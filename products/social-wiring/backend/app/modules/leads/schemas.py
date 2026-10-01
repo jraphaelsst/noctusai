@@ -13,6 +13,7 @@ from uuid import UUID
 
 from noctusai_lib.api import StrictHttpModel
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic_core import PydanticCustomError
 
 
 def _blank_to_none(value: Any) -> Any:
@@ -79,16 +80,30 @@ class LeadOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+#: Contract `atendimento-partes-imoveis` §3.6 — exact copy.
+MSG_IMOVEL_OBRIGATORIO = "Informe o imóvel do lead."
+
+
 class LeadCreate(StrictHttpModel):
     """POST /api/leads body — manual entry. Server assigns id/org_id/
     created_at/needs_review defaults; source_sheet/source_row/
     import_batch_id are importer-only (not settable via this endpoint —
     a manually-created lead always has source_sheet=NULL, matching the
-    fact-table's idempotency-key exemption, §4)."""
+    fact-table's idempotency-key exemption, §4).
+
+    🔴 `codigo_imovel` is REQUIRED here and ONLY here (owner decision D2,
+    2026-10-01): a hand-typed lead must name the imóvel it is about. The
+    importers and the portal/Meta ingest paths use services, not this body, so
+    an inbound lead with no resolvable código is still accepted (and surfaces
+    as `imovel_pendente`) — never dropped."""
 
     data_entrada: date
     codigo_raw: Optional[str] = None
-    codigo_imovel: Optional[str] = None
+    #: `Optional` + `validate_default` rather than a bare `str`: a MISSING
+    #: field, an explicit `null` and a blank string must all answer with the
+    #: SAME contract copy, and pydantic's stock `missing` error would render
+    #: "Campo obrigatório" instead.
+    codigo_imovel: Optional[str] = Field(default=None, validate_default=True)
     empreendimento: Optional[str] = None
     regiao: Optional[str] = None
     origem_id: Optional[UUID] = None
@@ -104,6 +119,14 @@ class LeadCreate(StrictHttpModel):
     follow_up_nota: Optional[str] = None
 
     _blank_follow_up_data = field_validator("follow_up_data", mode="before")(_blank_to_none)
+
+    @field_validator("codigo_imovel", mode="before")
+    @classmethod
+    def _codigo_imovel_obrigatorio(cls, value: Any) -> str:
+        texto = value.strip() if isinstance(value, str) else ""
+        if not texto:
+            raise PydanticCustomError("imovel_obrigatorio", MSG_IMOVEL_OBRIGATORIO)
+        return texto
 
 
 class LeadUpdate(StrictHttpModel):

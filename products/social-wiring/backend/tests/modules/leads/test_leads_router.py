@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from tests.modules.leads.conftest import ORG_A, ORG_B, auth_headers
+from tests.modules.leads.conftest import LEAD_CODIGO, ORG_A, ORG_B, auth_headers
 
 
 def _create_lead(client, **overrides):
-    body = {"data_entrada": "2026-07-01", "cliente_nome": "Alice"}
+    body = {"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "cliente_nome": "Alice"}
     body.update(overrides)
     resp = client.post("/api/leads", json=body, headers=auth_headers())
     assert resp.status_code == 201, resp.text
@@ -164,7 +164,7 @@ class TestBlankStringDateCoercion:
     def test_create_with_blank_follow_up_data_is_not_422(self, http_client):
         resp = http_client.post(
             "/api/leads",
-            json={"data_entrada": "2026-07-01", "follow_up_data": ""},
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "follow_up_data": ""},
             headers=auth_headers(),
         )
         assert resp.status_code == 201, resp.text
@@ -270,7 +270,7 @@ class TestOrgIsolation:
             return_value=MockUserResponse(MockUser(org_id=ORG_B))
         )
         resp_b = http_client.post(
-            "/api/leads", json={"data_entrada": "2026-07-01", "cliente_nome": "OrgB"},
+            "/api/leads", json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "cliente_nome": "OrgB"},
             headers=auth_headers(),
         )
         assert resp_b.status_code == 201
@@ -296,6 +296,7 @@ class TestCreateAttachesTheClienteSynchronously:
             "/api/leads",
             json={
                 "data_entrada": "2026-07-01",
+                "codigo_imovel": LEAD_CODIGO,
                 "cliente_nome": "Ana Silva",
                 "contato": "+5511988770001",
             },
@@ -317,7 +318,7 @@ class TestCreateAttachesTheClienteSynchronously:
         lead unresolved either — same rule `run_backfill` applies."""
         resp = http_client.post(
             "/api/leads",
-            json={"data_entrada": "2026-07-01", "cliente_nome": "Sem Contato"},
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "cliente_nome": "Sem Contato"},
             headers=auth_headers(),
         )
         assert resp.status_code == 201, resp.text
@@ -351,7 +352,7 @@ class TestCreateSchedulesPersonLayerSweep:
         try:
             resp = http_client.post(
                 "/api/leads",
-                json={"data_entrada": "2026-07-01", "cliente_nome": "Zed"},
+                json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "cliente_nome": "Zed"},
                 headers=auth_headers(),
             )
         finally:
@@ -377,7 +378,7 @@ class TestCreateSchedulesPersonLayerSweep:
 
         criado = http_client.post(
             "/api/leads",
-            json={"data_entrada": "2026-07-01", "contato": "+5511999978888"},
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "contato": "+5511999978888"},
             headers=auth_headers(),
         )
         assert criado.status_code == 201, criado.text
@@ -417,7 +418,7 @@ class TestCreateSchedulesPersonLayerSweep:
         try:
             resp = http_client.post(
                 "/api/leads",
-                json={"data_entrada": "2026-07-01", "cliente_nome": "Yan"},
+                json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "cliente_nome": "Yan"},
                 headers=auth_headers(),
             )
             order.append("response-built")

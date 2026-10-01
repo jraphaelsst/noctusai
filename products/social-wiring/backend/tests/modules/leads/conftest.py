@@ -49,6 +49,11 @@ from app.modules.leads.services.query import LeadFilters
 ORG_A = "00000000-0000-4000-8000-0000000000a1"
 ORG_B = "00000000-0000-4000-8000-0000000000b2"
 
+#: `POST /api/leads` requires a REGISTERED imóvel código (contract
+#: `atendimento-partes-imoveis` §3.6). Every manual-create test body carries
+#: this one, and `http_client` registers it for both orgs.
+LEAD_CODIGO = "TST001"
+
 
 def _filters_from_rpc_params(params: dict) -> LeadFilters:
     """Inverse of ``query.to_rpc_params`` — reconstructs the
@@ -148,6 +153,23 @@ def http_client(mock_db):
         from app.main import app
 
         bind_consent_module_to_mock(mock_db)
+        from app.modules.leads.deps import get_leads_client
+
+        get_leads_client().set_table_data(
+            "imovel_registry",
+            [
+                {
+                    "id": f"00000000-0000-4000-8000-0000000c{n:04d}",
+                    "org_id": org,
+                    "codigo_canonical": LEAD_CODIGO,
+                    "codigo_display": LEAD_CODIGO,
+                    "ativo_no_vista": True,
+                    "origem_descoberta": "manual",
+                    "created_at": "2026-01-01T00:00:00+00:00",
+                }
+                for n, org in enumerate((ORG_A, ORG_B))
+            ],
+        )
         tc = TestClient(app, raise_server_exceptions=True)
         yield tc
 
@@ -170,4 +192,4 @@ def auth_headers() -> dict:
     return {"Authorization": "Bearer test-token"}
 
 
-__all__ = ["ORG_A", "ORG_B", "auth_headers", "leads_client"]
+__all__ = ["LEAD_CODIGO", "ORG_A", "ORG_B", "auth_headers", "leads_client"]

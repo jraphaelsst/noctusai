@@ -27,7 +27,7 @@ a documented no-op, so an upsert-based path tests green and duplicates live.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
@@ -40,6 +40,7 @@ from noctusai_lib.integrations.imovelweb import (
     resolve_source_slug,
 )
 
+from app.modules.imovel_hub import atendimento_imoveis_service
 from app.modules.imovel_hub.dados_service import registrar_imovel
 from app.modules.leads.services import dimensions_service, leads_service
 from app.modules.leads.services.query import backfill_generated_columns
@@ -183,10 +184,17 @@ def store_imovelweb_lead(client: Any, org_id: UUID, lead: ImovelWebLead) -> None
 
 
 def ingest_imovelweb_lead(
-    client: Any, org_id: UUID, lead: ImovelWebLead
+    client: Any,
+    org_id: UUID,
+    lead: ImovelWebLead,
+    *,
+    vincular: Callable[..., Any] = atendimento_imoveis_service.vincular_lead_seguro,
 ) -> dict[str, Any]:
     """Idempotent single-delivery ingest: one `ImovelWebLead` → one ``leads``
     row.
+
+    `vincular` is the DI seam for the imóvel-link step (contract §3.5): the
+    real one never raises and the clientes sweep reconciles a miss.
 
     Re-running with the same ``eventId`` is a no-op returning the EXISTING
     row. That is ordinary traffic here, not an edge case: the vendor retries
@@ -236,6 +244,9 @@ def ingest_imovelweb_lead(
     # shape this codebase forbids.
     registrar_imovel(client, org_id, payload.get("codigo_imovel") or "", origem="lead")
     created = leads_service.create_lead(client, org_id, payload)
+    # The lead's imóvel → the card(s) it spawned + the cliente's interesses
+    # (contract §3.5). Never raises; the clientes sweep reconciles a miss.
+    vincular(client, org_id, lead_id=created["id"], contexto="imovelweb_ingest")
     return {"lead": created, "created": True, "source_slug": slug}
 
 

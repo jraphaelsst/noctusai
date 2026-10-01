@@ -177,6 +177,15 @@ class BackfillReport:
     # from `clientes_created`: this is an UPDATE on an EXISTING row, not a
     # new identity.
     clientes_reactivated: int = 0
+    # Contract `atendimento-partes-imoveis` §3.5/§4.2 — the imóvel reconcile
+    # that runs after the collapse (`_reconcile_imoveis`): junction links and
+    # cliente interesses derived from each lead's código, plus the
+    # `origem="atendimento"` proprietários. `imoveis_reconcile_falhou` is True
+    # when that step raised (logged) — never a silent zero.
+    imoveis_vinculados: int = 0
+    interesses_criados: int = 0
+    proprietarios_criados: int = 0
+    imoveis_reconcile_falhou: bool = False
 
     @property
     def touches_expected(self) -> int:
@@ -219,6 +228,10 @@ class BackfillReport:
             "atendimentos_orphaned": list(self.atendimentos_orphaned),
             "atendimentos_collapsed": self.atendimentos_collapsed,
             "clientes_reactivated": self.clientes_reactivated,
+            "imoveis_vinculados": self.imoveis_vinculados,
+            "interesses_criados": self.interesses_criados,
+            "proprietarios_criados": self.proprietarios_criados,
+            "imoveis_reconcile_falhou": self.imoveis_reconcile_falhou,
         }
 
 
@@ -369,8 +382,44 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         # one-shot migration the way `048`'s did (see
         # `clientes_backfill_job.py`'s module docstring for that lesson).
         _collapse_atendimentos(client, org_id, report)
+        # Contract `atendimento-partes-imoveis` §3.5: AFTER the repoint (a
+        # cliente is attached → the interesse can be written) and the collapse
+        # (the survivor is known → the junction link lands on it).
+        _reconcile_imoveis(client, org_id, report)
 
     return report
+
+
+def _reconcile_imoveis(client: Any, org_id: UUID, report: BackfillReport) -> None:
+    """Hook only — the logic lives in `imovel_hub` (the contract's owner of the
+    imóvel relationships). Converges `atendimento_imoveis`,
+    `cliente_imovel_interesses` and the derived `imovel_proprietarios` with
+    what the leads/partes/negociações already say, so a late cliente attach, a
+    collapse, or an ingest-time `vincular_lead` that failed all heal here.
+
+    A failure must not abort the person-layer sweep (identity resolution is
+    independent of imóvel links), but it is NEVER silent: logged at error with
+    the traceback and surfaced on the report as `imoveis_reconcile_falhou`.
+    The one realistic cause is the sweep running before migrations 181-183 are
+    applied — the same signal, same remedy (apply them).
+    """
+    from app.modules.imovel_hub import atendimento_imoveis_service, proprietarios_service
+
+    try:
+        r = atendimento_imoveis_service.reconcile(client, org_id)
+        report.imoveis_vinculados = r["vinculos_criados"]
+        report.interesses_criados = r["interesses_criados"]
+        report.proprietarios_criados = proprietarios_service.reconcile_de_atendimentos(
+            client, org_id
+        )["criados"]
+    except Exception:
+        report.imoveis_reconcile_falhou = True
+        logger.error(
+            "clientes_service.run_backfill: imóvel reconcile failed for org %s — "
+            "person layer is unaffected; links are retried on the next sweep "
+            "(are migrations 181-183 applied?)",
+            org_id, exc_info=True,
+        )
 
 
 def attach_lead_now(client: Any, org_id: UUID, lead_row: dict) -> Optional[str]:
