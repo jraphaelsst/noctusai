@@ -54,6 +54,8 @@ from uuid import UUID
 
 from noctusai_lib.primitives.phone import normalize_phone
 
+from app.services import table_reads
+
 from app.modules.leads.services.query import (
     LeadFilters,
     apply_db_filters,
@@ -316,6 +318,19 @@ def _list_leads_db(
     )
     rows = [backfill_generated_columns(r) for r in list(page_query.execute().data or [])]
     return rows, total
+
+
+def clientes_dos_leads(client: Any, org_id: UUID, lead_ids: list[str]) -> dict[str, str]:
+    """`{lead_id: cliente_id}` for the leads the person layer has claimed
+    (`cliente_touches`, origem `leads`) — the list's link to `/clientes/:id`."""
+    return {
+        str(t["origem_id"]): str(t["cliente_id"])
+        for t in table_reads.in_batched_rows(
+            client, "cliente_touches", org_id, "origem_id", sorted(set(lead_ids)),
+            select="id,cliente_id,origem_tabela,origem_id",
+        )
+        if t.get("origem_tabela") == "leads"
+    }
 
 
 def list_leads(

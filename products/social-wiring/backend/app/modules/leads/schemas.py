@@ -61,6 +61,10 @@ class LeadOut(BaseModel):
     origem: Optional[SourceRef] = None
     tipo_lead: str = "desconhecido"
     cliente_nome: Optional[str] = None
+    #: The person this lead belongs to (`cliente_touches`) — set on the LIST
+    #: only, so the lead row can link to `/clientes/:id`; `null` while the
+    #: person layer has not claimed the lead yet.
+    cliente_id: Optional[UUID] = None
     contato: Optional[str] = None
     contato_tipo: Optional[str] = None
     corretor_id: Optional[UUID] = None
