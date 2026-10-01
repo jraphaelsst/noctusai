@@ -79,7 +79,11 @@ async def criar_test_account(request: Request, body: TestAccountCreate, authoriz
         "email": body.email,
         "nome": body.nome.strip().title(),
         "org_id": org["id"],
-        "role": "admin",  # Test account user is admin of their org
+        # role='admin' is NoctusAI STAFF (RLS admin_all → every org), never a
+        # customer/test grant. Owner of the test org already cascades to
+        # admin of every licensed product (KB § PATTERNS/backend/backend.md
+        # "Product-admin rule").
+        "role": "user",
         "org_role": "owner",  # Org creator is owner of their org
     }
     db.table("noctus_users").insert(profile_data).execute()

@@ -180,9 +180,35 @@ the right client.
 
 ## SSO
 
-- `resolve_sso_role(user)` checks:
-  1. `org_role` — owner/admin → `platform_admin`.
-  2. `noctus_role` — admin → `platform_admin`.
+### Product-admin rule — org owner/admin ⇒ admin of every licensed product
+
+A Core ("noc") back-office user is **admin of product P in their org** iff:
+
+1. **License gate** — the org holds an `active` `licenses` row for P. Core's
+   `/api/sso/token` + `/api/sso/launch/{slug}` refuse otherwise (403).
+2. **Role cascade** — their trusted `public.noctus_users` row has
+   `org_role ∈ {owner, admin}` → products resolve `platform_admin` via
+   `make_resolve_platform_role` (`noctusai_lib.api.auth`). Every org creator
+   is `org_role='owner'` (Core `/api/auth/signup`), so granting the org a
+   license IS what makes its owner that product's admin — no per-product
+   role row, no product-side grant step.
+
+Invariants:
+
+- **Trusted row only.** `user_metadata` (`org_role` / `noctus_role`) is
+  user-writable and NEVER authorizes; no row ⇒ no role (SEC-2, 2026-09-28).
+  `resolve_sso_role(user)` survives only as the logged "spoof attempt" probe.
+- **`noctus_users.role='admin'` is NoctusAI staff**, not a customer admin —
+  RLS `admin_all` policies give it every org. Never set it on a customer
+  account (provision customers with `role='user'`, `org_role='owner'`).
+- **Customers (`CUSTOMER_ORG_ROLES`, e.g. `membro`) never cascade** — they are
+  refused by `make_get_current_user_org` unless the route opts in.
+
+Pinned by `seed/lib/backend/tests/test_auth.py::TestMakeResolvePlatformRole`
+(cascade) + `products/core/backend/tests/routers/test_sso_router.py`
+(`*_no_license`). First external-customer instance: Igig Agency → igig
+(2026-10-01).
+
 - Frontend helper: `resolveSSORoles()` → `{ isSSO, isProductAdmin }`.
 
 ## 7-role hierarchy

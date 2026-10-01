@@ -48,6 +48,11 @@ class TestCreateTestAccount:
         data = resp.json()["data"]
         assert data["user_id"] == "test-acct-user"
         assert data["category"] == "test"
+        # Product admin comes from org_role=owner; role='admin' would be
+        # NoctusAI-staff access to every org (RLS admin_all).
+        (profile,) = mock_sb.table("noctus_users").inserted_payloads
+        assert profile["role"] == "user"
+        assert profile["org_role"] == "owner"
 
     def test_create_test_account_forbidden_for_non_admin(self, client):
         resp = client.post("/api/admin/test-accounts", json={
