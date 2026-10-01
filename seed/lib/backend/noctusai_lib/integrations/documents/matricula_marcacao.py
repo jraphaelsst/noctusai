@@ -46,9 +46,7 @@ from dataclasses import dataclass
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
 from noctusai_lib.integrations.documents.transcription import (
-    _MARKUP_TOKEN_RE,
-    _unmatched_pair_indices,
-    _unmatched_toggle_index,
+    _classificar_marcacao,
     parse_markup,
 )
 
@@ -122,26 +120,7 @@ def remover_boilerplate(texto: str) -> MarcacaoRemovida:
 def remover_marcacao(texto: str) -> MarcacaoRemovida:
     """`texto` with every well-formed marker removed — see module docstring."""
     texto = texto or ""
-    tokens: list[tuple[str, int, int]] = []
-    pos = 0
-    for m in _MARKUP_TOKEN_RE.finditer(texto):
-        if m.start() > pos:
-            tokens.append(("text", pos, m.start()))
-        bruto = m.group()
-        if bruto == "**":
-            kind = "bold"
-        elif bruto.lower() == "<u>":
-            kind = "u_open"
-        else:
-            kind = "u_close"
-        tokens.append((kind, m.start(), m.end()))
-        pos = m.end()
-    if pos < len(texto):
-        tokens.append(("text", pos, len(texto)))
-
-    literais = set(_unmatched_toggle_index(tokens, "bold"))
-    abertos, fechamentos = _unmatched_pair_indices(tokens, "u_open", "u_close")
-    literais |= abertos | fechamentos
+    tokens, literais, _descartados = _classificar_marcacao(texto)
 
     removidos = tuple(
         (s, e)

@@ -510,6 +510,26 @@ class TestParseMarkupNeverRaisesOnMalformedInput:
         assert texto == "primeiro fechado mas **nunca fecha"
         assert ranges == (FormatRange(start=9, end=16, bold=True),)
 
+    def test_a_dangling_bold_marker_at_the_page_end_is_dropped(self) -> None:
+        """Live prod 2026-10-01: 4/6 re-transcribed matrículas ended a page
+        with one stray `**` after a footer timestamp. It formats nothing —
+        dropped, no document character lost, and the page is not flagged."""
+        texto, ranges = parse_markup("**R.1** Emitido em 01/10/2026 10:22:33**\n")
+        assert texto == "R.1 Emitido em 01/10/2026 10:22:33\n"
+        assert ranges == (FormatRange(start=0, end=3, bold=True),)
+        assert has_raw_markup(texto) is False
+
+    def test_a_masked_identifier_is_document_text_not_markup(self) -> None:
+        """A registry-printed LGPD mask (`***.123.456-**`) must not be read
+        as bold toggles — it would mis-pair the page's real markers."""
+        texto, ranges = parse_markup("**R.2** CPF: ***.123.456-** e **fim**")
+        assert texto == "R.2 CPF: ***.123.456-** e fim"
+        assert ranges == (
+            FormatRange(start=0, end=3, bold=True),
+            FormatRange(start=26, end=29, bold=True),
+        )
+        assert has_raw_markup(texto) is False
+
     def test_a_stray_closing_underline_tag_stays_literal(self) -> None:
         texto, ranges = parse_markup("fecha </u> sem abrir")
         assert texto == "fecha </u> sem abrir"
@@ -582,6 +602,10 @@ class TestHasRawMarkup:
         bruto = "primeiro **fechado** mas **nunca fecha"
         texto, _ranges = parse_markup(bruto)
         assert has_raw_markup(texto) is True
+
+    def test_bold_digits_are_still_markup(self) -> None:
+        """The mask rule never swallows a bolded number (`**12.345**`)."""
+        assert has_raw_markup("matricula **12.345** aberta") is True
 
     def test_a_fully_parsed_markup_string_is_clean_afterwards(self) -> None:
         """The output of a WELL-FORMED `parse_markup` call has every marker

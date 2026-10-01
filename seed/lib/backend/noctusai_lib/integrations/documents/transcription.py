@@ -1472,6 +1472,30 @@ def _extrair_formatacao_camada_texto(
 #: A change to the prompt's marker syntax must change this together with it.
 _MARKUP_TOKEN_RE = re.compile(r"\*\*|<u>|</u>", re.IGNORECASE)
 
+#: Asterisks that are DOCUMENT TEXT, not markup: a masked identifier as
+#: printed by the registry ("***.123.456-**" — LGPD masking of a CPF on a
+#: certidão). Live prod test 2026-10-01: such a mask's asterisks were read as
+#: bold toggles, mis-paired the page's real markers and left one stray `**`,
+#: and `has_raw_markup` then refused the whole matrícula fill. A run of 3+
+#: asterisks before a digit/dot, or `**` right after `<digit>-`, is literal.
+_MASCARA_RE = re.compile(r"\*{3,}(?=[.\d])|(?<=\d-)\*{2,}(?![\w*])")
+
+
+def _spans_de_mascara(texto: str) -> list[tuple[int, int]]:
+    return [m.span() for m in _MASCARA_RE.finditer(texto or "")]
+
+
+def _em_mascara(spans: list[tuple[int, int]], inicio: int, fim: int) -> bool:
+    return any(a < fim and inicio < b for a, b in spans)
+
+
+def _tokens_de_marcacao(texto: str):
+    """`_MARKUP_TOKEN_RE` matches that are markup — never a mask's asterisks."""
+    spans = _spans_de_mascara(texto)
+    for m in _MARKUP_TOKEN_RE.finditer(texto or ""):
+        if not _em_mascara(spans, m.start(), m.end()):
+            yield m
+
 #: Any OTHER angle-bracket tag — logged (never acted on) so an unexpected
 #: marker shows up in the logs instead of silently vanishing into the text.
 _UNKNOWN_TAG_RE = re.compile(r"</?(?!u\b)[a-zA-Z][^>]*>", re.IGNORECASE)
@@ -1507,22 +1531,19 @@ def _unmatched_pair_indices(
     return set(abertos), fechamentos_invalidos
 
 
-def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
-    """OCR markup (`**bold**`, `<u>underline</u>`, combined/nested freely) →
-    `(plain text, format ranges)`.
+def _classificar_marcacao(
+    markup: str,
+) -> tuple[list[tuple[str, int, int]], set[int], set[int]]:
+    """`(tokens, literais, descartados)` — the ONE marker classification
+    `parse_markup` and `matricula_marcacao.remover_marcacao` both apply, so
+    the two can never disagree about which bytes a marker owns.
 
-    Strips the markers and returns offsets into the STRIPPED text, so the
-    result slots directly into `TranscribedPage.text` / `.formatting`.
-
-    Never raises. An unbalanced `**`, a stray or unclosed `<u>`/`</u>`, or
-    any other bracketed marker the model was not asked for is kept as
-    LITERAL text (and logged) rather than guessed at — a malformed vision
-    reply must still produce a document, and a formatting range built from a
-    guess would be worse than none.
-    """
+    `literais`: unbalanced/stray markers kept as literal text. `descartados`:
+    a stray `**` with only whitespace after it — a dangling page-end marker
+    that formats nothing, removed (no document character is lost)."""
     tokens: list[tuple[str, int, int]] = []
     pos = 0
-    for m in _MARKUP_TOKEN_RE.finditer(markup):
+    for m in _tokens_de_marcacao(markup):
         if m.start() > pos:
             tokens.append(("text", pos, m.start()))
         bruto = m.group()
@@ -1537,14 +1558,10 @@ def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
     if pos < len(markup):
         tokens.append(("text", pos, len(markup)))
 
-    for m in _UNKNOWN_TAG_RE.finditer(markup):
-        logger.warning(
-            "transcription: unrecognised markup tag %r in vision reply — kept literal",
-            m.group(),
-        )
-
     bold_invalido = _unmatched_toggle_index(tokens, "bold")
-    if bold_invalido:
+    descartados = {i for i in bold_invalido if not markup[tokens[i][2]:].strip()}
+    literais = bold_invalido - descartados
+    if literais:
         logger.warning(
             "transcription: unbalanced ** marker in vision reply — kept literal"
         )
@@ -1555,6 +1572,28 @@ def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
         logger.warning(
             "transcription: unbalanced <u>/</u> marker in vision reply — kept literal"
         )
+    return tokens, literais | u_abertos_invalidos | u_fechamentos_invalidos, descartados
+
+
+def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
+    """OCR markup (`**bold**`, `<u>underline</u>`, combined/nested freely) →
+    `(plain text, format ranges)`.
+
+    Strips the markers and returns offsets into the STRIPPED text, so the
+    result slots directly into `TranscribedPage.text` / `.formatting`.
+
+    Never raises. An unbalanced `**`, a stray or unclosed `<u>`/`</u>`, or
+    any other bracketed marker the model was not asked for is kept as
+    LITERAL text (and logged) rather than guessed at — a malformed vision
+    reply must still produce a document, and a formatting range built from a
+    guess would be worse than none.
+    """
+    for m in _UNKNOWN_TAG_RE.finditer(markup):
+        logger.warning(
+            "transcription: unrecognised markup tag %r in vision reply — kept literal",
+            m.group(),
+        )
+    tokens, literais, descartados = _classificar_marcacao(markup)
 
     saida: list[str] = []
     comprimento = 0
@@ -1584,20 +1623,26 @@ def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
             saida.append(bruto)
             comprimento += len(bruto)
             continue
-        if kind == "bold" and i not in bold_invalido:
+        if kind == "bold" and i not in literais and i not in descartados:
             fechar_trecho(comprimento)
             negrito = not negrito
             trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
             continue
-        if kind == "u_open" and i not in u_abertos_invalidos:
+        if kind == "u_open" and i not in literais:
             fechar_trecho(comprimento)
             profundidade_sublinhado += 1
             trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
             continue
-        if kind == "u_close" and i not in u_fechamentos_invalidos:
+        if kind == "u_close" and i not in literais:
             fechar_trecho(comprimento)
             profundidade_sublinhado -= 1
             trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
+            continue
+        # A stray `**` with nothing but whitespace after it on this page
+        # formats nothing — a dangling marker the model left at the page end
+        # (live prod 2026-10-01: 4/6 re-transcribed matrículas). Dropping it
+        # loses no document character; keeping it blocked the whole fill.
+        if i in descartados:
             continue
         # Unbalanced/stray marker — kept as literal text.
         saida.append(bruto)
@@ -1621,7 +1666,7 @@ def has_raw_markup(text: Optional[str]) -> bool:
     `texto_extraido` back out (never re-transcribes) needs its own way to
     catch a row `parse_markup` never got to run on. `None`/empty → `False`.
     """
-    return bool(_MARKUP_TOKEN_RE.search(text or ""))
+    return next(_tokens_de_marcacao(text or ""), None) is not None
 
 
 def make_document_transcriber(
