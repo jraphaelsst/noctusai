@@ -1218,6 +1218,94 @@ class TestEnderecoResolucaoAutomaticaPorTitular:
         row = _cliente(scoped, cid)
         assert row["endereco_logradouro"] == "R PROF ARTUR RAMOS"
 
+    def test_own_bill_vs_bank_form_on_file_needs_a_human(self, client, scoped):
+        """🔴 Live prod test 2026-10-01 (deal 875): the buyer's own older
+        utility bill (holder verified as the buyer) replaced the bank-form
+        address the signed contract used, because the form's holder read as
+        `None`. A `ficha_cadastral` address IS the party's own declaration —
+        two of the party's own documents disagreeing need a human; the
+        on-file address is kept meanwhile (a gap, never a wrong value)."""
+        cid, ficha, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="ficha_cadastral", endereco_documento_id=ficha,
+        )])
+        scoped.set_table_data("cliente_documentos", [
+            {**self._doc(ficha), "tipo_documento": "ficha_cadastral"},
+            self._doc(doc_novo, "ANA PAULA SOUZA"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is False
+        assert conflito is not None  # pendente — a human decides
+        row = _cliente(scoped, cid)
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == ("04000-000", "RUA B")
+
+    def test_bank_form_proposal_vs_own_bill_on_file_needs_a_human(self, client, scoped):
+        """The reverse order (bill on file, the form re-read proposes)."""
+        cid, doc_velho, ficha = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="comprovante_endereco", endereco_documento_id=doc_velho,
+        )])
+        scoped.set_table_data("cliente_documentos", [
+            self._doc(doc_velho, "ANA PAULA SOUZA"),
+            {**self._doc(ficha), "tipo_documento": "ficha_cadastral"},
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "ficha_cadastral", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(ficha),
+        )
+
+        assert aplicado is False
+        assert conflito is not None
+        row = _cliente(scoped, cid)
+        assert row["endereco_logradouro"] == "RUA B"
+
+    def test_bank_form_beats_a_co_partys_bill(self, client, scoped):
+        """A co-party's bill (R2 household evidence) is weaker than the
+        party's own bank form — the form on file is kept, automatically."""
+        cid, outro, ficha, doc_novo = str(uuid4()), str(uuid4()), str(uuid4()), str(uuid4())
+        atendimento = str(uuid4())
+        scoped.set_table_data("clientes", [
+            cliente_row(
+                cid, nome="Ana Paula Souza",
+                endereco_cep="04000-000", endereco_logradouro="RUA B",
+                endereco_origem="ficha_cadastral", endereco_documento_id=ficha,
+            ),
+            cliente_row(outro, nome="Carlos Mendes"),
+        ])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atendimento, "cliente_id": cid},
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atendimento, "cliente_id": outro},
+        ])
+        scoped.set_table_data("cliente_documentos", [
+            {**self._doc(ficha), "tipo_documento": "ficha_cadastral"},
+            self._doc(doc_novo, "CARLOS MENDES"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+
+        assert aplicado is False
+        assert conflito is None
+        row = _cliente(scoped, cid)
+        assert row["endereco_logradouro"] == "RUA B"
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+
     def test_both_sides_unverified_but_own_address_on_file_auto_rejects(
         self, client, scoped,
     ):

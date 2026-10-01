@@ -430,6 +430,16 @@ PREFIXO_CONJUGE = "conjuge"
 #: exact value the moment the source no longer qualifies.
 ORIGEM_CONJUGE_DOMICILIO = "conjuge_domicilio"
 
+#: The address sources that carry no printed holder because the document IS
+#: the party's own declaration — a `ficha_cadastral` row reaches a cliente
+#: only after `ficha_cadastral_service._resolver_destino` matched that very
+#: person (CPF first, name on the uploaded-to card as the fallback). For the
+#: holder rule such an address is the party's OWN, never "titular unknown":
+#: live prod test 2026-10-01 (deal 875) — the buyer's own older utility bill
+#: (holder verified as the buyer) silently replaced the bank-form address the
+#: signed contract actually used, because the form's holder read as `None`.
+ORIGENS_ENDERECO_DECLARADO = frozenset({"ficha_cadastral"})
+
 #: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
 #: see `types.IdentityFields.data_emissao`'s own comment. It is the
 #: certidão's OWN issuance date, not a fact about the holder, so there is no
@@ -1267,6 +1277,43 @@ def _titular_e_parte_ou_conjuge(
     return False
 
 
+#: Holder ranks for the address rule. A bill whose holder is the party (or
+#: their linked spouse) is the party's OWN evidence; one whose holder is a
+#: co-party of the atendimento (R2) is household evidence — weaker. Equal
+#: ranks never auto-resolve (a human decides), so a gap beats a coin flip.
+_TITULAR_PROPRIO, _TITULAR_PARTE, _TITULAR_NENHUM = 2, 1, 0
+
+
+def _rank_titular(
+    client: Any, org_id: UUID, cliente_row: dict,
+    titular_nome: Optional[str], origem: Optional[str],
+) -> tuple[int, Optional[bool]]:
+    """`(rank, verificado)` for one side of an address disagreement.
+    `verificado` keeps `_titular_e_parte_ou_conjuge`'s tri-state (`None` =
+    nothing to check) for the R2 auto-reject branch. A declared-address
+    source (`ORIGENS_ENDERECO_DECLARADO`) is the party's own by construction."""
+    if origem in ORIGENS_ENDERECO_DECLARADO:
+        return _TITULAR_PROPRIO, True
+    if not titular_nome:
+        return _TITULAR_NENHUM, None
+    if _nomes_bate(cliente_row, titular_nome):
+        return _TITULAR_PROPRIO, True
+    conjuge_id = cliente_row.get("conjuge_cliente_id")
+    if conjuge_id:
+        conjuge_rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("nome,nome_completo,nome_oficial")
+            .eq("org_id", str(org_id))
+            .eq("id", str(conjuge_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if conjuge_rows and _nomes_bate(conjuge_rows[0], titular_nome):
+            return _TITULAR_PROPRIO, True
+    verificado = _titular_e_parte_ou_conjuge(client, org_id, cliente_row, titular_nome)
+    return (_TITULAR_PARTE if verificado else _TITULAR_NENHUM), verificado
+
+
 #: F3: a cidade candidate this long, or carrying a digit, is not a real
 #: city name — a whole-address string or a CEP fragment landed in the field
 #: instead. Measured (live prod test, 2026-09-30): a `comprovante_endereco`
@@ -1481,6 +1528,7 @@ def aplicar_endereco_ao_cliente(
                 client, org_id, atual,
                 _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
                 titular_documento or _titular_do_documento(client, org_id, documento_id),
+                origem_novo=origem,
             )
         campo_conflitos.registrar_decisao_automatica(
             client, campo_conflitos.CLIENTE, org_id, cliente_id, CAMPO_ENDERECO,
@@ -2088,6 +2136,8 @@ def _decisao_endereco_por_titular(
     atual: dict,
     titular_atual: Optional[str],
     titular_novo: Optional[str],
+    *,
+    origem_novo: Optional[str] = None,
 ) -> divergencia_resolucao.Decisao:
     """The holder rule for two disagreeing comprovantes (owner directive,
     2026-09-29 follow-up, extended R2 2026-09-30): the bill whose printed
@@ -2099,10 +2149,27 @@ def _decisao_endereco_por_titular(
     propagation derivative): a definitely-unrelated new holder is then
     auto-REJECTED rather than left pending (R2) — the cliente's own document
     outranks a stranger's, no human needed to say so. The caller owns the
-    manual/confirmed guard — this only compares holders."""
-    holder_atual = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_atual)
-    holder_novo = _titular_e_parte_ou_conjuge(client, org_id, atual, titular_novo)
-    if holder_novo is True and holder_atual is not True:
+    manual/confirmed guard — this only compares holders.
+
+    Ranked (2026-10-01): the party's/spouse's OWN evidence — including a
+    declared-address source such as the bank form (`ORIGENS_ENDERECO_
+    DECLARADO`, holder-less by nature) — outranks a co-party's bill, which
+    outranks an unverified one. The higher rank wins; equal verified ranks
+    (two of the party's own documents disagreeing) need a human, and so does
+    a declared source PROPOSED against an on-file document (it defends, it
+    never displaces)."""
+    rank_atual, holder_atual = _rank_titular(
+        client, org_id, atual, titular_atual, atual.get("endereco_origem"),
+    )
+    rank_novo, holder_novo = _rank_titular(
+        client, org_id, atual, titular_novo, origem_novo,
+    )
+    # A declared source DEFENDS the address on file, but never WINS one: no
+    # measured tier makes the bank form outrank a real document of the
+    # party's, so a proposed declaration against any on-file document falls
+    # through to a human (`ficha_cadastral_service` (d) — never a silent
+    # overwrite).
+    if rank_novo > rank_atual and origem_novo not in ORIGENS_ENDERECO_DECLARADO:
         return divergencia_resolucao.Decisao(
             vencedor="proposto", regra="endereco_titular",
             motivo=(
@@ -2112,7 +2179,7 @@ def _decisao_endereco_por_titular(
             ),
             requer_humano=False,
         )
-    if holder_atual is True and holder_novo is not True:
+    if rank_atual > rank_novo:
         return divergencia_resolucao.Decisao(
             vencedor="atual", regra="endereco_titular",
             motivo=(
@@ -2254,6 +2321,7 @@ def _decidir_endereco_pendente(
         client, org_id, atual,
         _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
         proposto.get("titular") or _titular_do_documento(client, org_id, row.get("fonte_id")),
+        origem_novo=row.get("origem_proposto"),
     ), partes
 
 
