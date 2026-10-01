@@ -1,245 +1,180 @@
 """The roteiro cronograma, as a PDF — one imóvel per page, in visiting order.
 
-WHY reportlab AND NOT WeasyPrint (user-ratified 2026-08-25)
------------------------------------------------------------
-`reportlab` is pure Python: no Cairo, no Pango, no system packages, so the
-house single-container image is unchanged. WeasyPrint would have given prettier
-layout control in exchange for dragging a graphics stack into every
-social-wiring build — a real base-image cost for a four-field page.
+Rendering goes through `noctusai_lib.integrations.documents.html_pdf.render_html_pdf`
+(owner-mandated path for every platform PDF; reportlab-direct was removed from
+this module). The HTML lives in `roteiro_pdf_template`; this module gathers
+what the template needs and owns the one piece of I/O the renderer forbids.
 
-It is also already the product's answer: `modules/meta_ads/services/
-ads_export_service.to_pdf` renders the ads report with it and
-`requirements.txt` has declared `reportlab>=4.0.0` since. This module adds no
-dependency.
+PHOTOS
+------
+`render_html_pdf` blocks remote fetches (SSRF + determinism), so a photo is
+fetched HERE, server-side, and embedded as a `data:` URI (`carregar_fotos`).
+That fetch is bounded (timeout, size cap, image content-type only) and a
+failure is NEVER silent and NEVER fatal: it is logged at WARNING and the page
+renders a visible "foto indisponível" placeholder — a cronograma without one
+photo is still useful at the door, a 500 is not.
 
-🔴 N=2 ON PDF GENERATION — NOT YET FORMALIZED, DELIBERATELY. The ads export is
-a landscape TABLE report built with `platypus`; this is a portrait
-one-record-per-page canvas document. They share the library and nothing else —
-no page furniture, no styles, no data shape — so extracting a "PDF helper" now
-would be a wrapper over `import reportlab`. Flagged as the triage the DRY rule
-asks for at N=2; a THIRD PDF surface is where a shared seam becomes mandatory,
-and the shape to extract will be visible by then.
-
-Server-side rather than a browser print dialog for the same reason it is worth
-doing at all: these bytes can later be attached to a WhatsApp message or an
-e-mail without a browser in the loop, and they do not depend on which browser
-the corretor happened to open.
-
-WHY ONE IMÓVEL PER PAGE
------------------------
-The user asked for it, and the shape earns it: a corretor carries this between
-properties, reads one page at the door, and turns it over on the way to the
-next. Cramming three per page would save paper and lose the thing that makes it
-a cronograma.
-
-WHAT IS DELIBERATELY NOT ON IT
-------------------------------
-No photo. The user named exactly four data points and a photo is not among
-them; fetching a remote image server-side would add a network failure mode to
-a document that otherwise cannot fail.
+Server-side rather than a browser print dialog so these bytes can later be
+attached to a WhatsApp message or e-mail without a browser in the loop.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from io import BytesIO
-from typing import Any, Optional
+import base64
+import io
+import logging
+from typing import Optional
 
+import httpx
+
+from noctusai_lib.integrations.documents.html_pdf import render_html_pdf
 from noctusai_lib.primitives.exceptions import ValidationError_
 
-#: reportlab is imported INSIDE `gerar`, matching
-#: `meta_ads/services/ads_export_service.to_pdf`. Module-level would make every
-#: importer of `card_hub.router` — i.e. the whole app and its whole test suite —
-#: hard-depend on a library only one route needs, so a missing wheel would fail
-#: everything instead of the one endpoint that actually cannot work.
+from app.modules.card_hub import roteiro_pdf_template as tpl
 
-#: A4 in points, resolved without importing reportlab (595.27 x 841.89).
-_LARGURA, _ALTURA = 210 / 25.4 * 72, 297 / 25.4 * 72
-#: One millimetre in points — reportlab's `units.mm`, inlined for the same
-#: reason as the page size.
-mm = 72.0 / 25.4
-_MARGEM = 20 * mm
-_UTIL = _LARGURA - 2 * _MARGEM
+logger = logging.getLogger(__name__)
 
-#: Values a field renders when we have nothing. One constant, so the PDF and
-#: the UI cannot drift into showing "-" in one place and "" in the other.
-VAZIO = "—"
+VAZIO = tpl.VAZIO
+
+FOTO_TIMEOUT_S = 5.0
+FOTO_MAX_BYTES = 3 * 1024 * 1024
+#: Formats xhtml2pdf (PIL) embeds reliably; anything else is a placeholder, not
+#: a render failure.
+_TIPOS_FOTO = {"image/jpeg", "image/jpg", "image/png", "image/gif"}
 
 
-def gerar(roteiro: dict, *, cliente_nome: Optional[str] = None) -> bytes:
-    """`RoteiroOut` -> PDF bytes.
-
-    Takes the already-enriched dict rather than re-reading the database: the
-    service that built it has the batched reads, and a second enrichment path
-    here is exactly how the two would drift.
-    """
-    visitas = roteiro.get("visitas") or []
+def gerar(
+    roteiro: dict,
+    *,
+    cliente_nome: Optional[str] = None,
+    proprietarios_por_codigo: Optional[dict[str, list[dict]]] = None,
+    fotos_por_codigo: Optional[dict[str, str]] = None,
+) -> bytes:
+    """`RoteiroOut` -> PDF bytes. Takes the already-enriched dict (no DB reads)."""
+    visitas = sorted(
+        roteiro.get("visitas") or [], key=lambda v: (v.get("ordem") or 0)
+    )
     if not visitas:
-        # A zero-page PDF is a corrupt file, not an empty state. Refusing is
-        # the honest answer and the UI can disable the button on `total == 0`.
-        raise ValidationError_(
-            "roteiro sem imóveis não gera cronograma", field="visitas"
-        )
+        # A zero-page PDF is a corrupt file, not an empty state.
+        raise ValidationError_("roteiro sem imóveis não gera cronograma", field="visitas")
 
-    # Deferred import — see the module note above.
-    from reportlab.lib.pagesizes import A4
-    from reportlab.pdfgen import canvas as pdf_canvas
-
-    buf = BytesIO()
-    c = pdf_canvas.Canvas(buf, pagesize=A4)
-    c.setTitle(_titulo_documento(roteiro))
-
+    proprietarios = {k.strip().upper(): v for k, v in (proprietarios_por_codigo or {}).items()}
+    fotos = {k.strip().upper(): v for k, v in (fotos_por_codigo or {}).items()}
+    titulo = _titulo_documento(roteiro)
+    data_visita = tpl.formatar_data(roteiro.get("data_visita"))
     total = len(visitas)
-    for i, visita in enumerate(visitas, start=1):
-        _pagina(c, visita, indice=i, total=total, roteiro=roteiro, cliente_nome=cliente_nome)
-        c.showPage()
 
-    c.save()
-    return buf.getvalue()
+    paginas = []
+    for i, visita in enumerate(visitas, start=1):
+        chave = str(visita.get("codigo") or "").strip().upper()
+        paginas.append(
+            tpl.pagina(
+                visita,
+                indice=i,
+                total=total,
+                titulo=titulo,
+                data_visita=data_visita,
+                cliente_nome=cliente_nome,
+                proprietarios=proprietarios.get(chave) or [],
+                foto_data_uri=fotos.get(chave),
+                foto_dim=_dimensoes(fotos.get(chave)),
+            )
+        )
+    return render_html_pdf(tpl.documento(paginas, titulo=titulo))
+
+
+#: The photo box (pt). Aspect ratio is preserved inside it so a tall photo can
+#: never push the page over and break "one imóvel per page".
+_CAIXA_FOTO = (330, 230)
+
+
+def _dimensoes(data_uri: Optional[str]) -> tuple[int, int]:
+    if not data_uri:
+        return _CAIXA_FOTO
+    try:
+        from PIL import Image
+
+        with Image.open(io.BytesIO(base64.b64decode(data_uri.split(",", 1)[1]))) as im:
+            w, h = im.size
+    except Exception:  # noqa: BLE001 — undecodable bytes: fall back to the box, logged
+        logger.warning("roteiro pdf: foto com dimensões ilegíveis; usando caixa padrão")
+        return _CAIXA_FOTO
+    escala = min(_CAIXA_FOTO[0] / w, _CAIXA_FOTO[1] / h)
+    return max(1, int(w * escala)), max(1, int(h * escala))
 
 
 def nome_arquivo(roteiro: dict) -> str:
-    return f"roteiro-{str(roteiro.get('id') or '')[:8]}.pdf"
+    """`roteiro-<id8>[-<YYYY-MM-DD>].pdf` — date part only when the roteiro has one."""
+    base = f"roteiro-{str(roteiro.get('id') or '')[:8]}"
+    data = str(roteiro.get("data_visita") or "")[:10]
+    return f"{base}-{data}.pdf" if data else f"{base}.pdf"
 
 
 def _titulo_documento(roteiro: dict) -> str:
-    return roteiro.get("titulo") or f"Roteiro de {_data_curta(roteiro.get('created_at'))}"
+    return roteiro.get("titulo") or f"Roteiro de {tpl.formatar_data(roteiro.get('created_at'))}"
 
 
-def _data_curta(iso: Any) -> str:
-    if not iso:
-        return VAZIO
-    try:
-        return datetime.fromisoformat(str(iso).replace("Z", "+00:00")).strftime("%d/%m/%Y")
-    except ValueError:
-        # Not swallowed: an unparseable timestamp still renders the raw value
-        # rather than disappearing, so a bad row is visible instead of silent.
-        return str(iso)
-
-
-def _pagina(
-    c: Any,
-    visita: dict,
+def carregar_fotos(
+    imoveis: list[dict],
     *,
-    indice: int,
-    total: int,
-    roteiro: dict,
-    cliente_nome: Optional[str],
-) -> None:
-    imovel = visita.get("imovel") or {}
-    y = _ALTURA - _MARGEM
+    client: Optional[httpx.Client] = None,
+) -> dict[str, str]:
+    """`codigo -> data: URI` of each imóvel's first photo; failures => missing key.
 
-    # ── header: which route, for whom ──────────────────────────────────
-    c.setFont("Helvetica", 9)
-    cabecalho = _titulo_documento(roteiro)
-    if cliente_nome:
-        cabecalho = f"{cabecalho}  ·  {cliente_nome}"
-    c.drawString(_MARGEM, y, cabecalho)
-    c.drawRightString(_LARGURA - _MARGEM, y, f"Imóvel {indice} de {total}")
-    y -= 6
-    c.line(_MARGEM, y, _LARGURA - _MARGEM, y)
-    y -= 16 * mm
-
-    # ── the código, large: this is what a corretor looks for ───────────
-    c.setFont("Helvetica-Bold", 28)
-    c.drawString(_MARGEM, y, str(visita.get("codigo") or VAZIO))
-    y -= 10 * mm
-
-    if imovel.get("titulo"):
-        c.setFont("Helvetica", 11)
-        y = _paragrafo(c, imovel["titulo"], y, "Helvetica", 11)
-        y -= 2 * mm
-
-    if imovel and not imovel.get("ativo_no_vista", True):
-        # Not decoration: a corretor routing a visit to a property that has
-        # left the catalog needs to know before driving there.
-        c.setFont("Helvetica-Oblique", 9)
-        c.drawString(_MARGEM, y, "fora do catálogo Vista")
-        y -= 8 * mm
-
-    y -= 6 * mm
-    y = _campo(c, "Condomínio", imovel.get("empreendimento"), y)
-    y = _campo(c, "Endereço", _endereco(imovel), y)
-    y = _campo(c, "Captação", _captacao(imovel), y)
-
-    # NOC-REMEDIATE[imovel-owner-data]: Vista exposes no proprietário field
-    # (see `noctusai_lib/integrations/vista/calibration.py` — neither
-    # CANDIDATE_IMOVEL_LIST_FIELDS nor CANDIDATE_IMOVEL_DETAIL_FIELDS carries
-    # one), so there is nothing to read yet. User-ratified 2026-08-25 to ship
-    # the slot empty rather than invent a source.
-    # DESTINATION: `social_wiring.imovel_dados` (migration 075) — the table
-    # that already holds what WE author about a property. Add
-    # `proprietario_nome` / `proprietario_celular` there, surface them through
-    # `imovel_hub.busca_service._imovel_out`, and delete this marker.
-    y = _campo(c, "Proprietário", None, y)
-    y = _campo(c, "Celular", None, y)
-
-    if visita.get("observacao"):
-        y -= 4 * mm
-        y = _campo(c, "Observação", visita["observacao"], y)
-
-    # ── the outcome line the corretor fills in by hand ─────────────────
-    rodape = _MARGEM + 18 * mm
-    c.line(_MARGEM, rodape, _LARGURA - _MARGEM, rodape)
-    c.setFont("Helvetica", 9)
-    c.drawString(_MARGEM, rodape - 6 * mm, "Visita realizada?   (   ) Sim      (   ) Não")
-
-
-def _campo(c: Any, rotulo: str, valor: Optional[str], y: float) -> float:
-    c.setFont("Helvetica-Bold", 9)
-    c.drawString(_MARGEM, y, rotulo.upper())
-    y -= 5.5 * mm
-    return _paragrafo(c, valor or VAZIO, y, "Helvetica", 12) - 5 * mm
-
-
-def _paragrafo(c: Any, texto: str, y: float, fonte: str, tamanho: int) -> float:
-    """Draw `texto`, wrapped to the printable width, and return the new `y`.
-
-    Wrapping is not cosmetic here: an endereço with a complemento overflows the
-    page width on a real address, and reportlab's `drawString` would silently
-    run it off the right edge rather than clip or wrap.
+    `imoveis` are `ImovelResumo` dicts (`foto_destaque`, else `fotos[0]`).
+    `client` is the DI seam (tests pass an `httpx.Client(transport=MockTransport)`).
     """
-    from reportlab.lib.utils import simpleSplit
-
-    c.setFont(fonte, tamanho)
-    for linha in simpleSplit(str(texto), fonte, tamanho, _UTIL):
-        c.drawString(_MARGEM, y, linha)
-        y -= tamanho + 3
-    return y
-
-
-def _endereco(imovel: dict) -> Optional[str]:
-    """Logradouro, número, complemento, bairro, cidade/UF, CEP — whichever of
-    them we have. A delisted imóvel answers from the registry snapshot, which
-    carries bairro/cidade/uf and no street, so this must read correctly with
-    half the parts missing rather than printing stray commas."""
-    rua = " ".join(
-        p for p in [imovel.get("logradouro"), imovel.get("numero")] if p
-    ).strip()
-    if imovel.get("complemento"):
-        rua = f"{rua} — {imovel['complemento']}".strip(" —")
-
-    cidade_uf = "/".join(p for p in [imovel.get("cidade"), imovel.get("uf")] if p)
-    partes = [rua, imovel.get("bairro"), cidade_uf, imovel.get("cep")]
-    texto = " · ".join(str(p) for p in partes if p)
-    return texto or None
+    out: dict[str, str] = {}
+    proprio = client is None
+    http = client or httpx.Client(timeout=FOTO_TIMEOUT_S, follow_redirects=True)
+    try:
+        for imovel in imoveis:
+            codigo = str(imovel.get("codigo") or "").strip().upper()
+            url = _primeira_foto(imovel)
+            if not codigo or not url:
+                continue
+            uri = _baixar(http, codigo, url)
+            if uri:
+                out[codigo] = uri
+    finally:
+        if proprio:
+            http.close()
+    return out
 
 
-def _captacao(imovel: dict) -> Optional[str]:
-    """Who brought the property in.
+def _primeira_foto(imovel: dict) -> Optional[str]:
+    url = imovel.get("foto_destaque")
+    if not url:
+        fotos = imovel.get("fotos") or []
+        first = fotos[0] if fotos else None
+        url = first.get("url") if isinstance(first, dict) else first
+    return str(url) if url else None
 
-    `imovel_dados.captador_user_id` (migration 075) is the canonical answer and
-    wins: it is a USER, which is what the commission slice is attributed to.
-    The Vista `corretores` list is the fallback — ALL of them, joined, because
-    13.1% of the catalog carries two or three and a first-only read discards
-    the rest (040's own measurement).
-    """
-    captacao = imovel.get("captacao") or {}
-    if captacao.get("nome"):
-        return str(captacao["nome"])
 
-    nomes = [
-        str(cor.get("nome"))
-        for cor in (imovel.get("corretores") or [])
-        if isinstance(cor, dict) and cor.get("nome")
-    ]
-    return " · ".join(nomes) or None
+def _baixar(http: httpx.Client, codigo: str, url: str) -> Optional[str]:
+    if not url.lower().startswith(("http://", "https://")):
+        logger.warning("roteiro pdf: foto de %s ignorada (esquema não http/https)", codigo)
+        return None
+    try:
+        with http.stream("GET", url, timeout=FOTO_TIMEOUT_S) as resp:
+            resp.raise_for_status()
+            tipo = resp.headers.get("content-type", "").split(";")[0].strip().lower()
+            if tipo not in _TIPOS_FOTO:
+                logger.warning(
+                    "roteiro pdf: foto de %s com content-type não suportado %r", codigo, tipo
+                )
+                return None
+            corpo = bytearray()
+            for pedaco in resp.iter_bytes():
+                corpo.extend(pedaco)
+                if len(corpo) > FOTO_MAX_BYTES:
+                    logger.warning(
+                        "roteiro pdf: foto de %s excede %d bytes", codigo, FOTO_MAX_BYTES
+                    )
+                    return None
+    except httpx.HTTPError as exc:
+        logger.warning("roteiro pdf: falha ao buscar foto de %s (%s)", codigo, exc)
+        return None
+    if not corpo:
+        logger.warning("roteiro pdf: foto de %s vazia", codigo)
+        return None
+    return f"data:{tipo};base64,{base64.b64encode(bytes(corpo)).decode('ascii')}"
