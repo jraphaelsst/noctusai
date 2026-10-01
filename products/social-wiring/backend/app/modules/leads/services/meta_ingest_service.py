@@ -64,6 +64,7 @@ from uuid import UUID
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
 
+from app.modules.imovel_hub import atendimento_imoveis_service
 from app.modules.leads.importer.resolvers import resolve_corretor
 from app.modules.leads.services import dimensions_service, leads_service
 from app.modules.leads.services.query import backfill_generated_columns
@@ -173,6 +174,19 @@ def _resolve_corretor_from_answers(
     return None, None
 
 
+def _codigo_do_meta_lead(meta_lead: dict[str, Any]) -> Optional[str]:
+    """The imóvel código a Meta lead is about: the 180 column when set, else
+    the form answer `REF`. `None` (never a blank string) when absent — an
+    unreferenced lead is accepted and surfaces as `imovel_pendente`."""
+    direto = meta_lead.get("codigo_imovel")
+    answers = meta_lead.get("answers")
+    ref = answers.get("REF") if isinstance(answers, dict) else None
+    for candidato in (direto, ref):
+        if isinstance(candidato, str) and candidato.strip():
+            return candidato.strip()
+    return None
+
+
 def map_meta_lead_to_lead_payload(
     meta_lead: dict[str, Any],
     *,
@@ -205,6 +219,11 @@ def map_meta_lead_to_lead_payload(
 
     return {
         "meta_lead_id": meta_lead_id,
+        # Owner decision D1 (2026-10-01): the form answer `REF` IS the imóvel
+        # código (100% of 1,895 rows). Migration 180 puts the same value on
+        # `meta_ads_leads.codigo_imovel`; the canonical `leads` row carries it
+        # too so every lead-keyed read (Interessados, analytics) sees it.
+        "codigo_imovel": _codigo_do_meta_lead(meta_lead),
         "data_entrada": data_entrada,
         "origem_id": origem_source_id,
         "origem_raw": meta_lead.get("campaign_name"),
@@ -324,6 +343,11 @@ def ingest_meta_lead(
         question_labels=question_labels,
     )
     lead = leads_service.create_lead(client, org_id, payload)
+    # Link the lead's imóvel to the card(s) it spawned (and the cliente's
+    # interesses once one is attached — the sweep completes that half).
+    atendimento_imoveis_service.vincular_lead_seguro(
+        client, org_id, lead_id=lead["id"], contexto="meta_ingest"
+    )
     return {"lead": lead, "created": True}
 
 

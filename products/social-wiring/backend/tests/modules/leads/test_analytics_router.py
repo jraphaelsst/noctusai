@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
-from tests.modules.leads.conftest import auth_headers
+from tests.modules.leads.conftest import LEAD_CODIGO, auth_headers
 
 
 def _create_lead(client, **overrides):
-    body = {"data_entrada": "2026-07-01"}
+    body = {"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO}
     body.update(overrides)
     resp = client.post("/api/leads", json=body, headers=auth_headers())
     assert resp.status_code == 201, resp.text

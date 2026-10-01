@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from tests.modules.leads.conftest import ORG_A, auth_headers
+from tests.modules.leads.conftest import LEAD_CODIGO, ORG_A, auth_headers
 
 
 def _create_corretor(client, **overrides):
@@ -87,7 +87,7 @@ class TestCorretoresCRUD:
         b = _create_corretor(http_client, nome="B")
         lead = http_client.post(
             "/api/leads",
-            json={"data_entrada": "2026-07-01", "corretor_id": a["id"]},
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "corretor_id": a["id"]},
             headers=auth_headers(),
         ).json()["data"]
 

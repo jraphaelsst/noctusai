@@ -53,6 +53,7 @@ from uuid import UUID
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub import services as svc
+from app.modules.imovel_hub import atendimento_imoveis_service as imoveis_do_atendimento
 from app.modules.imovel_hub import busca_service as imovel_busca
 from app.modules.imovel_hub.dados_service import ensure_imovel
 from app.services import table_reads
@@ -582,6 +583,39 @@ def _canonizar_imovel(client: Any, org_id: UUID, valor: Any) -> Optional[str]:
 
 
 def _gravar(
+    client: Any,
+    org_id: UUID,
+    atendimento_id: UUID,
+    patch: dict,
+    *,
+    usuario_id: Optional[UUID],
+) -> None:
+    """Write the row, then keep `imovel_codigo ∈ atendimento_imoveis`.
+
+    🔴 THE SINGLE WRITER OF `imovel_codigo` (also reached by
+    `roteiros_service.registrar_proposta` through
+    `definir_imovel_do_atendimento`), which is why the junction invariant of
+    contract `atendimento-partes-imoveis` §3.5 is enforced HERE and nowhere
+    else: the imóvel under negotiation must always be one of the imóveis the
+    atendimento is linked to. `origem="negociacao"` upgrades a weaker link
+    (lead/manual) and revives a soft-deleted one — the deal is now explicitly
+    about it. Clearing the código (`None`) never unlinks: the junction holds
+    every imóvel the atendimento is about, not only the negotiated one.
+
+    Runs AFTER the row write so a failed write never links an imóvel the deal
+    does not name; the código reaching here has already passed
+    `_canonizar_imovel`, so the registry FK cannot fail.
+    """
+    _gravar_linha(client, org_id, atendimento_id, patch, usuario_id=usuario_id)
+    codigo = patch.get("imovel_codigo")
+    if codigo:
+        imoveis_do_atendimento.garantir_vinculo(
+            client, org_id, atendimento_id, codigo, origem="negociacao",
+            usuario_id=usuario_id,
+        )
+
+
+def _gravar_linha(
     client: Any,
     org_id: UUID,
     atendimento_id: UUID,
