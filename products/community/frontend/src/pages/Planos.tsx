@@ -38,15 +38,15 @@ import {
   type Plano,
 } from "@/hooks/usePlanos";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
+import { PlanoGruposDialog } from "@/pages/planos/PlanoGruposDialog";
 import { GatewayRefsBadges, GatewayRefsDialog } from "@/pages/planos/GatewayRefsDialog";
 
-const ENTITLEMENT_FIELDS = [
-  { key: "ent_feed", entKey: "feed", label: "Feed" },
-  { key: "ent_forum", entKey: "forum", label: "Fórum" },
-  { key: "ent_chat", entKey: "chat", label: "Chat" },
-  { key: "ent_eventos", entKey: "eventos", label: "Eventos" },
-  { key: "ent_conteudo_todos", entKey: "conteudo_todos", label: "Todo o conteúdo" },
-] as const;
+// NOC-REMEDIATE[community-entitlements-modules]: the Feed / Fórum / Chat /
+// Eventos / "Todo o conteúdo" toggles were removed from the form because
+// those modules do not exist in the product yet (no routes, no pages) — a
+// toggle for a non-existent module lies. They return when the modules ship.
+// Stored values of those keys are NOT wiped: the full entitlements object is
+// round-tripped through `_entitlements_raw` and spread back on save.
 
 function toForm(row: Plano): Record<string, any> {
   const form: Record<string, any> = {
@@ -55,26 +55,22 @@ function toForm(row: Plano): Record<string, any> {
     preco_reais: centsToReais(row.preco_centavos),
     ciclo: row.ciclo,
     ordem: row.ordem,
-    // Carried through untouched — no v1 UI for these two array keys.
-    _conteudo_ids: row.entitlements?.conteudo_ids ?? [],
-    _grupos_whatsapp: row.entitlements?.grupos_whatsapp ?? [],
+    // Carried through untouched: every stored key (incl. removed module
+    // toggles + conteudo_ids + grupos_whatsapp, edited via its own dialog).
+    _entitlements_raw: row.entitlements ?? {},
     grupoterapia: row.entitlements?.grupoterapia ?? "nenhum",
   };
-  for (const f of ENTITLEMENT_FIELDS) {
-    form[f.key] = !!row.entitlements?.[f.entKey as keyof typeof row.entitlements];
-  }
   return form;
 }
 
 function toPayload(form: Record<string, any>): Record<string, any> {
+  const raw: Record<string, any> = form._entitlements_raw ?? {};
   const entitlements: Record<string, any> = {
-    conteudo_ids: form._conteudo_ids ?? [],
-    grupos_whatsapp: form._grupos_whatsapp ?? [],
+    conteudo_ids: [],
+    grupos_whatsapp: [],
+    ...raw,
     grupoterapia: (form.grupoterapia || "nenhum") as NivelGrupoterapia,
   };
-  for (const f of ENTITLEMENT_FIELDS) {
-    entitlements[f.entKey] = !!form[f.key];
-  }
   return {
     nome: form.nome,
     descricao: form.descricao || null,
@@ -94,6 +90,9 @@ export default function Planos() {
   // from a row action rather than living inside ResourceManager's own
   // create/edit form (which has no seam for a different backend call).
   const [gatewayDialogFor, setGatewayDialogFor] = useState<Plano | null>(null);
+  // ResourceManager has no custom-field seam (flat text/select/checkbox only),
+  // so the grupos multi-select lives in a row-action dialog like Gateways.
+  const [gruposDialogFor, setGruposDialogFor] = useState<Plano | null>(null);
   const isAdmin = useIsAdmin();
   const planos = usePlanos({ page_size: 100 });
   const criarPadrao = useCriarPlanosPadrao();
@@ -179,7 +178,12 @@ export default function Planos() {
         {
           key: "gateways",
           header: "Gateways",
-          render: (row) => <GatewayRefsBadges planoId={row.id} />,
+          render: (row) => <GatewayRefsBadges planoId={row.id} gratuito={row.preco_centavos === 0} />,
+        },
+        {
+          key: "grupos_whatsapp",
+          header: "Grupos WhatsApp",
+          render: (row) => (row.entitlements?.grupos_whatsapp ?? []).length,
         },
       ]}
       fields={[
@@ -215,11 +219,6 @@ export default function Planos() {
             label: NIVEL_GRUPOTERAPIA_LABELS[n],
           })),
         },
-        ...ENTITLEMENT_FIELDS.map((f) => ({
-          name: f.key,
-          label: f.label,
-          type: "checkbox" as const,
-        })),
       ]}
       rowActions={(row) => (
         <>
@@ -229,6 +228,13 @@ export default function Planos() {
             onClick={() => setGatewayDialogFor(row)}
           >
             Gateways
+          </button>
+          <button
+            type="button"
+            className="text-sm border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+            onClick={() => setGruposDialogFor(row)}
+          >
+            Grupos WhatsApp
           </button>
           {!row.ativo && (
             <button
@@ -242,6 +248,16 @@ export default function Planos() {
         </>
       )}
     />
+      {gruposDialogFor && (
+        <PlanoGruposDialog
+          plano={gruposDialogFor}
+          onClose={() => setGruposDialogFor(null)}
+          onSaved={() => {
+            setGruposDialogFor(null);
+            setReloadTick((n) => n + 1);
+          }}
+        />
+      )}
       {gatewayDialogFor && (
         <GatewayRefsDialog
           planoId={gatewayDialogFor.id}

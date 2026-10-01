@@ -177,3 +177,81 @@ describe("Planos — gateway refs extension (community-m2-contract.md)", () => {
     );
   });
 });
+
+describe("Planos — entitlements honesty + grupos mapping + free gateways", () => {
+  function route(grupos: { items: unknown[]; total: number }, plano: Record<string, unknown> = PLANO) {
+    mockGet.mockImplementation((path: string) => {
+      if (path.includes("/gateway-refs")) return Promise.resolve({ items: [], total: 0 });
+      if (path.includes("/api/whatsapp/grupos")) return Promise.resolve(grupos);
+      return Promise.resolve({ items: [plano], total: 1 });
+    });
+  }
+
+  it("does not offer toggles for modules that do not exist", async () => {
+    route({ items: [], total: 0 });
+    const { default: Planos } = await import("../Planos");
+    renderPage(<Planos />);
+    await waitFor(() => expect(screen.getByText("Círculo")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    await waitFor(() => expect(screen.getByLabelText(/Nome/)).toBeInTheDocument());
+    for (const l of ["Feed", "Fórum", "Chat", "Eventos", "Todo o conteúdo"]) {
+      expect(screen.queryByLabelText(l)).not.toBeInTheDocument();
+    }
+  });
+
+  it("preserves unknown/removed entitlement keys when saving an edit", async () => {
+    route({ items: [], total: 0 });
+    mockPatch.mockResolvedValue(PLANO);
+    const { default: Planos } = await import("../Planos");
+    renderPage(<Planos />);
+    await waitFor(() => expect(screen.getByText("Círculo")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Editar" }));
+    await waitFor(() => expect(screen.getByLabelText(/Nome/)).toBeInTheDocument());
+    fireEvent.submit(screen.getByLabelText(/Nome/).closest("form")!);
+    await waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    const ent = mockPatch.mock.calls[0][1].entitlements;
+    expect(ent.feed).toBe(true);
+    expect(ent.chat).toBe(true);
+  });
+
+  it("saves selected WhatsApp groups into entitlements.grupos_whatsapp, keeping other keys", async () => {
+    route({
+      items: [
+        { id: "g-1", nome: "Turma A", chat_id: "1@g.us" },
+        { id: "g-2", nome: "", chat_id: "2@g.us" },
+      ],
+      total: 2,
+    });
+    mockPatch.mockResolvedValue(PLANO);
+    const { default: Planos } = await import("../Planos");
+    renderPage(<Planos />);
+    await waitFor(() => expect(screen.getByText("Círculo")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Grupos WhatsApp" }));
+    await waitFor(() => expect(screen.getByLabelText("Turma A")).toBeInTheDocument());
+    fireEvent.click(screen.getByLabelText("Turma A"));
+    fireEvent.click(screen.getByLabelText("2@g.us"));
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    await waitFor(() =>
+      expect(mockPatch).toHaveBeenCalledWith("/api/planos/p-1", {
+        entitlements: expect.objectContaining({ feed: true, grupos_whatsapp: ["g-1", "g-2"] }),
+      }),
+    );
+  });
+
+  it("shows an empty state when no WhatsApp groups are registered", async () => {
+    route({ items: [], total: 0 });
+    const { default: Planos } = await import("../Planos");
+    renderPage(<Planos />);
+    await waitFor(() => expect(screen.getByText("Círculo")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Grupos WhatsApp" }));
+    await waitFor(() => expect(screen.getByTestId("planos-grupos-vazio")).toBeInTheDocument());
+  });
+
+  it("free plan shows 'Não se aplica (gratuito)' instead of gateway unavailable", async () => {
+    route({ items: [], total: 0 }, { ...PLANO, preco_centavos: 0 });
+    const { default: Planos } = await import("../Planos");
+    renderPage(<Planos />);
+    await waitFor(() => expect(screen.getByText("Não se aplica (gratuito)")).toBeInTheDocument());
+    expect(screen.queryByText(/não disponível/)).not.toBeInTheDocument();
+  });
+});

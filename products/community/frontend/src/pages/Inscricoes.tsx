@@ -34,6 +34,7 @@ import {
   type Pergunta,
 } from "@/hooks/useAplicacoes";
 import { usePlanos } from "@/hooks/usePlanos";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 const STATUS_LABELS: Record<AplicacaoStatus, string> = {
   pendente: "Pendente",
@@ -62,6 +63,7 @@ function formatDateBR(value: string): string {
 }
 
 export default function Inscricoes() {
+  const isAdmin = useIsAdmin();
   const [tab, setTab] = useState<"todas" | AplicacaoStatus>("pendente");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [approving, setApproving] = useState<Aplicacao | null>(null);
@@ -154,7 +156,7 @@ export default function Inscricoes() {
                 </div>
               )}
 
-              {a.status === "pendente" ? (
+              {a.status === "pendente" && isAdmin ? (
                 <div className="mt-3 flex gap-2">
                   <Button variant="primary" size="sm" onClick={() => setApproving(a)} data-testid={`aprovar-${a.id}`}>
                     Aprovar
@@ -179,7 +181,7 @@ export default function Inscricoes() {
           {editorOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
           Perguntas do formulário
         </button>
-        {editorOpen && <PerguntasEditor />}
+        {editorOpen && <PerguntasEditor isAdmin={isAdmin} />}
       </div>
 
       {approving && <AprovarDialog aplicacao={approving} onClose={() => setApproving(null)} />}
@@ -295,7 +297,7 @@ function RejeitarDialog({ aplicacao, onClose }: { aplicacao: Aplicacao; onClose:
 
 const OPCOES_TIPOS = new Set<Pergunta["tipo"]>(["escolha_unica", "escolha_multipla"]);
 
-function PerguntasEditor() {
+function PerguntasEditor({ isAdmin }: { isAdmin: boolean }) {
   const [reloadTick, setReloadTick] = useState(0);
 
   async function handleReativar(row: Pergunta) {
@@ -317,6 +319,9 @@ function PerguntasEditor() {
         api={api}
         apiPath="/api/aplicacoes/perguntas"
         singularName="Pergunta"
+        canCreate={isAdmin}
+        canEdit={isAdmin}
+        canDelete={isAdmin}
         deleteLabel="Desativar"
         emptyMessage="Nenhuma pergunta cadastrada. Crie a primeira!"
         toForm={(row) => ({
@@ -373,7 +378,7 @@ function PerguntasEditor() {
           { name: "ordem", label: "Ordem", type: "number", defaultValue: 0 },
         ]}
         rowActions={(row) =>
-          !row.ativa ? (
+          isAdmin && !row.ativa ? (
             <button
               type="button"
               className="text-sm border border-border bg-card text-foreground rounded-md px-3 py-1.5 hover:bg-accent transition-colors"

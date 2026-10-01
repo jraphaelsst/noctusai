@@ -29,8 +29,9 @@ const GATEWAY_LABELS: Record<Gateway, string> = {
   asaas: "Asaas (Pix / boleto)",
 };
 
-export function GatewayRefsBadges({ planoId }: { planoId: string }) {
+export function GatewayRefsBadges({ planoId, gratuito = false }: { planoId: string; gratuito?: boolean }) {
   const { data } = useGatewayRefs(planoId);
+  if (gratuito) return <span className="text-sm text-muted-foreground">Não se aplica (gratuito)</span>;
   const byGateway = new Map((data?.items ?? []).map((r) => [r.gateway, r]));
   return (
     <div className="flex flex-wrap gap-1">
