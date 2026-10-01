@@ -107,6 +107,7 @@ from noctusai_lib.integrations.documents import (
     strip_accents_upper,
 )
 from noctusai_lib.integrations.cep import CepLookupAdapter
+from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
 from noctusai_lib.integrations.documents.nacionalidade_civil import (
@@ -871,6 +872,7 @@ def aplicar_campos_ao_cliente(
     confirmado_por: Optional[Any] = None,
     nomes_anteriores: Optional[dict[str, Optional[str]]] = None,
     avisos_outra_pessoa: Optional[list[str]] = None,
+    avisos_cpf_invalido: Optional[list[str]] = None,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -950,6 +952,13 @@ def aplicar_campos_ao_cliente(
       `item_key` is appended to `avisos_outra_pessoa` when given, so the
       caller (`extrair_identidade`) can flag the SOURCE document.
 
+    🔴 A CPF whose mod-11 check digits FAIL is NOT READ (owner rule,
+    2026-10-01, P4/871: an `rg` reading at `baixa` wrote a wrong CPF onto the
+    cliente). Refused here — the one write chokepoint every source (identity
+    docs, ficha cadastral, crednet, certidão spouse, matrícula) funnels
+    through — so no reader can reintroduce it; `item_key` is appended to
+    `avisos_cpf_invalido` when given so the caller can flag the document.
+
     `documento_id=None` means this source has no `cliente_documentos` row to
     point at — the column is written as an explicit NULL.
 
@@ -988,6 +997,14 @@ def aplicar_campos_ao_cliente(
             continue
         if campo.item_key == "genero":
             valor = canonical_gender(str(valor)) or valor
+        if campo.item_key == "cpf" and not cpf_valido(str(valor)):
+            logger.warning(
+                "cpf com dígitos verificadores inválidos NÃO gravado (cliente %s, origem %s)",
+                cliente_id, origem,
+            )
+            if avisos_cpf_invalido is not None:
+                avisos_cpf_invalido.append(campo.item_key)
+            continue
 
         if campo.depende_de:
             # Only beside the value it was read with — see `depende_de`.
@@ -3091,6 +3108,7 @@ async def extrair_identidade(
 
         conflitos: list[dict] = []
         avisos_outra_pessoa: list[str] = []
+        avisos_cpf_invalido: list[str] = []
         aplicados, abertos = aplicar_campos_ao_cliente(
             client,
             org_id,
@@ -3102,8 +3120,11 @@ async def extrair_identidade(
             fonte_id=documento_id,
             nomes_anteriores={"nome_oficial": nome_anterior_titular},
             avisos_outra_pessoa=avisos_outra_pessoa,
+            avisos_cpf_invalido=avisos_cpf_invalido,
         )
         conflitos += abertos
+        if avisos_cpf_invalido and not fields.aviso and not avisos_outra_pessoa:
+            _marcar(client, documento_id, extracao_aviso="cpf_invalido")
         # R4 — this document read at least one field that belongs to
         # ANOTHER party of the negotiation (rejected above, never applied).
         # Flagged on the document row through the existing `extracao_aviso`
@@ -3124,7 +3145,11 @@ async def extrair_identidade(
         # re-link it so profissão/nacionalidade/RG from the registry act reach
         # this cliente. Local import: qualificacao_service imports this module.
         cpf_lido = re.sub(r"\D", "", str(fields.cpf or ""))
-        if len(cpf_lido) == 11 and not fields.leitura_comprometida:
+        if (
+            len(cpf_lido) == 11
+            and cpf_valido(cpf_lido)
+            and not fields.leitura_comprometida
+        ):
             try:
                 from app.modules.matriculas.qualificacao_service import revincular_pendentes
 

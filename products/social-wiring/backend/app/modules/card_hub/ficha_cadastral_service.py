@@ -56,6 +56,7 @@ from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.name import nomes_compativeis
 from noctusai_lib.integrations.documents.ficha_cadastral import (
@@ -146,7 +147,7 @@ def _mapa_cpf(linhas: list[dict]) -> dict[str, str]:
     mapa: dict[str, str] = {}
     for row in linhas:
         digits = only_digits(row.get("cpf") or "")
-        if digits:
+        if digits and cpf_valido(digits):
             mapa[digits] = str(row["id"])
     return mapa
 
