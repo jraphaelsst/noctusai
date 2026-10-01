@@ -497,11 +497,13 @@ async def varrer_pendentes(
     row cycling through `processando` forever, which is the silent error
     this sweep exists to remove, wearing a different hat.
 
-    A LINKED extraction (migration 109) does keep its PDF, as the imóvel's
-    document, and the message says so (`MENSAGEM_ORFA_VINCULADA`): the
-    operator re-requests it from that document. It is still marked rather
-    than retried here because a retry needs the org's transcriber, which is
-    a per-request DI seam this scheduler does not hold.
+    A LINKED extraction (migration 109) or one with a retained file
+    (migration 135) DOES keep its PDF. When the scheduler hands a
+    `transcriber_factory` such an orphan is RE-RUN in the same sweep
+    (`_reexecutar_orfa`, bounded by `retentativas`); only a row with no kept
+    source, an exhausted budget, or a sweep without a factory is marked
+    `erro` (`MENSAGEM_ORFA_VINCULADA`: the operator re-requests it from the
+    document — the UI's "Transcrever novamente").
 
     `_storage` is accepted and ignored: `app.services.extraction_sweep`'s
     `SweepFn` contract is `(admin_client, storage_backend)`, shared with the
@@ -530,7 +532,7 @@ async def varrer_pendentes(
     # postgrest-unbounded-ok: fixed 2-element `in_` constant, `.limit(limite)`.
     presos = (
         client.table(TABLE)
-        .select("id,org_id,nome_arquivo,status,imovel_documento_id")
+        .select("*")
         .in_("status", list(_ESTADOS_NAO_TERMINAIS))
         .lt("updated_at", cutoff)
         .limit(limite)
@@ -538,6 +540,7 @@ async def varrer_pendentes(
     ).data or []
 
     marcados = 0
+    reexecutadas = 0
     for row in presos:
         org_id = row.get("org_id")
         if not org_id:
@@ -548,6 +551,18 @@ async def varrer_pendentes(
                 "matricula sweep: row %s has no org_id — skipping (schema drift?)",
                 row.get("id"),
             )
+            continue
+        # 🔴 A stranded row whose source PDF was kept is RE-RUN here, in the
+        # same sweep, instead of being parked as `erro` and waiting for the
+        # next hourly pass (a deploy would strand every in-flight
+        # transcription for an hour and then leave it for a human). Bounded
+        # by `retentativas` (D3); a row with no kept source, or an exhausted
+        # one, is closed out as `erro` below — named and visible.
+        if transcriber_factory is not None and await _reexecutar_orfa(
+            client, _storage, str(org_id), row,
+            transcriber_factory=transcriber_factory, notificador=notificador,
+        ):
+            reexecutadas += 1
             continue
         _marcar(
             client, row["id"], str(org_id),
@@ -562,12 +577,38 @@ async def varrer_pendentes(
 
     resultado = {"encontrados": len(presos), "marcados": marcados}
     if transcriber_factory is not None:
+        resultado["reexecutadas"] = reexecutadas
+    if transcriber_factory is not None:
         resultado.update(
             await _retentar_falhas(
                 client, _storage, transcriber_factory, notificador, limite=limite
             )
         )
     return resultado
+
+
+async def _reexecutar_orfa(
+    client, storage, org_id: str, row: dict, *, transcriber_factory, notificador
+) -> bool:
+    """Re-run one orphaned (`pendente`/`processando`) extraction from its
+    kept source. True when it was re-run; False when it cannot be (no kept
+    source, or the D3 retry budget is spent) and the caller must mark it
+    `erro`."""
+    tentativas = int(row.get("retentativas") or 0)
+    if tentativas >= extracao_retentativa.MAX_RETENTATIVAS or row.get("substituida_por"):
+        return False
+    caminho = estrutura_service.caminho_da_fonte(client, org_id, row)
+    if caminho is None:
+        return False
+    _marcar(
+        client, row["id"], org_id,
+        status="pendente", retentativas=tentativas + 1,
+    )
+    await processar_extracao_de_documento(
+        row["id"], caminho, org_id, client, storage,
+        transcriber_factory=transcriber_factory, notificador=notificador,
+    )
+    return True
 
 
 async def _retentar_falhas(

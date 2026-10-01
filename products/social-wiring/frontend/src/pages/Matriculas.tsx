@@ -44,6 +44,7 @@ import {
   useCriarExtracaoManual,
   useDeleteExtracao,
   useRetranscreverExtracao,
+  useCriarExtracaoDeDocumento,
   useArquivoOriginalExtracao,
   useVincularExtracaoImovel,
   readableError,
@@ -171,6 +172,7 @@ export default function Matriculas() {
   const criarManualMutation = useCriarExtracaoManual();
   const deleteMutation = useDeleteExtracao();
   const retranscreverMutation = useRetranscreverExtracao();
+  const transcreverDeDocumentoMutation = useCriarExtracaoDeDocumento();
   const arquivoOriginalMutation = useArquivoOriginalExtracao();
   const vincularMutation = useVincularExtracaoImovel();
 
@@ -336,6 +338,18 @@ export default function Matriculas() {
       !ext.substituida_por && (!!ext.imovel_documento_id || !!ext.arquivo_origem_id),
     [],
   );
+  // A failed extraction linked to an imóvel keeps its PDF as that imóvel's
+  // document: the operator re-requests the transcription from it instead of
+  // re-uploading the file (`POST /extracoes/de-documento`).
+  const podeTranscreverNovamente = useCallback(
+    (ext: { status: string; codigo: string | null; imovel_documento_id: string | null; substituida_por: string | null }) =>
+      ext.status === 'erro' && !ext.substituida_por && !!ext.codigo && !!ext.imovel_documento_id,
+    [],
+  );
+  const handleTranscreverNovamente = (ext: { codigo: string | null; imovel_documento_id: string | null }) => {
+    if (!ext.codigo || !ext.imovel_documento_id) return;
+    transcreverDeDocumentoMutation.mutate({ codigo: ext.codigo, imovelDocumentoId: ext.imovel_documento_id });
+  };
   const temFonteRetida = useCallback(
     (ext: { imovel_documento_id: string | null; arquivo_origem_id: string | null }) =>
       !!ext.imovel_documento_id || !!ext.arquivo_origem_id,
@@ -450,6 +464,19 @@ export default function Matriculas() {
                   <p className="font-medium text-sm text-red-700 dark:text-red-400">Erro na extração</p>
                 </div>
                 <p className="text-xs text-muted-foreground">{selected.erro_mensagem}</p>
+                {podeTranscreverNovamente(selected) && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-3"
+                    onClick={() => handleTranscreverNovamente(selected)}
+                    disabled={transcreverDeDocumentoMutation.isPending}
+                    data-testid="matriculas-transcrever-novamente"
+                  >
+                    <RefreshCw className="h-3 w-3 mr-1" />
+                    Transcrever novamente
+                  </Button>
+                )}
               </div>
             )}
           </CardContent>
@@ -774,7 +801,19 @@ export default function Matriculas() {
                           >
                             <Eye className="h-3 w-3" />
                           </Button>
-                          {ext.status === 'erro' && (
+                          {podeTranscreverNovamente(ext) && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              onClick={() => handleTranscreverNovamente(ext)}
+                              disabled={transcreverDeDocumentoMutation.isPending}
+                              title="Transcrever novamente"
+                              data-testid={`matricula-row-${ext.id}-transcrever-novamente`}
+                            >
+                              <RefreshCw className="h-3 w-3 text-muted-foreground" />
+                            </Button>
+                          )}
+                          {ext.status === 'erro' && !podeTranscreverNovamente(ext) && (
                             <Button
                               size="sm"
                               variant="ghost"

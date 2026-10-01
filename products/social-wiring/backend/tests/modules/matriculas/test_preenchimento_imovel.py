@@ -426,3 +426,49 @@ class TestTranscriptionRetry:
         row = self._row(scoped, eid)
         assert row["status"] == "erro"
         assert row["retentativas"] == 2
+
+
+class TestOrphanRerun:
+    """A deploy-orphaned transcription whose PDF was kept re-runs by itself
+    in the same sweep — it is not parked as `erro` for a human."""
+
+    _mixin = TestTranscriptionRetry
+
+    async def _orfa(self, scoped, fake_storage, **extra):
+        return await TestTranscriptionRetry._setup(
+            self, scoped, fake_storage, status="processando", erro_codigo=None,
+            erro_mensagem=None, **extra,
+        )
+
+    _row = TestTranscriptionRetry._row
+
+    @pytest.mark.asyncio
+    async def test_a_kept_source_orphan_is_rerun_not_marked(self, client, scoped, fake_storage):
+        eid = await self._orfa(scoped, fake_storage)
+        res = await matriculas_service.varrer_pendentes(
+            scoped, fake_storage, transcriber_factory=lambda _org: StubTranscriber(TEXTO)
+        )
+        assert res["reexecutadas"] == 1 and res["marcados"] == 0
+        row = self._row(scoped, eid)
+        assert row["status"] == "concluida"
+        assert row["retentativas"] == 1
+
+    @pytest.mark.asyncio
+    async def test_an_exhausted_orphan_is_marked_erro(self, client, scoped, fake_storage):
+        eid = await self._orfa(scoped, fake_storage, retentativas=2)
+        stub = StubTranscriber(TEXTO)
+        res = await matriculas_service.varrer_pendentes(
+            scoped, fake_storage, transcriber_factory=lambda _org: stub
+        )
+        assert res["reexecutadas"] == 0 and res["marcados"] == 1
+        assert stub.calls == 0
+        assert self._row(scoped, eid)["status"] == "erro"
+
+    @pytest.mark.asyncio
+    async def test_a_sourceless_orphan_is_marked_erro(self, client, scoped, fake_storage):
+        eid = await self._orfa(scoped, fake_storage, imovel_documento_id=None)
+        res = await matriculas_service.varrer_pendentes(
+            scoped, fake_storage, transcriber_factory=lambda _org: StubTranscriber(TEXTO)
+        )
+        assert res["reexecutadas"] == 0 and res["marcados"] == 1
+        assert self._row(scoped, eid)["status"] == "erro"

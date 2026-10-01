@@ -50,6 +50,7 @@ const mockUseUpload = vi.fn();
 const mockUseCriarManual = vi.fn();
 const mockUseDelete = vi.fn();
 const mockUseRetranscrever = vi.fn();
+const mockUseCriarDeDocumento = vi.fn();
 const mockUseArquivoOriginal = vi.fn();
 const mockUseVincular = vi.fn();
 
@@ -60,6 +61,7 @@ vi.mock("@/hooks/useMatriculas", () => ({
   useCriarExtracaoManual: mockUseCriarManual,
   useDeleteExtracao: mockUseDelete,
   useRetranscreverExtracao: mockUseRetranscrever,
+  useCriarExtracaoDeDocumento: mockUseCriarDeDocumento,
   useArquivoOriginalExtracao: mockUseArquivoOriginal,
   useVincularExtracaoImovel: mockUseVincular,
 }));
@@ -194,6 +196,7 @@ const mockRefetch = vi.fn();
 const mockDefinirFontesMutate = vi.fn();
 const mockConfirmarDetalhesMutate = vi.fn();
 const mockRetranscreverMutate = vi.fn();
+const mockCriarDeDocumentoMutate = vi.fn();
 const mockArquivoOriginalMutate = vi.fn();
 const mockVincularMutate = vi.fn();
 
@@ -205,6 +208,7 @@ beforeEach(() => {
   mockUseCriarManual.mockReturnValue({ mutate: mockCriarManualMutate, isPending: false });
   mockUseDelete.mockReturnValue({ mutate: mockDeleteMutate, isPending: false });
   mockUseRetranscrever.mockReturnValue({ mutate: mockRetranscreverMutate, isPending: false });
+  mockUseCriarDeDocumento.mockReturnValue({ mutate: mockCriarDeDocumentoMutate, isPending: false });
   mockUseArquivoOriginal.mockReturnValue({ mutate: mockArquivoOriginalMutate, isPending: false });
   mockUseVincular.mockReturnValue({ mutate: mockVincularMutate, isPending: false });
   mockUseAtos.mockReturnValue(makeQuery({ data: { atos: [] } }));
@@ -944,5 +948,47 @@ describe("Matriculas — Bug H: 'Vincular a imóvel' row action", () => {
     fireEvent.click(getByTestId("imovel-codigo-picker-stub"));
 
     expect(queryByTestId("matricula-vincular-dialog")).toBeNull();
+  });
+});
+
+
+describe("Matriculas — Transcrever novamente (failed extraction, retained source)", () => {
+  it("row action re-requests the transcription from the imóvel's document", async () => {
+    mockUseExtracoes.mockReturnValue(
+      makeQuery({
+        data: [makeExtracao({ status: "erro", codigo: "ONE9001", imovel_documento_id: "doc-1" })],
+        refetch: mockRefetch,
+      }),
+    );
+    const { getByTestId, queryByTitle, fireEvent } = await renderPage();
+
+    expect(queryByTitle("Reenviar")).toBeNull();
+    fireEvent.click(getByTestId("matricula-row-extracao-1-transcrever-novamente"));
+    expect(mockCriarDeDocumentoMutate).toHaveBeenCalledWith({
+      codigo: "ONE9001",
+      imovelDocumentoId: "doc-1",
+    });
+  });
+
+  it("keeps 'Reenviar' (no re-transcribe) for an erro row with no retained source", async () => {
+    mockUseExtracoes.mockReturnValue(
+      makeQuery({ data: [makeExtracao({ status: "erro" })], refetch: mockRefetch }),
+    );
+    const { queryByTestId, getByTitle } = await renderPage();
+
+    expect(getByTitle("Reenviar")).toBeTruthy();
+    expect(queryByTestId("matricula-row-extracao-1-transcrever-novamente")).toBeNull();
+  });
+
+  it("error panel offers the same action", async () => {
+    mockUseExtracao.mockReturnValue(
+      makeQuery({
+        data: makeExtracao({ status: "erro", erro_mensagem: "interrompida", codigo: "ONE9001", imovel_documento_id: "doc-1" }),
+      }),
+    );
+    const { getByTestId, fireEvent } = await renderPage();
+
+    fireEvent.click(getByTestId("matriculas-transcrever-novamente"));
+    expect(mockCriarDeDocumentoMutate).toHaveBeenCalledWith({ codigo: "ONE9001", imovelDocumentoId: "doc-1" });
   });
 });
