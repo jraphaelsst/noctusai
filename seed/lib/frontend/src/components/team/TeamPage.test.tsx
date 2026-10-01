@@ -197,6 +197,19 @@ describe('TeamPage: non-manager', () => {
   });
 });
 
+describe('TeamPage: manager (backend MANAGE_TEAM_ROLES invite gate)', () => {
+  it('can invite, never sees the admin-only grant, and skips the admin-only invitations', async () => {
+    const api = makeApi();
+    renderPage({ api, user: { id: 'u7', user_metadata: { org_role: 'manager' } } });
+    await screen.findByText('Ana Admin');
+    fireEvent.click(screen.getByRole('button', { name: /Convidar/ }));
+    const select = (await screen.findByLabelText('Papel')) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['moderador']);
+    expect(screen.queryByText('Convites pendentes')).toBeNull();
+    expect((api.get as any).mock.calls.map((c: any[]) => c[0])).not.toContain('/api/team/invitations');
+  });
+});
+
 describe('TeamPage: two-signal loading', () => {
   it('keeps the roster mounted during a refetch', async () => {
     let resolveSecond: (v: unknown) => void = () => {};

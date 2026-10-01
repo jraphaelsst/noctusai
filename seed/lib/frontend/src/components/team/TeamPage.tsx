@@ -5,10 +5,13 @@
  * Renders, in four honest states (loading / empty / error / success):
  *   - the product's STAFF roster (nome · e-mail · papel · entrou em) — the
  *     backend already filters it by the product's `TeamPolicy`;
- *   - for owner/admin: an invite dialog whose role options come from
- *     `GET /api/team/policy` (`invitable_roles` + `labels`) — never hard-coded,
- *     so a product extra such as community's `moderador` just appears;
- *   - for owner/admin: pending invitations with cancel.
+ *   - for owner/admin/manager (`MANAGE_TEAM_ROLES`, the backend invite gate):
+ *     an invite dialog whose role options come from `GET /api/team/policy`
+ *     (`invitable_roles` + `labels`) — never hard-coded, so a product extra
+ *     such as community's `moderador` just appears; a non-admin inviter never
+ *     sees `ELEVATED_GRANT_ROLES` (the backend `_GRANT_REQUIRES` would 403);
+ *   - for owner/admin (`ADMIN_ROLES`, the backend invitations gate): pending
+ *     invitations with cancel.
  *
  * There is deliberately NO "Remover" action: `noctus_users` is one platform
  * profile per person, so removal from the org is a NoctusAI Core action
@@ -40,7 +43,7 @@ import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../../design-sys
 import { Input } from '../../design-system/ui/Input';
 import { TableSkeleton } from '../../design-system/ui/TableSkeleton';
 import { env } from '../../env';
-import { ADMIN_ROLES, ORG_ROLE_LABELS } from '../../roles';
+import { ADMIN_ROLES, ELEVATED_GRANT_ROLES, MANAGE_TEAM_ROLES, ORG_ROLE_LABELS } from '../../roles';
 import { resolveSSOContext } from '../../sso';
 import { createTeamHooks } from './createTeamHooks';
 import type { TeamApi, TeamHooks, TeamMember } from './createTeamHooks';
@@ -57,7 +60,8 @@ export interface TeamPageProps {
   /** The signed-in user (`useAuthStore((s) => s.user)`). `null` ⇒ auth not
    *  ready yet: nothing is fetched until it is. */
   user: TeamPageUser | null | undefined;
-  /** Override the owner/admin gate (default: derived from the SSO context). */
+  /** Override BOTH gates — invite and admin-only invitations (default:
+   *  derived from the SSO context, mirroring the backend's two gates). */
   canManage?: boolean;
   /** Core frontend base URL for the removal note. Default `env.CORE_URL`. */
   coreUrl?: string;
@@ -100,15 +104,23 @@ function InviteDialog({
   onClose,
   hooks,
   labelFor,
+  canGrantElevated,
 }: {
   open: boolean;
   onClose: () => void;
   hooks: TeamHooks;
   labelFor: (role: string | null | undefined) => string;
+  canGrantElevated: boolean;
 }) {
   const policy = hooks.useTeamPolicy(open);
   const invite = hooks.useInviteMember();
-  const roles = policy.data?.invitable_roles ?? [];
+  const roles = React.useMemo(
+    () =>
+      (policy.data?.invitable_roles ?? []).filter(
+        (r) => canGrantElevated || !(ELEVATED_GRANT_ROLES as string[]).includes(r),
+      ),
+    [policy.data, canGrantElevated],
+  );
   const [email, setEmail] = React.useState('');
   const [role, setRole] = React.useState('');
 
@@ -284,9 +296,11 @@ export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp, chil
   const ready = user != null;
 
   const sso = resolveSSOContext(user?.user_metadata ?? undefined);
-  const isManager =
-    canManage ??
-    (sso.isProductAdmin || (ADMIN_ROLES as string[]).includes(sso.org.role));
+  // Two gates, mirroring the backend: invite = MANAGE_TEAM_ROLES; listing /
+  // cancelling invitations = ADMIN_ROLES. `isProductAdmin` covers the
+  // platform operator (backend `_PLATFORM_ADMIN`).
+  const isAdmin = canManage ?? (sso.isProductAdmin || (ADMIN_ROLES as string[]).includes(sso.org.role));
+  const canInvite = canManage ?? (isAdmin || (MANAGE_TEAM_ROLES as string[]).includes(sso.org.role));
 
   const roster = hooks.useTeamRoster(ready);
   // The policy carries the labels for product-extra roles (e.g. `moderador`).
@@ -325,7 +339,7 @@ export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp, chil
             )}
           </div>
         </div>
-        {isManager && (
+        {canInvite && (
           <Button type="button" variant="primary" onClick={() => setInviteOpen(true)}>
             <UserPlus className="mr-1.5 h-4 w-4" />
             Convidar
@@ -388,7 +402,7 @@ export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp, chil
         </div>
       )}
 
-      {isManager && (
+      {canInvite && (
         <p className="text-sm text-muted-foreground" data-testid="team-remove-core-note">
           Para remover alguém da organização, use o{' '}
           <a
@@ -404,14 +418,15 @@ export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp, chil
         </p>
       )}
 
-      {isManager && ready && <PendingInvitations hooks={hooks} labelFor={labelFor} />}
+      {isAdmin && ready && <PendingInvitations hooks={hooks} labelFor={labelFor} />}
 
-      {isManager && (
+      {canInvite && (
         <InviteDialog
           open={inviteOpen}
           onClose={() => setInviteOpen(false)}
           hooks={hooks}
           labelFor={labelFor}
+          canGrantElevated={isAdmin}
         />
       )}
 
