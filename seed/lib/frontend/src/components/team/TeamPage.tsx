@@ -63,6 +63,9 @@ export interface TeamPageProps {
   coreUrl?: string;
   /** Pre-built hooks (tests / a custom basePath). Default `createTeamHooks(api)`. */
   hooks?: TeamHooks;
+  /** Named seam: product-owned sections rendered below the roster + invitations
+   *  (e.g. orbity's page-visibility panel). The organ never fetches for them. */
+  children?: React.ReactNode;
 }
 
 const SELECT_CLASS =
@@ -276,7 +279,7 @@ function PendingInvitations({
   );
 }
 
-export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp }: TeamPageProps) {
+export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp, children }: TeamPageProps) {
   const hooks = React.useMemo(() => hooksProp ?? createTeamHooks(api), [hooksProp, api]);
   const ready = user != null;
 
@@ -411,6 +414,8 @@ export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp }: Te
           labelFor={labelFor}
         />
       )}
+
+      {children}
     </div>
   );
 }

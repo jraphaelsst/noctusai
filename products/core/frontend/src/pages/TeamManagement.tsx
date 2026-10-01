@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import { NotificationBell } from '../components/NotificationBell';
@@ -105,7 +106,7 @@ export function TeamManagement() {
       setConfirmRemove(null);
       fetchData();
     } catch (err: any) {
-      alert(err.message || 'Erro ao remover membro');
+      toast.error(err.message || 'Erro ao remover membro');
     } finally {
       setRemoving(false);
     }
@@ -116,7 +117,7 @@ export function TeamManagement() {
       await api.patch(`/api/team/${memberId}/role`, { role: newRole });
       fetchData();
     } catch (err: any) {
-      alert(err.message || 'Erro ao alterar papel');
+      toast.error(err.message || 'Erro ao alterar papel');
     }
   }
 
@@ -125,7 +126,7 @@ export function TeamManagement() {
       await api.delete(`/api/team/invitations/${inviteId}`);
       fetchData();
     } catch (err: any) {
-      alert(err.message || 'Erro ao cancelar convite');
+      toast.error(err.message || 'Erro ao cancelar convite');
     }
   }
 
@@ -395,7 +396,7 @@ export function TeamManagement() {
           >
             <h2 className="mb-2 text-lg font-semibold text-foreground">Remover membro</h2>
             <p className="mb-6 text-sm text-muted-foreground">
-              Tem certeza que deseja remover <strong className="text-foreground">{confirmRemove.nome}</strong> ({confirmRemove.email}) da organização? Esta ação não pode ser desfeita.
+              Tem certeza que deseja remover <strong className="text-foreground">{confirmRemove.nome}</strong> ({confirmRemove.email}) da organização? Ao remover, a pessoa sai da organização em TODOS os produtos NoctusAI, não apenas aqui. Esta ação não pode ser desfeita.
             </p>
             <div className="flex justify-end gap-3">
               <button

@@ -1,22 +1,19 @@
 /**
- * Equipe page — the rewrite off the seed pattern (achado #18): TanStack
- * Query, correct pt-BR accents, the TWO admin gates (canManageTeam for
- * Convidar vs. useIsOrgAdmin for Ações/Convites — plat achado #4), and a
- * shown (never swallowed) invitations-fetch error.
+ * Equipe is the canonical seed TeamPage organ (the page is a one-component
+ * wrapper). This pins the wiring: roster read from /api/team with pt-BR role
+ * labels, and the honest "removal is a Core action" note for managers.
  */
 /// <reference types="@testing-library/jest-dom" />
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const { api, user, toast } = vi.hoisted(() => ({
+const { api, user } = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn(), upload: vi.fn() },
   user: { current: { id: "u1", user_metadata: { org_role: "admin" } as Record<string, unknown> } },
-  toast: { error: vi.fn(), success: vi.fn(), warning: vi.fn() },
 }));
-vi.mock("@noctusai/seed/infra", () => ({ api, useAuthStore: () => ({ user: user.current }) }));
-vi.mock("sonner", () => ({ toast }));
+vi.mock("@noctusai/seed/infra", () => ({ api, useAuthStore: (sel: (s: { user: unknown }) => unknown) => sel({ user: user.current }) }));
 
 import Equipe from "../Equipe";
 
@@ -24,7 +21,6 @@ const MEMBROS = [
   { id: "u1", nome: "Ana Owner", email: "ana@agencia.com", role: "owner", org_role: "owner", created_at: "2026-01-10T10:00:00Z" },
   { id: "u2", nome: "Beto Membro", email: "beto@agencia.com", role: "member", org_role: "member", created_at: "2026-02-01T10:00:00Z" },
 ];
-const CONVITE = { id: "c1", email: "novo@agencia.com", role: "manager", status: "pending", created_at: "2026-09-01T10:00:00Z", expires_at: "2026-09-08T10:00:00Z" };
 
 function renderPage() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -40,174 +36,25 @@ beforeEach(() => {
   user.current = { id: "u1", user_metadata: { org_role: "admin" } };
   api.get.mockImplementation(async (path: string) => {
     if (path === "/api/team") return { data: MEMBROS };
-    if (path === "/api/team/invitations") return { data: [CONVITE] };
+    if (path === "/api/team/invitations") return { data: [] };
+    if (path === "/api/team/policy") return { staff_roles: [], invitable_roles: ["member"], labels: {} };
     throw new Error(`GET inesperado ${path}`);
   });
-  api.post.mockResolvedValue({ data: { ...CONVITE, id: "c2", token: "tok-abc" }, email_enviado: true });
-  api.delete.mockResolvedValue({ ok: true });
 });
 afterEach(cleanup);
 
-describe("Equipe — lista + acentuação (achado #18)", () => {
-  it("lists members with correctly-accented labels and pt-BR role labels", async () => {
+describe("Equipe (TeamPage organ)", () => {
+  it("lists the roster with pt-BR role labels", async () => {
     renderPage();
     expect(await screen.findByText("Ana Owner")).toBeInTheDocument();
     expect(screen.getByText("Você")).toBeInTheDocument();
     expect(screen.getByText("Proprietário")).toBeInTheDocument();
     expect(screen.getByText("Membro")).toBeInTheDocument();
-    expect(screen.getByText(/na organização/)).toBeInTheDocument();
   });
 
-  it("shows the server's error instead of a silent empty state", async () => {
-    api.get.mockImplementation(async (path: string) => {
-      if (path === "/api/team") throw new Error("banco indisponível");
-      if (path === "/api/team/invitations") return { data: [] };
-      throw new Error(`GET inesperado ${path}`);
-    });
+  it("points managers to NoctusAI Core for removal (no Remover action)", async () => {
     renderPage();
-    expect(await screen.findByRole("alert")).toHaveTextContent("banco indisponível");
-  });
-});
-
-describe("Equipe — o convite pode ser aberto por manager, não só admin (plat achado #4)", () => {
-  it("an org admin sees Convidar AND Ações/Convites pendentes", async () => {
-    user.current = { id: "u1", user_metadata: { org_role: "admin" } };
-    renderPage();
-    await screen.findByText("Ana Owner");
-    expect(screen.getByTestId("equipe-convidar")).toBeInTheDocument();
-    expect(screen.getByText("Convites pendentes")).toBeInTheDocument();
-    expect(screen.getAllByText("Ações").length).toBeGreaterThan(0);
-  });
-
-  it("a manager sees Convidar but NOT Ações/Convites pendentes (canManageTeam ≠ useIsOrgAdmin)", async () => {
-    user.current = { id: "u2", user_metadata: { org_role: "manager" } };
-    renderPage();
-    await screen.findByText("Ana Owner");
-    expect(screen.getByTestId("equipe-convidar")).toBeInTheDocument();
-    expect(screen.queryByText("Convites pendentes")).not.toBeInTheDocument();
-    expect(screen.queryByText("Ações")).not.toBeInTheDocument();
-    // The seed never even calls GET /invitations for a non-admin caller.
-    expect(api.get).not.toHaveBeenCalledWith("/api/team/invitations");
-  });
-
-  it("a plain member sees neither Convidar nor Ações", async () => {
-    user.current = { id: "u2", user_metadata: { org_role: "member" } };
-    renderPage();
-    await screen.findByText("Ana Owner");
-    expect(screen.queryByTestId("equipe-convidar")).not.toBeInTheDocument();
-    expect(screen.queryByText("Ações")).not.toBeInTheDocument();
-  });
-});
-
-describe("Equipe — convidar", () => {
-  it("submits the chosen role", async () => {
-    renderPage();
-    await screen.findByText("Ana Owner");
-    fireEvent.click(screen.getByTestId("equipe-convidar"));
-    const sheet = await screen.findByTestId("convidar-sheet");
-    fireEvent.change(within(sheet).getByLabelText(/E-mail/), { target: { value: "novo@agencia.com" } });
-    fireEvent.change(within(sheet).getByLabelText("Papel"), { target: { value: "manager" } });
-    fireEvent.click(within(sheet).getByRole("button", { name: "Enviar convite" }));
-    await waitFor(() =>
-      expect(api.post).toHaveBeenCalledWith("/api/team/invite", { email: "novo@agencia.com", role: "manager" }),
-    );
-  });
-
-  it("offers every seed-accepted role except owner, in pt-BR, to an org admin", async () => {
-    renderPage();
-    await screen.findByText("Ana Owner");
-    fireEvent.click(screen.getByTestId("equipe-convidar"));
-    const sheet = await screen.findByTestId("convidar-sheet");
-    const select = within(sheet).getByLabelText("Papel") as HTMLSelectElement;
-    const rotulos = Array.from(select.options).map((o) => o.textContent);
-    expect(rotulos).toEqual([
-      "Administrador", "Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste", "Corretor",
-    ]);
-  });
-
-  it("never offers 'Administrador' to a Gerente (finais) — the server 403s that grant", async () => {
-    user.current = { id: "u2", user_metadata: { org_role: "manager" } };
-    renderPage();
-    await screen.findByText("Ana Owner");
-    fireEvent.click(screen.getByTestId("equipe-convidar"));
-    const sheet = await screen.findByTestId("convidar-sheet");
-    const select = within(sheet).getByLabelText("Papel") as HTMLSelectElement;
-    const rotulos = Array.from(select.options).map((o) => o.textContent);
-    expect(rotulos).toEqual(["Gerente", "Membro", "Visualizador", "Desenvolvedor", "Teste", "Corretor"]);
-    expect(rotulos).not.toContain("Administrador");
-  });
-
-  it("says the truth when the e-mail was not sent, with a copy-link action (finais)", async () => {
-    api.post.mockResolvedValue({
-      data: { ...CONVITE, id: "c3", token: "tok-xyz" },
-      email_enviado: false,
-      email_motivo: "Servico de e-mail nao configurado",
-    });
-    const writeText = vi.fn();
-    Object.assign(navigator, { clipboard: { writeText } });
-
-    renderPage();
-    await screen.findByText("Ana Owner");
-    fireEvent.click(screen.getByTestId("equipe-convidar"));
-    const sheet = await screen.findByTestId("convidar-sheet");
-    fireEvent.change(within(sheet).getByLabelText(/E-mail/), { target: { value: "novo@agencia.com" } });
-    fireEvent.click(within(sheet).getByRole("button", { name: "Enviar convite" }));
-
-    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
-    expect(toast.success).not.toHaveBeenCalled();
-    const [message, opts] = toast.warning.mock.calls[0];
-    expect(message).toBe("Convite criado, mas o e-mail não foi enviado — copie o link");
-    expect(opts.description).toBe("Servico de e-mail nao configurado");
-    expect(opts.action.label).toBe("Copiar link");
-
-    opts.action.onClick();
-    expect(writeText).toHaveBeenCalledWith(expect.stringContaining("/accept-invite/tok-xyz"));
-  });
-
-  it("toasts success when the e-mail WAS sent", async () => {
-    renderPage();
-    await screen.findByText("Ana Owner");
-    fireEvent.click(screen.getByTestId("equipe-convidar"));
-    const sheet = await screen.findByTestId("convidar-sheet");
-    fireEvent.change(within(sheet).getByLabelText(/E-mail/), { target: { value: "novo@agencia.com" } });
-    fireEvent.click(within(sheet).getByRole("button", { name: "Enviar convite" }));
-
-    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Convite enviado com sucesso"));
-    expect(toast.warning).not.toHaveBeenCalled();
-  });
-});
-
-describe("Equipe — remover membro", () => {
-  it("confirms before removing, and cannot target the owner or oneself", async () => {
-    renderPage();
-    await screen.findByText("Ana Owner");
-    // Owner row has no remove button at all (own row rule + owner rule).
-    const linhaOwner = screen.getByText("Ana Owner").closest("tr")!;
-    expect(within(linhaOwner).queryByRole("button", { name: /Remover/ })).not.toBeInTheDocument();
-
-    const linhaBeto = screen.getByText("Beto Membro").closest("tr")!;
-    fireEvent.click(within(linhaBeto).getByRole("button", { name: /Remover/ }));
-    fireEvent.click(screen.getByRole("button", { name: "Confirmar remoção" }));
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/team/u2"));
-  });
-});
-
-describe("Equipe — convites pendentes", () => {
-  it("shows a fetch error instead of a silent empty list", async () => {
-    api.get.mockImplementation(async (path: string) => {
-      if (path === "/api/team") return { data: MEMBROS };
-      if (path === "/api/team/invitations") throw new Error("Sem permissao");
-      throw new Error(`GET inesperado ${path}`);
-    });
-    renderPage();
-    await screen.findByText("Convites pendentes");
-    expect(await screen.findByText("Sem permissao")).toBeInTheDocument();
-  });
-
-  it("cancels a pending invite", async () => {
-    renderPage();
-    await screen.findByText("novo@agencia.com");
-    fireEvent.click(screen.getByRole("button", { name: "Cancelar" }));
-    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/team/invitations/c1"));
+    expect(await screen.findByTestId("team-remove-core-note")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /remover/i })).toBeNull();
   });
 });

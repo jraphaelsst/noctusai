@@ -18,7 +18,7 @@ known_facts:
 errors_encountered: []
 
 drifts_surfaced:
-  - "NOC-REMEDIATE[team-page-organ-fanout]: the remaining products still carry their local pages/Equipe.tsx copy (with a 'Remover' button that now gets the honest 409 TEAM_REMOVE_CORE_ONLY toast via err.message) — adconnect, agents, daily-life, erp-imobiliario, igig, knowledge-extractor, orbity, personal-finance, social-wiring. Fan out to `<TeamPage api={api} user={user} />` after the pilots prove out (pilot-products-first cadence). — 2026-10-01"
+  - "NOC-REMEDIATE[team-page-organ-fanout]: fan-out DONE for every ACTIVE product (agents, igig, orbity, social-wiring now ship the one-component wrapper; orbity adds its status_pagina panel through the declared `children` seam). The five INACTIVE products (adconnect, daily-life, erp-imobiliario, knowledge-extractor, personal-finance) are ASLEEP per the product catalog and keep their local pages/Equipe.tsx; each converts to `<TeamPage api={api} user={user} />` on reactivation. — 2026-10-01"
 
   - "register_organ(TeamPage) failed 2026-10-01 with OpenAI 429 insufficient_quota — the organ is not yet in the code-embeddings cache (find_reusable_component will not surface it); only this sidecar + git carry its provenance until credits return and `noctus.dev.register_organ TeamPage` is re-run."
 
