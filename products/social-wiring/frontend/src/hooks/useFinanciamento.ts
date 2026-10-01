@@ -11,6 +11,7 @@
  * `useDocumentoAcessos` is therefore lazy — enabled only when a viewer
  * actually opens the log.
  */
+import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
@@ -320,7 +321,7 @@ export function useFinanciamentoDocumentoMutations(clienteId: string) {
       tipoDocumento: string;
     }) => {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", await prepareImageForUpload(file));
       formData.append("tipo_documento", tipoDocumento);
       const headers = await getAuthHeader();
       const response = await fetch(apiUrl(`${base(clienteId)}/documentos`), {

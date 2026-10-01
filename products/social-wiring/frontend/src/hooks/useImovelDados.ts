@@ -7,6 +7,7 @@
  * hook file invites a single query key, and invalidating "imoveis" after a
  * cartório edit would re-fetch the whole 1919-imóvel catalog.
  */
+import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
@@ -412,7 +413,7 @@ export function useImovelDocumentoMutations(codigo: string) {
       tipoDocumento: string;
     }) => {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", await prepareImageForUpload(file));
       formData.append("tipo_documento", tipoDocumento);
       const headers = await getAuthHeader();
       const response = await fetch(apiUrl(`${base(codigo)}/documentos`), {

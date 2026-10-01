@@ -26,6 +26,7 @@ import {
 } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
 import { createCardHubHooks, flattenTimeline } from "@noctusai/lib/components";
+import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import type { CardHubApi } from "@noctusai/lib/components";
 
 import { apiUrl } from "@/lib/apiBase";
@@ -89,6 +90,14 @@ async function getAuthHeader(): Promise<Record<string, string>> {
  * THIRD copy the moment another card-adjacent resource needs an upload).
  */
 export async function uploadMultipart<T>(path: string, form: FormData): Promise<T> {
+  // Shrink big phone photos client-side (a 10 MB PNG hit Cloudflare's 100 s
+  // 524 timeout on mobile links); non-images + failures pass through as-is.
+  for (const [key, value] of Array.from(form.entries())) {
+    if (value instanceof File) {
+      const prepared = await prepareImageForUpload(value);
+      if (prepared !== value) form.set(key, prepared, prepared.name);
+    }
+  }
   const headers = await getAuthHeader();
   const response = await fetch(apiUrl(path), { method: "POST", headers, body: form });
   if (!response.ok) {

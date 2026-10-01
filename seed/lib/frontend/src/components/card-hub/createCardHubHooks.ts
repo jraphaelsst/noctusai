@@ -41,6 +41,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import type { QueryClient } from "@tanstack/react-query";
 
 import type { ApiClient } from "../../api";
+import { prepareImageForUpload } from "../../imageUpload";
 import type {
   Acesso,
   CardResumoBase,
@@ -573,9 +574,9 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
     // Multipart through the seed client's `upload` — never `post`, which
     // would JSON-stringify the FormData into `{}`.
     const upload = useMutation({
-      mutationFn: ({ file, tipoDocumento }: { file: File; tipoDocumento: string }) => {
+      mutationFn: async ({ file, tipoDocumento }: { file: File; tipoDocumento: string }) => {
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", await prepareImageForUpload(file));
         formData.append("tipo_documento", tipoDocumento);
         return api.upload<Documento>(`${base}/documentos`, formData);
       },
@@ -664,9 +665,9 @@ export function createCardHubHooks<TResumo extends CardResumoBase = CardResumoBa
     });
 
     const uploadDocumento = useMutation({
-      mutationFn: ({ extraId, file }: { extraId: string; file: File }) => {
+      mutationFn: async ({ extraId, file }: { extraId: string; file: File }) => {
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", await prepareImageForUpload(file));
         return api.upload<ChecklistExtra>(`${base}/${encodeURIComponent(extraId)}/documento`, formData);
       },
       onSuccess: invalidate,

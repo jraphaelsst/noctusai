@@ -23,6 +23,7 @@
  * while a row is `pendente`/`processando`, else `false`. That is what makes
  * the status column live without a websocket.
  */
+import { prepareImageForUpload } from '@noctusai/lib/imageUpload';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
@@ -189,7 +190,7 @@ export function useUploadMatricula() {
       // break them.
       const { file, codigo } = input instanceof File ? { file: input, codigo: undefined } : input;
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', await prepareImageForUpload(file));
       if (codigo) formData.append('codigo', codigo);
       const result = await api.upload('/api/matriculas/extrair', formData);
       return result.data as MatriculaExtracao;
