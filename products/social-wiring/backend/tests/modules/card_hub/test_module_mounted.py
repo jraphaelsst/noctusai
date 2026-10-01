@@ -70,3 +70,30 @@ def test_router_is_mounted_on_the_live_app():
     paths = {getattr(r, "path", "") for r in app.routes}
     assert "/api/clientes/tags" in paths
     assert "/api/clientes/{cliente_id}/card" in paths
+
+
+def test_atendimento_partes_imoveis_surfaces_are_mounted_on_the_real_app():
+    """CONTRACT §10: the new routers exist AND are mounted — every route below
+    answers on the real assembled app, not only in a slice's local FastAPI."""
+    from app.main import app
+
+    montadas = {
+        (method, route.path)
+        for route in app.routes
+        for method in (getattr(route, "methods", None) or ())
+    }
+    for esperado in (
+        # card_hub.partes_router / certidoes_partes_router
+        ("GET", "/api/clientes/{cliente_id}/partes"),
+        ("GET", "/api/clientes/{cliente_id}/partes/lookup"),
+        ("GET", "/api/clientes/{cliente_id}/certidoes/partes"),
+        ("POST", "/api/clientes/{cliente_id}/certidoes/partes/{kind}/{alvo_id}/emissao"),
+        # imovel_hub.register()'s four new routers
+        ("GET", "/api/clientes/{cliente_id}/atendimento-imoveis"),
+        ("GET", "/api/clientes/{cliente_id}/interesses"),
+        ("GET", "/api/imoveis/{codigo}/interessados"),
+        ("GET", "/api/imoveis/{codigo}/similares"),
+        ("GET", "/api/imoveis/{codigo}/proprietarios"),
+        ("GET", "/api/clientes/{cliente_id}/resumo"),
+    ):
+        assert esperado in montadas, f"{esperado} is not mounted on app.main.app"
