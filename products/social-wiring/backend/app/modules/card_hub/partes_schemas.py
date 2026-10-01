@@ -1,7 +1,6 @@
 """Schemas for the all-parties surface (atendimento-partes-imoveis §2).
 
-`ParteCreateBody` is `CompradorCreateBody` PLUS the PJ inputs; Wave C0 swaps
-`POST .../compradores` to it. The response models mirror CONTRACT §2.1/§2.5
+`ParteCreateBody` is the body of `POST .../compradores` (person OR company). The response models mirror CONTRACT §2.1/§2.5
 key-for-key — they are what the contract tests pin.
 """
 from __future__ import annotations
@@ -9,9 +8,10 @@ from __future__ import annotations
 from typing import Any, Literal, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.integrations.documents import cpf as cpf_docs
 
 
 class ParteCreateBody(StrictHttpModel):
@@ -32,6 +32,19 @@ class ParteCreateBody(StrictHttpModel):
     empresa_id: Optional[UUID] = None
     cnpj: Optional[str] = Field(default=None, min_length=11, max_length=18)
     razao_social: Optional[str] = Field(default=None, max_length=255)
+    #: Only meaningful with `nome` (a NEW pessoa física): persisted on the
+    #: created cliente as `cpf_origem='manual'`. Digits-normalised + checked.
+    cpf: Optional[str] = Field(default=None, max_length=18)
+
+    @field_validator("cpf")
+    @classmethod
+    def _cpf_valido(cls, v: Optional[str]) -> Optional[str]:
+        if v is None or not v.strip():
+            return None
+        digitos = cpf_docs.only_digits(v)
+        if len(digitos) != 11 or not cpf_docs.is_valid(digitos):
+            raise ValueError("CPF inválido.")
+        return digitos
 
 
 class EmpresaResumo(BaseModel):

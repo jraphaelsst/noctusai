@@ -115,20 +115,8 @@ class AgendamentoPatchBody(StrictHttpModel):
 _STATUS_VISITA_VALUES = {"pendente", "realizada", "nao_realizada"}
 
 
-class RoteiroCreateBody(StrictHttpModel):
-    #: The códigos, IN VISITING ORDER — the array index becomes `visitas.ordem`.
-    #: The order is the payload, so a client that reorders and re-POSTs is
-    #: doing the right thing.
-    imoveis: list[str] = Field(min_length=1)
-    titulo: Optional[str] = None
-    #: Optional: with one open atendimento the server resolves it. Sent
-    #: explicitly when the person has several, which the server REFUSES to
-    #: guess at (409) rather than filing the roteiro against the wrong deal.
-    atendimento_id: Optional[UUID] = None
-
-
-class RoteiroPatchBody(StrictHttpModel):
-    titulo: Optional[str] = None
+# `RoteiroCreateBodyV2` / `RoteiroPatchBodyV2` (roteiro_schemas.py) carry the
+# create/patch bodies — `data_visita` is required on create.
 
 
 class RoteiroOrdemBody(StrictHttpModel):
@@ -259,38 +247,7 @@ class DocumentoChecklistPatchBody(StrictHttpModel):
 # ─── Compradores / partes do atendimento (migration 073) ─────────────────────
 
 
-class CompradorCreateBody(StrictHttpModel):
-    """Add another person to this card's atendimento.
-
-    EITHER `cliente_id` (link someone already in this org — the spouse who is
-    herself a lead) OR `nome` (create her). Never both: when the two disagree
-    the caller's intent is unknowable, and picking one silently is how a
-    contract ends up naming the wrong person. The exclusivity is checked in the
-    service, which is also where the 422 is raised, so there is one rule rather
-    than a validator here and a check there.
-
-    `papel` is validated against `compradores_service.PAPEIS_POR_LADO[lado]` —
-    the definition — rather than re-listed as a Literal here, for the same
-    reason the checklist keys are not re-listed in
-    `DocumentoChecklistPatchBody`. Omit it and the service applies the side's
-    default: `comprador` for the buyer side, `proprietario` for the seller's.
-
-    `lado` selects the side (migration 098) and defaults to `comprador`, so
-    every caller written before the Vendedor tab existed keeps its meaning.
-
-    `atendimento_id` is optional and normally omitted: the service resolves the
-    person's single open atendimento. It is accepted for the case that
-    resolution refuses — someone with two open deals — where only the user can
-    say which one this comprador belongs to.
-    """
-
-    cliente_id: Optional[UUID] = None
-    nome: Optional[str] = Field(default=None, max_length=255)
-    celular: Optional[str] = Field(default=None, max_length=32)
-    papel: Optional[str] = None
-    observacao: Optional[str] = Field(default=None, max_length=2000)
-    atendimento_id: Optional[UUID] = None
-    lado: Optional[str] = None
+# `ParteCreateBody` (partes_schemas.py) is the body of `POST .../compradores`.
 
 
 class PartePapelPatchBody(StrictHttpModel):
@@ -308,7 +265,7 @@ class PartePapelPatchBody(StrictHttpModel):
     exactly one field and is driven by picking a value from a list, so an
     omitted `papel` is a request that means nothing.
 
-    Not validated as a `Literal` here for the same reason `CompradorCreateBody`
+    Not validated as a `Literal` here for the same reason `ParteCreateBody`
     is not: the per-side vocabulary lives in `compradores_service`, next to the
     dropdown that offers it, and a second copy is a second thing to forget.
     """
