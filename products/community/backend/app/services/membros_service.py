@@ -138,7 +138,7 @@ class MembrosService:
 
     # ── writes ───────────────────────────────────────────────────────
 
-    async def create(self, *, payload: dict) -> dict:
+    async def create(self, *, payload: dict, autor_id: Optional[UUID | str] = None) -> dict:
         email = payload["email"]
         existing = (
             self._client.table(_TABLE)
@@ -169,6 +169,12 @@ class MembrosService:
         if not result.data:
             raise MembrosServiceError("Falha ao criar membro.")
         created = result.data[0]
+        registrar_evento(
+            self._client, org_id=self._org_id, membro_id=created["id"], tipo="sistema",
+            descricao="Membro cadastrado pela equipe.",
+            dados={"origem": created.get("origem")},
+            autor_id=autor_id,
+        )
         plano_nomes = self._plano_nomes([created.get("plano_id")])
         return self._to_out(created, plano_nomes)
 

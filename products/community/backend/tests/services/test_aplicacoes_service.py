@@ -133,3 +133,19 @@ class TestPublicSubmitValidation:
             assert False, "expected AplicacoesServiceError"
         except AplicacoesServiceError as exc:
             assert exc.status_code == 409
+
+
+class TestAprovarTimeline:
+    def test_approval_records_timeline_event(self):
+        mock = MockSupabaseClient()
+        mock.set_table_data("aplicacoes", [_aplicacao_row()])
+        mock.set_table_data("membros", [])
+        svc = AplicacoesService(mock, org_id=ORG)
+        result = asyncio.run(svc.aprovar(
+            aplicacao_id=APLICACAO_ID, plano_id=None, ativar=False, revisor_id="u1",
+        ))
+        eventos = mock.table("membro_eventos").select("*").execute().data
+        assert len(eventos) == 1
+        assert eventos[0]["membro_id"] == result["membro"]["id"]
+        assert eventos[0]["tipo"] == "sistema"
+        assert eventos[0]["descricao"] == "Membro criado a partir da aprovação da inscrição."

@@ -107,3 +107,18 @@ class TestCreate:
             "telefone": None,
         }))
         assert result["entrou_em"] is not None
+
+
+class TestCreateTimeline:
+    def test_create_records_timeline_event(self):
+        svc, mock = _svc([])
+        result = asyncio.run(svc.create(payload={
+            "nome": "Nova", "email": "nova2@x.com", "origem": "convite",
+            "status": "pendente", "plano_id": None, "tags": [], "observacoes": None,
+            "telefone": None,
+        }))
+        eventos = mock.table("membro_eventos").select("*").execute().data
+        assert len(eventos) == 1
+        assert eventos[0]["membro_id"] == result["id"]
+        assert eventos[0]["tipo"] == "sistema"
+        assert eventos[0]["descricao"] == "Membro cadastrado pela equipe."

@@ -208,6 +208,11 @@ class CheckoutService:
         # touching the membros table at all.
         self._check_org_cap()
 
+        # 3b. Gateway availability — resolved BEFORE any write: a 503
+        # ("Pagamentos indisponíveis") must never leave an orphan `membros`
+        # row from the find-or-create below.
+        hosted_checkout = self._hosted_checkout_factory(_METODO_GATEWAY[metodo])
+
         # 4. Find-or-create membro (amendments A1/A3): the FOUND branch
         # writes NOTHING to `membros` — not nome, not telefone, not
         # plano_id, not status. Submitted nome/telefone are used ONLY
@@ -237,6 +242,7 @@ class CheckoutService:
         return self._iniciar_cobranca(
             membro=membro, plano=plano, ref=ref, metodo=metodo,
             nome=payload["nome"], email=payload["email"], tax_id=payload.get("cpf"),
+            hosted_checkout=hosted_checkout,
         )
 
     async def trocar_plano(
@@ -328,6 +334,7 @@ class CheckoutService:
         nome: str,
         email: str,
         tax_id: Optional[str],
+        hosted_checkout: Optional[HostedCheckout] = None,
     ) -> dict:
         """Open the gateway subscription for `membro` on `plano` and record
         it locally (`assinaturas` `iniciada` + the Asaas first `pagamentos`
@@ -358,7 +365,8 @@ class CheckoutService:
         # key for a Stripe FIRST payment: Stripe has no subscription id
         # at all until the payer completes the hosted page (amendment A1).
         assinatura_id = str(uuid4())
-        hosted_checkout = self._hosted_checkout_factory(gateway)
+        if hosted_checkout is None:
+            hosted_checkout = self._hosted_checkout_factory(gateway)
         request = CheckoutRequest(
             external_reference=assinatura_id,
             email=email,

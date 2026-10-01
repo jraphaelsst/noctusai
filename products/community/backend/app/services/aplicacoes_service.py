@@ -11,6 +11,8 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+from app.services.eventos_service import registrar_evento
+
 _PERGUNTAS_TABLE = "aplicacao_perguntas"
 _APLICACOES_TABLE = "aplicacoes"
 _MEMBROS_TABLE = "membros"
@@ -188,6 +190,12 @@ class AplicacoesService:
         if not membro_result.data:
             raise AplicacoesServiceError("Falha ao criar membro.")
         membro = membro_result.data[0]
+        registrar_evento(
+            self._client, org_id=self._org_id, membro_id=membro["id"], tipo="sistema",
+            descricao="Membro criado a partir da aprovação da inscrição.",
+            dados={"aplicacao_id": str(aplicacao_id), "origem": "aplicacao"},
+            autor_id=revisor_id,
+        )
 
         aplicacao_result = (
             self._client.table(_APLICACOES_TABLE)

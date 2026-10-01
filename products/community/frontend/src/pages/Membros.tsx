@@ -37,11 +37,13 @@ import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { EntityDetailDialog } from "@noctusai/lib/components";
 import type { DetailSection } from "@noctusai/lib/components";
 import { EmptyState, ErrorState, Field, FormError, Select } from "@/components/FormControls";
+import { normalizePhone } from "@noctusai/lib";
 import { errorMessage } from "@/lib/errors";
 import { formatBRLFromCents } from "@/lib/money";
 import { useAssinaturas, type AssinaturaEstado } from "@/hooks/useAssinaturas";
 import {
   useMembros,
+  useMembro,
   useCreateMembro,
   useUpdateMembro,
   useChangeMembroStatus,
@@ -239,7 +241,14 @@ export default function Membros() {
   const isRefreshing = isFetching && !!data;
   // `selected` is a click-time snapshot; read the refetched row when there is
   // one so e.g. "Criar acesso" disappears once `user_id` is set.
-  const selectedAtual = (selected && data?.items.find((m) => m.id === selected.id)) || selected;
+  // Freshest source first: the by-id query (invalidated with the list on every
+  // write, and still present when the row drops out of a filtered tab), then
+  // the refetched list row, then the click-time snapshot.
+  const { data: detalhe } = useMembro(selected?.id);
+  const selectedAtual: Membro | null =
+    (selected && detalhe && detalhe.id === selected.id ? detalhe : null) ||
+    (selected && data?.items.find((m) => m.id === selected.id)) ||
+    selected;
 
   async function handleCancel(m: Membro) {
     if (!window.confirm(`Cancelar o membro "${m.nome}"? Isso remove o acesso dele.`)) return;
@@ -263,15 +272,17 @@ export default function Membros() {
             {isRefreshing ? " Atualizando…" : ""}
           </p>
         </div>
-        <Button
-          variant="primary"
-          onClick={() => {
-            setEditing(null);
-            setFormOpen(true);
-          }}
-        >
-          + Novo Membro
-        </Button>
+        {isAdmin && (
+          <Button
+            variant="primary"
+            onClick={() => {
+              setEditing(null);
+              setFormOpen(true);
+            }}
+          >
+            + Novo Membro
+          </Button>
+        )}
       </div>
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Status do membro">
@@ -357,21 +368,25 @@ export default function Membros() {
       <EntityDetailDialog
         open={!!selected}
         onClose={() => setSelected(null)}
-        title={selected?.nome ?? ""}
-        subtitle={selected?.email}
-        badges={selected ? [{ label: STATUS_LABELS[selected.status], variant: statusBadgeVariant(selected.status) }] : []}
-        sections={selected ? membroDetailSections(selected) : []}
+        title={selectedAtual?.nome ?? ""}
+        subtitle={selectedAtual?.email}
+        badges={
+          selectedAtual
+            ? [{ label: STATUS_LABELS[selectedAtual.status], variant: statusBadgeVariant(selectedAtual.status) }]
+            : []
+        }
+        sections={selectedAtual ? membroDetailSections(selectedAtual) : []}
         actions={
-          selected
+          selectedAtual && isAdmin
             ? [
                 {
                   label: "Cancelar membro",
                   variant: "destructive",
                   align: "start",
-                  onClick: () => void handleCancel(selected),
+                  onClick: () => void handleCancel(selectedAtual),
                   testId: "membro-cancelar",
                 },
-                ...(isAdmin && !selectedAtual?.user_id
+                ...(!selectedAtual.user_id
                   ? [
                       {
                         label: "Criar acesso",
@@ -384,14 +399,14 @@ export default function Membros() {
                 {
                   label: "Alterar status",
                   variant: "outline",
-                  onClick: () => setStatusChangeFor(selected),
+                  onClick: () => setStatusChangeFor(selectedAtual),
                   testId: "membro-alterar-status",
                 },
                 {
                   label: "Editar",
                   variant: "primary",
                   onClick: () => {
-                    setEditing(selected);
+                    setEditing(selectedAtual);
                     setFormOpen(true);
                   },
                   testId: "membro-editar",
@@ -457,10 +472,17 @@ function MembroFormDialog({ membro, planos, onClose }: MembroFormDialogProps) {
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
+    // Backend contract is strict E.164; accept BR national input via the seed helper.
+    const telefoneRaw = (form.telefone ?? "").trim();
+    const telefone = telefoneRaw ? normalizePhone(telefoneRaw) : null;
+    if (telefoneRaw && !telefone) {
+      setFormError("Telefone inválido. Informe DDD + número, ex: (11) 99999-9999.");
+      return;
+    }
     const payload: MembroCreateInput = {
       nome: form.nome,
       email: form.email,
-      telefone: form.telefone || null,
+      telefone,
       origem: form.origem,
       plano_id: form.plano_id || null,
       tags,
@@ -499,7 +521,7 @@ function MembroFormDialog({ membro, planos, onClose }: MembroFormDialogProps) {
               required
             />
           </Field>
-          <Field label="Telefone" help="Formato internacional, ex: +5511999999999">
+          <Field label="Telefone" help="Com DDD, ex: (11) 99999-9999 — convertemos para o formato internacional">
             <Input
               value={form.telefone ?? ""}
               onChange={(e) => setForm({ ...form, telefone: e.target.value })}

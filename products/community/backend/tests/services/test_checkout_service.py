@@ -386,3 +386,22 @@ class TestTrocaDePlano:
             assert exc.status_code == 502
         assert (client.table("assinaturas").select("*").execute().data or []) == []
         assert client.table("membro_eventos").select("*").execute().data == []
+
+
+class TestGatewayUnavailableWritesNothing:
+    def test_503_leaves_no_membro_row(self):
+        client = _new_client()
+        client.set_table_data("membros", [])
+
+        def _indisponivel(gateway):
+            raise CheckoutServiceError(
+                "Pagamentos indisponíveis no momento. Tente novamente mais tarde.", status_code=503,
+            )
+
+        svc = _service(client, hosted_checkout_factory=_indisponivel)
+        try:
+            _run(svc.checkout(payload=_payload()))
+            assert False, "expected CheckoutServiceError"
+        except CheckoutServiceError as exc:
+            assert exc.status_code == 503
+        assert client.table("membros").select("*").execute().data == []

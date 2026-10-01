@@ -70,7 +70,7 @@ async def create_membro(
     client = get_user_client(token)
     service = MembrosService(client, org_id=org_id)
     try:
-        row = await service.create(payload=payload.model_dump())
+        row = await service.create(payload=payload.model_dump(), autor_id=actor_uuid(user))
     except MembrosServiceError as exc:
         raise http_error(exc.status_code, exc.detail) from exc
     return Membro(**row)
