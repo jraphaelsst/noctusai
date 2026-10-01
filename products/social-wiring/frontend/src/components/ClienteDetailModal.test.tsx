@@ -250,17 +250,42 @@ vi.mock("@/components/card/ClienteCardDialog", async () => {
           { "data-testid": "dados-pessoais-probe" },
           JSON.stringify(props.dadosPessoais ?? null),
         ),
+        // What the Roteiros tab acts on, and the Certidões tab's container.
+        React.createElement(
+          "span",
+          { "data-testid": "roteiros-ids-probe" },
+          JSON.stringify([props.roteirosClienteId ?? null, props.roteirosAtendimentoId ?? null]),
+        ),
+        props.renderCertidoes?.(),
+      ),
+  };
+});
+
+// The Certidões tab is the per-party container; only its props matter here.
+vi.mock("@/components/card/certidoes/CertidoesPartesTab", async () => {
+  const React = await import("react");
+  return {
+    CertidoesPartesTab: (props: any) =>
+      React.createElement(
+        "span",
+        { "data-testid": "certidoes-partes-tab-probe" },
+        JSON.stringify([props.clienteId, props.atendimentoId ?? null]),
       ),
   };
 });
 
 import { ClienteDetailModal } from "./ClienteDetailModal";
 
-async function render() {
+async function render(extra: { atendimentoId?: string | null } = {}) {
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
   return rtl.render(
-    React.createElement(ClienteDetailModal, { clienteId: "cl1", open: true, onClose: vi.fn() }),
+    React.createElement(ClienteDetailModal, {
+      clienteId: "cl1",
+      open: true,
+      onClose: vi.fn(),
+      ...extra,
+    }),
   );
 }
 
@@ -520,5 +545,19 @@ describe("ClienteDetailModal — dadosPessoais prefill (qualificação civil)", 
     expect(probe.regime_bens).toBe("Comunhão parcial de bens");
     expect(probe.endereco_logradouro).toBe("Av. Paulista");
     expect(probe.endereco_cidade).toBe("São Paulo");
+  });
+});
+
+describe("ClienteDetailModal — mounts the per-party certidões tab and feeds the roteiro flow", () => {
+  it("renders CertidoesPartesTab for the card's cliente + atendimento", async () => {
+    const { getByTestId } = await render({ atendimentoId: "atd-9" });
+    expect(getByTestId("certidoes-partes-tab-probe").textContent).toBe(
+      JSON.stringify(["cl1", "atd-9"]),
+    );
+  });
+
+  it("hands the Roteiros tab the cliente and atendimento (it mounts the interest list itself)", async () => {
+    const { getByTestId } = await render({ atendimentoId: "atd-9" });
+    expect(getByTestId("roteiros-ids-probe").textContent).toBe(JSON.stringify(["cl1", "atd-9"]));
   });
 });

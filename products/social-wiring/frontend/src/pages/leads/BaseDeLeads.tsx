@@ -38,6 +38,7 @@ import type { Lead } from "@/pages/leads/types";
 import { LeadFormDialog, type LeadFormValues } from "./components/LeadFormDialog";
 import { NovoLeadClienteDialog } from "./components/NovoLeadClienteDialog";
 import { LeadDetailModal } from "@/components/LeadDetailModal";
+import { PessoaLink } from "@/components/pessoa/PessoaLink";
 import { contatoValue } from "./leadDetailSections";
 import { ClearFiltersButton } from "./components/ClearFiltersButton";
 import { describeError } from "./utils";
@@ -251,7 +252,13 @@ export default function BaseDeLeads() {
                       <td className="px-4 py-3 whitespace-nowrap">{lead.data_entrada}</td>
                       <td className="px-4 py-3">
                         <span className="font-medium">
-                          {lead.cliente_nome || <span className="text-muted-foreground">—</span>}
+                          {lead.cliente_nome && lead.cliente_id ? (
+                            <PessoaLink clienteId={lead.cliente_id} testId={`lead-pessoa-link-${lead.id}`}>
+                              {lead.cliente_nome}
+                            </PessoaLink>
+                          ) : (
+                            lead.cliente_nome || <span className="text-muted-foreground">—</span>
+                          )}
                         </span>
                         {/* Through the SAME rule the detail modal and the board cards use —
                             a table showing "11 98191.2534" beside a card showing

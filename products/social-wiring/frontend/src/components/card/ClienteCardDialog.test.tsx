@@ -134,7 +134,11 @@ async function render(
 ) {
   const React = (await import("react")).default;
   const rtl = await import("@testing-library/react");
-  const result = rtl.render(React.createElement(ClienteCardDialog, props));
+  // A Router: the vendedor panel links to the person page (`PessoaLink`).
+  const { MemoryRouter } = await import("react-router-dom");
+  const result = rtl.render(
+    React.createElement(MemoryRouter, null, React.createElement(ClienteCardDialog, props)),
+  );
   if (!dobrado) {
     // Absent on the non-Geral subpages and on the loading/error/notFound
     // states, where there is no fold to open and nothing to assert inside it.
@@ -2606,10 +2610,24 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
 
   async function abrirVendedor(props: Partial<ClienteCardDialogProps>) {
     const rtl = await import("@testing-library/react");
-    rtl.render(<ClienteCardDialog {...baseProps(props)} />);
+    const { MemoryRouter } = await import("react-router-dom");
+    rtl.render(
+      <MemoryRouter>
+        <ClienteCardDialog {...baseProps(props)} />
+      </MemoryRouter>,
+    );
     rtl.fireEvent.click(rtl.screen.getByTestId("card-subpage-tab-vendedor"));
     return rtl;
   }
+
+  it("links each vendedor to their person page (/vendedores/:id)", async () => {
+    const { screen } = await abrirVendedor({
+      vendedores: [parte({ id: "v-1", cliente_id: "c-77", lado: "vendedor", papel: "proprietario" })],
+    });
+    expect(screen.getByTestId("vendedor-pessoa-link-v-1").getAttribute("href")).toBe(
+      "/vendedores/c-77",
+    );
+  });
 
   it("stays a read-only badge when no handler is wired", async () => {
     const { render, screen } = await import("@testing-library/react");

@@ -26,7 +26,7 @@ function cel(over: Partial<CertidaoParteCelula> = {}): CertidaoParteCelula {
     status: "pendente", texto: "Pendente", tipo: "cnd_federal", resultado_id: null, consulta_id: null,
     status_processamento: null, resultado: null, numero: null, emitida_em: null, validade_ate: null,
     idade_dias: null, stale_para_contrato: false, arquivo_url: null, tem_arquivo: false,
-    arquivo_nome: null, origem: null, confirmado: false, analise_ia: null, erro_mensagem: null, ...over,
+    arquivo_nome: null, origem: null, confirmado: false, analise_ia: null, erro_mensagem: null, segunda_via: false, ...over,
   };
 }
 const linhas = [
@@ -125,6 +125,29 @@ describe("CertidoesPartesTab", () => {
     fireEvent.change(screen.getByTestId("certidoes-partes-novo-nome-input"), { target: { value: "Municipal" } });
     fireEvent.click(screen.getByTestId("certidoes-partes-adicionar-confirmar"));
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/matriz/linhas", { nome: "Municipal" }));
+  });
+
+  it("explains a 2ª via: the original emission date, in the row and in the chip tooltip", async () => {
+    const segunda = parte({
+      celulas: {
+        cnd_federal: cel({
+          status: "nao_constam", resultado: "negativa", status_processamento: "sucesso",
+          resultado_id: "res-1", emitida_em: "2026-07-01", idade_dias: 92,
+          stale_para_contrato: true, segunda_via: true,
+        }),
+        serasa: cel({ tipo: "serasa" }),
+      },
+    });
+    mockGet.mockResolvedValue(resp([segunda, parte({ chave: "c:cli-2", cliente_id: "cli-2", titular: false, rotulo: "COMP 2" })]));
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    expect(screen.getByTestId("parte-segunda-via-c:cli-1-cnd_federal").textContent).toBe(
+      "2ª via — data de emissão original",
+    );
+    // A normal emission carries no such note.
+    open("c:cli-2");
+    expect(screen.queryByTestId("parte-segunda-via-c:cli-2-cnd_federal")).toBeNull();
   });
 
   it("shows skeleton, empty and error states", async () => {

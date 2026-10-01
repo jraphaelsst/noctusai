@@ -64,6 +64,9 @@ const mockUseTeamMembers = vi.fn();
 vi.mock("@/components/imovel/ImovelInteressadosCard", () => ({
   ImovelInteressadosCard: () => null,
 }));
+vi.mock("@/components/imovel/ImovelProprietariosCard", () => ({
+  ImovelProprietariosCard: () => null,
+}));
 vi.mock("@/components/imovel/ImovelSimilaresCard", () => ({
   ImovelSimilaresCard: () => null,
 }));

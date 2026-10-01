@@ -47,6 +47,9 @@ export interface ParteCreateBody {
   empresa_id?: string;
   cnpj?: string;
   razao_social?: string;
+  /** Digits of a check-digit-valid CPF; only with `nome` (a NEW pessoa física) —
+   *  stored with manual provenance. */
+  cpf?: string;
   papel?: string;
   observacao?: string;
   atendimento_id?: string;

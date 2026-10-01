@@ -97,7 +97,12 @@ async function renderPage() {
   const React = (await import("react")).default;
   const { default: BaseDeLeads } = await import("./BaseDeLeads");
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(BaseDeLeads)), fireEvent: rtl.fireEvent };
+  // A Router: a lead's name links to the person page (`PessoaLink`).
+  const { MemoryRouter } = await import("react-router-dom");
+  return {
+    ...rtl.render(React.createElement(MemoryRouter, null, React.createElement(BaseDeLeads))),
+    fireEvent: rtl.fireEvent,
+  };
 }
 
 describe("BaseDeLeads — table error recovery", () => {
@@ -113,5 +118,42 @@ describe("BaseDeLeads — table error recovery", () => {
 
     fireEvent.click(clearButton);
     expect(mockClearAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("BaseDeLeads — a lead's name opens the person page", () => {
+  const lead = (over: Record<string, unknown> = {}) => ({
+    id: "l1",
+    data_entrada: "2026-09-01",
+    origem: null,
+    tipo_lead: "novo",
+    cliente_nome: "Ana Silva",
+    contato: "+5511988770001",
+    contato_tipo: "telefone",
+    corretor: null,
+    corretor_raw: null,
+    needs_review: false,
+    ...over,
+  });
+
+  it("links the name to /clientes/:id when the lead has a cliente", async () => {
+    mockUseLeadsList.mockReturnValue(
+      makeQuery({
+        data: { data: [lead({ cliente_id: "c-42" })], pagination: { total: 1, total_pages: 1 } },
+      }),
+    );
+    const { getByTestId } = await renderPage();
+    expect(getByTestId("lead-pessoa-link-l1").getAttribute("href")).toBe("/clientes/c-42");
+  });
+
+  it("keeps a plain name while the person layer has not claimed the lead", async () => {
+    mockUseLeadsList.mockReturnValue(
+      makeQuery({
+        data: { data: [lead({ cliente_id: null })], pagination: { total: 1, total_pages: 1 } },
+      }),
+    );
+    const { queryByTestId, getByText } = await renderPage();
+    expect(queryByTestId("lead-pessoa-link-l1")).toBeNull();
+    expect(getByText("Ana Silva")).toBeTruthy();
   });
 });

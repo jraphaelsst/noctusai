@@ -26,6 +26,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatDate } from "@noctusai/lib";
 import { formatCountOrDash, type Cliente } from "@/hooks/useClientes";
 import { ClienteCardFace } from "@/components/card/ClienteCardFace";
+import { PessoaLink } from "@/components/pessoa/PessoaLink";
 
 export interface ClienteCardProps {
   cliente: Cliente;
@@ -59,7 +60,11 @@ export function ClienteCard({ cliente, onRestore, restoring, onOpen }: ClienteCa
         )}
 
         <div className="flex items-start justify-between gap-2">
-          <p className="line-clamp-2 text-sm font-semibold leading-snug">{cliente.nome}</p>
+          <p className="line-clamp-2 text-sm font-semibold leading-snug">
+            <PessoaLink clienteId={cliente.id} testId="cliente-card-nome-link">
+              {cliente.nome}
+            </PessoaLink>
+          </p>
           {!cliente.ativo && (
             <Badge variant="secondary" data-testid="cliente-inativo-badge">
               Inativo

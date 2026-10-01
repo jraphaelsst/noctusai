@@ -8,7 +8,7 @@ import type { CertidaoParte, CertidaoParteCelula } from "@/types/certidoesPartes
 export type ChipTom = "ok" | "alerta" | "erro" | "pendente" | "processando" | "na";
 
 /** Color classes per tone — text always travels WITH the color. Same palette as
- *  `CertidoesMatrizSection`'s `STATUS_ESTILO`. */
+ *  the rest of the card's status chips. */
 export const CHIP_ESTILO: Record<ChipTom, string> = {
   ok: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200",
   alerta: "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200",
@@ -58,6 +58,11 @@ export function tipoAutomatico(tipo: string | null | undefined): boolean {
 export function avisoVencida(c: CertidaoParteCelula): string | null {
   if (!c.stale_para_contrato || c.idade_dias == null) return null;
   return `Emitida há ${c.idade_dias} dias — vencida para contrato`;
+}
+
+/** Why a 2ª via reads older than "today": it carries the original emission date. */
+export function notaSegundaVia(c: CertidaoParteCelula): string | null {
+  return c.segunda_via ? "2ª via — data de emissão original" : null;
 }
 
 /** "9/13 ok · 2 pendentes · 1 vencida p/ contrato" — zero parts are dropped. */

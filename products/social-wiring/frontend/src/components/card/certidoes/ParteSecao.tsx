@@ -19,7 +19,13 @@ import type {
 } from "@/types/certidoesPartes";
 
 import { CertidaoCelulaChip } from "./CertidaoCelulaChip";
-import { avisoVencida, formatarDocumento, resumoDaParte, tipoAutomatico } from "./certidoesCelula";
+import {
+  avisoVencida,
+  formatarDocumento,
+  notaSegundaVia,
+  resumoDaParte,
+  tipoAutomatico,
+} from "./certidoesCelula";
 
 export interface ParteSecaoProps {
   parte: CertidaoParte;
@@ -183,6 +189,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2">
                         {c.emitida_em ? formatDate(c.emitida_em) : "—"}
+                        {notaSegundaVia(c) && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-segunda-via-${parte.chave}-${linha.chave}`}>
+                            {notaSegundaVia(c)}
+                          </p>
+                        )}
                         {aviso && (
                           <p className="mt-0.5 flex items-center gap-1 text-amber-700 dark:text-amber-300" data-testid={`parte-stale-${parte.chave}-${linha.chave}`}>
                             <AlertTriangle className="h-3 w-3" />

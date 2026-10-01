@@ -58,6 +58,7 @@ import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection
 import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
 import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
+import { ImovelProprietariosCard } from "@/components/imovel/ImovelProprietariosCard";
 import { ImovelSimilaresCard } from "@/components/imovel/ImovelSimilaresCard";
 import ImovelEnderecoCard from "@/components/imovel/ImovelEnderecoCard";
 import ImovelLocalizacaoSection from "@/components/imovel/ImovelLocalizacaoSection";
@@ -488,6 +489,7 @@ export default function ImovelDetalhes() {
 
           {/* Relationship cards (atendimento-partes-imoveis D5): everyone who
               was ever interested, and alternatives by property profile. */}
+          {codigo && <ImovelProprietariosCard codigo={codigo} />}
           {codigo && <ImovelInteressadosCard codigo={codigo} />}
           {codigo && <ImovelSimilaresCard codigo={codigo} />}
 
@@ -623,6 +625,7 @@ function ImovelManualLayout({
 
           <ImovelContratoContainer codigo={codigo} />
 
+          <ImovelProprietariosCard codigo={codigo} />
           <ImovelInteressadosCard codigo={codigo} />
           <ImovelSimilaresCard codigo={codigo} />
         </div>

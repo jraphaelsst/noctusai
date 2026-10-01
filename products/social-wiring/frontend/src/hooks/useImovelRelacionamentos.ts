@@ -13,6 +13,7 @@ import { api } from "@noctusai/seed/infra";
 import type {
   InteressadoRow,
   ItemsTotal,
+  ProprietarioDoImovel,
   SimilaresResponse,
 } from "@/types/interesses";
 
@@ -42,5 +43,15 @@ export function useImovelSimilares(codigo: string | undefined, limit = 10) {
       api.get<SimilaresResponse>(`${base(codigo as string)}/similares?limit=${limit}`),
     enabled: !!codigo,
     placeholderData: keepPreviousData,
+  });
+}
+
+/** `GET /api/imoveis/{codigo}/proprietarios` (CONTRACT §4.2) — who owns this imóvel. */
+export function useImovelProprietarios(codigo: string | undefined) {
+  return useQuery({
+    queryKey: [...KEY, codigo ?? "__none__", "proprietarios"],
+    queryFn: () =>
+      api.get<ItemsTotal<ProprietarioDoImovel>>(`${base(codigo as string)}/proprietarios`),
+    enabled: !!codigo,
   });
 }

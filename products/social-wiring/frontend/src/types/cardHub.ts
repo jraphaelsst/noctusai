@@ -411,6 +411,8 @@ export interface Roteiro {
   id: string;
   atendimento_id: string;
   titulo: string | null;
+  /** `YYYY-MM-DD`; `null` only on rows that predate migration 184. */
+  data_visita: string | null;
   created_at: string | null;
   visitas: Visita[];
   contagem: ContagemVisitas;
@@ -419,6 +421,8 @@ export interface Roteiro {
 export interface RoteiroCreateBody {
   /** Códigos IN VISITING ORDER — the array index becomes `ordem`. */
   imoveis: string[];
+  /** `YYYY-MM-DD`, no time — REQUIRED (CONTRACT §5.1). */
+  data_visita: string;
   titulo?: string | null;
   /** Only needed when the person has more than one open atendimento. */
   atendimento_id?: string;
@@ -426,6 +430,8 @@ export interface RoteiroCreateBody {
 
 export interface RoteiroPatchBody {
   titulo?: string | null;
+  /** May be changed, never cleared. */
+  data_visita?: string;
 }
 
 export interface VisitaPatchBody {
