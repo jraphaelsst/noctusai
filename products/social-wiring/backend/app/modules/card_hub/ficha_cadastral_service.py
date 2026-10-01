@@ -159,6 +159,7 @@ def _resolver_destino(
     mapa_cpf: dict[str, str],
     titular_row: Optional[dict],
     ja_atribuidos: set[str],
+    linhas: Optional[list[dict]] = None,
 ) -> Optional[str]:
     """Which atendimento party this person's own block belongs to.
 
@@ -176,15 +177,28 @@ def _resolver_destino(
     digits = only_digits(pessoa.cpf or "")
     if digits and digits in mapa_cpf:
         return mapa_cpf[digits]
-    if titular_row is None or str(cliente_id) in ja_atribuidos:
-        return None
-    nomes = [
-        titular_row.get("nome_oficial"), titular_row.get("nome_completo"),
-        titular_row.get("nome"),
-    ]
-    if pessoa.nome and any(n and nomes_compativeis(pessoa.nome, n) for n in nomes):
-        return str(cliente_id)
+    if titular_row is not None and str(cliente_id) not in ja_atribuidos:
+        if pessoa.nome and _nome_bate(pessoa.nome, titular_row):
+            return str(cliente_id)
+    # Last resort (live 2026-10-01, deal 871: a buyer whose ONLY CPF source
+    # is the bank form itself could never be matched by CPF): a UNIQUE
+    # strict name match against the other parties of the same atendimento.
+    # Two compatible parties ⇒ ambiguous ⇒ unmatched, exactly as before.
+    if pessoa.nome and linhas:
+        candidatos = [
+            str(r["id"]) for r in linhas
+            if str(r["id"]) not in ja_atribuidos and _nome_bate(pessoa.nome, r)
+        ]
+        if len(candidatos) == 1:
+            return candidatos[0]
     return None
+
+
+def _nome_bate(nome: str, row: dict) -> bool:
+    return any(
+        n and nomes_compativeis(nome, n)
+        for n in (row.get("nome_oficial"), row.get("nome_completo"), row.get("nome"))
+    )
 
 
 def _aplicar_endereco_ficha(
@@ -309,7 +323,7 @@ async def aplicar_leitura(
         for pessoa in lida.pessoas:
             destino = _resolver_destino(
                 pessoa, cliente_id=cliente_id, mapa_cpf=mapa_cpf,
-                titular_row=titular_row, ja_atribuidos=ja_atribuidos,
+                titular_row=titular_row, ja_atribuidos=ja_atribuidos, linhas=linhas,
             )
             destinos.append(destino)
             if destino is None:

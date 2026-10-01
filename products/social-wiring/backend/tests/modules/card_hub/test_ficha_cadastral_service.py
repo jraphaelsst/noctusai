@@ -331,3 +331,51 @@ class TestFichaLidaAntesDaIdentidade:
         await _extrair(scoped, storage, cid, did, lida)
         self._gravar_cpf(scoped, cid, CPF_PROPONENTE)
         assert _documento(scoped, did)["extracao_status"] != "pendente"
+
+
+class TestNomeUnicoOutraParte:
+    """Live 2026-10-01 (deal 871): a party whose ONLY CPF source is the bank
+    form itself could never be matched by CPF. A UNIQUE strict name match
+    against the other parties of the same atendimento now applies it; two
+    compatible parties stay unmatched (ambiguous)."""
+
+    async def _cenario(self, scoped, outros_nomes):
+        ids = [str(uuid4()) for _ in outros_nomes]
+        cid, did, storage = await _setup(
+            scoped, cliente={"nome": "Fulano", "cpf": None},
+            outros=[cliente_row(i, nome=n, nome_oficial=n, cpf=None, profissao=None)
+                    for i, n in zip(ids, outros_nomes)],
+        )
+        atd = str(uuid4())
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": i, "papel": "comprador", "ordem": k}
+            for k, i in enumerate(ids)
+        ])
+        lida = FichaCadastralLida(
+            pessoas=(
+                _pessoa(papel="proponente", nome="FULANO", cpf=CPF_PROPONENTE),
+                _pessoa(papel="conjuge", nome="BELTRANA MARIA DA SILVA", cpf=CPF_CONJUGE,
+                        profissao="médica"),
+            ),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        return did, ids
+
+    @pytest.mark.asyncio
+    async def test_unique_name_match_applies(self, client, scoped):
+        did, (outro,) = await self._cenario(scoped, ["Beltrana Maria da Silva"])
+        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        assert pessoas[1]["cliente_id_aplicado"] == outro
+        assert _cliente(scoped, outro)["profissao"] == "médica"
+
+    @pytest.mark.asyncio
+    async def test_ambiguous_name_stays_unmatched(self, client, scoped):
+        did, _ = await self._cenario(
+            scoped, ["Beltrana Maria da Silva", "Beltrana Maria da Silva"],
+        )
+        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        assert pessoas[1]["cliente_id_aplicado"] is None
+
