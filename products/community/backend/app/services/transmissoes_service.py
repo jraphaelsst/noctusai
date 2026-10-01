@@ -12,7 +12,8 @@ per-destino outcomes without inventing a second send path.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -20,6 +21,14 @@ from noctusai_lib.domain.jobs import JobRepository, Worker, make_job_repository
 from noctusai_lib.domain.jobs.entity import Job
 from noctusai_lib.integrations.rate_limit import acquire_async
 from noctusai_lib.integrations.whatsapp.types import WhatsAppClient
+
+logger = logging.getLogger(__name__)
+
+# A scheduled broadcast whose WhatsApp stayed disconnected this long past
+# its `agendada_para` is marked "falhou" (a stale announcement sent days
+# late is worse than a visible failure); younger ones wait for a reconnect.
+AGENDADA_EXPIRA_APOS = timedelta(hours=24)
+_NAO_CONECTADO_ERRO = "WhatsApp não conectado no horário agendado (expirou após 24h)."
 
 _TRANSMISSOES = "transmissoes"
 _DESTINOS = "transmissao_destinos"
@@ -31,18 +40,20 @@ _EDITABLE_ESTADOS = ("rascunho", "agendada")
 _EDIT_BLOCKED_DETAIL = "Só é possível editar uma transmissão em rascunho."
 _DELETE_BLOCKED_DETAIL = "Só é possível excluir uma transmissão em rascunho."
 
-# NOC-REMEDIATE[whatsapp-broadcast-worker]: `community.jobs` (migration
-# 009) ships the durable Postgres-backed queue shape (retry/lease/
-# dedupe_key + the four RPCs) for when this product gains a real
-# standing worker process. Until then there is no scheduler to run one
-# against (same gap the contract already flags for the retention job),
-# so `enviar` drains its own just-enqueued jobs INLINE within the same
-# request via a process-lifetime in-memory `FakeJobRepository` — durable
-# enough to protect a double-click within one running process (the
-# `dedupe_key` still no-ops a duplicate enqueue), but NOT across a
-# process restart. Swap to `make_job_repository(use_fake=False,
-# supabase_client=<admin client>, schema_name="community",
-# table_name="jobs")` once a persistent worker is wired. — 2026-09-17
+# NOC-REMEDIATE[whatsapp-broadcast-worker]: PARTIALLY CLOSED 2026-10-01.
+# SCHEDULED sends are now driven by the standing scheduler job
+# `community_transmissoes_agendadas` (`app/scheduler.py` ->
+# `executar_agendadas` below), claimed atomically (agendada -> enviando)
+# and sent through this same `enviar`. WHAT REMAINS: `community.jobs`
+# (migration 009) ships the durable Postgres-backed queue (retry/lease/
+# dedupe_key + the four RPCs) but `enviar` still drains its own
+# just-enqueued jobs INLINE via a process-lifetime in-memory
+# `FakeJobRepository` — the `dedupe_key` protects a double-enqueue within
+# one process only, NOT across a restart (cross-process double-send is
+# prevented by the atomic claim, not by this repo). Swap to
+# `make_job_repository(use_fake=False, supabase_client=<admin client>,
+# schema_name="community", table_name="jobs")` + a worker tick to make
+# per-destino retry durable. — 2026-09-17
 _inline_jobs_repo: JobRepository = make_job_repository(use_fake=True)
 
 
@@ -283,3 +294,96 @@ class TransmissoesService:
         }).eq("org_id", self._org_id).eq(
             "transmissao_id", job.payload["transmissao_id"],
         ).eq("grupo_id", grupo_id).execute()
+
+
+    # ── scheduled sends (scheduler tick) ────────────────────────────────
+
+    async def executar_agendadas(
+        self, *, waha_client: WhatsAppClient | None, now: datetime | None = None,
+        jobs_repo: JobRepository | None = None,
+    ) -> dict:
+        """Send every due "agendada" transmissão through `enviar`.
+
+        Each row is CLAIMED first with a conditional update
+        (`estado='agendada'` -> `'enviando'`); only the tick whose update
+        returns the row proceeds, so overlapping ticks/instances never
+        double-send. `waha_client=None` (WhatsApp not connected) never
+        fake-sends: rows stay "agendada" (one WARNING per tick) until
+        `AGENDADA_EXPIRA_APOS` past their time, then become "falhou".
+        """
+        now = now or datetime.now(timezone.utc)
+        rows = (
+            self._client.table(_TRANSMISSOES).select("*")
+            .eq("org_id", self._org_id).eq("estado", "agendada")
+            .execute().data or []
+        )
+        vencidas = [r for r in rows if _due(r.get("agendada_para"), now)]
+        resumo = {"vencidas": len(vencidas), "enviadas": 0, "falhas": 0, "adiadas": 0}
+        if not vencidas:
+            return resumo
+
+        if waha_client is None:
+            logger.warning(
+                "transmissoes agendadas: org %s tem %d vencida(s) mas o WhatsApp não está "
+                "conectado — mantidas 'agendada'", self._org_id, len(vencidas),
+            )
+            for row in vencidas:
+                agendada = _parse_dt(row["agendada_para"])
+                if agendada is not None and now - agendada > AGENDADA_EXPIRA_APOS:
+                    if self._claim(row["id"], "falhou"):
+                        logger.error("transmissao %s expirou sem WhatsApp conectado", row["id"])
+                        self._client.table(_DESTINOS).update({
+                            "estado": "falhou", "erro": _NAO_CONECTADO_ERRO,
+                        }).eq("org_id", self._org_id).eq("transmissao_id", row["id"]).eq(
+                            "estado", "pendente",
+                        ).execute()
+                        resumo["falhas"] += 1
+                        continue
+                resumo["adiadas"] += 1
+            return resumo
+
+        for row in vencidas:
+            if not self._claim(row["id"], "enviando"):
+                continue  # another tick/instance owns it
+            try:
+                await self.enviar(
+                    transmissao_id=row["id"], waha_client=waha_client, jobs_repo=jobs_repo,
+                )
+            except Exception as exc:  # noqa: BLE001 — logged + row marked, tick continues
+                logger.error("transmissao %s: envio agendado falhou: %s", row["id"], exc, exc_info=True)
+                self._client.table(_TRANSMISSOES).update({"estado": "falhou"}).eq(
+                    "org_id", self._org_id,
+                ).eq("id", row["id"]).execute()
+                resumo["falhas"] += 1
+                continue
+            final = (
+                self._client.table(_TRANSMISSOES).select("estado")
+                .eq("org_id", self._org_id).eq("id", row["id"])
+                .maybe_single().execute().data
+            ) or {}
+            resumo["enviadas" if final.get("estado") == "enviada" else "falhas"] += 1
+        return resumo
+
+    def _claim(self, transmissao_id: str, novo_estado: str) -> bool:
+        """Atomic conditional update `agendada` -> `novo_estado`; True iff won."""
+        result = (
+            self._client.table(_TRANSMISSOES).update({"estado": novo_estado})
+            .eq("org_id", self._org_id).eq("id", str(transmissao_id))
+            .eq("estado", "agendada").execute()
+        )
+        return bool(result.data)
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _due(value: Any, now: datetime) -> bool:
+    dt = _parse_dt(value)
+    return dt is not None and dt <= now
