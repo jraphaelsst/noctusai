@@ -104,3 +104,26 @@ def test_job_delegates_and_swallows_into_log():
             raise RuntimeError("db down")
 
     assert asyncio.run(transmissoes_agendadas_job(_Boom())) == {"erro": "db down"}
+
+
+class TestEnviarManualClaim:
+    def test_lost_claim_409_and_no_send(self):
+        for estado in ("enviando", "enviada"):
+            svc, mock = _svc(NOW, estado=estado)
+            client = _Counting()
+            try:
+                asyncio.run(svc.enviar(transmissao_id="t1", waha_client=client))
+                assert False, "expected 409"
+            except Exception as exc:
+                assert exc.status_code == 409
+                assert exc.code == "TRANSMISSAO_JA_ENVIADA"
+                assert "já" in exc.detail
+            assert client.sent == 0
+            assert _estado(mock) == estado
+
+    def test_rascunho_claims_and_sends_once(self):
+        svc, mock = _svc(NOW, estado="rascunho")
+        client = _Counting()
+        repo = make_job_repository(use_fake=True)
+        asyncio.run(svc.enviar(transmissao_id="t1", waha_client=client, jobs_repo=repo))
+        assert client.sent == 1 and _estado(mock) == "enviada"

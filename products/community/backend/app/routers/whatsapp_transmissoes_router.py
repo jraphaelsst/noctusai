@@ -100,7 +100,7 @@ async def enviar_transmissao(
     try:
         result = await service.enviar(transmissao_id=transmissao_id, waha_client=waha_client)
     except TransmissoesServiceError as exc:
-        raise http_error(exc.status_code, exc.detail) from exc
+        raise http_error(exc.status_code, exc.detail, code=exc.code) from exc
     return TransmissaoEnviarResponse(**result)
 
 

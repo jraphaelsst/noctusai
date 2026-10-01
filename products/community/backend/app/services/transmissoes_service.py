@@ -62,11 +62,16 @@ def get_jobs_repo() -> JobRepository:
     return _inline_jobs_repo
 
 
+JA_ENVIADA_DETAIL = "Esta transmissão já está sendo enviada ou já foi enviada."
+JA_ENVIADA_CODE = "TRANSMISSAO_JA_ENVIADA"
+
+
 class TransmissoesServiceError(Exception):
-    def __init__(self, detail: str, *, status_code: int = 409) -> None:
+    def __init__(self, detail: str, *, status_code: int = 409, code: str | None = None) -> None:
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+        self.code = code
 
 
 class TransmissoesService:
@@ -197,8 +202,12 @@ class TransmissoesService:
 
     async def enviar(
         self, *, transmissao_id: str, waha_client: WhatsAppClient,
-        jobs_repo: JobRepository | None = None,
+        jobs_repo: JobRepository | None = None, claimed: bool = False,
     ) -> dict:
+        """`claimed=True` = the caller (scheduler) already won the atomic
+        agendada -> enviando claim; otherwise this claims rascunho/agendada
+        -> enviando itself and a lost claim raises 409 `TRANSMISSAO_JA_ENVIADA`.
+        """
         jobs_repo = jobs_repo or get_jobs_repo()
         transmissao = (
             self._client.table(_TRANSMISSOES).select("*")
@@ -220,9 +229,15 @@ class TransmissoesService:
                 "Selecione ao menos um grupo de destino antes de enviar.", status_code=422,
             )
 
-        self._client.table(_TRANSMISSOES).update({"estado": "enviando"}).eq(
-            "org_id", self._org_id,
-        ).eq("id", str(transmissao_id)).execute()
+        if not claimed:
+            # Atomic claim — only one concurrent sender (manual or scheduled) wins.
+            for origem in ("rascunho", "agendada"):
+                if self._claim(transmissao_id, "enviando", origem=origem):
+                    break
+            else:
+                raise TransmissoesServiceError(
+                    JA_ENVIADA_DETAIL, status_code=409, code=JA_ENVIADA_CODE,
+                )
 
         for destino in destinos:
             await jobs_repo.enqueue(
@@ -348,6 +363,7 @@ class TransmissoesService:
             try:
                 await self.enviar(
                     transmissao_id=row["id"], waha_client=waha_client, jobs_repo=jobs_repo,
+                    claimed=True,
                 )
             except Exception as exc:  # noqa: BLE001 — logged + row marked, tick continues
                 logger.error("transmissao %s: envio agendado falhou: %s", row["id"], exc, exc_info=True)
@@ -364,12 +380,12 @@ class TransmissoesService:
             resumo["enviadas" if final.get("estado") == "enviada" else "falhas"] += 1
         return resumo
 
-    def _claim(self, transmissao_id: str, novo_estado: str) -> bool:
-        """Atomic conditional update `agendada` -> `novo_estado`; True iff won."""
+    def _claim(self, transmissao_id: str, novo_estado: str, *, origem: str = "agendada") -> bool:
+        """Atomic conditional update `origem` -> `novo_estado`; True iff won."""
         result = (
             self._client.table(_TRANSMISSOES).update({"estado": novo_estado})
             .eq("org_id", self._org_id).eq("id", str(transmissao_id))
-            .eq("estado", "agendada").execute()
+            .eq("estado", origem).execute()
         )
         return bool(result.data)
 

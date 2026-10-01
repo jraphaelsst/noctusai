@@ -187,9 +187,13 @@ class TestEnviar:
         waha = FakeWahaClient()
         jobs_repo = make_job_repository(use_fake=True)
         asyncio.run(svc.enviar(transmissao_id="t1", waha_client=waha, jobs_repo=jobs_repo))
-        asyncio.run(svc.enviar(transmissao_id="t1", waha_client=waha, jobs_repo=jobs_repo))
-        # The SAME jobs_repo (shared dedupe_key) means the second enviar's
-        # enqueue is a no-op for this destino — only one message sent.
+        # The atomic claim now refuses the re-send outright (409); the
+        # shared dedupe_key stays as the second line of defence.
+        try:
+            asyncio.run(svc.enviar(transmissao_id="t1", waha_client=waha, jobs_repo=jobs_repo))
+            assert False, "expected 409"
+        except TransmissoesServiceError as exc:
+            assert exc.status_code == 409
         assert len(waha.sent_messages) == 1
 
     def test_sem_destinos_422_and_estado_untouched(self):
