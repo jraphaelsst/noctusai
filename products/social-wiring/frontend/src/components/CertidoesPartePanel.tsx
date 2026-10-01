@@ -785,18 +785,6 @@ export function CertidoesPartePanel({
   );
 }
 
-/** `YYYY-MM-DD` for the browser's local date — the office fills a dozen
- * rows per person in one sitting; prefilling "Emitida em" with today means
- * confirming a row that already has the right date takes zero clicks
- * instead of re-picking the same date twelve times. Still fully editable —
- * only the INITIAL value changes, never a forced value. */
-function hojeIso(): string {
-  const d = new Date();
-  const mes = String(d.getMonth() + 1).padStart(2, "0");
-  const dia = String(d.getDate()).padStart(2, "0");
-  return `${d.getFullYear()}-${mes}-${dia}`;
-}
-
 function ResultadoEditForm({
   resultado,
   saving,
@@ -809,10 +797,10 @@ function ResultadoEditForm({
   onConfirm: (patch: ResultadoPatchInput) => void;
 }) {
   const [numero, setNumero] = useState(resultado.numero ?? "");
-  // A never-yet-set resultado defaults to TODAY rather than blank — see
-  // `hojeIso`'s own docstring. One that already carries a date (an
-  // automated hit, or a previous manual save) keeps its own value.
-  const [emitidaEm, setEmitidaEm] = useState(resultado.emitida_em ?? hojeIso());
+  // Never default an empty emissão date to today: a blank date is the honest
+  // state and defaulting it silently stamped fresh dates onto old certidões
+  // (atendimento-partes-imoveis spec §3.1). The operator types the real one.
+  const [emitidaEm, setEmitidaEm] = useState(resultado.emitida_em ?? "");
   const [validadeAte, setValidadeAte] = useState(resultado.validade_ate ?? "");
   const [valor, setValor] = useState<ResultadoValor | "">(
     (resultado.resultado as ResultadoValor) || "",

@@ -315,26 +315,21 @@ describe("CertidoesPartePanel — edit + confirm", () => {
     );
   });
 
-  it("prefills a never-yet-set 'emitida em' with today, so confirming it untouched still stamps a date", async () => {
+  it("leaves a never-yet-set 'emitida em' blank (never defaults to today) and an untouched confirm sends no date", async () => {
     mockUseResultadosPorParte.mockReturnValue(
       queryStub({ data: [makeResultado({ emitida_em: null })] }),
     );
     const { getByTestId, getByLabelText, fireEvent } = await renderPanel();
     fireEvent.click(getByLabelText("Editar Certidão TJSP"));
-    // Local date, matching the component's own `hojeIso()` — NOT
-    // `toISOString()`, which is UTC and can disagree with the local date
-    // near midnight in any timezone west of UTC.
-    const agora = new Date();
-    const hoje = `${agora.getFullYear()}-${String(agora.getMonth() + 1).padStart(2, "0")}-${String(agora.getDate()).padStart(2, "0")}`;
-    expect((getByLabelText("Emitida em") as HTMLInputElement).value).toBe(hoje);
+    expect((getByLabelText("Emitida em") as HTMLInputElement).value).toBe("");
     fireEvent.submit(getByTestId("certidoes-parte-edit-form"));
     expect(mockConfirmar).toHaveBeenCalledWith(
-      { resultadoId: "res-1", patch: { emitida_em: hoje } },
+      { resultadoId: "res-1", patch: {} },
       expect.objectContaining({ onSuccess: expect.any(Function) }),
     );
   });
 
-  it("still lets the prefilled 'emitida em' be changed to a different date", async () => {
+  it("lets a blank 'emitida em' be filled in to a different date", async () => {
     mockUseResultadosPorParte.mockReturnValue(
       queryStub({ data: [makeResultado({ emitida_em: null })] }),
     );
