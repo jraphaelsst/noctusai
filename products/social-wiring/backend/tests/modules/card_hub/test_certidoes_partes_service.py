@@ -10,12 +10,13 @@ person across atendimentos; the exact §1.1 field names; and the three writes
 from __future__ import annotations
 
 from datetime import date, timedelta
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from noctusai_lib.primitives.exceptions import AppException
 
 from app.modules.card_hub import certidoes_partes_service as svc
+from app.modules.card_hub import partes_service
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.card_hub.services import AmbiguousAtendimento
 from app.modules.certidoes.registry import CERTIDOES_CONFIG
@@ -181,7 +182,7 @@ class TestMontar:
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
             "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_nome", "origem",
-            "confirmado", "analise_ia", "erro_mensagem",
+            "confirmado", "analise_ia", "erro_mensagem", "segunda_via",
         }
 
     def test_titular_e_comp_1_e_partes_numeradas_por_lado(self, scoped):
@@ -219,7 +220,9 @@ class TestMontar:
             _parte_pj(aid, emp["id"], ordem=5),
         ])
 
-        partes = svc.carregar_partes(scoped, ORG_ID, aid)
+        _alvo, partes = partes_service.listar_partes(
+            scoped, ORG_ID, UUID(cid), atendimento_id=UUID(aid)
+        )
 
         assert [(p["rotulo"], p["tipo_pessoa"]) for p in partes] == [
             ("COMP 1", "PF"), ("VEND 1", "PF"), ("VEND 2", "PJ"),
@@ -229,6 +232,19 @@ class TestMontar:
             emp["id"], None, CNPJ, "Vende LTDA",
         )
         assert svc._chave(pj) == f"e:{emp['id']}" and svc._kind(pj) == "empresa"
+
+    def test_celula_sinaliza_segunda_via_pela_marca_do_api_response(self):
+        from app.modules.certidoes.service import MARCA_SEGUNDA_VIA
+
+        base = {"id": "r1", "status": "sucesso", "emitida_em": "2026-07-01", "resultado": "negativa"}
+        com = svc.montar_celula(
+            "cnd_federal", {**base, "api_response": {MARCA_SEGUNDA_VIA: {"preferencia_emissao": "2via"}}},
+            HOJE, 30,
+        )
+        sem = svc.montar_celula("cnd_federal", {**base, "api_response": {"code": 200}}, HOJE, 30)
+        assert com["segunda_via"] is True and com["stale_para_contrato"] is True
+        assert sem["segunda_via"] is False
+        assert svc.montar_celula("cnd_federal", None, HOJE, 30)["segunda_via"] is False
 
     def test_na_pf_nao_tem_fgts_e_pj_nao_tem_serasa(self):
         linhas = svc.montar_linhas.__globals__["MATRIZ_LINHAS"]

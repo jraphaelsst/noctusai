@@ -25,11 +25,8 @@ billed InfoSimples request per tipo, linked to the party), a re-emission is
 a NEW consulta for one tipo, "ensure cell" is a manual placeholder. History
 stays; selection by `emitida_em` is what makes the new one win when it lands.
 
-The party list is read here (`carregar_partes`) rather than imported from
-BE-partes' `partes_service.listar_partes`: Wave B slices are file-disjoint and
-that module lands in parallel. The two return the same ordering/labels
-(CONTRACT §2.1) — Wave C may swap this reader for that one with no change to
-`montar`, which takes the resolved list as an argument.
+The party list is `partes_service.listar_partes` — the ONE party reader
+(CONTRACT §2.1); this module only adds the derived `EMP n` columns on top.
 """
 from __future__ import annotations
 
@@ -41,6 +38,7 @@ from uuid import UUID
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 
+from app.modules.card_hub import partes_service
 from app.modules.card_hub.certidoes_matriz_service import (
     _linha_customizada,
     _linha_fixa,
@@ -54,6 +52,7 @@ from app.modules.card_hub.services import (
     resolve_atendimento_id_incluindo_partes,
 )
 from app.modules.certidoes import service as certidoes_svc
+from app.modules.certidoes.service import MARCA_SEGUNDA_VIA
 from app.modules.certidoes.matriz_custom_rows import (
     linhas_customizadas_ativas,
 )
@@ -73,7 +72,6 @@ logger = logging.getLogger(__name__)
 ATENDIMENTOS = "atendimentos"
 PARTES = "atendimento_partes"
 CLIENTES = "clientes"
-EMPRESAS = "empresas"
 CONSULTAS = certidoes_svc.CONSULTAS
 RESULTADOS = certidoes_svc.RESULTADOS
 
@@ -155,99 +153,6 @@ def _resolver_atendimento(
 def _documento(value: Optional[str]) -> Optional[str]:
     digits = only_digits(value or "")
     return digits or None
-
-
-def carregar_partes(client: Any, org_id: UUID, atendimento_id: str) -> list[dict]:
-    """Every party of one atendimento, both lados, titular first — shaped like
-    CONTRACT §2.1's `ParteItem` minus the nested `cliente`/`empresa` objects
-    this tab never renders. Labels are numbered per lado, PF and PJ sharing
-    the numbering; the titular is `COMP 1`."""
-    atendimento = (
-        _t(client, ATENDIMENTOS)
-        .select("id, cliente_id")
-        .eq("org_id", str(org_id))
-        .eq("id", atendimento_id)
-        .limit(1)
-        .execute()
-    ).data or []
-    if not atendimento:
-        return []
-    titular_id = str(atendimento[0]["cliente_id"])
-
-    # postgrest-unbounded-ok: one atendimento carries a handful of parties.
-    rows = (
-        _t(client, PARTES)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("atendimento_id", atendimento_id)
-        .execute()
-    ).data or []
-    rows = sorted(rows, key=lambda r: (r.get("ordem") or 0, str(r.get("created_at") or "")))
-
-    cliente_ids = {titular_id} | {str(r["cliente_id"]) for r in rows if r.get("cliente_id")}
-    empresa_ids = {str(r["empresa_id"]) for r in rows if r.get("empresa_id")}
-    clientes = {
-        str(r["id"]): r
-        for r in table_reads.in_batched_rows(
-            client, CLIENTES, org_id, "id", sorted(cliente_ids),
-            select="id, nome, nome_oficial, cpf",
-        )
-    }
-    empresas = {
-        str(r["id"]): r
-        for r in table_reads.in_batched_rows(
-            client, EMPRESAS, org_id, "id", sorted(empresa_ids),
-            select="id, razao_social, nome_fantasia, cnpj",
-        )
-    }
-
-    def pessoa(cid: str, **base) -> dict:
-        row = clientes.get(cid, {})
-        return {
-            **base,
-            "tipo_pessoa": "PF",
-            "cliente_id": cid,
-            "empresa_id": None,
-            "nome": row.get("nome_oficial") or row.get("nome") or "",
-            "documento": _documento(row.get("cpf")),
-        }
-
-    def empresa(eid: str, **base) -> dict:
-        row = empresas.get(eid, {})
-        return {
-            **base,
-            "tipo_pessoa": "PJ",
-            "cliente_id": None,
-            "empresa_id": eid,
-            "nome": row.get("razao_social") or row.get("nome_fantasia") or "",
-            "documento": _documento(row.get("cnpj")),
-        }
-
-    por_lado: dict[str, list[dict]] = {
-        "comprador": [pessoa(
-            titular_id, parte_id=None, titular=True, lado="comprador",
-            papel="comprador",
-        )],
-        "vendedor": [],
-    }
-    for r in rows:
-        lado = r.get("lado") or "comprador"
-        base = {
-            "parte_id": str(r["id"]), "titular": False, "lado": lado,
-            "papel": r.get("papel") or "",
-        }
-        if r.get("empresa_id"):
-            item = empresa(str(r["empresa_id"]), **base)
-        else:
-            item = pessoa(str(r["cliente_id"]), **base)
-        por_lado.setdefault(lado, []).append(item)
-
-    out: list[dict] = []
-    for lado in ("comprador", "vendedor"):
-        prefixo = "COMP" if lado == "comprador" else "VEND"
-        for n, item in enumerate(por_lado.get(lado, []), start=1):
-            out.append({**item, "rotulo": f"{prefixo} {n}"})
-    return out
 
 
 def _empresas_derivadas(
@@ -333,6 +238,7 @@ def _na(tipo: Optional[str]) -> dict:
         "idade_dias": None, "stale_para_contrato": False, "arquivo_url": None,
         "tem_arquivo": False, "arquivo_nome": None, "origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
+        "segunda_via": False,
     }
 
 
@@ -377,7 +283,16 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "confirmado": row.get("confirmado_em") is not None,
         "analise_ia": row.get("analise_ia"),
         "erro_mensagem": row.get("erro_mensagem"),
+        "segunda_via": _e_segunda_via(row),
     }
+
+
+def _e_segunda_via(row: dict) -> bool:
+    """The certidão is a 2ª via (the Receita refused a new one): its
+    `emitida_em` is the ORIGINAL emission date, which is why it may read as
+    stale. Read off the marker `certidoes.service` stamps into `api_response`."""
+    resposta = row.get("api_response")
+    return isinstance(resposta, dict) and bool(resposta.get(MARCA_SEGUNDA_VIA))
 
 
 def _aplicavel(linha: dict, parte: dict) -> bool:
@@ -437,7 +352,9 @@ def _vazio(hoje: date) -> dict:
 def _todas_as_partes(
     client: Any, org_id: UUID, cliente_id: UUID, atendimento_id: str
 ) -> list[dict]:
-    partes = carregar_partes(client, org_id, atendimento_id)
+    _alvo, partes = partes_service.listar_partes(
+        client, org_id, cliente_id, atendimento_id=UUID(str(atendimento_id))
+    )
     return partes + _empresas_derivadas(client, org_id, cliente_id, partes)
 
 
@@ -788,7 +705,6 @@ def garantir_celula(
 
 
 __all__ = [
-    "carregar_partes",
     "garantir_celula",
     "indexar_vencedores",
     "max_dias",

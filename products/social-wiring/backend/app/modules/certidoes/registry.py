@@ -55,6 +55,11 @@ CERTIDOES_CONFIG = [
         "params_fn": "cnd_federal",
         "parse_fn": "padrao",
         "response_format": "pdf",
+        # Holders of a "positiva com efeitos de negativa" cannot get a NEW
+        # certidão from the PGFN portal (InfoSimples `receita-federal/pgfn`
+        # docs): a source-side refusal of `preferencia_emissao=nova` is retried
+        # once as `2via` (`service._precisa_segunda_via`).
+        "segunda_via_fallback": True,
     },
     {
         "tipo": "trf3_sp",

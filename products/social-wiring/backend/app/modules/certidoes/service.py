@@ -158,6 +158,55 @@ def in_batches(items: list[str], size: int = 200):
 # --------------- Core Processing ---------------
 
 
+#: InfoSimples' own failure range for a processed-but-unsuccessful request
+#: (docs: `elif response_json['code'] in range(600, 799)`). 612 is excluded by
+#: the caller — "no data at source" is a valid nada-consta, never a failure.
+_FALHA_DA_ORIGEM = range(600, 799)
+
+#: Marker stored in `api_response` when the certidão came from the 2ª-via retry.
+MARCA_SEGUNDA_VIA = "noctus_segunda_via"
+NOTA_SEGUNDA_VIA = (
+    "2ª via — data de emissão original: a Receita não emite certidão nova "
+    "para quem já tem uma positiva com efeitos de negativa em vigor."
+)
+
+
+def _precisa_segunda_via(config: dict, params: dict, api_code: Any) -> bool:
+    """The `nova` emission was refused at the source for a tipo that opts into
+    the 2ª-via fallback.
+
+    InfoSimples documents the cause (a holder of a still-valid "positiva com
+    efeitos de negativa" cannot get a new certidão from the portal) but no
+    dedicated code or message for it, so the signal is the documented failure
+    range itself — scoped to ONE endpoint (`segunda_via_fallback`), ONE
+    preference (`nova`), and taken at most once per fetch. Auth/param errors
+    (4xx), 612 (nada consta) and exceptions never trigger it.
+    """
+    return bool(
+        config.get("segunda_via_fallback")
+        and params.get("preferencia_emissao") == "nova"
+        and isinstance(api_code, int)
+        and api_code in _FALHA_DA_ORIGEM
+        and api_code != 612
+    )
+
+
+def _api_response_marcada(result: dict) -> Optional[dict]:
+    """The raw response, stamped with `MARCA_SEGUNDA_VIA` when it is a 2ª via —
+    the machine-readable twin of the visible note (read by the party cell)."""
+    raw = result.get("raw_response")
+    if raw is None or not result.get("segunda_via"):
+        return raw
+    return {**raw, MARCA_SEGUNDA_VIA: {"preferencia_emissao": "2via"}}
+
+
+def _com_nota_segunda_via(result: dict, analise: Optional[str]) -> Optional[str]:
+    """Prefix the visible note when the document is a 2ª via."""
+    if not result.get("segunda_via"):
+        return analise
+    return f"{NOTA_SEGUNDA_VIA} {analise}" if analise else NOTA_SEGUNDA_VIA
+
+
 async def _fetch_certidao(
     config: dict,
     consulta: dict,
@@ -177,6 +226,7 @@ async def _fetch_certidao(
 
     last_error = "Erro desconhecido"
     last_raw = None
+    segunda_via = False
 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -197,6 +247,7 @@ async def _fetch_certidao(
                     "file_url": site_receipt,
                     "raw_response": data,
                     "error": None,
+                    "segunda_via": segunda_via,
                 }
 
             # Code 612 = "no data at source" — for certidões this means
@@ -214,6 +265,7 @@ async def _fetch_certidao(
                     "raw_response": data,
                     "error": None,
                     "nada_consta": detail,
+                    "segunda_via": segunda_via,
                 }
 
             # Extract error — prefer specific fields (errors[], code_message)
@@ -238,6 +290,17 @@ async def _fetch_certidao(
             # Don't retry on definitive API errors (bad params, auth, etc.)
             if isinstance(api_code, int) and 400 <= api_code < 500:
                 break
+
+            # `nova` refused at the source → ask for the 2ª via, once, at
+            # once (no backoff: it is a different request, not a retry).
+            if _precisa_segunda_via(config, params, api_code):
+                logger.warning(
+                    "InfoSimples %s: emissão nova recusada na origem (code %s: %s); "
+                    "tentando 2ª via", config["tipo"], api_code, last_error,
+                )
+                params = {**params, "preferencia_emissao": "2via"}
+                segunda_via = True
+                continue
 
             logger.warning(
                 "InfoSimples %s attempt %d/%d failed: %s",
@@ -265,6 +328,7 @@ async def _fetch_certidao(
         "file_url": None,
         "raw_response": last_raw,
         "error": last_error,
+        "segunda_via": segunda_via,
     }
 
 
@@ -1740,8 +1804,8 @@ async def _process_single_certidao(
     if result.get("nada_consta"):
         update_data = {
             "status": "sucesso",
-            "analise_ia": result["nada_consta"],
-            "api_response": result["raw_response"],
+            "analise_ia": _com_nota_segunda_via(result, result["nada_consta"]),
+            "api_response": _api_response_marcada(result),
             "erro_mensagem": None,
             "texto_extraido": extracted_doc.texto_extraido,
             "formatacao": ranges_to_json(extracted_doc.formatacao),
@@ -1782,8 +1846,8 @@ async def _process_single_certidao(
         "status": "sucesso",
         "arquivo_url": arquivo_url,
         "arquivo_nome": f"{config['tipo']}.pdf",
-        "analise_ia": analise,
-        "api_response": result["raw_response"],
+        "analise_ia": _com_nota_segunda_via(result, analise),
+        "api_response": _api_response_marcada(result),
         "erro_mensagem": None,
         "texto_extraido": extracted_doc.texto_extraido,
         "formatacao": ranges_to_json(extracted_doc.formatacao),
