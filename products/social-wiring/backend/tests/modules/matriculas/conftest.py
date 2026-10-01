@@ -280,6 +280,7 @@ def extracao_row(
     substituida_por: str | None = None,
     possui_marcacao_bruta: bool = False,
     ruido: list | None = None,
+    formatacao: list | None = None,
 ) -> dict:
     return {
         "id": id_ or str(uuid4()),
@@ -296,6 +297,9 @@ def extracao_row(
         "arquivo_origem_id": arquivo_origem_id,
         "substituida_por": substituida_por,
         "possui_marcacao_bruta": possui_marcacao_bruta,
+        # `None` = never run through `parse_markup` (a legacy row); a list
+        # (even empty) = parsed — see `preenchimento_service`'s docstring.
+        "formatacao": formatacao,
         # Migration 136 — page furniture as offsets into `texto`. `[]` by
         # default (every existing test's fixture stays untouched); a test
         # exercising `_citacao`'s subtraction passes its own spans.

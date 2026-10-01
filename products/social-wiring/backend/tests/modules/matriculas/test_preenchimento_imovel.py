@@ -194,6 +194,27 @@ class TestFillFromATranscription:
         assert resumo["status"] == "marcacao_bruta"
         assert _dados(scoped) == {}
 
+    @pytest.mark.asyncio
+    async def test_a_parsed_text_with_one_literal_marker_is_still_read(self, client, scoped):
+        """Live 2026-10-01: a PARSED transcription (formatacao set) that kept
+        one malformed `**` literal refused the whole fill. Only never-parsed
+        legacy text is refused now; the número still lands."""
+        eid = str(uuid4())
+        seed(scoped, registry=[registry_row()], extracoes=[
+            extracao_row(eid, texto=TEXTO + "\nnota final **solta", possui_marcacao_bruta=True,
+                         formatacao=[])
+        ])
+        resumo = await preench.preencher_imovel(scoped, ORG_ID, eid)
+        assert resumo["status"] == "ok"
+        assert _dados(scoped)["numero_matricula"] == "45678"
+
+    def test_a_value_carrying_a_marker_is_never_applied(self):
+        resumo, conflitos = {}, []
+        preench._aplicar(resumo, conflitos, None, ORG_ID, CODIGO, "numero_registro_imoveis",
+                         "1º OFICIAL **DE REGISTRO", extracao_id="e1")
+        assert resumo["numero_registro_imoveis"] == "marcacao_no_valor"
+        assert conflitos == []
+
 
 class TestLinkLater:
     @pytest.mark.asyncio

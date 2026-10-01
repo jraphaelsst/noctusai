@@ -414,7 +414,12 @@ def aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     codigo = extracao.get("codigo")
     if not codigo:
         return {"status": "sem_imovel"}
-    if extracao.get("substituida_por") or extracao.get("possui_marcacao_bruta"):
+    # Same rule as `preenchimento_service`: only NEVER-parsed (legacy) text is
+    # untrustworthy; a parsed text with one literal marker is read, and the
+    # fill never applied a value carrying one.
+    if extracao.get("substituida_por") or (
+        extracao.get("possui_marcacao_bruta") and extracao.get("formatacao") is None
+    ):
         return {"status": "extracao_nao_confiavel"}
 
     eid = str(extracao["id"])

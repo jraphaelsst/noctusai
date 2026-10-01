@@ -28,9 +28,16 @@ WHEN IT RUNS
 It is idempotent: a second run over the same extraction finds every field
 already equal (`igual`) and writes nothing.
 
-🔴 TEXT WITH RAW MARKUP IS NOT READ. A `possui_marcacao_bruta` text would
-leak `**` into a cartório name or a creditor. The backfill cleans it first,
-then calls this.
+🔴 NEVER-PARSED TEXT IS NOT READ. A legacy row (`possui_marcacao_bruta`
+with no `formatacao` — `parse_markup` never ran on it) has markers baked in
+everywhere, hiding every line-start label; the backfill cleans it first,
+then calls this. A PARSED text that merely kept one malformed marker
+literal (`parse_markup`'s own contract — measured live 2026-10-01: a single
+mid-text stray `**` refused the WHOLE imóvel fill: no número, cartório,
+título or ônus) IS read; instead no individual VALUE carrying a marker is
+ever applied (`_tem_marcacao`), so a `**` can never reach a cartório name
+or a creditor — and the contract lint (`MARCACAO_NAO_CONVERTIDA`) still
+refuses any marker in quoted text.
 """
 from __future__ import annotations
 
@@ -42,6 +49,7 @@ from noctusai_lib.integrations.documents import (
     Instrumento,
     find_matricula,
     frase_titulo_aquisitivo,
+    has_raw_markup,
 )
 from noctusai_lib.integrations.documents.matricula_cabecalho import (
     find_cartorio,
@@ -190,6 +198,16 @@ def derivar_situacao_onus(
     return SITUACAO_MULTIPLA
 
 
+def _tem_marcacao(valor: Any) -> bool:
+    if isinstance(valor, str):
+        return has_raw_markup(valor)
+    if isinstance(valor, dict):
+        return any(_tem_marcacao(v) for v in valor.values())
+    if isinstance(valor, (list, tuple)):
+        return any(_tem_marcacao(v) for v in valor)
+    return False
+
+
 def _aplicar(
     resumo: dict,
     conflitos: list[dict],
@@ -204,7 +222,15 @@ def _aplicar(
     documento_id: Optional[Any] = None,
     confianca: Optional[str] = None,
 ) -> None:
-    """One field, isolated: a failure on one never stops the others."""
+    """One field, isolated: a failure on one never stops the others. A
+    value carrying a literal marker (`**`/`<u>`) is never applied."""
+    if _tem_marcacao(valor):
+        logger.warning(
+            "matricula %s: %s not applied to imovel %s — value carries a literal marker",
+            extracao_id, chave, codigo,
+        )
+        resumo[chave] = "marcacao_no_valor"
+        return
     try:
         r = campos_svc.aplicar(
             client,
@@ -248,7 +274,7 @@ def preencher_sincrono(
         return {"status": "sem_imovel"}, []
     if extracao.get("substituida_por"):
         return {"status": "substituida"}, []
-    if extracao.get("possui_marcacao_bruta"):
+    if extracao.get("possui_marcacao_bruta") and extracao.get("formatacao") is None:
         return {"status": "marcacao_bruta"}, []
 
     eid = str(extracao["id"])
