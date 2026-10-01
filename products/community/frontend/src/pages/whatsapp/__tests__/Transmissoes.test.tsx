@@ -20,6 +20,8 @@ vi.mock("@/lib/api", () => ({
   api: { get: mockGet, post: mockPost, put: vi.fn(), patch: vi.fn(), delete: mockDelete },
 }));
 
+const mockUseAuthStore = vi.fn(() => ({ user: null as unknown }));
+
 vi.mock("@noctusai/seed/infra", () => {
   const noop = () => {};
   const api = { get: noop, post: noop, patch: noop, delete: noop };
@@ -28,7 +30,7 @@ vi.mock("@noctusai/seed/infra", () => {
     coreApi: api,
     supabase: {},
     appConfig: {},
-    useAuthStore: () => ({ user: null }),
+    useAuthStore: () => mockUseAuthStore(),
     AuthProvider: ({ children }: { children?: unknown }) => children,
     NotificationBell: () => null,
     useNotificacoes: () => ({ data: [] }),
@@ -75,6 +77,9 @@ const TRANSMISSAO_ENVIADA = {
 
 function mockRoutes(overrides: Record<string, unknown> = {}) {
   mockGet.mockImplementation((path: string) => {
+    if (path === "/api/whatsapp/sessao") {
+      return Promise.resolve(overrides.sessao ?? { estado: "WORKING", sessao: "default" });
+    }
     if (path === "/api/whatsapp/transmissoes") {
       return Promise.resolve(overrides.transmissoes ?? { items: [TRANSMISSAO_RASCUNHO], total: 1 });
     }
@@ -87,6 +92,8 @@ function mockRoutes(overrides: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Every write here is admin-only — admin by default.
+  mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
   vi.stubGlobal("confirm", vi.fn(() => true));
 });
 
@@ -136,5 +143,32 @@ describe("Transmissoes — per-destino delivery table", () => {
     await waitFor(() => expect(screen.getByTestId("transmissao-destinos-tabela")).toBeInTheDocument());
     expect(screen.getByTestId("destino-row-d-1")).toHaveTextContent("Comunidade Oficial");
     expect(screen.getByTestId("destino-row-d-2")).toHaveTextContent("Grupo não encontrado");
+  });
+});
+
+describe("Transmissoes — honest WhatsApp state + admin-only writes", () => {
+  it("not configured: Enviar is disabled and the banner says why", async () => {
+    mockRoutes({ sessao: { estado: "NAO_CONFIGURADO", sessao: "" } });
+    const { default: Transmissoes } = await import("../Transmissoes");
+    renderPage(<Transmissoes />);
+
+    await waitFor(() => expect(screen.getByTestId("transmissoes-whatsapp-indisponivel")).toBeInTheDocument());
+    expect(screen.getByTestId("transmissoes-whatsapp-indisponivel")).toHaveTextContent("WhatsApp não conectado");
+    expect(screen.getByTestId("transmissao-enviar-t-1")).toBeDisabled();
+    fireEvent.click(screen.getByTestId("transmissao-enviar-t-1"));
+    expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it("moderador: Nova / Editar / Enviar / Excluir are absent", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "moderador" } } });
+    mockRoutes();
+    const { default: Transmissoes } = await import("../Transmissoes");
+    renderPage(<Transmissoes />);
+
+    await waitFor(() => expect(screen.getByTestId("transmissao-row-t-1")).toBeInTheDocument());
+    expect(screen.queryByTestId("transmissoes-nova")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("transmissao-editar-t-1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("transmissao-enviar-t-1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("transmissao-excluir-t-1")).not.toBeInTheDocument();
   });
 });

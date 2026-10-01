@@ -196,27 +196,102 @@ describe("WhatsApp — invite link role gating (D3)", () => {
   });
 });
 
-describe("WhatsApp — Conexões link banner (community-fe-apikeys-conexoes slice)", () => {
-  it("admin: sees the honest banner + link to /whatsapp/conexoes", async () => {
+describe("WhatsApp — Conexões link", () => {
+  it("admin: the session banner carries the link to /whatsapp/conexoes", async () => {
     mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
     mockRoutes();
     const { default: WhatsApp } = await import("../WhatsApp");
     renderPage(<WhatsApp />);
 
-    await waitFor(() => expect(screen.getByTestId("whatsapp-conexoes-link-banner")).toBeInTheDocument());
-    expect(screen.getByTestId("whatsapp-conexoes-link-banner")).toHaveTextContent("Integração futura");
+    await waitFor(() => expect(screen.getByTestId("whatsapp-conexoes-link")).toBeInTheDocument());
+    // The contradictory "Integração futura" banner is gone.
+    expect(screen.queryByText(/Integração futura/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByTestId("whatsapp-conexoes-link"));
     expect(mockNavigate).toHaveBeenCalledWith("/whatsapp/conexoes");
   });
 
-  it("moderador: the Conexões link banner is ABSENT from the DOM, not merely hidden", async () => {
+  it("owner counts as admin (shared useIsAdmin — the drifted local check dropped it)", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "owner" } } });
+    mockRoutes();
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("whatsapp-novo-grupo")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("whatsapp-conexoes-link")).toBeInTheDocument());
+  });
+
+  it("moderador: the Conexões link is ABSENT from the DOM, not merely hidden", async () => {
     mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "moderador" } } });
     mockRoutes();
     const { default: WhatsApp } = await import("../WhatsApp");
     renderPage(<WhatsApp />);
 
     await waitFor(() => expect(screen.getByTestId("grupo-row-g-1")).toBeInTheDocument());
-    expect(screen.queryByTestId("whatsapp-conexoes-link-banner")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("whatsapp-conexoes-link")).not.toBeInTheDocument();
+  });
+});
+
+describe("WhatsApp — not configured (no WAHA connected)", () => {
+  const NAO_CONFIGURADO = { sessao: { estado: "NAO_CONFIGURADO", sessao: "" } };
+
+  it("renders ONE honest banner — never 'Aguardando pareamento'", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
+    mockRoutes(NAO_CONFIGURADO);
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("sessao-nao-configurada")).toBeInTheDocument());
+    expect(screen.getByTestId("sessao-nao-configurada")).toHaveTextContent("WhatsApp não conectado");
+    expect(screen.queryByTestId("sessao-banner")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Aguardando pareamento/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Integração futura/)).not.toBeInTheDocument();
+    expect(screen.getByTestId("whatsapp-conexoes-link")).toBeInTheDocument();
+  });
+
+  it("disables sync, lote and invite actions with the reason", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
+    mockRoutes(NAO_CONFIGURADO);
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("sessao-nao-configurada")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTestId("grupo-row-g-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("grupo-row-g-1"));
+    await waitFor(() => expect(screen.getByTestId("grupo-detail-dialog")).toBeInTheDocument());
+
+    expect(screen.getByTestId("grupo-whatsapp-indisponivel")).toHaveTextContent("WhatsApp não conectado");
+    expect(screen.getByTestId("grupo-sincronizar-roster")).toBeDisabled();
+    expect(screen.getByTestId("grupo-lote-adicionar")).toBeDisabled();
+    expect(screen.getByTestId("grupo-lote-remover")).toBeDisabled();
+    expect(screen.getByTestId("grupo-convite-revelar")).toBeDisabled();
+    // Toggling ativo is a pure DB write — still available.
+    expect(screen.getByTestId("grupo-toggle-ativo")).not.toBeDisabled();
+  });
+
+  it("create dialog: 'Criar novo grupo' is disabled, registering an existing chat_id is not", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
+    mockRoutes(NAO_CONFIGURADO);
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("sessao-nao-configurada")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("whatsapp-novo-grupo"));
+    await waitFor(() => expect(screen.getByTestId("grupo-modo-novo")).toBeDisabled());
+    expect(screen.getByTestId("grupo-criar-indisponivel")).toBeInTheDocument();
+  });
+
+  it("moderador: group detail write actions are absent", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "moderador" } } });
+    mockRoutes();
+    const { default: WhatsApp } = await import("../WhatsApp");
+    renderPage(<WhatsApp />);
+
+    await waitFor(() => expect(screen.getByTestId("grupo-row-g-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("grupo-row-g-1"));
+    await waitFor(() => expect(screen.getByTestId("grupo-detail-dialog")).toBeInTheDocument());
+    expect(screen.queryByTestId("grupo-sincronizar-roster")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grupo-toggle-ativo")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grupo-lote-adicionar")).not.toBeInTheDocument();
   });
 });
 

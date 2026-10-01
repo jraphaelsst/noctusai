@@ -85,3 +85,51 @@ def test_other_orgs_connection_row_is_invisible(monkeypatch):
 
     client = resolve_community_waha_client(org_id=ORG_ID, admin_client=mock_sb)
     assert isinstance(client, FakeWahaClient)
+
+
+# ── Honest not-configured state (2026-10-01) ─────────────────────────
+# `allow_fake` is the explicit override parameter (same shape as
+# `checkout_service._fake_ou_recusa`'s) — the harness sets
+# WHATSAPP_ALLOW_FAKE=true globally, so the prod default is driven here.
+
+
+def test_no_connection_no_base_url_returns_none_when_fake_not_allowed(monkeypatch):
+    monkeypatch.setattr(settings, "encryption_key", Fernet.generate_key().decode())  # self-patch-ok: configuration value, not a guard
+    mock_sb = MockSupabaseClient(data=[])
+
+    assert resolve_community_waha_client(
+        org_id=ORG_ID, admin_client=mock_sb, allow_fake=False,
+    ) is None
+
+
+def test_encryption_unconfigured_returns_none_when_fake_not_allowed(monkeypatch):
+    monkeypatch.setattr(settings, "encryption_key", "")  # self-patch-ok: configuration value, not a guard
+    assert resolve_community_waha_client(
+        org_id=ORG_ID, admin_client=MockSupabaseClient(), allow_fake=False,
+    ) is None
+
+
+def test_stored_connection_is_real_even_when_fake_not_allowed(monkeypatch):
+    key = Fernet.generate_key()
+    monkeypatch.setattr(settings, "encryption_key", key.decode())  # self-patch-ok: configuration value, not a guard
+    mock_sb = MockSupabaseClient(data=[_connection_row(fernet=Fernet(key))])
+
+    client = resolve_community_waha_client(org_id=ORG_ID, admin_client=mock_sb, allow_fake=False)
+    assert isinstance(client, WahaClient)
+
+
+def test_static_base_url_is_real_when_fake_not_allowed(monkeypatch):
+    monkeypatch.setattr(settings, "encryption_key", "")  # self-patch-ok: configuration value, not a guard
+    monkeypatch.setattr(settings, "community_waha_base_url", "https://waha.static.example")  # self-patch-ok: configuration value, not a guard
+
+    client = resolve_community_waha_client(
+        org_id=ORG_ID, admin_client=MockSupabaseClient(), allow_fake=False,
+    )
+    assert isinstance(client, WahaClient)
+    assert client.base_url == "https://waha.static.example"
+
+
+def test_whatsapp_allow_fake_defaults_off():
+    from app.config import SeedSettings
+
+    assert SeedSettings.model_fields["whatsapp_allow_fake"].default is False

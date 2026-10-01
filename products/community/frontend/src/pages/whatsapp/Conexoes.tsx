@@ -20,14 +20,12 @@
  * social-wiring — reachable, no `status_pagina` row needed since it's
  * not in `NAV_GROUPS`).
  *
- * Full-page admin gate mirrors `Configuracoes.tsx`/`Equipe.tsx`/
- * `WhatsApp.tsx`'s exact `isAdmin` expression.
+ * Full-page admin gate: the shared `useIsAdmin` hook.
  */
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
 import { createWhatsAppConnectionsHooks, WhatsAppConnectionsPage } from "@noctusai/lib/components";
 import { api } from "@/lib/api";
 import { Card } from "@/components/FormControls";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 
 const waHooks = createWhatsAppConnectionsHooks(api);
 
@@ -46,9 +44,7 @@ function FutureWorkBanner() {
 }
 
 export default function Conexoes() {
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
-  const isAdmin = ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+  const isAdmin = useIsAdmin();
 
   if (!isAdmin) {
     return (

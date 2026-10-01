@@ -18,6 +18,8 @@ from pathlib import Path as _Path
 _os.environ["REDIS_URL"] = ""
 # Tests run with no gateway keys; the Fake gateway is an explicit opt-in.
 _os.environ["PAYMENTS_ALLOW_FAKE"] = "true"
+# Same opt-in for WhatsApp: no WAHA connection in tests → FakeWahaClient.
+_os.environ["WHATSAPP_ALLOW_FAKE"] = "true"
 
 _REPO = _Path(__file__).resolve().parents[4]
 _LIB = _REPO / "seed" / "lib" / "backend"
@@ -138,4 +140,10 @@ def client():
         # table themselves.
         auth_client = AuthClient(TestClient(app), mock_sb)
         seed_community_role(auth_client, org_role="moderador")
-        yield auth_client
+        try:
+            yield auth_client
+        finally:
+            # `app` is a module singleton: a test's `dependency_overrides`
+            # (e.g. a FakeWahaClient for `get_community_waha_client`) used to
+            # leak into every later test, masking the not-configured path.
+            app.dependency_overrides.clear()

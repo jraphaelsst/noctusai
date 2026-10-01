@@ -192,6 +192,56 @@ class TestEnviar:
         # enqueue is a no-op for this destino — only one message sent.
         assert len(waha.sent_messages) == 1
 
+    def test_sem_destinos_422_and_estado_untouched(self):
+        """No destinos = nothing to send: refuse BEFORE any state change —
+        the old path flipped straight to "enviada" with zero sends."""
+        svc, mock = _svc(
+            transmissoes=[{
+                "id": "t1", "org_id": str(ORG), "titulo": "X", "corpo": "Olá",
+                "tipo": "anuncio", "estado": "rascunho",
+            }],
+        )
+        waha = FakeWahaClient()
+        try:
+            asyncio.run(svc.enviar(
+                transmissao_id="t1", waha_client=waha,
+                jobs_repo=make_job_repository(use_fake=True),
+            ))
+            assert False, "expected error"
+        except TransmissoesServiceError as exc:
+            assert exc.status_code == 422
+        transmissao = mock.table("transmissoes").select("*").eq("id", "t1").execute().data[0]
+        assert transmissao["estado"] == "rascunho"
+        assert waha.sent_messages == []
+
+    def test_never_enviada_without_a_confirmed_send(self):
+        """A destino the worker never confirmed (still `pendente`) must not
+        let the transmissão read "enviada"."""
+        svc, mock = _svc(
+            grupos=[_grupo_row(GRUPO_1, CHAT_1)],
+            transmissoes=[{
+                "id": "t1", "org_id": str(ORG), "titulo": "X", "corpo": "Olá",
+                "tipo": "anuncio", "estado": "rascunho",
+            }],
+            destinos=[
+                {"id": "d1", "org_id": str(ORG), "transmissao_id": "t1", "grupo_id": GRUPO_1, "estado": "pendente"},
+            ],
+        )
+        jobs_repo = make_job_repository(use_fake=True)
+        # Pre-claim the dedupe key so this enviar enqueues nothing and the
+        # worker sends nothing — the destino stays `pendente`.
+        asyncio.run(jobs_repo.enqueue(
+            type="test.unrelated", payload={},
+            dedupe_key="transmissao:t1:" + GRUPO_1,
+        ))
+        waha = FakeWahaClient()
+        asyncio.run(svc.enviar(transmissao_id="t1", waha_client=waha, jobs_repo=jobs_repo))
+
+        transmissao = mock.table("transmissoes").select("*").eq("id", "t1").execute().data[0]
+        assert waha.sent_messages == []
+        assert transmissao["estado"] != "enviada"
+        assert transmissao.get("enviada_em") is None
+
     def test_missing_transmissao_404(self):
         svc, _ = _svc()
         try:

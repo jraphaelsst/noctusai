@@ -9,6 +9,11 @@
  * re-fetches for the real per-destino outcome, exactly like `aplicado_parcial`
  * on the sync side never gets treated as a synchronous success/fail signal.
  *
+ * Every write (Nova / Editar / Enviar / Excluir) is admin-only server-side,
+ * so it is absent for non-admins (`useIsAdmin`). "Enviar" is disabled with
+ * the pt-BR reason when WhatsApp is not connected — the backend refuses it
+ * with 503 before any state change, so a row never reads "Enviada" unsent.
+ *
  * Two loading signals, never `isLoading`:
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  */
@@ -18,7 +23,8 @@ import { Badge, Button, Input, Dialog, DialogHeader, DialogBody, DialogFooter } 
 import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { Checkbox, EmptyState, ErrorState, Field, FormError, Select, Textarea } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
-import { useGruposWhatsApp } from "@/hooks/useGruposWhatsApp";
+import { useGruposWhatsApp, useWhatsAppIndisponivel } from "@/hooks/useGruposWhatsApp";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import {
   useTransmissoes,
   useCreateTransmissao,
@@ -77,6 +83,8 @@ export default function Transmissoes() {
   const { data, isPending, isFetching, error } = useTransmissoes(params);
   const enviar = useEnviarTransmissao();
   const excluir = useDeleteTransmissao();
+  const isAdmin = useIsAdmin();
+  const indisponivel = useWhatsAppIndisponivel();
 
   const showSkeleton = isPending && !data;
   const isRefreshing = isFetching && !!data;
@@ -112,17 +120,29 @@ export default function Transmissoes() {
             {isRefreshing ? " Atualizando…" : ""}
           </p>
         </div>
-        <Button
-          variant="primary"
-          onClick={() => {
-            setEditing(null);
-            setComposerOpen(true);
-          }}
-          data-testid="transmissoes-nova"
-        >
-          + Nova transmissão
-        </Button>
+        {isAdmin && (
+          <Button
+            variant="primary"
+            onClick={() => {
+              setEditing(null);
+              setComposerOpen(true);
+            }}
+            data-testid="transmissoes-nova"
+          >
+            + Nova transmissão
+          </Button>
+        )}
       </div>
+
+      {isAdmin && indisponivel && (
+        <div
+          className="rounded-lg border border-amber-400/40 bg-amber-400/10 p-3 text-sm text-foreground"
+          role="status"
+          data-testid="transmissoes-whatsapp-indisponivel"
+        >
+          {indisponivel} Rascunhos podem ser salvos, mas o envio fica bloqueado.
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <Select
@@ -174,7 +194,7 @@ export default function Transmissoes() {
                   <td className="px-4 py-3 text-foreground">{formatDateBR(t.enviada_em ?? t.agendada_para)}</td>
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-2">
-                      {editable(t) && (
+                      {isAdmin && editable(t) && (
                         <button
                           type="button"
                           className="text-sm bg-muted rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
@@ -187,17 +207,19 @@ export default function Transmissoes() {
                           Editar
                         </button>
                       )}
-                      {editable(t) && (
+                      {isAdmin && editable(t) && (
                         <button
                           type="button"
-                          className="text-sm bg-primary/10 text-primary rounded-md px-3 py-1.5 hover:bg-primary/20 transition-colors"
+                          className="text-sm bg-primary/10 text-primary rounded-md px-3 py-1.5 hover:bg-primary/20 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
                           onClick={() => void handleEnviar(t)}
+                          disabled={!!indisponivel}
+                          title={indisponivel ?? undefined}
                           data-testid={`transmissao-enviar-${t.id}`}
                         >
                           Enviar
                         </button>
                       )}
-                      {editable(t) && (
+                      {isAdmin && editable(t) && (
                         <button
                           type="button"
                           className="text-sm bg-danger/10 text-danger rounded-md px-3 py-1.5 hover:bg-danger/20 transition-colors"

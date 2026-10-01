@@ -96,10 +96,17 @@ class SeedSettings(ProductSettings):
     # D4: community gets its OWN WAHA session on its OWN instance — a
     # separate container from the shared WAHA `default` session social-
     # wiring already owns. Empty `base_url` → `get_whatsapp_client()`
-    # returns `FakeWahaClient` (same configured-vs-not signal every other
-    # seed adapter factory uses); a fresh clone boots and tests pass with
-    # zero real WAHA credentials.
+    # returns `FakeWahaClient` — which this product only USES when
+    # `whatsapp_allow_fake` is on (see `resolve_community_waha_client`).
     community_waha_base_url: str = ""
+    # No saved connection AND no `community_waha_base_url` → WAHA-dependent
+    # routes REFUSE (503 `WHATSAPP_NAO_CONECTADO`) and `GET /api/whatsapp/
+    # sessao` reports `NAO_CONFIGURADO` — unless this is explicitly on.
+    # Only the test harness / local dev set it (WHATSAPP_ALLOW_FAKE=true):
+    # a silent `FakeWahaClient` in a real deploy showed "Aguardando
+    # pareamento" and marked broadcasts "Enviada" with nothing sent
+    # (2026-10-01, community.noctusai.com). Mirrors `payments_allow_fake`.
+    whatsapp_allow_fake: bool = False
     community_waha_api_key: str = ""
     community_waha_session: str = "default"
     community_waha_external_base_url: str = ""

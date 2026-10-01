@@ -18,19 +18,18 @@
  * Two loading signals, never `isLoading`:
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  *
- * Admin-only banner below the session banner links to `/whatsapp/conexoes`
- * (`Conexoes.tsx`, not in nav) — the new, separate multi-line WAHA
- * connection admin surface (`createWhatsAppConnectionsHooks` +
- * `<WhatsAppConnectionsPage/>`, `@noctusai/lib/components`). Distinct from
- * THIS page's own group-sync session above: WhatsApp is not connected
- * through the new page yet (2026-09-17 user decision) — the banner and the
- * new page say so honestly, in the same words.
+ * Honest not-configured state (2026-10-01): when no WAHA number is
+ * connected, `GET /api/whatsapp/sessao` answers `estado: "NAO_CONFIGURADO"`
+ * and the page renders ONE banner saying so (replacing the old
+ * contradictory "Aguardando pareamento" + "Integração futura" pair), with
+ * an admin link to `/whatsapp/conexoes`. Every WAHA-dependent action
+ * (create-new group, sync roster, generate lote, invite link) is disabled
+ * with that reason — the backend would refuse them with 503 anyway.
+ * Admin-only write actions are absent for non-admins (`useIsAdmin`).
  */
 import { useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
 import {
   Badge,
   Button,
@@ -46,6 +45,7 @@ import { EntityDetailDialog } from "@noctusai/lib/components";
 import type { DetailSection } from "@noctusai/lib/components";
 import { EmptyState, ErrorState, Field, FormError, Select } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { maskPhone } from "@/lib/phone";
 import {
   useGruposWhatsApp,
@@ -56,6 +56,9 @@ import {
   useGrupoConvite,
   useRevogarConvite,
   useSessaoWhatsApp,
+  useWhatsAppIndisponivel,
+  SESSAO_NAO_CONFIGURADA,
+  WHATSAPP_NAO_CONECTADO_MOTIVO,
   type Grupo,
   type GrupoAcao,
 } from "@/hooks/useGruposWhatsApp";
@@ -75,7 +78,22 @@ const SESSAO_LABELS: Record<string, string> = {
   STOPPED: "Parado",
 };
 
-function SessionBanner() {
+function ConexoesLink() {
+  const navigate = useNavigate();
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      onClick={() => navigate("/whatsapp/conexoes")}
+      data-testid="whatsapp-conexoes-link"
+    >
+      Ir para Conexões
+    </Button>
+  );
+}
+
+function SessionBanner({ isAdmin }: { isAdmin: boolean }) {
   const { data, isPending, error } = useSessaoWhatsApp();
 
   if (isPending) {
@@ -85,6 +103,24 @@ function SessionBanner() {
     return (
       <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm text-destructive" data-testid="sessao-erro">
         {errorMessage(error)}
+      </div>
+    );
+  }
+  if (data?.estado === SESSAO_NAO_CONFIGURADA) {
+    return (
+      <div
+        className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/40 bg-amber-400/10 p-4"
+        role="status"
+        data-testid="sessao-nao-configurada"
+      >
+        <div>
+          <p className="text-sm font-medium text-foreground">{WHATSAPP_NAO_CONECTADO_MOTIVO}</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Enquanto nenhum número estiver conectado, envio de transmissões, sincronização de
+            roster, lotes e criação de grupos ficam indisponíveis.
+          </p>
+        </div>
+        {isAdmin && <ConexoesLink />}
       </div>
     );
   }
@@ -100,6 +136,11 @@ function SessionBanner() {
           Sessão do WhatsApp: {SESSAO_LABELS[data?.estado ?? ""] ?? data?.estado ?? "Desconhecida"}
         </p>
       </div>
+      {isAdmin && (
+        <div className="mt-2">
+          <ConexoesLink />
+        </div>
+      )}
       {!working && (
         <p className="mt-1 text-xs text-muted-foreground">
           O pareamento do número da comunidade é uma ação de operador, feita fora desta tela (não
@@ -112,9 +153,8 @@ function SessionBanner() {
 
 export default function WhatsApp() {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
-  const isAdmin = ssoCtx.isProductAdmin || ssoCtx.org.role === "admin";
+  const isAdmin = useIsAdmin();
+  const indisponivel = useWhatsAppIndisponivel();
 
   const [ativoFiltro, setAtivoFiltro] = useState<"todos" | "ativo" | "inativo">("todos");
   const [selected, setSelected] = useState<Grupo | null>(null);
@@ -164,28 +204,7 @@ export default function WhatsApp() {
         )}
       </div>
 
-      <SessionBanner />
-
-      {isAdmin && (
-        <div
-          className="flex items-center justify-between gap-3 rounded-lg border border-amber-400/40 bg-amber-400/10 p-4"
-          data-testid="whatsapp-conexoes-link-banner"
-        >
-          <p className="text-sm text-foreground">
-            Integração futura — o WhatsApp ainda não está conectado a este produto pela nova área de
-            Conexões. A conexão será feita numa próxima etapa.
-          </p>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => navigate("/whatsapp/conexoes")}
-            data-testid="whatsapp-conexoes-link"
-          >
-            Ver Conexões WhatsApp
-          </Button>
-        </div>
-      )}
+      <SessionBanner isAdmin={isAdmin} />
 
       <div className="flex flex-wrap gap-2" role="tablist" aria-label="Filtro de grupos">
         <Button variant={ativoFiltro === "todos" ? "primary" : "outline"} size="sm" onClick={() => setAtivoFiltro("todos")}>
@@ -243,11 +262,12 @@ export default function WhatsApp() {
         <GrupoDetailDialog
           grupo={selected}
           isAdmin={isAdmin}
+          indisponivel={indisponivel}
           onClose={() => setSelected(null)}
           onGerarLote={handleGerarLote}
         />
       )}
-      {createOpen && <GrupoFormDialog onClose={() => setCreateOpen(false)} />}
+      {createOpen && <GrupoFormDialog indisponivel={indisponivel} onClose={() => setCreateOpen(false)} />}
     </div>
   );
 }
@@ -267,11 +287,14 @@ function grupoDetailSections(g: Grupo): DetailSection[] {
 function GrupoDetailDialog({
   grupo,
   isAdmin,
+  indisponivel,
   onClose,
   onGerarLote,
 }: {
   grupo: Grupo;
   isAdmin: boolean;
+  /** pt-BR reason WAHA actions are unavailable, or `null`. */
+  indisponivel: string | null;
   onClose: () => void;
   onGerarLote: (grupo: Grupo, acao: GrupoAcao) => void;
 }) {
@@ -303,7 +326,9 @@ function GrupoDetailDialog({
       title={grupo.nome}
       badges={[{ label: grupo.ativo ? "Ativo" : "Inativo", variant: grupo.ativo ? "default" : "outline" }]}
       sections={grupoDetailSections(grupo)}
-      actions={[
+      // Every action below is an admin write (the backend 403s a
+      // moderador) — absent, not merely disabled, for non-admins.
+      actions={!isAdmin ? [] : [
         {
           label: grupo.ativo ? "Desativar" : "Ativar",
           variant: "outline",
@@ -316,28 +341,38 @@ function GrupoDetailDialog({
           label: sincronizar.isPending ? "Sincronizando..." : "Sincronizar roster",
           variant: "outline",
           onClick: () => void handleSincronizar(),
-          disabled: sincronizar.isPending,
+          disabled: sincronizar.isPending || !!indisponivel,
           testId: "grupo-sincronizar-roster",
         },
         {
           label: "Gerar lote de adição",
           variant: "primary",
           onClick: () => onGerarLote(grupo, "adicionar"),
+          disabled: !!indisponivel,
           testId: "grupo-lote-adicionar",
         },
         {
           label: "Gerar lote de remoção",
           variant: "destructive",
           onClick: () => onGerarLote(grupo, "remover"),
+          disabled: !!indisponivel,
           testId: "grupo-lote-remover",
         },
       ]}
       testId="grupo-detail-dialog"
     >
+      {isAdmin && indisponivel && (
+        <p
+          className="mt-2 rounded-md border border-amber-400/40 bg-amber-400/10 p-2 text-xs text-foreground"
+          data-testid="grupo-whatsapp-indisponivel"
+        >
+          {indisponivel}
+        </p>
+      )}
       <GrupoRoster grupoId={grupo.id} />
       {/* Absent from the DOM for a moderador — a conditional render, not
           CSS (community-m3-contract.md §4). */}
-      {isAdmin && <ConviteSection grupoId={grupo.id} />}
+      {isAdmin && <ConviteSection grupoId={grupo.id} indisponivel={indisponivel} />}
     </EntityDetailDialog>
   );
 }
@@ -388,7 +423,7 @@ function GrupoRoster({ grupoId }: { grupoId: string }) {
   );
 }
 
-function ConviteSection({ grupoId }: { grupoId: string }) {
+function ConviteSection({ grupoId, indisponivel }: { grupoId: string; indisponivel: string | null }) {
   const [revealed, setRevealed] = useState(false);
   const { data, refetch, isFetching, error } = useGrupoConvite(grupoId);
   const revogar = useRevogarConvite();
@@ -417,7 +452,14 @@ function ConviteSection({ grupoId }: { grupoId: string }) {
         Link de convite
       </h3>
       {!revealed ? (
-        <Button variant="outline" size="sm" onClick={() => void handleReveal()} data-testid="grupo-convite-revelar">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void handleReveal()}
+          disabled={!!indisponivel}
+          title={indisponivel ?? undefined}
+          data-testid="grupo-convite-revelar"
+        >
           Ver link de convite
         </Button>
       ) : isFetching ? (
@@ -446,7 +488,7 @@ function ConviteSection({ grupoId }: { grupoId: string }) {
   );
 }
 
-function GrupoFormDialog({ onClose }: { onClose: () => void }) {
+function GrupoFormDialog({ indisponivel, onClose }: { indisponivel: string | null; onClose: () => void }) {
   const [modo, setModo] = useState<"existente" | "novo">("existente");
   const [chatId, setChatId] = useState("");
   const [nome, setNome] = useState("");
@@ -479,10 +521,22 @@ function GrupoFormDialog({ onClose }: { onClose: () => void }) {
               Registrar grupo existente
             </label>
             <label className="flex items-center gap-2 text-sm text-foreground">
-              <input type="radio" checked={modo === "novo"} onChange={() => setModo("novo")} />
+              <input
+                type="radio"
+                checked={modo === "novo"}
+                onChange={() => setModo("novo")}
+                disabled={!!indisponivel}
+                data-testid="grupo-modo-novo"
+              />
               Criar novo grupo
             </label>
           </div>
+          {indisponivel && (
+            <p className="text-xs text-muted-foreground" data-testid="grupo-criar-indisponivel">
+              Criar um grupo novo exige o WhatsApp conectado. Registrar um grupo existente pelo Chat
+              ID continua disponível.
+            </p>
+          )}
           {modo === "existente" ? (
             <Field label="Chat ID" required help="ID do grupo no WhatsApp, ex: 12036...@g.us">
               <Input value={chatId} onChange={(e) => setChatId(e.target.value)} placeholder="12036xxxxxxxx@g.us" required />

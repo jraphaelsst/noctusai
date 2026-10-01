@@ -28,6 +28,8 @@ from noctusai_lib.integrations.whatsapp.client import WahaGroupError, WahaSessio
 from noctusai_lib.integrations.whatsapp.lid_auth import normalize_phone
 from noctusai_lib.integrations.whatsapp.types import WhatsAppGroupClient
 
+from app.dependencies import WHATSAPP_NAO_CONECTADO_DETAIL
+
 _GRUPOS = "grupos"
 _GRUPO_MEMBROS = "grupo_membros"
 _MEMBROS = "membros"
@@ -101,7 +103,9 @@ class GruposService:
 
     # ── writes ───────────────────────────────────────────────────────
 
-    async def create(self, *, payload: dict, waha_client: WhatsAppGroupClient) -> dict:
+    async def create(self, *, payload: dict, waha_client: WhatsAppGroupClient | None) -> dict:
+        """`waha_client=None` (WhatsApp not connected) is valid ONLY for
+        registering an existing `chat_id` — the router refuses `criar`."""
         criar = payload.get("criar", False)
         nome = payload.get("nome")
         chat_id = payload.get("chat_id")
@@ -110,6 +114,11 @@ class GruposService:
             if not nome:
                 raise GruposServiceError(
                     "Informe um nome para criar o grupo.", status_code=422,
+                )
+            if waha_client is None:
+                raise GruposServiceError(
+                    WHATSAPP_NAO_CONECTADO_DETAIL,
+                    status_code=503,
                 )
             try:
                 group_info = await waha_client.create_group(name=nome, participant_ids=[])
@@ -122,7 +131,9 @@ class GruposService:
                 raise GruposServiceError(
                     "Informe o chat_id do grupo existente.", status_code=422,
                 )
-            if not nome:
+            if not nome and waha_client is None:
+                nome = chat_id
+            elif not nome:
                 try:
                     group_info = await waha_client.get_group(chat_id)
                     nome = group_info.name

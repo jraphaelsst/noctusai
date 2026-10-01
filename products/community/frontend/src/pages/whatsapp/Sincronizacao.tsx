@@ -23,20 +23,24 @@
  *   swallowed failure: the group's invite link plus copy-the-link and
  *   copy-the-message helpers per pending member.
  *
+ * Admin-only writes (confirmar / aplicar / cancelar / repetir) are absent
+ * for non-admins (`useIsAdmin` — the shared gate that keeps `owner`).
+ * "Aplicar" is disabled with the pt-BR reason when WhatsApp is not
+ * connected (`useWhatsAppIndisponivel`) — the backend refuses it with 503.
+ *
  * Two loading signals, never `isLoading`:
  * `showSkeleton = isPending && !data`, `isRefreshing = isFetching && !!data`.
  */
 import { useMemo, useState } from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
 import { Badge, Button, Dialog, DialogHeader, DialogBody, DialogFooter } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { Checkbox, EmptyState, ErrorState, Field, FormError, Select } from "@/components/FormControls";
 import { errorMessage } from "@/lib/errors";
 import { maskPhone } from "@/lib/phone";
-import { useGruposWhatsApp } from "@/hooks/useGruposWhatsApp";
+import { useGruposWhatsApp, useWhatsAppIndisponivel } from "@/hooks/useGruposWhatsApp";
+import { useIsAdmin } from "@/hooks/useIsAdmin";
 import {
   useLotesSincronizacao,
   useLoteSincronizacao,
@@ -107,9 +111,7 @@ function resultadoBadgeVariant(resultado: LoteItemResultado): BadgeVariant {
 }
 
 export default function Sincronizacao() {
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
-  const isAdmin = ssoCtx.isProductAdmin || ssoCtx.org.role === "admin";
+  const isAdmin = useIsAdmin();
 
   const [grupoFiltro, setGrupoFiltro] = useState("");
   const [estadoFiltro, setEstadoFiltro] = useState<LoteEstado | "">("");
@@ -227,6 +229,7 @@ function LoteDetailDialog({ loteId, isAdmin, onClose }: { loteId: string; isAdmi
   const aplicarLote = useAplicarLote();
   const cancelarLote = useCancelarLote();
   const criarNovoLote = useCreateLoteSincronizacao();
+  const indisponivel = useWhatsAppIndisponivel();
 
   if (isPending) {
     return (
@@ -248,9 +251,9 @@ function LoteDetailDialog({ loteId, isAdmin, onClose }: { loteId: string; isAdmi
   }
 
   const expirado = lote.estado === "proposto" && new Date(lote.expira_em).getTime() < Date.now();
-  const podeConfirmar = lote.estado === "proposto" && !expirado;
-  const podeAplicar = lote.estado === "confirmado";
-  const podeCancelar = lote.estado === "proposto" || lote.estado === "confirmado";
+  const podeConfirmar = isAdmin && lote.estado === "proposto" && !expirado;
+  const podeAplicar = lote.estado === "confirmado" && !indisponivel;
+  const podeCancelar = isAdmin && (lote.estado === "proposto" || lote.estado === "confirmado");
   const confirmValido = confirmChecked && confirmText.trim().toUpperCase() === CONFIRM_PHRASE;
   const temConviteNecessario = lote.itens.some((i) => i.resultado === "convite_necessario");
 
@@ -325,16 +328,18 @@ function LoteDetailDialog({ loteId, isAdmin, onClose }: { loteId: string; isAdmi
               Alguns participantes não puderam ser processados. Veja os itens marcados abaixo e use
               "Repetir o restante" para gerar um novo lote — o lote já aplicado nunca é alterado.
             </p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-2"
-              onClick={() => void handleRepetirRestante()}
-              disabled={criarNovoLote.isPending}
-              data-testid="lote-repetir-restante"
-            >
-              {criarNovoLote.isPending ? "Gerando..." : "Repetir o restante"}
-            </Button>
+            {isAdmin && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                onClick={() => void handleRepetirRestante()}
+                disabled={criarNovoLote.isPending}
+                data-testid="lote-repetir-restante"
+              >
+                {criarNovoLote.isPending ? "Gerando..." : "Repetir o restante"}
+              </Button>
+            )}
           </div>
         )}
 
@@ -418,6 +423,15 @@ function LoteDetailDialog({ loteId, isAdmin, onClose }: { loteId: string; isAdmi
           </div>
         )}
 
+        {isAdmin && lote.estado === "confirmado" && indisponivel && (
+          <p
+            className="rounded-md border border-amber-400/40 bg-amber-400/10 p-2 text-xs text-foreground"
+            data-testid="lote-whatsapp-indisponivel"
+          >
+            {indisponivel}
+          </p>
+        )}
+
         {isAdmin && temConviteNecessario && <ConvitesPendentesPanel loteId={lote.id} />}
       </DialogBody>
       <DialogFooter className="justify-between gap-2">
@@ -447,14 +461,17 @@ function LoteDetailDialog({ loteId, isAdmin, onClose }: { loteId: string; isAdmi
           {/* "Aplicar" is a SEPARATE button — enabled ONLY once `estado ===
               "confirmado"`. Never collapsed with "Confirmar" into one click
               (contract §4). */}
-          <Button
-            variant="primary"
-            onClick={() => void handleAplicar()}
-            disabled={!podeAplicar || aplicarLote.isPending}
-            data-testid="lote-aplicar"
-          >
-            {aplicarLote.isPending ? "Aplicando..." : "Aplicar"}
-          </Button>
+          {isAdmin && (
+            <Button
+              variant="primary"
+              onClick={() => void handleAplicar()}
+              disabled={!podeAplicar || aplicarLote.isPending}
+              title={lote.estado === "confirmado" && indisponivel ? indisponivel : undefined}
+              data-testid="lote-aplicar"
+            >
+              {aplicarLote.isPending ? "Aplicando..." : "Aplicar"}
+            </Button>
+          )}
         </div>
       </DialogFooter>
     </Dialog>

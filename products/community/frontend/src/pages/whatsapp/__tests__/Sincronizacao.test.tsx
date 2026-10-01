@@ -97,6 +97,9 @@ function buildLote(overrides: Record<string, unknown> = {}) {
 
 function mockRoutes(lote: ReturnType<typeof buildLote>, extra: Record<string, unknown> = {}) {
   mockGet.mockImplementation((path: string) => {
+    if (path === "/api/whatsapp/sessao") {
+      return Promise.resolve(extra.sessao ?? { estado: "WORKING", sessao: "default" });
+    }
     if (path === "/api/whatsapp/lotes") return Promise.resolve({ items: [lote], total: 1 });
     if (path === "/api/whatsapp/lotes/l-1") return Promise.resolve(lote);
     if (path === "/api/whatsapp/grupos") return Promise.resolve({ items: [{ id: "g-1", nome: "Comunidade Oficial" }], total: 1 });
@@ -109,7 +112,9 @@ function mockRoutes(lote: ReturnType<typeof buildLote>, extra: Record<string, un
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockUseAuthStore.mockReturnValue({ user: null });
+  // The confirm/apply flow is admin-only (server 403s a moderador; the UI
+  // no longer renders those writes for non-admins) — admin by default.
+  mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "admin" } } });
   mockPost.mockResolvedValue({});
 });
 
@@ -226,5 +231,44 @@ describe("Sincronizacao — Convites pendentes (admin-only)", () => {
     await waitFor(() => expect(screen.getByTestId("lote-aviso-parcial")).toBeInTheDocument());
     expect(screen.queryByTestId("convites-pendentes-panel")).not.toBeInTheDocument();
     expect(mockGet).not.toHaveBeenCalledWith("/api/whatsapp/lotes/l-1/convites-pendentes");
+  });
+});
+
+describe("Sincronizacao — honest WhatsApp state + admin-only writes", () => {
+  it("not configured: Aplicar is disabled with the reason, even once confirmado", async () => {
+    mockRoutes(buildLote({ estado: "confirmado" }), { sessao: { estado: "NAO_CONFIGURADO", sessao: "" } });
+    const { default: Sincronizacao } = await import("../Sincronizacao");
+    renderPage(<Sincronizacao />);
+
+    await waitFor(() => expect(screen.getByTestId("lote-row-l-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("lote-row-l-1"));
+    await waitFor(() => expect(screen.getByTestId("lote-whatsapp-indisponivel")).toBeInTheDocument());
+    expect(screen.getByTestId("lote-whatsapp-indisponivel")).toHaveTextContent("WhatsApp não conectado");
+    expect(screen.getByTestId("lote-aplicar")).toBeDisabled();
+  });
+
+  it("moderador: confirmar / aplicar / cancelar are absent", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "moderador" } } });
+    mockRoutes(buildLote());
+    const { default: Sincronizacao } = await import("../Sincronizacao");
+    renderPage(<Sincronizacao />);
+
+    await waitFor(() => expect(screen.getByTestId("lote-row-l-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("lote-row-l-1"));
+    await waitFor(() => expect(screen.getByTestId("lote-itens-tabela")).toBeInTheDocument());
+    expect(screen.queryByTestId("lote-aplicar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lote-confirmar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("lote-cancelar")).not.toBeInTheDocument();
+  });
+
+  it("owner counts as admin (shared useIsAdmin)", async () => {
+    mockUseAuthStore.mockReturnValue({ user: { user_metadata: { org_role: "owner" } } });
+    mockRoutes(buildLote({ estado: "confirmado" }));
+    const { default: Sincronizacao } = await import("../Sincronizacao");
+    renderPage(<Sincronizacao />);
+
+    await waitFor(() => expect(screen.getByTestId("lote-row-l-1")).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId("lote-row-l-1"));
+    await waitFor(() => expect(screen.getByTestId("lote-aplicar")).toBeInTheDocument());
   });
 });

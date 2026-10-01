@@ -80,7 +80,23 @@ export interface GrupoConvite {
   link: string;
 }
 
-export type SessaoEstado = "WORKING" | "SCAN_QR_CODE" | "STARTING" | "FAILED" | "STOPPED" | string;
+/** `NAO_CONFIGURADO` — no WAHA connection for this org: the backend refuses
+ * every WAHA-dependent route (503 `WHATSAPP_NAO_CONECTADO`) instead of
+ * silently running on a fake client (2026-10-01). */
+export type SessaoEstado =
+  | "WORKING"
+  | "SCAN_QR_CODE"
+  | "STARTING"
+  | "FAILED"
+  | "STOPPED"
+  | "NAO_CONFIGURADO"
+  | string;
+
+export const SESSAO_NAO_CONFIGURADA = "NAO_CONFIGURADO";
+
+/** Same words as the backend's 503 `detail` (`WHATSAPP_NAO_CONECTADO_DETAIL`). */
+export const WHATSAPP_NAO_CONECTADO_MOTIVO =
+  "WhatsApp não conectado. Conecte um número em Conexões para usar esta função.";
 
 export interface SessaoWhatsApp {
   estado: SessaoEstado;
@@ -199,4 +215,15 @@ export function useSessaoWhatsApp() {
     queryKey: gruposKeys.sessao,
     queryFn: () => api.get<SessaoWhatsApp>("/api/whatsapp/sessao"),
   });
+}
+
+/**
+ * Why WAHA-dependent actions (send, sync, apply lote, create group, invite)
+ * are unavailable — the pt-BR reason when WhatsApp is NOT configured, else
+ * `null`. Derived from the same `/api/whatsapp/sessao` query the banner
+ * reads, so every page disables on one signal.
+ */
+export function useWhatsAppIndisponivel(): string | null {
+  const { data } = useSessaoWhatsApp();
+  return data?.estado === SESSAO_NAO_CONFIGURADA ? WHATSAPP_NAO_CONECTADO_MOTIVO : null;
 }

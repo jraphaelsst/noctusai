@@ -17,7 +17,10 @@ from app.dependencies import (
     coerce_org_uuid,
     http_error,
     get_community_role,
+    WHATSAPP_NAO_CONECTADO_CODE,
+    WHATSAPP_NAO_CONECTADO_DETAIL,
     get_community_waha_client,
+    get_community_waha_client_optional,
     get_current_user_org,
     get_user_client,
     require_admin,
@@ -42,6 +45,8 @@ from app.services.grupos_service import get_sessao as get_sessao_info
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/whatsapp", tags=["whatsapp-grupos"])
+
+SESSAO_NAO_CONFIGURADA = "NAO_CONFIGURADO"
 
 
 def _roster_for_role(rows: list[dict], role: str) -> list[dict]:
@@ -74,11 +79,18 @@ async def list_grupos(
 async def create_grupo(
     payload: GrupoCreate,
     auth: tuple = Depends(get_current_user_org),
-    waha_client: WhatsAppGroupClient = Depends(get_community_waha_client),
+    waha_client: WhatsAppGroupClient | None = Depends(get_community_waha_client_optional),
 ) -> Grupo:
+    """`criar=true` needs WAHA (503 when not connected). Registering an
+    EXISTING `chat_id` is a pure DB write and stays allowed without WAHA —
+    the name then comes from the payload (or falls back to the chat_id)."""
     user, token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     require_admin(get_community_role(user), action="cadastrar grupos")
+    if waha_client is None and payload.criar:
+        raise http_error(
+            503, WHATSAPP_NAO_CONECTADO_DETAIL, code=WHATSAPP_NAO_CONECTADO_CODE,
+        )
     client = get_user_client(token)
     service = GruposService(client, org_id=org_id)
     try:
@@ -182,9 +194,14 @@ async def revogar_convite(
 @router.get("/sessao", response_model=SessaoOut)
 async def get_sessao_endpoint(
     auth: tuple = Depends(get_current_user_org),
-    waha_client: WhatsAppGroupClient = Depends(get_community_waha_client),
+    waha_client: WhatsAppGroupClient | None = Depends(get_community_waha_client_optional),
 ) -> SessaoOut:
+    """200 + `estado="NAO_CONFIGURADO"` when no WAHA is connected — an
+    honest state the page renders as one banner, never a Fake's
+    `SCAN_QR_CODE` read as "Aguardando pareamento"."""
     _user, _token, _raw_org = auth
+    if waha_client is None:
+        return SessaoOut(estado=SESSAO_NAO_CONFIGURADA, sessao="")
     try:
         info = await get_sessao_info(waha_client=waha_client)
     except GruposServiceError as exc:

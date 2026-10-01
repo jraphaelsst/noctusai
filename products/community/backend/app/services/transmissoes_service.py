@@ -203,6 +203,12 @@ class TransmissoesService:
             .execute().data or []
         )
 
+        if not destinos:
+            # Nothing to send → never flip to "enviando"/"enviada".
+            raise TransmissoesServiceError(
+                "Selecione ao menos um grupo de destino antes de enviar.", status_code=422,
+            )
+
         self._client.table(_TRANSMISSOES).update({"estado": "enviando"}).eq(
             "org_id", self._org_id,
         ).eq("id", str(transmissao_id)).execute()
@@ -232,11 +238,11 @@ class TransmissoesService:
             .eq("org_id", self._org_id).eq("transmissao_id", str(transmissao_id))
             .execute().data or []
         )
-        todas_falharam = bool(destinos_finais) and all(
-            d.get("estado") == "falhou" for d in destinos_finais
-        )
+        # "enviada" is earned by at least one REAL send (a destino the
+        # client confirmed) — never by the absence of failures.
+        algum_enviado = any(d.get("estado") == "enviado" for d in destinos_finais)
         now = datetime.now(timezone.utc).isoformat()
-        if todas_falharam:
+        if not algum_enviado:
             primeiro_erro = next(
                 (d.get("erro") for d in destinos_finais if d.get("erro")), None,
             )

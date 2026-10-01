@@ -13,6 +13,7 @@ full why and the deprecation warning that fires on the broken shape.
 """
 from __future__ import annotations
 
+import logging
 import uuid as _uuid
 from typing import Any
 from uuid import UUID
@@ -31,6 +32,8 @@ from noctusai_lib.api.auth import (
     resolve_sso_role,  # noqa: F401 — re-exported for product imports
 )
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _db = create_database_module(settings, schema="community")
 _deps = create_dependencies(_db)
@@ -191,7 +194,7 @@ _ERROR_CODES = {
 }
 
 
-def http_error(status_code: int, detail: str) -> HTTPException:
+def http_error(status_code: int, detail: str, *, code: str | None = None) -> HTTPException:
     """Build an ``HTTPException`` whose JSON body has a top-level ``detail``
     key — the contract's error shape (``{"detail": "..."}``).
 
@@ -212,7 +215,7 @@ def http_error(status_code: int, detail: str) -> HTTPException:
     ``ValidationError`` handler in the same legacy envelope — that is
     platform-wide behavior this product does not override.
     """
-    code = _ERROR_CODES.get(status_code, "HTTP_ERROR")
+    code = code or _ERROR_CODES.get(status_code, "HTTP_ERROR")
     return HTTPException(status_code=status_code, detail={"detail": detail, "code": code})
 
 
@@ -330,9 +333,10 @@ def coerce_org_uuid(raw_org: Any) -> UUID:
 # Community gets its OWN WAHA session on its OWN instance (D4) — a
 # separate container from whatever other product's WAHA session exists.
 # `get_whatsapp_client()` is the seed's Fake+Real+factory
-# (`KB § PATTERNS/backend/seed-fake-real-adapter.md`): an unset
-# `community_waha_base_url` returns `FakeWahaClient`, so this product
-# boots and its tests pass with zero real WAHA credentials.
+# (`KB § PATTERNS/backend/seed-fake-real-adapter.md`). This product uses
+# its Fake ONLY under `whatsapp_allow_fake` (test harness / local dev);
+# otherwise "no WAHA configured" is an explicit state, never a silent Fake
+# (see `resolve_community_waha_client`).
 
 
 def actor_uuid(user: Any) -> UUID | None:
@@ -350,18 +354,31 @@ def actor_uuid(user: Any) -> UUID | None:
     return coerce_org_uuid(raw)
 
 
-def resolve_community_waha_client(*, org_id: UUID, admin_client: Any):
-    """The WAHA client module 3's routers actually talk to.
+WHATSAPP_NAO_CONECTADO_DETAIL = (
+    "WhatsApp não conectado. Conecte um número em Conexões para usar esta função."
+)
+WHATSAPP_NAO_CONECTADO_CODE = "WHATSAPP_NAO_CONECTADO"
+
+
+def resolve_community_waha_client(
+    *, org_id: UUID, admin_client: Any, allow_fake: bool | None = None,
+):
+    """The WAHA client module 3's routers actually talk to — or ``None``
+    when WhatsApp is NOT configured for this org.
 
     Slice C (user decision 2026-09-17): prefers `org_id`'s
     `community.whatsapp_connections` row (base_url + decrypted api_key +
     session_name — a line saved via `Configurações → WhatsApp →
     Conexões`), falling back to the static `community_waha_*` settings
-    when no connection is stored yet OR encryption is unconfigured —
-    the SAME fallback `get_community_waha_client` always had, so a
-    fresh clone / a deploy that hasn't paired a number (the expected
-    state right now, per `NOC-REMEDIATE[community-waha-pairing]`) keeps
-    working exactly as before.
+    when no connection is stored yet OR encryption is unconfigured.
+
+    When neither yields a WAHA base URL, this returns ``None`` — never a
+    silent `FakeWahaClient` — unless `settings.whatsapp_allow_fake` (or the
+    `allow_fake` override) is on (test harness / local dev only). A Fake in
+    prod reported "Aguardando pareamento" and let a broadcast read
+    "Enviada" with nothing sent (2026-10-01). Callers decide: WAHA-dependent
+    routes refuse 503 (`get_community_waha_client`); `GET /sessao` reports
+    `NAO_CONFIGURADO` (`get_community_waha_client_optional`).
 
     `admin_client` is the DI seam (`KB § PATTERNS/backend/di-test-seam.md`)
     — `get_community_waha_client` binds it to `get_admin_client()`; tests
@@ -374,6 +391,8 @@ def resolve_community_waha_client(*, org_id: UUID, admin_client: Any):
     )
     from noctusai_lib.security.api_keys import EncryptionNotConfigured
 
+    fake_ok = settings.whatsapp_allow_fake if allow_fake is None else allow_fake
+
     record = None
     try:
         store = build_whatsapp_connection_store(
@@ -385,26 +404,46 @@ def resolve_community_waha_client(*, org_id: UUID, admin_client: Any):
                 connection_id=connections[0].id, org_id=org_id, decrypt=True
             )
     except EncryptionNotConfigured:
+        logger.warning(
+            "community whatsapp: ENCRYPTION_KEY ausente — conexões salvas ignoradas",
+        )
         record = None
 
     if record is not None:
-        return get_whatsapp_client(
-            base_url=record.base_url or None,
-            api_key=record.api_key,
-            session=record.session_name,
-            external_base_url=settings.community_waha_external_base_url or None,
+        base_url, api_key, session = record.base_url, record.api_key, record.session_name
+    else:
+        base_url = settings.community_waha_base_url
+        api_key = settings.community_waha_api_key or None
+        session = settings.community_waha_session
+
+    if not base_url and not fake_ok:
+        logger.info(
+            "community whatsapp: nenhuma conexão WAHA para org %s — não configurado",
+            org_id,
         )
+        return None
 
     return get_whatsapp_client(
-        base_url=settings.community_waha_base_url or None,
-        api_key=settings.community_waha_api_key or None,
-        session=settings.community_waha_session,
+        base_url=base_url or None,
+        api_key=api_key,
+        session=session,
         external_base_url=settings.community_waha_external_base_url or None,
     )
 
 
-def get_community_waha_client(auth: tuple = Depends(get_current_user_org)):
+def get_community_waha_client_optional(auth: tuple = Depends(get_current_user_org)):
+    """The org's WAHA client, or ``None`` when WhatsApp is not configured."""
     _user, _token, raw_org = auth
     return resolve_community_waha_client(
         org_id=coerce_org_uuid(raw_org), admin_client=get_admin_client()
     )
+
+
+def get_community_waha_client(client=Depends(get_community_waha_client_optional)):
+    """The org's WAHA client; REFUSES 503 `WHATSAPP_NAO_CONECTADO` when
+    WhatsApp is not configured — before any route-side state change."""
+    if client is None:
+        raise http_error(
+            503, WHATSAPP_NAO_CONECTADO_DETAIL, code=WHATSAPP_NAO_CONECTADO_CODE,
+        )
+    return client
