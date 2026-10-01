@@ -53,8 +53,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
 | Academia De Reciclagem | 10 | 0 | 26 | 9 | 21 | 172 |
 | Agents | 11 | 1 | 37 | 26 | 64 | 833 |
-| Community | 25 | 29 | 47 | 31 | 55 | 606 |
-| **Total** | **285** | **306** | **608** | **386** | **962** | **13,550** |
+| Community | 25 | 29 | 48 | 31 | 55 | 606 |
+| **Total** | **285** | **306** | **609** | **386** | **962** | **13,550** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
