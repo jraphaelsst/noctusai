@@ -135,6 +135,36 @@ export function useAdicionarItem() {
   });
 }
 
+export function useEditarFatura() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ faturaId, ...campos }: {
+      faturaId: string; competencia?: string; vencimento?: string;
+    }) => api.patch<Fatura>(`/api/financeiro/faturas/${faturaId}`, campos),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
+export function useEditarItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ faturaId, itemId, ...campos }: {
+      faturaId: string; itemId: string; descricao?: string;
+      quantidade?: number; valor_unit?: number;
+    }) => api.patch<Fatura>(`/api/financeiro/faturas/${faturaId}/itens/${itemId}`, campos),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
+export function useRemoverItem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ faturaId, itemId }: { faturaId: string; itemId: string }) =>
+      api.delete<Fatura>(`/api/financeiro/faturas/${faturaId}/itens/${itemId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: FINANCEIRO_QUERY_KEY }),
+  });
+}
+
 export function useMarcarPaga() {
   const qc = useQueryClient();
   return useMutation({

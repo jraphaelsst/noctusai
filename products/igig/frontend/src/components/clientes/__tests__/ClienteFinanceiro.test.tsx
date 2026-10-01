@@ -8,6 +8,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import "@testing-library/jest-dom";
+import { MemoryRouter } from "react-router-dom";
 
 const mockUseFaturas = vi.fn();
 const mockMarcarPaga = { mutate: vi.fn(), isPending: false };
@@ -41,25 +42,25 @@ beforeEach(() => {
 
 describe("ClienteFinanceiro — 'Paga' is admin-only and confirmed", () => {
   it("shows the Paga button to an admin", () => {
-    render(<ClienteFinanceiro clienteId="c1" />);
+    render(<MemoryRouter><ClienteFinanceiro clienteId="c1" /></MemoryRouter>);
     expect(screen.getByRole("button", { name: /paga/i })).toBeInTheDocument();
   });
 
   it("hides the Paga button from a non-admin", () => {
     mockIsOrgAdmin.mockReturnValue(false);
-    render(<ClienteFinanceiro clienteId="c1" />);
+    render(<MemoryRouter><ClienteFinanceiro clienteId="c1" /></MemoryRouter>);
     expect(screen.queryByRole("button", { name: /paga/i })).not.toBeInTheDocument();
   });
 
   it("does NOT mutate on click alone — opens a confirmation first", () => {
-    render(<ClienteFinanceiro clienteId="c1" />);
+    render(<MemoryRouter><ClienteFinanceiro clienteId="c1" /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: /paga/i }));
     expect(mockMarcarPaga.mutate).not.toHaveBeenCalled();
     expect(screen.getByText(/não há como desfazer pela tela/i)).toBeInTheDocument();
   });
 
   it("mutates only after the confirmation is confirmed", () => {
-    render(<ClienteFinanceiro clienteId="c1" />);
+    render(<MemoryRouter><ClienteFinanceiro clienteId="c1" /></MemoryRouter>);
     fireEvent.click(screen.getByRole("button", { name: /paga/i }));
     fireEvent.click(screen.getByRole("button", { name: "Marcar paga" }));
     expect(mockMarcarPaga.mutate).toHaveBeenCalledWith("f1", expect.anything());

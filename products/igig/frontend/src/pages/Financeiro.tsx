@@ -11,6 +11,7 @@
  *     the single most actionable thing this table can say.
  */
 import { Fragment, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
@@ -23,11 +24,14 @@ import {
   FilePlus2,
   Mail,
   MailCheck,
+  Pencil,
   Plus,
+  Trash2,
   XCircle,
 } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { EditarFaturaForm, EditarItemForm } from "@/components/financeiro/EditarFatura";
 import { FechamentoMes } from "@/components/financeiro/FechamentoMes";
 import { RelatorioSheet } from "@/components/financeiro/RelatorioSheet";
 
@@ -45,7 +49,9 @@ import {
   useInadimplentes,
   useMarcarFaturaEnviada,
   useMarcarPaga,
+  useRemoverItem,
   type Fatura,
+  type FaturaItem,
   type StatusFatura,
   type TipoItem,
 } from "@/hooks/useFinanceiro";
@@ -225,7 +231,10 @@ export default function Financeiro() {
           <Skeleton className="h-20 w-full" />
         ) : excedentes.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            Nenhum contrato ativo com pacote definido nesta competência.
+            Nenhum contrato ativo com pacote definido nesta competência.{" "}
+            <Link to="/clientes" className="font-medium text-primary underline underline-offset-2">
+              Definir pacote nos contratos dos clientes
+            </Link>
           </p>
         ) : (
           <ul className="divide-y divide-border">
@@ -410,6 +419,12 @@ function LinhaFatura({
   const { itens, loading, isError: erroItens, error: erroItensDetalhe } = useFaturaItens(
     aberta ? fatura.id : undefined,
   );
+  const remover = useRemoverItem();
+  const [editandoFatura, setEditandoFatura] = useState(false);
+  const [itemEditando, setItemEditando] = useState<string | null>(null);
+  const [itemExcluindo, setItemExcluindo] = useState<FaturaItem | null>(null);
+  // Same rule the server enforces: lines/header only change while unpaid.
+  const editavel = isAdmin && fatura.status !== "paga" && fatura.status !== "cancelada";
 
   return (
     <li className="py-2">
@@ -450,6 +465,10 @@ function LinhaFatura({
             estar paga/cancelada — depois disso o "envio" já não é relevante. */}
         {isAdmin && fatura.status !== "paga" && fatura.status !== "cancelada" && (
           <>
+            <Button size="sm" variant="outline" onClick={() => setEditandoFatura((v) => !v)}>
+              <Pencil className="mr-2 h-3 w-3" />
+              Editar
+            </Button>
             <Button size="sm" variant="outline" onClick={onPedirEnvio}>
               <Mail className="mr-2 h-3 w-3" />
               Enviar fatura
@@ -478,6 +497,10 @@ function LinhaFatura({
         )}
       </div>
 
+      {editavel && editandoFatura && (
+        <EditarFaturaForm fatura={fatura} onClose={() => setEditandoFatura(false)} />
+      )}
+
       {aberta && (
         <div className="mt-2 rounded-md border border-border bg-background p-3">
           {erroItens ? (
@@ -499,12 +522,22 @@ function LinhaFatura({
                   <th className="pb-1 text-right font-medium">Qtd</th>
                   <th className="pb-1 text-right font-medium">Valor un.</th>
                   <th className="pb-1 text-right font-medium">Total</th>
+                  {editavel && <th className="pb-1 text-right font-medium">Ações</th>}
                 </tr>
               </thead>
               <tbody className="text-foreground">
                 {itens.map((i) => {
                   const bruto = i.quantidade * i.valor_unit;
                   const contribuicao = i.tipo === "desconto" ? -bruto : bruto;
+                  if (editavel && itemEditando === i.id) {
+                    return (
+                      <tr key={i.id} className="border-t border-border">
+                        <td colSpan={6}>
+                          <EditarItemForm faturaId={fatura.id} item={i} onClose={() => setItemEditando(null)} />
+                        </td>
+                      </tr>
+                    );
+                  }
                   return (
                     <tr key={i.id} className="border-t border-border">
                       <td className="py-1">{i.descricao}</td>
@@ -515,6 +548,26 @@ function LinhaFatura({
                         {contribuicao < 0 ? "− " : ""}
                         {BRL.format(Math.abs(contribuicao))}
                       </td>
+                      {editavel && (
+                        <td className="py-1 text-right">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Editar item ${i.descricao}`}
+                            onClick={() => setItemEditando(i.id)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            aria-label={`Excluir item ${i.descricao}`}
+                            onClick={() => setItemExcluindo(i)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -527,6 +580,32 @@ function LinhaFatura({
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={itemExcluindo !== null}
+        title="Excluir item da fatura?"
+        description={
+          itemExcluindo
+            ? `"${itemExcluindo.descricao}" será removido e o total da fatura recalculado.`
+            : ""
+        }
+        confirmLabel="Excluir item"
+        busy={remover.isPending}
+        onCancel={() => setItemExcluindo(null)}
+        onConfirm={() => {
+          if (!itemExcluindo) return;
+          remover.mutate(
+            { faturaId: fatura.id, itemId: itemExcluindo.id },
+            {
+              onSuccess: (f) => {
+                toast.success(`Item excluído — total ${BRL.format(f.valor_total)}`);
+                setItemExcluindo(null);
+              },
+              onError: (erro) => toast.error(describeError(erro, "Não foi possível excluir o item.")),
+            },
+          );
+        }}
+      />
     </li>
   );
 }

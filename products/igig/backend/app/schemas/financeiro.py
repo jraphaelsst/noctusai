@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from noctusai_lib.api.schemas import StrictHttpModel
 
 __all__ = [
-    "FaturaCreate", "FaturaOut", "FaturaItemCreate", "FaturaItemOut",
+    "FaturaCreate", "FaturaUpdate", "FaturaItemUpdate", "FaturaOut", "FaturaItemCreate", "FaturaItemOut",
     "ExcedenteOut", "DREOut", "InadimplenteOut",
     "GerarCompetenciaIn", "GerarCompetenciaOut", "ResumoFinanceiroOut",
     "EnviarFaturaOut",
@@ -27,6 +27,21 @@ class FaturaCreate(StrictHttpModel):
     #: falling through to the persistence layer's broad `PersistenceError`
     #: catch, which would misreport it as a duplicate invoice (finding #7).
     vencimento: date | None = None
+
+
+class FaturaUpdate(StrictHttpModel):
+    """PATCH body — only the header fields a person may correct by hand.
+    `valor_total` is derived from the lines and `status` moves through the
+    action endpoints, so neither is accepted here."""
+
+    competencia: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    vencimento: date | None = None
+
+
+class FaturaItemUpdate(StrictHttpModel):
+    descricao: str | None = Field(default=None, min_length=1, max_length=200)
+    quantidade: int | None = Field(default=None, ge=1)
+    valor_unit: float | None = Field(default=None, ge=0)
 
 
 class FaturaItemCreate(StrictHttpModel):

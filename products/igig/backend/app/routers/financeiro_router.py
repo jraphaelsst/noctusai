@@ -42,7 +42,9 @@ from app.schemas.financeiro import (
     FaturaCreate,
     FaturaItemCreate,
     FaturaItemOut,
+    FaturaItemUpdate,
     FaturaOut,
+    FaturaUpdate,
     GerarCompetenciaIn,
     GerarCompetenciaOut,
     InadimplenteOut,
@@ -187,6 +189,128 @@ async def adicionar_item(
     repos.fatura_item.criar(org_id, {"fatura_id": fatura_id, **novo_item})
     itens = repos.fatura_item.da_fatura(org_id, fatura_id)
     return FaturaOut(**repos.fatura.recalcular_total(org_id, fatura_id, itens))
+
+
+def _fatura_aberta(repos: Repositorios, org_id: str, fatura_id: str) -> dict:
+    """Load an org-scoped invoice and refuse (409) once it is `paga`/`cancelada`
+    — editing a closed invoice would silently change a number already paid or voided."""
+    try:
+        fatura = repos.fatura.buscar(org_id, fatura_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Fatura não encontrada")
+    if fatura.get("status") in _FATURA_FECHADA:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": f"Fatura {fatura['status']} não pode ser editada.",
+                "code": "fatura_fechada",
+            },
+        )
+    return fatura
+
+
+def _item_da_fatura(repos: Repositorios, org_id: str, fatura_id: str, item_id: str) -> dict:
+    try:
+        item = repos.fatura_item.buscar(org_id, item_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    if str(item.get("fatura_id")) != str(fatura_id):
+        raise HTTPException(status_code=404, detail="Item não encontrado")
+    return item
+
+
+@router.patch(
+    "/faturas/{fatura_id}", response_model=FaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
+async def editar_fatura(
+    fatura_id: str,
+    payload: FaturaUpdate,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> FaturaOut:
+    """Edit competência / vencimento of an open invoice. Admin-only; 409 on
+    `paga`/`cancelada`; 409 if the new competência collides with the
+    contract's existing invoice (same unique index as creation)."""
+    org_id = _org(auth)
+    atual = _fatura_aberta(repos, org_id, fatura_id)
+    valores = payload.model_dump(exclude_unset=True)
+    if valores.get("vencimento") is not None:
+        valores["vencimento"] = valores["vencimento"].isoformat()
+    if not valores:
+        return FaturaOut(**atual)
+    try:
+        return FaturaOut(**repos.fatura.atualizar(org_id, fatura_id, valores))
+    except UniqueViolation:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Já existe fatura para este contrato em {valores.get('competencia')}",
+        )
+
+
+@router.patch(
+    "/faturas/{fatura_id}/itens/{item_id}", response_model=FaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
+async def editar_item(
+    fatura_id: str,
+    item_id: str,
+    payload: FaturaItemUpdate,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> FaturaOut:
+    """Edit a line of an open invoice and RETURN the invoice with the total
+    recomputed (same `recalcular_total` + negative-total guard as adding)."""
+    org_id = _org(auth)
+    _fatura_aberta(repos, org_id, fatura_id)
+    item = _item_da_fatura(repos, org_id, fatura_id, item_id)
+    valores = payload.model_dump(exclude_none=True)
+    if valores:
+        itens = repos.fatura_item.da_fatura(org_id, fatura_id)
+        prospectivo = sum(
+            valor_da_linha_fatura({**i, **valores} if i["id"] == item["id"] else i)
+            for i in itens
+        )
+        if round(prospectivo, 2) < 0:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "detail": "Esta alteração deixaria o total da fatura negativo.",
+                    "code": "total_negativo",
+                },
+            )
+        repos.fatura_item.atualizar(org_id, item_id, valores)
+    itens = repos.fatura_item.da_fatura(org_id, fatura_id)
+    return FaturaOut(**repos.fatura.recalcular_total(org_id, fatura_id, itens))
+
+
+@router.delete(
+    "/faturas/{fatura_id}/itens/{item_id}", response_model=FaturaOut,
+    dependencies=[Depends(exigir_admin_da_org)],
+)
+async def remover_item(
+    fatura_id: str,
+    item_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> FaturaOut:
+    """Delete a line of an open invoice; returns the invoice, total recomputed."""
+    org_id = _org(auth)
+    _fatura_aberta(repos, org_id, fatura_id)
+    item = _item_da_fatura(repos, org_id, fatura_id, item_id)
+    itens_restantes = [
+        i for i in repos.fatura_item.da_fatura(org_id, fatura_id) if i["id"] != item["id"]
+    ]
+    if round(sum(valor_da_linha_fatura(i) for i in itens_restantes), 2) < 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "detail": "Remover este item deixaria o total da fatura negativo.",
+                "code": "total_negativo",
+            },
+        )
+    repos.fatura_item.remover(org_id, item_id)
+    return FaturaOut(**repos.fatura.recalcular_total(org_id, fatura_id, itens_restantes))
 
 
 @router.post(

@@ -8,6 +8,7 @@
  * the Financeiro page itself requires for the same money-movement action).
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
 import { CheckCircle2 } from "lucide-react";
@@ -62,7 +63,11 @@ export function ClienteFinanceiro({ clienteId }: { clienteId: string }) {
       </div>
       {ordenadas.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-          Nenhuma fatura para este cliente. Faturas saem de "Gerar competência" no Financeiro.
+          Nenhuma fatura para este cliente. Faturas saem de "Gerar competência" no{" "}
+          <Link to="/financeiro" className="font-medium text-primary underline underline-offset-2">
+            Financeiro
+          </Link>
+          .
         </p>
       ) : (
         <ul className="divide-y divide-border rounded-lg border border-border">

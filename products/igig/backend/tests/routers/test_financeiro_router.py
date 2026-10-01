@@ -1056,8 +1056,78 @@ class TestPermissoes:
         fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
         assert sem_admin.post(f"/api/financeiro/faturas/{fatura['id']}/enviar").status_code == 403
 
+    def test_edit_endpoints_require_admin(self, sem_admin, repos, cliente):
+        fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
+        base = f"/api/financeiro/faturas/{fatura['id']}"
+        assert sem_admin.patch(base, json={}).status_code == 403
+        assert sem_admin.patch(f"{base}/itens/x", json={}).status_code == 403
+        assert sem_admin.delete(f"{base}/itens/x").status_code == 403
+
     def test_marcar_enviada_requires_admin(self, sem_admin, repos, cliente):
         fatura = repos.fatura.criar(ORG, {"cliente_id": cliente["id"], "competencia": "2026-08"})
         assert sem_admin.post(
             f"/api/financeiro/faturas/{fatura['id']}/marcar-enviada"
         ).status_code == 403
+
+
+class TestEditarFatura:
+    """PATCH /faturas/{id}, PATCH + DELETE /faturas/{id}/itens/{item_id}."""
+
+    def _fatura_com_itens(self, api, cliente):
+        fatura = api.post("/api/financeiro/faturas", json={
+            "cliente_id": cliente["id"], "competencia": "2026-08",
+        }).json()
+        base = f"/api/financeiro/faturas/{fatura['id']}"
+        api.post(f"{base}/itens", json={"descricao": "Mensalidade", "valor_unit": 100.0})
+        api.post(f"{base}/itens", json={"descricao": "Extra", "quantidade": 2, "valor_unit": 50.0})
+        return fatura, base, api.get(f"{base}/itens").json()
+
+    def test_edit_header(self, api, cliente):
+        fatura, base, _ = self._fatura_com_itens(api, cliente)
+        resp = api.patch(base, json={"vencimento": "2026-09-10", "competencia": "2026-09"})
+        assert resp.status_code == 200
+        assert resp.json()["vencimento"] == "2026-09-10"
+        assert resp.json()["competencia"] == "2026-09"
+
+    def test_edit_item_recomputes_total(self, api, cliente):
+        _, base, itens = self._fatura_com_itens(api, cliente)
+        resp = api.patch(f"{base}/itens/{itens[0]['id']}", json={"valor_unit": 300.0})
+        assert resp.status_code == 200
+        assert resp.json()["valor_total"] == 400.0
+
+    def test_delete_item_recomputes_total(self, api, cliente):
+        _, base, itens = self._fatura_com_itens(api, cliente)
+        resp = api.delete(f"{base}/itens/{itens[1]['id']}")
+        assert resp.status_code == 200
+        assert resp.json()["valor_total"] == 100.0
+        assert len(api.get(f"{base}/itens").json()) == 1
+
+    def test_paid_invoice_refuses_every_edit(self, api, cliente):
+        _, base, itens = self._fatura_com_itens(api, cliente)
+        api.post(f"{base}/pagar")
+        assert api.patch(base, json={"vencimento": "2026-09-10"}).status_code == 409
+        assert api.patch(f"{base}/itens/{itens[0]['id']}", json={"descricao": "x"}).status_code == 409
+        assert api.delete(f"{base}/itens/{itens[0]['id']}").status_code == 409
+
+    def test_other_org_invoice_is_404(self, api, repos):
+        outra_org = "3b0c7f2e-9a41-4d8e-b0a6-2f1d5c7e9a10"
+        cliente_outro = repos.cliente.criar(outra_org, {"nome": "Outra Org"})
+        outra = repos.fatura.criar(
+            outra_org, {"cliente_id": cliente_outro["id"], "competencia": "2026-08"},
+        )
+        base = f"/api/financeiro/faturas/{outra['id']}"
+        assert api.patch(base, json={"vencimento": "2026-09-10"}).status_code == 404
+        assert api.delete(f"{base}/itens/zzz").status_code == 404
+
+    def test_unknown_item_is_404(self, api, cliente):
+        _, base, _ = self._fatura_com_itens(api, cliente)
+        assert api.delete(f"{base}/itens/nao-existe").status_code == 404
+
+    def test_extra_fields_are_refused(self, api, cliente):
+        _, base, _ = self._fatura_com_itens(api, cliente)
+        assert api.patch(base, json={"valor_total": 1}).status_code == 422
+
+    def test_requires_auth(self, api):
+        assert api.raw().patch("/api/financeiro/faturas/x", json={}).status_code == 401
+        assert api.raw().patch("/api/financeiro/faturas/x/itens/y", json={}).status_code == 401
+        assert api.raw().delete("/api/financeiro/faturas/x/itens/y").status_code == 401
