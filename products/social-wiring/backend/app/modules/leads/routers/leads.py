@@ -60,7 +60,8 @@ def list_leads(
     rows, total = leads_service.list_leads(
         client, org_id, filters, page=page, page_size=page_size, sort=sort, order=order, refs=refs
     )
-    data = [_out(r, refs) for r in rows]
+    por_lead = leads_service.clientes_dos_leads(client, org_id, [str(r["id"]) for r in rows])
+    data = [{**_out(r, refs), "cliente_id": por_lead.get(str(r["id"]))} for r in rows]
     return paginated_response(data, total, page, page_size)
 
 

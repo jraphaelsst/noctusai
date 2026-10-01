@@ -329,6 +329,41 @@ class TestCreateAttachesTheClienteSynchronously:
         assert clientes[0]["chave_canonica"] is None
 
 
+class TestListLinksEachLeadToItsCliente:
+    """The Leads list links a row to `/clientes/:id` — it needs the person's id."""
+
+    def test_list_carries_cliente_id_from_the_touch(self, http_client, leads_client):
+        resp = http_client.post(
+            "/api/leads",
+            json={
+                "data_entrada": "2026-07-01",
+                "codigo_imovel": LEAD_CODIGO,
+                "cliente_nome": "Ana Silva",
+                "contato": "+5511988770001",
+            },
+            headers=auth_headers(),
+        )
+        lead_id = resp.json()["data"]["id"]
+        (cliente,) = leads_client.table("clientes").select("*").execute().data
+
+        (linha,) = http_client.get("/api/leads", headers=auth_headers()).json()["data"]
+
+        assert linha["id"] == lead_id
+        assert linha["cliente_id"] == cliente["id"]
+
+    def test_a_lead_nobody_claimed_yet_has_a_null_cliente_id(self, http_client, leads_client):
+        http_client.post(
+            "/api/leads",
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "cliente_nome": "Sem Toque"},
+            headers=auth_headers(),
+        )
+        leads_client.set_table_data("cliente_touches", [])
+
+        (linha,) = http_client.get("/api/leads", headers=auth_headers()).json()["data"]
+
+        assert linha["cliente_id"] is None
+
+
 class TestCreateSchedulesPersonLayerSweep:
     """🔴 A created lead must become WORKABLE, not merely visible.
 
