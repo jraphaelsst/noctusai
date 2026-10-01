@@ -5,6 +5,7 @@ from typing import Optional
 
 import httpx
 
+from ..fake_or_refuse import resolve_fake_or_refuse
 from .fake import FakeTurnstileVerifier
 from .protocol import TurnstileVerifier
 from .real import DEFAULT_TIMEOUT_SECONDS, DEFAULT_VERIFY_URL, RealTurnstileVerifier
@@ -50,4 +51,39 @@ def make_turnstile_verifier(
     )
 
 
-__all__ = ["make_turnstile_verifier"]
+def resolve_turnstile_verifier(
+    *,
+    secret: Optional[str],
+    allow_fake: bool = False,
+    verify_url: str = DEFAULT_VERIFY_URL,
+    timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    transport: Optional[httpx.BaseTransport] = None,
+) -> Optional[TurnstileVerifier]:
+    """Fake-or-refuse resolution of a Turnstile verifier — the PROD seam.
+
+    Unlike `make_turnstile_verifier` (whose `secret=None` silently yields
+    the Fake), this declares the unconfigured state: no secret → `None`,
+    meaning "captcha disabled", which the caller must handle explicitly
+    (skip the check AND say so — log / expose the state to the FE).
+
+    - `secret` set → `RealTurnstileVerifier` (the Fake is never built).
+    - no secret + `allow_fake=True` (explicit test/dev opt-in) → Fake.
+    - no secret otherwise → `None`.
+
+    Built on `noctusai_lib.integrations.fake_or_refuse.resolve_fake_or_refuse`.
+    """
+    return resolve_fake_or_refuse(
+        configured=bool(secret),
+        build_real=lambda: RealTurnstileVerifier(
+            secret=secret,  # type: ignore[arg-type]
+            verify_url=verify_url,
+            timeout_seconds=timeout_seconds,
+            transport=transport,
+        ),
+        build_fake=FakeTurnstileVerifier,
+        allow_fake=allow_fake,
+        unconfigured=lambda: None,
+    )
+
+
+__all__ = ["make_turnstile_verifier", "resolve_turnstile_verifier"]

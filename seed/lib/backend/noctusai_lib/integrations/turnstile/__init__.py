@@ -36,11 +36,16 @@ simulate the failure branch. `make_turnstile_verifier` also returns the
 Fake when no `secret` is configured — same early-dev-bypass affordance
 the platform already uses for webhook secrets, EXCEPT an empty token
 still 403s (only a configured-but-wrong secret is bypassed, never a
-missing submission).
+missing submission). That bypass is a dev affordance only: a PROD
+consumer that must declare "captcha disabled" honestly uses
+`resolve_turnstile_verifier(secret=...)` instead — it returns `None`
+(never the Fake) when no secret is configured, and the Fake only under an
+explicit `allow_fake=True` (fake-or-refuse resolution,
+`noctusai_lib.integrations.fake_or_refuse`).
 """
 from __future__ import annotations
 
-from .factory import make_turnstile_verifier
+from .factory import make_turnstile_verifier, resolve_turnstile_verifier
 from .fake import FakeTurnstileVerifier
 from .protocol import TurnstileVerifier
 from .real import RealTurnstileVerifier
@@ -52,4 +57,5 @@ __all__ = [
     "TurnstileVerificationResult",
     "TurnstileVerifier",
     "make_turnstile_verifier",
+    "resolve_turnstile_verifier",
 ]

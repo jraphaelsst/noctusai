@@ -75,6 +75,8 @@ The slip looks like: *"Yes, the seed has a `CalendarAdapter` Protocol, so we can
 
 **Pattern origin:** surfaced 2026-05-03 during `therapy-scheduling-pilot` Phase 0 when *"Internal + Google Calendar two-way"* was about to lock without checking that the real GCal adapter actually shipped (it didn't — only the Fake). Filing `projects/google-calendar-real-adapters/` as a separate seed project — instead of silently expanding pilot scope to include OAuth work — is the right shape.
 
+**Consuming a shipped Fake+Real in prod — fake-or-refuse.** When the consumer's credentials can be absent in a real deploy, resolve through `noctusai_lib.integrations.fake_or_refuse.resolve_fake_or_refuse` (configured → Real; unconfigured → a DECLARED state — refusal or sentinel; the Fake only under an explicit `allow_fake`), never through the factory's dev-convenience "no key → Fake" branch. → `KB § PATTERNS/backend/seed-fake-real-adapter.md § Consumer-side resolution`
+
 This test is a corollary to "Seed first. Always." — that rule says *use* the seed; this test says *verify* the seed actually ships what you're about to use, **before** locking the decision.
 
 ### Runtime inheritance vs scaffold inheritance

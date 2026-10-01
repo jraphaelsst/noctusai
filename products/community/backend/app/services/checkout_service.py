@@ -35,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.fake_or_refuse import resolve_fake_or_refuse
 from noctusai_lib.integrations.payments import PaymentGatewayError
 from noctusai_lib.integrations.payments.checkout import (
     CheckoutRequest,
@@ -76,12 +77,27 @@ class CheckoutServiceError(Exception):
         self.status_code = status_code
 
 
-def _fake_ou_recusa(chave: str, allow_fake: Optional[bool] = None) -> HostedCheckout:
-    """Missing gateway key: the Fake only on explicit opt-in, else 503."""
-    if settings.payments_allow_fake if allow_fake is None else allow_fake:
-        return make_hosted_checkout(use_fake=True)
-    logger.error("checkout: %s não configurada — cobrança recusada", chave)
-    raise CheckoutServiceError("Pagamentos indisponíveis no momento. Tente novamente mais tarde.", status_code=503)
+def _checkout_ou_recusa(
+    chave: str, key: Optional[str], build_real: Callable[[], HostedCheckout],
+    allow_fake: Optional[bool] = None,
+) -> HostedCheckout:
+    """Fake-or-refuse (`noctusai_lib.integrations.fake_or_refuse`): the
+    Real when `key` resolved; on a miss the Fake only on explicit opt-in,
+    else 503."""
+
+    def _recusa() -> HostedCheckout:
+        logger.error("checkout: %s não configurada — cobrança recusada", chave)
+        raise CheckoutServiceError(
+            "Pagamentos indisponíveis no momento. Tente novamente mais tarde.", status_code=503,
+        )
+
+    return resolve_fake_or_refuse(
+        configured=bool(key),
+        build_real=build_real,
+        build_fake=lambda: make_hosted_checkout(use_fake=True),
+        allow_fake=settings.payments_allow_fake if allow_fake is None else allow_fake,
+        unconfigured=_recusa,
+    )
 
 
 def _default_hosted_checkout_factory(
@@ -102,14 +118,18 @@ def _default_hosted_checkout_factory(
     """
     if gateway == "stripe":
         key = resolve("stripe_secret_key", org_id)
-        if not key:
-            return _fake_ou_recusa("stripe_secret_key", allow_fake)
-        return make_hosted_checkout(provider="stripe", stripe_api_key=key)
+        return _checkout_ou_recusa(
+            "stripe_secret_key", key,
+            lambda: make_hosted_checkout(provider="stripe", stripe_api_key=key),
+            allow_fake,
+        )
     key = resolve("asaas_api_key", org_id)
-    if not key:
-        return _fake_ou_recusa("asaas_api_key", allow_fake)
-    return make_hosted_checkout(
-        provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url,
+    return _checkout_ou_recusa(
+        "asaas_api_key", key,
+        lambda: make_hosted_checkout(
+            provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url,
+        ),
+        allow_fake,
     )
 
 

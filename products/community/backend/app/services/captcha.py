@@ -28,17 +28,18 @@ indisponível", and the resolver logs an ERROR naming the missing key.
 Test seam: the services' `turnstile_verifier=` constructor argument
 (wrapped by `CaptchaGate.com_verificador`) and the router dependency
 `get_captcha_resolver` (FastAPI `dependency_overrides`). The seed Fake
-lives ONLY behind those seams.
+lives ONLY behind those seams. The resolution itself is the seed's
+fake-or-refuse primitive (`noctusai_lib.integrations.turnstile.
+resolve_turnstile_verifier`, built on `noctusai_lib.integrations.
+fake_or_refuse`).
 """
 from __future__ import annotations
-
-# NOC-REMEDIATE[fake-or-refuse-seed]: 3rd explicit "configured → real, unconfigured → declared state, Fake only via test seam" resolver in community (payments `_fake_ou_recusa`, WhatsApp `resolve_community_waha_client`, this one) — formalize in the seed (`noctusai_lib.integrations.turnstile` factory) — 2026-10-01
 
 import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from noctusai_lib.integrations.turnstile import RealTurnstileVerifier, TurnstileVerifier
+from noctusai_lib.integrations.turnstile import TurnstileVerifier, resolve_turnstile_verifier
 from noctusai_lib.security.api_keys import resolve_api_key
 
 from app.config import settings
@@ -106,7 +107,10 @@ def resolve_captcha(
     `settings.community_turnstile_site_key` (`COMMUNITY_TURNSTILE_SITE_KEY`).
     """
     secret = resolve("turnstile_secret_key", org_id) or settings.community_turnstile_secret or None
-    if not secret:
+    # Seed fake-or-refuse resolution: no secret → None (declared "disabled"),
+    # never the Fake — the Fake lives only behind this module's test seams.
+    verificador = resolve_turnstile_verifier(secret=secret)
+    if verificador is None:
         return CaptchaGate.desativado()
     site_key = resolve("turnstile_site_key", org_id) or settings.community_turnstile_site_key or None
     if not site_key:
@@ -114,7 +118,7 @@ def resolve_captcha(
             CAPTCHA_SEM_SITE_KEY_LOG,
             extra={"evento": "captcha_sem_site_key", "org_id": org_id},
         )
-    return CaptchaGate(verificador=RealTurnstileVerifier(secret=secret), site_key=site_key)
+    return CaptchaGate(verificador=verificador, site_key=site_key)
 
 
 def get_captcha_resolver() -> CaptchaResolver:

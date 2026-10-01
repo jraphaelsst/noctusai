@@ -89,7 +89,7 @@ def test_other_orgs_connection_row_is_invisible(monkeypatch):
 
 # ── Honest not-configured state (2026-10-01) ─────────────────────────
 # `allow_fake` is the explicit override parameter (same shape as
-# `checkout_service._fake_ou_recusa`'s) — the harness sets
+# `checkout_service._checkout_ou_recusa`'s) — the harness sets
 # WHATSAPP_ALLOW_FAKE=true globally, so the prod default is driven here.
 
 

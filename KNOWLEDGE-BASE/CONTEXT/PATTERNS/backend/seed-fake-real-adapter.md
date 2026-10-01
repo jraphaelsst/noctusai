@@ -126,6 +126,34 @@ This avoids forcing the domain module to know about `fakeredis` directly.
 
 ---
 
+## Consumer-side resolution — fake-or-refuse (`noctusai_lib.integrations.fake_or_refuse`)
+
+The factory's "no signal → Fake" branch is a **dev/test affordance**, not a prod answer. A consumer whose credentials can be legitimately absent in a real deploy (an org that has not configured its gateway / WAHA / captcha yet) must NOT let that branch decide — a silent Fake in prod shows a paying member a fake Pix QR, lets a broadcast read "Enviada" with nothing sent, or runs a captcha that accepts any token.
+
+The consumer resolves through the seed primitive instead:
+
+```python
+from noctusai_lib.integrations.fake_or_refuse import resolve_fake_or_refuse
+
+client = resolve_fake_or_refuse(
+    configured=bool(key),                       # did the Real's credentials resolve?
+    build_real=lambda: make_x(provider=..., api_key=key),
+    build_fake=lambda: make_x(use_fake=True),   # reached ONLY under allow_fake
+    allow_fake=settings.x_allow_fake,           # explicit test/dev opt-in, default False
+    unconfigured=_refuse_503,                   # REQUIRED: raise a refusal or return a sentinel
+)
+```
+
+- configured → Real (the Fake is never constructed);
+- unconfigured + explicit `allow_fake` → Fake;
+- unconfigured otherwise → the caller's **declared** state — raise an honest refusal (503 domain error) or return a sentinel its callers branch on (`None`, a "disabled" value object). `unconfigured` has no default: the state must be named at the call site. `allow_fake=True` with no `build_fake` raises `ValueError` (a misconfigured opt-in is loud).
+
+Seed modules may ship a pre-wired resolver on top: `noctusai_lib.integrations.turnstile.resolve_turnstile_verifier(secret=..., allow_fake=False)` returns the Real, or `None` ("captcha disabled") — never the Fake without the opt-in.
+
+**Reference consumers** (`products/community`, formalized 2026-10-01 at N=3): payments — `checkout_service._checkout_ou_recusa` / `assinaturas_service._gateway_ou_recusa` (unconfigured → 503 refusal; Fake under `payments_allow_fake`); WhatsApp — `app.dependencies.resolve_community_waha_client` (unconfigured → `None`, routes refuse 503 `WHATSAPP_NAO_CONECTADO`; Fake under `whatsapp_allow_fake`); captcha — `app.services.captcha.resolve_captcha` via `resolve_turnstile_verifier` (unconfigured → `CaptchaGate.desativado()`; the Fake only through the service/router test seams).
+
+---
+
 ## Anti-patterns
 
 ### "We ship a Protocol; consumers can BYO Fake"
@@ -143,6 +171,10 @@ Fake gap → extend the Fake, don't shortcut to the Real. The Fake's job is to m
 ### "The factory takes 10 kwargs and inspects them all"
 
 The factory's job is one decision: real or fake. Push other configuration into the adapter constructors. Factory: `if not api_key: return Fake; return Real(api_key, **kwargs)`. Adapter: takes whatever rich config it needs. Don't conflate "build the adapter" with "decide which kind".
+
+### "The factory's no-key → Fake branch is our prod path"
+
+`make_x(api_key=None)` returning the Fake is correct for the factory (dev boots without keys) and WRONG as a consumer's prod resolution — the missing credential silently becomes a fake security check / fake charge / fake send that nobody declared. Resolve through `resolve_fake_or_refuse` (above) so "unconfigured" is a named state and the Fake needs an explicit opt-in.
 
 ### "The Real uses a primitive the Fake doesn't run"
 

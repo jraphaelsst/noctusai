@@ -387,6 +387,7 @@ def resolve_community_waha_client(
     call this directly with a `MockSupabaseClient` instead of patching
     the module-level factory.
     """
+    from noctusai_lib.integrations.fake_or_refuse import resolve_fake_or_refuse
     from noctusai_lib.integrations.whatsapp import (
         build_whatsapp_connection_store,
         get_whatsapp_client,
@@ -418,18 +419,29 @@ def resolve_community_waha_client(
         api_key = settings.community_waha_api_key or None
         session = settings.community_waha_session
 
-    if not base_url and not fake_ok:
+    def _nao_configurado():
         logger.info(
             "community whatsapp: nenhuma conexão WAHA para org %s — não configurado",
             org_id,
         )
         return None
 
-    return get_whatsapp_client(
-        base_url=base_url or None,
-        api_key=api_key,
-        session=session,
-        external_base_url=settings.community_waha_external_base_url or None,
+    def _client(url: str | None):
+        return get_whatsapp_client(
+            base_url=url,
+            api_key=api_key,
+            session=session,
+            external_base_url=settings.community_waha_external_base_url or None,
+        )
+
+    # Seed fake-or-refuse resolution: no base URL → the declared `None`
+    # state; the seed `FakeWahaClient` (base_url=None) ONLY under fake_ok.
+    return resolve_fake_or_refuse(
+        configured=bool(base_url),
+        build_real=lambda: _client(base_url),
+        build_fake=lambda: _client(None),
+        allow_fake=bool(fake_ok),
+        unconfigured=_nao_configurado,
     )
 
 

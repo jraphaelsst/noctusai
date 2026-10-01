@@ -19,6 +19,7 @@ from noctusai_lib.integrations.turnstile import (
     RealTurnstileVerifier,
     TurnstileVerifier,
     make_turnstile_verifier,
+    resolve_turnstile_verifier,
 )
 
 
@@ -121,3 +122,23 @@ def test_real_transport_error_fails_closed():
     result = asyncio.run(verifier.verify("token-123"))
     assert result.success is False
     assert "internal-error" in result.error_codes
+
+
+# ── resolve_turnstile_verifier (fake-or-refuse) ──────────────────────────
+
+
+def test_resolve_unconfigured_is_none_never_fake():
+    assert resolve_turnstile_verifier(secret=None) is None
+    assert resolve_turnstile_verifier(secret="") is None
+
+
+def test_resolve_configured_is_real():
+    verifier = resolve_turnstile_verifier(secret="a-real-secret")
+    assert isinstance(verifier, RealTurnstileVerifier)
+
+
+def test_resolve_fake_only_with_explicit_opt_in():
+    assert isinstance(resolve_turnstile_verifier(secret=None, allow_fake=True), FakeTurnstileVerifier)
+    assert isinstance(
+        resolve_turnstile_verifier(secret="a-real-secret", allow_fake=True), RealTurnstileVerifier,
+    )
