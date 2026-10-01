@@ -31,7 +31,7 @@ FakeCnpjRegistryLookup(erro=...)` to isolate what they DO care about
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -103,7 +103,9 @@ def _documento(did, cid, **extra) -> dict:
 
 def _fields(**overrides) -> CrednetFields:
     base = dict(
-        consulta_em=datetime(2026, 9, 1, 10, 0, 0),
+        # Relative to today: the Crednet->Serasa apply skips a reading older than
+        # `politica.certidao_max_dias`, so a hard-coded date silently rots.
+        consulta_em=datetime.now().replace(microsecond=0) - timedelta(days=5),
         protocolo="1234567",
         cpf=CPF_VALIDO, cpf_valido=True,
         nome="FULANA DE TESTE", nome_mae="CICLANA DE TESTE",

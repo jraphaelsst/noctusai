@@ -17,7 +17,7 @@ WHAT THESE PIN
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from uuid import uuid4
 
@@ -75,11 +75,19 @@ def _resultado(**overrides) -> dict:
     return row
 
 
+# The Crednet age gate (`certidao_max_dias`) is measured against the REAL
+# clock, so fixtures are relative to today — a hard-coded date silently rots
+# past the window.
+_RECENTE = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0) - timedelta(days=5)
+_RECENTE_ISO = _RECENTE.date().isoformat()
+_ANTIGA = _RECENTE - timedelta(days=60)
+
+
 @dataclass(frozen=True)
 class _Leitura:
     cpf: Optional[str] = "41295423898"
     protocolo: Optional[str] = "9999999"
-    consulta_em: Optional[datetime] = datetime(2026, 9, 1, 10, 0, 0)
+    consulta_em: Optional[datetime] = _RECENTE
     _constam: Optional[bool] = False
 
     def ocorrencias_constam(self) -> Optional[bool]:
@@ -111,7 +119,7 @@ class TestRegistrarSerasaDeCrednet:
         assert row["resultado_origem"] == "ia"
         assert row["fonte_cliente_documento_id"] == doc["id"]
         assert row["numero"] == "9999999"
-        assert row["emitida_em"] == "2026-09-01"
+        assert row["emitida_em"] == _RECENTE_ISO
 
     def test_positiva_when_ocorrencias_constam(self):
         cliente_id = str(uuid4())
@@ -174,19 +182,19 @@ class TestRegistrarSerasaDeCrednet:
         resultado = _resultado(
             consulta_id=consulta["id"], status="sucesso", resultado="negativa",
             resultado_origem="ia", fonte_cliente_documento_id=old_doc_id,
-            emitida_em="2026-01-01",
+            emitida_em=_ANTIGA.date().isoformat(),
         )
         client = _client(**{CONSULTAS: [consulta], RESULTADOS: [resultado]})
         novo_doc = _doc()
 
         atualizados = service.registrar_serasa_de_crednet(
-            client, ORG, cliente_id, novo_doc, _Leitura(consulta_em=datetime(2026, 9, 1))
+            client, ORG, cliente_id, novo_doc, _Leitura(consulta_em=_RECENTE)
         )
 
         assert atualizados == 1
         row = client.table(RESULTADOS).select("*").eq("id", resultado["id"]).execute().data[0]
         assert row["fonte_cliente_documento_id"] == novo_doc["id"]
-        assert row["emitida_em"] == "2026-09-01"
+        assert row["emitida_em"] == _RECENTE_ISO
 
     def test_an_older_crednet_never_supersedes_a_newer_one(self):
         cliente_id = str(uuid4())
@@ -195,12 +203,12 @@ class TestRegistrarSerasaDeCrednet:
         resultado = _resultado(
             consulta_id=consulta["id"], status="sucesso", resultado="negativa",
             resultado_origem="ia", fonte_cliente_documento_id=newer_doc_id,
-            emitida_em="2026-09-01",
+            emitida_em=(_RECENTE + timedelta(days=2)).date().isoformat(),
         )
         client = _client(**{CONSULTAS: [consulta], RESULTADOS: [resultado]})
 
         atualizados = service.registrar_serasa_de_crednet(
-            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=datetime(2026, 1, 1))
+            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=_RECENTE - timedelta(days=3))
         )
 
         assert atualizados == 0
@@ -235,7 +243,7 @@ class TestAplicarCrednetPendente:
             "id": str(uuid4()), "storage_path": f"{ORG}/clientes/{cliente_id}/crednet-doc",
             "extracao_crednet": {
                 "cpf": "412.954.238-98", "protocolo": "1111111",
-                "consulta_em": "2026-09-01T10:00:00", "ocorrencias_constam": False,
+                "consulta_em": _RECENTE.isoformat(), "ocorrencias_constam": False,
             },
         }
         client = _client(**{
@@ -333,3 +341,66 @@ class TestPurgePrefixSafety:
         assert service._is_certidoes_storage_key(f"{ORG}/certidoes/x/y.pdf") is True
         assert service._is_certidoes_storage_key(f"{ORG}/clientes/x/y.pdf") is False
         assert service._is_certidoes_storage_key(f"{ORG}/empresas/x/y.pdf") is False
+
+
+class TestCrednetMaisAntigaQueAJanelaDoContrato:
+    """A Crednet older than `politica.certidao_max_dias` would land a cell the
+    contract gate rejects anyway — it must leave the cell `pendente` instead."""
+
+    def _alvo(self):
+        cliente_id = str(uuid4())
+        consulta = _consulta(cliente_id=cliente_id)
+        resultado = _resultado(consulta_id=consulta["id"])
+        return cliente_id, consulta, resultado, _client(**{CONSULTAS: [consulta], RESULTADOS: [resultado]})
+
+    def _linha(self, client, resultado):
+        return client.table(RESULTADOS).select("*").eq("id", resultado["id"]).execute().data[0]
+
+    def test_registrar_ignora_crednet_velha(self):
+        cliente_id, consulta, resultado, client = self._alvo()
+        n = service.registrar_serasa_de_crednet(
+            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=_ANTIGA),
+        )
+        assert n == 0
+        row = self._linha(client, resultado)
+        assert row["status"] == "pendente" and row["numero"] is None
+
+    def test_exatamente_no_limite_ja_e_velha(self):
+        from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
+
+        limite = POLITICA_PADRAO.certidao_max_dias
+        agora = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        cliente_id, consulta, resultado, client = self._alvo()
+        assert service.registrar_serasa_de_crednet(
+            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=agora - timedelta(days=limite)),
+        ) == 0
+        assert service.registrar_serasa_de_crednet(
+            client, ORG, cliente_id, _doc(),
+            _Leitura(consulta_em=agora - timedelta(days=limite - 1)),
+        ) == 1
+
+    def test_aplicar_pendente_deixa_a_celula_pendente_com_crednet_velha(self):
+        cliente_id, consulta, resultado, _ = self._alvo()
+        crednet = {
+            "id": str(uuid4()), "storage_path": f"{ORG}/clientes/{cliente_id}/crednet-doc",
+            "extracao_crednet": {
+                "cpf": "412.954.238-98", "protocolo": "1111111",
+                "consulta_em": _ANTIGA.isoformat(), "ocorrencias_constam": False,
+            },
+        }
+        client = _client(**{
+            CONSULTAS: [consulta], RESULTADOS: [resultado],
+            "cliente_documentos": [{
+                **crednet, "org_id": ORG, "cliente_id": cliente_id,
+                "tipo_documento": "serasa_crednet", "extracao_status": "ok", "deleted_at": None,
+            }],
+        })
+        assert service.aplicar_crednet_pendente(client, ORG, consulta) is False
+        row = self._linha(client, resultado)
+        assert row["status"] == "pendente" and row["numero"] is None
+
+    def test_crednet_sem_data_nao_e_pulada(self):
+        cliente_id, consulta, resultado, client = self._alvo()
+        assert service.registrar_serasa_de_crednet(
+            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=None),
+        ) == 1

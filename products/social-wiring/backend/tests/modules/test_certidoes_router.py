@@ -1091,8 +1091,10 @@ class TestUploadManual:
         assert ekw["resultado_id"] == "r1"
         assert ekw["consulta_id"] == "consulta-001"
         assert ekw["pdf_bytes"] == b"%PDF-1.4 scan"
-        assert ekw["resultado_origem_atual"] == "api"
-        assert ekw["confirmado_por_atual"] == "user-1"
+        # A re-upload is NEW evidence: the prior confirmation protected the
+        # previous file only, so the extraction leg must not honour it.
+        assert ekw["resultado_origem_atual"] is None
+        assert ekw["confirmado_por_atual"] is None
 
     def test_nao_pdf_e_422(self, client, certidoes_db):
         db, _ = certidoes_db
@@ -1909,7 +1911,7 @@ def _crednet_doc(cliente_id: str, **overrides) -> dict:
         "deleted_at": None,
         "extracao_crednet": {
             "cpf": "123.456.789-01", "protocolo": "9999999",
-            "consulta_em": "2026-09-01T10:00:00", "ocorrencias_constam": False,
+            "consulta_em": (datetime.now() - timedelta(days=5)).isoformat(), "ocorrencias_constam": False,
         },
     }
     row.update(overrides)
@@ -2047,3 +2049,87 @@ class TestCriarConsultaManualFanOutLinhasCustomizadas:
             if r.get("linha_customizada_id") is not None
         ]
         assert custom == []
+
+
+# ---------------------------------------------------------------------------
+# PJ party (migration 179: atendimento_partes.empresa_id, cliente_id NULL)
+# ---------------------------------------------------------------------------
+
+EMPRESA_ID = "55555555-5555-4555-8555-555555555555"
+
+
+def _parte_pj(**overrides) -> dict:
+    return _parte(cliente_id=None, empresa_id=EMPRESA_ID, papel="proprietario", lado="vendedor", **overrides)
+
+
+class TestPartePJ:
+    """`vincular_parte` / `criar_consulta_manual` used to resolve a party to
+    `cliente_id` alone — for a PJ party that is NULL, so the consulta was
+    linked to NO owner and its certidões surfaced on nobody's column."""
+
+    def test_vincular_parte_pj_grava_empresa_id_e_nao_cliente_id(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta(tipo_documento="cnpj", documento="11222333000181",
+                                       cliente_id="cliente-antigo")])
+        db.set_table_data("atendimento_partes", [_parte_pj()])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["empresa_id"] == EMPRESA_ID
+        assert data["cliente_id"] is None
+        assert data["atendimento_parte_id"] == PARTE_ID
+
+    def test_vincular_parte_pj_com_consulta_cpf_e_422(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte_pj()])
+        resp = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        )
+        assert resp.status_code == 422
+        assert _msg(resp) == "Esta parte é uma empresa — a consulta precisa ser de CNPJ."
+
+    def test_vincular_parte_pf_continua_sem_empresa_id(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()])
+        db.set_table_data("atendimento_partes", [_parte()])
+        data = client.post(
+            f"{BASE}/consultas/consulta-001/vincular-parte",
+            json={"atendimento_parte_id": PARTE_ID},
+        ).json()["data"]
+        assert data["cliente_id"] == "cliente-001" and data["empresa_id"] is None
+
+    def test_criar_consulta_manual_com_parte_pj_grava_empresa_id(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimento_partes", [_parte_pj()])
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cnpj", "documento": "11222333000181",
+                "nome": "Vende LTDA", "atendimento_parte_id": PARTE_ID,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["empresa_id"] == EMPRESA_ID
+        assert data.get("cliente_id") is None
+        assert data["atendimento_parte_id"] == PARTE_ID
+
+    def test_criar_consulta_manual_parte_pj_com_cpf_e_422_sem_escrita(self, client, certidoes_db):
+        db, _ = certidoes_db
+        _seed(db)
+        db.set_table_data("atendimento_partes", [_parte_pj()])
+        resp = client.post(
+            f"{BASE}/consultas/manual",
+            json={
+                "tipo_documento": "cpf", "documento": "12345678901",
+                "nome": "X Y", "atendimento_parte_id": PARTE_ID,
+            },
+        )
+        assert resp.status_code == 422
+        assert db.table("certidao_consultas").inserted_payloads == []

@@ -1,0 +1,321 @@
+"""HTTP surface of the per-party Certidões tab (CONTRACT §1.1-§1.4).
+
+`certidoes_partes_router.router` is mounted here in a LOCAL `FastAPI()` under
+`/api/clientes` — `card_hub/router.py` includes it only in the Wave C0
+integration patch (CONTRACT §10), so the real app does not serve it yet. The
+local app borrows the real app's exception handlers (the error envelope) and
+the same patched DB module, and resolves auth through the REAL
+`get_current_user_org`: the auth tests are the real dependency's answer, not a
+stub's.
+"""
+from __future__ import annotations
+
+import dataclasses
+from unittest.mock import AsyncMock
+from uuid import uuid4
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from noctusai_lib.integrations.storage import FakeStorageBackend
+
+from app.modules.card_hub import certidoes_partes_router
+from app.modules.certidoes.deps import (
+    build_default_service,
+    get_certidoes_service,
+    get_storage_backend,
+)
+from app.modules.certidoes.registry import CERTIDOES_CONFIG
+from tests.modules.card_hub.conftest import ORG_ID, cliente_row
+from tests.modules.card_hub.test_certidoes_matriz import (
+    _atendimento,
+    _consulta,
+    _parte,
+    _resultado,
+    _seed_tables,
+)
+
+CPF = "41295423898"
+AUTH = {"Authorization": "Bearer test-token"}
+BASE = "/api/clientes"
+
+
+@pytest.fixture
+def processar():
+    return AsyncMock()
+
+
+@pytest.fixture
+def credenciais():
+    """Mutable holder: tests set `.faltando` to simulate a missing token."""
+    class _C:
+        faltando: list[str] = []
+
+        def __call__(self, _org):
+            return list(self.faltando)
+
+    return _C()
+
+
+@pytest.fixture
+def api(client, scoped, processar, credenciais):
+    from app.main import app as base_app
+
+    local = FastAPI()
+    local.exception_handlers.update(base_app.exception_handlers)
+    local.include_router(certidoes_partes_router.router, prefix=BASE)
+    fake = dataclasses.replace(
+        build_default_service(),
+        check_required_credentials=credenciais,
+        processar_consulta=processar,
+    )
+    local.dependency_overrides[get_certidoes_service] = lambda: fake
+    local.dependency_overrides[get_storage_backend] = lambda: FakeStorageBackend()
+    return TestClient(local)
+
+
+def _card(scoped):
+    cid, aid, vid = str(uuid4()), str(uuid4()), str(uuid4())
+    _seed_tables(scoped)
+    scoped.set_table_data("clientes", [
+        cliente_row(cid, nome="Titular", cpf=CPF),
+        cliente_row(vid, nome="Vendedor", cpf="52998224725"),
+    ])
+    scoped.set_table_data("atendimentos", [_atendimento(aid, cid)])
+    scoped.set_table_data("atendimento_partes", [_parte(aid, vid)])
+    return cid, aid, vid
+
+
+class TestAuth:
+    """Strict `== 401` — never `in (401, 404, 422)`: a non-401 branch would
+    be a false green (route absent, or validation before auth)."""
+
+    def test_get_sem_token_401(self, api):
+        assert api.get(f"{BASE}/{uuid4()}/certidoes/partes").status_code == 401
+
+    def test_emissao_sem_token_401(self, api):
+        resp = api.post(f"{BASE}/{uuid4()}/certidoes/partes/pessoa/{uuid4()}/emissao", json={})
+        assert resp.status_code == 401
+
+    def test_reemitir_sem_token_401(self, api):
+        resp = api.post(f"{BASE}/{uuid4()}/certidoes/resultados/{uuid4()}/reemitir", json={})
+        assert resp.status_code == 401
+
+    def test_celulas_sem_token_401(self, api):
+        body = {"kind": "pessoa", "alvo_id": str(uuid4()), "linha_chave": "serasa"}
+        assert api.post(f"{BASE}/{uuid4()}/certidoes/celulas", json=body).status_code == 401
+
+
+class TestGetPartes:
+    def test_200_raw_dict_sem_envelope_e_campos_do_contrato(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.get(f"{BASE}/{cid}/certidoes/partes", headers=AUTH)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "data" not in body
+        assert set(body) == {"atendimento_id", "data_referencia", "max_dias", "linhas", "partes"}
+        assert body["atendimento_id"] == aid
+        assert [p["rotulo"] for p in body["partes"]] == ["COMP 1", "VEND 1"]
+        assert all("automatico" in l for l in body["linhas"])
+        celula = body["partes"][0]["celulas"]["cnd_federal"]
+        assert celula["status"] == "pendente" and celula["stale_para_contrato"] is False
+
+    def test_atendimento_id_explicito(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.get(f"{BASE}/{cid}/certidoes/partes", params={"atendimento_id": aid}, headers=AUTH)
+        assert resp.status_code == 200 and resp.json()["atendimento_id"] == aid
+
+    def test_cliente_desconhecido_404(self, api, scoped):
+        _seed_tables(scoped)
+        resp = api.get(f"{BASE}/{uuid4()}/certidoes/partes", headers=AUTH)
+        assert resp.status_code == 404
+        assert resp.json()["error"]["code"] == "NOT_FOUND"
+
+    def test_ambiguo_e_200_vazio_nunca_409(self, api, scoped):
+        cid = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Solo")])
+        resp = api.get(f"{BASE}/{cid}/certidoes/partes", headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json()["atendimento_id"] is None and resp.json()["partes"] == []
+
+    def test_celula_segue_a_pessoa(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        scoped.set_table_data("certidao_consultas", [_consulta("c1", cliente_id=vid)])
+        scoped.set_table_data("certidao_resultados", [
+            _resultado("r1", "c1", "cnd_federal", status="sucesso", resultado="negativa",
+                       emitida_em="2020-01-01"),
+        ])
+        body = api.get(f"{BASE}/{cid}/certidoes/partes", headers=AUTH).json()
+        vend = body["partes"][1]
+        assert vend["celulas"]["cnd_federal"]["stale_para_contrato"] is True
+        assert vend["totais"]["vencidas"] == 1
+
+
+class TestEmissao:
+    def test_201_cria_consulta_e_agenda_o_processamento(self, api, scoped, processar):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{vid}/emissao", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert set(body) == {"consulta_id", "resultados"}
+        assert len(body["resultados"]) == len(CERTIDOES_CONFIG) - 1  # no tjsp
+        assert set(body["resultados"][0]) == {"resultado_id", "tipo", "status_processamento"}
+        processar.assert_awaited_once()
+        assert processar.await_args.args[0] == body["consulta_id"]
+
+    def test_tipos_selecionados(self, api, scoped, processar):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{vid}/emissao",
+            json={"tipos": ["cnd_federal", "trf3"]}, headers=AUTH,
+        )
+        assert resp.status_code == 201
+        assert sorted(r["tipo"] for r in resp.json()["resultados"]) == ["cnd_federal", "trf3"]
+
+    def test_corpo_com_campo_desconhecido_422(self, api, scoped, processar):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{vid}/emissao",
+            json={"tipo": ["cnd_federal"]}, headers=AUTH,
+        )
+        assert resp.status_code == 422
+        processar.assert_not_awaited()
+
+    def test_tipo_nao_automatico_422_com_codigo(self, api, scoped, processar):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{vid}/emissao",
+            json={"tipos": ["serasa"]}, headers=AUTH,
+        )
+        assert resp.status_code == 422
+        err = resp.json()["error"]
+        assert err["code"] == "TIPO_NAO_AUTOMATICO"
+        assert err["message"] == "Serasa é registrada manualmente — envie o PDF na célula."
+        processar.assert_not_awaited()
+
+    def test_credencial_ausente_422_sem_escrita_nem_agendamento(
+        self, api, scoped, processar, credenciais
+    ):
+        credenciais.faltando = ["Token InfoSimples não configurado."]
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{vid}/emissao", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["message"].endswith(
+            "Configure em Configurações → Chaves de API."
+        )
+        assert scoped.table("certidao_consultas").inserted_payloads == []
+        processar.assert_not_awaited()
+
+    def test_kind_invalido_404(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoas/{vid}/emissao", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 404
+
+    def test_parte_estranha_404(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{uuid4()}/emissao", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 404
+        assert resp.json()["error"]["message"] == "Parte não encontrada neste atendimento."
+
+    def test_documento_ausente_422(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        scoped.set_table_data("clientes", [
+            cliente_row(cid, nome="Titular", cpf=CPF), cliente_row(vid, nome="V", cpf=None),
+        ])
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{vid}/emissao", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "DOCUMENTO_AUSENTE"
+
+    def test_atendimento_ambiguo_409(self, api, scoped):
+        cid = str(uuid4())
+        _seed_tables(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Solo", cpf=CPF)])
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/partes/pessoa/{cid}/emissao", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "AMBIGUOUS_ATENDIMENTO"
+
+
+class TestReemitir:
+    def test_201_uma_nova_consulta_um_resultado(self, api, scoped, processar):
+        cid, aid, vid = _card(scoped)
+        scoped.set_table_data("certidao_consultas", [_consulta("c0", cliente_id=vid)])
+        scoped.set_table_data("certidao_resultados", [
+            _resultado(str(uuid4()), "c0", "cnd_federal", status="sucesso", emitida_em="2026-06-23"),
+        ])
+        rid = scoped.table("certidao_resultados").select("id").execute().data[0]["id"]
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/resultados/{rid}/reemitir", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 201
+        body = resp.json()
+        assert set(body) == {"consulta_id", "resultados"} and len(body["resultados"]) == 1
+        assert body["resultados"][0]["tipo"] == "cnd_federal"
+        processar.assert_awaited_once()
+
+    def test_resultado_inexistente_404(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/resultados/{uuid4()}/reemitir", json={}, headers=AUTH,
+        )
+        assert resp.status_code == 404
+
+    def test_corpo_nao_vazio_422(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/resultados/{uuid4()}/reemitir",
+            json={"x": 1}, headers=AUTH,
+        )
+        assert resp.status_code == 422
+
+
+class TestCelulas:
+    def _body(self, vid, chave="serasa", **over):
+        return {"kind": "pessoa", "alvo_id": vid, "linha_chave": chave, **over}
+
+    def test_201_quando_cria_e_200_quando_ja_existe(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        criou = api.post(f"{BASE}/{cid}/certidoes/celulas", json=self._body(vid), headers=AUTH)
+        assert criou.status_code == 201
+        assert set(criou.json()) == {"resultado_id", "consulta_id", "criado"}
+        assert criou.json()["criado"] is True
+        # The placeholder is now the party's winning serasa cell.
+        existe = api.post(f"{BASE}/{cid}/certidoes/celulas", json=self._body(vid), headers=AUTH)
+        assert existe.status_code == 200
+        assert existe.json()["criado"] is False
+        assert existe.json()["resultado_id"] == criou.json()["resultado_id"]
+
+    def test_placeholder_le_origem_manual_no_get(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        api.post(f"{BASE}/{cid}/certidoes/celulas", json=self._body(vid), headers=AUTH)
+        body = api.get(f"{BASE}/{cid}/certidoes/partes", headers=AUTH).json()
+        celula = body["partes"][1]["celulas"]["serasa"]
+        assert (celula["origem"], celula["status_processamento"]) == ("manual", "pendente")
+
+    def test_nao_aplicavel_422(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/celulas",
+            json=self._body(vid, "fgts_regularidade"), headers=AUTH,
+        )
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "CELULA_NAO_APLICAVEL"
+
+    def test_kind_fora_do_enum_422(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/celulas", json=self._body(vid, kind="pj"), headers=AUTH,
+        )
+        assert resp.status_code == 422

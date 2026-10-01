@@ -291,7 +291,7 @@ class TestBuildParamsCndFederal:
         params = _build_params_cnd_federal(CONSULTA_CPF, "tok")
         assert params["cpf"] == "12345678901"
         assert params["birthdate"] == "1990-01-15"
-        assert params["preferencia_emissao"] == "2via"
+        assert params["preferencia_emissao"] == "nova"
         assert params["token"] == "tok"
 
     def test_cnpj(self):
@@ -4535,3 +4535,189 @@ class TestProcessManualExtractionCenprot:
         )
         estruturar.assert_not_awaited()
         assert update_data["numero"] == "9999999999"
+
+
+# ---------------------------------------------------------------------------
+# atendimento-partes-imoveis, BE-certidoes (2026-10-01)
+# ---------------------------------------------------------------------------
+
+
+class TestReceitaEmiteNovaCertidao:
+    """🔴 Prod evidence: `preferencia_emissao="2via"` returned a person's OLD
+    CND (requested 01/10, `emissao_data 23/06/2026`). InfoSimples docs
+    (receita-federal/pgfn): `nova` = emit a new certidão (the default),
+    `2via` = prefer a second copy."""
+
+    def test_envia_nova_e_nunca_2via(self):
+        for consulta in (CONSULTA_CPF, CONSULTA_CNPJ):
+            params = _build_params_cnd_federal(consulta, "tok")
+            assert params["preferencia_emissao"] == "nova"
+            assert params["preferencia_emissao"] != "2via"
+
+    def test_le_emissao_data_que_a_receita_realmente_devolve(self):
+        """The field name in the documented 200 response — `data_emissao` is
+        what the parser used to read, and it is absent there."""
+        fetch_result = {
+            "raw_response": {"data": [{
+                "certidao_codigo": "11AA.111A.1AA1.1A11",
+                "emissao_data": "23/06/2026",
+                "validade_data": "20/12/2026",
+                "validade": "20/12/2026",
+            }]},
+        }
+        campos = parse_resultado(CONFIG_FEDERAL, fetch_result)
+        assert campos["emitida_em"] == "2026-06-23"
+        assert campos["validade_ate"] == "2026-12-20"
+
+    def test_emissao_data_tem_precedencia_sobre_data_consulta(self):
+        fetch_result = {"raw_response": {"data": [{
+            "emissao_data": "01/10/2026", "data_consulta": "05/10/2026",
+        }]}}
+        assert parse_resultado(CONFIG_FEDERAL, fetch_result)["emitida_em"] == "2026-10-01"
+
+
+class TestDataEmissaoDoTexto:
+    @pytest.mark.parametrize("texto,esperado", [
+        ("Emitida em 23/06/2026 às 10:00", "2026-06-23"),
+        ("emitida em: 01/10/2026", "2026-10-01"),
+        ("Data de emissão: 05/03/2026", "2026-03-05"),
+        ("DATA DE EMISSÃO 05/03/2026", "2026-03-05"),
+        ("Data e hora da emissão: 07/08/2026 14:30:11", "2026-08-07"),
+        ("Expedida em 10/01/2026", "2026-01-10"),
+        ("Expedida em São Paulo, 10/01/2026", "2026-01-10"),
+    ])
+    def test_reconhece_a_linha_de_emissao(self, texto, esperado):
+        assert service._data_emissao_do_texto([texto]) == esperado
+
+    def test_ignora_outras_datas_do_documento(self):
+        pagina = "Nascimento: 01/01/1980\nValidade: 20/12/2026\nConsulta em 10/10/2026"
+        assert service._data_emissao_do_texto([pagina]) is None
+
+    def test_a_linha_de_emissao_vence_a_primeira_data_da_primeira_pagina(self):
+        paginas = [
+            "Validade até 20/12/2026\nNascimento 01/01/1980",
+            "Certidão emitida em 23/06/2026",
+        ]
+        assert service._data_emissao_do_texto(paginas) == "2026-06-23"
+
+    def test_data_impossivel_e_ignorada_nao_adivinhada(self):
+        assert service._data_emissao_do_texto(["Emitida em 31/02/2026"]) is None
+        assert service._data_emissao_do_texto(["Emitida em 31/02/2026\nEmitida em 01/03/2026"]) == "2026-03-01"
+
+    def test_sem_paginas(self):
+        assert service._data_emissao_do_texto([]) is None
+        assert service._data_emissao_do_texto([""]) is None
+
+    @pytest.mark.asyncio
+    async def test_leitura_por_pagina_prefere_a_linha_de_emissao_a_ia(self):
+        """Page 1's AI read supplies a date (a validity/consulta date), page 2
+        carries the real emission line — the line must win."""
+        por_pagina = {
+            "pag1": {"emitida_em": "2026-12-20", "numero": "N1"},
+            "pag2": {"emitida_em": "2026-06-23"},
+        }
+
+        async def estrutura(pagina, nome, org):
+            return por_pagina[pagina.split("|")[0]]
+
+        patch_ = await service._analyze_estrutura_por_pagina(
+            ["pag1|validade 20/12/2026", "pag2|Certidão emitida em 23/06/2026"],
+            "pag1 pag2", "CND", ORG, analyze_estrutura=estrutura,
+        )
+        assert patch_["emitida_em"] == "2026-06-23"
+        assert patch_["numero"] == "N1"
+
+    @pytest.mark.asyncio
+    async def test_sem_linha_de_emissao_mantem_a_regra_da_primeira_pagina(self):
+        async def estrutura(pagina, nome, org):
+            return {"emitida_em": "2026-05-05"}
+
+        patch_ = await service._analyze_estrutura_por_pagina(
+            ["pagina um"], "pagina um", "CND", ORG, analyze_estrutura=estrutura,
+        )
+        assert patch_["emitida_em"] == "2026-05-05"
+
+
+class TestReUploadSobreResultadoTravado:
+    """A new file is new evidence: the human lock protected an edit of the
+    PREVIOUS file only."""
+
+    @pytest.mark.asyncio
+    async def test_limpa_campos_e_trava_no_upload(self):
+        travado = _resultado(
+            status="sucesso", numero="OLD-1", emitida_em="2026-01-01",
+            validade_ate="2026-07-01", resultado="negativa", resultado_origem="manual",
+            confirmado_por="user-1", confirmado_em="2026-02-01T00:00:00+00:00",
+        )
+        db = _db(certidao_consultas=[_consulta_row()], certidao_resultados=[travado])
+        update_data = await service.process_manual_upload(
+            b"%PDF-1.4 novo", "resultado-001", _consulta_row(), "cnd_federal", "CND", ORG, db,
+            FakeStorageBackend(),
+        )
+        for campo in (
+            "numero", "emitida_em", "validade_ate", "resultado", "resultado_origem",
+            "confirmado_por", "confirmado_em",
+        ):
+            assert update_data[campo] is None, campo
+        row = db.table("certidao_resultados").select("*").eq("id", "resultado-001").execute().data[0]
+        assert row["status"] == "processando"
+        assert row["numero"] is None and row["emitida_em"] is None
+        assert row["confirmado_por"] is None and row["resultado_origem"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_extracao_seguinte_reextrai_porque_nao_esta_mais_travada(self):
+        """End to end at the service seam: upload clears the lock, then the
+        extraction (called with the router's now-`None` lock args) re-reads."""
+        travado = _resultado(
+            status="sucesso", numero="OLD-1", emitida_em="2026-01-01",
+            resultado="negativa", resultado_origem="manual",
+            confirmado_por="user-1", confirmado_em="2026-02-01T00:00:00+00:00",
+        )
+        db = _db(certidao_consultas=[_consulta_row()], certidao_resultados=[travado])
+        await service.process_manual_upload(
+            b"%PDF-1.4 novo", "resultado-001", _consulta_row(), "cnd_federal", "CND", ORG, db,
+            FakeStorageBackend(),
+        )
+        estrutura = AsyncMock(return_value={
+            "numero": "NEW-9", "emitida_em": "2026-09-30", "resultado": "negativa",
+        })
+        out = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4 novo", resultado_id="resultado-001",
+            consulta_id="consulta-001", nome_display="CND", org_id=ORG, db=db,
+            resultado_origem_atual=None, confirmado_por_atual=None,
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia="Certidão", paginas_texto=("Certidão",),
+            )),
+            analyze=AsyncMock(return_value="resumo"), analyze_estrutura=estrutura,
+        )
+        assert (out["numero"], out["emitida_em"]) == ("NEW-9", "2026-09-30")
+        row = db.table("certidao_resultados").select("*").eq("id", "resultado-001").execute().data[0]
+        assert row["numero"] == "NEW-9" and row["resultado_origem"] == "ia"
+        assert row["confirmado_por"] is None
+
+
+class TestCertidoesPorAlvos:
+    def test_agrupa_por_parte_e_traz_chaves_vazias(self):
+        db = _db(
+            certidao_consultas=[
+                _consulta_row(id="c1", cliente_id="cli-1", empresa_id=None),
+                _consulta_row(id="c2", cliente_id=None, empresa_id="emp-1"),
+                _consulta_row(id="c3", cliente_id="cli-1", empresa_id=None,
+                              excluida_em="2026-09-01T00:00:00+00:00"),
+            ],
+            certidao_resultados=[
+                _resultado(id="r1", consulta_id="c1"),
+                _resultado(id="r2", consulta_id="c2", tipo="trf3"),
+                _resultado(id="r3", consulta_id="c3", tipo="trf3"),
+            ],
+        )
+        out = service.certidoes_por_alvos(
+            db, ORG, cliente_ids=["cli-1", "cli-vazio"], empresa_ids=["emp-1"],
+        )
+        assert {r["id"] for r in out["c:cli-1"]} == {"r1"}
+        assert {r["id"] for r in out["e:emp-1"]} == {"r2"}
+        assert out["c:cli-vazio"] == []
+        assert out["c:cli-1"][0]["consulta_origem"] is None
+
+    def test_sem_alvos_nao_consulta_nada(self):
+        assert service.certidoes_por_alvos(_db(), ORG) == {}
