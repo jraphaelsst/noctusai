@@ -1146,6 +1146,24 @@ def _leitura_conflita_com_esperados(
     return False
 
 
+def _nome_de_pessoa_plausivel(nome: str) -> bool:
+    """Could `nome` be a real person's name, as opposed to a placeholder?
+
+    🔴 A HINT THAT IS NOT A PERSON'S NAME HAS NO OPINION (live prod P4,
+    2026-10-01). A card named like a test/placeholder label (`[TESTE P4] 858`,
+    `[P4] 858 Vend 1`) can never match any spouse a certidão prints, so the
+    hint cross-check (`_leitura_conflita_com_esperados`) read EVERY correctly
+    parsed couple as "contradicted by the caller's own records" and threw the
+    read away — 0 spouses on four of five certidões whose two-spouse block
+    parsed perfectly with no hint. A real name is letters, spaces and the
+    punctuation names carry (`'`, `-`, `.`); a digit or any bracket-like
+    character means the registered "name" is a label, and a label cannot rule
+    anyone out. Dropping it is the only direction that cannot attribute a
+    value to the wrong person: it removes an opinion, it never adds a name.
+    """
+    return bool(nome) and not re.search(r"[\d\[\]{}()<>_@#/\\|]", nome)
+
+
 def find_conjuges(
     text: str, *, esperados: tuple[str, ...] = ()
 ) -> tuple[ConjugeLido, ...]:
@@ -1183,6 +1201,7 @@ def find_conjuges(
     exactly the historical behaviour on every document whose label-driven
     read has no such conflict to notice.
     """
+    esperados = tuple(e for e in esperados if _nome_de_pessoa_plausivel(e))
     for leitor in (_ler_bloco_estruturado, _ler_narrativa_matrimonio, _ler_rotulada):
         lido = leitor(text or "")
         if not lido:
