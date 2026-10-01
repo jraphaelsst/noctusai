@@ -57,6 +57,8 @@ import ImovelCondicoesComerciaisSection from "@/components/imovel/ImovelCondicoe
 import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection";
 import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
 import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
+import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
+import { ImovelSimilaresCard } from "@/components/imovel/ImovelSimilaresCard";
 import ImovelEnderecoCard from "@/components/imovel/ImovelEnderecoCard";
 import ImovelLocalizacaoSection from "@/components/imovel/ImovelLocalizacaoSection";
 import ImovelMetadadosSection from "@/components/imovel/ImovelMetadadosSection";
@@ -484,6 +486,11 @@ export default function ImovelDetalhes() {
               (confirming one act's details makes all three of them stale). */}
           {codigo && <ImovelContratoContainer codigo={codigo} />}
 
+          {/* Relationship cards (atendimento-partes-imoveis D5): everyone who
+              was ever interested, and alternatives by property profile. */}
+          {codigo && <ImovelInteressadosCard codigo={codigo} />}
+          {codigo && <ImovelSimilaresCard codigo={codigo} />}
+
           {/* § 5.13 Metadados */}
           <ImovelMetadadosSection
             dataCadastro={imovel.data_cadastro}
@@ -615,6 +622,9 @@ function ImovelManualLayout({
           />
 
           <ImovelContratoContainer codigo={codigo} />
+
+          <ImovelInteressadosCard codigo={codigo} />
+          <ImovelSimilaresCard codigo={codigo} />
         </div>
       </div>
     </div>

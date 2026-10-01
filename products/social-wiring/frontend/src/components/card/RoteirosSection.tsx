@@ -44,7 +44,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
-import type { Roteiro, StatusVisita, Visita, VisitaPropostaBody } from "@/types/cardHub";
+import { ImovelInteressesList } from "@/components/interesses/ImovelInteressesList";
+import type { StatusVisita, Visita, VisitaPropostaBody } from "@/types/cardHub";
+import type { RoteiroComData } from "@/types/roteiros";
 
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 
@@ -57,8 +59,23 @@ const STATUS_OPCOES: { value: StatusVisita; label: string; classe: string }[] = 
   { value: "pendente", label: "Pendente", classe: "bg-muted text-foreground" },
 ];
 
+/** `YYYY-MM-DD` → `dd/mm/aaaa` without a timezone round-trip (a DATE has no
+ *  instant; `new Date("2026-10-01")` would render the 30th west of UTC). */
+function dataVisitaBR(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+}
+
 export interface RoteirosSectionProps {
-  roteiros: Roteiro[];
+  /**
+   * When set, the interest list (`ImovelInteressesList`: tick rows → "Gerar
+   * roteiro" → order + date → POST → PDF) is mounted above the saved roteiros
+   * — this tab is where the roteiro flow lives (CONTRACT §6). The card dialog
+   * passes it; leave it out and the section stays purely presentational.
+   */
+  clienteId?: string;
+  atendimentoId?: string | null;
+  roteiros: RoteiroComData[];
   /** No `roteiros` yet — the FIRST load only. Ignored once the list is
    *  non-empty (see the file docblock). */
   loading?: boolean;
@@ -91,6 +108,8 @@ export interface RoteirosSectionProps {
 }
 
 export function RoteirosSection({
+  clienteId,
+  atendimentoId,
   roteiros,
   loading,
   refreshing,
@@ -106,6 +125,11 @@ export function RoteirosSection({
 }: RoteirosSectionProps) {
   return (
     <div data-testid="roteiros-section">
+      {clienteId && (
+        <div className="mb-6" data-testid="roteiros-interesses">
+          <ImovelInteressesList clienteId={clienteId} atendimentoId={atendimentoId} />
+        </div>
+      )}
       <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
           <h3 className="text-sm font-semibold">Roteiros</h3>
@@ -172,7 +196,7 @@ function RoteiroCard({
   onPatchProposta,
   pdfPending,
 }: {
-  roteiro: Roteiro;
+  roteiro: RoteiroComData;
   onRemover: () => void;
   onGerarPdf: () => void;
   onPatchVisita: (visitaId: string, body: { status?: StatusVisita; observacao?: string | null }) => void;
@@ -198,6 +222,13 @@ function RoteiroCard({
             <Chip tom="ok">{contagem.realizadas} realizadas</Chip>
             <Chip tom="ruim">{contagem.nao_realizadas} não realizadas</Chip>
             <Chip tom="neutro">{contagem.pendentes} pendentes</Chip>
+            {roteiro.data_visita && (
+              <Chip tom="neutro">
+                <span data-testid="roteiro-data-visita-chip">
+                  visita em {dataVisitaBR(roteiro.data_visita)}
+                </span>
+              </Chip>
+            )}
             {aceita && (
               // The one fact somebody scanning this card is looking for.
               <Chip tom="ok">

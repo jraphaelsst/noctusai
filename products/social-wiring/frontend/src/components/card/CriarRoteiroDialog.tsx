@@ -53,7 +53,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useImoveisBusca } from "@/hooks/useCardHub";
-import type { ImovelBusca, ImovelVisita, RoteiroCreateBody } from "@/types/cardHub";
+import type { ImovelBusca, ImovelVisita } from "@/types/cardHub";
+import type { RoteiroCriarBody } from "@/types/roteiros";
 
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 
@@ -73,8 +74,20 @@ import { ImovelVisitaCard } from "./ImovelVisitaCard";
 export interface CriarRoteiroDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCriar: (body: RoteiroCreateBody) => void;
+  onCriar: (body: RoteiroCriarBody) => void;
   saving?: boolean;
+  /**
+   * The imóveis the user already ticked on `ImovelInteressesList` — when
+   * given, the dialog is the pure ORDERING step of the flow (checkbox rows →
+   * "Gerar roteiro" → reorder + date → "Confirmar ordem do roteiro"): the
+   * search box is hidden and the list is exactly this set (remove-only).
+   * Read once at mount — the caller mounts the dialog only while open.
+   * Absent ⇒ the legacy compose-from-search mode (the card's "Criar Roteiro").
+   */
+  inicial?: ImovelVisita[];
+  /** More than one open atendimento ⇒ the user must say which one
+   *  (CONTRACT §0: otherwise 409 AMBIGUOUS_ATENDIMENTO). */
+  atendimentoOpcoes?: { id: string; titulo: string }[];
 }
 
 export function CriarRoteiroDialog({
@@ -82,10 +95,16 @@ export function CriarRoteiroDialog({
   onOpenChange,
   onCriar,
   saving,
+  inicial,
+  atendimentoOpcoes,
 }: CriarRoteiroDialogProps) {
+  const somenteOrdenar = inicial !== undefined;
   const [titulo, setTitulo] = useState("");
+  const [dataVisita, setDataVisita] = useState("");
+  const [atendimentoId, setAtendimentoId] = useState("");
   const [termo, setTermo] = useState("");
-  const [escolhidos, setEscolhidos] = useState<ImovelVisita[]>([]);
+  const [escolhidos, setEscolhidos] = useState<ImovelVisita[]>(() => inicial ?? []);
+  const precisaAtendimento = (atendimentoOpcoes?.length ?? 0) > 1;
 
   const termoDebounced = useDebouncedValue(termo, 250);
   const busca = useImoveisBusca(termoDebounced);
@@ -140,18 +159,27 @@ export function CriarRoteiroDialog({
   function fechar(aberto: boolean) {
     if (!aberto) {
       setTitulo("");
+      setDataVisita("");
+      setAtendimentoId("");
       setTermo("");
-      setEscolhidos([]);
+      setEscolhidos(inicial ?? []);
     }
     onOpenChange(aberto);
   }
 
+  // The server requires `data_visita` (422 "Informe a data da visita.") — the
+  // button stays disabled until it is set, so the user never meets that error.
+  const podeConfirmar =
+    escolhidos.length > 0 && dataVisita !== "" && (!precisaAtendimento || atendimentoId !== "");
+
   function salvar() {
-    if (!escolhidos.length) return;
+    if (!podeConfirmar) return;
     onCriar({
       titulo: titulo.trim() || null,
       // In list order — the array index becomes `visitas.ordem` server-side.
       imoveis: escolhidos.map((i) => i.codigo),
+      data_visita: dataVisita,
+      ...(precisaAtendimento ? { atendimento_id: atendimentoId } : {}),
     });
   }
 
@@ -161,7 +189,9 @@ export function CriarRoteiroDialog({
         <DialogHeader>
           <DialogTitle>Novo roteiro</DialogTitle>
           <DialogDescription>
-            Busque os imóveis pela referência e arraste para definir a ordem da visita.
+            {somenteOrdenar
+              ? "Arraste para definir a ordem da visita e informe a data."
+              : "Busque os imóveis pela referência, arraste para definir a ordem da visita e informe a data."}
           </DialogDescription>
         </DialogHeader>
 
@@ -182,99 +212,143 @@ export function CriarRoteiroDialog({
             />
           </div>
 
-          <div className="relative">
+          <div>
             <label
               className="mb-1 block text-xs font-medium text-muted-foreground"
-              htmlFor="roteiro-busca"
+              htmlFor="roteiro-data-visita"
             >
-              Buscar imóvel
+              Data da visita *
             </label>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                id="roteiro-busca"
-                value={termo}
-                onChange={(e) => setTermo(e.target.value)}
-                placeholder="ONE9..."
-                className="pl-8"
-                autoComplete="off"
-                data-testid="roteiro-busca"
-              />
-            </div>
+            <Input
+              id="roteiro-data-visita"
+              type="date"
+              required
+              value={dataVisita}
+              onChange={(e) => setDataVisita(e.target.value)}
+              data-testid="roteiro-data-visita"
+            />
+          </div>
 
-            {termo.trim().length > 0 && (
-              <div
-                className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover shadow-md"
-                data-testid="roteiro-busca-popover"
+          {precisaAtendimento && (
+            <div>
+              <label
+                className="mb-1 block text-xs font-medium text-muted-foreground"
+                htmlFor="roteiro-atendimento"
               >
-                {!termoUtil ? (
-                  <p className="px-3 py-2 text-sm text-muted-foreground">
-                    Digite ao menos 2 caracteres.
-                  </p>
-                ) : busca.isError ? (
-                  <p className="px-3 py-2 text-sm text-destructive" data-testid="roteiro-busca-erro">
-                    Não foi possível buscar os imóveis.
-                  </p>
-                ) : resultados.length === 0 ? (
-                  // Only reachable with NO results to show yet — either the
-                  // very first fetch for this term, or a genuinely empty
-                  // match. `keepPreviousData` means a term that already
-                  // matched something never lands here while its refetch is
-                  // in flight; that case is the `buscando &&` spinner below,
-                  // ABOVE the still-visible list from the previous term.
-                  buscando ? (
-                    <p
-                      className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
-                      data-testid="roteiro-busca-carregando"
-                    >
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando...
+                Atendimento *
+              </label>
+              <select
+                id="roteiro-atendimento"
+                value={atendimentoId}
+                onChange={(e) => setAtendimentoId(e.target.value)}
+                className="h-9 w-full rounded-md border bg-background px-3 text-sm"
+                data-testid="roteiro-atendimento"
+              >
+                <option value="">Selecione…</option>
+                {atendimentoOpcoes?.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.titulo}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {!somenteOrdenar && (
+            <div className="relative">
+              <label
+                className="mb-1 block text-xs font-medium text-muted-foreground"
+                htmlFor="roteiro-busca"
+              >
+                Buscar imóvel
+              </label>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  id="roteiro-busca"
+                  value={termo}
+                  onChange={(e) => setTermo(e.target.value)}
+                  placeholder="ONE9..."
+                  className="pl-8"
+                  autoComplete="off"
+                  data-testid="roteiro-busca"
+                />
+              </div>
+
+              {termo.trim().length > 0 && (
+                <div
+                  className="absolute z-20 mt-1 max-h-64 w-full overflow-y-auto rounded-md border bg-popover shadow-md"
+                  data-testid="roteiro-busca-popover"
+                >
+                  {!termoUtil ? (
+                    <p className="px-3 py-2 text-sm text-muted-foreground">
+                      Digite ao menos 2 caracteres.
                     </p>
-                  ) : (
-                    <p className="px-3 py-2 text-sm text-muted-foreground" data-testid="roteiro-busca-vazio">
-                      Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
+                  ) : busca.isError ? (
+                    <p className="px-3 py-2 text-sm text-destructive" data-testid="roteiro-busca-erro">
+                      Não foi possível buscar os imóveis.
                     </p>
-                  )
-                ) : (
-                  <>
-                    {buscando && (
+                  ) : resultados.length === 0 ? (
+                    // Only reachable with NO results to show yet — either the
+                    // very first fetch for this term, or a genuinely empty
+                    // match. `keepPreviousData` means a term that already
+                    // matched something never lands here while its refetch is
+                    // in flight; that case is the `buscando &&` spinner below,
+                    // ABOVE the still-visible list from the previous term.
+                    buscando ? (
                       <p
-                        className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
+                        className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground"
                         data-testid="roteiro-busca-carregando"
                       >
-                        <Loader2 className="h-3 w-3 animate-spin" /> Atualizando…
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> Buscando...
                       </p>
-                    )}
-                    <ul>
-                    {resultados.map((row) => {
-                      const jaEsta = jaNoRoteiro.has(row.codigo.toUpperCase());
-                      return (
-                        <li key={row.codigo}>
-                          <button
-                            type="button"
-                            disabled={jaEsta}
-                            onClick={() => adicionar(row)}
-                            className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
-                            data-testid={`roteiro-busca-item-${row.codigo}`}
-                          >
-                            <span className="font-semibold">{row.codigo}</span>
-                            <span className="truncate text-muted-foreground">
-                              {[row.empreendimento ?? row.titulo, row.bairro]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </span>
-                            {jaEsta && (
-                              <span className="ml-auto shrink-0 text-xs">já no roteiro</span>
-                            )}
-                          </button>
-                        </li>
-                      );
-                    })}
-                    </ul>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
+                    ) : (
+                      <p className="px-3 py-2 text-sm text-muted-foreground" data-testid="roteiro-busca-vazio">
+                        Nenhum imóvel encontrado para “{termoDebounced.trim()}”.
+                      </p>
+                    )
+                  ) : (
+                    <>
+                      {buscando && (
+                        <p
+                          className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground"
+                          data-testid="roteiro-busca-carregando"
+                        >
+                          <Loader2 className="h-3 w-3 animate-spin" /> Atualizando…
+                        </p>
+                      )}
+                      <ul>
+                      {resultados.map((row) => {
+                        const jaEsta = jaNoRoteiro.has(row.codigo.toUpperCase());
+                        return (
+                          <li key={row.codigo}>
+                            <button
+                              type="button"
+                              disabled={jaEsta}
+                              onClick={() => adicionar(row)}
+                              className="flex w-full items-baseline gap-2 px-3 py-2 text-left text-sm hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                              data-testid={`roteiro-busca-item-${row.codigo}`}
+                            >
+                              <span className="font-semibold">{row.codigo}</span>
+                              <span className="truncate text-muted-foreground">
+                                {[row.empreendimento ?? row.titulo, row.bairro]
+                                  .filter(Boolean)
+                                  .join(" · ")}
+                              </span>
+                              {jaEsta && (
+                                <span className="ml-auto shrink-0 text-xs">já no roteiro</span>
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                      </ul>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -320,11 +394,11 @@ export function CriarRoteiroDialog({
           </Button>
           <Button
             onClick={salvar}
-            disabled={escolhidos.length === 0 || saving}
+            disabled={!podeConfirmar || saving}
             data-testid="roteiro-salvar"
           >
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Criar roteiro
+            Confirmar ordem do roteiro
           </Button>
         </DialogFooter>
       </DialogContent>
