@@ -127,6 +127,16 @@ def derivar_situacao_onus(
     "livre e desembaraçado" in a signed contract. The caller does not apply
     the field in that case, leaving it for a human to classify the
     outstanding act(s) — never a silent "no ônus found so far" default.
+
+    🔴 [situacao-onus-unresolved-cancellation] A cancellation act that
+    names NO act this matrícula actually has (typed `atos_referidos` empty
+    or pointing at nothing present, and no text-heuristic link) releases
+    SOMETHING we cannot identify. If an encumbrance written BEFORE it is
+    still counted active, that encumbrance may be the very thing it
+    released — reporting it active (a signed "livre e desembaraçado"
+    contradicted) is as wrong as reporting `livre`, so the answer is
+    `None` (indeterminate, a human reads the act). Unresolved
+    cancellations with nothing earlier still active change nothing.
     """
     ordenados = sorted(atos, key=lambda r: r["ordem"])
     liberados: set[tuple[str, int]] = set()
@@ -174,6 +184,7 @@ def derivar_situacao_onus(
         return None
 
     ativos: list[str] = []
+    ordens_ativas: list[int] = []
     tipados: set[str] = set()
     for ato in ordenados:
         natureza = (detalhes.get(str(ato["id"])) or {}).get("natureza")
@@ -181,6 +192,7 @@ def derivar_situacao_onus(
             tipados.add(str(ato["id"]))
         if natureza in NATUREZAS_ONUS and not _liberado(ato):
             ativos.append(natureza)
+            ordens_ativas.append(ato["ordem"])
     # The text heuristic fills in only where there is no typed reading of
     # that act at all — a typed nature (even a non-ônus one) wins.
     por_id = {str(a["id"]): a for a in ordenados}
@@ -189,6 +201,28 @@ def derivar_situacao_onus(
         if ato is None or str(ato["id"]) in tipados or _liberado(ato):
             continue
         ativos.append(o["tipo"])
+        ordens_ativas.append(ato["ordem"])
+
+    existentes = {r for r in (_ref(a) for a in ordenados) if r is not None}
+    for ato in ordenados:
+        aid = str(ato["id"])
+        if (detalhes.get(aid) or {}).get("natureza") != NATUREZA_CANCELAMENTO and (
+            aid not in canceladores_por_texto
+        ):
+            continue
+        resolvida = aid in canceladores_por_texto
+        for ref in (detalhes.get(aid) or {}).get("atos_referidos") or []:
+            try:
+                resolvida = resolvida or (str(ref["kind"]), int(ref["numero"])) in existentes
+            except (KeyError, TypeError, ValueError):
+                continue
+        if not resolvida and any(o < ato["ordem"] for o in ordens_ativas):
+            logger.warning(
+                "situacao_onus: cancelamento %s names no act of this matricula while an "
+                "earlier onus is still counted active — indeterminate",
+                aid,
+            )
+            return None
 
     tipos = sorted(set(ativos))
     if not tipos:

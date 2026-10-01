@@ -60,6 +60,7 @@ from noctusai_lib.integrations.documents import (
     MatriculaAto,
     RuidoSpan,
     ato_hint_span,
+    extrair_detalhes_ato,
     normalize,
     segment_matricula_atos,
     segmentar_abertura,
@@ -991,11 +992,22 @@ def _contem(norm: str, termo: str) -> bool:
     return re.search(rf"\b{re.escape(termo)}", norm) is not None
 
 
-def _cita(norm: str, kind: str, numero: int) -> bool:
-    """Does `norm` cite act `kind`-`numero` (`R-2`, `R.02`, `R 2/45.678`)?"""
-    return (
-        re.search(rf"(?<![A-Z]){kind}\s*[-.]?\s*0*{numero}(?!\d)", norm) is not None
-    )
+def _citados(texto_ato: str, tipados: Optional[dict] = None) -> set[tuple[str, int]]:
+    """The acts a cancellation act's text names — `(kind, numero)` pairs.
+
+    ONE reading, shared with the typed `atos_referidos` (the seed's
+    `extrair_detalhes_ato`: `R-2`, `R.02`, `R 2/45.678`, `registro numero 1`,
+    `registrada sob no 1`, `registro 1 desta matricula`, …, and NOT acts of
+    another matrícula) so the text heuristic and the typed reading agree;
+    the stored typed refs (a human may have edited them) are unioned in.
+    """
+    refs = {(r.kind, r.numero) for r in extrair_detalhes_ato(texto_ato).atos_referidos}
+    for r in (tipados or {}).get("atos_referidos") or []:
+        try:
+            refs.add((str(r["kind"]), int(r["numero"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return refs
 
 
 def _ref(row: dict, texto: str, termo: str) -> dict:
@@ -1037,6 +1049,14 @@ def sugerir(
     cancelamentos = {
         r["id"] for r in ordenados if _CANCELAMENTO.search(normalizados[r["id"]])
     }
+    citados_por_cancelamento = {
+        r["id"]: _citados(
+            _fatia(texto, int(r["char_inicio"]), int(r["char_fim"])),
+            (detalhes or {}).get(str(r["id"])),
+        )
+        for r in ordenados
+        if r["id"] in cancelamentos
+    }
 
     titulo: Optional[dict] = None
     onus: list[dict] = []
@@ -1064,7 +1084,7 @@ def sugerir(
                 if outro["ordem"] > row["ordem"]
                 and outro["id"] in cancelamentos
                 and row.get("numero") is not None
-                and _cita(normalizados[outro["id"]], row["kind"], int(row["numero"]))
+                and (row["kind"], int(row["numero"])) in citados_por_cancelamento[outro["id"]]
             ]
             onus.append(
                 {

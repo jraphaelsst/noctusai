@@ -536,3 +536,26 @@ class TestTheDeleteGuard:
         ext = extracao_row()
         seed(scoped, extracoes=[ext])
         svc.garantir_removivel(scoped, ORG, ext["id"])
+
+
+class TestSuggesterAgreesWithTheTypedCancellationReading:
+    """The text heuristic reads a cancellation's object through the SAME
+    extractor as the typed `atos_referidos`."""
+
+    def _onus(self, cancelamento: str) -> dict:
+        texto = (
+            "MATRÍCULA 3.333\nLote ficticio.\n"
+            "R-1/3.333 - HIPOTECA em favor de Banco Inventado.\n"
+            f"AV-2/3.333 - {cancelamento}\n"
+        )
+        return svc.sugerir(texto, _linhas(texto))["onus"][0]
+
+    def test_registro_numero_with_a_trailing_comma_cancels(self):
+        onus = self._onus("CANCELAMENTO. Fica cancelada a hipoteca, objeto do registro numero 01, conforme termo.")
+        assert onus["sugerido"] is False
+
+    def test_registrada_sob_no_cancels(self):
+        assert self._onus("CANCELAMENTO da hipoteca registrada sob o no 1 desta matricula.")["sugerido"] is False
+
+    def test_an_act_of_another_matricula_does_not_cancel(self):
+        assert self._onus("CANCELAMENTO da hipoteca, objeto do R.1 da matricula 5.390.")["sugerido"] is True

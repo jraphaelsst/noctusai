@@ -957,8 +957,45 @@ _CITACAO = re.compile(
     r"(?<![A-Z0-9$])(?P<k>AV|R)(?:\s*[-.–—]\s*|\s+)(?P<n>\d{1,4})(?![\d])(?!,\d)(?!\.\d)"
     r"(?P<suf>\s*/\s*(?:M\s*[.-]?\s*)?\d+(?:\.\d+)*)?"
 )
+# The wordings the real cancellation acts use to name what they release
+# (learned from live acts; generic shapes only):
+#   `objeto do REGISTRO NUMERO 01,` · `REGISTRO N.o 3` · `AVERBACAO no 2`
+#   `a hipoteca REGISTRADA SOB (O) No 1 desta matricula` · `AVERBADA SOB No 3`
+#   `o registro 1 desta matricula` (bare number — only when "desta" anchors it
+#   to THIS matrícula) · `registro PRIMEIRO desta matricula` / roman `I`.
+# Every one is a LOW-confidence (verbal) reading: the kind comes from the
+# noun/participle, not from an `R-`/`AV-` label.
+_NUM_ATO = r"(?P<n>\d{1,4})(?![\d/]|[,.]\d)"
+_NR = r"(?:N(?:\s*\.?\s*O|[°º])?\.?|NUMERO)"
+_ANCORA_DESTA = r"(?=\s+(?:DESTA|NESTA|DESTE|DESSA|DA\s+PRESENTE)\b)"
 _CITACAO_VERBAL = re.compile(
-    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+(?:N[O°]?\.?|NUMERO)\s*(?P<n>\d{1,4})(?![\d,/]|\.\d)"
+    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+" + _NR + r"\s*" + _NUM_ATO
+)
+_CITACAO_VERBAL_SOB = re.compile(
+    r"(?<![A-Z])(?P<k>REGISTRAD[OA]|AVERBAD[OA]|INSCRIT[OA])\s+SOB\s+(?:O\s+)?"
+    + _NR
+    + r"\s*"
+    + _NUM_ATO
+    + r"(?!\s*,?\s*(?:DO|NO|NA|EM)\s+(?:LIVRO|PROTOCOLO|FICHA))"
+)
+_CITACAO_VERBAL_NUA = re.compile(
+    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+" + _NUM_ATO + _ANCORA_DESTA
+)
+_ORDINAIS = {
+    "PRIMEIRO": 1, "PRIMEIRA": 1, "SEGUNDO": 2, "SEGUNDA": 2, "TERCEIRO": 3, "TERCEIRA": 3,
+    "QUARTO": 4, "QUARTA": 4, "QUINTO": 5, "QUINTA": 5,
+    "I": 1, "II": 2, "III": 3, "IV": 4, "V": 5,
+}
+_CITACAO_VERBAL_ORDINAL = re.compile(
+    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+(?P<o>"
+    + "|".join(sorted(_ORDINAIS, key=len, reverse=True))
+    + r")\b"
+    + _ANCORA_DESTA
+)
+# `R.13 E AV.14 DA MATRICULA 5.390` — acts of ANOTHER matrícula, named by
+# number after the act list; never ours, so never a release of ours.
+_OUTRA_MATRICULA = re.compile(
+    r"^(?:\s*(?:,|E|OU)\s*(?:AV|R)\s*[-.]?\s*\d{1,4})*\s+D[AO]\s+MATRICULA\s+(?:N(?:\s*\.?\s*O|[°º])?\.?\s*)?\d"
 )
 _CITACAO_ISCA_ANTES = re.compile(
     r"(?:QUADRA|LOTE|RUA|AVENIDA|UNIDADE|APARTAMENTO|APTO|BLOCO|TORRE|FICHA|LIVRO|FOLHA"
@@ -974,7 +1011,12 @@ def _atos_referidos(
     verbal = False
     for m in _CITACAO.finditer(t.norm, corpo):
         antes = t.norm[max(corpo, m.start() - 24) : m.start()]
-        if _CITACAO_ISCA_ANTES.search(antes) or _CITACAO_ISCA_DEPOIS.match(t.norm[m.end() :]):
+        resto = t.norm[m.end() :]
+        if (
+            _CITACAO_ISCA_ANTES.search(antes)
+            or _CITACAO_ISCA_DEPOIS.match(resto)
+            or _OUTRA_MATRICULA.match(resto)
+        ):
             continue
         sufixo = _digitos(m.group("suf"))
         if sufixo and sufixo_proprio and sufixo != sufixo_proprio:
@@ -982,15 +1024,23 @@ def _atos_referidos(
         ref = AtoReferido(kind=m.group("k"), numero=int(m.group("n")))  # type: ignore[arg-type]
         if (ref.kind, ref.numero) != proprio and ref not in vistos:
             vistos.append(ref)
-    for m in _CITACAO_VERBAL.finditer(t.norm, corpo):
-        antes = t.norm[max(corpo, m.start() - 24) : m.start()]
-        if _CITACAO_ISCA_ANTES.search(antes):
-            continue
-        kind = "R" if m.group("k") == "REGISTRO" else "AV"
-        ref = AtoReferido(kind=kind, numero=int(m.group("n")))  # type: ignore[arg-type]
-        if (ref.kind, ref.numero) != proprio and ref not in vistos:
-            vistos.append(ref)
-            verbal = True
+    verbais = (
+        (_CITACAO_VERBAL, "n"),
+        (_CITACAO_VERBAL_SOB, "n"),
+        (_CITACAO_VERBAL_NUA, "n"),
+        (_CITACAO_VERBAL_ORDINAL, "o"),
+    )
+    for rx, grupo in verbais:
+        for m in rx.finditer(t.norm, corpo):
+            antes = t.norm[max(corpo, m.start() - 24) : m.start()]
+            if _CITACAO_ISCA_ANTES.search(antes) or _OUTRA_MATRICULA.match(t.norm[m.end() :]):
+                continue
+            kind = "AV" if m.group("k").startswith("AVERBA") else "R"
+            numero = _ORDINAIS[m.group("o")] if grupo == "o" else int(m.group("n"))
+            ref = AtoReferido(kind=kind, numero=numero)  # type: ignore[arg-type]
+            if (ref.kind, ref.numero) != proprio and ref not in vistos:
+                vistos.append(ref)
+                verbal = True
     if not vistos:
         return (), NENHUMA
     return tuple(vistos), (BAIXA if verbal else ALTA)

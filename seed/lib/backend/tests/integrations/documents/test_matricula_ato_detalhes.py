@@ -752,3 +752,49 @@ def test_p4_blind_act_wordings_read_as_outro(texto):
     # `natureza` is what `derivar_situacao_onus` reads; the confidence may be
     # `baixa` when the title sits deep in a long sentence - still typed.
     assert extrair_detalhes_ato(texto).natureza == "outro"
+
+
+# ─── cancellation wordings seen in real acts (all text invented) ──────────
+
+
+@pytest.mark.parametrize(
+    "texto, esperado",
+    [
+        # "objeto do registro numero 01," — leading zero + comma after the number
+        ("AV-4 - Em 09 de junho de 1987. CANCELAMENTO. Fica cancelada a hipoteca, objeto do registro numero 01, "
+         "conforme termo de quitacao.", [("R", 1)]),
+        ("AV-4/9.999 - CANCELAMENTO. Cancelada a hipoteca objeto do registro n. 1 desta matricula.", [("R", 1)]),
+        # "registrada sob (o) no N desta matricula"
+        ("AV-15 - Em 03 de junho de 2020. CANCELAMENTO. Fica cancelado o cancelamento da alienacao fiduciaria "
+         "registrada sob o no 12 desta matricula.", [("R", 12)]),
+        ("AV-9 - CANCELAMENTO da hipoteca averbada sob no 03 desta.", [("AV", 3)]),
+        ("AV-9 - CANCELAMENTO da alienacao fiduciaria registrada sob n. 2.", [("R", 2)]),
+        # bare number anchored by "desta matricula"
+        ("AV-5 - CANCELAMENTO do registro 1 desta matricula.", [("R", 1)]),
+        ("AV-5 - CANCELAMENTO do registro primeiro desta matricula.", [("R", 1)]),
+        ("AV-5 - CANCELAMENTO da averbacao II desta matricula.", [("AV", 2)]),
+        # label shapes with suffix, lists, zero-padding
+        ("AV-6 - CANCELAMENTO da hipoteca R-01/12.345.", [("R", 1)]),
+        ("AV-7/12.345 - CANCELAMENTO da hipoteca constante do R.2 e Av.3.", [("R", 2), ("AV", 3)]),
+    ],
+)
+def test_cancellation_wordings_resolve_their_object(texto, esperado):
+    d = extrair_detalhes_ato(texto)
+    assert [(a.kind, a.numero) for a in d.atos_referidos] == esperado
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # protocol / numbers with thousands separators are not acts
+        "AV-8 - CANCELAMENTO da hipoteca. Protocolo registrado sob no 288.201 em 11/09/2020.",
+        # acts of ANOTHER matricula
+        "AV-3 - CANCELAMENTO da hipoteca desta, objeto do R.13 e AV.14 da matricula 5.390.",
+        # a bare number without the "desta" anchor is too weak
+        "AV-3 - CANCELAMENTO do registro 4 de imoveis.",
+        # a registration-book pointer, not an act
+        "AV-3 - CANCELAMENTO. Registrada sob no 12 no livro 2.",
+    ],
+)
+def test_non_citations_are_not_referenced_acts(texto):
+    assert extrair_detalhes_ato(texto).atos_referidos == ()
