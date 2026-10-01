@@ -133,7 +133,7 @@ describe("Transmissoes — enviar requires confirmation", () => {
 
 describe("Transmissoes — retry a falhou row", () => {
   it("labels Enviar as 'Tentar novamente' for falhou", async () => {
-    mockRoutes({ transmissoes: { items: [{ ...TRANSMISSAO_RASCUNHO_BASE, estado: "falhou" }], total: 1 } });
+    mockRoutes({ transmissoes: { items: [{ ...TRANSMISSAO_RASCUNHO, estado: "falhou" }], total: 1 } });
     const { default: Transmissoes } = await import("../Transmissoes");
     renderPage(<Transmissoes />);
     const btn = await screen.findByTestId("transmissao-enviar-t-1");
