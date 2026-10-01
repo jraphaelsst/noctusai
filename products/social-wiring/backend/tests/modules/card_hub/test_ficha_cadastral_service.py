@@ -258,3 +258,76 @@ class TestEnderecoTier:
         row = _cliente(scoped, cid)
         assert row["endereco_cep"] == "01234-567"
         assert row["endereco_origem"] == "ficha_cadastral"
+
+
+class TestFichaLidaAntesDaIdentidade:
+    """A bank form read BEFORE the other party's identity document stores
+    that person unmatched; when their CPF lands the form is re-queued and a
+    fresh read applies them."""
+
+    async def _ficha_com_terceiro_nao_casado(self, scoped):
+        outro_id = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, cliente={"nome": "Fulano", "cpf": None},
+            outros=[cliente_row(outro_id, nome="Beltrano", cpf=None, profissao=None)],
+        )
+        atd = str(uuid4())
+        scoped.set_table_data("atendimentos", [{"id": atd, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_partes", [
+            {"id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": atd,
+             "cliente_id": outro_id, "papel": "comprador", "ordem": 0},
+        ])
+        lida = FichaCadastralLida(
+            pessoas=(
+                _pessoa(papel="proponente", nome="FULANO", cpf=CPF_PROPONENTE),
+                # Name differs from the registry and no CPF on file: unmatched.
+                _pessoa(papel="conjuge", nome="B. DA SILVA", cpf=CPF_CONJUGE,
+                        profissao="médico"),
+            ),
+            source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        assert pessoas[1]["cliente_id_aplicado"] is None
+        return cid, did, outro_id, storage, lida
+
+    @staticmethod
+    def _gravar_cpf(scoped, pessoa_id, cpf):
+        return svc.aplicar_campos_ao_cliente(
+            scoped, ORG_UUID, UUID(pessoa_id), "rg",
+            {"cpf": (cpf, "alta", "RG", True)},
+            campos=(svc.CAMPO_POR_CHAVE["cpf"],), documento_id=uuid4(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_cpf_arriving_later_requeues_and_reread_applies(self, client, scoped):
+        cid, did, outro_id, storage, lida = await self._ficha_com_terceiro_nao_casado(scoped)
+
+        self._gravar_cpf(scoped, outro_id, CPF_CONJUGE)
+        assert _documento(scoped, did)["extracao_status"] == "pendente"
+
+        await _extrair(scoped, storage, cid, did, lida)
+        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        assert pessoas[1]["cliente_id_aplicado"] == outro_id
+        assert _cliente(scoped, outro_id)["profissao"] == "médico"
+
+    @pytest.mark.asyncio
+    async def test_cpf_matching_nobody_does_not_requeue(self, client, scoped):
+        _cid, did, outro_id, _storage, _lida = await self._ficha_com_terceiro_nao_casado(scoped)
+        self._gravar_cpf(scoped, outro_id, CPF_TERCEIRO)
+        assert _documento(scoped, did)["extracao_status"] != "pendente"
+
+    @pytest.mark.asyncio
+    async def test_no_requeue_loop_once_matched_or_attempts_exhausted(self, client, scoped):
+        cid, did, outro_id, storage, lida = await self._ficha_com_terceiro_nao_casado(scoped)
+        scoped.table("cliente_documentos").update(
+            {"extracao_tentativas": svc.MAX_TENTATIVAS}
+        ).eq("id", did).execute()
+        self._gravar_cpf(scoped, outro_id, CPF_CONJUGE)
+        assert _documento(scoped, did)["extracao_status"] != "pendente"
+        scoped.table("cliente_documentos").update(
+            {"extracao_tentativas": 1, "extracao_status": "pendente"}
+        ).eq("id", did).execute()
+        await _extrair(scoped, storage, cid, did, lida)
+        self._gravar_cpf(scoped, cid, CPF_PROPONENTE)
+        assert _documento(scoped, did)["extracao_status"] != "pendente"

@@ -1186,6 +1186,17 @@ def aplicar_campos_ao_cliente(
         updates["updated_at"] = now
         _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
 
+    # A CPF that just became known may be what an already-read bank form was
+    # waiting for (it named this person before their identity document
+    # existed and stored them unmatched) — re-queue that form for a fresh
+    # read. Local import: ficha_cadastral_service imports this module.
+    if aplicados.get("cpf") and updates.get("cpf"):
+        from app.modules.card_hub import ficha_cadastral_service
+
+        ficha_cadastral_service.reenfileirar_fichas_pelo_cpf(
+            client, org_id, cliente_id, updates["cpf"], excluir_documento_id=documento_id,
+        )
+
     return aplicados, conflitos
 
 

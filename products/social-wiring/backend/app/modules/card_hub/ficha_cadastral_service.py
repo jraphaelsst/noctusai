@@ -375,4 +375,61 @@ async def aplicar_leitura(
     )
 
 
-__all__ = ["CAMPOS_FICHA", "aplicar_leitura"]
+def reenfileirar_fichas_pelo_cpf(
+    client: Any, org_id: UUID, cliente_id: UUID, cpf: Any,
+    *, excluir_documento_id: Optional[UUID] = None,
+) -> list[str]:
+    """A party just got `cpf` on file: re-queue every already-read
+    `ficha_cadastral` of the same atendimento(s) that named a person with
+    that CPF and could NOT attribute them at read time.
+
+    A bank form is routinely a card's FIRST document, read before the other
+    parties' identity documents — their CPF was unknown, so `_resolver_
+    destino` stored them unmatched (`cliente_id_aplicado` null) and they were
+    never applied. The stored reading drops per-field confidences, so it is
+    never re-applied from the stored JSON: the document goes back to
+    `pendente` and the existing sweep (`varrer_extracoes_pendentes`) re-reads
+    it, now resolving that person by CPF.
+
+    Loop guard: only a ficha that is terminal-`ok`, whose stored reading has
+    an UNMATCHED person with exactly this CPF, and that still has attempts
+    left (`extracao_tentativas < MAX_TENTATIVAS`, the D3 accounting every read
+    increments) is re-queued; one read that now matches stops satisfying the
+    first condition. Returns the re-queued document ids.
+    """
+    digits = only_digits(str(cpf or ""))
+    if len(digits) != 11:
+        return []
+    ids = [str(r["id"]) for r in _linhas_do_atendimento(client, org_id, cliente_id)]
+    docs = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("id,extracao_status,extracao_tentativas,extracao_ficha_cadastral")
+        .eq("org_id", str(org_id))
+        .eq("tipo_documento", "ficha_cadastral")
+        .in_("cliente_id", ids)
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+    enfileirados: list[str] = []
+    for doc in docs:
+        if excluir_documento_id and str(doc["id"]) == str(excluir_documento_id):
+            continue
+        if doc.get("extracao_status") != extracao_job.OK:
+            continue
+        if int(doc.get("extracao_tentativas") or 0) >= identidade_svc.MAX_TENTATIVAS:
+            continue
+        pessoas = (doc.get("extracao_ficha_cadastral") or {}).get("pessoas") or []
+        if not any(
+            not p.get("cliente_id_aplicado") and only_digits(p.get("cpf") or "") == digits
+            for p in pessoas
+        ):
+            continue
+        extracao_job.marcar(
+            client, DOCUMENTOS_TABLE, UUID(str(doc["id"])),
+            extracao_status="pendente", extracao_erro=None, extracao_em=None,
+        )
+        enfileirados.append(str(doc["id"]))
+    return enfileirados
+
+
+__all__ = ["CAMPOS_FICHA", "aplicar_leitura", "reenfileirar_fichas_pelo_cpf"]
