@@ -65,6 +65,14 @@ def _dispatches_dir() -> Path:
 
 def _detect_worktree_path(cwd: str | None = None) -> str:
     """Return the current git worktree root (the checked-out path, not the bare repo)."""
+    if cwd is None:
+        try:
+            cwd = os.getcwd()
+        except OSError as exc:  # deleted cwd — never a live-cwd dependency
+            raise RuntimeError(
+                "surface_to_tech_lead: current working directory no longer exists; "
+                "pass worktree_path explicitly"
+            ) from exc
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],

@@ -74,6 +74,20 @@ def _parse_marker(marker_path: Path) -> dict:
     return fields
 
 
+def _safe_cwd() -> Path:
+    """``Path.cwd()`` that survives a deleted cwd.
+
+    A process whose cwd was removed (e.g. a session inside a worktree that
+    ``task_branch action=cleanup`` deleted) makes ``os.getcwd()`` raise
+    ``FileNotFoundError``. Repo-root resolution must not depend on a live
+    cwd, so fall back to this module's own location (always resolvable).
+    """
+    try:
+        return Path.cwd()
+    except (FileNotFoundError, OSError):
+        return _fallback_noc_root()
+
+
 def find_workspace_marker(start: Path | None = None) -> Path | None:
     """Walk up from ``start`` (default cwd) looking for the marker file.
 
@@ -88,7 +102,7 @@ def find_workspace_marker(start: Path | None = None) -> Path | None:
     worktree mechanism but lives under its own root. Sibling: the
     `NOCTUSAI_HOME` env override in `get_workspace_context` (explicit lever).
     """
-    cur = (start or Path.cwd()).resolve()
+    cur = (start or _safe_cwd()).resolve()
     while True:
         candidate = cur / MARKER_FILENAME
         if candidate.is_file():
@@ -167,7 +181,7 @@ def get_workspace_context(start: Path | None = None) -> WorkspaceContext:
     # `.../<primary>/.claude/worktrees/<slug>/`, that worktree's own root IS
     # the workspace root (overrides the committed marker's PRIMARY-pointing
     # noctusai_home). N=3 codification, 2026-05-26.
-    cwd = (start or Path.cwd()).resolve()
+    cwd = (start or _safe_cwd()).resolve()
     wt_root = _detect_worktree_root(cwd)
     if wt_root is not None:
         return WorkspaceContext(
@@ -301,7 +315,7 @@ def get_ledger_root(start: Path | None = None) -> Path:
             env_home,
         )
 
-    cwd = (start or Path.cwd()).resolve()
+    cwd = (start or _safe_cwd()).resolve()
     unwrapped = unwrap_worktree_root(cwd)
     if unwrapped is not None:
         return unwrapped
