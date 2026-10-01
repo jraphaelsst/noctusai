@@ -1068,6 +1068,14 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
         doc.close()
 
 
+#: Public name for a consumer that needs the page's own embedded-image pixels
+#: (a screenshot pasted into a PDF) to crop regions of it — social-wiring's
+#: CENPROT reader (`certidoes/cenprot.py`, 2026-10-01). Same function, same
+#: contract: 1-based page number, `None` (never raises) when the page carries
+#: no isolatable image.
+dominant_embedded_image = _dominant_embedded_image
+
+
 def _pdf_to_images_within_budget(
     pdf_bytes: bytes,
     paginas: list[int],
@@ -1686,6 +1694,7 @@ __all__ = [
     "RenderDpiPolicy",
     "TranscribedPage",
     "Transcription",
+    "dominant_embedded_image",
     "identity_document_render_dpi_policy",
     "make_document_transcriber",
     "has_raw_markup",

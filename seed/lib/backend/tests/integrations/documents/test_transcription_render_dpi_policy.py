@@ -747,3 +747,10 @@ class TestPolicyThreadsThroughTheFullChain:
         resolver._get_document_transcriber()
 
         assert captured["render_dpi_policy"] == "the-policy-object"
+
+
+def test_dominant_embedded_image_has_a_public_name() -> None:
+    """social-wiring's CENPROT reader consumes it — public alias, same object."""
+    from noctusai_lib.integrations import documents
+
+    assert documents.dominant_embedded_image is _dominant_embedded_image

@@ -75,6 +75,7 @@ from xhtml2pdf import pisa
 from xhtml2pdf.config.resources import ResourceAccessPolicy
 
 from app.modules.certidoes import cost_ledger
+from app.modules.certidoes.cenprot import CenprotEstrutura, estruturar_cenprot
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
     provider_api_key,
@@ -2089,6 +2090,7 @@ def _agendar_retomada_extracao_manual(
                 resultado_id=item["id"],
                 consulta_id=item["consulta_id"],
                 org_id=item.get("org_id"),
+                tipo=item.get("tipo"),
                 nome_display=item.get("nome_display") or item.get("tipo") or "certidão",
                 arquivo_url=item["arquivo_url"],
                 tentativa=tentativa,
@@ -2273,6 +2275,73 @@ async def process_manual_upload(
     return update_data
 
 
+async def _aplicar_leitura_cenprot(
+    update_data: dict,
+    pdf_bytes: bytes,
+    resultado_id: str,
+    consulta_id: str,
+    nome_display: str,
+    org_id: Optional[str],
+    db,
+    *,
+    estruturar: Callable[..., Any],
+) -> None:
+    """`process_manual_extraction`'s CENPROT leg: overwrite `numero` /
+    `emitida_em` in `update_data` with `cenprot.estruturar_cenprot`'s
+    validated answer — `None` included, since the generic read it replaces
+    is measured-wrong for this document (a wrong protest number in a signed
+    contract is worse than a gap). Never raises."""
+    from app.services.api_keys_store import resolve_vision_provider
+
+    try:
+        consulta_rows = (
+            db.table(CONSULTAS)
+            .select("documento, tipo_documento, created_at")
+            .eq("id", consulta_id)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): não foi possível ler a consulta para "
+            "validar o CENPROT: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        consulta_rows = []
+    consulta = consulta_rows[0] if consulta_rows else {}
+    referencia = None
+    criada = consulta.get("created_at")
+    if criada:
+        try:
+            referencia = datetime.fromisoformat(str(criada).replace("Z", "+00:00")).date()
+        except ValueError:
+            referencia = None
+
+    try:
+        estrutura = await estruturar(
+            pdf_bytes,
+            nome_display,
+            org_id,
+            provider=resolve_vision_provider(org_id),
+            tipo_documento_esperado=consulta.get("tipo_documento"),
+            documento_esperado=consulta.get("documento"),
+            referencia=referencia,
+        )
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): leitura do CENPROT falhou "
+            "inesperadamente: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        estrutura = CenprotEstrutura(avisos=("leitura do CENPROT falhou",))
+
+    update_data["numero"] = estrutura.numero
+    update_data["emitida_em"] = estrutura.emitida_em
+    if estrutura.numero or estrutura.emitida_em:
+        update_data["resultado_origem"] = "ia"
+    for aviso in estrutura.avisos:
+        logger.warning("Certidão %s (resultado %s): %s", nome_display, resultado_id, aviso)
+
+
 async def process_manual_extraction(
     pdf_bytes: bytes,
     resultado_id: str,
@@ -2281,12 +2350,14 @@ async def process_manual_extraction(
     org_id: Optional[str],
     db,
     *,
+    tipo: Optional[str] = None,
     resultado_origem_atual: Optional[str] = None,
     confirmado_por_atual: Optional[str] = None,
     tentativa: int = 1,
     extract_text: Optional[Callable[..., Any]] = None,
     analyze: Optional[Callable[..., Any]] = None,
     analyze_estrutura: Optional[Callable[..., Any]] = None,
+    estruturar_cenprot_fn: Optional[Callable[..., Any]] = None,
 ) -> dict:
     """The AI/vision leg of a manual certidão upload — the post-storage steps
     of the pipeline `process_manual_upload` starts.
@@ -2331,6 +2402,11 @@ async def process_manual_extraction(
 
     `extract_text` / `analyze` / `analyze_estrutura` are the same DI seams
     the pre-split function exposed. → KB § PATTERNS/backend/di-test-seam.md
+
+    `tipo='cenprot'`: `numero`/`emitida_em` come from `cenprot.py`'s own
+    region-crop reader instead of the generic structured read, which is
+    measured-wrong for CENPROT screenshots (see that module's docstring) —
+    REPLACING them, `None` included. `estruturar_cenprot_fn` is its DI seam.
     """
     extract_text = extract_text or _extract_pdf_text
     analyze = analyze or _analyze_with_ai
@@ -2430,6 +2506,12 @@ async def process_manual_extraction(
             update_data.update(via_ia)
             update_data["resultado_origem"] = "ia"
 
+    if not travado and tipo == "cenprot":
+        await _aplicar_leitura_cenprot(
+            update_data, pdf_bytes, resultado_id, consulta_id, nome_display,
+            org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
+        )
+
     # 🔴 `persist_data` is a SUPERSET of `update_data`, built for the DB write
     # ONLY — see this docstring's leak note. `update_data` itself never gains
     # these two keys.
@@ -2463,6 +2545,7 @@ async def _retomar_extracao_manual(
     nome_display: str,
     arquivo_url: str,
     tentativa: int,
+    tipo: Optional[str] = None,
 ) -> None:
     """`recover_stale_processando`'s retry half: re-read a manually uploaded
     certidão's already-stored bytes and re-run `process_manual_extraction`.
@@ -2513,6 +2596,7 @@ async def _retomar_extracao_manual(
         nome_display=nome_display,
         org_id=org_id,
         db=db,
+        tipo=tipo,
         resultado_origem_atual=(atual[0].get("resultado_origem") if atual else None),
         confirmado_por_atual=(atual[0].get("confirmado_por") if atual else None),
         tentativa=tentativa,

@@ -229,6 +229,7 @@ from noctusai_lib.integrations.documents.transcription import (
     TranscribedPage,
     Transcription,
     has_raw_markup,
+    dominant_embedded_image,
     identity_document_render_dpi_policy,
     make_document_transcriber,
 )
@@ -415,6 +416,7 @@ __all__ = [
     "find_regime_bens",
     "find_rg",
     "find_rg_orgao",
+    "dominant_embedded_image",
     "identity_document_render_dpi_policy",
     "is_same_as_cpf",
     "classificar_tipo_provavel",
