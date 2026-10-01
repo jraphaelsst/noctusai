@@ -284,6 +284,8 @@ def _create_team_router(
                 .eq("org_id", org_id)
             )
             if policy.staff_roles is not None:
+                # postgrest-unbounded-ok: staff_roles is a product-declared role
+                # vocabulary (a handful of slugs), never data-sized.
                 query = query.in_("org_role", sorted(policy.staff_roles))
             else:
                 customers = ",".join(sorted(CUSTOMER_ORG_ROLES))
