@@ -74,7 +74,8 @@ from noctusai_lib.primitives.tasks import schedule_coro
 from xhtml2pdf import pisa
 from xhtml2pdf.config.resources import ResourceAccessPolicy
 
-from app.modules.certidoes import cost_ledger
+from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
+from app.modules.certidoes import cost_ledger, feed_parte
 from app.modules.certidoes.cenprot import CenprotEstrutura, estruturar_cenprot
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
@@ -1140,6 +1141,31 @@ def _mesclar_resultados_estruturados(
     return patch, avisos
 
 
+#: Emission-line labels, most specific first. A certidão prints MANY dates
+#: (validity, consulta, birth, protocolo) — only the one on THIS line is the
+#: emission, which is what `stale_para_contrato` is measured against.
+_EMISSAO_LINHA_RE = re.compile(
+    r"(?:data\s+e\s+hora\s+d[ae]\s+emiss[ãa]o|data\s+d[ae]\s+emiss[ãa]o"
+    r"|emitid[ao]\s+em|expedid[ao]\s+em)"
+    r"\s*[:\-]?\s*(?:[^\d\n]{1,40}?,\s*)?(\d{2})/(\d{2})/(\d{4})",
+    re.IGNORECASE,
+)
+
+
+def _data_emissao_do_texto(paginas: Sequence[str]) -> Optional[str]:
+    """ISO date of the FIRST emission line ("emitida em", "data de emissão",
+    "expedida em", "data e hora da emissão") in document order, or `None`.
+    Pure. A date that is not a real calendar date is skipped, never guessed."""
+    for pagina in paginas:
+        for m in _EMISSAO_LINHA_RE.finditer(pagina or ""):
+            dia, mes, ano = m.groups()
+            try:
+                return datetime(int(ano), int(mes), int(dia)).date().isoformat()
+            except ValueError:
+                continue
+    return None
+
+
 async def _analyze_estrutura_por_pagina(
     paginas_texto: Sequence[str],
     texto_completo: Optional[str],
@@ -1178,6 +1204,11 @@ async def _analyze_estrutura_por_pagina(
         )
     if not patch:
         return None
+    # The emission LINE beats "first page that supplied any date": a page 1
+    # that prints a validity/consulta date first must not become the emissão.
+    emissao_linha = _data_emissao_do_texto(paginas_texto)
+    if emissao_linha:
+        patch["emitida_em"] = emissao_linha
     return _aplicar_overrides_numero(patch, texto_completo)
 
 
@@ -1724,6 +1755,10 @@ async def _process_single_certidao(
             analyze_estrutura=analyze_estrutura,
         ))
         db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
+        feed_parte.alimentar_parte(
+            db, org_id, consulta, config["tipo"], result["raw_response"],
+            resultado_id=resultado_id,
+        )
         _atualizar_status_consulta(consulta_id, org_id, db)
         return
 
@@ -1759,6 +1794,12 @@ async def _process_single_certidao(
         analyze_estrutura=analyze_estrutura,
     ))
     db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
+    # CONTRACT §1.7: the certidão also tells us who this CPF/CNPJ is — offer it
+    # to the party's profile (fill-empty / conflict-on-disagree). Never raises.
+    feed_parte.alimentar_parte(
+        db, org_id, consulta, config["tipo"], result["raw_response"],
+        resultado_id=resultado_id,
+    )
     _atualizar_status_consulta(consulta_id, org_id, db)
 
 
@@ -2270,6 +2311,16 @@ async def process_manual_upload(
         "api_response": None,
         "erro_mensagem": None,
         "estrutura_erro": None,
+        # A NEW file is new evidence: the human lock protected an edit of
+        # the PREVIOUS file only, so the structured fields it guarded go
+        # and the extraction that follows repopulates them.
+        "numero": None,
+        "emitida_em": None,
+        "validade_ate": None,
+        "resultado": None,
+        "resultado_origem": None,
+        "confirmado_por": None,
+        "confirmado_em": None,
     }
     db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
     return update_data
@@ -2996,7 +3047,7 @@ RESULTADO_ACESSOS = "certidao_resultado_acessos"
 #: round-trip).
 _CONSULTA_COLUNAS_RESUMO = (
     "id, nome, documento, tipo_documento, "
-    "situacao_cadastral, data_situacao, situacao_origem"
+    "situacao_cadastral, data_situacao, situacao_origem, origem"
 )
 
 
@@ -3044,6 +3095,10 @@ def _resultados_das_consultas(db, org_id, consultas: list[dict]) -> list[dict]:
             r["consulta_situacao_cadastral"] = consulta.get("situacao_cadastral")
             r["consulta_data_situacao"] = consulta.get("data_situacao")
             r["consulta_situacao_origem"] = consulta.get("situacao_origem")
+            # 'manual' for a consulta that never calls InfoSimples (migration
+            # 147) — lets a reader tell an untouched manual placeholder from
+            # an automated resultado still in flight.
+            r["consulta_origem"] = consulta.get("origem")
             resultados.append(r)
     return resultados
 
@@ -3118,6 +3173,43 @@ def certidoes_por_empresa(db, org_id, empresa_id: str) -> list[dict]:
         .execute()
     ).data or []
     return _resultados_das_consultas(db, org_id, consultas)
+
+
+def certidoes_por_alvos(
+    db, org_id, *, cliente_ids: Sequence[str] = (), empresa_ids: Sequence[str] = ()
+) -> dict[str, list[dict]]:
+    """`certidoes_por_cliente` / `certidoes_por_empresa` for MANY parties in
+    one batched pass — `{"c:<cliente_id>"|"e:<empresa_id>": [resultado, ...]}`,
+    every requested key present (an empty list when the party has none).
+
+    Same row shape as the single-party readers (the shared
+    `_resultados_das_consultas` denormalization), same soft-delete rule
+    (`excluida_em` consultas never surface). Exists so the per-party Certidões
+    tab costs a handful of queries however many parties a card carries,
+    instead of two per party (contract §0: no N+1 on a list read).
+    """
+    from app.services import table_reads
+
+    colunas = f"{_CONSULTA_COLUNAS_RESUMO}, cliente_id, empresa_id, excluida_em"
+    consultas: list[dict] = []
+    for coluna, ids in (("cliente_id", cliente_ids), ("empresa_id", empresa_ids)):
+        consultas.extend(
+            table_reads.in_batched_rows(
+                db, CONSULTAS, org_id, coluna, [str(i) for i in ids], select=colunas,
+            )
+        )
+    vivas = {c["id"]: c for c in consultas if not c.get("excluida_em")}
+    out: dict[str, list[dict]] = {
+        **{f"c:{i}": [] for i in cliente_ids},
+        **{f"e:{i}": [] for i in empresa_ids},
+    }
+    for resultado in _resultados_das_consultas(db, org_id, list(vivas.values())):
+        consulta = vivas[resultado["consulta_id"]]
+        if consulta.get("cliente_id"):
+            out.setdefault(f"c:{consulta['cliente_id']}", []).append(resultado)
+        if consulta.get("empresa_id"):
+            out.setdefault(f"e:{consulta['empresa_id']}", []).append(resultado)
+    return out
 
 
 def atualizar_situacao_cadastral(db, org_id, consulta_id: str, campos: dict) -> Optional[dict]:
@@ -3433,6 +3525,14 @@ def _aplicar_crednet_a_resultado(
         return False
     resultado = rows[0]
     novo_em = leitura.consulta_em.date().isoformat() if leitura.consulta_em else None
+    # A Crednet older than the contract window would land a cell the contract
+    # gate (`derivacao`, `certidao_max_dias`) rejects anyway — leave the cell
+    # pendente so the operator emits a fresh one instead of trusting a stale
+    # reading. An undated Crednet is not skipped: its age is unknowable.
+    if leitura.consulta_em is not None:
+        idade = (datetime.now(timezone.utc).date() - leitura.consulta_em.date()).days
+        if idade >= POLITICA_PADRAO.certidao_max_dias:
+            return False
 
     vazio = resultado.get("status") == "pendente" and resultado.get("resultado_origem") is None
     if not vazio:
@@ -3556,6 +3656,7 @@ __all__ = [
     "ExtractedPdfText",
     "atualizar_situacao_cadastral",
     "cancelar_processamento",
+    "certidoes_por_alvos",
     "certidoes_por_cliente",
     "certidoes_por_parte",
     "check_required_credentials",

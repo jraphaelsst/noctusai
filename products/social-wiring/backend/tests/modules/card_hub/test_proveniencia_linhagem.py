@@ -69,6 +69,9 @@ class TestLinhagemDoRegistro:
             # beats an identity document (unmeasured `PRECISAO`, corroboration
             # only), but the seed CAN read it, which is this listing's bar.
             "ficha_cadastral",
+            # The automated Receita/PGFN certidão feeds `nome` too
+            # (CONTRACT atendimento-partes-imoveis §1.7, `feed_parte`).
+            "certidao",
         }
 
     def test_profissao_lists_matricula_alongside_the_identity_documents(self):
@@ -185,6 +188,9 @@ class TestLinhagemDoCard:
             # The bank's own registration form also claims `cpf` — see
             # `test_nome_oficial_lists_every_identity_document`'s own note.
             "ficha_cadastral",
+            # CONTRACT atendimento-partes-imoveis §1.7: the Receita/PGFN
+            # certidão feeds the party's `nome` / `cpf` (`feed_parte`).
+            "certidao",
         }
         assert all(f["destino"] == f"/clientes/{ids['cliente']}" for f in item["fontes_possiveis"])
 
