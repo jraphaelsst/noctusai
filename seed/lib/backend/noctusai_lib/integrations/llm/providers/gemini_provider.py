@@ -29,6 +29,7 @@ from google.genai import types
 
 from ..exceptions import LLMAPIError, LLMNotConfigured
 from ..registry import register
+from ..stream_types import StreamOutcome
 from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
@@ -409,6 +410,7 @@ class GeminiProvider:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
         org_id: Optional[str] = None,
+        outcome: Optional[StreamOutcome] = None,
         **kwargs: Any,
     ):
         """Stream via `client.aio.models.generate_content_stream(...)`.
@@ -444,6 +446,12 @@ class GeminiProvider:
                 text = getattr(chunk, "text", None)
                 if text:
                     yield text
+                candidatos = getattr(chunk, "candidates", None) or []
+                finish_reason = getattr(candidatos[0], "finish_reason", None) if candidatos else None
+                if outcome is not None and finish_reason is not None:
+                    # Same normalization as the vision path above.
+                    outcome.stop_reason = str(getattr(finish_reason, "value", finish_reason))
+                    outcome.truncated = finish_reason == types.FinishReason.MAX_TOKENS
                 usage = getattr(chunk, "usage_metadata", None)
                 if usage is not None:
                     prompt_tokens = getattr(usage, "prompt_token_count", None)

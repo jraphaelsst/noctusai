@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any, Deque, Iterable, List, Optional, Union
 
+from ..stream_types import StreamOutcome
 from ..vision_types import VisionResult
 
 
@@ -48,6 +49,9 @@ class FakeProvider:
         # `truncated=False`, matching a real, non-truncated reply.
         vision_truncated: Optional[Iterable[bool]] = None,
         stream_responses: Optional[Iterable[List[str]]] = None,
+        # Aligned by call order with `stream_responses` — same convention as
+        # `vision_truncated`. Unset ⇒ every stream reports `truncated=False`.
+        stream_truncated: Optional[Iterable[bool]] = None,
     ) -> None:
         self._chat: Deque[str] = deque(chat_responses or [])
         self._embeddings: Deque[List[float]] = deque(embedding_responses or [])
@@ -57,6 +61,7 @@ class FakeProvider:
         # Each stream_response is a list of chunks — e.g. [["Hel", "lo", " world"]].
         # The outer deque.popleft() returns one full scripted stream per call.
         self._streams: Deque[List[str]] = deque(stream_responses or [])
+        self._stream_truncated: Deque[bool] = deque(stream_truncated or [])
 
         # Call log — tests can inspect what was called, with what args.
         self.calls: list[dict] = []
@@ -174,6 +179,7 @@ class FakeProvider:
         temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
+        outcome: Optional[StreamOutcome] = None,
         **kwargs: Any,
     ):
         """Async generator that yields scripted chunks from `stream_responses`.
@@ -194,8 +200,12 @@ class FakeProvider:
             chunks = self._streams.popleft()
         else:
             chunks = [f"[FAKE stream] chunk for {model}"]
+        truncated = self._stream_truncated.popleft() if self._stream_truncated else False
         for chunk in chunks:
             yield chunk
+        if outcome is not None:
+            outcome.truncated = truncated
+            outcome.stop_reason = "max_tokens" if truncated else "end_turn"
 
     async def close(self) -> None:
         # Nothing to close; FakeProvider holds no resources.

@@ -61,6 +61,8 @@ export interface HelpChatBubbleProps
 
 const DEFAULT_ENDPOINT = "/api/ajuda/chat";
 const DEFAULT_MAX_HISTORY = 20;
+/** Sent (as a visible user turn) by the "Continuar resposta" button. */
+const PEDIDO_CONTINUAR = "Continue a resposta de onde parou.";
 
 //: Error codes the backend router can return — see
 //: `noctusai_lib.domain.help_chat.service` for the canonical list.
@@ -132,6 +134,10 @@ export function HelpChatBubble({
   const [input, setInput] = React.useState("");
   const [streaming, setStreaming] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  // The backend already continues a long answer for a few rounds on its own;
+  // this is set only when it says the reply is STILL cut off (`truncated`
+  // frame) — so the user is told, instead of reading half an answer as whole.
+  const [truncated, setTruncated] = React.useState(false);
   const [configured, setConfigured] = React.useState(true);
 
   const messagesRef = React.useRef(messages);
@@ -179,6 +185,7 @@ export function HelpChatBubble({
       if (!trimmed || streaming) return;
 
       setError(null);
+      setTruncated(false);
       const history = [...messagesRef.current, { role: "user" as const, content: trimmed }];
       const withPlaceholder: HelpChatMessage[] = [...history, { role: "assistant" as const, content: "" }];
       setMessages(withPlaceholder);
@@ -223,6 +230,7 @@ export function HelpChatBubble({
         const decoder = new TextDecoder();
         let buffer = "";
         let sawError: { code?: string; message: string } | null = null;
+        let sawTruncated = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -243,6 +251,8 @@ export function HelpChatBubble({
               applyDelta(payload.delta);
             } else if (payload?.error) {
               sawError = payload.error;
+            } else if (payload?.truncated === true) {
+              sawTruncated = true;
             }
             // `payload.done` needs no handling — the loop's own end is the signal.
           }
@@ -251,6 +261,8 @@ export function HelpChatBubble({
         if (sawError) {
           setError(friendlyError(sawError.code, sawError.message));
           if (sawError.code === "ia_nao_configurada") setConfigured(false);
+        } else if (sawTruncated) {
+          setTruncated(true);
         }
         persist(messagesRef.current);
       } catch (err: any) {
@@ -280,6 +292,7 @@ export function HelpChatBubble({
     abortRef.current?.abort();
     setMessages([]);
     setError(null);
+    setTruncated(false);
     persist([]);
   };
 
@@ -393,6 +406,22 @@ export function HelpChatBubble({
               </div>
             )}
           </div>
+
+          {truncated && !streaming && !error && (
+            <div
+              role="status"
+              className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
+            >
+              <span>A resposta ficou longa e foi interrompida.</span>
+              <button
+                type="button"
+                onClick={() => void send(PEDIDO_CONTINUAR)}
+                className="shrink-0 font-medium text-foreground underline underline-offset-2"
+              >
+                Continuar resposta
+              </button>
+            </div>
+          )}
 
           {error && (
             <div className="mx-4 mb-2 flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">

@@ -206,6 +206,42 @@ describe('HelpChatBubble — errors', () => {
   });
 });
 
+describe('HelpChatBubble — long answers', () => {
+  it('tells the user a cut-off answer was interrupted and continues it on click', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(sseResponse(['{"delta":"Passo 1"}', '{"truncated":true}', '{"done":true}']))
+      .mockResolvedValueOnce(sseResponse(['{"delta":"Passo 2"}', '{"done":true}']));
+    vi.stubGlobal('fetch', fetchMock);
+    setup();
+    await openPanel(user);
+    await user.type(screen.getByPlaceholderText('Digite sua pergunta...'), 'como faço?');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(screen.getByText(/foi interrompida/i)).toBeInTheDocument());
+    await user.click(screen.getByRole('button', { name: 'Continuar resposta' }));
+
+    await waitFor(() => expect(screen.getByText('Passo 2')).toBeInTheDocument());
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(sent.messages.at(-1)).toEqual({ role: 'user', content: 'Continue a resposta de onde parou.' });
+    expect(sent.messages.at(-2)).toEqual({ role: 'assistant', content: 'Passo 1' });
+    expect(screen.queryByText(/foi interrompida/i)).not.toBeInTheDocument();
+  });
+
+  it('shows no interruption notice for a complete answer', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(sseResponse(['{"delta":"Tudo"}', '{"done":true}'])));
+    setup();
+    await openPanel(user);
+    await user.type(screen.getByPlaceholderText('Digite sua pergunta...'), 'oi');
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(screen.getByText('Tudo')).toBeInTheDocument());
+    expect(screen.queryByText(/foi interrompida/i)).not.toBeInTheDocument();
+  });
+});
+
 describe('HelpChatBubble — sessionStorage', () => {
   it('persists the transcript and reloads it on remount', async () => {
     const user = userEvent.setup();

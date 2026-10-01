@@ -23,6 +23,7 @@ from openai import OpenAIError
 
 from ..exceptions import LLMAPIError, LLMNotConfigured
 from ..registry import register
+from ..stream_types import StreamOutcome
 from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
@@ -402,6 +403,7 @@ class OpenAIProvider:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
         org_id: Optional[str] = None,
+        outcome: Optional[StreamOutcome] = None,
         **kwargs: Any,
     ):
         """Stream chat completion via the OpenAI `stream=True` mode.
@@ -435,6 +437,10 @@ class OpenAIProvider:
                     delta = chunk.choices[0].delta.content
                     if delta:
                         yield delta
+                    finish_reason = getattr(chunk.choices[0], "finish_reason", None)
+                    if outcome is not None and finish_reason is not None:
+                        outcome.stop_reason = finish_reason
+                        outcome.truncated = finish_reason == "length"
                 model_version = getattr(chunk, "model", None) or model_version
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:

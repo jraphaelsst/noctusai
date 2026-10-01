@@ -95,6 +95,22 @@ data: {"delta": "negócio, clique em..."}
 data: {"done": true}
 ```
 
+**Long answers are never silently cut.** Each model round is capped at
+`MAX_TOKENS_POR_RODADA` (4096). When the provider reports the reply hit that
+cap (`StreamOutcome.truncated`), the router asks the model to continue from
+where it stopped and streams the rest as more `delta` frames — up to
+`max_continuations` (default 2) extra rounds, invisible to the client. Only if
+the reply is STILL cut off after the last round does the stream carry one
+extra frame before `done`:
+
+```
+data: {"truncated": true}
+```
+
+The bubble then tells the user the answer was cut short and offers a
+"Continuar resposta" button. (2026-10-01: a 1200-token cap cut an IgIg
+orçamento walkthrough mid-section and still sent `done`.)
+
 or, if the seam fails **mid-stream** (the one failure shape that cannot
 become an HTTP status once bytes are already flowing):
 

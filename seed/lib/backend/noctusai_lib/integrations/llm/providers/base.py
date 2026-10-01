@@ -132,7 +132,9 @@ class LLMProvider(Protocol):
     # raises `NotImplementedError` if a provider's method is absent. Providers
     # return an async iterator of string chunks (delta text only, not cumulative).
     # Implementations may ignore `response_format` or translate it to their
-    # provider-specific format.
+    # provider-specific format. `outcome` (a `stream_types.StreamOutcome`),
+    # when given, is filled from the vendor's stop signal once the stream is
+    # drained — and must NOT be forwarded to the vendor SDK.
     def chat_completion_stream(
         self,
         messages: list[dict],
@@ -142,6 +144,7 @@ class LLMProvider(Protocol):
         temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
+        outcome: Optional[Any] = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         ...

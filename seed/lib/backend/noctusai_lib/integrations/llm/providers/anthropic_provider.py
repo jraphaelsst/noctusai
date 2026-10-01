@@ -35,6 +35,7 @@ from anthropic import AsyncAnthropic, APIError as AnthropicAPIError
 
 from ..exceptions import LLMAPIError, LLMNotConfigured, ProviderNotImplemented
 from ..registry import register
+from ..stream_types import StreamOutcome
 from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
@@ -337,6 +338,7 @@ class AnthropicProvider:
         max_tokens: Optional[int] = None,
         response_format: Optional[dict] = None,
         org_id: Optional[str] = None,
+        outcome: Optional[StreamOutcome] = None,
         **kwargs: Any,
     ):
         """Stream via Anthropic's `messages.stream(...)` context manager.
@@ -375,6 +377,10 @@ class AnthropicProvider:
                     if text_chunk:
                         yield text_chunk
                 final_message = await stream.get_final_message()
+                if outcome is not None:
+                    stop_reason = getattr(final_message, "stop_reason", None)
+                    outcome.stop_reason = stop_reason
+                    outcome.truncated = stop_reason == "max_tokens"
                 usage = getattr(final_message, "usage", None)
                 if usage is not None:
                     prompt_tokens = getattr(usage, "input_tokens", None)

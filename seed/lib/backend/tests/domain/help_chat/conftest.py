@@ -52,20 +52,34 @@ class FakeStream:
     """
 
     chunks: tuple[tuple[str, ...], ...] = (("Olá!", " Como posso ajudar?"),)
+    #: Aligned with `chunks` by round — True ⇒ that round reports it hit the
+    #: token cap (`FakeProvider(stream_truncated=...)`).
+    truncated: tuple[bool, ...] = ()
     erro: Optional[BaseException] = None
     calls: list[dict] = field(default_factory=list)
     provider: FakeProvider = field(init=False)
 
     def __post_init__(self) -> None:
-        self.provider = FakeProvider(stream_responses=[list(c) for c in self.chunks])
+        self.provider = FakeProvider(
+            stream_responses=[list(c) for c in self.chunks],
+            stream_truncated=list(self.truncated),
+        )
 
     def __call__(
-        self, messages: list[dict], *, model: str, provider: str, org_id: Optional[str]
+        self,
+        messages: list[dict],
+        *,
+        model: str,
+        provider: str,
+        org_id: Optional[str],
+        outcome: Any,
     ) -> AsyncIterator[str]:
         self.calls.append({"messages": messages, "model": model, "provider": provider, "org_id": org_id})
         if self.erro is not None:
             return self._raise()
-        return self.provider.chat_completion_stream(messages, model=model, api_key="fake-key")
+        return self.provider.chat_completion_stream(
+            messages, model=model, api_key="fake-key", outcome=outcome
+        )
 
     async def _raise(self) -> AsyncIterator[str]:
         raise self.erro
@@ -88,6 +102,7 @@ def build_harness(
     rate_limit: int = 20,
     max_turns: int = 20,
     max_chars_per_message: int = 4000,
+    max_continuations: int = 2,
     rate_limiter: Optional[HelpChatRateLimiter] = None,
 ) -> Harness:
     knowledge_path = tmp_path / "help_chat_knowledge.md"
@@ -103,6 +118,7 @@ def build_harness(
         rate_limit=rate_limit,
         max_turns=max_turns,
         max_chars_per_message=max_chars_per_message,
+        max_continuations=max_continuations,
         stream_fn=fake_stream,
         rate_limiter=rate_limiter,
     )

@@ -149,6 +149,65 @@ class TestStreaming:
             assert "SEGREDO-NAO-DEVE-APARECER-NO-LOG" not in record.getMessage()
 
 
+class TestLongAnswers:
+    """A reply cut off at the per-round token cap is continued, never
+    presented as complete (2026-10-01: a 1200-token cap cut an IgIg
+    walkthrough mid-section and the router still sent `done`)."""
+
+    PERGUNTA = {"messages": [{"role": "user", "content": "Como monto e envio um orçamento?"}]}
+
+    def _post(self, harness):
+        resp = harness.client.post("/api/ajuda/chat", json=self.PERGUNTA, headers=AUTH_HEADER)
+        assert resp.status_code == 200
+        return _sse_events(resp.text)
+
+    def test_truncated_round_is_continued_seamlessly(self, tmp_path):
+        stream = FakeStream(chunks=(("Passo 1.", " Passo 2"), (" e passo 3.",)), truncated=(True, False))
+        harness = build_harness(tmp_path, stream=stream)
+
+        events = self._post(harness)
+
+        assert events == [
+            {"delta": "Passo 1."}, {"delta": " Passo 2"}, {"delta": " e passo 3."}, {"done": True},
+        ], "the continuation streams as plain deltas, with no truncated frame"
+        first, second = harness.stream.calls
+        assert len(first["messages"]) == 2  # system + the user's question
+        replay = [(m["role"], m.get("content")) for m in second["messages"][1:]]
+        assert replay[0] == ("user", "Como monto e envio um orçamento?")
+        assert replay[1] == ("assistant", "Passo 1. Passo 2"), "the partial reply is replayed verbatim"
+        assert replay[2][0] == "user" and "Continue exatamente" in replay[2][1]
+
+    def test_still_truncated_after_last_round_emits_truncated_before_done(self, tmp_path):
+        stream = FakeStream(chunks=(("a",), ("b",), ("c",)), truncated=(True, True, True))
+        harness = build_harness(tmp_path, stream=stream, max_continuations=2)
+
+        events = self._post(harness)
+
+        assert events == [{"delta": "a"}, {"delta": "b"}, {"delta": "c"}, {"truncated": True}, {"done": True}]
+        assert len(harness.stream.calls) == 3, "1 round + max_continuations, never more"
+
+    def test_continuation_disabled_reports_truncation_immediately(self, tmp_path):
+        stream = FakeStream(chunks=(("a",),), truncated=(True,))
+        harness = build_harness(tmp_path, stream=stream, max_continuations=0)
+
+        assert self._post(harness) == [{"delta": "a"}, {"truncated": True}, {"done": True}]
+        assert len(harness.stream.calls) == 1
+
+    def test_complete_answer_makes_one_call(self, harness):
+        assert self._post(harness)[-1] == {"done": True}
+        assert len(harness.stream.calls) == 1
+
+    def test_default_stream_fn_caps_each_round_at_4096_and_requests_outcome(self):
+        """The production seam asks the provider for its stop signal — without
+        `outcome`, truncation is undetectable and continuation never fires."""
+        from noctusai_lib.domain.help_chat import router as help_chat_router
+
+        assert help_chat_router.MAX_TOKENS_POR_RODADA == 4096
+        import inspect
+
+        assert "outcome" in inspect.signature(help_chat_router._default_stream_fn).parameters
+
+
 class TestErrorMapping:
     def test_llm_not_configured_before_first_chunk_is_503(self, tmp_path):
         harness = build_harness(tmp_path, stream=FakeStream(erro=LLMNotConfigured("anthropic")))

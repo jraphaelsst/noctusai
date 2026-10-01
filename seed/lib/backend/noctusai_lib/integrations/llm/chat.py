@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator, Optional
 from .budget import enforce_budget
 from .cache import build_cache_key, try_get, try_set
 from .client import get_llm_config, get_provider, resolve_api_key
+from .stream_types import StreamOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -129,12 +130,18 @@ async def chat_completion_stream(
     temperature: float = 1.0,
     max_tokens: Optional[int] = None,
     response_format: Optional[dict] = None,
+    outcome: Optional[StreamOutcome] = None,
     **kwargs: Any,
 ) -> AsyncIterator[str]:
     """Stream a chat completion as an async iterator of text deltas.
 
     Each yielded string is a **delta** — the new text chunk, not the
     cumulative response. Callers concatenate the chunks as they arrive.
+
+    Pass `outcome=StreamOutcome()` to learn, once the iterator is drained,
+    whether the provider cut the reply off at `max_tokens`
+    (`outcome.truncated`) — a truncated stream otherwise ends exactly like a
+    finished one. See `stream_types`.
 
     Response-cache is never consulted for streams: streaming outputs aren't
     stable snapshots and the cache key design is built around whole-response
@@ -173,6 +180,7 @@ async def chat_completion_stream(
         max_tokens=max_tokens,
         response_format=response_format,
         org_id=org_id,
+        outcome=outcome,
         **kwargs,
     ):
         yield chunk

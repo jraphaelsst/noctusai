@@ -45,4 +45,11 @@ e2e_test:
   status: pending
   last_run: null
   runs_in_ci: false
-bugs_fixed_during_dev: []
+bugs_fixed_during_dev:
+- '2026-10-01 — long answers were silently cut: the backend capped each reply
+  at max_tokens=1200 and still sent `done`, so an IgIg orçamento walkthrough
+  stopped mid-section and read as complete. Not a display limit (the panel
+  scrolls). Fix: providers now report truncation via `StreamOutcome`; the
+  router raises the cap to 4096/round and auto-continues up to 2 rounds; only
+  if still cut does it send `{"truncated": true}`, which this bubble shows as
+  an "interrompida" notice + "Continuar resposta" button.'

@@ -60,6 +60,7 @@ from .embeddings import generate_embedding, generate_embeddings_batch
 from .provider_choice import resolve_llm_provider
 from .vision import analyze_image, analyze_images
 from .vision_types import VisionResult
+from .stream_types import StreamOutcome
 from .refusal import analyze_image_with_refusal_retry, looks_like_refusal
 from .budget import (
     compute_spend_usd,
@@ -189,6 +190,7 @@ __all__ = [
     # High-level entry points (what product services call)
     "chat_completion",
     "chat_completion_stream",
+    "StreamOutcome",
     "build_cached_messages",
     "generate_embedding",
     "generate_embeddings_batch",

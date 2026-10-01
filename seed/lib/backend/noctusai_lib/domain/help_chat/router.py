@@ -14,6 +14,8 @@ Mounts a single route:
         auth: `auth_dependency` (401 on missing/invalid auth)
         response: `text/event-stream` — SSE frames
             data: {"delta": "..."}          (one per streamed chunk)
+            data: {"truncated": true}        (reply still cut off after every
+                                              continuation round; precedes done)
             data: {"done": true}             (terminal, success)
             data: {"error": {"code", "message"}}   (terminal, mid-stream failure)
 
@@ -48,6 +50,7 @@ from noctusai_lib.integrations.llm import (
     LLMAPIError,
     LLMBudgetExceeded,
     LLMNotConfigured,
+    StreamOutcome,
     chat_completion_stream,
 )
 
@@ -67,14 +70,34 @@ from .service import (
 
 logger = logging.getLogger(__name__)
 
-#: `(messages, *, model, provider, org_id) -> AsyncIterator[str]` — what the
-#: router calls to get streamed text deltas. Defaults to the seed's
+#: `(messages, *, model, provider, org_id, outcome) -> AsyncIterator[str]` —
+#: what the router calls to get streamed text deltas; it must fill `outcome`
+#: (a `StreamOutcome`) once drained. Defaults to the seed's
 #: `chat_completion_stream`; tests inject a `FakeProvider`-backed callable.
 HelpChatStreamFn = Callable[..., AsyncIterator[str]]
 
+#: Output cap PER ROUND. A how-to answer for a whole product flow routinely
+#: exceeds the old 1200 (measured live 2026-10-01: an orçamento walkthrough cut
+#: off mid-section). Long answers that still exceed it are continued
+#: (`max_continuations`), not cut.
+MAX_TOKENS_POR_RODADA = 4096
+
+#: The follow-up turn that asks the model to resume a reply it was cut off in.
+#: Never shown to the user and never persisted — it exists for one request.
+PEDIDO_CONTINUACAO = (
+    "Sua resposta anterior foi interrompida pelo limite de tamanho. Continue "
+    "exatamente do ponto onde parou — sem repetir nada, sem introdução e sem "
+    "comentar a interrupção."
+)
+
 
 def _default_stream_fn(
-    messages: list[dict], *, model: str, provider: str, org_id: Optional[str]
+    messages: list[dict],
+    *,
+    model: str,
+    provider: str,
+    org_id: Optional[str],
+    outcome: StreamOutcome,
 ) -> AsyncIterator[str]:
     return chat_completion_stream(
         messages,
@@ -82,7 +105,8 @@ def _default_stream_fn(
         provider=provider,
         org_id=org_id,
         temperature=0.4,
-        max_tokens=1200,
+        max_tokens=MAX_TOKENS_POR_RODADA,
+        outcome=outcome,
     )
 
 
@@ -104,6 +128,7 @@ def create_help_chat_router(
     provider: str = "anthropic",
     max_turns: int = 20,
     max_chars_per_message: int = 4000,
+    max_continuations: int = 2,
     rate_limit: int = 20,
     prefix: str = "/api/ajuda",
     tags: Optional[list[str]] = None,
@@ -146,6 +171,13 @@ def create_help_chat_router(
             history before sending).
         max_chars_per_message: Per-message content length cap (422 above
             this).
+        max_continuations: When the provider reports the reply was cut off
+            at the per-round token cap, the router asks the model to
+            continue (up to this many extra rounds) and streams the rest as
+            ordinary `delta` frames — the client sees one unbroken answer.
+            Still cut off after the last round ⇒ a `{"truncated": true}`
+            frame before `done`, never a silent "complete" (`0` disables
+            continuation; truncation is then reported immediately).
         rate_limit: Requests per minute per user (429 above this, pt-BR
             message, `code="limite_de_mensagens"`).
         prefix: Router prefix. Default `/api/ajuda` mounts
@@ -205,7 +237,8 @@ def create_help_chat_router(
         )
 
         started = time.monotonic()
-        agen = stream_fn(messages, model=model, provider=provider, org_id=org_id)
+        outcome = StreamOutcome()
+        agen = stream_fn(messages, model=model, provider=provider, org_id=org_id, outcome=outcome)
         try:
             first_chunk = await agen.__anext__()
         except StopAsyncIteration:
@@ -224,21 +257,48 @@ def create_help_chat_router(
                          "O provedor de IA não respondeu. Tente novamente em instantes.") from exc
 
         async def event_stream() -> AsyncIterator[str]:
+            nonlocal outcome
             chunk_count = 0
-            char_count = 0
+            # The reply so far — held in memory for this request only (to
+            # replay it to the model on a continuation round), never logged
+            # or persisted.
+            resposta: list[str] = []
+            continuacoes = 0
             try:
                 if first_chunk is not None:
                     chunk_count += 1
-                    char_count += len(first_chunk)
+                    resposta.append(first_chunk)
                     yield sse_event({"delta": first_chunk})
-                async for chunk in agen:
-                    chunk_count += 1
-                    char_count += len(chunk)
-                    yield sse_event({"delta": chunk})
+                rodada = agen
+                while True:
+                    async for chunk in rodada:
+                        chunk_count += 1
+                        resposta.append(chunk)
+                        yield sse_event({"delta": chunk})
+                    texto = "".join(resposta)
+                    if not outcome.truncated or continuacoes >= max_continuations or not texto.strip():
+                        break
+                    continuacoes += 1
+                    continuacao = build_conversation_messages(
+                        system_prompt=system_prompt,
+                        history=history + [
+                            {"role": "assistant", "content": texto},
+                            {"role": "user", "content": PEDIDO_CONTINUACAO},
+                        ],
+                        provider=provider,
+                    )
+                    outcome = StreamOutcome()
+                    rodada = stream_fn(
+                        continuacao, model=model, provider=provider, org_id=org_id, outcome=outcome
+                    )
+                if outcome.truncated:
+                    yield sse_event({"truncated": True})
                 yield sse_event({"done": True})
                 logger.info(
-                    "help_chat: stream ok org=%s chunks=%d chars=%d latency_ms=%d",
-                    org_id, chunk_count, char_count, int((time.monotonic() - started) * 1000),
+                    "help_chat: stream ok org=%s chunks=%d chars=%d continuations=%d "
+                    "truncated=%s latency_ms=%d",
+                    org_id, chunk_count, sum(len(c) for c in resposta), continuacoes,
+                    outcome.truncated, int((time.monotonic() - started) * 1000),
                 )
             except LLMNotConfigured:
                 logger.warning("help_chat: IA não configurada mid-stream org=%s", org_id)
