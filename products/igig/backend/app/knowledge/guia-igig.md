@@ -109,9 +109,12 @@ Legenda: ✅ pode; ❌ o servidor recusa; "UI" = o que a tela faz para quem não
 | **Reatribuir papel de etapa da Esteira** ("Papéis das etapas") | ✅ | ❌ | ❌ | Painel não aparece |
 | **Reatribuir o papel "Fechado" do Comercial** ("Papéis das etapas") | ✅ | ❌ | ❌ | Painel não aparece |
 | Criar/editar/ativar clientes, marcas, acessos do Cofre (sem revelar) | ✅ | ✅ | ✅ | — |
-| **Remover cliente** (exclusão em cascata) | ✅ | ❌ | ❌ | Botão aparece; servidor recusa com 403 |
+| **Remover cliente** (exclusão em cascata) | ✅ | ❌ | ❌ | Botão escondido para quem não é administrador |
+| **Editar ou encerrar contrato** | ✅ | ❌ | ❌ | Botões "Editar" e "Encerrar contrato" escondidos |
+| **Editar fatura; editar ou excluir item de fatura** (fatura não paga/cancelada) | ✅ | ❌ | ❌ | Lápis e lixeira escondidos |
 | **Revelar senha do Cofre** | ✅ | ❌ | ❌ | Selo "Protegida" com cadeado |
-| Orçamentos (criar, versionar, PDF, enviar, aceitar, recusar, gerar pautas), contratos (gerar, marcar assinado), produtos e serviços | ✅ | ✅ | ✅ | — |
+| Orçamentos (criar, versionar, PDF, enviar, aceitar, recusar, gerar pautas, **excluir rascunho**), contratos (gerar, marcar assinado), produtos e serviços | ✅ | ✅ | ✅ | — |
+| Distribuição: agendar, **editar/reagendar** (só `agendada`), publicar, cancelar | ✅ | ✅ | ✅ | — |
 | Custos — ver funções/profissionais | ✅ | ✅ | ✅ | — |
 | **Custos — criar/editar/remover/ativar/desativar funções e profissionais, vincular usuário** | ✅ | ❌ | ❌ | Controles escondidos: a pessoa vê as tabelas só para leitura |
 | Esteira — tarefas, cronômetro, link de aprovação; Calendário — pautas e peças | ✅ | ✅ | ✅ | — |
@@ -312,6 +315,7 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 | POST `/api/orcamentos/{id}/aceitar` | Aceita: fecha o negócio, cliente, pautas | Auth |
 | POST `/api/orcamentos/{id}/gerar-pautas` | Gera pautas que faltam (idempotente; só Aceito) | Auth |
 | POST `/api/orcamentos/{id}/recusar` | Recusa (motivo) | Auth |
+| DELETE `/api/orcamentos/{id}` | Exclui um **rascunho** e seus itens (409 `orcamento_bloqueado` se não for rascunho; 409 `orcamento_com_dependencias` se já tem contrato ou e-mail enviado) | Auth |
 | POST/GET `/api/orcamentos/{id}/pdf` | Gera PDF / link do PDF | Auth |
 | POST `/api/orcamentos/{id}/contrato` | Gera contrato | Auth |
 | POST `/api/orcamentos/{id}/enviar` | Envia por e-mail com PDF | Auth |
@@ -320,6 +324,8 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 | GET `/api/contratos?cliente_id=` | Contratos | Auth |
 | GET `/api/contratos/{id}/pdf` | Links temporários do contrato/assinado | Auth |
 | POST `/api/contratos/{id}/marcar-assinado` | Contrato físico assinado (upload opcional, 25 MB) | Auth |
+| PATCH `/api/contratos/{id}` | Edita `numero`, `valor_mensal`, `posts_por_mes`, `valor_excedente`, `dia_vencimento`, `data_inicio`, `data_fim` (409 `contrato_encerrado` se encerrado) | **Admin** |
+| POST `/api/contratos/{id}/encerrar` | Encerra: `{motivo, data_encerramento?}` (data padrão = hoje; não pode ser futura nem antes do início). Contrato nunca é apagado | **Admin** |
 
 ### 6.6 Marca e Cofre
 | Método e caminho | Propósito | Acesso |
@@ -360,13 +366,15 @@ Não montados no IgIg: `/api/llm/…`, `/api/ai/…`, `/api/scheduler/…`, `/ap
 | GET/POST `/api/esteira/aprovar/{token}` | Portal do cliente (423 `portal_bloqueado` quando o bloqueio por inadimplência está ligado e se aplica) | **Público**, limitado |
 
 ### 6.9 Distribuição
-GET/POST `/api/distribuicao/publicacoes`; POST `…/publicacoes/{id}/executar`; POST `…/publicacoes/{id}/cancelar`; GET `/api/distribuicao/fila`; POST/GET `…/publicacoes/{id}/metricas`; GET `/api/distribuicao/bi/eficiencia` — todos Auth.
+GET/POST `/api/distribuicao/publicacoes`; POST `…/publicacoes/{id}/executar`; POST `…/publicacoes/{id}/cancelar`; PATCH `…/publicacoes/{id}` (editar canal e/ou `agendada_para`, só enquanto `agendada`; data no futuro); GET `/api/distribuicao/fila`; POST/GET `…/publicacoes/{id}/metricas`; GET `/api/distribuicao/bi/eficiencia` — todos Auth.
 
 ### 6.10 Financeiro e relatórios
 | Método e caminho | Propósito | Acesso |
 |---|---|---|
 | GET/POST `/api/financeiro/faturas` | Lista / nova fatura (contrato opcional) | Auth |
 | GET/POST `/api/financeiro/faturas/{id}/itens` | Itens / adicionar | Auth |
+| PATCH `/api/financeiro/faturas/{id}` | Editar `competencia` e/ou `vencimento` (409 `fatura_fechada` se paga/cancelada) | **Admin** |
+| PATCH/DELETE `/api/financeiro/faturas/{id}/itens/{item_id}` | Editar (`descricao`, `quantidade`, `valor_unit`) ou excluir item; total recalculado (409 `fatura_fechada` se paga/cancelada) | **Admin** |
 | POST `/api/financeiro/faturas/{id}/pagar` | Marcar paga | **Admin** |
 | POST `/api/financeiro/faturas/{id}/cancelar` | Cancelar fatura | **Admin** |
 | POST `/api/financeiro/faturas/{id}/enviar` | Envia a fatura por e-mail ao cliente com o PDF anexo; marca `enviada` | **Admin** |
@@ -1237,7 +1245,7 @@ A carteira de clientes da agência. A lista abre o **card do cliente**, que reú
 ### 2. Acesso
 - Rota: `/clientes`. Menu lateral: "Clientes" (3º item). Deep link: `/clientes?id=<id do cliente>` abre o card (fechar remove o `?id=`). O endereço antigo `/marca` redireciona para `/clientes`.
 - Qualquer membro logado: ver, criar, editar, ativar clientes; abrir um **"Novo negócio"** para o cliente; usar todas as abas; criar/editar marcas e acessos do Cofre.
-- Só administradores: **"Remover cliente"** (o botão aparece para todos, mas o servidor recusa não-admins com 403 "Apenas administradores da organização podem realizar esta ação."); **"Revelar"** senha do Cofre (para não-admin aparece o selo "Protegida" com cadeado); **"Paga"** na aba Financeiro (o botão só aparece para administradores).
+- Só administradores: **"Remover cliente"** (o botão só aparece para administradores); **"Editar"** e **"Encerrar contrato"** na aba de contratos; **"Revelar"** senha do Cofre (para não-admin aparece o selo "Protegida" com cadeado); **"Paga"** na aba Financeiro (o botão só aparece para administradores).
 
 ### 3. Layout
 - Cabeçalho: "Clientes" e o total ("N cliente"/"N clientes"; "Carregando…" na primeira carga; " · atualizando…" durante recarga). Botão "Novo cliente".
@@ -1341,7 +1349,7 @@ Modal "Marcar como assinado" (contrato físico): arquivo opcional "Escolher arqu
 - `IGIG_CARDHUB_BUCKET` para anexos.
 
 ### 10. Limitações conhecidas
-- Remover cliente é definitivo (sem lixeira). O botão "Remover cliente" aparece para quem não é administrador, que recebe o erro 403 ao confirmar.
+- Remover cliente é definitivo (sem lixeira). O botão só aparece para administradores.
 - O status "Inadimplente" é aplicado (e retirado) pela rotina diária das 06:00; entre a meia-noite e as 06:00 pode estar um dia atrasado em relação às faturas.
 - O e-mail/WhatsApp de boas-vindas e o formulário de onboarding após a assinatura não estão implementados (`NOC-REMEDIATE[igig-onboarding]`).
 - Assinatura digital ainda é simulação (link de teste).
@@ -1804,6 +1812,7 @@ Toda gravação atualiza a lista de orçamentos e o quadro do Comercial; o aceit
 - Uma pauta automática apagada (ou movida de data) **não volta**: o registro `pauta_slot_gerado` guarda que aquela vaga já foi gerada. Se foi engano, crie a pauta à mão no Calendário — mas ela conta como peça avulsa para excedentes.
 - Preço em 4 semanas × calendário real: meses com mais ocorrências dos dias marcados geram mais pautas que o pacote do contrato; essas peças do plano **não** geram excedente (ver Página Financeiro).
 - A tela não oferece recusar um orçamento Expirado (o servidor permite).
+- **Excluir:** só um **Rascunho** pode ser excluído (ícone de lixeira "Excluir rascunho" no orçamento, com confirmação). Enviado, Aceito ou um rascunho que já tem contrato ou e-mail enviado não podem ser excluídos — use "Recusar".
 - O filtro "De/Até" é aplicado no navegador, sobre a data de criação.
 
 ### 11. Perguntas frequentes
@@ -2183,6 +2192,7 @@ Gerar o **contrato de prestação de serviços** a partir de um **orçamento ace
 - Nome da organização (aparece como CONTRATADA).
 
 ### 10. Limitações conhecidas
+- **Editar e encerrar (administrador):** na aba de contratos do cliente, "Editar" (lápis) altera número, valores, pacote, dia de vencimento e datas; "Encerrar contrato" pede o **motivo** (obrigatório) e a data (padrão: hoje). Contrato encerrado não é apagado: aparece esmaecido com "encerrado em {data}" e o motivo, sem botões. Ele ainda fatura o mês em que foi encerrado e deixa de faturar a partir do mês seguinte.
 - **Assinatura digital é simulação** (`NOC-REMEDIATE[igig-assinatura]`): nenhum provedor (Clicksign, DocuSign, Autentique) está integrado; o link (`https://exemplo.invalido/assinar/...`) **não funciona**. Um contrato Digital só fica Ativo se um sistema externo chamar o webhook com o segredo. **Para ativar contratos hoje, use "Física" + "Marcar como assinado".**
 - Enquanto o contrato Digital não ativa, ele não gera fatura e o job de pautas fica pausado para esse orçamento.
 - Boas-vindas/onboarding automáticos após a assinatura não existem (`NOC-REMEDIATE[igig-onboarding]`).
@@ -2901,7 +2911,7 @@ Na tabela: Tarefas 10 · Refações 4 · Taxa 0,40 · Horas 39 h · Custo real R
 ### 10. Limitações conhecidas
 - **Publicação real não implementada** em nenhum canal (`NOC-REMEDIATE[igig-publishing]`). O conjunto de canais homologados está vazio.
 - **Agendar não publica sozinho — ainda.** A rotina da fila já roda a cada 5 minutos, mas só tenta canais homologados, e hoje nenhum está: as publicações agendadas ficam `agendada` (sem erro) na "Fila". Tocar "Publicar"/"Publicar agora" tenta na hora, mas também termina em `falhou` com "A integração com {canal} ainda não está disponível (homologação da API pendente).". Quando um canal for homologado, a rotina passa a publicá-lo sozinha, sem mudança na tela.
-- Não há como editar o horário de uma publicação; cancele e agende outra. Não há "descancelar".
+- **Editar:** uma publicação **agendada** tem o botão "Editar" (lápis), que abre o formulário "Editar publicação" para trocar o canal e/ou a data/hora (precisa ser no futuro); a pauta não muda — para outra pauta, agende de novo. Publicando, publicada, com falha ou cancelada não pode ser editada. Não há "descancelar".
 - Sem política automática de novas tentativas: cada tentativa é manual; o sistema só conta.
 - Se o servidor cair no meio de uma tentativa, a linha fica em `publicando` por até ~15–20 minutos (tocar "Publicar" nela devolve "Esta publicação já está sendo executada."); depois a rotina da fila a devolve para `agendada` com o erro "tentativa interrompida", e ela pode ser publicada de novo.
 - As mídias enviadas ao publicador são chaves de armazenamento, não URLs públicas — precisará ser ajustado quando a integração real existir.
@@ -3055,7 +3065,7 @@ Controlar a receita recorrente da agência: resumo do mês (MRR, a receber, rece
 - Excedentes olham só a quantidade: a peça do plano sempre ocupa o pacote primeiro, e o que sobra é disputado pelas avulsas; não há como marcar uma avulsa específica como "dentro do pacote" ou abonar uma peça.
 - Excedentes usam os contratos ativos **hoje**, não os que estavam ativos no mês consultado; e, como "entregue" depende da aprovação no portal, uma aprovação tardia muda o número de um mês já consultado (é recalculado na hora).
 - Cliente com 2+ contratos ativos com pacote: as peças avulsas dele não são atribuídas a nenhum contrato (sem aviso na tela); as do plano são.
-- Não há editar/apagar fatura nem editar/apagar item; um item errado precisa ser compensado (ex.: com desconto) ou a fatura cancelada.
+- **Editar (administrador):** enquanto a fatura não está paga nem cancelada, o lápis "Editar" muda competência e vencimento, e cada item tem lápis (editar descrição, quantidade, valor) e lixeira (excluir, com confirmação); o total é recalculado. Fatura paga ou cancelada fica travada. Não há apagar a fatura inteira — use "Cancelar fatura".
 - Marcar paga não registra valor parcial, forma de pagamento nem data retroativa; não há "desfazer pagamento".
 - DRE considera só custo de horas (sem ferramentas, mídia, impostos, overhead) e mistura períodos (receita do mês × custo de todo o histórico).
 
@@ -3315,7 +3325,7 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 - **Lembretes de card:** a aba "Lembretes" (card do cliente e do negócio) cria, edita, conclui e exclui lembretes, e a rotina de 5 em 5 minutos os entrega no sino usando o "Título" digitado (ou o nome do cliente/título do negócio, se ficou vazio); o "Responsável" escolhido é avisado quando tem login vinculado, além dos membros do card com login (sem nenhum dos dois, os administradores). Não há e-mail/WhatsApp nem lembrete recorrente.
 - **Onboarding após a assinatura** (e-mail/WhatsApp de boas-vindas, formulário): não implementado (`NOC-REMEDIATE[igig-onboarding]`).
 - **Régua de cobrança:** sem lembretes automáticos de cobrança; o envio de fatura é manual ("Enviar fatura"), uma por vez. Fechar o mês ("Gerar competência") também é manual.
-- **Estorno, pagamento parcial, data retroativa de pagamento, editar/apagar fatura ou item:** não existem.
+- **Estorno, pagamento parcial, data retroativa de pagamento, apagar a fatura inteira:** não existem (editar a fatura e editar/excluir item existem — ver Página Financeiro).
 - **Relatórios agendados por e-mail:** não existem; o relatório é gerado sob demanda (Financeiro → "Relatório").
 - **Histórico de movimentos na tela:** os dados existem (`pipeline_movimentos`, inclusive os cards movidos quando uma etapa é excluída), mas não há tela para vê-los fora da linha do tempo do card.
 - **Mudar o papel de um membro da Equipe** ou o status de visibilidade das páginas (`status_pagina`): sem tela; feito pela equipe da plataforma.
@@ -3323,5 +3333,7 @@ Gerar um relatório de um período, com prévia na tela e download em CSV ou PDF
 - **Assistente IgIg:** responde só a partir deste manual; não consulta nem altera dados, não executa ações e não guarda a conversa no servidor.
 
 ## 5.4 O que mudou nesta versão (para quem conhecia a anterior)
+
+**Novidades de edição (out/2026):** editar fatura e editar/excluir item (admin, fatura não paga/cancelada); editar e encerrar contrato (admin; nunca é apagado); editar/reagendar publicação agendada; excluir orçamento em rascunho; "Remover cliente" só aparece para administrador; telas vazias agora têm botão para o próximo passo; donos de organização que entram direto no IgIg passam a ver os controles de administrador.
 
 Resolvido e já descrito nas páginas: rotinas diárias de inadimplência (06:00), fila de publicação e lembretes (a cada 5 min) agora rodam; portal de aprovação pode ser bloqueado por inadimplência (423); "Enviar fatura" e "Marcar como enviada"; excedentes contam só peças avulsas **entregues** (publicadas ou aprovadas), nunca peças do plano; alertas no relatório comercial; custo real em segundos no BI/DRE/relatório; números em padrão brasileiro ("52,8%", "0,40", "1,5 h", "1.500" = mil e quinhentos); exclusão de tarefa com qualquer apontamento ("Excluir mesmo assim"); apagar a pauta apaga os arquivos das peças; papel de etapa nunca some em silêncio (Esteira) e "Papéis das etapas" no Comercial; `/esteira?tarefa=` abre a tarefa; "Paga" no card do cliente só para admin e com confirmação; logo sem SVG; negócio para cliente existente ("Cliente existente" / "Novo negócio"); "Margem indisponível" sem custo/hora; texto correto de "Nova versão"; aviso de pautas conta só as criadas no aceite; pautas automáticas apagadas/movidas não voltam; o contrato vivo mantém "Abrir PDF do contrato"; Custos e Integrações → E-mail escondem controles só-admin; respostas de e-mail avisam também os Administradores; Assistente do negócio fixo em Claude Sonnet; reabrir reinicia o tempo na etapa; estados de carregamento/erro na Inadimplência do Dashboard; rótulo "Proprietário" com acento; o endereço pedido é lembrado depois do login; o menu no celular fecha ao navegar; Assistente IgIg disponível em todas as telas; convite não enviado agora avisa (com link para copiar) em vez de mostrar sucesso falso; a lista "Papel" do convite já mostra só o que quem convida pode conceder; mensagens de validação de formato (422) agora em português, por campo; aba **"Lembretes"** no card do cliente e do negócio (antes não havia como criar um lembrete); "Margem no mês" do Dashboard compara receita e custo do **mesmo mês** (o DRE do Financeiro continua com custo do histórico completo); excedentes descontam do pacote as peças do plano já entregues antes de cobrar as avulsas (a nota da tela mudou); reenviar ou "Marcar como enviada" numa fatura vencida não a volta para "enviada" — ela fica "vencida · enviada em dd/mm/aaaa"; excluir etapa movendo os cards grava o histórico de cada card; a notificação da decisão do cliente no portal abre a tarefa; `/esteira?tarefa=` abre a tarefa mesmo fora do filtro de cliente; mensagens específicas de duplicado (409) também em produção; a notificação de lembrete agora usa o "Título" digitado (não mais o nome do cliente/título do negócio) e avisa também o "Responsável" escolhido, quando tem login vinculado; um lembrete excluído em outra aba devolve 404 "Lembrete não encontrado" (não mais o nome técnico da tabela).
