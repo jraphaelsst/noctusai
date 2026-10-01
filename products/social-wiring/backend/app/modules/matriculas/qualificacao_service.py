@@ -77,7 +77,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
@@ -97,6 +97,7 @@ from app.modules.card_hub.identidade_extracao_service import (
 )
 from app.modules.card_hub.services import atendimentos_abertos_certificaveis
 from app.services import table_reads
+from app.services.clientes_service import clientes_por_cpf
 from app.services.documento_store import now_iso
 
 logger = logging.getLogger(__name__)
@@ -201,28 +202,21 @@ def _digitos(valor: Optional[str]) -> str:
     return re.sub(r"\D", "", valor or "")
 
 
-def _clientes_por_cpf(client: Any, org_id: Any) -> dict[str, list[str]]:
-    """`{cpf_normalizado: [cliente_id, ...]}` for every cliente in this org
-    that has a CPF/CNPJ on file.
+def _clientes_por_cpf(
+    client: Any, org_id: Any, chaves: Iterable[str]
+) -> dict[str, list[str]]:
+    """`{cpf_normalizado: [cliente_id, ...]}` for the clientes of this org
+    holding any of `chaves` (CPF/CNPJ digits).
 
-    CPF/CNPJ never carry a check-digit letter the way an RG can, so a plain
-    digit strip on both sides is exact — the same comparison
-    `normalizar_documento` makes SQL-side (097), done here in Python because
-    PostgREST cannot filter on that expression directly.
+    Exact on `normalizar_documento(cpf)` through the `clientes_por_cpf` SQL
+    function (migration 185) — the lookup is scoped to the keys this call
+    needs instead of paging every cliente of the org.
     """
-    rows = table_reads.paged_rows(
-        client,
-        CLIENTES_TABLE,
-        org_id,
-        select="id,cpf",
-        refine=lambda q: q.not_.is_("cpf", "null"),
-    )
     out: dict[str, list[str]] = {}
-    for row in rows:
+    for row in clientes_por_cpf(client, org_id, chaves):
         chave = _digitos(row.get("cpf"))
-        if not chave:
-            continue
-        out.setdefault(chave, []).append(row["id"])
+        if chave:
+            out.setdefault(chave, []).append(row["id"])
     return out
 
 
@@ -376,7 +370,9 @@ def persistir_sugestoes(
     consolidadas = mesclar_qualificacoes(por_ato)
     if not consolidadas:
         return 0
-    por_cpf = _clientes_por_cpf(db, org_id)
+    por_cpf = _clientes_por_cpf(
+        db, org_id, [c.qualificacao.cpf_cnpj for c in consolidadas]
+    )
     org = str(org_id)
     linhas = [
         linha
@@ -456,7 +452,11 @@ def revincular_pendentes(
     ]
     if not pendentes:
         return 0
-    por_cpf = _clientes_por_cpf(client, org_id)
+    por_cpf = _clientes_por_cpf(
+        client,
+        org_id,
+        [r.get("cpf_cnpj_normalizado") or r.get("cpf_cnpj") for r in pendentes],
+    )
     vinculados = 0
     for row in pendentes:
         normalizado = row.get("cpf_cnpj_normalizado") or _digitos(row.get("cpf_cnpj"))

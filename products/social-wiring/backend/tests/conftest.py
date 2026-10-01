@@ -98,6 +98,23 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
 }
 
 
+@pytest.fixture(autouse=True)
+def _simulate_clientes_por_cpf_rpc(monkeypatch):
+    """`MockSupabaseClient.rpc` cannot execute SQL; route the one product RPC
+    the CPF lookups use (migration 185) to its contract fake, every other name
+    to the mock's own behaviour."""
+    from tests.support.rpc_fakes import clientes_por_cpf
+
+    original = MockSupabaseClient.rpc
+
+    def rpc(self, name, params=None):
+        if name == "clientes_por_cpf":
+            return clientes_por_cpf(self, params or {})
+        return original(self, name, params)
+
+    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)
+
+
 def pytest_configure(config):
     config.addinivalue_line("markers", "realdb: tests that require a live Supabase instance")
 

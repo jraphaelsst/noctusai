@@ -456,13 +456,15 @@ def reconcile_de_atendimentos(client: Any, org_id: UUID) -> dict:
 # ── matrícula backfill ─────────────────────────────────────────────────
 
 
-def _clientes_por_cpf(client: Any, org_id: UUID) -> dict[str, list[str]]:
+def _clientes_por_cpf(
+    client: Any, org_id: UUID, chaves: list[str]
+) -> dict[str, list[str]]:
     # The matrícula service's own normalisation + lookup (contract §4.2: "same
     # normalization the matrícula service owns"). Imported lazily: that module
     # imports card_hub, and this one must stay import-light for the routers.
     from app.modules.matriculas.qualificacao_service import _clientes_por_cpf as _impl
 
-    return _impl(client, org_id)
+    return _impl(client, org_id, chaves)
 
 
 def run_backfill_matricula(
@@ -534,7 +536,16 @@ def run_backfill_matricula(
                 q["cliente_id"]
             )
 
-    por_cpf = _clientes_por_cpf(client, org_id)
+    por_cpf = _clientes_por_cpf(
+        client,
+        org_id,
+        [
+            (adq or {}).get("cpf_cnpj")
+            for detalhes in detalhes_por_extracao.values()
+            for d in detalhes
+            for adq in (d.get("adquirentes") or [])
+        ],
+    )
     empresas_por_cnpj: dict[str, list[str]] = {}
     for e in table_reads.paged_rows(client, EMPRESAS_TABLE, org_id, select="id,cnpj"):
         chave = _cnpj_chave(e.get("cnpj"))
