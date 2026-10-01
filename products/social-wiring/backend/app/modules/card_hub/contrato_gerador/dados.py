@@ -542,6 +542,12 @@ class DadosContrato:
     #: through the loader (`contrato_gerador_fixtures` — the D2 gate reads
     #: nothing atendimento-scoped for those, by construction: §H1/D1).
     atendimento_id: Optional[str] = None
+    #: The PJ (company) parties of the atendimento — `atendimento_partes.
+    #: empresa_id` (migration 179), each `{parte_id, empresa_id, lado, papel,
+    #: nome, cnpj}`. The generator qualifies NATURAL PERSONS only, so a
+    #: company party is never a `Pessoa`; `derivacao._partes` turns each into
+    #: a `faltando` instead of silently dropping it from the instrument.
+    partes_pj: list[dict] = field(default_factory=list)
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal
