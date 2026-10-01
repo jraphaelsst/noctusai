@@ -3399,7 +3399,8 @@ def _pessoas_dos_cards(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]
         .in_("atendimento_id", ids)
         .execute()
     ).data or []:
-        pessoas.add(str(row["cliente_id"]))
+        if row.get("cliente_id"):  # a PJ party (migration 179) has none
+            pessoas.add(str(row["cliente_id"]))
     pessoas.discard(str(cliente_id))
     return sorted(pessoas)
 
@@ -3458,7 +3459,7 @@ def _pessoas_do_mesmo_lado(client: Any, org_id: UUID, cliente_id: UUID) -> list[
         .execute()
     ).data or []:
         chave = (str(row["atendimento_id"]), row.get("lado") or "comprador")
-        if chave in pares:
+        if chave in pares and row.get("cliente_id"):  # PJ party: none (179)
             pessoas.add(str(row["cliente_id"]))
     pessoas.discard(str(cliente_id))
     return sorted(pessoas)

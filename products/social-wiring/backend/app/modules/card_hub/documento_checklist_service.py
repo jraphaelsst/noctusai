@@ -730,6 +730,9 @@ def _e_certificando_no_atendimento(
         .eq("lado", "vendedor")
         .execute()
     ).data or []
+    # PJ vendedor parties (migration 179) carry no cliente_id — a None in the
+    # `in_` list is a bad filter, and a company has no spouse anyway.
+    vendedores = [r for r in vendedores if r.get("cliente_id")]
     if vendedores:
         conjuge = (
             _t(client, CLIENTES_TABLE)

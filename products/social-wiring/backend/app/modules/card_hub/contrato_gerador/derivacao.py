@@ -926,6 +926,18 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
         av.falta("partes.vendedores", "Ao menos um vendedor (proprietário) no card", "partes", ancora="vendedor")
     if not comp:
         av.falta("partes.compradores", "Ao menos um comprador no card", "partes")
+    for pj in d.partes_pj:
+        # A company party (migration 179) is not a `Pessoa`: the instrument's
+        # qualification wording exists for natural persons only. Named here
+        # rather than silently left out of the contract.
+        av.falta(
+            "partes.pj_sem_qualificacao",
+            f"Qualificação da empresa {pj.get('nome') or pj.get('cnpj') or ''} "
+            f"({pj.get('lado')}): o gerador ainda não redige partes PJ — "
+            "inclua o representante legal como parte ou ajuste o contrato manualmente",
+            "partes",
+            pj.get("parte_id"),
+        )
     for p in d.vendedores + d.compradores:
         if p not in vend and p not in comp and p not in antigos:
             av.avisa(
