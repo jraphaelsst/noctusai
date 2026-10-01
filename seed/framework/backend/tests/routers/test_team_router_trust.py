@@ -11,7 +11,8 @@ so before this fix:
   into `user_metadata.org_id` with ANY body `role` — invite yourself as owner
   of any org;
 - `DELETE /api/team/{id}` gated on `user_metadata.role` and deleted
-  `noctus_users` by id with NO org filter — delete any user platform-wide.
+  `noctus_users` by id with NO org filter — delete any user platform-wide
+  (since 2026-10-01 the route never deletes at all: 409, Core-only).
 
 Every test here spoofs the metadata the way an attacker would
 (`role=admin`, `org_id=<victim org>`) and asserts a strict status code. The
@@ -242,41 +243,54 @@ class TestInvitations:
 
 
 class TestRemoveMember:
+    """2026-10-01: removal is a NoctusAI Core action. `noctus_users` is one
+    platform-wide profile; a product-side delete wiped the person from every
+    product sharing the org. The route stays (Equipe pages call it) and
+    answers 409 `TEAM_REMOVE_CORE_ONLY` — never deleting anything."""
+
     def test_member_with_spoofed_admin_metadata_gets_403(self, world):
         client = world.as_user("me-member", metadata=SPOOFED_METADATA)
         resp = client.delete("/api/team/mate", headers=AUTH)
         assert resp.status_code == 403, resp.text
         assert "mate" in _ids(world.core)
 
-    def test_admin_cannot_delete_a_user_outside_its_org(self, world):
-        client = world.as_user("me-admin", metadata=SPOOFED_METADATA)
-        resp = client.delete("/api/team/victim-member", headers=AUTH)
-        assert resp.status_code == 404, resp.text
-        assert "victim-member" in _ids(world.core)
-
-    def test_admin_removes_a_member_of_own_org(self, world):
+    def test_admin_gets_409_core_only_and_nothing_is_deleted(self, world):
         client = world.as_user("me-admin")
         resp = client.delete("/api/team/mate", headers=AUTH)
-        assert resp.status_code == 200, resp.text
-        assert "mate" not in _ids(world.core)
-        assert "victim-member" in _ids(world.core)
+        assert resp.status_code == 409, resp.text
+        # Bare FastAPI app here (no seed exception handler) ⇒ nested under
+        # `detail`; the flat wire shape through `create_product_app`'s
+        # handler is pinned in test_team_policy.py.
+        assert resp.json()["detail"] == {
+            "detail": (
+                "A remoção de pessoas da organização é feita no NoctusAI Core "
+                "(afeta todos os produtos)."
+            ),
+            "code": "TEAM_REMOVE_CORE_ONLY",
+        }
+        assert "mate" in _ids(world.core)
 
-    def test_admin_cannot_remove_an_owner(self, world):
-        client = world.as_user("me-admin")
+    def test_owner_removing_a_co_owner_gets_409_and_nothing_is_deleted(self, world):
+        client = world.as_user("me-owner")
         resp = client.delete("/api/team/co-owner", headers=AUTH)
-        assert resp.status_code == 403, resp.text
+        assert resp.status_code == 409, resp.text
         assert "co-owner" in _ids(world.core)
 
-    def test_owner_can_remove_a_co_owner(self, world):
-        client = world.as_user("me-owner")
-        resp = client.delete("/api/team/co-owner", headers=AUTH)
-        assert resp.status_code == 200, resp.text
-        assert "co-owner" not in _ids(world.core)
+    def test_admin_targeting_another_org_gets_409_and_nothing_is_deleted(self, world):
+        client = world.as_user("me-admin", metadata=SPOOFED_METADATA)
+        resp = client.delete("/api/team/victim-member", headers=AUTH)
+        assert resp.status_code == 409, resp.text
+        assert "victim-member" in _ids(world.core)
 
-    def test_cannot_remove_self(self, world):
-        client = world.as_user("me-owner")
-        resp = client.delete("/api/team/me-owner", headers=AUTH)
-        assert resp.status_code == 400, resp.text
+    def test_unauthenticated_gets_401(self, world, fake_deps):
+        from fastapi import HTTPException
+
+        client = world.as_user("me-admin")
+        fake_deps.get_current_user = AsyncMock(
+            side_effect=HTTPException(status_code=401, detail="Token ausente")
+        )
+        resp = client.delete("/api/team/mate")
+        assert resp.status_code == 401, resp.text
 
 
 # ── POST /api/team/accept (authenticated) ──────────────────────────────────

@@ -31,6 +31,7 @@ from noctusai_seed.health import (
     mount_health_endpoints,
 )
 from noctusai_seed.llm_defaults import DEFAULT_LLM_CONFIG, default_llm_config
+from noctusai_seed.team_policy import TeamPolicy
 
 __all__ = [
     # Framework bones
@@ -50,6 +51,8 @@ __all__ = [
     "HealthCheckHook",
     "HealthEndpointConfig",
     "mount_health_endpoints",
+    # Named seam for the "team" standard router (create_product_app(team=...))
+    "TeamPolicy",
     # LLM inheritance (re-exported so products can do one-stop imports)
     "LLMConfig",
     "default_llm_config",

@@ -50,6 +50,7 @@ from noctusai_seed.dependencies import create_dependencies
 from noctusai_seed.health import HealthEndpointConfig, mount_health_endpoints
 from noctusai_seed.llm_defaults import default_llm_config
 from noctusai_seed.routers import build_standard_routers
+from noctusai_seed.team_policy import TeamPolicy
 from noctusai_seed.upload_route_overrides import enforce_upload_route_overrides
 
 logger = logging.getLogger(__name__)
@@ -73,6 +74,7 @@ def create_product_app(
     required_prod_config: Optional[list[str]] = None,
     max_body_path_overrides: Optional[Mapping[str, MaxBodyOverrideValue]] = None,
     audit_sink: Optional[AuditSink] = None,
+    team: Optional[TeamPolicy] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -106,6 +108,14 @@ def create_product_app(
             explicit opt-in, so a product that forgets to declare the kwarg
             gets none of the bundled capabilities rather than silently
             inheriting all four.
+        team: Optional ``noctusai_seed.TeamPolicy`` — the named seam that
+            shapes the "team" standard router: which org roles the product's
+            ``GET /api/team`` lists as staff, which roles ``/invite`` may
+            grant (incl. labelled product-specific extras), surfaced to the
+            FE via ``GET /api/team/policy``. Default ``None`` keeps the
+            pre-seam behaviour (every non-customer member listed, any
+            ``ORG_ROLES`` invitable). Requires "team" in
+            ``standard_routers`` (``ValueError`` otherwise).
         consent_features: Dotted module path whose import-time side effect
             populates the `noctusai_lib.domain.ai.consent` catalog (each product
             calls `register_feature(...)` from this module). The framework
@@ -469,6 +479,7 @@ def create_product_app(
     #    of the bundled capabilities.
     for router in build_standard_routers(
         deps, settings, product_name=name, version=version, names=standard_routers,
+        team_policy=team,
     ):
         app.include_router(router)
 

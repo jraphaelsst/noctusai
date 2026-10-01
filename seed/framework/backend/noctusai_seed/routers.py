@@ -52,9 +52,8 @@ from noctusai_lib.domain.notifications import map_notification_to_pt
 from noctusai_lib.primitives.roles import (
     ADMIN_ROLES,
     MANAGE_TEAM_ROLES,
-    ORG_ROLE_LABELS,
-    ORG_ROLES,
 )
+from noctusai_seed.team_policy import DEFAULT_TEAM_POLICY, TeamPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -214,8 +213,26 @@ def _org_display_name(core, org_id: str) -> str:
     return (rows[0].get("nome") if rows else None) or "sua organizacao"
 
 
-def _create_team_router(deps, settings, product_name: str) -> APIRouter:
+#: Columns `GET /api/team` returns — explicit, never `*`: `noctus_users` is a
+#: PLATFORM profile table and a future column must not leak to every product's
+#: Equipe page by default.
+_TEAM_MEMBER_COLUMNS = (
+    "id, email, nome, org_id, org_role, role, avatar_url, created_at, last_active_at"
+)
+
+#: Error code of the 409 `DELETE /api/team/{user_id}` returns (see that route).
+TEAM_REMOVE_CORE_ONLY = "TEAM_REMOVE_CORE_ONLY"
+
+
+def _create_team_router(
+    deps, settings, product_name: str, policy: Optional[TeamPolicy] = None,
+) -> APIRouter:
     """`/api/team` — members + invitations.
+
+    `policy` is the product's `TeamPolicy` (named seam, passed through
+    `create_product_app(team=...)`); `None` ⇒ `DEFAULT_TEAM_POLICY`, which
+    keeps the pre-seam roster + invite behaviour. Customers
+    (`CUSTOMER_ORG_ROLES`) are excluded from the roster under ANY policy.
 
     🔴 Trust model (SEC-1, 2026-09-28): every authenticated route resolves the
     caller's org AND role from `public.noctus_users` (the row RLS trusts) —
@@ -225,6 +242,8 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     read, invite and delete is filtered by the trusted `org_id`.
     """
     router = APIRouter(prefix="/api/team", tags=["Team"])
+    policy = policy or DEFAULT_TEAM_POLICY
+    invitable = frozenset(policy.effective_invitable_roles())
 
     _get_current_user_org = make_get_current_user_org(
         # Late-bound: resolve `deps.get_current_user` per request, exactly as
@@ -246,8 +265,22 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
     async def list_members(authorization: Optional[str] = Header(None)):
         _user, org_id, _role = await _member_context(authorization)
         core = deps.get_core_client()
-        result = core.table("noctus_users").select("*").eq("org_id", org_id).execute()
-        return {"data": result.data or []}
+        result = (
+            core.table("noctus_users").select(_TEAM_MEMBER_COLUMNS)
+            .eq("org_id", org_id).execute()
+        )
+        # The org is shared across products (and, for the platform org, with
+        # end customers): the roster is the product's STAFF only — customers
+        # never, and only the declared `staff_roles` when the policy names them.
+        return {"data": [r for r in (result.data or []) if policy.lists(r.get("org_role"))]}
+
+    @router.get("/policy")
+    async def team_policy(authorization: Optional[str] = Header(None)):
+        """The product's team policy — the contract the FE Equipe organ renders
+        its role filter + invite select from. Staff only (a customer-role
+        caller is refused 403 by `make_get_current_user_org`)."""
+        await _member_context(authorization)
+        return policy.as_contract()
 
     @router.post("/invite")
     async def invite_member(
@@ -261,13 +294,16 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
         if not email:
             raise HTTPException(status_code=400, detail="Email e obrigatorio")
         role = body.get("role") or "member"
-        if role not in ORG_ROLES:
+        # `invitable` = ORG_ROLES by default, the policy's `invitable_roles`
+        # (platform roles and/or labelled product extras such as `moderador`)
+        # when declared. A customer role is never in it (TeamPolicy refuses).
+        if role not in invitable:
             raise HTTPException(status_code=400, detail=f"Papel invalido: {role}")
         grantors = _GRANT_REQUIRES.get(role)
         if grantors is not None and inviter_role not in grantors:
             raise HTTPException(
                 status_code=403,
-                detail=f"Sem permissao para convidar como {ORG_ROLE_LABELS[role]}",
+                detail=f"Sem permissao para convidar como {policy.label_for(role)}",
             )
 
         admin = deps.get_admin_client()
@@ -292,7 +328,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
             to=email,
             product_name=product_name,
             org_name=org_name,
-            role_label=ORG_ROLE_LABELS[role],
+            role_label=policy.label_for(role),
             invite_token=invite["token"],
             invited_by=inviter_name,
             base_url=base_url,
@@ -403,7 +439,7 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
 
         # ── Membership ────────────────────────────────────────────────────
         try:
-            attach_user_to_org(
+            membership = attach_user_to_org(
                 core,
                 user_id,
                 org_id=org_id,
@@ -443,6 +479,23 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
             raise HTTPException(
                 status_code=500, detail="Erro ao vincular usuario a organizacao",
             ) from exc
+
+        # Already a member of THIS org under a DIFFERENT role: `attach_user_to_org`
+        # returned the existing row untouched — the platform role is NOT this
+        # product's to change (it would re-role the person in every product
+        # sharing the org). Refuse instead of mirroring the invite's role into
+        # metadata and reporting a role change that never happened; the
+        # invitation stays pending so it is still usable after Core fixes it.
+        current_role = (membership or {}).get("org_role")
+        if current_role is not None and current_role != org_role:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Você já participa da organização com o papel "
+                    f"{policy.label_for(current_role)}. Peça ao administrador "
+                    "para alterar no NoctusAI Core."
+                ),
+            )
 
         # Mirror into user_metadata so the member works BEFORE their first SSO
         # launch (which re-syncs from noctus_users anyway). Best-effort.
@@ -486,26 +539,32 @@ def _create_team_router(deps, settings, product_name: str) -> APIRouter:
 
     @router.delete("/{user_id}")
     async def remove_member(user_id: str, authorization: Optional[str] = Header(None)):
-        user, org_id, role = await _member_context(authorization)
+        """Refused with 409 `TEAM_REMOVE_CORE_ONLY` — removal is a Core action.
+
+        `noctus_users` is ONE platform-wide profile per person (single-org FK):
+        deleting the row from a product wiped the person from EVERY product
+        sharing the org, and from a shared org (the platform's own) a product
+        admin could erase another product's staff. The route stays mounted —
+        the product Equipe pages call it, and a 409 with a reason they can
+        render beats a 404 that reads as a bug.
+        """
+        # NOC-REMEDIATE[team-member-removal-core]: product-side removal should
+        # become a per-product ACCESS revoke (license/seat), not a profile
+        # delete; until that exists, the only removal path is NoctusAI Core. — 2026-10-01
+        _user, _org_id, role = await _member_context(authorization)
         _require_team_role(role, ADMIN_ROLES, "Sem permissao")
-        if str(user.id) == user_id:
-            raise HTTPException(status_code=400, detail="Nao pode remover a si mesmo")
-        core = deps.get_core_client()
-        # The target must be a member of the caller's OWN org — this is a
-        # service-role delete, so the org filter IS the tenant boundary.
-        target = (
-            core.table("noctus_users").select("id, org_role")
-            .eq("id", user_id).eq("org_id", org_id).limit(1).execute()
+        raise HTTPException(
+            status_code=409,
+            # Seed error shape (`{"detail", "code"}`) — passed through flat by
+            # `noctusai_lib.primitives.exceptions.http_exception_handler`.
+            detail={
+                "detail": (
+                    "A remoção de pessoas da organização é feita no NoctusAI Core "
+                    "(afeta todos os produtos)."
+                ),
+                "code": TEAM_REMOVE_CORE_ONLY,
+            },
         )
-        rows = target.data or []
-        if not rows:
-            raise HTTPException(status_code=404, detail="Membro nao encontrado")
-        if rows[0].get("org_role") == "owner" and role not in ("owner", _PLATFORM_ADMIN):
-            raise HTTPException(
-                status_code=403, detail="Somente o proprietario pode remover um proprietario",
-            )
-        core.table("noctus_users").delete().eq("id", user_id).eq("org_id", org_id).execute()
-        return {"ok": True}
 
     return router
 
@@ -567,7 +626,7 @@ def _build_auth_router(deps, settings, product_name: str, version: str) -> APIRo
 _STANDARD_ROUTERS = {
     "health":       lambda deps, s, n, v: _create_health_router(n, v),
     "notificacoes": lambda deps, s, n, v: _create_notificacoes_router(deps),
-    "team":         lambda deps, s, n, v: _create_team_router(deps, s, n),
+    "team":         lambda deps, s, n, v, policy=None: _create_team_router(deps, s, n, policy),
     "llm":          _build_llm_router,
     "ai_outputs":   _build_ai_outputs_router,
     "ai_feedback":  _build_ai_feedback_router,
@@ -583,6 +642,7 @@ def build_standard_routers(
     product_name: str,
     version: str,
     names: Sequence[str],
+    team_policy: Optional[TeamPolicy] = None,
 ) -> list:
     """Return the subset of standard routers named by `names`.
 
@@ -591,9 +651,14 @@ def build_standard_routers(
     `include_router` registration is order-sensitive for overlapping routes —
     products that care can enforce ordering by ordering their opt-in list.
 
+    `team_policy` (a `TeamPolicy`, from `create_product_app(team=...)`) is
+    handed to the "team" router only.
+
     Raises:
         ValueError: if any name is not in the registry. Error message names
             every unknown key and lists the valid keys for quick fixing.
+            Also when `team_policy` is set but "team" is not opted into — a
+            declared policy that shapes nothing is a silent no-op.
     """
     unknown = [n for n in names if n not in _STANDARD_ROUTERS]
     if unknown:
@@ -601,4 +666,15 @@ def build_standard_routers(
             f"Unknown standard router(s): {unknown}. "
             f"Valid: {sorted(_STANDARD_ROUTERS)}"
         )
-    return [_STANDARD_ROUTERS[n](deps, settings, product_name, version) for n in names]
+    if team_policy is not None and "team" not in names:
+        raise ValueError(
+            "team=TeamPolicy(...) was declared but 'team' is not in "
+            "standard_routers — the policy would shape nothing"
+        )
+    return [
+        _STANDARD_ROUTERS[n](
+            deps, settings, product_name, version,
+            **({"policy": team_policy} if n == "team" else {}),
+        )
+        for n in names
+    ]
