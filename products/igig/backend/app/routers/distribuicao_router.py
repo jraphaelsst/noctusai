@@ -33,6 +33,7 @@ from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.repositories import Repositorios
 from app.schemas.distribuicao import (
     AgendarPublicacao,
+    EditarPublicacao,
     EficienciaOut,
     MetricaIn,
     MetricaOut,
@@ -99,6 +100,49 @@ async def agendar_publicacao(
         # below describes — catching the specific member rather than the
         # broader `PersistenceError` means a DIFFERENT constraint failure
         # here surfaces as a real 500, not a mislabelled 409.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Esta pauta já tem publicação ativa em {payload.canal}",
+        )
+    return PublicacaoOut(**registro)
+
+
+@router.patch("/publicacoes/{publicacao_id}", response_model=PublicacaoOut)
+async def editar_publicacao(
+    publicacao_id: str,
+    payload: EditarPublicacao,
+    auth: tuple = Depends(get_current_user_org),
+    repos: Repositorios = Depends(get_repositorios),
+) -> PublicacaoOut:
+    """Edit / reschedule a publication that is still `agendada`.
+
+    The queue worker polls `agendada_para` (`PublicacaoRepository.pendentes`),
+    so persisting the new value IS the reschedule — no job id to move. Any
+    other status (publicando/publicada/falhou/cancelada) is a 409: the post is
+    in flight or already decided. Same auth as POST; the same partial unique
+    index guards a channel change onto a pauta+canal already scheduled.
+    """
+    org_id = _org(auth)
+    try:
+        atual = repos.publicacao.buscar(org_id, publicacao_id)
+    except RecordNotFound:
+        raise HTTPException(status_code=404, detail="Publicação não encontrada")
+    if atual.get("status") != "agendada":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "detail": "Só é possível editar publicações agendadas.",
+                "code": "publicacao_nao_editavel",
+            },
+        )
+    mudancas: dict[str, Any] = {}
+    if payload.canal is not None:
+        mudancas["canal"] = payload.canal
+    if payload.agendada_para is not None:
+        mudancas["agendada_para"] = payload.agendada_para.isoformat()
+    try:
+        registro = repos.publicacao.atualizar(org_id, publicacao_id, mudancas)
+    except UniqueViolation:
         raise HTTPException(
             status_code=409,
             detail=f"Esta pauta já tem publicação ativa em {payload.canal}",

@@ -111,6 +111,65 @@ class TestAgendamento:
         assert [p["canal"] for p in fila] == ["instagram"]
 
 
+class TestEdicao:
+    FUTURO = "2099-01-01T09:00:00"
+
+    def _agendar(self, api, pauta, canal="instagram"):
+        return api.post("/api/distribuicao/publicacoes", json={
+            "pauta_id": pauta["id"], "canal": canal,
+            "agendada_para": "2026-09-01T09:00:00",
+        }).json()
+
+    def test_reschedule_and_change_channel(self, api, pauta):
+        pub = self._agendar(api, pauta)
+        resp = api.patch(f"/api/distribuicao/publicacoes/{pub['id']}", json={
+            "agendada_para": self.FUTURO, "canal": "tiktok",
+        })
+        assert resp.status_code == 200
+        corpo = resp.json()
+        assert corpo["canal"] == "tiktok" and corpo["agendada_para"].startswith("2099-01-01")
+        assert corpo["status"] == "agendada"
+        # the queue polls agendada_para: the new time is what it sees
+        assert api.get("/api/distribuicao/fila?ate=2050-01-01T00:00:00").json() == []
+
+    def test_cannot_edit_published(self, api, repos, pauta):
+        pub = self._agendar(api, pauta)
+        repos.publicacao.marcar_publicada(ORG, pub["id"], external_id="x1")
+        resp = api.patch(f"/api/distribuicao/publicacoes/{pub['id']}",
+                         json={"agendada_para": self.FUTURO})
+        assert resp.status_code == 409
+
+    def test_cannot_edit_cancelled(self, api, pauta):
+        pub = self._agendar(api, pauta)
+        api.post(f"/api/distribuicao/publicacoes/{pub['id']}/cancelar")
+        resp = api.patch(f"/api/distribuicao/publicacoes/{pub['id']}",
+                         json={"agendada_para": self.FUTURO})
+        assert resp.status_code == 409
+
+    def test_past_date_returns_422(self, api, pauta):
+        pub = self._agendar(api, pauta)
+        resp = api.patch(f"/api/distribuicao/publicacoes/{pub['id']}",
+                         json={"agendada_para": "2020-01-01T09:00:00"})
+        assert resp.status_code == 422
+
+    def test_other_org_returns_404(self, api, repos):
+        cliente = repos.cliente.criar("outra-org", {"nome": "Outra"})
+        pauta_o = repos.pauta.criar("outra-org", {"cliente_id": cliente["id"], "titulo": "X"})
+        pub = repos.publicacao.agendar("outra-org", pauta_o["id"], "instagram", "2026-09-01T09:00:00")
+        resp = api.patch(f"/api/distribuicao/publicacoes/{pub['id']}",
+                         json={"agendada_para": self.FUTURO})
+        assert resp.status_code == 404
+
+    def test_channel_clash_returns_409(self, api, pauta):
+        self._agendar(api, pauta, "instagram")
+        outra = self._agendar(api, pauta, "tiktok")
+        resp = api.patch(f"/api/distribuicao/publicacoes/{outra['id']}", json={"canal": "instagram"})
+        assert resp.status_code == 409
+
+    def test_requires_auth(self, api):
+        assert api.raw().patch("/api/distribuicao/publicacoes/x", json={}).status_code == 401
+
+
 class TestExecucao:
     def _agendar(self, api, pauta, canal="instagram"):
         return api.post("/api/distribuicao/publicacoes", json={

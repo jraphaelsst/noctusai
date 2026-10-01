@@ -83,6 +83,16 @@ export function useAgendarPublicacao() {
   });
 }
 
+/** Edit / reschedule a still-`agendada` publication (PATCH). */
+export function useEditarPublicacao() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string; canal?: Canal; agendada_para?: string }) =>
+      api.patch<Publicacao>(`/api/distribuicao/publicacoes/${id}`, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: DISTRIBUICAO_QUERY_KEY }),
+  });
+}
+
 export function useExecutarPublicacao() {
   const qc = useQueryClient();
   return useMutation({

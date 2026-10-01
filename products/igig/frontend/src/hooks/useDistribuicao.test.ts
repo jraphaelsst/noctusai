@@ -8,8 +8,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { ApiError } from "@noctusai/lib";
 
-const { mockGet, mockInvalidate } = vi.hoisted(() => ({ mockGet: vi.fn(), mockInvalidate: vi.fn() }));
-vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet } }));
+const { mockGet, mockPatch, mockInvalidate } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockPatch: vi.fn(),
+  mockInvalidate: vi.fn(),
+}));
+vi.mock("@noctusai/seed/infra", () => ({ api: { get: mockGet, patch: mockPatch } }));
 
 let queryState: Record<string, unknown> = {};
 
@@ -20,7 +24,7 @@ vi.mock("@tanstack/react-query", () => {
   return { useQuery, useMutation, useQueryClient };
 });
 
-import { useEficiencia, useExecutarPublicacao, usePublicacoes } from "./useDistribuicao";
+import { useEditarPublicacao, useEficiencia, useExecutarPublicacao, usePublicacoes } from "./useDistribuicao";
 import { INTEGRACOES_QUERY_KEY } from "./useIntegracoes";
 
 beforeEach(() => {
@@ -73,5 +77,20 @@ describe("useExecutarPublicacao — credencial_ilegivel invalidates Integraçõe
     const hook = useExecutarPublicacao() as unknown as { onError: (e: unknown) => void };
     hook.onError(new ApiError(409, "Canal não configurado", { code: "canal_nao_configurado" }));
     expect(mockInvalidate).not.toHaveBeenCalledWith({ queryKey: INTEGRACOES_QUERY_KEY });
+  });
+});
+
+describe("useEditarPublicacao", () => {
+  it("PATCHes the publication (id out of the body) and invalidates the distribuicao queries", () => {
+    const opts = useEditarPublicacao() as unknown as {
+      mutationFn: (v: { id: string; agendada_para: string }) => unknown;
+      onSuccess: () => void;
+    };
+    opts.mutationFn({ id: "pub-1", agendada_para: "2099-01-01T09:00:00Z" });
+    expect(mockPatch).toHaveBeenCalledWith("/api/distribuicao/publicacoes/pub-1", {
+      agendada_para: "2099-01-01T09:00:00Z",
+    });
+    opts.onSuccess();
+    expect(mockInvalidate).toHaveBeenCalled();
   });
 });

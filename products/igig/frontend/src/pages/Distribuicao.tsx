@@ -11,11 +11,12 @@
  *   - a failed publication shows its `erro` inline rather than a generic
  *     "falhou", so the operator knows whether to retry or fix credentials.
  */
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge, Button, Input, Skeleton } from "@noctusai/lib/design-system";
 import type { BadgeVariant } from "@noctusai/lib/design-system";
-import { AlertTriangle, Ban, BarChart3, CalendarPlus, Clock, Send } from "lucide-react";
+import { AlertTriangle, Ban, BarChart3, CalendarPlus, Clock, Pencil, Send } from "lucide-react";
 
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { usePautas } from "@/hooks/usePautas";
@@ -25,6 +26,7 @@ import {
   CANAIS,
   useAgendarPublicacao,
   useCancelarPublicacao,
+  useEditarPublicacao,
   useEficiencia,
   useExecutarPublicacao,
   useFila,
@@ -55,6 +57,7 @@ export default function Distribuicao() {
   const cancelar = useCancelarPublicacao();
   const [metricasAbertas, setMetricasAbertas] = useState<string | null>(null);
   const [cancelando, setCancelando] = useState<string | null>(null);
+  const [editando, setEditando] = useState<Publicacao | null>(null);
 
   return (
     <div className="min-w-0 max-w-full space-y-6 p-4 sm:p-6">
@@ -123,7 +126,7 @@ export default function Distribuicao() {
       </section>
 
       {/* ── Agendar + fila ─────────────────────────────────────────── */}
-      <AgendarPublicacao />
+      <AgendarPublicacao editando={editando} onFimEdicao={() => setEditando(null)} />
       <FilaPublicacao />
 
       {/* ── Fila de publicação ─────────────────────────────────────── */}
@@ -173,6 +176,19 @@ export default function Distribuicao() {
                       <Send className="mr-2 h-3 w-3" />
                       Publicar
                     </Button>
+                    {pub.status === "agendada" && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setEditando(pub);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                      >
+                        <Pencil className="mr-2 h-3 w-3" />
+                        Editar
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="sm"
@@ -365,21 +381,70 @@ function isoDeDataHoraLocal(valor: string): string {
   return new Date(valor).toISOString();
 }
 
+/** ISO instant → `datetime-local` value in the browser's zone. */
+function dataHoraLocalDeIso(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /**
+ * Schedule a pauta on a channel — or, with `editando`, edit/reschedule an
+ * existing scheduled publication through the same form (PATCH).
+ *
  * Schedule a pauta on a channel. `POST /api/distribuicao/publicacoes` had no
  * consumer — the page said "agende a partir de uma pauta" and there was
  * nowhere to do it.
  */
-function AgendarPublicacao() {
+function AgendarPublicacao({
+  editando,
+  onFimEdicao,
+}: {
+  editando: Publicacao | null;
+  onFimEdicao: () => void;
+}) {
   const { pautas, loading } = usePautas();
   const agendar = useAgendarPublicacao();
+  const editar = useEditarPublicacao();
   const [pautaId, setPautaId] = useState("");
   const [canal, setCanal] = useState<Canal>("instagram");
   const [quando, setQuando] = useState("");
+  const emEdicao = editando !== null;
+  const salvando = agendar.isPending || editar.isPending;
+
+  // Entering edit mode prefills the form from the chosen publication.
+  useEffect(() => {
+    if (editando) {
+      setPautaId(editando.pauta_id);
+      setCanal(editando.canal as Canal);
+      setQuando(dataHoraLocalDeIso(editando.agendada_para));
+    }
+  }, [editando]);
+
+  function limpar() {
+    setPautaId("");
+    setCanal("instagram");
+    setQuando("");
+    onFimEdicao();
+  }
 
   function submeter(e: React.FormEvent) {
     e.preventDefault();
     if (!pautaId || !quando) return;
+    if (editando) {
+      editar.mutate(
+        { id: editando.id, canal, agendada_para: isoDeDataHoraLocal(quando) },
+        {
+          onSuccess: () => {
+            toast.success("Publicação atualizada");
+            limpar();
+          },
+          onError: (erro) => toast.error(describeError(erro, "Não foi possível salvar a edição.")),
+        },
+      );
+      return;
+    }
     agendar.mutate(
       { pauta_id: pautaId, canal, agendada_para: isoDeDataHoraLocal(quando) },
       {
@@ -398,12 +463,12 @@ function AgendarPublicacao() {
     <section className="rounded-lg border border-border bg-card p-4">
       <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
         <CalendarPlus className="h-4 w-4" />
-        Agendar publicação
+        {emEdicao ? "Editar publicação" : "Agendar publicação"}
       </h2>
       {!loading && pautas.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           Nenhuma pauta cadastrada. Crie uma no{" "}
-          <a href="/calendario" className="underline">Calendário Editorial</a>.
+          <Link to="/calendario" className="underline">Calendário Editorial</Link>.
         </p>
       ) : (
         <form onSubmit={submeter} className="grid grid-cols-1 gap-3 sm:grid-cols-[2fr_1fr_1fr_auto] sm:items-end">
@@ -413,7 +478,7 @@ function AgendarPublicacao() {
               className={`mt-1 ${campo}`}
               value={pautaId}
               onChange={(e) => setPautaId(e.target.value)}
-              disabled={loading}
+              disabled={loading || emEdicao}
             >
               <option value="">{loading ? "Carregando…" : "Selecione…"}</option>
               {pautas.map((p) => (
@@ -442,9 +507,18 @@ function AgendarPublicacao() {
               onChange={(e) => setQuando(e.target.value)}
             />
           </label>
-          <Button type="submit" className="min-h-11" disabled={!pautaId || !quando || agendar.isPending}>
-            {agendar.isPending ? "Agendando…" : "Agendar"}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="submit" className="min-h-11" disabled={!pautaId || !quando || salvando}>
+              {emEdicao
+                ? editar.isPending ? "Salvando…" : "Salvar"
+                : agendar.isPending ? "Agendando…" : "Agendar"}
+            </Button>
+            {emEdicao && (
+              <Button type="button" variant="ghost" className="min-h-11" onClick={limpar} disabled={salvando}>
+                Cancelar edição
+              </Button>
+            )}
+          </div>
         </form>
       )}
     </section>
