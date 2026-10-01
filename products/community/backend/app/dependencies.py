@@ -77,8 +77,10 @@ MEMBRO_ORG_ROLE = "membro"
 #: Org roles that are community STAFF. An ALLOW-list: the community org is
 #: the platform org, shared with other products' users (e.g. `corretor`),
 #: who must never read Mônica's members. Mirrors `community.eh_equipe()` in
-#: migration 013 — keep the two identical. `noctus_users.role == 'admin'`
-#: (platform admin) is staff too.
+#: migration 013 — keep the two identical (pinned by tests/test_team_policy.py).
+#: The single Python source: the API gates below AND the seed `/api/team`
+#: roster (`TeamPolicy(staff_roles=...)` in app/main.py) both read it.
+#: `noctus_users.role == 'admin'` (platform admin) is staff too.
 COMMUNITY_STAFF_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin", "moderador", "dev"})
 _ADMIN_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin"})
 

@@ -72,10 +72,16 @@ abuse-control legs alongside per-email/24h and per-org/hour rate caps
 
 ## Gaps
 
-No JS-widget helper ships here (and none should — the frontend's
-`VITE_TURNSTILE_SITE_KEY` + the `<div class="cf-turnstile">` widget is a
-pure client-side concern, unrelated to this server-side verification
-seam). No IP-reputation or bot-score threshold beyond Cloudflare's own
+No JS-widget helper ships here (and none should — the
+`<div class="cf-turnstile">` widget is a pure client-side concern,
+unrelated to this server-side verification seam). The PUBLIC site key is
+NOT a build arg: community reads it at runtime from
+`GET /api/planos/publicos` → `captcha` (`{obrigatorio, site_key}`,
+`app/schemas/pagamentos.py::CaptchaPublico`), resolved per org from
+Configurações → Chaves de API `turnstile_site_key` (env fallback
+`COMMUNITY_TURNSTILE_SITE_KEY`) — so rotating the key never needs a
+frontend rebuild. No secret configured ⇒ captcha explicitly disabled
+(`obrigatorio=false`, soft-launch decision 2026-10-01). No IP-reputation or bot-score threshold beyond Cloudflare's own
 pass/fail — a consumer that later needs Cloudflare's score-based
 "managed challenge" tier reads `raw` for the `score`/`action` fields the
 Enterprise plan adds; this v1 only uses the boolean `success`.

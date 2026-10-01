@@ -135,3 +135,18 @@ export type { MarkdownRendererProps } from './markdown';
 // see `seed/lib/backend/noctusai_lib/domain/help_chat/README.md`.
 export { HelpChatBubble } from './help-chat';
 export type { HelpChatBubbleProps, HelpChatMessage } from './help-chat';
+
+// Team — the canonical product Equipe page over the seed `/api/team` router
+// (roster + policy-driven invite + pending invitations; removal is Core-only).
+export { TeamPage, createTeamHooks, TEAM_QUERY_KEYS } from './team';
+export type {
+  TeamPageProps,
+  TeamPageUser,
+  TeamApi,
+  TeamHooks,
+  TeamMember,
+  TeamInvitation,
+  TeamPolicyContract,
+  TeamInviteResponse,
+  TeamInviteBody,
+} from './team';

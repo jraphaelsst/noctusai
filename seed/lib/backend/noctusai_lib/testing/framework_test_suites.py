@@ -248,6 +248,11 @@ class TeamFlowSuite:
     #: override when their fixture binds a different value. Defaults to
     #: ``"test-org-123"`` to match the seed-default ``MockUser``.
     expected_org_id: ClassVar[str] = TEST_ORG_ID
+    #: The second seeded member's ``org_role``. Must be a role the product's
+    #: ``TeamPolicy`` lists as staff — a product that declares
+    #: ``staff_roles`` without ``member`` (community: owner/admin/moderador/
+    #: dev) overrides this instead of the whole test.
+    staff_member_role: ClassVar[str] = "member"
 
     def test_list_members_returns_data(self, client):
         """Authenticated user can list org members.
@@ -265,7 +270,7 @@ class TeamFlowSuite:
             {**_caller_membership_row(self.expected_org_id, "owner"),
              "nome": "Alice", "email": "alice@test.com"},
             {"id": "u2", "nome": "Bob", "email": "bob@test.com",
-             "org_id": self.expected_org_id, "org_role": "member",
+             "org_id": self.expected_org_id, "org_role": self.staff_member_role,
              "avatar_url": None, "created_at": "2026-01-02T00:00:00Z"},
         ])
         resp = client.get("/api/team")

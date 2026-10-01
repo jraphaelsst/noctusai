@@ -1,0 +1,40 @@
+name: TeamPage
+path: seed/lib/frontend/src/components/team/TeamPage.tsx
+phase: pilot-seed
+registered_at: "2026-10-01"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Canonical product Equipe page over the seed `/api/team` router (noctusai_seed.routers._create_team_router). Replaces the byte-identical ~400-line pages/Equipe.tsx every product carried (N=12 copies at lift time)."
+  - "Pairs with the sibling hooks factory createTeamHooks (same directory). TeamPage takes the product's `api` + the auth-store `user` and builds the hooks itself (useMemo); a `hooks` prop overrides for tests / a custom client."
+  - "Role vocabulary is the product's TeamPolicy, read from GET /api/team/policy ({staff_roles, invitable_roles, labels}) — the invite <select> lists invitable_roles with their labels and NOTHING is hard-coded, so a product extra (community's `moderador`) appears with no FE change. Roster role labels prefer policy.labels, then ORG_ROLE_LABELS, then the raw slug."
+  - "No 'Remover' action by design: DELETE /api/team/{id} always answers 409 TEAM_REMOVE_CORE_ONLY (noctus_users is ONE platform profile per person). The page shows 'Para remover alguém da organização, use o NoctusAI Core.' linking to `${env.CORE_URL}/team` (the Core TeamManagement page)."
+  - "Invite toast tells the e-mail truth from the invite response: toast.success only when email_enviado; otherwise toast.warning carrying email_motivo (the invitation row exists, nobody was told)."
+  - "Loading follows the two-signal rule (KB § PATTERNS/frontend/lying-loading-state.md): createTeamHooks returns showSkeleton = isPending && !data and isRefreshing = isFetching && !!data on every query; nothing is fetched until `user` is non-null (auth-not-ready ≠ empty roster)."
+  - "Owner/admin gate is UX only (resolveSSOContext: isProductAdmin || org.role in ADMIN_ROLES; `canManage` prop overrides) — the backend resolves the caller's role from noctus_users and enforces 403 regardless. Invitations are only fetched for managers (the route is owner/admin-only)."
+  - "Pilot consumers (3 + template): products/seed, products/community (TeamPolicy with `moderador`), products/academia-de-reciclagem — each pages/Equipe.tsx is a one-component wrapper; templates/product-seed is synced from products/seed."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "NOC-REMEDIATE[team-page-organ-fanout]: the remaining products still carry their local pages/Equipe.tsx copy (with a 'Remover' button that now gets the honest 409 TEAM_REMOVE_CORE_ONLY toast via err.message) — adconnect, agents, daily-life, erp-imobiliario, igig, knowledge-extractor, orbity, personal-finance, social-wiring. Fan out to `<TeamPage api={api} user={user} />` after the pilots prove out (pilot-products-first cadence). — 2026-10-01"
+
+  - "register_organ(TeamPage) failed 2026-10-01 with OpenAI 429 insufficient_quota — the organ is not yet in the code-embeddings cache (find_reusable_component will not surface it); only this sidecar + git carry its provenance until credits return and `noctus.dev.register_organ TeamPage` is re-run."
+
+alternatives_considered:
+  - "Hard-coding the invite roles (the old member/admin <select>). Rejected: it is exactly what made community unable to invite a moderador; the policy endpoint is the single source."
+  - "Reading the auth user inside the organ. Rejected: @noctusai/lib must not import the seed framework's infra store (layering); the one-line page passes `useAuthStore((s) => s.user)`."
+  - "Keeping a 'Remover' button that surfaces the 409. Rejected: an action that can never succeed is a lying affordance; a note pointing to Core is the honest UI."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

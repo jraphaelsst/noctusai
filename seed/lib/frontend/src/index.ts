@@ -88,6 +88,22 @@ export type {
   StatusPaginaStatus,
 } from './components/index';
 
+// Team organ — the canonical product Equipe page over the seed `/api/team`
+// router. Role options come from `GET /api/team/policy` (the product's
+// `TeamPolicy`); removal is a NoctusAI Core action (no "Remover" here).
+export { TeamPage, createTeamHooks, TEAM_QUERY_KEYS } from './components/index';
+export type {
+  TeamPageProps,
+  TeamPageUser,
+  TeamApi,
+  TeamHooks,
+  TeamMember,
+  TeamInvitation,
+  TeamPolicyContract,
+  TeamInviteResponse,
+  TeamInviteBody,
+} from './components/index';
+
 // Env-mode hook (drives FakeModeBadge; exposed for products that want to
 // branch on backend-adapter mode without rendering the badge directly).
 export { useEnvMode } from './hooks/useEnvMode';

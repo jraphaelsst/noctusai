@@ -24,8 +24,9 @@ over `gpt-4o-mini`):
     )
 """
 from noctusai_lib.config.credentials import register_credential_override
-from noctusai_seed import create_product_app
+from noctusai_seed import TeamPolicy, create_product_app
 from app.config import settings
+from app.dependencies import COMMUNITY_STAFF_ORG_ROLES
 from app.rate_limit import limiter
 from app.routers.aplicacoes_router import router as aplicacoes_router
 from app.routers.api_keys_router import router as api_keys_router
@@ -94,6 +95,16 @@ app = create_product_app(
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],
+    # The seed `/api/team` roster is the community STAFF only (the org is the
+    # shared platform org — other products' `corretor`s must not show up on
+    # Equipe), and an admin may invite a `moderador`. `COMMUNITY_STAFF_ORG_ROLES`
+    # is the single Python source; `community.eh_equipe()` (migration 013) is
+    # its SQL twin — tests/test_team_policy.py pins the two together.
+    team=TeamPolicy(
+        staff_roles=COMMUNITY_STAFF_ORG_ROLES,
+        invitable_roles={"admin", "moderador"},
+        extra_role_labels={"moderador": "Moderador"},
+    ),
     # `planos_router` / `membros_router`
     # / `aplicacoes_router` are module 1's real domain routers
     # (community-m1-contract.md); `checkout_router` / `webhooks_router`

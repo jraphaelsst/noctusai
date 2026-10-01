@@ -268,6 +268,7 @@ STANDARD_ROUTER_FRONTEND_SIGNALS: dict[str, list[str]] = {
     ],
     "team": [
         r"['\"`]/api/team\b",  # literal path string in hooks / components
+        r"\bTeamPage\b",  # the @noctusai/lib Equipe organ (calls /api/team itself)
     ],
     "llm": [
         r"useLLM(?:Providers|Models|Preferences)\b",  # shared LLM preference hooks

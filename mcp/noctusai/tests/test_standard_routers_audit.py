@@ -178,6 +178,20 @@ class TestStandardRoutersAudit:
         )
         assert check_standard_routers_audit(product) == []
 
+    def test_team_page_organ_counts_as_team_signal(self, tmp_path: Path):
+        """A product whose Equipe page is the `@noctusai/lib` TeamPage organ
+        (no literal `/api/team` in its own tree) still consumes the team
+        router — no over-grant warning."""
+        main = _MAIN_TEMPLATE.format(routers_literal='["health", "team"]')
+        product = _mk_product(
+            tmp_path, "organ",
+            main_content=main,
+            frontend_files={
+                "pages/Equipe.tsx": 'import { TeamPage } from "@noctusai/lib";',
+            },
+        )
+        assert check_standard_routers_audit(product) == []
+
     def test_under_grant_frontend_uses_but_backend_does_not_opt_in(self, tmp_path: Path):
         """Under-grant = critical. Frontend signal present, not in opt-in, not self-provided."""
         main = _MAIN_TEMPLATE.format(routers_literal='["health", "team"]')

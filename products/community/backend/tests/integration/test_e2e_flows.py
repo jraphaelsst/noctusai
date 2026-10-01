@@ -22,7 +22,8 @@ class TestFrameworkEndpoints(FrameworkEndpointsSuite):
 
 
 class TestTeamFlow(TeamFlowSuite):
-    pass
+    # Community's TeamPolicy lists staff only (owner/admin/moderador/dev).
+    staff_member_role = "moderador"
 
 
 class TestNotificationFlow(NotificationFlowSuite):
