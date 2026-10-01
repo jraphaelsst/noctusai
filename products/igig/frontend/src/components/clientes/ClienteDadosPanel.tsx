@@ -18,6 +18,7 @@ import {
   type Cliente,
   type StatusCliente,
 } from "@/hooks/useClientes";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 import { describeError } from "@/lib/errors";
 import { STATUS_CLIENTE, STATUS_CLIENTE_LABEL } from "./status";
 
@@ -48,6 +49,8 @@ export function ClienteDadosPanel({ cliente, onRemovido }: { cliente: Cliente; o
   const atualizar = useAtualizarCliente();
   const ativar = useAtivarCliente();
   const remover = useRemoverCliente();
+  // The backend DELETE is admin-only (`exigir_admin_da_org`) — hide what it would refuse.
+  const podeRemover = useIsOrgAdmin();
   const [form, setForm] = useState<Form>(() => formDe(cliente));
   const [sujo, setSujo] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
@@ -121,14 +124,16 @@ export function ClienteDadosPanel({ cliente, onRemovido }: { cliente: Cliente; o
       <FormError message={atualizar.isError ? describeError(atualizar.error, "Não foi possível salvar as alterações.") : null} />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="ghost"
-            className="text-destructive max-sm:h-10"
-            onClick={() => setConfirmando(true)}
-            data-testid="cliente-remover"
-          >
-            <Trash2 className="mr-1 h-4 w-4" /> Remover cliente
-          </Button>
+          {podeRemover ? (
+            <Button
+              variant="ghost"
+              className="text-destructive max-sm:h-10"
+              onClick={() => setConfirmando(true)}
+              data-testid="cliente-remover"
+            >
+              <Trash2 className="mr-1 h-4 w-4" /> Remover cliente
+            </Button>
+          ) : null}
           {cliente.status === "prospect" ? (
             <Button
               variant="outline"
@@ -155,7 +160,7 @@ export function ClienteDadosPanel({ cliente, onRemovido }: { cliente: Cliente; o
       </div>
 
       <ConfirmDialog
-        open={confirmando}
+        open={confirmando && podeRemover}
         title="Remover cliente"
         description={
           <>

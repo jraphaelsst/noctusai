@@ -412,6 +412,46 @@ class TestOrcamentoCrud:
         assert resp.json()["code"] == "motivo_obrigatorio"
 
 
+class TestExcluirRascunho:
+    def test_deletes_draft_and_its_items(self, api, igig_db, catalogo, negocio):
+        orc = _criar(api, negocio, [_item_gestao(catalogo)])
+        resp = api.delete(f"/api/orcamentos/{orc['id']}")
+        assert resp.status_code == 204, resp.text
+        assert _linhas(igig_db, "orcamento", id=orc["id"]) == []
+        assert _linhas(igig_db, "orcamento_item", orcamento_id=orc["id"]) == []
+        assert api.get(f"/api/orcamentos/{orc['id']}").status_code == 404
+
+    def test_enviado_and_aceito_are_409(self, api, igig_db, catalogo, negocio):
+        orc = _criar(api, negocio, [_item_gestao(catalogo)])
+        igig_db.table("orcamento").update({"status": "enviado"}).eq("id", orc["id"]).execute()
+        resp = api.delete(f"/api/orcamentos/{orc['id']}")
+        assert resp.status_code == 409 and resp.json()["code"] == "orcamento_bloqueado"
+        api.post(f"/api/orcamentos/{orc['id']}/aceitar")
+        resp = api.delete(f"/api/orcamentos/{orc['id']}")
+        assert resp.status_code == 409 and resp.json()["code"] == "orcamento_bloqueado"
+        assert _linhas(igig_db, "orcamento", id=orc["id"])
+
+    def test_draft_with_email_history_is_409(self, api, igig_db, catalogo, negocio):
+        orc = _criar(api, negocio, [_item_gestao(catalogo)])
+        igig_db.table("orcamento_email").insert(
+            {"org_id": ORG, "orcamento_id": orc["id"], "direction": "out", "message_id": "m-1"}
+        ).execute()
+        resp = api.delete(f"/api/orcamentos/{orc['id']}")
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "orcamento_com_dependencias"
+
+    def test_another_orgs_draft_is_404(self, api, igig_db):
+        outro = igig_db.table("orcamento").insert(
+            {"org_id": "00000000-0000-0000-0000-0000000000ff", "status": "rascunho"}
+        ).execute().data[0]
+        assert api.delete(f"/api/orcamentos/{outro['id']}").status_code == 404
+        assert _linhas(igig_db, "orcamento", id=outro["id"])
+
+    def test_requires_auth(self, api, catalogo, negocio):
+        orc = _criar(api, negocio, [_item_gestao(catalogo)])
+        assert api.raw().delete(f"/api/orcamentos/{orc['id']}").status_code == 401
+
+
 # ── Aceite ──────────────────────────────────────────────────────────
 def _esperadas(dias: int, qtd: int, inicio: date) -> int:
     return sum(

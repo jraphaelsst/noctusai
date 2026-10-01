@@ -177,6 +177,29 @@ describe("OrcamentoModal — calculator", () => {
 });
 
 describe("OrcamentoModal — lifecycle", () => {
+  it("a rascunho offers Excluir (confirmed, DELETE, closes); a sent one does not", async () => {
+    api.get.mockImplementation(async (path: string) => {
+      if (path === "/api/produtos-servicos") return { data: CATALOGO };
+      if (path === "/api/orcamentos/o1") return { data: orcamento({ status: "rascunho" }) };
+      if (path === "/api/orcamentos/o1/emails") return { data: [] };
+      throw new Error(`GET inesperado ${path}`);
+    });
+    api.delete.mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    renderModal({ orcamentoId: "o1", onClose });
+    fireEvent.click(await screen.findByTestId("orcamento-excluir"));
+    expect(api.delete).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Excluir" }));
+    await waitFor(() => expect(api.delete).toHaveBeenCalledWith("/api/orcamentos/o1"));
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it("a non-rascunho orçamento has no Excluir button", async () => {
+    renderModal({ orcamentoId: "o1" });
+    await screen.findByTestId("orcamento-recusar");
+    expect(screen.queryByTestId("orcamento-excluir")).not.toBeInTheDocument();
+  });
+
   it("accept asks for confirmation, then POSTs /aceitar", async () => {
     api.post.mockImplementation(async (path: string, body: any) => {
       if (path === "/api/orcamentos/calcular") return { data: calcular(body) };

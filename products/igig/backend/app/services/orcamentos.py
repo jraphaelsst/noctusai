@@ -609,6 +609,34 @@ def recusar(db: Any, org_id: str, orcamento_id: str, motivo: str, *,
     return obter(db, org_id, orcamento_id, hoje=hoje)
 
 
+def excluir_rascunho(db: Any, org_id: str, orcamento_id: str) -> None:
+    """Hard-delete a DRAFT that nothing depends on (itens go with it).
+
+    Refused (409, pt-BR) when the orçamento is past rascunho, when a contrato
+    was generated from it or when an e-mail about it was sent/received — those
+    rows keep a history the operator must not lose."""
+    atual = carregar(db, org_id, orcamento_id)
+    if atual.get("status") != "rascunho":
+        raise RegraViolada(
+            409, "orcamento_bloqueado",
+            f"Só é possível excluir um rascunho: este orçamento está {atual.get('status')}.",
+        )
+    for tabela, motivo in (
+        ("contrato", "já existe um contrato gerado a partir dele"),
+        ("orcamento_email", "há e-mails registrados para ele"),
+    ):
+        if (db.table(tabela).select("id").eq("org_id", org_id)
+                .eq("orcamento_id", orcamento_id).limit(1).execute().data):
+            raise RegraViolada(
+                409, "orcamento_com_dependencias",
+                f"Não é possível excluir este rascunho: {motivo}.",
+            )
+    db.table("orcamento_item").delete().eq("org_id", org_id).eq(
+        "orcamento_id", orcamento_id
+    ).execute()
+    db.table("orcamento").delete().eq("id", orcamento_id).eq("org_id", org_id).execute()
+
+
 # ── Aceite ───────────────────────────────────────────────────────────
 def _etapa_fechado(db: Any, org_id: str) -> dict:
     for etapa in etapas(db, PIPELINE_COMERCIAL, org_id):

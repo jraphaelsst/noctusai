@@ -14,7 +14,7 @@
  * Filter + tab state lives in the URL so a shared link reproduces the view.
  */
 import { useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FilePlus2, Search } from "lucide-react";
 import { Badge, Button, EmptyState, Field, Input, Select, Skeleton } from "@noctusai/lib/design-system";
 import { cn } from "@noctusai/lib";
@@ -298,6 +298,7 @@ function EscolherNegocioDialog({
   onEscolher: (negocioId: string) => void;
 }) {
   const { data: colunas, isPending, isError, error } = comercialPipeline.useBoard(undefined, { enabled: open });
+  const navigate = useNavigate();
   const [busca, setBusca] = useState("");
   const negocios = (colunas ?? [])
     .flatMap((c) => c.cards.map((n) => ({ n, etapa: c.stage.label })))
@@ -332,9 +333,14 @@ function EscolherNegocioDialog({
       ) : isError ? (
         <p role="alert" className="text-sm text-destructive">{describeError(error, "Não foi possível carregar o funil.")}</p>
       ) : negocios.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">
-          Nenhum negócio em aberto. Crie um lead no Comercial primeiro.
-        </p>
+        <div className="flex flex-col items-center gap-3 py-6 text-center">
+          <p className="text-sm text-muted-foreground">
+            Nenhum negócio em aberto. Crie um lead no Comercial primeiro.
+          </p>
+          <Button variant="outline" size="sm" onClick={() => navigate("/comercial")}>
+            Ir para o Comercial
+          </Button>
+        </div>
       ) : (
         <ul className="space-y-2">
           {negocios.map(({ n, etapa }) => (

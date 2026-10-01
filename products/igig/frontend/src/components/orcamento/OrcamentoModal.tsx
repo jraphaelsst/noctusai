@@ -22,11 +22,12 @@
  * screen shows.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { CalendarPlus, Check, ExternalLink, FileText, Mail, Plus, X } from "lucide-react";
+import { CalendarPlus, Check, ExternalLink, FileText, Mail, Plus, Trash2, X } from "lucide-react";
 import { Badge, Button, Field, FormError, Input, Select, Skeleton, Textarea } from "@noctusai/lib/design-system";
 import { MotivoMoveDialog, TooltipIconButton } from "@noctusai/lib/components";
 import { toast } from "sonner";
 
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { SheetDialog } from "@/components/common/SheetDialog";
 import { ContratoPanel } from "@/components/orcamento/ContratoPanel";
 import { EnviarEmailPanel } from "@/components/orcamento/EnviarEmailPanel";
@@ -313,6 +314,7 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
   const [confirmandoNovaVersao, setConfirmandoNovaVersao] = useState(false);
   const [novaVersaoValidade, setNovaVersaoValidade] = useState<string>("");
   const [recusando, setRecusando] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [erroAcao, setErroAcao] = useState<string | null>(null);
 
@@ -479,6 +481,21 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
     );
   }
 
+  function excluir() {
+    if (!atualId) return;
+    mut.excluir.mutate(atualId, {
+      onSuccess: () => {
+        setExcluindo(false);
+        toast.success("Rascunho excluído.");
+        onClose();
+      },
+      onError: (e) => {
+        setExcluindo(false);
+        setErroAcao(describeError(e, "Não foi possível excluir o rascunho."));
+      },
+    });
+  }
+
   const status = orcamento?.status;
   const podeDecidir = !!orcamento && (status === "rascunho" || status === "enviado");
   const salvando = mut.criar.isPending || mut.atualizar.isPending;
@@ -543,6 +560,16 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
               </Button>
             ) : null}
             <div className="ml-auto flex items-center gap-2">
+              {!novo && orcamento && status === "rascunho" ? (
+                <TooltipIconButton
+                  label="Excluir rascunho"
+                  icon={Trash2}
+                  variant="outline"
+                  testId="orcamento-excluir"
+                  className="h-10 w-10 text-destructive"
+                  onClick={() => setExcluindo(true)}
+                />
+              ) : null}
               {podeDecidir ? (
                 <>
                   <TooltipIconButton
@@ -806,6 +833,17 @@ export function OrcamentoModal({ open, onClose, orcamentoId, negocioId, onOrcame
           </div>
         )}
       </SheetDialog>
+
+      <ConfirmDialog
+        open={excluindo}
+        title="Excluir rascunho"
+        description="Este rascunho de orçamento e seus itens serão apagados. A ação não pode ser desfeita."
+        confirmLabel={mut.excluir.isPending ? "Excluindo…" : "Excluir"}
+        busy={mut.excluir.isPending}
+        onCancel={() => setExcluindo(false)}
+        onConfirm={excluir}
+        testId="orcamento-excluir-confirm"
+      />
 
       <MotivoMoveDialog
         open={recusando}

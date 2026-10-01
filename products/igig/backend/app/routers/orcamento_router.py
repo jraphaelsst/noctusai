@@ -5,6 +5,7 @@
   GET   /api/orcamentos/{id}
   POST  /api/orcamentos                   201, versao = max + 1 for the negócio
   PATCH /api/orcamentos/{id}              rascunho|enviado only
+  DELETE /api/orcamentos/{id}             rascunho only, no contrato/e-mail → 204
   POST  /api/orcamentos/{id}/nova-versao  201, previous → substituido
   POST  /api/orcamentos/{id}/aceitar      the funnel's fechado transition + pautas
   POST  /api/orcamentos/{id}/recusar
@@ -153,6 +154,19 @@ async def atualizar_orcamento(
         return success_response(
             svc.atualizar(db, org_id, orcamento_id, dados, custo_hora=custo_hora)
         )
+    except RegraViolada as erro:
+        raise http_de(erro) from erro
+
+
+@router.delete("/{orcamento_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def excluir_orcamento(
+    orcamento_id: str,
+    auth: tuple = Depends(get_current_user_org),
+    db: Any = Depends(get_db),
+) -> None:
+    """Hard-delete a draft (and its itens); 409 once anything depends on it."""
+    try:
+        svc.excluir_rascunho(db, _org(auth), orcamento_id)
     except RegraViolada as erro:
         raise http_de(erro) from erro
 

@@ -10,6 +10,7 @@
  *   POST  /api/orcamentos/calcular             pure preview, no write
  *   POST  /api/orcamentos/{id}/aceitar         fechado transition + pautas
  *   POST  /api/orcamentos/{id}/recusar {motivo}
+ *   DELETE /api/orcamentos/{id}                (rascunho only → 204)
  *   POST  /api/orcamentos/{id}/pdf             → {pdf_key, url}
  *   GET   /api/orcamentos/{id}/pdf             → {url}
  *   POST  /api/orcamentos/{id}/enviar          (Slice B; 409 pdf_nao_gerado)
@@ -149,6 +150,11 @@ export function useOrcamentoMutations() {
       api.post(`/api/orcamentos/${encodeURIComponent(id)}/recusar`, { motivo }).then(unwrapData<Orcamento>),
     onSuccess: invalidate,
   });
+  /** Hard-delete a rascunho (409 once it is sent/accepted or has a contrato/e-mail). */
+  const excluir = useMutation({
+    mutationFn: (id: string) => api.delete(`/api/orcamentos/${encodeURIComponent(id)}`),
+    onSuccess: invalidate,
+  });
   const gerarPdf = useMutation({
     mutationFn: (id: string) => api.post(`/api/orcamentos/${encodeURIComponent(id)}/pdf`, {}).then(unwrapData<{ pdf_key: string; url: string }>),
     onSuccess: invalidate,
@@ -188,7 +194,7 @@ export function useOrcamentoMutations() {
   });
 
   return {
-    criar, atualizar, novaVersao, aceitar, recusar, gerarPdf, urlPdf, enviar, gerarContrato,
+    criar, atualizar, novaVersao, aceitar, recusar, excluir, gerarPdf, urlPdf, enviar, gerarContrato,
     gerarPautas,
   };
 }
