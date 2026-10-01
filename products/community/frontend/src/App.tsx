@@ -12,7 +12,7 @@ import { createRoleLayout } from "@/layouts/RoleLayout";
 import { MemberLayout } from "@/layouts/MemberLayout";
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2, CalendarHeart } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, ShieldAlert, Repeat, Megaphone, Settings2, CalendarHeart } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -50,6 +50,7 @@ const Transmissoes = lazy(() => import("@/pages/whatsapp/Transmissoes"));
 // Admin-only, not in NAV_GROUPS (linked from WhatsApp.tsx's own banner,
 // same seam as a detail route next to its list — no status_pagina row
 // needed since it's unreachable from nav).
+const Moderacao = lazy(() => import("@/pages/whatsapp/Moderacao"));
 const WhatsAppConexoes = lazy(() => import("@/pages/whatsapp/Conexoes"));
 
 // Ninho Vazio — member portal + public signup + role routing
@@ -94,6 +95,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat, route: "whatsapp-sincronizacao" },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone, route: "whatsapp-transmissoes" },
+      { name: "Moderação", href: "/whatsapp/moderacao", icon: ShieldAlert, route: "whatsapp-moderacao" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Configurações", href: "/configuracoes", icon: Settings2, route: "configuracoes" },
     ],
@@ -116,6 +118,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone },
+      { name: "Moderação", href: "/whatsapp/moderacao", icon: ShieldAlert },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Configurações", href: "/configuracoes", icon: Settings2 },
     ],
@@ -145,6 +148,7 @@ export default createProductApp({
     { path: "/whatsapp", component: WhatsApp },
     { path: "/whatsapp/sincronizacao", component: Sincronizacao },
     { path: "/whatsapp/transmissoes", component: Transmissoes },
+    { path: "/whatsapp/moderacao", component: Moderacao },
     { path: "/whatsapp/conexoes", component: WhatsAppConexoes },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Configuracoes },
