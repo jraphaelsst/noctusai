@@ -37,6 +37,7 @@ from app.modules.card_hub.services import (
     resolve_atendimento_id_incluindo_partes,
 )
 from app.services import table_reads
+from app.services.clientes_service import clientes_por_cpf
 
 PARTES_TABLE = comp_svc.TABLE
 EMPRESAS_TABLE = "empresas"
@@ -308,26 +309,9 @@ def _classificar_documento(documento: str) -> tuple[str, str]:
 
 
 def _clientes_por_cpf(client: Any, org_id: UUID, cpf: str) -> list[dict]:
-    """Every cliente of this org holding this CPF, oldest first.
-
-    `clientes.cpf` keeps whatever punctuation it arrived with (097) and
-    PostgREST cannot filter on `normalizar_documento(cpf)` (the expression
-    behind `idx_sw_clientes_cpf_norm`), so the two shapes the app itself
-    writes — bare digits and `ddd.ddd.ddd-dd` — are matched. A third spelling
-    (spaces, stray text) would be missed.
-
-    NOC-REMEDIATE[cpf-lookup-normalized-rpc]: a `social_wiring` RPC wrapping
-    `normalizar_documento()` would make this exact on the existing index —
-    batch with the CPF-dedupe consumers (`qualificacao_service._clientes_por_
-    cpf` full-scans the org for the same reason). — 2026-10-01
-    """
-    formatado = cpf_docs.format_cpf(cpf)
-    variantes = [cpf] + ([formatado] if formatado else [])
-    rows = table_reads.in_batched_rows(
-        client, CLIENTES_TABLE, org_id, "cpf", variantes,
-        select=",".join(_CLIENTE_LOOKUP),
-    )
-    return sorted(rows, key=lambda r: str(r.get("created_at") or ""))
+    """Every cliente of this org holding this CPF, oldest first — exact on
+    `normalizar_documento(cpf)` (migration 185, `clientes_service.clientes_por_cpf`)."""
+    return clientes_por_cpf(client, org_id, [cpf])
 
 
 def _empresa_por_cnpj(client: Any, org_id: UUID, cnpj: str) -> Optional[dict]:

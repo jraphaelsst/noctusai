@@ -85,6 +85,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
+from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives.exceptions import ValidationError_
 
 from app.services import identidade_service as ident
@@ -1710,6 +1711,41 @@ def _registrar_edicao_manual_confirmada(
             "created_at": now,
         }
     ).execute()
+
+
+def clientes_por_cpf(client: Any, org_id: UUID, cpfs: Any) -> list[dict]:
+    """Every cliente of this org holding one of `cpfs`, oldest first.
+
+    Exact on `normalizar_documento(cpf)` via the `clientes_por_cpf` SQL
+    function (migration 185) — any punctuation on either side. The ONE CPF
+    lookup: `partes_service` and `qualificacao_service` both call it instead
+    of each approximating the match PostgREST cannot express.
+    """
+    chaves = sorted({d for d in (only_digits(str(c or '')) for c in cpfs) if d})
+    if not chaves:
+        return []
+    resp = client.rpc("clientes_por_cpf", {"p_org_id": str(org_id), "p_cpfs": chaves}).execute()
+    return list(resp.data or [])
+
+
+def registrar_cpf_divergente(
+    client: Any, org_id: UUID, cliente_id: UUID, cpf_proposto: str
+) -> bool:
+    """A typed CPF that disagrees with the one on file is never written over
+    it — it opens a `pendente` conflict for admin adjudication (the manual-edit
+    mechanism). Returns whether a conflict was opened (False: nothing on file,
+    or the same CPF)."""
+    atual = _require_cliente(client, org_id, cliente_id)
+    registrado = atual.get("cpf")
+    if not registrado or only_digits(str(registrado)) == only_digits(cpf_proposto):
+        return False
+    _abrir_conflito_edicao_manual(
+        client, org_id, cliente_id, "cpf",
+        valor_anterior=registrado,
+        origem_anterior=atual.get("cpf_origem"),
+        valor_proposto=cpf_proposto,
+    )
+    return True
 
 
 def update_cliente(
