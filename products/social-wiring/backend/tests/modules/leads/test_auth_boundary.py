@@ -11,13 +11,14 @@ from uuid import uuid4
 
 import pytest
 
+from tests.modules.leads.conftest import LEAD_CODIGO
 
 _LEAD_ID = str(uuid4())
 _SOURCE_ID = str(uuid4())
 _CORRETOR_ID = str(uuid4())
 _ALIAS_ID = str(uuid4())
 
-_LEAD_CREATE_BODY = {"data_entrada": "2026-07-01"}
+_LEAD_CREATE_BODY = {"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO}
 _LEAD_UPDATE_BODY = {"cliente_nome": "X"}
 _SOURCE_CREATE_BODY = {"slug": "x", "label": "X"}
 _SOURCE_UPDATE_BODY = {"label": "Y"}

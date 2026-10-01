@@ -70,6 +70,17 @@ LIMITE_MAXIMO = 50
 _MIRROR_FIELDS = (
     "titulo", "empreendimento", "logradouro", "numero", "complemento",
     "bairro", "cidade", "uf", "cep", "foto_destaque",
+    # Additive (contract `atendimento-partes-imoveis` §0.1): the specs a
+    # person-page row / roteiro PDF / similares card needs to render an
+    # imóvel without a second read.
+    "categoria", "valor_venda", "valor_locacao", "dormitorios", "suites",
+    "vagas", "area_total", "area_privativa", "area_construida",
+)
+
+#: Money / area columns: Postgres NUMERIC reaches us as Decimal or str, and the
+#: contract's wire shape is a JSON number (§0 "Money = JSON number").
+_CAMPOS_NUMERICOS = (
+    "valor_venda", "valor_locacao", "area_total", "area_privativa", "area_construida",
 )
 
 #: The registry's delist-time snapshot. It is deliberately NARROWER than the
@@ -83,6 +94,13 @@ _SNAP_MAP = {
     "cidade": "snap_cidade",
     "uf": "snap_uf",
     "foto_destaque": "snap_foto_destaque",
+    # Additive keys (§0.1) — only the specs 063 snapshots; `suites`, `vagas`,
+    # `area_privativa`, `area_construida` stay null for a delisted imóvel.
+    "categoria": "snap_categoria",
+    "valor_venda": "snap_valor_venda",
+    "valor_locacao": "snap_valor_locacao",
+    "dormitorios": "snap_dormitorios",
+    "area_total": "snap_area_total",
 }
 
 #: Text columns worth matching a typed term against, per source. The mirror
@@ -202,6 +220,10 @@ def _imovel_out(
         # answer, and `registrado` is what callers branch on.
         fonte = "registry" if reg is not None else "nenhuma"
 
+    for chave in _CAMPOS_NUMERICOS:
+        campos[chave] = _numero(campos.get(chave))
+    campos.update(_derivados(campos))
+
     return {
         "codigo": codigo,
         **campos,
@@ -232,6 +254,46 @@ def _imovel_out(
         "registrado": reg is not None,
         "fonte": fonte,
     }
+
+
+def _derivados(campos: dict) -> dict:
+    """The two derived display keys of contract §0.1: `endereco` (one line)
+    and `valor`/`valor_tipo` (venda wins, locação is the fallback).
+
+    Pure over the already-resolved mirror/snapshot `campos`, so a delisted
+    imóvel (nulls) yields `endereco: None` / `valor: None` honestly.
+    """
+    logradouro = (campos.get("logradouro") or "").strip()
+    numero = str(campos.get("numero") or "").strip()
+    bairro = (campos.get("bairro") or "").strip()
+    cidade = (campos.get("cidade") or "").strip()
+    uf = (campos.get("uf") or "").strip()
+
+    rua = ", ".join(p for p in (logradouro, numero) if p)
+    cidade_uf = "/".join(p for p in (cidade, uf) if p)
+    local = ", ".join(p for p in (bairro, cidade_uf) if p)
+    endereco = " — ".join(p for p in (rua, local) if p) or None
+
+    venda = _numero(campos.get("valor_venda"))
+    locacao = _numero(campos.get("valor_locacao"))
+    if venda:
+        valor, tipo = venda, "venda"
+    elif locacao:
+        valor, tipo = locacao, "locacao"
+    else:
+        valor, tipo = None, None
+    return {"endereco": endereco, "valor": valor, "valor_tipo": tipo}
+
+
+def _numero(valor: Any) -> Optional[float]:
+    """Numeric columns arrive as Decimal/str from the driver; the wire shape
+    for money is a JSON number (contract §0)."""
+    if valor is None or valor == "":
+        return None
+    try:
+        return float(valor)
+    except (TypeError, ValueError):
+        return None
 
 
 # ── search ────────────────────────────────────────────────────────────────

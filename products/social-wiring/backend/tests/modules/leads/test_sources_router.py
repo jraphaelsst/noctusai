@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from tests.modules.leads.conftest import auth_headers
+from tests.modules.leads.conftest import LEAD_CODIGO, auth_headers
 
 
 def _create_source(client, **overrides):
@@ -59,7 +59,7 @@ class TestSourcesCRUD:
         source = _create_source(http_client)
         lead_resp = http_client.post(
             "/api/leads",
-            json={"data_entrada": "2026-07-01", "origem_id": source["id"]},
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "origem_id": source["id"]},
             headers=auth_headers(),
         )
         assert lead_resp.status_code == 201
@@ -121,7 +121,7 @@ class TestSourcesCRUD:
         source_b = _create_source(http_client, slug="b", label="B")
         lead_resp = http_client.post(
             "/api/leads",
-            json={"data_entrada": "2026-07-01", "origem_id": source_a["id"]},
+            json={"data_entrada": "2026-07-01", "codigo_imovel": LEAD_CODIGO, "origem_id": source_a["id"]},
             headers=auth_headers(),
         )
         lead_id = lead_resp.json()["data"]["id"]

@@ -19,6 +19,7 @@ from noctusai_lib.primitives.responses import (
 )
 
 from app.dependencies import coerce_org_uuid, get_current_user_org_unified
+from app.modules.imovel_hub import atendimento_imoveis_service
 from app.modules.leads.deps import get_leads_client
 from app.modules.leads.routers.params import get_lead_filters
 from app.modules.leads.schemas import LeadCreate, LeadOut, LeadUpdate
@@ -106,11 +107,43 @@ def create_lead(
     """
     _, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = leads_service.create_lead(client, org_id, body.model_dump(exclude_unset=True))
+    payload = body.model_dump(exclude_unset=True)
+    # §3.6: the código is required (schema) AND must be a known imóvel —
+    # validated BEFORE any write so an unknown one leaves nothing behind.
+    payload["codigo_imovel"] = atendimento_imoveis_service.resolver_codigo_para_lead(
+        client, org_id, body.codigo_imovel or ""
+    )
+    row = leads_service.create_lead(client, org_id, payload)
     clientes_service.attach_lead_now(client, org_id, row)
+    vinculo = _vincular_imovel_do_lead(client, org_id, row)
     refs = leads_service.build_refs(client, org_id)
     background.add_task(sweep)
-    return success_response(_out(row, refs))
+    data = _out(row, refs)
+    # Contract §3.6 additive keys, from the card migration 034's trigger spawned.
+    data["atendimento_id"] = vinculo["atendimento_id"]
+    data["imoveis"] = vinculo["imoveis"]
+    return success_response(data)
+
+
+def _vincular_imovel_do_lead(client: Any, org_id: UUID, row: dict) -> dict:
+    """`vincular_lead` for the just-created lead — junction + interesse.
+
+    Never raises (`vincular_lead_seguro`): the lead is already saved, and a 500
+    here would invite a retry that duplicates it. A failure is logged at error
+    level and healed by the clientes sweep's `reconcile`.
+    """
+    resultado = atendimento_imoveis_service.vincular_lead_seguro(
+        client, org_id, lead_id=row["id"], contexto="POST /api/leads"
+    )
+    atendimentos = (resultado or {}).get("atendimentos") or []
+    if not atendimentos:
+        # The card is spawned by a DB trigger; no atendimento to report yet.
+        return {"atendimento_id": None, "imoveis": []}
+    atendimento_id = atendimentos[0]
+    codigos = atendimento_imoveis_service.codigos_por_atendimento(
+        client, org_id, [atendimento_id]
+    )
+    return {"atendimento_id": atendimento_id, "imoveis": codigos.get(atendimento_id, [])}
 
 
 @router.get("/facets")

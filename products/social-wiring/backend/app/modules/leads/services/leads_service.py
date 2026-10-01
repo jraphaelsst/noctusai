@@ -144,6 +144,23 @@ def _derive_contato_fields(payload: dict, *, require_defaults: bool = False) -> 
     return {**payload, "contato_norm": None, "contato_tipo": tipo}
 
 
+def _derive_codigo_norm(payload: dict) -> dict:
+    """Fill ``codigo_imovel_norm`` from ``codigo_imovel``.
+
+    Mirrors migration 062's trigger case for case (``upper(btrim())``, NULL when
+    blank) for the SAME reason ``_derive_contato_fields`` mirrors 037's:
+    ``MockSupabaseClient`` has no triggers, so without this every lead written
+    through the service reads back WITHOUT the key every imóvel-keyed read
+    (`atendimento_imoveis_service.reconcile`, Interessados) filters on, and
+    those tests would assert a shape production never produces. On real
+    Postgres the trigger recomputes the identical value.
+    """
+    if "codigo_imovel" not in payload:
+        return payload
+    valor = str(payload.get("codigo_imovel") or "").strip()
+    return {**payload, "codigo_imovel_norm": valor.upper() or None}
+
+
 def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
     # `id`/`created_at` are explicit here (not left to a DB DEFAULT) so
     # the returned row is deterministic across the real Supabase client
@@ -161,7 +178,11 @@ def create_lead(client: Any, org_id: UUID, payload: dict) -> dict:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "updated_at": None,
     }
-    row.update(_derive_contato_fields(_jsonify_payload(payload), require_defaults=True))
+    row.update(
+        _derive_codigo_norm(
+            _derive_contato_fields(_jsonify_payload(payload), require_defaults=True)
+        )
+    )
     resp = _table(client, "leads").insert(row).execute()
     rows = list(resp.data or [])
     result = rows[0] if rows else row
@@ -218,7 +239,7 @@ def update_lead(client: Any, org_id: UUID, lead_id: UUID, payload: dict) -> Opti
         clean["needs_review"] = False
     if not clean:
         return existing
-    clean = _derive_contato_fields(_jsonify_payload(clean))
+    clean = _derive_codigo_norm(_derive_contato_fields(_jsonify_payload(clean)))
     now = datetime.now(timezone.utc).isoformat()
     clean["updated_at"] = now
     clean["edited_at"] = now
