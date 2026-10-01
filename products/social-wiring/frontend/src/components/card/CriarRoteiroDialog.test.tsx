@@ -215,11 +215,15 @@ describe("CriarRoteiroDialog — salvar", () => {
     rtl.fireEvent.change(getByTestId("roteiro-titulo"), {
       target: { value: "Terça de manhã" },
     });
+    rtl.fireEvent.change(getByTestId("roteiro-data-visita"), {
+      target: { value: "2026-10-05" },
+    });
     rtl.fireEvent.click(getByTestId("roteiro-salvar"));
 
     expect(onCriar).toHaveBeenCalledWith({
       titulo: "Terça de manhã",
       imoveis: ["ONE9003", "ONE9001", "ONE9002"],
+      data_visita: "2026-10-05",
     });
   });
 
@@ -231,9 +235,90 @@ describe("CriarRoteiroDialog — salvar", () => {
 
     await digitar(getByTestId, "ONE9");
     rtl.fireEvent.click(getByTestId("roteiro-busca-item-ONE9001"));
+    rtl.fireEvent.change(getByTestId("roteiro-data-visita"), {
+      target: { value: "2026-10-05" },
+    });
     rtl.fireEvent.click(getByTestId("roteiro-salvar"));
 
-    expect(onCriar).toHaveBeenCalledWith({ titulo: null, imoveis: ["ONE9001"] });
+    expect(onCriar).toHaveBeenCalledWith({
+      titulo: null,
+      imoveis: ["ONE9001"],
+      data_visita: "2026-10-05",
+    });
+  });
+
+  it("🔴 cannot confirm without a data_visita (the server would answer 422)", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
+    const onCriar = vi.fn();
+    const { getByTestId } = await render({ onCriar });
+    const rtl = await import("@testing-library/react");
+
+    await digitar(getByTestId, "ONE9");
+    rtl.fireEvent.click(getByTestId("roteiro-busca-item-ONE9001"));
+    const botao = getByTestId("roteiro-salvar") as HTMLButtonElement;
+    expect(botao.disabled).toBe(true);
+    rtl.fireEvent.click(botao);
+    expect(onCriar).not.toHaveBeenCalled();
+
+    rtl.fireEvent.change(getByTestId("roteiro-data-visita"), {
+      target: { value: "2026-10-05" },
+    });
+    expect(botao.disabled).toBe(false);
+  });
+
+  it("ordering mode: starts from the ticked imóveis, hides the search, keeps their order", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const onCriar = vi.fn();
+    const { getByTestId, queryByTestId, container } = await render({
+      onCriar,
+      inicial: [hit("ONE9007"), hit("ONE9001")],
+    });
+    const rtl = await import("@testing-library/react");
+
+    expect(queryByTestId("roteiro-busca")).toBeNull();
+    const lista = getByTestId("roteiro-lista");
+    expect(
+      Array.from(lista.querySelectorAll("[data-testid^='imovel-visita-ONE']")).map((e) =>
+        e.getAttribute("data-testid"),
+      ),
+    ).toEqual(["imovel-visita-ONE9007", "imovel-visita-ONE9001"]);
+    void container;
+
+    rtl.fireEvent.change(getByTestId("roteiro-data-visita"), {
+      target: { value: "2026-11-02" },
+    });
+    rtl.fireEvent.click(getByTestId("roteiro-salvar"));
+    expect(onCriar).toHaveBeenCalledWith({
+      titulo: null,
+      imoveis: ["ONE9007", "ONE9001"],
+      data_visita: "2026-11-02",
+    });
+  });
+
+  it("asks which atendimento when the person has several open ones", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([]));
+    const onCriar = vi.fn();
+    const { getByTestId } = await render({
+      onCriar,
+      inicial: [hit("ONE9001")],
+      atendimentoOpcoes: [
+        { id: "a1", titulo: "Compra apto" },
+        { id: "a2", titulo: "Compra casa" },
+      ],
+    });
+    const rtl = await import("@testing-library/react");
+    rtl.fireEvent.change(getByTestId("roteiro-data-visita"), {
+      target: { value: "2026-11-02" },
+    });
+    expect((getByTestId("roteiro-salvar") as HTMLButtonElement).disabled).toBe(true);
+    rtl.fireEvent.change(getByTestId("roteiro-atendimento"), { target: { value: "a2" } });
+    rtl.fireEvent.click(getByTestId("roteiro-salvar"));
+    expect(onCriar).toHaveBeenCalledWith({
+      titulo: null,
+      imoveis: ["ONE9001"],
+      data_visita: "2026-11-02",
+      atendimento_id: "a2",
+    });
   });
 
   it("cannot save an empty roteiro", async () => {

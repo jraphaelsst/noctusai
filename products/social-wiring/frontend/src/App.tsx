@@ -108,6 +108,7 @@ const ProcessosVenda = lazyWithReload(() => import("@/pages/funil/ProcessosVenda
 const PortalRoi = lazyWithReload(() => import("@/pages/PortalRoi"));
 const ClientesBoard = lazyWithReload(() => import("@/pages/clientes/ClientesBoard"));
 const RevisaoFila = lazyWithReload(() => import("@/pages/clientes/RevisaoFila"));
+const PessoaPage = lazyWithReload(() => import("@/pages/PessoaPage"));
 const Agendamentos = lazyWithReload(() => import("@/pages/scheduling/Agendamentos"));
 const EmailPainel = lazyWithReload(() => import("@/pages/email/Painel"));
 const EmailCampanhasNoc = lazyWithReload(() => import("@/pages/email/Campanhas"));
@@ -491,7 +492,13 @@ export default createProductApp({
     { path: "/edicao-fotos/modelos", component: EdicaoFotosModelos },
     { path: "/edicao-fotos/processamento", component: EdicaoFotosProcessamento },
     { path: "/clientes", component: ClientesBoard },
+    // `/clientes/revisao` MUST stay declared before `/clientes/:id`.
     { path: "/clientes/revisao", component: RevisaoFila },
+    // ONE person page, two section orders (atendimento-partes-imoveis D3).
+    // Detail routes reached from lists — no nav entry (same shape as
+    // `/imoveis/:codigo` next to the `imoveis` entry).
+    { path: "/clientes/:id", component: PessoaPage },
+    { path: "/vendedores/:id", component: PessoaPage },
     { path: "/email-marketing/listas", component: EmailListas },
     { path: "/email-marketing/templates", component: EmailTemplates },
     { path: "/email-marketing/campanhas", component: EmailCampanhas },

@@ -59,6 +59,14 @@ vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
 });
 
 const mockUseTeamMembers = vi.fn();
+// The relationship cards fetch on their own (tested in their own files); stub
+// them so this page's tests stay about the page.
+vi.mock("@/components/imovel/ImovelInteressadosCard", () => ({
+  ImovelInteressadosCard: () => null,
+}));
+vi.mock("@/components/imovel/ImovelSimilaresCard", () => ({
+  ImovelSimilaresCard: () => null,
+}));
 vi.mock("@/hooks/useTeam", () => ({ useTeamMembers: mockUseTeamMembers }));
 
 // The contract reads this page now mounts (`ImovelContratoContainer`,
