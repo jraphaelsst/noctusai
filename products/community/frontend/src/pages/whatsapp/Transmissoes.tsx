@@ -69,6 +69,10 @@ function estadoBadgeVariant(estado: TransmissaoEstado): BadgeVariant {
   }
 }
 
+function reenviavel(t: Transmissao): boolean {
+  return editable(t) || t.estado === "falhou";
+}
+
 function editable(t: Transmissao): boolean {
   return t.estado === "rascunho" || t.estado === "agendada";
 }
@@ -207,7 +211,7 @@ export default function Transmissoes() {
                           Editar
                         </button>
                       )}
-                      {isAdmin && editable(t) && (
+                      {isAdmin && reenviavel(t) && (
                         <button
                           type="button"
                           className="text-sm bg-primary/10 text-primary rounded-md px-3 py-1.5 hover:bg-primary/20 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
@@ -216,7 +220,7 @@ export default function Transmissoes() {
                           title={indisponivel ?? undefined}
                           data-testid={`transmissao-enviar-${t.id}`}
                         >
-                          Enviar
+                          {t.estado === "falhou" ? "Tentar novamente" : "Enviar"}
                         </button>
                       )}
                       {isAdmin && editable(t) && (

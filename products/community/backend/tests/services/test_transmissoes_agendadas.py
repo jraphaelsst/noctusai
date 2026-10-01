@@ -127,3 +127,28 @@ class TestEnviarManualClaim:
         repo = make_job_repository(use_fake=True)
         asyncio.run(svc.enviar(transmissao_id="t1", waha_client=client, jobs_repo=repo))
         assert client.sent == 1 and _estado(mock) == "enviada"
+
+
+def test_retry_falhou_sends_only_failed_destino():
+    G2 = "22222222-2222-2222-2222-222222222222"
+    svc, mock = _svc(NOW, estado="falhou")
+    mock.set_table_data("grupos", [
+        {"id": GRUPO, "org_id": str(ORG), "chat_id": CHAT, "nome": "G"},
+        {"id": G2, "org_id": str(ORG), "chat_id": "5511999990001@g.us", "nome": "G2"},
+    ])
+    mock.set_table_data("transmissao_destinos", [
+        {"id": "d1", "org_id": str(ORG), "transmissao_id": "t1", "grupo_id": GRUPO, "estado": "enviado"},
+        {"id": "d2", "org_id": str(ORG), "transmissao_id": "t1", "grupo_id": G2, "estado": "falhou", "erro": "x"},
+    ])
+    sent_to = []
+
+    class _Rec(FakeWahaClient):
+        async def send_text(self, chat_id, *a, **k):
+            sent_to.append(chat_id)
+            return await super().send_text(chat_id, *a, **k)
+
+    asyncio.run(svc.enviar(
+        transmissao_id="t1", waha_client=_Rec(), jobs_repo=make_job_repository(use_fake=True),
+    ))
+    assert sent_to == ["5511999990001@g.us"]
+    assert _estado(mock) == "enviada"

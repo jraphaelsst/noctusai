@@ -229,16 +229,24 @@ class TransmissoesService:
                 "Selecione ao menos um grupo de destino antes de enviar.", status_code=422,
             )
 
+        retry = False
         if not claimed:
             # Atomic claim — only one concurrent sender (manual or scheduled) wins.
-            for origem in ("rascunho", "agendada"):
+            # "falhou" is claimable so an admin can retry ("Tentar novamente").
+            for origem in ("rascunho", "agendada", "falhou"):
                 if self._claim(transmissao_id, "enviando", origem=origem):
+                    retry = origem == "falhou"
                     break
             else:
                 raise TransmissoesServiceError(
                     JA_ENVIADA_DETAIL, status_code=409, code=JA_ENVIADA_CODE,
                 )
 
+        # A retry sends ONLY to destinos not already confirmed "enviado"; its
+        # dedupe_key carries a fresh suffix so the failed first attempt's key
+        # does not swallow the re-enqueue.
+        sufixo = f":retry:{uuid4().hex}" if retry else ""
+        destinos = [d for d in destinos if d.get("estado") != "enviado"] if retry else destinos
         for destino in destinos:
             await jobs_repo.enqueue(
                 type=_JOB_TYPE,
@@ -247,7 +255,7 @@ class TransmissoesService:
                     "grupo_id": str(destino["grupo_id"]),
                     "corpo": transmissao["corpo"],
                 },
-                dedupe_key=f"transmissao:{transmissao_id}:{destino['grupo_id']}",
+                dedupe_key=f"transmissao:{transmissao_id}:{destino['grupo_id']}{sufixo}",
             )
 
         async def _handle(job: Job) -> None:

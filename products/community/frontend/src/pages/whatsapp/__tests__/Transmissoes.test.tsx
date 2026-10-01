@@ -131,6 +131,16 @@ describe("Transmissoes — enviar requires confirmation", () => {
   });
 });
 
+describe("Transmissoes — retry a falhou row", () => {
+  it("labels Enviar as 'Tentar novamente' for falhou", async () => {
+    mockRoutes({ transmissoes: { items: [{ ...TRANSMISSAO_RASCUNHO_BASE, estado: "falhou" }], total: 1 } });
+    const { default: Transmissoes } = await import("../Transmissoes");
+    renderPage(<Transmissoes />);
+    const btn = await screen.findByTestId("transmissao-enviar-t-1");
+    expect(btn).toHaveTextContent("Tentar novamente");
+  });
+});
+
 describe("Transmissoes — per-destino delivery table", () => {
   it("renders the embedded destinos with estado and erro", async () => {
     mockRoutes({ transmissoes: { items: [TRANSMISSAO_ENVIADA], total: 1 } });
