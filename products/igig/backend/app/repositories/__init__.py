@@ -121,6 +121,20 @@ class ContratoRepository(BaseRepository):
     def ativos(self, org_id: str) -> list[Record]:
         return self._por("status", "ativo", org_id)
 
+    def vigentes_em(self, org_id: str, desde: str) -> list[Record]:
+        """THE rule for "is this contrato billable in a period starting `desde`".
+
+        `ativo`, plus an `encerrado` one whose `data_encerramento` falls on or
+        after `desde` (it was still running in that period). An `encerrado`
+        contrato stops counting from the month AFTER its encerramento on.
+        `desde` is an ISO date (`YYYY-MM-DD`).
+        """
+        encerrados = [
+            c for c in self._por("status", "encerrado", org_id)
+            if c.get("data_encerramento") and str(c["data_encerramento"])[:10] >= desde[:10]
+        ]
+        return self._por("status", "ativo", org_id) + encerrados
+
     def registrar_assinatura(self, org_id: str, contrato_id: str) -> Record:
         """Módulo 1: the signature webhook lands here."""
         return self.atualizar(

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 
 const { api } = vi.hoisted(() => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn(), upload: vi.fn() },
@@ -46,12 +47,14 @@ function renderCard(onClose = vi.fn(), onAbrirOrcamento = vi.fn(), onNegocioCria
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={qc}>
+      <MemoryRouter>
       <ClienteCardDialog
         clienteId="c1"
         onClose={onClose}
         onAbrirOrcamento={onAbrirOrcamento}
         onNegocioCriado={onNegocioCriado}
       />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
   return { onClose, onAbrirOrcamento, onNegocioCriado };

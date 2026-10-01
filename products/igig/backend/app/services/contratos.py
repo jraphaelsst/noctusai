@@ -19,6 +19,8 @@ Refusals (:class:`RegraViolada`):
   409 `contrato_existente`    this orçamento already has a live contrato
   409 `contrato_digital`      marcar-assinado on a digital contrato
   409 `contrato_ja_assinado`  marcar-assinado twice
+  409 `contrato_encerrado`    encerrar / editar an already-encerrado contrato
+  422 `data_encerramento_invalida`  encerramento in the future / before the start
 """
 from __future__ import annotations
 
@@ -39,7 +41,7 @@ from app.services.regras import RegraViolada
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["gerar", "marcar_assinado", "listar", "chave_documento", "URL_TTL_SEGUNDOS"]
+__all__ = ["gerar", "marcar_assinado", "encerrar", "editar", "listar", "chave_documento", "URL_TTL_SEGUNDOS"]
 
 #: Signed download links are short-lived: the bucket is private and a link in a
 #: chat log should not stay a door into a client's contract for hours.
@@ -214,3 +216,58 @@ def listar(db: Any, org_id: str, *, cliente_id: str | None = None) -> list[dict]
                         eq_filters={"cliente_id": cliente_id} if cliente_id else None)
     linhas.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
     return linhas
+
+
+#: Commercial fields a contrato carries that an admin may correct in place.
+CAMPOS_EDITAVEIS = ("numero", "valor_mensal", "posts_por_mes", "valor_excedente",
+                    "dia_vencimento", "data_inicio", "data_fim")
+
+
+def _carregar_nao_encerrado(db: Any, org_id: str, contrato_id: str) -> dict:
+    contrato = qc.carregar(db, "contrato", org_id, contrato_id, rotulo="contrato")
+    if contrato.get("status") == "encerrado":
+        raise RegraViolada(
+            409, "contrato_encerrado",
+            "Este contrato está encerrado e não pode mais ser alterado.",
+        )
+    return contrato
+
+
+def encerrar(
+    db: Any, org_id: str, contrato_id: str, *, data_encerramento: date, motivo: str, hoje: date,
+) -> dict:
+    """End a contrato (never deleted). Billing stops counting it after the
+    month of `data_encerramento` (`ContratoRepository.vigentes_em`)."""
+    contrato = _carregar_nao_encerrado(db, org_id, contrato_id)
+    if data_encerramento > hoje:
+        raise RegraViolada(422, "data_encerramento_invalida",
+                           "A data de encerramento não pode ser no futuro.")
+    inicio = str(contrato.get("data_inicio") or "")[:10]
+    if inicio and data_encerramento.isoformat() < inicio:
+        raise RegraViolada(422, "data_encerramento_invalida",
+                           "A data de encerramento não pode ser anterior ao início do contrato.")
+    linhas = db.table("contrato").update({
+        "status": "encerrado",
+        "data_encerramento": data_encerramento.isoformat(),
+        "motivo_encerramento": motivo,
+        "updated_at": _agora(),
+    }).eq("id", contrato_id).eq("org_id", org_id).execute().data or []
+    if not linhas:
+        raise RuntimeError("update de contrato não retornou a linha")
+    logger.info("contrato encerrado org=%s contrato=%s", org_id, contrato_id)
+    return {**contrato, **linhas[0]}
+
+
+def editar(db: Any, org_id: str, contrato_id: str, campos: dict[str, Any]) -> dict:
+    """Patch the commercial fields of a not-yet-encerrado contrato."""
+    contrato = _carregar_nao_encerrado(db, org_id, contrato_id)
+    updates = {k: v for k, v in campos.items() if k in CAMPOS_EDITAVEIS}
+    if not updates:
+        return contrato
+    updates["updated_at"] = _agora()
+    linhas = db.table("contrato").update(updates).eq("id", contrato_id).eq(
+        "org_id", org_id
+    ).execute().data or []
+    if not linhas:
+        raise RuntimeError("update de contrato não retornou a linha")
+    return {**contrato, **linhas[0]}

@@ -38,6 +38,8 @@ export interface Contrato {
   dia_vencimento: number | null;
   data_inicio: string | null;
   data_fim: string | null;
+  data_encerramento: string | null;
+  motivo_encerramento: string | null;
   status: ContratoStatus;
   modalidade_assinatura: ModalidadeAssinatura;
   assinado_em: string | null;
@@ -47,6 +49,11 @@ export interface Contrato {
   link_assinatura: string | null;
   created_at: string;
 }
+
+/** The commercial fields `PATCH /api/contratos/{id}` accepts. */
+export type ContratoEdicao = Partial<
+  Pick<Contrato, "numero" | "valor_mensal" | "posts_por_mes" | "valor_excedente" | "dia_vencimento" | "data_inicio" | "data_fim">
+>;
 
 export const CONTRATOS_QUERY_KEY = ["igig", "contratos"] as const;
 
@@ -89,5 +96,17 @@ export function useContratoMutations() {
         qc.invalidateQueries({ queryKey: ["igig", "clientes"] }),
       ]),
   });
-  return { urlPdf, marcarAssinado };
+  const invalidar = () => qc.invalidateQueries({ queryKey: CONTRATOS_QUERY_KEY });
+  const editar = useMutation({
+    mutationFn: ({ id, ...campos }: { id: string } & ContratoEdicao) =>
+      api.patch(`/api/contratos/${encodeURIComponent(id)}`, campos).then(unwrapData<Contrato>),
+    onSuccess: invalidar,
+  });
+  /** Contratos are never deleted — they are encerrados. */
+  const encerrar = useMutation({
+    mutationFn: ({ id, ...corpo }: { id: string; motivo: string; data_encerramento?: string }) =>
+      api.post(`/api/contratos/${encodeURIComponent(id)}/encerrar`, corpo).then(unwrapData<Contrato>),
+    onSuccess: invalidar,
+  });
+  return { urlPdf, marcarAssinado, editar, encerrar };
 }

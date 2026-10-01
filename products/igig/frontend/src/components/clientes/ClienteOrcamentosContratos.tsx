@@ -9,17 +9,27 @@
  * Contratos: modalidade + status per contrato, the generated PDF (signed,
  * short-TTL URL fetched on click), and — física only, not yet ativo —
  * "Marcar como assinado" with an optional scan of the signed copy.
+ * Org admins can EDIT a contrato's commercial fields or ENCERRAR it (never
+ * deleted — an encerrado contrato stays listed, muted, with its date).
  */
 import { useState } from "react";
-import { Badge, Button, Skeleton } from "@noctusai/lib/design-system";
-import { AlertTriangle, ExternalLink, FileSignature, FileText, PenLine, RefreshCw, Upload } from "lucide-react";
+import { Badge, Button, Field, Input, Skeleton, Textarea } from "@noctusai/lib/design-system";
+import { AlertTriangle, ExternalLink, FileSignature, FileText, Pencil, PenLine, RefreshCw, Upload } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { SheetDialog } from "@/components/common/SheetDialog";
-import { CONTRATO_STATUS_LABEL, useContratoMutations, useContratos, type Contrato } from "@/hooks/useContratos";
+import {
+  CONTRATO_STATUS_LABEL,
+  useContratoMutations,
+  useContratos,
+  type Contrato,
+  type ContratoEdicao,
+} from "@/hooks/useContratos";
 import { useOrcamentos } from "@/hooks/useOrcamentos";
 import { describeError } from "@/lib/errors";
 import { brl, dataBR } from "@/lib/format";
+import { useIsOrgAdmin } from "@/lib/useIsOrgAdmin";
 import { ORCAMENTO_STATUS_LABEL } from "@/types/crm";
 
 export function ClienteOrcamentosContratos({
@@ -52,7 +62,10 @@ function OrcamentosDoCliente({ clienteId, onAbrir }: { clienteId: string; onAbri
         </p>
       ) : orcamentos.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-          Nenhum orçamento ligado a este cliente. Orçamentos nascem de um negócio no Comercial.
+          Nenhum orçamento ligado a este cliente. Orçamentos nascem de um negócio no Comercial.{" "}
+          <Link to="/comercial" className="font-medium text-primary underline-offset-2 hover:underline">
+            Ir para o Comercial
+          </Link>
         </p>
       ) : (
         <ul className="space-y-2">
@@ -93,6 +106,9 @@ function ContratosDoCliente({
   const { contratos, showSkeleton, isError, error } = useContratos(clienteId);
   const { urlPdf } = useContratoMutations();
   const [assinando, setAssinando] = useState<Contrato | null>(null);
+  const [editando, setEditando] = useState<Contrato | null>(null);
+  const [encerrando, setEncerrando] = useState<Contrato | null>(null);
+  const isAdmin = useIsOrgAdmin();
 
   function abrir(c: Contrato, qual: "url" | "url_assinado") {
     urlPdf.mutate(c.id, {
@@ -118,7 +134,10 @@ function ContratosDoCliente({
         </p>
       ) : contratos.length === 0 ? (
         <p className="rounded-lg border border-dashed border-border p-4 text-center text-sm text-muted-foreground">
-          Nenhum contrato. Gere um a partir de um orçamento aceito.
+          Nenhum contrato. Gere um a partir de um orçamento aceito.{" "}
+          <Link to="/orcamentos" className="font-medium text-primary underline-offset-2 hover:underline">
+            Ver orçamentos
+          </Link>
         </p>
       ) : (
         <ul className="space-y-2">
@@ -138,7 +157,11 @@ function ContratosDoCliente({
                 {c.posts_por_mes != null ? ` · ${c.posts_por_mes} posts/mês` : ""}
                 {c.dia_vencimento ? ` · vence dia ${c.dia_vencimento}` : ""}
                 {c.assinado_em ? ` · assinado em ${dataBR(c.assinado_em)}` : ""}
+                {c.status === "encerrado" && c.data_encerramento ? ` · encerrado em ${dataBR(c.data_encerramento)}` : ""}
               </p>
+              {c.status === "encerrado" && c.motivo_encerramento ? (
+                <p className="text-xs text-muted-foreground">Motivo: {c.motivo_encerramento}</p>
+              ) : null}
               {c.modalidade_assinatura === "digital" && c.status === "aguardando_assinatura" && c.link_assinatura ? (
                 <p className="break-all text-xs text-muted-foreground">
                   Link de assinatura (simulação — assinatura digital ainda não integrada): {c.link_assinatura}
@@ -183,12 +206,24 @@ function ContratosDoCliente({
                     <RefreshCw className="mr-1 h-3 w-3" /> Reenviar / gerar novamente
                   </Button>
                 ) : null}
+                {isAdmin && c.status !== "encerrado" ? (
+                  <>
+                    <Button size="sm" variant="outline" className="max-sm:h-10" onClick={() => setEditando(c)} data-testid="contrato-editar">
+                      <Pencil className="mr-1 h-3 w-3" /> Editar
+                    </Button>
+                    <Button size="sm" variant="destructive" className="max-sm:h-10" onClick={() => setEncerrando(c)} data-testid="contrato-encerrar">
+                      Encerrar contrato
+                    </Button>
+                  </>
+                ) : null}
               </div>
             </li>
           ))}
         </ul>
       )}
       <MarcarAssinadoSheet contrato={assinando} onClose={() => setAssinando(null)} />
+      <EditarContratoSheet contrato={editando} onClose={() => setEditando(null)} />
+      <EncerrarContratoSheet contrato={encerrando} onClose={() => setEncerrando(null)} />
     </section>
   );
 }
@@ -259,5 +294,140 @@ function MarcarAssinadoSheet({ contrato, onClose }: { contrato: Contrato | null;
         ) : null}
       </div>
     </SheetDialog>
+  );
+}
+
+const numOuNull = (v: string): number | null => (v.trim() === "" ? null : Number(v));
+
+/** Admin: correct the commercial fields of a not-yet-encerrado contrato. */
+function EditarContratoSheet({ contrato, onClose }: { contrato: Contrato | null; onClose: () => void }) {
+  return (
+    <SheetDialog
+      open={!!contrato}
+      onClose={onClose}
+      title="Editar contrato"
+      description="Ajuste os dados comerciais. O contrato continua o mesmo."
+      widthClassName="sm:max-w-md"
+      testId="editar-contrato-sheet"
+    >
+      {contrato ? <EditarContratoForm key={contrato.id} contrato={contrato} onClose={onClose} /> : null}
+    </SheetDialog>
+  );
+}
+
+function EditarContratoForm({ contrato, onClose }: { contrato: Contrato; onClose: () => void }) {
+  const { editar } = useContratoMutations();
+  const [f, setF] = useState({
+    numero: contrato.numero ?? "",
+    valor_mensal: contrato.valor_mensal?.toString() ?? "",
+    posts_por_mes: contrato.posts_por_mes?.toString() ?? "",
+    valor_excedente: contrato.valor_excedente?.toString() ?? "",
+    dia_vencimento: contrato.dia_vencimento?.toString() ?? "",
+  });
+  const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
+
+  function salvar() {
+    const campos: ContratoEdicao = {
+      numero: f.numero.trim() || null,
+      valor_mensal: numOuNull(f.valor_mensal),
+      posts_por_mes: numOuNull(f.posts_por_mes),
+      valor_excedente: numOuNull(f.valor_excedente),
+      dia_vencimento: numOuNull(f.dia_vencimento),
+    };
+    editar.mutate(
+      { id: contrato.id, ...campos },
+      {
+        onSuccess: () => {
+          toast.success("Contrato atualizado.");
+          onClose();
+        },
+      },
+    );
+  }
+
+  return (
+    <div className="space-y-3 text-sm">
+      <Field label="Número"><Input value={f.numero} onChange={set("numero")} /></Field>
+      <Field label="Valor mensal (R$)"><Input type="number" min={0} step="0.01" value={f.valor_mensal} onChange={set("valor_mensal")} /></Field>
+      <Field label="Posts por mês"><Input type="number" min={0} value={f.posts_por_mes} onChange={set("posts_por_mes")} /></Field>
+      <Field label="Valor do excedente (R$)"><Input type="number" min={0} step="0.01" value={f.valor_excedente} onChange={set("valor_excedente")} /></Field>
+      <Field label="Dia de vencimento"><Input type="number" min={1} max={31} value={f.dia_vencimento} onChange={set("dia_vencimento")} /></Field>
+      {editar.isError ? (
+        <p role="alert" className="text-destructive">
+          {describeError(editar.error, "Não foi possível salvar o contrato.")}
+        </p>
+      ) : null}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="outline" className="max-sm:h-10 max-sm:flex-1" onClick={onClose} disabled={editar.isPending}>
+          Cancelar
+        </Button>
+        <Button className="max-sm:h-10 max-sm:flex-1" onClick={salvar} disabled={editar.isPending} data-testid="contrato-salvar">
+          {editar.isPending ? "Salvando…" : "Salvar"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Admin, destructive: contratos are never deleted — encerrar asks the motivo + date. */
+function EncerrarContratoSheet({ contrato, onClose }: { contrato: Contrato | null; onClose: () => void }) {
+  return (
+    <SheetDialog
+      open={!!contrato}
+      onClose={onClose}
+      title="Encerrar contrato"
+      description="O contrato deixa de valer a partir da data informada e não pode mais ser alterado. Ele continua listado."
+      widthClassName="sm:max-w-md"
+      testId="encerrar-contrato-sheet"
+    >
+      {contrato ? <EncerrarContratoForm key={contrato.id} contrato={contrato} onClose={onClose} /> : null}
+    </SheetDialog>
+  );
+}
+
+function EncerrarContratoForm({ contrato, onClose }: { contrato: Contrato; onClose: () => void }) {
+  const { encerrar } = useContratoMutations();
+  const hoje = new Date().toLocaleDateString("sv-SE", { timeZone: "America/Sao_Paulo" });
+  const [motivo, setMotivo] = useState("");
+  const [data, setData] = useState(hoje);
+
+  return (
+    <div className="space-y-3 text-sm">
+      <Field label="Motivo do encerramento" required>
+        <Textarea rows={3} value={motivo} onChange={(e) => setMotivo(e.target.value)} />
+      </Field>
+      <Field label="Data de encerramento">
+        <Input type="date" value={data} max={hoje} onChange={(e) => setData(e.target.value)} />
+      </Field>
+      {encerrar.isError ? (
+        <p role="alert" className="text-destructive">
+          {describeError(encerrar.error, "Não foi possível encerrar o contrato.")}
+        </p>
+      ) : null}
+      <div className="flex justify-end gap-2 pt-1">
+        <Button variant="outline" className="max-sm:h-10 max-sm:flex-1" onClick={onClose} disabled={encerrar.isPending}>
+          Cancelar
+        </Button>
+        <Button
+          variant="destructive"
+          className="max-sm:h-10 max-sm:flex-1"
+          disabled={encerrar.isPending || !motivo.trim()}
+          data-testid="contrato-confirmar-encerrar"
+          onClick={() =>
+            encerrar.mutate(
+              { id: contrato.id, motivo: motivo.trim(), data_encerramento: data || undefined },
+              {
+                onSuccess: () => {
+                  toast.success("Contrato encerrado.");
+                  onClose();
+                },
+              },
+            )
+          }
+        >
+          {encerrar.isPending ? "Encerrando…" : "Encerrar contrato"}
+        </Button>
+      </div>
+    </div>
   );
 }

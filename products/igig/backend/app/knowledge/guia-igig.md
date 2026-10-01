@@ -440,7 +440,7 @@ Todas as tabelas têm `id` (UUID) e `org_id`; em geral `created_at`/`updated_at`
 - **marca** — `cliente_id`, `nome`, `logo_url`/`logo_key`, `paleta`, `tom_de_voz`, `termos_proibidos`, `nivel_formalidade`, `linhas_editoriais`, `personas`.
 - **acesso** — `cliente_id`, `rotulo`, `plataforma`, `url`, `usuario`, `senha_cifrada`, `observacoes`.
 - **cofre_revelacoes** (migração 028) — `acesso_id`, `revelado_por`, `revelado_em`: registro permanente (só inclusão) de cada revelação de senha do Cofre.
-- **contrato** — `cliente_id`, `orcamento_id`, `numero`, `valor_mensal`, `posts_por_mes`, `valor_excedente`, `dia_vencimento` (1–31), `data_inicio`, `data_fim`, `status` (`rascunho`/`aguardando_assinatura`/`ativo`/`encerrado`), `assinado_em`, `modalidade_assinatura` (`digital`/`fisica`), `assinado_manual_em`, `documento_key`, `documento_assinado_key`, `provedor_assinatura`, `assinatura_external_id`, `link_assinatura`.
+- **contrato** — `cliente_id`, `orcamento_id`, `numero`, `valor_mensal`, `posts_por_mes`, `valor_excedente`, `dia_vencimento` (1–31), `data_inicio`, `data_fim`, `data_encerramento`, `motivo_encerramento`, `status` (`rascunho`/`aguardando_assinatura`/`ativo`/`encerrado`), `assinado_em`, `modalidade_assinatura` (`digital`/`fisica`), `assinado_manual_em`, `documento_key`, `documento_assinado_key`, `provedor_assinatura`, `assinatura_external_id`, `link_assinatura`.
 
 ### 7.4 Produção
 - **pauta** — `cliente_id`, `marca_id`, `titulo`, `formato`, `funil` (`topo`/`meio`/`fundo`), `linha_editorial`, `copy_texto`, `direcao_video`, `canal`, `data_publicacao`, `publicado_em` (gravado quando uma publicação sai), `orcamento_item_id`, `gerada_automaticamente`.

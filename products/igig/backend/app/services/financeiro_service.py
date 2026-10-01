@@ -281,7 +281,7 @@ class FinanceiroService:
         inicio, fim = limites_da_competencia(competencia)
         clientes = {str(c["id"]): c for c in self._repos.cliente.listar(org_id)}
 
-        contratos_ativos = self._repos.contrato.ativos(org_id)
+        contratos_ativos = self._repos.contrato.vigentes_em(org_id, inicio)
         pacote_por_cliente: dict[str, list[dict]] = {}
         for c in contratos_ativos:
             if int(c.get("posts_por_mes") or 0):
@@ -445,7 +445,9 @@ class FinanceiroService:
 
         criadas: list[dict] = []
         existentes: list[dict] = []
-        for contrato in self._repos.contrato.ativos(org_id):
+        for contrato in self._repos.contrato.vigentes_em(
+            org_id, limites_da_competencia(competencia)[0],
+        ):
             contrato_id = str(contrato["id"])
             excedente = excedentes_por_contrato.get(contrato_id)
 
