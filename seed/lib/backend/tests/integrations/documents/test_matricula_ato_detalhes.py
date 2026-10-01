@@ -701,3 +701,54 @@ def test_no_instrument_type_means_no_phrase():
     assert frase_titulo_aquisitivo(Instrumento(data=date(2020, 1, 1)), kind="R", numero=1) is None
     with pytest.raises(ValueError):
         frase_titulo_aquisitivo(Instrumento(tipo="Escritura"), kind="abertura", numero=0)
+
+
+# ─── 2026-10-01 live-prod P4 blind acts (synthetic wordings) ──────────────
+# Neutral averbações/registros that read `natureza=None` and blocked
+# `derivar_situacao_onus`; each is `outro` (no ônus created or released).
+BLIND_P4_WORDINGS = {
+    "razao_social": (
+        "AV-9/9.999 - Em 10/10/2015. Pelo instrumento particular adiante "
+        "mencionado, procede-se a presente para constar que o credor BANCO "
+        "EXEMPLO S/A alterou a sua razão social para BANCO MODELO S/A.\n"
+    ),
+    "cisao": (
+        "AV-8/9.999 - Em 10/10/2015. Pelo instrumento adiante mencionado "
+        "procede-se a presente para constar a sucessão por cisão do credor "
+        "BANCO EXEMPLO S/A, CNPJ 00.000.000/0001-00, para o BANCO MODELO S/A.\n"
+    ),
+    "custodiante": (
+        "AV-4/9.999 - Em 10/10/2015. Pelo termo de transferência de "
+        "instituição custodiante procede-se a presente para constar que o "
+        "BANCO MODELO S/A substituiu o BANCO EXEMPLO S/A como instituição "
+        "custodiante da cédula de crédito imobiliário.\n"
+    ),
+    "ratificacao": (
+        "AV-2/9.999 - Em 10/01/1990. Pela escritura pública lavrada em "
+        "cartório, procede-se a presente para constar que foi ratificado o "
+        "instrumento particular, passando o mesmo a ter eficácia de escritura "
+        "pública.\n"
+    ),
+    "denominar_se": (
+        "AV-5/9.999 - Em 10/06/1990. Procede-se a presente ex officio, para "
+        "constar que a rua mencionada na descrição retro passou a denominar-se "
+        "Rua Exemplo, conforme prova o talão de imposto.\n"
+    ),
+    "cadastrado": (
+        "AV-6/9.999 - Em 10/06/1990. Pela escritura adiante registrada, "
+        "procede-se a presente para constar que o imóvel desta matrícula "
+        "encontra-se cadastrado junto a prefeitura sob nº 1.2.3.\n"
+    ),
+    "atribuido": (
+        "R-3/9.999 - Em 10/03/1990. TÍTULO: Escritura. Pela escritura pública "
+        "lavrada aos 10 de março, o imóvel objeto da presente matrícula foi "
+        "atribuído à co-proprietária FULANA EXEMPLO.\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("texto", list(BLIND_P4_WORDINGS.values()), ids=list(BLIND_P4_WORDINGS))
+def test_p4_blind_act_wordings_read_as_outro(texto):
+    # `natureza` is what `derivar_situacao_onus` reads; the confidence may be
+    # `baixa` when the title sits deep in a long sentence - still typed.
+    assert extrair_detalhes_ato(texto).natureza == "outro"

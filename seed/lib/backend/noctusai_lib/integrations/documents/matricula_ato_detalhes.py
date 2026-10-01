@@ -338,6 +338,19 @@ _NATUREZAS: tuple[tuple[str, re.Pattern[str]], ...] = (
             # closer slot in this vocabulary — see migration 115's CHECK
             # before adding one).
             r"|CADASTRO|ATRIBUICAO|DIGITO|RESTRICOES"
+            # 10 blind acts on 3 live-prod P4 matrículas (2026-10-01), each a
+            # NEUTRAL averbação/registro for ônus purposes (no encumbrance
+            # created or released — the existing one, if any, stays active):
+            # a creditor's `ALTERAÇÃO DA RAZÃO SOCIAL`, its succession by
+            # `CISÃO`/incorporação/fusão, a change of `INSTITUIÇÃO
+            # CUSTODIANTE` of a CCI, a `RATIFICAÇÃO` of a private instrument,
+            # the street/lot `PASSOU A DENOMINAR-SE` and the property being
+            # `CADASTRADO` with the prefeitura, and an `ATRIBUÍDO` registro
+            # (co-owner allotment — an ownership act, not an ônus).
+            r"|RAZAO\s+SOCIAL|DENOMINACAO\s+SOCIAL|ALTERACAO\s+D[AEO]S?\s+(?:NUMERACAO|ENDERECO)"
+            r"|SUCESSAO\s+POR\s+(?:CISAO|INCORPORACAO|FUSAO)|CISAO\s+(?:PARCIAL|TOTAL)"
+            r"|INSTITUICAO\s+CUSTODIANTE|RATIFICAD[OA]|RATIFICACAO"
+            r"|PASSOU\s+A\s+DENOMINAR-?\s*SE|CADASTRAD[OA]|ATRIBUID[OA]"
         ),
     ),
 )
