@@ -54,6 +54,52 @@ class TestFindCartorio:
         assert valor == "2º OFICIAL DE REGISTRO DE IMÓVEIS DE CAMPINAS"
         assert conf == "alta"
 
+    def test_locality_on_a_later_line_after_a_blank(self):
+        """Live prod 2026-10-01: the generic SERVENTIA heading, a blank line,
+        then the city with the national registry code (CNS) glued on."""
+        texto = (
+            "LIVRO Nº 2 - REGISTRO GERAL\n"
+            "SERVENTIA DO REGISTRO DE IMÓVEIS\n"
+            "\n"
+            "de Itapecerica - CNS: 10000-1\n"
+            "Itapecerica, 3 de maio de 2015\n"
+            "IMÓVEL: Casa 4.\n"
+        )
+        valor, conf, _ = find_cartorio(texto)
+        assert valor == "SERVENTIA DO REGISTRO DE IMÓVEIS de Itapecerica"
+        assert conf == "alta"
+
+    def test_two_column_scan_reads_only_the_registry_cell(self):
+        texto = (
+            "LIVRO Nº 2 - REGISTRO GERAL                SERVENTIA DO REGISTRO DE IMÓVEIS\n"
+            "\n"
+            "matrícula          ficha                    de Itapecerica - CNS: 10000-1\n"
+            "IMÓVEL: Apartamento 9.\n"
+        )
+        valor, conf, _ = find_cartorio(texto)
+        assert valor == "SERVENTIA DO REGISTRO DE IMÓVEIS de Itapecerica"
+        assert conf == "alta"
+
+    def test_locality_with_the_abertura_date_glued_on(self):
+        texto = (
+            "SERVENTIA DO REGISTRO DE IMÓVEIS\n"
+            "\n"
+            "de Itapecerica,  24     de     abril     de 2007\n"
+            "IMÓVEL: Terreno.\n"
+        )
+        valor, _, _ = find_cartorio(texto)
+        assert valor == "SERVENTIA DO REGISTRO DE IMÓVEIS de Itapecerica"
+
+    def test_a_named_registry_never_borrows_a_later_line(self):
+        texto = (
+            "1º Oficial de Registro de Imóveis de Cotia\n"
+            "\n"
+            "de Itapecerica - CNS: 10000-1\n"
+            "IMÓVEL: Casa.\n"
+        )
+        valor, _, _ = find_cartorio(texto)
+        assert valor == "1º Oficial de Registro de Imóveis de Cotia"
+
     def test_body_mention_of_another_registry_is_never_read(self):
         """REGISTRO ANTERIOR names the PREVIOUS registry — a different cartório."""
         texto = (

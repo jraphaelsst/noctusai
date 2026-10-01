@@ -70,6 +70,25 @@ _FIM_CABECALHO = re.compile(
 #: PAULO/SP", "DE COTIA - SP").
 _CONTINUACAO = re.compile(r"^(?:DA|DE|DO|DOS|DAS)\s+[A-Z]")
 
+#: A registry cell that names NO locality — the generic "SERVENTIA DO
+#: REGISTRO DE IMÓVEIS" heading whose city sits on a LATER line (live prod,
+#: 2026-10-01: 6/6 Cotia certidões print it, then a blank line, then
+#: "de Cotia - CNS: 11991-7" — sometimes in the 3rd cell of a two-column
+#: scan, sometimes with the abertura date glued on).
+_SEM_LOCALIDADE = re.compile(r"\bREGISTRO\s+(?:DE\s+IMOVEIS|IMOBILIARIO)$")
+
+#: How many non-blank heading lines below a locality-less registry cell may
+#: still complete it.
+_JANELA_LOCALIDADE = 3
+
+#: Two-column scans join cells with runs of spaces; a cell is a column.
+_CELULA = re.compile(r"\s{3,}|\t+")
+
+#: Tails glued onto a locality continuation that are not the cartório's
+#: name: the national registry code (CNS), and anything after a comma (the
+#: abertura's own date — a city name never carries a comma).
+_CAUDA_LOCALIDADE = re.compile(r"\s*(?:,.*|[-–—]\s*CNS\b.*)$", re.IGNORECASE)
+
 #: A line that ENDS a split heading from above ("1º OFICIAL DE").
 _PREFIXO = re.compile(
     r"^(?:\d{1,2}\s*[OA°]?\s*)?(?:OFICIAL|CARTORIO|SERVICO|OFICIO)\b.*\b(?:DE|DO)$"
@@ -102,6 +121,29 @@ def _linhas_do_cabecalho(text: str) -> list[str]:
     return linhas
 
 
+def _norm(texto: str) -> str:
+    return _WS.sub(" ", strip_accents_upper(_MARCAS.sub("", texto))).strip()
+
+
+def _localidade_abaixo(linhas: list[str], i: int) -> Optional[str]:
+    """The locality cell ("de Cotia") completing a locality-less registry
+    heading at line `i`: the first cell starting `DE/DA/DO…` within the next
+    `_JANELA_LOCALIDADE` non-blank heading lines, its CNS/date tail cut."""
+    vistos = 0
+    for bruta in linhas[i + 1:]:
+        if not bruta.strip():
+            continue
+        vistos += 1
+        if vistos > _JANELA_LOCALIDADE:
+            return None
+        for celula in _CELULA.split(bruta.strip()):
+            n = _norm(celula)
+            if _CONTINUACAO.match(n) and not _MOBILIA.search(n) and not _CARTORIO.search(n):
+                cortada = _CAUDA_LOCALIDADE.sub("", celula).strip()
+                return cortada or None
+    return None
+
+
 def find_cartorio(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """This certidão's own cartório de registro de imóveis.
 
@@ -120,13 +162,25 @@ def find_cartorio(text: str) -> tuple[Optional[str], str, Optional[str]]:
     for i, norm in enumerate(normais):
         if not _CARTORIO.search(norm) or _MOBILIA.search(norm):
             continue
-        partes = [linhas[i]]
+        # A two-column scan puts the registry in one CELL of a wider line
+        # ("LIVRO Nº 2 - REGISTRO GERAL     SERVENTIA DO REGISTRO DE IMÓVEIS")
+        # — the neighbouring cell is another heading item, not its name.
+        celulas = [c for c in _CELULA.split(linhas[i].strip()) if c.strip()]
+        propria = next(
+            (c for c in celulas if _CARTORIO.search(_norm(c)) and not _MOBILIA.search(_norm(c))),
+            linhas[i],
+        ) if len(celulas) > 1 else linhas[i]
+        partes = [propria]
         if i > 0 and _PREFIXO.match(normais[i - 1]) and not _CARTORIO.search(normais[i - 1]):
             partes.insert(0, linhas[i - 1])
         if i + 1 < len(normais) and _CONTINUACAO.match(normais[i + 1]) and not _MOBILIA.search(
             normais[i + 1]
         ):
             partes.append(linhas[i + 1])
+        elif _SEM_LOCALIDADE.search(_norm(_limpar(propria))):
+            localidade = _localidade_abaixo(linhas, i)
+            if localidade:
+                partes.append(localidade)
         valor = _limpar(" ".join(partes))
         if valor:
             achados.append(valor)
