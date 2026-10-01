@@ -26,6 +26,7 @@ import {
 import { useLeadSources } from "@/hooks/useLeadsSources";
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import type { Lead, LeadCreateInput } from "@/pages/leads/types";
+import { ImovelCodigoPicker } from "@/components/card/ImovelCodigoPicker";
 
 export interface LeadFormValues extends LeadCreateInput {
   /** Only meaningful when editing (`lead` set) — omitted (`undefined`) on
@@ -130,8 +131,16 @@ export function LeadFormDialog({
     }
   }, [open, lead]);
 
+  // 🔴 CREATE REQUIRES AN IMÓVEL (D2, contract §3.6): a manual lead without
+  // one is the exact gap `imovel_pendente` exists to flag, so it is refused
+  // at the source. EDIT keeps the free field — `PATCH /api/leads` changing the
+  // código is out of scope server-side (junction is not rewritten).
+  const criando = !lead;
+  const faltaImovel = criando && !(form.codigo_imovel ?? "").trim();
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (faltaImovel) return;
     onSubmit(cleanFormValues(form));
   }
 
@@ -294,35 +303,62 @@ export function LeadFormDialog({
             </div>
           </div>
 
+          {criando ? (
+            <div className="space-y-1.5">
+              <Label htmlFor="lead-codigo">
+                Imóvel <span className="text-destructive">*</span>
+              </Label>
+              {/* Registry-backed picker: the código it returns is canonical and
+                  exists in `imovel_registry`, which is what the backend's
+                  `IMOVEL_DESCONHECIDO` check (§3.6) demands. ONE value feeds
+                  both columns, exactly as the free field below does. */}
+              <ImovelCodigoPicker
+                id="lead-codigo"
+                value={form.codigo_imovel || null}
+                onChange={(codigo) =>
+                  setForm({ ...form, codigo_raw: codigo ?? "", codigo_imovel: codigo ?? "" })
+                }
+                disabled={isPending}
+                data-testid="lead-form-codigo"
+              />
+              {faltaImovel && (
+                <p className="text-xs text-muted-foreground" data-testid="lead-form-imovel-obrigatorio">
+                  Informe o imóvel do lead.
+                </p>
+              )}
+            </div>
+          ) : (
           <div className="space-y-1.5">
-            <Label htmlFor="lead-codigo">Código do imóvel</Label>
-            <Input
-              id="lead-codigo"
-              value={form.codigo_raw ?? ""}
-              // 🔴 ONE FIELD, TWO COLUMNS — and it used to write only the
-              // first. `codigo_raw` keeps the spelling; `codigo_imovel` is
-              // what migration 062's trigger canonicalises into
-              // `codigo_imovel_norm`, which is what every imóvel-side join
-              // and every registry FK matches on. Sending only `codigo_raw`
-              // meant a manually-entered lead's código was recorded and then
-              // joined to nothing — invisible to the imóvel's lead count, to
-              // the ROI view, and to the card's origin affordance.
-              //
-              // No `.toUpperCase()` here: canonicalisation is the trigger's
-              // job (server-side, for EVERY write path including the portal
-              // webhooks), and doing it in the browser too would be a second
-              // definition of the same rule to keep in step.
-              onChange={(e) =>
-                setForm({
-                  ...form,
-                  codigo_raw: e.target.value,
-                  codigo_imovel: e.target.value,
-                })
-              }
-              disabled={isPending}
-              data-testid="lead-form-codigo"
-            />
-          </div>
+              <Label htmlFor="lead-codigo">Código do imóvel</Label>
+              <Input
+                id="lead-codigo"
+                value={form.codigo_raw ?? ""}
+                // 🔴 ONE FIELD, TWO COLUMNS — and it used to write only the
+                // first. `codigo_raw` keeps the spelling; `codigo_imovel` is
+                // what migration 062's trigger canonicalises into
+                // `codigo_imovel_norm`, which is what every imóvel-side join
+                // and every registry FK matches on. Sending only `codigo_raw`
+                // meant a manually-entered lead's código was recorded and then
+                // joined to nothing — invisible to the imóvel's lead count, to
+                // the ROI view, and to the card's origin affordance.
+                //
+                // No `.toUpperCase()` here: canonicalisation is the trigger's
+                // job (server-side, for EVERY write path including the portal
+                // webhooks), and doing it in the browser too would be a second
+                // definition of the same rule to keep in step.
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    codigo_raw: e.target.value,
+                    codigo_imovel: e.target.value,
+                  })
+                }
+                disabled={isPending}
+                data-testid="lead-form-codigo"
+              />
+            </div>
+  
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="lead-observacoes">Observações</Label>
@@ -376,7 +412,11 @@ export function LeadFormDialog({
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isPending} data-testid="lead-form-submit">
+            <Button
+              type="submit"
+              disabled={isPending || faltaImovel}
+              data-testid="lead-form-submit"
+            >
               {isPending ? "Salvando..." : "Salvar"}
             </Button>
           </DialogFooter>

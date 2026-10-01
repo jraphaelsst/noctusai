@@ -11,6 +11,8 @@
  * second hand-written copy of them.
  */
 import type { LucideIcon } from "lucide-react";
+
+import type { LadoParteContrato, ParteItem } from "@/types/partes";
 import {
   Building2,
   CalendarClock,
@@ -133,4 +135,22 @@ export function resolverDestino(destino: string | null | undefined): {
   if (destino.startsWith("/")) return { rota: destino, subpageLabel: null };
   const subpage = CARD_SUBPAGES.find((s) => s.key === destino);
   return { rota: null, subpageLabel: subpage?.label ?? null };
+}
+
+/**
+ * The PJ parties of one side of the table, from the §2.1 `/partes` list.
+ *
+ * `GET …/compradores` stays PF-only (contract §2.2/§11-4: existing consumers
+ * assume a non-null `cliente`), so the card's Comprador/Vendedor lists render
+ * their PF rows from it and take the empresa rows from here. The titular is
+ * never a PJ party (it is the card's own PF), but the filter is explicit so a
+ * contract change cannot leak it into the list.
+ */
+export function partesPjDoLado(
+  partes: readonly ParteItem[] | undefined,
+  lado: LadoParteContrato,
+): ParteItem[] {
+  return (partes ?? []).filter(
+    (p) => p.tipo_pessoa === "PJ" && p.lado === lado && !p.titular && p.parte_id !== null,
+  );
 }

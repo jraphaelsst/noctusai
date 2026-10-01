@@ -25,6 +25,22 @@ vi.mock("@/hooks/useLeadsCorretores", () => ({
   useLeadCorretores: () => ({ data: [], isPending: false }),
 }));
 
+vi.mock("@/components/card/ImovelCodigoPicker", () => ({
+  // A stub with the picker's contract (value in, canonical código | null out) —
+  // the real one is registry-backed and covered by ImovelCodigoPicker.test.tsx.
+  ImovelCodigoPicker: (props: {
+    value: string | null;
+    onChange: (c: string | null) => void;
+    "data-testid"?: string;
+  }) => (
+    <input
+      data-testid={props["data-testid"]}
+      value={props.value ?? ""}
+      onChange={(e) => props.onChange(e.target.value || null)}
+    />
+  ),
+}));
+
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
@@ -69,42 +85,48 @@ describe("LeadFormDialog — o código do imóvel", () => {
     const values = onSubmit.mock.calls[0][0];
     // 🔴 THE ASSERTION. Without it the field is decorative.
     expect(values.codigo_imovel).toBe("ONE10337");
+    expect(values.codigo_raw).toBe("ONE10337");
   });
 
-  it("keeps the raw spelling alongside it", async () => {
+  it("🔴 create REQUIRES an imóvel: submit is disabled and nothing is sent without one", async () => {
+    const rtl = await import("@testing-library/react");
     const { onSubmit } = await abrir();
 
-    // Lowercase on purpose: `codigo_raw` records what a person typed, and the
-    // canonicalisation is the DB trigger's job — server-side, for every write
-    // path including the portal webhooks. Upper-casing in the browser would be
-    // a second definition of the same rule to keep in step.
-    await preencherCodigo("one10337");
+    expect((rtl.screen.getByTestId("lead-form-submit") as HTMLButtonElement).disabled).toBe(true);
+    expect(rtl.screen.getByTestId("lead-form-imovel-obrigatorio").textContent).toBe(
+      "Informe o imóvel do lead.",
+    );
     await salvar();
-
-    const values = onSubmit.mock.calls[0][0];
-    expect(values.codigo_raw).toBe("one10337");
-    expect(values.codigo_imovel).toBe("one10337");
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 
-  it("sends null rather than an empty string when left blank", async () => {
-    const { onSubmit } = await abrir();
-
-    await salvar();
-
-    const values = onSubmit.mock.calls[0][0];
-    expect(values.codigo_imovel).toBeNull();
-    expect(values.codigo_raw).toBeNull();
-  });
-
-  it("clearing the field clears both columns", async () => {
-    const { onSubmit } = await abrir();
+  it("clearing the picked imóvel disables submit again", async () => {
+    const rtl = await import("@testing-library/react");
+    await abrir();
 
     await preencherCodigo("ONE10337");
+    expect((rtl.screen.getByTestId("lead-form-submit") as HTMLButtonElement).disabled).toBe(false);
     await preencherCodigo("");
-    await salvar();
+    expect((rtl.screen.getByTestId("lead-form-submit") as HTMLButtonElement).disabled).toBe(true);
+  });
 
-    const values = onSubmit.mock.calls[0][0];
-    expect(values.codigo_imovel).toBeNull();
+  it("EDIT keeps the free field and does not require an imóvel (PATCH of código is out of scope)", async () => {
+    const rtl = await import("@testing-library/react");
+    const { onSubmit } = await abrir({
+      id: "l1",
+      data_entrada: "2026-09-01",
+      codigo_raw: null,
+      codigo_imovel: null,
+      tipo_lead: "novo",
+      origem_id: null,
+      corretor_id: null,
+      needs_review: false,
+    } as unknown as Lead);
+
+    expect(rtl.screen.queryByTestId("lead-form-imovel-obrigatorio")).toBeNull();
+    await salvar();
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].codigo_imovel).toBeNull();
   });
 });
 
@@ -133,6 +155,7 @@ describe("LeadFormDialog — o nome do cliente (pessoa), não da marca", () => {
     const rtl = await import("@testing-library/react");
     const { onSubmit } = await abrir();
 
+    await preencherCodigo("ONE10337");
     const input = rtl.screen.getByTestId("lead-form-cliente");
     rtl.fireEvent.change(input, { target: { value: "Maria Silva" } });
     await salvar();
