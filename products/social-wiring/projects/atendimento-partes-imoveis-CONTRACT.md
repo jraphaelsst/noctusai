@@ -81,7 +81,8 @@ Celula = {
   "arquivo_nome": str|null,
   "origem": "api"|"ia"|"manual"|null,            // certidao_resultados.resultado_origem
   "confirmado": bool,                            // confirmado_em IS NOT NULL
-  "analise_ia": str|null, "erro_mensagem": str|null
+  "analise_ia": str|null, "erro_mensagem": str|null,
+  "segunda_via": bool   // C0: the Receita refused a NEW certidão → this is its 2ª via; emitida_em is the ORIGINAL date
 }
 ```
 Rules (pinned):

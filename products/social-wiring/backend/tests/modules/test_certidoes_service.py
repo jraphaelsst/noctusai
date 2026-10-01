@@ -542,6 +542,75 @@ class TestFetchCertidao:
         assert result["raw_response"] is None
 
 
+class TestSegundaViaFallback:
+    """Receita `nova` refused at the source (a still-valid "positiva com
+    efeitos de negativa" holder) → ONE retry as `2via`, flagged."""
+
+    @staticmethod
+    def _preferencias(client):
+        return [c.kwargs["params"]["preferencia_emissao"] for c in client.get.await_args_list]
+
+    @pytest.mark.asyncio
+    async def test_falha_da_origem_retenta_uma_vez_como_2via_e_marca(self):
+        client = _http([
+            {"code": 605, "errors": ["Não foi possível emitir a certidão"]},
+            {"code": 200, "data": [{"site_receipt": "https://x/2via.pdf"}]},
+        ])
+        result = await service._fetch_certidao(CONFIG_FEDERAL, CONSULTA_CPF, "tok", client)
+        assert result["success"] is True and result["segunda_via"] is True
+        assert result["file_url"] == "https://x/2via.pdf"
+        assert self._preferencias(client) == ["nova", "2via"]
+
+    @pytest.mark.asyncio
+    async def test_emissao_nova_com_sucesso_nao_e_segunda_via(self):
+        client = _http([{"code": 200, "data": [{"site_receipt": "https://x/n.pdf"}]}])
+        result = await service._fetch_certidao(CONFIG_FEDERAL, CONSULTA_CPF, "tok", client)
+        assert result["segunda_via"] is False
+        assert self._preferencias(client) == ["nova"]
+
+    @pytest.mark.asyncio
+    async def test_a_2via_so_e_pedida_uma_vez(self):
+        client = _http([{"code": 605, "errors": ["x"]}] * service.MAX_RETRIES)
+        with patch("asyncio.sleep", new=AsyncMock()):
+            result = await service._fetch_certidao(CONFIG_FEDERAL, CONSULTA_CPF, "tok", client)
+        assert result["success"] is False
+        assert self._preferencias(client).count("2via") == service.MAX_RETRIES - 1
+        assert self._preferencias(client)[0] == "nova"
+        assert "nova" not in self._preferencias(client)[1:]
+
+    @pytest.mark.asyncio
+    async def test_4xx_612_e_excecao_de_rede_nao_disparam_a_2via(self):
+        for payload in ({"code": 400, "errors": ["CPF inválido"]}, {"code": 612}):
+            client = _http([payload])
+            await service._fetch_certidao(CONFIG_FEDERAL, CONSULTA_CPF, "tok", client)
+            assert self._preferencias(client) == ["nova"]
+        client = MagicMock()
+        client.get = AsyncMock(side_effect=httpx.ConnectError("down"))
+        with patch("asyncio.sleep", new=AsyncMock()):
+            await service._fetch_certidao(CONFIG_FEDERAL, CONSULTA_CPF, "tok", client)
+        assert {c.kwargs["params"]["preferencia_emissao"] for c in client.get.await_args_list} == {"nova"}
+
+    @pytest.mark.asyncio
+    async def test_outro_tipo_nao_tem_o_fallback(self):
+        client = _http([{"code": 605, "errors": ["x"]}] * service.MAX_RETRIES)
+        with patch("asyncio.sleep", new=AsyncMock()):
+            result = await service._fetch_certidao(
+                config_for("trf3_sp"), CONSULTA_CPF, "tok", client
+            )
+        assert result["segunda_via"] is False
+        assert all("preferencia_emissao" not in c.kwargs["params"] for c in client.get.await_args_list)
+
+    def test_marca_e_nota_visivel_so_quando_e_segunda_via(self):
+        raw = {"code": 200, "data": [{}]}
+        com = {"raw_response": raw, "segunda_via": True}
+        sem = {"raw_response": raw, "segunda_via": False}
+        assert service._api_response_marcada(com)[service.MARCA_SEGUNDA_VIA]
+        assert service._api_response_marcada(sem) is raw
+        assert service.NOTA_SEGUNDA_VIA in service._com_nota_segunda_via(com, "Negativa")
+        assert "Negativa" in service._com_nota_segunda_via(com, "Negativa")
+        assert service._com_nota_segunda_via(sem, "Negativa") == "Negativa"
+
+
 # ---------------------------------------------------------------------------
 # _download_file / _convert_html_to_pdf
 # ---------------------------------------------------------------------------
