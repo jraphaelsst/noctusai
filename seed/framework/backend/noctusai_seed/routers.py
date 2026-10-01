@@ -51,6 +51,7 @@ from noctusai_lib.integrations.email.templates import (
 from noctusai_lib.domain.notifications import map_notification_to_pt
 from noctusai_lib.primitives.roles import (
     ADMIN_ROLES,
+    CUSTOMER_ORG_ROLES,
     MANAGE_TEAM_ROLES,
 )
 from noctusai_seed.team_policy import DEFAULT_TEAM_POLICY, TeamPolicy
@@ -220,6 +221,9 @@ _TEAM_MEMBER_COLUMNS = (
     "id, email, nome, org_id, org_role, role, avatar_url, created_at, last_active_at"
 )
 
+#: Page size for the roster read — PostgREST's default max-rows.
+_TEAM_PAGE = 1000
+
 #: Error code of the 409 `DELETE /api/team/{user_id}` returns (see that route).
 TEAM_REMOVE_CORE_ONLY = "TEAM_REMOVE_CORE_ONLY"
 
@@ -265,14 +269,33 @@ def _create_team_router(
     async def list_members(authorization: Optional[str] = Header(None)):
         _user, org_id, _role = await _member_context(authorization)
         core = deps.get_core_client()
-        result = (
-            core.table("noctus_users").select(_TEAM_MEMBER_COLUMNS)
-            .eq("org_id", org_id).execute()
-        )
         # The org is shared across products (and, for the platform org, with
         # end customers): the roster is the product's STAFF only — customers
         # never, and only the declared `staff_roles` when the policy names them.
-        return {"data": [r for r in (result.data or []) if policy.lists(r.get("org_role"))]}
+        # Filtered IN the query (so customers never count against a page) and
+        # paged with `.range()` (PostgREST caps an unranged select at 1000 rows
+        # and reports success) — then re-checked by `policy.lists`, the single
+        # definition of who is staff.
+        rows: list = []
+        start = 0
+        while True:
+            query = (
+                core.table("noctus_users").select(_TEAM_MEMBER_COLUMNS)
+                .eq("org_id", org_id)
+            )
+            if policy.staff_roles is not None:
+                query = query.in_("org_role", sorted(policy.staff_roles))
+            else:
+                customers = ",".join(sorted(CUSTOMER_ORG_ROLES))
+                query = query.or_(f"org_role.is.null,org_role.not.in.({customers})")
+            batch = (
+                query.order("id").range(start, start + _TEAM_PAGE - 1).execute().data or []
+            )
+            rows.extend(batch)
+            if len(batch) < _TEAM_PAGE:
+                break
+            start += _TEAM_PAGE
+        return {"data": [r for r in rows if policy.lists(r.get("org_role"))]}
 
     @router.get("/policy")
     async def team_policy(authorization: Optional[str] = Header(None)):

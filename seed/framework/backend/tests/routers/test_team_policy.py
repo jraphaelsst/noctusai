@@ -227,6 +227,16 @@ class TestListFilter:
         assert resp.status_code == 200, resp.text
         assert not {"customer-1", "customer-2"} & _listed(resp)
 
+    def test_roster_past_one_page_is_returned_whole(self, make_world):
+        """PostgREST caps an unranged select at 1000 rows and reports success;
+        the roster pages with `.range()` so no member silently disappears."""
+        world = make_world(None)
+        many = [_row(f"m-{i:04d}", ORG, "corretor") for i in range(1500)]
+        world.core.set_table_data("noctus_users", [*ROSTER, *many])
+        resp = world.as_user("admin-1").get("/api/team", headers=AUTH)
+        assert resp.status_code == 200, resp.text
+        assert len(_listed(resp)) == 7 + 1500
+
     def test_customer_caller_gets_403(self, make_world):
         resp = make_world(None).as_user("customer-1").get("/api/team", headers=AUTH)
         assert resp.status_code == 403, resp.text
