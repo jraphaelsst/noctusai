@@ -84,7 +84,7 @@ import { NegociacaoContainer } from "@/components/NegociacaoContainer";
 import { FinanciamentoContainer } from "@/components/FinanciamentoContainer";
 import { ContratosContainer } from "@/components/ContratosContainer";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
-import { CertidoesMatrizSection } from "@/components/card/CertidoesMatrizSection";
+import { CertidoesPartesTab } from "@/components/card/certidoes/CertidoesPartesTab";
 import { EmpresasSection } from "@/components/card/EmpresasSection";
 import { QualificacaoCompletudePanel } from "@/components/QualificacaoCompletudePanel";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
@@ -491,6 +491,8 @@ export function ClienteDetailModal({
       }
       agendamentoSaving={agendamentoMutations.create.isPending}
       roteiros={roteiros.data ?? []}
+      roteirosClienteId={id ?? undefined}
+      roteirosAtendimentoId={atendimentoId}
       // 🔴 SKELETON ONLY WHEN THERE IS NOTHING TO SHOW — never `isLoading`
       // (v5's is false during a background refetch, so an empty branch keyed
       // off it renders "nenhum roteiro criado" over roteiros that exist) AND
@@ -894,7 +896,9 @@ export function ClienteDetailModal({
       renderAtendimentoImoveis={() =>
         id && <AtendimentoImoveisSection clienteId={id} atendimentoId={atendimentoId} />
       }
-      renderCertidoes={() => id && <CertidoesMatrizSection clienteId={id} />}
+      renderCertidoes={() =>
+        id && <CertidoesPartesTab clienteId={id} atendimentoId={atendimentoId} />
+      }
       renderContratos={({ irPara }) => (
         <ContratosContainer
           clienteId={id as string}

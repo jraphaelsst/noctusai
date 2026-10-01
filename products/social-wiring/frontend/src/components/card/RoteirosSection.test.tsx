@@ -63,6 +63,7 @@ function roteiro(over: Partial<Roteiro> = {}): Roteiro {
     id: "r1",
     atendimento_id: "a1",
     titulo: "Terça de manhã",
+    data_visita: "2026-08-26",
     created_at: "2026-08-25T12:00:00+00:00",
     visitas,
     contagem: {

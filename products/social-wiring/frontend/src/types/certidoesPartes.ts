@@ -42,6 +42,9 @@ export interface CertidaoParteCelula {
   confirmado: boolean;
   analise_ia: string | null;
   erro_mensagem: string | null;
+  /** The Receita refused a NEW certidão (holder of a valid "positiva com efeitos
+   *  de negativa"): this is its 2ª via, so `emitida_em` is the ORIGINAL date. */
+  segunda_via: boolean;
 }
 
 export interface CertidaoParteTotais {

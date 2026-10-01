@@ -56,6 +56,20 @@ export interface ItemsTotal<T> {
   total: number;
 }
 
+/** CONTRACT §4.2 `GET /api/imoveis/{codigo}/proprietarios` item. */
+export interface ProprietarioDoImovel {
+  id: string;
+  tipo_pessoa: "PF" | "PJ";
+  cliente_id: string | null;
+  empresa_id: string | null;
+  nome: string;
+  documento: string | null;
+  celular: string | null;
+  email: string | null;
+  origem: "manual" | "matricula" | "atendimento";
+  created_at: string | null;
+}
+
 /** CONTRACT §4.3 `Row`. */
 export interface InteressadoRow {
   interesse_id: string;

@@ -261,3 +261,29 @@ describe("AdicionarCompradorDialog — PF / PJ", () => {
     expect(mockLookup).not.toHaveBeenCalled();
   });
 });
+
+describe("AdicionarCompradorDialog — CPF de uma pessoa nova", () => {
+  it("envia o CPF (só dígitos, válido) junto com o nome de uma pessoa física nova", async () => {
+    const rtl = await abrir();
+    digitarDocumento(rtl, CPF_OK);
+    rtl.fireEvent.change(rtl.screen.getByTestId("comprador-nome-input"), {
+      target: { value: "Maria Nova" },
+    });
+    rtl.fireEvent.click(rtl.screen.getByTestId("comprador-salvar-btn"));
+    expect(rtl.onCreate).toHaveBeenCalledWith({
+      nome: "Maria Nova",
+      celular: undefined,
+      cpf: "52998224725",
+    });
+  });
+
+  it("não envia CPF incompleto ou inválido — só o nome", async () => {
+    const rtl = await abrir();
+    digitarDocumento(rtl, "111.111.111-11");
+    rtl.fireEvent.change(rtl.screen.getByTestId("comprador-nome-input"), {
+      target: { value: "Maria Nova" },
+    });
+    rtl.fireEvent.click(rtl.screen.getByTestId("comprador-salvar-btn"));
+    expect(rtl.onCreate.mock.calls[0][0]).toEqual({ nome: "Maria Nova", celular: undefined });
+  });
+});

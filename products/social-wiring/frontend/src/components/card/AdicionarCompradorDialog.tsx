@@ -57,8 +57,9 @@ import {
 export type AdicionarCompradorVariant = LadoParte | "conjuge";
 
 /**
- * What `onCreate` hands the container. PF-new stays exactly `{ nome, celular }`;
- * the extra keys appear only for the new paths, each matching one of the
+ * What `onCreate` hands the container. PF-new is `{ nome, celular }` (+ `cpf`
+ * when a valid one was typed); the extra keys appear only for the new paths,
+ * each matching one of the
  * mutually-exclusive identifiers of the §2.3 body (`cliente_id` | `nome` |
  * `empresa_id` | `cnpj`) — never two at once.
  */
@@ -69,6 +70,8 @@ export interface AdicionarCompradorValues {
   empresa_id?: string;
   cnpj?: string;
   razao_social?: string;
+  /** A new pessoa física's CPF (digits, check-digit-valid) — sent with `nome`. */
+  cpf?: string;
   /** "Re-emitir e re-analisar" ticked on a reused cadastro whose certidões
    *  are stale — the container chains the §1.2 emission after adding. */
   reemitirCertidoes?: boolean;
@@ -322,6 +325,7 @@ export function AdicionarCompradorDialog({
     onCreate({
       nome: nome.trim(),
       celular: celular.trim() || undefined,
+      ...(documentoLookup ? { cpf: documentoLookup } : {}),
     });
   }
 

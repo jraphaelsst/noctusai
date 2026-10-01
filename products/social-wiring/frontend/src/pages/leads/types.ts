@@ -28,6 +28,8 @@ export interface Lead {
   origem: { id: string; slug: string; label: string; cor: string | null } | null;  // joined
   tipo_lead: "novo" | "retorno" | "desconhecido";
   cliente_nome: string | null;
+  /** The person this lead belongs to — `null` until the person layer claims it. */
+  cliente_id?: string | null;
   contato: string | null; contato_tipo: "telefone" | "email" | "desconhecido" | null;
   corretor_id: string | null; corretor_raw: string | null;
   corretor: { id: string; nome: string; cor: string | null } | null;               // joined

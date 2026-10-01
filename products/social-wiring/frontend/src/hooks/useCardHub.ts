@@ -480,6 +480,21 @@ export function useRoteiroMutations(clienteId: string) {
   };
 }
 
+/** `filename="x.pdf"` (or RFC 5987 `filename*=UTF-8''x.pdf`) out of a Content-Disposition. */
+export function nomeDoArquivo(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+  const estendido = /filename\*\s*=\s*(?:UTF-8|utf-8)''([^;]+)/.exec(contentDisposition);
+  if (estendido) {
+    try {
+      return decodeURIComponent(estendido[1].trim());
+    } catch {
+      // malformed percent-encoding: fall through to the plain form
+    }
+  }
+  const simples = /filename\s*=\s*"?([^";]+)"?/.exec(contentDisposition);
+  return simples ? simples[1].trim() : null;
+}
+
 /**
  * The "Gerar Roteiro" download.
  *
@@ -503,7 +518,11 @@ export async function baixarRoteiroPdf(clienteId: string, roteiroId: string): Pr
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `roteiro-${roteiroId.slice(0, 8)}.pdf`;
+  // The server names the file (`roteiro-<id8>-<data_visita>.pdf`); fall back
+  // to the id-only name when the header is absent or unreadable.
+  a.download =
+    nomeDoArquivo(resp.headers.get("Content-Disposition")) ??
+    `roteiro-${roteiroId.slice(0, 8)}.pdf`;
   document.body.appendChild(a);
   a.click();
   a.remove();

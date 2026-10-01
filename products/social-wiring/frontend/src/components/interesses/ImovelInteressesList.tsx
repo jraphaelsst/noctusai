@@ -27,8 +27,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { baixarRoteiroPdf, useCriarRoteiro } from "@/hooks/useRoteiros";
 import { useInteresseMutations, useInteresses } from "@/hooks/useInteresses";
 import { usePessoaResumo } from "@/hooks/usePessoa";
+import type { RoteiroCreateBody } from "@/types/cardHub";
 import type { InteresseItem, ImovelResumo } from "@/types/interesses";
-import type { RoteiroCriarBody } from "@/types/roteiros";
 
 import { AdicionarInteresseDialog } from "./AdicionarInteresseDialog";
 import { ImovelLinhaInfo } from "./ImovelLinhaInfo";
@@ -111,8 +111,8 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
     });
   }
 
-  async function confirmarRoteiro(body: RoteiroCriarBody) {
-    const comAtendimento: RoteiroCriarBody =
+  async function confirmarRoteiro(body: RoteiroCreateBody) {
+    const comAtendimento: RoteiroCreateBody =
       atendimentoId && !body.atendimento_id ? { ...body, atendimento_id: atendimentoId } : body;
     let roteiroId: string;
     try {

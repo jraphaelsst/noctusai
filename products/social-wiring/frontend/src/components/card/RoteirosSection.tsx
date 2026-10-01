@@ -45,8 +45,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { ImovelInteressesList } from "@/components/interesses/ImovelInteressesList";
-import type { StatusVisita, Visita, VisitaPropostaBody } from "@/types/cardHub";
-import type { RoteiroComData } from "@/types/roteiros";
+import type { Roteiro, StatusVisita, Visita, VisitaPropostaBody } from "@/types/cardHub";
 
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 
@@ -75,7 +74,7 @@ export interface RoteirosSectionProps {
    */
   clienteId?: string;
   atendimentoId?: string | null;
-  roteiros: RoteiroComData[];
+  roteiros: Roteiro[];
   /** No `roteiros` yet — the FIRST load only. Ignored once the list is
    *  non-empty (see the file docblock). */
   loading?: boolean;
@@ -196,7 +195,7 @@ function RoteiroCard({
   onPatchProposta,
   pdfPending,
 }: {
-  roteiro: RoteiroComData;
+  roteiro: Roteiro;
   onRemover: () => void;
   onGerarPdf: () => void;
   onPatchVisita: (visitaId: string, body: { status?: StatusVisita; observacao?: string | null }) => void;

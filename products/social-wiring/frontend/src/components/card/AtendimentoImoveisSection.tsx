@@ -9,7 +9,7 @@
  * `imovel_pendente` from "zero live rows"; the section shows it loudly so the
  * corretor fills the gap, and the picker sits right under it.
  *
- * Self-fetching by `clienteId` (same precedent as `CertidoesMatrizSection`),
+ * Self-fetching by `clienteId` (same precedent as `CertidoesPartesTab`),
  * so the dialog needs no new prop plumbing per field.
  *
  * Loading: `showSkeleton = isPending && !data`, `isRefreshing = isFetching &&

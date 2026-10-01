@@ -40,7 +40,18 @@
  */
 import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
-import { Archive, Bell, Loader2, Mail, Phone, Plus, Trash2, User as UserIcon, UserPlus } from "lucide-react";
+import {
+  Archive,
+  Bell,
+  ExternalLink,
+  Loader2,
+  Mail,
+  Phone,
+  Plus,
+  Trash2,
+  User as UserIcon,
+  UserPlus,
+} from "lucide-react";
 
 import {
   CardHubDialog,
@@ -97,6 +108,7 @@ import type {
 import { PAPEIS_POR_LADO } from "@/types/cardHub";
 
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
+import { PessoaLink } from "@/components/pessoa/PessoaLink";
 import { RoteirosSection } from "./RoteirosSection";
 import { CARD_SUBPAGES, partesPjDoLado, type CardSubpageKey } from "./cardSubpages";
 import type { ParteItem } from "@/types/partes";
@@ -299,9 +311,9 @@ export interface ClienteCardDialogProps {
    *  fetches its own data keyed by the titular's `clienteId`, which this
    *  component is never handed directly. */
   renderEmpresas?: () => ReactNode;
-  /** The Certidões subpage (Levantamento de Certidões.xlsx) — same
-   *  render-prop reasoning as `renderEmpresas` above: `CertidoesMatrizSection`
-   *  fetches its own data keyed by the titular's `clienteId`. */
+  /** The Certidões subpage — same render-prop reasoning as `renderEmpresas`
+   *  above: `CertidoesPartesTab` fetches its own data keyed by the titular's
+   *  `clienteId`. */
   renderCertidoes?: () => ReactNode;
   /**
    * The imóveis linked to this atendimento (`AtendimentoImoveisSection`,
@@ -367,6 +379,11 @@ export interface ClienteCardDialogProps {
   // button no longer offers "Visita"; a visit is a roteiro entry now, because
   // only that can hold several properties, an order, and an outcome.
   roteiros?: Roteiro[];
+  /** The titular + atendimento the Roteiros tab acts on: `RoteirosSection`
+   *  mounts `ImovelInteressesList` (the interest list → "Gerar roteiro" flow)
+   *  from them. Left out ⇒ the tab is the saved-roteiros list only. */
+  roteirosClienteId?: string;
+  roteirosAtendimentoId?: string | null;
   roteirosLoading?: boolean;
   /** A fetch is in flight AND `roteiros` already has rows — never unmounts
    *  the list (`KB § PATTERNS/frontend/lying-loading-state.md`). */
@@ -628,15 +645,29 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         defaultOpen={opts?.defaultOpen}
         testId={`${lado}-${parte.id}`}
         acao={
-          onRemover && (
-            <TooltipIconButton
-              label={`Remover ${nomeDaParte(parte)} deste atendimento`}
-              icon={Trash2}
-              testId={`${lado}-remover-${parte.id}`}
-              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-              onClick={() => onRemover(parte.id)}
-            />
-          )
+          <>
+            {lado === "vendedor" && (
+              <PessoaLink
+                clienteId={parte.cliente_id}
+                visao="vendedor"
+                title={`Abrir a página de ${nomeDaParte(parte)}`}
+                testId={`vendedor-pessoa-link-${parte.id}`}
+                className="inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <ExternalLink className="h-4 w-4" aria-hidden />
+                <span className="sr-only">Abrir a página de {nomeDaParte(parte)}</span>
+              </PessoaLink>
+            )}
+            {onRemover && (
+              <TooltipIconButton
+                label={`Remover ${nomeDaParte(parte)} deste atendimento`}
+                icon={Trash2}
+                testId={`${lado}-remover-${parte.id}`}
+                className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                onClick={() => onRemover(parte.id)}
+              />
+            )}
+          </>
         }
       >
         {() => (
@@ -960,9 +991,9 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       </div>
     ),
 
-    // Levantamento de Certidões.xlsx — a container, same render-prop
-    // reasoning as `empresas` above: `CertidoesMatrizSection` fetches its
-    // own data keyed by the titular's clienteId.
+    // Certidões per party — a container, same render-prop reasoning as
+    // `empresas` above: `CertidoesPartesTab` fetches its own data keyed by
+    // the titular's clienteId.
     certidoes: () => (
       <div data-testid="card-subpage-certidoes">
         {props.renderCertidoes?.() ?? (
@@ -982,6 +1013,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
 
     roteiros: () => (
       <RoteirosSection
+        clienteId={props.roteirosClienteId}
+        atendimentoId={props.roteirosAtendimentoId}
         roteiros={props.roteiros ?? []}
         loading={props.roteirosLoading}
         refreshing={props.roteirosRefreshing}

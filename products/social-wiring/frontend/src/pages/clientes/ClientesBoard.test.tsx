@@ -93,7 +93,11 @@ async function renderPage() {
   const React = (await import("react")).default;
   const { default: ClientesBoard } = await import("./ClientesBoard");
   const rtl = await import("@testing-library/react");
-  return { ...rtl.render(React.createElement(ClientesBoard)) };
+  // A Router: each card's name links to the person page (`PessoaLink`).
+  const { MemoryRouter } = await import("react-router-dom");
+  return {
+    ...rtl.render(React.createElement(MemoryRouter, null, React.createElement(ClientesBoard))),
+  };
 }
 
 beforeEach(() => {
@@ -275,6 +279,17 @@ describe("ClientesBoard — click opens the card detail dialog (lead-card-hub Ph
 
     const modal = getByTestId("cliente-detail-modal");
     expect(modal.getAttribute("data-cliente-id")).toBe("cl1");
+  });
+
+  it("the card's name links to the person page without opening the dialog", async () => {
+    const { getByTestId, queryByTestId } = await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+
+    const link = getByTestId("cliente-card-nome-link");
+    expect(link.getAttribute("href")).toBe("/clientes/cl1");
+
+    fireEvent.click(link);
+    expect(queryByTestId("cliente-detail-modal")).toBeNull();
   });
 
   it("clicking Restaurar does not also open the dialog", async () => {

@@ -53,8 +53,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useImoveisBusca } from "@/hooks/useCardHub";
-import type { ImovelBusca, ImovelVisita } from "@/types/cardHub";
-import type { RoteiroCriarBody } from "@/types/roteiros";
+import type { ImovelBusca, ImovelVisita, RoteiroCreateBody } from "@/types/cardHub";
 
 import { ImovelVisitaCard } from "./ImovelVisitaCard";
 
@@ -74,7 +73,7 @@ import { ImovelVisitaCard } from "./ImovelVisitaCard";
 export interface CriarRoteiroDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCriar: (body: RoteiroCriarBody) => void;
+  onCriar: (body: RoteiroCreateBody) => void;
   saving?: boolean;
   /**
    * The imóveis the user already ticked on `ImovelInteressesList` — when

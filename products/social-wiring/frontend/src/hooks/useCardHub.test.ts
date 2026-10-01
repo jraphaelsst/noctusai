@@ -393,3 +393,46 @@ describe("useDecidirConflitoMutation — Bug F, reverse direction (admin decisio
     expect(keys).toContain(JSON.stringify(["sw", "cardHub", "qualificacao"]));
   });
 });
+
+// ─── Roteiro PDF download — the server names the file ─────────────────────
+describe("nomeDoArquivo / baixarRoteiroPdf", () => {
+  it("reads the plain and the RFC 5987 forms, else null", async () => {
+    const { nomeDoArquivo } = await import("./useCardHub");
+    expect(nomeDoArquivo('attachment; filename="roteiro-ab12cd34-2026-10-10.pdf"')).toBe(
+      "roteiro-ab12cd34-2026-10-10.pdf",
+    );
+    expect(nomeDoArquivo("attachment; filename*=UTF-8''roteiro%20x.pdf")).toBe("roteiro x.pdf");
+    expect(nomeDoArquivo("attachment")).toBeNull();
+    expect(nomeDoArquivo(null)).toBeNull();
+  });
+
+  it("downloads under the Content-Disposition name, falling back to the id-only name", async () => {
+    const { baixarRoteiroPdf } = await import("./useCardHub");
+    const nomes: string[] = [];
+    const click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        nomes.push(this.download);
+      });
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    const resposta = (disposition: string | null) => ({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob(["%PDF-"]),
+      headers: new Headers(disposition ? { "Content-Disposition": disposition } : {}),
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(resposta('attachment; filename="roteiro-ab12cd34-2026-10-10.pdf"'))
+      .mockResolvedValueOnce(resposta(null));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await baixarRoteiroPdf("cli-1", "ab12cd34-0000");
+    await baixarRoteiroPdf("cli-1", "ab12cd34-0000");
+
+    expect(nomes).toEqual(["roteiro-ab12cd34-2026-10-10.pdf", "roteiro-ab12cd34.pdf"]);
+    click.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});
