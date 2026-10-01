@@ -2768,3 +2768,67 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
     expect([...select.options].map((o) => o.value)).toContain("anuente");
   });
 });
+
+describe("ClienteCardDialog — PJ parties + imóveis do atendimento (atendimento-partes-imoveis)", () => {
+  const pj = (over: Record<string, unknown> = {}) =>
+    ({
+      parte_id: "pj-1",
+      titular: false,
+      rotulo: "VEND 1",
+      lado: "vendedor",
+      papel: "proprietario",
+      ordem: 1,
+      tipo_pessoa: "PJ",
+      cliente_id: null,
+      empresa_id: "e1",
+      nome: "NEON PARK LTDA",
+      documento: "11222333000181",
+      observacao: null,
+      cliente: null,
+      empresa: {
+        id: "e1",
+        razao_social: "NEON PARK LTDA",
+        nome_fantasia: null,
+        cnpj: "11222333000181",
+        situacao_cadastral: "ATIVA",
+      },
+      ...over,
+    }) as any;
+
+  it("🔴 a PJ vendedor party shows on the Vendedor subpage (not the empty state) and is removable by parte_id", async () => {
+    const rtl = await import("@testing-library/react");
+    const onRemoverVendedor = vi.fn();
+    rtl.render(
+      <ClienteCardDialog {...baseProps({ vendedores: [], partes: [pj()], onRemoverVendedor })} />,
+    );
+    rtl.fireEvent.click(rtl.screen.getByTestId("card-subpage-tab-vendedor"));
+    expect(rtl.screen.queryByTestId("card-subpage-vendedor-empty")).toBeNull();
+    expect(rtl.screen.getByTestId("vendedor-empresa-pj-1").textContent).toContain("NEON PARK LTDA");
+    rtl.fireEvent.click(rtl.screen.getByTestId("vendedor-empresa-remover-pj-1"));
+    expect(onRemoverVendedor).toHaveBeenCalledWith("pj-1");
+  });
+
+  it("a PJ comprador party shows in the Compradores block on Geral", async () => {
+    const rtl = await import("@testing-library/react");
+    rtl.render(
+      <ClienteCardDialog
+        {...baseProps({
+          compradores: [],
+          partes: [pj({ parte_id: "pj-2", lado: "comprador", papel: "comprador", rotulo: "COMP 2" })],
+        })}
+      />,
+    );
+    expect(rtl.screen.getByTestId("comprador-empresa-pj-2")).toBeTruthy();
+  });
+
+  it("mounts the imóveis section on Geral through renderAtendimentoImoveis", async () => {
+    const rtl = await import("@testing-library/react");
+    rtl.render(
+      <ClienteCardDialog
+        {...baseProps({ renderAtendimentoImoveis: () => <p data-testid="imoveis-stub">imóveis</p> })}
+      />,
+    );
+    expect(rtl.screen.getByTestId("atendimento-imoveis-slot")).toBeTruthy();
+    expect(rtl.screen.getByTestId("imoveis-stub")).toBeTruthy();
+  });
+});

@@ -57,3 +57,23 @@ describe("resolverDestino", () => {
     expect(resolverDestino(undefined)).toEqual({ rota: null, subpageLabel: null });
   });
 });
+
+describe("partesPjDoLado — PJ parties on the Comprador/Vendedor lists (§2.1)", () => {
+  const base = {
+    papel: "proprietario", ordem: 1, observacao: null, cliente: null, empresa: null,
+    cliente_id: null, empresa_id: "e1", nome: "X LTDA", documento: "11222333000181",
+  };
+  const partes = [
+    { ...base, parte_id: "p1", titular: false, rotulo: "VEND 1", lado: "vendedor", tipo_pessoa: "PJ" },
+    { ...base, parte_id: "p2", titular: false, rotulo: "COMP 2", lado: "comprador", tipo_pessoa: "PJ" },
+    { ...base, parte_id: "p3", titular: false, rotulo: "VEND 2", lado: "vendedor", tipo_pessoa: "PF", cliente_id: "c1", empresa_id: null },
+    { ...base, parte_id: null, titular: true, rotulo: "COMP 1", lado: "comprador", tipo_pessoa: "PJ" },
+  ] as never;
+
+  it("keeps only the PJ, non-titular rows of the asked side", async () => {
+    const { partesPjDoLado } = await import("./cardSubpages");
+    expect(partesPjDoLado(partes, "vendedor").map((p) => p.parte_id)).toEqual(["p1"]);
+    expect(partesPjDoLado(partes, "comprador").map((p) => p.parte_id)).toEqual(["p2"]);
+    expect(partesPjDoLado(undefined, "vendedor")).toEqual([]);
+  });
+});
