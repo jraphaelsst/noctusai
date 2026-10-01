@@ -467,6 +467,19 @@ CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
 #: Kept as the flat `{item_key: coluna}` mapping earlier callers already read.
 CAMPO_POR_ITEM: dict[str, str] = {c.item_key: c.coluna_valor for c in CAMPOS}
 
+
+def _coluna_lida_no_documento(campo: CampoExtraido) -> str:
+    """The `cliente_documentos` column a document stores `campo` in.
+
+    A `CampoExtraido` from a NON-document source (`qualificacao_service.
+    CAMPOS_QUALIFICACAO`, `crednet`) carries `coluna_valor=""` — it has no
+    column of its own — yet the apply path judges the ON-FILE side against
+    the identity DOCUMENT behind it. Reading `documento.get("")` made every
+    such document look like it had re-read to nothing: a false 'retratado'
+    that let a matrícula overwrite a value its own CNH still asserted. The
+    column is the document-extraction `CAMPOS` entry's, by `item_key`."""
+    return campo.coluna_valor or CAMPO_POR_ITEM.get(campo.item_key, "")
+
 #: P0c contract §A.8/§C4 — Serasa Crednet's `nome_mae`, held OUTSIDE the
 #: `CAMPOS` tuple deliberately: `extrair_identidade`'s per-document `lidos`
 #: dict (`_valores_lidos`/`_lidos_vazios`) is keyed EXACTLY on `CAMPOS`, and
@@ -2038,7 +2051,7 @@ def evidencia_viva(
         elif str(d.get("cliente_id")) != cliente_id:
             continue
         else:
-            valor = d.get(campo.coluna_valor)
+            valor = d.get(_coluna_lida_no_documento(campo))
         if not _vazio(valor):
             afirmacoes.append((valor, tipo))
     return divergencia_resolucao.EvidenciaViva(
@@ -2086,7 +2099,10 @@ def _documento_sustenta(
     ):
         lido = _valor_atribuido(campo, cliente_row, documento)
         return False if _vazio(lido) else _mesmo_valor(campo.item_key, lido, valor)
-    lido = documento.get(campo.coluna_valor)
+    coluna = _coluna_lida_no_documento(campo)
+    if not coluna:
+        return None  # no document column for this campo — cannot tell
+    lido = documento.get(coluna)
     if _vazio(lido):
         return False if campo.item_key in _CAMPOS_SO_DA_PROPRIA_COLUNA else None
     return _mesmo_valor(campo.item_key, lido, valor)
