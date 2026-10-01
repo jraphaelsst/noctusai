@@ -220,7 +220,7 @@ def _fontes_possiveis(entidade: str, campo: str, *, destino: Optional[str]) -> l
         canonico = CANONICOS_REGISTRO.get(par)
         if not canonico:
             return []
-        candidatos = [f for f in fontes_mod.FONTES.values() if canonico & f.campos]
+        candidatos = [f for f in fontes_mod.FONTES.values() if canonico & (f.campos | f.campos_sem_capacidade)]
     return [
         {
             "tipo_documento": f.tipo_documento,
@@ -292,7 +292,7 @@ def linhagem_do_card(client: Any, org_id: UUID, cliente_id: UUID, contrato_id: U
 def _registro_fontes() -> list[dict]:
     saida: list[dict] = []
     for (entidade, campo), canonico in sorted(CANONICOS_REGISTRO.items()):
-        candidatos = [f for f in fontes_mod.FONTES.values() if canonico & f.campos]
+        candidatos = [f for f in fontes_mod.FONTES.values() if canonico & (f.campos | f.campos_sem_capacidade)]
         if not candidatos:
             continue
         saida.append({

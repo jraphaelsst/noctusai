@@ -55,7 +55,7 @@ class Entrada(str, Enum):
     DERIVADO = "derivado"
 
 
-Dominio = Literal["cliente", "imovel", "empresa", "atendimento"]
+Dominio = Literal["cliente", "imovel", "empresa", "atendimento", "certidao"]
 
 
 @dataclass(frozen=True)
@@ -93,6 +93,17 @@ class Fonte:
     #: LEITURA_INTEGRAL` concept. Meaningless (always `False`) off `dominio
     #: == "imovel"`.
     leitura_integral: bool = False
+    #: Fields this product claims from this tipo that `noctusai_lib`'s
+    #: `CAPACIDADES` (the SEED's typed extractors) has no entry for — a
+    #: source that is not a seed extractor at all, e.g. the Receita/PGFN
+    #: certidão feed (`certidoes.feed_parte`), which reads an InfoSimples JSON
+    #: response, not a document. Kept apart from `campos` on purpose: guard 4
+    #: (`test_proveniencia_fontes.TestCapacidades`) holds `campos ⊆
+    #: CAPACIDADES[tipo]` so a product never over-claims what the seed can
+    #: read, and this set is the explicit, named exception to that rule —
+    #: `proveniencia.linhagem` matches candidates on `campos | campos_sem_
+    #: capacidade`.
+    campos_sem_capacidade: frozenset[str] = field(default_factory=frozenset)
     #: Gets the imóvel structured read (migration 118, `imovel_hub.
     #: documentos_service.extrair_estrutura` / `CAMPOS_ESTRUTURA_POR_TIPO`).
     #: Meaningless (always `False`) off `dominio == "cliente"`.
@@ -369,6 +380,23 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
              "motivo_situacao", "uf"}
         ),
     ),
+    # ─── certidoes (automated Receita/PGFN emission -> party profile) —
+    # CONTRACT atendimento-partes-imoveis §1.7 ───────────────────────────────
+    Fonte(
+        tipo_documento="certidao",
+        dominio="certidao",
+        entradas=frozenset({Entrada.CERTIDAO_ROBO}),
+        extrator="app.modules.certidoes.feed_parte.alimentar_parte",
+        origens=frozenset({"certidao"}),
+        # No seed-typed capability behind it (InfoSimples JSON, not a
+        # document) — see `Fonte.campos_sem_capacidade`. PF -> `clientes`,
+        # PJ -> `empresas`; only `cnd_federal` (Receita/PGFN, keyed on the
+        # CPF/CNPJ) is identity-authoritative (`feed_parte.TIPOS_FONTE`).
+        campos_sem_capacidade=frozenset(
+            {"nome", "cpf", "data_nascimento", "razao_social", "situacao_cadastral",
+             "data_situacao_cadastral"}
+        ),
+    ),
     # ─── atendimento_documentos (card_hub/negociacao_extracao_service) —
     # S2 contract `sw-negociacao-extracao-contract.md` §A/§D ─────────────────
     Fonte(
@@ -450,6 +478,7 @@ ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
     "cnd_condominio": "CND de condomínio",
     "serasa_crednet": "Serasa Crednet",
     "cartao_cnpj": "Cartão CNPJ",
+    "certidao": "Certidão Receita/PGFN (emitida pelo sistema)",
     "guia_itbi": "Guia do ITBI",
     "proposta_financiamento": "Proposta de financiamento",
     "contrato_financiamento": "Contrato de financiamento imobiliário",

@@ -222,7 +222,7 @@ def _build_params_cnd_federal(consulta: dict, token: str) -> dict:
     params = _token_and_doc(consulta, token)
     if consulta.get("data_nascimento"):
         params["birthdate"] = consulta["data_nascimento"]
-    params["preferencia_emissao"] = "2via"
+    params["preferencia_emissao"] = "nova"
     return params
 
 
@@ -354,7 +354,7 @@ def _parse_resultado_padrao(raw_response: dict) -> dict:
     Deliberately narrow: only `numero`/`emitida_em`/`validade_ate`, off the
     handful of field names InfoSimples uses across these ten endpoints
     (`numero_controle`/`codigo_controle`/`numero_certidao`/`numero`,
-    `data_emissao`/`data_consulta`, `data_validade`/`validade`).
+    `emissao_data`/`data_emissao`/`data_consulta`, `data_validade`/`validade`).
 
     It does NOT guess `resultado`. A `code=200` response can be a negativa OR
     a positiva PDF depending on what the DOCUMENT itself says — this module
@@ -377,7 +377,12 @@ def _parse_resultado_padrao(raw_response: dict) -> dict:
     )
     if isinstance(numero, str) and numero.strip():
         out["numero"] = numero.strip()
-    emitida = _parse_date_br(item.get("data_emissao") or item.get("data_consulta"))
+    # `emissao_data` is what Receita/PGFN actually returns (prod 2026-10);
+    # the other two cover the remaining endpoints.
+    emitida = _parse_date_br(
+        item.get("emissao_data") or item.get("data_emissao")
+        or item.get("data_consulta")
+    )
     if emitida:
         out["emitida_em"] = emitida
     validade = _parse_date_br(item.get("data_validade") or item.get("validade"))

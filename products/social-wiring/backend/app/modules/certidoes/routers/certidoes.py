@@ -276,22 +276,31 @@ def _fan_out_tipos_manuais(
         db.table(RESULTADOS).insert(novos).execute()
 
 
-def _resolve_parte_cliente_id(db, org_id, atendimento_parte_id: str) -> Optional[str]:
-    """The `cliente_id` behind one `atendimento_partes` row of THIS org, or a
-    404 — never trust a caller-supplied `cliente_id` for a party, so a
-    caller cannot link a consulta to a person who is not actually party to
-    this atendimento. Shared by `vincular_parte` and `criar_consulta_manual`.
+def _resolve_parte_dono(db, org_id, atendimento_parte_id: str) -> tuple[Optional[str], Optional[str]]:
+    """`(cliente_id, empresa_id)` behind one `atendimento_partes` row of THIS
+    org — exactly one is set (migration 179's CHECK: a party is a PF `clientes`
+    row OR a PJ `empresas` row), or a 404. Never trust a caller-supplied id
+    for a party, so a caller cannot link a consulta to a person/company who is
+    not actually party to this atendimento. Shared by `vincular_parte` and
+    `criar_consulta_manual`.
+
+    🔴 Returning only `cliente_id` (the pre-179 shape) linked a consulta with
+    NO owner when the party is a PJ — `cliente_id` is NULL there — so its
+    certidões surfaced on nobody's column.
     """
     parte_rows = (
         db.table("atendimento_partes")
-        .select("id, cliente_id")
+        .select("id, cliente_id, empresa_id")
         .eq("id", atendimento_parte_id)
         .eq("org_id", str(org_id))
         .execute()
     ).data or []
     if not parte_rows:
         raise HTTPException(status_code=404, detail="Parte não encontrada")
-    return parte_rows[0]["cliente_id"]
+    parte = parte_rows[0]
+    cliente_id = str(parte["cliente_id"]) if parte.get("cliente_id") else None
+    empresa_id = str(parte["empresa_id"]) if parte.get("empresa_id") else None
+    return cliente_id, empresa_id
 
 
 def _atendimento_id_da_parte(db, org_id, atendimento_parte_id: str) -> Optional[str]:
@@ -594,10 +603,16 @@ async def criar_consulta_manual(
         )
 
     resolved_cliente_id: Optional[str] = None
+    resolved_empresa_id: Optional[str] = None
     if body.atendimento_parte_id:
-        resolved_cliente_id = _resolve_parte_cliente_id(
+        resolved_cliente_id, resolved_empresa_id = _resolve_parte_dono(
             db, org_id, str(body.atendimento_parte_id)
         )
+        if resolved_empresa_id and body.tipo_documento != "cnpj":
+            raise HTTPException(
+                status_code=422,
+                detail="Esta parte é uma empresa — a consulta precisa ser de CNPJ.",
+            )
     elif body.cliente_id:
         _validar_cliente_id(db, org_id, str(body.cliente_id))
         resolved_cliente_id = str(body.cliente_id)
@@ -639,6 +654,8 @@ async def criar_consulta_manual(
         consulta_data["atendimento_parte_id"] = str(body.atendimento_parte_id)
     if resolved_cliente_id:
         consulta_data["cliente_id"] = resolved_cliente_id
+    if resolved_empresa_id:
+        consulta_data["empresa_id"] = resolved_empresa_id
 
     consulta_result = db.table(CONSULTAS).insert(consulta_data).execute()
     if not consulta_result.data:
@@ -1099,8 +1116,10 @@ async def upload_certidao_manual(
         org_id=str(org_id),
         db=db,
         tipo=resultado["tipo"],
-        resultado_origem_atual=resultado.get("resultado_origem"),
-        confirmado_por_atual=resultado.get("confirmado_por"),
+        # process_manual_upload just cleared the lock (new file = new
+        # evidence), so the extraction must not honour the stale one.
+        resultado_origem_atual=None,
+        confirmado_por_atual=None,
     )
 
     return success_response({**resultado, **update_data})
@@ -1195,17 +1214,25 @@ async def vincular_parte(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
 
-    resolved_cliente_id = _resolve_parte_cliente_id(
+    resolved_cliente_id, resolved_empresa_id = _resolve_parte_dono(
         db, org_id, str(body.atendimento_parte_id)
     )
 
-    _get_consulta_or_404(db, consulta_id, org_id, select="id")
+    consulta_atual = _get_consulta_or_404(db, consulta_id, org_id, select="id, tipo_documento")
+    if resolved_empresa_id and consulta_atual.get("tipo_documento") != "cnpj":
+        raise HTTPException(
+            status_code=422,
+            detail="Esta parte é uma empresa — a consulta precisa ser de CNPJ.",
+        )
 
     updated = (
         db.table(CONSULTAS)
         .update({
             "atendimento_parte_id": str(body.atendimento_parte_id),
+            # Both set explicitly: a PJ party clears a stale `cliente_id` (and
+            # vice versa) so a consulta never carries two owners.
             "cliente_id": resolved_cliente_id,
+            "empresa_id": resolved_empresa_id,
         })
         .eq("id", consulta_id)
         .eq("org_id", str(org_id))
