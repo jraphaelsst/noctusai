@@ -1,8 +1,8 @@
 """Roteiro request bodies for the atendimento-partes-imoveis project (CONTRACT §5.1).
 
 Lives beside `roteiros_service` rather than in `schemas.py` because that file
-has no owner in Wave B; the Wave C0 patch swaps these in for `RoteiroCreateBody`
-/ `RoteiroPatchBody` (CONTRACT §10 item 3).
+has no owner in Wave B; they are the bodies of the roteiro create/patch routes
+(CONTRACT §10 item 3).
 
 `data_visita` is required on create and may never be nulled on patch. Both
 refusals carry the SAME message — `"Informe a data da visita."` — raised from a

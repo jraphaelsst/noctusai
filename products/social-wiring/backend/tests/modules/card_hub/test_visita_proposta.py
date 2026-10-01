@@ -54,7 +54,7 @@ def _seed(scoped, *, codigos=("ONE9001", "ONE9002"), negociacoes=None):
 def _criar_roteiro(client, cid, codigos) -> dict:
     resp = client.post(
         f"/api/clientes/{cid}/roteiros",
-        json={"imoveis": list(codigos)},
+        json={"imoveis": list(codigos), "data_visita": "2026-10-10"},
         headers=_auth(),
     )
     assert resp.status_code == 201, resp.text

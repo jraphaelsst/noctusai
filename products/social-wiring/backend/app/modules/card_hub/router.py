@@ -38,6 +38,8 @@ from fastapi import (
     UploadFile,
 )
 
+from starlette.concurrency import run_in_threadpool
+
 from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
 from noctusai_lib.domain.card_hub import CardHubContext, card_hub_routers
 
@@ -61,14 +63,24 @@ from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.contrato_gerador.router import (
     router as contrato_gerador_router,
 )
+from app.modules.card_hub.certidoes_partes_router import (
+    router as certidoes_partes_router,
+)
+from app.modules.card_hub.partes_router import router as partes_router
 from app.modules.card_hub.contrato_testemunhas_router import (
     router as contrato_testemunhas_router,
 )
 from app.modules.card_hub.negociacao_estruturada_router import (
     router as negociacao_estruturada_router,
 )
+from app.modules.card_hub.partes_schemas import ParteCreateBody
+from app.modules.card_hub.roteiro_schemas import (
+    RoteiroCreateBodyV2,
+    RoteiroPatchBodyV2,
+)
 from app.modules.card_hub.proveniencia.router import router as proveniencia_router
 from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
+from app.modules.imovel_hub import proprietarios_service as proprietarios_svc
 from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
 from app.modules.card_hub.config import CARD_HUB
@@ -84,7 +96,6 @@ from app.modules.empresas.deps import (
     get_storage_backend as get_empresas_storage_backend,
 )
 from app.modules.card_hub.schemas import (
-    CompradorCreateBody,
     ContratoPatchBody,
     EmpresaManualCreateBody,
     FinanciamentoPatchBody,
@@ -100,9 +111,7 @@ from app.modules.card_hub.schemas import (
     PartePapelPatchBody,
     ProcessoLegadoBody,
     ResolverConflitoNegociacaoBody,
-    RoteiroCreateBody,
     RoteiroOrdemBody,
-    RoteiroPatchBody,
     VisitaCreateBody,
     VisitaPatchBody,
     VisitaPropostaBody,
@@ -124,6 +133,12 @@ router.include_router(contrato_gerador_router)
 router.include_router(assinatura_router)
 # Per-contract witness selection (migration 168) — .../contratos/{id}/testemunhas.
 router.include_router(contrato_testemunhas_router)
+# atendimento-partes-imoveis (CONTRACT §10): all-parties surface
+# (`.../partes`, `.../partes/lookup`) and per-party certidões
+# (`.../certidoes/partes…`). Literal ≥3-segment paths with a distinct 2nd
+# segment — no collision with `/{cliente_id}` or `/tags`.
+router.include_router(partes_router)
+router.include_router(certidoes_partes_router)
 
 #: Shared with the included routers — see `card_hub/auth.py`.
 _auth_parts = auth_parts
@@ -401,7 +416,7 @@ async def list_roteiros_route(
 @router.post("/{cliente_id}/roteiros", status_code=201)
 async def create_roteiro_route(
     cliente_id: UUID,
-    body: RoteiroCreateBody,
+    body: RoteiroCreateBodyV2,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
@@ -416,6 +431,7 @@ async def create_roteiro_route(
         imoveis=body.imoveis,
         titulo=body.titulo,
         atendimento_id=body.atendimento_id,
+        data_visita=body.data_visita,
     )
 
 
@@ -423,14 +439,19 @@ async def create_roteiro_route(
 async def patch_roteiro_route(
     cliente_id: UUID,
     roteiro_id: UUID,
-    body: RoteiroPatchBody,
+    body: RoteiroPatchBodyV2,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
     _user, org_id = _auth_parts(auth)
     updates = body.model_dump(exclude_unset=True)
     return roteiros_svc.atualizar(
-        client, org_id, cliente_id, roteiro_id, titulo=updates.get("titulo", ...)
+        client,
+        org_id,
+        cliente_id,
+        roteiro_id,
+        titulo=updates.get("titulo", ...),
+        data_visita=updates.get("data_visita", ...),
     )
 
 
@@ -478,9 +499,20 @@ async def roteiro_pdf_route(
     _user, org_id = _auth_parts(auth)
     cliente = svc.ensure_cliente(client, org_id, cliente_id)
     roteiro = roteiros_svc.obter(client, org_id, cliente_id, roteiro_id)
+    visitas = roteiro.get("visitas") or []
+    # Photo download is blocking httpx I/O — off the event loop.
+    fotos_por_codigo = await run_in_threadpool(
+        roteiro_pdf_svc.carregar_fotos,
+        [v["imovel"] for v in visitas if v.get("imovel")],
+    )
+    proprietarios_por_codigo = proprietarios_svc.por_codigos(
+        client, org_id, [v["codigo"] for v in visitas]
+    )
     pdf = roteiro_pdf_svc.gerar(
         roteiro,
         cliente_nome=cliente.get("nome_oficial") or cliente.get("nome"),
+        proprietarios_por_codigo=proprietarios_por_codigo,
+        fotos_por_codigo=fotos_por_codigo,
     )
     return Response(
         content=pdf,
@@ -911,7 +943,7 @@ async def list_compradores_route(
 @router.post("/{cliente_id}/compradores", status_code=201)
 async def create_comprador_route(
     cliente_id: UUID,
-    body: CompradorCreateBody,
+    body: ParteCreateBody,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
@@ -933,6 +965,10 @@ async def create_comprador_route(
         atendimento_id=body.atendimento_id,
         lado=body.lado,
         user_id=getattr(user, "id", None),
+        empresa_id=body.empresa_id,
+        cnpj=body.cnpj,
+        razao_social=body.razao_social,
+        cpf=body.cpf,
     )
 
 

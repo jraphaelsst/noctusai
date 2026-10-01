@@ -83,7 +83,7 @@ def _seed(scoped, *, codigos=("ONE9001", "ONE9002"), atendimentos=None, mirror=T
 def _criar(client, cid, codigos, **body) -> dict:
     resp = client.post(
         f"/api/clientes/{cid}/roteiros",
-        json={"imoveis": list(codigos), **body},
+        json={"imoveis": list(codigos), "data_visita": "2026-10-10", **body},
         headers=_auth(),
     )
     assert resp.status_code == 201, resp.text
@@ -118,7 +118,7 @@ class TestCriacao:
         cid, _ = _seed(scoped, codigos=("ONE9001",))
         resp = client.post(
             f"/api/clientes/{cid}/roteiros",
-            json={"imoveis": ["ONE9001", "NOPE0001"]},
+            json={"imoveis": ["ONE9001", "NOPE0001"], "data_visita": "2026-10-10"},
             headers=_auth(),
         )
         assert resp.status_code == 404, resp.text
@@ -129,7 +129,7 @@ class TestCriacao:
         cid, _ = _seed(scoped, codigos=("ONE9001",))
         resp = client.post(
             f"/api/clientes/{cid}/roteiros",
-            json={"imoveis": ["ONE9001", "one9001"]},
+            json={"imoveis": ["ONE9001", "one9001"], "data_visita": "2026-10-10"},
             headers=_auth(),
         )
         assert resp.status_code == 400, resp.text
@@ -159,7 +159,7 @@ class TestCriacao:
 
         resp = client.post(
             f"/api/clientes/{cid}/roteiros",
-            json={"imoveis": ["ONE9001"]},
+            json={"imoveis": ["ONE9001"], "data_visita": "2026-10-10"},
             headers=_auth(),
         )
         assert resp.status_code == 409, resp.text

@@ -1,10 +1,8 @@
 """All parties of an atendimento + registration lookup (CONTRACT §2.1-§2.5).
 
-The router is not mounted on the real app until Wave C0 (CONTRACT §10), so
-these tests mount `partes_router` — and the existing `POST .../compradores`
-handler's service — on a LOCAL FastAPI app under `/api/clientes`, with the
-house exception handlers and the REAL `get_current_user_org` dependency (so
-the 401 assertions exercise the actual guard, not an override).
+Driven through the REAL app (`partes_router` is mounted by `card_hub.router`,
+CONTRACT §10), with the REAL `get_current_user_org` dependency — so the 401
+assertions exercise the actual guard, not an override.
 """
 from __future__ import annotations
 
@@ -12,23 +10,11 @@ from datetime import date
 from uuid import uuid4
 
 import pytest
-from fastapi import Depends, FastAPI
-from fastapi.exceptions import RequestValidationError
-from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from noctusai_lib.primitives.exceptions import (
-    AppException,
-    app_exception_handler,
-    request_validation_exception_handler,
-)
-
-from app.dependencies import get_current_user_org
 from app.modules.card_hub import compradores_service as comp_svc
 from app.modules.card_hub import partes_service as svc
-from app.modules.card_hub.auth import auth_parts
 from app.modules.card_hub.deps import get_card_hub_client
-from app.modules.card_hub.partes_router import router as partes_router
 from app.modules.card_hub.partes_schemas import ParteCreateBody
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
@@ -65,38 +51,16 @@ def _auth() -> dict:
     return {"Authorization": "Bearer test-token"}
 
 
-def _local_app() -> FastAPI:
-    app = FastAPI()
-    app.add_exception_handler(AppException, app_exception_handler)
-    app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
-    app.include_router(partes_router, prefix="/api/clientes")
-
-    @app.post("/api/clientes/{cliente_id}/compradores", status_code=201)
-    async def _add(cliente_id: str, body: ParteCreateBody, auth=Depends(get_current_user_org)):
-        from uuid import UUID
-
-        _u, org_id = auth_parts(auth)
-        return comp_svc.adicionar(
-            get_card_hub_client(), org_id, UUID(cliente_id),
-            parte_cliente_id=body.cliente_id, nome=body.nome, celular=body.celular,
-            papel=body.papel, observacao=body.observacao,
-            atendimento_id=body.atendimento_id, lado=body.lado,
-            empresa_id=body.empresa_id, cnpj=body.cnpj, razao_social=body.razao_social,
-        )
-
-    return app
-
-
 @pytest.fixture
 def http(client):
-    """Local app over the SAME patched mock the `client` fixture installed."""
-    return TestClient(_local_app())
+    """The real app over the SAME patched mock the `client` fixture installed."""
+    return client
 
 
 @pytest.fixture
-def anon_http(client):
+def anon_http(anon_client):
     """No Authorization header — the guard decides the status."""
-    return TestClient(_local_app())
+    return anon_client
 
 
 @pytest.fixture

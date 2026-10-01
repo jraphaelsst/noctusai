@@ -42,6 +42,7 @@ from noctusai_lib.primitives.exceptions import (
     ValidationError_,
 )
 
+from app.services import clientes_service as clientes_svc
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
     _atendimentos_do_cliente,
@@ -260,6 +261,7 @@ def adicionar(
     empresa_id: Optional[UUID] = None,
     cnpj: Optional[str] = None,
     razao_social: Optional[str] = None,
+    cpf: Optional[str] = None,
 ) -> dict:
     """Attach another party (PF or PJ) to this card's atendimento.
 
@@ -268,6 +270,13 @@ def adicionar(
     (find-or-create the company by normalised CNPJ) — never two, never none.
     Accepting two would make the caller's intent unknowable when they
     disagree; accepting none would write a party with nobody in it.
+
+    `cpf` (digits, already validated by `ParteCreateBody`) rides with `nome` or
+    `cliente_id`, never with a company. With `nome` it is stored on the NEW
+    person as `cpf_origem='manual'` — and refused (409) when another person of
+    this org already holds it, so the operator links that person instead of
+    minting a duplicate. With `cliente_id` it is NEVER written over the CPF on
+    file: a different one opens an admin conflict (`registrar_cpf_divergente`).
 
     Returns the legacy `_out` keys (PF callers keep working) merged with the
     contract's `ParteItem` (`partes_service.item_da_parte`).
@@ -288,6 +297,8 @@ def adicionar(
             "Informe exatamente um de: cliente_id, nome, empresa_id, cnpj."
         )
     e_pj = empresa_id is not None or cnpj is not None
+    if cpf and e_pj:
+        raise ValidationError_("CPF não se aplica a uma empresa.")
     if e_pj and papel == PAPEL_CONJUGE:
         raise ValidationError_("Uma empresa não pode ser cônjuge.")
 
@@ -322,6 +333,14 @@ def adicionar(
         # who happened to already be a lead is no less related for it.
         _vincular(client, org_id, novo_cliente_id, cliente_id, lado_alvo)
     else:
+        if cpf:
+            existentes = clientes_svc.clientes_por_cpf(client, org_id, [cpf])
+            if existentes:
+                raise ConflictError(
+                    "Já existe uma pessoa com este CPF "
+                    f"({existentes[0].get('nome_oficial') or existentes[0].get('nome') or 'sem nome'})"
+                    " — selecione-a em vez de criar outra."
+                )
         novo_cliente_id = _criar_cliente(
             client,
             org_id,
@@ -330,6 +349,12 @@ def adicionar(
             vinculado_a=cliente_id,
             lado=lado_alvo,
         )
+        if cpf:
+            # The existing manual-edit path stamps cpf_origem='manual' /
+            # cpf_em — the same quinteto a hand-typed CPF on the card gets.
+            clientes_svc.update_cliente(
+                client, org_id, UUID(novo_cliente_id), cpf=cpf, acting_user_id=user_id
+            )
 
     # No `lado` filter: the same person/empresa cannot be on both sides of one
     # deal (DB unique indexes are per atendimento, not per side).
@@ -384,6 +409,9 @@ def adicionar(
     if e_pj:
         row["empresa_id"] = novo_empresa_id
     _t(client, TABLE).insert(row).execute()
+    if cpf and parte_cliente_id is not None:
+        # After the insert: a refused double-click must not leave a conflict.
+        clientes_svc.registrar_cpf_divergente(client, org_id, parte_cliente_id, cpf)
 
     from app.modules.card_hub import partes_service
 
