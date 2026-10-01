@@ -1,230 +1,197 @@
-"""The roteiro cronograma PDF — one imóvel per page, in visiting order.
+"""The roteiro cronograma PDF (xhtml2pdf via `render_html_pdf`) — one imóvel per page.
 
-HOW A PDF IS ASSERTED WITHOUT A PDF PARSER
-------------------------------------------
-`reportlab` writes, it does not read, and this product has no PDF reader
-dependency. So the page count is asserted off the document's own catalogue —
-every PDF carries `/Type /Pages ... /Count N` — and the content off the raw
-byte stream, which is uncompressed for these documents. That is a real
-assertion, not a smoke test: a layout change that dropped a page or a field
-fails it.
-
-The one thing it cannot see is where on the page something landed. That is the
-honest limit of testing a PDF this way, and it is stated rather than implied.
+Asserted by PARSING the produced PDF with PyMuPDF (`fitz`, already a declared
+dependency): real page count and real extracted text, not byte greps.
 """
 from __future__ import annotations
 
-import re
-
+import httpx
 import pytest
 
 from app.modules.card_hub import roteiro_pdf_service as svc
 
-pytest.importorskip(
-    "reportlab",
-    reason="reportlab>=4.0.0 is declared in requirements.txt — install it to run "
-    "the PDF tests; skipping here would hide a broken generator.",
-)
+fitz = pytest.importorskip("fitz", reason="PyMuPDF is a declared requirement")
+pytest.importorskip("xhtml2pdf", reason="xhtml2pdf is a declared requirement")
+
+def _png() -> bytes:
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (4, 4), (200, 30, 30)).save(buf, "PNG")
+    return buf.getvalue()
 
 
-@pytest.fixture(autouse=True)
-def _texto_legivel():
-    """reportlab zlib-compresses page content streams by default, which hides
-    every drawn string from a byte assertion. Turning compression off is a
-    TEST-TIME global on `rl_config` — production output is untouched, and the
-    alternative (adding a PDF parser dependency just to read our own writes)
-    is a heavier price for the same assertion.
-    """
-    from reportlab import rl_config
+PNG = _png()
 
-    anterior = rl_config.pageCompression
-    rl_config.pageCompression = 0
-    yield
-    rl_config.pageCompression = anterior
+
+def _texto(pdf: bytes) -> list[str]:
+    doc = fitz.open(stream=pdf, filetype="pdf")
+    return [p.get_text() for p in doc]
 
 
 def _visita(codigo: str, ordem: int, **imovel) -> dict:
     base = {
-        "codigo": codigo,
-        "titulo": f"Apartamento {codigo}",
-        "empreendimento": "Edifício Aurora",
-        "logradouro": "Rua das Palmeiras",
-        "numero": "320",
-        "complemento": "apto 91",
-        "bairro": "Centro",
-        "cidade": "Florianópolis",
-        "uf": "SC",
-        "cep": "88010-000",
+        "codigo": codigo, "titulo": f"Apartamento {codigo}",
+        "empreendimento": "Edifício Aurora", "logradouro": "Rua das Palmeiras",
+        "numero": "320", "complemento": "apto 91", "bairro": "Centro",
+        "cidade": "Florianópolis", "uf": "SC", "cep": "88010-000",
         "foto_destaque": None,
-        "corretores": [{"nome": "Ana Prado", "email": "ana@example.com"}],
-        "captacao": None,
-        "ativo_no_vista": True,
-        "fonte": "imoveis",
+        "corretores": [{"nome": "Ana Prado"}], "captacao": None,
+        "ativo_no_vista": True, "fonte": "imoveis",
+        "categoria": "Apartamento", "valor": 1234567.5, "valor_tipo": "venda",
+        "dormitorios": 3, "suites": 1, "vagas": 2,
+        "area_privativa": 85, "area_total": 120.5,
     }
     base.update(imovel)
-    return {
-        "id": f"v-{ordem}",
-        "roteiro_id": "r-1",
-        "codigo": codigo,
-        "ordem": ordem,
-        "status": "pendente",
-        "observacao": None,
-        "feedback_em": None,
-        "created_at": "2026-08-25T12:00:00+00:00",
-        "imovel": base,
-    }
+    return {"id": f"v-{ordem}", "roteiro_id": "r-1", "codigo": codigo, "ordem": ordem,
+            "status": "pendente", "observacao": None, "feedback_em": None,
+            "created_at": "2026-08-25T12:00:00+00:00", "imovel": base}
 
 
-def _roteiro(*visitas, titulo=None) -> dict:
-    return {
-        "id": "3f5c2d69-0000-0000-0000-000000000001",
-        "atendimento_id": "a-1",
-        "titulo": titulo,
-        "created_at": "2026-08-25T12:00:00+00:00",
-        "visitas": list(visitas),
-        "contagem": {
-            "total": len(visitas), "realizadas": 0, "nao_realizadas": 0,
-            "pendentes": len(visitas),
-        },
-    }
-
-
-def _page_count(pdf: bytes) -> int:
-    """The page tree's own `/Count`.
-
-    Matched on `/Count` alone rather than anchored after `/Type /Pages`:
-    reportlab writes dictionary keys in ALPHABETICAL order, so the real output
-    is `/Count 3 /Kids [...] /Type /Pages` — an anchored regex silently matches
-    nothing and the assertion below is what caught that.
-    """
-    assert re.search(rb"/Type\s*/Pages", pdf), "no page tree in the output"
-    counts = [int(m) for m in re.findall(rb"/Count\s+(\d+)", pdf)]
-    assert counts, "page tree carries no /Count"
-    return max(counts)
+def _roteiro(*visitas, titulo=None, data_visita="2026-10-15") -> dict:
+    return {"id": "3f5c2d69-0000-0000-0000-000000000001", "atendimento_id": "a-1",
+            "titulo": titulo, "data_visita": data_visita,
+            "created_at": "2026-08-25T12:00:00+00:00", "visitas": list(visitas)}
 
 
 class TestEstrutura:
-    def test_is_a_pdf(self):
-        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0)))
-        assert pdf.startswith(b"%PDF-")
-
     def test_one_page_per_imovel(self):
-        """🔴 The user's words: One property per page."""
-        pdf = svc.gerar(
-            _roteiro(_visita("ONE9001", 0), _visita("ONE9002", 1), _visita("ONE9003", 2))
-        )
-        assert _page_count(pdf) == 3
+        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0), _visita("ONE9002", 1), _visita("ONE9003", 2)))
+        assert pdf.startswith(b"%PDF-")
+        assert len(_texto(pdf)) == 3
 
-    def test_an_empty_roteiro_is_refused_not_a_blank_file(self):
-        """A zero-page PDF is a corrupt file, not an empty state."""
+    def test_single_imovel_is_one_page(self):
+        assert len(_texto(svc.gerar(_roteiro(_visita("ONE9001", 0))))) == 1
+
+    def test_pages_follow_visitas_ordem_not_list_order(self):
+        paginas = _texto(svc.gerar(_roteiro(_visita("ONE9002", 1), _visita("ONE9001", 0))))
+        assert "ONE9001" in paginas[0] and "ONE9002" in paginas[1]
+
+    def test_empty_roteiro_is_refused(self):
         with pytest.raises(Exception) as exc:
             svc.gerar(_roteiro())
         assert getattr(exc.value, "status_code", None) == 400
 
-    def test_filename_is_stable_and_scoped_to_the_roteiro(self):
-        assert svc.nome_arquivo(_roteiro(_visita("ONE9001", 0))) == "roteiro-3f5c2d69.pdf"
+
+class TestNomeArquivo:
+    def test_includes_data_visita(self):
+        assert svc.nome_arquivo(_roteiro(data_visita="2026-10-15")) == "roteiro-3f5c2d69-2026-10-15.pdf"
+
+    def test_without_date_has_no_date_part(self):
+        assert svc.nome_arquivo(_roteiro(data_visita=None)) == "roteiro-3f5c2d69.pdf"
 
 
 class TestConteudo:
-    """The four data points the user named, and nothing invented."""
+    def test_header_fields(self):
+        p = _texto(svc.gerar(_roteiro(_visita("ONE9001", 0), _visita("ONE9002", 1), titulo="Terça de manhã"),
+                             cliente_nome="Marina Souza"))[1]
+        for s in ("Terça de manhã", "Marina Souza", "15/10/2026", "Imóvel 2 de 2", "ONE9002"):
+            assert s in p
 
-    def test_carries_every_codigo_in_order(self):
-        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0), _visita("ONE9002", 1)))
-        assert pdf.index(b"ONE9001") < pdf.index(b"ONE9002")
+    def test_technical_data(self):
+        p = _texto(svc.gerar(_roteiro(_visita("ONE9001", 0))))[0]
+        for s in ("Apartamento", "Rua das Palmeiras 320", "apto 91", "Centro", "Florianópolis/SC",
+                  "R$ 1.234.567,50", "3 dorm.", "1 suítes", "2 vagas", "85 m²", "120,5 m²",
+                  "Edifício Aurora", "Ana Prado"):
+            assert s in p, s
 
-    def test_carries_condominio_and_endereco(self):
+    def test_missing_additive_keys_render_dash_not_crash(self):
+        v = _visita("ONE9001", 0)
+        for k in ("categoria", "valor", "valor_tipo", "dormitorios", "suites", "vagas",
+                  "area_privativa", "area_total"):
+            v["imovel"].pop(k)
+        p = _texto(svc.gerar(_roteiro(v)))[0]
+        assert "—" in p and "ONE9001" in p
+
+    def test_valor_falls_back_to_valor_venda_then_locacao(self):
+        v = _visita("ONE9001", 0, valor=None, valor_tipo=None, valor_venda=None, valor_locacao=2500)
+        assert "R$ 2.500,00 /mês" in _texto(svc.gerar(_roteiro(v)))[0]
+
+    def test_form_blocks_present(self):
+        p = _texto(svc.gerar(_roteiro(_visita("ONE9001", 0))))[0]
+        for s in ("Visita realizada", "Sim", "Não", "Assinatura", "Gerou proposta?", "Proposta:",
+                  "Permuta", "Financiamento", "FGTS", "PROPRIETÁRIO"):
+            assert s in p, s
+
+    def test_proprietarios_listed_else_dash(self):
+        pdf = svc.gerar(
+            _roteiro(_visita("ONE9001", 0), _visita("ONE9002", 1)),
+            proprietarios_por_codigo={"one9001": [{"nome": "Carlos Dono", "documento": "123.456.789-09",
+                                                   "tipo_pessoa": "PF"}]},
+        )
+        p0, p1 = _texto(pdf)
+        assert "Carlos Dono" in p0 and "123.456.789-09" in p0
+        assert "Carlos Dono" not in p1
+
+    def test_html_in_data_is_escaped(self):
+        p = _texto(svc.gerar(_roteiro(_visita("ONE9001", 0, titulo="<b>X</b> & Y"))))[0]
+        assert "<b>X</b> & Y" in p
+
+    def test_emoji_in_text_does_not_break_rendering(self):
+        assert len(_texto(svc.gerar(_roteiro(_visita("ONE9001", 0), titulo="Roteiro 🏠")))) == 1
+
+    def test_delisted_imovel_renders_and_says_so(self):
+        v = _visita("ONE4770", 0, empreendimento=None, logradouro=None, numero=None, complemento=None,
+                    corretores=[], bairro="Trindade", ativo_no_vista=False, fonte="registry")
+        p = _texto(svc.gerar(_roteiro(v)))[0]
+        assert "Trindade" in p and "catálogo Vista" in p
+
+
+class TestFotos:
+    def test_embedded_photo_is_an_image_and_no_placeholder(self):
+        uri = "data:image/png;base64," + __import__("base64").b64encode(PNG).decode()
+        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0)), fotos_por_codigo={"ONE9001": uri})
+        doc = fitz.open(stream=pdf, filetype="pdf")
+        assert doc[0].get_images()
+        assert "foto indisponível" not in doc[0].get_text()
+
+    def test_missing_photo_renders_visible_placeholder(self):
         pdf = svc.gerar(_roteiro(_visita("ONE9001", 0)))
-        assert b"Aurora" in pdf
-        assert b"Palmeiras" in pdf
-        assert b"320" in pdf
-
-    def test_owner_fields_render_as_blank_not_as_absent(self):
-        """D1 — user-ratified 2026-08-25. Vista exposes no proprietário, so the
-        LABEL still prints with an em-dash: a corretor must see that the field
-        exists and is unknown, not wonder whether the report dropped it.
-        Destination for the real data: `imovel_dados` (migration 075)."""
-        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0)))
-        assert b"PROPRIET" in pdf.upper()
-        assert b"CELULAR" in pdf.upper()
-
-    def test_no_photo_is_embedded(self):
-        """The user named four data points and a photo is not among them;
-        fetching remote images server-side would add a failure mode this
-        document does not need."""
-        pdf = svc.gerar(
-            _roteiro(_visita("ONE9001", 0, foto_destaque="https://cdn.example/x.jpg"))
-        )
-        # `/Subtype /Image`, NOT a bare `/Image`: every reportlab document
-        # declares `/ProcSet [/PDF /Text /ImageB /ImageC /ImageI]` as
-        # boilerplate, so the loose substring matches a document with no image
-        # in it at all — a false failure that says nothing.
-        assert b"/Subtype /Image" not in pdf
-        assert b"cdn.example" not in pdf
+        doc = fitz.open(stream=pdf, filetype="pdf")
+        assert not doc[0].get_images()
+        assert "foto indisponível" in doc[0].get_text()
 
 
-class TestCaptacao:
-    def test_prefers_the_imovel_dados_captador(self):
-        """`captador_user_id` (075) is the canonical model and outranks the
-        Vista corretor list."""
-        pdf = svc.gerar(
-            _roteiro(
-                _visita("ONE9001", 0, captacao={"id": "u-1", "nome": "Bruno Sales"})
-            )
-        )
-        assert b"Bruno Sales" in pdf
-        assert b"Ana Prado" not in pdf
-
-    def test_falls_back_to_every_vista_corretor_not_just_the_first(self):
-        """13.1% of the catalog carries 2–3 corretores (040's census) and a
-        first-only read discards the rest."""
-        pdf = svc.gerar(
-            _roteiro(
-                _visita(
-                    "ONE9001", 0,
-                    corretores=[{"nome": "Ana Prado"}, {"nome": "Caio Lima"}],
-                )
-            )
-        )
-        assert b"Ana Prado" in pdf
-        assert b"Caio Lima" in pdf
-
-    def test_no_captador_anywhere_renders_blank(self):
-        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0, corretores=[])))
-        assert pdf.startswith(b"%PDF-")
+def _client(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-class TestImovelDelistado:
-    def test_renders_from_the_registry_snapshot_and_says_so(self):
-        """A sold imóvel keeps its page. The registry snapshot has no street,
-        so the endereço prints what it has without stray separators — and the
-        page states the property has left the catalog, which a corretor needs
-        before driving there."""
-        pdf = svc.gerar(
-            _roteiro(
-                _visita(
-                    "ONE4770", 0,
-                    empreendimento=None, logradouro=None, numero=None,
-                    complemento=None, cep=None, corretores=[],
-                    bairro="Trindade", cidade="Florianópolis", uf="SC",
-                    ativo_no_vista=False, fonte="registry",
-                )
-            )
-        )
-        assert _page_count(pdf) == 1
-        assert b"ONE4770" in pdf
-        assert b"Trindade" in pdf
-        assert b"cat" in pdf  # "fora do catálogo Vista"
+class TestCarregarFotos:
+    IMOVEIS = [{"codigo": "one9001", "foto_destaque": "https://cdn.example/a.png"}]
 
+    def test_success_builds_data_uri_keyed_by_canonical_codigo(self):
+        c = _client(lambda r: httpx.Response(200, content=PNG, headers={"content-type": "image/png"}))
+        out = svc.carregar_fotos(self.IMOVEIS, client=c)
+        assert out["ONE9001"].startswith("data:image/png;base64,")
 
-class TestCabecalho:
-    def test_titulo_falls_back_to_the_creation_date(self):
-        pdf = svc.gerar(_roteiro(_visita("ONE9001", 0)))
-        assert b"25/08/2026" in pdf
+    def test_falls_back_to_first_of_fotos(self):
+        c = _client(lambda r: httpx.Response(200, content=PNG, headers={"content-type": "image/png"}))
+        out = svc.carregar_fotos([{"codigo": "A1", "fotos": [{"url": "https://x/y.png"}]}], client=c)
+        assert "A1" in out
 
-    def test_cliente_name_rides_along_when_given(self):
-        pdf = svc.gerar(
-            _roteiro(_visita("ONE9001", 0), titulo="Terca de manha"),
-            cliente_nome="Marina Souza",
-        )
-        assert b"Marina Souza" in pdf
-        assert b"Terca de manha" in pdf
+    @pytest.mark.parametrize("resp", [
+        httpx.Response(404),
+        httpx.Response(200, content=b"<html/>", headers={"content-type": "text/html"}),
+        httpx.Response(200, content=b"x" * (svc.FOTO_MAX_BYTES + 1), headers={"content-type": "image/png"}),
+        httpx.Response(200, content=b"", headers={"content-type": "image/png"}),
+    ])
+    def test_failures_are_missing_key_and_logged(self, resp, caplog):
+        with caplog.at_level("WARNING"):
+            out = svc.carregar_fotos(self.IMOVEIS, client=_client(lambda r: resp))
+        assert out == {}
+        assert "ONE9001" in caplog.text
+
+    def test_network_error_is_missing_key_and_logged(self, caplog):
+        def boom(request):
+            raise httpx.ConnectTimeout("slow", request=request)
+        with caplog.at_level("WARNING"):
+            assert svc.carregar_fotos(self.IMOVEIS, client=_client(boom)) == {}
+        assert "ONE9001" in caplog.text
+
+    def test_non_http_scheme_is_never_fetched(self):
+        calls = []
+        c = _client(lambda r: calls.append(r) or httpx.Response(200))
+        assert svc.carregar_fotos([{"codigo": "A1", "foto_destaque": "file:///etc/passwd"}], client=c) == {}
+        assert calls == []

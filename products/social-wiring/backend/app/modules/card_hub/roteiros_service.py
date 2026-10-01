@@ -56,7 +56,7 @@ owns the two rules a constraint cannot:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -81,7 +81,11 @@ VISITAS_TABLE = "visitas"
 #: future job). Neither is redundant with the other.
 STATUS_VALIDOS = ("pendente", "realizada", "nao_realizada")
 
-_ROTEIRO_FIELDS = ("id", "atendimento_id", "titulo", "created_at")
+_ROTEIRO_FIELDS = ("id", "atendimento_id", "titulo", "data_visita", "created_at")
+
+#: Same sentence the request schema (`roteiro_schemas`) raises, so the 422 from
+#: the body and the typed error from a direct service call read identically.
+MSG_DATA_OBRIGATORIA = "Informe a data da visita."
 _VISITA_FIELDS = (
     "id", "roteiro_id", "codigo", "ordem", "status",
     "observacao", "feedback_em", "created_at",
@@ -218,10 +222,17 @@ def criar(
     cliente_id: UUID,
     *,
     imoveis: list[str],
+    data_visita: Optional[date] = None,
     titulo: Optional[str] = None,
     atendimento_id: Optional[UUID] = None,
 ) -> dict:
-    """A route and one visita per property, in the order given."""
+    """A route and one visita per property, in the order given.
+
+    `data_visita` is REQUIRED (CONTRACT §5.1); it defaults to `None` only so a
+    caller that forgets it gets the typed `ValidationError_` below rather than a
+    `TypeError`. Past dates are allowed (CONTRACT §11).
+    """
+    data_visita = _exigir_data(data_visita)
     ensure_cliente(client, org_id, cliente_id)
     alvo = resolve_atendimento_id(client, org_id, cliente_id, atendimento_id)
     codigos = _validar_codigos(client, org_id, imoveis)
@@ -234,6 +245,7 @@ def criar(
             "org_id": str(org_id),
             "atendimento_id": alvo,
             "titulo": (titulo or "").strip() or None,
+            "data_visita": data_visita,
             "created_at": agora,
         }
     ).execute()
@@ -254,6 +266,21 @@ def criar(
     ).execute()
 
     return obter(client, org_id, cliente_id, UUID(roteiro_id))
+
+
+def _exigir_data(valor: Any) -> str:
+    """ISO `YYYY-MM-DD` for the column, or the typed refusal. Accepts a `date`
+    or an ISO string; anything else (None, '', garbage) is the same 400."""
+    if isinstance(valor, datetime):
+        valor = valor.date()
+    if isinstance(valor, date):
+        return valor.isoformat()
+    if isinstance(valor, str) and valor.strip():
+        try:
+            return date.fromisoformat(valor.strip()[:10]).isoformat()
+        except ValueError:
+            pass
+    raise ValidationError_(MSG_DATA_OBRIGATORIA, field="data_visita")
 
 
 def _validar_codigos(client: Any, org_id: UUID, imoveis: list[str]) -> list[str]:
@@ -290,13 +317,18 @@ def atualizar(
     roteiro_id: UUID,
     *,
     titulo: Optional[str] = ...,
+    data_visita: Optional[date] = ...,
 ) -> dict:
-    """`...` sentinels an unset field — only what the PATCH carried is written."""
+    """`...` sentinels an unset field — only what the PATCH carried is written.
+    An explicit `data_visita=None` is refused: a roteiro never loses its date."""
     _obter(client, org_id, cliente_id, roteiro_id)
+    updates: dict = {}
     if titulo is not ...:
-        _t(client, TABLE).update(
-            {"titulo": (titulo or "").strip() or None}
-        ).eq("id", str(roteiro_id)).execute()
+        updates["titulo"] = (titulo or "").strip() or None
+    if data_visita is not ...:
+        updates["data_visita"] = _exigir_data(data_visita)
+    if updates:
+        _t(client, TABLE).update(updates).eq("id", str(roteiro_id)).execute()
     return obter(client, org_id, cliente_id, roteiro_id)
 
 
