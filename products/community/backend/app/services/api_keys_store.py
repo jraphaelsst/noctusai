@@ -86,10 +86,27 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
             "formulário público de inscrição. No painel da Cloudflare: "
             "Turnstile > seu site > Chave secreta. Sem ela, a proteção fica "
             "desligada e o formulário aceita qualquer envio, inclusive de "
-            "robôs."        ),
+            "robôs. Configure junto com a Site Key abaixo."
+        ),
         is_secret=True,
         testable=False,
         input_type="password",
+        placeholder="0x...",
+    ),
+    ApiKeySpec(
+        name="turnstile_site_key",
+        label="Cloudflare Turnstile Site Key",
+        description=(
+            "Chave pública que mostra a verificação contra robôs (captcha) "
+            "nos formulários de cadastro e assinatura. No painel da "
+            "Cloudflare: Turnstile > seu site > Chave do site. Ela não é "
+            "secreta: aparece para quem visita o site. Se a Chave secreta "
+            "acima estiver preenchida e esta não, os formulários ficam "
+            "indisponíveis."
+        ),
+        is_secret=False,
+        testable=False,
+        input_type="text",
         placeholder="0x...",
     ),
 )

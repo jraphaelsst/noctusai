@@ -11,12 +11,13 @@ silently treats the body model as an unresolved `Query(...)` param.
 """
 import logging
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from app.config import settings
 from app.dependencies import get_admin_client, get_core_client, http_error, resolve_public_org_id
 from app.rate_limit import limiter
 from app.schemas.cadastro import CadastroCreate, CadastroOut
+from app.services.captcha import CaptchaResolver, get_captcha_resolver
 from app.services.cadastro_service import CadastroService, CadastroServiceError
 
 logger = logging.getLogger(__name__)
@@ -29,11 +30,12 @@ router = APIRouter(prefix="/api/cadastro", tags=["cadastro"])
 async def create_cadastro(
     request: Request,
     payload: CadastroCreate,
+    resolver: CaptchaResolver = Depends(get_captcha_resolver),
 ) -> CadastroOut:
     org_id = resolve_public_org_id()
     admin_client = get_admin_client()
     core_client = get_core_client()
-    service = CadastroService(admin_client, core_client, org_id=org_id)
+    service = CadastroService(admin_client, core_client, org_id=org_id, captcha=resolver(str(org_id)))
     remote_ip = request.client.host if request.client else None
     try:
         result = await service.cadastrar(payload=payload.model_dump(), remote_ip=remote_ip)

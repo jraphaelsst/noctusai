@@ -111,6 +111,18 @@ class PlanoPublico(BaseModel):
     ordem: int = 0
 
 
+class CaptchaPublico(BaseModel):
+    """Whether the public forms (`/api/checkout`, `/api/cadastro`)
+    require a Turnstile token, and the PUBLIC site key the widget renders
+    with. `obrigatorio=True` with `site_key=None` = secret configured but
+    no site key: the forms cannot be submitted (FE shows "Cadastro
+    temporariamente indisponível"). See `app/services/captcha.py`."""
+
+    obrigatorio: bool
+    site_key: Optional[str] = None
+
+
 class PlanoPublicoListResponse(BaseModel):
     items: list[PlanoPublico]
     total: int
+    captcha: CaptchaPublico

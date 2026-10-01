@@ -4,10 +4,10 @@ Reuses the seed's identity primitives VERBATIM
 (`noctusai_lib.domain.org.provision_invited_identity` /
 `.attach_user_to_org`) — the SAME mechanism the seed's own `team`
 standard router uses for invite-accept (`noctusai_seed.routers.
-_create_team_router`). Turnstile is checked with the exact SAME
-resolution helper `/api/checkout` uses (`checkout_service.
-_default_turnstile_verifier`) — reused, not copied, so the two public
-forms never drift on how a key is resolved.
+_create_team_router`). Turnstile is checked through the exact SAME
+captcha gate `/api/checkout` uses (`app/services/captcha.py` — real
+verifier, or the explicit soft-launch disabled state) — reused, not
+copied, so the two public forms never drift on how a key is resolved.
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from noctusai_lib.domain.org import attach_user_to_org, provision_invited_identi
 from noctusai_lib.integrations.turnstile import TurnstileVerifier
 
 from app.dependencies import MEMBRO_ORG_ROLE
-from app.services.checkout_service import _default_turnstile_verifier
+from app.services.captcha import CaptchaGate, resolve_captcha
 from app.services.eventos_service import registrar_evento
 
 logger = logging.getLogger(__name__)
@@ -66,19 +66,25 @@ class CadastroService:
         *,
         org_id: UUID,
         turnstile_verifier: Optional[TurnstileVerifier] = None,
+        captcha: Optional[CaptchaGate] = None,
     ) -> None:
         self._client = admin_client
         self._core = core_client
         self._org_id = str(org_id)
-        self._turnstile = turnstile_verifier or _default_turnstile_verifier(self._org_id)
+        # `turnstile_verifier=` is the test seam for an ENABLED gate.
+        self._captcha = (
+            captcha if captcha is not None
+            else CaptchaGate.com_verificador(turnstile_verifier) if turnstile_verifier is not None
+            else resolve_captcha(self._org_id)
+        )
 
     async def cadastrar(self, *, payload: dict, remote_ip: Optional[str] = None) -> dict:
         if not payload.get("aceite_termos"):
             raise CadastroServiceError("É preciso aceitar os termos.", status_code=400)
 
-        token = payload.get("turnstile_token") or ""
-        verification = await self._turnstile.verify(token, remote_ip=remote_ip)
-        if not verification.success:
+        if not await self._captcha.verificar(
+            payload.get("turnstile_token"), remote_ip=remote_ip, rota="cadastro",
+        ):
             raise CadastroServiceError(
                 "Verificação de segurança falhou. Recarregue a página e tente novamente.",
                 status_code=403,

@@ -22,7 +22,7 @@ from tests.conftest import seed_community_role
 
 _SPEC_KEYS = {
     "stripe_secret_key", "stripe_webhook_secret",
-    "asaas_api_key", "asaas_webhook_token", "turnstile_secret_key",
+    "asaas_api_key", "asaas_webhook_token", "turnstile_secret_key", "turnstile_site_key",
 }
 
 

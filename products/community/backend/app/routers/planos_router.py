@@ -55,6 +55,7 @@ from app.schemas.planos import (
     PlanoListResponse,
     PlanoUpdate,
 )
+from app.services.captcha import CaptchaResolver, get_captcha_resolver
 from app.services.gateway_refs_service import GatewayRefsService, GatewayRefsServiceError
 from app.services.planos_publicos_service import PlanosPublicosService
 from app.services.planos_service import PlanosService, PlanosServiceError
@@ -89,12 +90,17 @@ async def list_planos(
 
 @router.get("/publicos", response_model=PlanoPublicoListResponse)
 @limiter.limit(settings.checkout_rate_limit)
-async def list_planos_publicos(request: Request) -> PlanoPublicoListResponse:
+async def list_planos_publicos(
+    request: Request,
+    resolver: CaptchaResolver = Depends(get_captcha_resolver),
+) -> PlanoPublicoListResponse:
     org_id = resolve_public_org_id()
     client = get_admin_client()
     service = PlanosPublicosService(client, org_id=org_id)
     result = await service.list()
-    return PlanoPublicoListResponse(**result)
+    # Additive (soft-launch captcha-off mode, 2026-10-01): tells the FE
+    # whether to render the Turnstile widget, and with which site key.
+    return PlanoPublicoListResponse(**result, captcha=resolver(str(org_id)).publico())
 
 
 @router.post("", response_model=Plano, status_code=status.HTTP_201_CREATED)

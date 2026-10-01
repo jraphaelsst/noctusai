@@ -74,6 +74,11 @@ const PLANO = {
   metodos_disponiveis: ["cartao", "pix", "boleto"] as const,
 };
 
+/** Runtime captcha state (`GET /api/planos/publicos` → `captcha`). Most
+ * tests exercise the REQUIRED path (widget mocked above). */
+const CAPTCHA_OBRIGATORIO = { obrigatorio: true, site_key: "0xsite" };
+const CAPTCHA_DESLIGADO = { obrigatorio: false, site_key: null };
+
 function fillCommonFields() {
   fireEvent.change(screen.getByLabelText(/^Plano/), { target: { value: "p-1" } });
   fireEvent.change(screen.getByLabelText(/Nome/), { target: { value: "Ana" } });
@@ -109,7 +114,7 @@ describe("Assinar — loading / empty / error", () => {
 
 describe("Assinar — CPF field per method (P1)", () => {
   it("shows the CPF field (with the not-stored note) for pix, not for cartao", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />);
     await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
@@ -126,7 +131,7 @@ describe("Assinar — CPF field per method (P1)", () => {
   });
 
   it("blocks submit client-side when pix/boleto CPF is missing/invalid, never calling checkout", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     const { container } = renderPage(<Assinar />);
     await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
@@ -145,7 +150,7 @@ describe("Assinar — CPF field per method (P1)", () => {
 
 describe("Assinar — amendment A2 (checkout_url:null is a normal outcome)", () => {
   it("renders the friendly 'verifique seu e-mail' state, never as an error", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     mockPost.mockResolvedValue({
       checkout_url: null,
       assinatura_id: "a-1",
@@ -169,7 +174,7 @@ describe("Assinar — amendment A2 (checkout_url:null is a normal outcome)", () 
 
 describe("Assinar — Pix shows the QR inline instead of redirecting", () => {
   it("renders the QR payload + image for a pix checkout", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     mockPost.mockResolvedValue({
       checkout_url: "https://asaas.example/checkout/abc",
       assinatura_id: "a-2",
@@ -197,7 +202,7 @@ describe("Assinar — Pix shows the QR inline instead of redirecting", () => {
 
 describe("Assinar — amendment P2 (missing/expired Turnstile token)", () => {
   it("surfaces the backend's strict 403 detail when the token is missing", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { ApiError } = await import("@noctusai/lib");
     mockPost.mockRejectedValue(
       new ApiError(403, "Verificação de segurança falhou. Recarregue a página e tente novamente."),
@@ -243,7 +248,7 @@ describe("Assinar — per-tier payment methods (amendment A17)", () => {
   };
 
   it("offers only cartao (not pix/boleto) for a tier whose metodos_disponiveis is ['cartao']", async () => {
-    mockGet.mockResolvedValue({ items: [CARTAO_SOMENTE], total: 1 });
+    mockGet.mockResolvedValue({ items: [CARTAO_SOMENTE], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />);
     await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
@@ -256,7 +261,7 @@ describe("Assinar — per-tier payment methods (amendment A17)", () => {
   });
 
   it("renders a tier with metodos_disponiveis:[] as a disabled, explained option — never hidden", async () => {
-    mockGet.mockResolvedValue({ items: [INDISPONIVEL], total: 1 });
+    mockGet.mockResolvedValue({ items: [INDISPONIVEL], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />);
     await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
@@ -272,7 +277,7 @@ describe("Assinar — per-tier payment methods (amendment A17)", () => {
   });
 
   it("loads tiers from the PUBLIC /api/planos/publicos endpoint (A17) with no session set up in the test", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />);
 
@@ -283,7 +288,7 @@ describe("Assinar — per-tier payment methods (amendment A17)", () => {
 
 describe("Assinar — Ninho Vazio `?plano=` pre-selection", () => {
   it("pre-selects the tier named in the query string (cadastro → login → checkout path)", async () => {
-    mockGet.mockResolvedValue({ items: [PLANO], total: 1 });
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />, "/assinar?plano=p-1");
     await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toHaveValue("p-1"));
@@ -292,9 +297,50 @@ describe("Assinar — Ninho Vazio `?plano=` pre-selection", () => {
   });
 
   it("labels a zero-price tier as signup-only", async () => {
-    mockGet.mockResolvedValue({ items: [{ ...PLANO, id: "p-0", nome: "Gratuito", preco_centavos: 0, metodos_disponiveis: [] }], total: 1 });
+    mockGet.mockResolvedValue({ items: [{ ...PLANO, id: "p-0", nome: "Gratuito", preco_centavos: 0, metodos_disponiveis: [] }], total: 1, captcha: CAPTCHA_OBRIGATORIO });
     const { default: Assinar } = await import("../Assinar");
     renderPage(<Assinar />);
     expect(await screen.findByRole("option", { name: "Gratuito — gratuito (faça seu cadastro)" })).toBeDisabled();
+  });
+});
+
+describe("Assinar — captcha-off mode (runtime `captcha` state)", () => {
+  it("not required: no widget, Submit enabled without a token, token sent empty", async () => {
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_DESLIGADO });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+    await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
+
+    fillCommonFields();
+    fireEvent.click(screen.getByLabelText("Pix"));
+    expect(screen.queryByTestId("turnstile-mock-verify")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Verificação de segurança/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Assinar" })).toBeEnabled();
+  });
+
+  it("required: Submit disabled until the widget hands back a token", async () => {
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: CAPTCHA_OBRIGATORIO });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+    await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
+
+    fillCommonFields();
+    fireEvent.click(screen.getByLabelText("Pix"));
+    expect(screen.getByRole("button", { name: "Assinar" })).toBeDisabled();
+    fireEvent.click(screen.getByTestId("turnstile-mock-verify"));
+    expect(screen.getByRole("button", { name: "Assinar" })).toBeEnabled();
+  });
+
+  it("required without a site key: says the form is unavailable, Submit disabled", async () => {
+    mockGet.mockResolvedValue({ items: [PLANO], total: 1, captcha: { obrigatorio: true, site_key: null } });
+    const { default: Assinar } = await import("../Assinar");
+    renderPage(<Assinar />);
+    await waitFor(() => expect(screen.getByLabelText(/^Plano/)).toBeInTheDocument());
+
+    fillCommonFields();
+    fireEvent.click(screen.getByLabelText("Pix"));
+    expect(screen.getByTestId("captcha-indisponivel")).toHaveTextContent("Cadastro temporariamente indisponível");
+    expect(screen.queryByTestId("turnstile-mock-verify")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Assinar" })).toBeDisabled();
   });
 });

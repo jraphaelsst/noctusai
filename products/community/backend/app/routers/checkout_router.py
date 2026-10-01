@@ -11,12 +11,13 @@ module's, and FastAPI silently treats the body model as an unresolved
 """
 import logging
 
-from fastapi import APIRouter, Request, status
+from fastapi import APIRouter, Depends, Request, status
 
 from app.config import settings
 from app.dependencies import http_error, get_admin_client, resolve_public_org_id
 from app.rate_limit import limiter
 from app.schemas.checkout import CheckoutCreate, CheckoutOut
+from app.services.captcha import CaptchaResolver, get_captcha_resolver
 from app.services.checkout_service import CheckoutService, CheckoutServiceError
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,11 @@ router = APIRouter(prefix="/api/checkout", tags=["checkout"])
 async def create_checkout(
     request: Request,
     payload: CheckoutCreate,
+    resolver: CaptchaResolver = Depends(get_captcha_resolver),
 ) -> CheckoutOut:
     org_id = resolve_public_org_id()
     client = get_admin_client()
-    service = CheckoutService(client, org_id=org_id)
+    service = CheckoutService(client, org_id=org_id, captcha=resolver(str(org_id)))
     remote_ip = request.client.host if request.client else None
     try:
         result = await service.checkout(payload=payload.model_dump(), remote_ip=remote_ip)

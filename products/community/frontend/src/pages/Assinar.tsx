@@ -5,8 +5,9 @@
  * Registered as a `publicRoute` in `App.tsx` (the same seam `/inscrever`
  * uses, module 1) — rendered WITHOUT the seed `Layout`/auth gate. Picks a
  * tier + payment method, collects nome/email/telefone (+ CPF for
- * pix/boleto), passes a Cloudflare Turnstile token (product decision P2),
- * and submits `POST /api/checkout`.
+ * pix/boleto), passes a Cloudflare Turnstile token (product decision P2)
+ * when the backend's runtime `captcha` state requires one (`CaptchaCampo`;
+ * soft-launch captcha-off mode, 2026-10-01), and submits `POST /api/checkout`.
  *
  * Tier listing (amendment A17): consumes `usePlanosPublicos` —
  * `GET /api/planos/publicos`, a PUBLIC, narrower endpoint the tech-lead
@@ -52,7 +53,7 @@ import {
   type CheckoutMetodo,
   type CheckoutResponse,
 } from "@/hooks/useCheckout";
-import { TurnstileWidget } from "@/components/TurnstileWidget";
+import { CaptchaCampo, captchaPermiteEnvio, estadoCaptcha } from "@/components/CaptchaCampo";
 import { PixQrCard } from "@/pages/checkout/PixQrCard";
 import { useAuthStore } from "@noctusai/seed/infra";
 import { useEu, isMembro } from "@/hooks/useEu";
@@ -102,6 +103,7 @@ export default function Assinar() {
   }, [conta.data]);
 
   const showSkeleton = isPending && !data;
+  const captchaEstado = estadoCaptcha(data?.captcha, isPending);
   const isRefreshing = isFetching && !!data;
   const requiresCpf = metodo === "pix" || metodo === "boleto";
 
@@ -275,11 +277,19 @@ export default function Assinar() {
                   />
                 </Field>
               )}
-              <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken("")} />
+              <CaptchaCampo
+                estado={captchaEstado}
+                siteKey={data?.captcha?.site_key}
+                onVerify={setTurnstileToken}
+                onExpire={() => setTurnstileToken("")}
+              />
               <Button
                 type="submit"
                 variant="primary"
-                disabled={checkout.isPending || !planoId || !metodo || !turnstileToken}
+                disabled={
+                  checkout.isPending || !planoId || !metodo
+                  || !captchaPermiteEnvio(captchaEstado, turnstileToken)
+                }
                 className="w-full"
               >
                 {checkout.isPending ? "Processando..." : "Assinar"}

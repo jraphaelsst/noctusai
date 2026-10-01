@@ -3,6 +3,9 @@ slice BE-A. PUBLIC, no auth header needed (`client.raw()`).
 """
 from types import SimpleNamespace
 
+from noctusai_lib.integrations.turnstile import FakeTurnstileVerifier
+
+from app.services.captcha import CaptchaGate, get_captcha_resolver
 from tests.conftest import ORG_UUID, seed_public_license
 
 PLANO_GRATUITO = "22222222-2222-2222-2222-222222222222"
@@ -28,6 +31,16 @@ def _payload(**over) -> dict:
     }
     base.update(over)
     return base
+
+
+def _captcha_obrigatorio(client, *, rejeitar=()):
+    """Router-level seam: an ENABLED captcha gate backed by the seed Fake,
+    via FastAPI `dependency_overrides` (cleared per test by conftest)."""
+    fake = FakeTurnstileVerifier()
+    fake.rejected_tokens.update(rejeitar)
+    gate = CaptchaGate.com_verificador(fake, site_key="0xsite")
+    client.raw().app.dependency_overrides[get_captcha_resolver] = lambda: (lambda org_id: gate)
+    return fake
 
 
 def _seed_base(client, *, planos=None):
@@ -92,9 +105,28 @@ class TestCadastroHappyPath:
 class TestCadastroValidation:
     def test_missing_turnstile_token_403(self, client):
         _seed_base(client)
+        _captcha_obrigatorio(client)
         resp = client.raw().post("/api/cadastro", json=_payload(turnstile_token=None))
         assert resp.status_code == 403
         assert "Verificação de segurança" in resp.json()["detail"]
+
+    def test_captcha_enabled_bad_token_403(self, client):
+        _seed_base(client)
+        _captcha_obrigatorio(client, rejeitar={"bad"})
+        resp = client.raw().post("/api/cadastro", json=_payload(turnstile_token="bad"))
+        assert resp.status_code == 403
+
+    def test_captcha_enabled_valid_token_201(self, client):
+        _seed_base(client)
+        _captcha_obrigatorio(client)
+        resp = client.raw().post("/api/cadastro", json=_payload(turnstile_token="tok"))
+        assert resp.status_code == 201
+
+    def test_captcha_disabled_accepts_missing_token_201(self, client):
+        """Soft-launch captcha-off mode: no Turnstile keys configured."""
+        _seed_base(client)
+        resp = client.raw().post("/api/cadastro", json=_payload(turnstile_token=None))
+        assert resp.status_code == 201
 
     def test_aceite_termos_false_400(self, client):
         _seed_base(client)

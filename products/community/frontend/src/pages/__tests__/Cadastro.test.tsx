@@ -34,6 +34,8 @@ const PLANOS = {
     { id: "3f2a1b4c-0000-4000-8000-000000000000", nome: "Gratuito", descricao: null, preco_centavos: 0, ciclo: "mensal", beneficios: { feed: true, forum: true, chat: true, eventos: true }, metodos_disponiveis: [], nivel_grupoterapia: "nenhum", ordem: 0 },
   ],
   total: 2,
+  // Most tests exercise the REQUIRED path (widget mocked above).
+  captcha: { obrigatorio: true, site_key: "0xsite" },
 };
 
 function renderPage() {
@@ -131,5 +133,49 @@ describe("Cadastro", () => {
     fireEvent.click(screen.getByRole("button", { name: "Criar minha conta" }));
     expect(await screen.findByText("É preciso aceitar os termos.")).toBeInTheDocument();
     expect(mockPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("Cadastro — captcha-off mode (runtime `captcha` state)", () => {
+  function preencherSemCaptcha() {
+    fireEvent.change(screen.getByLabelText(/Seu nome/), { target: { value: "Ana Souza" } });
+    fireEvent.change(screen.getByLabelText(/E-mail/), { target: { value: "ana@x.com" } });
+    fireEvent.change(screen.getByLabelText(/Crie uma senha/), { target: { value: "segredo123" } });
+    fireEvent.click(screen.getByRole("checkbox"));
+  }
+
+  it("not required: no widget, Submit enabled, submits with an empty token", async () => {
+    mockGet.mockResolvedValue({ ...PLANOS, captcha: { obrigatorio: false, site_key: null } });
+    mockPost.mockResolvedValue({ membro_id: "m-1", plano_id: "p", status: "ativo" });
+    renderPage();
+    await screen.findByLabelText(/Gratuito · Gratuito/);
+    preencherSemCaptcha();
+    expect(screen.queryByTestId("turnstile-mock-verify")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Verificação de segurança/)).not.toBeInTheDocument();
+    const enviar = screen.getByRole("button", { name: "Criar minha conta" });
+    expect(enviar).toBeEnabled();
+    fireEvent.click(enviar);
+    await waitFor(() => expect(mockPost).toHaveBeenCalled());
+    expect(mockPost.mock.calls[0][1]).toMatchObject({ turnstile_token: "" });
+  });
+
+  it("required: Submit disabled until the widget hands back a token", async () => {
+    mockGet.mockResolvedValue(PLANOS);
+    renderPage();
+    await screen.findByLabelText(/Gratuito · Gratuito/);
+    preencherSemCaptcha();
+    const enviar = screen.getByRole("button", { name: "Criar minha conta" });
+    expect(enviar).toBeDisabled();
+    fireEvent.click(screen.getByTestId("turnstile-mock-verify"));
+    expect(enviar).toBeEnabled();
+  });
+
+  it("required without a site key: 'Cadastro temporariamente indisponível', Submit disabled", async () => {
+    mockGet.mockResolvedValue({ ...PLANOS, captcha: { obrigatorio: true, site_key: null } });
+    renderPage();
+    await screen.findByLabelText(/Gratuito · Gratuito/);
+    preencherSemCaptcha();
+    expect(screen.getByTestId("captcha-indisponivel")).toHaveTextContent("Cadastro temporariamente indisponível");
+    expect(screen.getByRole("button", { name: "Criar minha conta" })).toBeDisabled();
   });
 });

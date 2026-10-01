@@ -2,6 +2,9 @@
 
 PUBLIC, no auth header (`client.raw()`), org via `seed_public_license`.
 """
+from noctusai_lib.integrations.turnstile import FakeTurnstileVerifier
+
+from app.services.captcha import CaptchaGate, get_captcha_resolver
 from tests.conftest import ORG_UUID, seed_public_license
 
 PLANO_ATIVO = "11111111-1111-1111-1111-111111111111"
@@ -102,3 +105,27 @@ class TestNinhoVazioTierFields:
             ("Gratuito", 0, "nenhum"),
             ("Ouvinte", 1, "ouvir"),
         ]
+
+
+class TestCaptchaField:
+    """Additive `captcha` field (soft-launch captcha-off mode, 2026-10-01)."""
+
+    def test_no_keys_captcha_not_required(self, client):
+        _seed(client)
+        resp = client.raw().get("/api/planos/publicos")
+        assert resp.status_code == 200
+        assert resp.json()["captcha"] == {"obrigatorio": False, "site_key": None}
+
+    def test_configured_captcha_required_with_site_key(self, client):
+        _seed(client)
+        gate = CaptchaGate.com_verificador(FakeTurnstileVerifier(), site_key="0xsite")
+        client.raw().app.dependency_overrides[get_captcha_resolver] = lambda: (lambda org_id: gate)
+        resp = client.raw().get("/api/planos/publicos")
+        assert resp.json()["captcha"] == {"obrigatorio": True, "site_key": "0xsite"}
+
+    def test_secret_without_site_key_required_with_null_site_key(self, client):
+        _seed(client)
+        gate = CaptchaGate.com_verificador(FakeTurnstileVerifier(), site_key=None)
+        client.raw().app.dependency_overrides[get_captcha_resolver] = lambda: (lambda org_id: gate)
+        resp = client.raw().get("/api/planos/publicos")
+        assert resp.json()["captcha"] == {"obrigatorio": True, "site_key": None}

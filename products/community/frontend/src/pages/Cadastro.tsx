@@ -10,8 +10,8 @@
  * dialog opens for that tier).
  *
  * Tier names and prices render from `GET /api/planos/publicos` — never
- * hardcoded. Turnstile reuses `components/TurnstileWidget` (shared with
- * `/assinar`). Every backend error (400 terms, 403 Turnstile, 409 existing
+ * hardcoded. The captcha slot is `components/CaptchaCampo` (shared with
+ * `/assinar`), driven by the runtime `captcha` field of the same query. Every backend error (400 terms, 403 Turnstile, 409 existing
  * e-mail / no free plan, 429) is shown verbatim.
  */
 import { useMemo, useState, type FormEvent } from "react";
@@ -22,7 +22,7 @@ import { Button, Input } from "@noctusai/lib/design-system";
 import { Card, ErrorState, Field, FormError } from "@/components/FormControls";
 import { LinhaDeCuidado } from "@/components/LinhaDeCuidado";
 import { BOTAO_PRIMARIO } from "@/components/PortalShell";
-import { TurnstileWidget } from "@/components/TurnstileWidget";
+import { CaptchaCampo, captchaPermiteEnvio, estadoCaptcha } from "@/components/CaptchaCampo";
 import { SENHA_MAX, SENHA_MIN, TELEFONE_RE, useCadastro } from "@/hooks/useCadastro";
 import { ordenarPlanosPublicos, usePlanosPublicos, type PlanoPublico } from "@/hooks/usePlanosPublicos";
 import { errorMessage } from "@/lib/errors";
@@ -81,6 +81,8 @@ export default function Cadastro() {
     [planosQuery.data],
   );
   const showSkeleton = planosQuery.isPending && !planosQuery.data;
+  const captcha = planosQuery.data?.captcha;
+  const captchaEstado = estadoCaptcha(captcha, planosQuery.isPending);
   // The picked tier, defaulting to the free one until the visitor chooses.
   const planoEscolhido = planos.find((p) => p.id === planoId) ?? planoGratuito(planos);
 
@@ -212,13 +214,18 @@ export default function Cadastro() {
                   </span>
                 </label>
 
-                <TurnstileWidget onVerify={setTurnstileToken} onExpire={() => setTurnstileToken("")} />
+                <CaptchaCampo
+                  estado={captchaEstado}
+                  siteKey={captcha?.site_key}
+                  onVerify={setTurnstileToken}
+                  onExpire={() => setTurnstileToken("")}
+                />
 
                 <Button
                   type="submit"
                   variant="primary"
                   className="h-12 w-full text-base"
-                  disabled={cadastro.isPending || !turnstileToken}
+                  disabled={cadastro.isPending || !captchaPermiteEnvio(captchaEstado, turnstileToken)}
                 >
                   {cadastro.isPending ? "Criando sua conta…" : "Criar minha conta"}
                 </Button>

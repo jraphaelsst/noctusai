@@ -117,7 +117,8 @@ staff gate). 200:
 ```
 
 **POST `/api/cadastro`** — PUBLIC, rate-limit 5/min per IP, Turnstile token
-checked like `/api/checkout` (`turnstile_token`). Body (extra fields rejected):
+checked like `/api/checkout` (`turnstile_token`; optional while the captcha is
+disabled — see `captcha` under `/api/planos/publicos`). Body (extra fields rejected):
 ```json
 {"nome": "str 1..120", "email": "email", "telefone": "str|null (same regex as membros)",
  "senha": "str 8..72", "turnstile_token": "str", "aceite_termos": true}
@@ -223,7 +224,25 @@ faça seu cadastro." (never calls a gateway).
 additive fields for the tier cards: `nivel_grupoterapia`
 (`nenhum|ouvir|falar`, from `entitlements.grupoterapia`, default `nenhum`)
 and `ordem` (int). Still never serialized: gateway refs, `membros_ativos`,
-`ativo`, timestamps. The existing Assinaturas list
+`ativo`, timestamps. The response (top level, next to `items`/`total`) also
+gains an additive `captcha` field (2026-10-01, soft-launch captcha-off mode):
+```json
+{"captcha": {"obrigatorio": true, "site_key": "str|null"}}
+```
+Resolved per request from the org key store (`turnstile_secret_key`,
+`turnstile_site_key` in Configurações; env fallbacks `COMMUNITY_TURNSTILE_SECRET`
+/ `COMMUNITY_TURNSTILE_SITE_KEY`). Three states:
+(a) no secret → `{"obrigatorio": false, "site_key": null}`: captcha is
+EXPLICITLY disabled — `/api/checkout` and `/api/cadastro` accept an empty or
+missing `turnstile_token`, log one WARNING "captcha desativado: nenhuma chave
+Turnstile configurada" per request; rate limits unchanged; the FE renders no
+widget. (b) secret + site key → `obrigatorio: true` with the site key: the
+backend verifies strictly (missing/rejected token → 403, as above) and the FE
+renders the widget with this runtime key. (c) secret set, site key missing →
+`{"obrigatorio": true, "site_key": null}`: the forms cannot obtain a token, so
+they cannot be submitted; the backend logs an ERROR and the FE shows "Cadastro
+temporariamente indisponível" (fix: save the site key in Configurações).
+`POST /api/aplicacoes` (`/inscrever`) does not verify a captcha. The existing Assinaturas list
 item gains `inadimplente_desde, carencia_ate, pago_ate, proxima_cobranca,
 expirada_em, cancelamento_solicitado_por, cancelamento_motivo`; its `estado`
 filter accepts `carencia` and `expirada`. Existing staff cancel sets

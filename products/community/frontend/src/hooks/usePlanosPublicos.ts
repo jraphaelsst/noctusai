@@ -53,9 +53,18 @@ export function ordenarPlanosPublicos(planos: PlanoPublico[]): PlanoPublico[] {
   return [...planos].sort((a, b) => a.ordem - b.ordem || a.preco_centavos - b.preco_centavos);
 }
 
+/** Whether the public forms need a Turnstile token, and the PUBLIC site
+ * key to render the widget with (runtime, from the org key store — not a
+ * build arg). `obrigatorio && !site_key` = forms unavailable. */
+export interface CaptchaPublico {
+  obrigatorio: boolean;
+  site_key: string | null;
+}
+
 export interface PlanoPublicoListResponse {
   items: PlanoPublico[];
   total: number;
+  captcha: CaptchaPublico;
 }
 
 /** PUBLIC — no auth, rate-limited server-side. Powers `/assinar`. */

@@ -4,8 +4,9 @@ decisions P1 (CPF)/P2 (Turnstile + abuse caps).
 Reuses `noctusai_lib.integrations.payments.checkout`
 (`make_hosted_checkout`, `CheckoutRequest`) and
 `noctusai_lib.integrations.payments.types.Money` VERBATIM — no new
-gateway adapter. Cloudflare Turnstile via this session's seed lift,
-`noctusai_lib.integrations.turnstile` (see `KB § INTEGRATIONS/turnstile.md`).
+gateway adapter. Cloudflare Turnstile via `app/services/captcha.py`
+(real verifier when a secret is configured, an EXPLICIT disabled state
+otherwise — soft-launch decision 2026-10-01; see that module).
 
 CPF (product decision P1) is validated shape-only in
 `schemas/checkout.py` and passed straight through as
@@ -42,10 +43,11 @@ from noctusai_lib.integrations.payments.checkout import (
     make_hosted_checkout,
 )
 from noctusai_lib.integrations.payments.types import Money
-from noctusai_lib.integrations.turnstile import TurnstileVerifier, make_turnstile_verifier
+from noctusai_lib.integrations.turnstile import TurnstileVerifier
 from noctusai_lib.security.api_keys import resolve_api_key
 
 from app.config import settings
+from app.services.captcha import CaptchaGate, resolve_captcha
 from app.services.ciclo_assinatura import ESTADOS_EM_COBRANCA
 from app.services.eventos_service import registrar_evento
 
@@ -111,22 +113,6 @@ def _default_hosted_checkout_factory(
     )
 
 
-def _default_turnstile_verifier(org_id: str) -> TurnstileVerifier:
-    """Same resolution order as the hosted-checkout factory above, plus
-    a THIRD tier — `settings.community_turnstile_secret` — kept as a
-    belt-and-suspenders fallback for the pre-Slice-C env-var name
-    (`COMMUNITY_TURNSTILE_SECRET`, documented in `deploy/fleet/
-    docker-compose.prod.yml`) since it predates the `turnstile_secret_
-    key` spec name `resolve_api_key`'s env tier reads
-    (`TURNSTILE_SECRET_KEY`)."""
-    secret = (
-        resolve_api_key("turnstile_secret_key", org_id)
-        or settings.community_turnstile_secret
-        or None
-    )
-    return make_turnstile_verifier(secret=secret)
-
-
 def _parse_asaas_date_or_none(value: Any) -> Optional[str]:
     """Asaas' `dueDate` is `YYYY-MM-DD` — store as a UTC-midnight ISO-8601
     timestamp, or `None` for anything unparseable (never raises)."""
@@ -150,6 +136,7 @@ class CheckoutService:
         org_id: UUID,
         hosted_checkout_factory: Optional[Callable[[str], HostedCheckout]] = None,
         turnstile_verifier: Optional[TurnstileVerifier] = None,
+        captcha: Optional[CaptchaGate] = None,
         reuse_window_minutes: Optional[int] = None,
         max_per_email_per_24h: Optional[int] = None,
         max_per_org_per_hour: Optional[int] = None,
@@ -159,10 +146,15 @@ class CheckoutService:
         self._hosted_checkout_factory = hosted_checkout_factory or functools.partial(
             _default_hosted_checkout_factory, org_id=self._org_id
         )
-        # Resolved lazily (`_turnstile_verifier`): only the anonymous
-        # route verifies a token, so the member route never pays for the
-        # key lookup.
-        self._turnstile = turnstile_verifier
+        # Resolved lazily (`_captcha_gate`): only the anonymous route
+        # verifies a token, so the member route never pays for the key
+        # lookup. `turnstile_verifier=` is the test seam for an ENABLED
+        # gate (e.g. the seed Fake); `captcha=` passes a resolved state.
+        self._captcha = (
+            captcha if captcha is not None
+            else CaptchaGate.com_verificador(turnstile_verifier) if turnstile_verifier is not None
+            else None
+        )
         # Config values read HERE (constructor time), not per-call — the
         # DI seam a test uses to exercise the abuse-cap branches with a
         # small cap, without monkeypatching `app.config.settings`
@@ -184,11 +176,11 @@ class CheckoutService:
         """PUBLIC `POST /api/checkout` — anonymous; the email in the body
         is the only identity, so every anti-abuse amendment applies."""
         # 1. Turnstile (product decision P2) — before ANY DB read/write
-        # or gateway call. A missing token is `payload.get(...)` → None
-        # → treated identically to an empty string by the verifier.
-        token = payload.get("turnstile_token") or ""
-        verification = await self._turnstile_verifier().verify(token, remote_ip=remote_ip)
-        if not verification.success:
+        # or gateway call. Enabled: a missing/rejected token 403s.
+        # Disabled (no keys, soft launch): accepted, WARNING logged.
+        if not await self._captcha_gate().verificar(
+            payload.get("turnstile_token"), remote_ip=remote_ip, rota="checkout",
+        ):
             raise CheckoutServiceError(
                 "Verificação de segurança falhou. Recarregue a página e tente novamente.",
                 status_code=403,
@@ -419,10 +411,10 @@ class CheckoutService:
             "membro_id": membro["id"], "pix_qr": pix_qr_out, "status": None,
         }
 
-    def _turnstile_verifier(self) -> TurnstileVerifier:
-        if self._turnstile is None:
-            self._turnstile = _default_turnstile_verifier(self._org_id)
-        return self._turnstile
+    def _captcha_gate(self) -> CaptchaGate:
+        if self._captcha is None:
+            self._captcha = resolve_captcha(self._org_id)
+        return self._captcha
 
     # ── reads ────────────────────────────────────────────────────────
 

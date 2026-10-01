@@ -87,10 +87,14 @@ class SeedSettings(ProductSettings):
     checkout_max_per_org_per_hour: int = 100
 
     # ── Module 2: Cloudflare Turnstile (product decision P2) ──
-    # Empty by default → `make_turnstile_verifier` returns
-    # `FakeTurnstileVerifier` (early-dev bypass, same posture as the
-    # webhook secrets above) — a missing `turnstile_token` still 403s.
+    # Env fallbacks behind the org key store (`turnstile_secret_key` /
+    # `turnstile_site_key`, Configurações). No secret anywhere → captcha
+    # is EXPLICITLY disabled (soft-launch decision 2026-10-01, see
+    # `app/services/captcha.py`) — never a silent Fake verifier.
     community_turnstile_secret: str = ""
+    # Public site key the FE widget renders with (served by
+    # `GET /api/planos/publicos` → `captcha.site_key`, not baked at build).
+    community_turnstile_site_key: str = ""
 
     # ── Module 3: WhatsApp (community-m3-contract.md) ──
     # D4: community gets its OWN WAHA session on its OWN instance — a

@@ -14,6 +14,7 @@ from noctusai_lib.integrations.payments.checkout import FakeHostedCheckout
 from noctusai_lib.integrations.turnstile import FakeTurnstileVerifier
 from noctusai_lib.testing import MockSupabaseClient
 
+from app.services.captcha import CaptchaGate
 from app.services.checkout_service import CheckoutService, CheckoutServiceError
 
 ORG_ID = "11111111-1111-1111-1111-111111111111"
@@ -86,6 +87,13 @@ class TestTurnstile:
             assert False, "expected CheckoutServiceError"
         except CheckoutServiceError as exc:
             assert exc.status_code == 403
+
+    def test_disabled_captcha_accepts_missing_token(self):
+        """Soft-launch captcha-off mode: no keys → explicit disabled state."""
+        client = _new_client()
+        service = _service(client, captcha=CaptchaGate.desativado())
+        result = _run(service.checkout(payload=_payload(turnstile_token=None)))
+        assert result["checkout_url"]
 
     def test_invalid_token_403(self):
         client = _new_client()
