@@ -39,6 +39,7 @@ import { useLeadSources } from "@/hooks/useLeadsSources";
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import { useLeadMutations } from "@/hooks/useLeads";
 import type { Lead } from "@/pages/leads/types";
+import { ImovelCodigoPicker } from "@/components/card/ImovelCodigoPicker";
 import { ClienteAttachPicker, type ClienteSelecionado } from "./ClienteAttachPicker";
 import { describeError } from "../utils";
 
@@ -59,6 +60,9 @@ export function NovoLeadClienteDialog({ open, onOpenChange }: NovoLeadClienteDia
   const [origemId, setOrigemId] = useState<string | null>(null);
   const [corretorId, setCorretorId] = useState<string | null>(null);
   const [cliente, setCliente] = useState<ClienteSelecionado | null>(null);
+  // Required (D2, contract §3.6): a lead with no imóvel is the gap
+  // `imovel_pendente` flags, so a MANUAL create refuses to make one.
+  const [codigoImovel, setCodigoImovel] = useState<string | null>(null);
 
   const { data: sources } = useLeadSources();
   const { data: corretores } = useLeadCorretores();
@@ -70,6 +74,7 @@ export function NovoLeadClienteDialog({ open, onOpenChange }: NovoLeadClienteDia
     setOrigemId(null);
     setCorretorId(null);
     setCliente(null);
+    setCodigoImovel(null);
   }
 
   function fechar() {
@@ -79,10 +84,12 @@ export function NovoLeadClienteDialog({ open, onOpenChange }: NovoLeadClienteDia
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!cliente) return;
+    if (!cliente || !codigoImovel) return;
     create.mutate(
       {
         data_entrada: dataEntrada,
+        codigo_raw: codigoImovel,
+        codigo_imovel: codigoImovel,
         tipo_lead: tipoLead,
         origem_id: origemId,
         corretor_id: corretorId,
@@ -123,6 +130,24 @@ export function NovoLeadClienteDialog({ open, onOpenChange }: NovoLeadClienteDia
               disabled={create.isPending}
               data-testid="novo-lead-cliente-picker"
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="novo-lead-imovel">
+              Imóvel <span className="text-destructive">*</span>
+            </Label>
+            <ImovelCodigoPicker
+              id="novo-lead-imovel"
+              value={codigoImovel}
+              onChange={setCodigoImovel}
+              disabled={create.isPending}
+              data-testid="novo-lead-imovel-picker"
+            />
+            {!codigoImovel && (
+              <p className="text-xs text-muted-foreground" data-testid="novo-lead-imovel-obrigatorio">
+                Informe o imóvel do lead.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -203,7 +228,7 @@ export function NovoLeadClienteDialog({ open, onOpenChange }: NovoLeadClienteDia
             </Button>
             <Button
               type="submit"
-              disabled={!cliente || create.isPending}
+              disabled={!cliente || !codigoImovel || create.isPending}
               data-testid="novo-lead-submit"
             >
               {create.isPending ? "Salvando..." : "Criar lead"}

@@ -98,7 +98,8 @@ import { PAPEIS_POR_LADO } from "@/types/cardHub";
 
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { RoteirosSection } from "./RoteirosSection";
-import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
+import { CARD_SUBPAGES, partesPjDoLado, type CardSubpageKey } from "./cardSubpages";
+import type { ParteItem } from "@/types/partes";
 import type { GeracaoDestino } from "./GeradorContratoSection";
 import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
 import { SW_TIMELINE_RENDERERS } from "./Timeline";
@@ -302,6 +303,24 @@ export interface ClienteCardDialogProps {
    *  render-prop reasoning as `renderEmpresas` above: `CertidoesMatrizSection`
    *  fetches its own data keyed by the titular's `clienteId`. */
   renderCertidoes?: () => ReactNode;
+  /**
+   * The imóveis linked to this atendimento (`AtendimentoImoveisSection`,
+   * contract §3). Mounted on Geral right under the contact line — the deal's
+   * imóvel is context for everything below it, and the "Imóvel pendente"
+   * warning has to be seen without opening another tab. (NOT on "Campanha e
+   * imóvel": that subpage is disabled when the record has no campanha fields,
+   * which is exactly when an imóvel gap matters most.) Same render-prop
+   * reasoning as `renderEmpresas`: the section fetches by the titular's
+   * `clienteId`, which this component is never handed.
+   */
+  renderAtendimentoImoveis?: () => ReactNode;
+  /**
+   * Every party of the atendimento from `GET …/partes` (§2.1). Only its PJ
+   * rows are rendered here — the PF rows come from `compradores`/`vendedores`
+   * (which carry the `cliente` the per-person panels need). Removal reuses
+   * `onRemoverComprador`/`onRemoverVendedor`: the junction row is the same.
+   */
+  partes?: ParteItem[];
 
   /** Current values behind the typed checklist items — read by the inline row
    *  editors AND by the full form on the Dados do cliente tab. */
@@ -536,6 +555,45 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   const compradoresGeral = titularCasado
     ? compradores.filter((p) => p.papel !== "conjuge")
     : compradores;
+  const empresasCompradoras = partesPjDoLado(props.partes, "comprador");
+  const empresasVendedoras = partesPjDoLado(props.partes, "vendedor");
+
+  /** One PJ party: no per-person document panels (an empresa's paperwork is
+   *  its certidões, on the Certidões tab) — just who it is, its role and the
+   *  remove action. */
+  function renderParteEmpresa(parte: ParteItem, lado: "comprador" | "vendedor") {
+    const onRemover = lado === "comprador" ? props.onRemoverComprador : props.onRemoverVendedor;
+    const nome = parte.empresa?.razao_social || parte.empresa?.nome_fantasia || parte.nome;
+    return (
+      <div
+        key={parte.parte_id}
+        className="mb-2 flex items-center justify-between gap-2 rounded-md border p-2"
+        data-testid={`${lado}-empresa-${parte.parte_id}`}
+      >
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium">
+            {nome}
+            <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[10px] font-normal text-muted-foreground">
+              PJ
+            </span>
+          </p>
+          <p className="truncate text-xs text-muted-foreground">
+            {rotuloDePapel(parte.papel)}
+            {parte.documento ? ` · CNPJ ${parte.documento}` : ""}
+          </p>
+        </div>
+        {onRemover && parte.parte_id && (
+          <TooltipIconButton
+            label={`Remover ${nome} deste atendimento`}
+            icon={Trash2}
+            testId={`${lado}-empresa-remover-${parte.parte_id}`}
+            className="h-7 w-7 text-muted-foreground hover:text-destructive"
+            onClick={() => onRemover(parte.parte_id as string)}
+          />
+        )}
+      </div>
+    );
+  }
 
   const agendamentoPopover = (
     <AgendamentoPopover
@@ -634,7 +692,14 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         // b. The contact line — what an operator reads BEFORE picking up the
         //    phone.
         afterTags: (
-          <ContatoResumo dados={props.dadosPessoais} origem={contatoDeOrigem(props.atendimentos)} />
+          <>
+            <ContatoResumo dados={props.dadosPessoais} origem={contatoDeOrigem(props.atendimentos)} />
+            {props.renderAtendimentoImoveis && (
+              <div className="mb-4" data-testid="atendimento-imoveis-slot">
+                {props.renderAtendimentoImoveis()}
+              </div>
+            )}
+          </>
         ),
         // d. + e. The client's paperwork, folded away by default.
         //    🔴 ONE fold, TWO levels. The mandatory checklist and the
@@ -741,12 +806,13 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         //    titular IS the card. Collapsible because each panel's queries only
         //    run when opened.
         beforeAnexos:
-          compradoresGeral.length > 0 ? (
+          compradoresGeral.length > 0 || empresasCompradoras.length > 0 ? (
             <div className="mb-4" data-testid="compradores-section">
               <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 Compradores
               </p>
               {compradoresGeral.map((parte) => renderParte(parte, "comprador"))}
+              {empresasCompradoras.map((parte) => renderParteEmpresa(parte, "comprador"))}
             </div>
           ) : undefined,
       }}
@@ -867,7 +933,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
           <p className="text-sm text-muted-foreground" data-testid="card-subpage-vendedor-loading">
             Carregando…
           </p>
-        ) : vendedores.length === 0 ? (
+        ) : vendedores.length === 0 && empresasVendedoras.length === 0 ? (
           /* Deliberately NOT hidden when empty, unlike Compradores: a deal
              with no seller recorded is a gap, and a contract cannot name a
              party nobody entered. */
@@ -875,7 +941,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
             Nenhum vendedor cadastrado neste atendimento.
           </p>
         ) : (
-          vendedores.map((parte) => renderParte(parte, "vendedor"))
+          <>
+            {vendedores.map((parte) => renderParte(parte, "vendedor"))}
+            {empresasVendedoras.map((parte) => renderParteEmpresa(parte, "vendedor"))}
+          </>
         )}
       </div>
     ),

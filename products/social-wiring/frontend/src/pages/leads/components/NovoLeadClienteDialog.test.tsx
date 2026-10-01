@@ -40,6 +40,21 @@ vi.mock("@/hooks/useLeads", () => ({
     remove: { mutate: vi.fn(), isPending: false },
   }),
 }));
+vi.mock("@/components/card/ImovelCodigoPicker", () => ({
+  // A stub with the picker's contract (value in, canonical código | null out) —
+  // the real one is registry-backed and covered by ImovelCodigoPicker.test.tsx.
+  ImovelCodigoPicker: (props: {
+    value: string | null;
+    onChange: (c: string | null) => void;
+    "data-testid"?: string;
+  }) => (
+    <input
+      data-testid={props["data-testid"]}
+      value={props.value ?? ""}
+      onChange={(e) => props.onChange(e.target.value || null)}
+    />
+  ),
+}));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 beforeEach(() => {
@@ -92,6 +107,13 @@ async function digitar(testId: string, termo: string) {
   rtl.fireEvent.change(rtl.screen.getByTestId(testId), { target: { value: termo } });
 }
 
+async function escolherImovel(codigo = "ONE10337") {
+  const rtl = await import("@testing-library/react");
+  rtl.fireEvent.change(rtl.screen.getByTestId("novo-lead-imovel-picker"), {
+    target: { value: codigo },
+  });
+}
+
 describe("NovoLeadClienteDialog — anexar a um cliente já cadastrado", () => {
   it("mostra o campo de busca e o dropdown com resultados ao digitar", async () => {
     mockUseClientesBusca.mockReturnValue(busca([cliente()]));
@@ -115,11 +137,15 @@ describe("NovoLeadClienteDialog — anexar a um cliente já cadastrado", () => {
       "Fernando Souza",
     );
 
+    await escolherImovel();
     fireEvent.click(getByTestId("novo-lead-submit"));
 
     expect(mockCreateMutate).toHaveBeenCalledTimes(1);
     const [body] = mockCreateMutate.mock.calls[0];
     expect(body.cliente_nome).toBe("Fernando Souza");
+    // 🔴 The picked imóvel travels on BOTH columns (§3.6 requires it).
+    expect(body.codigo_imovel).toBe("ONE10337");
+    expect(body.codigo_raw).toBe("ONE10337");
     // The EXACT chave_canonica, not a re-typed/re-formatted value — this is
     // what lets `attach_lead_now`'s exact-key lookup reattach to the SAME
     // cliente instead of creating a duplicate.
@@ -160,6 +186,7 @@ describe("NovoLeadClienteDialog — anexar a um cliente já cadastrado", () => {
     });
     fireEvent.click(getByTestId("novo-lead-cliente-picker-novo-salvar"));
 
+    await escolherImovel();
     fireEvent.click(getByTestId("novo-lead-submit"));
 
     expect(mockCreateMutate).toHaveBeenCalledTimes(1);
@@ -178,5 +205,42 @@ describe("NovoLeadClienteDialog — anexar a um cliente já cadastrado", () => {
   it("o botão 'Criar lead' fica desabilitado até um cliente ser escolhido", async () => {
     const { getByTestId } = await render();
     expect((getByTestId("novo-lead-submit") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("🔴 exige o imóvel: com cliente mas sem imóvel o botão segue desabilitado e nada é enviado", async () => {
+    mockUseClientesBusca.mockReturnValue(busca([cliente()]));
+    const { getByTestId, fireEvent } = await render();
+
+    await digitar("novo-lead-cliente-picker-input", "Fer");
+    fireEvent.click(getByTestId("novo-lead-cliente-picker-opcao-c1"));
+
+    expect((getByTestId("novo-lead-submit") as HTMLButtonElement).disabled).toBe(true);
+    expect(getByTestId("novo-lead-imovel-obrigatorio").textContent).toBe(
+      "Informe o imóvel do lead.",
+    );
+    fireEvent.click(getByTestId("novo-lead-submit"));
+    expect(mockCreateMutate).not.toHaveBeenCalled();
+
+    await escolherImovel();
+    expect((getByTestId("novo-lead-submit") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("mostra o erro tipado do backend (IMOVEL_DESCONHECIDO) em pt-BR", async () => {
+    const { toast } = await import("sonner");
+    mockUseClientesBusca.mockReturnValue(busca([cliente()]));
+    const { getByTestId, fireEvent } = await render();
+
+    await digitar("novo-lead-cliente-picker-input", "Fer");
+    fireEvent.click(getByTestId("novo-lead-cliente-picker-opcao-c1"));
+    await escolherImovel("XXX1");
+    fireEvent.click(getByTestId("novo-lead-submit"));
+
+    const [, opts] = mockCreateMutate.mock.calls[0];
+    opts.onError(
+      new Error("[422] Imóvel XXX1 não está cadastrado. Selecione um imóvel do catálogo."),
+    );
+    expect(toast.error).toHaveBeenCalledWith(
+      "Erro ao criar lead. Imóvel XXX1 não está cadastrado. Selecione um imóvel do catálogo.",
+    );
   });
 });

@@ -20,6 +20,16 @@ afterEach(async () => {
 const { toastError } = vi.hoisted(() => ({ toastError: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: toastError, warning: vi.fn() } }));
 
+// The party hooks own their own react-query reads (no QueryClient in this
+// harness): stubbed at the hook boundary, like `useCardHub` below.
+vi.mock("@/hooks/usePartes", () => ({
+  usePartes: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
+  useAdicionarParte: () => ({ mutate: vi.fn(), isPending: false }),
+  useParteLookup: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
+}));
+vi.mock("@/components/card/AtendimentoImoveisSection", () => ({
+  AtendimentoImoveisSection: () => null,
+}));
 vi.mock("@/hooks/useLeadsCorretores", () => ({
   useLeadCorretores: () => ({ data: [] }),
 }));

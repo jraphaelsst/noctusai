@@ -67,7 +67,12 @@ import {
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
 import type { CardSubpageKey } from "@/components/card/cardSubpages";
 import { baixarArquivo } from "@noctusai/lib/components";
-import { AdicionarCompradorDialog } from "@/components/card/AdicionarCompradorDialog";
+import {
+  AdicionarCompradorDialog,
+  type AdicionarCompradorValues,
+} from "@/components/card/AdicionarCompradorDialog";
+import { AtendimentoImoveisSection } from "@/components/card/AtendimentoImoveisSection";
+import { useAdicionarParte, usePartes } from "@/hooks/usePartes";
 import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
 import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
@@ -241,6 +246,10 @@ export function ClienteDetailModal({
   // `remover` needs only a parte id, so a second hook would be the same
   // object twice.
   const compradorMutations = useCompradorMutations(id ?? "__none__");
+  // PF-or-PJ add (+ optional chained certidão re-emission) and the §2.1 list
+  // that carries the PJ parties `compradores` deliberately omits.
+  const adicionarParte = useAdicionarParte(id ?? "__none__");
+  const partes = usePartes(id, atendimentoId);
   const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
   // Durable pending-state read (owner directive, 2026-09-19) —
   // `DadosPessoaisForm`'s notice must survive a reload, unlike the last
@@ -328,9 +337,22 @@ export function ClienteDetailModal({
     }
   }
 
-  function handleAdicionarComprador(values: { nome: string; celular?: string }) {
-    compradorMutations.adicionar.mutate(values, {
-      onSuccess: () => setCompradorDialogOpen(false),
+  /** Shared success path: close the dialog; an add that succeeded but whose
+   *  chained certidão re-emission failed says so (never swallowed). */
+  function aoAdicionarParte(fechar: () => void) {
+    return (res: { emissaoErro: string | null; emissao: unknown }) => {
+      fechar();
+      if (res.emissaoErro) {
+        toast.error(`Parte adicionada, mas a re-emissão das certidões falhou: ${res.emissaoErro}`);
+      } else if (res.emissao) {
+        toast.success("Certidões solicitadas — acompanhe na aba Certidões.");
+      }
+    };
+  }
+
+  function handleAdicionarComprador(values: AdicionarCompradorValues) {
+    adicionarParte.mutate(values, {
+      onSuccess: aoAdicionarParte(() => setCompradorDialogOpen(false)),
       // The server's own message is surfaced verbatim rather than replaced by
       // a generic one: its 409 says "esta pessoa já é parte deste atendimento"
       // and its 400 explains an ambiguous atendimento, and both are things the
@@ -342,11 +364,11 @@ export function ClienteDetailModal({
 
   /** Same call, `lado: "vendedor"` — the server picks `proprietario` as the
    *  default role for that side, so this does not name one. */
-  function handleAdicionarVendedor(values: { nome: string; celular?: string }) {
-    compradorMutations.adicionar.mutate(
+  function handleAdicionarVendedor(values: AdicionarCompradorValues) {
+    adicionarParte.mutate(
       { ...values, lado: "vendedor" },
       {
-        onSuccess: () => setVendedorDialogOpen(false),
+        onSuccess: aoAdicionarParte(() => setVendedorDialogOpen(false)),
         onError: (err) => toastServerError(err, "Não foi possível adicionar."),
       },
     );
@@ -359,11 +381,11 @@ export function ClienteDetailModal({
    * defaults it to `comprador`, which is exactly where this card's own
    * marriage lives (the titular is a buyer by construction).
    */
-  function handleAdicionarConjuge(values: { nome: string; celular?: string }) {
-    compradorMutations.adicionar.mutate(
+  function handleAdicionarConjuge(values: AdicionarCompradorValues) {
+    adicionarParte.mutate(
       { ...values, papel: "conjuge" },
       {
-        onSuccess: () => setConjugeDialogOpen(false),
+        onSuccess: aoAdicionarParte(() => setConjugeDialogOpen(false)),
         onError: (err) => toastServerError(err, "Não foi possível adicionar."),
       },
     );
@@ -868,6 +890,10 @@ export function ClienteDetailModal({
       renderNegociacao={() => <NegociacaoContainer clienteId={id} />}
       renderFinanciamento={() => <FinanciamentoContainer clienteId={id} />}
       renderEmpresas={() => id && <EmpresasSection clienteId={id} />}
+      partes={partes.data?.items}
+      renderAtendimentoImoveis={() =>
+        id && <AtendimentoImoveisSection clienteId={id} atendimentoId={atendimentoId} />
+      }
       renderCertidoes={() => id && <CertidoesMatrizSection clienteId={id} />}
       renderContratos={({ irPara }) => (
         <ContratosContainer
@@ -954,7 +980,9 @@ export function ClienteDetailModal({
       open={compradorDialogOpen}
       onOpenChange={setCompradorDialogOpen}
       onCreate={handleAdicionarComprador}
-      saving={compradorMutations.adicionar.isPending}
+      saving={adicionarParte.isPending}
+      clienteId={id}
+      atendimentoId={atendimentoId}
     />
 
     {/* The same dialog, seller-side copy. Sibling of the card for the reason
@@ -965,7 +993,9 @@ export function ClienteDetailModal({
       open={vendedorDialogOpen}
       onOpenChange={setVendedorDialogOpen}
       onCreate={handleAdicionarVendedor}
-      saving={compradorMutations.adicionar.isPending}
+      saving={adicionarParte.isPending}
+      clienteId={id}
+      atendimentoId={atendimentoId}
     />
 
     {/* The same dialog again, Cônjuge-tab copy — same sibling reasoning as
@@ -976,7 +1006,9 @@ export function ClienteDetailModal({
       open={conjugeDialogOpen}
       onOpenChange={setConjugeDialogOpen}
       onCreate={handleAdicionarConjuge}
-      saving={compradorMutations.adicionar.isPending}
+      saving={adicionarParte.isPending}
+      clienteId={id}
+      atendimentoId={atendimentoId}
     />
 
     {/* Sibling of the card for the same reason `AdicionarCompradorDialog` is:
