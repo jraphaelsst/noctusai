@@ -225,8 +225,13 @@ def listar(
         .eq("lado", lado_alvo)
         .execute()
     )
+    # 🔴 PF-ONLY BY CONTRACT (atendimento-partes-imoveis §2.2): since migration
+    # 179 a party may be an empresa (`cliente_id IS NULL`). This shape's
+    # consumers (carregador, FE) assume a non-null `cliente_id`, so PJ rows
+    # are filtered out HERE and surface only through
+    # `partes_service.listar_partes` (`GET .../partes`).
     rows = sorted(
-        res.data or [],
+        [r for r in (res.data or []) if r.get("cliente_id")],
         key=lambda r: (r.get("ordem") or 0, str(r.get("created_at") or "")),
     )
     clientes = _clientes_por_id(client, org_id, [str(r["cliente_id"]) for r in rows])
@@ -252,13 +257,20 @@ def adicionar(
     atendimento_id: Optional[UUID] = None,
     lado: Optional[str] = None,
     user_id: Optional[UUID] = None,
+    empresa_id: Optional[UUID] = None,
+    cnpj: Optional[str] = None,
+    razao_social: Optional[str] = None,
 ) -> dict:
-    """Attach another person to this card's atendimento.
+    """Attach another party (PF or PJ) to this card's atendimento.
 
-    Either `parte_cliente_id` (link someone who already exists) or `nome`
-    (create them) — never both, and never neither. Accepting both would make
-    the caller's intent unknowable when they disagree; accepting neither would
-    write a party with nobody in it.
+    EXACTLY ONE of `parte_cliente_id` (link a person who exists), `nome`
+    (create a person), `empresa_id` (link a company that exists) or `cnpj`
+    (find-or-create the company by normalised CNPJ) — never two, never none.
+    Accepting two would make the caller's intent unknowable when they
+    disagree; accepting none would write a party with nobody in it.
+
+    Returns the legacy `_out` keys (PF callers keep working) merged with the
+    contract's `ParteItem` (`partes_service.item_da_parte`).
     """
     lado_alvo = normalizar_lado(lado)
     papeis = PAPEIS_POR_LADO[lado_alvo]
@@ -268,16 +280,28 @@ def adicionar(
             f"Papel inválido para o lado {lado_alvo}: {papel}. "
             f"Esperado um de {', '.join(papeis)}."
         )
-    if (parte_cliente_id is None) == (nome is None):
+    informados = [
+        x for x in (parte_cliente_id, nome, empresa_id, cnpj) if x is not None
+    ]
+    if len(informados) != 1:
         raise ValidationError_(
-            "Informe cliente_id (para vincular alguém que já existe) OU nome "
-            "(para cadastrar), nunca ambos."
+            "Informe exatamente um de: cliente_id, nome, empresa_id, cnpj."
         )
+    e_pj = empresa_id is not None or cnpj is not None
+    if e_pj and papel == PAPEL_CONJUGE:
+        raise ValidationError_("Uma empresa não pode ser cônjuge.")
 
     ensure_cliente(client, org_id, cliente_id)
     alvo = resolve_atendimento_id(client, org_id, cliente_id, atendimento_id)
 
-    if parte_cliente_id is not None:
+    novo_cliente_id: Optional[str] = None
+    novo_empresa_id: Optional[str] = None
+    if e_pj:
+        novo_empresa_id = _resolver_empresa(
+            client, org_id, empresa_id=empresa_id, cnpj=cnpj,
+            razao_social=razao_social, user_id=user_id,
+        )
+    elif parte_cliente_id is not None:
         # Validated against THIS org — an unvalidated id would attach a
         # stranger's record to this deal.
         ensure_cliente(client, org_id, parte_cliente_id)
@@ -307,19 +331,28 @@ def adicionar(
             lado=lado_alvo,
         )
 
+    # No `lado` filter: the same person/empresa cannot be on both sides of one
+    # deal (DB unique indexes are per atendimento, not per side).
+    coluna, valor = (
+        ("empresa_id", novo_empresa_id) if e_pj else ("cliente_id", novo_cliente_id)
+    )
     ja = (
         _t(client, TABLE)
         .select("id")
         .eq("org_id", str(org_id))
         .eq("atendimento_id", alvo)
-        .eq("cliente_id", novo_cliente_id)
+        .eq(coluna, valor)
         .execute()
     )
     if ja.data:
         # A double-click, not an intent. Reported rather than silently ignored:
         # a 201 for a row that was not created teaches the UI to trust a
         # response that is not true.
-        raise ConflictError("Esta pessoa já é parte deste atendimento.")
+        raise ConflictError(
+            "Esta empresa já é parte deste atendimento."
+            if e_pj
+            else "Esta pessoa já é parte deste atendimento."
+        )
 
     # Ordem is per SIDE: each panel numbers its own people from zero, so the
     # first vendedor is ordem 0 (the proprietário) rather than continuing the
@@ -348,9 +381,44 @@ def adicionar(
         "created_at": _now(),
         "created_by": str(user_id) if user_id else None,
     }
+    if e_pj:
+        row["empresa_id"] = novo_empresa_id
     _t(client, TABLE).insert(row).execute()
-    clientes = _clientes_por_id(client, org_id, [novo_cliente_id])
-    return _out(row, clientes.get(novo_cliente_id))
+
+    from app.modules.card_hub import partes_service
+
+    clientes = _clientes_por_id(client, org_id, [novo_cliente_id] if novo_cliente_id else [])
+    legado = _out(row, clientes.get(novo_cliente_id) if novo_cliente_id else None)
+    item = partes_service.item_da_parte(client, org_id, cliente_id, alvo, row["id"])
+    return {**legado, **item}
+
+
+def _resolver_empresa(
+    client: Any,
+    org_id: UUID,
+    *,
+    empresa_id: Optional[UUID],
+    cnpj: Optional[str],
+    razao_social: Optional[str],
+    user_id: Optional[UUID],
+) -> str:
+    """The `empresas.id` a PJ party points at — an existing one (404 if it is
+    not in this org) or find-or-create by normalised CNPJ through the ONE
+    creation primitive (`dados_service.obter_ou_criar_por_cnpj`)."""
+    from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
+
+    from app.modules.empresas import dados_service
+
+    if empresa_id is not None:
+        return str(dados_service.ensure_empresa(client, org_id, empresa_id)["id"])
+    if not cnpj_valido(cnpj):
+        raise ValidationError_("CNPJ inválido.")
+    return str(
+        dados_service.obter_ou_criar_por_cnpj(
+            client, org_id, cnpj=cnpj, razao_social=razao_social,
+            confirmado_por=user_id,
+        )["id"]
+    )
 
 
 def atualizar_papel(
@@ -409,6 +477,19 @@ def atualizar_papel(
             f"Papel inválido para o lado {lado_alvo}: {papel}. "
             f"Esperado um de {', '.join(papeis)}."
         )
+
+    if not row.get("cliente_id"):
+        # A PJ party (migration 179): no person to link, no spouse semantics.
+        if papel == PAPEL_CONJUGE:
+            raise ValidationError_("Uma empresa não pode ser cônjuge.")
+        _t(client, TABLE).update({"papel": papel}).eq("id", str(parte_id)).eq(
+            "org_id", str(org_id)
+        ).execute()
+        row["papel"] = papel
+        out_pj = _out(row, None)
+        out_pj["empresa_id"] = row.get("empresa_id")
+        out_pj["conjuge_cliente_id"] = None
+        return out_pj
 
     parte_cliente_id = str(row["cliente_id"])
     principal_id: Optional[str] = None
@@ -472,10 +553,14 @@ def _principal_do_conjuge(
         .eq("lado", lado)
         .execute()
     ).data or []
+    # `r.get("cliente_id")`: a PJ party (migration 179) has none and is never
+    # a marriage principal — without the guard `str(None)` would count as a
+    # phantom candidate and flip an unambiguous spouse into "ambiguous".
     candidatos = [
         str(r["cliente_id"])
         for r in partes
-        if r.get("papel") == PAPEL_PADRAO_POR_LADO[lado]
+        if r.get("cliente_id")
+        and r.get("papel") == PAPEL_PADRAO_POR_LADO[lado]
         and str(r["cliente_id"]) != eu
     ]
     if lado == "comprador":

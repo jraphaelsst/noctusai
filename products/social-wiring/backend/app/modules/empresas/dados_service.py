@@ -148,21 +148,19 @@ def ensure_empresa(client: Any, org_id: UUID, empresa_id: UUID) -> dict:
     return empresa
 
 
-def criar_ou_vincular_manual(
+def obter_ou_criar_por_cnpj(
     client: Any,
     org_id: UUID,
-    cliente_id: UUID,
     *,
     cnpj: str,
     razao_social: Optional[str] = None,
-    participacao_pct: Optional[float] = None,
     confirmado_por: Optional[Any] = None,
 ) -> dict:
-    """`POST /api/clientes/{cliente_id}/empresas` (contract §D2) — a manual
-    link. Upserts the empresa by `(org_id, cnpj)` (fill-empty `razao_social`
-    only, never overwriting a machine-provenanced one), then upserts a
-    `origem='manual'` participação for this cliente, fill-empty on `pct`.
-    """
+    """Find-or-create the `empresas` row for `(org_id, cnpj)` — the ONE
+    creation primitive (fill-empty `razao_social` only, never overwriting a
+    machine-provenanced one). `criar_ou_vincular_manual` (a PF's manual
+    participação) and `card_hub.compradores_service.adicionar` (a PJ party,
+    migration 179) both call it so a company is created exactly one way."""
     from noctusai_lib.integrations.documents.cnpj import normalize as normalize_cnpj
 
     cnpj_norm = normalize_cnpj(cnpj)
@@ -182,20 +180,43 @@ def criar_ou_vincular_manual(
                 "id", empresa["id"]
             ).execute()
             empresa = {**empresa, "razao_social": razao_social}
-    else:
-        empresa = {
-            "id": str(uuid4()),
-            "org_id": str(org_id),
-            "cnpj": cnpj_norm,
-            "razao_social": razao_social,
-            "dados_origem": "manual",
-            "dados_documento_id": None,
-            "dados_em": now,
-            "dados_confirmado_por": str(confirmado_por) if confirmado_por else None,
-            "dados_confirmado_em": now if confirmado_por else None,
-            "created_at": now,
-        }
-        _t(client, TABLE).insert(empresa).execute()
+        return empresa
+    empresa = {
+        "id": str(uuid4()),
+        "org_id": str(org_id),
+        "cnpj": cnpj_norm,
+        "razao_social": razao_social,
+        "dados_origem": "manual",
+        "dados_documento_id": None,
+        "dados_em": now,
+        "dados_confirmado_por": str(confirmado_por) if confirmado_por else None,
+        "dados_confirmado_em": now if confirmado_por else None,
+        "created_at": now,
+    }
+    _t(client, TABLE).insert(empresa).execute()
+    return empresa
+
+
+def criar_ou_vincular_manual(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    cnpj: str,
+    razao_social: Optional[str] = None,
+    participacao_pct: Optional[float] = None,
+    confirmado_por: Optional[Any] = None,
+) -> dict:
+    """`POST /api/clientes/{cliente_id}/empresas` (contract §D2) — a manual
+    link. Upserts the empresa by `(org_id, cnpj)` (fill-empty `razao_social`
+    only, never overwriting a machine-provenanced one), then upserts a
+    `origem='manual'` participação for this cliente, fill-empty on `pct`.
+    """
+    empresa = obter_ou_criar_por_cnpj(
+        client, org_id, cnpj=cnpj, razao_social=razao_social,
+        confirmado_por=confirmado_por,
+    )
+    now = _now()
 
     participacoes_table = "cliente_empresa_participacoes"
     existentes_part = (

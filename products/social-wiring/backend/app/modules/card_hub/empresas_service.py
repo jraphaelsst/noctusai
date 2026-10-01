@@ -108,6 +108,11 @@ def pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]:
         .execute()
     ).data or []
     for parte in partes:
+        if not parte.get("cliente_id"):
+            # A PJ party (migration 179): a company is not one of the
+            # "pessoas" whose Crednet participações this card walks. Without
+            # the guard `str(None)` became the phantom cliente id "None".
+            continue
         cid = str(parte["cliente_id"])
         if cid in vistos:
             continue

@@ -529,6 +529,10 @@ def carregar(
                 _pessoa(client, org_id, str(parte["cliente_id"]), lado, parte["papel"], str(parte["id"]))
             )
 
+    from app.modules.card_hub import partes_service
+
+    partes_pj = partes_service.partes_pj(client, org_id, str(atendimento_id))
+
     negociacao = negociacao_service.obter(client, org_id, cliente_id)
     estruturada = estruturada_svc.obter_estruturada(client, org_id, cliente_id)
     financiamento = financiamento_service.obter(client, org_id, cliente_id)
@@ -592,6 +596,7 @@ def carregar(
         # .coletar`'s key for the deal-scoped D2 reads (negociação,
         # financiamento, parcelas, favorecidos).
         atendimento_id=str(atendimento_id),
+        partes_pj=partes_pj,
         modelo=contrato["modelo"],
         vendedores=vendedores,
         compradores=compradores,
