@@ -12,9 +12,7 @@ not `settings.*` directly — so these tests drive the secret through
 `monkeypatch.setenv(...)` (tier-3, the CONFIGURATION value tier
 `resolve_credential` documents as its own env-var fallback), not a
 `settings` attribute patch. Not a guard/keeper being routed around —
-same convention the inherited `tests/routers/test_webhook_router.py`
-uses for `settings.example_webhook_secret`, one resolution layer
-further out. `seed_public_license` seeds the single-tenant org
+the secret resolves through the credential tiers, not `settings.*`. `seed_public_license` seeds the single-tenant org
 `resolve_public_org_id()` (called before signature verification) needs.
 """
 import hashlib

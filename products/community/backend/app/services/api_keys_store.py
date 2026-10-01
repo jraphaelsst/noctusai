@@ -26,8 +26,10 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         name="stripe_secret_key",
         label="Stripe Secret Key",
         description=(
-            "Chave secreta da conta Stripe usada para criar assinaturas e "
-            "processar pagamentos por cartão (Checkout hospedado)."
+            "Chave que permite à plataforma cobrar por cartão pela sua conta "
+            "Stripe. No painel do Stripe: Desenvolvedores > Chaves de API > "
+            "Chave secreta (começa com sk_). Sem ela, o pagamento por cartão "
+            "não funciona."
         ),
         is_secret=True,
         testable=True,
@@ -38,9 +40,11 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         name="stripe_webhook_secret",
         label="Stripe Webhook Signing Secret",
         description=(
-            "Segredo de assinatura do webhook Stripe (`whsec_...`). Sem ele, "
-            "todo webhook do Stripe é recusado com 401 (amendment A9 — "
-            "nunca um bypass)."
+            "Código que o Stripe usa para provar que os avisos de pagamento "
+            "são mesmo dele. No painel do Stripe: Desenvolvedores > Webhooks > "
+            "seu endpoint > Segredo de assinatura (começa com whsec_). Sem "
+            "ele, os avisos de pagamento do Stripe são recusados e as "
+            "assinaturas não são atualizadas."
         ),
         is_secret=True,
         testable=False,
@@ -51,8 +55,9 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         name="asaas_api_key",
         label="Asaas API Key",
         description=(
-            "Chave de API da conta Asaas usada para criar assinaturas e "
-            "cobranças Pix/boleto."
+            "Chave que permite à plataforma gerar cobranças Pix e boleto pela "
+            "sua conta Asaas. No Asaas: Integrações > Chaves de API > gerar "
+            "nova chave. Sem ela, não é possível cobrar por Pix ou boleto."
         ),
         is_secret=True,
         testable=True,
@@ -63,10 +68,11 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         name="asaas_webhook_token",
         label="Asaas Webhook Token",
         description=(
-            "Token compartilhado enviado no header `asaas-access-token` de "
-            "cada webhook Asaas — não é uma assinatura HMAC (ver "
-            "`noctusai_lib.integrations.payments.webhook_events`). Sem ele, "
-            "todo webhook do Asaas é recusado com 401."
+            "Senha que o Asaas envia junto de cada aviso de pagamento para "
+            "provar que ele é verdadeiro. Você a define no Asaas, em "
+            "Integrações > Webhooks > Token de autenticação, e cola o mesmo "
+            "valor aqui. Sem ele, os avisos de pagamento do Asaas são "
+            "recusados e os pagamentos não são confirmados."
         ),
         is_secret=True,
         testable=False,
@@ -76,11 +82,11 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         name="turnstile_secret_key",
         label="Cloudflare Turnstile Secret Key",
         description=(
-            "Chave secreta do Cloudflare Turnstile usada para validar o "
-            "captcha do formulário público de inscrição/checkout. Sem ela, "
-            "a verificação roda em modo Fake (sempre aprova) — early-dev "
-            "apenas."
-        ),
+            "Chave que valida a proteção contra robôs (captcha) do "
+            "formulário público de inscrição. No painel da Cloudflare: "
+            "Turnstile > seu site > Chave secreta. Sem ela, a proteção fica "
+            "desligada e o formulário aceita qualquer envio, inclusive de "
+            "robôs."        ),
         is_secret=True,
         testable=False,
         input_type="password",

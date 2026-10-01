@@ -35,7 +35,6 @@ from app.routers.checkout_router import router as checkout_router
 from app.routers.dashboard_router import router as dashboard_router
 from app.routers.eu_router import router as eu_router
 from app.routers.cobranca_router import router as cobranca_router
-from app.routers.example_router import router as example_router
 from app.routers.lancamentos_router import router as lancamentos_router
 from app.routers.grupoterapia_router import router as grupoterapia_router
 from app.routers.membros_router import router as membros_router
@@ -44,7 +43,6 @@ from app.routers.planos_router import router as planos_router
 from app.routers.portal_grupoterapia_router import router as portal_grupoterapia_router
 from app.routers.portal_router import router as portal_router
 from app.routers.portal_assinatura_router import router as portal_assinatura_router
-from app.routers.webhook_router import router as webhook_router
 from app.routers.webhooks_router import router as webhooks_router
 from app.routers.whatsapp_connections_router import router as whatsapp_connections_router
 from app.routers.whatsapp_flags_router import router as whatsapp_flags_router
@@ -96,20 +94,16 @@ app = create_product_app(
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],
-    # `example_router` / `webhook_router` are the inherited scaffold
-    # skeletons (kept mounted — their own inherited test suite still
-    # exercises the canonical shapes); `planos_router` / `membros_router`
+    # `planos_router` / `membros_router`
     # / `aplicacoes_router` are module 1's real domain routers
     # (community-m1-contract.md); `checkout_router` / `webhooks_router`
-    # (mounted at `/api/webhooks/{stripe,asaas}` — distinct from the
-    # inherited `webhook_router`'s `/api/webhooks/example`) /
+    # (mounted at `/api/webhooks/{stripe,asaas}`) /
     # `assinaturas_router` / `pagamentos_router` are module 2's
     # (community-m2-contract.md, including its SECURITY AMENDMENTS +
     # PRODUCT DECISIONS sections). `whatsapp_grupos_router` /
     # `whatsapp_lotes_router` / `whatsapp_transmissoes_router` /
     # `whatsapp_flags_router` / `whatsapp_webhook_router` (mounted at
-    # `/api/webhooks/whatsapp` — distinct from the inherited
-    # `webhook_router`'s `/api/webhooks/example` and module 2's
+    # `/api/webhooks/whatsapp` — distinct from module 2's
     # `/api/webhooks/{stripe,asaas}`) are module 3's
     # (community-m3-contract.md). `api_keys_router` / `whatsapp_
     # connections_router` are Slice C's (this dispatch, 2026-09-17) —
@@ -129,7 +123,7 @@ app = create_product_app(
     # minha-conta` (the member-cancel endpoint is slice BE-B's, mounted
     # from its own router module).
     routers=[
-        example_router, webhook_router, planos_router, membros_router,
+        planos_router, membros_router,
         aplicacoes_router, checkout_router, webhooks_router,
         assinaturas_router, pagamentos_router,
         whatsapp_grupos_router, whatsapp_lotes_router,

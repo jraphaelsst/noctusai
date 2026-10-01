@@ -12,7 +12,7 @@ import { createRoleLayout } from "@/layouts/RoleLayout";
 import { MemberLayout } from "@/layouts/MemberLayout";
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, UsersRound, Boxes, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2, CalendarHeart } from "lucide-react";
+import { LayoutDashboard, Users, Home, UsersRound, UserRound, Wallet, ClipboardList, CircleDollarSign, MessageCircle, Repeat, Megaphone, Settings2, CalendarHeart } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -22,10 +22,6 @@ const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
 const Dashboard = lazy(() => import("@/pages/Dashboard"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
 
 // Module 1 — Membros + Planos + Inscrições (community-m1-contract.md).
 // Backend mirror at `app/routers/{membros,planos,aplicacoes}_router.py`.
@@ -98,7 +94,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat, route: "whatsapp-sincronizacao" },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone, route: "whatsapp-transmissoes" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Configurações", href: "/configuracoes", icon: Settings2, route: "configuracoes" },
     ],
@@ -121,7 +116,6 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone },
-      { name: "Example", href: "/example", icon: Boxes },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Configurações", href: "/configuracoes", icon: Settings2 },
     ],
@@ -152,7 +146,6 @@ export default createProductApp({
     { path: "/whatsapp/sincronizacao", component: Sincronizacao },
     { path: "/whatsapp/transmissoes", component: Transmissoes },
     { path: "/whatsapp/conexoes", component: WhatsAppConexoes },
-    { path: "/example", component: Example },
     { path: "/equipe", component: Equipe },
     { path: "/configuracoes", component: Configuracoes },
   ],

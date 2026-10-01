@@ -26,17 +26,10 @@ class SeedSettings(ProductSettings):
     # plaintext (see `noctusai_lib.security.api_keys.require_fernet`).
     encryption_key: str = ""
 
-    # ── Webhook receiver (consumed by app/routers/webhook_router.py) ──
-    # Empty by default → ``webhook_endpoint(bypass_when_unset=True)``
-    # accepts unsigned payloads with a WARNING (early-dev only). Set in
-    # ``.env`` (``EXAMPLE_WEBHOOK_SECRET=…``) to enforce verification.
-    # Rename per vendor (``resend_webhook_secret`` / ``meta_webhook_secret`` / etc.).
-    example_webhook_secret: str = ""
-
+    # ── Webhook receiver ──
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
-    # Reused by BOTH module 2's payment webhooks (`/api/webhooks/stripe`,
-    # `/api/webhooks/asaas` — contract amendment A9) and the inherited
-    # `/api/webhooks/example` skeleton — same DDoS-guard rationale.
+    # Reused by module 2's payment webhooks (`/api/webhooks/stripe`,
+    # `/api/webhooks/asaas`) and the WhatsApp webhook.
     webhook_rate_limit: str = "60/minute"
 
     # ── Public application form (contract §Aplicações, PUBLIC routes) ──
@@ -111,8 +104,7 @@ class SeedSettings(ProductSettings):
     community_waha_session: str = "default"
     community_waha_external_base_url: str = ""
     # Contract §3 item 19: "HMAC required (the secret is always set in
-    # prod)". Empty by default (early-dev bypass — same posture as
-    # `example_webhook_secret` above); set in `.env` to enforce.
+    # prod)". Empty by default (early-dev bypass); set in `.env` to enforce.
     community_waha_webhook_hmac_secret: str = ""
 
     # D2 caps — config values, never literals in the service.
