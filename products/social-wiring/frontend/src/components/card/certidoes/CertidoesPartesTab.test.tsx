@@ -26,7 +26,7 @@ function cel(over: Partial<CertidaoParteCelula> = {}): CertidaoParteCelula {
     status: "pendente", texto: "Pendente", tipo: "cnd_federal", resultado_id: null, consulta_id: null,
     status_processamento: null, resultado: null, numero: null, emitida_em: null, validade_ate: null,
     idade_dias: null, stale_para_contrato: false, arquivo_url: null, tem_arquivo: false,
-    arquivo_nome: null, origem: null, confirmado: false, analise_ia: null, erro_mensagem: null, segunda_via: false, ...over,
+    arquivo_nome: null, origem: null, confirmado: false, analise_ia: null, erro_mensagem: null, segunda_via: false, pcen: null, ...over,
   };
 }
 const linhas = [
@@ -148,6 +148,106 @@ describe("CertidoesPartesTab", () => {
     // A normal emission carries no such note.
     open("c:cli-2");
     expect(screen.queryByTestId("parte-segunda-via-c:cli-2-cnd_federal")).toBeNull();
+  });
+
+  describe("Receita PCEN 2ª via — acknowledgment (owner 2026-10-01)", () => {
+    const pcen = (over: Record<string, unknown> = {}) => ({
+      titulo: "Certidão da Receita Federal: positiva com efeitos de negativa",
+      mensagem: "Receita: certidão positiva com efeitos de negativa — 2ª via emitida em 01/08/2026, válida até 30/11/2026 (a PGFN não emite nova enquanto esta for válida)",
+      explicacao: ["Primeiro parágrafo.", "A PGFN não consegue emitir uma certidão nova."],
+      validade_ate: "2026-11-30", vencida: false, ciente: false, ciente_em: null, duvida_em: null,
+      acoes: { entendi: "Entendi — seguir com esta certidão", duvida: "Tenho dúvida — falar com o suporte" },
+      ...over,
+    });
+    const comPcen = (p = pcen()) => parte({
+      celulas: {
+        cnd_federal: cel({
+          status: "constam", resultado: "positiva_com_efeito_de_negativa", status_processamento: "sucesso",
+          resultado_id: "res-9", emitida_em: "2026-08-01", idade_dias: 61, validade_ate: "2026-11-30",
+          stale_para_contrato: false, segunda_via: true, pcen: p,
+        }),
+        serasa: cel({ tipo: "serasa" }),
+      },
+    });
+
+    it("shows the educational block, the validity note and no 'vencida' warning while valid", async () => {
+      mockGet.mockResolvedValue(resp([comPcen()]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      expect(screen.getByTestId("parte-pcen-c:cli-1-cnd_federal")).toBeTruthy();
+      expect(screen.getByText("A PGFN não consegue emitir uma certidão nova.")).toBeTruthy();
+      expect(screen.getByTestId("parte-segunda-via-c:cli-1-cnd_federal").textContent).toContain("válida até 30/11/2026");
+      expect(screen.queryByTestId("parte-stale-c:cli-1-cnd_federal")).toBeNull();
+    });
+
+    it("'Entendi' posts the acknowledgment", async () => {
+      mockGet.mockResolvedValue(resp([comPcen()]));
+      mockPost.mockResolvedValue({ resultado_id: "res-9", acao: "entendi", pcen: pcen({ ciente: true }), suporte: null });
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-pcen-c:cli-1-cnd_federal-entendi"));
+      await waitFor(() => expect(mockPost).toHaveBeenCalledWith(
+        "/api/clientes/cli-1/certidoes/resultados/res-9/ciencia-pcen", { acao: "entendi" },
+      ));
+    });
+
+    it("'Tenho dúvida' records it and offers the configured WhatsApp — never a dead button", async () => {
+      mockGet.mockResolvedValue(resp([comPcen()]));
+      mockPost.mockResolvedValue({
+        resultado_id: "res-9", acao: "duvida", pcen: pcen(),
+        suporte: { nome: "Escritório", email: null, whatsapp: "5511999990000" },
+      });
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-pcen-c:cli-1-cnd_federal-duvida"));
+      const box = await screen.findByTestId("parte-pcen-c:cli-1-cnd_federal-suporte");
+      const link = box.querySelector("a") as HTMLAnchorElement;
+      expect(link.href).toContain("https://wa.me/5511999990000?text=");
+      expect(mockPost).toHaveBeenCalledWith(
+        "/api/clientes/cli-1/certidoes/resultados/res-9/ciencia-pcen", { acao: "duvida" },
+      );
+    });
+
+    it("with no support contact configured it says so instead of linking nowhere", async () => {
+      mockGet.mockResolvedValue(resp([comPcen()]));
+      mockPost.mockResolvedValue({ resultado_id: "res-9", acao: "duvida", pcen: pcen(), suporte: null });
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-pcen-c:cli-1-cnd_federal-duvida"));
+      await screen.findByTestId("parte-pcen-c:cli-1-cnd_federal-sem-contato");
+    });
+
+    it("an acknowledged certidão shows the registered ciência and no buttons", async () => {
+      mockGet.mockResolvedValue(resp([comPcen(pcen({ ciente: true }))]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      expect(screen.getByTestId("parte-pcen-c:cli-1-cnd_federal-ciente")).toBeTruthy();
+      expect(screen.queryByTestId("parte-pcen-c:cli-1-cnd_federal-entendi")).toBeNull();
+    });
+
+    it("an expired printed validity reads as vencida by validity, with no acknowledgment offered", async () => {
+      const vencida = parte({
+        celulas: {
+          cnd_federal: cel({
+            status: "constam", resultado: "positiva_com_efeito_de_negativa", status_processamento: "sucesso",
+            resultado_id: "res-9", emitida_em: "2026-08-01", idade_dias: 61, validade_ate: "2026-09-01",
+            stale_para_contrato: true, segunda_via: true, pcen: pcen({ vencida: true, validade_ate: "2026-09-01" }),
+          }),
+          serasa: cel({ tipo: "serasa" }),
+        },
+      });
+      mockGet.mockResolvedValue(resp([vencida]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      expect(screen.getByTestId("parte-stale-c:cli-1-cnd_federal").textContent).toContain("Validade impressa venceu em 01/09/2026");
+      expect(screen.queryByTestId("parte-pcen-c:cli-1-cnd_federal")).toBeNull();
+    });
   });
 
   it("shows skeleton, empty and error states", async () => {

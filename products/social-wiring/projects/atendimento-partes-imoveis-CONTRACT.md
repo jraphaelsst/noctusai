@@ -82,7 +82,10 @@ Celula = {
   "origem": "api"|"ia"|"manual"|null,            // certidao_resultados.resultado_origem
   "confirmado": bool,                            // confirmado_em IS NOT NULL
   "analise_ia": str|null, "erro_mensagem": str|null,
-  "segunda_via": bool   // C0: the Receita refused a NEW certidão → this is its 2ª via; emitida_em is the ORIGINAL date
+  "segunda_via": bool,  // C0: the Receita refused a NEW certidão → this is its 2ª via; emitida_em is the ORIGINAL date
+  "pcen": null | {titulo, mensagem, explicacao[], validade_ate, vencida, ciente, ciente_em, duvida_em, acoes}
+         // Receita "positiva com efeitos de negativa" 2ª via ONLY (owner 2026-10-01): judged by its PRINTED validity, not the 30-day age;
+         // the operator acknowledges via POST …/certidoes/resultados/{id}/ciencia-pcen {acao:"entendi"|"duvida"}
 }
 ```
 Rules (pinned):

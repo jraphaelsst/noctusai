@@ -22,7 +22,7 @@ import { Label } from "@/components/ui/label";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
-  useCertidoesPartes, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
+  useCertidoesPartes, useCienciaPcen, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
   useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
@@ -37,6 +37,7 @@ export function CertidoesPartesTab(props: {
   const q = useCertidoesPartes(clienteId, atendimentoId);
   const emissao = useSolicitarEmissao(clienteId, atendimentoId);
   const reemitir = useReemitirResultado(clienteId);
+  const ciencia = useCienciaPcen(clienteId);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
   const criar = useCriarLinhaPartes(clienteId);
   const renomear = useRenomearLinhaPartes(clienteId);
@@ -107,6 +108,7 @@ export function CertidoesPartesTab(props: {
             onAdicionar={() => setAdicionando(true)}
             onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}
             onRemover={setRemovendo}
+            onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
           />
         ))}
       </TooltipProvider>

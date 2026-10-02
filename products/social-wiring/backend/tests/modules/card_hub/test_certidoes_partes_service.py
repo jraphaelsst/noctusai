@@ -182,7 +182,7 @@ class TestMontar:
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
             "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_nome", "origem",
-            "confirmado", "analise_ia", "erro_mensagem", "segunda_via",
+            "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen",
         }
 
     def test_titular_e_comp_1_e_partes_numeradas_por_lado(self, scoped):

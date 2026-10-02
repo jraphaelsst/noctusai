@@ -31,6 +31,7 @@ import { toast } from "sonner";
 
 import GeradorContratoSection, { type GeracaoDestino } from "@/components/card/GeradorContratoSection";
 import ValidacaoExtracaoDialog from "@/components/card/ValidacaoExtracaoDialog";
+import { useCienciaPcen } from "@/hooks/useCertidoesPartes";
 import {
   ContratoGeracaoError,
   aguardandoRevisaoJuridica,
@@ -81,6 +82,7 @@ export function GeradorContratoContainer({
 }: GeradorContratoContainerProps) {
   const query = useContratoGeracao(clienteId, contratoId, aberto);
   const { gerar } = useContratoMutations(clienteId);
+  const ciencia = useCienciaPcen(clienteId);
 
   const [assinaturaData, setAssinaturaData] = useState(hoje);
   const [erroGeracao, setErroGeracao] = useState<ContratoGeracaoError | null>(null);
@@ -230,6 +232,7 @@ export function GeradorContratoContainer({
         erroGeracao={erroGeracao}
         avisosGerados={avisosGerados}
         onIrPara={onIrPara}
+        onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
       />
       <ValidacaoExtracaoDialog
         open={validacaoAberta}

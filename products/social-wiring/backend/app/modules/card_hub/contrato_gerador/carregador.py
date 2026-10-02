@@ -48,7 +48,7 @@ from app.modules.card_hub import financiamento_service
 from app.modules.card_hub import negociacao_estruturada_service as estruturada_svc
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub import services as svc
-from app.modules.card_hub.contrato_gerador import derivacao
+from app.modules.card_hub.contrato_gerador import certidao_pcen, derivacao
 from app.modules.card_hub.contrato_gerador.dados import (
     AtoCitado,
     Certidao,
@@ -128,6 +128,11 @@ def _certidao(r: dict) -> Certidao:
         # each resultado by `_resultados_das_consultas`.
         consulta_situacao_cadastral=r.get("consulta_situacao_cadastral"),
         consulta_data_situacao=_data(r.get("consulta_data_situacao")),
+        resultado_id=_id(r.get("id")),
+        segunda_via=certidao_pcen.e_segunda_via(r.get("api_response")),
+        pcen_ciente_em=_id(r.get("pcen_ciente_em")),
+        pcen_ciente_por=_id(r.get("pcen_ciente_por")),
+        pcen_ciente_validade=_data(r.get("pcen_ciente_validade")),
     )
 
 

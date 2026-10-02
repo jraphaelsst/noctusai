@@ -93,6 +93,7 @@ def register_all(server) -> None:
     from . import phase_learnings
     from . import predeploy_check
     from . import prod_consent
+    from . import certidoes_emissao_aprendizado
     from . import schema_drift
     from . import tunnel_config
     from . import products
@@ -228,6 +229,7 @@ def register_all(server) -> None:
     phase_learnings.register(server)
     predeploy_check.register(server)
     prod_consent.register(server)
+    certidoes_emissao_aprendizado.register(server)
     schema_drift.register(server)
     tunnel_config.register(server)
     products.register(server)

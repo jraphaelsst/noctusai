@@ -527,3 +527,60 @@ describe("GeradorContratoSection", () => {
     expect(onAssinaturaDataChange).toHaveBeenCalledWith("2026-09-20");
   });
 });
+
+
+describe("confirmações — Receita PCEN 2ª via acknowledgment gate (owner 2026-10-01)", () => {
+  const conf = (over: Record<string, unknown> = {}) => ({
+    codigo: "CERTIDAO_PCEN_SEGUNDA_VIA",
+    titulo: "Certidão da Receita Federal: positiva com efeitos de negativa",
+    rotulo: "CND Federal — VEND 1",
+    mensagem: "Receita: certidão positiva com efeitos de negativa — 2ª via emitida em 01/08/2026, válida até 30/11/2026 (a PGFN não emite nova enquanto esta for válida)",
+    explicacao: ["Primeiro parágrafo.", "Segundo parágrafo."],
+    parte_id: null, resultado_id: "res-9", emitida_em: "2026-08-01", validade_ate: "2026-11-30",
+    ciente: false, ciente_em: null, ciente_por: null,
+    acoes: { entendi: "Entendi — seguir com esta certidão", duvida: "Tenho dúvida — falar com o suporte" },
+    ...over,
+  });
+  const onCienciaPcen = vi.fn().mockResolvedValue({ suporte: null });
+
+  it("pending acknowledgment: not pronto, its own badge (not 'Faltam dados'), button disabled, copy shown", async () => {
+    const { screen } = await render({
+      status: status({ pronto: false, confirmacoes: [conf()] }),
+      onCienciaPcen,
+    });
+    expect(screen.getByTestId("gerador-contrato-aguardando-ciencia").textContent).toContain("Aguardando sua ciência");
+    expect(screen.queryByTestId("gerador-contrato-faltam")).toBeNull();
+    expect((screen.getByTestId("gerador-contrato-btn") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Primeiro parágrafo.")).toBeTruthy();
+    expect(screen.getByText("Entendi — seguir com esta certidão")).toBeTruthy();
+    expect(screen.getByText("Tenho dúvida — falar com o suporte")).toBeTruthy();
+  });
+
+  it("clicking 'Entendi' sends the acknowledgment for THAT resultado", async () => {
+    const rtl = await import("@testing-library/react");
+    const { screen } = await render({ status: status({ pronto: false, confirmacoes: [conf()] }), onCienciaPcen });
+    rtl.fireEvent.click(screen.getByTestId("gerador-contrato-confirmacao-res-9-entendi"));
+    await rtl.waitFor(() => expect(onCienciaPcen).toHaveBeenCalledWith("res-9", "entendi"));
+  });
+
+  it("acknowledged: pronto, the ciência is shown and the button is enabled", async () => {
+    const { screen } = await render({
+      status: status({ pronto: true, confirmacoes: [conf({ ciente: true })] }),
+      onCienciaPcen,
+    });
+    expect(screen.getByTestId("gerador-contrato-pronto")).toBeTruthy();
+    expect(screen.getByTestId("gerador-contrato-confirmacao-res-9-ciente")).toBeTruthy();
+    expect((screen.getByTestId("gerador-contrato-btn") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a refused generation lists the pending acknowledgment", async () => {
+    const { screen } = await render({
+      status: status({ pronto: false, confirmacoes: [conf()] }),
+      onCienciaPcen,
+      erroGeracao: new ContratoGeracaoError("CONTRATO_INCOMPLETO", "O contrato não pode ser gerado.", {
+        faltando: [], bloqueios: [], confirmacoes: [conf()] as never,
+      }),
+    });
+    expect(screen.getByTestId("gerador-contrato-erro-incompleto").textContent).toContain("Aguardando ciência: Receita:");
+  });
+});

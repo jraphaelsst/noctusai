@@ -101,6 +101,12 @@ class TestAuth:
         resp = api.post(f"{BASE}/{uuid4()}/certidoes/resultados/{uuid4()}/reemitir", json={})
         assert resp.status_code == 401
 
+    def test_ciencia_pcen_sem_token_401(self, api):
+        resp = api.post(
+            f"{BASE}/{uuid4()}/certidoes/resultados/{uuid4()}/ciencia-pcen", json={"acao": "entendi"},
+        )
+        assert resp.status_code == 401
+
     def test_celulas_sem_token_401(self, api):
         body = {"kind": "pessoa", "alvo_id": str(uuid4()), "linha_chave": "serasa"}
         assert api.post(f"{BASE}/{uuid4()}/certidoes/celulas", json=body).status_code == 401
@@ -317,5 +323,85 @@ class TestCelulas:
         cid, aid, vid = _card(scoped)
         resp = api.post(
             f"{BASE}/{cid}/certidoes/celulas", json=self._body(vid, kind="pj"), headers=AUTH,
+        )
+        assert resp.status_code == 422
+
+
+class TestCienciaPcen:
+    """Receita PCEN 2ª via acknowledgment (owner amendment 2026-10-01)."""
+
+    VALIDADE = "2099-12-31"
+    RID = str(uuid4())
+
+    def _pcen(self, scoped, vid, **over):
+        base = dict(
+            status="sucesso", resultado="positiva_com_efeito_de_negativa",
+            emitida_em="2026-08-01", validade_ate=self.VALIDADE, numero="X1",
+            api_response={"noctus_segunda_via": {"preferencia_emissao": "2via"}},
+        )
+        base.update(over)
+        scoped.set_table_data("certidao_consultas", [_consulta("c1", cliente_id=vid)])
+        scoped.set_table_data("certidao_resultados", [_resultado(self.RID, "c1", "cnd_federal", **base)])
+
+    def _post(self, api, cid, acao="entendi", rid=None):
+        rid = rid or self.RID
+        return api.post(
+            f"{BASE}/{cid}/certidoes/resultados/{rid}/ciencia-pcen",
+            json={"acao": acao}, headers=AUTH,
+        )
+
+    def test_entendi_grava_quem_quando_e_a_validade(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid)
+        resp = self._post(api, cid)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["pcen"]["ciente"] is True
+        (row,) = scoped.table("certidao_resultados").updated_payloads
+        assert row["pcen_ciente_em"] and row["pcen_ciente_por"]
+        assert row["pcen_ciente_validade"] == self.VALIDADE
+
+    def test_duvida_registra_e_nao_da_ciencia_e_aponta_o_contato_configurado(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid)
+        scoped.set_table_data("notification_recipients", [{
+            "id": "n1", "org_id": ORG_ID, "name": "Escritório", "email": "x@y.z",
+            "whatsapp_number": "5511999990000", "is_active": True, "created_at": "2026-01-01T00:00:00+00:00",
+        }])
+        body = self._post(api, cid, "duvida").json()
+        assert body["pcen"]["ciente"] is False and body["pcen"]["duvida_em"]
+        assert body["suporte"]["whatsapp"] == "5511999990000"
+        (row,) = scoped.table("certidao_resultados").updated_payloads
+        assert "pcen_ciente_em" not in row and row["pcen_duvida_em"]
+
+    def test_sem_contato_configurado_suporte_e_nulo_nao_inventado(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid)
+        scoped.set_table_data("notification_recipients", [])
+        assert self._post(api, cid, "duvida").json()["suporte"] is None
+
+    def test_outra_certidao_409_nada_e_gravado(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid, api_response=None)  # not a 2ª via
+        resp = self._post(api, cid)
+        assert resp.status_code == 409
+        assert resp.json()["error"]["code"] == "CIENCIA_PCEN_NAO_APLICAVEL"
+        assert scoped.table("certidao_resultados").updated_payloads == []
+
+    def test_validade_vencida_409(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid, validade_ate="2020-01-01")
+        assert self._post(api, cid).status_code == 409
+
+    def test_resultado_de_outro_card_404(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        scoped.set_table_data("certidao_consultas", [_consulta("c1", cliente_id=str(uuid4()))])
+        scoped.set_table_data("certidao_resultados", [_resultado(self.RID, "c1", "cnd_federal", status="sucesso")])
+        assert self._post(api, cid).status_code == 404
+
+    def test_corpo_invalido_422(self, api, scoped):
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid)
+        resp = api.post(
+            f"{BASE}/{cid}/certidoes/resultados/{self.RID}/ciencia-pcen", json={"acao": "x"}, headers=AUTH,
         )
         assert resp.status_code == 422

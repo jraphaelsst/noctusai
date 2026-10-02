@@ -239,6 +239,27 @@ export interface GeracaoAviso {
   mensagem: string;
 }
 
+/** Owner amendment 2026-10-01 — something that is NOT wrong data but must be
+ *  KNOWN by the operator before generating (today: the Receita "positiva com
+ *  efeitos de negativa" 2ª via). The contract is not `pronto` until `ciente`. */
+export interface GeracaoConfirmacao {
+  codigo: string;
+  titulo: string;
+  rotulo: string;
+  /** The one-line aviso. */
+  mensagem: string;
+  /** Plain-language explanation, one paragraph per entry. */
+  explicacao: string[];
+  parte_id: string | null;
+  resultado_id: string | null;
+  emitida_em: string | null;
+  validade_ate: string;
+  ciente: boolean;
+  ciente_em: string | null;
+  ciente_por: string | null;
+  acoes: { entendi: string; duvida: string };
+}
+
 export interface ContratoGeracaoStatus {
   contrato_id: string;
   pronto: boolean;
@@ -264,6 +285,8 @@ export interface ContratoGeracaoStatus {
   faltando: GeracaoFaltando[];
   bloqueios: GeracaoBloqueio[];
   avisos: GeracaoAviso[];
+  /** Absent on a pre-186 backend ⇒ none. */
+  confirmacoes?: GeracaoConfirmacao[];
 }
 
 export interface GerarContratoInput {
@@ -275,6 +298,7 @@ export interface GerarContratoResult {
   /** Same version-row shape the contratos list returns, `origem: "gerado"`. */
   versao: VersaoOut;
   avisos: GeracaoAviso[];
+  confirmacoes?: GeracaoConfirmacao[];
 }
 
 /** `POST .../contratos/gerar` — the card's "Gerar contrato" button: the new
@@ -287,6 +311,8 @@ export interface IniciarContratoResult {
 interface ContratoIncompletoDetails {
   faltando?: GeracaoFaltando[];
   bloqueios?: GeracaoBloqueio[];
+  /** Acknowledgments still pending (the generation endpoint re-checks them). */
+  confirmacoes?: GeracaoConfirmacao[];
   /** `422 CONTRATO_LINT`: the rendered text failed the final check (clause
    *  numbering, references, extenso…); nothing was saved. */
   lint?: GeracaoBloqueio[];

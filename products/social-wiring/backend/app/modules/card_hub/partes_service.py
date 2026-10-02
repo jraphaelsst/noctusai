@@ -27,7 +27,7 @@ from noctusai_lib.integrations.documents import cpf as cpf_docs
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub import compradores_service as comp_svc
-from app.modules.card_hub.contrato_gerador import politica
+from app.modules.card_hub.contrato_gerador import certidao_pcen, politica
 from app.modules.card_hub.services import (
     AmbiguousAtendimento,
     _atendimentos_ids_via_partes_e_conjuge,
@@ -437,7 +437,15 @@ def certidoes_mais_recentes(
             "validade_ate": (_data(r.get("validade_ate")).isoformat()
                              if _data(r.get("validade_ate")) else None),
             "idade_dias": idade,
-            "stale_para_contrato": idade >= max_dias,
+            "stale_para_contrato": certidao_pcen.esta_vencida(
+                emitida_em=emitida, validade_ate=_data(r.get("validade_ate")),
+                referencia=hoje, max_dias=max_dias,
+                excecao=certidao_pcen.excecao_aplica(
+                    resultado=r.get("resultado"),
+                    segunda_via=certidao_pcen.e_segunda_via(r.get("api_response")),
+                    validade_ate=_data(r.get("validade_ate")),
+                ),
+            ),
             "resultado": r.get("resultado"),
         })
     vencidos = [i["tipo"] for i in itens if i["stale_para_contrato"]]

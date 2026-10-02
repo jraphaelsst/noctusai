@@ -32,6 +32,9 @@ import {
   type GeracaoOnde,
 } from "@/hooks/useContratos";
 
+import type { CienciaPcenResult } from "@/types/certidoesPartes";
+
+import { PcenCiencia } from "./certidoes/PcenCiencia";
 import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
@@ -385,6 +388,9 @@ interface Props {
    *  `alvo`. Omitted outside the card dialog — card destinos then render as
    *  guidance text. */
   onIrPara?: (destino: GeracaoDestino) => void;
+  /** Receita PCEN 2ª via: the operator's acknowledgment / support question
+   *  (the container owns the mutation — this file stays presentational). */
+  onCienciaPcen?: (resultadoId: string, acao: "entendi" | "duvida") => Promise<CienciaPcenResult>;
 }
 
 export default function GeradorContratoSection({
@@ -400,6 +406,7 @@ export default function GeradorContratoSection({
   erroGeracao,
   avisosGerados,
   onIrPara,
+  onCienciaPcen,
 }: Props) {
   if (showSkeleton) {
     return (
@@ -431,6 +438,11 @@ export default function GeradorContratoSection({
   }
 
   const grupos = agruparPorOnde(status.faltando);
+  const confirmacoes = status.confirmacoes ?? [];
+  const aguardandoCiencia = confirmacoes.some((c) => !c.ciente);
+  // "Faltam dados" is for missing/blocking data; a deal that is only waiting
+  // for the operator's acknowledgment says so instead.
+  const soCiencia = !status.pronto && aguardandoCiencia && status.faltando.length === 0 && status.bloqueios.length === 0;
 
   return (
     <div className="space-y-3" data-testid="gerador-contrato-section">
@@ -442,6 +454,11 @@ export default function GeradorContratoSection({
           >
             <CheckCircle2 className="h-3 w-3" />
             Pronto para gerar
+          </Badge>
+        ) : soCiencia ? (
+          <Badge variant="secondary" className="gap-1 text-[11px]" data-testid="gerador-contrato-aguardando-ciencia">
+            <AlertTriangle className="h-3 w-3" />
+            Aguardando sua ciência
           </Badge>
         ) : (
           <Badge variant="secondary" className="gap-1 text-[11px]" data-testid="gerador-contrato-faltam">
@@ -477,6 +494,27 @@ export default function GeradorContratoSection({
             </li>
           ))}
         </ul>
+      )}
+
+      {confirmacoes.length > 0 && onCienciaPcen && (
+        <div className="space-y-2" data-testid="gerador-contrato-confirmacoes">
+          {confirmacoes.map((c) => (
+            <div key={`${c.codigo}-${c.resultado_id ?? c.parte_id ?? c.rotulo}`} className="space-y-1">
+              <p className="text-xs font-medium">{c.rotulo}</p>
+              <PcenCiencia
+                testId={`gerador-contrato-confirmacao-${c.resultado_id ?? c.rotulo}`}
+                titulo={c.titulo}
+                explicacao={c.explicacao}
+                validadeAte={c.validade_ate}
+                ciente={c.ciente}
+                acoes={c.acoes}
+                contexto={c.rotulo}
+                onEntendi={() => onCienciaPcen(c.resultado_id as string, "entendi")}
+                onDuvida={() => onCienciaPcen(c.resultado_id as string, "duvida")}
+              />
+            </div>
+          ))}
+        </div>
       )}
 
       {status.avisos.length > 0 && (
@@ -547,6 +585,11 @@ export default function GeradorContratoSection({
           {erroGeracao.details?.faltando?.map((item) => (
             <p key={`f-${item.campo}-${item.parte_id ?? ""}`} className="text-muted-foreground">
               • {item.rotulo}
+            </p>
+          ))}
+          {erroGeracao.details?.confirmacoes?.map((c) => (
+            <p key={`c-${c.resultado_id ?? c.rotulo}`} className="text-muted-foreground">
+              • Aguardando ciência: {c.mensagem}
             </p>
           ))}
           {erroGeracao.details?.bloqueios?.map((b) => (

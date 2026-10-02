@@ -84,6 +84,16 @@ class Certidao:
     consulta_situacao_cadastral: Optional[str] = None
     #: [Q9] Date of that situação (for 'baixada': when it was closed).
     consulta_data_situacao: Optional[date] = None
+    #: The `certidao_resultados` row — the identity an acknowledgment hangs on.
+    resultado_id: Optional[str] = None
+    #: The certidão is a 2ª via (the Receita refused a new one; its emission
+    #: date is the ORIGINAL) — read off the `noctus_segunda_via` marker.
+    segunda_via: bool = False
+    #: The operator's acknowledgment of a Receita PCEN 2ª via (migration 186):
+    #: when, by whom, and the printed validity it was given for.
+    pcen_ciente_em: Optional[str] = None
+    pcen_ciente_por: Optional[str] = None
+    pcen_ciente_validade: Optional[date] = None
 
 
 @dataclass

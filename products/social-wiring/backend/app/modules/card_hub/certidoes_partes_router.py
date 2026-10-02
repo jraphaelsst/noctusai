@@ -21,7 +21,12 @@ from noctusai_lib.integrations.storage import StorageBackend
 from app.dependencies import get_current_user_org
 from app.modules.card_hub import certidoes_partes_service as svc
 from app.modules.card_hub.auth import auth_parts
-from app.modules.card_hub.certidoes_partes_schemas import CelulaBody, EmissaoBody, ReemitirBody
+from app.modules.card_hub.certidoes_partes_schemas import (
+    CelulaBody,
+    CienciaPcenBody,
+    EmissaoBody,
+    ReemitirBody,
+)
 from app.modules.card_hub.deps import get_card_hub_client
 from app.modules.certidoes.deps import (
     CertidoesService,
@@ -83,6 +88,23 @@ async def reemitir_route(
     )
     background_tasks.add_task(certidoes.processar_consulta, out["consulta_id"], client, storage)
     return out
+
+
+@router.post("/{cliente_id}/certidoes/resultados/{resultado_id}/ciencia-pcen")
+async def ciencia_pcen_route(
+    cliente_id: UUID,
+    resultado_id: UUID,
+    body: CienciaPcenBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Receita "positiva com efeitos de negativa" 2ª via — the operator's
+    acknowledgment (`entendi`) or support question (`duvida`); the contract
+    readiness stays pending until `entendi` (owner amendment 2026-10-01)."""
+    user, org_id = auth_parts(auth)
+    return svc.registrar_ciencia_pcen(
+        client, org_id, cliente_id, str(resultado_id), acao=body.acao, user_id=user.id,
+    )
 
 
 @router.post("/{cliente_id}/certidoes/celulas")

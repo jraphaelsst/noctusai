@@ -31,7 +31,7 @@ The party list is `partes_service.listar_partes` — the ONE party reader
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any, Callable, Optional
 from uuid import UUID
 
@@ -44,6 +44,7 @@ from app.modules.card_hub.certidoes_matriz_service import (
     _linha_fixa,
     _status_da_celula,
 )
+from app.modules.card_hub.contrato_gerador import certidao_pcen
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.card_hub.empresas_service import listar as listar_empresas
 from app.modules.card_hub.services import (
@@ -52,7 +53,6 @@ from app.modules.card_hub.services import (
     resolve_atendimento_id_incluindo_partes,
 )
 from app.modules.certidoes import service as certidoes_svc
-from app.modules.certidoes.service import MARCA_SEGUNDA_VIA
 from app.modules.certidoes.matriz_custom_rows import (
     linhas_customizadas_ativas,
 )
@@ -238,7 +238,7 @@ def _na(tipo: Optional[str]) -> dict:
         "idade_dias": None, "stale_para_contrato": False, "arquivo_url": None,
         "tem_arquivo": False, "arquivo_nome": None, "origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
-        "segunda_via": False,
+        "segunda_via": False, "pcen": None,
     }
 
 
@@ -263,6 +263,18 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
     idade: Optional[int] = None
     if emitida:
         idade = (hoje - date.fromisoformat(str(emitida)[:10])).days
+    validade = _iso_para_data(row.get("validade_ate"))
+    excecao = certidao_pcen.excecao_aplica(
+        resultado=row.get("resultado"),
+        segunda_via=certidao_pcen.e_segunda_via(row.get("api_response")),
+        validade_ate=validade,
+    )
+    # ONE rule with the contract gate (`derivacao._certidoes`): the Receita
+    # PCEN 2ª via is judged by its printed validity, everything else by age.
+    vencida = certidao_pcen.esta_vencida(
+        emitida_em=_iso_para_data(emitida), validade_ate=validade,
+        referencia=hoje, max_dias=limite, excecao=excecao,
+    )
     return {
         "status": status,
         "texto": texto,
@@ -275,7 +287,7 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "emitida_em": emitida,
         "validade_ate": row.get("validade_ate"),
         "idade_dias": idade,
-        "stale_para_contrato": idade is not None and idade >= limite,
+        "stale_para_contrato": vencida,
         "arquivo_url": row.get("arquivo_url"),
         "tem_arquivo": bool(row.get("arquivo_url")),
         "arquivo_nome": row.get("arquivo_nome"),
@@ -283,16 +295,38 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "confirmado": row.get("confirmado_em") is not None,
         "analise_ia": row.get("analise_ia"),
         "erro_mensagem": row.get("erro_mensagem"),
-        "segunda_via": _e_segunda_via(row),
+        "segunda_via": certidao_pcen.e_segunda_via(row.get("api_response")),
+        "pcen": _bloco_pcen(row, validade, hoje) if excecao else None,
     }
 
 
-def _e_segunda_via(row: dict) -> bool:
-    """The certidão is a 2ª via (the Receita refused a new one): its
-    `emitida_em` is the ORIGINAL emission date, which is why it may read as
-    stale. Read off the marker `certidoes.service` stamps into `api_response`."""
-    resposta = row.get("api_response")
-    return isinstance(resposta, dict) and bool(resposta.get(MARCA_SEGUNDA_VIA))
+def _iso_para_data(valor: Any) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(valor)[:10]) if valor else None
+    except ValueError:
+        return None
+
+
+def _bloco_pcen(row: dict, validade: date, hoje: date) -> dict:
+    """The educational block of the Receita PCEN 2ª via (shared copy with the
+    contract readiness `confirmacao`) + its acknowledgment state."""
+    emitida = _iso_para_data(row.get("emitida_em"))
+    ciente = certidao_pcen.ciente_vale(
+        ciente_em=row.get("pcen_ciente_em"),
+        ciente_validade=_iso_para_data(row.get("pcen_ciente_validade")),
+        validade_ate=validade,
+    )
+    return {
+        "titulo": certidao_pcen.TITULO,
+        "mensagem": certidao_pcen.aviso(emitida, validade),
+        "explicacao": certidao_pcen.explicacao(emitida, validade),
+        "validade_ate": validade.isoformat(),
+        "vencida": validade < hoje,
+        "ciente": ciente,
+        "ciente_em": row.get("pcen_ciente_em") if ciente else None,
+        "duvida_em": row.get("pcen_duvida_em"),
+        "acoes": {"entendi": certidao_pcen.ACAO_ENTENDI, "duvida": certidao_pcen.ACAO_DUVIDA},
+    }
 
 
 def _aplicavel(linha: dict, parte: dict) -> bool:
@@ -626,6 +660,90 @@ def reemitir(
     return _criar_consulta_automatica(client, org_id, user_id, parte, [config])
 
 
+def _suporte_da_org(client: Any, org_id: UUID) -> Optional[dict]:
+    """The org's configured contact for questions — the first ACTIVE
+    `notification_recipients` row (the office's own recipients; the product
+    has no other support channel). `None` = none configured; the UI says so
+    instead of showing a dead button."""
+    try:
+        rows = (
+            _t(client, "notification_recipients")
+            .select("name, email, whatsapp_number")
+            .eq("org_id", str(org_id)).eq("is_active", True)
+            .order("created_at").limit(1).execute()
+        ).data or []
+    except Exception:  # noqa: BLE001 — a lookup failure must not block the acknowledgment
+        logger.warning("ciencia-pcen: could not read notification_recipients", exc_info=True)
+        return None
+    if not rows:
+        return None
+    r = rows[0]
+    return {"nome": r.get("name"), "email": r.get("email"), "whatsapp": r.get("whatsapp_number")}
+
+
+def registrar_ciencia_pcen(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    resultado_id: str,
+    *,
+    acao: str,
+    user_id: Any,
+    hoje: Optional[date] = None,
+) -> dict:
+    """`POST …/certidoes/resultados/{resultado_id}/ciencia-pcen`: record WHO
+    acknowledged (or questioned) a Receita "positiva com efeitos de negativa"
+    2ª via, WHEN, and for WHICH printed validity. Only valid while the
+    exception actually applies and the certidão is still within validity —
+    anything else is a 409, never a silent write."""
+    hoje = hoje or date.today()
+    ensure_cliente(client, org_id, cliente_id)
+    resultado, _consulta = _consulta_do_resultado(client, org_id, resultado_id)
+    pertence = any(
+        r["id"] == resultado_id
+        for partes in _partes_do_card(client, org_id, cliente_id)
+        for p in partes
+        for r in certidoes_svc.certidoes_por_alvos(
+            client, org_id,
+            cliente_ids=[p["cliente_id"]] if p["cliente_id"] else [],
+            empresa_ids=[p["empresa_id"]] if p["empresa_id"] else [],
+        ).get(_chave(p), [])
+    )
+    if not pertence:
+        raise NotFoundError("Resultado")
+    row = (
+        _t(client, RESULTADOS).select("*").eq("org_id", str(org_id)).eq("id", resultado_id)
+        .limit(1).execute()
+    ).data[0]
+    validade = _iso_para_data(row.get("validade_ate"))
+    if not certidao_pcen.excecao_aplica(
+        resultado=row.get("resultado"),
+        segunda_via=certidao_pcen.e_segunda_via(row.get("api_response")),
+        validade_ate=validade,
+    ) or validade is None or validade < hoje:
+        raise AppException(
+            code="CIENCIA_PCEN_NAO_APLICAVEL",
+            message="Esta certidão não exige ciência (não é uma 2ª via positiva com efeitos de negativa em vigor).",
+            status_code=409,
+        )
+    agora = datetime.now(timezone.utc).isoformat()
+    if acao == "entendi":
+        patch = {
+            "pcen_ciente_por": str(user_id), "pcen_ciente_em": agora,
+            "pcen_ciente_validade": validade.isoformat(),
+        }
+    else:
+        patch = {"pcen_duvida_por": str(user_id), "pcen_duvida_em": agora}
+    _t(client, RESULTADOS).update(patch).eq("org_id", str(org_id)).eq("id", resultado_id).execute()
+    logger.info("ciencia-pcen: resultado %s acao=%s por %s (validade %s)", resultado_id, acao, user_id, validade)
+    return {
+        "resultado_id": resultado_id,
+        "acao": acao,
+        "pcen": _bloco_pcen({**row, **patch}, validade, hoje),
+        "suporte": _suporte_da_org(client, org_id),
+    }
+
+
 def garantir_celula(
     client: Any,
     org_id: UUID,
@@ -713,5 +831,6 @@ __all__ = [
     "montar_linhas",
     "montar_parte",
     "reemitir",
+    "registrar_ciencia_pcen",
     "solicitar_emissao",
 ]

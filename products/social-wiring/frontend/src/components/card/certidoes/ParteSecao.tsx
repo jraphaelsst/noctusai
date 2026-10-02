@@ -3,7 +3,7 @@
  * + nome + documento + compact status summary + stale flag. Body (lazy, only
  * when open): that party's levantamento table with per-row actions.
  */
-import { useRef, useState } from "react";
+import { Fragment, useRef, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { formatDate } from "@/lib/utils";
 import { useMintResultadoUrl } from "@/hooks/useCertidoes";
 import type {
+  CienciaPcenResult,
   CertidaoParte,
   CertidaoParteLinha,
   SolicitarEmissaoInput,
@@ -19,6 +20,7 @@ import type {
 } from "@/types/certidoesPartes";
 
 import { CertidaoCelulaChip } from "./CertidaoCelulaChip";
+import { PcenCiencia } from "./PcenCiencia";
 import {
   avisoVencida,
   formatarDocumento,
@@ -39,6 +41,8 @@ export interface ParteSecaoProps {
   onAdicionar: () => void;
   onRenomear: (linha: CertidaoParteLinha) => void;
   onRemover: (linha: CertidaoParteLinha) => void;
+  /** Receita PCEN 2ª via acknowledgment / support question. */
+  onCienciaPcen: (resultadoId: string, acao: "entendi" | "duvida") => Promise<CienciaPcenResult>;
 }
 
 export function ParteSecao(p: ParteSecaoProps) {
@@ -161,7 +165,8 @@ export function ParteSecao(p: ParteSecaoProps) {
                   const auto = tipoAutomatico(linha.tipo);
                   const aviso = avisoVencida(c);
                   return (
-                    <tr key={linha.chave} className="border-b last:border-b-0" data-testid={`parte-linha-${parte.chave}-${linha.chave}`}>
+                    <Fragment key={linha.chave}>
+                    <tr className="border-b last:border-b-0" data-testid={`parte-linha-${parte.chave}-${linha.chave}`}>
                       <td className="p-2">
                         {auto && !na && (
                           <Checkbox
@@ -237,6 +242,24 @@ export function ParteSecao(p: ParteSecaoProps) {
                         )}
                       </td>
                     </tr>
+                    {c.pcen && !c.pcen.vencida && c.resultado_id && (
+                      <tr className="border-b last:border-b-0">
+                        <td colSpan={5} className="p-2">
+                          <PcenCiencia
+                            testId={`parte-pcen-${parte.chave}-${linha.chave}`}
+                            titulo={c.pcen.titulo}
+                            explicacao={c.pcen.explicacao}
+                            validadeAte={c.pcen.validade_ate}
+                            ciente={c.pcen.ciente}
+                            acoes={c.pcen.acoes}
+                            contexto={`${parte.rotulo} ${parte.nome}`}
+                            onEntendi={() => p.onCienciaPcen(c.resultado_id as string, "entendi")}
+                            onDuvida={() => p.onCienciaPcen(c.resultado_id as string, "duvida")}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 })}
               </tbody>

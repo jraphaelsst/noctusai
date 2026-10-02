@@ -17,6 +17,13 @@ vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// The acknowledgment mutation (Receita PCEN 2ª via) has its own tests in the
+// certidões tab + section suites; here it is only wired, never fired.
+const mockCienciaMutateAsync = vi.fn();
+vi.mock("@/hooks/useCertidoesPartes", () => ({
+  useCienciaPcen: () => ({ mutateAsync: mockCienciaMutateAsync }),
+}));
+
 const mockUseContratoGeracao = vi.fn();
 const mockGerarMutate = vi.fn();
 const mockRefetch = vi.fn();
