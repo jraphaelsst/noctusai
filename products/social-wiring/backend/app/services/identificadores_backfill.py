@@ -16,6 +16,8 @@ A. **Canonicalise stored values.** `clientes.cpf` / `rg` / `endereco_cep`,
    A value that does NOT fit (bad check digit, unknown mask, another type's
    number) is never touched: it is COUNTED by reason, and stays visible.
    `empresas.cnpj` is left alone (it is the identity key — migration 187).
+A2. **Derive the search haystack** (`documentos_chave`) for rows stored before
+   the migration-187 trigger existed, so the number a screen renders finds them.
 B. **Re-resolve pending conflicts** in `cliente_campo_conflitos`
    (cpf / rg / rg_orgao_expedidor — through the SAME `divergencia_resolucao`
    the live path runs: equivalence, type routing, DV validator, corroboration,
@@ -229,6 +231,69 @@ def canonizar_certidao_consultas(
             ).eq("id", str(row["id"])).execute()
 
 
+def derivar_chaves(client: Any, org_id: UUID, contagem: _Contagem, *, dry_run: bool) -> None:
+    """Fill `documentos_chave` (the search HAYSTACK, migration 187) for rows
+    stored BEFORE the trigger existed — a row whose value is already canonical
+    is never written by the canonicalisation step, so without this its key
+    would stay NULL and the number a screen renders would not find it. The key
+    is invariant under canonicalisation (canonical alnum when it fits, RAW
+    alnum otherwise), so the order of the two steps does not matter. The
+    trigger recomputes the same value on every later write."""
+    from app.modules.imovel_hub import dados_service
+
+    def derivar(tabela: str, linhas: list[dict], chave_linha: str, calcular) -> None:
+        for row in linhas:
+            esperado = calcular(row)
+            contagem.visto(f"{tabela}.documentos_chave")
+            if (row.get("documentos_chave") or None) == esperado:
+                contagem.ja_canonico(f"{tabela}.documentos_chave")
+                continue
+            contagem.canonizado(f"{tabela}.documentos_chave")
+            if not dry_run:
+                _t(client, tabela).update({"documentos_chave": esperado}).eq(
+                    "org_id", str(org_id)
+                ).eq(chave_linha, row[chave_linha]).execute()
+
+    derivar(
+        "clientes",
+        table_reads.paged_rows(
+            client, "clientes", org_id,
+            select="id,cpf,rg,rg_orgao_expedidor,documentos_chave",
+        ),
+        "id", idf.documentos_chave_cliente,
+    )
+    derivar(
+        "imovel_dados",
+        table_reads.paged_rows(
+            client, "imovel_dados", org_id,
+            select="codigo,numero_matricula,prefeitura_cadastro_imobiliario,documentos_chave",
+            order_col="codigo", id_key="codigo",
+        ),
+        "codigo",
+        lambda row: idf.documentos_chave_imovel(
+            row,
+            municipio=(
+                dados_service.municipio_do_imovel(client, org_id, row["codigo"])
+                if row.get("prefeitura_cadastro_imobiliario") else None
+            ),
+        ),
+    )
+    derivar(
+        "certidao_consultas",
+        [
+            r for r in table_reads.paged_rows(
+                client, "certidao_consultas", org_id,
+                select="id,tipo_documento,documento,documentos_chave",
+            )
+            if str(r.get("tipo_documento") or "").lower() in ("cpf", "cnpj")
+        ],
+        "id",
+        lambda row: idf.documentos_chave([
+            (str(row["tipo_documento"]).lower(), row.get("documento"), {}),
+        ]),
+    )
+
+
 def diagnosticar_empresas(client: Any, org_id: UUID, contagem: _Contagem) -> None:
     """READ-ONLY: `empresas.cnpj` is the identity key (digits-only on purpose
     — migration 187), so it is never rewritten; this only reports whether
@@ -391,14 +456,19 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> dict:
     canonizar_imovel_dados(client, org_id, contagem, dry_run=dry_run)
     canonizar_certidao_consultas(client, org_id, contagem, dry_run=dry_run)
     diagnosticar_empresas(client, org_id, contagem)
+    # Conflicts BEFORE the search keys: a conflict the resolver settles may
+    # replace a stored value, and the key must describe the value that stays
+    # (in production the trigger recomputes it on that write; the mock has none).
+    conflitos = {
+        "cliente_campo_conflitos": resolver_conflitos_cliente(client, org_id),
+        "imovel_campo_conflitos": resolver_conflitos_imovel(client, org_id, dry_run=dry_run),
+        "empresa_campo_conflitos": resolver_conflitos_empresa(client, org_id),
+    }
+    derivar_chaves(client, org_id, contagem, dry_run=dry_run)
     relatorio = {
         "dry_run": dry_run,
         "valores": contagem.como_dict(),
-        "conflitos": {
-            "cliente_campo_conflitos": resolver_conflitos_cliente(client, org_id),
-            "imovel_campo_conflitos": resolver_conflitos_imovel(client, org_id, dry_run=dry_run),
-            "empresa_campo_conflitos": resolver_conflitos_empresa(client, org_id),
-        },
+        "conflitos": conflitos,
     }
     logger.info("identificadores.backfill org=%s %s", org_id, relatorio)
     return relatorio
@@ -429,6 +499,7 @@ __all__ = [
     "canonizar_certidao_consultas",
     "canonizar_clientes",
     "canonizar_imovel_dados",
+    "derivar_chaves",
     "diagnosticar_empresas",
     "main",
     "resolver_conflitos_cliente",

@@ -26,6 +26,7 @@ from app.services import identificadores_backfill as bf
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
 
 ORG_UUID = UUID(ORG_ID)
+ORG = ORG_ID
 
 CPF_RAW, CPF_CANON = "52998224725", "529.982.247-25"
 
@@ -147,6 +148,31 @@ class TestCanonizar:
         blob = json.dumps(bf.run_backfill(banco, ORG_UUID, dry_run=True))
         for secret in (CPF_RAW, CPF_CANON, "30128742", "412.954.238-98", "79826", "11.222.333"):
             assert secret not in blob
+
+
+class TestChavesDeBusca:
+    def test_rows_stored_before_the_trigger_get_their_search_key(self, banco):
+        """A row whose value is ALREADY canonical is never written by the
+        canonicalisation step — without this its `documentos_chave` stays NULL
+        and the rendered number would not find it."""
+        out = bf.run_backfill(banco, ORG_UUID)
+        assert _cliente(banco, banco._ids["b"])["documentos_chave"] == "41295423898"
+        assert _cliente(banco, banco._ids["a"])["documentos_chave"] == "52998224725 301287429"
+        assert _rows(banco, "imovel_dados")[0]["documentos_chave"] == "79826 232314211037700000"
+        docs = {r["documento"]: r["documentos_chave"] for r in _rows(banco, "certidao_consultas")}
+        assert docs["412.954.238-98"] == "41295423898"
+        assert out["valores"]["clientes.documentos_chave"]["canonizados"] == 5
+
+    def test_the_search_round_trip_works_on_a_backfilled_row(self, banco):
+        from app.services import clientes_service as svc
+
+        bf.run_backfill(banco, ORG_UUID)
+        ids = [c["id"] for c in svc.list_clientes(banco, ORG, q="412.954.238-98")["items"]]
+        assert ids == [banco._ids["b"]]
+
+    def test_dry_run_derives_nothing(self, banco):
+        bf.run_backfill(banco, ORG_UUID, dry_run=True)
+        assert _cliente(banco, banco._ids["b"]).get("documentos_chave") is None
 
 
 class TestConflitos:

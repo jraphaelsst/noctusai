@@ -21,7 +21,7 @@
 --        certidao_consultas.documento (type from tipo_documento)
 --      A trigger, not a service call: the next write path added would forget
 --      the call (same reasoning as the phone trigger, migration 037);
---   E. `documentos_chave` on clientes / imovel_dados — the HAYSTACK half of
+--   E. `documentos_chave` on clientes / imovel_dados / certidao_consultas — the HAYSTACK half of
 --      the search round-trip (`feedback_canonicalizing_a_value_breaks_search`):
 --      the typed needle is keyed the same way in the service;
 --   F. `clientes_por_cpf` keyed by `chave_busca_documento('cpf', cpf)` + its
@@ -488,10 +488,15 @@ ALTER TABLE social_wiring.clientes
     ADD COLUMN IF NOT EXISTS documentos_chave TEXT;
 ALTER TABLE social_wiring.imovel_dados
     ADD COLUMN IF NOT EXISTS documentos_chave TEXT;
+ALTER TABLE social_wiring.certidao_consultas
+    ADD COLUMN IF NOT EXISTS documentos_chave TEXT;
 
 COMMENT ON COLUMN social_wiring.clientes.documentos_chave IS
     'Search keys (alnum) of cpf and rg, space-joined. Maintained by trigger; '
     'never written by the app. Migration 187.';
+COMMENT ON COLUMN social_wiring.certidao_consultas.documentos_chave IS
+    'Search key (alnum) of documento, read as its tipo_documento. Maintained by '
+    'trigger; never written by the app. Migration 187.';
 COMMENT ON COLUMN social_wiring.imovel_dados.documentos_chave IS
     'Search keys (alnum) of numero_matricula and prefeitura_cadastro_imobiliario, '
     'space-joined. Maintained by trigger; never written by the app. Migration 187.';
@@ -517,6 +522,12 @@ BEGIN
     FOREACH par IN ARRAY TG_ARGV LOOP
         campo := split_part(par, ':', 1);
         tipo  := split_part(par, ':', 2);
+        IF left(tipo, 1) = '@' THEN
+            tipo := lower(btrim(coalesce(n ->> substr(tipo, 2), '')));
+        END IF;
+        IF tipo NOT IN ('cpf','cin','cnpj','rg','cep','matricula_imovel','inscricao_municipal') THEN
+            CONTINUE;
+        END IF;
         uf := NULL; municipio := NULL;
         IF tipo = 'rg' THEN
             uf := social_wiring.identificador_uf_do_orgao(n ->> 'rg_orgao_expedidor');
@@ -557,6 +568,11 @@ CREATE TRIGGER trg_b_documentos_chave
     BEFORE INSERT OR UPDATE OF numero_matricula, prefeitura_cadastro_imobiliario ON social_wiring.imovel_dados
     FOR EACH ROW EXECUTE FUNCTION social_wiring.manter_documentos_chave(
         'numero_matricula:matricula_imovel', 'prefeitura_cadastro_imobiliario:inscricao_municipal');
+
+DROP TRIGGER IF EXISTS trg_b_documentos_chave ON social_wiring.certidao_consultas;
+CREATE TRIGGER trg_b_documentos_chave
+    BEFORE INSERT OR UPDATE OF documento, tipo_documento ON social_wiring.certidao_consultas
+    FOR EACH ROW EXECUTE FUNCTION social_wiring.manter_documentos_chave('documento:@tipo_documento');
 
 -- ----------------------------------------------------------------------------
 -- F. clientes_por_cpf on the canonical key
