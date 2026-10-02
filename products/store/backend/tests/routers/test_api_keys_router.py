@@ -159,7 +159,27 @@ class TestConsumption:
         from app import store_deps
         from app.api_keys import key_provider
 
-        assert type(store_deps.get_email_sender()).__name__ == "UnconfiguredEmailSender"
+        assert type(store_deps.get_email_sender(keyed.settings)).__name__ == "UnconfiguredEmailSender"
         platform = {"smtp_host": "smtp.x.test", "smtp_username": "u", "smtp_password": "p", "smtp_port": "587"}
         key_provider.use(store=keyed.creds, resolver=lambda name, org: platform.get(name), org_id=ORG_ID)
-        assert isinstance(store_deps.get_email_sender(), SmtpEmailSender)
+        assert isinstance(store_deps.get_email_sender(keyed.settings), SmtpEmailSender)
+
+    def test_sender_name_is_the_product_name_over_the_platform_default(self, keyed):
+        from app import store_deps
+        from app.api_keys import key_provider
+        from app.services.settings_service import DEFAULT_SETTINGS
+
+        platform = {
+            "smtp_host": "smtp.x.test", "smtp_username": "u", "smtp_password": "p", "smtp_port": "587",
+            "email_from": "noreply@x.test", "email_from_name": "Plataforma",
+        }
+        key_provider.use(store=keyed.creds, resolver=lambda name, org: platform.get(name), org_id=ORG_ID)
+        # Empty ledger -> the default product name (what the landing shows).
+        assert store_deps.get_email_sender(keyed.settings).config.from_name == DEFAULT_SETTINGS["product_name"]
+        # An edited product name is the sender; the address stays the platform's.
+        keyed.settings.append(version=1, data={**DEFAULT_SETTINGS, "product_name": "Kit Contratos"}, created_by=None)
+        sender = store_deps.get_email_sender(keyed.settings)
+        assert (sender.config.from_name, sender.config.from_email) == ("Kit Contratos", "noreply@x.test")
+        # No product name -> the platform default name applies.
+        keyed.settings.append(version=2, data={**DEFAULT_SETTINGS, "product_name": ""}, created_by=None)
+        assert store_deps.get_email_sender(keyed.settings).config.from_name == "Plataforma"

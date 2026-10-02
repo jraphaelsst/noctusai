@@ -32,7 +32,7 @@ from app.dependencies import get_admin_client
 from app.services.assets import AssetService
 from app.services.checkout_service import CheckoutError, CheckoutService
 from app.services.delivery_service import DeliveryService
-from app.services.settings_service import SettingsService
+from app.services.settings_service import DEFAULT_SETTINGS, SettingsService
 from app.services.webhook_service import WebhookService
 from app.stores import PedidoStore, SettingsStore, SupabasePedidoStore, SupabaseSettingsStore
 
@@ -139,8 +139,20 @@ def _smtp_credentials() -> dict[str, str]:
     return {name: key_provider.platform_resolve(name, org) or "" for name in _SMTP_KEYS}
 
 
-def get_email_sender() -> EmailSender:
+def _sender_name(settings_store: SettingsStore) -> str:
+    """The buyer sees the PRODUCT as the sender ("Contrato Blindado de Compra
+    e Venda <noreply@…>"), not the platform's default name: the transport and
+    address stay platform config, the display name is the store's own setting
+    (the same `product_name` the landing page shows). Empty when the ledger
+    has no product name, so the platform default applies."""
+    row = settings_store.current()
+    data = row["data"] if row else DEFAULT_SETTINGS
+    return str(data.get("product_name") or "").strip()
+
+
+def get_email_sender(settings_store: SettingsStore = Depends(get_settings_store)) -> EmailSender:
     creds = _smtp_credentials()
+    creds["email_from_name"] = _sender_name(settings_store) or creds["email_from_name"]
     configured = bool(creds["smtp_host"] and creds["smtp_username"] and creds["smtp_password"])
     return resolve_fake_or_refuse(
         configured=configured,
