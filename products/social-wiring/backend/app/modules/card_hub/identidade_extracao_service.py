@@ -119,7 +119,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
-from app.services import campo_conflitos, divergencia_resolucao, extracao_job
+from app.services import campo_conflitos, divergencia_resolucao, extracao_job, table_reads
 from app.services import identificadores as idf
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
@@ -2043,15 +2043,14 @@ def conflitos_pendentes(
 ) -> list[dict]:
     """The admin's queue — every unresolved `cliente_campo_conflitos` row,
     newest first. `cliente_id=None` lists every pending conflict in the org."""
-    query = (
-        _t(client, CONFLITOS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("status", "pendente")
-    )
+    # Paged: one unpaged read silently capped the org-wide queue (and the
+    # identifier backfill that re-resolves it) at PostgREST's 1000 rows.
+    eq_filters = {"status": "pendente"}
     if cliente_id is not None:
-        query = query.eq("cliente_id", str(cliente_id))
-    rows = query.execute().data or []
+        eq_filters["cliente_id"] = str(cliente_id)
+    rows = table_reads.paged_rows(
+        client, CONFLITOS_TABLE, org_id, eq_filters=eq_filters
+    )
     return sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
 
 
@@ -2070,16 +2069,16 @@ _CHAVE_CONJUGE: dict[str, str] = {
 
 def _documentos_vivos(client: Any, org_id: UUID, cliente_ids: list[str]) -> list[dict]:
     """Every non-deleted `cliente_documentos` row of these clientes."""
-    if not cliente_ids:
-        return []
-    return (
-        _t(client, DOCUMENTOS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .in_("cliente_id", cliente_ids)
-        .is_("deleted_at", "null")
-        .execute()
-    ).data or []
+    # Batched IN (URL length) x paged (row cap): neither bound may silently
+    # truncate the evidence a backfill over many clientes judges against.
+    return [
+        row
+        for lote in table_reads.batched(cliente_ids)
+        for row in table_reads.paged_rows(
+            client, DOCUMENTOS_TABLE, org_id,
+            refine=lambda q, lote=lote: q.in_("cliente_id", lote).is_("deleted_at", "null"),
+        )
+    ]
 
 
 def _entrada_conjuge_da_pessoa(
@@ -2499,16 +2498,17 @@ def backfill_resolver_conflitos_pendentes(
     ids = sorted({str(r["cliente_id"]) for r in pendentes})
     clientes_rows = {
         str(c["id"]): c
+        for lote in table_reads.batched(ids)
         for c in (
             (
                 _t(client, CLIENTES_TABLE)
                 .select("*")
                 .eq("org_id", str(org_id))
-                .in_("id", ids)
+                .in_("id", lote)
                 .execute()
             ).data or []
         )
-    } if ids else {}
+    }
     donos = sorted(
         set(ids) | {str(c["conjuge_cliente_id"]) for c in clientes_rows.values() if c.get("conjuge_cliente_id")}
     )
