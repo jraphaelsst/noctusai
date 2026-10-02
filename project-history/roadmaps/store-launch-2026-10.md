@@ -16,7 +16,7 @@ Contract: `products/store/projects/store-v1-CONTRACT.md`.
 - **M4: Asaas sandbox end-to-end** — a sandbox payment marks the order paid, sends the email and the download works. ⬜ Runs on the prod host with the store's Asaas environment left at `sandbox` (the default) before switching to `production`.
 - **M5: prod promote** — ✅ authorized 2026-10-02 by the owner in-session ("I authorize store to be published to production."; consent record `deploy/consent/store.prod.yml`). The ✅ marks the authorization; the cutover items below stay open until reached.
   - ✅ Dev validation (M3) complete.
-  - ⬜ `store.noctusai.com` serving the landing; `/login` admin restricted to the owner.
+  - ✅ `store.noctusai.com` serving the landing (2026-10-02, prod `c728f42a1`): container healthy, edge 200 on `/`, `/obrigado`, `/login`, `/api/health`; checkout 503 until an Asaas key is saved (by design), admin + webhook 401 unauthenticated; core CORS accepts the store origin (URL roster applied); DNS CNAME `store` → the prod tunnel, proxied.
   - ⬜ Asaas keys saved in `/admin` → Integrações; sandbox E2E (M4), then switch to production.
 
 ## Anti-goals
