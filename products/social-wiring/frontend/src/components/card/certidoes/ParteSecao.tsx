@@ -191,6 +191,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2">
                         <CertidaoCelulaChip celula={c} testId={`parte-chip-${parte.chave}-${linha.chave}`} />
+                        {c.pendencia && c.erro_mensagem && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-pendencia-${parte.chave}-${linha.chave}`}>
+                            {c.erro_mensagem}
+                          </p>
+                        )}
                       </td>
                       <td className="p-2">
                         {c.emitida_em ? formatDate(c.emitida_em) : "—"}
@@ -209,7 +214,7 @@ export function ParteSecao(p: ParteSecaoProps) {
                       <td className="p-2">
                         {!na && (
                           <div className="flex flex-wrap items-center gap-1">
-                            {auto && c.resultado_id && (
+                            {auto && c.resultado_id && !c.pendencia && (
                               <Button size="sm" variant={c.stale_para_contrato ? "default" : "ghost"} className="h-7 px-2 text-xs"
                                 onClick={() => p.onReemitir(c.resultado_id as string)}
                                 data-testid={`parte-reemitir-${parte.chave}-${linha.chave}`}>
