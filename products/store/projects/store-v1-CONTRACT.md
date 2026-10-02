@@ -21,6 +21,8 @@ already carries a product-local one (`products/p-studio/backend/app/providers/as
   description, externalReference, callback:{successUrl, autoRedirect:true}}
   → `CheckoutSession(checkout_url=invoiceUrl, gateway_charge_id=<payment id>)`.
 - `StripeHostedCheckout` one-off path: Checkout Session `mode="payment"`.
+  Seed-only symmetry (core bills through Stripe); **store is Asaas-only**
+  (owner decision 2026-10-02) and never constructs a Stripe checkout.
 - `FakeHostedCheckout`: deterministic fake URL + id.
 - Webhook parsing is unchanged: `PAYMENT_RECEIVED` / `PAYMENT_CONFIRMED` →
   `charge_paid`, `externalReference` → `GatewayEvent.external_reference`.
