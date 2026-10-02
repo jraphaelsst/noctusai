@@ -170,6 +170,12 @@ describe("maskCpf", () => {
   it("returns an unexpected shape unmasked rather than mangling it", () => {
     expect(maskCpf("123")).toBe("123");
   });
+
+  it("masks a CPF stored with stray spacing identically (digits come through the identifier seam)", () => {
+    expect(maskCpf(" 412 954 238 98 ")).toBe("***.***.*38-98");
+    expect(maskCpf("412.954.238-98")).toBe("***.***.*38-98");
+    expect(maskCpf("41295423898")).toBe("***.***.*38-98");
+  });
 });
 
 describe("useNegociacoesDoCliente", () => {

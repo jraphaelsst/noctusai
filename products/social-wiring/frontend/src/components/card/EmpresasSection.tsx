@@ -53,6 +53,7 @@ import {
   useUploadEmpresaDocumento,
 } from "@/hooks/useEmpresas";
 import { formatDate } from "@/lib/utils";
+import { formatIdentificador } from "@noctusai/lib/identificador";
 import { SITUACAO_CADASTRAL_LABELS } from "@/types/certidoesEstruturadas";
 import type {
   AtualizarEmpresaBody,
@@ -253,7 +254,9 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
       <span className="truncate font-medium" data-testid={`${testId}-nome`}>
         {nome}
       </span>
-      <span className="shrink-0 text-xs text-muted-foreground">{empresa.cnpj}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {formatIdentificador("cnpj", empresa.cnpj)}
+      </span>
     </span>
   );
 

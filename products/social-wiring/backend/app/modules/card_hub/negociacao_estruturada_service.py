@@ -54,6 +54,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.domain.real_estate import dividir_em_parcelas_iguais
 from noctusai_lib.integrations.documents import cnpj, cpf
+from noctusai_lib.primitives import identificador as ident_primitives
 from noctusai_lib.primitives.exceptions import (
     ConflictError,
     NotFoundError,
@@ -62,6 +63,7 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub import services as svc
+from app.services import identificadores as idf
 from app.services import table_reads
 
 TABLE_PARCELAS = "atendimento_negociacao_parcelas"
@@ -252,6 +254,14 @@ def _exigir_favorecido(
     return rows[0]
 
 
+def _favorecido_canonico(valores: dict) -> dict:
+    """`cpf_cnpj` is stored in its canonical PUNCTUATED form when it fits its
+    type (owner rule 2026-10-01, `canonical-identifiers`); as typed otherwise."""
+    if "cpf_cnpj" not in valores:
+        return valores
+    return {**valores, "cpf_cnpj": idf.canonico_cpf_cnpj(valores["cpf_cnpj"])}
+
+
 def criar_favorecido(
     client: Any, org_id: UUID, cliente_id: UUID, *, valores: dict,
     usuario_id: Optional[UUID],
@@ -261,7 +271,9 @@ def criar_favorecido(
         "id": str(uuid4()),
         "org_id": str(org_id),
         "atendimento_id": str(atendimento_id),
-        **{k: valores.get(k) for k in _FAVORECIDO_CAMPOS_EDITAVEIS if k in valores},
+        **_favorecido_canonico(
+            {k: valores.get(k) for k in _FAVORECIDO_CAMPOS_EDITAVEIS if k in valores}
+        ),
         "created_at": _now(),
         "created_por": str(usuario_id) if usuario_id else None,
     }
@@ -287,7 +299,9 @@ def atualizar_favorecido(
     """
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     _exigir_favorecido(client, org_id, atendimento_id, favorecido_id)
-    patch = {k: v for k, v in valores.items() if k in _FAVORECIDO_CAMPOS_EDITAVEIS}
+    patch = _favorecido_canonico(
+        {k: v for k, v in valores.items() if k in _FAVORECIDO_CAMPOS_EDITAVEIS}
+    )
     now = _now()
     patch["updated_at"] = now
     patch["updated_por"] = str(usuario_id) if usuario_id else None
@@ -407,20 +421,23 @@ def _normalizar_documento(bruto: str) -> tuple[str, str]:
     wrong person.
     """
     s = cnpj.normalize(bruto)
+    # Stored in the canonical PUNCTUATED form (`canonical-identifiers`, owner
+    # rule 2026-10-01) — the contract generator reads digits back out of it
+    # (`frases.documento` → `so_digitos`), so the printed contract is unchanged.
     if len(s) == 11 and s.isdigit():
         if not cpf.is_valid(s):
             raise ValidationError_(
                 "CPF inválido: os dígitos verificadores não conferem",
                 field="documento",
             )
-        return s, "pf"
+        return ident_primitives.canonico("cpf", s) or s, "pf"
     if len(s) == 14:
         if not cnpj.is_valid(s):
             raise ValidationError_(
                 "CNPJ inválido: os dígitos verificadores não conferem",
                 field="documento",
             )
-        return s, "pj"
+        return ident_primitives.canonico("cnpj", s) or s, "pj"
     raise ValidationError_(
         "documento deve ser um CPF (11 dígitos) ou um CNPJ (14 caracteres)",
         field="documento",
@@ -461,6 +478,7 @@ def _normalizar_qualificacao(
             cep = re.sub(r"\D", "", cep)
             if len(cep) != 8:
                 raise ValidationError_("CEP deve ter 8 dígitos", field="endereco_cep")
+            cep = ident_primitives.canonico("cep", cep) or cep
         out["endereco_cep"] = cep
 
     if "representante_cpf" in valores:
@@ -471,7 +489,7 @@ def _normalizar_qualificacao(
                     "CPF do representante inválido: os dígitos verificadores não conferem",
                     field="representante_cpf",
                 )
-            rep = cpf.only_digits(rep)
+            rep = ident_primitives.canonico("cpf", rep) or cpf.only_digits(rep)
         out["representante_cpf"] = rep
 
     if "favorecido_id" in valores:
@@ -509,7 +527,7 @@ def _normalizar_qualificacao(
         out["pessoa_tipo"] = pessoa_tipo
 
     if documento:
-        esperado = "pf" if len(documento) == 11 else "pj"
+        esperado = "pf" if len(cnpj.normalize(documento)) == 11 else "pj"
         if pessoa_tipo is None:
             raise ValidationError_(
                 "informe se o intermediário é pessoa física (pf) ou jurídica (pj)",

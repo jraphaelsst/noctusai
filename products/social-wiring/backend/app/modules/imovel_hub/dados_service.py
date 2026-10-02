@@ -35,6 +35,7 @@ from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
+from app.services import identificadores as idf
 from app.services import table_reads
 
 TABLE = "imovel_dados"
@@ -651,7 +652,9 @@ def atualizar(
         )
 
     atual = linha(client, org_id, codigo)
-    patch = {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
+    patch = canonizar_valores(
+        client, org_id, codigo, {k: v for k, v in valores.items() if k in CAMPOS_EDITAVEIS}
+    )
 
     # A human typing the value IS the provenance. Stamped here rather than
     # left null so a later extraction can tell the column is already spoken
@@ -720,6 +723,61 @@ def _json_seguro(patch: dict) -> dict:
     }
 
 
+def municipio_do_imovel(client: Any, org_id: UUID, codigo: str) -> Optional[str]:
+    """The município an imóvel sits in — the context the inscrição municipal
+    needs to be read at all (each prefeitura has its own mask,
+    `canonical-identifiers`). The live Vista mirror first, then the
+    registry's delist-time snapshot; None when neither knows."""
+    for tabela, chave_codigo, coluna in (
+        ("imoveis", "codigo", "cidade"),
+        (REGISTRY_TABLE, "codigo_canonical", "snap_cidade"),
+    ):
+        rows = (
+            _t(client, tabela)
+            .select(coluna)
+            .eq("org_id", str(org_id))
+            .eq(chave_codigo, codigo)
+            .limit(1)
+            .execute()
+        ).data or []
+        if rows and rows[0].get(coluna):
+            return str(rows[0][coluna])
+    return None
+
+
+def canonizar_valores(
+    client: Any, org_id: UUID, codigo: str, valores: dict
+) -> dict:
+    """CANONICAL ON WRITE for the identifier columns of `imovel_dados`
+    (owner rule 2026-10-01, `canonical-identifiers`): `numero_matricula` is
+    stored `79.826`, `prefeitura_cadastro_imobiliario` in its município's
+    punctuated mask. A value that does not fit its type is kept AS READ
+    (never rewritten, stays visible); one that is a valid identifier of
+    ANOTHER type (a CPF typed into the matrícula field) is refused —
+    `ValidationError_` naming the field, the hand-in a human sees."""
+    saida = dict(valores)
+    municipio: Optional[str] = None
+    municipio_lido = False
+    for campo, tipo in idf.TIPO_POR_CAMPO_ESCRITA_IMOVEL.items():
+        bruto = saida.get(campo)
+        if bruto is None or not str(bruto).strip():
+            continue
+        ctx: dict = {}
+        if tipo == "inscricao_municipal":
+            if not municipio_lido:
+                municipio, municipio_lido = municipio_do_imovel(client, org_id, codigo), True
+            ctx["municipio"] = municipio
+        g = idf.para_gravar(tipo, bruto, **ctx)
+        if g.rejeitado_por_tipo:
+            raise ValidationError_(
+                f"O valor informado é um {str(g.tipo_detectado).upper()} válido, "
+                f"não um(a) {campo.replace('_', ' ')}.",
+                field=campo,
+            )
+        saida[campo] = g.valor
+    return saida
+
+
 def _gravar(
     client: Any, org_id: UUID, codigo: str, atual: Optional[dict], patch: dict
 ) -> None:
@@ -730,7 +788,11 @@ def _gravar(
     `atual` is the row the caller just re-read. Read-then-write rather than
     `upsert()` for the reason `registrar_imovel` records: the mock's upsert is
     a no-op, so an upsert path tests green and breaks live.
+
+    Identifier columns are written CANONICAL here (`canonizar_valores`) — the
+    one chokepoint, so no author of this table can forget it.
     """
+    patch = canonizar_valores(client, org_id, codigo, patch)
     if atual is None:
         _t(client, TABLE).insert(
             _json_seguro(
@@ -853,6 +915,10 @@ def gravar_endereco_manual(
     historico: list[dict] = []
     for coluna, bruto in valores.items():
         novo = (bruto or "").strip() or None if isinstance(bruto, str) else bruto
+        if coluna == "endereco_manual_cep" and novo:
+            # canonical BEFORE the history comparison, so `01310100` re-saved
+            # as the `01310-100` already on file is not a change
+            novo = idf.canonico_ou_bruto("cep", novo)
         campo = _CAMPO_MIRROR[coluna]
         anterior_override = (atual or {}).get(coluna)
         anterior_efetivo = (

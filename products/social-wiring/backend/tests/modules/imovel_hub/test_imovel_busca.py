@@ -402,3 +402,59 @@ class TestAuthBoundary:
     def test_unauthenticated_busca_duplicatas_is_strictly_401(self, anon_client):
         resp = anon_client.get("/api/imoveis/busca/duplicatas", params={"q": "Euroville"})
         assert resp.status_code == 401, resp.text
+
+
+class TestDocumentNumbersFindTheImovel:
+    """Owner rule 2026-10-01 (`canonical-identifiers`): the matrícula / inscrição
+    municipal a card RENDERS finds the imóvel — storage, display, SEARCH. The
+    needle is keyed like the haystack (`imovel_dados.documentos_chave`, which a
+    trigger maintains in production — mocks have no triggers, so the fixture
+    derives it the way migration 187 does) and the match is strictly additive."""
+
+    @staticmethod
+    def _seed(scoped) -> None:
+        from app.services import identificadores as idf
+
+        dados = []
+        for codigo, matricula, inscricao in (
+            ("ONE4770", "79.826", "23231.42.11.0377.00.000"),
+            ("CA5180", "1.234.567", None),
+            ("AP0001", "826", None),
+        ):
+            row = {
+                "org_id": ORG_ID, "codigo": codigo, "numero_matricula": matricula,
+                "prefeitura_cadastro_imobiliario": inscricao,
+            }
+            row["documentos_chave"] = idf.documentos_chave_imovel(row, municipio="Cotia")
+            dados.append(row)
+        seed_busca(
+            scoped,
+            registry=[registry_row(c, ativo=False, titulo=f"Imóvel {c}") for c in ("ONE4770", "CA5180", "AP0001")],
+            mirror=[],
+            dados=dados,
+        )
+
+    def test_the_rendered_matricula_finds_it(self, client, scoped):
+        self._seed(scoped)
+        assert codigos(buscar(client, "79.826")) == ["ONE4770"]
+
+    def test_the_bare_matricula_and_a_leading_zero_print_find_it(self, client, scoped):
+        self._seed(scoped)
+        assert codigos(buscar(client, "79826")) == ["ONE4770"]
+        assert codigos(buscar(client, "0079826")) == ["ONE4770"]
+
+    def test_a_fragment_across_the_dots_finds_it(self, client, scoped):
+        self._seed(scoped)
+        assert codigos(buscar(client, "1234567")) == ["CA5180"]
+        assert codigos(buscar(client, "234.567")) == ["CA5180"]
+
+    def test_the_inscricao_municipal_finds_it_in_any_spelling(self, client, scoped):
+        self._seed(scoped)
+        assert codigos(buscar(client, "23231.42.11.0377.00.000")) == ["ONE4770"]
+        assert codigos(buscar(client, "232314211")) == ["ONE4770"]
+
+    def test_a_short_needle_never_scans_the_key_column(self, client, scoped):
+        self._seed(scoped)
+        # `826` is below the floor: it must not match `79.826` by key (it may
+        # still match the código/título passes, which are unchanged).
+        assert "ONE4770" not in codigos(buscar(client, "826"))

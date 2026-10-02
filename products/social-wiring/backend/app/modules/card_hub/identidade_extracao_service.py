@@ -120,6 +120,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.proveniencia import fontes
 from app.services import campo_conflitos, divergencia_resolucao, extracao_job
+from app.services import identificadores as idf
 from app.services.api_keys_store import resolve_vision_provider
 from app.modules.card_hub.services import _now, _t
 
@@ -637,9 +638,16 @@ def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
     if _vazio(a) or _vazio(b):
         return False
     if item_key == "cpf":
-        return only_digits(str(a)) == only_digits(str(b))
-    if item_key in ("rg", "rg_orgao_expedidor"):
-        return only_alnum(str(a)) == only_alnum(str(b))
+        return idf.iguais("cpf", a, b)
+    if item_key == "rg":
+        # The registry proves format-only differences AND an RG read without
+        # its check digit (a CNH) against the full one (`30128742` ==
+        # `30.128.742-9`) — `canonical-identifiers`, owner rule 2026-10-01.
+        return idf.iguais("rg", a, b)
+    if item_key == "rg_orgao_expedidor":
+        return idf.iguais("orgao_expedidor", a, b) or (
+            only_alnum(str(a)) == only_alnum(str(b))
+        )
     if item_key == "genero":
         ga, gb = canonical_gender(str(a)), canonical_gender(str(b))
         if ga is not None and gb is not None:
@@ -871,6 +879,30 @@ def _valores_outras_pessoas(
     ]
 
 
+def _cpf_proprio(lidos: dict, atual: dict, updates: dict) -> Optional[str]:
+    """The CPF of the person being written — the one a CIN's RG may equal.
+    A reading in this same apply wins over what is on file; an invalid one
+    is no CPF at all."""
+    for candidato in ((lidos.get("cpf") or (None,))[0], updates.get("cpf"), atual.get("cpf")):
+        if candidato and cpf_valido(str(candidato)):
+            return str(candidato)
+    return None
+
+
+def _canonico_do_presente(
+    tipo_id: Optional[str], presente: Any, *, uf: Optional[str] = None
+) -> Optional[str]:
+    """The canonical form to upgrade a stored identifier to, or None when
+    there is nothing to do (no registry type, already canonical, or the
+    stored value does not fit its type — never rewritten)."""
+    if tipo_id is None or _vazio(presente):
+        return None
+    g = idf.para_gravar(tipo_id, presente, uf=uf if tipo_id == "rg" else None)
+    if g.canonico and g.valor is not None and g.valor != str(presente):
+        return g.valor
+    return None
+
+
 def aplicar_campos_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -886,6 +918,7 @@ def aplicar_campos_ao_cliente(
     nomes_anteriores: Optional[dict[str, Optional[str]]] = None,
     avisos_outra_pessoa: Optional[list[str]] = None,
     avisos_cpf_invalido: Optional[list[str]] = None,
+    avisos_tipo_trocado: Optional[list[str]] = None,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -972,6 +1005,18 @@ def aplicar_campos_ao_cliente(
     through — so no reader can reintroduce it; `item_key` is appended to
     `avisos_cpf_invalido` when given so the caller can flag the document.
 
+    🔴 CANONICAL ON WRITE (owner rule 2026-10-01, `KB § PATTERNS/common/
+    canonical-identifiers.md`): a `cpf` / `rg` / `rg_orgao_expedidor` that
+    FITS its type is stored in the registry's PUNCTUATED canonical form
+    (`identificadores.para_gravar`); a value that does not fit is stored as
+    read and stays visible (never silently rewritten); a value that is a
+    valid instance of ANOTHER type (a CPF `297.556.088-50` in the RG field —
+    except the CIN, whose RG IS the holder's own CPF) is NOT written, and
+    its `item_key` is appended to `avisos_tipo_trocado` so the caller flags
+    the source document for a human. A still-non-canonical stored value that
+    is the SAME identifier as the incoming one is upgraded in place to the
+    canonical form (provenance untouched).
+
     `documento_id=None` means this source has no `cliente_documentos` row to
     point at — the column is written as an explicit NULL.
 
@@ -1018,6 +1063,33 @@ def aplicar_campos_ao_cliente(
             if avisos_cpf_invalido is not None:
                 avisos_cpf_invalido.append(campo.item_key)
             continue
+
+        tipo_id = idf.TIPO_POR_CAMPO_CLIENTE.get(campo.item_key)
+        uf_rg = None
+        cpf_proprio = None
+        if tipo_id is not None:
+            cpf_proprio = _cpf_proprio(lidos, atual, updates)
+            uf_rg = idf.uf_do_orgao(
+                (lidos.get("rg_orgao_expedidor") or (None,))[0]
+                or updates.get("rg_orgao_expedidor")
+                or atual.get("rg_orgao_expedidor")
+            )
+            gravacao = idf.para_gravar(
+                tipo_id, valor,
+                uf=uf_rg if tipo_id == "rg" else None,
+                cpf_proprio=cpf_proprio,
+            )
+            if gravacao.rejeitado_por_tipo:
+                logger.warning(
+                    "%s NÃO gravado: é um %s válido, não um %s "
+                    "(cliente %s, origem %s)",
+                    campo.item_key, gravacao.tipo_detectado, tipo_id,
+                    cliente_id, origem,
+                )
+                if avisos_tipo_trocado is not None:
+                    avisos_tipo_trocado.append(campo.item_key)
+                continue
+            valor = gravacao.valor
 
         if campo.depende_de:
             # Only beside the value it was read with — see `depende_de`.
@@ -1142,6 +1214,8 @@ def aplicar_campos_ao_cliente(
                         fonte_id=fonte_id,
                         mesmo_valor=_mesmo_valor,
                         evidencia=_evidencia_ao_vivo(client, org_id, cliente_id, campo, presente),
+                        uf=uf_rg,
+                        cpf_proprio=cpf_proprio,
                     )
                     if decisao.requer_humano:
                         novo = _registrar_conflito(
@@ -1177,12 +1251,19 @@ def aplicar_campos_ao_cliente(
                     # decisao.vencedor == "atual": the record already holds
                     # the fact — nothing to write, the audit row alone
                     # (`resolvido_automatico`) records the resolver ran.
-            elif confirmado_por and _vazio(atual.get(campo.confirmado_em)):
-                # Same fact, still machine-pending, a human now vouches for
-                # it — promote to confirmed. See the docstring's D1 bullet.
-                updates[campo.confirmado_por] = str(confirmado_por)
-                updates[campo.confirmado_em] = now
-                aplicados[campo.item_key] = True
+            else:
+                # Same identifier: bring a still-raw stored form to the
+                # canonical one, provenance untouched (format-only).
+                canonico_presente = _canonico_do_presente(tipo_id, presente, uf=uf_rg)
+                if canonico_presente is not None:
+                    updates[campo.item_key] = canonico_presente
+                if confirmado_por and _vazio(atual.get(campo.confirmado_em)):
+                    # Same fact, still machine-pending, a human now vouches
+                    # for it — promote to confirmed. See the docstring's D1
+                    # bullet.
+                    updates[campo.confirmado_por] = str(confirmado_por)
+                    updates[campo.confirmado_em] = now
+                    aplicados[campo.item_key] = True
             continue
         if atual.get(campo.origem) == "manual":
             continue
@@ -1201,14 +1282,19 @@ def aplicar_campos_ao_cliente(
 
     # A CPF that just became known may be what an already-read bank form was
     # waiting for (it named this person before their identity document
-    # existed and stored them unmatched) — re-queue that form for a fresh
-    # read. Local import: ficha_cadastral_service imports this module.
+    # existed and stored them unmatched). The form's STORED reading is applied
+    # to this person right now — zero model calls (it used to be re-queued for
+    # a full vision re-read, once per party whose CPF arrived later; owner rule
+    # 2026-10-01, `canonical-identifiers`). Any conflict that apply opens
+    # joins this call's own, so the caller announces it. Local import:
+    # ficha_cadastral_service imports this module.
     if aplicados.get("cpf") and updates.get("cpf"):
         from app.modules.card_hub import ficha_cadastral_service
 
-        ficha_cadastral_service.reenfileirar_fichas_pelo_cpf(
+        reaplicado = ficha_cadastral_service.reaplicar_fichas_pelo_cpf(
             client, org_id, cliente_id, updates["cpf"], excluir_documento_id=documento_id,
         )
+        conflitos.extend(reaplicado["conflitos"])
 
     return aplicados, conflitos
 
@@ -1465,6 +1551,9 @@ def aplicar_endereco_ao_cliente(
     if _vazio(partes.get("cep")) or _vazio(partes.get("logradouro")):
         return False, None
     partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
+    # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
+    # `13010-110`; one that does not fit stays as read.
+    partes = {**partes, "cep": idf.canonico_ou_bruto("cep", partes.get("cep"))}
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join([
@@ -2370,7 +2459,8 @@ def _decidir_endereco_pendente(
 
 
 def backfill_resolver_conflitos_pendentes(
-    client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None
+    client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None,
+    campos: Optional[frozenset[str]] = None,
 ) -> dict[str, list[dict]]:
     """The callable BACKFILL owner directive (2026-09-29) explicitly asks
     for: re-consult `divergencia_resolucao` against every conflict ALREADY
@@ -2386,6 +2476,11 @@ def backfill_resolver_conflitos_pendentes(
     reported under `"ignorado_composto"` rather than silently skipped or
     mis-applied through a scalar write.
 
+    `campos`, when given, restricts the pass to those `campo` names (the
+    identifier backfill, `identificadores_backfill`, re-resolves only
+    `cpf` / `rg` / `rg_orgao_expedidor`); `None` is every scalar field, as
+    before.
+
     Returns `{"resolvidos": [...], "ainda_pendentes": [...],
     "ignorado_composto": [...]}` — one row (the original conflict, plus
     `decisao_regra`/`decisao_vencedor` on a resolved one) per conflict
@@ -2396,6 +2491,8 @@ def backfill_resolver_conflitos_pendentes(
     ignorado_composto: list[dict] = []
     now = _now()
     pendentes = conflitos_pendentes(client, org_id, cliente_id)
+    if campos is not None:
+        pendentes = [r for r in pendentes if r.get("campo") in campos]
 
     # Live evidence, loaded once per cliente: their row + their own and
     # their linked spouse's non-deleted documents (`evidencia_viva`).
@@ -2506,6 +2603,8 @@ def backfill_resolver_conflitos_pendentes(
             mesmo_valor=_mesmo_valor,
             conflito_existente_id=row["id"],
             evidencia=evidencia,
+            uf=idf.uf_do_orgao((cliente_row or {}).get("rg_orgao_expedidor")),
+            cpf_proprio=(cliente_row or {}).get("cpf"),
         )
         if decisao.requer_humano:
             ainda_pendentes.append(row)
@@ -3136,6 +3235,7 @@ async def extrair_identidade(
         conflitos: list[dict] = []
         avisos_outra_pessoa: list[str] = []
         avisos_cpf_invalido: list[str] = []
+        avisos_tipo_trocado: list[str] = []
         aplicados, abertos = aplicar_campos_ao_cliente(
             client,
             org_id,
@@ -3148,10 +3248,26 @@ async def extrair_identidade(
             nomes_anteriores={"nome_oficial": nome_anterior_titular},
             avisos_outra_pessoa=avisos_outra_pessoa,
             avisos_cpf_invalido=avisos_cpf_invalido,
+            avisos_tipo_trocado=avisos_tipo_trocado,
         )
         conflitos += abertos
         if avisos_cpf_invalido and not fields.aviso and not avisos_outra_pessoa:
             _marcar(client, documento_id, extracao_aviso="cpf_invalido")
+        # A reading that is a valid identifier of ANOTHER type (a CPF in the
+        # RG field) was not written — flagged on the document so the human
+        # sees WHY the field stayed empty and can type the right one (the
+        # existing `extracao_aviso` hand-in, `canonical-identifiers`).
+        if avisos_tipo_trocado and not fields.aviso and not avisos_outra_pessoa and not avisos_cpf_invalido:
+            _marcar(
+                client, documento_id,
+                extracao_aviso="identificador_de_outro_tipo",
+                extracao_aviso_mensagem=(
+                    "O número lido em "
+                    + ", ".join(sorted(avisos_tipo_trocado)).upper()
+                    + " é válido como outro tipo de documento (ex.: um CPF no campo do RG) — "
+                    "não foi gravado; confira o documento."
+                ),
+            )
         # R4 — this document read at least one field that belongs to
         # ANOTHER party of the negotiation (rejected above, never applied).
         # Flagged on the document row through the existing `extracao_aviso`

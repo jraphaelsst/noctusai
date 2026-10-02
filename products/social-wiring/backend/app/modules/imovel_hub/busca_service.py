@@ -49,6 +49,7 @@ from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import ValidationError_
 
+from app.services import identificadores as idf
 from app.services import table_reads
 
 MIRROR_TABLE = "imoveis"
@@ -333,6 +334,19 @@ def buscar(
             canonical(str(r["codigo_canonical"]))
             for r in _ilike_rows(client, REGISTRY_TABLE, org_id, coluna, termo, limite)
             if r.get("codigo_canonical")
+        )
+
+    # Document numbers (owner rule 2026-10-01, `canonical-identifiers`): the
+    # matrícula / inscrição municipal a card RENDERS (`79.826`) finds the
+    # imóvel, as does the bare number or a fragment of it. The needle is keyed
+    # the way the database keys the haystack (`imovel_dados.documentos_chave`,
+    # maintained by trigger — migration 187); STRICTLY ADDITIVE to the passes
+    # above, floored at `CHAVE_BUSCA_MIN` and digit-bearing.
+    for chave in idf.chaves_do_needle(termo):
+        codigos.update(
+            canonical(str(r["codigo"]))
+            for r in _ilike_rows(client, DADOS_TABLE, org_id, "documentos_chave", chave, limite)
+            if r.get("codigo")
         )
 
     if not codigos:

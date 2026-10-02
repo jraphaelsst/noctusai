@@ -52,6 +52,7 @@ aplicar_leitura` uses (the seed's own reading is `FichaCadastralLida`, not
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Any, Optional
 from uuid import UUID
@@ -68,6 +69,7 @@ from app.modules.card_hub import identidade_extracao_service as identidade_svc
 from app.modules.card_hub.deps import BUCKET
 from app.modules.card_hub.services import _now, _t
 from app.services import extracao_job
+from app.services import identificadores as idf
 
 logger = logging.getLogger(__name__)
 
@@ -389,61 +391,129 @@ async def aplicar_leitura(
     )
 
 
-def reenfileirar_fichas_pelo_cpf(
+@dataclass(frozen=True)
+class _EnderecoArmazenado:
+    """The address block of a STORED ficha reading, shaped like the seed's
+    `EnderecoLido` as far as `_aplicar_endereco_ficha` reads it."""
+
+    dados: dict
+    confianca: Optional[str] = None
+
+    def partes(self) -> dict:
+        return dict(self.dados)
+
+    @property
+    def presente(self) -> bool:
+        return bool(self.dados.get("cep") and self.dados.get("logradouro"))
+
+
+#: The stored reading dropped per-field confidences (`_serializar_pessoa`),
+#: so a re-apply from it labels every value at the LOWEST — which only changes
+#: the confidence text on a conflict row: every D1 apply is machine-pending
+#: whatever the confidence, and `PRECISAO` carries no `ficha_cadastral` cell.
+_CONFIANCA_ARMAZENADA = "baixa"
+
+
+def _lidos_armazenados(pessoa: dict) -> dict[str, tuple]:
+    """`CAMPOS_FICHA`'s `lidos` rebuilt from one STORED person block."""
+    rotulo = "FICHA CADASTRAL"
+
+    def item(valor: Any) -> tuple:
+        return (valor, _CONFIANCA_ARMAZENADA, rotulo, bool(valor))
+
+    return {
+        "nome_oficial": item(pessoa.get("nome")),
+        "cpf": item(pessoa.get("cpf")),
+        "rg": item(pessoa.get("rg")),
+        "rg_orgao_expedidor": item(pessoa.get("rg_orgao")),
+        "data_nascimento": item(pessoa.get("data_nascimento")),
+        "estado_civil": item(pessoa.get("estado_civil")),
+        "regime_bens": item(pessoa.get("regime_bens")),
+        "nacionalidade": item(pessoa.get("nacionalidade")),
+        "profissao": item(pessoa.get("profissao")),
+    }
+
+
+def reaplicar_fichas_pelo_cpf(
     client: Any, org_id: UUID, cliente_id: UUID, cpf: Any,
     *, excluir_documento_id: Optional[UUID] = None,
-) -> list[str]:
-    """A party just got `cpf` on file: re-queue every already-read
-    `ficha_cadastral` of the same atendimento(s) that named a person with
-    that CPF and could NOT attribute them at read time.
+) -> dict:
+    """A party just got `cpf` on file: apply, FROM THE STORED READING and with
+    ZERO model calls, every already-read `ficha_cadastral` person of the same
+    atendimento(s) that named exactly that CPF and could NOT be attributed at
+    read time.
 
     A bank form is routinely a card's FIRST document, read before the other
     parties' identity documents — their CPF was unknown, so `_resolver_
-    destino` stored them unmatched (`cliente_id_aplicado` null) and they were
-    never applied. The stored reading drops per-field confidences, so it is
-    never re-applied from the stored JSON: the document goes back to
-    `pendente` and the existing sweep (`varrer_extracoes_pendentes`) re-reads
-    it, now resolving that person by CPF.
+    destino` stored them unmatched (`cliente_id_aplicado` null). This used to
+    send the document back to `pendente` so the sweep paid for a FULL vision
+    re-read of the whole multi-page form, once per party whose CPF arrived
+    later (up to parties-1 reads per ficha, plus the D3 attempts they burned)
+    — only to learn what the stored JSON already says. Owner rule 2026-10-01
+    (`canonical-identifiers`): a CPF is the same identifier in any spelling,
+    so the match is the registry's `equivalentes`, and the apply is the SAME
+    D1 machinery (`aplicar_campos_ao_cliente` / `_aplicar_endereco_ficha`) fed
+    from the stored block instead of a fresh read.
 
-    Loop guard: only a ficha that is terminal-`ok`, whose stored reading has
-    an UNMATCHED person with exactly this CPF, and that still has attempts
-    left (`extracao_tentativas < MAX_TENTATIVAS`, the D3 accounting every read
-    increments) is re-queued; one read that now matches stops satisfying the
-    first condition. Returns the re-queued document ids.
+    Idempotent and loop-free by construction: a person is applied once —
+    afterwards `cliente_id_aplicado` is set, so the next call no longer
+    selects them. Never creates a cliente. Returns `{"documentos": [ids
+    updated], "pessoas": n applied, "conflitos": [newly opened conflict
+    rows]}` — the caller announces the conflicts.
     """
-    digits = only_digits(str(cpf or ""))
-    if len(digits) != 11:
-        return []
+    if not idf.cabe("cpf", cpf):
+        return {"documentos": [], "pessoas": 0, "conflitos": []}
     ids = [str(r["id"]) for r in _linhas_do_atendimento(client, org_id, cliente_id)]
     docs = (
         _t(client, DOCUMENTOS_TABLE)
-        .select("id,extracao_status,extracao_tentativas,extracao_ficha_cadastral")
+        .select("id,extracao_status,extracao_ficha_cadastral")
         .eq("org_id", str(org_id))
         .eq("tipo_documento", "ficha_cadastral")
         .in_("cliente_id", ids)
         .is_("deleted_at", "null")
         .execute()
     ).data or []
-    enfileirados: list[str] = []
+    atualizados: list[str] = []
+    conflitos: list[dict] = []
+    aplicadas = 0
     for doc in docs:
         if excluir_documento_id and str(doc["id"]) == str(excluir_documento_id):
             continue
         if doc.get("extracao_status") != extracao_job.OK:
             continue
-        if int(doc.get("extracao_tentativas") or 0) >= identidade_svc.MAX_TENTATIVAS:
-            continue
-        pessoas = (doc.get("extracao_ficha_cadastral") or {}).get("pessoas") or []
-        if not any(
-            not p.get("cliente_id_aplicado") and only_digits(p.get("cpf") or "") == digits
-            for p in pessoas
-        ):
-            continue
-        extracao_job.marcar(
-            client, DOCUMENTOS_TABLE, UUID(str(doc["id"])),
-            extracao_status="pendente", extracao_erro=None, extracao_em=None,
-        )
-        enfileirados.append(str(doc["id"]))
-    return enfileirados
+        leitura = dict(doc.get("extracao_ficha_cadastral") or {})
+        pessoas = [dict(p) for p in (leitura.get("pessoas") or [])]
+        mudou = False
+        for pessoa in pessoas:
+            if pessoa.get("cliente_id_aplicado") or not pessoa.get("cpf"):
+                continue
+            if not idf.iguais("cpf", pessoa["cpf"], cpf):
+                continue
+            documento_id = UUID(str(doc["id"]))
+            _aplicados, novos = identidade_svc.aplicar_campos_ao_cliente(
+                client, org_id, cliente_id, "ficha_cadastral", _lidos_armazenados(pessoa),
+                campos=CAMPOS_FICHA, documento_id=documento_id,
+                fonte_tabela=DOCUMENTOS_TABLE, fonte_id=documento_id,
+            )
+            conflitos.extend(novos)
+            endereco = _EnderecoArmazenado(pessoa["endereco"]) if pessoa.get("endereco") else None
+            if endereco is not None and endereco.presente:
+                _ok, conflito_endereco = _aplicar_endereco_ficha(
+                    client, org_id, str(cliente_id), endereco, documento_id=documento_id,
+                )
+                if conflito_endereco is not None:
+                    conflitos.append(conflito_endereco)
+            pessoa["cliente_id_aplicado"] = str(cliente_id)
+            mudou = True
+            aplicadas += 1
+        if mudou:
+            leitura["pessoas"] = pessoas
+            extracao_job.marcar(
+                client, DOCUMENTOS_TABLE, UUID(str(doc["id"])),
+                extracao_ficha_cadastral=leitura,
+            )
+            atualizados.append(str(doc["id"]))
+    return {"documentos": atualizados, "pessoas": aplicadas, "conflitos": conflitos}
 
 
-__all__ = ["CAMPOS_FICHA", "aplicar_leitura", "reenfileirar_fichas_pelo_cpf"]
+__all__ = ["CAMPOS_FICHA", "aplicar_leitura", "reaplicar_fichas_pelo_cpf"]

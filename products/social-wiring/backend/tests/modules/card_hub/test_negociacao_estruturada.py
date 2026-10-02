@@ -276,6 +276,41 @@ class TestParcelaOrdemIsServerComputed:
         assert nova["ordem"] == 6
 
 
+class TestFavorecidoDocumentoCanonico:
+    """Owner rule 2026-10-01 (`canonical-identifiers`): a favorecido's
+    `cpf_cnpj` is stored in its canonical punctuated form WHEN IT FITS its
+    type; one that does not fit stays exactly as typed (visible, never
+    rewritten) — here `111.222.333-44` is not a valid CPF."""
+
+    def test_a_valid_cpf_typed_bare_is_stored_punctuated(self, client, scoped):
+        cid, _aid = _seed(scoped, com_negociacao=True)
+        fav = client.post(
+            f"/api/clientes/{cid}/negociacao/favorecidos",
+            json={"nome": "Maria", "cpf_cnpj": "41295423898"},
+            headers=_auth(),
+        )
+        assert fav.status_code == 201, fav.text
+        assert fav.json()["favorecidos"][0]["cpf_cnpj"] == "412.954.238-98"
+
+    def test_a_valid_cnpj_is_stored_punctuated(self, client, scoped):
+        cid, _aid = _seed(scoped, com_negociacao=True)
+        fav = client.post(
+            f"/api/clientes/{cid}/negociacao/favorecidos",
+            json={"nome": "Imobiliária", "cpf_cnpj": "11222333000181"},
+            headers=_auth(),
+        )
+        assert fav.json()["favorecidos"][0]["cpf_cnpj"] == "11.222.333/0001-81"
+
+    def test_a_document_that_does_not_fit_is_kept_as_typed(self, client, scoped):
+        cid, _aid = _seed(scoped, com_negociacao=True)
+        fav = client.post(
+            f"/api/clientes/{cid}/negociacao/favorecidos",
+            json={"nome": "Maria", "cpf_cnpj": "111.222.333-44"},
+            headers=_auth(),
+        )
+        assert fav.json()["favorecidos"][0]["cpf_cnpj"] == "111.222.333-44"
+
+
 class TestFavorecidoScoping:
     """🔴 A parcela's favorecido must belong to the SAME atendimento."""
 

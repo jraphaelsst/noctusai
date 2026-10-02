@@ -33,7 +33,7 @@ def _clientes(scoped) -> list[dict]:
 
 
 class TestNewPessoaFisicaWithCpf:
-    def test_cpf_is_stored_digits_with_manual_provenance(self, client, scoped):
+    def test_cpf_is_stored_canonical_with_manual_provenance(self, client, scoped):
         cid = _card(scoped)
         r = client.post(
             f"/api/clientes/{cid}/compradores",
@@ -42,7 +42,7 @@ class TestNewPessoaFisicaWithCpf:
         )
         assert r.status_code == 201, r.text
         nova = next(c for c in _clientes(scoped) if c["id"] == r.json()["cliente"]["id"])
-        assert nova["cpf"] == CPF
+        assert nova["cpf"] == "529.982.247-25"  # canonical, punctuated
         assert nova["cpf_origem"] == "manual"
         assert nova["cpf_documento_id"] is None and nova["cpf_em"]
 
@@ -111,7 +111,7 @@ class TestLinkingAnExistingPessoaWithCpf:
         assert next(c for c in _clientes(scoped) if c["id"] == existente["id"])["cpf"] == CPF
         (conflito,) = scoped.table("cliente_campo_conflitos").select("*").execute().data
         assert (conflito["campo"], conflito["valor_anterior"], conflito["valor_proposto"]) == (
-            "cpf", CPF, OUTRO_CPF,
+            "cpf", CPF, "111.444.777-35",  # the PROPOSED value arrives canonical
         )
         assert conflito["status"] == "pendente" and conflito["origem_proposto"] == "manual"
 

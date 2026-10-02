@@ -85,7 +85,7 @@ class TestReading:
             headers=auth(),
         )
         assert w.status_code == 200
-        assert w.json()["numero_matricula"] == "12345"
+        assert w.json()["numero_matricula"] == "12.345"
 
     def test_stored_values_come_back(self, client, scoped):
         seed(
@@ -191,7 +191,7 @@ class TestWriting:
             headers=auth(),
         )
         body = r.json()
-        assert body["numero_matricula"] == "12345"
+        assert body["numero_matricula"] == "12.345"
         assert body["numero_matricula_origem"] == "manual"
         assert body["numero_matricula_em"] is not None
 
@@ -325,3 +325,57 @@ class TestTheVistaMirrorIsNeverTouched:
         assert [dict(row) for row in mirror()] == antes
         # And the authored column never appears on the mirror at all.
         assert all("numero_matricula" not in row for row in antes)
+
+
+class TestIdentificadoresCanonicosNaEscrita:
+    """Owner rule 2026-10-01 (`canonical-identifiers`): the identifier columns
+    are stored PUNCTUATED when they fit their type; one that does not fit is
+    kept as typed; a valid identifier of ANOTHER type is refused by name. One
+    chokepoint (`dados_service._gravar`) — no author of this table can forget."""
+
+    def _patch(self, client, **body):
+        return client.patch(f"/api/imoveis/{CODIGO}/dados", json=body, headers=auth())
+
+    def test_a_bare_matricula_is_stored_punctuated(self, client, scoped):
+        seed(scoped)
+        r = self._patch(client, numero_matricula="79826")
+        assert r.status_code == 200 and r.json()["numero_matricula"] == "79.826"
+
+    def test_a_leading_zero_print_is_the_same_matricula(self, client, scoped):
+        seed(scoped)
+        assert self._patch(client, numero_matricula="0079826").json()["numero_matricula"] == "79.826"
+
+    def test_resaving_the_rendered_value_is_not_a_change(self, client, scoped):
+        """The unchanged-check compares CANONICAL forms: re-sending `79826`
+        against the stored `79.826` must not restamp the manual provenance."""
+        seed(scoped)
+        primeiro = self._patch(client, numero_matricula="79.826").json()
+        segundo = self._patch(client, numero_matricula="79826").json()
+        assert segundo["numero_matricula_em"] == primeiro["numero_matricula_em"]
+
+    def test_a_matricula_that_does_not_fit_is_kept_as_typed(self, client, scoped):
+        seed(scoped)
+        r = self._patch(client, numero_matricula="79.82B")
+        assert r.status_code == 200 and r.json()["numero_matricula"] == "79.82B"
+
+    def test_a_cpf_typed_into_the_matricula_field_is_refused_by_name(self, client, scoped):
+        seed(scoped)
+        r = self._patch(client, numero_matricula="412.954.238-98")
+        assert r.status_code == 400
+        assert r.json()["error"]["details"]["field"] == "numero_matricula"
+        assert "CPF" in r.json()["error"]["message"]
+
+    def test_the_inscricao_municipal_follows_the_municipio_mask(self, client, scoped):
+        seed(scoped, imoveis=[imovel_row(cidade="Cotia")])
+        r = self._patch(client, prefeitura_cadastro_imobiliario="232314211037700000")
+        assert r.json()["prefeitura_cadastro_imobiliario"] == "23231.42.11.0377.00.000"
+
+    def test_the_inscricao_of_a_municipio_without_a_profile_is_kept_as_typed(self, client, scoped):
+        seed(scoped, imoveis=[imovel_row(cidade="Osasco")])
+        r = self._patch(client, prefeitura_cadastro_imobiliario="232314211037700000")
+        assert r.json()["prefeitura_cadastro_imobiliario"] == "232314211037700000"
+
+    def test_the_cartorio_text_is_never_rewritten(self, client, scoped):
+        seed(scoped)
+        texto = "Serventia do Registro de Imóveis de Cotia - CNS: 11991-7"
+        assert self._patch(client, numero_registro_imoveis=texto).json()["numero_registro_imoveis"] == texto

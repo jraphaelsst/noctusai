@@ -942,8 +942,42 @@ class TestFavorecidoVendedor:
         favorecidos = _t(scoped, "atendimento_favorecidos").select("*").execute().data
         assert len(favorecidos) == 1
         assert favorecidos[0]["banco"] == "Bradesco"
-        assert favorecidos[0]["cpf_cnpj"] == CPF_VENDEDOR
+        assert favorecidos[0]["cpf_cnpj"] == "111.444.777-35"  # canonical, punctuated
         assert favorecidos[0]["origem"] == "contrato_financiamento"
+
+    def test_a_favorecido_a_human_typed_punctuated_is_matched_not_duplicated(self, scoped):
+        """Owner rule 2026-10-01 (`canonical-identifiers`): the same CPF in two
+        spellings is ONE person. The old exact-digits `.eq` missed the human's
+        `111.444.777-35` and the machine INSERTED a second favorecido."""
+        cid, aid = _seed(scoped, com_negociacao=True, com_vendedor=True)
+        favorecido_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_favorecidos",
+            [{
+                "id": favorecido_id, "org_id": ORG_ID, "atendimento_id": aid,
+                "nome": "Vendedor", "cpf_cnpj": "111.444.777-35",
+                "banco": None, "agencia": None, "conta": None, "pix": None,
+                "origem": "manual", "documento_id": None,
+                "confirmado_por": None, "confirmado_em": None,
+                "created_at": "2026-01-01T00:00:00+00:00", "created_por": None,
+                "updated_at": None, "updated_por": None,
+            }],
+        )
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        conta = _ContaCreditoVendedor(
+            banco_nome="Bradesco", agencia="1234", conta="56789-0",
+            titular_cpf=CPF_VENDEDOR, titular_cpf_valido=True,
+        )
+        nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "contrato_financiamento",
+            _FinanciamentoLeitura(conta_credito_vendedor=conta),
+        )
+        favorecidos = _t(scoped, "atendimento_favorecidos").select("*").execute().data
+        assert [f["id"] for f in favorecidos] == [favorecido_id]
+        assert favorecidos[0]["banco"] == "Bradesco"
 
     def test_a_partial_fill_on_a_confirmed_row_reopens_confirmation(self, scoped):
         """🔴 Finding [MEDIUM] (audit, 2026-09-28): a vision-read value

@@ -11,7 +11,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
-from noctusai_lib.integrations.documents import cpf as cpf_docs
+from noctusai_lib.primitives import identificador as ident_primitives
 
 
 class ParteCreateBody(StrictHttpModel):
@@ -33,7 +33,7 @@ class ParteCreateBody(StrictHttpModel):
     cnpj: Optional[str] = Field(default=None, min_length=11, max_length=18)
     razao_social: Optional[str] = Field(default=None, max_length=255)
     #: Only meaningful with `nome` (a NEW pessoa física): persisted on the
-    #: created cliente as `cpf_origem='manual'`. Digits-normalised + checked.
+    #: created cliente as `cpf_origem='manual'`. Checked, and normalised to the canonical punctuated form.
     cpf: Optional[str] = Field(default=None, max_length=18)
 
     @field_validator("cpf")
@@ -41,10 +41,12 @@ class ParteCreateBody(StrictHttpModel):
     def _cpf_valido(cls, v: Optional[str]) -> Optional[str]:
         if v is None or not v.strip():
             return None
-        digitos = cpf_docs.only_digits(v)
-        if len(digitos) != 11 or not cpf_docs.is_valid(digitos):
+        # Checked against the canonical punctuated shape + check digits, and
+        # stored in it (`canonical-identifiers`, owner rule 2026-10-01).
+        canonico = ident_primitives.canonico("cpf", v)
+        if canonico is None:
             raise ValueError("CPF inválido.")
-        return digitos
+        return canonico
 
 
 class EmpresaResumo(BaseModel):

@@ -29,6 +29,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+import { formatIdentificador } from "@noctusai/lib/identificador";
+
 import type { ConflitoCampo } from "@/hooks/useCardHub";
 
 /** Free-text `campo` -> a label an operator recognizes — mirrors
@@ -38,6 +40,7 @@ const CAMPO_ROTULOS: Record<string, string> = {
   nome_oficial: "Nome completo (como no documento)",
   cpf: "CPF",
   rg: "RG",
+  rg_orgao_expedidor: "Órgão expedidor do RG",
   data_nascimento: "Data de nascimento",
   genero: "Gênero",
   estado_civil: "Estado civil",
@@ -48,6 +51,23 @@ const CAMPO_ROTULOS: Record<string, string> = {
 
 function rotuloCampo(campo: string): string {
   return CAMPO_ROTULOS[campo] ?? campo;
+}
+
+/** `campo` -> the identifier type the value is a number of. A conflicting
+ *  CPF / RG renders in its canonical PUNCTUATED form (the ONE seam — owner
+ *  rule 2026-10-01), so a human compares `30128742` against `30.128.742-9`
+ *  as the two spellings of one RG they are, not as two strangers; a value that
+ *  does not fit its type is shown as stored. */
+const CAMPO_TIPO_IDENTIFICADOR: Record<string, string> = {
+  cpf: "cpf",
+  rg: "rg",
+  rg_orgao_expedidor: "orgao_expedidor",
+};
+
+function valorDoConflito(campo: string, valor: string | null | undefined): string {
+  if (valor == null || valor === "") return "—";
+  const tipo = CAMPO_TIPO_IDENTIFICADOR[campo];
+  return tipo ? formatIdentificador(tipo, valor) : valor;
 }
 
 export interface ConflitosPendentesCardProps {
@@ -111,9 +131,9 @@ export function ConflitosPendentesCard({
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Documento/atual: <span className="font-mono">{c.valor_anterior ?? "—"}</span>
+                Documento/atual: <span className="font-mono">{valorDoConflito(c.campo, c.valor_anterior)}</span>
                 {" → "}
-                proposto: <span className="font-mono">{c.valor_proposto}</span>
+                proposto: <span className="font-mono">{valorDoConflito(c.campo, c.valor_proposto)}</span>
               </p>
               {isAdmin && (
                 <div className="mt-2 flex gap-2">

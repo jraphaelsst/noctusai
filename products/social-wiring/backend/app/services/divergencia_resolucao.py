@@ -49,11 +49,24 @@ contracts arrive) can tell a well-measured cell from a thin one at a glance.
 
 THE RESOLUTION ORDER (owner directive)
 ---------------------------------------
+0. **Equivalence** (owner rule 2026-10-01, `canonical-identifiers`) — for an
+   identifier campo (cpf / rg / rg_orgao_expedidor / cnpj / cep), two readings
+   the registry PROVES are the same identifier (`30128742` — a CNH's RG
+   without its check digit — and `30.128.742-9`; `412.954.238-98` and
+   `41295423898`) are not a disagreement at all: `vencedor='atual'`, the
+   on-file provenance is untouched, the stored form is canonicalised by
+   its own write path / the backfill — never by stamping the other source's
+   provenance over it.
+1a. **Type routing** — a reading that is a VALID instance of ANOTHER type
+   (a CPF `297.556.088-50` in the RG field) is not this campo's value and
+   loses to one that is not misrouted. The one exception is the CIN, whose
+   identity number IS the holder's own CPF (`cpf_proprio`).
 1. **Validators** — an invalid side loses outright, whatever its tier: a CPF
-   whose check digits fail, a date that does not parse, or (RG-specific) one
-   reading that is the OTHER's prefix missing only the trailing check digit
-   (a CNH prints the RG without it) — the longer one, carrying its own DV,
-   wins regardless of which side it is on.
+   whose check digits fail, a date that does not parse, or an RG whose SP
+   check digit fails (`15.668.564-3` vs `16.669.554-3` — an OCR digit
+   swap; the one that verifies wins). A reading that merely LACKS its RG
+   check digit is completed arithmetically by the registry
+   (`identificador.ler`) — it is equivalent, not a loser.
 1b. **Live evidence** (`EvidenciaViva`, 2026-09-29 second pass) — a side
    whose OWN document no longer asserts it (deleted, or re-read to a
    different value) has been RETRACTED and loses to a side that has not;
@@ -138,7 +151,9 @@ from typing import Any, Callable, Optional, Sequence
 from noctusai_lib.integrations.documents.cnpj import is_valid as _cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
-from noctusai_lib.integrations.documents.rg import only_alnum
+from noctusai_lib.primitives import identificador as _ident
+
+from app.services import identificadores as _ids
 
 #: Precision the validation gate requires to skip a human click entirely
 #: (BUILD item 2) — `n >= N_MINIMO_VALIDACAO` guards against a 2/2 or 1/1
@@ -263,12 +278,20 @@ def _data_valida(valor: Any) -> Optional[bool]:
     return True
 
 
-def _validar(campo: str, valor: Any) -> Optional[bool]:
+def _validar(
+    campo: str, valor: Any, *, uf: Optional[str] = None
+) -> Optional[bool]:
     """`True`/`False` when this campo carries a self-verifying shape (a
     check-digit document number, a date), `None` when there is nothing to
     validate (an empty value, or a campo/valor this function has no verifier
     for) — `None` never counts as either a pass or a fail in
-    `resolver_divergencia`."""
+    `resolver_divergencia`.
+
+    `rg`: the registry's reading decides (`identificador.ler`) — an SP RG
+    whose check digit fails is `False`, one whose digit verifies is `True`,
+    one WITHOUT a digit (completed arithmetically) is `None`: absence of
+    the digit is not an error, only a wrong one is. `uf` keeps an RG from a
+    state with no evidenced mask out of the SP check."""
     if _vazio(valor):
         return None
     texto = str(valor)
@@ -276,25 +299,30 @@ def _validar(campo: str, valor: Any) -> Optional[bool]:
         return _cpf_valido(texto)
     if campo == "cnpj":
         return _cnpj_valido(texto)
+    if campo == "rg":
+        leitura = _ident.ler("rg", texto, uf=uf)
+        if leitura.dv_ok is False:
+            return False
+        if leitura.cabe and leitura.dv_ok:
+            return True
+        return None
     if campo in ("data_nascimento", "data_casamento"):
         return _data_valida(texto)
     return None
 
 
-def _rg_vencedor_por_dv(valor_atual: Any, valor_proposto: Any) -> Optional[str]:
-    """`'atual'` / `'proposto'` / `None` — the RG-specific validator rule:
-    when one reading is exactly the OTHER's prefix missing only the trailing
-    check digit (a CNH prints the RG without it — measured 39%/38% precision
-    against the RG card's/matrícula's fuller reading), the longer one, DV
-    included, wins — whichever side it happens to be on."""
-    a, b = only_alnum(str(valor_atual or "")), only_alnum(str(valor_proposto or ""))
-    if not a or not b or a == b:
+def _tipo_trocado(
+    campo: str, valor: Any, *, uf: Optional[str], cpf_proprio: Any
+) -> Optional[str]:
+    """The OTHER identifier type `valor` is a valid instance of when it sits
+    in the wrong campo (a CPF in the RG field), else None. The CIN exception:
+    an RG equal to its holder's own CPF is a legitimate RG
+    (`identificadores.para_gravar`)."""
+    tipo = _ids.TIPO_POR_CAMPO.get(campo)
+    if tipo is None or _vazio(valor):
         return None
-    if b.startswith(a) and len(b) == len(a) + 1:
-        return "proposto"
-    if a.startswith(b) and len(a) == len(b) + 1:
-        return "atual"
-    return None
+    g = _ids.para_gravar(tipo, valor, uf=uf, cpf_proprio=cpf_proprio)
+    return g.tipo_detectado if g.rejeitado_por_tipo else None
 
 
 # ─── Address logradouro normalisation (owner rule: kill format-only noise) ──
@@ -463,6 +491,8 @@ def resolver_divergencia(
     mesmo_valor: Callable[[str, Any, Any], bool],
     historico: Sequence[tuple[Any, Optional[str]]] = (),
     evidencia: Optional[EvidenciaViva] = None,
+    uf: Optional[str] = None,
+    cpf_proprio: Any = None,
 ) -> Decisao:
     """Decide `'atual'` vs `'proposto'` for one disagreeing (campo, valores)
     pair, or admit a human is needed. Pure — no I/O, no DB. `mesmo_valor` is
@@ -482,10 +512,52 @@ def resolver_divergencia(
     `evidencia` (optional) is what the person's live documents assert now —
     step 1b's retraction check and extra corroboration. Omitted, the
     resolver behaves exactly as before it existed.
+
+    `uf` (the UF of the person's órgão expedidor) and `cpf_proprio` (the
+    person's own CPF) are the identifier registry's reading context — see
+    `_validar` / `_tipo_trocado`. Both optional; omitted, an RG is read with
+    the SP mask and a CPF in the RG field is never exempt.
     """
+    # 0. Equivalence — format-only differences are not a disagreement.
+    tipo_id = _ids.TIPO_POR_CAMPO.get(campo)
+    if (
+        tipo_id is not None
+        and not _vazio(valor_atual)
+        and not _vazio(valor_proposto)
+        and _ids.iguais(
+            tipo_id, valor_atual, valor_proposto,
+            **({"uf": uf} if tipo_id == "rg" and uf else {}),
+        )
+    ):
+        return _decisao(
+            "atual", "equivalencia",
+            f"{campo}: as duas leituras ({origem_atual} e {origem_proposto}) "
+            f"são o mesmo identificador, só muda a formatação ou o dígito "
+            f"verificador ausente — nada a decidir.",
+        )
+
+    # 1a. Type routing — a valid identifier of ANOTHER type is not this
+    # campo's value.
+    tipo_atual = _tipo_trocado(campo, valor_atual, uf=uf, cpf_proprio=cpf_proprio)
+    tipo_proposto = _tipo_trocado(campo, valor_proposto, uf=uf, cpf_proprio=cpf_proprio)
+    if tipo_atual and not tipo_proposto:
+        return _decisao(
+            "proposto", "tipo_detectado",
+            f"{campo}: o valor em registro ({origem_atual}) é um "
+            f"{tipo_atual.upper()} válido, não um {campo.upper()}; o proposto "
+            f"({origem_proposto}) não está no campo errado.",
+        )
+    if tipo_proposto and not tipo_atual:
+        return _decisao(
+            "atual", "tipo_detectado",
+            f"{campo}: o valor proposto ({origem_proposto}) é um "
+            f"{tipo_proposto.upper()} válido, não um {campo.upper()}; o em "
+            f"registro ({origem_atual}) não está no campo errado.",
+        )
+
     # 1. Validators — an invalid side loses outright, whatever its tier.
-    ok_atual = _validar(campo, valor_atual)
-    ok_proposto = _validar(campo, valor_proposto)
+    ok_atual = _validar(campo, valor_atual, uf=uf)
+    ok_proposto = _validar(campo, valor_proposto, uf=uf)
     if ok_atual is False and ok_proposto is not False:
         return _decisao(
             "proposto", "validador",
@@ -498,16 +570,6 @@ def resolver_divergencia(
             f"{campo}: o valor proposto ({origem_proposto}) falha o dígito "
             f"verificador; o em registro ({origem_atual}) verifica.",
         )
-
-    if campo == "rg":
-        vencedor_dv = _rg_vencedor_por_dv(valor_atual, valor_proposto)
-        if vencedor_dv is not None:
-            perdedor_origem = origem_proposto if vencedor_dv == "atual" else origem_atual
-            return _decisao(
-                vencedor_dv, "rg_prefixo_dv",
-                f"rg: uma leitura é a outra sem o dígito verificador — a "
-                f"mais longa (com DV) vence ({perdedor_origem!r} perde).",
-            )
 
     # 1b. Live evidence — a value no live document asserts any more has been
     # retracted; the side that still has support wins.
