@@ -87,7 +87,10 @@ class TestRoutes:
         from tests.conftest import ADMIN_EMAIL
 
         monkeypatch.setattr(settings, "store_org_id", ORG_ID)  # self-patch-ok: configuration value, not a guard
-        key_provider.reset()  # the REAL store builder: ENCRYPTION_KEY is unset in tests
+        # The case under test is "no ENCRYPTION_KEY": set it explicitly, so the
+        # verdict never depends on whether the machine running the suite has one.
+        monkeypatch.setattr(settings, "encryption_key", "")  # self-patch-ok: configuration value, not a guard
+        key_provider.reset()  # the REAL store builder, now with no key
         app.dependency_overrides[get_store_admin_emails] = lambda: frozenset({ADMIN_EMAIL})
         try:
             as_admin(client)
