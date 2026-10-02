@@ -1251,3 +1251,27 @@ def test_ordinary_test_failure_is_never_unmeasurable(tmp_path):
     )
     assert r["status"] == "blocked"
     assert r["unmeasurable"] == []
+
+
+def test_schema_legs_read_products_from_the_given_root(monkeypatch, tmp_path):
+    """worktree_path/root must reach the schema legs (2026-10-02: a product
+    present only in the worktree was 'undeterminable' via the primary)."""
+    from tools.noctus.dev import ensure_schema_exposure as ESE
+    from tools.noctus.dev import schema_drift as SD
+
+    seen = {}
+
+    def fake_drift(product, **kw):
+        seen["drift"] = kw.get("products_dir")
+        return {"status": "in_sync", "findings": [], "checked_tables": 0, "sources_used": []}
+
+    def fake_exposure(**kw):
+        seen["exposure"] = kw.get("products_dir")
+        return {"status": "ok", "missing": [], "exposed_schemas": []}
+
+    monkeypatch.setattr(SD, "check_schema_drift", fake_drift)
+    monkeypatch.setattr(ESE, "check_schema_exposure", fake_exposure)
+    PC._default_run_check("schema_drift", "only-here", tmp_path)
+    PC._default_run_check("schema_exposure", "only-here", tmp_path)
+    assert seen["drift"] == tmp_path / "products"
+    assert seen["exposure"] == tmp_path / "products"

@@ -871,7 +871,9 @@ def _default_run_check(
         # /api/health stayed 200 while the startup hook failed).
         from . import ensure_schema_exposure as _ese
 
-        result = _ese.check_schema_exposure(action="check", products=[product])
+        result = _ese.check_schema_exposure(
+            action="check", products=[product], products_dir=root / "products"
+        )
         if result["status"] in ("not_configured", "unavailable", "error"):
             return False, (
                 f"schema_exposure BLOCKED ({result['status']}) — "
@@ -898,7 +900,7 @@ def _default_run_check(
         # looked fine right up until a real request hit them.
         from . import schema_drift as _sd
 
-        result = _sd.check_schema_drift(product)
+        result = _sd.check_schema_drift(product, products_dir=root / "products")
         if result["status"] in ("not_configured", "undeterminable", "error"):
             return False, (
                 f"schema_drift BLOCKED ({result['status']}) — "

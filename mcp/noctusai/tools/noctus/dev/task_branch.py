@@ -296,6 +296,11 @@ def _rebase_in_progress(runner, wt_path: str) -> bool:
     )
 
 
+def _absolute_wt_path(wt_path: str, root: str) -> str:
+    """Worktree path resolved against the repo root (never the process cwd)."""
+    return wt_path if os.path.isabs(wt_path) else os.path.join(str(root), wt_path)
+
+
 def _resolve_primary_root(primary_root: str | None) -> str:
     """The PRIMARY checkout root — injected in tests, `REPO_ROOT` in production.
 
@@ -1725,6 +1730,10 @@ def task_branch(
         # files into benign (the known patterns) vs real (actual task work);
         # auto-stash benign files before the rebase, pop stash after success.
         # Only if REAL dirty files exist (not just benign ones) do we block.
+        # wt_path is repo-relative; every `cwd=`/`-C` use below needs an ABSOLUTE
+        # path — the fresh-subprocess fallback's cwd is not the repo root, so a
+        # relative cwd raised FileNotFoundError (2026-10-02).
+        wt_path = _absolute_wt_path(wt_path, _resolve_primary_root(primary_root))
         benign_stashed = False
         if verbose:
             logger.debug("task_branch.integrate: classifying dirty files in %s", wt_path)
@@ -2102,7 +2111,8 @@ def task_branch(
     # token list guards history-rewriting ops, not clean-worktree teardown).
     rc, out, err = git("worktree", "remove", wt_path)
     if rc != 0:
-        if _is_dirty_excluding_gitignored(runner, wt_path):
+        if _is_dirty_excluding_gitignored(
+                runner, _absolute_wt_path(wt_path, _resolve_primary_root(primary_root))):
             return {**plan, "status": "error", "exit_code": 1, "salvage_ledger": salvage_ledger,
                     "error": f"worktree remove refused (has real uncommitted changes — "
                              f"integrate or discard first): {err.strip() or out.strip()}"}

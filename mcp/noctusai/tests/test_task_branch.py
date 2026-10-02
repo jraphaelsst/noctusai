@@ -2850,3 +2850,20 @@ def test_injected_runner_without_pointer_ops_never_touches_the_real_ledger():
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
     res = T.task_branch(action="start", slug="x", confirm=True, run=fake)
     assert res["pointer"]["status"] == "skipped"
+
+
+def test_integrate_and_cleanup_use_absolute_worktree_cwd(tmp_path):
+    """Fresh-subprocess fallback runs outside the repo root: every worktree cwd
+    must be absolute (2026-10-02 FileNotFoundError on a relative cwd)."""
+    fake = FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+    )
+    T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                  primary_root=str(tmp_path))
+    cwds = [c for _cmd, c in fake.calls if c]
+    assert cwds, "expected worktree-scoped calls"
+    assert all(os.path.isabs(c) for c in cwds), cwds
+    assert str(tmp_path / ".claude/worktrees/x") in cwds
