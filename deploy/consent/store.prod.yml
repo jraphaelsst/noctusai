@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-10-02
+consent_ref: 'project-history/roadmaps/store-launch-2026-10.md#M5: prod promote'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize store to be published to production."
+  prompt_source: suggestion_accepted
+  tier: performative
+  evidence_rank: canonical-exact/other
+  candidates_considered: 7
+  session_id: 59f06507-c9f3-499a-a977-789c84525a2e
+  transcript_sha256: 0cf671fe0266f0f75ca3f76ee0ef4046895642583b4f2eba2e315bb73bcbc74c
+  recorded_at: 2026-10-02T16:10:35+00:00
