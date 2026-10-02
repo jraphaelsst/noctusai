@@ -390,6 +390,31 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         placeholder="Token InfoSimples...",
     ),
     ApiKeySpec(
+        name="infosimples_govbr_cpf",
+        label="Login GOV.BR — CPF (Dívida Ativa SP)",
+        description=(
+            "CPF da conta GOV.BR do escritório. Obrigatório para a emissão "
+            "automática da Dívida Ativa SP (PGE-SP). Sem ele e a senha "
+            "abaixo, a certidão fica pendente e deve ser enviada em PDF."
+        ),
+        is_secret=True,
+        testable=False,
+        input_type="password",
+        placeholder="Somente números",
+    ),
+    ApiKeySpec(
+        name="infosimples_govbr_senha",
+        label="Login GOV.BR — Senha (Dívida Ativa SP)",
+        description=(
+            "Senha da conta GOV.BR acima. Guardada criptografada; nunca "
+            "é exibida nem registrada em log."
+        ),
+        is_secret=True,
+        testable=False,
+        input_type="password",
+        placeholder="Senha GOV.BR",
+    ),
+    ApiKeySpec(
         name="infosimples_email_envio",
         label="E-mail de Envio (TJSP)",
         description=(
