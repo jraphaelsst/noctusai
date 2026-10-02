@@ -26,6 +26,7 @@ import {
   Palette,
   Recycle,
   UsersRound,
+  ShoppingBag,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -43,6 +44,7 @@ const ICONS: Record<string, LucideIcon> = {
   Palette, // igig — communication agency ERP
   Recycle, // academia-de-reciclagem — knowledge workspace of the recycling-education project
   UsersRound, // community — online community management center
+  ShoppingBag, // store — public sales pages for digital products
 };
 
 // Size presets so the same component fits both the dashboard cards (md) and
