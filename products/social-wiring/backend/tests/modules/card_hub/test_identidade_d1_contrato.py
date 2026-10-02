@@ -259,23 +259,94 @@ class TestResolucaoAutomaticaDeDivergencia:
         assert "[validador]" in c["motivo_resolucao"]
 
     @pytest.mark.asyncio
-    async def test_a_cnh_rg_missing_its_check_digit_loses_to_the_fuller_reading(
+    async def test_a_cnh_rg_missing_its_check_digit_is_the_same_rg_not_a_conflict(
         self, client, scoped,
     ):
         """The CNH prints the RG without its trailing DV (measured 39%
-        precision) — a matrícula qualification's fuller reading, WITH the
-        DV, already on file wins automatically."""
+        precision) — `30128742` and the matrícula's `30.128.742-9` are ONE
+        identifier (owner rule 2026-10-01): nothing to resolve, the on-file
+        value (with its DV) and its provenance are untouched."""
         cid, did, storage = await _setup(
             scoped, tipo="cnh",
-            cliente={"rg": "1234567890", "rg_origem": "matricula"},
+            cliente={"rg": "30.128.742-9", "rg_origem": "matricula"},
         )
         out = await _extrair(scoped, storage, cid, did, IdentityFields(
-            rg="123456789", rg_confianca=A, source=TextSource.TEXT_LAYER,
+            rg="30128742", rg_confianca=A, source=TextSource.TEXT_LAYER,
         ))
-        assert _cliente(scoped, cid)["rg"] == "1234567890"  # untouched, WITH the DV
+        row = _cliente(scoped, cid)
+        assert row["rg"] == "30.128.742-9"  # untouched, WITH the DV
+        assert row["rg_origem"] == "matricula"
+        assert out["conflitos_abertos"] == []
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_a_raw_stored_rg_is_upgraded_to_canonical_without_restamping_provenance(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(
+            scoped, tipo="cnh",
+            cliente={"rg": "301287429", "rg_origem": "matricula"},
+        )
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            rg="30.128.742-9", rg_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["rg"] == "30.128.742-9"
+        assert row["rg_origem"] == "matricula"
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_a_dv_invalid_ocr_rg_on_file_loses_to_the_verifying_reading(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(
+            scoped, tipo="rg",
+            cliente={"rg": "15.668.564-3", "rg_origem": "matricula"},
+        )
+        out = await _extrair(scoped, storage, cid, did, IdentityFields(
+            rg="16.669.554-3", rg_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        assert _cliente(scoped, cid)["rg"] == "16.669.554-3"
         assert out["conflitos_abertos"] == []
         (c,) = _conflitos(scoped)
-        assert "rg_prefixo_dv" in c["motivo_resolucao"]
+        assert "[validador]" in c["motivo_resolucao"]
+
+    @pytest.mark.asyncio
+    async def test_a_cpf_read_into_the_rg_field_is_not_written_and_flags_the_document(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(scoped, tipo="rg")
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            rg="297.556.088-50", rg_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        assert _cliente(scoped, cid).get("rg") in (None, "")
+        doc = scoped.table("cliente_documentos").select("*").eq("id", did).execute().data[0]
+        assert doc["extracao_aviso"] == "identificador_de_outro_tipo"
+        assert "RG" in doc["extracao_aviso_mensagem"]
+
+    @pytest.mark.asyncio
+    async def test_a_cin_rg_equal_to_the_holders_own_cpf_is_stored_canonical(
+        self, client, scoped,
+    ):
+        cid, did, storage = await _setup(scoped, tipo="cin")
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            cpf="29755608850", cpf_confianca=A,
+            rg="297.556.088-50", rg_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["cpf"] == "297.556.088-50"
+        assert row["rg"] == "297.556.088-50"
+
+    @pytest.mark.asyncio
+    async def test_cpf_and_cnh_rg_are_written_canonical(self, client, scoped):
+        cid, did, storage = await _setup(scoped, tipo="cnh")
+        await _extrair(scoped, storage, cid, did, IdentityFields(
+            cpf="41295423898", cpf_confianca=A,
+            rg="30128742", rg_confianca=A, source=TextSource.TEXT_LAYER,
+        ))
+        row = _cliente(scoped, cid)
+        assert row["cpf"] == "412.954.238-98"
+        assert row["rg"] == "30.128.742-9"  # DV completed arithmetically
 
     def test_married_name_adoption_requires_cpf_corroboration_when_both_present(self):
         """Owner directive, 2026-09-29: `_nome_anterior_confirma_adocao`'s
@@ -703,7 +774,7 @@ class TestRgOrgao:
         an SSP/SP read beside a number that is NOT the one on file qualifies
         nobody."""
         cid, did, storage = await _setup(
-            scoped, cliente={"rg": "11.111.111-1", "rg_origem": "manual"}
+            scoped, cliente={"rg": "30.128.742-9", "rg_origem": "manual"}
         )
         await _extrair(scoped, storage, cid, did, IdentityFields(
             rg="52.179.965-X", rg_confianca=A, rg_orgao="SSP/SP", rg_orgao_confianca=A,

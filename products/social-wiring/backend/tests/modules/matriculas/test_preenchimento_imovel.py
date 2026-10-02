@@ -77,7 +77,7 @@ class TestFillFromATranscription:
 
         assert resumo["status"] == "ok"
         row = _dados(scoped)
-        assert row["numero_matricula"] == "45678"
+        assert row["numero_matricula"] == "45.678"
         assert row["numero_matricula_origem"] == "matricula"
         assert row["numero_registro_imoveis"] == "1º OFICIAL DE REGISTRO DE IMÓVEIS DE COTIA - SP"
         assert row["numero_registro_imoveis_documento_id"] == eid
@@ -206,7 +206,7 @@ class TestFillFromATranscription:
         ])
         resumo = await preench.preencher_imovel(scoped, ORG_ID, eid)
         assert resumo["status"] == "ok"
-        assert _dados(scoped)["numero_matricula"] == "45678"
+        assert _dados(scoped)["numero_matricula"] == "45.678"
 
     def test_a_value_carrying_a_marker_is_never_applied(self):
         resumo, conflitos = {}, []
@@ -231,7 +231,7 @@ class TestLinkLater:
         r = client.put(f"/api/matriculas/extracoes/{eid}/imovel", json={"codigo": CODIGO})
         assert r.status_code == 200, r.text
         row = _dados(scoped)
-        assert row["numero_matricula"] == "45678"
+        assert row["numero_matricula"] == "45.678"
         assert row["prefeitura_cadastro_imobiliario"] == "123.456.7-8"
         assert row["numero_registro_imoveis_documento_id"] == eid
 
@@ -247,7 +247,7 @@ class TestTranscriptionRunsTheFill:
             eid, b"%PDF", ORG_ID, scoped, transcriber=StubTranscriber(TEXTO)
         )
 
-        assert _dados(scoped)["numero_matricula"] == "45678"
+        assert _dados(scoped)["numero_matricula"] == "45.678"
 
     @pytest.mark.asyncio
     async def test_a_failure_records_the_machine_code(self, client, scoped):
@@ -403,7 +403,7 @@ class TestTranscriptionRetry:
         row = self._row(scoped, eid)
         assert row["status"] == "concluida"
         assert row["retentativas"] == 1
-        assert _dados(scoped)["numero_matricula"] == "45678"
+        assert _dados(scoped)["numero_matricula"] == "45.678"
 
     @pytest.mark.asyncio
     async def test_the_cap_is_two(self, client, scoped, fake_storage):

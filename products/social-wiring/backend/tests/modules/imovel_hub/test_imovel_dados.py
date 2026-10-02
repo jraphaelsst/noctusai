@@ -85,7 +85,7 @@ class TestReading:
             headers=auth(),
         )
         assert w.status_code == 200
-        assert w.json()["numero_matricula"] == "12345"
+        assert w.json()["numero_matricula"] == "12.345"
 
     def test_stored_values_come_back(self, client, scoped):
         seed(
@@ -191,7 +191,7 @@ class TestWriting:
             headers=auth(),
         )
         body = r.json()
-        assert body["numero_matricula"] == "12345"
+        assert body["numero_matricula"] == "12.345"
         assert body["numero_matricula_origem"] == "manual"
         assert body["numero_matricula_em"] is not None
 

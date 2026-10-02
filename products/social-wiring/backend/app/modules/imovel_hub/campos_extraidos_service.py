@@ -58,6 +58,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.imovel_hub import dados_service
 from app.services import campo_conflitos, table_reads
+from app.services import identificadores as idf
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +193,11 @@ SUBSTITUIDO = "substituido"
 #: DIFFERENT, higher-precedence document overriding a DIFFERENT source)
 #: and from `PREENCHIDO` (the field was empty before).
 RELEITURA = "releitura"
+#: The reading is a VALID identifier of ANOTHER type (a CPF where a matrícula
+#: number belongs) — not written, never a conflict: nobody should have to
+#: choose between a matrícula number and someone's CPF
+#: (`canonical-identifiers`, owner rule 2026-10-01).
+REJEITADO_TIPO = "rejeitado_tipo"
 
 
 @dataclass(frozen=True)
@@ -282,7 +288,13 @@ def iguais(campo: CampoImovel, atual: Any, proposto: Any) -> bool:
             return True
         if campo.chave == "prefeitura_cadastro_imobiliario":
             return _digitos_sem_dv(atual) == _digitos_sem_dv(proposto)
-        return False
+        # `0079826` and `79.826` are one matrícula: the registry strips the
+        # leading zeros the cartório's own print sometimes carries.
+        return idf.iguais("matricula_imovel", atual, proposto)
+    if campo.chave == "numero_registro_imoveis" and idf.cartorios_iguais(atual, proposto):
+        # The cartório as a name in one reading and as its CNS in the other
+        # (`... - CNS: 11991-7` vs `11991-7`) — same serventia.
+        return True
     return _norm_texto(atual) == _norm_texto(proposto)
 
 
@@ -387,6 +399,19 @@ def aplicar(
     if _vazio(valor):
         raise ValueError(f"aplicar({chave}): refusing an empty reading")
     dados_service.ensure_imovel(client, org_id, codigo)
+    if not campo.grupo and chave in (*idf.TIPO_POR_CAMPO_IMOVEL,):
+        # CANONICAL ON WRITE — the reading is compared, conflicted and
+        # stored in its punctuated canonical form (or as read when it does
+        # not fit its type); one that is a valid identifier of ANOTHER type
+        # is not written at all.
+        try:
+            valor = dados_service.canonizar_valores(client, org_id, codigo, {chave: valor})[chave]
+        except ValidationError_:
+            logger.warning(
+                "imovel %s: %s — reading is a valid identifier of another type, "
+                "NOT written (origem=%s)", codigo, chave, origem,
+            )
+            return Resultado(REJEITADO_TIPO)
     row = dados_service.linha(client, org_id, codigo)
     atual = _valor_atual(row, campo)
 
@@ -593,6 +618,7 @@ __all__ = [
     "CAMPOS",
     "CAMPOS_QUINTETO_MANUAL",
     "CONFLITOS_TABLE",
+    "REJEITADO_TIPO",
     "CampoImovel",
     "ORIGEM_MANUAL",
     "ORIGEM_SUGERIDO",

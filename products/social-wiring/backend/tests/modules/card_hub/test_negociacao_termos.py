@@ -512,9 +512,9 @@ class TestIntermediarioQualificacao:
         assert r.status_code == 201, r.text
         item = r.json()["intermediarios"][0]
         assert item["pessoa_tipo"] == "pf"
-        assert item["documento"] == CPF_NU
+        assert item["documento"] == CPF  # canonical, punctuated
         assert item["email"] == "corretora@example.com"
-        assert item["endereco_cep"] == "01310100"
+        assert item["endereco_cep"] == "01310-100"  # canonical, punctuated
         assert item["endereco_uf"] == "SP"
 
     def test_a_pj_with_its_representante(self, client, scoped):
@@ -526,15 +526,15 @@ class TestIntermediarioQualificacao:
         assert r.status_code == 201, r.text
         item = r.json()["intermediarios"][0]
         assert item["pessoa_tipo"] == "pj"
-        assert item["documento"] == CNPJ_NU
-        assert item["representante_cpf"] == "52998224725"
+        assert item["documento"] == "11.222.333/0001-81"  # canonical, punctuated
+        assert item["representante_cpf"] == "529.982.247-25"
 
     def test_an_alphanumeric_cnpj_is_accepted(self, client, scoped):
         cid, _aid = _seed(scoped)
         r = _criar_intermediario(client, cid, documento=CNPJ_ALFANUMERICO)
         assert r.status_code == 201, r.text
         item = r.json()["intermediarios"][0]
-        assert item["documento"] == "12ABC34501DE35"
+        assert item["documento"] == "12.ABC.345/01DE-35"  # canonical, punctuated
         assert item["pessoa_tipo"] == "pj"
 
     def test_a_cpf_with_wrong_check_digits_is_refused(self, client, scoped):
@@ -602,7 +602,7 @@ class TestIntermediarioQualificacao:
         )
         assert r.status_code == 200, r.text
         item = r.json()["intermediarios"][0]
-        assert (item["pessoa_tipo"], item["documento"]) == ("pj", CNPJ_NU)
+        assert (item["pessoa_tipo"], item["documento"]) == ("pj", "11.222.333/0001-81")
 
     def test_a_patch_that_leaves_qualification_alone_keeps_it(self, client, scoped):
         cid, _aid = _seed(scoped)
@@ -613,4 +613,4 @@ class TestIntermediarioQualificacao:
         )
         assert r.status_code == 200, r.text
         item = r.json()["intermediarios"][0]
-        assert (item["pessoa_tipo"], item["documento"], item["creci"]) == ("pf", CPF_NU, "12345-F")
+        assert (item["pessoa_tipo"], item["documento"], item["creci"]) == ("pf", CPF, "12345-F")

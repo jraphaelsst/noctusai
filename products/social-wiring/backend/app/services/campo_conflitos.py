@@ -298,6 +298,8 @@ def resolver_e_registrar(
     mesmo_valor: Callable[[str, Any, Any], bool],
     conflito_existente_id: Optional[Any] = None,
     evidencia: Optional[divergencia_resolucao.EvidenciaViva] = None,
+    uf: Optional[str] = None,
+    cpf_proprio: Optional[Any] = None,
 ) -> Decisao:
     """THE automatic divergence resolver — owner directive, 2026-09-29:
     "resolve divergencies without the need of a human [...] using docs and
@@ -343,6 +345,8 @@ def resolver_e_registrar(
         mesmo_valor=mesmo_valor,
         historico=historico_valores(client, table, org_id, owner, campo),
         evidencia=evidencia,
+        uf=uf,
+        cpf_proprio=cpf_proprio,
     )
     return registrar_decisao_automatica(
         client, table, org_id, owner, campo,

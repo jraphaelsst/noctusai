@@ -85,10 +85,10 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives.exceptions import ValidationError_
 
 from app.services import identidade_service as ident
+from app.services import identificadores as idf
 from app.services import table_reads
 from app.services.identidade_service import SourceRow
 
@@ -1716,12 +1716,13 @@ def _registrar_edicao_manual_confirmada(
 def clientes_por_cpf(client: Any, org_id: UUID, cpfs: Any) -> list[dict]:
     """Every cliente of this org holding one of `cpfs`, oldest first.
 
-    Exact on `normalizar_documento(cpf)` via the `clientes_por_cpf` SQL
-    function (migration 185) — any punctuation on either side. The ONE CPF
-    lookup: `partes_service` and `qualificacao_service` both call it instead
-    of each approximating the match PostgREST cannot express.
+    Exact on the canonical key `chave_busca_documento('cpf', cpf)` via the
+    `clientes_por_cpf` SQL function (migrations 185 + 187) — any punctuation
+    on either side. The ONE CPF lookup: `partes_service` and
+    `qualificacao_service` both call it instead of each approximating the
+    match PostgREST cannot express.
     """
-    chaves = sorted({d for d in (only_digits(str(c or '')) for c in cpfs) if d})
+    chaves = sorted({k for k in (idf.chave("cpf", c) for c in cpfs if c) if k})
     if not chaves:
         return []
     resp = client.rpc("clientes_por_cpf", {"p_org_id": str(org_id), "p_cpfs": chaves}).execute()
@@ -1737,15 +1738,52 @@ def registrar_cpf_divergente(
     or the same CPF)."""
     atual = _require_cliente(client, org_id, cliente_id)
     registrado = atual.get("cpf")
-    if not registrado or only_digits(str(registrado)) == only_digits(cpf_proposto):
+    if not registrado or idf.iguais("cpf", registrado, cpf_proposto):
         return False
     _abrir_conflito_edicao_manual(
         client, org_id, cliente_id, "cpf",
         valor_anterior=registrado,
         origem_anterior=atual.get("cpf_origem"),
-        valor_proposto=cpf_proposto,
+        valor_proposto=idf.canonico_ou_bruto("cpf", cpf_proposto),
     )
     return True
+
+
+def _canonizar_identificadores(payload: dict, atual: Optional[dict]) -> dict:
+    """The identifier columns of a manual PATCH in canonical form — only the
+    ones the PATCH carries, only when they CHANGE (a value that does not fit
+    its type is left exactly as typed). A value that is a valid identifier of
+    ANOTHER type (a CPF typed into the RG box, bar the CIN case where it is
+    the holder's own CPF) is refused with a message naming the field."""
+    atual = atual or {}
+    cpf_proprio = next(
+        (
+            c for c in (payload.get("cpf"), atual.get("cpf"))
+            if c and ident.normalizar_cpf(c)
+        ),
+        None,
+    )
+    uf = idf.uf_do_orgao(
+        payload["rg_orgao_expedidor"] if "rg_orgao_expedidor" in payload
+        else atual.get("rg_orgao_expedidor")
+    )
+    saida: dict = {}
+    for campo, tipo in (("cpf", "cpf"), ("rg", "rg"), ("endereco_cep", "cep")):
+        bruto = payload.get(campo)
+        if bruto is None or not str(bruto).strip():
+            continue
+        g = idf.para_gravar(
+            tipo, bruto, uf=uf if tipo == "rg" else None, cpf_proprio=cpf_proprio
+        )
+        if g.rejeitado_por_tipo:
+            raise ValidationError_(
+                f"O valor informado é um {str(g.tipo_detectado).upper()} válido, "
+                f"não um {tipo.upper()}.",
+                field=campo,
+            )
+        if g.valor is not None and g.valor != bruto:
+            saida[campo] = g.valor
+    return saida
 
 
 def update_cliente(
@@ -1827,6 +1865,16 @@ def update_cliente(
     colunas_de_grupo = {c for _campo, _pref, cols in _GRUPOS_COM_ORIGEM for c in cols}
     if payload.keys() & (set(_CAMPOS_COM_ORIGEM) | colunas_de_grupo):
         atual = _require_cliente(client, org_id, cliente_id)
+
+    # CANONICAL ON WRITE (owner rule 2026-10-01, `canonical-identifiers`): a
+    # typed CPF / RG / CEP that fits its type is stored punctuated. The
+    # canonical value also becomes the PROPOSED value of any conflict this
+    # edit queues (`_proposto` reads `updates`), so a human adjudicates the
+    # same spelling the record will hold.
+    canonizados = _canonizar_identificadores(payload, atual)
+    for _campo_id, _valor_id in canonizados.items():
+        payload[_campo_id] = _valor_id
+        updates[_campo_id] = _valor_id
 
     pendentes: list[str] = []
     aprovados_admin: list[tuple[str, Any, Optional[str]]] = []

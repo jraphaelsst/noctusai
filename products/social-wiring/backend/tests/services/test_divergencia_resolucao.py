@@ -6,9 +6,11 @@
 
 WHAT THESE PIN
 --------------
-- validators: an invalid CPF/CNPJ or unparseable date loses outright,
-  whatever its tier; the RG-specific "one reading is the other's prefix
-  missing only the DV" rule picks the longer, DV-carrying value;
+- equivalence: format-only differences (an RG read without its check digit,
+  a CPF with and without punctuation) are not a disagreement at all;
+- type routing: a CPF sitting in the RG field is not an RG (CIN excepted);
+- validators: an invalid CPF/CNPJ/RG-DV or unparseable date loses outright,
+  whatever its tier;
 - corroboration: >=2 distinct origins agreeing outranks a lone dissenter,
   regardless of either side's tier; an unresolved 2-vs-2 split falls
   through to tier, then to a human;
@@ -96,45 +98,107 @@ class TestValidadorData:
         assert decisao.regra == "validador"
 
 
-class TestRgPrefixoDv:
-    def test_the_longer_reading_with_the_check_digit_wins_when_proposed(self):
-        # CNH prints the RG without its trailing DV (measured 39%/18) —
-        # a fuller matrícula reading with the DV wins even though it is
-        # the PROPOSED (newer) side here.
+class TestRgEquivalenciaEValidador:
+    """Owner rule 2026-10-01 (`canonical-identifiers`) — prod examples."""
+
+    def test_a_cnh_rg_without_its_dv_is_the_same_rg_as_the_full_one_proposed(self):
+        # CNH prints `30128742`; the matrícula/card carries `30.128.742-9`.
+        # Same identifier -> never a conflict (rule `equivalencia`, the
+        # on-file provenance untouched).
         decisao = dr.resolver_divergencia(
             "rg",
-            valor_atual="123456789",  # CNH: no DV
+            valor_atual="30128742",
             origem_atual="cnh",
-            valor_proposto="1234567890",  # matrícula: the full RG + DV
+            valor_proposto="30.128.742-9",
+            origem_proposto="matricula",
+            mesmo_valor=_mesmo_valor_simples,
+        )
+        assert decisao.vencedor == "atual"
+        assert decisao.regra == "equivalencia"
+        assert not decisao.requer_humano
+
+    def test_equivalence_holds_when_the_full_rg_is_the_value_on_file(self):
+        decisao = dr.resolver_divergencia(
+            "rg",
+            valor_atual="30.128.742-9",
+            origem_atual="matricula",
+            valor_proposto="30128742",
+            origem_proposto="cnh",
+            mesmo_valor=_mesmo_valor_simples,
+        )
+        assert (decisao.vencedor, decisao.regra) == ("atual", "equivalencia")
+
+    def test_a_cnh_rg_whose_dv_is_wrong_loses_to_the_completed_one(self):
+        # `30.128.742-5` carries a DV that FAILS (the right one is 9).
+        decisao = dr.resolver_divergencia(
+            "rg",
+            valor_atual="30128742",
+            origem_atual="cnh",
+            valor_proposto="30.128.742-5",
+            origem_proposto="matricula",
+            mesmo_valor=_mesmo_valor_simples,
+        )
+        assert decisao.vencedor == "atual"
+        assert decisao.regra == "validador"
+
+    def test_an_ocr_digit_swap_loses_to_the_reading_whose_dv_verifies(self):
+        decisao = dr.resolver_divergencia(
+            "rg",
+            valor_atual="15.668.564-3",  # DV fails
+            origem_atual="cnh",
+            valor_proposto="16.669.554-3",  # DV verifies
             origem_proposto="matricula",
             mesmo_valor=_mesmo_valor_simples,
         )
         assert decisao.vencedor == "proposto"
-        assert decisao.regra == "rg_prefixo_dv"
+        assert decisao.regra == "validador"
 
-    def test_the_longer_reading_wins_even_when_it_is_the_value_on_file(self):
+    def test_a_cpf_sitting_in_the_rg_field_loses_to_a_real_rg(self):
         decisao = dr.resolver_divergencia(
             "rg",
-            valor_atual="1234567890",  # already on file WITH its DV
+            valor_atual="297.556.088-50",  # a valid CPF, not an RG
             origem_atual="matricula",
-            valor_proposto="123456789",  # a later CNH read, missing it
+            valor_proposto="30.128.742-9",
             origem_proposto="cnh",
             mesmo_valor=_mesmo_valor_simples,
         )
-        assert decisao.vencedor == "atual"
-        assert decisao.regra == "rg_prefixo_dv"
+        assert decisao.vencedor == "proposto"
+        assert decisao.regra == "tipo_detectado"
 
-    def test_two_genuinely_different_rgs_are_not_a_prefix_match(self):
+    def test_a_cin_rg_equal_to_the_holders_own_cpf_is_not_misrouted(self):
+        # The CIN prints the CPF number AS the identity number.
         decisao = dr.resolver_divergencia(
             "rg",
-            valor_atual="111222333",
+            valor_atual="297.556.088-50",
+            origem_atual="rg",
+            valor_proposto="30.128.742-9",
+            origem_proposto="cnh",
+            mesmo_valor=_mesmo_valor_simples,
+            cpf_proprio="297.556.088-50",
+        )
+        assert decisao.regra != "tipo_detectado"
+
+    def test_format_only_cpf_difference_is_equivalent(self):
+        decisao = dr.resolver_divergencia(
+            "cpf",
+            valor_atual="41295423898",
             origem_atual="cnh",
-            valor_proposto="444555666",
+            valor_proposto="412.954.238-98",
+            origem_proposto="serasa_crednet",
+            mesmo_valor=_mesmo_valor_simples,
+        )
+        assert (decisao.vencedor, decisao.regra) == ("atual", "equivalencia")
+
+    def test_two_genuinely_different_valid_rgs_fall_through_to_tier(self):
+        decisao = dr.resolver_divergencia(
+            "rg",
+            valor_atual="30.128.742-9",
+            origem_atual="cnh",
+            valor_proposto="52.179.965-X",
             origem_proposto="matricula",
             mesmo_valor=_mesmo_valor_simples,
         )
-        # Falls through validators/DV to tier: matricula (0.38) < cnh (0.39)
-        # — cnh wins on tier, not on the DV rule.
+        # matricula (0.38) < cnh (0.39) — cnh wins on tier.
         assert decisao.regra == "tier"
         assert decisao.vencedor == "atual"
 

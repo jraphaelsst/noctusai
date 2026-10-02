@@ -102,7 +102,7 @@ class TestPF:
         out = feed_parte.alimentar_parte(db, ORG, _consulta_pf(cid), "cnd_federal", _resposta_pf())
         row = _linha(db, "clientes", cid)
         assert set(out["aplicados"]) == {"nome_oficial", "cpf"}
-        assert (row["nome_oficial"], row["cpf"]) == ("FULANO DE TAL", CPF)
+        assert (row["nome_oficial"], row["cpf"]) == ("FULANO DE TAL", "412.954.238-98")
         assert row["nome_oficial_origem"] == "certidao" == row["cpf_origem"]
         assert row["nome_oficial_documento_id"] is None
         assert row["nome_oficial_confirmado_por"] is None and row["nome_oficial_confirmado_em"] is None
