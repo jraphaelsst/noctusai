@@ -84,27 +84,53 @@ _POLICY_MODULE_FILE = _POLICY_MODULE_DIR / "app" / "services" / "divergencia_res
 _POLICY_MODULE_NAME = "_noctus_calibrar_divergencia_resolucao"
 
 
+_IDS_MODULE_FILE = _POLICY_MODULE_DIR / "app" / "services" / "identificadores.py"
+#: The names the resolver reaches its one product-side sibling through
+#: (`from app.services import identificadores`). Stubbed ONLY while it executes.
+_SIBLING_KEYS = ("app", "app.services", "app.services.identificadores")
+
+
 def _load_current_policy() -> dict[str, dict[str, tuple[float, int]]]:
     """Import `divergencia_resolucao.PRECISAO` fresh, BY FILE PATH under a
-    private module name — never as `app.services...`. A package-name import
-    collides with whichever product's `app` package another caller already
-    put in `sys.modules` (every product's backend is a top-level `app`),
-    and popping `app` afterwards broke THAT caller in turn: the calibration
-    tests passed alone and failed in the full MCP suite. The resolver module
-    imports only `noctusai_lib`, so a standalone load is complete."""
-    import importlib.util
+    private module name — never as a real `app.services...` import. A
+    package-name import collides with whichever product's `app` package another
+    caller already put in `sys.modules` (every product's backend is a top-level
+    `app`), and popping `app` afterwards broke THAT caller in turn: the
+    calibration tests passed alone and failed in the full MCP suite.
 
-    spec = importlib.util.spec_from_file_location(_POLICY_MODULE_NAME, _POLICY_MODULE_FILE)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"cannot load the policy module from {_POLICY_MODULE_FILE}")
-    mod = importlib.util.module_from_spec(spec)
-    # Registered for the duration of exec only — `@dataclass` resolves its
-    # annotations through `sys.modules[cls.__module__]`.
-    sys.modules[_POLICY_MODULE_NAME] = mod
+    The resolver imports `noctusai_lib` plus ONE product sibling,
+    `app.services.identificadores` (canonical-identifier registry adapter, which
+    itself imports only `noctusai_lib`). That sibling is loaded by file path
+    too and exposed under a synthetic `app`/`app.services` for the duration of
+    the resolver's exec; whatever `app` another caller had registered is saved
+    and restored exactly, so the isolation guarantee above still holds."""
+    import importlib.util
+    import types
+
+    saved = {k: sys.modules.get(k) for k in _SIBLING_KEYS}
     try:
+        ids_spec = importlib.util.spec_from_file_location(_SIBLING_KEYS[2], _IDS_MODULE_FILE)
+        spec = importlib.util.spec_from_file_location(_POLICY_MODULE_NAME, _POLICY_MODULE_FILE)
+        if ids_spec is None or ids_spec.loader is None or spec is None or spec.loader is None:
+            raise ImportError(f"cannot load the policy module from {_POLICY_MODULE_FILE}")
+        ids_mod = importlib.util.module_from_spec(ids_spec)
+        app_pkg, svc_pkg = types.ModuleType("app"), types.ModuleType("app.services")
+        app_pkg.__path__, svc_pkg.__path__ = [], []
+        app_pkg.services, svc_pkg.identificadores = svc_pkg, ids_mod
+        sys.modules.update({"app": app_pkg, "app.services": svc_pkg, _SIBLING_KEYS[2]: ids_mod})
+        ids_spec.loader.exec_module(ids_mod)
+        mod = importlib.util.module_from_spec(spec)
+        # Registered for the duration of exec only — `@dataclass` resolves its
+        # annotations through `sys.modules[cls.__module__]`.
+        sys.modules[_POLICY_MODULE_NAME] = mod
         spec.loader.exec_module(mod)
     finally:
         sys.modules.pop(_POLICY_MODULE_NAME, None)
+        for key, previous in saved.items():
+            if previous is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = previous
     return {
         campo: {origem: (p.precisao, p.n) for origem, p in origens.items()}
         for campo, origens in mod.PRECISAO.items()
