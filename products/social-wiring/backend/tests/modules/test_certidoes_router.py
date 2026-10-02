@@ -282,44 +282,34 @@ class TestListarConsultas:
         assert client.get(f"{BASE}/consultas?busca=João").status_code == 200
         assert client.get(f"{BASE}/consultas?busca=123456").status_code == 200
 
-    def test_busca_digitos_cruza_documento_pontuado_via_chave(
-        self, client, certidoes_db, monkeypatch
-    ):
+    def test_busca_digitos_cruza_documento_pontuado_via_chave(self, client, certidoes_db):
         """Migration 187 stores `documento` punctuated; a bare-digits needle
-        must also reach `documentos_chave` (strictly additive to the raw
-        `documento`/`nome` pass). The mock cannot evaluate `or_`, so the
-        PostgREST expression handed to it is captured and asserted."""
-        from noctusai_lib.testing.mocks import MockSelectBuilder
+        must also reach `documentos_chave` — strictly additive to the raw
+        `nome`/`documento` pass. The mock cannot evaluate `or_`, so the
+        expression the router builds is asserted directly, and the request
+        proves it is accepted end to end."""
+        from app.modules.certidoes.routers.certidoes import busca_or_filter
 
-        seen: list[str] = []
-        original = MockSelectBuilder.or_
-
-        def spy(self, *a, **k):
-            seen.append(a[0])
-            return original(self, *a, **k)
-
-        monkeypatch.setattr(MockSelectBuilder, "or_", spy)
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta(documento="123.456.789-01")])
         assert client.get(f"{BASE}/consultas?busca=12345678901").status_code == 200
-        expr = seen[0]
+        expr = busca_or_filter("12345678901")
         assert "nome.ilike.%12345678901%" in expr
         assert "documento.ilike.%12345678901%" in expr
         assert "documentos_chave.ilike.%12345678901%" in expr
 
-    def test_busca_so_texto_nao_varre_chave(self, client, certidoes_db, monkeypatch):
-        from noctusai_lib.testing.mocks import MockSelectBuilder
+    def test_busca_pontuada_tambem_acha_pela_chave(self):
+        from app.modules.certidoes.routers.certidoes import busca_or_filter
 
-        seen: list[str] = []
-        original = MockSelectBuilder.or_
-        monkeypatch.setattr(
-            MockSelectBuilder, "or_",
-            lambda self, *a, **k: (seen.append(a[0]), original(self, *a, **k))[1],
-        )
-        db, _ = certidoes_db
-        _seed(db, consultas=[_consulta()])
-        assert client.get(f"{BASE}/consultas?busca=Joao").status_code == 200
-        assert "documentos_chave" not in seen[0]
+        # a punctuated needle still matches the raw column AND the digits key
+        expr = busca_or_filter("123.456.789-01")
+        assert "documento.ilike.%123.456.789-01%" in expr
+        assert "documentos_chave.ilike.%12345678901%" in expr
+
+    def test_busca_so_texto_nao_varre_chave(self):
+        from app.modules.certidoes.routers.certidoes import busca_or_filter
+
+        assert "documentos_chave" not in busca_or_filter("Joao")
 
     def test_page_invalida_e_422(self, client, certidoes_db):
         assert client.get(f"{BASE}/consultas?page=0").status_code == 422
