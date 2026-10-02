@@ -40,7 +40,7 @@ store consumes ONLY `make_hosted_checkout(...)`, `parse_webhook_event(...)`,
   `email_enviado_em`, `downloads int default 0`, `created_at`, `updated_at`.
 - `store.webhook_eventos` — the seed event-inbox table
   (`gateway text, event_id text, claimed_at timestamptz default now(), PK(gateway,event_id)`).
-- `status_pagina` rows (`producao`) for `/admin` and `/admin/vendas`.
+- `status_pagina` rows (`producao`) keyed by NAV ROUTE KEY: `admin` and `vendas` (see A1); the scaffold's `dashboard`/`equipe` rows are removed.
 - Private storage bucket `store-produtos`: `contrato-blindado/kit.zip`,
   `autor/foto.<ext>`. Never public — served through the backend.
 
@@ -124,3 +124,42 @@ the seed email sender. All in `.env.example` with placeholders.
   PUT with expected_version, 409 → reload prompt) and `/admin/vendas`
   "Vendas" (orders table + reenviar). Non-admin signed-in user → seed
   forbidden/empty state, never the form.
+
+## 5. Amendments (shipped by the backend, 2026-10-02) — these are the contract
+
+- **A1 — `status_pagina`.** Rows are `admin` and `vendas` (`producao`), the nav
+  route keys the FE joins on — not URL paths. `dashboard` / `equipe` are
+  deleted by migration `007_store_core.sql`; the scaffold `example` table is dropped there too.
+- **A2 — `GET /api/admin/settings`** returns `{version, data}`; `data` is the §2
+  document and `data.author.has_photo` is DERIVED from storage at read time.
+  `PUT` body `{data, expected_version}` → `{version}`; a client-sent
+  `has_photo` is ignored. An empty ledger is `version: 0` with the defaults, so
+  the first PUT carries `expected_version: 0` (`>= 0`).
+- **A3 — `GET /api/admin/pedidos`** returns `{items: [...]}` (newest first;
+  `?status=`, `?limit=` 1..500 default 100, `?offset=`). Item fields: `id, nome,
+  email, cpf_mascarado, valor_cents, produto, status, gateway, pago_em,
+  email_enviado_em, email_erro, downloads, created_at`. The buyer `token` and
+  the full CPF never appear.
+- **A4 — multipart field name is `file`** for `POST /api/admin/autor/foto`
+  (JPG/PNG/WebP ≤ 5 MB, magic bytes checked) and `POST /api/admin/produto/arquivo`
+  (zip ≤ 50 MB, `PK` magic checked → returns `{exists, size, updated_at}`). A
+  photo upload takes effect immediately and creates NO settings version (it is
+  derived), so an open editor never turns into a 409.
+- **A5 — relative paths.** `photo_url` is `/api/public/autor/foto`; `download_url`
+  is `/api/public/download/{token}` (same origin).
+- **A6 — error body.** Business errors are the seed's flat shape
+  `{"detail": "<pt-BR message>", "code": "<machine_code>"[, "field": "<name>"]}`
+  (e.g. 422 `{code:"invalid", field:"cpf"}`, 409 `checkout_disabled` /
+  `version_conflict` / `not_paid`, 503 `payments_unavailable`, 502
+  `gateway_error` / `email_failed`, 410/404/503 `download_unavailable`). Pydantic
+  body errors keep the seed's validation envelope.
+- **A7 — `download_url` honesty.** `GET /api/public/pedidos/{token}` returns
+  `download_url` only when the link would actually work: `pago` AND inside 30
+  days AND fewer than 20 downloads. `GET /api/public/download/{token}`: unknown or
+  not-yet-paid → 404; `reembolsado` / expired / exhausted → 410; kit missing in
+  storage → 503 (checked BEFORE a download is consumed).
+- **A8 — email failure.** A failed delivery email is recorded in
+  `pedidos.email_erro` and logged; the webhook still answers 200 (the payment is
+  confirmed) and the owner re-sends from `/admin/vendas` (`POST …/reenviar`:
+  409 unless `pago`, 502 on send failure).
+- **A9 — table `store.pedidos`** gains `email_erro text` (additive to §1).

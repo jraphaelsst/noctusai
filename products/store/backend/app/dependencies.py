@@ -13,9 +13,12 @@ full why and the deprecation warning that fires on the broken shape.
 """
 from __future__ import annotations
 
+import logging
 import uuid as _uuid
 from typing import Any
 from uuid import UUID
+
+from fastapi import Depends, HTTPException
 
 from noctusai_seed import (
     create_database_module,
@@ -74,6 +77,36 @@ def get_user_client(token: str):
 
 def get_admin_client():
     return _db.get_admin_client()
+
+
+def parse_admin_emails(raw: str) -> frozenset[str]:
+    """`"a@x.com, B@Y.com"` -> `{"a@x.com", "b@y.com"}` (case-insensitive, blanks dropped)."""
+    return frozenset(part.strip().lower() for part in (raw or "").split(",") if part.strip())
+
+
+def get_store_admin_emails() -> frozenset[str]:
+    """The allow-list, read at REQUEST time (never captured at import) — also
+    the DI seam the tests override, so `require_store_admin` itself always runs."""
+    return parse_admin_emails(settings.store_admin_emails)
+
+
+async def require_store_admin(
+    auth: tuple = Depends(get_current_user),
+    admins: frozenset = Depends(get_store_admin_emails),
+):
+    """Admin gate for `/api/admin/*`: the signed-in user's EMAIL must be in
+    `STORE_ADMIN_EMAILS` (the owner only). No token -> 401 (from
+    `get_current_user`); signed in but not allow-listed -> 403.
+
+    The allow-list is read at request time (never captured at import) and the
+    email is the one on the verified Supabase user — never `user_metadata`.
+    """
+    user, _token = auth  # get_current_user yields (user, token)
+    email = (getattr(user, "email", None) or "").strip().lower()
+    if not email or email not in admins:
+        logging.getLogger(__name__).warning("store admin: access denied for an authenticated non-admin user")
+        raise HTTPException(status_code=403, detail="Acesso restrito ao administrador da loja.")
+    return user
 
 
 def coerce_org_uuid(raw_org: Any) -> UUID:

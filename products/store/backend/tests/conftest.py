@@ -73,3 +73,68 @@ def client():
 
         tc = TestClient(app)
         yield AuthClient(tc, mock_sb)
+
+
+# ── Store DI doubles ────────────────────────────────────────────────────────
+import types as _types  # noqa: E402
+
+from noctusai_lib.domain.payments import FakeEventInbox  # noqa: E402
+from noctusai_lib.integrations.email import FakeEmailSender  # noqa: E402
+from noctusai_lib.integrations.payments.checkout import FakeHostedCheckout  # noqa: E402
+from noctusai_lib.integrations.storage.fake import FakeStorageBackend  # noqa: E402
+from noctusai_lib.testing import bind_user_metadata  # noqa: E402,F401
+
+from tests.support.fakes import FakePedidoStore, FakeSettingsStore  # noqa: E402
+
+ADMIN_EMAIL = "owner@store.test"
+WEBHOOK_TOKEN = "asaas-token-store-test"
+
+
+@pytest.fixture
+def store(client):
+    """Install the Fakes through FastAPI's `dependency_overrides` (the DI seam —
+    nothing in the product is patched) and hand them back for assertions.
+
+    The auth dependency and `require_store_admin` themselves are NOT replaced:
+    only the data/IO collaborators and the two config providers (the admin
+    allow-list and the webhook token) are.
+    """
+    from app import store_deps
+    from app.dependencies import get_store_admin_emails
+    from app.main import app
+
+    ns = _types.SimpleNamespace(
+        settings=FakeSettingsStore(),
+        pedidos=FakePedidoStore(),
+        storage=FakeStorageBackend(),
+        email=FakeEmailSender(),
+        checkout=FakeHostedCheckout(),
+        inbox=FakeEventInbox(),
+        admin_email=ADMIN_EMAIL,
+        webhook_token=WEBHOOK_TOKEN,
+    )
+    overrides = {
+        store_deps.get_settings_store: lambda: ns.settings,
+        store_deps.get_pedido_store: lambda: ns.pedidos,
+        store_deps.get_storage: lambda: ns.storage,
+        store_deps.get_checkout_factory: lambda: (lambda: ns.checkout),
+        store_deps.get_event_inbox: lambda: ns.inbox,
+        store_deps.get_email_sender: lambda: ns.email,
+        store_deps.get_asaas_webhook_token: lambda: ns.webhook_token,
+        get_store_admin_emails: lambda: frozenset({ADMIN_EMAIL}),
+    }
+    app.dependency_overrides.update(overrides)
+    ns.client = client
+    try:
+        yield ns
+    finally:
+        for dep in overrides:
+            app.dependency_overrides.pop(dep, None)
+
+
+def as_admin(client) -> None:
+    bind_user_metadata(client, email=ADMIN_EMAIL, org_id="test-org-123")
+
+
+def as_other_user(client) -> None:
+    bind_user_metadata(client, email="someone.else@store.test", org_id="test-org-123")
