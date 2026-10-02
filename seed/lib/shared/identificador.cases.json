@@ -1,0 +1,1254 @@
+{
+ "versao": 1,
+ "descricao": "ONE case table for identificador: Python (tests/test_identificador.py), TypeScript (identificador.test.ts) and plpgsql (seed/lib/sql/identificador.sql parity block). Entries flagged sql=true are asserted by the SQL twin too. Add a case to all runtimes or to none.",
+ "ler": [
+  {
+   "tipo": "cpf",
+   "entrada": "412.954.238-98",
+   "canonico": "412.954.238-98",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "41295423898",
+   "canonico": "412.954.238-98",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": " 412 954 238 98 ",
+   "canonico": "412.954.238-98",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "412954238-98",
+   "canonico": "412.954.238-98",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "412.954.238-99",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "111.111.111-11",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "repdigit"
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "4129542389",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "never re-add a lost leading zero"
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "412.954.2O8-98",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "caracteres_invalidos",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "11.222.333/0001-81",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": "cnpj"
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "vazio",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cin",
+   "entrada": "297.556.088-50",
+   "canonico": "297.556.088-50",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "29755608850",
+   "canonico": "297.556.088-50",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "11.222.333/0001-81",
+   "canonico": "11.222.333/0001-81",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "11222333000181",
+   "canonico": "11.222.333/0001-81",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "11 222 333 0001 81",
+   "canonico": "11.222.333/0001-81",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "11.222.333/0001-82",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "1122233300018",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "412.954.238-98",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": "cpf",
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "30.128.742-9",
+   "canonico": "30.128.742-9",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "301287429",
+   "canonico": "30.128.742-9",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "30128742-9",
+   "canonico": "30.128.742-9",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "30128742",
+   "canonico": "30.128.742-9",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": true,
+   "motivo": "dv_completado",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "CNH prints the RG without its DV; DV is arithmetic"
+  },
+  {
+   "tipo": "rg",
+   "entrada": "16.669.554-3",
+   "canonico": "16.669.554-3",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "15.668.564-3",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "OCR suspect vs 16.669.554-3: the DV decides"
+  },
+  {
+   "tipo": "rg",
+   "entrada": "16669554",
+   "canonico": "16.669.554-3",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": true,
+   "motivo": "dv_completado",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "297.556.088-50",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "rg_formato_desconhecido",
+   "tipo_detectado": "cpf",
+   "sql": true,
+   "nota": "a CPF sitting in an RG field"
+  },
+  {
+   "tipo": "rg",
+   "entrada": "29755608850",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "rg_formato_desconhecido",
+   "tipo_detectado": "cpf",
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "3415227369",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "rg_formato_desconhecido",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "W-573.678-Z",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "rg_formato_desconhecido",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "old non-SP shape: kept visible, never invented"
+  },
+  {
+   "tipo": "rg",
+   "entrada": "2964316",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "rg_formato_desconhecido",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "7 digits: cannot tell whether the DV is included"
+  },
+  {
+   "tipo": "rg",
+   "entrada": "30128742",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "rg_uf_sem_mascara",
+   "tipo_detectado": null,
+   "opts": {
+    "uf": "RJ"
+   }
+  },
+  {
+   "tipo": "cnh",
+   "entrada": "12345678900",
+   "canonico": "12345678900",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "cnh",
+   "entrada": "12345678901",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "titulo_eleitor",
+   "entrada": "123456780191",
+   "canonico": "1234 5678 0191",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "titulo_eleitor",
+   "entrada": "1234 5678 0191",
+   "canonico": "1234 5678 0191",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "titulo_eleitor",
+   "entrada": "123456780192",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "nis_pis",
+   "entrada": "12345678900",
+   "canonico": "123.45678.90-0",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "nis_pis",
+   "entrada": "123.45678.90-0",
+   "canonico": "123.45678.90-0",
+   "cabe": true,
+   "dv_ok": true,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "nis_pis",
+   "entrada": "12345678901",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": false,
+   "dv_completado": false,
+   "motivo": "dv_invalido",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "cep",
+   "entrada": "13010-110",
+   "canonico": "13010-110",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cep",
+   "entrada": "13010110",
+   "canonico": "13010-110",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cep",
+   "entrada": "13010 110",
+   "canonico": "13010-110",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cep",
+   "entrada": "1310110",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": null,
+   "sql": true,
+   "nota": "7-digit CEP lost a leading zero: never guessed"
+  },
+  {
+   "tipo": "cep",
+   "entrada": "13010-11A",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "caracteres_invalidos",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "cns_cartorio",
+   "entrada": "11991-7",
+   "canonico": "11991-7",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "cns_cartorio",
+   "entrada": "119917",
+   "canonico": "11991-7",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "cns_cartorio",
+   "entrada": "1199",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "79.826",
+   "canonico": "79.826",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "79826",
+   "canonico": "79.826",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "79 826",
+   "canonico": "79.826",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "0079826",
+   "canonico": "79.826",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "826",
+   "canonico": "826",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "1234567",
+   "canonico": "1.234.567",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "79.82B",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "caracteres_invalidos",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "0",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "zero",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.000",
+   "canonico": "23231.42.11.0377.00.000",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "232314211037700000",
+   "canonico": "23231.42.11.0377.00.000",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231/42/11/0377/00/000",
+   "canonico": "23231.42.11.0377.00.000",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.000-1",
+   "canonico": "23231.42.11.0377.00.000-1",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "2323142110377000001",
+   "canonico": "23231.42.11.0377.00.000-1",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.000",
+   "canonico": "23231.42.11.0377.00.000",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "ibge": "3513009"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.00",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "digitos_incompativeis",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.000",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "municipio_sem_perfil",
+   "tipo_detectado": null,
+   "opts": {
+    "municipio": "Osasco"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.000",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "municipio_sem_perfil",
+   "tipo_detectado": null,
+   "sql": true
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "SSP/SP",
+   "canonico": "SSP/SP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "SSP SP",
+   "canonico": "SSP/SP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "ssp-sp",
+   "canonico": "SSP/SP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "SSP.SP",
+   "canonico": "SSP/SP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "IIRGD",
+   "canonico": "SSP/SP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "DETRAN-SP",
+   "canonico": "DETRAN/SP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "DETRAN/RJ",
+   "canonico": "DETRAN/RJ",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "DPF",
+   "canonico": "DPF",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "SSP",
+   "canonico": "SSP",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "sem_uf",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "Secretaria Seg. Pública",
+   "canonico": "SECRETARIA SEG. PUBLICA",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "desconhecido_mantido",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "SSP",
+   "canonico": "SSP/MG",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null,
+   "opts": {
+    "uf": "mg"
+   }
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "vazio",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "certidao_controle_receita",
+   "entrada": "ab12cd34ef56ab78",
+   "canonico": "AB12.CD34.EF56.AB78",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "certidao_controle_receita",
+   "entrada": "AB12.CD34.EF56.AB78",
+   "canonico": "AB12.CD34.EF56.AB78",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "certidao_controle_receita",
+   "entrada": "AB12.CD34.EF56",
+   "canonico": null,
+   "cabe": false,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "tamanho",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "protocolo_cenprot",
+   "entrada": "2024.0123456",
+   "canonico": "20240123456",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  },
+  {
+   "tipo": "protocolo_cenprot",
+   "entrada": "20240123456",
+   "canonico": "20240123456",
+   "cabe": true,
+   "dv_ok": null,
+   "dv_completado": false,
+   "motivo": "ok",
+   "tipo_detectado": null
+  }
+ ],
+ "equivalentes": [
+  {
+   "tipo": "rg",
+   "a": "30128742",
+   "b": "30.128.742-9",
+   "esperado": true
+  },
+  {
+   "tipo": "rg",
+   "a": "30.128.742-9",
+   "b": "301287429",
+   "esperado": true
+  },
+  {
+   "tipo": "rg",
+   "a": "30.128.742-9",
+   "b": "16.669.554-3",
+   "esperado": false
+  },
+  {
+   "tipo": "rg",
+   "a": "15.668.564-3",
+   "b": "16.669.554-3",
+   "esperado": false
+  },
+  {
+   "tipo": "rg",
+   "a": "15.668.564-3",
+   "b": "15668564-3",
+   "esperado": true
+  },
+  {
+   "tipo": "rg",
+   "a": "2964316",
+   "b": "2.964.316",
+   "esperado": true
+  },
+  {
+   "tipo": "rg",
+   "a": "2964316",
+   "b": "2964317",
+   "esperado": null
+  },
+  {
+   "tipo": "rg",
+   "a": "30128742",
+   "b": "",
+   "esperado": null
+  },
+  {
+   "tipo": "cpf",
+   "a": "412.954.238-98",
+   "b": "41295423898",
+   "esperado": true
+  },
+  {
+   "tipo": "cpf",
+   "a": "412.954.238-98",
+   "b": "297.556.088-50",
+   "esperado": false
+  },
+  {
+   "tipo": "cpf",
+   "a": "412.954.238-98",
+   "b": "412.954.238-99",
+   "esperado": false
+  },
+  {
+   "tipo": "cpf",
+   "a": "412.954.238-98",
+   "b": "4129542389",
+   "esperado": null
+  },
+  {
+   "tipo": "cnpj",
+   "a": "11.222.333/0001-81",
+   "b": "11222333000181",
+   "esperado": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "a": "79.826",
+   "b": "79826",
+   "esperado": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "a": "79.826",
+   "b": "79.827",
+   "esperado": false
+  },
+  {
+   "tipo": "matricula_imovel",
+   "a": "79.826",
+   "b": "79.8x6",
+   "esperado": null
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "a": "23231.42.11.0377.00.000-1",
+   "b": "23231.42.11.0377.00.000",
+   "esperado": true,
+   "opts": {
+    "municipio": "Cotia"
+   }
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "a": "23231.42.11.0377.00.000-1",
+   "b": "23231.42.11.0377.00.000-2",
+   "esperado": false,
+   "opts": {
+    "municipio": "Cotia"
+   }
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "a": "23231.42.11.0377.00.000",
+   "b": "23231.42.11.0377.00.001",
+   "esperado": false,
+   "opts": {
+    "municipio": "Cotia"
+   }
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "a": "123456",
+   "b": "123456",
+   "esperado": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "a": "123456",
+   "b": "12345",
+   "esperado": null
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "a": "123456",
+   "b": "999999",
+   "esperado": false
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "a": "IIRGD",
+   "b": "SSP/SP",
+   "esperado": true
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "a": "SSP",
+   "b": "SSP/SP",
+   "esperado": null
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "a": "SSP/SP",
+   "b": "DETRAN/SP",
+   "esperado": false
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "a": "SSP/SP",
+   "b": "SSP/RJ",
+   "esperado": false
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "a": "DPF",
+   "b": "dpf",
+   "esperado": true
+  },
+  {
+   "tipo": "cep",
+   "a": "13010-110",
+   "b": "13010110",
+   "esperado": true
+  }
+ ],
+ "chave_busca": [
+  {
+   "tipo": "rg",
+   "entrada": "30.128.742-9",
+   "esperado": "301287429",
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "30128742",
+   "esperado": "301287429",
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "3012",
+   "esperado": "3012",
+   "sql": true
+  },
+  {
+   "tipo": "rg",
+   "entrada": "15.668.564-3",
+   "esperado": "156685643",
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "412.954.238-98",
+   "esperado": "41295423898",
+   "sql": true
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "412.954",
+   "esperado": "412954",
+   "sql": true
+  },
+  {
+   "tipo": "cnpj",
+   "entrada": "11.222.333/0001-81",
+   "esperado": "11222333000181",
+   "sql": true
+  },
+  {
+   "tipo": "cep",
+   "entrada": "13010-110",
+   "esperado": "13010110",
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "79.826",
+   "esperado": "79826",
+   "sql": true
+  },
+  {
+   "tipo": "matricula_imovel",
+   "entrada": "0079826",
+   "esperado": "79826",
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11.0377.00.000-1",
+   "esperado": "2323142110377000001",
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "inscricao_municipal",
+   "entrada": "23231.42.11",
+   "esperado": "232314211",
+   "opts": {
+    "municipio": "Cotia"
+   },
+   "sql": true
+  },
+  {
+   "tipo": "orgao_expedidor",
+   "entrada": "IIRGD",
+   "esperado": "SSPSP"
+  },
+  {
+   "tipo": "cpf",
+   "entrada": "",
+   "esperado": null
+  }
+ ],
+ "extrair_cns": [
+  {
+   "texto": "SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia - CNS: 11991-7",
+   "esperado": "11991-7"
+  },
+  {
+   "texto": "Cartório de Registro de Imóveis — C.N.S. 11.991-7",
+   "esperado": "11991-7"
+  },
+  {
+   "texto": "CNS 119917",
+   "esperado": "11991-7"
+  },
+  {
+   "texto": "CNS: 11991-7 e CNS: 11991-7",
+   "esperado": "11991-7"
+  },
+  {
+   "texto": "CNS: 11991-7 / CNS: 12345-6",
+   "esperado": null
+  },
+  {
+   "texto": "sem cartório aqui",
+   "esperado": null
+  },
+  {
+   "texto": "CNS: 1199",
+   "esperado": null
+  }
+ ],
+ "detectar_tipo": [
+  {
+   "entrada": "297.556.088-50",
+   "esperado": [
+    "cpf",
+    "nis_pis"
+   ],
+   "nota": "11 digits are ambiguous by chance (~1/11 pass the NIS DV); priority order cpf > cnpj > cnh > nis_pis picks tipo_detectado"
+  },
+  {
+   "entrada": "29755608850",
+   "esperado": [
+    "cpf",
+    "nis_pis"
+   ],
+   "nota": "11 digits are ambiguous by chance (~1/11 pass the NIS DV); priority order cpf > cnpj > cnh > nis_pis picks tipo_detectado"
+  },
+  {
+   "entrada": "11.222.333/0001-81",
+   "esperado": [
+    "cnpj"
+   ]
+  },
+  {
+   "entrada": "13010-110",
+   "esperado": [
+    "cep"
+   ]
+  },
+  {
+   "entrada": "30.128.742-9",
+   "esperado": [
+    "rg"
+   ]
+  },
+  {
+   "entrada": "30128742",
+   "esperado": []
+  },
+  {
+   "entrada": "",
+   "esperado": []
+  },
+  {
+   "entrada": "12345678900",
+   "esperado": [
+    "cnh",
+    "nis_pis"
+   ]
+  }
+ ]
+}

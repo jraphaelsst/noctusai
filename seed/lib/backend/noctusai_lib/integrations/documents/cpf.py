@@ -44,6 +44,8 @@ import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.labels import Achado, label_before
+from noctusai_lib.primitives.identificador import cpf_dv_valido as _cpf_dv_valido
+from noctusai_lib.primitives.identificador import mascara_cpf as _mascara_cpf
 
 #: How far back from a value to look for its label. Matches the window the
 #: sibling parsers use — these are the same document layouts.
@@ -124,27 +126,12 @@ def is_valid(value: str) -> bool:
     with placeholder data looks like, so accepting them would let test data
     through the one gate this module has.
     """
-    digits = only_digits(value)
-    if len(digits) != 11 or digits == digits[0] * 11:
-        return False
-
-    for tamanho in (9, 10):
-        soma = sum(
-            int(digits[i]) * (tamanho + 1 - i) for i in range(tamanho)
-        )
-        resto = (soma * 10) % 11
-        esperado = 0 if resto == 10 else resto
-        if esperado != int(digits[tamanho]):
-            return False
-    return True
+    return _cpf_dv_valido(only_digits(value))
 
 
 def format_cpf(value: str) -> Optional[str]:
     """`41295423898` → `412.954.238-98`. None when it is not eleven digits."""
-    digits = only_digits(value)
-    if len(digits) != 11:
-        return None
-    return f"{digits[0:3]}.{digits[3:6]}.{digits[6:9]}-{digits[9:11]}"
+    return _mascara_cpf(only_digits(value))
 
 
 def _label_before(haystack: str, at: int) -> Achado:
