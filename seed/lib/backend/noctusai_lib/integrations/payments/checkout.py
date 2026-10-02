@@ -38,6 +38,7 @@ stay defined in exactly one place.
 from __future__ import annotations
 
 import base64
+import datetime as _dt
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional, Protocol, Union, runtime_checkable
@@ -48,7 +49,7 @@ from .errors import PaymentGatewayError
 from .factory import make_payment_gateway
 from .real_asaas import DEFAULT_BASE_URL as ASAAS_DEFAULT_BASE_URL
 from .real_asaas import DEFAULT_TIMEOUT_SECONDS as ASAAS_DEFAULT_TIMEOUT_SECONDS
-from .real_asaas import AsaasPaymentGateway
+from .real_asaas import _BILLING_METHOD_MAP, AsaasPaymentGateway
 from .real_stripe import StripePaymentGateway
 from .types import BillingCycle, BillingMethod, Money, PaymentGatewayName, SubscriptionRequest
 from ._stripe_fields import stripe_field, stripe_to_dict
@@ -85,7 +86,9 @@ class CheckoutRequest:
     email: str
     name: str
     price: Money
-    billing_cycle: BillingCycle = "monthly"
+    #: `None` ⇒ a ONE-OFF charge (no subscription is created). Any cycle
+    #: keeps the original subscription behaviour, byte-identical.
+    billing_cycle: Optional[BillingCycle] = "monthly"
     billing_method: BillingMethod = "unspecified"
     plan_ref: Optional[str] = None  # Stripe: a pre-created Price id, REQUIRED
     success_url: Optional[str] = None  # Stripe: REQUIRED
@@ -98,12 +101,25 @@ class CheckoutRequest:
     #: Payer CPF/CNPJ (digits). Asaas refuses to charge a customer without
     #: one; Stripe ignores it.
     tax_id: Optional[str] = None
+    #: One-off only: what the payer sees on the charge (Asaas `description`,
+    #: Stripe line-item product name). Falls back to `external_reference`.
+    description: Optional[str] = None
+    #: One-off only, Asaas: days from today until the charge's due date.
+    due_days: int = 3
+
+    @property
+    def is_one_off(self) -> bool:
+        return self.billing_cycle is None
 
 
 @dataclass(frozen=True)
 class CheckoutSession:
     """What we got back — a URL to redirect the payer to, plus whatever
     the gateway already knows at creation time.
+
+    For a ONE-OFF charge `subscription_id_at_gateway` is always `None` and
+    `id_at_gateway` is the gateway's charge id (Asaas `pay_...`) or the Stripe
+    Checkout Session id.
 
     `subscription_id_at_gateway` is `None` for a freshly-created Stripe
     Checkout Session (Stripe only creates the `Subscription` once the payer
@@ -151,6 +167,8 @@ class StripeHostedCheckout:
         self._gateway = gateway
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
+        if request.is_one_off:
+            return self._create_one_off(request)
         if not request.plan_ref:
             raise PaymentGatewayError(
                 "stripe",
@@ -207,6 +225,59 @@ class StripeHostedCheckout:
         )
 
 
+    def _create_one_off(self, request: CheckoutRequest) -> CheckoutSession:
+        """A single charge: Checkout Session `mode="payment"`. Uses `plan_ref`
+        as the Price when given, else an inline `price_data` line item (a
+        one-off has no recurring Price to pre-create)."""
+        if not request.success_url or not request.cancel_url:
+            raise PaymentGatewayError(
+                "stripe",
+                "create_checkout requires both success_url and cancel_url — "
+                "Stripe Checkout Sessions reject a request missing either.",
+                retryable=False,
+            )
+        customer = self._gateway.ensure_customer(
+            external_reference=request.external_reference,
+            email=request.email,
+            name=request.name,
+            tax_id=request.tax_id,
+        )
+        line_item: dict[str, Any]
+        if request.plan_ref:
+            line_item = {"price": request.plan_ref, "quantity": 1}
+        else:
+            line_item = {
+                "price_data": {
+                    "currency": request.price.currency.lower(),
+                    "unit_amount": request.price.amount_cents,
+                    "product_data": {"name": request.description or request.external_reference},
+                },
+                "quantity": 1,
+            }
+        stripe = self._gateway._stripe()
+        metadata = {"external_reference": request.external_reference, **request.metadata}
+        session = self._gateway._call(
+            lambda: stripe.checkout.Session.create(
+                mode="payment",
+                customer=customer.id_at_gateway,
+                client_reference_id=request.external_reference,
+                line_items=[line_item],
+                success_url=request.success_url,
+                cancel_url=request.cancel_url,
+                metadata=metadata,
+                payment_intent_data={"metadata": metadata},
+            )
+        )
+        return CheckoutSession(
+            id_at_gateway=session["id"],
+            checkout_url=session["url"],
+            customer_id_at_gateway=customer.id_at_gateway,
+            external_reference=request.external_reference,
+            subscription_id_at_gateway=None,
+            raw=stripe_to_dict(session),
+        )
+
+
 class AsaasHostedCheckout:
     """`HostedCheckout` over Asaas — no native hosted-checkout resource, so
     this REDIRECTS TO THE FIRST GENERATED PAYMENT'S INVOICE PAGE instead.
@@ -224,7 +295,50 @@ class AsaasHostedCheckout:
     def __init__(self, gateway: AsaasPaymentGateway) -> None:
         self._gateway = gateway
 
+    def _create_one_off(self, request: CheckoutRequest) -> CheckoutSession:
+        """A single charge: ensure_customer (with CPF) → `POST /payments` →
+        the payment's `invoiceUrl`. `billing_method="undefined"` lets the
+        payer pick PIX / boleto / card on Asaas' page. `success_url` is sent
+        as `callback` with `autoRedirect` so the payer lands back on the
+        consumer's thank-you page. Request shape lifted from p-studio's
+        `criar_cobranca`."""
+        customer = self._gateway.ensure_customer(
+            external_reference=request.external_reference,
+            email=request.email,
+            name=request.name,
+            tax_id=request.tax_id,
+        )
+        body: dict[str, Any] = {
+            "customer": customer.id_at_gateway,
+            "billingType": _BILLING_METHOD_MAP[request.billing_method],
+            "value": request.price.amount_cents / 100,
+            "dueDate": (self._gateway._today() + _dt.timedelta(days=request.due_days)).isoformat(),
+            "description": request.description or request.external_reference,
+            # The conciliation key — without it the webhook cannot be matched.
+            "externalReference": request.external_reference,
+        }
+        if request.success_url:
+            body["callback"] = {"successUrl": request.success_url, "autoRedirect": True}
+        payment = self._gateway._request("POST", "/payments", json=body)
+        invoice_url = payment.get("invoiceUrl")
+        if not payment.get("id") or not invoice_url:
+            raise PaymentGatewayError(
+                "asaas",
+                f"payment {payment.get('id')!r} has no id/invoiceUrl",
+                retryable=True,
+            )
+        return CheckoutSession(
+            id_at_gateway=payment["id"],
+            checkout_url=invoice_url,
+            customer_id_at_gateway=customer.id_at_gateway,
+            external_reference=request.external_reference,
+            subscription_id_at_gateway=None,
+            raw={"payment": payment},
+        )
+
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
+        if request.is_one_off:
+            return self._create_one_off(request)
         if request.billing_method not in ("pix", "boleto", "card"):
             raise PaymentGatewayError(
                 "asaas",
@@ -319,7 +433,7 @@ class FakeHostedCheckout:
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         self.calls.append(("create_checkout", request))
-        session_id = self._next_id("cs")
+        session_id = self._next_id("pay" if request.is_one_off else "cs")
         pix_qr: Optional[PixQr] = None
         if request.billing_method == "pix":
             pix_qr = PixQr(
@@ -332,7 +446,7 @@ class FakeHostedCheckout:
             checkout_url=f"{self._base_url}/{session_id}",
             customer_id_at_gateway=self._next_id("cus"),
             external_reference=request.external_reference,
-            subscription_id_at_gateway=self._next_id("sub"),
+            subscription_id_at_gateway=None if request.is_one_off else self._next_id("sub"),
             pix_qr=pix_qr,
         )
         self.sessions[session_id] = session

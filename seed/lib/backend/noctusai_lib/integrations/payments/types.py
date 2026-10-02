@@ -148,7 +148,11 @@ BillingCycle = Literal["weekly", "monthly", "yearly"]
 #: reason that module gives: Pix and boleto behave differently enough
 #: (D+1 settlement, no chargebacks) that collapsing them into "card or
 #: not" would hide real reconciliation differences.
-BillingMethod = Literal["pix", "boleto", "card", "unspecified"]
+#:
+#: `"undefined"` is the explicit "the payer picks on the gateway's page" value
+#: (Asaas `billingType=UNDEFINED`); `"unspecified"` is the older spelling of
+#: the same wire value and stays for existing subscription callers.
+BillingMethod = Literal["pix", "boleto", "card", "unspecified", "undefined"]
 
 
 @dataclass(frozen=True)

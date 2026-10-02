@@ -8,8 +8,8 @@
 > `products/core`'s live Stripe billing (`stripe_service.py` +
 > `billing_service.py`). **Neither existing product was refactored.**
 > This organ ships ALONGSIDE both; migrating Core onto it is a separate,
-> separately-consented slice. No consumer exists yet — this is a Phase 1
-> seed-capability lift; Phase 2 wires an external app onto it.
+> separately-consented slice. First consumer: `products/store` (one-off
+> digital-product checkout, 2026-10-02) — see "One-off hosted checkout" below.
 
 ## What ships (seed)
 
@@ -288,6 +288,30 @@ substitution needed, `construct_event` does pure local verification;
 Asaas via a scripted `asaas-access-token` header). 129 payments tests
 total (integrations + domain), still zero network / zero real Stripe or
 Asaas keys.
+
+## One-off hosted checkout (2026-10-02, `products/store`) — additive
+
+N=2 lift (p-studio `criar_cobranca` + store). `CheckoutRequest.billing_cycle=None`
+⇒ a single charge, no subscription; plus `description` and `due_days` (default 3).
+`billing_method` gains `"undefined"` (same wire value as `"unspecified"`: Asaas
+`billingType=UNDEFINED` — the payer picks PIX / boleto / card on Asaas' page).
+
+- **Asaas** — `ensure_customer(tax_id=cpf)` → `POST /payments` {customer,
+  billingType, value, dueDate=`today()+due_days`, description,
+  externalReference, `callback:{successUrl, autoRedirect:true}` (only when
+  `success_url` is set)} → `CheckoutSession(checkout_url=invoiceUrl,
+  id_at_gateway=<pay_...>, subscription_id_at_gateway=None)`. No
+  `/subscriptions` call is ever made.
+- **Stripe** — Checkout Session `mode="payment"`; line item is `plan_ref` as a
+  Price when given, else inline `price_data` (currency/amount from `price`,
+  product name = `description`). `success_url` + `cancel_url` required.
+- **Fake** — deterministic `pay_000001` ids / URL, no subscription id.
+- Webhook parsing is unchanged: `PAYMENT_RECEIVED`/`PAYMENT_CONFIRMED` →
+  `charge_paid`; `externalReference` → `GatewayEvent.external_reference`.
+
+Subscription behaviour is byte-identical (the whole payments test dir stays
+green). Consumers use only `make_hosted_checkout` + `parse_webhook_event` +
+`make_event_inbox`.
 
 ## Additions from Core R2 (2026-09-16) — all additive
 

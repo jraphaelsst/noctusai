@@ -214,6 +214,7 @@ class ProvedorAsaas:
         return criado.get("id")
 
     # ── cobranças ────────────────────────────────────────────────────────
+    # NOC-REMEDIATE[seed-consume]: the one-off POST /payments request shape now ships in the seed — noctusai_lib.integrations.payments.checkout (CheckoutRequest billing_cycle=None → AsaasHostedCheckout) — 2026-10-02
     def criar_cobranca(self, pedido: PedidoCobranca) -> Cobranca:
         id_pagador = pedido.pagador_no_provedor or self.garantir_cliente(pedido.pagador)
 

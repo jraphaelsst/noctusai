@@ -411,3 +411,146 @@ def test_make_hosted_checkout_missing_provider_raises() -> None:
 def test_make_hosted_checkout_unknown_provider_raises() -> None:
     with pytest.raises(ValueError):
         make_hosted_checkout(provider="mercadopago")
+
+
+# ── One-off (billing_cycle=None) ─────────────────────────────────────────
+
+import datetime as _dt
+
+
+def _one_off_request(**overrides: Any) -> CheckoutRequest:
+    base = dict(
+        external_reference="pedido-1",
+        email="a@b.com",
+        name="Ana",
+        price=Money(4700, "BRL"),
+        billing_cycle=None,
+        billing_method="undefined",
+        tax_id="12345678909",
+        description="Kit de contratos",
+        success_url="https://store.example.com/obrigado?pedido=tok",
+        cancel_url="https://store.example.com/",
+        due_days=3,
+    )
+    base.update(overrides)
+    return CheckoutRequest(**base)
+
+
+def test_asaas_one_off_posts_payment_and_returns_invoice_url() -> None:
+    seen: dict[str, Any] = {}
+
+    def create_payment(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json_lib.loads(request.content)
+        return httpx.Response(
+            200, content=json_lib.dumps({"id": "pay_1", "invoiceUrl": "https://asaas.test/i/pay_1"}).encode()
+        )
+
+    def create_customer(request: httpx.Request) -> httpx.Response:
+        seen["customer"] = json_lib.loads(request.content)
+        return httpx.Response(200, content=json_lib.dumps({"id": "cus_1"}).encode())
+
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(200, {"data": []}),
+            "POST /v3/customers": create_customer,
+            "POST /v3/payments": create_payment,
+        }
+    )
+    session = _asaas_checkout(transport).create_checkout(_one_off_request())
+
+    assert session.checkout_url == "https://asaas.test/i/pay_1"
+    assert session.id_at_gateway == "pay_1"
+    assert session.subscription_id_at_gateway is None
+    assert session.customer_id_at_gateway == "cus_1"
+    assert seen["customer"]["cpfCnpj"] == "12345678909"
+    body = seen["body"]
+    assert body["customer"] == "cus_1"
+    assert body["billingType"] == "UNDEFINED"
+    assert body["value"] == 47.0
+    assert body["dueDate"] == (_dt.date.today() + _dt.timedelta(days=3)).isoformat()
+    assert body["description"] == "Kit de contratos"
+    assert body["externalReference"] == "pedido-1"
+    assert body["callback"] == {
+        "successUrl": "https://store.example.com/obrigado?pedido=tok",
+        "autoRedirect": True,
+    }
+
+
+def test_asaas_one_off_never_touches_subscriptions() -> None:
+    # No /subscriptions routes registered: a call to one would 404 → raise.
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(200, {"data": [{"id": "cus_9", "email": "a@b.com", "name": "Ana"}]}),
+            "POST /v3/payments": _json(200, {"id": "pay_2", "invoiceUrl": "https://asaas.test/i/pay_2"}),
+        }
+    )
+    session = _asaas_checkout(transport).create_checkout(_one_off_request())
+    assert session.id_at_gateway == "pay_2"
+
+
+def test_asaas_one_off_missing_invoice_url_raises_retryable() -> None:
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(200, {"data": [{"id": "cus_9"}]}),
+            "POST /v3/payments": _json(200, {"id": "pay_3"}),
+        }
+    )
+    with pytest.raises(PaymentGatewayError) as exc:
+        _asaas_checkout(transport).create_checkout(_one_off_request())
+    assert exc.value.retryable is True
+
+
+def test_asaas_one_off_gateway_error_propagates() -> None:
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(200, {"data": [{"id": "cus_9"}]}),
+            "POST /v3/payments": _json(400, {"errors": [{"code": "invalid_value", "description": "valor invalido"}]}),
+        }
+    )
+    with pytest.raises(PaymentGatewayError) as exc:
+        _asaas_checkout(transport).create_checkout(_one_off_request())
+    assert exc.value.status == 400
+
+
+def test_asaas_one_off_without_success_url_omits_callback() -> None:
+    seen: dict[str, Any] = {}
+
+    def create_payment(request: httpx.Request) -> httpx.Response:
+        seen["body"] = json_lib.loads(request.content)
+        return httpx.Response(200, content=json_lib.dumps({"id": "p", "invoiceUrl": "u"}).encode())
+
+    transport = _routed_transport(
+        {"GET /v3/customers": _json(200, {"data": [{"id": "c"}]}), "POST /v3/payments": create_payment}
+    )
+    _asaas_checkout(transport).create_checkout(_one_off_request(success_url=None))
+    assert "callback" not in seen["body"]
+
+
+def test_stripe_one_off_uses_payment_mode_with_inline_price(
+    stripe_double: Any, stripe_checkout: StripeHostedCheckout
+) -> None:
+    session = stripe_checkout.create_checkout(_one_off_request(billing_method="unspecified"))
+    kwargs = next(c[1] for c in stripe_double.calls if c[0] == "checkout.Session.create")
+    assert kwargs["mode"] == "payment"
+    item = kwargs["line_items"][0]
+    assert item["price_data"]["unit_amount"] == 4700
+    assert item["price_data"]["currency"] == "brl"
+    assert item["price_data"]["product_data"]["name"] == "Kit de contratos"
+    assert session.subscription_id_at_gateway is None
+
+
+def test_stripe_one_off_requires_redirect_urls(stripe_checkout: StripeHostedCheckout) -> None:
+    with pytest.raises(PaymentGatewayError):
+        stripe_checkout.create_checkout(_one_off_request(success_url=None))
+
+
+def test_fake_one_off_is_deterministic_and_has_no_subscription() -> None:
+    fake = FakeHostedCheckout()
+    first = fake.create_checkout(_one_off_request())
+    assert first.id_at_gateway == "pay_000001"
+    assert first.checkout_url.endswith("/pay_000001")
+    assert first.subscription_id_at_gateway is None
+    # Subscription behaviour unchanged.
+    sub = FakeHostedCheckout().create_checkout(_asaas_request())
+    assert sub.id_at_gateway == "cs_000001"
+    assert sub.subscription_id_at_gateway is not None

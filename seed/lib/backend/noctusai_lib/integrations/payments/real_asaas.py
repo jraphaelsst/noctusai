@@ -67,6 +67,7 @@ _BILLING_METHOD_MAP: dict[BillingMethod, str] = {
     "boleto": "BOLETO",
     "card": "CREDIT_CARD",
     "unspecified": "UNDEFINED",
+    "undefined": "UNDEFINED",
 }
 
 
