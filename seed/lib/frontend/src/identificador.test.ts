@@ -3,6 +3,9 @@
  * table as `seed/lib/backend/tests/test_identificador.py` and the plpgsql
  * parity block (`seed/lib/shared/identificador.cases.json`).
  */
+// Node types for `node:fs` / `__dirname`: every product's `tsc` includes this file
+// through the `@noctusai/lib` path and its tsconfig carries only `vite/client`.
+/// <reference types="node" />
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';

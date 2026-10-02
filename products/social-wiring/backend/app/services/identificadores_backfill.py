@@ -185,12 +185,12 @@ def canonizar_imovel_dados(client: Any, org_id: UUID, contagem: _Contagem, *, dr
 
     rows = table_reads.paged_rows(
         client, "imovel_dados", org_id,
-        select="codigo,numero_matricula,prefeitura_cadastro_imobiliario",
+        select="codigo,numero_matricula,prefeitura_cadastro_imobiliario,endereco_manual_cep",
         order_col="codigo", id_key="codigo",
     )
     for row in rows:
         patch: dict[str, Any] = {}
-        for campo, tipo in idf.TIPO_POR_CAMPO_IMOVEL.items():
+        for campo, tipo in idf.TIPO_POR_CAMPO_ESCRITA_IMOVEL.items():
             valor = row.get(campo)
             ctx: dict[str, Any] = {}
             if tipo == "inscricao_municipal" and valor:

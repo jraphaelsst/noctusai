@@ -16,6 +16,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { canonicoIdentificador } from "@noctusai/lib/identificador";
 
 // ─── Types (§4 schema — `clientes` table) ──────────────────────────────────
 
@@ -332,14 +333,17 @@ export function formatCountOrDash(value: number | null | undefined): string {
 /**
  * `123.456.789-01` → `***.***.*89-01` — every digit masked except the last
  * two of the third group plus the check digits, matching the owner's own
- * example verbatim (brief, 2026-09-28). Never mutates a value that is not a
- * clean 11-digit CPF (an unexpected shape is returned unmasked rather than
- * silently mangled — this is a display concern, not validation, and
- * `identidade_service.normalizar_cpf` already owns the latter server-side).
+ * example verbatim (brief, 2026-09-28). An LGPD MASK, not a format: the digits
+ * come through the ONE identifier seam (`@noctusai/lib/identificador`, owner
+ * rule 2026-10-01) so a CPF stored bare, punctuated or with stray spacing masks
+ * identically. Never mutates a value that is not a clean 11-digit CPF (an
+ * unexpected shape is returned unmasked rather than silently mangled — this is
+ * a display concern, not validation, and `identidade_service.normalizar_cpf`
+ * already owns the latter server-side).
  */
 export function maskCpf(cpf: string | null | undefined): string {
   if (!cpf) return "—";
-  const d = cpf.replace(/\D/g, "");
+  const d = (canonicoIdentificador("cpf", cpf) ?? cpf).replace(/\D/g, "");
   if (d.length !== 11) return cpf;
   return `***.***.*${d[7]}${d[8]}-${d[9]}${d[10]}`;
 }

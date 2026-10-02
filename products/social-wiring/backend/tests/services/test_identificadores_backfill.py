@@ -59,7 +59,7 @@ def banco() -> MockSupabaseClient:
     scoped.set_table_data("imovel_registry", [])
     scoped.set_table_data("imovel_dados", [
         {"org_id": ORG_ID, "codigo": "ONE4770", "numero_matricula": "79826",
-         "prefeitura_cadastro_imobiliario": "232314211037700000"},
+         "prefeitura_cadastro_imobiliario": "232314211037700000", "endereco_manual_cep": "13010110"},
     ])
     scoped.set_table_data("certidao_consultas", [
         {"id": str(uuid4()), "org_id": ORG_ID, "tipo_documento": "cpf", "documento": "41295423898"},
@@ -121,6 +121,7 @@ class TestCanonizar:
         d = _rows(banco, "imovel_dados")[0]
         assert d["numero_matricula"] == "79.826"
         assert d["prefeitura_cadastro_imobiliario"] == "23231.42.11.0377.00.000"  # Cotia mask
+        assert d["endereco_manual_cep"] == "13010-110"
         docs = sorted(r["documento"] for r in _rows(banco, "certidao_consultas"))
         assert docs == ["11.222.333/0001-81", "412.954.238-98"]
 

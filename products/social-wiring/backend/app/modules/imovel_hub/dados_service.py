@@ -758,7 +758,7 @@ def canonizar_valores(
     saida = dict(valores)
     municipio: Optional[str] = None
     municipio_lido = False
-    for campo, tipo in idf.TIPO_POR_CAMPO_IMOVEL.items():
+    for campo, tipo in idf.TIPO_POR_CAMPO_ESCRITA_IMOVEL.items():
         bruto = saida.get(campo)
         if bruto is None or not str(bruto).strip():
             continue
@@ -915,6 +915,10 @@ def gravar_endereco_manual(
     historico: list[dict] = []
     for coluna, bruto in valores.items():
         novo = (bruto or "").strip() or None if isinstance(bruto, str) else bruto
+        if coluna == "endereco_manual_cep" and novo:
+            # canonical BEFORE the history comparison, so `01310100` re-saved
+            # as the `01310-100` already on file is not a change
+            novo = idf.canonico_ou_bruto("cep", novo)
         campo = _CAMPO_MIRROR[coluna]
         anterior_override = (atual or {}).get(coluna)
         anterior_efetivo = (

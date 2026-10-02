@@ -63,6 +63,7 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub import services as svc
+from app.services import identificadores as idf
 from app.services import table_reads
 
 TABLE_PARCELAS = "atendimento_negociacao_parcelas"
@@ -253,6 +254,14 @@ def _exigir_favorecido(
     return rows[0]
 
 
+def _favorecido_canonico(valores: dict) -> dict:
+    """`cpf_cnpj` is stored in its canonical PUNCTUATED form when it fits its
+    type (owner rule 2026-10-01, `canonical-identifiers`); as typed otherwise."""
+    if "cpf_cnpj" not in valores:
+        return valores
+    return {**valores, "cpf_cnpj": idf.canonico_cpf_cnpj(valores["cpf_cnpj"])}
+
+
 def criar_favorecido(
     client: Any, org_id: UUID, cliente_id: UUID, *, valores: dict,
     usuario_id: Optional[UUID],
@@ -262,7 +271,9 @@ def criar_favorecido(
         "id": str(uuid4()),
         "org_id": str(org_id),
         "atendimento_id": str(atendimento_id),
-        **{k: valores.get(k) for k in _FAVORECIDO_CAMPOS_EDITAVEIS if k in valores},
+        **_favorecido_canonico(
+            {k: valores.get(k) for k in _FAVORECIDO_CAMPOS_EDITAVEIS if k in valores}
+        ),
         "created_at": _now(),
         "created_por": str(usuario_id) if usuario_id else None,
     }
@@ -288,7 +299,9 @@ def atualizar_favorecido(
     """
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
     _exigir_favorecido(client, org_id, atendimento_id, favorecido_id)
-    patch = {k: v for k, v in valores.items() if k in _FAVORECIDO_CAMPOS_EDITAVEIS}
+    patch = _favorecido_canonico(
+        {k: v for k, v in valores.items() if k in _FAVORECIDO_CAMPOS_EDITAVEIS}
+    )
     now = _now()
     patch["updated_at"] = now
     patch["updated_por"] = str(usuario_id) if usuario_id else None

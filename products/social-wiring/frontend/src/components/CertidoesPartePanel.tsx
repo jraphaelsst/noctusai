@@ -93,6 +93,7 @@ import {
 import type { CertidaoResultado } from "@/hooks/useCertidoes";
 import { downloadFile } from "@/lib/file-download";
 import { formatDate } from "@/lib/utils";
+import { formatarDocumentoArmazenado } from "@/components/card/documentoBr";
 import {
   RESULTADO_ORIGEM_LABELS,
   RESULTADO_VALOR_LABELS,
@@ -654,7 +655,7 @@ export function CertidoesPartePanel({
               <SelectContent>
                 {consultasDisponiveis.map((c) => (
                   <SelectItem key={c.id} value={c.id}>
-                    {c.nome} — {c.documento}
+                    {c.nome} — {formatarDocumentoArmazenado(c.documento)}
                   </SelectItem>
                 ))}
               </SelectContent>
