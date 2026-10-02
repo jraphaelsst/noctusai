@@ -2852,7 +2852,7 @@ def test_injected_runner_without_pointer_ops_never_touches_the_real_ledger():
     assert res["pointer"]["status"] == "skipped"
 
 
-def test_integrate_and_cleanup_use_absolute_worktree_cwd(tmp_path):
+def test_integrate_uses_absolute_worktree_cwd(tmp_path):
     """Fresh-subprocess fallback runs outside the repo root: every worktree cwd
     must be absolute (2026-10-02 FileNotFoundError on a relative cwd)."""
     fake = FakeGit(
@@ -2867,3 +2867,26 @@ def test_integrate_and_cleanup_use_absolute_worktree_cwd(tmp_path):
     assert cwds, "expected worktree-scoped calls"
     assert all(os.path.isabs(c) for c in cwds), cwds
     assert str(tmp_path / ".claude/worktrees/x") in cwds
+
+
+def test_cleanup_dirty_check_uses_absolute_worktree_cwd(tmp_path):
+    """cleanup's refused-remove dirty check runs with the worktree as cwd — it
+    must be absolute too (same 2026-10-02 class as integrate)."""
+
+    class RefusingRemove(FakeGit):
+        def __call__(self, cmd, cwd=None):
+            rc, out, err = super().__call__(cmd, cwd=cwd)
+            if cmd[1:3] == ["worktree", "remove"]:
+                return (1, "", "contains modified files")
+            return rc, out, err
+
+    fake = RefusingRemove(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([("b0", "d0")]),
+        status_output=" M real.py\n",
+    )
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root=str(tmp_path))
+    assert res["status"] == "error"
+    status_cwds = [c for cmd, c in fake.calls if cmd[1:2] == ["status"]]
+    assert status_cwds == [str(tmp_path / ".claude/worktrees/x")]

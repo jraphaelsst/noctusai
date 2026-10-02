@@ -695,6 +695,8 @@ def _default_run_check(
     root: pathlib.Path,
     prod_env_path: str | None = None,
     env_fleet_path: str | None = None,
+    schema_drift_check: Callable[..., dict[str, Any]] | None = None,
+    schema_exposure_check: Callable[..., dict[str, Any]] | None = None,
 ) -> tuple[bool, str]:
     """Real runner — shells the deploy-relevant build/test (mirrors
     noctus.dev.vite_build / pytest); framework_deps composes the existing
@@ -871,7 +873,8 @@ def _default_run_check(
         # /api/health stayed 200 while the startup hook failed).
         from . import ensure_schema_exposure as _ese
 
-        result = _ese.check_schema_exposure(
+        exposure_fn = schema_exposure_check or _ese.check_schema_exposure
+        result = exposure_fn(
             action="check", products=[product], products_dir=root / "products"
         )
         if result["status"] in ("not_configured", "unavailable", "error"):
@@ -900,7 +903,8 @@ def _default_run_check(
         # looked fine right up until a real request hit them.
         from . import schema_drift as _sd
 
-        result = _sd.check_schema_drift(product, products_dir=root / "products")
+        drift_fn = schema_drift_check or _sd.check_schema_drift
+        result = drift_fn(product, products_dir=root / "products")
         if result["status"] in ("not_configured", "undeterminable", "error"):
             return False, (
                 f"schema_drift BLOCKED ({result['status']}) — "
@@ -1063,6 +1067,8 @@ def predeploy_check(
     fix_framework_deps: Callable[[pathlib.Path, str], bool] | None = None,
     repo_root: str | None = None,
     worktree_path: str | None = None,
+    schema_drift_check: Callable[..., dict[str, Any]] | None = None,
+    schema_exposure_check: Callable[..., dict[str, Any]] | None = None,
     now: Callable[[], _dt.datetime] | None = None,
 ) -> dict[str, Any]:
     """Run the deploy-relevant checks for `product`; classify + (auto_fix the
@@ -1076,7 +1082,8 @@ def predeploy_check(
     # default runner threads the resolved prod env + env-fleet paths; injected
     # runners keep the 3-arg (check, product, root) contract the tests rely on.
     runner = run_check or functools.partial(
-        _default_run_check, prod_env_path=prod_env_path, env_fleet_path=env_fleet_path
+        _default_run_check, prod_env_path=prod_env_path, env_fleet_path=env_fleet_path,
+        schema_drift_check=schema_drift_check, schema_exposure_check=schema_exposure_check,
     )
     logger = log_fn or _pl.log_learning
     fixer = fix_framework_deps or _default_fix_framework_deps
