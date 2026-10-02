@@ -86,6 +86,11 @@ Celula = {
   "pcen": null | {titulo, mensagem, explicacao[], validade_ate, vencida, ciente, ciente_em, duvida_em, acoes}
          // Receita "positiva com efeitos de negativa" 2ª via ONLY (owner 2026-10-01): judged by its PRINTED validity, not the 30-day age;
          // the operator acknowledges via POST …/certidoes/resultados/{id}/ciencia-pcen {acao:"entendi"|"duvida"}
+  "pendencia": null | "credencial_govbr"
+         // C1: PENDING (never an error) for a fixable reason — Dívida Ativa SP needs the office's GOV.BR login
+         // (InfoSimples `pge/sp/cndt` 606 without it). `status`/`status_processamento` stay "pendente", `erro_mensagem`
+         // carries the pt-BR text, the cell stays uploadable; the pipeline does NOT call InfoSimples until the org sets
+         // the login (Configurações → Chaves API). The contract gate already reads it as `faltando`, not an error.
 }
 ```
 Rules (pinned):
