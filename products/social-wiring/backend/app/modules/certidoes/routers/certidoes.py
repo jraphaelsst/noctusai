@@ -408,6 +408,19 @@ async def listar_tipos_certidoes(_auth=Depends(get_current_user_org)):
     return success_response(get_certidoes_tipos())
 
 
+def busca_or_filter(busca: str) -> str:
+    """The PostgREST `or` expression for the consultas `busca` box.
+
+    `documento` is stored PUNCTUATED since migration 187, so a bare-digits
+    needle misses it; `documentos_chave` (the trigger-maintained digits
+    haystack) catches it. STRICTLY ADDITIVE to the raw `nome`/`documento`
+    pass: a name-only needle yields no key clause.
+    """
+    clauses = [f"nome.ilike.%{busca}%", f"documento.ilike.%{busca}%"]
+    clauses += [f"documentos_chave.ilike.%{k}%" for k in chaves_do_needle(busca)]
+    return ",".join(clauses)
+
+
 @router.get("/consultas")
 async def listar_consultas(
     busca: Optional[str] = Query(None),
@@ -435,14 +448,7 @@ async def listar_consultas(
         if status:
             query = query.eq("status", status)
         if busca:
-            # `documento` is stored PUNCTUATED since migration 187, so a bare
-            # digits needle misses it; `documentos_chave` (trigger-maintained
-            # digits haystack) catches it. STRICTLY ADDITIVE to the raw pass.
-            clauses = [f"nome.ilike.%{busca}%", f"documento.ilike.%{busca}%"]
-            clauses += [
-                f"documentos_chave.ilike.%{k}%" for k in chaves_do_needle(busca)
-            ]
-            query = query.or_(",".join(clauses))
+            query = query.or_(busca_or_filter(busca))
         return query
 
     count_result = _scoped(
