@@ -1386,7 +1386,8 @@ def undo_merge(client: Any, org_id: UUID, merge_id: UUID) -> str:
 
 # ─── read surface (Slice B builds routers on top of these) ──────────────
 
-#: `GET /api/clientes?q=` columns — nome, celular, email (leads-novo-lead
+#: `GET /api/clientes?q=` columns — nome, celular, email (+ the document-number
+#: key `documentos_chave`, `_ids_matching_termo`) (leads-novo-lead
 #: 2026-09-24). Used to be `nome` alone: the board search and the
 #: Base-de-Leads "Novo lead" cliente picker both need to find "Fernando" by
 #: typing his phone or his e-mail just as much as his name — a lead/atendimento
@@ -1423,6 +1424,23 @@ def _ids_matching_termo(client: Any, org_id: UUID, termo: str) -> set[str]:
             .select("id")
             .eq("org_id", str(org_id))
             .ilike(coluna, f"%{termo}%")
+            .limit(_PAGE)
+            .execute()
+        ).data or []
+        ids.update(str(r["id"]) for r in rows if r.get("id"))
+    # Document numbers (owner rule 2026-10-01, `canonical-identifiers`): the
+    # number a card RENDERS (`412.954.238-98`), a bare one and a fragment
+    # (`412954`) all find the cliente. The needle is keyed the way the
+    # database keys the haystack (`clientes.documentos_chave`, maintained by
+    # trigger — migration 187) and the match is STRICTLY ADDITIVE to the
+    # passes above. Floored at `CHAVE_BUSCA_MIN` and digit-bearing, so a name
+    # fragment never scans the key column.
+    for chave in idf.chaves_do_needle(termo):
+        rows = (
+            _t(client, "clientes")
+            .select("id")
+            .eq("org_id", str(org_id))
+            .ilike("documentos_chave", f"%{chave}%")
             .limit(_PAGE)
             .execute()
         ).data or []

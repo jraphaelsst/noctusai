@@ -26,6 +26,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app.modules.card_hub import ficha_cadastral_service as ficha_svc
 from app.modules.card_hub import identidade_extracao_service as svc
 from noctusai_lib.integrations.storage import FakeStorageBackend
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
@@ -262,8 +263,9 @@ class TestEnderecoTier:
 
 class TestFichaLidaAntesDaIdentidade:
     """A bank form read BEFORE the other party's identity document stores
-    that person unmatched; when their CPF lands the form is re-queued and a
-    fresh read applies them."""
+    that person unmatched; when their CPF lands the STORED reading is applied
+    to them — zero model calls (it used to re-queue the whole form for a paid
+    vision re-read, once per party whose CPF arrived later)."""
 
     async def _ficha_com_terceiro_nao_casado(self, scoped):
         outro_id = str(uuid4())
@@ -282,7 +284,7 @@ class TestFichaLidaAntesDaIdentidade:
                 _pessoa(papel="proponente", nome="FULANO", cpf=CPF_PROPONENTE),
                 # Name differs from the registry and no CPF on file: unmatched.
                 _pessoa(papel="conjuge", nome="B. DA SILVA", cpf=CPF_CONJUGE,
-                        profissao="médico"),
+                        profissao="médico", endereco=_endereco()),
             ),
             source=TextSource.TEXT_LAYER,
         )
@@ -300,36 +302,52 @@ class TestFichaLidaAntesDaIdentidade:
         )
 
     @pytest.mark.asyncio
-    async def test_cpf_arriving_later_requeues_and_reread_applies(self, client, scoped):
+    async def test_cpf_arriving_later_applies_the_stored_reading_without_a_reread(
+        self, client, scoped,
+    ):
         cid, did, outro_id, storage, lida = await self._ficha_com_terceiro_nao_casado(scoped)
 
         self._gravar_cpf(scoped, outro_id, CPF_CONJUGE)
-        assert _documento(scoped, did)["extracao_status"] == "pendente"
 
-        await _extrair(scoped, storage, cid, did, lida)
-        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        # No paid re-read queued: the document stays terminal-ok…
+        doc = _documento(scoped, did)
+        assert doc["extracao_status"] != "pendente"
+        # …and the person was attributed + applied from the STORED JSON.
+        pessoas = doc["extracao_ficha_cadastral"]["pessoas"]
         assert pessoas[1]["cliente_id_aplicado"] == outro_id
-        assert _cliente(scoped, outro_id)["profissao"] == "médico"
+        outro = _cliente(scoped, outro_id)
+        assert outro["profissao"] == "médico"
+        assert outro["profissao_origem"] == "ficha_cadastral"
+        assert outro["endereco_cep"] == "01234-567"
 
     @pytest.mark.asyncio
-    async def test_cpf_matching_nobody_does_not_requeue(self, client, scoped):
+    async def test_the_cpf_matches_in_any_spelling(self, client, scoped):
+        _cid, did, outro_id, _storage, _lida = await self._ficha_com_terceiro_nao_casado(scoped)
+        # The ficha stored `529.982.247-25`; the identity document read it bare.
+        self._gravar_cpf(scoped, outro_id, "52998224725")
+        assert _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"][1][
+            "cliente_id_aplicado"
+        ] == outro_id
+
+    @pytest.mark.asyncio
+    async def test_cpf_matching_nobody_applies_nothing(self, client, scoped):
         _cid, did, outro_id, _storage, _lida = await self._ficha_com_terceiro_nao_casado(scoped)
         self._gravar_cpf(scoped, outro_id, CPF_TERCEIRO)
-        assert _documento(scoped, did)["extracao_status"] != "pendente"
+        doc = _documento(scoped, did)
+        assert doc["extracao_status"] != "pendente"
+        assert doc["extracao_ficha_cadastral"]["pessoas"][1]["cliente_id_aplicado"] is None
+        assert _cliente(scoped, outro_id)["profissao"] is None
 
     @pytest.mark.asyncio
-    async def test_no_requeue_loop_once_matched_or_attempts_exhausted(self, client, scoped):
-        cid, did, outro_id, storage, lida = await self._ficha_com_terceiro_nao_casado(scoped)
-        scoped.table("cliente_documentos").update(
-            {"extracao_tentativas": svc.MAX_TENTATIVAS}
-        ).eq("id", did).execute()
+    async def test_applying_twice_is_idempotent_and_never_loops(self, client, scoped):
+        _cid, did, outro_id, _storage, _lida = await self._ficha_com_terceiro_nao_casado(scoped)
         self._gravar_cpf(scoped, outro_id, CPF_CONJUGE)
-        assert _documento(scoped, did)["extracao_status"] != "pendente"
-        scoped.table("cliente_documentos").update(
-            {"extracao_tentativas": 1, "extracao_status": "pendente"}
-        ).eq("id", did).execute()
-        await _extrair(scoped, storage, cid, did, lida)
-        self._gravar_cpf(scoped, cid, CPF_PROPONENTE)
+        primeiro = _cliente(scoped, outro_id)["profissao_em"]
+        resultado = ficha_svc.reaplicar_fichas_pelo_cpf(
+            scoped, ORG_UUID, UUID(outro_id), CPF_CONJUGE,
+        )
+        assert resultado["pessoas"] == 0 and resultado["documentos"] == []
+        assert _cliente(scoped, outro_id)["profissao_em"] == primeiro
         assert _documento(scoped, did)["extracao_status"] != "pendente"
 
 

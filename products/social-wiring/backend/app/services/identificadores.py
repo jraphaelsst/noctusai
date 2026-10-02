@@ -143,6 +143,12 @@ def para_gravar(
     return Gravacao(texto, True, False, leitura.motivo)
 
 
+def cabe(tipo: str, valor: Any, **ctx: Optional[str]) -> bool:
+    """Does `valor` FIT identifier `tipo` (shape and, where it exists, the
+    check digit)?"""
+    return bool(_texto(valor)) and ident.ler(tipo, valor, **ctx).cabe
+
+
 def canonico_ou_bruto(tipo: str, valor: Any, **ctx: Optional[str]) -> Optional[str]:
     """`valor` in canonical form when it fits, else as read (trimmed), else
     None for empty — the display / compare form (never a destructive rewrite
@@ -195,6 +201,38 @@ def chave(tipo: str, valor: Any, **ctx: Optional[str]) -> Optional[str]:
     return ident.chave_busca(tipo, valor, **ctx)
 
 
+def documentos_chave(pares: list[tuple[str, Any, dict]]) -> Optional[str]:
+    """Python twin of the `documentos_chave` TRIGGER column (migration 187):
+    the space-joined `chave` of each `(tipo, valor, ctx)` — what the database
+    stores beside the row so a search can match the number a screen RENDERS.
+    Fixtures derive the column through this (mocks have no triggers —
+    `feedback_canonicalizing_a_value_breaks_search`, leg 4)."""
+    chaves = [k for tipo, valor, ctx in pares if (k := chave(tipo, valor, **ctx))]
+    return " ".join(chaves) or None
+
+
+def documentos_chave_cliente(row: dict) -> Optional[str]:
+    """`clientes.documentos_chave` for a row (cpf + rg, RG read with its
+    órgão's UF)."""
+    uf = uf_do_orgao(row.get("rg_orgao_expedidor"))
+    return documentos_chave([
+        ("cpf", row.get("cpf"), {}),
+        ("rg", row.get("rg"), {"uf": uf} if uf else {}),
+    ])
+
+
+def documentos_chave_imovel(row: dict, municipio: Optional[str] = None) -> Optional[str]:
+    """`imovel_dados.documentos_chave` for a row (matrícula + inscrição
+    municipal read in its município's mask)."""
+    return documentos_chave([
+        ("matricula_imovel", row.get("numero_matricula"), {}),
+        (
+            "inscricao_municipal", row.get("prefeitura_cadastro_imobiliario"),
+            {"municipio": municipio} if municipio else {},
+        ),
+    ])
+
+
 def needle_chave(termo: Any) -> Optional[str]:
     """The key a typed search term is matched by against `*_chave` columns:
     alphanumerics of the term, uppercased, accent-folded — `None` when the
@@ -245,10 +283,14 @@ __all__ = [
     "TIPO_POR_CAMPO",
     "TIPO_POR_CAMPO_CLIENTE",
     "TIPO_POR_CAMPO_IMOVEL",
+    "cabe",
     "canonico_ou_bruto",
     "cartorios_iguais",
     "chave",
     "chaves_do_needle",
+    "documentos_chave",
+    "documentos_chave_cliente",
+    "documentos_chave_imovel",
     "cns_do_cartorio",
     "iguais",
     "needle_chave",

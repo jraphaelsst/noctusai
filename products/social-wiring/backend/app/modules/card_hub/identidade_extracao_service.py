@@ -1282,14 +1282,19 @@ def aplicar_campos_ao_cliente(
 
     # A CPF that just became known may be what an already-read bank form was
     # waiting for (it named this person before their identity document
-    # existed and stored them unmatched) — re-queue that form for a fresh
-    # read. Local import: ficha_cadastral_service imports this module.
+    # existed and stored them unmatched). The form's STORED reading is applied
+    # to this person right now — zero model calls (it used to be re-queued for
+    # a full vision re-read, once per party whose CPF arrived later; owner rule
+    # 2026-10-01, `canonical-identifiers`). Any conflict that apply opens
+    # joins this call's own, so the caller announces it. Local import:
+    # ficha_cadastral_service imports this module.
     if aplicados.get("cpf") and updates.get("cpf"):
         from app.modules.card_hub import ficha_cadastral_service
 
-        ficha_cadastral_service.reenfileirar_fichas_pelo_cpf(
+        reaplicado = ficha_cadastral_service.reaplicar_fichas_pelo_cpf(
             client, org_id, cliente_id, updates["cpf"], excluir_documento_id=documento_id,
         )
+        conflitos.extend(reaplicado["conflitos"])
 
     return aplicados, conflitos
 
@@ -2454,7 +2459,8 @@ def _decidir_endereco_pendente(
 
 
 def backfill_resolver_conflitos_pendentes(
-    client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None
+    client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None,
+    campos: Optional[frozenset[str]] = None,
 ) -> dict[str, list[dict]]:
     """The callable BACKFILL owner directive (2026-09-29) explicitly asks
     for: re-consult `divergencia_resolucao` against every conflict ALREADY
@@ -2470,6 +2476,11 @@ def backfill_resolver_conflitos_pendentes(
     reported under `"ignorado_composto"` rather than silently skipped or
     mis-applied through a scalar write.
 
+    `campos`, when given, restricts the pass to those `campo` names (the
+    identifier backfill, `identificadores_backfill`, re-resolves only
+    `cpf` / `rg` / `rg_orgao_expedidor`); `None` is every scalar field, as
+    before.
+
     Returns `{"resolvidos": [...], "ainda_pendentes": [...],
     "ignorado_composto": [...]}` — one row (the original conflict, plus
     `decisao_regra`/`decisao_vencedor` on a resolved one) per conflict
@@ -2480,6 +2491,8 @@ def backfill_resolver_conflitos_pendentes(
     ignorado_composto: list[dict] = []
     now = _now()
     pendentes = conflitos_pendentes(client, org_id, cliente_id)
+    if campos is not None:
+        pendentes = [r for r in pendentes if r.get("campo") in campos]
 
     # Live evidence, loaded once per cliente: their row + their own and
     # their linked spouse's non-deleted documents (`evidencia_viva`).

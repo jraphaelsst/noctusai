@@ -41,10 +41,8 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any, Optional
 
-from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.legibilidade import AVISO_LEITURA_COMPROMETIDA
 from noctusai_lib.integrations.documents.name import chave_nome
-from noctusai_lib.integrations.documents.rg import only_alnum
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
@@ -52,6 +50,7 @@ from noctusai_lib.integrations.documents.types import (
     IdentityFields,
     TextSource,
 )
+from noctusai_lib.primitives import identificador as _ident
 
 logger = logging.getLogger(__name__)
 
@@ -207,10 +206,12 @@ def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
     is exact-modulo-normalisation, and a genuine difference — even a
     dropped middle name — is a disagreement, never a match.
     """
-    if campo == "cpf":
-        return only_digits(str(a)) == only_digits(str(b))
-    if campo == "rg":
-        return only_alnum(str(a)) == only_alnum(str(b))
+    if campo in ("cpf", "rg"):
+        # The ONE identifier registry (`primitives.identificador`, owner rule
+        # 2026-10-01): same identifier in any punctuation, and an RG read
+        # without its check digit (a CNH) against the full one is the SAME
+        # RG — an agreement, not a disagreement that blanks or demotes it.
+        return _ident.equivalentes(campo, str(a), str(b)) is True
     if campo == "nome":
         return chave_nome(str(a)) == chave_nome(str(b))
     if campo in ("data_nascimento", "data_casamento"):
@@ -220,6 +221,30 @@ def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
     # IdentityFields`'s per-field comments) — an accent/case difference on
     # an otherwise-identical token is transcription noise, not a new fact.
     return strip_accents_upper(str(a)) == strip_accents_upper(str(b))
+
+
+#: Fields whose check digit can break a tie between two DISAGREEING reads.
+_CAMPOS_COM_DV = frozenset({"cpf", "rg"})
+
+
+def _vencedor_por_dv(campo: str, a: Any, b: Any) -> Optional[str]:
+    """`'original'` / `'escalada'` when EXACTLY ONE of two disagreeing reads
+    passes the field's check digit and the other fails it, else `None`.
+
+    A one-digit OCR slip passes a mod-11 check 1 time in ~11 (CPF: 1 in 100),
+    so a reading that verifies against one that does not is overwhelmingly
+    the right one — deterministic, zero extra API cost, and the only honest
+    way to break a tie between two models (`15.668.564-3` vs
+    `16.669.554-3`). Both valid, both invalid, or a field with no check
+    digit stays what it was: a disagreement."""
+    if campo not in _CAMPOS_COM_DV:
+        return None
+    la, lb = _ident.ler(campo, str(a)), _ident.ler(campo, str(b))
+    if la.dv_ok is True and lb.dv_ok is False:
+        return "original"
+    if lb.dv_ok is True and la.dv_ok is False:
+        return "escalada"
+    return None
 
 
 def _somar_codigo(atual: Optional[str], codigo: str) -> str:
@@ -289,6 +314,8 @@ def mesclar(
     confirmados: list[str] = []
     conflitantes: list[str] = []
     adotados: list[str] = []
+    dv_adotados: list[str] = []
+    dv_mantidos: list[str] = []
 
     for campo in CAMPOS:
         tinha = original.presente(campo)
@@ -312,6 +339,24 @@ def mesclar(
                 if nova_conf is not atual_conf:
                     updates[f"{campo}_confianca"] = nova_conf
                     confirmados.append(campo)
+            elif (vencedor_dv := _vencedor_por_dv(campo, v0, v1)) is not None:
+                if vencedor_dv == "original":
+                    # The first read verifies, the escalated one does not —
+                    # keep the first, untouched.
+                    dv_mantidos.append(campo)
+                else:
+                    # The escalated read verifies, the first does not — adopt
+                    # it, but as a `baixa` suggestion with a divergence note:
+                    # still human-gated, never alta.
+                    updates[campo] = v1
+                    updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
+                    updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
+                    if campo == "rg":
+                        updates["rg_orgao"] = escalada.rg_orgao
+                        updates["rg_orgao_confianca"] = (
+                            ExtractionConfidence.BAIXA if escalada.rg_orgao else ExtractionConfidence.NENHUMA
+                        )
+                    dv_adotados.append(campo)
             elif campo in _ADOTA_ESCALADA_NA_DIVERGENCIA:
                 # Measured exception (P2 corpus, 2026-09-29): on every RG
                 # disagreement (3/3 CNHs) the escalated read matched the
@@ -356,7 +401,7 @@ def mesclar(
         updates["data_emissao_confianca"] = escalada.data_emissao_confianca
         updates["data_emissao_rotulo"] = escalada.data_emissao_rotulo
 
-    if not updates and not estava_comprometida:
+    if not updates and not estava_comprometida and not dv_mantidos:
         # Nothing changed and there was no gate to lift — no provenance
         # worth recording.
         return original
@@ -372,6 +417,16 @@ def mesclar(
         partes.append(
             "divergiu (adotado o valor do modelo superior como sugestão baixa — "
             "confirme): " + ", ".join(adotados)
+        )
+    if dv_adotados:
+        partes.append(
+            "divergiu (adotado o valor com dígito verificador válido do modelo "
+            "superior como sugestão baixa — confirme): " + ", ".join(dv_adotados)
+        )
+    if dv_mantidos:
+        partes.append(
+            "divergiu (mantido o valor da primeira leitura, o único com dígito "
+            "verificador válido): " + ", ".join(dv_mantidos)
         )
     if conflitantes:
         partes.append(
