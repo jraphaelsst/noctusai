@@ -130,9 +130,15 @@ def test_rebuild_decision_product_runtime():
     assert d["needed"] is True and d["products"] == ["core"]
 
 
-def test_rebuild_decision_fleet_wide_on_compose():
-    d = DP._rebuild_decision(["docker-compose.yml"])
-    assert d["needed"] is True and d["fleet_wide"] is True
+def test_rebuild_decision_compose_is_config_not_rebuild():
+    d = DP._rebuild_decision(["docker-compose.yml", "deploy/fleet/docker-compose.prod.yml"])
+    assert d["needed"] is False and d["fleet_wide"] is False
+    assert d["config_changed"] is True and d["recreate_needed"] is True
+
+
+def test_rebuild_decision_fleet_wide_on_dockerfile_and_build_script():
+    assert DP._rebuild_decision(["products/seed/Dockerfile"])["fleet_wide"] is True
+    assert DP._rebuild_decision(["scripts/infra/build-and-push.sh"])["fleet_wide"] is True
 
 
 def test_rebuild_decision_docs_only_no_rebuild():
@@ -307,7 +313,7 @@ class TestLegacyDeployPathIsNotFleetWide:
 
     def test_real_fleet_dockerfile_still_triggers(self):
         """The exclusion must be surgical — fleet paths keep working."""
-        assert DP._rebuild_decision(["deploy/fleet/docker-compose.prod.yml"])["fleet_wide"] is True
+        assert DP._rebuild_decision(["deploy/fleet/docker-compose.prod.yml"])["fleet_wide"] is False
         assert DP._rebuild_decision(["products/seed/Dockerfile"])["fleet_wide"] is True
         assert DP._rebuild_decision(["seed/lib/backend/x.py"])["fleet_wide"] is True
 

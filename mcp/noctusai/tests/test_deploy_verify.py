@@ -230,6 +230,29 @@ def test_fleet_wide_seed_change_flags_drift_for_every_actionable_product(tmp_pat
     assert erp["fleet_wide_change"] is True
 
 
+def test_compose_and_other_product_changes_are_not_drift(tmp_path):
+    """2026-10-02 false positive: a new compose service block + another
+    product's paths + core migrations must not flag an unrelated image."""
+    kw = _with_compose(tmp_path)
+    old = "OLDCOMPOSEONLY000000000000000000"
+    r, vps, git = _run(
+        containers={
+            "erp-imobiliario": {"revision": old}, "igig": {"revision": old},
+            "orbity": {"revision": _SHA}, "seed": {"revision": old},
+            "social-wiring": {"revision": _SHA}, "core": {"revision": _SHA},
+        },
+        known_commits={old},
+        diffs={old: [
+            "deploy/fleet/docker-compose.prod.yml", "docker-compose.yml",
+            "products/core/backend/migrations/058_x.sql",
+            "products/store/frontend/src/App.tsx",
+        ]},
+        **kw,
+    )
+    assert "igig" not in r["drifted"] and "erp-imobiliario" not in r["drifted"]
+    assert "seed" not in r["drifted"]
+
+
 def test_raw_sha_inequality_alone_is_not_drift():
     """The 2026-08-17 fix in one assertion: stale-but-untouched must be ok."""
     old = "STALEBUTSAFEREV00000000000000000"

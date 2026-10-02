@@ -59,9 +59,19 @@ _BANNED_TOKENS = ("reset", "checkout", "restore", "clean", "--hard", "--force", 
 # product container. Docs / projects / KB / mcp-toolkit changes do NOT
 # (validation-freshness, KB § PATTERNS/containerization.md § 12b).
 _RUNTIME_PRODUCT = re.compile(r"^products/([^/]+)/(?:backend|frontend)/")
+# Image build inputs shared by EVERY image: a Dockerfile (any depth), `seed/**`
+# (the baked seed base), and the build scripts — exactly the fleet-wide trigger
+# `.github/workflows/build-and-push.yml` uses (`seed/` or build-script change →
+# whole active set). Compose / edge config is deliberately NOT here: it is
+# runtime config, never COPYed into an image (see `_RUNTIME_CONFIG`).
 _RUNTIME_FLEET = re.compile(
-    r"(?:^|/)(?:Dockerfile[^/]*|docker-compose[^/]*\.ya?ml|config\.yml)$|^seed/"
+    r"(?:^|/)Dockerfile[^/]*$|^seed/|^scripts/infra/build-(?:and-push|base-images)\.sh$"
 )
+# Runtime config: changes how containers are CREATED (env, new service blocks,
+# tunnel ingress) but is not baked into any image. A change here never makes a
+# running image stale (so it is NOT drift / not a rebuild) — it only means
+# `up -d` must run for it to take effect. Surfaced as a separate signal.
+_RUNTIME_CONFIG = re.compile(r"(?:^|/)(?:docker-compose[^/]*\.ya?ml|config\.yml)$")
 # Auto-generated/cosmetic files that match a runtime path but are behaviourally
 # a no-op — excluded from the rebuild trigger. The pre-commit stamps
 # `_version_static.py` (the git-sha version string) on every commit, so without
@@ -84,13 +94,15 @@ _NON_FLEET_DEPLOY = re.compile(r"^deploy/legacy/")
 def _rebuild_decision(files: list[str]) -> dict[str, Any]:
     """Derive — never eyeball — whether the incoming diff needs a rebuild and
     of which products. Per-product runtime path → that product; a Dockerfile /
-    compose / edge-config / seed change → fleet-wide. Cosmetic auto-generated
+    Dockerfile / seed / build-script change → fleet-wide (mirrors build-and-push.yml);
+    compose / edge-config → `config_changed` only (recreate, not rebuild). Cosmetic auto-generated
     files (the pre-commit's `_version_static.py` version-stamp, written on EVERY
     commit) are excluded — otherwise every deploy_pull falsely flags a fleet
     rebuild for a no-op version string."""
     products: set[str] = set()
     reasons: list[str] = []
     non_fleet_reasons: list[str] = []
+    config_reasons: list[str] = []
     fleet = False
     for f in files:
         if _COSMETIC_NONRUNTIME.search(f):
@@ -109,8 +121,16 @@ def _rebuild_decision(files: list[str]) -> dict[str, Any]:
         if _RUNTIME_FLEET.search(f):
             fleet = True
             reasons.append(f)
+            continue
+        if _RUNTIME_CONFIG.search(f):
+            config_reasons.append(f)
     return {
+        # `needed` = an IMAGE rebuild (build inputs changed). Compose/config
+        # changes are the separate `config_changed` / `recreate_needed` signal.
         "needed": bool(products) or fleet,
+        "config_changed": bool(config_reasons),
+        "config_reasons": config_reasons[:20],
+        "recreate_needed": bool(products) or fleet or bool(config_reasons),
         "products": sorted(products),
         "fleet_wide": fleet,
         "reasons": reasons[:20],
@@ -339,7 +359,8 @@ def deploy_pull(
     if not confirm:
         return {**base, "status": "planned", "exit_code": 0,
                 "message": "clean fast-forward available — pass confirm=True to deploy.",
-                "would_backup": True, "would_rebuild": rebuild["needed"]}
+                "would_backup": True, "would_rebuild": rebuild["needed"],
+                "would_recreate": rebuild["recreate_needed"]}
 
     # ── BACKUP (C1) ──
     utc = clock().strftime("%Y%m%d-%H%M%S")
@@ -442,7 +463,13 @@ def deploy_pull(
                 + ", ".join(rebuild["products"] or ["fleet-wide"])
                 + " — run noctus.dev.deploy_image <product> (C2 atomic redeploy)"
                 if rebuild["needed"]
-                else "no rebuild needed (docs/non-runtime only)."
+                else (
+                    "no image rebuild needed; compose/config changed ("
+                    + ", ".join(rebuild["config_reasons"][:3])
+                    + ") — `up -d` (noctus.dev.vps_recreate) applies it."
+                    if rebuild["config_changed"]
+                    else "no rebuild needed (docs/non-runtime only)."
+                )
             )
             + (
                 f" CACHE MIRROR FAILED — code IS deployed, cache is stale: "
