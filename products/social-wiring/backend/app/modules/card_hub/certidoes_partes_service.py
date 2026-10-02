@@ -62,8 +62,10 @@ from app.modules.certidoes.registry import (
     CUSTOM_ROW_TIPO,
     MANUAL_CONFIG_BY_TIPO,
     MATRIZ_LINHAS,
+    PENDENCIA_CREDENCIAL_GOVBR,
     TJSP_TIPO,
     aplicavel_a_tipo_documento,
+    e_pendencia_de_credencial,
 )
 from app.services import table_reads
 
@@ -238,7 +240,7 @@ def _na(tipo: Optional[str]) -> dict:
         "idade_dias": None, "stale_para_contrato": False, "arquivo_url": None,
         "tem_arquivo": False, "arquivo_nome": None, "origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
-        "segunda_via": False, "pcen": None,
+        "segunda_via": False, "pcen": None, "pendencia": None,
     }
 
 
@@ -297,6 +299,9 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "erro_mensagem": row.get("erro_mensagem"),
         "segunda_via": certidao_pcen.e_segunda_via(row.get("api_response")),
         "pcen": _bloco_pcen(row, validade, hoje) if excecao else None,
+        # PENDING for a reason a human can fix (not an error): the org has no
+        # GOV.BR login for this tipo, `erro_mensagem` carries the pt-BR text.
+        "pendencia": PENDENCIA_CREDENCIAL_GOVBR if e_pendencia_de_credencial(row) else None,
     }
 
 

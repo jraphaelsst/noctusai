@@ -90,10 +90,13 @@ from app.modules.certidoes.registry import (
     INFOSIMPLES_BASE_URL,
     PARAM_BUILDERS,
     RESULTADO_VALUES,
+    SEGREDOS_DE_PARAMS,
     TJSP_COOLDOWN_SECONDS,
     TJSP_TIPO,
     config_for,
+    e_pendencia_de_credencial,
     parse_resultado,
+    pendencia_de_credencial,
 )
 
 logger = logging.getLogger(__name__)
@@ -285,7 +288,12 @@ async def _fetch_certidao(
     for attempt in range(1, MAX_RETRIES + 1):
         t0 = time.monotonic()
         try:
-            resp = await client.get(url, params=params, timeout=timeout)
+            if any(k in params for k in SEGREDOS_DE_PARAMS):
+                # A GOV.BR login never rides in a query string (logged by
+                # httpx / every proxy hop): form body instead.
+                resp = await client.post(url, data=params, timeout=timeout)
+            else:
+                resp = await client.get(url, params=params, timeout=timeout)
             data = resp.json()
             obs_atual = _observar(data, getattr(resp, "status_code", None), t0)
 
@@ -1773,6 +1781,21 @@ async def _process_single_certidao(
         or bool(atual_rows[0].get("confirmado_por"))
     )
 
+    # An org without the credential this tipo needs (GOV.BR login for Dívida
+    # Ativa SP) must NOT hit InfoSimples — the call is guaranteed to fail (606)
+    # and is billed. Park the cell as PENDING (never an error) with the pt-BR
+    # reason; manual upload stays available on it. A human-locked resultado is
+    # left exactly as it is.
+    pendencia = pendencia_de_credencial(config, org_id)
+    if pendencia:
+        if not travado:
+            db.table(RESULTADOS).update({
+                "status": "pendente",
+                "erro_mensagem": pendencia,
+            }).eq("id", resultado_id).execute()
+        _atualizar_status_consulta(consulta_id, org_id, db)
+        return
+
     # Update status to processando and record when the API call is about to
     # happen. api_requested_at survives status resets (reprocessing) so the
     # TJSP cooldown is always enforced — even after a resultado is reset from
@@ -1998,15 +2021,19 @@ def _atualizar_status_consulta(consulta_id: str, org_id: Optional[str], db) -> N
     - All done, at least one success → "concluida"
     - All done, zero successes → "erro"
     """
-    query = db.table(RESULTADOS).select("status").eq("consulta_id", consulta_id)
+    query = db.table(RESULTADOS).select("status, erro_mensagem").eq("consulta_id", consulta_id)
     if org_id:
         query = query.eq("org_id", str(org_id))
     rows = query.execute().data or []
 
     sucessos = sum(1 for r in rows if r["status"] == "sucesso")
     erros = sum(1 for r in rows if r["status"] == "erro")
+    # A cell parked for a missing org credential waits on a human, not on the
+    # pipeline — it must not keep the consulta "processando" forever.
     still_pending = sum(
-        1 for r in rows if r["status"] in ("pendente", "processando", "na_fila")
+        1 for r in rows
+        if r["status"] in ("pendente", "processando", "na_fila")
+        and not e_pendencia_de_credencial(r)
     )
 
     if still_pending > 0:

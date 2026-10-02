@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_EMAIL_ENVIO,
+    govbr_login,
     resolve_key,
 )
 
@@ -138,7 +139,12 @@ CERTIDOES_CONFIG = [
         "nome": "Dívida Ativa SP",
         "endpoint": "pge/sp/cndt",
         "ordem": 10,
-        "params_fn": "simples",
+        # InfoSimples answers 606 without a GOV.BR login (44/44 failures in
+        # prod, 2026-10-01). `requer_credencial` makes the pipeline refuse to
+        # call (and bill) it until the org configures one — see
+        # `pendencia_de_credencial`.
+        "params_fn": "govbr",
+        "requer_credencial": "govbr",
         "parse_fn": "padrao",
         "response_format": "pdf",
     },
@@ -317,7 +323,51 @@ def _build_params_tjsp(consulta: dict, token: str) -> dict:
     return params
 
 
+def _build_params_govbr(consulta: dict, token: str) -> dict:
+    """Endpoints behind a GOV.BR login (Dívida Ativa SP): token + cpf/cnpj +
+    `login_cpf` + `login_senha`. The login comes from the org credential
+    store. The caller (`pendencia_de_credencial`) has already refused to get
+    here without it; a missing login sends none rather than a half pair."""
+    params = _token_and_doc(consulta, token)
+    org_id = consulta.get("org_id")
+    login = govbr_login(org_id) if org_id else None
+    if login:
+        params["login_cpf"], params["login_senha"] = login
+    return params
+
+
+#: Param keys that are secrets: a request carrying one is sent in the POST
+#: body (never in a URL that httpx/proxies log), and the keys are never echoed
+#: into the watcher's stored `params`.
+SEGREDOS_DE_PARAMS = ("login_cpf", "login_senha", "pkcs12_cert", "pkcs12_pass")
+
+CREDENCIAL_GOVBR = "govbr"
+
+#: The cell/resultado message while the org has no GOV.BR login. ONE constant:
+#: the pipeline writes it, the cell + consulta aggregate recognise it by it.
+MSG_REQUER_GOVBR = (
+    "Requer login GOV.BR do escritório — configure em Configurações "
+    "ou envie o PDF manualmente"
+)
+PENDENCIA_CREDENCIAL_GOVBR = "credencial_govbr"
+
+
+def pendencia_de_credencial(config: dict, org_id: Optional[str]) -> Optional[str]:
+    """The pt-BR message when `config`'s tipo needs a credential the org has
+    not configured (so InfoSimples must NOT be called), else `None`."""
+    if config.get("requer_credencial") == CREDENCIAL_GOVBR and not govbr_login(org_id):
+        return MSG_REQUER_GOVBR
+    return None
+
+
+def e_pendencia_de_credencial(row: Optional[dict]) -> bool:
+    """Is this resultado row parked waiting for an org credential (pending —
+    never an error)? Recognised by the status + the one message constant."""
+    return bool(row) and row.get("status") == "pendente" and row.get("erro_mensagem") == MSG_REQUER_GOVBR
+
+
 PARAM_BUILDERS = {
+    "govbr": _build_params_govbr,
     "cnd_federal": _build_params_cnd_federal,
     "trf3_sp": _build_params_trf3_sp,
     "trf3": _build_params_trf3,

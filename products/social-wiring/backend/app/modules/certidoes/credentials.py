@@ -53,6 +53,12 @@ from app.services.api_keys_store import resolve_api_key
 INFOSIMPLES_TOKEN = "infosimples_token"
 INFOSIMPLES_EMAIL_ENVIO = "infosimples_email_envio"
 OPENAI_API_KEY = "openai_api_key"
+#: The GOV.BR login InfoSimples' `pge/sp/cndt` (Dívida Ativa SP) requires —
+#: the endpoint answers 606 "Parâmetros obrigatórios não foram enviados"
+#: without `login_cpf` + `login_senha`. Both are secrets, stored Fernet-
+#: encrypted like every sibling key, never logged and never returned to the FE.
+INFOSIMPLES_GOVBR_CPF = "infosimples_govbr_cpf"
+INFOSIMPLES_GOVBR_SENHA = "infosimples_govbr_senha"
 
 
 def provider_api_key(provider: str) -> str:
@@ -81,8 +87,24 @@ def resolve_key(name: str, org_id: Optional[str] = None) -> Optional[str]:
     return resolve_api_key(name, org_id)
 
 
+def govbr_login(org_id: Optional[str] = None) -> Optional[tuple[str, str]]:
+    """`(login_cpf, login_senha)` for the org, or `None` unless BOTH are set.
+
+    Half a credential is no credential: sending only one makes InfoSimples
+    bill a call that is guaranteed to fail with 606.
+    """
+    cpf = resolve_key(INFOSIMPLES_GOVBR_CPF, org_id)
+    senha = resolve_key(INFOSIMPLES_GOVBR_SENHA, org_id)
+    if cpf and senha:
+        return cpf, senha
+    return None
+
+
 __all__ = [
     "INFOSIMPLES_EMAIL_ENVIO",
+    "INFOSIMPLES_GOVBR_CPF",
+    "INFOSIMPLES_GOVBR_SENHA",
+    "govbr_login",
     "INFOSIMPLES_TOKEN",
     "OPENAI_API_KEY",
     "provider_api_key",
