@@ -21,6 +21,7 @@ from app.services import identificadores as idf
 
 HERE = Path(__file__).resolve()
 MIGRATION = HERE.parents[1] / "migrations" / "187_identificadores_canonicos.sql"
+MIGRATION_188 = HERE.parents[1] / "migrations" / "188_identificador_funcoes_search_path.sql"
 SEED_TWIN = HERE.parents[4] / "seed" / "lib" / "sql" / "identificador.sql"
 CASES = HERE.parents[4] / "seed" / "lib" / "shared" / "identificador.cases.json"
 
@@ -60,13 +61,58 @@ def test_migration_parses_including_every_plpgsql_body(sql: str):
     assert bodies == 6
 
 
-def test_the_plpgsql_twin_is_byte_identical_to_the_seeds(sql: str):
-    """Drift guard: adopting the twin means COPYING it. A product that edits
-    its copy has forked the contract three runtimes assert against ONE case
-    table (`seed/lib/shared/identificador.cases.json`)."""
+_PIN = " SET search_path FROM CURRENT"
+
+
+def test_the_plpgsql_twin_matches_the_seed_except_for_the_search_path_pin(sql: str):
+    """Drift guard. 187 is an APPLIED, immutable snapshot of the seed as it was
+    (functions without a pinned search_path — the 42883 bug migration 188
+    fixes). The seed has since gained `SET search_path FROM CURRENT` on every
+    function; stripping exactly those pins from the seed must reproduce 187's
+    twin byte for byte, so the ONLY permitted difference is the pin."""
     seed = SEED_TWIN.read_text(encoding="utf-8")
     inicio = seed.index("CREATE OR REPLACE FUNCTION identificador_cpf_dv_ok")
-    assert seed[inicio:].strip() in sql
+    corpo = seed[inicio:].strip()
+    assert corpo.count(_PIN) == len(re.findall(r"^CREATE OR REPLACE FUNCTION", corpo, re.M))
+    assert corpo.replace(_PIN, "") in sql
+
+
+def test_migration_188_pins_exactly_the_functions_the_seed_defines_plus_uf_do_orgao():
+    seed = SEED_TWIN.read_text(encoding="utf-8")
+    seed_fns = set(re.findall(r"^CREATE OR REPLACE FUNCTION (\w+)\(", seed, re.M))
+    assert len(seed_fns) == 5
+    m188 = MIGRATION_188.read_text(encoding="utf-8")
+    pinned = set(
+        re.findall(
+            r"^ALTER FUNCTION social_wiring\.(\w+)\([^)]*\)\s+SET search_path = social_wiring, public;",
+            m188,
+            re.M,
+        )
+    )
+    # `identificador_uf_do_orgao` is product-local (not in the seed twin).
+    assert pinned == seed_fns | {"identificador_uf_do_orgao"}
+    # every function 187 defines without a pin is covered by 188
+    m187 = MIGRATION.read_text(encoding="utf-8")
+    unpinned_187 = {
+        name
+        for name, head in re.findall(
+            r"CREATE OR REPLACE FUNCTION (?:social_wiring\.)?(identificador_\w+|canonizar_identificador)\((.*?)AS \$",
+            m187,
+            re.S,
+        )
+        if "search_path" not in head
+    }
+    assert unpinned_187 <= pinned
+
+
+def test_migration_188_is_idempotent_and_self_checks_every_pin():
+    m188 = MIGRATION_188.read_text(encoding="utf-8")
+    assert "DROP " not in m188 and "CREATE " not in m188.replace("CREATE OR", "")
+    assert "RAISE EXCEPTION 'migration 188: search_path not pinned" in m188
+    assert "proconfig" in m188
+    pglast = pytest.importorskip("pglast")
+    stmts = pglast.parse_sql(m188)
+    assert len(stmts) == 8  # SET + 6 ALTER FUNCTION + DO
 
 
 def test_the_migration_carries_the_parity_block_that_raises_on_drift(sql: str):

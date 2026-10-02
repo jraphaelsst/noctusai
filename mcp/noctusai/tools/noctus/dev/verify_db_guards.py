@@ -3023,6 +3023,289 @@ _COMMUNITY_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — migrations 179-183 (social-wiring, project atendimento-partes-
+# imoveis): the CHECK / partial-UNIQUE guards of the atendimento-parties and
+# imóvel-junction tables. Each probe borrows deterministic existing rows
+# (fail-closed `no_fixture` when absent), runs the forbidden write, and
+# classifies by the violated CONSTRAINT_NAME (a CHECK raises
+# `check_violation`, a unique index `unique_violation`; both carry the
+# constraint/index name). FK columns are filled from real rows because the
+# FKs are checked at statement end — after the CHECK / unique guards fire.
+# ---------------------------------------------------------------------------
+
+_SW_FIXTURES: dict[str, tuple[str, str]] = {
+    "registry": (
+        "SELECT org_id, codigo_canonical FROM social_wiring.imovel_registry LIMIT 1",
+        "v_org, v_codigo",
+    ),
+    # `atendimento` supplies the id only (org comes from `registry`, which the
+    # (org_id, codigo) FK needs); `atendimento_org` also supplies the org, for
+    # the probes that carry no registry fixture.
+    "atendimento": (
+        "SELECT id FROM social_wiring.atendimentos LIMIT 1",
+        "v_atendimento",
+    ),
+    "atendimento_org": (
+        "SELECT org_id, id FROM social_wiring.atendimentos LIMIT 1",
+        "v_org, v_atendimento",
+    ),
+    "cliente": (
+        "SELECT id FROM social_wiring.clientes LIMIT 1",
+        "v_cliente",
+    ),
+    "empresa": (
+        "SELECT id FROM social_wiring.empresas LIMIT 1",
+        "v_empresa",
+    ),
+}
+
+
+def _sw_junction_probe(
+    *,
+    probe_id: str,
+    guard_name: str,
+    migration: str,
+    rationale: str,
+    fixtures: tuple[str, ...],
+    ops_sql: str,
+    sqlstate_condition: str,
+    what: str,
+) -> GuardProbe:
+    """Build a probe over the 179-183 guards. `fixtures` names entries of
+    `_SW_FIXTURES` (every one is `no_fixture` if its source has no row —
+    never a silent pass). `ops_sql` is the forbidden write(s); the guard is
+    proven only when the violated constraint's NAME is exactly `guard_name`."""
+    # Each probe uses at most one org source (`registry` or `atendimento_org`).
+    declares = (
+        "  v_org uuid;\n  v_codigo text;\n  v_atendimento uuid;\n"
+        "  v_cliente uuid;\n  v_empresa uuid;\n  v_constraint text;\n"
+    )
+    setup = ""
+    for name in fixtures:
+        select_sql, into_vars = _SW_FIXTURES[name]
+        last_var = into_vars.split(",")[-1].strip()
+        setup += (
+            f"  {select_sql.replace(' FROM ', ' INTO ' + into_vars + ' FROM ', 1)};\n"
+            f"  IF {last_var} IS NULL THEN\n"
+            f"    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no row for the {name} fixture ({_sql_lit(select_sql)})';\n"
+            f"  END IF;\n"
+        )
+    what_lit = _sql_lit(what)
+    guard_lit = _sql_lit(guard_name)
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=(migration,),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+{declares}BEGIN
+{setup}  BEGIN
+{ops_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
+  EXCEPTION
+    WHEN {sqlstate_condition} THEN
+      GET STACKED DIAGNOSTICS v_constraint = CONSTRAINT_NAME;
+      IF v_constraint = '{guard_lit}' THEN
+        RAISE EXCEPTION 'NOC_PROBE:refused: % refused by %', '{what_lit}', v_constraint;
+      END IF;
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: refused by an unexpected constraint %', v_constraint;
+    WHEN OTHERS THEN
+      IF SQLERRM LIKE 'NOC_PROBE:%' THEN
+        RAISE;
+      END IF;
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+  END;
+END;
+"""),
+    )
+
+
+_M179 = "179_atendimento_partes_pj_e_certidoes_por_parte.sql"
+_M181 = "181_atendimento_imoveis.sql"
+_M182 = "182_cliente_imovel_interesses.sql"
+_M183 = "183_imovel_proprietarios.sql"
+_S = _SW_SCHEMA
+_CHECK = "check_violation"
+_UNIQ = "unique_violation"
+
+_ATD_IMOVEL_INS = (
+    f"    INSERT INTO {_S}.atendimento_imoveis (org_id, atendimento_id, codigo{{extra_cols}})\n"
+    "    VALUES (v_org, v_atendimento, v_codigo{extra_vals});"
+)
+_CLI_INT_INS = (
+    f"    INSERT INTO {_S}.cliente_imovel_interesses (org_id, cliente_id, codigo{{extra_cols}})\n"
+    "    VALUES (v_org, v_cliente, v_codigo{extra_vals});"
+)
+
+
+def _ins(template: str, extra_cols: str = "", extra_vals: str = "") -> str:
+    return template.format(extra_cols=extra_cols, extra_vals=extra_vals)
+
+
+_ATD_IMOVEL_FX = ("registry", "atendimento")
+_CLI_INT_FX = ("registry", "cliente")
+
+_SW_179_183_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="atendimento_partes.pessoa_xor_empresa",
+        guard_name="atendimento_partes_pessoa_xor_empresa",
+        migration=_M179,
+        rationale="A party is exactly one of cliente_id / empresa_id; a row with both (or neither) has no defined identity.",
+        fixtures=("atendimento_org", "cliente", "empresa"),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_partes (org_id, atendimento_id, cliente_id, empresa_id)\n"
+            "    VALUES (v_org, v_atendimento, v_cliente, v_empresa);"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an atendimento_partes row with BOTH cliente_id and empresa_id",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_partes.one_empresa_per_atendimento",
+        guard_name="uq_sw_atendimento_partes_empresa",
+        migration=_M179,
+        rationale="The same empresa must not be added twice as a party of one atendimento (a double-click, not an intent).",
+        fixtures=("atendimento_org", "empresa"),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_partes (org_id, atendimento_id, empresa_id)\n"
+            "    VALUES (v_org, v_atendimento, v_empresa);\n"
+            f"    INSERT INTO {_S}.atendimento_partes (org_id, atendimento_id, empresa_id)\n"
+            "    VALUES (v_org, v_atendimento, v_empresa);"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="a second atendimento_partes row for the same (atendimento, empresa)",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_imoveis.origem_valida",
+        guard_name="atendimento_imoveis_origem_valida",
+        migration=_M181,
+        rationale="origem drives how the junction row is explained to the user; an unknown value would render as nothing.",
+        fixtures=_ATD_IMOVEL_FX,
+        ops_sql=_ins(_ATD_IMOVEL_INS, ", origem", ", 'noc_probe_bogus'"),
+        sqlstate_condition=_CHECK,
+        what="an atendimento_imoveis row with an out-of-vocabulary origem",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_imoveis.one_live_per_codigo",
+        guard_name="uq_sw_atendimento_imoveis_vivo",
+        migration=_M181,
+        rationale="One live junction row per (atendimento, código); a duplicate would double-count the imóvel.",
+        fixtures=_ATD_IMOVEL_FX,
+        ops_sql=_ins(_ATD_IMOVEL_INS) + "\n" + _ins(_ATD_IMOVEL_INS),
+        sqlstate_condition=_UNIQ,
+        what="two live atendimento_imoveis rows for the same (atendimento, codigo)",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_imoveis.one_live_principal",
+        guard_name="uq_sw_atendimento_imoveis_principal",
+        migration=_M181,
+        rationale="At most one live principal imóvel per atendimento; two would make 'the' imóvel ambiguous.",
+        fixtures=_ATD_IMOVEL_FX,
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_imoveis (org_id, atendimento_id, codigo, principal)\n"
+            "    VALUES (v_org, v_atendimento, v_codigo, true);\n"
+            f"    INSERT INTO {_S}.atendimento_imoveis (org_id, atendimento_id, codigo, principal)\n"
+            "    VALUES (v_org, v_atendimento, v_codigo || '-noc-probe', true);"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two live principal atendimento_imoveis rows for one atendimento",
+    ),
+    _sw_junction_probe(
+        probe_id="cliente_imovel_interesses.origem_valida",
+        guard_name="cliente_imovel_interesses_origem_valida",
+        migration=_M182,
+        rationale="origem drives how the interest is explained; an unknown value would render as nothing.",
+        fixtures=_CLI_INT_FX,
+        ops_sql=_ins(_CLI_INT_INS, ", origem", ", 'noc_probe_bogus'"),
+        sqlstate_condition=_CHECK,
+        what="a cliente_imovel_interesses row with an out-of-vocabulary origem",
+    ),
+    _sw_junction_probe(
+        probe_id="cliente_imovel_interesses.lead_unico",
+        guard_name="cliente_imovel_interesses_lead_unico",
+        migration=_M182,
+        rationale="An interest comes from at most one lead source (lead_id XOR meta_ads_lead_id).",
+        fixtures=_CLI_INT_FX,
+        ops_sql=(
+            f"    INSERT INTO {_S}.cliente_imovel_interesses (org_id, cliente_id, codigo, lead_id, meta_ads_lead_id)\n"
+            "    VALUES (v_org, v_cliente, v_codigo, gen_random_uuid(), 'noc_probe_meta_lead');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a cliente_imovel_interesses row with BOTH lead_id and meta_ads_lead_id",
+    ),
+    _sw_junction_probe(
+        probe_id="cliente_imovel_interesses.one_live_per_codigo",
+        guard_name="uq_sw_cliente_imovel_interesses_vivo",
+        migration=_M182,
+        rationale="One live interest per (cliente, código); a duplicate would double-count the lead.",
+        fixtures=_CLI_INT_FX,
+        ops_sql=_ins(_CLI_INT_INS) + "\n" + _ins(_CLI_INT_INS),
+        sqlstate_condition=_UNIQ,
+        what="two live cliente_imovel_interesses rows for the same (cliente, codigo)",
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_proprietarios.origem_valida",
+        guard_name="imovel_proprietarios_origem_valida",
+        migration=_M183,
+        rationale="origem records where the ownership claim came from; an unknown value breaks provenance display.",
+        fixtures=("registry", "cliente"),
+        ops_sql=(
+            f"    INSERT INTO {_S}.imovel_proprietarios (org_id, codigo, cliente_id, origem)\n"
+            "    VALUES (v_org, v_codigo, v_cliente, 'noc_probe_bogus');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an imovel_proprietarios row with an out-of-vocabulary origem",
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_proprietarios.pessoa_xor_empresa",
+        guard_name="imovel_proprietarios_pessoa_xor_empresa",
+        migration=_M183,
+        rationale="An owner is exactly one of cliente / empresa; both-or-neither has no defined identity.",
+        fixtures=("registry", "cliente", "empresa"),
+        ops_sql=(
+            f"    INSERT INTO {_S}.imovel_proprietarios (org_id, codigo, cliente_id, empresa_id)\n"
+            "    VALUES (v_org, v_codigo, v_cliente, v_empresa);"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an imovel_proprietarios row with BOTH cliente_id and empresa_id",
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_proprietarios.one_live_cliente_per_codigo",
+        guard_name="uq_sw_imovel_proprietarios_cliente_vivo",
+        migration=_M183,
+        rationale="One live ownership row per (imóvel, cliente) within an org.",
+        fixtures=("registry", "cliente"),
+        ops_sql=(
+            f"    INSERT INTO {_S}.imovel_proprietarios (org_id, codigo, cliente_id)\n"
+            "    VALUES (v_org, v_codigo, v_cliente);\n"
+            f"    INSERT INTO {_S}.imovel_proprietarios (org_id, codigo, cliente_id)\n"
+            "    VALUES (v_org, v_codigo, v_cliente);"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two live imovel_proprietarios rows for the same (codigo, cliente)",
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_proprietarios.one_live_empresa_per_codigo",
+        guard_name="uq_sw_imovel_proprietarios_empresa_vivo",
+        migration=_M183,
+        rationale="One live ownership row per (imóvel, empresa) within an org.",
+        fixtures=("registry", "empresa"),
+        ops_sql=(
+            f"    INSERT INTO {_S}.imovel_proprietarios (org_id, codigo, empresa_id)\n"
+            "    VALUES (v_org, v_codigo, v_empresa);\n"
+            f"    INSERT INTO {_S}.imovel_proprietarios (org_id, codigo, empresa_id)\n"
+            "    VALUES (v_org, v_codigo, v_empresa);"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two live imovel_proprietarios rows for the same (codigo, empresa)",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -3054,6 +3337,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SW_API_TOKEN_HASH_PROBE,
     _SW_RECIPIENT_CHANNEL_PROBE,
     *_COMMUNITY_PROBES,
+    *_SW_179_183_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

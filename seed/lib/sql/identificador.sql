@@ -15,7 +15,10 @@
 --
 -- ADOPTION (a product, phase 2): copy this file into the product's migrations
 -- under its next number; the functions are created in the first schema of the
--- migration's `SET search_path`. Idempotent (CREATE OR REPLACE). NEVER
+-- migration's `SET search_path`, and each function PINS that search_path
+-- (`SET search_path FROM CURRENT`) so a caller whose own path lacks the schema
+-- still resolves the helpers `canonizar_identificador` calls unqualified.
+-- Idempotent (CREATE OR REPLACE). NEVER
 -- invents data: unparseable / DV-invalid / unsupported shape => NULL, and the
 -- stored value stays untouched (reversible: store the canonical value in its
 -- own column, as `contato_norm` does for phones).
@@ -28,7 +31,7 @@
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION identificador_cpf_dv_ok(d text)
-RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE SET search_path FROM CURRENT AS $$
 DECLARE t int; i int; soma int; resto int; esperado int;
 BEGIN
     IF d IS NULL OR d !~ '^[0-9]{11}$' OR d ~ '^([0-9])\1{10}$' THEN RETURN false; END IF;
@@ -45,7 +48,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION identificador_cnpj_dv_ok(a text)
-RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+RETURNS boolean LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE SET search_path FROM CURRENT AS $$
 DECLARE
     p1 int[] := ARRAY[5,4,3,2,9,8,7,6,5,4,3,2];
     p2 int[] := ARRAY[6,5,4,3,2,9,8,7,6,5,4,3,2];
@@ -63,7 +66,7 @@ BEGIN
 END $$;
 
 CREATE OR REPLACE FUNCTION identificador_rg_sp_dv(d8 text)
-RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE SET search_path FROM CURRENT AS $$
 DECLARE i int; soma int := 0; dv int;
 BEGIN
     FOR i IN 1..8 LOOP soma := soma + substr(d8, i, 1)::int * (i + 1); END LOOP;
@@ -74,7 +77,7 @@ END $$;
 CREATE OR REPLACE FUNCTION canonizar_identificador(
     tipo text, valor text,
     municipio text DEFAULT NULL, ibge text DEFAULT NULL, uf text DEFAULT NULL)
-RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE AS $$
+RETURNS text LANGUAGE plpgsql IMMUTABLE PARALLEL SAFE SET search_path FROM CURRENT AS $$
 DECLARE
     s text := btrim(coalesce(valor, ''));
     d text; nome text; ibge_r text; n bigint;
@@ -140,7 +143,7 @@ COMMENT ON FUNCTION canonizar_identificador(text, text, text, text, text) IS
 CREATE OR REPLACE FUNCTION identificador_chave_busca(
     tipo text, valor text,
     municipio text DEFAULT NULL, ibge text DEFAULT NULL, uf text DEFAULT NULL)
-RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE SET search_path FROM CURRENT AS $$
     SELECT NULLIF(regexp_replace(
         upper(coalesce(canonizar_identificador(tipo, valor, municipio, ibge, uf), btrim(coalesce(valor, '')))),
         '[^0-9A-Z]', '', 'g'), '');
