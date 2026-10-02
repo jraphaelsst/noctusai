@@ -5,6 +5,8 @@
  */
 import type { CertidaoParte, CertidaoParteCelula } from "@/types/certidoesPartes";
 
+import { formatarDocumentoArmazenado } from "../documentoBr";
+
 export type ChipTom = "ok" | "alerta" | "erro" | "pendente" | "processando" | "na";
 
 /** Color classes per tone — text always travels WITH the color. Same palette as
@@ -76,10 +78,10 @@ export function resumoDaParte(p: CertidaoParte): string {
   return partes.join(" · ");
 }
 
+/** The party's document in its canonical punctuated form (the ONE identifier
+ *  seam — `@noctusai/lib/identificador`, owner rule 2026-10-01); a value that
+ *  does not fit its type is shown as stored. */
 export function formatarDocumento(doc: string | null): string {
   if (!doc) return "sem documento";
-  if (doc.length === 11) return doc.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, "$1.$2.$3-$4");
-  if (doc.length === 14)
-    return doc.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, "$1.$2.$3/$4-$5");
-  return doc;
+  return formatarDocumentoArmazenado(doc);
 }

@@ -51,6 +51,13 @@ TIPO_POR_CAMPO_IMOVEL: dict[str, str] = {
     "prefeitura_cadastro_imobiliario": "inscricao_municipal",
 }
 
+#: Every `imovel_dados` column a write path stores canonical: the identifiers
+#: above plus the hand-typed address CEP (`endereco_manual_cep`, migration 159).
+TIPO_POR_CAMPO_ESCRITA_IMOVEL: dict[str, str] = {
+    **TIPO_POR_CAMPO_IMOVEL,
+    "endereco_manual_cep": "cep",
+}
+
 #: `<entidade>_campo_conflitos.campo` → registry type, for the conflict /
 #: display surfaces that only know the campo name.
 TIPO_POR_CAMPO: dict[str, str] = {
@@ -147,6 +154,24 @@ def cabe(tipo: str, valor: Any, **ctx: Optional[str]) -> bool:
     """Does `valor` FIT identifier `tipo` (shape and, where it exists, the
     check digit)?"""
     return bool(_texto(valor)) and ident.ler(tipo, valor, **ctx).cabe
+
+
+def tipo_do_documento_pessoa(valor: Any) -> Optional[str]:
+    """`'cpf'` / `'cnpj'` for a free-text CPF-or-CNPJ field (a favorecido's
+    `cpf_cnpj`), told by the number's own length (11 / 14 alphanumerics) —
+    None when it is neither (shown and kept as typed)."""
+    tamanho = len("".join(ch for ch in _texto(valor) if ch.isalnum()))
+    return {11: "cpf", 14: "cnpj"}.get(tamanho)
+
+
+def canonico_cpf_cnpj(valor: Any) -> Optional[str]:
+    """A free-text CPF-or-CNPJ in its canonical punctuated form when it FITS;
+    as typed (trimmed) when it does not; None when empty."""
+    texto = _texto(valor)
+    if not texto:
+        return None
+    tipo = tipo_do_documento_pessoa(texto)
+    return canonico_ou_bruto(tipo, texto) if tipo else texto
 
 
 def canonico_ou_bruto(tipo: str, valor: Any, **ctx: Optional[str]) -> Optional[str]:
@@ -282,8 +307,10 @@ __all__ = [
     "Gravacao",
     "TIPO_POR_CAMPO",
     "TIPO_POR_CAMPO_CLIENTE",
+    "TIPO_POR_CAMPO_ESCRITA_IMOVEL",
     "TIPO_POR_CAMPO_IMOVEL",
     "cabe",
+    "canonico_cpf_cnpj",
     "canonico_ou_bruto",
     "cartorios_iguais",
     "chave",
@@ -295,5 +322,6 @@ __all__ = [
     "iguais",
     "needle_chave",
     "para_gravar",
+    "tipo_do_documento_pessoa",
     "uf_do_orgao",
 ]

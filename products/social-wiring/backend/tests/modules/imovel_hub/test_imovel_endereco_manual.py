@@ -216,6 +216,18 @@ class TestRegistrarImovel:
         # Never sent — stays a real None, not an empty string.
         assert dados["endereco_manual_complemento"] is None
 
+    def test_a_bare_cep_is_stored_in_its_canonical_punctuated_form(self, client, scoped):
+        """Owner rule 2026-10-01 (`canonical-identifiers`)."""
+        seed(scoped, registry=[], imoveis=[])
+        r = client.post(
+            "/api/imoveis/OFFMKT01/registrar",
+            json={**ENDERECO_COMPLETO, "cep": "06355465"},
+            headers=auth(),
+        )
+        assert r.status_code == 200
+        dados = client.get("/api/imoveis/OFFMKT01/dados", headers=auth()).json()
+        assert dados["endereco_manual_cep"] == "06355-465"
+
     def test_complemento_is_the_only_optional_field(self, client, scoped):
         seed(scoped, registry=[], imoveis=[])
         r = client.post(

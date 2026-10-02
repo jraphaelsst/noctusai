@@ -103,8 +103,10 @@ def test_canonicalising_trigger_fires_on_the_write_columns_only(flat: str):
     for tabela, colunas, args in (
         ("clientes", "cpf, rg, endereco_cep", "'cpf:cpf', 'rg:rg', 'endereco_cep:cep'"),
         (
-            "imovel_dados", "numero_matricula, prefeitura_cadastro_imobiliario",
-            "'numero_matricula:matricula_imovel', 'prefeitura_cadastro_imobiliario:inscricao_municipal'",
+            "imovel_dados",
+            "numero_matricula, prefeitura_cadastro_imobiliario, endereco_manual_cep",
+            "'numero_matricula:matricula_imovel', 'prefeitura_cadastro_imobiliario:inscricao_municipal', "
+            "'endereco_manual_cep:cep'",
         ),
         ("certidao_consultas", "documento", "'documento:@tipo_documento'"),
     ):
@@ -130,6 +132,17 @@ def test_a_value_is_only_rewritten_when_it_fits_and_the_raw_is_kept(flat: str):
     assert "INSERT INTO social_wiring.identificador_canonizacoes" in flat
 
 
+def test_trigger_functions_are_definer_with_a_pinned_search_path(flat: str):
+    """The raw-log insert must land whichever role wrote the row (the log has
+    no INSERT policy for API roles — only service_role); pinned search_path +
+    REVOKE FROM PUBLIC are what make DEFINER safe."""
+    for fn in ("canonizar_campos_identificadores", "manter_documentos_chave"):
+        cabecalho = flat[flat.index(f"CREATE OR REPLACE FUNCTION social_wiring.{fn}()"):]
+        cabecalho = cabecalho[: cabecalho.index("AS $$")]
+        assert "SECURITY DEFINER" in cabecalho and "SET search_path = social_wiring, public" in cabecalho
+        assert f"REVOKE ALL ON FUNCTION social_wiring.{fn}() FROM PUBLIC" in flat
+
+
 def test_the_raw_log_is_org_scoped_rls_and_append_only(flat: str):
     assert "ALTER TABLE social_wiring.identificador_canonizacoes ENABLE ROW LEVEL SECURITY" in flat
     assert "FOR SELECT TO authenticated USING (org_id = public.current_org_id())" in flat
@@ -148,7 +161,10 @@ def test_it_never_rewrites_existing_rows_or_the_empresas_key(flat: str):
 def test_clientes_por_cpf_keeps_its_contract_and_moves_to_the_canonical_key(flat: str):
     assert "CREATE OR REPLACE FUNCTION social_wiring.clientes_por_cpf( p_org_id UUID, p_cpfs TEXT[] )" in flat
     assert "RETURNS SETOF social_wiring.clientes" in flat
-    assert "SECURITY INVOKER" in flat and "SECURITY DEFINER" not in flat
+    # the lookup itself stays INVOKER (only the two trigger functions are DEFINER)
+    corpo = flat[flat.index("CREATE OR REPLACE FUNCTION social_wiring.clientes_por_cpf("):]
+    corpo = corpo[: corpo.index("COMMENT ON FUNCTION social_wiring.clientes_por_cpf")]
+    assert "SECURITY INVOKER" in corpo and "SECURITY DEFINER" not in corpo
     assert "social_wiring.chave_busca_documento('cpf', c.cpf) IN" in flat
     assert "SELECT social_wiring.chave_busca_documento('cpf', k) FROM unnest(p_cpfs)" in flat
     assert "GRANT EXECUTE ON FUNCTION social_wiring.clientes_por_cpf(UUID, TEXT[]) TO service_role" in flat

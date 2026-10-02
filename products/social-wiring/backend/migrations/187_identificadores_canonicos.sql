@@ -17,7 +17,7 @@
 --   D. one generic BEFORE trigger that stores a value in its canonical
 --      punctuated form WHEN IT FITS ITS TYPE — never otherwise — on:
 --        clientes.cpf · clientes.rg (UF of its own órgão) · clientes.endereco_cep
---        imovel_dados.numero_matricula · .prefeitura_cadastro_imobiliario
+--        imovel_dados.numero_matricula · .prefeitura_cadastro_imobiliario · .endereco_manual_cep
 --        certidao_consultas.documento (type from tipo_documento)
 --      A trigger, not a service call: the next write path added would forget
 --      the call (same reasoning as the phone trigger, migration 037);
@@ -383,6 +383,7 @@ CREATE POLICY "identificador_canonizacoes_service_role" ON social_wiring.identif
 CREATE OR REPLACE FUNCTION social_wiring.canonizar_campos_identificadores()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = social_wiring, public
 AS $$
 DECLARE
@@ -447,7 +448,11 @@ END $$;
 COMMENT ON FUNCTION social_wiring.canonizar_campos_identificadores() IS
     'BEFORE trigger: stores each `campo:tipo` argument in its canonical '
     'punctuated form when it fits its type; raw reading kept in '
-    'identificador_canonizacoes. Migration 187.';
+    'identificador_canonizacoes. SECURITY DEFINER (pinned search_path) so the '
+    'log row lands whichever role wrote the row — same shape as the other '
+    'trigger functions of this schema. Migration 187.';
+
+REVOKE ALL ON FUNCTION social_wiring.canonizar_campos_identificadores() FROM PUBLIC;
 
 DROP TRIGGER IF EXISTS trg_a_identificadores_canonizar ON social_wiring.clientes;
 CREATE TRIGGER trg_a_identificadores_canonizar
@@ -457,9 +462,11 @@ CREATE TRIGGER trg_a_identificadores_canonizar
 
 DROP TRIGGER IF EXISTS trg_a_identificadores_canonizar ON social_wiring.imovel_dados;
 CREATE TRIGGER trg_a_identificadores_canonizar
-    BEFORE INSERT OR UPDATE OF numero_matricula, prefeitura_cadastro_imobiliario ON social_wiring.imovel_dados
+    BEFORE INSERT OR UPDATE OF numero_matricula, prefeitura_cadastro_imobiliario, endereco_manual_cep
+    ON social_wiring.imovel_dados
     FOR EACH ROW EXECUTE FUNCTION social_wiring.canonizar_campos_identificadores(
-        'numero_matricula:matricula_imovel', 'prefeitura_cadastro_imobiliario:inscricao_municipal');
+        'numero_matricula:matricula_imovel', 'prefeitura_cadastro_imobiliario:inscricao_municipal',
+        'endereco_manual_cep:cep');
 
 DROP TRIGGER IF EXISTS trg_a_identificadores_canonizar ON social_wiring.certidao_consultas;
 CREATE TRIGGER trg_a_identificadores_canonizar
@@ -492,6 +499,7 @@ COMMENT ON COLUMN social_wiring.imovel_dados.documentos_chave IS
 CREATE OR REPLACE FUNCTION social_wiring.manter_documentos_chave()
 RETURNS trigger
 LANGUAGE plpgsql
+SECURITY DEFINER
 SET search_path = social_wiring, public
 AS $$
 DECLARE
@@ -534,7 +542,10 @@ END $$;
 
 COMMENT ON FUNCTION social_wiring.manter_documentos_chave() IS
     'BEFORE trigger: documentos_chave = space-joined chave_busca of the `campo:tipo` '
-    'arguments. Migration 187.';
+    'arguments. SECURITY DEFINER (pinned search_path): it reads imoveis / '
+    'imovel_registry for the município whichever role wrote the row. Migration 187.';
+
+REVOKE ALL ON FUNCTION social_wiring.manter_documentos_chave() FROM PUBLIC;
 
 DROP TRIGGER IF EXISTS trg_b_documentos_chave ON social_wiring.clientes;
 CREATE TRIGGER trg_b_documentos_chave

@@ -1,50 +1,53 @@
 /**
  * CPF / CNPJ helpers for the party-registration lookup (contract §2.5).
  *
- * The backend is the authority (it validates with `integrations.documents`);
- * this only decides WHEN to fire the lookup — a half-typed or check-digit-invalid
- * documento must not cost a round trip nor flash a server 400.
+ * The backend is the authority; this only decides WHEN to fire the lookup — a
+ * half-typed or check-digit-invalid documento must not cost a round trip nor
+ * flash a server 400.
+ *
+ * Owner rule 2026-10-01 (`canonical-identifiers`): the check-digit algorithms
+ * and the punctuated shape live in ONE place — `@noctusai/lib/identificador`
+ * (the TS twin of `noctusai_lib.primitives.identificador`). This file used to
+ * carry its own copy of the CPF / CNPJ mod-11 code; it is now a thin adapter.
  */
+import {
+  chaveBuscaIdentificador,
+  formatIdentificador,
+  lerIdentificador,
+} from "@noctusai/lib/identificador";
 
 export function apenasDigitos(valor: string): string {
   return valor.replace(/\D/g, "");
 }
 
-function digitoVerificador(base: string, pesoInicial: number): number {
-  let soma = 0;
-  for (let i = 0; i < base.length; i += 1) soma += Number(base[i]) * (pesoInicial - i);
-  const resto = (soma * 10) % 11;
-  return resto === 10 ? 0 : resto;
-}
-
+/** Does `valor` FIT a CPF — punctuated shape and check digits? */
 export function cpfValido(valor: string): boolean {
-  const d = apenasDigitos(valor);
-  if (d.length !== 11 || /^(\d)\1{10}$/.test(d)) return false;
-  return (
-    digitoVerificador(d.slice(0, 9), 10) === Number(d[9]) &&
-    digitoVerificador(d.slice(0, 10), 11) === Number(d[10])
-  );
+  return lerIdentificador("cpf", valor).cabe;
 }
 
-function dvCnpj(base: string): number {
-  const pesos = base.length === 12
-    ? [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
-    : [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2];
-  const soma = base.split("").reduce((acc, ch, i) => acc + Number(ch) * pesos[i], 0);
-  const resto = soma % 11;
-  return resto < 2 ? 0 : 11 - resto;
-}
-
+/** Does `valor` FIT a CNPJ (numeric or alphanumeric)? */
 export function cnpjValido(valor: string): boolean {
-  const d = apenasDigitos(valor);
-  if (d.length !== 14 || /^(\d)\1{13}$/.test(d)) return false;
-  return dvCnpj(d.slice(0, 12)) === Number(d[12]) && dvCnpj(d.slice(0, 13)) === Number(d[13]);
+  return lerIdentificador("cnpj", valor).cabe;
 }
 
-/** The digits to look up, or `null` while the documento is incomplete/invalid
- *  for the chosen kind of person. */
+/** A stored CPF-or-CNPJ rendered in its canonical PUNCTUATED form — the kind
+ *  is told by the number itself (11 / 14 alphanumerics), as a stored
+ *  `certidao_consultas.documento` or a `parte.documento` carries no other hint.
+ *  A value that does not fit is shown as stored (visible, never hidden). */
+export function formatarDocumentoArmazenado(doc: string | null | undefined): string {
+  if (!doc) return "";
+  const tamanho = doc.replace(/[^0-9A-Za-z]/g, "").length;
+  if (tamanho === 11) return formatIdentificador("cpf", doc);
+  if (tamanho === 14) return formatIdentificador("cnpj", doc);
+  return doc;
+}
+
+/** The document to look up (its alphanumeric key — digits for a CPF and for a
+ *  numeric CNPJ), or `null` while it is incomplete/invalid for the chosen kind
+ *  of person. */
 export function documentoParaLookup(valor: string, tipo: "PF" | "PJ"): string | null {
-  const d = apenasDigitos(valor);
-  if (tipo === "PF") return cpfValido(d) ? d : null;
-  return cnpjValido(d) ? d : null;
+  const identificador = tipo === "PF" ? "cpf" : "cnpj";
+  return lerIdentificador(identificador, valor).cabe
+    ? chaveBuscaIdentificador(identificador, valor)
+    : null;
 }

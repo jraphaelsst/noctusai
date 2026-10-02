@@ -74,6 +74,7 @@ from app.modules.card_hub import negociacao_estruturada_service as neg_estrutura
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub.proveniencia import fontes
 from app.services import campo_conflitos, extracao_job, table_reads
+from app.services import identificadores as idf
 
 logger = logging.getLogger(__name__)
 
@@ -1085,14 +1086,21 @@ def _aplicar_favorecido_vendedor(
     if parte is None or parte.get("lado") != "vendedor":
         return
 
-    favorecidos = (
-        _t(client, FAVORECIDOS_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("atendimento_id", str(atendimento_id))
-        .eq("cpf_cnpj", cpf_norm)
-        .execute()
-    ).data or []
+    # Matched by the registry's `iguais`, not an exact-digits `.eq`: a favorecido
+    # a human typed as `412.954.238-98` is the same person as the CPF the
+    # Quadro Resumo printed as `41295423898` (owner rule 2026-10-01,
+    # `canonical-identifiers`) — an `.eq("cpf_cnpj", digits)` silently missed it
+    # and the machine then INSERTED a duplicate favorecido.
+    favorecidos = [
+        f for f in (
+            _t(client, FAVORECIDOS_TABLE)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("atendimento_id", str(atendimento_id))
+            .execute()
+        ).data or []
+        if idf.iguais("cpf", f.get("cpf_cnpj"), cpf_norm)
+    ]
 
     # `ContaCreditoVendedor` has no `pix` field — the Quadro Resumo prints
     # a bank account, never a PIX key; `atendimento_favorecidos.pix` simply
@@ -1134,7 +1142,7 @@ def _aplicar_favorecido_vendedor(
             "org_id": str(org_id),
             "atendimento_id": str(atendimento_id),
             "nome": parte.get("nome") or cpf_norm,
-            "cpf_cnpj": cpf_norm,
+            "cpf_cnpj": idf.canonico_cpf_cnpj(cpf_norm),
             **campos_banco,
             "origem": tipo_documento,
             "documento_id": str(documento_id),

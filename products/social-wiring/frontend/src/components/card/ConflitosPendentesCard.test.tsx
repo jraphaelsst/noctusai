@@ -162,4 +162,46 @@ describe("ConflitosPendentesCard", () => {
     expect(screen.getByText("Estado civil")).toBeTruthy();
     expect(screen.queryByText("CPF")).toBeNull();
   });
+  it("renders a conflicting CPF / RG in its canonical punctuated form (one seam, owner rule 2026-10-01)", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ConflitosPendentesCard
+        conflitos={[
+          { ...PENDENTE, id: "rg", campo: "rg", valor_anterior: "301287429", valor_proposto: "52.179.965-X" },
+          { ...PENDENTE, id: "cpf", campo: "cpf", valor_anterior: "41295423898", valor_proposto: "529.982.247-25" },
+        ]}
+        onDecidir={vi.fn()}
+        isAdmin
+      />,
+    );
+    // The bare RG renders punctuated, so it reads as what it is next to the other spelling.
+    expect(screen.getByText("30.128.742-9")).toBeTruthy();
+    expect(screen.getByText("52.179.965-X")).toBeTruthy();
+    expect(screen.getByText("412.954.238-98")).toBeTruthy();
+    expect(screen.queryByText("301287429")).toBeNull();
+  });
+
+  it("shows a value that does not fit its type exactly as stored", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ConflitosPendentesCard
+        conflitos={[{ ...PENDENTE, campo: "rg", valor_anterior: "15.668.564-3", valor_proposto: "16.669.554-3" }]}
+        onDecidir={vi.fn()}
+        isAdmin
+      />,
+    );
+    expect(screen.getByText("15.668.564-3")).toBeTruthy(); // DV fails: kept visible, not rewritten
+  });
+
+  it("labels the órgão expedidor instead of leaking the raw key", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ConflitosPendentesCard
+        conflitos={[{ ...PENDENTE, campo: "rg_orgao_expedidor", valor_anterior: "IIRGD", valor_proposto: "SSP/SP" }]}
+        onDecidir={vi.fn()}
+        isAdmin
+      />,
+    );
+    expect(screen.getByText("Órgão expedidor do RG")).toBeTruthy();
+  });
 });

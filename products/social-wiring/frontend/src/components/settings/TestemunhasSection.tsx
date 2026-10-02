@@ -49,7 +49,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-import { formatarDocumento } from "@/lib/utils";
+import { formatIdentificador } from "@noctusai/lib/identificador";
 import {
   useCreateTestemunha,
   useDeleteTestemunha,
@@ -210,7 +210,7 @@ export function TestemunhasSection() {
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {[t.cpf ? formatarDocumento(t.cpf) : null, t.celular, t.email]
+                    {[t.cpf ? formatIdentificador("cpf", t.cpf) : null, t.celular, t.email]
                       .filter(Boolean)
                       .join(" · ") || "—"}
                   </p>

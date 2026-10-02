@@ -81,6 +81,7 @@ import {
   type DadosPessoais,
 } from "@/components/card/DadosPessoaisForm";
 import { formatDate } from "@/lib/utils";
+import { formatIdentificador } from "@noctusai/lib/identificador";
 import { cn } from "@/lib/utils";
 import type {
   Agendamento,
@@ -596,7 +597,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
           </p>
           <p className="truncate text-xs text-muted-foreground">
             {rotuloDePapel(parte.papel)}
-            {parte.documento ? ` · CNPJ ${parte.documento}` : ""}
+            {parte.documento ? ` · CNPJ ${formatIdentificador("cnpj", parte.documento)}` : ""}
           </p>
         </div>
         {onRemover && parte.parte_id && (

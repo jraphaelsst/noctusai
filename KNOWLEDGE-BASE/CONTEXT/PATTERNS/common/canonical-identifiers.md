@@ -50,3 +50,33 @@ Extend by adding a reader to the registry in all runtimes, with evidence.
 - **Honest limits:** titulo/NIS/CNH DV rules are implemented from the published algorithms and
   hand-verified on synthetic values only; CNS cartório and Cotia IM have no published DV
   (`dv_ok=None`). The SQL twin is parity-checked at apply time (no local Postgres in the seed).
+
+## 4 · Wiring a product (social-wiring, phase 2 — the checklist that cost something)
+
+The registry is half the job; the other half is making every door go through it. In order:
+
+1. **One product adapter** over the seed (`app/services/identificadores.py`): `para_gravar`
+   (canonical when it fits · AS READ when it does not · NOT written when it is a valid identifier of
+   another type, with the reason), `iguais` (proof, not a guess), `chaves_do_needle` + the
+   `documentos_chave*` fixtures twin. Write paths never call the primitives directly.
+2. **Storage — decide per field, write the decision down** (migration 187 header): canonical IN PLACE
+   with the raw kept in an append-only log (`identificador_canonizacoes`) where the canonical form
+   adds nothing (cpf/cep/matrícula/IM; rg adds only the arithmetic SP check digit); a KEY column
+   that other code joins on stays as it is and RENDERS canonical (`empresas.cnpj`, digits, until
+   `certidoes/**` compares by key). A value that does not fit is never rewritten — it shows in
+   `vw_identificadores_nao_conformes`.
+3. **A trigger, not a service call** — and a chokepoint in Python too (`dados_service._gravar`,
+   `aplicar_campos_ao_cliente`, `update_cliente`): the next write path added forgets a call.
+4. **The resolver** (`divergencia_resolucao`): equivalence → type routing (CPF in the RG field;
+   the CIN, whose RG IS the holder's CPF, is exempt) → DV validator → corroboration → tier. Format
+   differences never open a conflict.
+5. **Search needs BOTH halves**: a `documentos_chave` haystack column kept by trigger + the needle
+   keyed the same way (raw run AND canonical key, floored, digit-bearing). Strictly additive.
+6. **Display**: every surface through `formatIdentificador`; an LGPD mask is built ON the seam
+   (`maskCpf`), never beside it.
+7. **A zero-API backfill with a read-only dry run** (`identificadores_backfill`): canonicalise
+   stored values (raw logged first), re-run the live resolver over pending conflicts, report counts
+   only. The dry run is a read-only CLIENT, so it cannot write and reports what a real run decides.
+8. **Hunt the paid calls a deterministic answer replaces.** A CPF learned later used to re-queue a
+   whole bank form for a vision re-read; the stored reading already names the person — apply it.
+   Merge two disagreeing model reads by the check digit before calling it a conflict.
