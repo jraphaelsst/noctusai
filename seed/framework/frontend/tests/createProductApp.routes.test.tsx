@@ -136,3 +136,57 @@ describe("createProductApp — Landing at / routing contract", () => {
     expect(await screen.findByTestId("landing-page")).toBeTruthy();
   });
 });
+
+// ── Public "/" via publicRoutes (landing-less-slot products, e.g. store) ──────
+// A product whose public landing is a `publicRoutes` entry at "/" (NOT the
+// `Landing` slot) must show that page to signed-out AND signed-in visitors:
+// publicRoutes are matched in AppRoutes BEFORE the authenticated `/*` catch-all.
+// With no `Landing` slot, `unauthRedirect` ("/login") sends signed-out visitors
+// of protected paths to Login instead of looping to "/".
+describe("createProductApp — public '/' via publicRoutes", () => {
+  const PublicHome = lazy(() =>
+    Promise.resolve({ default: () => <div data-testid="public-home">public</div> })
+  );
+  const make = (user: unknown, extra: Record<string, unknown> = {}) =>
+    createProductApp({
+      authProvider: mockAuthProvider({ user, isInitialized: true }),
+      Layout: FakeLayout,
+      routes: [{ path: "/admin", component: AnyPage }],
+      publicRoutes: [{ path: "/", component: PublicHome }],
+      Login: AnyPage,
+      unauthRedirect: "/login",
+      ...extra,
+    });
+
+  beforeEach(() => {
+    window.history.pushState({}, "", "/");
+  });
+
+  it("signed-out user at '/' sees the public page", async () => {
+    const App = make(null);
+    render(<App />);
+    expect(await screen.findByTestId("public-home")).toBeTruthy();
+  });
+
+  it("signed-in user at '/' ALSO sees the public page (not the app)", async () => {
+    const App = make({ id: "u1" });
+    render(<App />);
+    expect(await screen.findByTestId("public-home")).toBeTruthy();
+    expect(screen.queryByTestId("app-layout")).toBeNull();
+  });
+
+  it("signed-in user still reaches protected routes; signed-out is sent to /login", async () => {
+    window.history.pushState({}, "", "/admin");
+    const signedIn = make({ id: "u1" });
+    const { unmount } = render(React.createElement(signedIn));
+    expect(await screen.findByTestId("app-layout")).toBeTruthy();
+    unmount();
+
+    window.history.pushState({}, "", "/admin");
+    const signedOut = make(null);
+    render(React.createElement(signedOut));
+    expect(await screen.findByTestId("any-page")).toBeTruthy(); // Login stand-in
+    expect(screen.queryByTestId("app-layout")).toBeNull();
+    expect(window.location.pathname).toBe("/login");
+  });
+});
