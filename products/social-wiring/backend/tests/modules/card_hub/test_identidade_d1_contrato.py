@@ -2372,3 +2372,23 @@ class TestR5DoisConjugesTodosOsCampos:
         assert row.get("estado_civil") == "divorciado"
         assert row.get("regime_bens") == "comunhao_parcial"
         assert _conflitos(scoped) == []
+
+
+class TestConflitosPendentesPaginados:
+    def test_fila_org_wide_passa_do_teto_de_1000_linhas(self):
+        """One unpaged read capped the queue (and the identifier backfill that
+        re-resolves it) at PostgREST's 1000 rows — silently."""
+        from uuid import uuid4
+
+        from noctusai_lib.testing import MockSupabaseClient
+
+        from app.modules.card_hub import identidade_extracao_service as svc
+
+        org = uuid4()
+        db = MockSupabaseClient(schema="social_wiring")
+        db.set_table_data(svc.CONFLITOS_TABLE, [
+            {"id": f"{i:05d}", "org_id": str(org), "status": "pendente",
+             "cliente_id": "c", "campo": "cpf", "created_at": f"2026-01-01T00:{i // 60 % 60:02d}:{i % 60:02d}"}
+            for i in range(1205)
+        ] + [{"id": "x", "org_id": str(org), "status": "resolvido", "cliente_id": "c", "campo": "cpf"}])
+        assert len(svc.conflitos_pendentes(db, org)) == 1205
