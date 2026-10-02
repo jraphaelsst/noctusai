@@ -144,7 +144,7 @@ ORG_ID = "11111111-1111-1111-1111-111111111111"
 
 
 @pytest.fixture
-def keyed(client, monkeypatch):
+def keyed(client):
     """Like `store`, but the Asaas key / webhook token are resolved FOR REAL
     through `key_provider` (the seed `resolve_api_key` seam) over a seed
     `FakeCredentialStore` — only the data/IO collaborators are swapped (DI), and
@@ -154,13 +154,11 @@ def keyed(client, monkeypatch):
 
     from app import store_deps
     from app.api_keys import key_provider
-    from app.config import settings
     from app.dependencies import get_store_admin_emails
     from app.main import app
 
-    monkeypatch.setattr(settings, "store_org_id", ORG_ID)  # self-patch-ok: configuration value, not a guard
     creds = FakeCredentialStore()
-    key_provider.use(store=creds, resolver=lambda name, org: None)
+    key_provider.use(store=creds, resolver=lambda name, org: None, org_id=ORG_ID)
     ns = _types.SimpleNamespace(
         settings=FakeSettingsStore(),
         pedidos=FakePedidoStore(),

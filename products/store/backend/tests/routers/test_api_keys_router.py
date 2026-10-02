@@ -27,10 +27,10 @@ class TestGate:
         assert c.delete(f"{BASE}/asaas_api_key").status_code == 403
         assert keyed.creds.get(ORG_ID, "api_key:asaas_api_key") is None
 
-    def test_unset_org_is_503(self, keyed, monkeypatch):
-        from app.config import settings
+    def test_unset_org_is_503(self, keyed):
+        from app.api_keys import key_provider
 
-        monkeypatch.setattr(settings, "store_org_id", "")  # self-patch-ok: configuration value, not a guard
+        key_provider.use(store=keyed.creds, resolver=lambda name, org: None, org_id="")
         as_admin(keyed.client)
         assert keyed.client.get(BASE).status_code == 503
 
@@ -78,25 +78,24 @@ class TestRoutes:
         _put(keyed.client, "asaas_webhook_token", "tok-123456")
         assert keyed.creds.get(ORG_ID, "api_key:asaas_webhook_token").tokens["value"] == "tok-123456"
 
-    def test_encryption_key_missing_writes_503_never_plaintext(self, client, monkeypatch):
-        from app.config import settings
+    def test_encryption_key_missing_writes_503_never_plaintext(self, client):
         from app.api_keys import key_provider
         from app.dependencies import get_store_admin_emails
         from app.main import app
 
         from tests.conftest import ADMIN_EMAIL
 
-        monkeypatch.setattr(settings, "store_org_id", ORG_ID)  # self-patch-ok: configuration value, not a guard
-        # The case under test is "no ENCRYPTION_KEY": set it explicitly, so the
-        # verdict never depends on whether the machine running the suite has one.
-        monkeypatch.setattr(settings, "encryption_key", "")  # self-patch-ok: configuration value, not a guard
-        key_provider.reset()  # the REAL store builder, now with no key
+        # The case under test is "no ENCRYPTION_KEY": stated explicitly through the
+        # provider's seam, so the verdict never depends on the machine's env. No
+        # store override => the REAL store builder runs with no key.
+        key_provider.use(org_id=ORG_ID, encryption_key="")
         app.dependency_overrides[get_store_admin_emails] = lambda: frozenset({ADMIN_EMAIL})
         try:
             as_admin(client)
             resp = _put(client, "asaas_api_key", "plain-text-secret")
         finally:
             app.dependency_overrides.pop(get_store_admin_emails, None)
+            key_provider.reset()
         assert resp.status_code == 503
         assert "ENCRYPTION_KEY" in resp.json()["error"]["message"]
 
@@ -148,7 +147,7 @@ class TestConsumption:
     def test_platform_chain_is_the_fallback_tier(self, keyed):
         from app.api_keys import key_provider
 
-        key_provider.use(store=keyed.creds, resolver=lambda name, org: "from-platform" if name == "asaas_api_key" else None)
+        key_provider.use(store=keyed.creds, resolver=lambda name, org: "from-platform" if name == "asaas_api_key" else None, org_id=ORG_ID)
         assert key_provider.resolve("asaas_api_key") == "from-platform"
         as_admin(keyed.client)
         assert _put(keyed.client, "asaas_api_key", "local-wins").status_code == 200
@@ -162,5 +161,5 @@ class TestConsumption:
 
         assert type(store_deps.get_email_sender()).__name__ == "UnconfiguredEmailSender"
         platform = {"smtp_host": "smtp.x.test", "smtp_username": "u", "smtp_password": "p", "smtp_port": "587"}
-        key_provider.use(store=keyed.creds, resolver=lambda name, org: platform.get(name))
+        key_provider.use(store=keyed.creds, resolver=lambda name, org: platform.get(name), org_id=ORG_ID)
         assert isinstance(store_deps.get_email_sender(), SmtpEmailSender)

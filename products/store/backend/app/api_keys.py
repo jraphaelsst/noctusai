@@ -79,6 +79,8 @@ class KeyProvider:
     def __init__(self) -> None:
         self._store_override: Optional[CredentialStore] = None
         self._resolver_override: Optional[Callable[[str, Optional[str]], Optional[str]]] = None
+        self._org_id_override: Optional[str] = None
+        self._encryption_key_override: Optional[str] = None
 
     # ── DI seam ──────────────────────────────────────────────────────────
     def use(
@@ -86,9 +88,17 @@ class KeyProvider:
         *,
         store: Optional[CredentialStore] = None,
         resolver: Optional[Callable[[str, Optional[str]], Optional[str]]] = None,
+        org_id: Optional[str] = None,
+        encryption_key: Optional[str] = None,
     ) -> None:
+        """Swap collaborators and configuration for a test. `org_id` /
+        `encryption_key` take precedence over `STORE_ORG_ID` / `ENCRYPTION_KEY`
+        when given (`""` means "explicitly unset"), so a test states the
+        configuration it judges instead of inheriting the machine's env."""
         self._store_override = store
         self._resolver_override = resolver
+        self._org_id_override = org_id
+        self._encryption_key_override = encryption_key
 
     def reset(self) -> None:
         self.use()
@@ -101,7 +111,7 @@ class KeyProvider:
             return self._store_override
         return build_api_key_store(
             client if client is not None else get_admin_client(),
-            encryption_key=settings.encryption_key,
+            encryption_key=self.encryption_key(),
             table="credentials",
         )
 
@@ -113,9 +123,14 @@ class KeyProvider:
         return resolve_credential(name, org_id)
 
     # ── consume seam ─────────────────────────────────────────────────────
-    @staticmethod
-    def org_id() -> Optional[str]:
-        return settings.store_org_id.strip() or None
+    def org_id(self) -> Optional[str]:
+        raw = self._org_id_override if self._org_id_override is not None else settings.store_org_id
+        return (raw or "").strip() or None
+
+    def encryption_key(self) -> str:
+        if self._encryption_key_override is not None:
+            return self._encryption_key_override
+        return settings.encryption_key
 
     def resolve(self, name: str) -> Optional[str]:
         return resolve_api_key_detail(
