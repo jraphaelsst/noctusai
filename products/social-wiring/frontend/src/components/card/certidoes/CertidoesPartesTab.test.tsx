@@ -150,6 +150,32 @@ describe("CertidoesPartesTab", () => {
     expect(screen.queryByTestId("parte-segunda-via-c:cli-2-cnd_federal")).toBeNull();
   });
 
+  it("shows a missing GOV.BR login as PENDING with the reason, keeps manual upload, hides re-emit", async () => {
+    const msg = "Requer login GOV.BR do escritório — configure em Configurações ou envie o PDF manualmente";
+    const base = resp([parte({
+      celulas: {
+        cnd_federal: cel({}),
+        divida_ativa_sp: cel({
+          tipo: "divida_ativa_sp", status: "pendente", status_processamento: "pendente",
+          resultado_id: "res-da", erro_mensagem: msg, pendencia: "credencial_govbr",
+        }),
+      },
+    })]);
+    mockGet.mockResolvedValue({
+      ...base,
+      linhas: [...linhas, { tipo: "divida_ativa_sp", chave: "divida_ativa_sp", id: null, linha: "5.12", rotulo: "Dívida ativa", custom: false }],
+    });
+    render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    open("c:cli-1");
+    const linha = screen.getByTestId("parte-linha-c:cli-1-divida_ativa_sp");
+    expect(screen.getByTestId("parte-pendencia-c:cli-1-divida_ativa_sp").textContent).toBe(msg);
+    expect(screen.getByTestId("parte-chip-c:cli-1-divida_ativa_sp").textContent).toContain("Pendente");
+    expect(linha.textContent).not.toContain("Erro");
+    expect(screen.getByTestId("parte-upload-c:cli-1-divida_ativa_sp")).toBeTruthy();
+    expect(screen.queryByTestId("parte-reemitir-c:cli-1-divida_ativa_sp")).toBeNull();
+  });
+
   describe("Receita PCEN 2ª via — acknowledgment (owner 2026-10-01)", () => {
     const pcen = (over: Record<string, unknown> = {}) => ({
       titulo: "Certidão da Receita Federal: positiva com efeitos de negativa",

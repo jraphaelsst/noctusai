@@ -48,6 +48,10 @@ export interface CertidaoParteCelula {
   /** Receita "positiva com efeitos de negativa" 2ª via ONLY (owner 2026-10-01):
    *  judged by the PRINTED validity, and the operator must acknowledge it. */
   pcen: CertidaoPcen | null;
+  /** PENDING for a reason an operator can fix — not an error. `credencial_govbr`:
+   *  Dívida Ativa SP needs the office's GOV.BR login; `erro_mensagem` carries the
+   *  pt-BR text. The cell stays uploadable (Enviar PDF). */
+  pendencia?: "credencial_govbr" | null;
 }
 
 export interface CertidaoPcen {
