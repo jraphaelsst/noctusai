@@ -117,6 +117,21 @@ def test_canonicalising_trigger_fires_on_the_write_columns_only(flat: str):
         ) in flat, tabela
 
 
+def test_the_chave_trigger_covers_clientes_imovel_dados_and_certidao_consultas(flat: str):
+    assert (
+        "CREATE TRIGGER trg_b_documentos_chave BEFORE INSERT OR UPDATE OF cpf, rg, rg_orgao_expedidor "
+        "ON social_wiring.clientes FOR EACH ROW EXECUTE FUNCTION "
+        "social_wiring.manter_documentos_chave('cpf:cpf', 'rg:rg')"
+    ) in flat
+    assert (
+        "CREATE TRIGGER trg_b_documentos_chave BEFORE INSERT OR UPDATE OF documento, tipo_documento "
+        "ON social_wiring.certidao_consultas FOR EACH ROW EXECUTE FUNCTION "
+        "social_wiring.manter_documentos_chave('documento:@tipo_documento')"
+    ) in flat
+    for tabela in ("clientes", "imovel_dados", "certidao_consultas"):
+        assert f"ALTER TABLE social_wiring.{tabela} ADD COLUMN IF NOT EXISTS documentos_chave TEXT" in flat
+
+
 def test_chave_trigger_sorts_after_the_canonicalising_one(sql: str):
     """Triggers of one event fire in NAME order — the key must be computed over
     the already-canonical value."""
