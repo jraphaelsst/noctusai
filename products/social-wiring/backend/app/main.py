@@ -143,6 +143,9 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.painel_router import (
         router as painel_router,
     )
+    from app.routers.identificadores_router import (
+        router as identificadores_router,
+    )
     from app.routers.custos_router import (
         router as custos_router,
     )
@@ -233,6 +236,7 @@ def _register_media_wiring() -> ModuleRegistration:
             portal_roi_router,
             clientes_router,
             painel_router,
+            identificadores_router,
             custos_router,
         ],
         standard_routers=("health", "notificacoes", "team"),

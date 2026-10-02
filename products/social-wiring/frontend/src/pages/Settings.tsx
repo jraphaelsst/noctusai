@@ -81,6 +81,7 @@ import { useMarcas, type Marca } from "@/hooks/useMarcas";
 import { rotuloTipo } from "@/lib/documentoTipos";
 import { useConflitosPendentes, useDecidirConflitoMutation } from "@/hooks/useCardHub";
 import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
+import { IdentificadoresNaoConformesPanel } from "@/components/IdentificadoresNaoConformesCard";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
 function HealthBadge({ entry }: { entry: KeyStatusEntry }) {
@@ -2240,8 +2241,9 @@ function PendenciasDadosTab() {
           <DocumentoRetencaoTab canEdit={canEditClientesInactivity} />
         </TabsContent>
         {canEditClientesInactivity && (
-          <TabsContent value="pendencias" className="mt-6">
+          <TabsContent value="pendencias" className="mt-6 space-y-6">
             <PendenciasDadosTab />
+            <IdentificadoresNaoConformesPanel />
           </TabsContent>
         )}
         {isAdminOrDev && (
