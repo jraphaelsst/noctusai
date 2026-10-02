@@ -109,6 +109,18 @@ async def require_store_admin(
     return user
 
 
+async def get_store_admin_org(user=Depends(require_store_admin)):
+    """`(user, token, org_id)` for the seed api-keys router: admin-gated, and
+    scoped to the single-tenant owner org `STORE_ORG_ID` (NOT the caller's org)."""
+    org = (settings.store_org_id or "").strip()
+    if not org:
+        raise HTTPException(
+            status_code=503,
+            detail="STORE_ORG_ID não configurado — não há org dona das chaves da loja.",
+        )
+    return user, None, org
+
+
 def coerce_org_uuid(raw_org: Any) -> UUID:
     """Coerce the auth-side org_id into a UUID.
 

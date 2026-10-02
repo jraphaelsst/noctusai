@@ -11,10 +11,15 @@ Contract: ``products/store/projects/store-v1-CONTRACT.md``.
 
 Run with: uvicorn app.main:app --reload --port 8018
 """
+from noctusai_lib.config.credentials import register_credential_override
+from noctusai_lib.security.api_keys import make_local_credential_override
 from noctusai_seed import create_product_app
+
+from app.api_keys import API_KEY_SPECS, key_provider
 from app.config import settings
 from app.rate_limit import limiter
 from app.routers.admin_router import router as admin_router
+from app.routers.api_keys_router import router as api_keys_router
 from app.routers.public_router import router as public_router
 from app.routers.webhooks_router import router as webhooks_router
 
@@ -27,6 +32,12 @@ _MAX_BODY_PATH_OVERRIDES = {
     "/api/admin/produto/arquivo": 52 * 1024 * 1024,
 }
 
+# Tier-0 of the platform credential chain: lets `resolve_credential` (and so
+# every seed adapter that goes through it) see the owner's DB-stored keys too.
+# Registered BEFORE `create_product_app` so no request can race it — same shape
+# as social-wiring's `_local_api_key` / community's.
+register_credential_override(make_local_credential_override(API_KEY_SPECS, key_provider.build_store))
+
 app = create_product_app(
     name="Store",
     schema="store",
@@ -34,6 +45,6 @@ app = create_product_app(
     version="0.1.0",
     limiter=limiter,
     standard_routers=["health", "notificacoes", "team"],
-    routers=[public_router, webhooks_router, admin_router],
+    routers=[public_router, webhooks_router, admin_router, api_keys_router],
     max_body_path_overrides=_MAX_BODY_PATH_OVERRIDES,
 )

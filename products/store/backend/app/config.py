@@ -8,9 +8,10 @@ Every value is read at request time through a FastAPI dependency
 """
 from noctusai_seed import ProductSettings
 
-#: Asaas SANDBOX by default — production is an explicit opt-in via
-#: `ASAAS_BASE_URL=https://api.asaas.com/v3`, never an accident.
+#: Asaas environments. SANDBOX is the default — production is an explicit
+#: choice the admin makes in the UI (`asaas_environment` key), never an accident.
 ASAAS_SANDBOX_BASE_URL = "https://api-sandbox.asaas.com/v3"
+ASAAS_PRODUCTION_BASE_URL = "https://api.asaas.com/v3"
 
 
 class SeedSettings(ProductSettings):
@@ -18,16 +19,16 @@ class SeedSettings(ProductSettings):
 
     cors_origins: str = "@registry:own:store"
 
-    # ── Payments (seed `integrations.payments`, hosted one-off checkout) ──
-    asaas_api_key: str = ""
-    asaas_base_url: str = ASAAS_SANDBOX_BASE_URL
-    # Asaas' webhook auth is a bare shared-secret token in the
-    # `asaas-access-token` header. Unset => every delivery 401s (fail
-    # closed — a financial webhook never has an early-dev bypass).
-    asaas_webhook_token: str = ""
-    # A missing Asaas key REFUSES checkout (503) unless this is explicitly
-    # on. Test harness / local dev only: a silent Fake in a real deploy
-    # would hand a paying buyer a fake checkout URL.
+    # ── Keys: DB-stored, NOT env (owner directive 2026-10-02) ──
+    # Asaas key / webhook token / environment live Fernet-encrypted in
+    # `store.credentials` (see app/api_keys.py); SMTP resolves through the
+    # platform chain. Only these remain env:
+    encryption_key: str = ""  # ENCRYPTION_KEY — Fernet key; unset => key writes 503
+    # The owner's org: single-tenant scope every key is stored and resolved under.
+    store_org_id: str = ""
+    # A missing Asaas key REFUSES checkout (503) unless this is explicitly on.
+    # Test harness / local dev only: a silent Fake in a real deploy would hand a
+    # paying buyer a fake checkout URL.
     payments_allow_fake: bool = False
 
     # ── Public site ──
@@ -37,22 +38,9 @@ class SeedSettings(ProductSettings):
     store_public_url: str = "https://store.noctusai.com"
 
     # ── Admin ──
-    # Comma-separated emails (case-insensitive) allowed into /api/admin/*.
+    # Comma-separated emails (case-insensitive) allowed into the admin routes.
     # Empty => nobody is an admin (every admin route 403s).
     store_admin_emails: str = ""
-
-    # ── Delivery email (seed `make_email_sender`, SMTP) ──
-    # All four of host/port/username/password must be set for the Real
-    # sender; otherwise the Fake sender is used ONLY when
-    # `payments_allow_fake` is on — a real deploy with no SMTP records the
-    # send failure on the pedido instead of pretending it delivered.
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_security: str = "starttls"
-    email_from: str = ""
-    email_from_name: str = "Contrato Blindado"
 
     # ── Rate limits (per visitor IP; the public surface is unauthenticated) ──
     webhook_rate_limit: str = "60/minute"

@@ -26,6 +26,7 @@ from noctusai_lib.integrations.storage import make_storage_backend
 from noctusai_lib.integrations.storage.fake import FakeStorageBackend
 from noctusai_lib.integrations.storage.protocol import StorageBackend
 
+from app.api_keys import key_provider
 from app.config import settings
 from app.dependencies import get_admin_client
 from app.services.assets import AssetService
@@ -78,7 +79,7 @@ def get_assets(storage: StorageBackend = Depends(get_storage)) -> AssetService:
 
 
 def _refuse_checkout() -> HostedCheckout:
-    logger.error("checkout: ASAAS_API_KEY not configured — charge refused")
+    logger.error("checkout: asaas_api_key not configured — charge refused")
     raise CheckoutError(
         "Pagamentos indisponíveis no momento. Tente novamente mais tarde.",
         status_code=503,
@@ -87,11 +88,12 @@ def _refuse_checkout() -> HostedCheckout:
 
 
 def build_hosted_checkout() -> HostedCheckout:
-    key = settings.asaas_api_key
+    # DB-stored key (owner directive): local store -> platform chain -> env.
+    key = key_provider.resolve("asaas_api_key")
     return resolve_fake_or_refuse(
         configured=bool(key),
         build_real=lambda: make_hosted_checkout(
-            provider="asaas", asaas_api_key=key, asaas_base_url=settings.asaas_base_url
+            provider="asaas", asaas_api_key=key, asaas_base_url=key_provider.asaas_base_url()
         ),
         build_fake=lambda: make_hosted_checkout(use_fake=True),
         allow_fake=settings.payments_allow_fake,
@@ -124,25 +126,25 @@ class UnconfiguredEmailSender:
         raise EmailNotConfigured("SMTP não configurado (SMTP_HOST/PORT/USERNAME/PASSWORD).")
 
 
-def _smtp_config() -> SmtpConfig:
-    return SmtpConfig.from_credentials(
-        {
-            "smtp_host": settings.smtp_host,
-            "smtp_port": settings.smtp_port,
-            "smtp_username": settings.smtp_username,
-            "smtp_password": settings.smtp_password,
-            "smtp_security": settings.smtp_security,
-            "email_from": settings.email_from,
-            "email_from_name": settings.email_from_name,
-        }
-    )
+_SMTP_KEYS = (
+    "smtp_host", "smtp_port", "smtp_username", "smtp_password", "smtp_security", "email_from", "email_from_name",
+)
+
+
+def _smtp_credentials() -> dict[str, str]:
+    """SMTP is PLATFORM config, not a store key: the seed email sender's own
+    names (`digest._resolve_smtp_config`) resolve through the platform chain
+    (org_settings -> platform_settings -> env), scoped to the owner org."""
+    org = key_provider.org_id()
+    return {name: key_provider.platform_resolve(name, org) or "" for name in _SMTP_KEYS}
 
 
 def get_email_sender() -> EmailSender:
-    configured = bool(settings.smtp_host and settings.smtp_username and settings.smtp_password)
+    creds = _smtp_credentials()
+    configured = bool(creds["smtp_host"] and creds["smtp_username"] and creds["smtp_password"])
     return resolve_fake_or_refuse(
         configured=configured,
-        build_real=lambda: make_email_sender(_smtp_config()),
+        build_real=lambda: make_email_sender(SmtpConfig.from_credentials(creds)),
         build_fake=lambda: make_email_sender(None),
         allow_fake=settings.payments_allow_fake,
         unconfigured=UnconfiguredEmailSender,
@@ -191,5 +193,5 @@ def get_webhook_service(
 
 
 def get_asaas_webhook_token() -> str:
-    """Per-request secret resolver (webhook pin 2): read at request time."""
-    return settings.asaas_webhook_token
+    """Per-request secret resolver (webhook pin 2): DB-stored token, read at request time."""
+    return key_provider.resolve("asaas_webhook_token") or ""

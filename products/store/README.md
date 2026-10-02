@@ -25,10 +25,17 @@ Seed single container: FastAPI (`create_product_app`) + React SPA
 
 ## Configuration
 
-See `backend/.env.example`: Asaas (`ASAAS_API_KEY`, `ASAAS_BASE_URL`,
-`ASAAS_WEBHOOK_TOKEN`), `STORE_PUBLIC_URL`, `STORE_ADMIN_EMAILS`, SMTP for the
-seed email sender. Without an Asaas key the checkout answers 503 (or uses the
-fake gateway when `PAYMENTS_ALLOW_FAKE=true`, dev only).
+Keys are **stored in the DB, not env**. The owner writes the Asaas API key, the
+webhook token and the environment (sandbox | production, default sandbox) in the
+admin UI (`/api/settings/api-keys`, seed router); they are Fernet-encrypted in
+`store.credentials` and read via `resolve_api_key` (local store -> platform chain
+-> env fallback). Values are never returned, only a masked hint + source. SMTP
+for the delivery email comes from the platform chain (`smtp_*`, `email_from`).
+
+Env that remains (see `backend/.env.example`): `ENCRYPTION_KEY` (unset => key
+writes 503), `STORE_ORG_ID` (the owner's org), `STORE_PUBLIC_URL`,
+`STORE_ADMIN_EMAILS`, `PAYMENTS_ALLOW_FAKE` (dev only). Without an Asaas key the
+checkout answers 503.
 
 ## Docs
 

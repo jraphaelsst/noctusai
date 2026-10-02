@@ -138,3 +138,50 @@ def as_admin(client) -> None:
 
 def as_other_user(client) -> None:
     bind_user_metadata(client, email="someone.else@store.test", org_id="test-org-123")
+
+
+ORG_ID = "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.fixture
+def keyed(client, monkeypatch):
+    """Like `store`, but the Asaas key / webhook token are resolved FOR REAL
+    through `key_provider` (the seed `resolve_api_key` seam) over a seed
+    `FakeCredentialStore` — only the data/IO collaborators are swapped (DI), and
+    the platform tier is stubbed empty so the ambient environment can't leak in.
+    """
+    from noctusai_lib.security.token_store.fake import FakeCredentialStore
+
+    from app import store_deps
+    from app.api_keys import key_provider
+    from app.config import settings
+    from app.dependencies import get_store_admin_emails
+    from app.main import app
+
+    monkeypatch.setattr(settings, "store_org_id", ORG_ID)  # self-patch-ok: configuration value, not a guard
+    creds = FakeCredentialStore()
+    key_provider.use(store=creds, resolver=lambda name, org: None)
+    ns = _types.SimpleNamespace(
+        settings=FakeSettingsStore(),
+        pedidos=FakePedidoStore(),
+        storage=FakeStorageBackend(),
+        email=FakeEmailSender(),
+        inbox=FakeEventInbox(),
+        creds=creds,
+        client=client,
+    )
+    overrides = {
+        store_deps.get_settings_store: lambda: ns.settings,
+        store_deps.get_pedido_store: lambda: ns.pedidos,
+        store_deps.get_storage: lambda: ns.storage,
+        store_deps.get_event_inbox: lambda: ns.inbox,
+        store_deps.get_email_sender: lambda: ns.email,
+        get_store_admin_emails: lambda: frozenset({ADMIN_EMAIL}),
+    }
+    app.dependency_overrides.update(overrides)
+    try:
+        yield ns
+    finally:
+        for dep in overrides:
+            app.dependency_overrides.pop(dep, None)
+        key_provider.reset()
