@@ -1,38 +1,37 @@
 # Store
 
-Minimal reference implementation — the spine with no organs. Proves that both seed packages (`noctusai_lib` + `noctusai_seed` backend, `@noctusai/lib` + `@noctusai/seed` frontend) work end-to-end. Source of truth for the product template (`templates/product-seed/`).
+Public sales pages for digital products. The first product is the
+"Contrato Blindado de Compra e Venda" kit: three generic contract templates
+(à vista, financiado, parcelado com confissão de dívida) in Word + PDF,
+generated from social-wiring's contract generator with no client data
+(`projects/store/contrato/`).
 
-## Stack
+## How it works
 
-- **Backend**: FastAPI via `create_product_app()` from `noctusai_seed` (port 8018)
-- **Frontend**: React via `createProductApp()` + `createProductLayout()` from `@noctusai/seed` (port 8220)
-- **Build**: `createViteConfig()` from seed framework (3-line vite.config.ts)
-- **Database**: Supabase (schema: `store`)
-- **Auth**: SSO + direct login
+1. A visitor opens `/` (public, no login link) and clicks a CTA.
+2. A short form (nome, e-mail, CPF) creates an order and an Asaas one-off
+   charge through the seed payments organ; the buyer pays on Asaas' page.
+3. Asaas calls `POST /api/webhooks/asaas`; the order becomes `pago` and the
+   buyer gets an email with a private download link (30 days, 20 downloads).
+4. Asaas redirects to `/obrigado?pedido=<token>`, which shows the same link
+   once the payment is confirmed.
+5. The owner signs in at `/login` (no button anywhere; type the URL) and edits
+   the page's values at `/admin` and sees sales at `/admin/vendas`.
 
-## Running
+## Stack and ports
 
-```bash
-# Backend
-uvicorn app.main:app --reload --port 8018 --app-dir products/store/backend
+Seed single container: FastAPI (`create_product_app`) + React SPA
+(`createProductApp`). Backend 8018, frontend dev 8220, schema `store`.
 
-# Frontend
-cd products/store/frontend && npm run dev
-```
+## Configuration
 
-## What it proves
+See `backend/.env.example`: Asaas (`ASAAS_API_KEY`, `ASAAS_BASE_URL`,
+`ASAAS_WEBHOOK_TOKEN`), `STORE_PUBLIC_URL`, `STORE_ADMIN_EMAILS`, SMTP for the
+seed email sender. Without an Asaas key the checkout answers 503 (or uses the
+fake gateway when `PAYMENTS_ALLOW_FAKE=true`, dev only).
 
-- `create_product_app()` works (health, team, notifications — all from framework)
-- `createProductApp()` + `createProductLayout()` works (routing, auth, sidebar, header)
-- `createViteConfig()` works (alias resolution, dependency deduplication)
-- SSO authentication flow
-- Page status filtering
-- Notification proxying
-- Team/invitation management
-- Template auto-sync (post-commit hook → `templates/product-seed/`)
+## Docs
 
-## Tests
-
-```bash
-cd products/store/backend && pytest  # 6 tests
-```
+- Contract: `projects/store-v1-CONTRACT.md`
+- Approved landing design: `projects/landing-reference/`
+- Roadmap: `project-history/roadmaps/store-launch-2026-10.md`

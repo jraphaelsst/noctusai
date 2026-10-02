@@ -1,78 +1,54 @@
 # Store — MASTER-PROMPT
 
-> Authoritative development guide for the seed reference product.
+> Authoritative development guide for the store product.
 
 ## Purpose
 
-Minimal reference implementation proving the NoctusAI seed framework works end-to-end. The simplest possible product — just the spine, no domain logic. When the seed breaks, the framework broke. When creating a new product, the seed is the pattern to follow.
+Sell digital products from a public sales page. v1 sells one kit, the
+"Contrato Blindado de Compra e Venda" (3 contract templates, Word + PDF).
+Buyers never log in; one owner administers the page at `/login` → `/admin`.
 
 ## Architecture
 
-**Born from the seed framework.** This product has ZERO domain code. Everything comes from the framework.
-
-### Backend (19 lines in main.py)
+Seed single container. Backend `create_product_app("Store", "store", settings)`;
+frontend `createProductApp()` with `publicRoutes` for `/` and `/obrigado`.
 
 ```
 products/store/backend/app/
-  main.py              → create_product_app("Store", "store", settings)
-  config.py            → SeedSettings(ProductSettings) — no extra fields
-  database.py          → create_database_module(settings, "store")
-  dependencies.py      → create_dependencies(db)
-  rate_limit.py        → create_product_limiter(settings)
-  routers/             → EMPTY — framework provides health, team, notifications
-```
-
-### Frontend (App.tsx uses framework factories)
-
-```
+  routers/   public (settings, checkout, pedidos, download, autor/foto),
+             admin (settings, upload, pedidos), webhooks (asaas)
+  services/  settings (versioned ledger), checkout (seed hosted checkout),
+             fulfillment (email + signed download), webhooks (seed inbox)
 products/store/frontend/src/
-  App.tsx              → createProductApp() + createProductLayout()
-  vite.config.ts       → createViteConfig({ port: 8220 }) — 3 lines
-  pages/               → Dashboard (stack status), Equipe (team), Landing, Login, etc.
-  hooks/               → useNotificacoes (from seed lib)
-  components/          → NotificationBell, ErrorBoundary, AuthProvider (from seed lib)
-  NO Layout.tsx        → framework provides it via createProductLayout()
+  pages/     Landing (public), Obrigado (public), Login, AdminPagina, AdminVendas
 ```
 
-### Database
+### Database (schema `store`)
 
-Schema: `store` — only `status_pagina` (feature flags) and `invitations` (team invites). Zero domain tables.
+`landing_settings` (append-only versions), `pedidos`, `webhook_eventos`
+(seed event inbox), `status_pagina`. RLS on everywhere, service-role access
+from the backend only; no anon grants. Private bucket `store-produtos`.
 
-## What the framework provides automatically
+## Domains
 
-- `/api/health` — health check
-- `/api/team` — team management (invite, accept, list, cancel, remove)
-- `/api/notificacoes` — notification proxy to core
-- `/api/llm/providers`, `/api/llm/models`, `/api/llm/preferences` — shared LLM router from `noctusai_seed.llm_router`
-- Multi-provider LLM access: `create_product_app()` auto-wires `configure_credentials()` + `configure_llm(default_llm_config())` + `shutdown_llm()` in lifespan. Products inherit `noctusai_lib.llm.chat_completion` / `generate_embedding` / `transcribe_audio` / `analyze_image` with zero plumbing. Override only when the product needs different defaults: `create_product_app(..., llm_config=default_llm_config(default_chat_model="gpt-4o"))`.
-- CORS, Sentry, exception handlers, middleware, rate limiting, logging
-- Sidebar, Header, AppShell, page status filtering, SSO context, trial/license warnings
-- TooltipProvider, QueryClientProvider, AuthProvider, ErrorBoundary, Suspense
-
-## Template Auto-Sync
-
-The seed is the source for `templates/product-seed/`. Post-commit hook runs `noctus.dev.sync_seed_template`:
-1. Copies seed → template
-2. Replaces values with `{{PLACEHOLDERS}}`
-3. Template always in sync
-
-Do NOT edit `templates/product-seed/` directly.
+- **Settings** — defaults live only in the backend service; the anchor total
+  is derived, never stored.
+- **Checkout** — price is read server-side; the charge goes through
+  `noctusai_lib.integrations.payments` (never a store-local Asaas client).
+- **Fulfillment** — webhook-driven and idempotent (inbox claim + `email_enviado_em`).
+- **Admin** — `require_store_admin` (`STORE_ADMIN_EMAILS`); public pages carry no login link.
 
 ## Rules
 
-- Keep the seed minimal — zero domain logic
-- Any new framework feature must work in the seed first
-- Changes to the seed propagate to the template automatically
-- 6 tests must always pass
+- Seed first: new IO goes into the seed organ with Fake + Real + factory.
+- The contract (`projects/store-v1-CONTRACT.md`) is the FE ↔ BE source of truth;
+  change it first, then both sides.
+- Visual identity: `projects/landing-reference/` and the Store Visual Identity
+  design system. Cream paper, navy ink, gold foil; Playfair Display + Montserrat.
 
 ## Testing
 
-```bash
-cd products/store/backend && pytest  # 6 tests
-cd products/store/frontend && npx vite build  # must build clean
-```
-
-## Dependencies
-
-- Backend: `noctusai_lib` (code library) + `noctusai_seed` (framework)
-- Frontend: `@noctusai/lib` (code library) + `@noctusai/seed` (framework)
+Backend: status-pinned router tests (auth `== 401`, admin 403), service tests
+with the seed Fakes via DI. Frontend: vitest for public `/` (signed in and out),
+checkout dialog states, admin 403 state. `predeploy_check product='store'`
+must be `ready` before any deploy.
