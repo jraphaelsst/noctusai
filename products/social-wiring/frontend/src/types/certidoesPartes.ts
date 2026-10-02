@@ -45,6 +45,38 @@ export interface CertidaoParteCelula {
   /** The Receita refused a NEW certidão (holder of a valid "positiva com efeitos
    *  de negativa"): this is its 2ª via, so `emitida_em` is the ORIGINAL date. */
   segunda_via: boolean;
+  /** Receita "positiva com efeitos de negativa" 2ª via ONLY (owner 2026-10-01):
+   *  judged by the PRINTED validity, and the operator must acknowledge it. */
+  pcen: CertidaoPcen | null;
+}
+
+export interface CertidaoPcen {
+  titulo: string;
+  /** The one-line aviso (also on the contract readiness). */
+  mensagem: string;
+  /** Plain-language explanation, one paragraph per entry. */
+  explicacao: string[];
+  validade_ate: string;
+  /** The printed validity already passed. */
+  vencida: boolean;
+  ciente: boolean;
+  ciente_em: string | null;
+  duvida_em: string | null;
+  acoes: { entendi: string; duvida: string };
+}
+
+/** The org's configured contact for questions — `null` when none is set. */
+export interface SuporteContato {
+  nome: string | null;
+  email: string | null;
+  whatsapp: string | null;
+}
+
+export interface CienciaPcenResult {
+  resultado_id: string;
+  acao: "entendi" | "duvida";
+  pcen: CertidaoPcen;
+  suporte: SuporteContato | null;
 }
 
 export interface CertidaoParteTotais {

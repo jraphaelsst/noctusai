@@ -45,7 +45,7 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
-from app.modules.card_hub.contrato_gerador import frases
+from app.modules.card_hub.contrato_gerador import certidao_pcen, frases
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
     PAPEIS_SEM_REDACAO,
@@ -484,11 +484,19 @@ class Avaliacao:
     faltando: list[dict] = field(default_factory=list)
     bloqueios: list[dict] = field(default_factory=list)
     avisos: list[dict] = field(default_factory=list)
+    #: Things that are NOT wrong data but must be KNOWN by the operator before
+    #: the contract is generated (owner amendment 2026-10-01): each carries
+    #: `ciente`; the contract is not `pronto` until every one is acknowledged.
+    confirmacoes: list[dict] = field(default_factory=list)
     destinos: Destinos = field(default_factory=Destinos)
 
     @property
+    def pendentes_confirmacao(self) -> list[dict]:
+        return [c for c in self.confirmacoes if not c["ciente"]]
+
+    @property
     def pronto(self) -> bool:
-        return not self.faltando and not self.bloqueios
+        return not self.faltando and not self.bloqueios and not self.pendentes_confirmacao
 
     def falta(
         self,
@@ -1436,6 +1444,34 @@ def _certidoes(
         else:
             av.bloqueia(codigo, mensagem)
 
+    def confirmar_pcen(p: Pessoa, c: Certidao, rotulo: str, nome_grupo: str) -> None:
+        """[Owner 2026-10-01, Option A + amendment] The Receita PCEN 2ª via is
+        judged by its printed validity, but the operator must KNOW the
+        difference: an acknowledgment gate (`confirmacoes`), never a silent
+        pass. The aviso stays on the record once acknowledged."""
+        ciente = certidao_pcen.ciente_vale(
+            ciente_em=c.pcen_ciente_em, ciente_validade=c.pcen_ciente_validade,
+            validade_ate=c.validade_ate,
+        )
+        mensagem = certidao_pcen.aviso(c.emitida_em, c.validade_ate)
+        av.avisa(certidao_pcen.CODIGO_CONFIRMACAO, f"{mensagem} — {nome_grupo}")
+        av.confirmacoes.append({
+            "codigo": certidao_pcen.CODIGO_CONFIRMACAO,
+            "titulo": certidao_pcen.TITULO,
+            "rotulo": f"{rotulo} — {nome_grupo}",
+            "mensagem": mensagem,
+            "explicacao": certidao_pcen.explicacao(c.emitida_em, c.validade_ate),
+            "parte_id": p.parte_id,
+            "resultado_id": c.resultado_id,
+            "emitida_em": c.emitida_em.isoformat() if c.emitida_em else None,
+            "validade_ate": c.validade_ate.isoformat(),
+            "ciente": ciente,
+            "ciente_em": c.pcen_ciente_em if ciente else None,
+            "ciente_por": c.pcen_ciente_por if ciente else None,
+            "acoes": {"entendi": certidao_pcen.ACAO_ENTENDI, "duvida": certidao_pcen.ACAO_DUVIDA},
+            "destino": av.destinos.para("certidoes", parte_id=p.parte_id),
+        })
+
     def conferir(p: Pessoa, certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
         idx = indice_certidoes(certs, tipo_documento)
         for tipo in tipos_exigidos(tipo_documento):
@@ -1459,10 +1495,14 @@ def _certidoes(
             if not c.emitida_em:
                 av.falta(f"certidao.{tipo}.emitida_em", f"Data de emissão da {rotulo} — {nome_grupo}", "certidoes", p.parte_id)
                 continue
+            excecao_pcen = certidao_pcen.excecao_aplica(
+                resultado=c.resultado, segunda_via=c.segunda_via, validade_ate=c.validade_ate
+            )
             if c.emitida_em > assinatura:
                 av.bloqueia("CERTIDAO_EMITIDA_APOS_ASSINATURA", f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.")
-            elif (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
+            elif not excecao_pcen and (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
                 # [Q10] every certidão is emitted less than 30 days before signing.
+                # (The Receita PCEN 2ª via is judged by its printed validity below.)
                 tempo(
                     "CERTIDAO_EMISSAO_ANTIGA",
                     f"{rotulo} de {nome_grupo} foi emitida há {(assinatura - c.emitida_em).days} dias; "
@@ -1470,6 +1510,8 @@ def _certidoes(
                 )
             if c.validade_ate is not None and c.validade_ate < assinatura:
                 tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
+            elif excecao_pcen and c.emitida_em <= assinatura:
+                confirmar_pcen(p, c, rotulo, nome_grupo)
             # A genuine positiva needs the esclarecimentos paragraph.
             # [Owner directive, 2026-09-25] `negativa_com_homonimos` no
             # longer does — reversed §6.1 #15's original read; see

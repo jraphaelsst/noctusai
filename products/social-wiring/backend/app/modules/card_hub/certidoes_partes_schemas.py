@@ -27,6 +27,14 @@ class ReemitirBody(StrictHttpModel):
     """`POST …/certidoes/resultados/{resultado_id}/reemitir` — empty body."""
 
 
+class CienciaPcenBody(StrictHttpModel):
+    """`POST …/certidoes/resultados/{resultado_id}/ciencia-pcen` — `entendi`
+    acknowledges the Receita PCEN 2ª via; `duvida` records a support question
+    (the readiness stays pending either way until `entendi`)."""
+
+    acao: Literal["entendi", "duvida"]
+
+
 class CelulaBody(StrictHttpModel):
     """`POST …/certidoes/celulas` — ensure an uploadable cell."""
 

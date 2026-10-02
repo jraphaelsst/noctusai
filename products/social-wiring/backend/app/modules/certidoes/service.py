@@ -41,6 +41,7 @@ import io
 import json
 import logging
 import re
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -74,8 +75,9 @@ from noctusai_lib.primitives.tasks import schedule_coro
 from xhtml2pdf import pisa
 from xhtml2pdf.config.resources import ResourceAccessPolicy
 
+from app.modules.card_hub.contrato_gerador import certidao_pcen
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
-from app.modules.certidoes import cost_ledger, feed_parte
+from app.modules.certidoes import aprendizado, cost_ledger, feed_parte
 from app.modules.certidoes.cenprot import CenprotEstrutura, estruturar_cenprot
 from app.modules.certidoes.credentials import (
     INFOSIMPLES_TOKEN,
@@ -117,11 +119,19 @@ RESULTADO_COLUNAS_SEM_TEXTO = (
     "arquivo_url,arquivo_nome,api_response,erro_mensagem,api_requested_at,"
     "created_at,updated_at,numero,emitida_em,validade_ate,resultado,"
     "resultado_origem,confirmado_por,confirmado_em,tem_transcricao,"
-    "estrutura_erro,estrutura_tentativas"
+    "estrutura_erro,estrutura_tentativas,"
+    "pcen_ciente_por,pcen_ciente_em,pcen_ciente_validade,pcen_duvida_por,pcen_duvida_em"
 )
 
 MAX_RETRIES = 3
 DEFAULT_TIMEOUT = 240.0
+
+#: A re-processed / replaced certidão is a NEW document: the operator's
+#: acknowledgment of the previous one (Receita PCEN 2ª via) never carries over.
+PCEN_CIENCIA_LIMPA = {
+    "pcen_ciente_por": None, "pcen_ciente_em": None, "pcen_ciente_validade": None,
+    "pcen_duvida_por": None, "pcen_duvida_em": None,
+}
 
 #: Maximum time a resultado can stay "processando" before being considered
 #: stuck. InfoSimples API calls time out at 240s with 3 retries = ~12 min worst
@@ -164,14 +174,21 @@ def in_batches(items: list[str], size: int = 200):
 _FALHA_DA_ORIGEM = range(600, 799)
 
 #: Marker stored in `api_response` when the certidão came from the 2ª-via retry.
-MARCA_SEGUNDA_VIA = "noctus_segunda_via"
+MARCA_SEGUNDA_VIA = certidao_pcen.MARCA_SEGUNDA_VIA
 NOTA_SEGUNDA_VIA = (
     "2ª via — data de emissão original: a Receita não emite certidão nova "
     "para quem já tem uma positiva com efeitos de negativa em vigor."
 )
 
 
-def _precisa_segunda_via(config: dict, params: dict, api_code: Any) -> bool:
+def _precisa_segunda_via(
+    config: dict,
+    params: dict,
+    api_code: Any,
+    *,
+    assinatura: Optional[str] = None,
+    classificacoes: Optional[dict[str, str]] = None,
+) -> bool:
     """The `nova` emission was refused at the source for a tipo that opts into
     the 2ª-via fallback.
 
@@ -181,6 +198,11 @@ def _precisa_segunda_via(config: dict, params: dict, api_code: Any) -> bool:
     range itself — scoped to ONE endpoint (`segunda_via_fallback`), ONE
     preference (`nova`), and taken at most once per fetch. Auth/param errors
     (4xx), 612 (nada consta) and exceptions never trigger it.
+
+    LEARNED (emission watcher, `aprendizado`): a failure signature CONFIRMED
+    as transitória (the 2ª via failed too / a later `nova` worked) skips the
+    retry and saves the billed call; confirmed PCEN and UNKNOWN signatures
+    retry exactly as before.
     """
     return bool(
         config.get("segunda_via_fallback")
@@ -188,6 +210,7 @@ def _precisa_segunda_via(config: dict, params: dict, api_code: Any) -> bool:
         and isinstance(api_code, int)
         and api_code in _FALHA_DA_ORIGEM
         and api_code != 612
+        and aprendizado.decidir_retry_2via(assinatura, classificacoes)
     )
 
 
@@ -212,26 +235,59 @@ async def _fetch_certidao(
     consulta: dict,
     token: str,
     client: httpx.AsyncClient,
+    *,
+    classificacoes: Optional[dict[str, str]] = None,
+    preferencia_inicial: str = "nova",
 ) -> dict:
     """Call InfoSimples API for a single certificate type, with retry logic.
 
     Retries up to MAX_RETRIES times on transient failures (timeouts, network
     errors, server errors). Returns dict with keys: success, file_url,
-    raw_response, error.
+    raw_response, error, segunda_via, observacoes.
+
+    `observacoes` (emission watcher): ONE row per HTTP call — success or not,
+    token/birthdate/name/document never included (`aprendizado.
+    montar_observacao`) — for the caller to persist. `classificacoes` are the
+    learned failure classes; `preferencia_inicial='2via'` (per-documento
+    history: a still-valid PCEN 2ª via) skips the `nova` call that must fail,
+    falling back to `nova` once if the 2ª via itself is refused.
     """
     builder = PARAM_BUILDERS[config["params_fn"]]
     params = builder(consulta, token)
+    via2_inicial = bool(
+        config.get("segunda_via_fallback")
+        and preferencia_inicial == "2via"
+        and params.get("preferencia_emissao") == "nova"
+    )
+    if via2_inicial:
+        params = {**params, "preferencia_emissao": "2via"}
     url = f"{INFOSIMPLES_BASE_URL}/{config['endpoint']}"
     timeout = config.get("timeout", DEFAULT_TIMEOUT)
 
     last_error = "Erro desconhecido"
     last_raw = None
-    segunda_via = False
+    segunda_via = via2_inicial
+    observacoes: list[dict] = []
+    gatilho_id: Optional[str] = None  # the call whose failure switched the preference
+
+    def _observar(resposta, http_status, t0, *, erro=None) -> dict:
+        nonlocal gatilho_id
+        obs = aprendizado.montar_observacao(
+            config=config, consulta=consulta, params=params, tentativa=len(observacoes) + 1,
+            http_status=http_status if isinstance(http_status, int) else None,
+            resposta=resposta, elapsed_ms=int((time.monotonic() - t0) * 1000),
+            fallback_de=gatilho_id, erro_excecao=erro,
+        )
+        gatilho_id = None
+        observacoes.append(obs)
+        return obs
 
     for attempt in range(1, MAX_RETRIES + 1):
+        t0 = time.monotonic()
         try:
             resp = await client.get(url, params=params, timeout=timeout)
             data = resp.json()
+            obs_atual = _observar(data, getattr(resp, "status_code", None), t0)
 
             api_code = data.get("code")
 
@@ -248,6 +304,7 @@ async def _fetch_certidao(
                     "raw_response": data,
                     "error": None,
                     "segunda_via": segunda_via,
+                    "observacoes": observacoes,
                 }
 
             # Code 612 = "no data at source" — for certidões this means
@@ -266,6 +323,7 @@ async def _fetch_certidao(
                     "error": None,
                     "nada_consta": detail,
                     "segunda_via": segunda_via,
+                    "observacoes": observacoes,
                 }
 
             # Extract error — prefer specific fields (errors[], code_message)
@@ -291,13 +349,34 @@ async def _fetch_certidao(
             if isinstance(api_code, int) and 400 <= api_code < 500:
                 break
 
+            # The initial 2ª via (history said a PCEN is still valid) was
+            # refused at the source → ask for a `nova`, once, at once.
+            if (
+                via2_inicial and params.get("preferencia_emissao") == "2via"
+                and isinstance(api_code, int) and api_code in _FALHA_DA_ORIGEM
+                and api_code != 612
+            ):
+                logger.warning(
+                    "InfoSimples %s: 2ª via inicial recusada (code %s: %s); tentando emissão nova",
+                    config["tipo"], api_code, last_error,
+                )
+                gatilho_id = obs_atual["id"]
+                params = {**params, "preferencia_emissao": "nova"}
+                segunda_via = False
+                via2_inicial = False
+                continue
+
             # `nova` refused at the source → ask for the 2ª via, once, at
             # once (no backoff: it is a different request, not a retry).
-            if _precisa_segunda_via(config, params, api_code):
+            if _precisa_segunda_via(
+                config, params, api_code,
+                assinatura=obs_atual.get("assinatura"), classificacoes=classificacoes,
+            ):
                 logger.warning(
                     "InfoSimples %s: emissão nova recusada na origem (code %s: %s); "
                     "tentando 2ª via", config["tipo"], api_code, last_error,
                 )
+                gatilho_id = obs_atual["id"]
                 params = {**params, "preferencia_emissao": "2via"}
                 segunda_via = True
                 continue
@@ -310,6 +389,8 @@ async def _fetch_certidao(
         except Exception as e:
             last_error = str(e)
             last_raw = None
+            if len(observacoes) < attempt:  # raised before/while reading the response
+                _observar(None, None, t0, erro=f"{type(e).__name__}: {e}")
             logger.warning(
                 "InfoSimples %s attempt %d/%d exception: %s",
                 config["tipo"], attempt, MAX_RETRIES, e,
@@ -329,6 +410,7 @@ async def _fetch_certidao(
         "raw_response": last_raw,
         "error": last_error,
         "segunda_via": segunda_via,
+        "observacoes": observacoes,
     }
 
 
@@ -1353,6 +1435,14 @@ async def _analisar_resumo_sem_truncar(
     return "\n\n".join(resumos) if resumos else None
 
 
+def _data_tipo_do_raw(raw: Any) -> Optional[str]:
+    data = raw.get("data") if isinstance(raw, dict) else None
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        tipo = data[0].get("tipo")
+        return tipo if isinstance(tipo, str) else None
+    return None
+
+
 async def _derive_estrutura(
     *,
     config: Optional[dict],
@@ -1393,6 +1483,15 @@ async def _derive_estrutura(
         parsed = parse_resultado(config, result)
         if parsed:
             patch.update(parsed)
+            origem = "api"
+        # The Receita's own printed `tipo` ("Positiva com efeitos de negativa",
+        # documented field of `receita-federal/pgfn`) is the source's verdict —
+        # no guess, and it is what the PCEN 2ª-via contract rule keys on.
+        if (
+            config.get("tipo") == "cnd_federal" and "resultado" not in patch
+            and aprendizado.e_data_tipo_pcen(_data_tipo_do_raw(result.get("raw_response")))
+        ):
+            patch["resultado"] = "positiva_com_efeito_de_negativa"
             origem = "api"
     if "resultado" not in patch and texto_para_ia:
         via_ia = await analyze_estrutura(texto_para_ia, nome_display, org_id)
@@ -1683,8 +1782,25 @@ async def _process_single_certidao(
         "api_requested_at": datetime.now(timezone.utc).isoformat(),
     }).eq("id", resultado_id).execute()
 
-    # Fetch from InfoSimples
-    result = await _fetch_certidao(config, consulta, infosimples_token, http_client)
+    # Fetch from InfoSimples — with what the watcher has learned (never blocks:
+    # both loaders fall back to today's behaviour on any failure).
+    classificacoes = aprendizado.carregar_classificacoes(db, org_id, config["tipo"])
+    preferencia_inicial = (
+        aprendizado.carregar_preferencia_inicial(
+            db, consulta, config["tipo"], datetime.now(timezone.utc).date()
+        )
+        if config.get("segunda_via_fallback") else "nova"
+    )
+    result = await _fetch_certidao(
+        config, consulta, infosimples_token, http_client,
+        classificacoes=classificacoes, preferencia_inicial=preferencia_inicial,
+    )
+    # Record EVERY call (success or failure) and let the failures teach the
+    # trigger. `registrar`/`aprender` log and swallow their own errors.
+    observacoes = result.get("observacoes") or []
+    aprendizado.registrar(db, observacoes, resultado_id=resultado_id)
+    if any(not o.get("sucesso") for o in observacoes):
+        aprendizado.aprender(db, org_id, config["tipo"])
 
     # Book the InfoSimples spend regardless of success/erro — a "nada
     # consta" (612) or a definitive 4xx API error still consumed a billed
@@ -1722,6 +1838,7 @@ async def _process_single_certidao(
             "status": "erro",
             "erro_mensagem": result["error"],
             "api_response": result["raw_response"],
+            **PCEN_CIENCIA_LIMPA,
         }).eq("id", resultado_id).execute()
         _atualizar_status_consulta(consulta_id, org_id, db)
         return
@@ -1809,6 +1926,7 @@ async def _process_single_certidao(
             "erro_mensagem": None,
             "texto_extraido": extracted_doc.texto_extraido,
             "formatacao": ranges_to_json(extracted_doc.formatacao),
+            **PCEN_CIENCIA_LIMPA,
         }
         if arquivo_url:
             update_data["arquivo_url"] = arquivo_url
@@ -1851,6 +1969,7 @@ async def _process_single_certidao(
         "erro_mensagem": None,
         "texto_extraido": extracted_doc.texto_extraido,
         "formatacao": ranges_to_json(extracted_doc.formatacao),
+        **PCEN_CIENCIA_LIMPA,
     }
     update_data.update(await _derive_estrutura(
         config=config, result=result, texto_para_ia=text_for_analysis,

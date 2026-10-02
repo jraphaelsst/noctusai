@@ -1,0 +1,27 @@
+artifact: social-wiring:certidoes:infosimples
+kind: integration
+stage: building
+last_touched: '2026-10-01'
+last_touched_by: backend-engineer
+known_facts:
+- InfoSimples docs (receita-federal/pgfn) - a holder of a PCEN certidao cannot get a NEW one from the PGFN portal;
+  preferencia_emissao=2via retrieves the still-valid earlier one, with the same practical effect.
+- The docs give NO code or message for the refused nova; the only signal is the 600-798 failure range. The emission
+  watcher (migration 186) records every call to learn the real signature.
+- A 2a via carries the ORIGINAL emission date, so the 30-day rule would reject it; the contract gate judges it by the
+  printed validity and asks the operator to acknowledge it.
+- data[0].tipo is the source's own verdict (Positiva com efeitos de negativa / Negativa); header.price + header.billable
+  give the per-call cost.
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+- alt: always request 2via first (the vendor's suggestion)
+  rejected_because: only a per-documento history of a still-valid PCEN justifies skipping nova; otherwise a negativa
+    holder would get an old certidao instead of a fresh one.
+- alt: classify the failure by code range only
+  rejected_because: the range is too broad (outages and PCEN share it); signatures + outcome evidence separate them.
+manual_validation_log: []
+bugs_fixed_during_dev: []
+related:
+  kb_patterns:
+  - KB § INTEGRATIONS/infosimples-certidoes.md

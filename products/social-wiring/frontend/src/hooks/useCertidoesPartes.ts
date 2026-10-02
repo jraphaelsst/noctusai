@@ -14,6 +14,7 @@ import { api } from "@noctusai/seed/infra";
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
 import type {
   CelulaEnsureResponse,
+  CienciaPcenResult,
   CertidaoParteCelula,
   CertidoesPartesResponse,
   EmissaoResponse,
@@ -95,6 +96,27 @@ export function useReemitirResultado(clienteId: string) {
       void invalidate();
     },
     onError: (e) => toast.error("Erro ao re-emitir certidão", { description: erroMsg(e) }),
+  });
+}
+
+/** `POST …/certidoes/resultados/{resultado_id}/ciencia-pcen` — the operator's
+ *  acknowledgment (`entendi`) of a Receita PCEN 2ª via, or a support question
+ *  (`duvida`). Invalidates this tab AND every contract readiness of the card
+ *  (the gate there flips from "aguardando ciência" to "pronto"). */
+export function useCienciaPcen(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ resultadoId, acao }: { resultadoId: string; acao: "entendi" | "duvida" }) =>
+      api.post<CienciaPcenResult>(
+        `${clienteBase(clienteId)}/certidoes/resultados/${encodeURIComponent(resultadoId)}/ciencia-pcen`,
+        { acao },
+      ),
+    onSuccess: (r) => {
+      if (r.acao === "entendi") toast.success("Ciência registrada.");
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "certidoes", "partes"] });
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "contratos"] });
+    },
+    onError: (e) => toast.error("Não foi possível registrar", { description: erroMsg(e) }),
   });
 }
 

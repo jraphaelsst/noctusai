@@ -59,12 +59,23 @@ def data_assinatura(dados: DadosContrato, pedida: Optional[date]) -> date:
 
 
 class ContratoIncompleto(AppException):
-    def __init__(self, faltando: list[dict], bloqueios: list[dict]) -> None:
+    def __init__(
+        self,
+        faltando: list[dict],
+        bloqueios: list[dict],
+        confirmacoes: Optional[list[dict]] = None,
+    ) -> None:
+        # `confirmacoes`: acknowledgments still pending (owner amendment
+        # 2026-10-01) — the generation endpoint re-checks them, so the gate
+        # cannot be bypassed by skipping the readiness screen.
+        details: dict = {"faltando": faltando, "bloqueios": bloqueios}
+        if confirmacoes:
+            details["confirmacoes"] = confirmacoes
         super().__init__(
             code="CONTRATO_INCOMPLETO",
             message="O contrato não pode ser gerado: há dados faltando ou inconsistentes.",
             status_code=400,
-            details={"faltando": faltando, "bloqueios": bloqueios},
+            details=details,
         )
 
 
@@ -136,6 +147,9 @@ def obter_geracao(
         "faltando": avaliacao.faltando,
         "bloqueios": avaliacao.bloqueios,
         "avisos": avaliacao.avisos,
+        # Owner amendment 2026-10-01 — acknowledgments the operator must give
+        # (each with `ciente`); `pronto` is False while any is pending.
+        "confirmacoes": avaliacao.confirmacoes,
     }
 
 
@@ -237,7 +251,9 @@ async def gerar(
     switches = derivar_switches(dados, politica, referencia)
     avaliacao = avaliar(dados, switches, politica, data, referencia)
     if not avaliacao.pronto:
-        raise ContratoIncompleto(avaliacao.faltando, avaliacao.bloqueios)
+        raise ContratoIncompleto(
+            avaliacao.faltando, avaliacao.bloqueios, avaliacao.pendentes_confirmacao
+        )
 
     renderizado = renderizar(adapter, dados, switches, politica, data, referencia)
     achados = lint(
@@ -279,7 +295,12 @@ async def gerar(
         modalidade_assinatura=dados.modalidade_assinatura,
         revisao_campos=revisao_campos,
     )
-    return {"versao": versao, "avisos": avaliacao.avisos}
+    return {
+        "versao": versao,
+        "avisos": avaliacao.avisos,
+        # The acknowledged confirmations ride on the record of this generation.
+        "confirmacoes": avaliacao.confirmacoes,
+    }
 
 
 __all__ = [

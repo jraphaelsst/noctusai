@@ -55,14 +55,44 @@ export function tipoAutomatico(tipo: string | null | undefined): boolean {
   return tipo !== "serasa" && tipo !== "fgts_regularidade";
 }
 
+/** `2026-11-30` → `30/11/2026` (no timezone shift — the date is already a calendar day). */
+export function dataBr(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+}
+
 export function avisoVencida(c: CertidaoParteCelula): string | null {
-  if (!c.stale_para_contrato || c.idade_dias == null) return null;
+  if (!c.stale_para_contrato) return null;
+  // The Receita PCEN 2ª via is judged by its printed validity, not by age.
+  if (c.pcen) return `Validade impressa venceu em ${dataBr(c.pcen.validade_ate)} — vencida para contrato`;
+  if (c.idade_dias == null) return null;
   return `Emitida há ${c.idade_dias} dias — vencida para contrato`;
 }
 
 /** Why a 2ª via reads older than "today": it carries the original emission date. */
 export function notaSegundaVia(c: CertidaoParteCelula): string | null {
+  if (c.pcen && !c.pcen.vencida) {
+    return `2ª via — data de emissão original; válida até ${dataBr(c.pcen.validade_ate)}`;
+  }
   return c.segunda_via ? "2ª via — data de emissão original" : null;
+}
+
+/** Where "Tenho dúvida" can actually reach someone: the org's configured
+ *  WhatsApp, else its e-mail, else `null` (the UI then says so — never a dead
+ *  button). */
+export function linkDeSuporte(
+  suporte: { email: string | null; whatsapp: string | null } | null,
+  mensagem: string,
+): { href: string; rotulo: string } | null {
+  const fone = (suporte?.whatsapp ?? "").replace(/\D/g, "");
+  if (fone) return { href: `https://wa.me/${fone}?text=${encodeURIComponent(mensagem)}`, rotulo: "Abrir WhatsApp" };
+  if (suporte?.email) {
+    return {
+      href: `mailto:${suporte.email}?subject=${encodeURIComponent("Dúvida sobre certidão da Receita")}&body=${encodeURIComponent(mensagem)}`,
+      rotulo: "Enviar e-mail",
+    };
+  }
+  return null;
 }
 
 /** "9/13 ok · 2 pendentes · 1 vencida p/ contrato" — zero parts are dropped. */
