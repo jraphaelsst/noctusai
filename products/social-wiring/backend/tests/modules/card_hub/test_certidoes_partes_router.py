@@ -363,20 +363,34 @@ class TestCienciaPcen:
     def test_duvida_registra_e_nao_da_ciencia_e_aponta_o_contato_configurado(self, api, scoped):
         cid, aid, vid = _card(scoped)
         self._pcen(scoped, vid)
-        scoped.set_table_data("notification_recipients", [{
-            "id": "n1", "org_id": ORG_ID, "name": "Escritório", "email": "x@y.z",
-            "whatsapp_number": "5511999990000", "is_active": True, "created_at": "2026-01-01T00:00:00+00:00",
+        scoped.set_table_data("org_dados_cadastrais", [{
+            "org_id": ORG_ID, "suporte_nome": "Suporte Noctus",
+            "suporte_whatsapp": "+5511999990000", "suporte_email": "suporte@x.z",
         }])
         body = self._post(api, cid, "duvida").json()
         assert body["pcen"]["ciente"] is False and body["pcen"]["duvida_em"]
-        assert body["suporte"]["whatsapp"] == "5511999990000"
+        assert body["suporte"] == {
+            "nome": "Suporte Noctus", "whatsapp": "+5511999990000", "email": "suporte@x.z",
+        }
         (row,) = scoped.table("certidao_resultados").updated_payloads
         assert "pcen_ciente_em" not in row and row["pcen_duvida_em"]
 
     def test_sem_contato_configurado_suporte_e_nulo_nao_inventado(self, api, scoped):
         cid, aid, vid = _card(scoped)
         self._pcen(scoped, vid)
-        scoped.set_table_data("notification_recipients", [])
+        scoped.set_table_data("org_dados_cadastrais", [])
+        assert self._post(api, cid, "duvida").json()["suporte"] is None
+
+    def test_suporte_nunca_cai_nos_destinatarios_de_notificacao(self, api, scoped):
+        """Owner decision 2026-10-02: support is SEPARATE from the notification
+        number — an org with recipients but no support contact gets `None`."""
+        cid, aid, vid = _card(scoped)
+        self._pcen(scoped, vid)
+        scoped.set_table_data("org_dados_cadastrais", [{"org_id": ORG_ID, "suporte_nome": "Só nome"}])
+        scoped.set_table_data("notification_recipients", [{
+            "id": "n1", "org_id": ORG_ID, "name": "Escritório", "email": "x@y.z",
+            "whatsapp_number": "+5511999990000", "is_active": True, "created_at": "2026-01-01T00:00:00+00:00",
+        }])
         assert self._post(api, cid, "duvida").json()["suporte"] is None
 
     def test_outra_certidao_409_nada_e_gravado(self, api, scoped):

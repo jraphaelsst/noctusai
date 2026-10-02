@@ -1347,6 +1347,9 @@ describe("DadosImobiliariaTab", () => {
         plataforma_assinatura_url: null,
         posse_multa_diaria: null,
         prazo_pendencias_padrao_dias: null,
+        suporte_nome: null,
+        suporte_whatsapp: null,
+        suporte_email: null,
         updated_at: null,
       },
       showSkeleton: false,
@@ -1426,6 +1429,39 @@ describe("DadosImobiliariaTab", () => {
     });
     expect(typeof payload.posse_multa_diaria).toBe("number");
     expect(typeof payload.prazo_pendencias_padrao_dias).toBe("number");
+  });
+
+  it("saves the support contact with the WhatsApp canonicalized to E.164 (migration 189)", async () => {
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-suporte-nome"), { target: { value: "Suporte" } });
+    fireEvent.change(getByTestId("imob-suporte-whatsapp"), {
+      target: { value: "(11) 99457-3387" },
+    });
+    fireEvent.change(getByTestId("imob-suporte-email"), {
+      target: { value: "suporte@exemplo.com.br" },
+    });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).toHaveBeenCalledTimes(1);
+    expect(mockSalvarImob.mock.calls[0][0]).toEqual({
+      suporte_nome: "Suporte",
+      suporte_whatsapp: "+5511994573387",
+      suporte_email: "suporte@exemplo.com.br",
+    });
+  });
+
+  it("refuses an unresolvable support WhatsApp client-side", async () => {
+    const { toast } = await import("sonner");
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+
+    fireEvent.change(getByTestId("imob-suporte-whatsapp"), { target: { value: "1199457" } });
+    fireEvent.click(getByTestId("imob-salvar"));
+
+    expect(mockSalvarImob).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith(
+      "WhatsApp de suporte inválido (ex.: +55 11 99999-9999).",
+    );
   });
 
   it("clearing the daily fine sends null, not an empty string", async () => {

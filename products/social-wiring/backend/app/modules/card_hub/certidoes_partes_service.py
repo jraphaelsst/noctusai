@@ -666,24 +666,28 @@ def reemitir(
 
 
 def _suporte_da_org(client: Any, org_id: UUID) -> Optional[dict]:
-    """The org's configured contact for questions — the first ACTIVE
-    `notification_recipients` row (the office's own recipients; the product
-    has no other support channel). `None` = none configured; the UI says so
-    instead of showing a dead button."""
+    """The office's SUPPORT contact — `org_dados_cadastrais.suporte_*`
+    (migration 189, set in Configurações → Imobiliária). Deliberately NOT the
+    notification recipients (owner decision 2026-10-02: a lead-alert inbox is
+    not a help desk), and no fallback to them. `None` = not configured; the UI
+    says so instead of showing a dead button."""
     try:
         rows = (
-            _t(client, "notification_recipients")
-            .select("name, email, whatsapp_number")
-            .eq("org_id", str(org_id)).eq("is_active", True)
-            .order("created_at").limit(1).execute()
+            _t(client, "org_dados_cadastrais")
+            .select("suporte_nome, suporte_whatsapp, suporte_email")
+            .eq("org_id", str(org_id)).limit(1).execute()
         ).data or []
     except Exception:  # noqa: BLE001 — a lookup failure must not block the acknowledgment
-        logger.warning("ciencia-pcen: could not read notification_recipients", exc_info=True)
+        logger.warning("ciencia-pcen: could not read the support contact", exc_info=True)
         return None
-    if not rows:
+    r = rows[0] if rows else {}
+    if not (r.get("suporte_whatsapp") or r.get("suporte_email")):
         return None
-    r = rows[0]
-    return {"nome": r.get("name"), "email": r.get("email"), "whatsapp": r.get("whatsapp_number")}
+    return {
+        "nome": r.get("suporte_nome"),
+        "email": r.get("suporte_email"),
+        "whatsapp": r.get("suporte_whatsapp"),
+    }
 
 
 def registrar_ciencia_pcen(

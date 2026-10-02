@@ -112,8 +112,8 @@ export function PcenCiencia(p: PcenCienciaProps) {
             </a>
           ) : (
             <p className="text-muted-foreground" data-testid={`${p.testId}-sem-contato`}>
-              Nenhum contato de suporte está configurado para este escritório (Configurações → destinatários de
-              notificação). Peça ao administrador, informando a mensagem abaixo:
+              Nenhum contato de suporte está configurado para este escritório (Configurações → Imobiliária →
+              Contato de suporte). Peça ao administrador, informando a mensagem abaixo:
             </p>
           )}
           <p className="select-all rounded bg-muted p-1.5 text-muted-foreground">{mensagem}</p>

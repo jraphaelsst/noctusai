@@ -48,6 +48,7 @@ import { Separator } from "@/components/ui/separator";
 
 import { useAuthStore } from "@noctusai/seed/infra";
 import { resolveSSOContext, StatusPaginaPanel } from "@noctusai/lib";
+import { normalizePhone } from "@noctusai/lib/phone";
 import { api } from "@/lib/api";
 
 import {
@@ -190,6 +191,23 @@ function DadosImobiliariaTab() {
           return;
         }
         (payload as Record<string, unknown>)[k] = n;
+        return;
+      }
+
+      if (k === "suporte_whatsapp" && raw) {
+        // Mirrors the backend's canonicalization (migration 189): any
+        // spelling the platform phone canon resolves is saved as E.164.
+        const e164 = normalizePhone(raw);
+        if (!e164) {
+          erro = "WhatsApp de suporte inválido (ex.: +55 11 99999-9999).";
+          return;
+        }
+        (payload as Record<string, unknown>)[k] = e164;
+        return;
+      }
+
+      if (k === "suporte_email" && raw && !/^[^@\s]+@[^@\s]+$/.test(raw)) {
+        erro = "E-mail de suporte inválido.";
         return;
       }
 
@@ -508,6 +526,51 @@ function DadosImobiliariaTab() {
                   vencida. A plataforma usa 10 dias quando a organização
                   nunca personalizou este valor.
                 </p>
+              </div>
+            </div>
+
+            <Separator />
+            <div className="space-y-1" data-testid="imob-suporte">
+              <h3 className="text-sm font-medium">Contato de suporte</h3>
+              <p className="text-xs text-muted-foreground">
+                Para quem o botão “Tenho dúvida — falar com o suporte” encaminha
+                o operador (por exemplo, na ciência da certidão da Receita
+                “positiva com efeitos de negativa”). É separado dos
+                destinatários de notificação de leads.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-suporte-nome">Nome</Label>
+                <Input
+                  id="imob-suporte-nome"
+                  value={valor("suporte_nome")}
+                  onChange={(e) => campo("suporte_nome", e.target.value)}
+                  placeholder="Suporte"
+                  data-testid="imob-suporte-nome"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-suporte-whatsapp">WhatsApp</Label>
+                <Input
+                  id="imob-suporte-whatsapp"
+                  inputMode="tel"
+                  value={valor("suporte_whatsapp")}
+                  onChange={(e) => campo("suporte_whatsapp", e.target.value)}
+                  placeholder="+55 11 99999-9999"
+                  data-testid="imob-suporte-whatsapp"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="imob-suporte-email">E-mail</Label>
+                <Input
+                  id="imob-suporte-email"
+                  type="email"
+                  value={valor("suporte_email")}
+                  onChange={(e) => campo("suporte_email", e.target.value)}
+                  placeholder="suporte@exemplo.com.br"
+                  data-testid="imob-suporte-email"
+                />
               </div>
             </div>
 

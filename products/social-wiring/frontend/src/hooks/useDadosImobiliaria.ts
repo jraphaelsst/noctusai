@@ -54,6 +54,13 @@ export interface DadosImobiliaria {
    *  that has never saved this tab returns every field as `null` (the
    *  no-row shape), this one included. */
   prazo_pendencias_padrao_dias: number | null;
+  // ─── Migration 189 — the office's SUPPORT contact (owner decision
+  // 2026-10-02), read by the certidões PCEN "Tenho dúvida" button.
+  // Deliberately separate from the notification recipients.
+  suporte_nome: string | null;
+  /** E.164 (the platform phone canon) — the backend canonicalizes on save. */
+  suporte_whatsapp: string | null;
+  suporte_email: string | null;
   updated_at: string | null;
 }
 

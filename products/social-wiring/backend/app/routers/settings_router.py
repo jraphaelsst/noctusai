@@ -37,6 +37,7 @@ from noctusai_lib.api.auth.session import require_org_admin_role
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
+from noctusai_lib.primitives.phone import normalize_phone
 
 from app.config import SocialWiringSettings, settings
 from app.dependencies import (
@@ -1508,6 +1509,12 @@ _IMOBILIARIA_CAMPOS: tuple[str, ...] = (
     "plataforma_assinatura_url",
     "posse_multa_diaria",
     "prazo_pendencias_padrao_dias",
+    # Migration 189 — the office's SUPPORT contact, read by the certidões
+    # PCEN "Tenho dúvida" button. Deliberately separate from the
+    # notification recipients (owner decision 2026-10-02).
+    "suporte_nome",
+    "suporte_whatsapp",
+    "suporte_email",
 )
 
 
@@ -1563,6 +1570,36 @@ class DadosImobiliariaBody(StrictHttpModel):
     #: opened this settings form still gets a sane value the moment a row is
     #: created for any other reason.
     prazo_pendencias_padrao_dias: Optional[int] = Field(default=10, gt=0)
+
+    # ─── Migration 189 — the support contact (owner decision 2026-10-02) ───
+    #: Who answers an operator's "Tenho dúvida" (certidões PCEN gate). Its
+    #: own answer — never the notification recipients.
+    suporte_nome: Optional[str] = Field(default=None, max_length=255)
+    #: E.164 after normalization (the platform phone canon); any spelling the
+    #: canon resolves is accepted, anything it cannot resolve is a 422 — the
+    #: column's CHECK would refuse it anyway, this just names the field.
+    suporte_whatsapp: Optional[str] = Field(default=None, max_length=32)
+    suporte_email: Optional[str] = Field(default=None, max_length=255)
+
+    @field_validator("suporte_whatsapp")
+    @classmethod
+    def _normalizar_suporte_whatsapp(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        e164 = normalize_phone(value)
+        if e164 is None:
+            raise ValueError("WhatsApp de suporte inválido (ex.: +55 11 99999-9999)")
+        return e164
+
+    @field_validator("suporte_email")
+    @classmethod
+    def _validar_suporte_email(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("E-mail de suporte inválido")
+        return value
 
 
 def _imobiliaria_out(row: dict | None) -> dict:

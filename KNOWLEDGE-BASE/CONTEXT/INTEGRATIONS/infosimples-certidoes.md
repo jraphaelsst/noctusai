@@ -76,6 +76,9 @@ It is never a silent pass: the readiness report gets a `confirmacoes` entry and 
 ("Tenho dúvida — falar com o suporte"). The acknowledgment is stored per resultado
 (`certidao_resultados.pcen_ciente_por/_em/_validade`), is valid only for the printed validity it was given for,
 and is cleared whenever the row is re-processed. `POST …/gerar` re-checks it.
+"Tenho dúvida" routes to the office's **support contact** — `org_dados_cadastrais.suporte_*` (migration 189,
+Configurações → Imobiliária → Contato de suporte). It is deliberately separate from the lead-notification
+recipients (owner decision 2026-10-02) and never falls back to them: unset ⇒ the UI says none is configured.
 
 ## 5 · Comportamento observado (vs documentação oficial)
 

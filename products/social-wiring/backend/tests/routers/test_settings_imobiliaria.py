@@ -9,25 +9,10 @@ length in its own module docstring): `Depends(get_social_wiring_client)`
 resolved via `app.dependency_overrides`, never a `unittest.mock.patch` of
 our own code.
 
-🔴 NO ROUND-TRIP (PUT-then-GET) ASSERTIONS HERE — A REAL, PRE-EXISTING MOCK
-GAP, NOT SOMETHING THIS SLICE INTRODUCED
---------------------------------------------------------------------------------
-`update_dados_imobiliaria` writes via `.upsert(linha, on_conflict="org_id")`.
-`noctusai_lib.testing.mocks.MockRequestBuilder.upsert` is a documented no-op
-today — "Upsert propagation is deferred to a follow-up project (needs
-conflict-target tracking via `on_conflict`)" — so a PUT's own response (which
-re-reads through `get_dados_imobiliaria` right after the upsert) can never
-observe the value it just wrote, for ANY field on this table, not only the
-four this migration adds. There was no pre-existing round-trip test for this
-endpoint to break; writing one now would be a false-green — it would pass
-even if persistence were completely broken. What IS honestly testable
-against this mock is everything that happens BEFORE the DB call: the
-Pydantic validation boundary.
-
-NOC-REMEDIATE[seed]: `MockRequestBuilder.upsert` needs real conflict-target-
-aware propagation (same shape `insert`/`update` already have via
-`inserted_payloads`/`updated_payloads`) before a genuine round-trip test can
-exist for this endpoint — 2026-09-15.
+Round trips (PUT-then-GET) are genuine here: the seed's
+`MockRequestBuilder.upsert` now merges on the `on_conflict` key, which
+closed the 2026-09-15 `NOC-REMEDIATE[seed]` gap this file used to carry —
+see `TestSuporteContato` (migration 189).
 """
 from __future__ import annotations
 
@@ -136,3 +121,37 @@ class TestPutValidation:
             json={"plataforma_assinatura_nome": "X", "org_id": "should-not-be-settable"},
         )
         assert r.status_code == 422, r.text
+
+
+class TestSuporteContato:
+    """Migration 189 — the office's SUPPORT contact, separate from the
+    notification recipients (owner decision 2026-10-02). The mock's `upsert`
+    now propagates on the conflict key, so this is a genuine round trip."""
+
+    def test_whatsapp_is_canonicalized_to_e164_and_round_trips(self, client, imobiliaria_scoped):
+        r = client.put(
+            "/api/settings/imobiliaria",
+            json={
+                "suporte_nome": "Suporte",
+                "suporte_whatsapp": "(11) 99457-3387",
+                "suporte_email": "suporte@exemplo.com.br",
+            },
+        )
+        assert r.status_code == 200, r.text
+        body = client.get("/api/settings/imobiliaria").json()
+        assert body["suporte_nome"] == "Suporte"
+        assert body["suporte_whatsapp"] == "+5511994573387"
+        assert body["suporte_email"] == "suporte@exemplo.com.br"
+
+    def test_an_unresolvable_whatsapp_is_refused(self, client, imobiliaria_scoped):
+        r = client.put("/api/settings/imobiliaria", json={"suporte_whatsapp": "1199457"})
+        assert r.status_code == 422, r.text
+
+    def test_an_invalid_email_is_refused(self, client, imobiliaria_scoped):
+        r = client.put("/api/settings/imobiliaria", json={"suporte_email": "sem-arroba"})
+        assert r.status_code == 422, r.text
+
+    def test_blank_clears_to_null(self, client, imobiliaria_scoped):
+        r = client.put("/api/settings/imobiliaria", json={"suporte_whatsapp": "  "})
+        assert r.status_code == 200, r.text
+        assert client.get("/api/settings/imobiliaria").json()["suporte_whatsapp"] is None
