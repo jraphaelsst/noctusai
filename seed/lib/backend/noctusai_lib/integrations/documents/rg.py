@@ -51,6 +51,7 @@ from typing import Optional
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_is_valid
 from noctusai_lib.integrations.documents.cpf import only_digits as _cpf_only_digits
 from noctusai_lib.integrations.documents.labels import Achado, label_before
+from noctusai_lib.primitives import identificador as _identificador
 
 #: Same window as every sibling — these are the same document layouts.
 _LABEL_WINDOW = 48
@@ -639,4 +640,27 @@ def is_same_as_cpf(rg: Optional[str], cpf: Optional[str]) -> bool:
     return only_alnum(rg) == _cpf_only_digits(cpf)
 
 
-__all__ = ["find_rg", "find_rg_orgao", "is_same_as_cpf", "normalize", "only_alnum"]
+def completar_dv(rg: Optional[str]) -> Optional[str]:
+    """`30128742` (a CNH prints the RG without its check digit) -> `30.128.742-9`.
+
+    Delegates to the canonical-identifier registry — the ONE place the SP RG
+    check-digit algorithm lives. None when the value does not fit an SP RG
+    or its own check digit is wrong (never invents).
+    """
+    return _identificador.canonico("rg", rg)
+
+
+def mesmo_rg(a: Optional[str], b: Optional[str]) -> Optional[bool]:
+    """True / False / None (undecidable) — see `identificador.equivalentes`."""
+    return _identificador.equivalentes("rg", a, b)
+
+
+__all__ = [
+    "completar_dv",
+    "find_rg",
+    "find_rg_orgao",
+    "is_same_as_cpf",
+    "mesmo_rg",
+    "normalize",
+    "only_alnum",
+]

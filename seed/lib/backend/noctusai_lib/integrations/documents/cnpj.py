@@ -19,11 +19,8 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-_PESOS_DV1 = (5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
-_PESOS_DV2 = (6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2)
-
-_FORMATO = re.compile(r"^[0-9A-Z]{12}[0-9]{2}$")
-
+from noctusai_lib.primitives.identificador import cnpj_dv_valido as _cnpj_dv_valido
+from noctusai_lib.primitives.identificador import mascara_cnpj as _mascara_cnpj
 
 def normalize(value: Optional[str]) -> str:
     """Uppercased, with the usual punctuation (`.`, `/`, `-`, spaces) removed.
@@ -35,35 +32,17 @@ def normalize(value: Optional[str]) -> str:
     return re.sub(r"[.\-/\s]", "", value or "").upper()
 
 
-def _digito(base: str, pesos: tuple[int, ...]) -> int:
-    soma = sum((ord(c) - 48) * p for c, p in zip(base, pesos))
-    resto = soma % 11
-    return 0 if resto < 2 else 11 - resto
-
-
 def is_valid(value: Optional[str]) -> bool:
     """Do this CNPJ's two check digits verify? Accepts numeric and
-    alphanumeric CNPJs, punctuated or not. Rejects the numeric repdigit strings
-    (`00000000000000` … `99999999999999`): some satisfy the arithmetic and none
-    are real registrations — they are placeholder data, same reasoning as
-    `cpf.is_valid`."""
-    s = normalize(value)
-    if not _FORMATO.match(s):
-        return False
-    if s.isdigit() and s == s[0] * 14:
-        return False
-    dv1 = _digito(s[:12], _PESOS_DV1)
-    dv2 = _digito(s[:12] + str(dv1), _PESOS_DV2)
-    return s[12:] == f"{dv1}{dv2}"
+    alphanumeric CNPJs, punctuated or not; rejects repdigit placeholders.
+    The algorithm lives in `primitives.identificador` (one implementation)."""
+    return _cnpj_dv_valido(normalize(value))
 
 
 def format_cnpj(value: Optional[str]) -> Optional[str]:
     """`11222333000181` → `11.222.333/0001-81`. None when it is not fourteen
     characters of CNPJ shape (validity is `is_valid`'s job, not this one's)."""
-    s = normalize(value)
-    if not _FORMATO.match(s):
-        return None
-    return f"{s[:2]}.{s[2:5]}.{s[5:8]}/{s[8:12]}-{s[12:]}"
+    return _mascara_cnpj(normalize(value))
 
 
 __all__ = ["format_cnpj", "is_valid", "normalize"]
