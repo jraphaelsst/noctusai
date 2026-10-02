@@ -325,7 +325,12 @@ AS $$
     SELECT CASE
         WHEN orgao IS NULL OR btrim(orgao) = '' THEN NULL
         WHEN upper(btrim(orgao)) ~ '^IIRGD' THEN 'SP'
-        ELSE (regexp_match(upper(btrim(orgao)), '[/.\- ]([A-Z]{2})\s*$'))[1]
+        ELSE (
+            SELECT m[1]
+              FROM (SELECT regexp_match(upper(btrim(orgao)), '[/.\- ]([A-Z]{2})\s*$') AS m) x
+             WHERE m[1] = ANY (ARRAY['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG',
+                                     'PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'])
+        )
     END;
 $$;
 

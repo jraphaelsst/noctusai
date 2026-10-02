@@ -315,6 +315,46 @@ class TestMesclar:
         out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
         assert out.cpf is None
 
+    def test_a_cnh_rg_without_dv_and_the_full_rg_agree_not_disagree(self):
+        """Owner rule 2026-10-01 (`canonical-identifiers`): `30128742` (a CNH
+        prints the RG without its check digit) and `30.128.742-9` are ONE RG —
+        the stronger model corroborates, it does not disagree."""
+        original = self._original(rg="30128742", rg_confianca=ExtractionConfidence.BAIXA)
+        escalada = IdentityFields(rg="30.128.742-9", rg_confianca=ExtractionConfidence.MEDIA)
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.rg == "30128742"  # the first read's value is not rewritten
+        assert out.rg_confianca is ExtractionConfidence.MEDIA  # promoted one step
+        assert "divergiu" not in (out.aviso_mensagem or "")
+
+    def test_cpf_in_two_spellings_agrees(self):
+        original = self._original(cpf="41295423898")
+        escalada = IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.BAIXA)
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.cpf == "41295423898"
+        assert out.cpf_confianca is ExtractionConfidence.MEDIA
+
+    def test_disagreeing_cpf_the_escalated_read_verifies_and_the_first_does_not(self):
+        original = self._original(cpf="412.954.238-99")  # DV fails
+        escalada = IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.MEDIA)
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.cpf == _CPF_A
+        assert out.cpf_confianca is ExtractionConfidence.BAIXA  # still human-gated
+        assert "dígito verificador válido" in out.aviso_mensagem
+
+    def test_disagreeing_cpf_the_first_read_verifies_and_the_escalated_does_not(self):
+        original = self._original()  # _CPF_A, verifies
+        escalada = IdentityFields(cpf="412.954.238-99", cpf_confianca=ExtractionConfidence.MEDIA)
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.cpf == _CPF_A
+        assert "mantido o valor da primeira leitura" in out.aviso_mensagem
+
+    def test_disagreeing_rg_dv_swap_keeps_the_one_that_verifies(self):
+        original = self._original(rg="15.668.564-3", rg_confianca=ExtractionConfidence.BAIXA)  # DV fails
+        escalada = IdentityFields(rg="16.669.554-3", rg_confianca=ExtractionConfidence.MEDIA)
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.rg == "16.669.554-3"
+        assert out.rg_confianca is ExtractionConfidence.BAIXA
+
     def test_no_change_when_escalation_agrees_at_the_ceiling_and_finds_nothing_new(self):
         original = self._original(
             cpf_confianca=ExtractionConfidence.ALTA,
