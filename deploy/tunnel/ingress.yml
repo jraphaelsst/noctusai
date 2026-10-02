@@ -108,6 +108,11 @@ routes:
   - hostname: community.noctusai.com
     service:  http://community:8017
 
+  # ── store (prod exposure consented 2026-10-02; see
+  # deploy/consent/store.prod.yml) ─────────────────────────────────────
+  - hostname: store.noctusai.com
+    service:  http://store:8018
+
   - hostname: igig.noctusai.com
     service:  http://igig:8013
 

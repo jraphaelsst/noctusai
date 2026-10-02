@@ -52,6 +52,8 @@ ingress:
     service: http://orbity:8010
   - hostname: community.noctusai.com
     service: http://community:8017
+  - hostname: store.noctusai.com
+    service: http://store:8018
   - hostname: igig.noctusai.com
     service: http://igig:8013
   - hostname: p-studio.noctusai.com

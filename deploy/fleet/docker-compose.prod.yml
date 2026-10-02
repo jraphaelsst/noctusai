@@ -536,6 +536,40 @@ services:
     mem_limit: 512m
 
 
+  # ── store 8018 — public sales page + Asaas checkout (prod exposure
+  # consented 2026-10-02; deploy/consent/store.prod.yml). Asaas keys live in
+  # the DB (store.credentials, encrypted with the fleet ENCRYPTION_KEY), so
+  # only NON-SECRET store config is set here.
+  store:
+    <<: *prod-defaults
+    image: ghcr.io/jraphaelsst/noctus-store:${NOCTUS_IMAGE_TAG:-latest}
+    container_name: noctus-store
+    environment:
+      <<: *prod-env
+      STORE_PUBLIC_URL: https://store.noctusai.com
+      STORE_ORG_ID: 6dd73140-74a4-41c6-aeff-bc94b5312b53
+      STORE_ADMIN_EMAILS: jraphaelsst@noctusai.com
+    expose:
+      - "8018"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8018/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    # /tmp only: Starlette spools multipart parts over 1MB to a tempfile, and
+    # the admin uploads the kit (≤ 50 MB) and the author photo. mode=1777
+    # mirrors standard /tmp semantics for the `noctus` app user.
+    tmpfs:
+      - /tmp:mode=1777,size=96m
+    mem_limit: 512m
+
+
 networks:
   noctus-net:
     name: noctus-net
