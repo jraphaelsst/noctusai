@@ -11,6 +11,7 @@ import {
   Badge, Button, Card, Field, FormError, Input, Skeleton, Switch, Textarea,
 } from "@noctusai/lib/design-system";
 import { AccessDenied, isForbidden } from "@/components/AccessDenied";
+import { IntegracoesPanel } from "@/components/IntegracoesPanel";
 import { useAdminSettings, useKitFile, useSaveSettings, useUploadFoto, useUploadKit } from "@/hooks/useStore";
 import {
   BIO_MAX, MAX_ITEMS, assetUrl, centsFromDigits, centsToMask, formatBRL, type StoreSettings,
@@ -225,10 +226,12 @@ export default function Admin() {
         </Button>
       </Card>
 
+      <IntegracoesPanel />
+
       {errors.length > 0 && <FormError message={errors.join(" ")} />}
       <div className="flex items-center gap-3">
         <Button onClick={onSave} disabled={!dirty || errors.length > 0 || save.isPending}>
-          {save.isPending ? "Salvando…" : "Salvar"}
+          {save.isPending ? "Salvando…" : "Salvar página"}
         </Button>
         {dirty && !save.isPending && <span className="text-xs text-muted-foreground">Alterações não salvas</span>}
       </div>

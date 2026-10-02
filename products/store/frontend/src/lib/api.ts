@@ -7,6 +7,7 @@
  */
 import { api } from "@noctusai/seed/infra";
 import { env, lerIdentificador } from "@noctusai/lib";
+import { createApiKeysHooks } from "@noctusai/lib/components";
 
 export { api };
 
@@ -119,6 +120,13 @@ export const reenviarPedido = (id: string) =>
 /** Absolute URL for a backend-relative asset path (`photo_url`). */
 export const assetUrl = (path: string | null | undefined): string | null =>
   !path ? null : /^https?:\/\//.test(path) ? path : `${env.BACKEND_API_URL}${path}`;
+
+/**
+ * DB-stored credentials (contract §6): the canonical seed hooks over the seed
+ * router at `/api/settings/api-keys*`. Built lazily, once.
+ */
+let apiKeysHooks: ReturnType<typeof createApiKeysHooks> | undefined;
+export const getApiKeysHooks = () => (apiKeysHooks ??= createApiKeysHooks(api));
 
 // ─── Formatting / validation ───────────────────────────────────────────────
 const brl = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });

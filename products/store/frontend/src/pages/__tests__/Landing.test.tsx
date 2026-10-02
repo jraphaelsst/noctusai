@@ -107,3 +107,16 @@ describe("Landing", () => {
     expect(await screen.findByText("e-mail recusado")).toBeInTheDocument();
   });
 });
+
+describe("Landing checkout — flat error shape (contract A6)", () => {
+  it("422 {code, field, detail} lands on the named field", async () => {
+    apiMock.get.mockResolvedValue(PUBLIC_SETTINGS);
+    apiMock.post.mockRejectedValue(new ApiError(422, "x", { detail: "CPF inválido", code: "invalid", field: "cpf" }));
+    renderWithProviders(<Landing />);
+    await waitFor(() => screen.getByText("Contrato À Vista (Word + PDF)"));
+    openDialog();
+    fill("52998224725");
+    fireEvent.click(screen.getByRole("button", { name: "Ir para o pagamento" }));
+    expect(await screen.findByText("CPF inválido")).toBeInTheDocument();
+  });
+});

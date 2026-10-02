@@ -6,7 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import type { PublicSettings } from "@/lib/api";
 
-export const apiMock = { get: vi.fn(), post: vi.fn(), put: vi.fn(), upload: vi.fn() };
+export const apiMock = { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn(), upload: vi.fn() };
 
 export const PUBLIC_SETTINGS: PublicSettings = {
   product_name: "Contrato Blindado de Compra e Venda",

@@ -26,7 +26,12 @@ export function validateCheckout(v: { nome: string; email: string; cpf: string }
 /** Map a 422 body (FastAPI `detail[]` with `loc`, or `{error:{details}}`) to fields. */
 export function fieldErrorsFrom422(body: unknown): Errors {
   const out: Errors = {};
-  const b = body as { detail?: unknown; error?: { details?: unknown } } | undefined;
+  const b = body as { detail?: unknown; field?: string; error?: { details?: unknown } } | undefined;
+  // Store's flat business-error shape (contract A6): {detail, code, field}.
+  if (b?.field === "nome" || b?.field === "email" || b?.field === "cpf") {
+    out[b.field] = typeof b.detail === "string" ? b.detail : "Valor inválido.";
+    return out;
+  }
   const list = Array.isArray(b?.detail) ? b!.detail : Array.isArray(b?.error?.details) ? b!.error!.details : [];
   for (const item of list as { loc?: unknown[]; field?: string; msg?: string; message?: string }[]) {
     const key = (item.field ?? (Array.isArray(item.loc) ? String(item.loc[item.loc.length - 1]) : "")) as Field;
