@@ -933,6 +933,39 @@ class TestScaffoldLLMRewrite:
         assert all(b is None for b in captured)
 
 
+class TestScaffoldEmitsFrontendLockfile:
+    """The template drops package-lock.json on purpose; scaffold_product must
+    re-emit one so CI `npm ci` works (2026-10-02 `store` incident)."""
+
+    def test_lockfile_emitted_with_matching_root_name(self, tmp_path):
+        import json
+
+        result = scaffold_product(
+            "Lock Product", "lockfile-scaffold-test", "test_schema",
+            8099, 8199, "Box",
+            brief={},
+            products_dir=tmp_path / "products",
+            template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True
+        fe = tmp_path / "products" / "lockfile-scaffold-test" / "frontend"
+        lock = json.loads((fe / "package-lock.json").read_text())
+        pkg = json.loads((fe / "package.json").read_text())
+        assert lock["name"] == pkg["name"]
+        assert lock["packages"][""]["name"] == pkg["name"]
+        assert "frontend_lockfile" in result and "skipped" not in result["frontend_lockfile"]
+
+    def test_missing_seed_lockfile_is_surfaced_not_silent(self, tmp_path):
+        from tools.noctus.dev.scaffold import _emit_frontend_lockfile
+
+        target = tmp_path / "p"
+        (target / "frontend").mkdir(parents=True)
+        (target / "frontend" / "package.json").write_text('{"name": "x"}')
+        out = _emit_frontend_lockfile(target, tmp_path / "nope.json")
+        assert "skipped" in out
+        assert not (target / "frontend" / "package-lock.json").exists()
+
+
 class TestScaffoldEnsuresFrameworkDeps:
     """`scaffold_product` calls `ensure_framework_deps_for_product` before
     returning so a freshly-scaffolded product is FRAMEWORK_DEP-complete by

@@ -624,3 +624,26 @@ portable `while read` rather than `mapfile` (bash 4+; on a bash 3.2 host mapfile
 fails silently and leaves an empty array — observed locally before landing).
 Verified both ways: 14 discovered → exit 0; 0 discovered → exit 1 with an error.
 
+
+## Ninth axis — a scaffolded product with NO lockfile (2026-10-02)
+
+`sync_seed_template` deliberately excludes `package-lock.json` from
+`templates/product-seed/` (`_TEMPLATE_EXTRA_EXCLUDES`: the seed lockfile's root
+`name` is the seed's, so it is not a verbatim template file). `scaffold_product`
+copies the template, so a new product's frontend had **no lockfile**: CI's
+`Product Frontend Tests (vitest) (<slug>)` failed with "Some specified paths
+were not resolved, unable to cache dependencies" — found shipping `store`, and
+caught by nothing at pre-commit because `check_product_lockfile_dep_sync`
+silently `continue`d on an absent lockfile.
+
+Mechanism + gate, same commit (gate↔methodology sync):
+
+- **By construction:** `scaffold_product` step 3.c (`_emit_frontend_lockfile`)
+  copies `products/seed/frontend/package-lock.json` (the dependency set is the
+  seed's by construction) and rewrites the root `name` / `packages[""].name` to
+  the product's own `package.json` name. A missing seed lockfile is surfaced in
+  the return (`frontend_lockfile.skipped`) and `next_steps`, never swallowed.
+- **Backstop:** `check_product_lockfile_dep_sync` now flags an ACTIVE product
+  whose `frontend/package.json` has no sibling `package-lock.json` (severity
+  high), instead of skipping it. Same §6e pre-commit trigger (a staged
+  `package.json` / lockfile change) and `--check-product-lockfile-dep-sync`.

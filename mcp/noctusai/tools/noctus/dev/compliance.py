@@ -5981,8 +5981,6 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
         return issues
 
     required, _organ_transitive = _required_deps(root)
-    if not required:
-        return issues
 
     import json as _json
 
@@ -5996,6 +5994,26 @@ def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]
         slug = pkg_path.parent.parent.name
         lock_path = pkg_path.parent / "package-lock.json"
         if not lock_path.exists():
+            # No lockfile at all = no `npm ci` possible: CI's setup-node
+            # cache fails ("Some specified paths were not resolved") — the
+            # 2026-10-02 `store` incident (scaffold_product emitted none).
+            issues.append({
+                "product": slug,
+                "file": f"products/{slug}/frontend/package-lock.json",
+                "issue": (
+                    f"{slug}: products/{slug}/frontend/package.json exists but "
+                    f"has NO sibling package-lock.json — CI `npm ci` / the "
+                    f"setup-node dependency cache cannot run (vitest job fails "
+                    f"with 'Some specified paths were not resolved'). "
+                    f"`noctus.dev.scaffold_product` emits one by construction; "
+                    f"for a hand-made product copy products/seed/frontend/"
+                    f"package-lock.json and set its root `name` to the "
+                    f"product's package.json name."
+                ),
+                "severity": "high",
+            })
+            continue
+        if not required:
             continue
         try:
             pkg = _json.loads(pkg_path.read_text(encoding="utf-8"))

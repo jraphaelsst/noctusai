@@ -38,7 +38,7 @@ def _write_product(
 
     `lockfile_packages` is the `packages` dict of a lockfileVersion-3
     package-lock.json (keyed `node_modules/<dep>`, plus the root `""` entry).
-    Pass `None` to omit the lockfile entirely (detector must skip, not crash).
+    Pass `None` to omit the lockfile entirely (detector must flag it, not crash).
     """
     pdir = root / "products" / slug / "frontend"
     pdir.mkdir(parents=True)
@@ -89,11 +89,21 @@ class TestProductLockfileDepSync:
         issues = check_product_lockfile_dep_sync(tmp_path)
         assert issues == [], issues
 
-    def test_no_lockfile_no_crash_no_flag(self, tmp_path: Path):
-        # A product mid-scaffold with no lockfile yet — skip, don't crash.
+    def test_missing_lockfile_is_flagged(self, tmp_path: Path):
+        # 2026-10-02 `store`: scaffold emitted no lockfile; CI npm ci failed.
         _write_product(tmp_path, "acme", deps={"react": "^18.3.1"}, lockfile_packages=None)
         issues = check_product_lockfile_dep_sync(tmp_path)
-        assert issues == [], issues
+        assert len(issues) == 1, issues
+        assert issues[0]["product"] == "acme"
+        assert issues[0]["file"].endswith("acme/frontend/package-lock.json")
+        assert "NO sibling package-lock.json" in issues[0]["issue"]
+
+    def test_present_lockfile_passes_presence_check(self, tmp_path: Path):
+        _write_product(
+            tmp_path, "acme", deps={"react": "^18.3.1"},
+            lockfile_packages={"node_modules/react": {"version": "18.3.1"}},
+        )
+        assert check_product_lockfile_dep_sync(tmp_path) == []
 
     def test_dep_not_declared_is_not_this_detectors_problem(self, tmp_path: Path):
         # A required dep absent from package.json entirely is

@@ -599,6 +599,38 @@ def _canonicalize_seed_migration(target: Path, slug: str, schema: str) -> dict:
     }
 
 
+def _emit_frontend_lockfile(target: Path, seed_lockfile: Path) -> dict:
+    """Give the new product's frontend a ``package-lock.json`` (by construction).
+
+    ``sync_seed_template`` deliberately excludes ``package-lock.json`` from
+    ``templates/product-seed/`` (a template-only exclude: the lockfile's root
+    ``name`` is the seed's, so it can't be a verbatim template file). Without
+    this step a scaffolded product had NO lockfile, so CI's ``npm ci`` /
+    setup-node cache failed ("Some specified paths were not resolved, unable
+    to cache dependencies") — found shipping ``store``, 2026-10-02. The
+    dependency set is the seed's by construction, so copy the seed's lockfile
+    and rewrite the root ``name`` fields to the product's own package.json
+    ``name``. Gated fleet-wide by ``check_product_lockfile_dep_sync``.
+    """
+    import json
+
+    pkg_path = target / "frontend" / "package.json"
+    if not pkg_path.is_file():
+        return {"skipped": f"no {pkg_path} in scaffolded product"}
+    if not seed_lockfile.is_file():
+        return {"skipped": f"seed lockfile not found at {seed_lockfile}"}
+    pkg_name = json.loads(pkg_path.read_text(encoding="utf-8")).get("name")
+    lock = json.loads(seed_lockfile.read_text(encoding="utf-8"))
+    if pkg_name:
+        lock["name"] = pkg_name
+        root_entry = lock.get("packages", {}).get("")
+        if isinstance(root_entry, dict):
+            root_entry["name"] = pkg_name
+    dest = target / "frontend" / "package-lock.json"
+    dest.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    return {"path": str(dest), "name": pkg_name}
+
+
 def scaffold_product(
     name: str,
     slug: str,
@@ -808,6 +840,12 @@ def scaffold_product(
         base_products_dir.parent, slug,
     )
 
+    # ─── 3.c Frontend lockfile, BY CONSTRUCTION ─────────────────────────
+    seed_lockfile = base_products_dir / "seed" / "frontend" / "package-lock.json"
+    if not seed_lockfile.is_file():
+        seed_lockfile = PRODUCTS_DIR / "seed" / "frontend" / "package-lock.json"
+    frontend_lockfile = _emit_frontend_lockfile(target, seed_lockfile)
+
     # ─── 4. LLM rewrite of prose surfaces ───────────────────────────────
     # README.md + MASTER-PROMPT.md get rewritten by the LLM so the new
     # product never inherits the seed's narrative DNA. System prompt
@@ -902,6 +940,13 @@ def scaffold_product(
             + ". The files still contain seed-template content — fix manually "
             "or rerun the rewrite once the LLM call succeeds."
         )
+    if frontend_lockfile.get("skipped"):
+        next_steps.append(
+            "Frontend package-lock.json NOT emitted ("
+            + frontend_lockfile["skipped"]
+            + ") — CI `npm ci` will fail without it. Generate one in "
+            f"products/{slug}/frontend/."
+        )
     if framework_deps_ensured.get("unresolved_deps"):
         next_steps.append(
             "Framework-dep parity is INCOMPLETE — "
@@ -934,6 +979,7 @@ def scaffold_product(
         "brief_write": brief_write,
         "mechanical_substitution": mechanical_status,
         "framework_deps_ensured": framework_deps_ensured,
+        "frontend_lockfile": frontend_lockfile,
         "llm_rewrite": llm_rewrite,
         "seed_row_migration": seed_row_migration,
         "canonical_migration": canonical_migration,
