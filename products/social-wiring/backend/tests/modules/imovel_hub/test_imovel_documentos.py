@@ -346,7 +346,7 @@ class TestTheExtraction:
         assert out["aplicado_ao_imovel"] is True
 
         body = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
-        assert body["numero_matricula"] == "12345"
+        assert body["numero_matricula"] == "12.345"
         assert body["numero_matricula_origem"] == "matricula"
         # 🔴 A machine read is attributable to a DOCUMENT, never to a person.
         assert body["numero_matricula_confirmado_por"] is None
@@ -383,7 +383,7 @@ class TestTheExtraction:
         assert out["aplicado_ao_imovel"] is True
 
         dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
-        assert dados["numero_matricula"] == "12345"
+        assert dados["numero_matricula"] == "12.345"
         prov = dados["proveniencia"]["numero_matricula"]
         assert prov["origem"] == "matricula"
         assert prov["documento_id"] == did
@@ -606,4 +606,4 @@ class TestG6NeverAFalseOkOnApplyFailure:
         assert out["aplicado_ao_imovel"] is True
 
         dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
-        assert dados["numero_matricula"] == "54321"
+        assert dados["numero_matricula"] == "54.321"

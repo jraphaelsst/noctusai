@@ -54,6 +54,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.domain.real_estate import dividir_em_parcelas_iguais
 from noctusai_lib.integrations.documents import cnpj, cpf
+from noctusai_lib.primitives import identificador as ident_primitives
 from noctusai_lib.primitives.exceptions import (
     ConflictError,
     NotFoundError,
@@ -407,20 +408,23 @@ def _normalizar_documento(bruto: str) -> tuple[str, str]:
     wrong person.
     """
     s = cnpj.normalize(bruto)
+    # Stored in the canonical PUNCTUATED form (`canonical-identifiers`, owner
+    # rule 2026-10-01) — the contract generator reads digits back out of it
+    # (`frases.documento` → `so_digitos`), so the printed contract is unchanged.
     if len(s) == 11 and s.isdigit():
         if not cpf.is_valid(s):
             raise ValidationError_(
                 "CPF inválido: os dígitos verificadores não conferem",
                 field="documento",
             )
-        return s, "pf"
+        return ident_primitives.canonico("cpf", s) or s, "pf"
     if len(s) == 14:
         if not cnpj.is_valid(s):
             raise ValidationError_(
                 "CNPJ inválido: os dígitos verificadores não conferem",
                 field="documento",
             )
-        return s, "pj"
+        return ident_primitives.canonico("cnpj", s) or s, "pj"
     raise ValidationError_(
         "documento deve ser um CPF (11 dígitos) ou um CNPJ (14 caracteres)",
         field="documento",
@@ -461,6 +465,7 @@ def _normalizar_qualificacao(
             cep = re.sub(r"\D", "", cep)
             if len(cep) != 8:
                 raise ValidationError_("CEP deve ter 8 dígitos", field="endereco_cep")
+            cep = ident_primitives.canonico("cep", cep) or cep
         out["endereco_cep"] = cep
 
     if "representante_cpf" in valores:
@@ -471,7 +476,7 @@ def _normalizar_qualificacao(
                     "CPF do representante inválido: os dígitos verificadores não conferem",
                     field="representante_cpf",
                 )
-            rep = cpf.only_digits(rep)
+            rep = ident_primitives.canonico("cpf", rep) or cpf.only_digits(rep)
         out["representante_cpf"] = rep
 
     if "favorecido_id" in valores:
@@ -509,7 +514,7 @@ def _normalizar_qualificacao(
         out["pessoa_tipo"] = pessoa_tipo
 
     if documento:
-        esperado = "pf" if len(documento) == 11 else "pj"
+        esperado = "pf" if len(cnpj.normalize(documento)) == 11 else "pj"
         if pessoa_tipo is None:
             raise ValidationError_(
                 "informe se o intermediário é pessoa física (pf) ou jurídica (pj)",

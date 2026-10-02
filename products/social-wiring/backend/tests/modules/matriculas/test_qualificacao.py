@@ -187,7 +187,7 @@ class TestAutoApplyOnVincular:
         assert cliente_atual["nacionalidade_origem"] == "matricula"
         assert cliente_atual["profissao"] == "comerciante"
         assert cliente_atual["estado_civil"] == "casado"
-        assert cliente_atual["rg"] == "11.222.333"
+        assert cliente_atual["rg"] == "11.222.333-3"
         # Migration 153's gender canonicalisation applies here exactly like
         # it does on `confirmar` — see `_lidos`' own comment.
         assert cliente_atual["genero"] == "Masculino"
@@ -402,7 +402,7 @@ class TestConfirming:
         assert cliente_atual["nacionalidade_origem"] == "matricula"
         assert cliente_atual["profissao"] == "comerciante"
         assert cliente_atual["estado_civil"] == "casado"
-        assert cliente_atual["rg"] == "11.222.333"
+        assert cliente_atual["rg"] == "11.222.333-3"
         # Migration 153: the matrícula's `m` code is canonicalised to the word
         # `clientes.genero` holds everywhere else — writing the code made
         # every later RG/CIN reading of the same fact look like a conflict.

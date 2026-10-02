@@ -162,7 +162,7 @@ class TestD1Apply:
         cliente = client.table("clientes").select("*").eq("id", cid).execute().data[0]
         assert cliente["nome_oficial"] == "FULANA DE TESTE"
         assert cliente["nome_oficial_origem"] == "serasa_crednet"
-        assert cliente["cpf"] == CPF_VALIDO
+        assert cliente["cpf"] == "412.954.238-98"  # canonical, punctuated
         assert cliente["nome_mae"] == "CICLANA DE TESTE"
         assert cliente["nome_mae_origem"] == "serasa_crednet"
         assert cliente["nome_mae_confirmado_em"] is None  # machine-pending
