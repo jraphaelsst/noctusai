@@ -112,7 +112,11 @@ def _simulate_clientes_por_cpf_rpc(monkeypatch):
             return clientes_por_cpf(self, params or {})
         return original(self, name, params)
 
-    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)
+    # The patched thing is the TEST DOUBLE, which cannot execute SQL: this
+    # installs the contract fake of the migration-185 function on it (pinned by
+    # `test_migration_185_*`); no product logic is neutered. Seed follow-up: a
+    # public `register_rpc_simulator` on the mock would make this a registration.
+    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)  # self-patch-ok: test double cannot run SQL; contract fake of migration 185
 
 
 def pytest_configure(config):
