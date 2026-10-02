@@ -85,6 +85,7 @@ from noctusai_lib.integrations.storage import StorageBackend
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.modules.certidoes import service
+from app.services.identificadores import chaves_do_needle
 from app.modules.certidoes.deps import (
     CertidoesService,
     get_certidoes_client,
@@ -434,7 +435,14 @@ async def listar_consultas(
         if status:
             query = query.eq("status", status)
         if busca:
-            query = query.or_(f"nome.ilike.%{busca}%,documento.ilike.%{busca}%")
+            # `documento` is stored PUNCTUATED since migration 187, so a bare
+            # digits needle misses it; `documentos_chave` (trigger-maintained
+            # digits haystack) catches it. STRICTLY ADDITIVE to the raw pass.
+            clauses = [f"nome.ilike.%{busca}%", f"documento.ilike.%{busca}%"]
+            clauses += [
+                f"documentos_chave.ilike.%{k}%" for k in chaves_do_needle(busca)
+            ]
+            query = query.or_(",".join(clauses))
         return query
 
     count_result = _scoped(
