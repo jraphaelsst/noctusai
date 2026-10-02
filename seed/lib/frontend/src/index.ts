@@ -4,6 +4,21 @@ export { cn, formatCurrency, formatDate, getTodayAtMidnight, stripTime } from '.
 // Phone — THE canonical format (E.164). `formatPhone` is the single display
 // seam for every phone rendered anywhere on the platform; change it there and
 // all products follow. Mirrors `noctusai_lib.primitives.phone` case for case.
+// Canonical identifier formats (CPF/CNPJ/RG/CEP/matrícula/...): the PUNCTUATED
+// form is canonical; `formatIdentificador` is the display seam. Mirrors
+// `noctusai_lib.primitives.identificador` + the plpgsql twin, one case table.
+export {
+  CHAVE_BUSCA_MIN,
+  canonicoIdentificador,
+  chaveBuscaIdentificador,
+  detectarTipoIdentificador,
+  equivalentesIdentificador,
+  extrairCns,
+  formatIdentificador,
+  lerIdentificador,
+  tiposIdentificador,
+} from './identificador';
+export type { IdentificadorOpts, Leitura as LeituraIdentificador } from './identificador';
 export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneDigits } from './phone';
 
 // API client

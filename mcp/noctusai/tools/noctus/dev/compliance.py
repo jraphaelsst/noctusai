@@ -15348,6 +15348,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     # to a single agent's `owns_kb:` would misrepresent a universal always-on
     # rule as a specialist's domain. The member rules' own depth docs stay owned
     # by whoever owned them before; only the index is commons.
+    "CONTEXT/PATTERNS/common/canonical-identifiers.md",  # universal commons: the identifier canon spans Python + TS + SQL across every product (backend, frontend, DB lenses alike) — sibling of the phone canon, no single specialist domain
     "CONTEXT/PATTERNS/common/methodology-gc.md",  # universal commons: the retirement/exhaust leg of the capture pipeline — governs CLAUDE.md §1 + MEMORY.md budgets, which every lens loads
     "CONTEXT/PATTERNS/common/cache-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/orchestration-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners

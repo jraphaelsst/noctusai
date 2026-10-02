@@ -40,6 +40,13 @@ know about our domain, it goes here.
   and received the same number in four non-comparable spellings.
   `format_phone` is the single display seam: change it here and every
   product's UI follows. Mirrored 1:1 by `@noctusai/lib/phone`.
+- `identificador.py` — canonical identifier formats (CPF/CNPJ/RG/CEP/
+  matrícula/inscrição municipal/...): the PUNCTUATED form is canonical,
+  unpunctuated values are checked against it (`ler`, `canonico`,
+  `equivalentes`, `detectar_tipo`, `chave_busca`, `formatar`,
+  `extrair_cns`). The ONE implementation of the CPF/CNPJ/SP-RG check
+  digits; never invents data. Mirrored by `@noctusai/lib/identificador`
+  and `seed/lib/sql/identificador.sql` against one case table.
 - `tasks.py` — `schedule_coro(coro, *, logger=None, name=None)` +
   `NoRunningLoopError`. Canonical fire-and-forget helper that
   schedules a coroutine on the running loop and logs exceptions
