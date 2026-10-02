@@ -163,3 +163,53 @@ the seed email sender. All in `.env.example` with placeholders.
   confirmed) and the owner re-sends from `/admin/vendas` (`POST …/reenviar`:
   409 unless `pago`, 502 on send failure).
 - **A9 — table `store.pedidos`** gains `email_erro text` (additive to §1).
+
+## 6. Amendment A10 — keys live in the DB (owner directive 2026-10-02)
+
+Asaas credentials are no longer env vars: the admin writes them in the UI,
+they are Fernet-encrypted in `store.credentials` (seed `noctusai_lib.security.api_keys`)
+and consumed through `resolve_api_key` (local store → platform chain `org_settings`/
+`platform_settings` → env fallback). Single-tenant: every key is scoped to the
+owner's org, `STORE_ORG_ID`. **Values are never returned** — only a masked
+`hint` + `source`.
+
+Env that remains: `ENCRYPTION_KEY`, `STORE_ORG_ID`, `STORE_PUBLIC_URL`,
+`STORE_ADMIN_EMAILS`, `PAYMENTS_ALLOW_FAKE`. SMTP is NOT a store key: the seed
+email sender resolves `smtp_host/port/username/password/security`, `email_from`,
+`email_from_name` through the PLATFORM chain (org_settings → platform_settings → env).
+
+### Key routes (seed router, all admin-only: no token 401 · non-admin 403)
+
+| Method | Path | Body | 200 result |
+|---|---|---|---|
+| GET | `/api/settings/api-keys` | – | `{items: ApiKeyStatus[], total}` |
+| PUT | `/api/settings/api-keys/{key}` | `{value: string}` | `ApiKeyStatus` |
+| DELETE | `/api/settings/api-keys/{key}` | – | `ApiKeyStatus` (re-resolved: may still be `configured` via the platform tier) |
+
+`{key}` ∈ `asaas_api_key`, `asaas_webhook_token`, `asaas_environment`.
+Unknown key → 404. Empty `value` → 422. `asaas_environment` accepts only
+`sandbox` | `production` (else 422). PUT with `ENCRYPTION_KEY` unset → **503**
+(`detail` names the gap; nothing is stored in plaintext). `STORE_ORG_ID` unset → 503.
+`POST /api/settings/api-keys/{key}/test` exists but every key is `testable:false` (400).
+
+```json
+ApiKeyStatus = {
+  "key": "asaas_api_key",
+  "label": "Chave de API do Asaas",
+  "description": "…pt-BR help text…",
+  "is_secret": true,
+  "testable": false,
+  "input_type": "password",          // "password" | "text" | "select"-like (options non-empty)
+  "placeholder": "$aact_...",
+  "configured": true,
+  "options": [{"value":"sandbox","label":"…","description":"…"}],   // [] for secrets
+  "default": null,                    // "sandbox" for asaas_environment
+  "hint": "...b3f9",                  // masked secret (last 4) | verbatim for the non-secret environment | null
+  "source": "local",                  // "local" | "platform" | "env" | null when not configured
+  "updated_at": "2026-10-02T…Z"       // set when source = "local"
+}
+```
+
+Order of `items`: `asaas_api_key`, `asaas_webhook_token`, `asaas_environment`.
+`asaas_environment` unset ⇒ `configured:false`, `default:"sandbox"`; the backend
+treats an unset environment as sandbox.
