@@ -276,6 +276,7 @@ jobs:
           - academia-de-reciclagem
           - agents
           - community
+          - store
 
     steps:
       - uses: actions/checkout@v7

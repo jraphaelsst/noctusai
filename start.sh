@@ -66,6 +66,7 @@ PRODUCTS=(
   "academia-de-reciclagem:Academia de Reciclagem:8015:8190"
   "agents:Agentes:8016:8200"
   "community:Community:8017:8210"
+  "store:Store:8018:8220"
 )
 # END_PRODUCTS_REGISTRY
 

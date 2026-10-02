@@ -1,0 +1,558 @@
+<title>Contrato Blindado de Compra e Venda</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Playfair+Display:ital,wght@0,700;0,800;0,900;1,800&display=swap">
+<style>
+/* Layout: one mobile-first column of alternating paper / midnight bands joined by torn-paper edges; collage art (gold foil disc, fanned contract pages) carries the hero and the offer. Single committed look from the Store Visual Identity, so no dark-mode remap. */
+:root{
+  color-scheme: light;
+  --paper:#f2eadd; --paper-shade:#e3d7c4; --ink:#0b1530; --navy:#142a3f; --midnight:#061727;
+  --gold:#b08d57; --gold-bright:#c9a46a; --gold-deep:#8c6b38; --concrete:#8d8983; --highlight:#f6e27a;
+  --muted:#4a5468; --muted-night:#b9c0cc;
+  --font-display:"Playfair Display","Bodoni Moda",Didot,Georgia,serif;
+  --font-sans:Montserrat,"Helvetica Neue",Arial,sans-serif;
+  --wrap:1080px;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--paper);color:var(--ink);font:500 17px/1.6 var(--font-sans);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img{max-width:100%;display:block}
+a{color:inherit}
+:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+
+/* grain over everything, like the posts */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:50;opacity:.16;mix-blend-mode:multiply;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 .55 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E")}
+
+.band{position:relative;padding-block:clamp(56px,9vw,104px)}
+.band>.in{max-width:var(--wrap);margin-inline:auto;padding-inline:20px}
+.night{background:var(--midnight);color:var(--paper)}
+.navy{background:var(--navy);color:var(--paper)}
+.tear{position:absolute;left:0;width:100%;height:30px;top:-29px;display:block}
+.tear.down{top:auto;bottom:-29px;transform:scaleY(-1)}
+.night .tear,.night .tear.down{color:var(--midnight)}
+.navy .tear{color:var(--navy)}
+.paper-band .tear{color:var(--paper)}
+.paper-band{background:var(--paper)}
+
+/* type */
+.eyebrow{font:700 12px/1 var(--font-sans);letter-spacing:.16em;text-transform:uppercase;color:var(--gold-deep)}
+.night .eyebrow,.navy .eyebrow{color:var(--gold-bright)}
+h1,h2,h3{font-family:var(--font-display);margin:0;text-wrap:balance}
+h1{font-weight:900;font-size:clamp(44px,8.4vw,92px);line-height:.88;letter-spacing:-.04em}
+h2{font-weight:900;font-size:clamp(34px,5.6vw,60px);line-height:.92;letter-spacing:-.035em}
+h3{font-weight:800;font-size:clamp(22px,2.6vw,28px);line-height:1.05;letter-spacing:-.02em}
+.k{color:var(--gold)}
+.night .k,.navy .k{color:var(--gold-bright)}
+.deck{font-size:clamp(18px,2.2vw,22px);line-height:1.35;max-width:34ch;margin:18px 0 0}
+.lead{max-width:62ch;margin:16px 0 0;color:var(--muted)}
+.night .lead,.navy .lead{color:var(--muted-night)}
+.rule{width:120px;height:8px;background:var(--gold);margin-top:28px}
+.stack{display:grid;gap:20px}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:12px;text-decoration:none;text-align:center;
+  font:800 17px/1.2 var(--font-sans);letter-spacing:.06em;text-transform:uppercase;
+  background:var(--gold);color:var(--midnight);padding:20px 34px;border:0;cursor:pointer;
+  box-shadow:0 0 0 0 rgba(201,164,106,.55);animation:pulse 1.8s infinite;transition:transform .2s,background .2s}
+.btn:hover{background:var(--gold-bright);transform:translateY(-2px)}
+.btn svg{width:20px;height:20px;flex:none}
+@keyframes pulse{70%{box-shadow:0 0 0 22px rgba(201,164,106,0)}100%{box-shadow:0 0 0 0 rgba(201,164,106,0)}}
+.btn.ghost{background:transparent;color:inherit;box-shadow:inset 0 0 0 2px var(--gold);animation:none;padding:16px 26px;font-size:14px}
+
+/* HERO */
+.hero{padding-block:clamp(36px,6vw,72px) clamp(72px,9vw,110px);overflow:hidden}
+.hero .in{display:grid;grid-template-columns:1.05fr .95fr;gap:40px;align-items:center}
+.hero .copy{min-width:0;position:relative;z-index:2}
+.pills{display:flex;flex-wrap:wrap;gap:8px 18px;margin-top:26px;padding:0;list-style:none;font:600 14px/1.3 var(--font-sans)}
+.pills li{display:flex;gap:8px;align-items:center}
+.pills li::before{content:"";width:10px;height:10px;background:var(--gold);transform:rotate(45deg);flex:none}
+.hero .actions{display:flex;flex-wrap:wrap;gap:14px 20px;align-items:center;margin-top:30px}
+.hero .actions small{font-size:13px;color:var(--muted)}
+.strip{position:absolute;top:0;right:0;width:clamp(70px,12vw,170px);height:100%;background:var(--navy);
+  clip-path:polygon(18% 0,100% 0,100% 100%,10% 100%,22% 92%,6% 81%,20% 70%,4% 58%,18% 47%,7% 35%,22% 24%,8% 12%)}
+.collage{position:relative;aspect-ratio:4/5;max-width:100%;min-width:0}
+.disc{position:absolute;border-radius:50%;
+  background:radial-gradient(circle at 34% 30%,var(--gold-bright),var(--gold) 46%,var(--gold-deep) 100%)}
+.disc::after{content:"";position:absolute;inset:0;border-radius:50%;opacity:.5;mix-blend-mode:overlay;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='turbulence' baseFrequency='.045' numOctaves='4'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23f)'/%3E%3C/svg%3E")}
+.collage .disc{width:78%;aspect-ratio:1;right:-6%;top:6%}
+.page{position:absolute;width:62%;box-shadow:0 18px 40px -14px rgba(6,23,39,.55);background:#fff;border:1px solid rgba(11,21,48,.08)}
+.page.p3{left:22%;top:4%;transform:rotate(7deg)}
+.page.p2{left:10%;top:9%;transform:rotate(-4deg)}
+.page.p1{left:2%;top:16%;transform:rotate(-11deg)}
+.orbit{position:absolute;inset:auto -4% 4% -6%;width:112%;height:auto;pointer-events:none}
+.orbit ellipse{fill:none;stroke:var(--gold);stroke-width:2.2}
+.tag{position:absolute;font:700 12px/1.25 var(--font-sans);letter-spacing:.08em;text-transform:uppercase;
+  background:var(--midnight);color:var(--paper);padding:10px 14px;max-width:180px}
+.tag b{color:var(--gold-bright);display:block;font-size:22px;letter-spacing:0;font-family:var(--font-display)}
+.tag.t1{right:2%;bottom:8%}
+.tag.t2{left:-2%;bottom:24%;background:var(--highlight);color:var(--ink)}
+
+/* MARQUEE */
+.reels{overflow:hidden;margin-top:36px;mask-image:linear-gradient(90deg,transparent,#000 8%,#000 92%,transparent)}
+.reels .track{display:flex;gap:18px;width:max-content;animation:slide 38s linear infinite}
+.reels img{width:clamp(150px,20vw,220px);aspect-ratio:9/16;object-fit:cover;box-shadow:0 10px 24px -10px rgba(0,0,0,.6)}
+@keyframes slide{to{transform:translateX(-50%)}}
+.reels:hover .track{animation-play-state:paused}
+
+/* FEARS */
+.fears{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:22px;margin-top:40px}
+.fear{background:#fffaf1;display:flex;flex-direction:column;min-width:0;box-shadow:0 1px 0 var(--paper-shade);transition:transform .25s}
+.fear:hover{transform:translateY(-4px) rotate(-.4deg)}
+.fear q{display:block;padding:24px 22px 26px;font:italic 800 22px/1.15 var(--font-display);color:var(--ink);quotes:"“" "”"}
+.fear .ans{margin-top:auto;position:relative;background:var(--navy);color:var(--paper);padding:22px 22px 22px}
+.fear .ans::before{content:"";position:absolute;left:0;right:0;top:-12px;height:13px;background:var(--navy);
+  clip-path:polygon(0 100%,0 40%,6% 70%,13% 20%,21% 60%,30% 10%,38% 55%,47% 25%,55% 70%,64% 15%,72% 50%,81% 20%,90% 65%,100% 30%,100% 100%)}
+.fear .cl{font:700 11px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase;color:var(--gold-bright)}
+.fear p{margin:8px 0 0;font-size:15px;line-height:1.5;color:var(--muted-night)}
+
+/* COMPARE */
+.compare{margin-top:40px;overflow-x:auto}
+.compare table{width:100%;border-collapse:collapse;min-width:520px}
+.compare th,.compare td{padding:16px 14px;text-align:left;vertical-align:top;border-bottom:1px solid rgba(242,234,221,.14);font-size:15px}
+.compare thead th{font:700 12px/1.2 var(--font-sans);letter-spacing:.12em;text-transform:uppercase;color:var(--muted-night)}
+.compare thead th:last-child{color:var(--gold-bright)}
+.compare td:first-child{font-weight:600;color:var(--paper);width:40%}
+.no,.yes{display:flex;gap:10px;align-items:flex-start}
+.no{color:var(--muted-night)}
+.no::before{content:"✕";color:#d98b7a;font-weight:800}
+.yes::before{content:"";width:18px;height:18px;flex:none;margin-top:2px;background:var(--gold);
+  clip-path:polygon(14% 52%,0 66%,38% 100%,100% 22%,86% 8%,38% 72%)}
+
+/* DELIVERABLES */
+.kit{display:grid;gap:56px;margin-top:48px}
+.item{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:40px;align-items:center}
+.item:nth-child(even) .media{order:2}
+.media{position:relative;padding:20px}
+.media .disc{width:70%;aspect-ratio:1;left:-4%;top:-2%}
+.item:nth-child(even) .media .disc{left:auto;right:-4%}
+.media img{position:relative;width:78%;margin-inline:auto;box-shadow:0 18px 36px -14px rgba(6,23,39,.5);transform:rotate(-3deg);background:#fff}
+.item:nth-child(even) .media img{transform:rotate(3deg)}
+.badge{display:inline-block;font:700 11px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase;background:var(--ink);color:var(--paper);padding:8px 10px}
+.item ul{margin:14px 0 0;padding:0;list-style:none;display:grid;gap:8px}
+.item li{display:flex;gap:10px;font-size:16px}
+.item li::before{content:"";width:16px;height:2px;background:var(--gold);margin-top:12px;flex:none}
+
+/* WORD PREVIEW */
+.word{margin-top:44px;background:#fff;max-width:760px;margin-inline:auto;box-shadow:0 24px 50px -24px rgba(6,23,39,.5);overflow:hidden}
+.word .bar{display:flex;align-items:center;gap:10px;background:#2b579a;color:#fff;padding:10px 16px;font:600 13px/1 var(--font-sans)}
+.word .bar i{width:14px;height:14px;background:#fff;opacity:.9;clip-path:polygon(0 0,70% 0,100% 30%,100% 100%,0 100%)}
+.word .doc{padding:clamp(22px,5vw,48px);font:15px/1.7 Arial,Helvetica,sans-serif;color:#111;text-align:justify}
+.word .doc .h{font-weight:700;text-decoration:underline}
+.word .doc p{margin:0 0 12px}
+mark{background:linear-gradient(transparent 8%,var(--highlight) 8%,var(--highlight) 92%,transparent 92%) no-repeat 0 0/0% 100%;color:inherit;padding:0 2px;animation:marker 1.2s .4s ease-out forwards}
+mark:nth-of-type(2){animation-delay:.9s}mark:nth-of-type(3){animation-delay:1.4s}mark:nth-of-type(4){animation-delay:1.9s}mark:nth-of-type(5){animation-delay:2.4s}
+@keyframes marker{to{background-size:100% 100%}}
+
+/* CLAUSES INDEX */
+.clauses{columns:2 280px;column-gap:48px;margin:40px 0 0;padding:0;list-style:none;counter-reset:c}
+.clauses li{break-inside:avoid;display:flex;gap:16px;align-items:baseline;padding:12px 0;border-bottom:1px solid rgba(11,21,48,.12);counter-increment:c}
+.clauses li::before{content:counter(c,decimal-leading-zero);font:900 26px/1 var(--font-display);color:var(--gold);min-width:36px;font-variant-numeric:tabular-nums}
+.clauses span{font:600 14px/1.35 var(--font-sans);letter-spacing:.04em;text-transform:uppercase}
+.clauses em{display:block;font:500 13px/1.4 var(--font-sans);letter-spacing:0;text-transform:none;color:var(--muted);font-style:normal}
+
+/* FOR WHO */
+.who{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px;margin-top:40px;background:rgba(242,234,221,.12)}
+.who div{background:var(--navy);padding:26px 24px;min-width:0}
+.who h3{color:var(--paper)}
+.who p{margin:8px 0 0;color:var(--muted-night);font-size:15px}
+
+/* OFFER */
+.offer{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0;background:var(--paper);color:var(--ink);margin-top:44px;box-shadow:0 30px 60px -30px rgba(0,0,0,.7)}
+.offer .art{position:relative;background:var(--navy);min-height:360px;overflow:hidden}
+.offer .art .disc{width:80%;aspect-ratio:1;left:10%;top:12%}
+.offer .art .page{width:46%}
+.offer .art .page.p1{left:8%;top:22%;transform:rotate(-9deg)}
+.offer .art .page.p2{left:28%;top:16%;transform:rotate(-1deg)}
+.offer .art .page.p3{left:47%;top:22%;transform:rotate(8deg)}
+.offer .body{padding:clamp(26px,4vw,44px);min-width:0}
+.recap{list-style:none;margin:16px 0 0;padding:0;display:grid}
+.recap li{display:flex;justify-content:space-between;gap:16px;padding:11px 0;border-bottom:1px dashed rgba(11,21,48,.22);font-size:15px}
+.recap li span:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
+.strike{position:relative;display:inline-block;color:var(--muted)}
+.strike::after{content:"";position:absolute;left:-4%;top:52%;height:2.5px;width:0;background:#b4472e;transform:rotate(-8deg);animation:strike 5s ease-in-out infinite}
+@keyframes strike{0%{width:0}18%,82%{width:108%}100%{width:108%}}
+.total{display:flex;justify-content:space-between;margin-top:14px;font-weight:700}
+.price{margin-top:22px;display:grid;gap:4px}
+.price .from{font-size:15px;color:var(--muted)}
+.price .now{font:900 clamp(64px,9vw,92px)/.9 var(--font-display);letter-spacing:-.04em;color:var(--ink);display:flex;align-items:flex-start;gap:6px}
+.price .now small{font:700 22px/1 var(--font-sans);margin-top:12px;letter-spacing:0}
+.price .how{font-size:15px;font-weight:600;color:var(--gold-deep)}
+.offer .btn{width:100%;margin-top:22px}
+.safe{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:14px;font:600 12px/1.3 var(--font-sans);color:var(--muted);letter-spacing:.04em;text-transform:uppercase}
+.safe span{display:flex;align-items:center;gap:6px}
+.safe span::before{content:"";width:6px;height:6px;background:var(--gold)}
+
+/* STEPS */
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:28px;margin-top:36px;counter-reset:s;padding:0;list-style:none}
+.steps li{counter-increment:s;min-width:0}
+.steps li::before{content:counter(s);display:grid;place-items:center;width:56px;height:56px;border-radius:50%;background:var(--gold);color:var(--midnight);font:900 28px/1 var(--font-display);margin-bottom:14px}
+.steps p{margin:6px 0 0;color:var(--muted);font-size:15px}
+
+/* GUARANTEE */
+.guarantee{display:grid;grid-template-columns:auto minmax(0,1fr);gap:36px;align-items:center}
+.seal{position:relative;width:clamp(150px,22vw,210px);aspect-ratio:1;display:grid;place-items:center;text-align:center}
+.seal .disc{inset:0}
+.seal b{position:relative;font:900 64px/.8 var(--font-display);color:var(--midnight)}
+.seal b small{display:block;font:800 13px/1.2 var(--font-sans);letter-spacing:.14em;text-transform:uppercase;margin-top:8px}
+
+/* CHOICES */
+.choices{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin-top:36px}
+.choice{padding:28px 26px;min-width:0}
+.choice.bad{background:rgba(242,234,221,.06);box-shadow:inset 0 0 0 1px rgba(242,234,221,.16)}
+.choice.good{background:var(--paper);color:var(--ink)}
+.choice .lbl{font:700 12px/1 var(--font-sans);letter-spacing:.14em;text-transform:uppercase;color:var(--muted-night)}
+.choice.good .lbl{color:var(--gold-deep)}
+.choice h3{margin-top:10px}
+.choice p{margin:10px 0 0;font-size:15px}
+.choice.bad p{color:var(--muted-night)}
+
+/* AUTHOR */
+.author{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:40px;align-items:center}
+.photo{position:relative;aspect-ratio:4/5;max-width:100%;display:grid;place-items:center;background:var(--paper-shade);
+  outline:2px dashed rgba(11,21,48,.3);outline-offset:-14px;font:600 13px/1.4 var(--font-sans);color:var(--muted);text-align:center;padding:30px}
+.photo .disc{width:56%;aspect-ratio:1;right:-8%;bottom:-6%;z-index:0}
+.photo span{position:relative;z-index:1}
+
+/* FAQ */
+.faq{margin-top:32px;display:grid;gap:0;border-top:1px solid rgba(11,21,48,.16)}
+.faq details{border-bottom:1px solid rgba(11,21,48,.16)}
+.faq summary{list-style:none;cursor:pointer;display:flex;justify-content:space-between;gap:18px;padding:20px 2px;font:700 17px/1.35 var(--font-sans)}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:"+";font:800 26px/1 var(--font-display);color:var(--gold-deep);transition:transform .2s}
+.faq details[open] summary::after{transform:rotate(45deg)}
+.faq details p{margin:0 0 20px;max-width:64ch;color:var(--muted)}
+
+footer{background:var(--midnight);color:var(--muted-night);font-size:13px;line-height:1.6}
+footer .in{max-width:var(--wrap);margin-inline:auto;padding:40px 20px 56px}
+
+.center{text-align:center}.center .deck,.center .lead{margin-inline:auto}.center .rule{margin-inline:auto}
+
+@media (max-width:820px){
+  body{font-size:16px}
+  .hero .in,.item,.author,.offer,.guarantee{grid-template-columns:minmax(0,1fr)}
+  .hero .collage{max-width:440px;width:100%;margin-inline:auto}
+  .item:nth-child(even) .media{order:0}
+  .fears{grid-template-columns:minmax(0,1fr)}
+  .steps,.choices,.who{grid-template-columns:minmax(0,1fr)}
+  .guarantee{justify-items:start}
+  .offer .art{min-height:300px}
+  .strip{opacity:.9}
+  .btn{width:100%}
+}
+@media (min-width:821px) and (max-width:1000px){.fears{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+  mark{background-size:100% 100%}
+  .strike::after{width:108%}
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="tear" viewBox="0 0 1200 30" preserveAspectRatio="none"><path fill="currentColor" d="M0,30 L0,14 L23,16 L40,6 L60,15 L77,20 L104,5 L123,17 L163,6 L192,6 L233,5 L254,11 L271,22 L310,5 L338,5 L360,13 L400,8 L421,22 L454,21 L479,7 L505,15 L525,21 L543,22 L560,10 L605,21 L646,14 L689,22 L732,15 L765,11 L790,11 L809,22 L842,20 L887,14 L929,13 L947,7 L993,17 L1017,14 L1040,19 L1080,5 L1098,21 L1132,14 L1168,19 L1200,14 L1200,30 Z"/></symbol>
+  <symbol id="arrow" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+</svg>
+
+<!-- 1 · HERO -->
+<header class="band hero">
+  <div class="strip" aria-hidden="true"></div>
+  <div class="in">
+    <div class="copy">
+      <p class="eyebrow">Modelo pronto · Word editável + PDF</p>
+      <h1 style="margin-top:18px">Um contrato mal feito pode custar <span class="k">o imóvel inteiro</span>.</h1>
+      <p class="deck">Copie o contrato de compra e venda construído a partir de negociações reais e feche negócio com cada risco previsto por escrito.</p>
+      <ul class="pills">
+        <li>3 modalidades de pagamento</li>
+        <li>Até 15 cláusulas</li>
+        <li>Campos destacados para preencher</li>
+      </ul>
+      <div class="actions">
+        <a class="btn" href="#oferta">Quero meu contrato <svg><use href="#arrow"/></svg></a>
+        <small>Acesso imediato no seu e-mail</small>
+      </div>
+    </div>
+    <div class="collage" aria-label="Páginas do contrato sobre um disco dourado">
+      <div class="disc"></div>
+      <img class="page p3" src="img/parcelado-direto-p3.jpg" alt="">
+      <img class="page p2" src="img/parcelado-direto-p2.jpg" alt="">
+      <img class="page p1" src="img/parcelado-direto-p1.jpg" alt="Primeira página do Instrumento Particular de Promessa de Venda e Compra de Bem Imóvel">
+      <svg class="orbit" viewBox="0 0 500 140" aria-hidden="true"><ellipse cx="250" cy="70" rx="236" ry="44" transform="rotate(-8 250 70)"/></svg>
+      <div class="tag t2">[CAMPOS EM AMARELO] é só preencher</div>
+      <div class="tag t1"><b>.docx + .pdf</b>abre no Word e no Google Docs</div>
+    </div>
+  </div>
+</header>
+
+<!-- 2 · WHY IT EXISTS (Instagram) -->
+<section class="band night">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in center">
+    <p class="eyebrow">Do Instagram do Gilson para a sua mesa</p>
+    <h2 style="margin-top:14px">Vocês pediram <span class="k">o contrato</span>.</h2>
+    <p class="lead">Depois de muitos pedidos nos comentários e no direct, o contrato que o Gilson usa nas negociações virou um modelo genérico, sem nenhum dado de cliente, pronto para você usar.</p>
+  </div>
+  <div class="reels" aria-label="Posts do Instagram do Gilson">
+    <div class="track">
+      <img src="img/post-aluguel.jpg" alt="Post: O que acontece com o dinheiro de alguém que paga aluguel por 10 anos é assustador">
+      <img src="img/post-mudar.jpg" alt="Post: Você pode mudar quase tudo em um imóvel, menos o mais importante">
+      <img src="img/post-habitos.jpg" alt="Post: 3 hábitos que destroem sua performance como corretor">
+      <img src="img/post-tijolos.jpg" alt="Post: os 3 hábitos escritos em tijolos">
+      <img src="img/post-juros.jpg" alt="Post: Esperar os juros baixarem pode fazer você pagar muito mais caro pelo imóvel">
+      <img src="img/post-aluguel.jpg" alt="" aria-hidden="true">
+      <img src="img/post-mudar.jpg" alt="" aria-hidden="true">
+      <img src="img/post-habitos.jpg" alt="" aria-hidden="true">
+      <img src="img/post-tijolos.jpg" alt="" aria-hidden="true">
+      <img src="img/post-juros.jpg" alt="" aria-hidden="true">
+    </div>
+  </div>
+  <svg class="tear down" aria-hidden="true"><use href="#tear"/></svg>
+</section>
+
+<!-- 3 · PAIN → CLAUSE (mechanism) -->
+<section class="band paper-band" id="medos">
+  <div class="in">
+    <p class="eyebrow">Eu sei o que tira o seu sono</p>
+    <h2 style="margin-top:14px">Cada medo da negociação tem <span class="k">uma cláusula</span> resolvendo.</h2>
+    <p class="lead">Quem já comprou ou vendeu imóvel conhece essas perguntas. Um contrato improvisado deixa todas em aberto. Este deixa cada uma respondida por escrito, antes do sinal.</p>
+    <div class="fears">
+      <article class="fear"><q>E se o comprador desistir depois de pagar o sinal?</q>
+        <div class="ans"><span class="cl">Da irretratabilidade e rescisão</span><p>Quem desiste perde o sinal a título indenizatório e paga multa rescisória, mais os custos já gerados.</p></div></article>
+      <article class="fear"><q>E se o vendedor não entregar as chaves no prazo?</q>
+        <div class="ans"><span class="cl">Da posse sobre o imóvel</span><p>Prazo de entrega definido e multa diária por atraso, sem prejuízo da ação de imissão na posse.</p></div></article>
+      <article class="fear"><q>E se aparecer processo ou dívida no nome do vendedor?</q>
+        <div class="ans"><span class="cl">Das certidões e documentos</span><p>14 certidões e documentos listados um a um, com prazo para apresentar os pendentes e esclarecer apontamentos.</p></div></article>
+      <article class="fear"><q>Quem paga ITBI, escritura e registro?</q>
+        <div class="ans"><span class="cl">Dos tributos, taxas e contribuições</span><p>Despesas da transmissão, IPTU, condomínio e contas de consumo divididas por escrito, antes e depois da posse.</p></div></article>
+      <article class="fear"><q>E se o comprador parar de pagar as parcelas?</q>
+        <div class="ans"><span class="cl">Da confissão de dívida</span><p>Na versão parcelada, o saldo vira título executivo extrajudicial, com vencimento antecipado após 30 dias de atraso.</p></div></article>
+      <article class="fear"><q>E se o financiamento do banco não sair?</q>
+        <div class="ans"><span class="cl">Do preço e condições de pagamento</span><p>Fica claro de quem é a responsabilidade pela obtenção do crédito e qual parcela ele quita.</p></div></article>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · YES QUESTION + COMPARE -->
+<section class="band navy">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in">
+    <p class="eyebrow">Agora eu te pergunto</p>
+    <h2 style="margin-top:14px">Se você pudesse fechar o próximo negócio com <span class="k">um contrato completo</span> em minutos, faria sentido pra você?</h2>
+    <p class="lead">Se a resposta for sim, olhe a diferença entre um contrato improvisado e este modelo.</p>
+    <div class="compare">
+      <table>
+        <thead><tr><th>O que protege você</th><th>Modelo improvisado</th><th>Contrato Blindado</th></tr></thead>
+        <tbody>
+          <tr><td>Desistência depois do sinal</td><td><span class="no">Vago ou ausente</span></td><td><span class="yes">Perda do sinal + multa rescisória</span></td></tr>
+          <tr><td>Atraso na entrega das chaves</td><td><span class="no">Sem prazo nem multa</span></td><td><span class="yes">Prazo + multa diária por atraso</span></td></tr>
+          <tr><td>Dívidas e processos do vendedor</td><td><span class="no">"Livre e desembaraçado" e só</span></td><td><span class="yes">14 certidões listadas + prazo para pendências</span></td></tr>
+          <tr><td>Parcelamento direto</td><td><span class="no">Uma promessa de pagamento</span></td><td><span class="yes">Confissão de dívida com força executiva</span></td></tr>
+          <tr><td>Numeração e referências</td><td><span class="no">"Cláusula sétima" apontando para a oitava</span></td><td><span class="yes">Cláusulas e parágrafos conferidos</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <svg class="tear down" aria-hidden="true"><use href="#tear"/></svg>
+</section>
+
+<!-- 5 · DELIVERABLES -->
+<section class="band paper-band" id="kit">
+  <div class="in">
+    <p class="eyebrow">Veja tudo que você recebe</p>
+    <h2 style="margin-top:14px">Três contratos, <span class="k">um para cada negócio</span>.</h2>
+    <div class="kit">
+      <div class="item">
+        <div class="media"><div class="disc"></div><img src="img/a-vista-p1.jpg" alt="Página do contrato à vista"></div>
+        <div><span class="badge">Contrato 01 · 14 cláusulas</span><h3 style="margin-top:12px">À Vista</h3>
+          <ul><li>Sinal e princípio de pagamento</li><li>Saldo pago na escritura pública</li><li>Posse vinculada ao pagamento do saldo</li></ul></div>
+      </div>
+      <div class="item">
+        <div class="media"><div class="disc"></div><img src="img/financiado-p4.jpg" alt="Página do contrato financiado"></div>
+        <div><span class="badge">Contrato 02 · 14 cláusulas</span><h3 style="margin-top:12px">Financiado</h3>
+          <ul><li>Sinal + recursos próprios + financiamento bancário</li><li>Comprador responsável pela obtenção do crédito</li><li>Posse após a liberação do financiamento</li></ul></div>
+      </div>
+      <div class="item">
+        <div class="media"><div class="disc"></div><img src="img/parcelado-direto-p2.jpg" alt="Página do contrato parcelado com confissão de dívida"></div>
+        <div><span class="badge">Contrato 03 · 15 cláusulas</span><h3 style="margin-top:12px">Parcelado direto com o vendedor</h3>
+          <ul><li>Parcelas com juros pro rata die</li><li>Confissão de dívida com força de título executivo</li><li>Vencimento antecipado e encargos de mora definidos</li></ul></div>
+      </div>
+    </div>
+
+    <div class="word" aria-label="Exemplo de como o contrato aparece no Word">
+      <div class="bar"><i></i>Contrato-Compra-e-Venda-Imovel-Financiado.docx</div>
+      <div class="doc">
+        <p><span class="h">CLÁUSULA SEGUNDA</span> – DO PREÇO E CONDIÇÕES DE PAGAMENTO</p>
+        <p>O(A) <b>VENDEDOR(A)</b> compromete-se a vender para o(a) <b>COMPRADOR(A)</b> e, este(a) a comprar-lhe o referido imóvel, descrito na Cláusula Primeira, pelo preço certo, firme e irreajustável de <b>R$ <mark>[VALOR TOTAL]</mark> (<mark>[valor total por extenso]</mark>)</b>, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:</p>
+        <p><b>Parcela 01: Sinal e princípio de pagamento:</b> R$ <mark>[VALOR DO SINAL]</mark>, com vencimento em <mark>[data]</mark>, por meio de <mark>[PIX / transferência bancária]</mark>…</p>
+      </div>
+    </div>
+    <p class="lead center" style="margin-inline:auto">Tudo que você precisa trocar aparece em amarelo. O resto já está redigido.</p>
+  </div>
+</section>
+
+<!-- 6 · CLAUSE INDEX -->
+<section class="band paper-band" style="padding-top:0">
+  <div class="in">
+    <p class="eyebrow">Ainda não acabou</p>
+    <h2 style="margin-top:14px">As 15 cláusulas do <span class="k">contrato parcelado</span>.</h2>
+    <ol class="clauses">
+      <li><span>Do objeto do contrato<em>Descrição do imóvel conforme a matrícula</em></span></li>
+      <li><span>Do preço e condições de pagamento<em>Parcelas, favorecido e conta</em></span></li>
+      <li><span>Da confissão de dívida<em>Vencimento antecipado e força executiva</em></span></li>
+      <li><span>Das certidões e documentos<em>14 certidões + pendências com prazo</em></span></li>
+      <li><span>Do ônus sobre o imóvel<em>Ações reipersecutórias e evicção</em></span></li>
+      <li><span>Da posse sobre o imóvel<em>Prazo e multa diária</em></span></li>
+      <li><span>Do pagamento dos tributos<em>IPTU, condomínio, ITBI e registro</em></span></li>
+      <li><span>Da irretratabilidade e rescisão<em>Arts. 417 a 420 do Código Civil</em></span></li>
+      <li><span>Da mora e do inadimplemento<em>Multa de 2%, juros de 1% e IGPM</em></span></li>
+      <li><span>Declaração das partes<em>Lei 7.433/85 e Decreto 93.240/86</em></span></li>
+      <li><span>Da vistoria prévia<em>Estado de conservação aceito</em></span></li>
+      <li><span>Autorização de registro<em>No Registro de Imóveis competente</em></span></li>
+      <li><span>Cláusula resolutiva expressa<em>Art. 474 do Código Civil</em></span></li>
+      <li><span>Da intermediação<em>Corretagem e quem paga em caso de rescisão</em></span></li>
+      <li><span>Da eleição do foro<em>Comarca e assinaturas com 2 testemunhas</em></span></li>
+    </ol>
+  </div>
+</section>
+
+<!-- 7 · FOR WHO -->
+<section class="band navy">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in">
+    <p class="eyebrow">É para você que</p>
+    <h2 style="margin-top:14px">Vai assinar um negócio <span class="k">de seis dígitos</span> em breve.</h2>
+    <div class="who">
+      <div><h3>É corretor</h3><p>e quer entregar ao cliente um contrato completo, sem montar do zero a cada venda.</p></div>
+      <div><h3>Está vendendo por conta própria</h3><p>e não quer descobrir depois do sinal que faltou uma cláusula.</p></div>
+      <div><h3>Vai comprar um imóvel</h3><p>e quer saber o que exigir antes de transferir qualquer valor.</p></div>
+      <div><h3>Vai parcelar direto com o vendedor</h3><p>e precisa que a dívida tenha força de cobrança de verdade.</p></div>
+    </div>
+  </div>
+  <svg class="tear down" aria-hidden="true"><use href="#tear"/></svg>
+</section>
+
+<!-- 8 · OFFER -->
+<section class="band night" id="oferta">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in">
+    <div class="center">
+      <p class="eyebrow">Recapitulando</p>
+      <h2 style="margin-top:14px">Tudo que você precisa por <span class="k">R$ 47</span>.</h2>
+    </div>
+    <div class="offer">
+      <div class="art" aria-hidden="true">
+        <div class="disc"></div>
+        <img class="page p1" src="img/a-vista-p1.jpg" alt="">
+        <img class="page p2" src="img/financiado-p4.jpg" alt="">
+        <img class="page p3" src="img/parcelado-direto-p2.jpg" alt="">
+      </div>
+      <div class="body">
+        <p class="eyebrow">Contrato Blindado · kit completo</p>
+        <ul class="recap">
+          <li><span>Contrato À Vista (Word + PDF)</span><span class="strike">R$ 97</span></li>
+          <li><span>Contrato Financiado (Word + PDF)</span><span class="strike">R$ 97</span></li>
+          <li><span>Contrato Parcelado com confissão de dívida</span><span class="strike">R$ 127</span></li>
+          <li><span>Lista de 14 certidões e documentos</span><span class="strike">R$ 47</span></li>
+        </ul>
+        <div class="total"><span>Tudo isso deveria custar</span><span class="strike">R$ 368</span></div>
+        <div class="price">
+          <span class="from">Hoje, você leva tudo por</span>
+          <span class="now"><small>R$</small>47</span>
+          <span class="how">à vista no PIX ou parcelado no cartão</span>
+        </div>
+        <a class="btn" href="#oferta">Quero meu contrato <svg><use href="#arrow"/></svg></a>
+        <div class="safe"><span>Pagamento seguro</span><span>Acesso imediato</span><span>Garantia de 7 dias</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 9 · ACCESS STEPS -->
+<section class="band paper-band">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in">
+    <p class="eyebrow">Como você recebe</p>
+    <h2 style="margin-top:14px">Do pagamento ao contrato pronto em <span class="k">três passos</span>.</h2>
+    <ol class="steps">
+      <li><h3>Garanta o kit</h3><p>Pagamento em ambiente seguro, no PIX ou no cartão.</p></li>
+      <li><h3>Receba no e-mail</h3><p>Os 3 contratos em Word e PDF chegam logo após a confirmação.</p></li>
+      <li><h3>Preencha o amarelo</h3><p>Troque os campos destacados pelos dados do seu negócio e imprima.</p></li>
+    </ol>
+  </div>
+</section>
+
+<!-- 10 · GUARANTEE -->
+<section class="band paper-band" style="padding-top:0">
+  <div class="in guarantee">
+    <div class="seal"><div class="disc"></div><b>7<small>dias de garantia</small></b></div>
+    <div>
+      <h2>Abriu e não gostou? <span class="k">Devolvemos tudo.</span></h2>
+      <p class="lead">Você tem 7 dias para baixar, ler cada cláusula e decidir. Se achar que não serve para você, peça o reembolso e recebe 100% do valor, sem precisar explicar.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 11 · TWO CHOICES -->
+<section class="band night">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in">
+    <p class="eyebrow">Agora você tem duas opções</p>
+    <h2 style="margin-top:14px">O próximo contrato que você assinar vai <span class="k">proteger ou expor</span> você.</h2>
+    <div class="choices">
+      <div class="choice bad"><span class="lbl">Opção 1</span><h3>Improvisar</h3><p>Copiar um modelo qualquer, torcer para nada dar errado e descobrir a cláusula que faltou quando o problema já chegou.</p></div>
+      <div class="choice good"><span class="lbl">Opção 2</span><h3>Assinar com tudo previsto</h3><p>Usar um contrato construído a partir de negociações reais, com cada risco já escrito, por menos de R$ 50.</p></div>
+    </div>
+    <p class="lead" style="margin-top:28px">Eu sei, e você também sabe: a opção 2 é a mais inteligente.</p>
+  </div>
+  <svg class="tear down" aria-hidden="true"><use href="#tear"/></svg>
+</section>
+
+<!-- 12 · AUTHOR -->
+<section class="band paper-band">
+  <div class="in author">
+    <div class="photo"><div class="disc"></div><span>Foto do Gilson em preto e branco, recortada, sobre o disco dourado</span></div>
+    <div>
+      <p class="eyebrow">Quem está por trás</p>
+      <h2 style="margin-top:14px">Gilson, <span class="k">corretor de imóveis</span>.</h2>
+      <p class="lead">O Gilson acompanha negociações de compra e venda do sinal à entrega das chaves. Este modelo nasceu dos contratos assinados nessas negociações, reunidos em um só texto e transformados em um modelo genérico que qualquer pessoa pode preencher.</p>
+      <div class="rule"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 13 · OFFER REPEAT -->
+<section class="band night">
+  <svg class="tear" aria-hidden="true"><use href="#tear"/></svg>
+  <div class="in center">
+    <h2>Seu próximo negócio, <span class="k">blindado</span>.</h2>
+    <p class="deck" style="margin-inline:auto">3 contratos em Word e PDF, 14 certidões listadas, garantia de 7 dias.</p>
+    <div class="price" style="justify-items:center;color:var(--paper)">
+      <span class="from" style="color:var(--muted-night)">De <span class="strike" style="color:var(--muted-night)">R$ 368</span> por</span>
+      <span class="now" style="color:var(--paper)"><small>R$</small>47</span>
+    </div>
+    <p style="margin-top:26px"><a class="btn" href="#oferta">Quero meu contrato <svg><use href="#arrow"/></svg></a></p>
+  </div>
+  <svg class="tear down" aria-hidden="true"><use href="#tear"/></svg>
+</section>
+
+<!-- 14 · FAQ -->
+<section class="band paper-band">
+  <div class="in">
+    <p class="eyebrow">Perguntas frequentes</p>
+    <h2 style="margin-top:14px">Ainda com dúvida?</h2>
+    <div class="faq">
+      <details open><summary>Serve para imóveis em qualquer estado?</summary><p>Sim. Cidade, comarca e as certidões estaduais são campos para preencher. Para negócios de valor alto ou situações fora do comum, vale uma revisão rápida por um advogado da sua região.</p></details>
+      <details><summary>Em que formato eu recebo?</summary><p>Cada contrato vem em Word (.docx), editável no Word, no Google Docs ou no LibreOffice, e em PDF para conferência.</p></details>
+      <details><summary>Serve quando o comprador vai financiar pelo banco?</summary><p>Sim, é para isso que existe a versão Financiado. Ela é o compromisso entre comprador e vendedor, assinado antes do contrato do banco.</p></details>
+      <details><summary>E se forem dois vendedores ou um casal?</summary><p>O texto usa VENDEDOR(A) e COMPRADOR(A). Basta ajustar para o plural e repetir a qualificação de cada pessoa.</p></details>
+      <details><summary>O modelo substitui um advogado?</summary><p>Não. Ele é um ponto de partida completo e redigido. Inventário, imóvel com penhora ou permuta pedem orientação jurídica específica.</p></details>
+      <details><summary>Como funciona a garantia?</summary><p>Você tem 7 dias a partir da compra para pedir reembolso integral, sem precisar justificar.</p></details>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="in">
+    <p>Contrato Blindado de Compra e Venda é um modelo genérico de contrato e não constitui assessoria jurídica. Os modelos não contêm dados de nenhum cliente. Adapte o texto ao seu caso e, quando necessário, consulte um advogado.</p>
+  </div>
+</footer>
