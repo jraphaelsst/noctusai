@@ -26,7 +26,7 @@ CNPJ_B = "11444777000161"
 _PARTE_ITEM_KEYS = {
     "parte_id", "titular", "rotulo", "lado", "papel", "ordem", "tipo_pessoa",
     "cliente_id", "empresa_id", "nome", "documento", "observacao", "cliente",
-    "empresa",
+    "empresa", "representa_parte_id", "pj_nire", "pj_sede",
 }
 _EMPRESA_KEYS = {"id", "razao_social", "nome_fantasia", "cnpj", "situacao_cadastral"}
 _LOOKUP_KEYS = {
@@ -714,6 +714,29 @@ class TestParteContratoPatch:
         assert body["pj_sede_uf"] == "SP" and body["pj_sede_cep"] == "06700000"
         # untouched keys are not written (PATCH semantics)
         assert body["pj_sede_cidade"] is None
+
+    def test_the_list_reads_back_the_stored_qualification(self, http, scoped):
+        """A write-only qualification shows blank in the form and invites a
+        clearing re-save — the list must return what the PATCH stored."""
+        emp = _empresa()
+        rep = str(uuid4())
+        cid, aid = _deal(scoped, empresas=[emp], clientes=[cliente_row(rep, nome="Rep")])
+        pj = _parte(aid, empresa_id=emp["id"], lado="vendedor", papel="proprietario")
+        pr = _parte(aid, cliente_id=rep, lado="vendedor", papel="representante", ordem=1)
+        scoped.set_table_data("atendimento_partes", [pj, pr])
+        assert http.patch(self._url(cid, pj["id"]), headers=_auth(), json={
+            "pj_nire": "35200000000", "pj_sede_cidade": "Cotia", "pj_sede_uf": "SP",
+        }).status_code == 200
+        assert http.patch(self._url(cid, pr["id"]), headers=_auth(),
+                          json={"representa_parte_id": pj["id"]}).status_code == 200
+        items = {i["parte_id"]: i for i in
+                 http.get(f"/api/clientes/{cid}/partes", headers=_auth()).json()["items"]}
+        assert items[pj["id"]]["pj_nire"] == "35200000000"
+        assert items[pj["id"]]["pj_sede"]["cidade"] == "Cotia"
+        assert items[pj["id"]]["pj_sede"]["uf"] == "SP"
+        assert items[pr["id"]]["representa_parte_id"] == pj["id"]
+        # a person party carries no PJ qualification block
+        assert items[pr["id"]]["pj_nire"] is None and items[pr["id"]]["pj_sede"] is None
 
     def test_pj_fields_are_refused_on_a_person(self, http, scoped):
         pessoa = str(uuid4())

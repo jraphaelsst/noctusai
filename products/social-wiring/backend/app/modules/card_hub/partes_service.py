@@ -125,6 +125,18 @@ def _item(
             else _digitos((cliente or {}).get("cpf"))
         ),
         "observacao": (parte or {}).get("observacao"),
+        # Migration 193 — the deal-scoped contract qualification lives on the
+        # party row, so the list must carry it for the FE form to prefill
+        # (a write-only field shows blank and invites a clearing re-save).
+        "representa_parte_id": (
+            str(parte["representa_parte_id"])
+            if parte and parte.get("representa_parte_id") else None
+        ),
+        "pj_nire": (parte or {}).get("pj_nire") if e_pj else None,
+        "pj_sede": (
+            {campo: (parte or {}).get(f"pj_sede_{campo}") for campo in comp_svc.CAMPOS_SEDE_PJ}
+            if e_pj else None
+        ),
         "cliente": (
             {k: cliente.get(k) for k in comp_svc._CLIENTE_RESUMO} if cliente else None
         ),

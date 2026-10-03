@@ -70,6 +70,12 @@ class ParteItem(BaseModel):
     nome: str
     documento: Optional[str] = None
     observacao: Optional[str] = None
+    # Migration 193 contract qualification (party row), readable so the FE
+    # form prefills: the represented company of a 'representante', and a PJ
+    # party's NIRE + sede ({logradouro, numero, complemento, bairro, cidade, uf, cep}).
+    representa_parte_id: Optional[str] = None
+    pj_nire: Optional[str] = None
+    pj_sede: Optional[dict[str, Optional[str]]] = None
     cliente: Optional[dict[str, Any]] = None
     empresa: Optional[EmpresaResumo] = None
 
