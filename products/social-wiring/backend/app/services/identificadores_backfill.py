@@ -341,49 +341,30 @@ def _decisao_equivalencia(campo: str, motivo: str) -> Decisao:
 
 
 def resolver_conflitos_imovel(client: Any, org_id: UUID, *, dry_run: bool) -> dict:
-    """Equivalence only: matrícula / inscrição municipal / cartório have no
-    check digit, so a pending conflict that is the same identifier in two
-    spellings is closed `resolvido_automatico`; anything else stays for a
-    human, untouched."""
+    """The imóvel automatic resolver (`campos_extraidos_service.
+    backfill_resolver_conflitos_pendentes`) over every pending identifier
+    conflict (matrícula / inscrição municipal / cartório) — equivalence
+    (formatting, the inscrição in its município's mask, the cartório's
+    book-header/CNS noise) plus the deterministic imóvel rules
+    (`imovel_hub.conflito_resolucao`). One resolver, not a second
+    equivalence-only copy. Under `--dry-run` the caller hands in the
+    READ-ONLY client, so this reports exactly what a real run would decide,
+    writing nothing."""
     from app.modules.imovel_hub import campos_extraidos_service as campos_svc
-    from app.modules.imovel_hub import dados_service
 
-    pendentes = [
-        r for r in table_reads.paged_rows(
-            client, "imovel_campo_conflitos", org_id, eq_filters={"status": "pendente"},
-        )
-        if r.get("campo") in CAMPOS_CONFLITO_IMOVEL
-    ]
-    resolvidos = 0
-    por_campo: Counter[str] = Counter()
-    for row in pendentes:
-        campo = campos_svc.CAMPOS.get(row["campo"])
-        if campo is None:
-            continue
-        anterior, proposto = row.get("valor_anterior"), row.get("valor_proposto")
-        mesmo = campos_svc.iguais(campo, anterior, proposto)
-        if not mesmo and row["campo"] == "prefeitura_cadastro_imobiliario":
-            mesmo = idf.iguais(
-                "inscricao_municipal", anterior, proposto,
-                municipio=dados_service.municipio_do_imovel(client, org_id, row["codigo"]),
-            )
-        if not mesmo:
-            continue
-        resolvidos += 1
-        por_campo[row["campo"]] += 1
-        if not dry_run:
-            campo_conflitos.registrar_decisao_automatica(
-                client, campo_conflitos.IMOVEL, org_id, row["codigo"], row["campo"],
-                valor_anterior=anterior, origem_anterior=row.get("origem_anterior"),
-                valor_proposto=proposto, origem_proposto=row.get("origem_proposto"),
-                decisao=_decisao_equivalencia(row["campo"], "formatação"),
-                conflito_existente_id=row["id"],
-            )
+    out = campos_svc.backfill_resolver_conflitos_pendentes(
+        client, org_id, campos=CAMPOS_CONFLITO_IMOVEL
+    )
+    ignorados_fora = [r for r in out["ignorados"] if r.get("campo") not in CAMPOS_CONFLITO_IMOVEL]
+    pendentes = len(out["resolvidos"]) + len(out["ainda_pendentes"]) + (
+        len(out["ignorados"]) - len(ignorados_fora)
+    )
+    por_campo: Counter[str] = Counter(r["campo"] for r in out["resolvidos"])
     return {
-        "pendentes": len(pendentes),
-        "resolvidos": resolvidos,
+        "pendentes": pendentes,
+        "resolvidos": len(out["resolvidos"]),
         "por_campo": dict(sorted(por_campo.items())),
-        "ainda_pendentes": len(pendentes) - resolvidos,
+        "ainda_pendentes": pendentes - len(out["resolvidos"]),
     }
 
 

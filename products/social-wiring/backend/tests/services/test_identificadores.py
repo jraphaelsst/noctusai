@@ -179,3 +179,39 @@ class TestClientesSearchRoundTrip:
 
     def test_a_short_numeric_needle_does_not_match_every_row(self, client):
         assert self._ids(client, "41") == []
+
+
+class TestRefinamento:
+    """`orgao_refinamento` / `cartorio_refinamento` (2026-10-03): one reading
+    is the other plus the detail it lacked — a deterministic relation the
+    resolvers use to keep the complete reading without a human."""
+
+    def test_orgao_with_and_without_its_uf(self):
+        assert idf.orgao_refinamento("SSP/SP", "SSP") == idf.MAIS_COMPLETO_A
+        assert idf.orgao_refinamento("SSP", "SSP-SP") == idf.MAIS_COMPLETO_B
+
+    def test_orgao_not_proven(self):
+        assert idf.orgao_refinamento("SERRA/SP", "SSP") is None
+        assert idf.orgao_refinamento("SSP/SP", "SSP/RJ") is None
+        assert idf.orgao_refinamento("SSP/SP", "SSP/SP") is None
+        assert idf.orgao_refinamento(None, "SSP") is None
+
+    def test_cartorio_locality_suffix(self):
+        base = "SERVENTIA DO REGISTRO DE IMÓVEIS"
+        assert idf.cartorio_refinamento(base, f"{base} de Cotia") == idf.MAIS_COMPLETO_B
+        assert idf.cartorio_refinamento(f"{base} de Cotia - CNS: 11991-7", base) == idf.MAIS_COMPLETO_A
+        assert idf.cartorio_refinamento(
+            f"LIVRO Nº 2 - REGISTRO GERAL {base}",
+            f"LIVRO Nº 2 - REGISTRO GERAL | {base} de Cotia",
+        ) == idf.MAIS_COMPLETO_B
+
+    def test_cartorio_book_header_and_formatting_are_equivalent(self):
+        base = "SERVENTIA DO REGISTRO DE IMÓVEIS"
+        assert idf.cartorio_refinamento(base, f"LIVRO Nº 2 - REGISTRO GERAL {base}") == idf.EQUIVALENTE
+        assert idf.cartorio_refinamento(base, "serventia do registro de imoveis") == idf.EQUIVALENTE
+
+    def test_cartorio_not_proven(self):
+        assert idf.cartorio_refinamento("1º RI de Barueri", "2º RI de Barueri") is None
+        assert idf.cartorio_refinamento(
+            "RI de Cotia - CNS: 11991-7", "RI de Cotia - CNS: 12000-1"
+        ) is None

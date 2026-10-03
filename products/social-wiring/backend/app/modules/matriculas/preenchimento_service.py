@@ -413,6 +413,21 @@ def preencher_sincrono(
         # A named destination, not a silent skip: at least one act could not
         # be classified as encumbering or not — see `derivar_situacao_onus`.
         resumo["situacao_onus"] = "indeterminado"
+
+    # Re-consult the automatic resolver over this imóvel's conflicts that
+    # were ALREADY pending before this fill (2026-10-03): a fresh, current
+    # extraction is exactly the evidence an older conflict was waiting on
+    # (its on-file side came from an extraction this one superseded).
+    # Best-effort — the fill itself already landed.
+    try:
+        auto = campos_svc.backfill_resolver_conflitos_pendentes(client, org_id, codigo=codigo)
+        if auto["resolvidos"]:
+            resumo["conflitos_resolvidos_automaticamente"] = len(auto["resolvidos"])
+    except Exception:  # noqa: BLE001 - the fill already landed; logged loudly
+        logger.exception(
+            "matricula %s: automatic conflict resolution failed for imovel %s",
+            eid, codigo,
+        )
     return resumo, conflitos
 
 

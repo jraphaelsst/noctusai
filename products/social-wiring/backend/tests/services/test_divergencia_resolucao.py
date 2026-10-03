@@ -503,3 +503,62 @@ class TestDecisaoOutraPessoa:
             valores_outras_pessoas=[(None, "comprador"), ("", "vendedor")],
         )
         assert decisao is None
+
+
+class TestRefinamentoOrgaoExpedidor:
+    """2026-10-03, P3/P4 test loop: a bank form (`ficha_cadastral`) prints the
+    issuer as `SSP` with no state, the CNH as `SSP/SP`. Same órgão, one
+    reading stated completely — measured as the single largest class of
+    blocking conflicts. Pre-fix: `requer_humano` (no ficha cell in PRECISAO)."""
+
+    def _decidir(self, atual, origem_atual, proposto, origem_proposto, **kw):
+        return dr.resolver_divergencia(
+            "rg_orgao_expedidor",
+            valor_atual=atual, origem_atual=origem_atual,
+            valor_proposto=proposto, origem_proposto=origem_proposto,
+            mesmo_valor=_mesmo_valor_simples, **kw,
+        )
+
+    def test_the_reading_with_the_uf_is_kept(self):
+        d = self._decidir("SSP/SP", "cnh", "SSP", "ficha_cadastral")
+        assert (d.vencedor, d.regra, d.requer_humano) == ("atual", "refinamento", False)
+
+    def test_the_proposed_reading_with_the_uf_wins_over_a_bare_one(self):
+        d = self._decidir("SSP", "ficha_cadastral", "SSP/SP", "cnh")
+        assert (d.vencedor, d.regra) == ("proposto", "refinamento")
+
+    def test_a_different_orgao_still_needs_a_human(self):
+        d = self._decidir("SERRA/SP", "rg", "SSP", "ficha_cadastral")
+        assert d.requer_humano is True
+
+    def test_a_human_typed_bare_orgao_is_never_replaced(self):
+        d = self._decidir("SSP", "manual", "SSP/SP", "cnh", atual_humano=True)
+        assert (d.requer_humano, d.regra) == (True, "valor_humano")
+
+    def test_a_human_value_still_wins_when_the_rule_keeps_it(self):
+        d = self._decidir("SSP/SP", "manual", "SSP", "ficha_cadastral", atual_humano=True)
+        assert (d.vencedor, d.regra) == ("atual", "refinamento")
+
+
+class TestValorHumanoNuncaSobrescrito:
+    def test_a_tier_win_for_the_proposal_yields_to_a_confirmed_value(self):
+        """Tier would pick the CNH over the matrícula — but the on-file value
+        was confirmed by a person, so a human decides."""
+        d = dr.resolver_divergencia(
+            "nome_oficial",
+            valor_atual="FULANO DE TAL", origem_atual="matricula",
+            valor_proposto="FULANO DE TAL SILVA", origem_proposto="cnh",
+            mesmo_valor=_mesmo_valor_simples, atual_humano=True,
+        )
+        assert (d.requer_humano, d.regra) == (True, "valor_humano")
+
+    def test_a_proven_invalid_value_is_still_replaced(self):
+        """`REGRAS_PROVA_OBJETIVA`: a typed CPF whose check digit fails is
+        not a CPF at all (pinned since 2026-09-29)."""
+        d = dr.resolver_divergencia(
+            "cpf",
+            valor_atual="111.111.111-11", origem_atual="manual",
+            valor_proposto="412.954.238-98", origem_proposto="cnh",
+            mesmo_valor=_mesmo_valor_simples, atual_humano=True,
+        )
+        assert (d.vencedor, d.regra) == ("proposto", "validador")

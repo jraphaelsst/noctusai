@@ -187,6 +187,56 @@ class TestBackfillRoute:
         assert body["ainda_pendentes"] == []
         assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
 
+    def test_a_bank_form_orgao_without_uf_is_settled_by_the_backfill(self, client, scoped):
+        """2026-10-03 (P3/P4): the largest blocking class — `SSP/SP` from the
+        CNH vs `SSP` from the bank form. Same órgão; the complete reading is
+        kept, the pending conflict closes `resolvido_automatico`. The imóvel
+        queue is swept by the same call (additive `imoveis` key)."""
+        _make_admin(client)
+        cid = _seed(scoped, cliente={
+            "rg_orgao_expedidor": "SSP/SP", "rg_orgao_expedidor_origem": "cnh",
+        })
+        conflito = _conflito_row(
+            cid, campo="rg_orgao_expedidor",
+            valor_anterior="SSP/SP", origem_anterior="cnh",
+            valor_proposto="SSP", origem_proposto="ficha_cadastral",
+            fonte_tabela="cliente_documentos",
+        )
+        scoped.set_table_data("cliente_campo_conflitos", [conflito])
+
+        r = client.post("/api/clientes/conflitos/resolver-automaticamente", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert [x["decisao_regra"] for x in body["resolvidos"]] == ["refinamento"]
+        assert body["imoveis"] == {"resolvidos": 0, "ainda_pendentes": 0, "ignorados": 0}
+        assert _cliente(scoped, cid)["rg_orgao_expedidor"] == "SSP/SP"
+        [row] = scoped.table("cliente_campo_conflitos").select("*").execute().data
+        assert row["status"] == "resolvido_automatico"
+        assert row["decidido_por"] is None
+        assert row["motivo_resolucao"].startswith("[refinamento]")
+
+    def test_a_confirmed_bare_orgao_is_not_replaced_by_the_backfill(self, client, scoped):
+        _make_admin(client)
+        cid = _seed(scoped, cliente={
+            "rg_orgao_expedidor": "SSP", "rg_orgao_expedidor_origem": "ficha_cadastral",
+            "rg_orgao_expedidor_confirmado_por": TEST_USER_ID,
+            "rg_orgao_expedidor_confirmado_em": "2026-10-01T00:00:00+00:00",
+        })
+        conflito = _conflito_row(
+            cid, campo="rg_orgao_expedidor",
+            valor_anterior="SSP", origem_anterior="ficha_cadastral",
+            valor_proposto="SSP/SP", origem_proposto="cnh",
+            fonte_tabela="cliente_documentos",
+        )
+        scoped.set_table_data("cliente_campo_conflitos", [conflito])
+
+        r = client.post("/api/clientes/conflitos/resolver-automaticamente", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        assert r.json()["resolvidos"] == []
+        assert _cliente(scoped, cid)["rg_orgao_expedidor"] == "SSP"
+
     def test_an_admin_leaves_a_still_ambiguous_conflict_pending(self, client, scoped):
         _make_admin(client)
         cid = _seed(

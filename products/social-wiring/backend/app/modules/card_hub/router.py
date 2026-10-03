@@ -80,6 +80,7 @@ from app.modules.card_hub.roteiro_schemas import (
 )
 from app.modules.card_hub.proveniencia.router import router as proveniencia_router
 from app.modules.card_hub import roteiro_pdf_service as roteiro_pdf_svc
+from app.modules.imovel_hub import campos_extraidos_service as campos_extraidos_svc
 from app.modules.imovel_hub import proprietarios_service as proprietarios_svc
 from app.modules.card_hub import roteiros_service as roteiros_svc
 from app.modules.card_hub import services as svc
@@ -856,7 +857,12 @@ async def backfill_resolver_conflitos_route(
             status_code=403,
             detail="Resolver conflitos automaticamente é restrito a administradores.",
         )
-    return identidade_svc.backfill_resolver_conflitos_pendentes(client, org_id)
+    resultado = identidade_svc.backfill_resolver_conflitos_pendentes(client, org_id)
+    # The imóvel queue too (2026-10-03, `imovel_hub.conflito_resolucao`) —
+    # additive key, the cliente keys above keep their shape.
+    imoveis = campos_extraidos_svc.backfill_resolver_conflitos_pendentes(client, org_id)
+    resultado["imoveis"] = {k: len(v) for k, v in imoveis.items()}
+    return resultado
 
 
 @router.put("/conflitos/{conflito_id}/decidir")

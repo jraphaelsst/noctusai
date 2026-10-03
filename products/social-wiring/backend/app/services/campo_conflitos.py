@@ -87,7 +87,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, Sequence
 from uuid import uuid4
 
 from app.services import divergencia_resolucao, table_reads
@@ -300,6 +300,7 @@ def resolver_e_registrar(
     evidencia: Optional[divergencia_resolucao.EvidenciaViva] = None,
     uf: Optional[str] = None,
     cpf_proprio: Optional[Any] = None,
+    atual_humano: bool = False,
 ) -> Decisao:
     """THE automatic divergence resolver — owner directive, 2026-09-29:
     "resolve divergencies without the need of a human [...] using docs and
@@ -347,6 +348,7 @@ def resolver_e_registrar(
         evidencia=evidencia,
         uf=uf,
         cpf_proprio=cpf_proprio,
+        atual_humano=atual_humano,
     )
     return registrar_decisao_automatica(
         client, table, org_id, owner, campo,
@@ -378,6 +380,8 @@ def registrar_decisao_automatica(
     fonte_tabela: Optional[str] = None,
     fonte_id: Optional[Any] = None,
     conflito_existente_id: Optional[Any] = None,
+    documento_id_proposto: Optional[Any] = None,
+    evidencia_ids: Sequence[str] = (),
 ) -> Decisao:
     """THE WRITE half of an automatic resolution — factored out of
     `resolver_e_registrar` (whose `Decisao` always comes from `divergencia_
@@ -395,12 +399,22 @@ def registrar_decisao_automatica(
     otherwise a row lands as `status='resolvido_automatico'`,
     `decidido_por=None`, `motivo_resolucao='[regra] motivo'` — inserted
     fresh, or updated in place when `conflito_existente_id` names an
-    existing `pendente` row (the backfill shape)."""
+    existing `pendente` row (the backfill shape).
+
+    `evidencia_ids` — the ids of the documents/extractions the rule read
+    (owner rule 2026-10-03: every automatic resolution names its evidence);
+    appended to `motivo_resolucao` as `evidência: ...`, so the audit trail
+    says WHICH documents decided, not only which rule. The actor is always
+    the system (`decidido_por=None`). `documento_id_proposto` lands only on
+    a table that has the column (`IMOVEL`), same as `registrar_conflito`."""
     if decisao.requer_humano:
         return decisao
 
     now = _now()
     motivo = f"[{decisao.regra}] {decisao.motivo}"
+    ids = [str(i) for i in evidencia_ids if i]
+    if ids:
+        motivo = f"{motivo} evidência: {', '.join(ids)}"
     if conflito_existente_id is not None:
         _t(client, table.table).update(
             {
@@ -431,6 +445,10 @@ def registrar_decisao_automatica(
         "motivo_resolucao": motivo,
         "created_at": now,
     }
+    if table.has_documento_id_proposto:
+        linha["documento_id_proposto"] = (
+            str(documento_id_proposto) if documento_id_proposto else None
+        )
     _t(client, table.table).insert(linha).execute()
     return decisao
 

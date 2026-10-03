@@ -57,6 +57,10 @@ THE RESOLUTION ORDER (owner directive)
    on-file provenance is untouched, the stored form is canonicalised by
    its own write path / the backfill — never by stamping the other source's
    provenance over it.
+0b. **Refinement** (2026-10-03, P3/P4 test loop) — an órgão expedidor
+   reading that is the other one plus the UF it lacked (`SSP` from a bank
+   form vs `SSP/SP` from the CNH) is the same órgão, stated completely:
+   the complete one is kept (`identificadores.orgao_refinamento`).
 1a. **Type routing** — a reading that is a VALID instance of ANOTHER type
    (a CPF `297.556.088-50` in the RG field) is not this campo's value and
    loses to one that is not misrouted. The one exception is the CIN, whose
@@ -89,6 +93,12 @@ THE RESOLUTION ORDER (owner directive)
    still a source that agrees.
 3. **Source tier** — the higher measured `PRECISAO` wins. Equal, unmeasured,
    or too-thin-to-trust precision on both sides is NOT a tier decision.
+Across every step: **a human-entered or human-confirmed value is never
+   overridden** (`atual_humano=True`, owner rule 2026-10-03) — a verdict
+   for the proposed side comes back as `requer_humano` instead; a verdict
+   that KEEPS the human's value still stands. The one exception is a value
+   PROVEN invalid (`REGRAS_PROVA_OBJETIVA`: failing check digit, another
+   type's identifier) — pinned behaviour since 2026-09-29.
 4. Anything still standing needs a human — same posture as today
    (`requer_humano=True`), never a coin flip.
 
@@ -430,6 +440,27 @@ _HUMANO = Decisao(
 )
 
 
+#: Rules whose verdict PROVES the on-file value is not a valid value of this
+#: campo at all — its check digit fails (`validador`), or it is a valid
+#: identifier of ANOTHER type (`tipo_detectado`). These still replace a
+#: hand-typed value (pinned since 2026-09-29: a typed `111.111.111-11` loses
+#: to a CNH's valid CPF); every other rule's preference for the proposed
+#: side yields to a human value (`atual_humano`).
+REGRAS_PROVA_OBJETIVA = frozenset({"validador", "tipo_detectado"})
+
+_HUMANO_PROTEGIDO_MOTIVO = (
+    "o valor em registro foi digitado ou confirmado por uma pessoa — nunca "
+    "sobrescrito automaticamente; a regra {regra!r} preferiria o proposto."
+)
+
+
+def _protegido(regra: str) -> Decisao:
+    return Decisao(
+        vencedor=None, regra="valor_humano",
+        motivo=_HUMANO_PROTEGIDO_MOTIVO.format(regra=regra), requer_humano=True,
+    )
+
+
 #: R4 (owner directive, 2026-09-30, live-test evidence): the three fields a
 #: document can print that belong to exactly ONE person and to nobody else
 #: in the same negotiation. `endereco` is deliberately excluded — a shared
@@ -493,6 +524,7 @@ def resolver_divergencia(
     evidencia: Optional[EvidenciaViva] = None,
     uf: Optional[str] = None,
     cpf_proprio: Any = None,
+    atual_humano: bool = False,
 ) -> Decisao:
     """Decide `'atual'` vs `'proposto'` for one disagreeing (campo, valores)
     pair, or admit a human is needed. Pure — no I/O, no DB. `mesmo_valor` is
@@ -517,7 +549,41 @@ def resolver_divergencia(
     person's own CPF) are the identifier registry's reading context — see
     `_validar` / `_tipo_trocado`. Both optional; omitted, an RG is read with
     the SP mask and a CPF in the RG field is never exempt.
+
+    `atual_humano` — the on-file value was typed (`origem='manual'`) or
+    confirmed (`confirmado_por` set) by a person: any verdict for the
+    PROPOSED side is turned into `requer_humano` (regra `valor_humano`).
     """
+    decisao = _resolver(
+        campo,
+        valor_atual=valor_atual, origem_atual=origem_atual,
+        valor_proposto=valor_proposto, origem_proposto=origem_proposto,
+        mesmo_valor=mesmo_valor, historico=historico, evidencia=evidencia,
+        uf=uf, cpf_proprio=cpf_proprio,
+    )
+    if (
+        atual_humano
+        and decisao.vencedor == "proposto"
+        and decisao.regra not in REGRAS_PROVA_OBJETIVA
+    ):
+        return _protegido(decisao.regra)
+    return decisao
+
+
+def _resolver(
+    campo: str,
+    *,
+    valor_atual: Any,
+    origem_atual: Optional[str],
+    valor_proposto: Any,
+    origem_proposto: str,
+    mesmo_valor: Callable[[str, Any, Any], bool],
+    historico: Sequence[tuple[Any, Optional[str]]],
+    evidencia: Optional[EvidenciaViva],
+    uf: Optional[str],
+    cpf_proprio: Any,
+) -> Decisao:
+    """`resolver_divergencia`'s steps 0-4, before the human guard."""
     # 0. Equivalence — format-only differences are not a disagreement.
     tipo_id = _ids.TIPO_POR_CAMPO.get(campo)
     if (
@@ -535,6 +601,19 @@ def resolver_divergencia(
             f"são o mesmo identificador, só muda a formatação ou o dígito "
             f"verificador ausente — nada a decidir.",
         )
+
+    # 0b. Refinement — the same órgão, one reading missing only its UF.
+    if campo == "rg_orgao_expedidor":
+        refinado = _ids.orgao_refinamento(valor_atual, valor_proposto)
+        if refinado is not None:
+            vencedor = "atual" if refinado == _ids.MAIS_COMPLETO_A else "proposto"
+            completo = valor_atual if vencedor == "atual" else valor_proposto
+            return _decisao(
+                vencedor, "refinamento",
+                f"{campo}: as duas leituras ({origem_atual} e {origem_proposto}) "
+                f"nomeiam o mesmo órgão; só {completo!r} traz a UF — mantida a "
+                f"leitura completa.",
+            )
 
     # 1a. Type routing — a valid identifier of ANOTHER type is not this
     # campo's value.
@@ -646,6 +725,7 @@ def resolver_divergencia(
 
 
 __all__ = [
+    "REGRAS_PROVA_OBJETIVA",
     "CAMPOS_IDENTIDADE_EXCLUSIVA",
     "CAMPOS_POR_PESSOA",
     "CORROBORACAO_MINIMA",

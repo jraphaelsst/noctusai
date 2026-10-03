@@ -94,13 +94,28 @@ class TestAplicar:
         assert c["valor_proposto"] == "1º RI de Barueri"
         assert c["status"] == "pendente"
 
-        # A second reading while one is pending does not pile up.
+        # The SAME reading again while it is pending does not pile up.
+        r_mesmo = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "numero_registro_imoveis", "1º RI de Barueri",
+            origem="matricula",
+        )
+        assert r_mesmo.status == campos_svc.CONFLITO_EXISTENTE
+        assert len(_conflitos(scoped)) == 1
+
+        # A DIFFERENT, newer reading supersedes the stale pending proposal
+        # (2026-10-03): still exactly one pending row, and it is the newer
+        # one — the old early-return dropped this reading on the floor.
         r2 = campos_svc.aplicar(
             scoped, ORG, CODIGO, "numero_registro_imoveis", "3º RI de Barueri",
             origem="matricula",
         )
-        assert r2.status == campos_svc.CONFLITO_EXISTENTE
-        assert len(_conflitos(scoped)) == 1
+        assert r2.status == campos_svc.CONFLITO
+        pendentes = [x for x in _conflitos(scoped) if x["status"] == "pendente"]
+        assert [x["valor_proposto"] for x in pendentes] == ["3º RI de Barueri"]
+        [antigo] = [x for x in _conflitos(scoped) if x["status"] == "rejeitado"]
+        assert antigo["valor_proposto"] == "1º RI de Barueri"
+        assert antigo["decidido_por"] is None  # a system supersede, not a human "no"
+        assert _dados(scoped)["numero_registro_imoveis"] == "2º RI de Barueri"
 
     def test_machine_versus_machine_is_a_conflict_too(self, scoped):
         seed(scoped, dados=[dados_row(
@@ -357,7 +372,9 @@ class TestPrefeituraPrecedence:
 
     def test_a_matricula_reading_never_replaces_a_prefeitura_one(self, scoped):
         """Precedence is directional — `origem` must be a prefeitura
-        source; the matrícula never wins this one back."""
+        source; the matrícula never wins this one back. Since 2026-10-03 the
+        automatic resolver settles it outright (`autoridade_prefeitura`): the
+        prefeitura's value is KEPT and no human is asked."""
         seed(scoped, dados=[dados_row(
             prefeitura_cadastro_imobiliario="23231.42.11.0377.00.000",
             prefeitura_cadastro_imobiliario_origem="guia_iptu",
@@ -366,7 +383,12 @@ class TestPrefeituraPrecedence:
             scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
             "23231.42.11.9999.00.000", origem="matricula",
         )
-        assert r.status == campos_svc.CONFLITO
+        assert r.status == campos_svc.RESOLVIDO_MANTIDO
+        assert _dados(scoped)["prefeitura_cadastro_imobiliario"] == "23231.42.11.0377.00.000"
+        [c] = _conflitos(scoped)
+        assert c["status"] == "resolvido_automatico"
+        assert c["motivo_resolucao"].startswith("[autoridade_prefeitura]")
+        assert c["decidido_por"] is None
 
 
 class TestDecidir:

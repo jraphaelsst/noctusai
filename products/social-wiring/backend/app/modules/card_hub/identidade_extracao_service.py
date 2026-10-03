@@ -879,6 +879,15 @@ def _valores_outras_pessoas(
     ]
 
 
+def _valor_humano(row: Optional[dict], campo: CampoExtraido) -> bool:
+    """A person typed (`origem='manual'`) or vouched for (`confirmado_por`
+    set) this field's current value — the automatic resolver never
+    overrides it (owner rule 2026-10-03, `divergencia_resolucao.
+    resolver_divergencia(atual_humano=...)`)."""
+    row = row or {}
+    return row.get(campo.origem) == "manual" or bool(row.get(campo.confirmado_por))
+
+
 def _cpf_proprio(lidos: dict, atual: dict, updates: dict) -> Optional[str]:
     """The CPF of the person being written — the one a CIN's RG may equal.
     A reading in this same apply wins over what is on file; an invalid one
@@ -1028,6 +1037,7 @@ def aplicar_campos_ao_cliente(
     for campo in campos:
         colunas += [
             campo.item_key, campo.origem, campo.documento_id, campo.confirmado_em,
+            campo.confirmado_por,
         ]
     rows = (
         _t(client, CLIENTES_TABLE)
@@ -1216,6 +1226,7 @@ def aplicar_campos_ao_cliente(
                         evidencia=_evidencia_ao_vivo(client, org_id, cliente_id, campo, presente),
                         uf=uf_rg,
                         cpf_proprio=cpf_proprio,
+                        atual_humano=_valor_humano(atual, campo),
                     )
                     if decisao.requer_humano:
                         novo = _registrar_conflito(
@@ -2605,6 +2616,9 @@ def backfill_resolver_conflitos_pendentes(
             evidencia=evidencia,
             uf=idf.uf_do_orgao((cliente_row or {}).get("rg_orgao_expedidor")),
             cpf_proprio=(cliente_row or {}).get("cpf"),
+            atual_humano=(
+                row.get("origem_anterior") == "manual" or _valor_humano(cliente_row, campo)
+            ),
         )
         if decisao.requer_humano:
             ainda_pendentes.append(row)

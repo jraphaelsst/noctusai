@@ -56,7 +56,7 @@ from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
-from app.modules.imovel_hub import dados_service
+from app.modules.imovel_hub import conflito_resolucao, dados_service
 from app.services import campo_conflitos, table_reads
 from app.services import identificadores as idf
 
@@ -77,7 +77,7 @@ ORIGEM_MATRICULA = "matricula"
 #: matrícula's `CADASTRO MUNICIPAL:` block, which is a transcription of
 #: what the prefeitura told the cartório at some point in the past. See
 #: `_substituivel_por_prefeitura`.
-FONTES_PREFEITURA = frozenset({"guia_iptu", "cnd_iptu"})
+FONTES_PREFEITURA = conflito_resolucao.FONTES_PREFEITURA
 
 FONTE_EXTRACOES = "matricula_extracoes"
 FONTE_DOCUMENTOS = "imovel_documentos"
@@ -198,6 +198,12 @@ RELEITURA = "releitura"
 #: choose between a matrícula number and someone's CPF
 #: (`canonical-identifiers`, owner rule 2026-10-01).
 REJEITADO_TIPO = "rejeitado_tipo"
+#: The automatic resolver (`conflito_resolucao.decidir`, 2026-10-03) settled
+#: the disagreement without a human: the reading was APPLIED (it beat the
+#: on-file value) or the on-file value was KEPT. Either way a
+#: `resolvido_automatico` audit row names the rule and its evidence.
+RESOLVIDO_APLICADO = "resolvido_aplicado"
+RESOLVIDO_MANTIDO = "resolvido_mantido"
 
 
 @dataclass(frozen=True)
@@ -207,7 +213,7 @@ class Resultado:
 
     @property
     def preenchido(self) -> bool:
-        return self.status in (PREENCHIDO, SUBSTITUIDO, RELEITURA)
+        return self.status in (PREENCHIDO, SUBSTITUIDO, RELEITURA, RESOLVIDO_APLICADO)
 
 
 def _now() -> str:
@@ -294,6 +300,14 @@ def iguais(campo: CampoImovel, atual: Any, proposto: Any) -> bool:
     if campo.chave == "numero_registro_imoveis" and idf.cartorios_iguais(atual, proposto):
         # The cartório as a name in one reading and as its CNS in the other
         # (`... - CNS: 11991-7` vs `11991-7`) — same serventia.
+        return True
+    if (
+        campo.chave == "numero_registro_imoveis"
+        and idf.cartorio_refinamento(atual, proposto) == idf.EQUIVALENTE
+    ):
+        # The same serventia name once the matrícula's book header
+        # (`LIVRO Nº 2 - REGISTRO GERAL`), a `|` separator or the CNS
+        # fragment are set aside — an older reader glued those on.
         return True
     return _norm_texto(atual) == _norm_texto(proposto)
 
@@ -458,11 +472,10 @@ def aplicar(
         )
         return Resultado(RELEITURA)
 
-    if _conflitos(client, org_id, codigo, chave, "pendente"):
-        return Resultado(CONFLITO_EXISTENTE)
     # A human already said no to exactly this reading — re-running the same
-    # extraction must not re-open (and re-notify) the same question. Shared
-    # with `card_hub.negociacao_extracao_service` — see
+    # extraction must not re-open (and re-notify) the same question, and the
+    # automatic resolver below must never apply what a person rejected.
+    # Shared with `card_hub.negociacao_extracao_service` — see
     # `campo_conflitos.ja_rejeitado_pelo_usuario`'s own docstring
     # (`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]`, 2026-09-28).
     if campo_conflitos.ja_rejeitado_pelo_usuario(
@@ -471,11 +484,33 @@ def aplicar(
     ):
         return Resultado(REJEITADO_ANTES)
 
+    # The automatic resolver (2026-10-03) — a deterministic, evidence-based
+    # answer (a superseded extraction, a locality refinement, the
+    # prefeitura's own document) settles it without a human; a
+    # human-touched value is never overridden (see `conflito_resolucao`).
+    decidido = _resolver_automaticamente(
+        client, org_id, codigo, campo, row,
+        valor_atual=atual, valor_proposto=valor, origem_proposto=origem,
+        documento_id=documento_id, confianca=confianca,
+        fonte_tabela=fonte_tabela, fonte_id=fonte_id,
+    )
+    if decidido is not None:
+        return decidido
+
+    pendentes = _conflitos(client, org_id, codigo, chave, "pendente")
+    if any(iguais(campo, p.get("valor_proposto"), valor) for p in pendentes):
+        return Resultado(CONFLITO_EXISTENTE)
+    # A pending conflict proposing a DIFFERENT value is stale — this newer
+    # reading supersedes it (`campo_conflitos.registrar_conflito` closes it as
+    # a system resolution before opening the fresh one). Returning
+    # CONFLITO_EXISTENTE here used to DROP the newer reading: a re-run
+    # extraction's correct value never reached the queue while the first
+    # one's stale proposal sat pending (P3 live loop, 2026-10-03).
+
     # The insert shape/dedupe is `app.services.campo_conflitos`' (P0c
     # contract §H6, the N=3 formalization shared with `identidade_extracao
-    # _service` and `app.modules.empresas`) — the `pendente` check above
-    # already proved there is nothing to dedupe against, so this always
-    # inserts.
+    # _service` and `app.modules.empresas`) — it closes a stale pending row
+    # proposing a different value before inserting this one.
     origem_anterior = (row or {}).get(campo.origem)
     linha = campo_conflitos.registrar_conflito(
         client, campo_conflitos.IMOVEL, org_id, codigo, chave,
@@ -495,14 +530,183 @@ def aplicar(
     return Resultado(CONFLITO, conflito=linha)
 
 
+# ─── the automatic resolver (live + backfill) ─────────────────────────────
+
+
+def _iguais_no_imovel(client: Any, org_id: UUID, codigo: str) -> Any:
+    """`iguais`, plus the inscrição read in its município's mask (the
+    identifier backfill's own equivalence, `identificadores_backfill`) — the
+    município lookup is one read, so it is resolved lazily, once."""
+    municipio: dict[str, Any] = {}
+
+    def comparar(campo: CampoImovel, a: Any, b: Any) -> bool:
+        if iguais(campo, a, b):
+            return True
+        if campo.chave != "prefeitura_cadastro_imobiliario" or _vazio(a) or _vazio(b):
+            return False
+        if "v" not in municipio:
+            municipio["v"] = dados_service.municipio_do_imovel(client, org_id, codigo)
+        return idf.iguais(
+            "inscricao_municipal", a, b,
+            **({"municipio": municipio["v"]} if municipio["v"] else {}),
+        )
+
+    return comparar
+
+
+def _resolver_automaticamente(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    campo: CampoImovel,
+    row: Optional[dict],
+    *,
+    valor_atual: Any,
+    valor_proposto: Any,
+    origem_proposto: str,
+    documento_id: Optional[Any],
+    confianca: Optional[str],
+    fonte_tabela: Optional[str],
+    fonte_id: Optional[Any],
+    conflito_existente_id: Optional[Any] = None,
+    origem_atual: Optional[str] = None,
+) -> Optional[Resultado]:
+    """Consult `conflito_resolucao.decidir`; on a verdict, write the audit
+    row (`resolvido_automatico`, actor = system, rule + evidence ids) and —
+    when the proposal wins — apply it with the same machine-pending
+    provenance a first fill gets, closing any other stale pending conflict on
+    the field. `None` = a human is needed; the caller proceeds as before.
+    `origem_atual` overrides the row's own provenance — the backfill passes
+    the conflict's `origem_anterior` when the field has since been emptied."""
+    origem_atual = (row or {}).get(campo.origem) or origem_atual
+    decisao, evidencia = conflito_resolucao.decidir(
+        client, org_id, codigo, campo, row,
+        valor_atual=valor_atual, origem_atual=origem_atual,
+        valor_proposto=valor_proposto, origem_proposto=origem_proposto,
+        fonte_tabela=fonte_tabela, fonte_id=fonte_id,
+        iguais=_iguais_no_imovel(client, org_id, codigo),
+    )
+    if decisao.requer_humano:
+        return None
+    campo_conflitos.registrar_decisao_automatica(
+        client, campo_conflitos.IMOVEL, org_id, codigo, campo.chave,
+        valor_anterior=valor_atual,
+        origem_anterior=origem_atual,
+        valor_proposto=valor_proposto,
+        origem_proposto=origem_proposto,
+        confianca_proposta=confianca,
+        fonte_tabela=fonte_tabela,
+        fonte_id=fonte_id,
+        decisao=decisao,
+        conflito_existente_id=conflito_existente_id,
+        documento_id_proposto=documento_id,
+        evidencia_ids=evidencia,
+    )
+    if decisao.vencedor != "proposto":
+        logger.info(
+            "imovel %s: %s — kept the on-file value automatically [%s]",
+            codigo, campo.chave, decisao.regra,
+        )
+        return Resultado(RESOLVIDO_MANTIDO)
+    patch = _patch_preenchimento(
+        campo, valor_proposto, origem=origem_proposto, documento_id=documento_id
+    )
+    dados_service.gravar_extraido(client, org_id, codigo, row, patch)
+    campo_conflitos.fechar_conflitos_pendentes(
+        client, campo_conflitos.IMOVEL, org_id, codigo, campo.chave, decidido_por=None,
+    )
+    logger.info(
+        "imovel %s: %s — applied the proposed reading automatically [%s]",
+        codigo, campo.chave, decisao.regra,
+    )
+    return Resultado(RESOLVIDO_APLICADO)
+
+
+def backfill_resolver_conflitos_pendentes(
+    client: Any,
+    org_id: UUID,
+    *,
+    codigo: Optional[str] = None,
+    campos: Optional[frozenset[str]] = None,
+) -> dict[str, list[dict]]:
+    """Re-consult the automatic resolver over every `imovel_campo_conflitos`
+    row ALREADY `pendente` — the imóvel twin of `identidade_extracao_service.
+    backfill_resolver_conflitos_pendentes`, run by the same triggers
+    (resolve-on-read in `listar`, the org-wide `POST /conflitos/resolver-
+    automaticamente` sweep, the end of every matrícula fill) and by the
+    identifier backfill (`identificadores_backfill`, `campos=` its three
+    identifier fields).
+
+    Decides against the CURRENT `imovel_dados` value (re-read per row — the
+    record may have moved since the conflict opened); when the field has
+    since been emptied, against the conflict's own `valor_anterior`. A
+    conflict with neither, or whose campo is unknown, is left untouched and
+    reported under `ignorados`.
+
+    Returns `{"resolvidos": [...], "ainda_pendentes": [...], "ignorados":
+    [...]}` — each resolved row carries `decisao_regra`/`decisao_vencedor`.
+    """
+    eq_filters: dict[str, Any] = {"status": "pendente"}
+    if codigo is not None:
+        eq_filters["codigo"] = codigo
+    pendentes = table_reads.paged_rows(client, CONFLITOS_TABLE, org_id, eq_filters=eq_filters)
+    resolvidos: list[dict] = []
+    ainda: list[dict] = []
+    ignorados: list[dict] = []
+    for conflito in sorted(pendentes, key=lambda r: r.get("created_at") or ""):
+        campo = CAMPOS.get(conflito.get("campo"))
+        if campo is None or (campos is not None and campo.chave not in campos):
+            ignorados.append(conflito)
+            continue
+        row = dados_service.linha(client, org_id, conflito["codigo"])
+        atual = _valor_atual(row, campo)
+        origem_anterior = None
+        if _vazio(atual):
+            atual, origem_anterior = conflito.get("valor_anterior"), conflito.get("origem_anterior")
+        if _vazio(atual):
+            ignorados.append(conflito)
+            continue
+        try:
+            resultado = _resolver_automaticamente(
+                client, org_id, conflito["codigo"], campo, row,
+                valor_atual=atual,
+                valor_proposto=conflito.get("valor_proposto"),
+                origem_proposto=conflito.get("origem_proposto"),
+                documento_id=conflito.get("documento_id_proposto"),
+                confianca=conflito.get("confianca_proposta"),
+                fonte_tabela=conflito.get("fonte_tabela"),
+                fonte_id=conflito.get("fonte_id"),
+                conflito_existente_id=conflito["id"],
+                origem_atual=origem_anterior,
+            )
+        except Exception:  # noqa: BLE001 - one row must not stop the sweep
+            logger.exception(
+                "imovel %s: automatic resolution of conflict %s failed",
+                conflito.get("codigo"), conflito.get("id"),
+            )
+            ainda.append(conflito)
+            continue
+        if resultado is None:
+            ainda.append(conflito)
+            continue
+        resolvidos.append({**conflito, "decisao_status": resultado.status})
+    return {"resolvidos": resolvidos, "ainda_pendentes": ainda, "ignorados": ignorados}
+
+
 # ─── the human's side ─────────────────────────────────────────────────────
 
 
 def listar(
     client: Any, org_id: UUID, codigo: str, *, apenas_pendentes: bool = True
 ) -> dict:
-    """`GET /api/imoveis/{codigo}/conflitos` — newest first."""
+    """`GET /api/imoveis/{codigo}/conflitos` — newest first.
+
+    RESOLVE-ON-READ (same posture as the cliente queue's `GET /conflitos`):
+    every pending conflict of this imóvel is first re-consulted against the
+    automatic resolver, so a divergence it can now settle is applied/kept and
+    marked `resolvido_automatico` instead of waiting for a human."""
     dados_service.ensure_imovel(client, org_id, codigo)
+    backfill_resolver_conflitos_pendentes(client, org_id, codigo=codigo)
     query = (
         _t(client, CONFLITOS_TABLE)
         .select("*")
@@ -619,11 +823,14 @@ __all__ = [
     "CAMPOS_QUINTETO_MANUAL",
     "CONFLITOS_TABLE",
     "REJEITADO_TIPO",
+    "RESOLVIDO_APLICADO",
+    "RESOLVIDO_MANTIDO",
     "CampoImovel",
     "ORIGEM_MANUAL",
     "ORIGEM_SUGERIDO",
     "Resultado",
     "aplicar",
+    "backfill_resolver_conflitos_pendentes",
     "iguais",
     "listar",
     "notificar",

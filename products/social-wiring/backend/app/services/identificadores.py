@@ -26,6 +26,8 @@ a value that does not fit is data to show, not an error to throw.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -217,6 +219,105 @@ def cartorios_iguais(a: Any, b: Any) -> Optional[bool]:
     return ca == cb
 
 
+# ─── refinement (one reading = the other + the detail it lacked) ───────────
+#
+# Owner directive (2026-10-03, P3/P4 live test loop): a correct fresh read must
+# not stay blocked behind an older reading that says LESS about the same fact.
+# These answer "is one reading the other one plus a detail it was missing?" —
+# a deterministic, document-free relation (no tier, no vote), so the resolver
+# can keep the more complete reading without a human. Anything else (a
+# different órgão, a different cartório, two CNSs that disagree) stays None:
+# not proven, still a conflict.
+
+#: `refinamento_*` verdicts: which side carries the extra detail.
+MAIS_COMPLETO_A = "a"
+MAIS_COMPLETO_B = "b"
+EQUIVALENTE = "equivalente"
+
+
+def orgao_refinamento(a: Any, b: Any) -> Optional[str]:
+    """`MAIS_COMPLETO_A` / `MAIS_COMPLETO_B` when both órgão expedidor
+    readings name the SAME órgão and exactly one carries its UF (`SSP` vs
+    `SSP/SP` — a bank form that printed the issuer without the state); None
+    otherwise (empty, a different órgão, both or neither with a UF).
+
+    The registry alone answers `equivalentes('orgao_expedidor', 'SSP/SP',
+    'SSP')` with None (undecidable — it cannot invent the missing UF); this
+    is the product's rule on top: the reading WITH the UF is the same órgão,
+    stated completely, so it is kept — never a new value invented."""
+    if not _texto(a) or not _texto(b):
+        return None
+    ca = ident.ler("orgao_expedidor", a).canonico
+    cb = ident.ler("orgao_expedidor", b).canonico
+    if not ca or not cb:
+        return None
+    base_a, _, uf_a = ca.partition("/")
+    base_b, _, uf_b = cb.partition("/")
+    if base_a != base_b:
+        return None
+    if uf_a and not uf_b:
+        return MAIS_COMPLETO_A
+    if uf_b and not uf_a:
+        return MAIS_COMPLETO_B
+    return None
+
+
+#: The matrícula's book header ("LIVRO Nº 2 - REGISTRO GERAL") that an older
+#: cartório reader glued onto the serventia's name — page furniture, not part
+#: of the cartório's identity.
+_LIVRO_CABECALHO = re.compile(
+    r"\bLIVRO\s+N\S{0,2}\s*\d+\s*[-–—]?\s*REGISTRO\s+GERAL\b", re.IGNORECASE
+)
+#: A CNS fragment ("- CNS: 11991-7") — compared separately via
+#: `cns_do_cartorio`, so it is removed from the name text.
+_CNS_FRAGMENTO = re.compile(r"[-–—,]?\s*\bCNS\b\s*[:Nº°.]*\s*[\d.\-/]+", re.IGNORECASE)
+#: What may follow " DE " in a locality suffix: a city name (letters, spaces,
+#: apostrophes, hyphens), at most five words — never more structure.
+_LOCALIDADE = re.compile(r"^[A-Z' \-]+$")
+
+
+def cartorio_normalizado(valor: Any) -> str:
+    """The serventia's NAME as comparison text: accents/case/whitespace
+    folded, the book header and the CNS fragment removed, separators (`|`,
+    stray dashes) collapsed. `""` for an empty value."""
+    texto = _texto(valor)
+    if not texto:
+        return ""
+    texto = _LIVRO_CABECALHO.sub(" ", texto)
+    texto = _CNS_FRAGMENTO.sub(" ", texto)
+    decomposto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(c for c in decomposto if not unicodedata.combining(c)).upper()
+    texto = texto.replace("|", " ")
+    texto = re.sub(r"\s+", " ", texto).strip(" -–—,.")
+    return texto
+
+
+def cartorio_refinamento(a: Any, b: Any) -> Optional[str]:
+    """Relation between two `numero_registro_imoveis` readings:
+
+    - `EQUIVALENTE` — same serventia name once the book header, the CNS
+      fragment and formatting are set aside (and no CNS disagreement);
+    - `MAIS_COMPLETO_A` / `MAIS_COMPLETO_B` — one is the other plus a
+      locality (`SERVENTIA DO REGISTRO DE IMÓVEIS` vs `SERVENTIA DO
+      REGISTRO DE IMÓVEIS de Cotia`): same serventia, the longer one names
+      its city;
+    - None — not proven (different names, or two CNSs that disagree)."""
+    if cartorios_iguais(a, b) is False:
+        return None
+    na, nb = cartorio_normalizado(a), cartorio_normalizado(b)
+    if not na or not nb:
+        return None
+    if na == nb:
+        return EQUIVALENTE
+    for curto, longo, veredito in ((na, nb, MAIS_COMPLETO_B), (nb, na, MAIS_COMPLETO_A)):
+        prefixo = f"{curto} DE "
+        if longo.startswith(prefixo):
+            resto = longo[len(prefixo):].strip()
+            if resto and len(resto.split()) <= 5 and _LOCALIDADE.match(resto):
+                return veredito
+    return None
+
+
 # ─── search side ────────────────────────────────────────────────────────────
 
 
@@ -312,6 +413,11 @@ __all__ = [
     "cabe",
     "canonico_cpf_cnpj",
     "canonico_ou_bruto",
+    "EQUIVALENTE",
+    "MAIS_COMPLETO_A",
+    "MAIS_COMPLETO_B",
+    "cartorio_normalizado",
+    "cartorio_refinamento",
     "cartorios_iguais",
     "chave",
     "chaves_do_needle",
@@ -321,6 +427,7 @@ __all__ = [
     "cns_do_cartorio",
     "iguais",
     "needle_chave",
+    "orgao_refinamento",
     "para_gravar",
     "tipo_do_documento_pessoa",
     "uf_do_orgao",
