@@ -1,0 +1,12 @@
+{
+  "_comentario": "Pass bars for comparador.pontuar (see comparador.Limiares). Numbers and dates are zero-tolerance by owner requirement: any unexplained difference fails.",
+  "redacao_min": 0.90,
+  "secao_min": 0.60,
+  "qualificacao_min": 0.85,
+  "matricula_min": 0.95,
+  "certidoes_min": 1.0,
+  "estrutura_min": 1.0,
+  "max_numeros_divergentes": 0,
+  "max_datas_divergentes": 0,
+  "falhar_em_clausula_extra": true
+}

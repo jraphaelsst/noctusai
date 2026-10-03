@@ -1,0 +1,11 @@
+{
+  "_comentario": [
+    "Deliberate template-vs-reference wording differences (comparador.pontuar). PUBLIC REPO: patterns only, never a real name/CPF/value/address — validar_allowlist refuses digit runs and e-mails.",
+    "Patterns are Python regexes matched against the ACCENT-FREE LOWERCASE text (comparador._dobrar).",
+    "categoria: redacao | numero (remove padrao_ref from the reference and padrao_gerado from the render inside sections whose title key matches 'secao') | clausula_faltando (padrao_ref on the reference clause title key) | clausula_extra (padrao_gerado on the generated clause title key).",
+    "Only entries with aprovado_pelo_dono=true explain a difference; an unapproved entry is reported as pending and changes nothing.",
+    "Entry shape: {\"id\": \"...\", \"categoria\": \"redacao\", \"secao\": \"^clausula:.*foro\", \"padrao_ref\": \"...\", \"padrao_gerado\": \"...\", \"motivo\": \"why the template deliberately differs\", \"aprovado_pelo_dono\": false, \"adicionado_em\": \"YYYY-MM-DD\"}"
+  ],
+  "versao": 1,
+  "entradas": []
+}

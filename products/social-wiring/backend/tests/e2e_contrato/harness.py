@@ -81,6 +81,21 @@ import comparador  # noqa: E402  (path insert must precede this)
 
 
 # ─── readiness ──────────────────────────────────────────────────────────
+#
+# 🔴 NO RE-IMPLEMENTATION (2026-10-03). This used to compute `pode_gerar`
+# from the per-field pending list (`validacao_extracao.situacao`) — the
+# rollback mode. Production runs `Politica.revisao_final_unica=True`, where
+# machine-pending values do NOT block `gerar` (they ride on the version for
+# the one legal review) and only open CONFLICTS refuse. Readiness now comes
+# from the SAME service calls production makes, with the SAME policy DI
+# resolves (`deps.get_politica_contrato`):
+#
+# - `service.obter_geracao` — the GET readiness report (`pronto`, `faltando`,
+#   `bloqueios`, `avisos`, `confirmacoes`, `modelo_derivado`);
+# - the extraction precondition `service.gerar` runs first, per mode:
+#   `pendentes_para_revisao` (revisao_final_unica) / `exigir_sem_pendentes`
+#   (rollback) — called verbatim, their `ExtracaoPendenteValidacao` read as
+#   the refusal it is.
 
 
 @dataclass
@@ -89,12 +104,15 @@ class Prontidao:
     pronto: bool
     modelo_derivado: str
     modelo_confere: bool
-    pode_gerar: bool  # pronto AND no pendentes/conflitos (the real gerar precondition)
+    pode_gerar: bool  #: `obter_geracao.pronto` AND the extraction precondition does not refuse
+    revisao_final_unica: bool = True
     faltando: list[dict] = field(default_factory=list)
     bloqueios: list[dict] = field(default_factory=list)
     avisos: list[dict] = field(default_factory=list)
-    pendentes: list[dict] = field(default_factory=list)
+    confirmacoes: list[dict] = field(default_factory=list)
+    pendentes: list[dict] = field(default_factory=list)  #: refusing pendentes (rollback mode only)
     conflitos: list[dict] = field(default_factory=list)
+    revisao_campos: list[dict] = field(default_factory=list)  #: recorded for the legal review (non-blocking)
 
 
 def _client() -> Any:
@@ -106,75 +124,148 @@ def _client() -> Any:
     return get_card_hub_client()
 
 
+def politica_producao() -> Any:
+    """The policy production DI hands every contract-generation endpoint."""
+    from app.modules.card_hub.contrato_gerador.deps import get_politica_contrato
+
+    return get_politica_contrato()
+
+
 def carregar_dados(client: Any, org_id: UUID, cliente_id: UUID, contrato_id: UUID):
     from app.modules.card_hub.contrato_gerador.carregador import carregar
 
     return carregar(client, org_id, cliente_id, contrato_id, usuario_id=None)
 
 
-def avaliar_prontidao(dados) -> tuple[Any, dict[str, bool], Any, str]:
-    """`(avaliacao, switches, assinatura, modelo_derivado)` — the exact
-    inputs/outputs `service.obter_geracao` computes, using the production
-    default policy (`POLITICA_PADRAO`, same as `deps.get_politica_contrato`)."""
-    from app.modules.card_hub.contrato_gerador.derivacao import avaliar, derivar_switches, modelo_derivado
-    from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
-    from app.modules.card_hub.contrato_gerador.service import data_assinatura
+def precondicao_extracao(client: Any, org_id: UUID, dados, politica) -> dict:
+    """`service.gerar`'s first step, per mode, called verbatim. Returns
+    `{bloqueia, pendentes, conflitos, revisao_campos}`; never writes
+    (`pendentes_para_revisao` / `exigir_sem_pendentes` are reads — the write
+    happens later in `gerar`, on the version)."""
+    from app.modules.card_hub.contrato_gerador.validacao_extracao import (
+        ExtracaoPendenteValidacao,
+        exigir_sem_pendentes,
+        pendentes_para_revisao,
+    )
 
-    switches = derivar_switches(dados, POLITICA_PADRAO)
-    assinatura = data_assinatura(dados, None)
-    avaliacao = avaliar(dados, switches, POLITICA_PADRAO, assinatura)
-    return avaliacao, switches, assinatura, modelo_derivado(switches)
-
-
-def situacao_validacao(client: Any, org_id: UUID, dados) -> dict:
-    """`validacao_extracao.situacao` — the SAME precondition `service.gerar`
-    calls via `exigir_sem_pendentes` before it will render anything."""
-    from app.modules.card_hub.contrato_gerador.validacao_extracao import situacao
-
-    return situacao(client, org_id, dados, usuario_id=None)
+    try:
+        if politica.revisao_final_unica:
+            revisao = pendentes_para_revisao(client, org_id, dados, usuario_id=None)
+            return {"bloqueia": False, "pendentes": [], "conflitos": [], "revisao_campos": revisao}
+        exigir_sem_pendentes(client, org_id, dados, usuario_id=None)
+        return {"bloqueia": False, "pendentes": [], "conflitos": [], "revisao_campos": []}
+    except ExtracaoPendenteValidacao as exc:
+        return {
+            "bloqueia": True,
+            "pendentes": list(exc.details.get("pendentes") or []),
+            "conflitos": list(exc.details.get("conflitos") or []),
+            "revisao_campos": [],
+        }
 
 
 def relatorio_prontidao(client: Any, org_id: UUID, cliente_id: UUID, contrato_id: UUID) -> tuple[Prontidao, Any]:
     """Returns `(Prontidao, dados)` — `dados` handed back so the caller can
-    render/trace without re-loading the card a second time."""
+    render/trace. `obter_geracao` loads the card itself (it is the endpoint's
+    own function); `dados` is loaded once more for the render, read-only."""
+    from app.modules.card_hub.contrato_gerador.service import obter_geracao
+
+    politica = politica_producao()
+    geracao = obter_geracao(client, org_id, cliente_id, contrato_id, usuario_id=None, politica=politica)
     dados, _atendimento_id = carregar_dados(client, org_id, cliente_id, contrato_id)
-    avaliacao, _switches, _assinatura, derivado = avaliar_prontidao(dados)
-    estado = situacao_validacao(client, org_id, dados)
-    pendentes, conflitos = estado["pendentes"], estado["conflitos"]
+    pre = precondicao_extracao(client, org_id, dados, politica)
     prontidao = Prontidao(
         contrato_id=str(contrato_id),
-        pronto=avaliacao.pronto,
-        modelo_derivado=derivado,
-        modelo_confere=dados.modelo == derivado,
-        pode_gerar=avaliacao.pronto and not pendentes and not conflitos,
-        faltando=avaliacao.faltando,
-        bloqueios=avaliacao.bloqueios,
-        avisos=avaliacao.avisos,
-        pendentes=pendentes,
-        conflitos=conflitos,
+        pronto=geracao["pronto"],
+        modelo_derivado=geracao["modelo_derivado"],
+        modelo_confere=geracao["modelo_confere"],
+        pode_gerar=geracao["pronto"] and not pre["bloqueia"],
+        revisao_final_unica=geracao["revisao_final_unica"],
+        faltando=geracao["faltando"],
+        bloqueios=geracao["bloqueios"],
+        avisos=geracao["avisos"],
+        confirmacoes=geracao.get("confirmacoes") or [],
+        pendentes=pre["pendentes"],
+        conflitos=pre["conflitos"],
+        revisao_campos=pre["revisao_campos"],
     )
     return prontidao, dados
 
 
 # ─── in-memory render (no persistence) ─────────────────────────────────
 
+#: Printable free-text fields a not-`pronto` card may leave empty. Only these
+#: are replaced by `comparador.MARCADOR_LACUNA` — never a CODE field
+#: (estado_civil, regime_bens, genero, resultado, forma_pagamento, *_id, …),
+#: whose value the context builder looks up in a phrase table and which a
+#: marker would turn into a KeyError instead of a visible gap.
+CAMPOS_TEXTO_MARCAVEIS = frozenset(
+    {
+        "nome", "nacionalidade", "profissao", "cpf", "rg", "rg_orgao", "email",
+        "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep",
+        "razao_social", "banco", "agencia", "conta", "pix", "cpf_cnpj", "creci",
+        "documento", "representante_nome", "representante_cpf",
+    }
+)
 
-def renderizar_em_memoria(dados) -> Any:
-    """`documento.renderizar` with the REAL docx adapter — the exact
-    rendering `service.gerar` would save, minus the save. Raises whatever
-    `renderizar`/the template does; the caller decides whether a
-    not-`pronto` card should even attempt this (the harness's CLI does
-    attempt it regardless, so a broken template shows up even on an
-    incomplete card — see `main()`)."""
+
+def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
+    """`(copy, n_marcadores)` — a deep copy of `dados` where every EMPTY
+    printable text field (`CAMPOS_TEXTO_MARCAVEIS`, declared `str`) carries
+    `comparador.MARCADOR_LACUNA`, so a not-`pronto` card renders with its
+    gaps VISIBLE instead of as silently missing words. Never mutates
+    `dados`; non-text and code fields are left exactly as loaded."""
+    import dataclasses
+
+    contagem = 0
+
+    def _visita(obj: Any) -> Any:
+        nonlocal contagem
+        if dataclasses.is_dataclass(obj) and not isinstance(obj, type):
+            mudancas: dict[str, Any] = {}
+            for f in dataclasses.fields(obj):
+                valor = getattr(obj, f.name)
+                tipo = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", str(f.type))
+                if f.name in CAMPOS_TEXTO_MARCAVEIS and valor in (None, "") and "str" in tipo:
+                    mudancas[f.name] = comparador.MARCADOR_LACUNA
+                    contagem += 1
+                    continue
+                novo = _visita(valor)
+                if novo is not valor:
+                    mudancas[f.name] = novo
+            return dataclasses.replace(obj, **mudancas) if mudancas else obj
+        if isinstance(obj, list):
+            novos = [_visita(v) for v in obj]
+            return novos if any(a is not b for a, b in zip(novos, obj)) else obj
+        if isinstance(obj, tuple) and not hasattr(obj, "_fields"):
+            novos_t = tuple(_visita(v) for v in obj)
+            return novos_t if any(a is not b for a, b in zip(novos_t, obj)) else obj
+        return obj
+
+    return _visita(dados), contagem
+
+
+def renderizar_em_memoria(dados, *, com_marcadores: bool = False) -> Any:
+    """`documento.renderizar` with the REAL docx adapter and the production
+    policy — `service.gerar`'s own sequence (one `hoje()` snapshot for
+    switches + render, `data_assinatura(dados, None)`), minus the save.
+
+    `com_marcadores=True` (a not-`pronto` card): switches are derived from the
+    card AS LOADED (a marker must never flip a switch), then the template is
+    rendered from `dados_com_marcadores(dados)`. Raises whatever the template
+    raises — the caller reports it."""
     from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
+    from app.modules.card_hub.contrato_gerador.derivacao import derivar_switches
     from app.modules.card_hub.contrato_gerador.documento import renderizar
+    from app.modules.card_hub.contrato_gerador.service import data_assinatura, hoje
 
-    _avaliacao, switches, assinatura, _derivado = avaliar_prontidao(dados)
-    from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
-
+    politica = politica_producao()
+    referencia = hoje()
+    switches = derivar_switches(dados, politica, referencia)
+    assinatura = data_assinatura(dados, None)
+    alvo = dados_com_marcadores(dados)[0] if com_marcadores else dados
     adapter = get_docx_render_adapter(real=True)
-    return renderizar(adapter, dados, switches, POLITICA_PADRAO, assinatura)
+    return renderizar(adapter, alvo, switches, politica, assinatura, referencia)
 
 
 def lint_renderizado(renderizado) -> list[dict]:
@@ -335,6 +426,155 @@ def contrato_mais_recente(client: Any, org_id: UUID, cliente_id: UUID) -> Option
     return str(linhas[0]["id"])
 
 
+# ─── batch scoring (noctus.dev.contract_score's engine) ─────────────────
+
+
+def pontuar_deal(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    contrato_id: Optional[UUID],
+    ref_paragrafos: list[str],
+    *,
+    allowlist: list,
+    limiares: Any,
+) -> dict:
+    """One deal → `{"resumo": <verdict-level>, "detalhe": <private, masked>}`.
+
+    A `pronto` card renders exactly as production would; a not-`pronto` card
+    renders with explicit gap markers (`dados_com_marcadores`) so its gaps
+    are counted apart from wording/number diffs. The readiness gaps
+    (`faltando` / `bloqueios` / `confirmacoes` / refusing conflicts) are
+    reported by FIELD NAME + count only — never a value."""
+    if contrato_id is None:
+        resolved = contrato_mais_recente(client, org_id, cliente_id)
+        if resolved is None:
+            return {"resumo": {"veredito": "sem_contrato"}, "detalhe": {"veredito": "sem_contrato"}}
+        contrato_id = UUID(resolved)
+    prontidao, dados = relatorio_prontidao(client, org_id, cliente_id, contrato_id)
+    gaps = {
+        "pronto": prontidao.pronto,
+        "pode_gerar": prontidao.pode_gerar,
+        "revisao_final_unica": prontidao.revisao_final_unica,
+        "faltando": len(prontidao.faltando),
+        "bloqueios": len(prontidao.bloqueios),
+        "confirmacoes_pendentes": sum(1 for c in prontidao.confirmacoes if not c.get("ciente")),
+        "conflitos_extracao": len(prontidao.conflitos),
+        "pendentes_extracao_bloqueantes": len(prontidao.pendentes),
+        "revisao_campos": len(prontidao.revisao_campos),
+    }
+    gaps_campos = {
+        "faltando": sorted({f.get("campo", "?") for f in prontidao.faltando}),
+        "bloqueios": sorted({b.get("codigo", "?") for b in prontidao.bloqueios}),
+    }
+    com_marcadores = not prontidao.pronto
+    modo = "marcadores" if com_marcadores else "producao"
+    marcadores = dados_com_marcadores(dados)[1] if com_marcadores else 0
+    try:
+        renderizado = renderizar_em_memoria(dados, com_marcadores=com_marcadores)
+    except Exception as exc:  # noqa: BLE001 — reported (class only), never swallowed
+        resumo = {
+            "veredito": "render_falhou",
+            "render_modo": modo,
+            "render_erro": type(exc).__name__,
+            "gaps": gaps,
+        }
+        return {"resumo": resumo, "detalhe": {**resumo, "gaps_campos": gaps_campos}}
+    achados = lint_renderizado(renderizado)
+    card = comparador.pontuar(
+        ref_paragrafos,
+        comparador.paragrafos_de_lista(renderizado.paragrafos),
+        allowlist=allowlist,
+        limiares=limiares,
+    )
+    veredito = card.veredito
+    if veredito == "aprovado" and not prontidao.pode_gerar:
+        # Text matches, but production would still refuse this card — the
+        # verdict must never read "aprovado" for a contract that cannot be
+        # generated (e.g. a refusing extraction conflict, an unacknowledged
+        # confirmation with no printable gap).
+        veredito = "incompleto"
+    resumo = {
+        **card.resumo(),
+        "veredito": veredito,
+        "veredito_texto": card.veredito,
+        "render_modo": modo,
+        "campos_marcados": marcadores,
+        "lint_achados": len(achados),
+        "gaps": gaps,
+    }
+    detalhe = {
+        **card.detalhe(),
+        "veredito": veredito,
+        "veredito_texto": card.veredito,
+        "render_modo": modo,
+        "campos_marcados": marcadores,
+        "lint_codigos": sorted({a.get("codigo", "?") for a in achados}),
+        "gaps": gaps,
+        "gaps_campos": gaps_campos,
+    }
+    return {"resumo": resumo, "detalhe": detalhe}
+
+
+def _escrever_privado(caminho: Path, payload: Any) -> None:
+    """0600 atomic write — the scorecard lives on private disk only."""
+    import os
+
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    tmp = caminho.with_suffix(caminho.suffix + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2, default=str)
+    os.replace(tmp, caminho)
+
+
+def executar_lote(entrada: Path, saida: Path) -> dict:
+    """`entrada` (private JSON, written by `noctus.dev.contract_score`):
+    `{"org_id", "allowlist"?, "limiares"?, "deals": [{"numero", "cliente_id",
+    "contrato_id"?, "ref_paragrafos"}]}`. Writes the full (masked) scorecard
+    to `saida` (0600) and RETURNS the verdict-level summary only."""
+    pedido = json.loads(Path(entrada).read_text(encoding="utf-8"))
+    org_id = UUID(pedido["org_id"])
+    allowlist = comparador.carregar_allowlist(Path(pedido["allowlist"]) if pedido.get("allowlist") else None)
+    limiares = (
+        comparador.Limiares.de_dict(pedido["limiares"])
+        if isinstance(pedido.get("limiares"), dict)
+        else comparador.Limiares.de_arquivo(Path(pedido["limiares"]) if pedido.get("limiares") else None)
+    )
+    client = _client()
+    resumos: dict[str, Any] = {}
+    detalhes: dict[str, Any] = {}
+    for deal in pedido["deals"]:
+        numero = str(deal["numero"])
+        try:
+            r = pontuar_deal(
+                client,
+                org_id,
+                UUID(deal["cliente_id"]),
+                UUID(deal["contrato_id"]) if deal.get("contrato_id") else None,
+                deal["ref_paragrafos"],
+                allowlist=allowlist,
+                limiares=limiares,
+            )
+        except Exception as exc:  # noqa: BLE001 — per-deal, reported by class, the batch goes on
+            r = {"resumo": {"veredito": "erro", "erro": type(exc).__name__}, "detalhe": {"veredito": "erro", "erro": type(exc).__name__}}
+        resumos[numero] = r["resumo"]
+        detalhes[numero] = r["detalhe"]
+    contagem: dict[str, int] = {}
+    for r in resumos.values():
+        contagem[r["veredito"]] = contagem.get(r["veredito"], 0) + 1
+    total = {
+        "deals": len(resumos),
+        "por_veredito": contagem,
+        "aprovados": contagem.get("aprovado", 0),
+        "limiares": asdict(limiares),
+        "allowlist_entradas": len(allowlist),
+        "allowlist_aprovadas": sum(1 for e in allowlist if e.aprovado_pelo_dono),
+    }
+    _escrever_privado(Path(saida), {"total": total, "deals": detalhes})
+    return {"total": total, "deals": resumos}
+
+
 # ─── CLI ─────────────────────────────────────────────────────────────────
 
 
@@ -381,6 +621,9 @@ def executar(
         "n_avisos": len(prontidao.avisos),
         "n_pendentes_validacao": len(prontidao.pendentes),
         "n_conflitos": len(prontidao.conflitos),
+        "n_confirmacoes": len(prontidao.confirmacoes),
+        "n_revisao_campos": len(prontidao.revisao_campos),
+        "revisao_final_unica": prontidao.revisao_final_unica,
         "faltando": _redigir_faltando(prontidao.faltando) if redigir else prontidao.faltando,
         "bloqueios": prontidao.bloqueios,  # codigo+mensagem only, no PII by construction
         "gaps": [_redigir_gap(g) for g in gaps] if redigir else gaps,
@@ -397,7 +640,9 @@ def executar(
     # as false "generator defects".
     if prontidao.pronto or forcar_render:
         try:
-            renderizado = renderizar_em_memoria(dados)
+            # A forced render of an incomplete card carries explicit gap
+            # markers (`dados_com_marcadores`), never silently-missing words.
+            renderizado = renderizar_em_memoria(dados, com_marcadores=not prontidao.pronto)
         except Exception as exc:  # noqa: BLE001 — surfaced verbatim, never swallowed
             render_erro = f"{type(exc).__name__}: {exc}"
     else:
@@ -424,6 +669,13 @@ def executar(
                     else [asdict(d) for d in diff.diferencas]
                 ),
             }
+            card = comparador.pontuar(
+                ref_paragrafos,
+                gen_paragrafos,
+                allowlist=comparador.carregar_allowlist(),
+                limiares=comparador.Limiares.de_arquivo(),
+            )
+            saida["scorecard"] = card.resumo() if redigir else card.detalhe()
     return saida
 
 
@@ -433,8 +685,10 @@ def _parse_uuid(s: str) -> UUID:
 
 def main(argv: Optional[list[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--org", required=True, type=_parse_uuid)
-    sub = p.add_mutually_exclusive_group(required=True)
+    p.add_argument("--lote", type=Path, default=None, help="batch-score request JSON (noctus.dev.contract_score); needs --saida")
+    p.add_argument("--saida", type=Path, default=None, help="private 0600 scorecard path for --lote")
+    p.add_argument("--org", type=_parse_uuid, default=None)
+    sub = p.add_mutually_exclusive_group(required=False)
     sub.add_argument("--cliente", type=_parse_uuid, help="cliente_id (the card)")
     sub.add_argument("--descobrir", action="store_true", help="scan the org for cards with >= --min-documentos live documents")
     p.add_argument("--contrato", type=_parse_uuid, default=None, help="contrato_id; defaults to the most recently updated one")
@@ -447,6 +701,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         help="attempt the in-memory render even when the card is not 'pronto' (debugging the template only — never a reachable production path)",
     )
     args = p.parse_args(argv)
+
+    if args.lote is not None:
+        if args.saida is None:
+            p.error("--lote requires --saida")
+        resultado = executar_lote(args.lote, args.saida)
+        # stdout carries VERDICT-LEVEL numbers only (the scorecard file is private)
+        print(json.dumps(resultado, ensure_ascii=False, default=str))
+        return 0
+    if args.org is None or (args.cliente is None and not args.descobrir):
+        p.error("--org and one of --cliente/--descobrir are required (or --lote)")
 
     if args.descobrir:
         client = _client()

@@ -11,7 +11,9 @@ without ever writing anything. Context:
 |---|---|
 | `harness.py` | The harness + CLI. Loads a card (`carregador.carregar`), evaluates readiness (`derivacao.avaliar`) + the validation gate (`validacao_extracao.situacao`), renders in memory (`documento.renderizar`) WITHOUT persisting a version, traces every gap back to "document missing" / "extraction pending validation" / "manual field empty" / "outside the provenance ledger's scope" via `proveniencia.linhagem`, and (given a reference file) diffs the render against it. |
 | `comparador.py` | Generic paragraph-aligned diff (`difflib.SequenceMatcher` on a normalised key) + heuristic categorisation: `clausula_faltando` / `clausula_extra` / `valor_errado` / `formatacao` / `clausula_faltando_e_extra`. Knows nothing about any specific contract. |
-| `test_comparador_offline.py` | The only file here collected by the default `pytest` run — invented strings only, no database, no real data. |
+| `allowlist.json` | Versioned, owner-approved deliberate template-vs-reference wording differences — PATTERNS only (regex on accent-free lowercase text), never a real value; `comparador.validar_allowlist` refuses digit runs/e-mails. Only `aprovado_pelo_dono: true` entries explain a difference. |
+| `limiares.json` | The scorecard's pass bars (`comparador.Limiares`). Numbers and dates are zero-tolerance. |
+| `test_comparador_offline.py` / `test_harness_offline.py` | Collected by the default `pytest` run — invented strings + synthetic fixtures only, no database, no real data. |
 
 `harness.py` is a CLI script, not a `test_*.py` module: it is never collected
 by `noctus.dev.pytest` / CI, so a run against a live database is always an
@@ -50,6 +52,36 @@ whether it has a contract, and (when it does) its readiness counts —
 ranked by how close to `pronto`. Read-only; one extra query per
 qualifying card (no bulk fan-out over the whole org beyond the initial
 document scan).
+
+## The scorecard — the enforced number
+
+`comparador.pontuar(ref, gerado)` cuts both texts into sections (preamble ·
+one per clause, keyed by TITLE so a renumbering is not a missing clause ·
+closing block), aligns them, and scores per category: `estrutura`,
+`qualificacao`, `matricula` (the `IMÓVEL:` quote), `certidoes` (item labels),
+`redacao` (word similarity, digits masked), plus EXACT multiset checks of
+`numeros` (CPF/CNPJ/CEP/R$/any digit run) and `datas`. Verdict:
+`aprovado` · `reprovado` (any unexplained missing/extra clause, number or
+date diff, or a category under its bar) · `incompleto` (no failure, but the
+render carries `[[LACUNA]]` gap markers — a not-`pronto` card, rendered with
+its empty printable fields marked by `harness.dados_com_marcadores`; what a
+marker stands in for counts as a GAP, never as a wording/number diff).
+
+```bash
+<repo-venv-python> comparador.py --ref ref.txt --gerado gen.txt   # exit 0 aprovado / 1 reprovado / 2 incompleto
+```
+
+Against real signed contracts (private disk only) use the MCP tool
+`noctus.dev.contract_score` — it renders read-only from the live DB via
+`harness.py --lote`, writes the masked scorecard to
+`~/.noctusai/private/scores/<ts>.json` (0600) and returns verdict-level
+numbers only. CI's half is `tests/modules/card_hub/test_contrato_golden.py`
+(golden full-text snapshots of the 6 synthetic variants).
+
+Readiness comes from production's own functions — `service.obter_geracao`
+plus the mode-switched extraction precondition `service.gerar` runs
+(`pendentes_para_revisao` under `Politica.revisao_final_unica`, else
+`exigir_sem_pendentes`) — never a re-derivation.
 
 ## What "provenance" means here
 
