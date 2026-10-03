@@ -53,6 +53,7 @@ import ImovelAreasSection from "@/components/imovel/ImovelAreasSection";
 import ImovelCartorioCard from "@/components/imovel/ImovelCartorioCard";
 import ImovelComodidadesSection from "@/components/imovel/ImovelComodidadesSection";
 import ImovelComodosSection from "@/components/imovel/ImovelComodosSection";
+import { ImovelConflitosCard } from "@/components/imovel/ImovelConflitosCard";
 import ImovelCondicoesComerciaisSection from "@/components/imovel/ImovelCondicoesComerciaisSection";
 import ImovelConstrucaoSection from "@/components/imovel/ImovelConstrucaoSection";
 import ImovelDescricaoSection from "@/components/imovel/ImovelDescricaoSection";
@@ -417,6 +418,10 @@ export default function ImovelDetalhes() {
             referencia={imovel.referencia}
           />
 
+          {/* Migration 154 — readings that disagreed with a value already
+              here, decided right above the card that holds the value. */}
+          {codigo && <ImovelConflitosCard codigo={codigo} />}
+
           {/* What WE author about this property — never the Vista mirror.
               See migration 075 for why the two are separate. */}
           <ImovelCartorioCard
@@ -573,6 +578,8 @@ function ImovelManualLayout({
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2 lg:col-start-2">
+          <ImovelConflitosCard codigo={codigo} />
+
           <ImovelCartorioCard
             dados={dadosQuery.data}
             membros={teamQuery.data ?? []}

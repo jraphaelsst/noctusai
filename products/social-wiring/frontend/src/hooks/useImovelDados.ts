@@ -519,6 +519,96 @@ export function useImovelDocumentoMutations(codigo: string) {
   return { upload, remove, getUrl, reextrair };
 }
 
+// ─── Field conflicts (migration 154, D1) ────────────────────────────────────
+
+/**
+ * One `imovel_campo_conflitos` row — a matrícula / guia de IPTU / CND reading
+ * that disagreed with a value already on `imovel_dados`. `valor_*` are JSONB:
+ * a string for the scalar fields, an object for the two pointer GROUPS
+ * (`titulo_aquisitivo`, `onus_fonte`).
+ */
+export interface ImovelConflito {
+  id: string;
+  codigo: string;
+  campo: string;
+  valor_anterior: unknown;
+  origem_anterior: string | null;
+  valor_proposto: unknown;
+  origem_proposto: string;
+  /** The `imovel_documentos` row the proposed value was read from, when known. */
+  documento_id_proposto: string | null;
+  confianca_proposta: string | null;
+  /** Polymorphic source: `'matricula_extracoes'` | `'imovel_documentos'`. */
+  fonte_tabela: string | null;
+  fonte_id: string | null;
+  status: "pendente" | "aceito" | "rejeitado" | "resolvido_automatico";
+  decidido_por: string | null;
+  decidido_em: string | null;
+  created_at: string;
+}
+
+// Under `["sw","imovel-dados"]` on purpose: the org-wide automatic sweep
+// (`useResolverConflitosAutomaticamente`) already invalidates that root, so
+// both lists refresh after it without a second place knowing about them.
+const CONFLITOS_KEY = (codigo: string) => [...FAMILY_KEY(codigo), "conflitos"] as const;
+const CONFLITOS_ORG_KEY = ["sw", "imovel-dados", "__org__", "conflitos"] as const;
+
+/** Pending conflicts of ONE imóvel — the card on `/imoveis/:codigo`. */
+export function useImovelConflitos(codigo: string | null) {
+  return useQuery({
+    queryKey: CONFLITOS_KEY(codigo ?? "__none__"),
+    queryFn: async () => {
+      const res = await api.get<ItemsEnvelope<ImovelConflito>>(
+        `${base(codigo as string)}/conflitos`,
+      );
+      return res?.items ?? [];
+    },
+    enabled: !!codigo,
+  });
+}
+
+/** Every pending imóvel conflict in the org — Settings › Pendências. */
+export function useImovelConflitosPendentesOrg(enabled = true) {
+  return useQuery({
+    queryKey: CONFLITOS_ORG_KEY,
+    queryFn: async () => {
+      const res = await api.get<ItemsEnvelope<ImovelConflito>>(
+        "/api/imoveis/conflitos/pendentes",
+      );
+      return res?.items ?? [];
+    },
+    enabled,
+  });
+}
+
+/** Owner/admin only on the server (`decidir_conflito_route`, strict 403);
+ *  accepting writes `imovel_dados` for real, so the whole imóvel family and
+ *  the contract readings it feeds go stale with it. */
+export function useDecidirImovelConflito() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      codigo,
+      conflitoId,
+      aceitar,
+    }: {
+      codigo: string;
+      conflitoId: string;
+      aceitar: boolean;
+    }) =>
+      api.put<ImovelConflito>(
+        `${base(codigo)}/conflitos/${encodeURIComponent(conflitoId)}/decidir`,
+        { aceitar },
+      ),
+    onSuccess: (_r, { codigo }) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: FAMILY_KEY(codigo) }),
+        qc.invalidateQueries({ queryKey: CONFLITOS_ORG_KEY }),
+        qc.invalidateQueries({ queryKey: ["sw", "imovel-contrato", codigo] }),
+      ]),
+  });
+}
+
 // ─── Display helpers ────────────────────────────────────────────────────────
 
 /** Where a stored matrícula number came from, in words. */

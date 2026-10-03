@@ -22,7 +22,16 @@
  * `isAdmin` (the server's OWN `decidir_conflito_route` enforces this for
  * real; `isAdmin` here is a UI convenience, same posture `Equipe.tsx`'s
  * button-visibility already takes — a spoofed client would still 403).
+ *
+ * TWO CONFLICT TABLES, ONE CARD (2026-10-03). `imovel_campo_conflitos`
+ * (migration 154) has the same decide shape as `cliente_campo_conflitos`, so
+ * `ImovelConflitosCard` mounts THIS card rather than a copy: the props that
+ * differ per table are seams — `rotuloCampo` / `formatarValor` (the imóvel
+ * fields and their JSONB group values), `renderDetalhe` (the source document
+ * and, in the org queue, the imóvel link), `itemTestId` and `titulo`. The
+ * cliente call sites pass none of them and render exactly as before.
  */
+import type { ReactNode } from "react";
 import { Check, Clock3, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -70,8 +79,32 @@ function valorDoConflito(campo: string, valor: string | null | undefined): strin
   return tipo ? formatIdentificador(tipo, valor) : valor;
 }
 
-export interface ConflitosPendentesCardProps {
-  conflitos: ConflitoCampo[];
+/** The fields both conflict tables share — all the card itself reads.
+ *  `valor_*` are `unknown` because `imovel_campo_conflitos` stores JSONB
+ *  (a pointer GROUP is an object); the cliente table's are strings. */
+export interface ConflitoPendenteBase {
+  id: string;
+  campo: string;
+  status: string;
+  valor_anterior: unknown;
+  valor_proposto: unknown;
+  origem_proposto: string;
+  /** cliente table only — read when `mostrarCliente` is set. */
+  cliente_id?: string;
+}
+
+/** Default value rendering: identifiers punctuated (the cliente fields),
+ *  any other non-string (an imóvel JSONB group) as compact JSON — never a
+ *  blank and never `[object Object]`. */
+function valorPadrao(campo: string, valor: unknown): string {
+  if (valor == null || valor === "") return "—";
+  if (typeof valor === "string") return valorDoConflito(campo, valor);
+  if (typeof valor === "number" || typeof valor === "boolean") return String(valor);
+  return JSON.stringify(valor);
+}
+
+export interface ConflitosPendentesCardProps<T extends ConflitoPendenteBase = ConflitoCampo> {
+  conflitos: T[];
   onDecidir: (conflitoId: string, aceitar: boolean) => void;
   /** The `conflitoId` currently in flight — disables both its buttons so a
    *  double-click can't fire two decisions for the same row. */
@@ -85,20 +118,37 @@ export interface ConflitosPendentesCardProps {
    *  `mostrarCliente` is true. Falls back to the raw id when absent —
    *  never a blank row. */
   nomeDoCliente?: (clienteId: string) => string | undefined;
+  /** Field label seam — defaults to the cliente field labels. */
+  rotuloCampo?: (campo: string) => string;
+  /** Value rendering seam — defaults to `valorPadrao`. */
+  formatarValor?: (campo: string, valor: unknown) => string;
+  /** Extra per-row content under the values (source document, a link to
+   *  the record the row is about). */
+  renderDetalhe?: (conflito: T) => ReactNode;
+  /** Per-row test id; defaults to `${testId}-item-${id}`. The buttons are
+   *  `<itemTestId>-aprovar` / `-rejeitar`. */
+  itemTestId?: (conflitoId: string) => string;
+  titulo?: string;
   testId?: string;
 }
 
-export function ConflitosPendentesCard({
+export function ConflitosPendentesCard<T extends ConflitoPendenteBase = ConflitoCampo>({
   conflitos,
   onDecidir,
   decidingId,
   isAdmin,
   mostrarCliente = false,
   nomeDoCliente,
+  rotuloCampo: rotular = rotuloCampo,
+  formatarValor = valorPadrao,
+  renderDetalhe,
+  itemTestId,
+  titulo = "Pendências de confirmação",
   testId = "conflitos-pendentes",
-}: ConflitosPendentesCardProps) {
+}: ConflitosPendentesCardProps<T>) {
   const pendentes = conflitos.filter((c) => c.status === "pendente");
   if (pendentes.length === 0) return null;
+  const idDoItem = itemTestId ?? ((id: string) => `${testId}-item-${id}`);
 
   return (
     <Card data-testid={testId}>
@@ -106,35 +156,37 @@ export function ConflitosPendentesCard({
         <div className="flex items-center gap-2">
           <Clock3 className="h-4 w-4 text-amber-600" />
           <CardTitle className="text-sm">
-            Pendências de confirmação ({pendentes.length})
+            {titulo} ({pendentes.length})
           </CardTitle>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         {pendentes.map((c) => {
           const deciding = decidingId === c.id;
+          const itemId = idDoItem(c.id);
           return (
             <div
               key={c.id}
               className="rounded-md border p-3 text-sm"
-              data-testid={`${testId}-item-${c.id}`}
+              data-testid={itemId}
             >
               <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="font-medium">{rotuloCampo(c.campo)}</span>
+                <span className="font-medium">{rotular(c.campo)}</span>
                 <Badge variant="outline" className="text-[11px]">
                   {c.origem_proposto === "manual" ? "edição manual" : "extração"}
                 </Badge>
               </div>
-              {mostrarCliente && (
+              {mostrarCliente && c.cliente_id && (
                 <p className="mb-1 text-xs text-muted-foreground">
                   {nomeDoCliente?.(c.cliente_id) ?? c.cliente_id}
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Documento/atual: <span className="font-mono">{valorDoConflito(c.campo, c.valor_anterior)}</span>
+                Documento/atual: <span className="font-mono">{formatarValor(c.campo, c.valor_anterior)}</span>
                 {" → "}
-                proposto: <span className="font-mono">{valorDoConflito(c.campo, c.valor_proposto)}</span>
+                proposto: <span className="font-mono">{formatarValor(c.campo, c.valor_proposto)}</span>
               </p>
+              {renderDetalhe?.(c)}
               {isAdmin && (
                 <div className="mt-2 flex gap-2">
                   <Button
@@ -142,7 +194,7 @@ export function ConflitosPendentesCard({
                     variant="default"
                     disabled={deciding}
                     onClick={() => onDecidir(c.id, true)}
-                    data-testid={`${testId}-item-${c.id}-aprovar`}
+                    data-testid={`${itemId}-aprovar`}
                   >
                     <Check className="mr-1 h-3.5 w-3.5" />
                     Aprovar
@@ -152,7 +204,7 @@ export function ConflitosPendentesCard({
                     variant="outline"
                     disabled={deciding}
                     onClick={() => onDecidir(c.id, false)}
-                    data-testid={`${testId}-item-${c.id}-rejeitar`}
+                    data-testid={`${itemId}-rejeitar`}
                   >
                     <X className="mr-1 h-3.5 w-3.5" />
                     Rejeitar

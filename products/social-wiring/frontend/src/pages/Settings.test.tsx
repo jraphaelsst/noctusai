@@ -173,6 +173,24 @@ vi.mock("@/hooks/useCardHub", async () => {
   };
 });
 
+// The imóvel half of the Pendências tab (migration 154). Same default —
+// nothing pending — so every other suite ignores it.
+const mockUseImovelConflitosPendentesOrg = vi.fn(() => ({
+  data: [] as unknown[],
+  isPending: false,
+  isError: false,
+  refetch: vi.fn(),
+}));
+const mockDecidirImovelConflito = vi.fn();
+vi.mock("@/hooks/useImovelDados", () => ({
+  useImovelConflitosPendentesOrg: () => mockUseImovelConflitosPendentesOrg(),
+  useDecidirImovelConflito: () => ({
+    mutate: mockDecidirImovelConflito,
+    isPending: false,
+    variables: undefined,
+  }),
+}));
+
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // ─── @/components/ui/tabs — structural pass-through ─────────────────────
@@ -307,6 +325,19 @@ const RETENCAO_MATRICULA = {
 };
 
 beforeEach(() => {
+  mockDecidirImovelConflito.mockReset();
+  mockUseConflitosPendentes.mockReturnValue({
+    data: [],
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
+  mockUseImovelConflitosPendentesOrg.mockReturnValue({
+    data: [],
+    isPending: false,
+    isError: false,
+    refetch: vi.fn(),
+  });
   mockUseCalendarStatus.mockReturnValue({
     data: {
       configured: false,
@@ -418,11 +449,13 @@ async function renderSettingsOnKeysTab() {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  // A router too: the Pendências tab links each imóvel conflict to its page.
+  const { MemoryRouter } = await import("react-router-dom");
   const utils = rtl.render(
     React.createElement(
       QueryClientProvider,
       { client: qc },
-      React.createElement(Settings),
+      React.createElement(MemoryRouter, null, React.createElement(Settings)),
     ),
   );
   return { ...utils, fireEvent: rtl.fireEvent };
@@ -919,6 +952,27 @@ describe("Settings — document retention policy", () => {
       tipo_documento: "matricula",
       retencao_dias: 3650,
     });
+  });
+
+  // ─── `empresa` surface (migration 167) ──────────────────────────────────
+  it("🔴 renders migration 167's empresa rows in their own group, never silently dropped", async () => {
+    setUser("owner");
+    stubRetencao([
+      RETENCAO_FGTS,
+      { ...RETENCAO_MATRICULA, superficie: "empresa", tipo_documento: "cartao_cnpj", retencao_dias: 1825 },
+    ]);
+    const { getByText, getByTestId } = await renderSettingsOnKeysTab();
+
+    expect(getByText("Documentos da empresa")).toBeTruthy();
+    expect(getByTestId("retencao-row-empresa-cartao_cnpj").textContent).toContain("Cartão CNPJ");
+  });
+
+  it("renders a surface the screen does not know yet under its slug instead of hiding it", async () => {
+    setUser("owner");
+    stubRetencao([{ ...RETENCAO_FGTS, superficie: "nova_superficie", tipo_documento: "x" }]);
+    const { getByTestId } = await renderSettingsOnKeysTab();
+
+    expect(getByTestId("retencao-row-nova_superficie-x")).toBeTruthy();
   });
 });
 
@@ -1589,5 +1643,88 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
       { conflitoId: "conflito-2", aceitar: true },
       expect.anything(),
     );
+  });
+
+  const IMOVEL_CONFLITO = {
+    id: "ic-1",
+    codigo: "AP1234",
+    campo: "numero_matricula",
+    valor_anterior: "12345",
+    origem_anterior: "manual",
+    valor_proposto: "12346",
+    origem_proposto: "matricula",
+    documento_id_proposto: null,
+    confianca_proposta: null,
+    fonte_tabela: "matricula_extracoes",
+    fonte_id: "ext-1",
+    status: "pendente",
+    decidido_por: null,
+    decidido_em: null,
+    created_at: "2026-10-01T00:00:00Z",
+  };
+
+  it("lists imóvel conflicts next to the people's, linking to the imóvel page", async () => {
+    setUser("owner");
+    mockUseImovelConflitosPendentesOrg.mockReturnValue({
+      data: [IMOVEL_CONFLITO],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, queryByText } = await renderSettingsOnKeysTab();
+    expect(getByTestId("imovel-conflito-ic-1").textContent).toContain("Número da matrícula");
+    expect(getByTestId("imovel-conflito-ic-1-link").getAttribute("href")).toBe(
+      "/imoveis/AP1234#imovel-conflitos",
+    );
+    // Something IS pending — the empty state must not show beside it.
+    expect(queryByText("Nenhuma pendência de confirmação no momento.")).toBeNull();
+  });
+
+  it("decides an imóvel conflict with its own imóvel code", async () => {
+    setUser("admin");
+    mockUseImovelConflitosPendentesOrg.mockReturnValue({
+      data: [IMOVEL_CONFLITO],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId, fireEvent } = await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("imovel-conflito-ic-1-rejeitar"));
+    expect(mockDecidirImovelConflito).toHaveBeenCalledWith(
+      { codigo: "AP1234", conflitoId: "ic-1", aceitar: false },
+      expect.anything(),
+    );
+  });
+
+  it("an imóvel-list failure shows its own retry and never hides the people's list", async () => {
+    setUser("owner");
+    mockUseImovelConflitosPendentesOrg.mockReturnValue({
+      data: undefined as unknown as unknown[],
+      isPending: false,
+      isError: true,
+      refetch: vi.fn(),
+    });
+    mockUseConflitosPendentes.mockReturnValue({
+      data: [
+        {
+          id: "conflito-9",
+          cliente_id: "cliente-1",
+          campo: "rg",
+          valor_anterior: "1",
+          origem_anterior: "rg",
+          valor_proposto: "2",
+          origem_proposto: "manual",
+          confianca_proposta: null,
+          status: "pendente",
+          created_at: "2026-09-20T00:00:00Z",
+        },
+      ],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    const { getByTestId } = await renderSettingsOnKeysTab();
+    expect(getByTestId("pendencias-imoveis-erro")).toBeTruthy();
+    expect(getByTestId("pendencias-dados-tab")).toBeTruthy();
   });
 });

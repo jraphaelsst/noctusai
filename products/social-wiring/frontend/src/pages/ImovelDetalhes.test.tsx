@@ -55,6 +55,10 @@ vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
     useImovelDocumentoMutations: mockUseImovelDocumentoMutations,
     useImovelDocumentos: mockUseImovelDocumentos,
     useImovelExtracaoPollingInvalidation: mockUseImovelExtracaoPollingInvalidation,
+    // The conflicts card (migration 154) — inert here, same no-provider
+    // reason as above; its behaviour lives in `ImovelConflitosCard.test.tsx`.
+    useImovelConflitos: () => ({ data: [], isPending: false, isError: false, refetch: vi.fn() }),
+    useDecidirImovelConflito: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
   };
 });
 

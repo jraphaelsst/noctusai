@@ -723,6 +723,24 @@ def listar(
     return {"items": rows, "total": len(rows)}
 
 
+def listar_pendentes_org(client: Any, org_id: UUID) -> dict:
+    """`GET /api/imoveis/conflitos/pendentes` — every `pendente` imóvel
+    conflict in the org, newest first: the imóvel half of Settings ›
+    Pendências (the cliente half is `card_hub`'s `GET /api/clientes/
+    conflitos`). Each row carries its `codigo` so the screen can link to
+    the imóvel page, where the decision is made.
+
+    Same RESOLVE-ON-READ posture as `listar`, org-wide: whatever the
+    automatic resolver can now settle is applied before the list is read,
+    so the queue never shows a human a divergence policy already decided."""
+    backfill_resolver_conflitos_pendentes(client, org_id)
+    rows = table_reads.paged_rows(
+        client, CONFLITOS_TABLE, org_id, eq_filters={"status": "pendente"}
+    )
+    rows = sorted(rows, key=lambda r: r.get("created_at") or "", reverse=True)
+    return {"items": rows, "total": len(rows)}
+
+
 def resolver(
     client: Any,
     org_id: UUID,

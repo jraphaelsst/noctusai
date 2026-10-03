@@ -484,6 +484,23 @@ async def list_certidoes_route(
 # ─── D1 conflicts (migration 154) ─────────────────────────────────────────
 
 
+@router.get("/conflitos/pendentes")
+async def list_conflitos_pendentes_org_route(
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Every pending imóvel conflict in the org — Settings › Pendências'
+    imóvel list. Read-only and not admin-gated, same split as the per-imóvel
+    list below and the cliente queue: seeing is open, deciding is not.
+
+    🔴 TWO segments on purpose: a bare `/api/imoveis/conflitos` would be
+    swallowed by `imoveis_router`'s `GET /{codigo}` (mounted first) and read
+    as an imóvel whose code is "CONFLITOS". `test_imovel_conflitos_ui.py`
+    pins the route reaching THIS handler."""
+    _user, org_id = _auth_parts(auth)
+    return campos_svc.listar_pendentes_org(client, org_id)
+
+
 @router.get("/{codigo}/conflitos")
 async def list_conflitos_route(
     codigo: str,

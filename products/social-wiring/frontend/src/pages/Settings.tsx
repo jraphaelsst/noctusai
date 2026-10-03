@@ -89,6 +89,8 @@ import {
 import { ResolverConflitosAutoAcao } from "@/components/card/ResolverConflitosAutoAcao";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
+import { ImovelConflitosPendentesOrgCard } from "@/components/imovel/ImovelConflitosCard";
+import { useImovelConflitosPendentesOrg } from "@/hooks/useImovelDados";
 import { IdentificadoresNaoConformesPanel } from "@/components/IdentificadoresNaoConformesCard";
 
 // ─── Reusable bits ──────────────────────────────────────────────────────
@@ -1919,7 +1921,13 @@ const SUPERFICIE_ROTULOS: Record<string, string> = {
   cliente: "Documentos do cliente",
   atendimento: "Documentos do atendimento (negociação)",
   imovel: "Documentos do imóvel",
+  empresa: "Documentos da empresa",
 };
+
+/** Display order of the retention groups. A surface the server returns that
+ *  is NOT listed here still renders (appended, slug as title) — a hard-coded
+ *  allow-list here once hid migration 167's `empresa` rows silently. */
+const SUPERFICIE_ORDEM = ["atendimento", "cliente", "imovel", "empresa"];
 
 /** `null` is "manter indefinidamente" — a real policy, never a blank. */
 function formatRetencao(dias: number | null): string {
@@ -2118,9 +2126,11 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
     );
   }
 
-  const grupos = ["atendimento", "cliente", "imovel"].filter((s) =>
-    data.items.some((p) => p.superficie === s)
-  );
+  const presentes = Array.from(new Set<string>(data.items.map((p) => p.superficie)));
+  const grupos = [
+    ...SUPERFICIE_ORDEM.filter((s) => presentes.includes(s)),
+    ...presentes.filter((s) => !SUPERFICIE_ORDEM.includes(s)),
+  ];
 
   return (
     <div className="space-y-6">
@@ -2179,9 +2189,15 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
  * `ConflitosPendentesPanel` mounts per-card — `mostrarCliente` is the only
  * thing this call site sets differently, since there is no single person
  * already in view here.
+ *
+ * The imóvel half (`imovel_campo_conflitos`, migration 154) sits beside the
+ * people's: `ImovelConflitosPendentesOrgCard`, the same card with the imóvel
+ * seams, each row linking to its imóvel page. Each half owns its own
+ * loading/error state — one list failing never hides the other.
  */
 function PendenciasDadosTab() {
   const conflitos = useConflitosPendentes();
+  const imoveis = useImovelConflitosPendentesOrg();
   const decidir = useDecidirConflitoMutation();
   const resolverAuto = useResolverConflitosAutomaticamente();
   const [resultadoAuto, setResultadoAuto] =
@@ -2217,7 +2233,9 @@ function PendenciasDadosTab() {
     />
   );
 
-  if (showSkeleton) {
+  const imoveisSkeleton = imoveis.isPending && !imoveis.data;
+
+  if (showSkeleton && imoveisSkeleton) {
     return (
       <Card>
         <CardContent className="flex items-center justify-center p-12">
@@ -2227,57 +2245,72 @@ function PendenciasDadosTab() {
     );
   }
 
-  if (conflitos.isError && !conflitos.data) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
-          <p className="text-sm text-muted-foreground">
-            Não foi possível carregar as pendências de confirmação.
-          </p>
-          <Button variant="outline" size="sm" onClick={() => conflitos.refetch()}>
-            Tentar novamente
-          </Button>
-        </CardContent>
-      </Card>
-    );
-  }
+  const falha = (mensagem: string, onRetry: () => void, testId: string) => (
+    <Card data-testid={testId}>
+      <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
+        <p className="text-sm text-muted-foreground">{mensagem}</p>
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          Tentar novamente
+        </Button>
+      </CardContent>
+    </Card>
+  );
 
-  if (!conflitos.data?.length) {
-    return (
-      <div className="space-y-4">
-        {acaoAutomatica}
+  const pessoas =
+    conflitos.isError && !conflitos.data
+      ? falha(
+          "Não foi possível carregar as pendências de confirmação.",
+          () => conflitos.refetch(),
+          "pendencias-pessoas-erro",
+        )
+      : conflitos.data?.length
+        ? (
+          <ConflitosPendentesCard
+            conflitos={conflitos.data}
+            isAdmin
+            mostrarCliente
+            decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}
+            onDecidir={(conflitoId, aceitar) =>
+              decidir.mutate(
+                { conflitoId, aceitar },
+                {
+                  onError: (e) =>
+                    toast.error(
+                      e instanceof Error && e.message
+                        ? e.message
+                        : "Não foi possível decidir a pendência.",
+                    ),
+                },
+              )
+            }
+            testId="pendencias-dados-tab"
+          />
+        )
+        : null;
+
+  const imoveisCard =
+    imoveis.isError && !imoveis.data
+      ? falha(
+          "Não foi possível carregar as pendências de imóveis.",
+          () => imoveis.refetch(),
+          "pendencias-imoveis-erro",
+        )
+      : imoveis.data?.length
+        ? <ImovelConflitosPendentesOrgCard conflitos={imoveis.data} />
+        : null;
+
+  return (
+    <div className="space-y-4">
+      {acaoAutomatica}
+      {pessoas}
+      {imoveisCard}
+      {!pessoas && !imoveisCard && !showSkeleton && !imoveisSkeleton && (
         <Card>
           <CardContent className="p-12 text-center text-sm text-muted-foreground">
             Nenhuma pendência de confirmação no momento.
           </CardContent>
         </Card>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-4">
-      {acaoAutomatica}
-      <ConflitosPendentesCard
-        conflitos={conflitos.data}
-        isAdmin
-        mostrarCliente
-        decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}
-        onDecidir={(conflitoId, aceitar) =>
-          decidir.mutate(
-            { conflitoId, aceitar },
-            {
-              onError: (e) =>
-                toast.error(
-                  e instanceof Error && e.message
-                    ? e.message
-                    : "Não foi possível decidir a pendência.",
-                ),
-            },
-          )
-        }
-        testId="pendencias-dados-tab"
-      />
+      )}
     </div>
   );
 }
