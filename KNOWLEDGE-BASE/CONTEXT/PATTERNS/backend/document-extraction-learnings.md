@@ -104,6 +104,22 @@ Extraction is its own process, measured separately from contract generation (own
   unpunctuated 14-digit CNPJ; a share never has a thousands separator.
 - **Guia ITBI (Carapicuíba)** — no transaction-value box: price = "Valor do Instrumento (à vista)"
   + "Valor Financiado" (equals the base de cálculo).
+- **Guia ITBI (Cotia, text layer)** — the price is "Valor do Instrumento (Valor Venal de
+  Mercado)" (not Carapicuíba's cash part), and the text layer dumps the boxed row as a label
+  COLUMN then a value COLUMN: the line after a label is another box's value (an area that parses
+  as money). Pair money labels ↔ `R$` amounts, equal counts only
+  (`caixa_rotulada.valor_em_coluna`); an unpairable dump reads `None`, never the next line.
+- **Guia ITBI (Embu das Artes, text layer)** — facts in prose; the text layer wraps through the
+  label ("… E VALOR DA" / "TRANSAÇÃO: R$ …") → a joined-pairs second pass
+  (`caixa_rotulada.linhas_unidas`). Before both fixes, 0/6 text-layer guides read a value.
+  People too: Cotia dumps "Nome:/Endereço:/CGC/CPF:" then the three values (the contribuinte is
+  the comprador); Embu wraps "A - CPF: … E" / "B - CPF: …". Without them no guide's CPF reached
+  the belongs-check (0/6 → 5/6 verified; the 6th names a CPF absent from the deal → refused).
+- **Proposta de financiamento (Itaú "Carta de Crédito", 10/11 of the corpus)** — names the
+  proponente only in a greeting ("Oi, <Nome>. Sua proposta foi aprovada") and prints NO CPF;
+  another bank prints "Nome do(s) Comprador(es):" and "CPF(s):" on separate lines. Belonging is
+  then a STRICT `chave_nome` match to a deal comprador — vision misreads 1–2 letters of a name in
+  ~3/8 letters, and those stay unverified (a human decides), never fuzzily accepted.
 
 ## 4 · Where signed contracts diverge from the documents
 

@@ -146,10 +146,10 @@ def _documento(doc_id: str, aid: str, tipo: str, **over) -> dict:
 def _seed(
     scoped, *, aid=None, com_negociacao=False, negociacao_over=None,
     com_vendedor=False, parcelas=None, financiamento=None, favorecidos=None,
-    agentes=None,
+    agentes=None, nome_comprador="Comprador", cpf_comprador=CPF_COMPRADOR,
 ):
     cid, aid = str(uuid4()), (aid or str(uuid4()))
-    clientes = [cliente_row(cid, nome="Comprador", cpf=CPF_COMPRADOR)]
+    clientes = [cliente_row(cid, nome=nome_comprador, cpf=cpf_comprador)]
     partes = []
     if com_vendedor:
         vid = str(uuid4())
@@ -309,6 +309,100 @@ class TestBelongsToThisDeal:
 
 
 # ─── H2: valor_negociado — fill-empty, else conflict ────────────────────
+
+
+class TestPropostaLetterBelongsByProponente:
+    """Live 2026-10-03: 5/5 proposta uploads read
+    `pertencimento_nao_verificado`, so every value they proposed opened a
+    conflict against an EMPTY field instead of filling it (H1). The bank's
+    letter names its proponente — Itaú's with NO CPF at all ("Oi, <Nome>.
+    Sua proposta foi aprovada"). Read through the REAL seed parser so the
+    seed↔SW contract is exercised, not a hand-built fake. All names and
+    numbers are invented."""
+
+    _NOME = "Fulana Sintética de Teste"
+
+    @staticmethod
+    def _carta(nome: str) -> str:
+        return (
+            "Crédito imobiliário\nCarta de Crédito\nN. Proposta: 12345678\n"
+            f"Oi, {nome}. Sua proposta foi aprovada e agora você pode conferir "
+            "as condições do crédito através das informações abaixo:\n"
+            "Valor do Imóvel: R$ 640.000,00\n"
+            "Valor da entrada: R$ 140.000,00\n"
+            "Valor do financiamento: R$ 500.000,00\n"
+            "Prazo: 360 meses\n"
+        )
+
+    def _aplicar(self, scoped, nome_na_carta: str, **seed_over):
+        from noctusai_lib.integrations.documents.financiamento_imobiliario import (
+            parse_financiamento_imobiliario,
+        )
+        from noctusai_lib.integrations.documents.types import TextSource
+
+        cid, aid = _seed(scoped, com_negociacao=False, **seed_over)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "proposta_financiamento")],
+        )
+        leitura = parse_financiamento_imobiliario(
+            self._carta(nome_na_carta), TextSource.OCR, "proposta"
+        )
+        return nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "proposta_financiamento", leitura,
+        )
+
+    def test_letter_naming_the_comprador_fills_the_empty_field_directly(self, scoped):
+        resultado = self._aplicar(
+            scoped, "FULANA SINTETICA DE TESTE", nome_comprador=self._NOME,
+        )
+        assert "pertencimento_nao_verificado" not in (resultado["aviso"] or "")
+        assert resultado["conflitos"] == []
+        negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
+        assert negociacao[0]["valor_negociado"] == "640000.00"
+        assert negociacao[0]["valor_negociado_origem"] == "proposta_financiamento"
+
+    def test_comprador_without_a_registered_cpf_still_matches_by_name(self, scoped):
+        resultado = self._aplicar(
+            scoped, self._NOME, nome_comprador=self._NOME, cpf_comprador=None,
+        )
+        assert "pertencimento_nao_verificado" not in (resultado["aviso"] or "")
+        assert resultado["conflitos"] == []
+
+    def test_letter_naming_someone_else_is_still_refused(self, scoped):
+        resultado = self._aplicar(
+            scoped, "Beltrana Outra Pessoa", nome_comprador=self._NOME,
+        )
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+        negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
+        assert negociacao[0]["valor_negociado"] is None
+        assert {c["campo"] for c in resultado["conflitos"]} >= {"valor_negociado"}
+
+    def test_a_one_letter_misread_is_not_a_match(self, scoped):
+        resultado = self._aplicar(
+            scoped, "Fulana Sintetica de Tesre", nome_comprador=self._NOME,
+        )
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+
+    def test_a_vendedor_s_name_does_not_verify_a_proposta(self, scoped):
+        resultado = self._aplicar(scoped, "Vendedor", com_vendedor=True)
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+
+    def test_a_valid_cpf_of_someone_else_outranks_a_coinciding_name(self, scoped):
+        leitura = _FinanciamentoLeitura(
+            documento="proposta",
+            valor_compra_venda=Decimal("640000.00"),
+            compradores=[_Pessoa(nome="Comprador", cpf="52998224725", cpf_valido=True)],
+        )
+        cid, aid = _seed(scoped, com_negociacao=False)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "proposta_financiamento")],
+        )
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "proposta_financiamento", leitura,
+        )
+        assert resultado["aviso"] == "documento_de_outro_negocio"
 
 
 class TestValorNegociado:

@@ -726,3 +726,55 @@ class TestEmptyAndErrors:
         assert f.valor_compra_venda is None
         assert f.error is None
         assert all(c is ExtractionConfidence.NENHUMA for c in f.confiancas.values())
+
+
+# ─── the proponente(s) a bank PROPOSTA letter names (2026-10-03) ─────────
+# Shapes measured on 11 real proposals; every name/number here is invented.
+
+
+class TestPropostaProponentes:
+    def test_itau_greeting_names_the_proponente_without_a_cpf(self) -> None:
+        texto = (
+            "Carta de Crédito\nN. Proposta: 12345678\n"
+            "Oi, Fulana Sintética de Teste. Sua proposta foi aprovada e agora "
+            "você pode conferir as condições do crédito:\n"
+            "Valor do Imóvel: R$ 640.000,00\n"
+        )
+        r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
+        assert r.nomes_proponentes == ("FULANA SINTETICA DE TESTE",)
+        assert r.compradores == ()
+
+    def test_greeting_without_a_full_stop(self) -> None:
+        texto = "Oi, Fulana Sintetica Sua proposta foi aprovada e agora ...\n"
+        r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
+        assert r.nomes_proponentes == ("FULANA SINTETICA",)
+
+    def test_name_and_cpf_on_separate_label_lines_are_paired(self) -> None:
+        texto = (
+            "Prezado(s) Cliente(s):\n"
+            "1) Nome do (s) Comprador (es): FULANA SINTETICA DE TESTE\n"
+            f"2) CPF(s): {CPF_VALIDO}\n"
+        )
+        r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
+        assert len(r.compradores) == 1
+        assert r.compradores[0].nome == "FULANA SINTETICA DE TESTE"
+        assert r.compradores[0].cpf == CPF_VALIDO
+        assert r.compradores[0].cpf_valido is True
+        assert r.nomes_proponentes == ("FULANA SINTETICA DE TESTE",)
+
+    def test_two_names_joined_by_e_split_only_to_match_two_cpfs(self) -> None:
+        texto = (
+            "Nome dos Compradores: FULANO SINTETICO E BELTRANA SINTETICA\n"
+            f"CPF(s): {CPF_VALIDO}; 529.982.247-25\n"
+        )
+        r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
+        assert [p.nome for p in r.compradores] == ["FULANO SINTETICO", "BELTRANA SINTETICA"]
+
+    def test_masked_cpf_leaves_the_name_unpaired(self) -> None:
+        texto = (
+            "Nome do (s) Comprador (es): FULANA SINTETICA DE TESTE\n"
+            "CPF(s): ***.954.238-**\n"
+        )
+        r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
+        assert r.compradores == ()
+        assert r.nomes_proponentes == ("FULANA SINTETICA DE TESTE",)

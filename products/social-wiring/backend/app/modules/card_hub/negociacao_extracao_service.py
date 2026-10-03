@@ -67,6 +67,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import cpf as cpf_docs
+from noctusai_lib.integrations.documents.name import chave_nome
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.card_hub import financiamento_service
@@ -224,10 +225,34 @@ def _marcar_documento(client: Any, documento_id: UUID, **campos: Any) -> None:
 # ─── (b) belongs-to-this-deal ────────────────────────────────────────────
 
 
-def _cpfs_do_negocio(client: Any, org_id: UUID, atendimento_id: UUID) -> dict[str, dict]:
-    """`cpf_normalizado -> {cliente_id, lado, nome}` for the titular AND
-    every `atendimento_partes` row of this deal — the set the belongs-check
-    (and H5's vendedor match) compares a document's read CPFs against."""
+def _por_cpf(partes: list[dict]) -> dict[str, dict]:
+    """`cpf_normalizado -> {cliente_id, lado, nome}` over the deal's parties
+    (`_partes_do_negocio`) — the set the belongs-check (and H5's vendedor
+    match) compares a document's read CPFs against."""
+    saida: dict[str, dict] = {}
+    for parte in partes:
+        if parte["cpf"]:
+            saida[parte["cpf"]] = {
+                "cliente_id": parte["cliente_id"],
+                "lado": parte["lado"],
+                "nome": parte["nome"],
+            }
+    return saida
+
+
+def _nomes_compradores(partes: list[dict]) -> frozenset[str]:
+    """The `chave_nome` of every COMPRADOR of the deal (CPF or not) — what a
+    proposta letter's proponente name is matched against, strictly."""
+    return frozenset(
+        chave_nome(parte["nome"])
+        for parte in partes
+        if parte["lado"] == "comprador" and chave_nome(parte["nome"])
+    )
+
+
+def _partes_do_negocio(client: Any, org_id: UUID, atendimento_id: UUID) -> list[dict]:
+    """`[{cliente_id, lado, nome, cpf}]` (cpf = digits or `""`) for the
+    titular AND every `atendimento_partes` row of this deal."""
     titulares = (
         _t(client, "atendimentos")
         .select("cliente_id")
@@ -250,7 +275,7 @@ def _cpfs_do_negocio(client: Any, org_id: UUID, atendimento_id: UUID) -> dict[st
             lado_por_cliente.setdefault(str(row["cliente_id"]), row.get("lado") or "comprador")
 
     if not lado_por_cliente:
-        return {}
+        return []
     clientes = (
         _t(client, "clientes")
         .select("id,cpf,nome")
@@ -258,16 +283,15 @@ def _cpfs_do_negocio(client: Any, org_id: UUID, atendimento_id: UUID) -> dict[st
         .in_("id", sorted(lado_por_cliente))
         .execute()
     ).data or []
-    saida: dict[str, dict] = {}
-    for c in clientes:
-        cpf_norm = cpf_docs.only_digits(str(c.get("cpf") or ""))
-        if cpf_norm:
-            saida[cpf_norm] = {
-                "cliente_id": c["id"],
-                "lado": lado_por_cliente.get(str(c["id"]), "comprador"),
-                "nome": c.get("nome"),
-            }
-    return saida
+    return [
+        {
+            "cliente_id": c["id"],
+            "lado": lado_por_cliente.get(str(c["id"]), "comprador"),
+            "nome": c.get("nome"),
+            "cpf": cpf_docs.only_digits(str(c.get("cpf") or "")),
+        }
+        for c in clientes
+    ]
 
 
 def _cpfs_lidos(leitura: Any) -> list[tuple[str, Any]]:
@@ -293,7 +317,23 @@ NAO_VERIFICADO = "nao_verificado"
 OUTRO_NEGOCIO = "outro_negocio"
 
 
-def _pertence_ao_negocio(leitura: Any, cpfs_negocio: dict[str, dict]) -> str:
+def _nomes_lidos(leitura: Any) -> list[str]:
+    """Every proponente/comprador NAME the reading carries whose CPF did NOT
+    verify — a proposta letter's `nomes_proponentes` (Itaú's prints no CPF
+    at all; a masked CPF is none either) plus a comprador whose CPF failed
+    its check digit. `chave_nome`-normalized."""
+    nomes = [chave_nome(n) for n in (getattr(leitura, "nomes_proponentes", None) or ())]
+    for pessoa in getattr(leitura, "compradores", None) or []:
+        if not getattr(pessoa, "cpf_valido", False):
+            nomes.append(chave_nome(getattr(pessoa, "nome", None)))
+    return [n for n in nomes if n]
+
+
+def _pertence_ao_negocio(
+    leitura: Any,
+    cpfs_negocio: dict[str, dict],
+    nomes_compradores: frozenset[str] = frozenset(),
+) -> str:
     """(b) — does at least one CPF this document read match a deal party?
 
     Returns one of the three module-level constants above:
@@ -315,6 +355,16 @@ def _pertence_ao_negocio(leitura: Any, cpfs_negocio: dict[str, dict]) -> str:
       valido`) as evidence TOO, not just `compradores`/`vendedores` — the
       live case this closes (deal 883): party-header CPFs all misread by
       vision, but the account-box CPF is valid and matches the vendedora.
+      ALSO `PERTENCE` when NO validated CPF was read but a name the
+      document prints (`_nomes_lidos`) is EXACTLY (`chave_nome`, never
+      fuzzy) the name of one of the deal's COMPRADORES — the bank proposta
+      letter, which names its proponente and prints no CPF (Itaú, 10/11
+      real proposals, 2026-10-03; 5/5 live uploads read
+      `pertencimento_nao_verificado` before this). A name that matches no
+      comprador stays `NAO_VERIFICADO` (a vision misread of one letter is
+      indistinguishable from a different person, so a human decides); a
+      VALIDATED CPF always outranks a name — a letter whose valid CPF is
+      someone else's is `OUTRO_NEGOCIO` even if a name coincides.
     """
     lidos = _cpfs_lidos(leitura)
     conta = getattr(leitura, "conta_credito_vendedor", None)
@@ -323,6 +373,8 @@ def _pertence_ao_negocio(leitura: Any, cpfs_negocio: dict[str, dict]) -> str:
         if cpf_conta:
             lidos = [*lidos, (cpf_docs.only_digits(str(cpf_conta)), conta)]
     if not lidos:
+        if any(nome in nomes_compradores for nome in _nomes_lidos(leitura)):
+            return PERTENCE
         return NAO_VERIFICADO
     if any(cpf_norm in cpfs_negocio for cpf_norm, _ in lidos):
         return PERTENCE
@@ -1220,8 +1272,9 @@ def aplicar_leitura(
 
     Returns `{"status": OK|SEM_DADOS, "aviso": str|None, "conflitos": [...]}`.
     """
-    cpfs_negocio = _cpfs_do_negocio(client, org_id, atendimento_id)
-    pertence = _pertence_ao_negocio(leitura, cpfs_negocio)
+    partes = _partes_do_negocio(client, org_id, atendimento_id)
+    cpfs_negocio = _por_cpf(partes)
+    pertence = _pertence_ao_negocio(leitura, cpfs_negocio, _nomes_compradores(partes))
     if pertence == OUTRO_NEGOCIO:
         return {"status": SEM_DADOS, "aviso": "documento_de_outro_negocio", "conflitos": []}
     # Finding [MEDIUM] (audit, 2026-09-28) — `NAO_VERIFICADO` (no validated
