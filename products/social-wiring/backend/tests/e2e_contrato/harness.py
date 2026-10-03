@@ -203,20 +203,42 @@ CAMPOS_TEXTO_MARCAVEIS = frozenset(
         "nome", "nacionalidade", "profissao", "cpf", "rg", "rg_orgao", "email",
         "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep",
         "razao_social", "banco", "agencia", "conta", "pix", "cpf_cnpj", "creci",
-        "documento", "representante_nome", "representante_cpf",
+        "documento", "representante_nome", "representante_cpf", "endereco_registro_texto",
     }
 )
 
 
+#: Required DATE fields the context builder formats unconditionally — filled
+#: with the date sentinel `comparador.DATA_LACUNA` when empty.
+CAMPOS_DATA_MARCAVEIS = frozenset({"emitida_em"})
+
+
 def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
-    """`(copy, n_marcadores)` — a deep copy of `dados` where every EMPTY
-    printable text field (`CAMPOS_TEXTO_MARCAVEIS`, declared `str`) carries
-    `comparador.MARCADOR_LACUNA`, so a not-`pronto` card renders with its
-    gaps VISIBLE instead of as silently missing words. Never mutates
-    `dados`; non-text and code fields are left exactly as loaded."""
+    """`(copy, n_marcadores)` — a copy of `dados` a not-`pronto` card can be
+    rendered from with its gaps VISIBLE instead of as silently missing words:
+
+    - every EMPTY printable text field (`CAMPOS_TEXTO_MARCAVEIS`, declared
+      `str`) carries `comparador.MARCADOR_LACUNA`; every empty required
+      date (`CAMPOS_DATA_MARCAVEIS`) the date sentinel
+      `comparador.DATA_LACUNA` (01/01/1900); every empty `*_dias` int the
+      day-count sentinel `comparador.INTEIRO_LACUNA` (999);
+    - the two STRUCTURAL inputs the context builder refuses to go without
+      (it asserts them — `contexto.montar_contexto`, "# gated") get the money
+      sentinel `comparador.VALOR_LACUNA` (R$ 0,01, itself a gap marker for
+      the scorecard): a missing `valor_negociado`, a parcela with no
+      `valor`, and — when the deal has no `sinal` parcela at all — one
+      synthetic `sinal` parcela worth the sentinel.
+
+    Never mutates `dados`; code fields are left exactly as loaded. A gap
+    the template cannot be fed a stand-in for (no imóvel at all) still makes
+    the render fail — reported as such, never papered over."""
     import dataclasses
+    from datetime import date
+    from decimal import Decimal
 
     contagem = 0
+    valor_lacuna = Decimal(comparador.VALOR_LACUNA)
+    data_lacuna = date.fromisoformat(comparador.DATA_LACUNA)
 
     def _visita(obj: Any) -> Any:
         nonlocal contagem
@@ -227,6 +249,14 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
                 tipo = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", str(f.type))
                 if f.name in CAMPOS_TEXTO_MARCAVEIS and valor in (None, "") and "str" in tipo:
                     mudancas[f.name] = comparador.MARCADOR_LACUNA
+                    contagem += 1
+                    continue
+                if f.name.endswith("_dias") and valor is None and "int" in tipo:
+                    mudancas[f.name] = comparador.INTEIRO_LACUNA
+                    contagem += 1
+                    continue
+                if f.name in CAMPOS_DATA_MARCAVEIS and valor is None and "date" in tipo:
+                    mudancas[f.name] = data_lacuna
                     contagem += 1
                     continue
                 novo = _visita(valor)
@@ -241,7 +271,43 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
             return novos_t if any(a is not b for a, b in zip(novos_t, obj)) else obj
         return obj
 
-    return _visita(dados), contagem
+    marcado = _visita(dados)
+    estruturais: dict[str, Any] = {}
+    if getattr(marcado, "valor_negociado", "ausente") is None:
+        estruturais["valor_negociado"] = valor_lacuna
+        contagem += 1
+    parcelas = list(getattr(marcado, "parcelas", []) or [])
+    if parcelas or hasattr(marcado, "parcelas"):
+        novas = []
+        for p in parcelas:
+            if p.valor is None:
+                p = dataclasses.replace(p, valor=valor_lacuna)
+                contagem += 1
+            novas.append(p)
+        if not any(p.tipo == "sinal" for p in novas):
+            from app.modules.card_hub.contrato_gerador.dados import Parcela
+
+            primeira = min((p.ordem for p in novas), default=1)
+            novas.insert(
+                0,
+                Parcela(
+                    id="lacuna-sinal",
+                    tipo="sinal",
+                    valor=valor_lacuna,
+                    vencimento=None,
+                    evento=comparador.MARCADOR_LACUNA,
+                    forma_pagamento=None,
+                    favorecido_id=None,
+                    confissao_divida=False,
+                    ordem=primeira - 1,
+                ),
+            )
+            contagem += 1
+        if novas != parcelas:
+            estruturais["parcelas"] = novas
+    if estruturais:
+        marcado = dataclasses.replace(marcado, **estruturais)
+    return marcado, contagem
 
 
 def renderizar_em_memoria(dados, *, com_marcadores: bool = False) -> Any:

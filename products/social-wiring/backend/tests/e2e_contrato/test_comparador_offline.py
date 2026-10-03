@@ -304,3 +304,15 @@ def test_cli_exit_code(tmp_path):
     assert comparador.main(["--ref", str(ref), "--gerado", str(gen)]) == 0
     gen.write_text("\n".join(_troca(_REF, "R$ 500.000,00", "R$ 5,00")), encoding="utf-8")
     assert comparador.main(["--ref", str(ref), "--gerado", str(gen)]) == 1
+
+
+def test_sentinelas_estruturais_sao_lacunas():
+    """R$ 0,01 / 01/01/1900 / 999 are the harness's required-value stand-ins:
+    gaps, never number/date diffs."""
+    gerado = _troca(_REF, "R$ 500.000,00 (quinhentos mil reais)", "R$ 0,01 (um centavo)")
+    gerado = _troca(gerado, "1.1 – Certidão Negativa de Débitos Trabalhistas – nº SIM-0006 - emitida em 01/09/2026;",
+                    "1.1 – Certidão Negativa de Débitos Trabalhistas – nº SIM-0006 - emitida em 01/01/1900;")
+    card = comparador.pontuar(_REF, gerado)
+    assert card.numeros_divergentes == 0 and card.datas_divergentes == 0, card.detalhe()["secoes"]
+    assert card.lacunas == 2
+    assert card.veredito == "incompleto", card.motivos()

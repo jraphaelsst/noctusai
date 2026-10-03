@@ -56,3 +56,30 @@ def test_render_com_marcadores_vira_lacuna_no_scorecard():
     assert resumo["lacunas"] >= 2
     assert resumo["numeros_em_lacuna"] >= 1
     assert resumo["numeros_divergentes"] == 0, card.detalhe()["secoes"]
+
+
+def test_preenchimentos_estruturais_permitem_render_de_card_incompleto():
+    """The context builder ASSERTS a price, a sinal parcela, certidão dates
+    and day counts. A card missing them still renders — with sentinels the
+    scorecard reads as gaps (R$ 0,01 · 01/01/1900 · 999), never as values."""
+    d = fx.variante(1)
+    sem = replace(
+        d,
+        valor_negociado=None,
+        parcelas=[p for p in d.parcelas if p.tipo != "sinal"],
+        termos=replace(d.termos, posse_prazo_dias=None),
+        assinatura_data=fx.ASSINATURA,
+    )
+    marcado, n = harness.dados_com_marcadores(sem)
+    assert n >= 3
+    assert any(p.tipo == "sinal" for p in marcado.parcelas)
+    assert str(marcado.valor_negociado) == comparador.VALOR_LACUNA
+    assert marcado.termos.posse_prazo_dias == comparador.INTEIRO_LACUNA
+    assert sem.valor_negociado is None  # input untouched
+    renderizado = harness.renderizar_em_memoria(sem, com_marcadores=True)
+    card = comparador.pontuar(
+        _GOLDEN_V1.read_text(encoding="utf-8").splitlines(),
+        comparador.paragrafos_de_lista(renderizado.paragrafos),
+    )
+    assert card.lacunas >= 3
+    assert all("0.01" not in t and "999" not in t for r in card.resultados for t in r.numeros_extras)

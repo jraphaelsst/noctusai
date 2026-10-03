@@ -202,8 +202,24 @@ def comparar(ref_paragrafos: list[str], gerado_paragrafos: list[str]) -> Resulta
 #: (`harness.dados_com_marcadores`). ASCII on purpose — survives the docx
 #: render and `python-docx` read-back untouched.
 MARCADOR_LACUNA = "[[LACUNA]]"
+#: The money sentinel a not-`pronto` render carries where a REQUIRED amount is
+#: missing (the context builder refuses a `None` price — `harness.
+#: dados_com_marcadores` fills it with `VALOR_LACUNA`). One centavo never
+#: appears in a real instrument, so its printed form is a gap marker too.
+VALOR_LACUNA = "0.01"
+#: Same idea for a REQUIRED date the render cannot go without (a certidão's
+#: `emitida_em`): 01/01/1900 never appears in a real instrument.
+DATA_LACUNA = "1900-01-01"
+#: …and for a REQUIRED day count (`termos.posse_prazo_dias` and kin).
+INTEIRO_LACUNA = 999
 _TOKEN_LACUNA = "lacuna_marcador"
-_LACUNA_RE = re.compile(re.escape(MARCADOR_LACUNA), re.I)
+_LACUNA_RE = re.compile(
+    re.escape(MARCADOR_LACUNA)
+    + r"|R\$\s*0,01(?:\s*\(um centavo\))?"
+    + r"|\b0?1/0?1/1900\b|\b1º?\s+de\s+janeiro\s+de\s+1900\b"
+    + r"|\b999\b(?:\s*\(novecentos e noventa e nove\))?",
+    re.I,
+)
 
 _DIR = Path(__file__).resolve().parent
 ALLOWLIST_PADRAO = _DIR / "allowlist.json"
@@ -832,6 +848,9 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 __all__ = [
     "MARCADOR_LACUNA",
+    "VALOR_LACUNA",
+    "DATA_LACUNA",
+    "INTEIRO_LACUNA",
     "Diferenca",
     "EntradaAllowlist",
     "Limiares",
