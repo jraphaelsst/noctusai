@@ -15,6 +15,7 @@ import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
+import { toast } from "sonner";
 
 import { apiUrl } from "@/lib/apiBase";
 
@@ -39,6 +40,14 @@ export type FinanciamentoDocumentoExtracaoStatus =
  *  rationale `EmpresaDocumentoExtracaoDados` gives: this UI never composes
  *  from it, only displays the handful of avisos the server already names. */
 export type FinanciamentoDocumentoExtracaoDados = Record<string, unknown>;
+
+/** `POST …/negociacao/documentos/reler` — what the card-level re-read did. */
+export interface RelerDocumentosResponse {
+  relidos: number;
+  sem_arquivo: number;
+  em_andamento: number;
+  erros: number;
+}
 
 export interface FinanciamentoDocumento {
   id: string;
@@ -393,6 +402,58 @@ export function useFinanciamentoDocumentoExtracao(clienteId: string) {
     onSuccess: invalidate,
   });
 
+  // Re-read the file ALREADY STORED (no new upload) — works on an `ok`
+  // reading too, which `reextrair` is for stuck/never-run ones. Refreshes
+  // the negociação surfaces a new reading can change (conflicts included).
+  const reler = useMutation({
+    mutationFn: (documentoId: string) =>
+      api.post<FinanciamentoDocumento>(
+        `${base(clienteId)}/documentos/${encodeURIComponent(documentoId)}/reler`,
+        {},
+      ),
+    onSuccess: () => {
+      toast.success("Lendo o documento novamente…");
+      void invalidate();
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "negociacao"] });
+    },
+    onError: (e) =>
+      toast.error("Não foi possível ler o documento novamente", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
+  // `POST …/negociacao/documentos/reler` — every extractable document of the
+  // card's open deal; counts come back at once, the reads run server-side.
+  const relerTodos = useMutation({
+    mutationFn: () =>
+      api.post<RelerDocumentosResponse>(
+        `/api/clientes/${encodeURIComponent(clienteId)}/negociacao/documentos/reler`,
+        {},
+      ),
+    onSuccess: (r) => {
+      if (r.relidos === 0) {
+        toast.info("Nenhum documento enviado para ler novamente.");
+      } else {
+        toast.success(
+          r.relidos === 1 ? "Lendo 1 documento novamente…" : `Lendo ${r.relidos} documentos novamente…`,
+        );
+      }
+      if (r.erros > 0) {
+        toast.error(
+          r.erros === 1
+            ? "1 documento não pôde ser lido novamente — envie o arquivo de novo se o problema continuar."
+            : `${r.erros} documentos não puderam ser lidos novamente — envie os arquivos de novo se o problema continuar.`,
+        );
+      }
+      void invalidate();
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "negociacao"] });
+    },
+    onError: (e) =>
+      toast.error("Não foi possível reler os documentos", {
+        description: e instanceof Error ? e.message : undefined,
+      }),
+  });
+
   const confirmar = useMutation({
     mutationFn: (documentoId: string) =>
       api.post<FinanciamentoDocumento>(
@@ -411,7 +472,7 @@ export function useFinanciamentoDocumentoExtracao(clienteId: string) {
     onSuccess: invalidate,
   });
 
-  return { reextrair, confirmar, descartar };
+  return { reextrair, reler, relerTodos, confirmar, descartar };
 }
 
 /**

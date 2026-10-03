@@ -96,6 +96,8 @@ async function render(over: Partial<Financiamento> | undefined = {}, props = {})
   const onExtrair = vi.fn();
   const onConfirmarExtracao = vi.fn();
   const onDescartarExtracao = vi.fn();
+  const onReler = vi.fn();
+  const onRelerTodos = vi.fn();
   const view = rtl.render(
     <FinanciamentoPanel
       financiamento={over === undefined ? undefined : financiamento(over)}
@@ -109,6 +111,8 @@ async function render(over: Partial<Financiamento> | undefined = {}, props = {})
       onExtrair={onExtrair}
       onConfirmarExtracao={onConfirmarExtracao}
       onDescartarExtracao={onDescartarExtracao}
+      onReler={onReler}
+      onRelerTodos={onRelerTodos}
       {...props}
     />,
   );
@@ -122,6 +126,8 @@ async function render(over: Partial<Financiamento> | undefined = {}, props = {})
     onExtrair,
     onConfirmarExtracao,
     onDescartarExtracao,
+    onReler,
+    onRelerTodos,
   };
 }
 
@@ -365,6 +371,34 @@ describe("FinanciamentoPanel", () => {
       });
       expect(queryByTestId("financiamento-slot-certidao_casamento-processando")).toBeNull();
       expect(queryByTestId("financiamento-slot-certidao_casamento-decisao")).toBeNull();
+    });
+  });
+
+  describe("re-read the stored document", () => {
+    it("offers 'Ler o documento novamente' on an ok reading and calls onReler", async () => {
+      const { screen, fireEvent, onReler } = await render({
+        documentos: [doc("guia_itbi", { extracao_status: "ok" })],
+      });
+      fireEvent.click(screen.getByTestId("financiamento-slot-guia_itbi-reextrair"));
+      expect(onReler).toHaveBeenCalledWith("d-guia_itbi");
+    });
+
+    it("hides the slot action while a read is in flight", async () => {
+      const { queryByTestId } = await render({
+        documentos: [doc("guia_itbi", { extracao_status: "processando" })],
+      });
+      expect(queryByTestId("financiamento-slot-guia_itbi-reextrair")).toBeNull();
+    });
+
+    it("tab-level 'Reler documentos' appears only with a readable document", async () => {
+      const vazio = await render({ documentos: [] });
+      expect(vazio.queryByTestId("financiamento-reextrair-todos")).toBeNull();
+      vazio.unmount();
+      const { screen, fireEvent, onRelerTodos } = await render({
+        documentos: [doc("guia_itbi", { extracao_status: "sem_dados" })],
+      });
+      fireEvent.click(screen.getByTestId("financiamento-reextrair-todos"));
+      expect(onRelerTodos).toHaveBeenCalledTimes(1);
     });
   });
 });

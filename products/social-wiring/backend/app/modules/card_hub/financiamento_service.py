@@ -713,8 +713,86 @@ def configure(*, scheduler: Any = None) -> None:
     logger.info("card_hub financiamento retention sweep configured: every 24h")
 
 
+# ─── Re-read a stored document ───────────────────────────────────────────
+#
+# A reader that improves later (guia de ITBI / proposta ownership, 2026-10)
+# never reached rows already read: the slot offered view/discard only. The
+# re-read runs the SAME `negociacao_extracao_service.extrair` on the bytes
+# already in the bucket — no new storage object; D1 stays inside `extrair`
+# (a human-confirmed value is never overwritten, a difference opens a
+# conflict exactly as at upload).
+
+RELEITURA_SEM_ARQUIVO = "sem_arquivo"
+RELEITURA_EM_ANDAMENTO = "em_andamento"
+
+
+class ReleituraRecusada(Exception):
+    """A document that cannot be re-read — `motivo` is a `RELEITURA_*` code,
+    `mensagem` the pt-BR text a caller shows."""
+
+    def __init__(self, motivo: str, mensagem: str) -> None:
+        super().__init__(mensagem)
+        self.motivo = motivo
+        self.mensagem = mensagem
+
+
+def preparar_releitura(client: Any, documento: dict) -> dict:
+    """Validate a document for a re-read and mark it `pendente` — the
+    synchronous half; the caller schedules `negociacao_extracao_service.
+    extrair`. `pendente` + a fresh attempt budget is the same state an upload
+    leaves, so the D3 sweep retries an interrupted re-read exactly as it does
+    an interrupted first read. Nothing else moves (`extracao_dados` survives
+    until the new read lands; the human lock lives on the applied values).
+
+    Raises `ReleituraRecusada` — never writes — for a document with no stored
+    file or one already `pendente`/`processando`. Returns the patched row."""
+    if not documento.get("storage_path") or not deve_extrair(
+        str(documento.get("tipo_documento") or "")
+    ):
+        raise ReleituraRecusada(
+            RELEITURA_SEM_ARQUIVO,
+            "Este documento não tem um arquivo armazenado para ler novamente.",
+        )
+    if documento.get("extracao_status") in ("pendente", "processando"):
+        raise ReleituraRecusada(
+            RELEITURA_EM_ANDAMENTO, "Este documento já está em processamento.",
+        )
+    patch = {"extracao_status": "pendente", "extracao_tentativas": 0}
+    _t(client, DOCUMENTOS_TABLE).update(patch).eq("id", str(documento["id"])).execute()
+    return {**documento, **patch}
+
+
+def reler_documentos_do_card(
+    client: Any, org_id: UUID, atendimento_id: UUID
+) -> tuple[dict, list[dict]]:
+    """`POST …/negociacao/documentos/reler` → `(contagem, documentos)`: every
+    extractable document of the deal. One with no stored file counts
+    `sem_arquivo`, one already being read `em_andamento`; the rest are marked
+    (`preparar_releitura`) and returned for the caller to schedule — one job
+    each. A failure on one row counts `erros` (logged), never stops the rest."""
+    contagem = {"relidos": 0, "sem_arquivo": 0, "em_andamento": 0, "erros": 0}
+    documentos: list[dict] = []
+    for doc in STORE.listar_linhas(client, org_id, atendimento_id):
+        if not deve_extrair(str(doc.get("tipo_documento") or "")):
+            continue
+        try:
+            documentos.append(preparar_releitura(client, doc))
+        except ReleituraRecusada as exc:
+            contagem["sem_arquivo" if exc.motivo == RELEITURA_SEM_ARQUIVO else "em_andamento"] += 1
+            continue
+        except Exception:  # noqa: BLE001 - one row's failure must not sink the batch
+            logger.error("reler-card: documento %s falhou ao preparar", doc.get("id"), exc_info=True)
+            contagem["erros"] += 1
+            continue
+        contagem["relidos"] += 1
+    return contagem, documentos
+
+
 __all__ = [
     "ALLOWED_MIME_TYPES",
+    "RELEITURA_EM_ANDAMENTO",
+    "RELEITURA_SEM_ARQUIVO",
+    "ReleituraRecusada",
     "CAMPOS_EDITAVEIS",
     "MAX_UPLOAD_BYTES",
     "SITUACOES",
@@ -731,6 +809,8 @@ __all__ = [
     "deve_extrair",
     "listar_acessos",
     "obter",
+    "preparar_releitura",
+    "reler_documentos_do_card",
     "remover",
     "upload",
     "varrer_retencao",

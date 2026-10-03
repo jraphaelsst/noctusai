@@ -1379,6 +1379,71 @@ async def reextrair_financiamento_documento_route(
     return {**documento, "extracao_status": "pendente"}
 
 
+@router.post("/{cliente_id}/financiamento/documentos/{documento_id}/reler")
+async def reler_financiamento_documento_route(
+    cliente_id: UUID,
+    documento_id: UUID,
+    background: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_identity_extractor_factory),
+) -> dict:
+    """Re-read the file already stored (no new object) — what `/extrair`
+    cannot do while a read is pending, and the only way an `ok` reading
+    reaches an improved reader. D1 unchanged (`negociacao_extracao_service.
+    extrair`): confirmed values are kept, differences open conflicts. 404 for
+    another org's document; 409 with no stored file / already processing."""
+    user, org_id = _auth_parts(auth)
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    documento = financiamento_svc.STORE.exigir(client, org_id, atendimento_id, documento_id)
+    try:
+        marcado = financiamento_svc.preparar_releitura(client, documento)
+    except financiamento_svc.ReleituraRecusada as exc:
+        raise HTTPException(status_code=409, detail=exc.mensagem) from exc
+    background.add_task(
+        negociacao_extracao_svc.extrair,
+        client, storage, org_id, atendimento_id, documento_id,
+        extractor=extractor_factory(str(org_id), documento["tipo_documento"]),
+        notification_service=None,
+    )
+    logger.info(
+        "financiamento: documento relido user_id=%s org_id=%s documento_id=%s tipo=%s",
+        getattr(user, "id", None), org_id, documento_id, documento["tipo_documento"],
+    )
+    return marcado
+
+
+@router.post("/{cliente_id}/negociacao/documentos/reler")
+async def reler_documentos_negociacao_route(
+    cliente_id: UUID,
+    background: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage=Depends(get_storage_backend),
+    extractor_factory=Depends(get_identity_extractor_factory),
+) -> dict:
+    """`…/documentos/{id}/reler` for every extractable document of the card's
+    open deal; counts come back now, the reads run as background jobs."""
+    user, org_id = _auth_parts(auth)
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    contagem, documentos = financiamento_svc.reler_documentos_do_card(
+        client, org_id, atendimento_id,
+    )
+    for doc in documentos:
+        background.add_task(
+            negociacao_extracao_svc.extrair,
+            client, storage, org_id, atendimento_id, UUID(str(doc["id"])),
+            extractor=extractor_factory(str(org_id), doc["tipo_documento"]),
+            notification_service=None,
+        )
+    logger.info(
+        "financiamento: card relido user_id=%s org_id=%s cliente_id=%s %s",
+        getattr(user, "id", None), org_id, cliente_id, contagem,
+    )
+    return contagem
+
+
 @router.post("/{cliente_id}/financiamento/documentos/{documento_id}/extracao/confirmar")
 async def confirmar_financiamento_extracao_route(
     cliente_id: UUID,

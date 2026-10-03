@@ -75,6 +75,10 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
             ),
         })
       }
+      onReler={(documentoId) => extracao.reler.mutate(documentoId)}
+      onRelerTodos={() => extracao.relerTodos.mutate()}
+      relendo={extracao.reler.isPending}
+      relendoTodos={extracao.relerTodos.isPending}
       onConfirmarExtracao={(documentoId) =>
         extracao.confirmar.mutate(documentoId, {
           onError: (err: unknown) =>

@@ -23,6 +23,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  FileSearch,
   FileText,
   Loader2,
   XCircle,
@@ -90,6 +91,12 @@ interface Props {
   extraindo?: boolean;
   confirmandoExtracao?: boolean;
   descartandoExtracao?: boolean;
+  /** Re-read the file already stored (an `ok` reading included) — per slot
+   *  and for the whole tab. Optional, same posture as the actions above. */
+  onReler?: (documentoId: string) => void;
+  onRelerTodos?: () => void;
+  relendo?: boolean;
+  relendoTodos?: boolean;
 }
 
 const SITUACOES: SituacaoFinanciamento[] = ["pendente", "aprovado", "recusado"];
@@ -116,6 +123,10 @@ export default function FinanciamentoPanel({
   extraindo,
   confirmandoExtracao,
   descartandoExtracao,
+  onReler,
+  onRelerTodos,
+  relendo,
+  relendoTodos,
   agentes = [],
   agentesLoading,
 }: Props) {
@@ -156,8 +167,30 @@ export default function FinanciamentoPanel({
     ...(f?.fgts ? f?.tipos_fgts ?? [] : [])
   ].filter((t) => !docsPorTipo.has(t)).length;
 
+  // A document with an extraction status is one the server can re-read.
+  const temDocumentoLido = (f?.documentos ?? []).some((d) => d.extracao_status != null);
+
   return (
     <div className="space-y-4" data-testid="financiamento-panel">
+      {onRelerTodos && temDocumentoLido && (
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={loading || relendoTodos}
+            title="Lê de novo todos os documentos já enviados deste negócio. Valores confirmados não são alterados."
+            onClick={onRelerTodos}
+            data-testid="financiamento-reextrair-todos"
+          >
+            {relendoTodos ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <FileSearch className="mr-1 h-4 w-4" />
+            )}
+            Reler documentos
+          </Button>
+        </div>
+      )}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Situação do financiamento</CardTitle>
@@ -330,6 +363,8 @@ export default function FinanciamentoPanel({
         extraindo={extraindo}
         confirmandoExtracao={confirmandoExtracao}
         descartandoExtracao={descartandoExtracao}
+        onReler={onReler}
+        relendo={relendo}
       />
 
       {f?.fgts && (
@@ -348,6 +383,8 @@ export default function FinanciamentoPanel({
           extraindo={extraindo}
           confirmandoExtracao={confirmandoExtracao}
           descartandoExtracao={descartandoExtracao}
+          onReler={onReler}
+          relendo={relendo}
         />
       )}
 
@@ -368,6 +405,8 @@ export default function FinanciamentoPanel({
           extraindo={extraindo}
           confirmandoExtracao={confirmandoExtracao}
           descartandoExtracao={descartandoExtracao}
+          onReler={onReler}
+          relendo={relendo}
         />
 
       <Secao
@@ -385,6 +424,8 @@ export default function FinanciamentoPanel({
           extraindo={extraindo}
           confirmandoExtracao={confirmandoExtracao}
           descartandoExtracao={descartandoExtracao}
+          onReler={onReler}
+          relendo={relendo}
         />
 
       {faltando > 0 && (
@@ -412,6 +453,8 @@ function Secao({
   extraindo,
   confirmandoExtracao,
   descartandoExtracao,
+  onReler,
+  relendo,
 }: {
   titulo: string;
   tipos: string[];
@@ -427,6 +470,8 @@ function Secao({
   extraindo?: boolean;
   confirmandoExtracao?: boolean;
   descartandoExtracao?: boolean;
+  onReler?: (documentoId: string) => void;
+  relendo?: boolean;
 }) {
   // Every documento currently on the deal, so `DocumentoTipoSlot` (which
   // reads the ONE row of its own `tipoDocumento` out of the full list) sees
@@ -458,6 +503,8 @@ function Secao({
             extraindo={extraindo}
             confirmandoExtracao={confirmandoExtracao}
             descartandoExtracao={descartandoExtracao}
+            onReler={onReler}
+            relendo={relendo}
           />
         ))}
       </CardContent>
@@ -490,6 +537,8 @@ function FinanciamentoDocSlot({
   extraindo,
   confirmandoExtracao,
   descartandoExtracao,
+  onReler,
+  relendo,
 }: {
   tipo: string;
   documentos: FinanciamentoDocumento[];
@@ -504,6 +553,8 @@ function FinanciamentoDocSlot({
   extraindo?: boolean;
   confirmandoExtracao?: boolean;
   descartandoExtracao?: boolean;
+  onReler?: (documentoId: string) => void;
+  relendo?: boolean;
 }) {
   const documento = documentoDoTipo(documentos, tipo);
   const label = TIPO_LABEL[tipo] ?? tipo;
@@ -586,6 +637,20 @@ function FinanciamentoDocSlot({
             </Button>
           )}
         </div>
+      )}
+      {/* The file is already stored: an `ok` reading is re-readable too, so
+          an improved reader reaches existing rows without a re-upload.
+          `erro`/`sem_dados` carry their own contextual action above. */}
+      {onReler && documento?.extracao_status === "ok" && (
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => onReler(documento.id)}
+          disabled={loading || relendo}
+          data-testid={`${testId}-reextrair`}
+        >
+          Ler o documento novamente
+        </Button>
       )}
       {documento?.extracao_aviso && (
         <p
