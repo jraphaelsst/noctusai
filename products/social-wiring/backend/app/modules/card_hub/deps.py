@@ -128,6 +128,12 @@ _FACTORY_SHAPED_EXTRATORES: frozenset[str] = frozenset(
             "noctusai_lib.integrations.documents.ficha_cadastral_extractor"
             ".make_ficha_cadastral_extractor"
         ),
+        # `pacto_antenupcial` — same convention, dispatched to
+        # `pacto_antenupcial_service.aplicar_leitura`.
+        (
+            "noctusai_lib.integrations.documents.pacto_antenupcial"
+            ".make_pacto_antenupcial_extractor"
+        ),
     }
 )
 

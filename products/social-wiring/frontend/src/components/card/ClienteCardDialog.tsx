@@ -121,7 +121,8 @@ import {
   progressoChecklist,
 } from "./DocumentoChecklistSection";
 import { CasadoToggle } from "./CasadoToggle";
-import { CertidaoCasamentoSlot, TIPO_CERTIDAO_CASAMENTO } from "./CertidaoCasamentoSlot";
+import { DocumentoTipoSlot } from "./DocumentoTipoSlot";
+import { SLOTS_DO_CASAMENTO } from "./slotsDoCasamento";
 import { estadoCivilExigeConjuge, temArquivoCin } from "@/types/qualificacaoCompletude";
 
 export interface ClienteCardDialogProps {
@@ -886,16 +887,20 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                 (`PessoaDocumentosPanel`) — reads the titular's OWN
                 `documentos` list, the same one Geral's Anexos renders, so
                 there is no second fetch and no second source of truth. */}
-            {titularCasado && (
-              <CertidaoCasamentoSlot
-                testId="certidao-casamento-titular"
-                documentos={props.documentos}
-                uploading={props.uploadingDocumento}
-                onUpload={(file) => props.onUploadDocumento(file, TIPO_CERTIDAO_CASAMENTO)}
-                onVisualizar={props.onOpenDocumento}
-                onRemover={props.onDeleteDocumento}
-              />
-            )}
+            {titularCasado &&
+              SLOTS_DO_CASAMENTO.map((slot) => (
+                <DocumentoTipoSlot
+                  key={slot.tipo}
+                  tipoDocumento={slot.tipo}
+                  label={slot.label}
+                  testId={`${slot.testId}-titular`}
+                  documentos={props.documentos}
+                  uploading={props.uploadingDocumento}
+                  onUpload={(file) => props.onUploadDocumento(file, slot.tipo)}
+                  onVisualizar={props.onOpenDocumento}
+                  onRemover={props.onDeleteDocumento}
+                />
+              ))}
             {props.renderCertidoesDoTitular?.(props.dadosPessoais?.cpf ?? undefined) ?? null}
             {props.renderQualificacaoDoTitular?.() ?? null}
           </>

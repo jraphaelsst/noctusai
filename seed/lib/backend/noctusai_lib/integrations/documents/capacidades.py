@@ -112,6 +112,14 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # utility bill's printed name/CPF belong to whoever it was mailed to,
     # not necessarily this titular, so this module does not claim them even
     # though nothing stops a caller from reading the bytes further.
+    # `pacto_antenupcial.parse_pacto_antenupcial` — the escritura (or its
+    # Livro 3 registro): the couple's regime, the marriage date when the
+    # registro states it, and the two contracting parties (nome + CPF,
+    # `conjuge`). The escritura's own livro/folhas/tabelionato/registro are
+    # document facts, not person fields — carried on the reading itself.
+    "pacto_antenupcial": frozenset(
+        {"regime_bens", "data_casamento", "nome", "cpf", "conjuge"}
+    ),
     "comprovante_endereco": frozenset({"endereco"}),
     # `matricula.find_matricula` (the número off the header) PLUS
     # `matricula_qualificacao.extrair_qualificacoes` (each party's own

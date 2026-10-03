@@ -277,6 +277,29 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
              "regime_bens", "nacionalidade", "profissao", "endereco"}
         ),
     ),
+    # 🔴 `pacto_antenupcial` — the couple's escritura pública (or its Livro 3
+    # registro at the Registro de Imóveis). P4 deal 858 (2026-10-01): a
+    # signed contract cited the pacto's date/tabelião/livro/página and the
+    # product had no type to file it under at all. Same "differently-shaped
+    # reader" dispatch as `ficha_cadastral` above (`pacto_antenupcial_
+    # service.aplicar_leitura`, not the single-titular identity apply): the
+    # reading names TWO people, each matched to a party by CPF, and only
+    # `regime_bens` is written onto them — through the SAME D1 path, so an
+    # existing different value becomes a conflict, never an overwrite. The
+    # escritura's own facts (data/tabelionato/livro/folhas/registro) are
+    # carried on `cliente_documentos.extracao_pacto_antenupcial` (migration
+    # 190), not on any person.
+    Fonte(
+        tipo_documento="pacto_antenupcial",
+        dominio="cliente",
+        entradas=_ENTRADAS_CLIENTE_UPLOAD,
+        extrator=(
+            "noctusai_lib.integrations.documents.pacto_antenupcial"
+            ".make_pacto_antenupcial_extractor"
+        ),
+        origens=frozenset({"pacto_antenupcial"}),
+        campos=frozenset({"regime_bens"}),
+    ),
     # ─── imovel_documentos (imovel_hub/documentos_service) ─────────────────
     Fonte(
         tipo_documento="matricula",
@@ -472,6 +495,7 @@ ROTULOS_TIPO_DOCUMENTO: dict[str, str] = {
     "certidao_nascimento": "Certidão de nascimento",
     "comprovante_endereco": "Comprovante de endereço",
     "ficha_cadastral": "Ficha cadastral / formulário do banco",
+    "pacto_antenupcial": "Pacto antenupcial",
     "matricula": "Matrícula do imóvel",
     "guia_iptu": "Guia do IPTU",
     "cnd_iptu": "CND de IPTU",

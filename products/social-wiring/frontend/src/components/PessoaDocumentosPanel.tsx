@@ -48,7 +48,8 @@ import { AnexosSection } from "@/components/card/AnexosSection";
 import { DocumentoChecklistSection } from "@/components/card/DocumentoChecklistSection";
 import { DadosPessoaisForm } from "@/components/card/DadosPessoaisForm";
 import { CasadoToggle } from "@/components/card/CasadoToggle";
-import { CertidaoCasamentoSlot, TIPO_CERTIDAO_CASAMENTO } from "@/components/card/CertidaoCasamentoSlot";
+import { DocumentoTipoSlot } from "@/components/card/DocumentoTipoSlot";
+import { SLOTS_DO_CASAMENTO } from "@/components/card/slotsDoCasamento";
 import { baixarArquivo } from "@noctusai/lib/components";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 import { estadoCivilExigeConjuge, temArquivoCin } from "@/types/qualificacaoCompletude";
@@ -229,52 +230,56 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           file docblock on `CertidaoCasamentoSlot` for why this exists at
           all. Reads `documentos` off the SAME list Anexos below renders,
           never a second fetch. */}
-      {casado && (
-        <CertidaoCasamentoSlot
-          testId={`certidao-casamento-${clienteId}`}
-          documentos={documentos.data ?? []}
-          uploading={docs.upload.isPending}
-          onUpload={(file) =>
-            docs.upload.mutate(
-              { file, tipoDocumento: TIPO_CERTIDAO_CASAMENTO },
-              {
-                onError: (e) =>
-                  toast.error(erro(e, "Não foi possível enviar a certidão de casamento.")),
-              },
-            )
-          }
-          onVisualizar={(documentoId) =>
-            docs.getUrl.mutate(
-              { documentoId, intent: "view" },
-              {
-                onSuccess: (res) =>
-                  window.open(res.url, "_blank", "noopener,noreferrer"),
-                onError: (e) =>
-                  toast.error(erro(e, "Não foi possível abrir a certidão de casamento.")),
-              },
-            )
-          }
-          onBaixar={(documentoId, nomeArquivo) =>
-            docs.getUrl.mutate(
-              { documentoId, intent: "download" },
-              {
-                onSuccess: (res) => void baixarArquivo(res.url, nomeArquivo),
-                onError: (e) =>
-                  toast.error(erro(e, "Não foi possível baixar a certidão de casamento.")),
-              },
-            )
-          }
-          onRemover={(documentoId, motivo) =>
-            docs.remove.mutate(
-              { documentoId, motivo },
-              {
-                onError: (e) =>
-                  toast.error(erro(e, "Não foi possível descartar a certidão de casamento.")),
-              },
-            )
-          }
-        />
-      )}
+      {casado &&
+        SLOTS_DO_CASAMENTO.map((slot) => (
+          <DocumentoTipoSlot
+            key={slot.tipo}
+            tipoDocumento={slot.tipo}
+            label={slot.label}
+            testId={`${slot.testId}-${clienteId}`}
+            documentos={documentos.data ?? []}
+            uploading={docs.upload.isPending}
+            onUpload={(file) =>
+              docs.upload.mutate(
+                { file, tipoDocumento: slot.tipo },
+                {
+                  onError: (e) =>
+                    toast.error(erro(e, `Não foi possível enviar ${slot.artigo}.`)),
+                },
+              )
+            }
+            onVisualizar={(documentoId) =>
+              docs.getUrl.mutate(
+                { documentoId, intent: "view" },
+                {
+                  onSuccess: (res) =>
+                    window.open(res.url, "_blank", "noopener,noreferrer"),
+                  onError: (e) =>
+                    toast.error(erro(e, `Não foi possível abrir ${slot.artigo}.`)),
+                },
+              )
+            }
+            onBaixar={(documentoId, nomeArquivo) =>
+              docs.getUrl.mutate(
+                { documentoId, intent: "download" },
+                {
+                  onSuccess: (res) => void baixarArquivo(res.url, nomeArquivo),
+                  onError: (e) =>
+                    toast.error(erro(e, `Não foi possível baixar ${slot.artigo}.`)),
+                },
+              )
+            }
+            onRemover={(documentoId, motivo) =>
+              docs.remove.mutate(
+                { documentoId, motivo },
+                {
+                  onError: (e) =>
+                    toast.error(erro(e, `Não foi possível descartar ${slot.artigo}.`)),
+                },
+              )
+            }
+          />
+        ))}
       <AnexosSection
         testId={`anexos-section-${clienteId}`}
         documentos={documentos.data ?? []}

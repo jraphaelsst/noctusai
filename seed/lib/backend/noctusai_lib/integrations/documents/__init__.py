@@ -204,6 +204,15 @@ from noctusai_lib.integrations.documents.ficha_cadastral_extractor import (
 from noctusai_lib.integrations.documents.ficha_cadastral_texto import (
     parse_texto as parse_ficha_cadastral_texto,
 )
+from noctusai_lib.integrations.documents.pacto_antenupcial import (
+    ConjugePacto,
+    FakePactoAntenupcialExtractor,
+    PactoAntenupcialExtractor,
+    PactoAntenupcialLido,
+    RegistroPacto,
+    make_pacto_antenupcial_extractor,
+    parse_pacto_antenupcial,
+)
 from noctusai_lib.integrations.documents.matricula_ruido import (
     RuidoKind,
     RuidoSpan,
@@ -267,6 +276,9 @@ _LAZY: dict[str, str] = {
     ),
     "LadderFichaCadastralExtractor": (
         "noctusai_lib.integrations.documents.ficha_cadastral_extractor"
+    ),
+    "LadderPactoAntenupcialExtractor": (
+        "noctusai_lib.integrations.documents.pacto_antenupcial"
     ),
     "LadderDocumentTranscriber": (
         "noctusai_lib.integrations.documents.transcription"
@@ -368,6 +380,7 @@ __all__ = [
     "LadderCrednetExtractor",
     "LadderDocumentTranscriber",
     "LadderFichaCadastralExtractor",
+    "LadderPactoAntenupcialExtractor",
     "LadderGuiaItbiExtractor",
     "LadderIdentityExtractor",
     "LadderMatriculaExtractor",
@@ -428,6 +441,13 @@ __all__ = [
     "make_crednet_extractor",
     "make_document_transcriber",
     "make_ficha_cadastral_extractor",
+    "make_pacto_antenupcial_extractor",
+    "parse_pacto_antenupcial",
+    "ConjugePacto",
+    "FakePactoAntenupcialExtractor",
+    "PactoAntenupcialExtractor",
+    "PactoAntenupcialLido",
+    "RegistroPacto",
     "make_guia_itbi_extractor",
     "make_identity_extractor",
     "make_matricula_extractor",

@@ -156,6 +156,28 @@ describe("PessoaDocumentosPanel — marriage-gated UI (this slice)", () => {
       expect.any(Object),
     );
   });
+
+  it("a married party also gets the pacto antenupcial slot, filed as 'pacto_antenupcial'", async () => {
+    mockChecklist.mockReturnValue(checklist("casado"));
+    const { PessoaDocumentosPanel } = await import("./PessoaDocumentosPanel");
+    render(<PessoaDocumentosPanel clienteId="cli-1" />);
+    const file = new File(["x"], "pacto.pdf", { type: "application/pdf" });
+    fireEvent.change(
+      screen.getByTestId("pacto-antenupcial-cli-1-arquivo-input") as HTMLInputElement,
+      { target: { files: [file] } },
+    );
+    expect(mockUploadMutate).toHaveBeenCalledWith(
+      { file, tipoDocumento: "pacto_antenupcial" },
+      expect.any(Object),
+    );
+  });
+
+  it("🔴 a single party gets no pacto slot either", async () => {
+    mockChecklist.mockReturnValue(checklist("solteiro"));
+    const { PessoaDocumentosPanel } = await import("./PessoaDocumentosPanel");
+    render(<PessoaDocumentosPanel clienteId="cli-1" />);
+    expect(screen.queryByTestId("pacto-antenupcial-cli-1-row")).toBeNull();
+  });
 });
 
 describe("PessoaDocumentosPanel — a party's upload posts to THAT party's cliente_id (prod card 755253934)", () => {

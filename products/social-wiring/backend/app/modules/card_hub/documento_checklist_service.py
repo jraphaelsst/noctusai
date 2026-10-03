@@ -196,6 +196,14 @@ ITENS: tuple[dict[str, Any], ...] = (
     # already keys purely off `item["documentos"]`, no special-casing).
     {"key": "serasa_crednet", "label": "Serasa Crednet",
      "documento": "serasa_crednet", "documentos": ("serasa_crednet",)},
+    # Migration 190 — scoped (``escopo``, see `_ESCOPOS`): shown only when
+    # the party's regime de bens is one a pacto antenupcial must establish
+    # (or a pacto is already on file), so a comunhão-parcial or single
+    # party's card never asks for a document that does not exist for them.
+    # No ``documentos`` slot here: the married party's named
+    # `pacto_antenupcial` slot (FE `SLOTS_DO_CASAMENTO`) is the upload.
+    {"key": "pacto_antenupcial", "label": "Pacto antenupcial",
+     "documento": "pacto_antenupcial", "escopo": "pacto_antenupcial"},
 )
 
 ITEM_KEYS = tuple(item["key"] for item in ITENS)
@@ -318,6 +326,39 @@ _FONTES: dict[str, dict[str, Any]] = {
     },
 }
 
+#: Regimes a pacto antenupcial must establish (CC arts. 1.640 par. único,
+#: 1.653): the convencional separação, participação final nos aquestos,
+#: and comunhão universal for a marriage under Lei 6.515/77 (in force
+#: 26/12/1977 — before it, comunhão universal was the legal default and
+#: needed no pacto). `separacao_obrigatoria` is imposed by law, never by a
+#: pacto; `comunhao_parcial` is the default regime.
+_REGIMES_COM_PACTO = frozenset({"separacao_total", "participacao_final_aquestos"})
+_INICIO_LEI_DIVORCIO = "1977-12-26"
+
+
+def _exige_pacto_antenupcial(cliente: dict, documentos: dict[str, dict]) -> bool:
+    if "pacto_antenupcial" in documentos:
+        return True
+    regime = cliente.get("regime_bens")
+    if regime in _REGIMES_COM_PACTO:
+        return True
+    if regime == "comunhao_universal":
+        casamento = str(cliente.get("data_casamento") or "")[:10]
+        return not casamento or casamento >= _INICIO_LEI_DIVORCIO
+    return False
+
+
+#: Scoped items (``escopo``): the item is LISTED only when its predicate
+#: holds — the same "drop, don't untick" posture `serasa_crednet` takes, so
+#: an item that cannot apply to this person is never a permanently-red row.
+_ESCOPOS: dict[str, dict[str, Any]] = {
+    "pacto_antenupcial": {
+        "colunas": ("regime_bens", "data_casamento"),
+        "visivel": _exige_pacto_antenupcial,
+    },
+}
+
+
 #: Columns read for DISPLAY beside the checklist but never used to derive a
 #: tick.
 #:
@@ -344,6 +385,12 @@ _CLIENTE_COLUNAS = tuple(
             for i in ITENS
             for fonte in i.get("fontes", ())
             for col in _FONTES[fonte]["colunas"]
+        ]
+        + [
+            col
+            for i in ITENS
+            if i.get("escopo")
+            for col in _ESCOPOS[i["escopo"]]["colunas"]
         ]
         + list(_CLIENTE_COLUNAS_EXIBICAO)
     )
@@ -806,10 +853,13 @@ def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     )
     by_key = {r["item_key"]: r for r in (res.data or [])}
 
-    itens_visiveis = ITENS
+    itens_visiveis = tuple(
+        i for i in ITENS
+        if not i.get("escopo") or _ESCOPOS[i["escopo"]]["visivel"](cliente or {}, documentos)
+    )
     if not _e_certificando(client, org_id, cliente_id):
         itens_visiveis = tuple(
-            i for i in ITENS if i["key"] != _ITEM_KEY_SERASA_CREDNET
+            i for i in itens_visiveis if i["key"] != _ITEM_KEY_SERASA_CREDNET
         )
 
     sugestoes = identidade_svc.sugestoes_pendentes(client, org_id, cliente_id)

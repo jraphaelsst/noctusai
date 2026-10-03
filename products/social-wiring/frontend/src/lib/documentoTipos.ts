@@ -50,6 +50,7 @@ export const TIPO_LABEL_CLIENTE: Record<string, string> = {
   cpf: "CPF",
   certidao_casamento: "Certidão de casamento",
   certidao_nascimento: "Certidão de nascimento",
+  pacto_antenupcial: "Pacto antenupcial",
   // P0c contract §F — the identity item's own two upload slots
   // (`IdentidadeChecklistRow`) and the Serasa Crednet checklist item (§H8).
   cnh: "CNH",

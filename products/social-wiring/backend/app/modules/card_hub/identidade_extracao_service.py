@@ -3047,6 +3047,22 @@ async def extrair_identidade(
             cep_lookup=cep_lookup,
         )
 
+    # A pacto antenupcial names the COUPLE — both spouses matched by CPF,
+    # only `regime_bens` written onto each; see `pacto_antenupcial_service`.
+    if tipo == "pacto_antenupcial":
+        from app.modules.card_hub import pacto_antenupcial_service
+
+        pacto_extractor = extractor
+        if pacto_extractor is None:
+            from app.modules.card_hub.deps import _build_identity_extractor
+
+            pacto_extractor = _build_identity_extractor(str(org_id), "pacto_antenupcial")
+        return await pacto_antenupcial_service.aplicar_leitura(
+            client, org_id, cliente_id, documento_id, doc, blob.data,
+            extractor=pacto_extractor,
+            notification_service=notification_service,
+        )
+
     # 🔴 The page cap is chosen from the document's TYPE, not from a global
     # default — see `TIPOS_LEITURA_INTEGRAL`. A certidão de casamento must be
     # read whole or its averbação (the divorce) never reaches the model, and

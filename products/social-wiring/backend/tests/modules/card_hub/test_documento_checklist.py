@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from app.modules.card_hub import documento_checklist_service as svc
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row, documento_row
 
@@ -30,7 +32,7 @@ def _auth() -> dict:
 #: — every fixture in this file that asserts against `svc.ITENS` directly
 #: needs this filtered view instead.
 _ITENS_SEM_ATENDIMENTO = tuple(
-    i for i in svc.ITENS if i["key"] != "serasa_crednet"
+    i for i in svc.ITENS if i["key"] != "serasa_crednet" and not i.get("escopo")
 )
 
 
@@ -426,3 +428,43 @@ class TestIdentidadeItem:
             for key in ("nome_completo", "celular", "email", "data_nascimento",
                         "profissao", "genero")
         )
+
+
+class TestPactoAntenupcialEscopo:
+    """Migration 190 — the pacto item is LISTED only for a regime a pacto
+    must establish (or when one is on file); never a permanently-red row
+    for a comunhão-parcial / single party."""
+
+    def _keys(self, client, cid):
+        body = client.get(f"/api/clientes/{cid}/documento-checklist", headers=_auth()).json()
+        return {i["key"]: i for i in body["items"]}
+
+    def test_sem_regime_nao_lista(self, client, scoped):
+        assert "pacto_antenupcial" not in self._keys(client, _seed(scoped))
+
+    @pytest.mark.parametrize("regime", ["comunhao_parcial", "separacao_obrigatoria"])
+    def test_regime_sem_pacto_nao_lista(self, client, scoped, regime):
+        cid = _seed(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, regime_bens=regime)])
+        assert "pacto_antenupcial" not in self._keys(client, cid)
+
+    def test_separacao_total_lista_desmarcado(self, client, scoped):
+        cid = _seed(scoped)
+        scoped.set_table_data("clientes", [cliente_row(cid, regime_bens="separacao_total")])
+        item = self._keys(client, cid)["pacto_antenupcial"]
+        assert item["concluido"] is False
+
+    def test_comunhao_universal_antes_de_1977_nao_lista(self, client, scoped):
+        cid = _seed(scoped)
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, regime_bens="comunhao_universal", data_casamento="1970-05-01",
+        )])
+        assert "pacto_antenupcial" not in self._keys(client, cid)
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, regime_bens="comunhao_universal", data_casamento="1990-05-01",
+        )])
+        assert "pacto_antenupcial" in self._keys(client, cid)
+
+    def test_derivar_marca_pelo_documento(self):
+        assert svc.derivar({}, frozenset({"pacto_antenupcial"}))["pacto_antenupcial"] is True
+        assert svc.derivar({}, frozenset())["pacto_antenupcial"] is False
