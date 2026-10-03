@@ -198,6 +198,17 @@ export interface ContratoPatch {
  * lines). A version generated while the contract was still digital is never
  * handed out for printing — it would print the digital-signature clause.
  */
+/**
+ * contrato-aditivos-CONTRACT: an aditivo amends a contract that is
+ * `assinado`, or that has an `assinatura_data` — and is not `cancelado`. The
+ * server re-checks (409 `CONTRATO_ORIGINAL_NAO_ASSINADO`); this only decides
+ * whether the card offers the "Aditivos" section at all.
+ */
+export function contratoAdmiteAditivo(contrato: ContratoOut): boolean {
+  if (contrato.status === "cancelado") return false;
+  return contrato.status === "assinado" || !!contrato.assinatura_data;
+}
+
 export function versaoParaImpressao(contrato: ContratoOut): VersaoOut | null {
   const atual = contrato.versao_atual;
   if (atual && atual.origem === "gerado" && atual.modalidade_assinatura === "fisica") {
@@ -544,6 +555,10 @@ export { formatBytes };
 
 const KEY = (clienteId: string) => ["sw", "clientes", clienteId, "contratos"] as const;
 
+/** The contratos family root — exported so a sub-resource hook (aditivos)
+ *  nests under it and every contract invalidation still reaches it. */
+export const contratosQueryKey = KEY;
+
 const GERACAO_KEY = (clienteId: string, contratoId: string) =>
   [...KEY(clienteId), contratoId, "geracao"] as const;
 
@@ -713,13 +728,15 @@ async function extractDetailMessage(response: Response): Promise<string> {
  * translating its `ApiError` into `ContratoGeracaoError` so the readiness
  * section reads `code` + `details.{faltando,bloqueios}` from the 400
  * `CONTRATO_INCOMPLETO` body — which `ApiError` now carries as `body`.
+ *
+ * Exported: an aditivo's `gerar` answers the SAME error shapes (400
+ * `ADITIVO_INCOMPLETO` with `details.{faltando,bloqueios}`, 422
+ * `CONTRATO_LINT` / `CONTRATO_PDF_NAO_GERADO`), so it goes through this one
+ * translation rather than a copy.
  */
-async function postGerarContrato(
-  url: string,
-  body: GerarContratoInput,
-): Promise<GerarContratoResult> {
+export async function postGeracao<T>(url: string, body: unknown): Promise<T> {
   try {
-    return await api.post<GerarContratoResult>(url, body);
+    return await api.post<T>(url, body);
   } catch (err) {
     if (err instanceof ApiError) {
       const envelope = err.body as { error?: { message?: string } } | undefined;
@@ -739,7 +756,7 @@ async function postGerarContrato(
  * read `code`/`details.{faltando,provedor_mensagem}` from the §3.1/§3.3
  * error bodies. `message` prefers the server's own `error.message` over
  * `ApiError.message` — the latter carries the `[status]` prefix — same
- * discipline as `postGerarContrato`.
+ * discipline as `postGeracao`.
  */
 async function postAssinatura<T>(url: string, body: unknown): Promise<T> {
   try {
@@ -875,9 +892,10 @@ export function useContratoMutations(clienteId: string) {
       contratoId: string;
       assinaturaData?: string;
     }) =>
-      postGerarContrato(`${base(clienteId)}/${encodeURIComponent(contratoId)}/gerar`, {
-        assinatura_data: assinaturaData,
-      }),
+      postGeracao<GerarContratoResult>(
+        `${base(clienteId)}/${encodeURIComponent(contratoId)}/gerar`,
+        { assinatura_data: assinaturaData } satisfies GerarContratoInput,
+      ),
     onSuccess: (_data, variables) => {
       invalidate();
       qc.invalidateQueries({ queryKey: GERACAO_KEY(clienteId, variables.contratoId) });

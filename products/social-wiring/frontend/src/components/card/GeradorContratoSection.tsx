@@ -17,6 +17,7 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +29,8 @@ import {
   MODELO_LABEL,
   type ContratoGeracaoError,
   type ContratoGeracaoStatus,
+  type GeracaoAviso,
+  type GeracaoBloqueio,
   type GeracaoFaltando,
   type GeracaoOnde,
 } from "@/hooks/useContratos";
@@ -190,17 +193,19 @@ function SugestoesLista({
   campo,
   parteId,
   onIrPara,
+  prefixo,
 }: {
   sugestoes?: GeracaoSugestao[];
   campo: string;
   parteId: string | null;
   onIrPara?: (destino: GeracaoDestino) => void;
+  prefixo: string;
 }) {
   if (!sugestoes || sugestoes.length === 0) return null;
   return (
     <ul
       className="ml-3 mt-0.5 list-disc space-y-0.5 text-muted-foreground/80"
-      data-testid={`gerador-contrato-faltando-sugestoes-${campo}-${parteId ?? ""}`}
+      data-testid={`${prefixo}-faltando-sugestoes-${campo}-${parteId ?? ""}`}
     >
       {sugestoes.map((sugestao, i) => {
         const documentoRotulo = sugestao.tipo_documento ?? sugestao.rotulo;
@@ -217,7 +222,7 @@ function SugestoesLista({
                 <Link
                   to={resolved.href}
                   className="text-primary hover:underline"
-                  data-testid={`gerador-contrato-faltando-sugestao-link-${campo}-${parteId ?? ""}-${i}`}
+                  data-testid={`${prefixo}-faltando-sugestao-link-${campo}-${parteId ?? ""}-${i}`}
                 >
                   {sugestao.rotulo}
                 </Link>
@@ -231,7 +236,7 @@ function SugestoesLista({
                   variant="link"
                   size="sm"
                   className="h-auto p-0 text-xs font-normal"
-                  data-testid={`gerador-contrato-faltando-sugestao-ir-${campo}-${parteId ?? ""}-${i}`}
+                  data-testid={`${prefixo}-faltando-sugestao-ir-${campo}-${parteId ?? ""}-${i}`}
                   onClick={() => onIrPara?.(sugestao.destino!)}
                 >
                   Resolver
@@ -263,9 +268,11 @@ function SugestoesLista({
 function FaltandoLinha({
   item,
   onIrPara,
+  prefixo,
 }: {
   item: FaltandoComDestino;
   onIrPara?: (destino: GeracaoDestino) => void;
+  prefixo: string;
 }) {
   const destino = item.destino;
 
@@ -279,6 +286,7 @@ function FaltandoLinha({
           campo={item.campo}
           parteId={item.parte_id}
           onIrPara={onIrPara}
+          prefixo={prefixo}
         />
       </li>
     );
@@ -302,7 +310,7 @@ function FaltandoLinha({
               variant="link"
               size="sm"
               className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
-              data-testid={`gerador-contrato-faltando-ir-${item.campo}-${item.parte_id ?? ""}`}
+              data-testid={`${prefixo}-faltando-ir-${item.campo}-${item.parte_id ?? ""}`}
               onClick={() => onIrPara?.(destino)}
             >
               Resolver
@@ -314,12 +322,13 @@ function FaltandoLinha({
             campo={item.campo}
             parteId={item.parte_id}
             onIrPara={onIrPara}
+            prefixo={prefixo}
           />
         </li>
       );
     }
     return (
-      <li data-testid={`gerador-contrato-faltando-guidance-${item.campo}-${item.parte_id ?? ""}`}>
+      <li data-testid={`${prefixo}-faltando-guidance-${item.campo}-${item.parte_id ?? ""}`}>
         {item.rotulo}
         {resolved.subpageLabel && (
           <span className="block text-muted-foreground/70">
@@ -331,6 +340,7 @@ function FaltandoLinha({
           campo={item.campo}
           parteId={item.parte_id}
           onIrPara={onIrPara}
+          prefixo={prefixo}
         />
       </li>
     );
@@ -350,7 +360,7 @@ function FaltandoLinha({
           variant="link"
           size="sm"
           className="h-auto shrink-0 gap-1 p-0 text-xs font-normal"
-          data-testid={`gerador-contrato-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
+          data-testid={`${prefixo}-faltando-link-${item.campo}-${item.parte_id ?? ""}`}
         >
           <Link to={resolved.href ?? rotaDoDestino(destino)}>
             Resolver
@@ -363,8 +373,125 @@ function FaltandoLinha({
         campo={item.campo}
         parteId={item.parte_id}
         onIrPara={onIrPara}
+        prefixo={prefixo}
       />
     </li>
+  );
+}
+
+/**
+ * The readiness lists — `bloqueios` (red), `avisos` (amber) and `faltando`
+ * grouped by WHERE to go fill it, each line actionable off its `destino`.
+ * Shared by the contract generator (below) and the aditivo generator
+ * (`aditivos/AditivoGeracaoSection`): the backend answers the SAME item
+ * shapes for both, so one renderer keeps "Resolver" behaving identically.
+ * `entreBloqueiosEAvisos` is the contract's PCEN acknowledgment slot.
+ * `prefixo` namespaces every test id.
+ */
+export function ProntidaoListas({
+  faltando,
+  bloqueios,
+  avisos,
+  pronto,
+  onIrPara,
+  entreBloqueiosEAvisos,
+  prefixo = "gerador-contrato",
+}: {
+  faltando: GeracaoFaltando[];
+  bloqueios: GeracaoBloqueio[];
+  avisos: GeracaoAviso[];
+  pronto: boolean;
+  onIrPara?: (destino: GeracaoDestino) => void;
+  entreBloqueiosEAvisos?: ReactNode;
+  prefixo?: string;
+}) {
+  const grupos = agruparPorOnde(faltando);
+  return (
+    <>
+      {bloqueios.length > 0 && (
+        <ul className="space-y-1" data-testid={`${prefixo}-bloqueios`}>
+          {bloqueios.map((b) => (
+            <li key={b.codigo} className="text-xs text-destructive">
+              {b.mensagem}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {entreBloqueiosEAvisos}
+
+      {avisos.length > 0 && (
+        <ul className="space-y-1" data-testid={`${prefixo}-avisos`}>
+          {avisos.map((a) => (
+            <li key={a.codigo} className="text-xs text-amber-700">
+              {a.mensagem}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!pronto && grupos.length > 0 && (
+        <div className="space-y-2" data-testid={`${prefixo}-faltando`}>
+          {grupos.map(([onde, itens]) => (
+            <div key={onde}>
+              <p className="text-xs font-medium">{ONDE_ROTULOS[onde] ?? onde}</p>
+              <ul className="ml-3 list-disc text-xs text-muted-foreground">
+                {itens.map((item) => (
+                  <FaltandoLinha
+                    key={`${item.campo}-${item.parte_id ?? ""}`}
+                    item={item}
+                    onIrPara={onIrPara}
+                    prefixo={prefixo}
+                  />
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * The last generate attempt's refusal (`400 *_INCOMPLETO` / `422
+ * CONTRATO_LINT`), with each `details` item on its own line — shared by the
+ * contract and the aditivo generator for the same reason as `ProntidaoListas`.
+ */
+export function ErroGeracaoDetalhes({
+  erro,
+  prefixo = "gerador-contrato",
+}: {
+  erro: ContratoGeracaoError;
+  prefixo?: string;
+}) {
+  return (
+    <div
+      className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
+      data-testid={`${prefixo}-erro-incompleto`}
+    >
+      <p className="text-destructive">{erro.message}</p>
+      {erro.details?.faltando?.map((item) => (
+        <p key={`f-${item.campo}-${item.parte_id ?? ""}`} className="text-muted-foreground">
+          • {item.rotulo}
+        </p>
+      ))}
+      {erro.details?.confirmacoes?.map((c) => (
+        <p key={`c-${c.resultado_id ?? c.rotulo}`} className="text-muted-foreground">
+          • Aguardando ciência: {c.mensagem}
+        </p>
+      ))}
+      {erro.details?.bloqueios?.map((b) => (
+        <p key={`b-${b.codigo}`} className="text-muted-foreground">
+          • {b.mensagem}
+        </p>
+      ))}
+      {erro.details?.lint?.map((l, i) => (
+        <p key={`l-${l.codigo}-${i}`} className="text-muted-foreground">
+          • {l.mensagem}
+        </p>
+      ))}
+    </div>
   );
 }
 
@@ -437,7 +564,6 @@ export default function GeradorContratoSection({
     );
   }
 
-  const grupos = agruparPorOnde(status.faltando);
   const confirmacoes = status.confirmacoes ?? [];
   const aguardandoCiencia = confirmacoes.some((c) => !c.ciente);
   // "Faltam dados" is for missing/blocking data; a deal that is only waiting
@@ -486,65 +612,37 @@ export default function GeradorContratoSection({
         </p>
       )}
 
-      {status.bloqueios.length > 0 && (
-        <ul className="space-y-1" data-testid="gerador-contrato-bloqueios">
-          {status.bloqueios.map((b) => (
-            <li key={b.codigo} className="text-xs text-destructive">
-              {b.mensagem}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {confirmacoes.length > 0 && onCienciaPcen && (
-        <div className="space-y-2" data-testid="gerador-contrato-confirmacoes">
-          {confirmacoes.map((c) => (
-            <div key={`${c.codigo}-${c.resultado_id ?? c.parte_id ?? c.rotulo}`} className="space-y-1">
-              <p className="text-xs font-medium">{c.rotulo}</p>
-              <PcenCiencia
-                testId={`gerador-contrato-confirmacao-${c.resultado_id ?? c.rotulo}`}
-                titulo={c.titulo}
-                explicacao={c.explicacao}
-                validadeAte={c.validade_ate}
-                ciente={c.ciente}
-                acoes={c.acoes}
-                contexto={c.rotulo}
-                onEntendi={() => onCienciaPcen(c.resultado_id as string, "entendi")}
-                onDuvida={() => onCienciaPcen(c.resultado_id as string, "duvida")}
-              />
-            </div>
-          ))}
-        </div>
-      )}
-
-      {status.avisos.length > 0 && (
-        <ul className="space-y-1" data-testid="gerador-contrato-avisos">
-          {status.avisos.map((a) => (
-            <li key={a.codigo} className="text-xs text-amber-700">
-              {a.mensagem}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {!status.pronto && grupos.length > 0 && (
-        <div className="space-y-2" data-testid="gerador-contrato-faltando">
-          {grupos.map(([onde, itens]) => (
-            <div key={onde}>
-              <p className="text-xs font-medium">{ONDE_ROTULOS[onde] ?? onde}</p>
-              <ul className="ml-3 list-disc text-xs text-muted-foreground">
-                {itens.map((item) => (
-                  <FaltandoLinha
-                    key={`${item.campo}-${item.parte_id ?? ""}`}
-                    item={item}
-                    onIrPara={onIrPara}
-                  />
+      <ProntidaoListas
+        faltando={status.faltando}
+        bloqueios={status.bloqueios}
+        avisos={status.avisos}
+        pronto={status.pronto}
+        onIrPara={onIrPara}
+        entreBloqueiosEAvisos={
+          <>
+            {confirmacoes.length > 0 && onCienciaPcen && (
+              <div className="space-y-2" data-testid="gerador-contrato-confirmacoes">
+                {confirmacoes.map((c) => (
+                  <div key={`${c.codigo}-${c.resultado_id ?? c.parte_id ?? c.rotulo}`} className="space-y-1">
+                    <p className="text-xs font-medium">{c.rotulo}</p>
+                    <PcenCiencia
+                      testId={`gerador-contrato-confirmacao-${c.resultado_id ?? c.rotulo}`}
+                      titulo={c.titulo}
+                      explicacao={c.explicacao}
+                      validadeAte={c.validade_ate}
+                      ciente={c.ciente}
+                      acoes={c.acoes}
+                      contexto={c.rotulo}
+                      onEntendi={() => onCienciaPcen(c.resultado_id as string, "entendi")}
+                      onDuvida={() => onCienciaPcen(c.resultado_id as string, "duvida")}
+                    />
+                  </div>
                 ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
+              </div>
+            )}
+          </>
+        }
+      />
 
       <div className="flex flex-wrap items-end gap-2">
         <div className="space-y-1">
@@ -576,34 +674,7 @@ export default function GeradorContratoSection({
         </Button>
       </div>
 
-      {erroGeracao && (
-        <div
-          className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
-          data-testid="gerador-contrato-erro-incompleto"
-        >
-          <p className="text-destructive">{erroGeracao.message}</p>
-          {erroGeracao.details?.faltando?.map((item) => (
-            <p key={`f-${item.campo}-${item.parte_id ?? ""}`} className="text-muted-foreground">
-              • {item.rotulo}
-            </p>
-          ))}
-          {erroGeracao.details?.confirmacoes?.map((c) => (
-            <p key={`c-${c.resultado_id ?? c.rotulo}`} className="text-muted-foreground">
-              • Aguardando ciência: {c.mensagem}
-            </p>
-          ))}
-          {erroGeracao.details?.bloqueios?.map((b) => (
-            <p key={`b-${b.codigo}`} className="text-muted-foreground">
-              • {b.mensagem}
-            </p>
-          ))}
-          {erroGeracao.details?.lint?.map((l, i) => (
-            <p key={`l-${l.codigo}-${i}`} className="text-muted-foreground">
-              • {l.mensagem}
-            </p>
-          ))}
-        </div>
-      )}
+      {erroGeracao && <ErroGeracaoDetalhes erro={erroGeracao} />}
 
       {avisosGerados && avisosGerados.length > 0 && (
         <div

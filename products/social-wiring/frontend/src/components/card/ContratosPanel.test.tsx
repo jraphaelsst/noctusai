@@ -118,6 +118,27 @@ async function render(over: Record<string, unknown> = {}) {
   return { ...view, ...rtl, props };
 }
 
+describe("ContratosPanel — aditivos (contrato-aditivos-CONTRACT)", () => {
+  it("🔴 offers 'Aditivos' only on a contract that admits one, and opens it lazily", async () => {
+    const renderAditivos = vi.fn((contratoId: string, aberto: boolean) => (
+      <div data-testid={`aditivos-${contratoId}-${aberto ? "aberto" : "fechado"}`} />
+    ));
+    const { screen, fireEvent } = await render({
+      renderAditivos,
+      contratos: [
+        contrato({ id: "assinado", status: "assinado" }),
+        contrato({ id: "rascunho", status: "rascunho" }),
+        contrato({ id: "cancelado", status: "cancelado", assinatura_data: "2026-09-01" }),
+      ],
+    });
+    expect(screen.getByTestId("contrato-aditivos-toggle-assinado")).toBeTruthy();
+    expect(screen.queryByTestId("contrato-aditivos-toggle-rascunho")).toBeNull();
+    expect(screen.queryByTestId("contrato-aditivos-toggle-cancelado")).toBeNull();
+    fireEvent.click(screen.getByTestId("contrato-aditivos-toggle-assinado"));
+    expect(renderAditivos).toHaveBeenLastCalledWith("assinado", true);
+  });
+});
+
 describe("ContratosPanel", () => {
   it("names both upload AND auto-generation in the empty state", async () => {
     const { screen } = await render({ contratos: [] });

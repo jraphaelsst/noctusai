@@ -108,6 +108,7 @@ import { Textarea } from "@/components/ui/textarea";
 
 import { ContratoModalidadeSection } from "@/components/card/ContratoModalidadeSection";
 import { RevisaoJuridicaSection } from "@/components/card/RevisaoJuridicaSection";
+import { VersaoRow } from "@/components/card/VersaoRow";
 import type {
   AssinaturaEntry,
   DownloadOpcoes,
@@ -124,6 +125,7 @@ import {
   STATUS_ASSINATURA_LABEL,
   STATUS_LABEL,
   aguardandoRevisaoJuridica,
+  contratoAdmiteAditivo,
   envelopeVivo,
   formatBytes,
   validateContratoFile,
@@ -198,6 +200,12 @@ interface Props {
    *  `renderGeradorContrato`. Optional — omitted entirely while the caller
    *  has not wired it. */
   renderTestemunhasSelect?: (contratoId: string, aberto: boolean) => ReactNode;
+  /** Renders the "Aditivos" block (contrato-aditivos-CONTRACT) for one
+   *  contract — offered only on a contract that admits one
+   *  (`contratoAdmiteAditivo`: assinado or dated, not cancelado). `aberto`
+   *  gates the caller's lazy fetch, same discipline as
+   *  `renderGeradorContrato`. Optional — omitted entirely while not wired. */
+  renderAditivos?: (contratoId: string, aberto: boolean) => ReactNode;
   /** `contrato.id` → its `useAssinaturas` entry. A missing key means "never
    *  eligible" (no `gerado` version ever existed) and reads the same as a
    *  resolved `data: null` — see `_AssinaturaSection`. */
@@ -256,6 +264,7 @@ export default function ContratosPanel({
   renderGeradorContrato,
   renderProveniencia,
   renderTestemunhasSelect,
+  renderAditivos,
   assinaturas = {},
   onAbrirEnvioAssinatura,
   onCancelarAssinatura,
@@ -367,6 +376,7 @@ export default function ContratosPanel({
               renderGeradorContrato={renderGeradorContrato}
               renderProveniencia={renderProveniencia}
               renderTestemunhasSelect={renderTestemunhasSelect}
+              renderAditivos={renderAditivos}
               recemIniciado={contratoIniciadoId === contrato.id}
               assinaturaEntry={assinaturas[contrato.id]}
               onAbrirEnvioAssinatura={
@@ -424,6 +434,7 @@ function ContratoCard({
   renderGeradorContrato,
   renderProveniencia,
   renderTestemunhasSelect,
+  renderAditivos,
   recemIniciado = false,
   assinaturaEntry,
   onAbrirEnvioAssinatura,
@@ -458,6 +469,7 @@ function ContratoCard({
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
   renderProveniencia?: (contratoId: string, aberto: boolean) => ReactNode;
   renderTestemunhasSelect?: (contratoId: string, aberto: boolean) => ReactNode;
+  renderAditivos?: (contratoId: string, aberto: boolean) => ReactNode;
   recemIniciado?: boolean;
   /** This contract's `useAssinaturas` entry — `undefined` when the contract
    *  was never eligible (no `gerado` version ever existed). */
@@ -480,6 +492,7 @@ function ContratoCard({
   const [geradorAberto, setGeradorAberto] = useState(recemIniciado);
   const [provenienciaAberta, setProvenienciaAberta] = useState(false);
   const [testemunhasAberta, setTestemunhasAberta] = useState(false);
+  const [aditivosAberto, setAditivosAberto] = useState(false);
 
   // Local drafts for the two migration-114 fields — a plain string, parsed
   // only on save. `prazo_pendencias_dias` null reads as "" (the placeholder
@@ -868,6 +881,26 @@ function ContratoCard({
           </Collapsible>
         )}
 
+        {renderAditivos && contratoAdmiteAditivo(contrato) && (
+          <Collapsible open={aditivosAberto} onOpenChange={setAditivosAberto}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                data-testid={`contrato-aditivos-toggle-${contrato.id}`}
+              >
+                <ChevronDown
+                  className={`h-3 w-3 transition-transform ${aditivosAberto ? "rotate-180" : ""}`}
+                />
+                Aditivos
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2">
+              {renderAditivos(contrato.id, aditivosAberto)}
+            </CollapsibleContent>
+          </Collapsible>
+        )}
+
         {renderProveniencia && (
           <Collapsible open={provenienciaAberta} onOpenChange={setProvenienciaAberta}>
             <CollapsibleTrigger asChild>
@@ -980,101 +1013,6 @@ function _VersaoAtualRow({
             disabled={baixandoDocx}
             onClick={() => onDownload(versao.id, "docx")}
             testId={`contrato-baixar-docx-${contratoId}`}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function VersaoRow({
-  versao,
-  deleting,
-  podeExcluir,
-  baixandoDocx,
-  onOpen,
-  onDownload,
-  onDownloadDocx,
-  onExcluir,
-}: {
-  versao: VersaoOut;
-  deleting: boolean;
-  podeExcluir: boolean;
-  baixandoDocx: boolean;
-  onOpen: () => void;
-  onDownload: () => void;
-  onDownloadDocx: () => void;
-  onExcluir: () => void;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-xs"
-      data-testid={`contrato-versao-${versao.id}`}
-    >
-      <div className="min-w-0 space-y-0.5">
-        <p className="truncate">
-          Versão {versao.numero}
-          {versao.rotulo ? ` · ${versao.rotulo}` : ""}
-          {versao.origem === "gerado" && (
-            <span className="ml-1.5 text-muted-foreground">(gerado automaticamente)</span>
-          )}
-          {aguardandoRevisaoJuridica(versao) && (
-            <span
-              className="ml-1.5 text-amber-700"
-              data-testid={`contrato-versao-rascunho-${versao.id}`}
-            >
-              (rascunho)
-            </span>
-          )}
-          {versao.origem === "assinado" && (
-            <span
-              className="ml-1.5 text-muted-foreground"
-              data-testid={`contrato-versao-assinado-${versao.id}`}
-            >
-              (Assinado)
-            </span>
-          )}
-        </p>
-        <p className="truncate text-muted-foreground">
-          {versao.nome_original} · {formatBytes(versao.tamanho_bytes)}
-          {versao.enviado_por?.nome ? ` · ${versao.enviado_por.nome}` : ""} ·{" "}
-          {new Date(versao.created_at).toLocaleString("pt-BR")}
-        </p>
-      </div>
-      <div className="flex shrink-0 items-center gap-1">
-        <TooltipIconButton
-          label="Abrir"
-          icon={Eye}
-          className="h-7 w-7"
-          onClick={onOpen}
-          testId={`contrato-versao-abrir-${versao.id}`}
-        />
-        <TooltipIconButton
-          label="Baixar PDF"
-          icon={FileDown}
-          className="h-7 w-7"
-          onClick={onDownload}
-          testId={`contrato-versao-baixar-${versao.id}`}
-        />
-        {versao.docx_disponivel && (
-          <TooltipIconButton
-            label="Baixar .docx"
-            icon={baixandoDocx ? Loader2 : FileType2}
-            iconClassName={baixandoDocx ? "animate-spin" : undefined}
-            className="h-7 w-7"
-            disabled={baixandoDocx}
-            onClick={onDownloadDocx}
-            testId={`contrato-versao-baixar-docx-${versao.id}`}
-          />
-        )}
-        {podeExcluir && (
-          <TooltipIconButton
-            label="Excluir versão"
-            icon={Trash2}
-            className="h-7 w-7"
-            disabled={deleting}
-            onClick={onExcluir}
-            testId={`contrato-versao-excluir-${versao.id}`}
           />
         )}
       </div>

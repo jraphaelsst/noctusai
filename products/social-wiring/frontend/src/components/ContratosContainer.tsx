@@ -36,8 +36,9 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { ApiError, resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext } from "@noctusai/lib";
 
+import { AditivosContainer } from "@/components/AditivosContainer";
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
 import { TestemunhasSelectContainer } from "@/components/TestemunhasSelectContainer";
 import type { GeracaoDestino } from "@/components/card/GeradorContratoSection";
@@ -54,17 +55,7 @@ import {
 } from "@/hooks/useContratos";
 import { useContratoTestemunhas } from "@/hooks/useContratoTestemunhas";
 import { useNegociacao } from "@/hooks/useNegociacao";
-
-function toastServerError(err: unknown, fallback: string) {
-  // A typed server refusal (`{error: {code, message}}` — e.g. migration
-  // 157's 409 CONTRATO_COM_ASSINATURA_DIGITAL_EM_ANDAMENTO) carries its own
-  // pt-BR sentence; `ApiError.message` would prefix it with the status.
-  const envelope =
-    err instanceof ApiError ? (err.body as { error?: { message?: string } } | undefined) : undefined;
-  const message =
-    envelope?.error?.message || (err instanceof Error && err.message ? err.message : fallback);
-  toast.error(message);
-}
+import { toastServerError } from "@/lib/erroServidor";
 
 export function ContratosContainer({
   clienteId,
@@ -280,6 +271,15 @@ export function ContratosContainer({
         )}
         renderTestemunhasSelect={(contratoId, aberto) => (
           <TestemunhasSelectContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+        )}
+        renderAditivos={(contratoId, aberto) => (
+          <AditivosContainer
+            clienteId={clienteId}
+            contratoId={contratoId}
+            aberto={aberto}
+            isAdmin={isAdmin}
+            onIrPara={onIrPara}
+          />
         )}
         assinaturas={assinaturas}
         onAbrirEnvioAssinatura={(contratoId, versaoId) => {
