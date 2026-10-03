@@ -10,6 +10,14 @@
  *     §1.2), so that caller omits `permutaAtivos` (⇒ `permuta` is never
  *     offered) and turns off `mostrarDisparaCorretagem`.
  *
+ * Migration 192 (contrato-pagamentos-CONTRACT, `permitePagamentoDetalhado`,
+ * negociação only): a divisible parcela (sinal/intermediária/direta/saldo)
+ * can be split among several favorecidos by value OR percentage — exclusive
+ * with the single favorecido, switched in ONE request — and the financing
+ * parcela takes `valor_fgts`. The split's reconciliation is shown, never
+ * enforced (the contract gate decides; drafts are legitimate). Helpers in
+ * `parcelaPagamento.ts`.
+ *
  * Presentational: the caller owns the write and hands back `error` (shown ON
  * the dialog, not only as a toast — the dialog stays open on a refusal).
  *
@@ -17,7 +25,7 @@
  * `@/lib/moedaDecimal`.
  */
 import { useEffect, useState } from "react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -43,10 +51,21 @@ import type { PermutaAtivo } from "@/hooks/usePermutas";
 import { formatarValorEditavel, lerValorDigitado } from "@/lib/moedaDecimal";
 import {
   PARCELA_TIPOS_CRIAVEIS,
+  PARCELA_TIPOS_DIVISIVEIS,
   PARCELA_TIPO_LABELS,
   type ParcelaCreate,
+  type ParcelaDivisao,
   type ParcelaTipo,
 } from "@/types/negociacaoEstruturada";
+
+import {
+  conciliarDivisao,
+  divisaoParaWire,
+  erroValorFgts,
+  errosDivisao,
+  type DivisaoLinha,
+  type DivisaoModo,
+} from "./parcelaPagamento";
 
 // Backend `max_length` caps (`ParcelaCreateBody`/`ParcelaPatchBody`) — the
 // aditivo's `ParcelaAditivoIn` allows MORE (500/60), so the narrower pair
@@ -66,6 +85,8 @@ export interface ParcelaEditavel {
   confissao_divida: boolean;
   dispara_corretagem?: boolean;
   permuta_ativo_ids?: string[];
+  valor_fgts?: string | null;
+  favorecidos_divisao?: ParcelaDivisao[];
 }
 
 /** A favorecido the parcela can be paid to — `NegociacaoFavorecido` fits. */
@@ -84,6 +105,16 @@ interface ParcelaDraft {
   confissao_divida: boolean;
   dispara_corretagem: boolean;
   permuta_ativo_ids: string[];
+  valorFgtsTexto: string;
+  dividir: boolean;
+  divisaoModo: DivisaoModo;
+  divisao: DivisaoLinha[];
+}
+
+let seqDivisao = 0;
+function linhaDivisao(favorecido_id = "", texto = ""): DivisaoLinha {
+  seqDivisao += 1;
+  return { uid: `div-${seqDivisao}`, favorecido_id, texto };
 }
 
 function toParcelaDraft(p: ParcelaEditavel | null): ParcelaDraft {
@@ -100,6 +131,22 @@ function toParcelaDraft(p: ParcelaEditavel | null): ParcelaDraft {
     confissao_divida: p?.confissao_divida ?? false,
     dispara_corretagem: p?.dispara_corretagem ?? false,
     permuta_ativo_ids: p?.permuta_ativo_ids ?? [],
+    valorFgtsTexto: p?.valor_fgts ? formatarValorEditavel(p.valor_fgts) : "",
+    dividir: (p?.favorecidos_divisao?.length ?? 0) > 0,
+    divisaoModo: p?.favorecidos_divisao?.some((d) => d.percentual != null) ? "percentual" : "valor",
+    divisao: (p?.favorecidos_divisao ?? [])
+      .slice()
+      .sort((a, b) => a.ordem - b.ordem)
+      .map((d) =>
+        linhaDivisao(
+          d.favorecido_id ?? "",
+          d.percentual != null
+            ? d.percentual.replace(".", ",")
+            : d.valor != null
+              ? formatarValorEditavel(d.valor)
+              : "",
+        ),
+      ),
   };
 }
 
@@ -113,6 +160,10 @@ export interface ParcelaFormDialogProps {
   /** The negociação's migration-114 switch — off for the aditivo schedule,
    *  which has no such column. Default `true`. */
   mostrarDisparaCorretagem?: boolean;
+  /** Migration 192 (negociação only — the aditivo schedule has neither
+   *  column): offer the split among several favorecidos on a divisible tipo,
+   *  and `valor_fgts` on the financing parcela. Default `false`. */
+  permitePagamentoDetalhado?: boolean;
   onSubmit: (payload: ParcelaCreate) => void;
   saving: boolean;
   error: string | null;
@@ -125,6 +176,7 @@ export function ParcelaFormDialog({
   favorecidos,
   permutaAtivos,
   mostrarDisparaCorretagem = true,
+  permitePagamentoDetalhado = false,
   onSubmit,
   saving,
   error,
@@ -150,19 +202,39 @@ export function ParcelaFormDialog({
     if (permitePermuta) {
       payload.permuta_ativo_ids = draft.tipo === "permuta" ? draft.permuta_ativo_ids : [];
     }
+    if (permitePagamentoDetalhado) {
+      // `valor_fgts`: only on financiamento; an explicit null clears a stored
+      // one (also required when the tipo moves away from financiamento).
+      if (draft.tipo === "financiamento") {
+        payload.valor_fgts = draft.valorFgtsTexto.trim() ? lerValorDigitado(draft.valorFgtsTexto) : null;
+      } else if (parcela?.valor_fgts) {
+        payload.valor_fgts = null;
+      }
+      // The split and `favorecido_id` are exclusive — switching sends both
+      // sides in the SAME request (contract §1).
+      if (usaDivisao) {
+        payload.favorecido_id = null;
+        payload.favorecidos_divisao = divisaoParaWire(draft.divisaoModo, draft.divisao);
+      } else if ((parcela?.favorecidos_divisao?.length ?? 0) > 0) {
+        payload.favorecidos_divisao = [];
+      }
+    }
     onSubmit(payload);
   }
 
-  const podeSalvar = lerValorDigitado(draft.valorTexto).trim() !== "";
+  const divisivel = PARCELA_TIPOS_DIVISIVEIS.includes(draft.tipo);
+  const usaDivisao = permitePagamentoDetalhado && divisivel && draft.dividir;
+  const errosDaDivisao = usaDivisao ? errosDivisao(draft.divisaoModo, draft.divisao) : [];
+  const erroFgts =
+    permitePagamentoDetalhado && draft.tipo === "financiamento"
+      ? erroValorFgts(draft.valorFgtsTexto, draft.valorTexto)
+      : null;
+  const podeSalvar =
+    lerValorDigitado(draft.valorTexto).trim() !== "" && errosDaDivisao.length === 0 && !erroFgts;
 
-  // `fgts` is no longer offered on a NEW parcela (the office folded it into
-  // `financiamento`) — but an existing `fgts` row keeps its tipo selectable
-  // in ITS OWN edit dialog, so opening it does not force an unrelated change.
-  const criaveis = permitePermuta
+  const tiposDisponiveis: ParcelaTipo[] = permitePermuta
     ? PARCELA_TIPOS_CRIAVEIS
     : PARCELA_TIPOS_CRIAVEIS.filter((t) => t !== "permuta");
-  const tiposDisponiveis: ParcelaTipo[] =
-    parcela?.tipo === "fgts" ? ["fgts", ...criaveis] : criaveis;
 
   function alternarAtivo(id: string) {
     setDraft((d) => ({
@@ -235,6 +307,32 @@ export function ParcelaFormDialog({
               placeholder="0,00"
             />
           </div>
+          {permitePagamentoDetalhado && draft.tipo === "financiamento" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="parc-valor-fgts">Desse valor, quanto é FGTS (R$) — opcional</Label>
+              <Input
+                id="parc-valor-fgts"
+                data-testid="parc-valor-fgts"
+                value={draft.valorFgtsTexto}
+                onChange={(e) => setDraft((d) => ({ ...d, valorFgtsTexto: e.target.value }))}
+                placeholder="0,00"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                O restante é o financiado. Alternativa: uma parcela separada do tipo FGTS — nunca as duas.
+              </p>
+              {erroFgts && (
+                <p className="text-xs text-destructive" data-testid="parc-valor-fgts-erro">
+                  {erroFgts}
+                </p>
+              )}
+            </div>
+          )}
+          {permitePagamentoDetalhado && draft.tipo === "fgts" && (
+            <p className="text-[11px] text-muted-foreground" data-testid="parc-fgts-dica">
+              Parte FGTS do financiamento: impressa junto da parcela de financiamento, sem número próprio —
+              deixe vencimento e evento em branco.
+            </p>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="parc-venc">Vencimento</Label>
@@ -268,6 +366,38 @@ export function ParcelaFormDialog({
               onChange={(e) => setDraft((d) => ({ ...d, forma_pagamento: e.target.value }))}
             />
           </div>
+          {permitePagamentoDetalhado && divisivel && (
+            <div className="flex items-center gap-2">
+              <Switch
+                id="parc-dividir"
+                data-testid="parc-dividir"
+                checked={draft.dividir}
+                onCheckedChange={(v) =>
+                  setDraft((d) => ({
+                    ...d,
+                    dividir: v,
+                    divisao:
+                      v && d.divisao.length === 0
+                        ? [linhaDivisao(d.favorecido_id), linhaDivisao()]
+                        : d.divisao,
+                  }))
+                }
+              />
+              <Label htmlFor="parc-dividir">Dividir entre vários favorecidos</Label>
+            </div>
+          )}
+          {usaDivisao ? (
+            <DivisaoEditor
+              modo={draft.divisaoModo}
+              linhas={draft.divisao}
+              favorecidos={favorecidos}
+              valorParcelaTexto={draft.valorTexto}
+              erros={errosDaDivisao}
+              onModo={(m) => setDraft((d) => ({ ...d, divisaoModo: m }))}
+              onLinhas={(linhas) => setDraft((d) => ({ ...d, divisao: linhas }))}
+              novaLinha={() => linhaDivisao()}
+            />
+          ) : (
           <div className="space-y-1.5">
             <Label htmlFor="parc-favorecido">Favorecido</Label>
             <Select
@@ -289,6 +419,7 @@ export function ParcelaFormDialog({
               </SelectContent>
             </Select>
           </div>
+          )}
           <div className="flex items-center gap-2">
             <Switch
               id="parc-confissao"
@@ -327,6 +458,113 @@ export function ParcelaFormDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** The split among several favorecidos — by value OR by percentage (never
+ *  mixed), with a display-only reconciliation against the parcela. */
+function DivisaoEditor({
+  modo,
+  linhas,
+  favorecidos,
+  valorParcelaTexto,
+  erros,
+  onModo,
+  onLinhas,
+  novaLinha,
+}: {
+  modo: DivisaoModo;
+  linhas: DivisaoLinha[];
+  favorecidos: FavorecidoOpcao[];
+  valorParcelaTexto: string;
+  erros: string[];
+  onModo: (m: DivisaoModo) => void;
+  onLinhas: (linhas: DivisaoLinha[]) => void;
+  novaLinha: () => DivisaoLinha;
+}) {
+  const conc = conciliarDivisao(modo, linhas, valorParcelaTexto);
+  const atualizar = (uid: string, campos: Partial<DivisaoLinha>) =>
+    onLinhas(linhas.map((l) => (l.uid === uid ? { ...l, ...campos } : l)));
+  return (
+    <div className="space-y-2 rounded-md border p-2.5" data-testid="parc-divisao">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Label className="text-xs">Favorecidos desta parcela</Label>
+        <Select value={modo} onValueChange={(v) => onModo(v as DivisaoModo)}>
+          <SelectTrigger className="h-8 w-40" data-testid="parc-divisao-modo" aria-label="Dividir por">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="valor">Por valor (R$)</SelectItem>
+            <SelectItem value="percentual">Por percentual (%)</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+      {linhas.map((l, i) => (
+        <div key={l.uid} className="flex items-center gap-2" data-testid={`parc-divisao-linha-${i}`}>
+          <Select
+            value={l.favorecido_id || "__none__"}
+            onValueChange={(v) => atualizar(l.uid, { favorecido_id: v === "__none__" ? "" : v })}
+          >
+            <SelectTrigger className="h-8 flex-1" data-testid={`parc-divisao-favorecido-${i}`} aria-label="Favorecido">
+              <SelectValue placeholder="Favorecido" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">Escolha…</SelectItem>
+              {favorecidos.map((f) => (
+                <SelectItem key={f.id} value={f.id}>
+                  {f.nome}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            className="h-8 w-32"
+            aria-label={modo === "valor" ? "Valor (R$)" : "Percentual (%)"}
+            placeholder={modo === "valor" ? "0,00" : "50"}
+            value={l.texto}
+            onChange={(e) => atualizar(l.uid, { texto: e.target.value })}
+            data-testid={`parc-divisao-valor-${i}`}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 w-8 p-0"
+            onClick={() => onLinhas(linhas.filter((x) => x.uid !== l.uid))}
+            aria-label="Remover favorecido da divisão"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      ))}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs"
+        onClick={() => onLinhas([...linhas, novaLinha()])}
+        data-testid="parc-divisao-adicionar"
+      >
+        <Plus className="mr-1 h-3 w-3" />
+        Adicionar favorecido
+      </Button>
+      <p
+        className={`text-xs ${conc.confere ? "text-emerald-700" : "text-amber-700"}`}
+        data-testid="parc-divisao-conciliacao"
+      >
+        {conc.texto}
+        {!conc.confere && " Pode salvar assim; o contrato só é gerado quando as partes fecharem."}
+      </p>
+      {erros.length > 0 && (
+        <ul data-testid="parc-divisao-erros">
+          {erros.map((e) => (
+            <li key={e} className="text-xs text-destructive">
+              {e}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

@@ -13,7 +13,8 @@ import { ApiError } from "@noctusai/lib";
 export function mensagemErroServidor(err: unknown, fallback: string): string {
   const envelope =
     err instanceof ApiError ? (err.body as { error?: { message?: string } } | undefined) : undefined;
-  return envelope?.error?.message || (err instanceof Error && err.message ? err.message : fallback);
+  const proprio = (err as { message?: unknown } | null | undefined)?.message;
+  return envelope?.error?.message || (typeof proprio === "string" && proprio ? proprio : fallback);
 }
 
 export function toastServerError(err: unknown, fallback: string): void {

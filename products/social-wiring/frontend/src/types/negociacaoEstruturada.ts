@@ -17,10 +17,11 @@ export type ParcelaTipo =
   | "sinal"
   | "intermediaria"
   | "financiamento"
-  /** LEGACY (114): the office folded FGTS into the `financiamento` parcela —
-   *  `contrato_gerador` now BLOCKS generation on a separate `fgts` parcela
-   *  (`PARCELA_FGTS_SEPARADA`). Still a valid `tipo` the backend accepts (old
-   *  rows exist), just no longer offered on create — see `PARCELA_TIPOS_CRIAVEIS`. */
+  /** The FGTS part of the financed payment as its OWN parcela, with no
+   *  vencimento/evento of its own (contrato-pagamentos-CONTRACT §3, migration
+   *  192: allowed again — printed inside the financing paragraph, never
+   *  numbered). The other way to enter the same split is `valor_fgts` on the
+   *  `financiamento` parcela; using both is `FGTS_EM_DUPLICIDADE`. */
   | "fgts"
   | "saldo"
   | "direta"
@@ -28,13 +29,14 @@ export type ParcelaTipo =
    *  `permuta_imovel`) instead of money — see `permuta_ativo_ids`. */
   | "permuta";
 
-/** Selectable on a NEW parcela — `fgts` excluded (see `ParcelaTipo`). An
- *  existing `fgts` row keeps rendering (with a warning), it is just not an
- *  option going forward. */
+/** Selectable on a NEW parcela. Several `sinal` tranches (consecutive in
+ *  `ordem`) and several `permuta` parcelas are valid shapes since migration
+ *  192 — nothing here limits them to one. */
 export const PARCELA_TIPOS_CRIAVEIS: ParcelaTipo[] = [
   "sinal",
   "intermediaria",
   "financiamento",
+  "fgts",
   "saldo",
   "direta",
   "permuta",
@@ -88,6 +90,14 @@ export interface NegociacaoParcela {
   /** Migration 114. `tipo === "permuta"` only — the `permuta_ativos`
    *  (natureza `permuta_imovel`) this parcela is paid with. */
   permuta_ativo_ids: string[];
+  /** Migration 192. `tipo === "financiamento"` only — the FGTS part of the
+   *  financed payment (`< valor`; the financed part is `valor − valor_fgts`).
+   *  Optional for a pre-192 backend. */
+  valor_fgts?: string | null;
+  /** Migration 192. The parcela paid to SEVERAL favorecidos (2+), by value
+   *  or by percentage — exclusive with `favorecido_id`. Sums are checked by
+   *  the contract gate, not on save. Optional for a pre-192 backend. */
+  favorecidos_divisao?: ParcelaDivisao[];
   ordem: number;
   /** Migration 171 provenance (contract §C.4) — `null` on a legacy row. */
   origem: NegociacaoOrigem | null;
@@ -98,6 +108,27 @@ export interface NegociacaoParcela {
   created_at: string | null;
   updated_at: string | null;
 }
+
+/** One share of a split parcela. `favorecido_id` is `null` only when the
+ *  favorecido was deleted after the split was made. `valor` XOR
+ *  `percentual` (both blank while drafting). */
+export interface ParcelaDivisao {
+  id: string;
+  favorecido_id: string | null;
+  valor: string | null;
+  percentual: string | null;
+  ordem: number;
+}
+
+/** The write shape of one share (`favorecidos_divisao[]` on POST/PATCH). */
+export interface ParcelaDivisaoIn {
+  favorecido_id: string;
+  valor?: string | null;
+  percentual?: string | null;
+}
+
+/** The tipos paid INTO an account — the only ones a split applies to. */
+export const PARCELA_TIPOS_DIVISIVEIS: ParcelaTipo[] = ["sinal", "intermediaria", "direta", "saldo"];
 
 export interface NegociacaoFavorecido {
   id: string;
@@ -213,7 +244,10 @@ export type OnusQuitacao =
   | "compradores_prazo"
   | "interveniente_quitante"
   | "parcela"
-  | "ja_quitado";
+  | "ja_quitado"
+  /** Migration 192 — the seller pays the lien off by bank slip, within
+   *  `onus_prazo_dias` (required, like `compradores_prazo`). */
+  | "vendedores_boleto";
 
 export type CorretagemContratantes = "vendedores" | "compradores" | "partes";
 
@@ -259,7 +293,12 @@ export const ONUS_QUITACOES: OnusQuitacao[] = [
   "interveniente_quitante",
   "parcela",
   "ja_quitado",
+  "vendedores_boleto",
 ];
+
+/** The quitação forms whose clause names a deadline — `onus_prazo_dias`
+ *  required. */
+export const ONUS_QUITACOES_COM_PRAZO: OnusQuitacao[] = ["compradores_prazo", "vendedores_boleto"];
 export const CORRETAGEM_CONTRATANTES: CorretagemContratantes[] = [
   "vendedores",
   "compradores",
@@ -277,6 +316,7 @@ export const ONUS_QUITACAO_LABELS: Record<OnusQuitacao, string> = {
   interveniente_quitante: "Interveniente quitante",
   parcela: "Quitado com uma parcela",
   ja_quitado: "Já quitado",
+  vendedores_boleto: "Vendedores quitam por boleto, em prazo",
 };
 
 export const CORRETAGEM_CONTRATANTES_LABELS: Record<CorretagemContratantes, string> = {
@@ -328,6 +368,12 @@ export interface ParcelaCreate {
   dispara_corretagem?: boolean;
   /** Migration 114. `tipo === "permuta"` only. */
   permuta_ativo_ids?: string[];
+  /** Migration 192. `financiamento` only; PATCH `null` clears it. */
+  valor_fgts?: string | null;
+  /** Migration 192. Divisible tipos only, 2+ entries; on PATCH a present
+   *  list REPLACES the split and `[]` removes it; exclusive with
+   *  `favorecido_id` (send `favorecido_id: null` in the same PATCH). */
+  favorecidos_divisao?: ParcelaDivisaoIn[];
   ordem?: number;
 }
 
@@ -387,7 +433,7 @@ export const PARCELA_TIPO_LABELS: Record<ParcelaTipo, string> = {
   sinal: "Sinal",
   intermediaria: "Intermediária",
   financiamento: "Financiamento",
-  fgts: "FGTS (legado — junte ao financiamento)",
+  fgts: "FGTS",
   saldo: "Saldo",
   direta: "Direta",
   permuta: "Permuta",

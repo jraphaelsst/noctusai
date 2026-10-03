@@ -50,6 +50,7 @@ import {
   CORRETAGEM_CONTRATANTES,
   CORRETAGEM_CONTRATANTES_LABELS,
   ONUS_QUITACOES,
+  ONUS_QUITACOES_COM_PRAZO,
   ONUS_QUITACAO_LABELS,
   POSSE_MARCOS,
   POSSE_MARCO_LABELS,
@@ -581,7 +582,15 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                 onChange={(e) =>
                   setDraft((d) => ({ ...d, onus_prazo_dias: e.target.value }))
                 }
+                data-testid="termos-onus-prazo"
               />
+              {draft.onus_quitacao &&
+                ONUS_QUITACOES_COM_PRAZO.includes(draft.onus_quitacao) &&
+                draft.onus_prazo_dias.trim() === "" && (
+                  <p className="text-xs text-amber-700" data-testid="termos-onus-prazo-obrigatorio">
+                    Informe o prazo — obrigatório para esta forma de quitação.
+                  </p>
+                )}
             </div>
           </div>
         </section>

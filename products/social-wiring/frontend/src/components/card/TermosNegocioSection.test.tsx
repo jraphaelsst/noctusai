@@ -167,6 +167,14 @@ describe("grupos condicionais", () => {
     expect(getByTestId("termos-confissao")).toBeTruthy();
   });
 
+  it("🔴 'vendedores_boleto' (migração 192) é oferecido e pede o prazo", async () => {
+    const { getByTestId, getByText } = await render(
+      aggregate({ termos: { ...termosVazios(), onus_quitacao: "vendedores_boleto" } as any }),
+    );
+    expect(getByText("Vendedores quitam por boleto, em prazo")).toBeTruthy();
+    expect(getByTestId("termos-onus-prazo-obrigatorio")).toBeTruthy();
+  });
+
   it("a nota de ônus explica quando ele se aplica", async () => {
     const { getByTestId } = await render(aggregate());
     expect(getByTestId("termos-onus").textContent).toContain("financiamento");

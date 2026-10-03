@@ -418,17 +418,17 @@ describe("nova parcela — o 422 do backend é renderizado NO DIÁLOGO (não só
   });
 });
 
-describe("nova parcela — fgts removido, permuta e corretagem", () => {
-  it("🔴 'fgts' não aparece nas opções de uma parcela NOVA", async () => {
-    const { getByTestId, queryByText } = await render();
-    const { fireEvent } = await import("@testing-library/react");
+describe("nova parcela — fgts, permuta e corretagem", () => {
+  it("🔴 'fgts' volta a ser oferecido numa parcela NOVA (migração 192)", async () => {
+    const { getByTestId, getByRole } = await render();
+    const { fireEvent, within } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-parcela-nova"));
 
-    expect(queryByText("FGTS (legado — junte ao financiamento)")).toBeNull();
+    expect(within(getByRole("dialog")).queryByText("FGTS")).toBeTruthy();
   });
 
-  it("uma parcela EXISTENTE de tipo fgts mantém 'fgts' selecionável na sua própria edição", async () => {
+  it("🔴 uma parcela de tipo fgts não carrega mais aviso de bloqueio na tabela", async () => {
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({
         data: aggregate({
@@ -452,41 +452,9 @@ describe("nova parcela — fgts removido, permuta e corretagem", () => {
         }),
       }),
     );
-    const { getByLabelText, getByRole } = await render();
-    const { fireEvent, within } = await import("@testing-library/react");
-
-    fireEvent.click(getByLabelText("Editar parcela"));
-
-    const dialog = within(getByRole("dialog"));
-    expect(dialog.queryByText("FGTS (legado — junte ao financiamento)")).toBeTruthy();
-  });
-
-  it("🔴 uma parcela legada de tipo fgts mostra o aviso na tabela", async () => {
-    mockUseNegociacaoEstruturada.mockReturnValue(
-      query({
-        data: aggregate({
-          parcelas: [
-            {
-              id: "pf1",
-              tipo: "fgts",
-              valor: "10000.00",
-              vencimento: null,
-              evento: null,
-              forma_pagamento: null,
-              favorecido_id: null,
-              confissao_divida: false,
-              dispara_corretagem: false,
-              permuta_ativo_ids: [],
-              ordem: 1,
-              created_at: null,
-              updated_at: null,
-            },
-          ],
-        }),
-      }),
-    );
-    const { getByTestId } = await render();
-    expect(getByTestId("parcela-fgts-aviso-pf1")).toBeTruthy();
+    const { queryByTestId, getByTestId } = await render();
+    expect(getByTestId("parcela-pf1")).toBeTruthy();
+    expect(queryByTestId("parcela-fgts-aviso-pf1")).toBeNull();
   });
 
   it("o multi-select de imóveis de permuta só aparece quando tipo = permuta", async () => {

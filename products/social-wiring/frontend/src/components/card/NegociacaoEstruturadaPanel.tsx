@@ -109,6 +109,7 @@ import {
   PARCELA_FORMA_PAGAMENTO_MAX,
   ParcelaFormDialog,
 } from "@/components/card/negociacao/ParcelaFormDialog";
+import { mensagemErroServidor } from "@/lib/erroServidor";
 import { exibirData, exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
 
 interface Props {
@@ -599,15 +600,6 @@ function ParcelasSection({
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       {PARCELA_TIPO_LABELS[p.tipo]}
-                      {p.tipo === "fgts" && (
-                        <span
-                          className="flex items-center gap-1 text-amber-600"
-                          title="Parcela de FGTS separada — o gerador de contrato bloqueia isso; junte o valor à parcela de financiamento."
-                          data-testid={`parcela-fgts-aviso-${p.id}`}
-                        >
-                          <AlertTriangle className="h-3.5 w-3.5" />
-                        </span>
-                      )}
                     </div>
                   </TableCell>
                   <TableCell>
@@ -618,6 +610,14 @@ function ParcelasSection({
                       >
                         {exibirValorParcela(p.valor)}
                       </span>
+                      {p.valor_fgts && (
+                        <span
+                          className="text-xs text-muted-foreground"
+                          data-testid={`parcela-valor-fgts-${p.id}`}
+                        >
+                          (FGTS {exibirMoeda(p.valor_fgts)})
+                        </span>
+                      )}
                       <OrigemBadge
                         origem={p.origem}
                         confirmadoEm={p.confirmado_em}
@@ -626,7 +626,26 @@ function ParcelasSection({
                     </div>
                   </TableCell>
                   <TableCell>{exibirData(p.vencimento) ?? p.evento ?? "—"}</TableCell>
-                  <TableCell>{favorecidoNome(p.favorecido_id)}</TableCell>
+                  <TableCell>
+                    {(p.favorecidos_divisao?.length ?? 0) > 0 ? (
+                      <ul className="space-y-0.5 text-xs" data-testid={`parcela-divisao-${p.id}`}>
+                        {[...(p.favorecidos_divisao ?? [])]
+                          .sort((a, b) => a.ordem - b.ordem)
+                          .map((d) => (
+                            <li key={d.id}>
+                              {d.favorecido_id ? favorecidoNome(d.favorecido_id) : "favorecido removido"} —{" "}
+                              {d.percentual != null
+                                ? `${d.percentual.replace(".", ",")}%`
+                                : d.valor != null
+                                  ? exibirMoeda(d.valor)
+                                  : "a definir"}
+                            </li>
+                          ))}
+                      </ul>
+                    ) : (
+                      favorecidoNome(p.favorecido_id)
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={p.confissao_divida ? "default" : "outline"}>
                       {p.confissao_divida ? "Sim" : "Não"}
@@ -668,13 +687,17 @@ function ParcelasSection({
         parcela={editando}
         favorecidos={data.favorecidos}
         permutaAtivos={permutaAtivos.data ?? []}
+        permitePagamentoDetalhado
         saving={criar.isPending || atualizar.isPending}
         error={formError}
         onSubmit={(payload) => {
           setFormError(null);
           const onSuccess = () => setFormOpen(false);
           const onError = (err: unknown) => {
-            const msg = errorMessage(err, "Não foi possível salvar a parcela.");
+            // The server's own sentence (`{error: {message}}` — e.g. the 400
+            // "a parcela já tem um favorecido único…" or a split 422), never
+            // the `[400]`-prefixed `ApiError.message`.
+            const msg = mensagemErroServidor(err, "Não foi possível salvar a parcela.");
             setFormError(msg);
             toast.error(msg);
           };
