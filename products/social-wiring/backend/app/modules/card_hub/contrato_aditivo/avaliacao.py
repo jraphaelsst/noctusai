@@ -27,7 +27,7 @@ from noctusai_lib.integrations.documents import has_raw_markup
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
 from app.modules.card_hub.contrato_aditivo.dados import DadosAditivo
-from app.modules.card_hub.contrato_gerador.dados import DadosContrato, Parcela
+from app.modules.card_hub.contrato_gerador.dados import DadosContrato, Parcela, anuentes
 from app.modules.card_hub.contrato_gerador.derivacao import (
     Avaliacao,
     Destinos,
@@ -282,11 +282,30 @@ def avaliar(
     # The aditivo's own modalidade decides the e-mail avisos `_partes` emits.
     _original(av, ad, assinatura)
     _partes(av, replace(d, modalidade_assinatura=ad.modalidade_assinatura))
+    _partes_sem_redacao_no_aditivo(av, d)
     _imovel(av, d)
     _assinatura(av, d, ad)
     _alteracoes(av, d, ad, politica, assinatura, referencia)
     _cronograma(av, d, ad, politica, assinatura, referencia)
     return av
+
+
+def _partes_sem_redacao_no_aditivo(av: Avaliacao, d: DadosContrato) -> None:
+    """[Migration 193, contrato_gerador] `_partes` now ACCEPTS a company party
+    and a seller's anuente (the CCV words them), but the aditivo's
+    qualification (`documento.py`: `frases.qualificacao` over PF signatários
+    only) does not print either — refused by name rather than silently left
+    out of the amendment."""
+    if d.partes_pj:
+        av.bloqueia(
+            "ADITIVO_PARTE_PJ_SEM_REDACAO",
+            "O aditivo ainda não qualifica partes empresa (PJ); a empresa não entraria no aditivo.",
+        )
+    if anuentes(d.vendedores):
+        av.bloqueia(
+            "ADITIVO_ANUENTE_SEM_REDACAO",
+            "O aditivo ainda não qualifica anuentes; o(a) anuente não entraria no aditivo.",
+        )
 
 
 def parcelas_ordenadas(ad: DadosAditivo) -> list[Parcela]:

@@ -27,9 +27,10 @@ The office's policy answers (spec §6.2, answered 2026-09-15) are cited as
 spec §6.1 field real storage (see `dados`'s module docstring), so a gap is now
 always an un-filled FORM, never a missing column — which is why every refusal
 can name a screen. The two things still genuinely absent are named as such:
-procurador/inventariante wording (`PAPEIS_SEM_REDACAO`) and the stored-but-
-unwritten clauses (`ja_quitado`, `obrigacoes_vendedor`,
-`permuta_obrigacoes_entrega`).
+procurador/inventariante wording (`PAPEIS_SEM_REDACAO`) and penhora /
+indisponibilidade (`ONUS_NAO_SUPORTADO`) — the signed-contract corpus has no
+wording for either. `ja_quitado`, `obrigacoes_vendedor` and
+`permuta_obrigacoes_entrega` are worded since migration 193.
 """
 from __future__ import annotations
 
@@ -47,6 +48,7 @@ from noctusai_lib.integrations.documents import (
     has_raw_markup,
     segment_matricula_atos,
 )
+from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
 from app.modules.card_hub.contrato_gerador import certidao_pcen, frases
@@ -58,16 +60,21 @@ from app.modules.card_hub.contrato_gerador.dados import (
     DadosContrato,
     Empresa,
     Parcela,
+    ParteJuridica,
     Pessoa,
+    anuentes,
     parcela_permuta,
     parcelas_permuta,
+    representantes,
     signatarios,
 )
 from app.modules.card_hub.contrato_gerador.numeracao import num2
 from app.modules.card_hub.contrato_gerador.politica import (
     MIN_TESTEMUNHAS,
     ONUS_COM_SALDO,
+    POLITICA_PADRAO,
     ONUS_SUPORTADOS,
+    ONUS_USUFRUTO,
     PAPEL_ANTIGO_PROPRIETARIO,
     SITUACAO_PJ_BAIXADA,
     SITUACOES_CADASTRAIS,
@@ -500,6 +507,10 @@ class Avaliacao:
     #: `ciente`; the contract is not `pronto` until every one is acknowledged.
     confirmacoes: list[dict] = field(default_factory=list)
     destinos: Destinos = field(default_factory=Destinos)
+    #: [Migration 193] Wording the final legal review must read with care —
+    #: recorded on the generated version (`revisao_juridica_itens`). Never a
+    #: readiness condition: the review itself is the gate.
+    itens_revisao: list[dict] = field(default_factory=list)
 
     @property
     def pendentes_confirmacao(self) -> list[dict]:
@@ -551,6 +562,11 @@ class Avaliacao:
     def avisa(self, codigo: str, mensagem: str) -> None:
         if not any(a["codigo"] == codigo and a["mensagem"] == mensagem for a in self.avisos):
             self.avisos.append({"codigo": codigo, "mensagem": mensagem})
+
+    def revisar(self, codigo: str, titulo: str, texto: str) -> None:
+        item = {"codigo": codigo, "titulo": titulo, "texto": texto}
+        if item not in self.itens_revisao:
+            self.itens_revisao.append(item)
 
 
 # ─── dates ────────────────────────────────────────────────────────────────
@@ -717,6 +733,13 @@ def derivar_switches(
     # `permuta_ativos` — not the legacy one-asset `negociacao.permuta_ativo_id`.
     tem_permuta = parcela_permuta(d) is not None
     termos = d.termos
+    situacao_onus = d.imovel.situacao_onus if d.imovel else None
+    # [Migration 193] 'ja_quitado': the debt is PAID and its baixa requested
+    # — nothing left to settle, so it is not a saldo devedor; deal 867's
+    # objeto paragraph is printed instead.
+    onus_ja_quitado = (
+        situacao_onus in ONUS_COM_SALDO and termos.onus_quitacao == frases.QUITACAO_ONUS_JA_QUITADO
+    )
     return {
         "tem_financiamento": tem_financiamento,
         # [Q6] FGTS is part of the financiamento parcela, never its own.
@@ -731,7 +754,15 @@ def derivar_switches(
         # `faltando` in that state, so the gate still blocks generation.
         "a_vista": bool(tipos)
         and not (tem_financiamento or "fgts" in tipos or tem_parcelas_diretas),
-        "tem_saldo_devedor": bool(d.imovel and d.imovel.situacao_onus in ONUS_COM_SALDO),
+        "tem_saldo_devedor": situacao_onus in ONUS_COM_SALDO and not onus_ja_quitado,
+        "tem_onus_ja_quitado": onus_ja_quitado,
+        "tem_usufruto": situacao_onus == ONUS_USUFRUTO,
+        # [Migration 193] The seller's spouse/companion signing as ANUENTE.
+        "tem_anuentes": bool(anuentes(d.vendedores)),
+        # [Migration 193] Operator-typed obligations, printed verbatim.
+        "tem_obrigacoes_vendedor": bool(frases.paragrafos_livres(termos.obrigacoes_vendedor)),
+        "tem_permuta_obrigacoes": tem_permuta
+        and bool(frases.paragrafos_livres(termos.permuta_obrigacoes_entrega)),
         "tem_intermediacao": bool(d.intermediarios),
         "tem_itens_integrantes": bool((termos.itens_integrantes or "").strip()),
         "ad_corpus": bool(termos.ad_corpus),
@@ -822,7 +853,7 @@ def _empresas_de_certificandos(d: DadosContrato, sw: dict[str, bool]) -> list[tu
     (from `empresa.owners`) the readiness report attributes it to — one
     pair per `Empresa` (E4; `d.empresas` already carries one row per
     DISTINCT company, `owners` holding every participant)."""
-    certificandos = signatarios(d.vendedores) + (
+    certificandos = signatarios(d.vendedores) + anuentes_certificandos(d) + (
         signatarios(d.compradores) if sw["tem_permuta"] else []
     )
     ids = {p.cliente_id for p in certificandos}
@@ -957,6 +988,40 @@ def antigos_proprietarios(d: DadosContrato) -> list[Pessoa]:
     return [p for p in d.vendedores if p.papel == PAPEL_ANTIGO_PROPRIETARIO]
 
 
+def conjuge_do_anuente(d: DadosContrato, a: Pessoa) -> Optional[Pessoa]:
+    """[Migration 193] The signing VENDEDOR an anuente is the reciprocal
+    spouse/companion of — the only anuente the corpus words (7 deals). `None`
+    for any other anuente: no wording (`ANUENTE_SEM_REDACAO`)."""
+    if a.lado != "vendedor" or a.estado_civil not in frases.ESTADOS_EM_NUCLEO:
+        return None
+    conjuge = next(
+        (v for v in signatarios(d.vendedores) if v.cliente_id == a.conjuge_cliente_id), None
+    )
+    if conjuge is None or conjuge.conjuge_cliente_id != a.cliente_id:
+        return None
+    return conjuge
+
+
+def anuentes_certificandos(d: DadosContrato) -> list[Pessoa]:
+    """[E3 + migration 193] An anuente who is a signing vendedor's spouse/
+    companion is treated as a vendedor FOR CERTIDÕES (owner rule: "the
+    cônjuge of a married vendedor IS a vendedor") — the full CPF set plus the
+    estado-civil certidão. An anuente who is not a spouse never is (and is
+    refused anyway: `ANUENTE_SEM_REDACAO`)."""
+    return [a for a in anuentes(d.vendedores) if conjuge_do_anuente(d, a) is not None]
+
+
+def pj_certificandas(d: DadosContrato, sw: dict[str, bool]) -> list[ParteJuridica]:
+    """[Migration 193] PJ parties that present certidões: every PJ vendedor,
+    and a PJ comprador in a permuta — the SAME rule as a person. A PJ
+    presents only its own 11 CNPJ certidões; its representantes are not
+    certificandos."""
+    return [
+        pj for pj in d.partes_pj
+        if pj.lado == "vendedor" or (pj.lado == "comprador" and sw["tem_permuta"])
+    ]
+
+
 def exige_antigo_proprietario(d: DadosContrato, assinatura: date, politica: Politica) -> Optional[bool]:
     """[Q9] True when the last registered transfer of ownership is less than
     `antigo_proprietario_janela_anos` before the assinatura; `False` when a
@@ -989,7 +1054,11 @@ def pessoas_certificadas(
     """Whose certidões the contract presents, in group order: the signing
     vendedores, the signing compradores in a permuta, then the previous
     owner(s) when they enter the contract (`antigos_no_contrato`)."""
-    pessoas = signatarios(d.vendedores) + (signatarios(d.compradores) if sw["tem_permuta"] else [])
+    pessoas = (
+        signatarios(d.vendedores)
+        + anuentes_certificandos(d)
+        + (signatarios(d.compradores) if sw["tem_permuta"] else [])
+    )
     if antigos_no_contrato(d, assinatura, politica):
         pessoas += antigos_proprietarios(d)
     return pessoas
@@ -1017,37 +1086,199 @@ def _ancora(p: Pessoa) -> str:
     return _ANCORA_POR_LADO.get(p.lado, "geral")
 
 
-def _partes(av: Avaliacao, d: DadosContrato) -> None:
+#: [Migration 193] Qualificação keys a REPRESENTANTE never prints: they sign
+#: for a company and are qualified alone ("casada", no regime, no spouse) —
+#: owner rule: no spouse anuência for a PJ by default.
+_CHAVES_SEM_EFEITO_NO_REPRESENTANTE = frozenset(
+    {"conjuge", "conjuge_qualificacao", "regime_bens", "data_casamento"}
+)
+
+#: [Migration 193] The PJ papéis the corpus's PJ wording covers (deal 866: a
+#: company that IS the seller). Any other papel on a company is refused.
+_PAPEIS_PJ_COM_REDACAO = frozenset({"proprietario", "comprador"})
+
+PJ_REDACAO_A_CONFIRMAR = (
+    "redação de PJ derivada de um único contrato assinado — confirme na revisão jurídica"
+)
+
+
+def _parte_juridica(av: Avaliacao, d: DadosContrato, pj: ParteJuridica) -> None:
+    """[Migration 193] A company party — qualified with corpus deal 866's
+    wording, every field of which is a named `faltando` (never the old
+    blanket `partes.pj_sem_qualificacao`)."""
+    nome = pj.razao_social or frases.documento(pj.cnpj)[1] or "empresa"
+    ancora = _ANCORA_POR_LADO.get(pj.lado, "geral")
+    for valor, campo, rotulo in (
+        (pj.razao_social, "razao_social", "Razão social"),
+        (pj.cnpj, "cnpj", "CNPJ"),
+        (pj.nire, "nire", "NIRE (registro na Junta Comercial)"),
+        (pj.sede.logradouro, "sede_logradouro", "Logradouro da sede"),
+        (pj.sede.numero, "sede_numero", "Número da sede"),
+        (pj.sede.bairro, "sede_bairro", "Bairro da sede"),
+        (pj.sede.cidade, "sede_cidade", "Cidade da sede"),
+        (pj.sede.uf, "sede_uf", "UF da sede"),
+        (pj.sede.cep, "sede_cep", "CEP da sede"),
+    ):
+        if not (valor or "").strip():
+            av.falta(f"partes.pj.{campo}", f"{rotulo} — {nome}", "partes", pj.parte_id, ancora=ancora)
+    if pj.cnpj and not cnpj_valido(pj.cnpj):
+        av.bloqueia("CNPJ_INVALIDO", f"O CNPJ de {nome} não confere (dígitos verificadores).")
+    if pj.papel not in _PAPEIS_PJ_COM_REDACAO:
+        av.bloqueia(
+            "PJ_PAPEL_SEM_REDACAO",
+            f"{nome} é parte como '{pj.papel}': o gerador só tem redação para a empresa que "
+            "vende ou compra (proprietário/comprador).",
+        )
+    reps = representantes(d.vendedores + d.compradores, pj.parte_id)
+    if not reps:
+        av.falta(
+            "partes.pj.representante",
+            f"Representante legal (sócio(a) e administrador(a)) que assina por {nome} — "
+            "adicione a pessoa como parte com o papel 'representante' vinculada à empresa",
+            "partes",
+            pj.parte_id,
+            ancora=ancora,
+        )
+    elif len(reps) > 1:
+        # The corpus's one PJ contract is signed by ONE representative —
+        # joint representation has no wording.
+        av.bloqueia(
+            "PJ_MAIS_DE_UM_REPRESENTANTE",
+            f"{nome} tem {len(reps)} representantes: o gerador só tem redação para um.",
+        )
+    elif reps[0].lado != pj.lado:
+        av.bloqueia(
+            "REPRESENTANTE_FORA_DO_LADO",
+            f"O representante de {nome} precisa estar no mesmo lado do contrato que a empresa.",
+        )
+    av.avisa("PJ_REDACAO_A_CONFIRMAR", f"{nome}: {PJ_REDACAO_A_CONFIRMAR}.")
+    av.revisar(
+        "PJ_REDACAO_A_CONFIRMAR",
+        f"Qualificação da empresa {nome}",
+        PJ_REDACAO_A_CONFIRMAR,
+    )
+
+
+def _pacto_do_casal(
+    av: Avaliacao, a: Pessoa, b: Pessoa, politica: Politica, vistos: set[frozenset[str]]
+) -> None:
+    """[Migration 193] The pacto antenupcial a married couple's qualification
+    cites (corpus deal 858): required when the regime needs one, every field
+    named when half-entered, refused when the two spouses' rows disagree."""
+    par = frozenset({a.cliente_id, b.cliente_id})
+    if par in vistos or a.estado_civil != "casado":
+        return
+    vistos.add(par)
+    preenchidos = [p for p in (a, b) if p.pacto is not None and not p.pacto.vazio()]
+    if len(preenchidos) == 2 and preenchidos[0].pacto != preenchidos[1].pacto:
+        av.bloqueia(
+            "PACTO_ANTENUPCIAL_DIVERGENTE",
+            f"{_nome(a)} e o cônjuge têm dados de pacto antenupcial diferentes.",
+        )
+    pacto = frases.pacto_do_casal(a, b)
+    if pacto is None:
+        if frases.regime_exige_pacto(a.regime_bens, a.data_casamento, politica.lei_6515_vigencia_desde):
+            av.falta(
+                "qualificacao.pacto_antenupcial",
+                f"Escritura de pacto antenupcial (data, tabelionato, livro e página) — {_nome(a)}: "
+                f"o regime de {frases.REGIME_EXTENSO.get(a.regime_bens or '', a.regime_bens)} exige pacto",
+                "partes",
+                a.parte_id,
+                ancora=_ancora(a),
+            )
+        return
+    dono = preenchidos[0]
+    for valor, campo, rotulo in (
+        (pacto.data, "data", "Data da escritura de pacto antenupcial"),
+        (pacto.tabelionato, "tabelionato", "Tabelionato da escritura de pacto antenupcial"),
+        (pacto.livro, "livro", "Livro da escritura de pacto antenupcial"),
+        (pacto.folha, "folha", "Página da escritura de pacto antenupcial"),
+    ):
+        if not (str(valor).strip() if valor is not None else ""):
+            av.falta(
+                f"qualificacao.pacto_antenupcial_{campo}",
+                f"{rotulo} — {_nome(dono)}",
+                "partes",
+                dono.parte_id,
+                ancora=_ancora(dono),
+            )
+
+
+def _identidade(av: Avaliacao, p: Pessoa) -> None:
+    """[Migration 193] RG vs RNE/RNM (a foreign party — corpus: 3 deals)."""
+    tipo = (p.identidade_tipo or "rg").strip().lower()
+    if tipo not in frases.IDENTIDADES_VALIDAS:
+        av.bloqueia(
+            "IDENTIDADE_TIPO_DESCONHECIDO",
+            f"O tipo de documento de identidade de {_nome(p)} ('{p.identidade_tipo}') não tem redação no gerador.",
+        )
+        return
+    brasileiro = frases.e_brasileiro(p)
+    if tipo in frases.IDENTIDADES_ESTRANGEIRO and brasileiro:
+        av.bloqueia(
+            "IDENTIDADE_ESTRANGEIRO_BRASILEIRO",
+            f"{_nome(p)} tem nacionalidade brasileira, mas está identificado(a) por "
+            f"{frases.IDENTIDADES_ESTRANGEIRO[tipo]} (documento de estrangeiro).",
+        )
+    elif tipo == "rg" and (p.nacionalidade or "").strip() and not brasileiro:
+        av.avisa(
+            "ESTRANGEIRO_COM_RG",
+            f"{_nome(p)} não tem nacionalidade brasileira e está identificado(a) por RG: confirme se o "
+            "documento é um RNE/RNM e, se for, marque o tipo do documento.",
+        )
+
+
+def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRAO) -> None:
+    """The parties gate. `politica` defaults to the office's — keeps the
+    two-argument call `contrato_aditivo` makes working (its pacto check
+    reads only `lei_6515_vigencia_desde`)."""
     vend, comp = signatarios(d.vendedores), signatarios(d.compradores)
     antigos = antigos_proprietarios(d)
-    if not vend:
+    anu = anuentes(d.vendedores + d.compradores)
+    reps = representantes(d.vendedores + d.compradores)
+    pj_ids = {pj.parte_id for pj in d.partes_pj}
+    if not vend and not any(pj.lado == "vendedor" for pj in d.partes_pj):
         av.falta("partes.vendedores", "Ao menos um vendedor (proprietário) no card", "partes", ancora="vendedor")
-    if not comp:
+    if not comp and not any(pj.lado == "comprador" for pj in d.partes_pj):
         av.falta("partes.compradores", "Ao menos um comprador no card", "partes")
     for pj in d.partes_pj:
-        # A company party (migration 179) is not a `Pessoa`: the instrument's
-        # qualification wording exists for natural persons only. Named here
-        # rather than silently left out of the contract.
-        av.falta(
-            "partes.pj_sem_qualificacao",
-            f"Qualificação da empresa {pj.get('nome') or pj.get('cnpj') or ''} "
-            f"({pj.get('lado')}): o gerador ainda não redige partes PJ — "
-            "inclua o representante legal como parte ou ajuste o contrato manualmente",
-            "partes",
-            pj.get("parte_id"),
-        )
+        _parte_juridica(av, d, pj)
+    for r in reps:
+        if r.representa_parte_id not in pj_ids:
+            av.bloqueia(
+                "REPRESENTANTE_SEM_EMPRESA",
+                f"{_nome(r)} é representante, mas não está vinculado(a) a uma empresa que seja parte "
+                "deste contrato.",
+            )
+    for a in anu:
+        if conjuge_do_anuente(d, a) is None:
+            # [Migration 193] The corpus words ONE anuente: a signing seller's
+            # spouse/companion (7 deals; the PJ's case is a representative's
+            # spouse, refused by owner rule — no spouse anuência for a PJ).
+            av.bloqueia(
+                "ANUENTE_SEM_REDACAO",
+                f"{_nome(a)} é anuente, mas não é cônjuge/companheiro(a) (vínculo recíproco no card) de "
+                "um vendedor pessoa física: o gerador só tem redação de anuência de cônjuge/companheiro(a).",
+            )
     for p in d.vendedores + d.compradores:
-        if p not in vend and p not in comp and p not in antigos:
+        if p not in vend and p not in comp and p not in antigos and p not in anu and p not in reps:
             av.avisa(
                 "PARTE_NAO_SIGNATARIA",
                 f"{_nome(p)} ({p.papel}) não entra na qualificação nem assina o contrato.",
             )
 
     documentos: dict[str, str] = {}
-    for lado_pessoas in (vend, comp):
+    casais: set[frozenset[str]] = set()
+    # The anuente is qualified with (and gated against) the seller side: a
+    # married seller whose spouse signs as anuente has that spouse "on the
+    # side". A representante is qualified alone (`avulso`), its own group.
+    for lado_pessoas, e_representante in ((vend + anu, False), (comp, False), (reps, True)):
         ids_lado = {p.cliente_id: p for p in lado_pessoas}
         for p in lado_pessoas:
+            _identidade(av, p)
             for chave in p.faltando_qualificacao:
+                if e_representante and chave in _CHAVES_SEM_EFEITO_NO_REPRESENTANTE:
+                    continue
                 conjuge = ids_lado.get(p.conjuge_cliente_id or "")
                 if chave == "conjuge_qualificacao" and conjuge is not None:
                     continue  # the spouse is a signatory and is gated on their own
@@ -1091,7 +1322,7 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                     "ESTADO_CIVIL_SEM_REDACAO",
                     f"O estado civil de {_nome(p)} ('{p.estado_civil}') não tem redação no gerador.",
                 )
-            if p.estado_civil == "casado":
+            if p.estado_civil == "casado" and not e_representante:
                 # The qualificação prints "casados no regime da <regime>": a
                 # missing regime would leave the slot empty and an unknown one
                 # would print its raw stored value — refuse both.
@@ -1150,7 +1381,7 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                         f"{_nome(p)} tem RG/CPF igual ao de outra parte do contrato.",
                     )
 
-            if p.estado_civil in frases.ESTADOS_EM_NUCLEO and p.conjuge_cliente_id:
+            if p.estado_civil in frases.ESTADOS_EM_NUCLEO and p.conjuge_cliente_id and not e_representante:
                 conjuge = ids_lado.get(p.conjuge_cliente_id)
                 if conjuge is None:
                     av.bloqueia(
@@ -1182,6 +1413,7 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                             "DATA_CASAMENTO_DIVERGENTE",
                             f"{_nome(p)} e o cônjuge têm datas de casamento diferentes.",
                         )
+                    _pacto_do_casal(av, p, conjuge, politica, casais)
 
 
 def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Politica, assinatura: date) -> None:
@@ -1204,6 +1436,16 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
     ):
         if not getattr(im, campo):
             av.falta(f"imovel.{campo}", rotulo, "imovel")
+    # [Corpus catalog §6, 34/34] The contract prints "Cartório de Registro de
+    # Imóveis de <cidade>" — a reading with no city in it (a bare CNS, "… da
+    # Capital") cannot be printed in that form and is named, never guessed.
+    if im.numero_registro_imoveis and frases.cartorio_texto(im.numero_registro_imoveis) is None:
+        av.falta(
+            "imovel.numero_registro_imoveis",
+            "Cartório de registro de imóveis com a cidade (ex.: \"1º Cartório de Registro de Imóveis de "
+            f"Cotia\") — a cidade não foi encontrada em '{im.numero_registro_imoveis}'",
+            "imovel",
+        )
 
     if d.matricula.num_atos == 0 or not d.matricula.texto.strip():
         av.falta("matricula.atos", "Atos da matrícula selecionados para o contrato", "matricula")
@@ -1282,29 +1524,56 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             "ONUS_NAO_SUPORTADO",
             f"O gerador não tem redação para ônus do tipo '{im.situacao_onus}'.",
         )
+    elif im.situacao_onus == ONUS_USUFRUTO and not sw["tem_financiamento"]:
+        # [Migration 193] Corpus deal 839 words the usufruto ONLY as the
+        # precondition of the buyers' financing; without one there is no text.
+        av.bloqueia(
+            "ONUS_USUFRUTO_SEM_FINANCIAMENTO",
+            "O imóvel tem usufruto, e a única redação dos contratos assinados condiciona a baixa do "
+            "usufruto ao financiamento dos compradores — este negócio não tem parcela de financiamento.",
+        )
 
     _certidoes_do_imovel(av, d, politica, assinatura)
 
-    if sw["tem_saldo_devedor"]:
+    if im.situacao_onus in ONUS_COM_SALDO:
         termos = d.termos
+        ja_quitado = termos.onus_quitacao == frases.QUITACAO_ONUS_JA_QUITADO
+        fonte_valida = False
         if not im.onus_fonte_atos:
             av.falta("matricula.onus_fonte", "Atos da matrícula que registram o ônus", "matricula")
         elif any(a.kind not in ("R", "AV") or a.numero is None for a in im.onus_fonte_atos):
             av.bloqueia("ONUS_FONTE_INVALIDA", "O ônus aponta para um ato sem número (abertura).")
+        else:
+            fonte_valida = True
         # [§6.1 #11] Migration 115 stores the confirmed creditor on the imóvel,
         # read off the ônus acts — so it is fixed on the matrícula surface.
-        if not im.onus_credor:
+        # Deal 867's 'ja_quitado' paragraph names no creditor.
+        if not im.onus_credor and not ja_quitado:
             av.falta("matricula.onus_credor", "Credor confirmado do financiamento que onera o imóvel", "matricula")
         if not termos.onus_quitacao:
             av.falta("negociacao.onus_quitacao", "Forma de quitação do saldo devedor", "negociacao")
-        elif termos.onus_quitacao == frases.QUITACAO_ONUS_SEM_REDACAO:
-            # Stored by 114, but no sample contract has this clause — refusing
-            # by name beats printing a paragraph the office never wrote.
-            av.bloqueia(
-                "ONUS_QUITACAO_SEM_REDACAO",
-                "A quitação do ônus está marcada como 'já quitado (com termo)', e o gerador "
-                "ainda não tem redação para esse caso — nenhum contrato modelo o traz.",
-            )
+        elif ja_quitado:
+            # [Migration 193] Corpus deal 867: "protocolou, em <data>, junto ao
+            # Registro de Imóveis de <cidade>, o requerimento de baixa da
+            # Alienação Fiduciária registrada sob o R-<n>".
+            protocolo = termos.onus_baixa_protocolo_em
+            if protocolo is None:
+                av.falta(
+                    "negociacao.onus_baixa_protocolo_em",
+                    "Data do protocolo do requerimento de baixa do ônus no Registro de Imóveis",
+                    "negociacao",
+                )
+            elif protocolo > assinatura:
+                av.bloqueia(
+                    "ONUS_BAIXA_PROTOCOLO_POSTERIOR",
+                    "O protocolo da baixa do ônus tem data posterior à assinatura.",
+                )
+            if fonte_valida and len(im.onus_fonte_atos) != 1:
+                av.bloqueia(
+                    "ONUS_JA_QUITADO_MAIS_DE_UM_ATO",
+                    "A redação de ônus já quitado cita um único ato da matrícula (\"registrada sob o "
+                    "R-…\"), mas o ônus aponta para vários.",
+                )
         elif termos.onus_quitacao not in frases.QUITACOES_ONUS:
             av.bloqueia("ONUS_QUITACAO_INVALIDA", f"Forma de quitação desconhecida: {termos.onus_quitacao}.")
         elif termos.onus_quitacao == "compradores_prazo" and not termos.onus_prazo_dias:
@@ -1346,6 +1615,23 @@ def _certidoes_do_imovel(
             )
         if c.validade_ate is not None and c.validade_ate < assinatura:
             av.bloqueia("CERTIDAO_IMOVEL_VENCIDA", f"{rotulo} do imóvel está vencida na data da assinatura.")
+        # [2026-10-03 bug fix] The printed line carries the certidão's OWN
+        # resultado (`frases.CERTIDOES_IMOVEL_MODELO`) — it used to print
+        # "Negativa" whatever it said. Missing/unknown is refused, never
+        # printed as a guess. (The matrícula certidão has no resultado.)
+        if c.tipo != "matricula":
+            if not c.resultado:
+                av.falta(
+                    f"imovel.certidao.{c.tipo}.resultado",
+                    f"Resultado da {rotulo.replace('Certidão Negativa', 'certidão')} do imóvel "
+                    "(negativa, positiva ou positiva com efeito de negativa)",
+                    "imovel",
+                )
+            elif c.resultado not in frases.RESULTADO_ROTULO:
+                av.bloqueia(
+                    "CERTIDAO_IMOVEL_RESULTADO_DESCONHECIDO",
+                    f"{rotulo} do imóvel tem um resultado desconhecido ('{c.resultado}').",
+                )
         if c.resultado in frases.RESULTADOS_COM_APONTAMENTO:
             av.avisa(
                 "CERTIDAO_IMOVEL_COM_APONTAMENTO",
@@ -1384,6 +1670,9 @@ def _negociacao(
 
     favorecidos = {f.id: f for f in d.favorecidos}
     cpfs_vendedores = {frases.so_digitos(p.cpf) for p in signatarios(d.vendedores) if p.cpf}
+    cpfs_vendedores |= {
+        frases.so_digitos(pj.cnpj) for pj in d.partes_pj if pj.lado == "vendedor" and pj.cnpj
+    }
     numeros = (
         numeros_impressos(d)
         if agrupar_parcelas
@@ -1773,6 +2062,13 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
         ):
             if not getattr(imovel, campo):
                 av.falta(f"{alvo}.{campo}", rotulo, "imovel")
+        if imovel.cartorio and frases.cartorio_texto(imovel.cartorio) is None:
+            av.falta(
+                f"{alvo}.cartorio",
+                "Cartório de registro do imóvel da permuta com a cidade — a cidade não foi encontrada "
+                f"em '{imovel.cartorio}'",
+                "imovel",
+            )
         for campo, rotulo in (
             ("logradouro", "Logradouro do imóvel da permuta"),
             ("numero", "Número do imóvel da permuta"),
@@ -1845,7 +2141,7 @@ def _certidoes(
         else:
             av.bloqueia(codigo, mensagem)
 
-    def confirmar_pcen(p: Pessoa, c: Certidao, rotulo: str, nome_grupo: str) -> None:
+    def confirmar_pcen(parte_id: Optional[str], c: Certidao, rotulo: str, nome_grupo: str) -> None:
         """[Owner 2026-10-01, Option A + amendment] The Receita PCEN 2ª via is
         judged by its printed validity, but the operator must KNOW the
         difference: an acknowledgment gate (`confirmacoes`), never a silent
@@ -1862,7 +2158,7 @@ def _certidoes(
             "rotulo": f"{rotulo} — {nome_grupo}",
             "mensagem": mensagem,
             "explicacao": certidao_pcen.explicacao(c.emitida_em, c.validade_ate),
-            "parte_id": p.parte_id,
+            "parte_id": parte_id,
             "resultado_id": c.resultado_id,
             "emitida_em": c.emitida_em.isoformat() if c.emitida_em else None,
             "validade_ate": c.validade_ate.isoformat(),
@@ -1870,10 +2166,10 @@ def _certidoes(
             "ciente_em": c.pcen_ciente_em if ciente else None,
             "ciente_por": c.pcen_ciente_por if ciente else None,
             "acoes": {"entendi": certidao_pcen.ACAO_ENTENDI, "duvida": certidao_pcen.ACAO_DUVIDA},
-            "destino": av.destinos.para("certidoes", parte_id=p.parte_id),
+            "destino": av.destinos.para("certidoes", parte_id=parte_id),
         })
 
-    def conferir(p: Pessoa, certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
+    def conferir(parte_id: Optional[str], certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
         # A result whose consulta kind (CPF/CNPJ) is unknown cannot be placed
         # in either group — named, never silently read as one of them.
         for c in certs:
@@ -1883,7 +2179,7 @@ def _certidoes(
                     f"Tipo de consulta (CPF ou CNPJ) da certidão {_rotulo_certidao_seguro(c.tipo)} "
                     f"— {nome_grupo}",
                     "certidoes",
-                    p.parte_id,
+                    parte_id,
                 )
         idx = indice_certidoes(certs, tipo_documento)
         for tipo in tipos_exigidos(tipo_documento):
@@ -1898,7 +2194,7 @@ def _certidoes(
                 # this block used to grant (df54184ab, live in prod since
                 # d1dc3f834) is revoked by owner directive (roadmap
                 # `sw-drive-extraction-2026-09.md` §R1, 2026-09-24).
-                av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", p.parte_id)
+                av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", parte_id)
                 continue
             if c.resultado == "nao_emitida":
                 continue
@@ -1911,9 +2207,9 @@ def _certidoes(
                 )
                 continue
             if not c.numero:
-                av.falta(f"certidao.{tipo}.numero", f"Número da {rotulo} — {nome_grupo}", "certidoes", p.parte_id)
+                av.falta(f"certidao.{tipo}.numero", f"Número da {rotulo} — {nome_grupo}", "certidoes", parte_id)
             if not c.emitida_em:
-                av.falta(f"certidao.{tipo}.emitida_em", f"Data de emissão da {rotulo} — {nome_grupo}", "certidoes", p.parte_id)
+                av.falta(f"certidao.{tipo}.emitida_em", f"Data de emissão da {rotulo} — {nome_grupo}", "certidoes", parte_id)
                 continue
             excecao_pcen = certidao_pcen.excecao_aplica(
                 resultado=c.resultado, segunda_via=c.segunda_via, validade_ate=c.validade_ate
@@ -1931,7 +2227,7 @@ def _certidoes(
             if c.validade_ate is not None and c.validade_ate < assinatura:
                 tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
             elif excecao_pcen and c.emitida_em <= assinatura:
-                confirmar_pcen(p, c, rotulo, nome_grupo)
+                confirmar_pcen(parte_id, c, rotulo, nome_grupo)
             # A genuine positiva needs the esclarecimentos paragraph.
             # [Owner directive, 2026-09-25] `negativa_com_homonimos` no
             # longer does — reversed §6.1 #15's original read; see
@@ -1944,14 +2240,17 @@ def _certidoes(
         # Migration 116 reaches EVERY party's certidões, the titular included,
         # so an empty list is "none issued yet" and each tipo is named below —
         # it is no longer an unreachable-data refusal.
-        conferir(p, p.certidoes, "cpf", _nome(p))
+        conferir(p.parte_id, p.certidoes, "cpf", _nome(p))
 
     def conferir_empresas() -> None:
         """[E1] Every empresa a certificando holds a participação in — the
         NULL-situação gap (no Cartão CNPJ uploaded yet) is a named
         `faltando`, never a silent skip (E1, H4); required companies get
         the same 11-item CNPJ certidão check as a person (E5)."""
+        partes_pj = {pj.empresa_id for pj in d.partes_pj}
         for e, dono in _empresas_de_certificandos(d, sw):
+            if e.id in partes_pj:
+                continue  # the company IS a party: its own group below (`conferir_pj`)
             nome_pj = e.razao_social or e.cnpj
             motivo = classificar_empresa(e, hoje, politica)
             if motivo == PJ_SEM_SITUACAO:
@@ -1968,7 +2267,12 @@ def _certidoes(
                     f"A situação cadastral da empresa {nome_pj} não é reconhecida.",
                 )
             elif motivo in (PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA):
-                conferir(dono, e.certidoes, "cnpj", nome_pj)
+                conferir(dono.parte_id, e.certidoes, "cnpj", nome_pj)
+
+    def conferir_pj() -> None:
+        """[Migration 193] A PJ party presents its OWN 11 CNPJ certidões."""
+        for pj in pj_certificandas(d, sw):
+            conferir(pj.parte_id, pj.certidoes, "cnpj", pj.razao_social or pj.cnpj or "empresa")
 
     def conferir_conjuges_ausentes() -> None:
         """[E3] A married certificando's cônjuge who is not a `Pessoa` on
@@ -1985,8 +2289,9 @@ def _certidoes(
             )
 
     conferir_empresas()
+    conferir_pj()
     conferir_conjuges_ausentes()
-    for p in signatarios_certificados:
+    for p in signatarios_certificados + anuentes_certificandos(d):
         conferir_pessoa(p)
         # [Q11] the estado-civil certidão is less than 90 days old.
         emitida = p.certidao_estado_civil_emitida_em
@@ -2253,28 +2558,40 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
             "negociacao.ad_corpus", "Venda ad corpus (sim ou não)", "negociacao",
             alvo=ALVO_AD_CORPUS,
         )
-    # Stored by 114, with no clause in any sample contract. 🔴 A BLOQUEIO,
-    # never an aviso (owner goal 2026-10-03: "a generated contract must
-    # never be silently wrong"): the operator TYPED an obligation they
-    # believe binds a party, and a contract that generates without it is a
-    # signed instrument missing a term somebody agreed to. An aviso let that
-    # instrument through; refusing makes the operator choose — clear the
-    # field (the obligation is not part of this deal) or wait for the clause.
-    for valor, codigo, rotulo in (
-        (d.termos.obrigacoes_vendedor, "OBRIGACOES_VENDEDOR_SEM_REDACAO", "As obrigações do vendedor"),
-        (
-            d.termos.permuta_obrigacoes_entrega,
-            "PERMUTA_OBRIGACOES_SEM_REDACAO",
-            "As obrigações de entrega do imóvel da permuta",
-        ),
+    # [Migration 193 — supersedes the 2026-10-03 OBRIGACOES_VENDEDOR_SEM_REDACAO
+    # / PERMUTA_OBRIGACOES_SEM_REDACAO bloqueios] The signed contracts carry
+    # these as FREE paragraphs (corpus catalog §5: 6 deals' seller
+    # declarations/regularização, 1 permuta delivery), so the operator's text
+    # is printed VERBATIM where the corpus puts it — seller obligations as a
+    # paragraph of the ÔNUS clause (deal 859), the permuta delivery inside
+    # the permuta posse clause (deal 873) — and recorded as a legal-review
+    # item: wording the office never standardised gets a lawyer's eye.
+    for valor, codigo, titulo, ligado in (
+        (d.termos.obrigacoes_vendedor, "OBRIGACOES_VENDEDOR_TEXTO_LIVRE",
+         "Obrigações/declarações do vendedor (texto digitado)", True),
+        (d.termos.permuta_obrigacoes_entrega, "PERMUTA_OBRIGACOES_TEXTO_LIVRE",
+         "Obrigações de entrega do imóvel da permuta (texto digitado)", sw["tem_permuta"]),
     ):
-        if (valor or "").strip():
+        paragrafos = frases.paragrafos_livres(valor)
+        if not paragrafos:
+            continue
+        if not ligado:
             av.bloqueia(
-                codigo,
-                f"{rotulo} foram preenchidas, mas o gerador ainda não tem cláusula para elas — "
-                "o texto não entraria no contrato. Apague o campo (se não faz parte deste "
-                "negócio) ou aguarde a cláusula para gerar.",
+                "PERMUTA_OBRIGACOES_SEM_PERMUTA",
+                "As obrigações de entrega do imóvel da permuta foram preenchidas, mas o negócio não "
+                "tem parcela de permuta — o texto não teria onde entrar. Apague o campo ou inclua a permuta.",
             )
+            continue
+        if any(has_raw_markup(t) for t in paragrafos):
+            av.bloqueia(
+                "TEXTO_LIVRE_COM_MARCACAO",
+                f"{titulo}: o texto contém marcação de formatação (** ou <u>) — remova-a.",
+            )
+        av.avisa(
+            codigo,
+            f"{titulo}: será impresso exatamente como digitado e entra como item da revisão jurídica.",
+        )
+        av.revisar(codigo, titulo, "\n".join(paragrafos))
     # [Owner revision, 2026-09-23 — supersedes an earlier `foro_comarca`
     # manual-field draft] NO manual field, NO imóvel-city fallback: the
     # comarca is read off the SAME matrícula transcription the contract
@@ -2299,6 +2616,10 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
         )
 
 
+#: Public name for the parties gate (`contrato_aditivo` reuses it).
+avaliar_partes = _partes
+
+
 def avaliar(
     d: DadosContrato,
     switches: dict[str, bool],
@@ -2315,7 +2636,7 @@ def avaliar(
             imovel_codigo=d.imovel.codigo if d.imovel else None,
         )
     )
-    _partes(av, d)
+    _partes(av, d, politica)
     _imovel(av, d, switches, politica, assinatura)
     _negociacao(av, d, switches, assinatura, agrupar_parcelas=True)
     _financiamento(av, d, switches)
@@ -2340,10 +2661,15 @@ __all__ = [
     "ORDEM_CERTIDOES_IMOVEL",
     "SUFIXO_DOCUMENTO_DE_IDENTIDADE",
     "SUFIXO_PJ_BAIXADA",
+    "PJ_REDACAO_A_CONFIRMAR",
     "anos_antes",
     "antigos_no_contrato",
+    "anuentes_certificandos",
+    "conjuge_do_anuente",
+    "pj_certificandas",
     "antigos_proprietarios",
     "avaliar",
+    "avaliar_partes",
     "certidoes_imovel",
     "classificar_empresa",
     "classificar_situacao_pj",

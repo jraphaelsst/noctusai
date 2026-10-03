@@ -73,19 +73,23 @@ def _campos(av) -> list[str]:
 
 
 class TestObrigacoesSemRedacaoRecusam:
+    # Migration 193 superseded the SEM_REDACAO bloqueios: the typed text now
+    # PRINTS verbatim (test_contrato_gerador_partes_clausulas) — what stays
+    # true is that it never silently vanishes: it is printed AND recorded as
+    # a legal-review item.
     @pytest.mark.parametrize("campo, codigo, n", [
-        ("obrigacoes_vendedor", "OBRIGACOES_VENDEDOR_SEM_REDACAO", 1),
-        ("permuta_obrigacoes_entrega", "PERMUTA_OBRIGACOES_SEM_REDACAO", 5),
+        ("obrigacoes_vendedor", "OBRIGACOES_VENDEDOR_TEXTO_LIVRE", 1),
+        ("permuta_obrigacoes_entrega", "PERMUTA_OBRIGACOES_TEXTO_LIVRE", 5),
     ])
     def test_typed_text_blocks_instead_of_silently_vanishing(self, campo, codigo, n):
         d = fx.variante(n)
         d = replace(d, termos=replace(d.termos, **{campo: "Entregar o imóvel pintado."}))
         av = _avaliar(n, d)
-        assert codigo in _codigos(av.bloqueios)
-        assert codigo not in _codigos(av.avisos)
-        assert not av.pronto
-        mensagem = next(b["mensagem"] for b in av.bloqueios if b["codigo"] == codigo)
-        assert "Apague o campo" in mensagem and "aguarde a cláusula" in mensagem
+        assert codigo not in _codigos(av.bloqueios)
+        assert codigo in _codigos(av.avisos)
+        assert any(i["codigo"] == codigo for i in av.itens_revisao)
+        texto = "\n".join(_render(n, d).paragrafos)
+        assert "Entregar o imóvel pintado." in texto
 
     def test_blank_text_is_not_an_obligation(self):
         d = fx.variante(1)
@@ -190,8 +194,10 @@ class TestVocabularioDesconhecidoRecusa:
         assert "qualificacao.regime_bens" in _campos(av)
 
     def test_a_known_regime_still_prints_its_wording(self):
-        texto = "\n".join(_render(1, _casal("comunhao_universal")).paragrafos)
-        assert "casados no regime da comunhão universal de bens" in texto
+        # Comunhão parcial: since migration 193 a post-1977 comunhão universal
+        # also needs its pacto antenupcial (test_contrato_gerador_partes_clausulas).
+        texto = "\n".join(_render(1, _casal("comunhao_parcial")).paragrafos)
+        assert "casados no regime da comunhão parcial de bens" in texto
 
     def test_the_phrase_refuses_an_unknown_regime(self):
         d = _casal("regime_inventado")

@@ -163,7 +163,67 @@ class TestRegimeDoCasal:
         assert out["status"] == "sem_dados"
 
 
+class TestCitacaoDaEscritura:
+    """Migration 193 — the escritura's citation (data, tabelionato, livro,
+    folha) lands on BOTH spouses' `clientes.pacto_antenupcial_*` through the
+    same D1 path: fill empty machine-pending, conflict on a different value,
+    never overwrite. The contract generator prints it from there."""
+
+    @pytest.mark.asyncio
+    async def test_os_dois_conjuges_recebem_a_citacao_pendente_de_confirmacao(self, client, scoped):
+        cid, conj_id, did, storage = await _setup(scoped)
+        await _extrair(scoped, storage, cid, did, _lida())
+        for rid in (cid, conj_id):
+            row = _row(scoped, "clientes", rid)
+            assert (
+                str(row["pacto_antenupcial_data"])[:10], row["pacto_antenupcial_tabelionato"],
+                row["pacto_antenupcial_livro"], row["pacto_antenupcial_folha"],
+            ) == ("2019-01-10", "7º Tabelião de Notas desta Capital", "1234", "056")
+            assert row["pacto_antenupcial_livro_origem"] == "pacto_antenupcial"
+            assert row["pacto_antenupcial_livro_documento_id"] == did
+            assert row.get("pacto_antenupcial_livro_confirmado_em") is None
+
+    @pytest.mark.asyncio
+    async def test_livro_diferente_ja_gravado_vira_conflito_nunca_sobrescreve(self, client, scoped):
+        cid, conj_id, did, storage = await _setup(
+            scoped,
+            titular={"pacto_antenupcial_livro": "999", "pacto_antenupcial_livro_origem": "manual"},
+        )
+        await _extrair(scoped, storage, cid, did, _lida(), FakeNotificationService())
+        assert _row(scoped, "clientes", cid)["pacto_antenupcial_livro"] == "999"
+        campos = [c["campo"] for c in scoped.table("cliente_campo_conflitos").select("*").execute().data]
+        assert campos == ["pacto_antenupcial_livro"]
+        assert _row(scoped, "clientes", conj_id)["pacto_antenupcial_livro"] == "1234"
+
+    @pytest.mark.asyncio
+    async def test_citacao_sem_regime_ainda_e_gravada(self, client, scoped):
+        cid, _conj, did, storage = await _setup(scoped)
+        await _extrair(scoped, storage, cid, did, _lida(regime_bens=None,
+                       regime_bens_confianca=ExtractionConfidence.NENHUMA))
+        row = _row(scoped, "clientes", cid)
+        assert row["pacto_antenupcial_folha"] == "056"
+        assert row.get("regime_bens") in (None, "")
+
+    def test_um_conflito_de_pacto_e_decidivel_pelo_admin(self):
+        # `resolver_conflito` is generic over CAMPO_POR_CHAVE.
+        for parte in ("data", "tabelionato", "livro", "folha"):
+            assert f"pacto_antenupcial_{parte}" in svc.CAMPO_POR_CHAVE
+
+    @pytest.mark.asyncio
+    async def test_o_contrato_le_a_citacao_gravada(self, client, scoped):
+        from app.modules.card_hub.contrato_gerador.carregador import _pacto
+
+        cid, _conj, did, storage = await _setup(scoped)
+        await _extrair(scoped, storage, cid, did, _lida())
+        pacto = _pacto(_row(scoped, "clientes", cid))
+        assert pacto is not None
+        assert (pacto.data, pacto.livro, pacto.folha) == (date(2019, 1, 10), "1234", "056")
+
+
 def test_tipo_registrado_no_catalogo_de_fontes():
     fonte = fontes.FONTES["pacto_antenupcial"]
-    assert fonte.dominio == "cliente" and fonte.campos == frozenset({"regime_bens"})
+    assert fonte.dominio == "cliente" and fonte.campos == frozenset({
+        "regime_bens", "pacto_antenupcial_data", "pacto_antenupcial_tabelionato",
+        "pacto_antenupcial_livro", "pacto_antenupcial_folha",
+    })
     assert svc.deve_extrair("pacto_antenupcial")

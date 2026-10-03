@@ -110,6 +110,7 @@ from app.modules.card_hub.schemas import (
     DecidirConflitoBody,
     DocumentoChecklistPatchBody,
     ExtracaoSugestaoBody,
+    ParteContratoPatchBody,
     PartePapelPatchBody,
     ProcessoLegadoBody,
     ResolverConflitoNegociacaoBody,
@@ -130,7 +131,7 @@ logger = logging.getLogger(__name__)
 router.include_router(negociacao_estruturada_router)
 # F5 — contract generation (GET .../contratos/{id}/geracao, POST .../gerar).
 router.include_router(contrato_gerador_router)
-# Aditivos (migration 190) — .../contratos/{id}/aditivos[...].
+# Aditivos (migration 193) — .../contratos/{id}/aditivos[...].
 router.include_router(contrato_aditivo_router)
 # Contract signing (migration 134) — .../contratos/{id}/assinatura[/cancelar].
 # The webhook (§3.4) is NOT here — see `assinatura_router.py`'s own docstring.
@@ -1005,6 +1006,24 @@ async def patch_comprador_route(
     _user, org_id = _auth_parts(auth)
     return compradores_svc.atualizar_papel(
         client, org_id, cliente_id, parte_id, papel=body.papel
+    )
+
+
+@router.patch("/{cliente_id}/compradores/{parte_id}/contrato")
+async def patch_comprador_contrato_route(
+    cliente_id: UUID,
+    parte_id: UUID,
+    body: ParteContratoPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """[Migration 193] A party's contract-qualification fields: a company's
+    NIRE + sede, a representante's link to the company it signs for. Only
+    the keys sent are written (`exclude_unset`); `null` clears."""
+    _user, org_id = _auth_parts(auth)
+    return compradores_svc.atualizar_dados_contrato(
+        client, org_id, cliente_id, parte_id,
+        valores=body.model_dump(exclude_unset=True, mode="json"),
     )
 
 

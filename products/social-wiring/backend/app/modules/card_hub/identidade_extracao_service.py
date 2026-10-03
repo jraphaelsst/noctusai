@@ -500,6 +500,30 @@ CAMPO_NOME_MAE = CampoExtraido(
 )
 CAMPO_POR_CHAVE["nome_mae"] = CAMPO_NOME_MAE
 
+#: [Migration 193] The escritura de pacto antenupcial the contract cites in a
+#: married couple's qualification (`clientes.pacto_antenupcial_*`), written by
+#: `pacto_antenupcial_service` through `aplicar_campos_ao_cliente` (D1: fill
+#: an empty field machine-pending, conflict on a different value, never
+#: overwrite). Held OUTSIDE `CAMPOS` for the same reason as `CAMPO_NOME_MAE`
+#: (no `IdentityFields` attribute maps to them — `_valores_lidos` would
+#: `KeyError`), but registered in `CAMPO_POR_CHAVE` so the admin's generic
+#: `resolver_conflito` can decide a pacto conflict. No `cliente_documentos`
+#: column of their own (the reading rides on the document's
+#: `extracao_pacto_antenupcial` JSONB), hence `coluna_*=""` —
+#: `_documento_sustenta` answers "cannot tell" for them, never "retracted".
+CAMPOS_PACTO_ESCRITURA: tuple[CampoExtraido, ...] = tuple(
+    CampoExtraido(
+        item_key=f"pacto_antenupcial_{parte}",
+        coluna_valor="",
+        coluna_confianca="",
+        coluna_rotulo="",
+        sobrescreve=False,
+    )
+    for parte in ("data", "tabelionato", "livro", "folha")
+)
+for _campo_pacto in CAMPOS_PACTO_ESCRITURA:
+    CAMPO_POR_CHAVE[_campo_pacto.item_key] = _campo_pacto
+
 
 def deve_extrair(tipo_documento: str) -> bool:
     """Is this a document we read fields from?"""
@@ -668,7 +692,7 @@ def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
         ea, eb = _estado_civil_normalizado(str(a)), _estado_civil_normalizado(str(b))
         if ea is not None and eb is not None:
             return ea == eb
-    if item_key in ("data_nascimento", "data_casamento"):
+    if item_key in ("data_nascimento", "data_casamento", "pacto_antenupcial_data"):
         return str(a)[:10] == str(b)[:10]
     return _mesmo_nome(str(a), str(b))
 
@@ -4456,6 +4480,7 @@ __all__ = [
     "revalidar_negociacao",
     "cpf_conhecido",
     "vincular_conjuges",
+    "CAMPOS_PACTO_ESCRITURA",
     "CAMPO_POR_CHAVE",
     "CAMPO_POR_ITEM",
     "MAX_TENTATIVAS",

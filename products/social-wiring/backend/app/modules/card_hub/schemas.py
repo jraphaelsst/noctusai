@@ -10,6 +10,7 @@ not by a second parallel schema declaration for every read shape).
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 from typing import Literal, Optional
 from uuid import UUID
@@ -271,6 +272,24 @@ class PartePapelPatchBody(StrictHttpModel):
     """
 
     papel: str = Field(min_length=1, max_length=64)
+
+
+class ParteContratoPatchBody(StrictHttpModel):
+    """[Migration 193] `PATCH .../compradores/{parte_id}/contrato` — a party
+    row's contract-qualification fields. PATCH semantics: only the keys SENT
+    are written (`null` clears). `pj_*` only on a company party; `representa_
+    parte_id` only on a person whose papel is 'representante', naming a
+    company party of the SAME atendimento (service-validated, 400)."""
+
+    pj_nire: Optional[str] = Field(default=None, max_length=40)
+    pj_sede_logradouro: Optional[str] = Field(default=None, max_length=200)
+    pj_sede_numero: Optional[str] = Field(default=None, max_length=20)
+    pj_sede_complemento: Optional[str] = Field(default=None, max_length=120)
+    pj_sede_bairro: Optional[str] = Field(default=None, max_length=120)
+    pj_sede_cidade: Optional[str] = Field(default=None, max_length=120)
+    pj_sede_uf: Optional[str] = Field(default=None, max_length=2)
+    pj_sede_cep: Optional[str] = Field(default=None, max_length=9)
+    representa_parte_id: Optional[UUID] = None
 
 
 # ─── Negociação (migration 077) ──────────────────────────────────────────
@@ -629,6 +648,9 @@ class TermosNegocioPutBody(StrictHttpModel):
         ]
     ] = None
     onus_prazo_dias: Optional[int] = None
+    #: [Migration 193] `onus_quitacao='ja_quitado'`: the date the baixa
+    #: request was filed at the Registro de Imóveis.
+    onus_baixa_protocolo_em: Optional[date] = None
 
     #: % ao mês.
     confissao_juros_am: Optional[Decimal] = None

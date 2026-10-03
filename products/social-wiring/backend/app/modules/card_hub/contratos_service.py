@@ -262,6 +262,10 @@ def _revisao_out(row: dict, resolved: dict) -> dict:
         "campos": [
             {k: c.get(k) for k in CAMPOS_REVISAO_CHAVES if k != "valor_sha256"} for c in campos
         ],
+        # Migration 193 — wording to read with care (verbatim operator
+        # paragraphs, single-contract-derived PJ wording): `{codigo, titulo,
+        # texto}`. `[]` for a pre-193 row (no column at all).
+        "itens": list(row.get("revisao_juridica_itens") or []),
         "revisado_por": table_reads.actor(resolved, row.get("revisado_por")),
         "revisado_em": row.get("revisado_em"),
     }
@@ -395,7 +399,7 @@ def _versao_out(row: dict, resolved: dict) -> dict:
 
 
 #: Public name of the version projection — the aditivos' versions
-#: (`contrato_aditivo.store`, migration 190) carry the same row shape and are
+#: (`contrato_aditivo.store`, migration 193) carry the same row shape and are
 #: projected by this same function, never a copy of it.
 saida_versao = _versao_out
 
@@ -805,6 +809,7 @@ async def nova_versao_gerada(
     usuario_id: Optional[UUID],
     modalidade_assinatura: str = MODALIDADE_PADRAO,
     revisao_campos: Optional[list[dict]] = None,
+    revisao_itens: Optional[list[dict]] = None,
 ) -> dict:
     """A version produced by the F5 generator (`card_hub/contrato_gerador`):
     origem='gerado' plus the SHA-256 of the data it was rendered from
@@ -852,6 +857,15 @@ async def nova_versao_gerada(
                     {k: c.get(k) for k in CAMPOS_REVISAO_CHAVES} for c in revisao_campos
                 ]}
                 if revisao_campos
+                else {}
+            ),
+            # Migration 193 — likewise only written when there is an item, so
+            # an insert against a pre-193 schema is unchanged.
+            **(
+                {"revisao_juridica_itens": [
+                    {k: i.get(k) for k in ("codigo", "titulo", "texto")} for i in revisao_itens
+                ]}
+                if revisao_itens
                 else {}
             ),
         },
@@ -1123,7 +1137,7 @@ async def url_artefato_versao(
     """The PDF or `.docx` sibling of a GENERATED-version row of `store` —
     the ONE signed-URL path for every version surface shaped like
     `atendimento_contrato_versoes` (the contract's own, and the aditivos'
-    `contrato_aditivo.store.VERSOES_STORE`, migration 190). Same short TTL,
+    `contrato_aditivo.store.VERSOES_STORE`, migration 193). Same short TTL,
     same access-log call keyed to the version's own id for both artifacts;
     a foreign/missing id 404s before "has no docx" can be told apart."""
     if formato not in ("pdf", "docx"):

@@ -150,6 +150,8 @@ def obter_geracao(
         # Owner amendment 2026-10-01 — acknowledgments the operator must give
         # (each with `ciente`); `pronto` is False while any is pending.
         "confirmacoes": avaliacao.confirmacoes,
+        # Migration 193 — what the final legal review will be pointed at.
+        "itens_revisao": avaliacao.itens_revisao,
     }
 
 
@@ -309,6 +311,8 @@ async def gerar(
         # rendering that actually carries the signature lines.
         modalidade_assinatura=dados.modalidade_assinatura,
         revisao_campos=revisao_campos,
+        # Migration 193 — verbatim operator paragraphs / PJ wording.
+        revisao_itens=avaliacao.itens_revisao,
     )
     return {
         "versao": versao,

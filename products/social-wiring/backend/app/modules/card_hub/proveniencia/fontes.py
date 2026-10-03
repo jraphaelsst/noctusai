@@ -283,8 +283,9 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
     # product had no type to file it under at all. Same "differently-shaped
     # reader" dispatch as `ficha_cadastral` above (`pacto_antenupcial_
     # service.aplicar_leitura`, not the single-titular identity apply): the
-    # reading names TWO people, each matched to a party by CPF, and only
-    # `regime_bens` is written onto them — through the SAME D1 path, so an
+    # reading names TWO people, each matched to a party by CPF, and
+    # `regime_bens` + (migration 193) the escritura's citation are written
+    # onto them — through the SAME D1 path, so an
     # existing different value becomes a conflict, never an overwrite. The
     # escritura's own facts (data/tabelionato/livro/folhas/registro) are
     # carried on `cliente_documentos.extracao_pacto_antenupcial` (migration
@@ -298,7 +299,12 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
             ".make_pacto_antenupcial_extractor"
         ),
         origens=frozenset({"pacto_antenupcial"}),
-        campos=frozenset({"regime_bens"}),
+        # Migration 193 — the escritura's citation now ALSO lands on both
+        # spouses (`clientes.pacto_antenupcial_*`, same D1 path).
+        campos=frozenset({
+            "regime_bens", "pacto_antenupcial_data", "pacto_antenupcial_tabelionato",
+            "pacto_antenupcial_livro", "pacto_antenupcial_folha",
+        }),
     ),
     # ─── imovel_documentos (imovel_hub/documentos_service) ─────────────────
     Fonte(

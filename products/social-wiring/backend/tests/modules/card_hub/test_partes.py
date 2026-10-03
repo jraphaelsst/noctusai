@@ -80,12 +80,13 @@ def _atendimento(aid, cliente_id, **over):
 
 
 def _parte(aid, *, cliente_id=None, empresa_id=None, lado="comprador",
-           papel="comprador", ordem=0, created_at="2026-01-02T00:00:00+00:00"):
+           papel="comprador", ordem=0, created_at="2026-01-02T00:00:00+00:00", **extra):
     return {
         "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
         "cliente_id": cliente_id, "empresa_id": empresa_id, "lado": lado,
         "papel": papel, "ordem": ordem, "observacao": None,
         "created_at": created_at, "created_by": None, "updated_at": None,
+        **extra,
     }
 
 
@@ -636,30 +637,39 @@ class TestContratoPjFaltando:
         [pj] = svc.partes_pj(scoped, UUID(ORG_ID), aid)
         assert pj["cnpj"] == CNPJ_A and pj["lado"] == "vendedor" and pj["nome"] == "Empresa Um LTDA"
 
-    def test_derivacao_names_the_pj_party_as_faltando(self):
+    def test_derivacao_names_each_missing_pj_field(self):
+        """Migration 193 replaced the blanket `partes.pj_sem_qualificacao`
+        with per-field faltando (razão social, CNPJ, NIRE, sede, representante)."""
         import dataclasses
 
         from app.modules.card_hub.contrato_gerador import derivacao
+        from app.modules.card_hub.contrato_gerador.dados import ParteJuridica
         from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
         base = fx.base_v1()
-        assert not any(
-            f["campo"] == "partes.pj_sem_qualificacao"
-            for f in derivacao.avaliar(
-                base, derivacao.derivar_switches(base, fx.POLITICA_PADRAO, fx.REFERENCIA),
-                fx.POLITICA_PADRAO, fx.REFERENCIA,
-            ).faltando
-        )
-        d = dataclasses.replace(base, partes_pj=[{
-            "parte_id": "p1", "empresa_id": "e1", "lado": "comprador",
-            "papel": "comprador", "nome": "Acme", "cnpj": CNPJ_A,
-        }])
+        d = dataclasses.replace(base, partes_pj=[ParteJuridica(
+            parte_id="p1", empresa_id="e1", lado="comprador", papel="comprador",
+            razao_social="Acme", cnpj=CNPJ_A,
+        )])
         av = derivacao.avaliar(
             d, derivacao.derivar_switches(d, fx.POLITICA_PADRAO, fx.REFERENCIA),
             fx.POLITICA_PADRAO, fx.REFERENCIA,
         )
-        [f] = [f for f in av.faltando if f["campo"] == "partes.pj_sem_qualificacao"]
-        assert f["parte_id"] == "p1" and "Acme" in f["rotulo"]
+        campos = {f["campo"] for f in av.faltando if f["parte_id"] == "p1"}
+        assert {"partes.pj.nire", "partes.pj.sede_logradouro", "partes.pj.representante"} <= campos
+        assert "partes.pj_sem_qualificacao" not in {f["campo"] for f in av.faltando}
+
+    def test_partes_pj_carries_nire_and_sede(self, scoped, client):
+        from uuid import UUID
+
+        emp = _empresa()
+        cid, aid = _deal(scoped, empresas=[emp])
+        scoped.set_table_data("atendimento_partes", [
+            _parte(aid, empresa_id=emp["id"], lado="vendedor", papel="proprietario",
+                   pj_nire="35200000000", pj_sede_cidade="Cotia"),
+        ])
+        [pj] = svc.partes_pj(scoped, UUID(ORG_ID), aid)
+        assert pj["nire"] == "35200000000" and pj["sede"]["cidade"] == "Cotia"
 
 
 # ─── auth: strict 401 ──────────────────────────────────────────────────────
@@ -677,3 +687,69 @@ class TestAuthBoundary:
     def test_post_compradores_no_token_is_exactly_401(self, anon_http):
         r = anon_http.post(f"/api/clientes/{uuid4()}/compradores", json={"cnpj": CNPJ_A})
         assert r.status_code == 401
+
+
+# ─── migration 193: a party's contract-qualification fields ───────────────
+
+
+class TestParteContratoPatch:
+    def _url(self, cid, parte_id):
+        return f"/api/clientes/{cid}/compradores/{parte_id}/contrato"
+
+    def test_no_token_is_exactly_401(self, anon_http):
+        r = anon_http.patch(self._url(uuid4(), uuid4()), json={"pj_nire": "1"})
+        assert r.status_code == 401
+
+    def test_pj_party_stores_nire_and_sede(self, http, scoped):
+        emp = _empresa()
+        cid, aid = _deal(scoped, empresas=[emp])
+        pj = _parte(aid, empresa_id=emp["id"], lado="vendedor", papel="proprietario")
+        scoped.set_table_data("atendimento_partes", [pj])
+        r = http.patch(self._url(cid, pj["id"]), headers=_auth(), json={
+            "pj_nire": " 35200000000 ", "pj_sede_uf": "sp", "pj_sede_cep": "06700-000",
+        })
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["pj_nire"] == "35200000000"
+        assert body["pj_sede_uf"] == "SP" and body["pj_sede_cep"] == "06700000"
+        # untouched keys are not written (PATCH semantics)
+        assert body["pj_sede_cidade"] is None
+
+    def test_pj_fields_are_refused_on_a_person(self, http, scoped):
+        pessoa = str(uuid4())
+        cid, aid = _deal(scoped, clientes=[cliente_row(pessoa, nome="Vend")])
+        pf = _parte(aid, cliente_id=pessoa, lado="vendedor", papel="proprietario")
+        scoped.set_table_data("atendimento_partes", [pf])
+        r = http.patch(self._url(cid, pf["id"]), headers=_auth(), json={"pj_nire": "1"})
+        assert r.status_code == 400, r.text
+
+    def test_representante_links_to_a_company_of_the_same_deal(self, http, scoped):
+        emp = _empresa()
+        rep, outro = str(uuid4()), str(uuid4())
+        cid, aid = _deal(scoped, empresas=[emp], clientes=[
+            cliente_row(rep, nome="Rep"), cliente_row(outro, nome="Outro"),
+        ])
+        pj = _parte(aid, empresa_id=emp["id"], lado="vendedor", papel="proprietario")
+        pr = _parte(aid, cliente_id=rep, lado="vendedor", papel="representante", ordem=1)
+        po = _parte(aid, cliente_id=outro, lado="vendedor", papel="proprietario", ordem=2)
+        scoped.set_table_data("atendimento_partes", [pj, pr, po])
+        ok = http.patch(self._url(cid, pr["id"]), headers=_auth(), json={"representa_parte_id": pj["id"]})
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["representa_parte_id"] == pj["id"]
+        # a person party is not a company to represent
+        r = http.patch(self._url(cid, pr["id"]), headers=_auth(), json={"representa_parte_id": po["id"]})
+        assert r.status_code == 400
+        # only a 'representante' represents
+        r = http.patch(self._url(cid, po["id"]), headers=_auth(), json={"representa_parte_id": pj["id"]})
+        assert r.status_code == 400
+
+    def test_a_company_cannot_be_anuente(self, http, scoped):
+        cid, _aid = _deal(scoped)
+        r = http.post(f"/api/clientes/{cid}/compradores", headers=_auth(),
+                      json={"cnpj": CNPJ_A, "lado": "vendedor", "papel": "anuente"})
+        assert r.status_code == 400, r.text
+
+    def test_anuente_and_representante_are_vendedor_papeis(self):
+        assert "anuente" in comp_svc.PAPEIS_POR_LADO["vendedor"]
+        assert "representante" in comp_svc.PAPEIS_POR_LADO["vendedor"]
+        assert "anuente" not in comp_svc.PAPEIS_POR_LADO["comprador"]

@@ -16,7 +16,9 @@ PactoAntenupcialLido`) names two people, not one titular.
         party who has one on file; else the uploading card by name; else a
         UNIQUE strict name match among the atendimento's parties). An
         unmatched spouse is recorded, never created;
-    (b) per matched spouse, write `regime_bens` through the SAME D1 path
+    (b) per matched spouse, write `regime_bens` — and (migration 193) the
+        escritura's citation the contract prints, `pacto_antenupcial_{data,
+        tabelionato,livro,folha}` — through the SAME D1 path
         every identity source uses (`identidade_extracao_service.
         aplicar_campos_ao_cliente`): an empty field is filled machine-
         pending; an existing DIFFERENT value is never overwritten — it goes
@@ -50,15 +52,38 @@ DOCUMENTOS_TABLE = "cliente_documentos"
 TIPO = "pacto_antenupcial"
 ERRO_SIDE_EFFECTS_FAILED = "side_effects_failed"
 
-#: The only person field a pacto writes — the couple's regime.
-CAMPOS_PACTO: tuple = (identidade_svc.CAMPO_POR_CHAVE["regime_bens"],)
+#: The person fields a pacto writes: the couple's regime, and (migration 193)
+#: the escritura's own citation the contract prints — data, tabelionato,
+#: livro, folha(s) — onto BOTH spouses' `clientes.pacto_antenupcial_*`.
+CAMPOS_PACTO: tuple = (
+    identidade_svc.CAMPO_POR_CHAVE["regime_bens"],
+    *identidade_svc.CAMPOS_PACTO_ESCRITURA,
+)
+
+#: The reader states a confidence for `regime_bens` only. The escritura's
+#: citation (date / tabelião / livro / folhas) is read label-anchored off the
+#: same text, so it is recorded at the reader's middle tier — a constant,
+#: named here, never a per-field guess.
+_CONFIANCA_ESCRITURA = "media"
 
 _ROTULO = "PACTO ANTENUPCIAL"
 
 
 def _lidos(lida: PactoAntenupcialLido) -> dict[str, tuple]:
     confianca = getattr(lida.regime_bens_confianca, "value", lida.regime_bens_confianca)
-    return {"regime_bens": (lida.regime_bens, confianca, _ROTULO, bool(lida.regime_bens))}
+    escritura = {
+        "pacto_antenupcial_data": _iso(lida.data_escritura),
+        "pacto_antenupcial_tabelionato": lida.tabelionato,
+        "pacto_antenupcial_livro": lida.livro,
+        "pacto_antenupcial_folha": lida.folhas,
+    }
+    return {
+        "regime_bens": (lida.regime_bens, confianca, _ROTULO, bool(lida.regime_bens)),
+        **{
+            chave: (valor, _CONFIANCA_ESCRITURA, _ROTULO, bool(valor))
+            for chave, valor in escritura.items()
+        },
+    }
 
 
 def _iso(d) -> Optional[str]:
@@ -136,10 +161,11 @@ async def aplicar_leitura(
             if destino is None:
                 continue
             ja_atribuidos.add(destino)
-            if not lida.regime_bens:
+            lidos = _lidos(lida)
+            if not any(pode for _v, _c, _r, pode in lidos.values()):
                 continue
             feitos, novos = identidade_svc.aplicar_campos_ao_cliente(
-                client, org_id, destino, TIPO, _lidos(lida),
+                client, org_id, destino, TIPO, lidos,
                 campos=CAMPOS_PACTO, documento_id=documento_id,
                 fonte_tabela=DOCUMENTOS_TABLE, fonte_id=documento_id,
             )

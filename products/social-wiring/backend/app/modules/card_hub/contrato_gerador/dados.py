@@ -40,14 +40,15 @@ WHAT REMAINS WITHOUT A HOME (spec §6.1, named refusals — see `derivacao`)
 ------------------------------------------------------------------------
 - #20 procurador / inventariante qualification wording (`PAPEIS_SEM_REDACAO`):
   no sample contract has it, so there is no wording to generate.
-- `Termos.onus_quitacao='ja_quitado'` (#11's "already paid, has termo" state)
-  and `Termos.obrigacoes_vendedor` / `.permuta_obrigacoes_entrega`: stored by
-  114, but the sample contracts carry no clause for them. Each is a named
-  BLOQUEIO (`ONUS_QUITACAO_SEM_REDACAO`, `OBRIGACOES_VENDEDOR_SEM_REDACAO`,
-  `PERMUTA_OBRIGACOES_SEM_REDACAO`) — never an aviso: generating without the
-  typed obligation would silently drop a term the parties agreed to, and
-  printing it would be a clause the office never wrote. The operator clears
-  the field or waits for the clause.
+- [Migration 193, 2026-10-03] What used to be listed here as unwritten now
+  has wording from the office's signed contracts (redacted corpus catalog):
+  `onus_quitacao='ja_quitado'` (deal 867's objeto paragraph, with
+  `Termos.onus_baixa_protocolo_em`), `obrigacoes_vendedor` /
+  `permuta_obrigacoes_entrega` (printed VERBATIM in the clause position the
+  corpus uses, and recorded as a legal-review item on the version), the
+  anuente spouse/companion (`PAPEL_ANUENTE`), the PJ party (`ParteJuridica`),
+  the pacto antenupcial citation (`PactoAntenupcial`) and the foreign party's
+  RNE/RNM (`Pessoa.identidade_tipo`).
 """
 from __future__ import annotations
 
@@ -118,6 +119,23 @@ class CertidaoImovel:
 
 
 @dataclass
+class PactoAntenupcial:
+    """[Migration 193] The escritura de pacto antenupcial a married couple's
+    qualification cites (corpus deal 858). Every field Optional so a half-
+    entered pacto is NAMED by the gate rather than printed with a blank."""
+
+    data: Optional[date] = None
+    #: As printed in the escritura's heading — "1º Tabelião de Notas de
+    #: Cotia". The qualification prints "pelo <tabelionato>".
+    tabelionato: Optional[str] = None
+    livro: Optional[str] = None
+    folha: Optional[str] = None
+
+    def vazio(self) -> bool:
+        return not (self.data or self.tabelionato or self.livro or self.folha)
+
+
+@dataclass
 class Pessoa:
     cliente_id: str
     lado: str  # "vendedor" | "comprador"
@@ -150,6 +168,36 @@ class Pessoa:
     #: Migration 116 closed spec §6.1 #18: certidões are reachable for EVERY
     #: party, the titular included (`certidoes_por_cliente`). An empty list is
     #: therefore "none issued yet" — a real, nameable gap — never "unreachable".
+    certidoes: list[Certidao] = field(default_factory=list)
+    #: [Migration 193] Which identity document `rg`/`rg_orgao` hold —
+    #: `None`/'rg' (cédula de identidade), 'rne'/'rnm' (a foreign party).
+    identidade_tipo: Optional[str] = None
+    #: [Migration 193] The couple's pacto antenupcial, when one was entered.
+    pacto: Optional[PactoAntenupcial] = None
+    #: [Migration 193] `atendimento_partes.representa_parte_id` — the PJ
+    #: party (its `parte_id`) this person signs for (papel 'representante').
+    representa_parte_id: Optional[str] = None
+
+
+@dataclass
+class ParteJuridica:
+    """[Migration 179 + 193] A COMPANY party of the atendimento
+    (`atendimento_partes.empresa_id`). Qualified with the corpus's only PJ
+    wording (deal 866) — razão social, CNPJ, NIRE, sede — and represented by
+    the `Pessoa`(s) whose `representa_parte_id` names `parte_id`. The PJ
+    presents its OWN 11 CNPJ certidões (`certidoes`); its representantes are
+    not certificandos."""
+
+    parte_id: str
+    empresa_id: str
+    lado: str
+    papel: str
+    razao_social: Optional[str] = None
+    cnpj: Optional[str] = None
+    nire: Optional[str] = None
+    sede: Endereco = field(default_factory=Endereco)
+    situacao_cadastral: Optional[str] = None
+    data_situacao_cadastral: Optional[date] = None
     certidoes: list[Certidao] = field(default_factory=list)
 
 
@@ -489,7 +537,8 @@ class Termos:
     permuta_posse_prazo_dias: Optional[int] = None
     permuta_posse_marco: Optional[str] = None
     permuta_posse_marco_parcela_id: Optional[str] = None
-    #: Stored by 114; no sample contract has a clause for it (see module doc).
+    #: [Migration 193] Printed VERBATIM in the permuta posse clause (corpus
+    #: deal 873's position) and recorded as a legal-review item.
     permuta_obrigacoes_entrega: Optional[str] = None
     itens_integrantes: Optional[str] = None
     #: [Migration 163 / owner directive, 2026-09-23] `itens_integrantes`
@@ -500,11 +549,15 @@ class Termos:
     #: (`derivacao._contrato`, `negociacao.itens_integrantes`).
     itens_integrantes_ausente_confirmado: bool = False
     ad_corpus: Optional[bool] = None
-    #: Stored by 114; no sample contract has a clause for it (see module doc).
+    #: [Migration 193] Printed VERBATIM as a paragraph of the ÔNUS clause
+    #: (corpus deal 859's position) and recorded as a legal-review item.
     obrigacoes_vendedor: Optional[str] = None
     #: 'compradores_prazo' | 'interveniente_quitante' | 'parcela' | 'ja_quitado'
     onus_quitacao: Optional[str] = None
     onus_prazo_dias: Optional[int] = None
+    #: [Migration 193] `onus_quitacao='ja_quitado'`: when the seller filed the
+    #: baixa request at the Registro de Imóveis (corpus deal 867).
+    onus_baixa_protocolo_em: Optional[date] = None
     confissao_juros_am: Optional[Decimal] = None
     confissao_garantia: Optional[str] = None
     #: 'vendedores' | 'compradores' | 'partes'
@@ -580,11 +633,9 @@ class DadosContrato:
     #: nothing atendimento-scoped for those, by construction: §H1/D1).
     atendimento_id: Optional[str] = None
     #: The PJ (company) parties of the atendimento — `atendimento_partes.
-    #: empresa_id` (migration 179), each `{parte_id, empresa_id, lado, papel,
-    #: nome, cnpj}`. The generator qualifies NATURAL PERSONS only, so a
-    #: company party is never a `Pessoa`; `derivacao._partes` turns each into
-    #: a `faltando` instead of silently dropping it from the instrument.
-    partes_pj: list[dict] = field(default_factory=list)
+    #: empresa_id` (migration 179), qualified since migration 193 with the
+    #: corpus's PJ wording (`ParteJuridica`). Never a `Pessoa`.
+    partes_pj: list[ParteJuridica] = field(default_factory=list)
 
 
 #: Papéis that sign the instrument. `fiador`/`outro` are parties to the deal
@@ -596,9 +647,29 @@ PAPEIS_SIGNATARIOS: frozenset[str] = frozenset(
 #: no sample contract carries it, so there is nothing to generate.
 PAPEIS_SEM_REDACAO: frozenset[str] = frozenset({"procurador", "inventariante"})
 
+#: [Migration 193] A seller's spouse/companion who signs WITHOUT owning
+#: (corpus: 7 deals — "denominada neste ato simplesmente "ANUENTE""). Signs
+#: in its own group, never counted among the VENDEDORES.
+PAPEL_ANUENTE = "anuente"
+#: [Migration 193] A person who signs FOR a PJ party
+#: (`Pessoa.representa_parte_id`). Qualified inside the PJ's qualification.
+PAPEL_REPRESENTANTE = "representante"
+
 
 def signatarios(pessoas: list[Pessoa]) -> list[Pessoa]:
     return [p for p in pessoas if p.papel in PAPEIS_SIGNATARIOS]
+
+
+def anuentes(pessoas: list[Pessoa]) -> list[Pessoa]:
+    return [p for p in pessoas if p.papel == PAPEL_ANUENTE]
+
+
+def representantes(pessoas: list[Pessoa], parte_id: Optional[str] = None) -> list[Pessoa]:
+    """Every representante — or, with `parte_id`, those who sign for THAT PJ."""
+    return [
+        p for p in pessoas
+        if p.papel == PAPEL_REPRESENTANTE and (parte_id is None or p.representa_parte_id == parte_id)
+    ]
 
 
 def parcela_permuta(d: DadosContrato) -> Optional[Parcela]:
@@ -632,12 +703,18 @@ __all__ = [
     "Matricula",
     "PAPEIS_SEM_REDACAO",
     "PAPEIS_SIGNATARIOS",
+    "PAPEL_ANUENTE",
+    "PAPEL_REPRESENTANTE",
+    "PactoAntenupcial",
+    "ParteJuridica",
     "Parcela",
     "PermutaImovel",
     "Pessoa",
     "Termos",
     "Testemunha",
+    "anuentes",
     "parcela_permuta",
     "parcelas_permuta",
+    "representantes",
     "signatarios",
 ]

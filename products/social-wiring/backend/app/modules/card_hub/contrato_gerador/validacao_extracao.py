@@ -293,6 +293,16 @@ CAMPOS_CLIENTE: tuple[CampoValidavel, ...] = (
     # Migration 153 — the link read off a certidão de casamento.
     _quinteto(ENTIDADE_CLIENTE, "conjuge", ROTULO_QUALIFICACAO["conjuge"],
               valores=("conjuge_cliente_id",), prefixo="conjuge"),
+    # Migration 193 — the pacto antenupcial citation the qualification
+    # prints; optional (only couples whose regime needs a pacto have one).
+    _quinteto(ENTIDADE_CLIENTE, "pacto_antenupcial_data", "Data do pacto antenupcial",
+              obrigatorio=False, edicao=_ed_cliente("pacto_antenupcial_data", "data")),
+    _quinteto(ENTIDADE_CLIENTE, "pacto_antenupcial_tabelionato", "Tabelionato do pacto antenupcial",
+              obrigatorio=False, edicao=_ed_cliente("pacto_antenupcial_tabelionato")),
+    _quinteto(ENTIDADE_CLIENTE, "pacto_antenupcial_livro", "Livro do pacto antenupcial",
+              obrigatorio=False, edicao=_ed_cliente("pacto_antenupcial_livro")),
+    _quinteto(ENTIDADE_CLIENTE, "pacto_antenupcial_folha", "Página do pacto antenupcial",
+              obrigatorio=False, edicao=_ed_cliente("pacto_antenupcial_folha")),
     # 148 has `_origem`/`_em` only; 153 adds `_confirmado_por/_em`.
     _quinteto(ENTIDADE_CLIENTE, "certidao_estado_civil_emitida_em",
               "Emissão da certidão de estado civil", documento=False, obrigatorio=False,

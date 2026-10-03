@@ -14,6 +14,7 @@ from typing import Optional, Sequence
 
 from noctusai_lib.domain.texto_ptbr import (
     brl_por_extenso,
+    data_por_extenso,
     dias_por_extenso,
     formatar_data_br,
     formatar_inteiro_br,
@@ -39,7 +40,9 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Favorecido,
     Imobiliaria,
     Intermediario,
+    PactoAntenupcial,
     Parcela,
+    ParteJuridica,
     Pessoa,
 )
 from app.modules.card_hub.contrato_gerador.estilo import negrito, nome_parte
@@ -155,18 +158,58 @@ def nacionalidade_flex(p: Pessoa) -> str:
     return _g(p, canonica, _nacionalidade_feminina(canonica) or canonica)
 
 
+def e_brasileiro(p: Pessoa) -> bool:
+    """True when the party's nationality reads Brazilian (the legacy typed
+    spellings or the seed's canonical gentílico) — the RNE/RNM gate's test."""
+    bruto = (p.nacionalidade or "").strip()
+    if bruto.lower() in _NACIONALIDADE_BR:
+        return True
+    return _nacionalidade_canonica(bruto) == "brasileiro"
+
+
 def rg_texto(p: Pessoa) -> str:
     orgao = re.sub(r"[\s/]+", "-", (p.rg_orgao or "").strip().upper())
     return f"{(p.rg or '').strip()}-{orgao}"
 
 
-def texto_pessoa(p: Pessoa, *, em_nucleo: bool) -> str:
+#: [Migration 193] `clientes.identidade_tipo` — the identity documents a
+#: foreign party is qualified by instead of the RG (corpus: 3 deals, "RNE").
+#: `None`/'rg' is the cédula de identidade (RG). RNM (Registro Nacional
+#: Migratório, the RNE's 2018 successor) is the same document class under
+#: its current name, printed in the SAME shape.
+IDENTIDADES_ESTRANGEIRO: dict[str, str] = {"rne": "RNE", "rnm": "RNM"}
+IDENTIDADES_VALIDAS: tuple[str, ...] = ("rg", *IDENTIDADES_ESTRANGEIRO)
+
+
+def identidade_texto(p: Pessoa) -> str:
+    """"portador(a) da cédula de identidade RG <n>-<órgão>" — or, for a
+    foreign party (corpus deals 141/866/876), "portador(a) da cédula de
+    identidade RNE <n> <órgão>" (the corpus's own spacing: no hyphen)."""
+    portador = _g(p, "portador", "portadora")
+    sigla = IDENTIDADES_ESTRANGEIRO.get((p.identidade_tipo or "").strip().lower())
+    if sigla is None:
+        return f"{portador} da cédula de identidade RG {rg_texto(p)}"
+    orgao = re.sub(r"\s+", " ", (p.rg_orgao or "").strip().upper())
+    return f"{portador} da cédula de identidade {sigla} {(p.rg or '').strip()} {orgao}"
+
+
+#: [Migration 193] A person qualified ALONE whose estado civil is one the
+#: núcleo normally says for them (a PJ's representante): the plain word.
+_ESTADO_CIVIL_AVULSO = {
+    "casado": ("casado", "casada"),
+    "uniao_estavel": ("convivente em união estável", "convivente em união estável"),
+}
+
+
+def texto_pessoa(p: Pessoa, *, em_nucleo: bool, avulso: bool = False) -> str:
     # The name is the one bold, upper-case stretch of a qualification — the
     # CPF/RG/address after it stay plain (`estilo.py`: names 68% bold+upper,
     # CPF 0%, the rest of a qualification 3%).
     partes = [nome_parte(p.nome or ""), nacionalidade_flex(p)]
     if not em_nucleo:
-        par_ec = _ESTADO_CIVIL_FLEX.get(p.estado_civil or "")
+        par_ec = _ESTADO_CIVIL_FLEX.get(p.estado_civil or "") or (
+            _ESTADO_CIVIL_AVULSO.get(p.estado_civil or "") if avulso else None
+        )
         if par_ec:
             partes.append(_g(p, *par_ec))
     # [2026-09-22] Omitted cleanly when absent — the office accepts a
@@ -178,7 +221,7 @@ def texto_pessoa(p: Pessoa, *, em_nucleo: bool) -> str:
         partes.append(profissao)
     texto = ", ".join(partes)
     texto += (
-        f", {_g(p, 'portador', 'portadora')} da cédula de identidade RG {rg_texto(p)}"
+        f", {identidade_texto(p)}"
         f" e {_g(p, 'inscrito', 'inscrita')} no CPF/MF {documento(p.cpf)[1]}"
     )
     if p.email:
@@ -215,6 +258,53 @@ def lei_6515_frase(data_casamento: date, vigencia_desde: date) -> str:
     return ", anterior à vigência da Lei 6.515/77"
 
 
+def pacto_frase(pacto: Optional[PactoAntenupcial]) -> str:
+    """[Migration 193] Corpus deal 858, verbatim shape: ", conforme escritura
+    de pacto antenupcial, lavrada aos <data>, pelo <tabelionato>, no Livro nº
+    <livro>, Página nº <folha>". "" when no pacto was entered — the gate
+    (`derivacao._partes`, `qualificacao.pacto_antenupcial`) decides whether
+    the regime needs one."""
+    if pacto is None or pacto.vazio():
+        return ""
+    tabelionato = re.sub(r"^(?:o|pelo)\s+", "", (pacto.tabelionato or "").strip(), flags=re.IGNORECASE)
+    return (
+        f", conforme escritura de pacto antenupcial, lavrada aos {data_por_extenso(pacto.data)}, "  # type: ignore[arg-type] — gated
+        f"pelo {tabelionato}, no Livro nº {(pacto.livro or '').strip()}, "
+        f"Página nº {(pacto.folha or '').strip()}"
+    )
+
+
+def pacto_do_casal(a: Pessoa, b: Optional[Pessoa]) -> Optional[PactoAntenupcial]:
+    """The couple's pacto — either spouse's row carries it (gated equal when
+    both do: `PACTO_ANTENUPCIAL_DIVERGENTE`)."""
+    for p in (a, b):
+        if p is not None and p.pacto is not None and not p.pacto.vazio():
+            return p.pacto
+    return None
+
+
+#: [Migration 193] Regimes whose adoption REQUIRES an escritura de pacto
+#: antenupcial (CC arts. 1.640 p.ú. / 1.653): separação convencional
+#: (`separacao_total` — `separacao_obrigatoria` is the legal one, no pacto),
+#: participação final nos aquestos, and comunhão universal on/after the Lei
+#: 6.515/77 (before it, comunhão universal WAS the legal regime).
+_REGIMES_COM_PACTO = ("separacao_total", "participacao_final_aquestos")
+
+
+def regime_exige_pacto(
+    regime: Optional[str], data_casamento: Optional[date], vigencia_desde: date
+) -> Optional[bool]:
+    """True / False, or `None` when it depends on a marriage date nobody
+    entered (that date is its own `faltando`)."""
+    if regime in _REGIMES_COM_PACTO:
+        return True
+    if regime == "comunhao_universal":
+        if data_casamento is None:
+            return None
+        return data_casamento >= vigencia_desde
+    return False
+
+
 def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
     textos: list[str] = []
     for a, b in nucleos(pessoas):
@@ -238,8 +328,112 @@ def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
             # Gated (`derivacao._partes` — REGIME_BENS_SEM_REDACAO): an
             # unknown regime is refused, never printed as its raw enum.
             regime = REGIME_EXTENSO[a.regime_bens or ""]
-            textos.append(f"{ta}, e {tb}, casados no regime da {regime}{lei}{sufixo}")
+            pacto = pacto_frase(pacto_do_casal(a, b))
+            textos.append(f"{ta}, e {tb}, casados no regime da {regime}{lei}{pacto}{sufixo}")
     return ", e ".join(textos)
+
+
+# ─── anuente / parte PJ (migration 193) ───────────────────────────────────
+
+
+def qualificacao_anuente(a: Pessoa, conjuge: Pessoa, *, lei_6515_desde: date) -> str:
+    """[Migration 193] A seller's spouse/companion who signs without owning
+    (corpus: 7 deals). Shape of deals 799/839, verbatim: "<qualificação>,
+    casada no regime da <regime>, na vigência da Lei 6.515/77 com <NOME DO
+    VENDEDOR>, já qualificado anteriormente"; a companion takes deal 867's
+    "que convive em união estável com". The address is printed only when it
+    differs from the seller's (the corpus states it once, on the seller)."""
+    texto = texto_pessoa(a, em_nucleo=True)
+    nome_conjuge = nome_parte(conjuge.nome or "")
+    ja = _g(conjuge, "já qualificado", "já qualificada")
+    if a.estado_civil == "uniao_estavel":
+        texto += f", que convive em união estável com {nome_conjuge}, {ja} anteriormente"
+    else:
+        lei = lei_6515_frase(a.data_casamento, lei_6515_desde)  # type: ignore[arg-type] — gated
+        regime = REGIME_EXTENSO[a.regime_bens or ""]
+        pacto = pacto_frase(pacto_do_casal(a, conjuge))
+        texto += (
+            f", {_g(a, 'casado', 'casada')} no regime da {regime}{lei}{pacto} com "
+            f"{nome_conjuge}, {ja} anteriormente"
+        )
+    if endereco_texto(a.endereco) != endereco_texto(conjuge.endereco):
+        texto += f", {_residente(a)} na {endereco_texto(a.endereco)}"
+    return texto
+
+
+def denominacao_anuentes(anuentes: Sequence[Pessoa]) -> str:
+    """"denominado/denominada/denominados/denominadas neste ato simplesmente
+    "ANUENTE(S)"" — corpus 799/839 write "denominadas" for two women."""
+    generos = [genero_exigido(p.genero, p.nome or p.nome_cadastro or "") for p in anuentes]
+    if len(generos) == 1:
+        palavra, rotulo = ("denominada" if generos[0] == "f" else "denominado"), "ANUENTE"
+    else:
+        palavra = "denominadas" if all(g == "f" for g in generos) else "denominados"
+        rotulo = "ANUENTES"
+    return f'{palavra} neste ato simplesmente {negrito(chr(34) + rotulo + chr(34))}'
+
+
+def linhas_anuentes(textos: Sequence[str], anuentes: Sequence[Pessoa]) -> list[str]:
+    """One paragraph for one anuente; a numbered list ("1-) …;") for several,
+    the denomination closing the last item — corpus 799/839."""
+    if not textos:
+        return []
+    fecho = denominacao_anuentes(anuentes)
+    if len(textos) == 1:
+        return [f"{textos[0]}, {fecho};"]
+    linhas = [f"{i}-) {t};" for i, t in enumerate(textos[:-1], start=1)]
+    linhas.append(f"{len(textos)}-) {textos[-1]}, {fecho};")
+    return linhas
+
+
+def _cargo_representante(r: Pessoa) -> tuple[str, str]:
+    """(qualifying phrase, signature label) — corpus deal 866: "representada
+    neste ato por sua sócia e administradora …" / "Sócia-Administradora"."""
+    if genero_exigido(r.genero, r.nome or r.nome_cadastro or "") == "f":
+        return "sua sócia e administradora", "Sócia-Administradora"
+    return "seu sócio e administrador", "Sócio-Administrador"
+
+
+def qualificacao_pj(pj: ParteJuridica, representante: Pessoa) -> str:
+    """[Migration 193] A company party — corpus deal 866, verbatim shape:
+    "<RAZÃO SOCIAL>, pessoa jurídica de direito privado, devidamente inscrita
+    sob CNPJ nº <cnpj> e NIRE <nire>, com sede na <endereço>, representada
+    neste ato por sua sócia e administradora <qualificação PF>, residente e
+    domiciliada na <endereço>". Derived from ONE signed contract — the gate
+    always raises `PJ_REDACAO_A_CONFIRMAR` and a legal-review item."""
+    cargo, _rotulo = _cargo_representante(representante)
+    return (
+        f"{nome_parte(pj.razao_social or '')}, pessoa jurídica de direito privado, devidamente "
+        f"inscrita sob CNPJ nº {documento(pj.cnpj)[1]} e NIRE {(pj.nire or '').strip()}, com sede na "
+        f"{endereco_texto(pj.sede)}, representada neste ato por {cargo} "
+        f"{texto_pessoa(representante, em_nucleo=False, avulso=True)}, "
+        f"{_residente(representante)} na {endereco_texto(representante.endereco)}"
+    )
+
+
+def signatario_pj_linhas(pj: ParteJuridica, representante: Pessoa) -> list[str]:
+    """Digital signature block of a PJ — corpus 866: "<RAZÃO SOCIAL> / Por:
+    <REPRESENTANTE> / Sócia-Administradora" (e-mail beside the signer, [Q14])."""
+    _cargo, rotulo = _cargo_representante(representante)
+    return [
+        nome_parte(pj.razao_social or ""),
+        f"Por: {signatario_linha(representante)}",
+        rotulo,
+    ]
+
+
+def assinante_fisico_pj(pj: ParteJuridica, representante: Pessoa) -> dict[str, str]:
+    """Física signature block of a PJ: the company, then who signs for it,
+    their cargo and CPF (corpus 866: "Por: … / Sócia-Administradora / CPF")."""
+    _cargo, rotulo = _cargo_representante(representante)
+    return {
+        "nome": (pj.razao_social or "").upper(),
+        "documento": " – ".join(
+            x for x in (
+                f"Por: {(representante.nome or '').upper()}", rotulo, documento_linha(representante.cpf),
+            ) if x
+        ),
+    }
 
 
 def nome_email_linha(nome: Optional[str], email: Optional[str]) -> str:
@@ -583,17 +777,29 @@ def item_matricula_imovel(numero: str, emitida_em) -> str:
 #: [§6.1 #14] The imóvel certidão group's label per tipo (migration 118). The
 #: `matricula` tipo is absent on purpose — it names the MATRÍCULA's number
 #: rather than the document's, so it keeps `item_matricula_imovel`'s wording.
+#: The un-qualified label (readiness messages); the PRINTED line carries the
+#: certidão's own resultado (`CERTIDOES_IMOVEL_MODELO`).
 CERTIDOES_IMOVEL_ROTULO: dict[str, str] = {
     "cnd_iptu": "Certidão Negativa de Débitos Municipais (IPTU)",
     "cnd_condominio": "Certidão Negativa de Débitos Condominiais",
 }
 
+#: [2026-10-03 bug fix] The printed label WITH the resultado — a positive
+#: IPTU certidão used to print "Certidão Negativa de …" (only an aviso said
+#: otherwise). Same `{R}` model + `RESULTADO_ROTULO` as a party's certidão.
+CERTIDOES_IMOVEL_MODELO: dict[str, str] = {
+    "cnd_iptu": "Certidão {R} de Débitos Municipais (IPTU)",
+    "cnd_condominio": "Certidão {R} de Débitos Condominiais",
+}
+
 
 def item_certidao_imovel(c: CertidaoImovel, *, numero_matricula: Optional[str]) -> str:
-    """One line of the imóvel's own certidão group (migration 118)."""
+    """One line of the imóvel's own certidão group (migration 118). The gate
+    (`derivacao._certidoes_do_imovel`) refuses a missing or unknown resultado,
+    so `RESULTADO_ROTULO[c.resultado]` never misses here."""
     if c.tipo == "matricula":
         return item_matricula_imovel(numero_matricula or "", c.emitida_em)
-    texto = CERTIDOES_IMOVEL_ROTULO[c.tipo]
+    texto = CERTIDOES_IMOVEL_MODELO[c.tipo].replace("{R}", RESULTADO_ROTULO[c.resultado or ""])
     if c.numero:
         texto += f" nº {c.numero}"
     return f"{texto} - emitida em {formatar_data_br(c.emitida_em)}"  # type: ignore[arg-type] — gated
@@ -616,6 +822,13 @@ def pendencia_estado_civil(max_dias: int) -> str:
 def pendencia_baixa_onus(situacao_onus: str) -> str:
     gravame = "alienação fiduciária" if situacao_onus == "alienacao_fiduciaria" else "hipoteca"
     return f"Termo de quitação do financiamento e matrícula com o registro da baixa da {gravame}"
+
+
+def pendencia_matricula_baixa(situacao_onus: str) -> str:
+    """[Migration 193] `ja_quitado` — corpus deal 867's pendência, verbatim:
+    "Matrícula Atualizada do Imóvel com a baixa da alienação fiduciária"."""
+    gravame = "alienação fiduciária" if situacao_onus == "alienacao_fiduciaria" else "hipoteca"
+    return f"Matrícula Atualizada do Imóvel com a baixa da {gravame}"
 
 
 def antigos_proprietarios_texto(pessoas: Sequence[Pessoa]) -> str:
@@ -650,10 +863,103 @@ QUITACOES_ONUS: tuple[str, ...] = (
     "compradores_prazo", "interveniente_quitante", "parcela", QUITACAO_ONUS_VENDEDORES_BOLETO,
 )
 
-#: Stored by migration 114, but NO sample contract carries a clause for it
-#: (spec §6.1 #11's "already paid, has termo" state). The gate refuses it by
-#: name rather than inventing wording — see `derivacao._imovel`.
-QUITACAO_ONUS_SEM_REDACAO = "ja_quitado"
+#: [Migration 193] The "already paid, baixa requested" state (spec §6.1 #11).
+#: Worded since the corpus catalog found it in signed deal 867 — it is NOT a
+#: saldo-devedor quitação (nothing is left to pay), so it is not in
+#: `QUITACOES_ONUS`: `derivacao.derivar_switches` turns `tem_saldo_devedor`
+#: off and `tem_onus_ja_quitado` on.
+QUITACAO_ONUS_JA_QUITADO = "ja_quitado"
+
+
+def onus_ja_quitado_frase(
+    situacao_onus: str, ato: AtoCitado, protocolo_em: date, cidade_registro: str,
+    *, V: Concordancia, C: Concordancia,
+) -> str:
+    """Corpus deal 867's objeto paragraph, verbatim shape (after the
+    "Parágrafo …:" label)."""
+    gravame = "Alienação Fiduciária" if situacao_onus == "alienacao_fiduciaria" else "Hipoteca"
+    return (
+        f"{C.ART} {negrito(C.NOME)} {C.pl('declara', 'declaram')} ter conhecimento de que {V.art} "
+        f"{negrito(V.NOME)} {V.pl('protocolou', 'protocolaram')}, em {formatar_data_br(protocolo_em)}, junto ao "
+        f"Registro de Imóveis de {cidade_registro}, o requerimento de baixa da {gravame} registrada sob o "
+        f"{ato_rotulo(ato)} da matrícula do imóvel, estando {C.g('ciente', 'ciente', 'cientes')} de que a "
+        "efetivação da referida baixa depende da conclusão do procedimento registral pelo Oficial competente."
+    )
+
+
+def usufruto_frase(*, V: Concordancia, C: Concordancia) -> str:
+    """[Migration 193] Corpus deal 839's objeto paragraph, verbatim shape —
+    the usufruto's baixa as a precondition of the buyers' financing."""
+    return (
+        f"{V.ART} {negrito(V.NOME)} {V.pl('declara', 'declaram')} estar {V.g('ciente', 'ciente', 'cientes')} "
+        "da necessidade de lavratura de escritura pública de baixa do usufruto, como condição prévia ao "
+        f"início do processo junto à instituição financeira a ser escolhida {C.pelos} {negrito(C.NOME)} "
+        "para fins de financiamento imobiliário."
+    )
+
+
+# ─── cartório de registro (migration 193) ─────────────────────────────────
+
+#: A `numero_registro_imoveis` reading — the matrícula heading as
+#: `find_cartorio` returns it ("1º OFICIAL DE REGISTRO DE IMÓVEIS DE COTIA",
+#: "SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia - CNS: 11991-7", "OFICIAL DE
+#: REGISTRO DE IMÓVEIS DA COMARCA DE SÃO PAULO/SP"): optional ordinal, any
+#: office noun, "Registro de Imóveis", optional "da Comarca", the city, then
+#: an optional UF / CNS tail.
+_CARTORIO_RE = re.compile(
+    r"^\s*(?:(?P<ord>\d{1,2})\s*[ºo°ª]?\s*)?"
+    r"(?:[A-Za-zÀ-ÿ]+\s+){0,3}?"
+    r"registro\s+(?:de\s+im[óo]veis|imobili[áa]rio)\s+"
+    r"(?:(?:da|de)\s+comarca\s+)?(?:de|da|do|dos|das)\s+"
+    r"(?P<cidade>[A-Za-zÀ-ÿ'][A-Za-zÀ-ÿ' ]*?)"
+    r"\s*(?:[/\-–—]\s*(?:[A-Za-z]{2}\b|CNS\b).*)?[\s.,;]*$",
+    re.IGNORECASE,
+)
+_CONECTIVOS = {"de", "da", "do", "das", "dos", "e"}
+
+
+def _cidade_titulo(cidade: str) -> str:
+    palavras = re.sub(r"\s+", " ", cidade).strip().lower().split(" ")
+    return " ".join(
+        w if (i > 0 and w in _CONECTIVOS) else w[:1].upper() + w[1:]
+        for i, w in enumerate(palavras)
+    )
+
+
+def cartorio_partes(valor: Optional[str]) -> Optional[tuple[Optional[int], str]]:
+    """(ordinal, cidade) read off a `numero_registro_imoveis` value, or
+    `None` when no city can be read (a bare CNS, free text) — the gate names
+    it (`imovel.numero_registro_imoveis`), never a guess."""
+    m = _CARTORIO_RE.match((valor or "").strip())
+    # "… DA CAPITAL" names no city by itself (which capital is a UF fact the
+    # reading does not carry) — a named gap, never "de Capital".
+    if not m or not m.group("cidade").strip() or m.group("cidade").strip().lower() == "capital":
+        return None
+    ordinal = int(m.group("ord")) if m.group("ord") else None
+    return ordinal, _cidade_titulo(m.group("cidade"))
+
+
+def cartorio_texto(valor: Optional[str]) -> Optional[str]:
+    """[Corpus catalog §6, 34/34 signed CCVs] "Cartório de Registro de Imóveis
+    de <Cidade>" — prefixed "<N>º" when the registry carries an ordinal (the
+    corpus's "{N}º Cartório de Registro de Imóveis de {CIDADE}"). The heading
+    as transcribed ("SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia") is never
+    printed: no signed contract uses it."""
+    partes = cartorio_partes(valor)
+    if partes is None:
+        return None
+    ordinal, cidade = partes
+    prefixo = f"{ordinal}º " if ordinal else ""
+    return f"{prefixo}Cartório de Registro de Imóveis de {cidade}"
+
+
+# ─── texto livre do operador (migration 193) ──────────────────────────────
+
+
+def paragrafos_livres(texto: Optional[str]) -> list[str]:
+    """Operator-typed obligations, VERBATIM, one paragraph per non-blank line
+    (a Word paragraph cannot hold a line break of the template's own)."""
+    return [linha.strip() for linha in (texto or "").splitlines() if linha.strip()]
 
 #: 🔴 THE STORAGE VOCABULARY, VERBATIM (`atendimento_negociacao_termos.
 #: posse_marco`, migration 114). The generator used to say

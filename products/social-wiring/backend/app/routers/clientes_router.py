@@ -39,7 +39,7 @@ from __future__ import annotations
 import logging
 import weakref
 from datetime import date, datetime, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query
@@ -353,6 +353,18 @@ class ClientePatchBody(StrictHttpModel):
     #: `certidao_estado_civil_emitida_em_origem` is NOT accepted; the server
     #: stamps it, same discipline as every field above.
     certidao_estado_civil_emitida_em: Optional[date] = None
+
+    #: Migration 193 — which identity document `rg`/`rg_orgao_expedidor`
+    #: hold: 'rg' (cédula de identidade) or a foreign party's 'rne'/'rnm'.
+    #: The contract qualifies by it ("cédula de identidade RNE …").
+    identidade_tipo: Optional[Literal["rg", "rne", "rnm"]] = None
+    #: Migration 193 — the escritura de pacto antenupcial the contract cites
+    #: for a married couple (data, tabelionato, livro, página); typed by hand
+    #: until a pacto document reader fills it. Stored on each spouse's row.
+    pacto_antenupcial_data: Optional[date] = None
+    pacto_antenupcial_tabelionato: Optional[str] = Field(default=None, max_length=200)
+    pacto_antenupcial_livro: Optional[str] = Field(default=None, max_length=40)
+    pacto_antenupcial_folha: Optional[str] = Field(default=None, max_length=40)
 
 
 class MergeGrupoBody(StrictHttpModel):

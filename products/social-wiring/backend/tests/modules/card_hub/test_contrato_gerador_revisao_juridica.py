@@ -157,7 +157,7 @@ class TestGerarComRevisaoFinal:
         assert r.status_code == 201, r.text
         versao = r.json()["versao"]
         assert versao["revisao_juridica"] == {
-            "status": "aguardando", "campos": [], "revisado_por": None, "revisado_em": None,
+            "status": "aguardando", "campos": [], "itens": [], "revisado_por": None, "revisado_em": None,
         }
         assert not _versao_row(scoped, versao["id"]).get("revisao_juridica_campos")
 

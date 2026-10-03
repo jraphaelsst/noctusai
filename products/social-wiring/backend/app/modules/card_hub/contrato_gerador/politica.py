@@ -28,11 +28,17 @@ from typing import Optional
 #: the imóvel (spec §1.1 `tem_saldo_devedor`).
 ONUS_COM_SALDO: tuple[str, ...] = ("hipoteca", "alienacao_fiduciaria")
 
+#: [Migration 193] The usufruto the seller must cancel (corpus deal 839's
+#: objeto paragraph — worded ONLY as a precondition of the buyers'
+#: financing, so `derivacao._imovel` blocks it without a financiamento).
+ONUS_USUFRUTO = "usufruto"
+
 #: `situacao_onus` values the generator can word today. `penhora`,
-#: `usufruto`, `indisponibilidade` and `outro` have no clause in the sample
-#: contracts — generating would print "livre de ônus" over a real one, so
-#: they BLOCK rather than fall through.
-ONUS_SUPORTADOS: tuple[str, ...] = ("livre",) + ONUS_COM_SALDO
+#: `indisponibilidade` and `outro` have no clause in the signed contracts
+#: (corpus catalog §4: 0 real cases — only boilerplate "livre de penhoras")
+#: — generating would print "livre de ônus" over a real one, so they BLOCK
+#: rather than fall through.
+ONUS_SUPORTADOS: tuple[str, ...] = ("livre", ONUS_USUFRUTO) + ONUS_COM_SALDO
 
 #: Spec §3 #16 — `imovel.em_condominio` "derivable from imoveis.empreendimento
 #: (rule to confirm)". A named rule, not an inline truthiness test.
@@ -219,6 +225,7 @@ __all__ = [
     "VENCIMENTO_ANTECIPADO_PARCELAS",
     "ONUS_COM_SALDO",
     "ONUS_SUPORTADOS",
+    "ONUS_USUFRUTO",
     "PAPEL_ANTIGO_PROPRIETARIO",
     "POLITICA_PADRAO",
     "Politica",

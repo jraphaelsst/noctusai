@@ -33,6 +33,7 @@ never both.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -94,13 +95,35 @@ LADO_PADRAO = "comprador"
 #: deal. Seller-side only: a buyer has no "previous" analogue.
 PAPEL_ANTIGO_PROPRIETARIO = "antigo_proprietario"
 
+#: [Migration 193] A seller's spouse/companion who signs the contract WITHOUT
+#: owning (consents to the sale — the corpus's "ANUENTE", 7 signed deals).
+#: Seller-side only. The spouse link itself stays on the person's record
+#: (`clientes.conjuge_cliente_id`, set where it always was): an anuente is
+#: not necessarily a spouse, and only a real spouse may be linked as one.
+PAPEL_ANUENTE = "anuente"
+#: [Migration 193] A person who signs FOR a company party
+#: (`atendimento_partes.representa_parte_id`, `atualizar_dados_contrato`).
+PAPEL_REPRESENTANTE = "representante"
+#: Papéis only a PERSON can hold.
+_PAPEIS_SO_PF = frozenset({PAPEL_CONJUGE, PAPEL_ANUENTE, PAPEL_REPRESENTANTE})
+
 PAPEIS_POR_LADO: dict[str, tuple[str, ...]] = {
-    "comprador": ("comprador", "conjuge", "fiador", "procurador", "outro"),
+    "comprador": ("comprador", "conjuge", "fiador", "procurador", PAPEL_REPRESENTANTE, "outro"),
     "vendedor": (
         "proprietario", "conjuge", "procurador", "inventariante",
-        PAPEL_ANTIGO_PROPRIETARIO, "outro",
+        PAPEL_ANTIGO_PROPRIETARIO, PAPEL_ANUENTE, PAPEL_REPRESENTANTE, "outro",
     ),
 }
+
+#: [Migration 193] A company party's sede, as `atendimento_partes.pj_sede_*`.
+CAMPOS_SEDE_PJ: tuple[str, ...] = (
+    "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep",
+)
+#: [Migration 193] The contract-qualification fields of a party row
+#: (`PATCH .../compradores/{parte_id}/contrato`): a PJ's NIRE + sede, a
+#: representante's link to the PJ party it signs for.
+CAMPOS_PJ_CONTRATO: tuple[str, ...] = ("pj_nire", *(f"pj_sede_{c}" for c in CAMPOS_SEDE_PJ))
+CAMPOS_CONTRATO_PARTE: tuple[str, ...] = (*CAMPOS_PJ_CONTRATO, "representa_parte_id")
 
 PAPEL_PADRAO_POR_LADO: dict[str, str] = {
     "comprador": "comprador",
@@ -141,6 +164,8 @@ def normalizar_lado(lado: Optional[str]) -> str:
 _FIELDS = (
     "id", "atendimento_id", "cliente_id", "lado", "papel", "ordem",
     "observacao", "created_at",
+    # Migration 193 — the PJ party a representante signs for.
+    "representa_parte_id",
 )
 
 #: Columns of the joined person the card needs to render a party row without a
@@ -301,6 +326,8 @@ def adicionar(
         raise ValidationError_("CPF não se aplica a uma empresa.")
     if e_pj and papel == PAPEL_CONJUGE:
         raise ValidationError_("Uma empresa não pode ser cônjuge.")
+    if e_pj and papel in _PAPEIS_SO_PF:
+        raise ValidationError_(f"Uma empresa não pode ter o papel '{papel}'.")
 
     ensure_cliente(client, org_id, cliente_id)
     alvo = resolve_atendimento_id(client, org_id, cliente_id, atendimento_id)
@@ -510,6 +537,8 @@ def atualizar_papel(
         # A PJ party (migration 179): no person to link, no spouse semantics.
         if papel == PAPEL_CONJUGE:
             raise ValidationError_("Uma empresa não pode ser cônjuge.")
+        if papel in _PAPEIS_SO_PF:
+            raise ValidationError_(f"Uma empresa não pode ter o papel '{papel}'.")
         _t(client, TABLE).update({"papel": papel}).eq("id", str(parte_id)).eq(
             "org_id", str(org_id)
         ).execute()
@@ -543,6 +572,92 @@ def atualizar_papel(
     #: row. Returned anyway so the caller can tell the ambiguous case (papel
     #: set, `null` here) from the linked one without a second round-trip.
     out["conjuge_cliente_id"] = principal_id
+    return out
+
+
+def _texto_ou_none(valor: Any) -> Optional[str]:
+    texto = " ".join(str(valor).split()) if valor is not None else ""
+    return texto or None
+
+
+def atualizar_dados_contrato(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    parte_id: UUID,
+    *,
+    valores: dict,
+) -> dict:
+    """[Migration 193] PATCH a party row's contract-qualification fields —
+    only the keys sent are written (`None` clears one).
+
+    - `pj_nire`, `pj_sede_*` — a COMPANY party's qualification (corpus deal
+      866: "… CNPJ nº … e NIRE …, com sede na …"). Refused on a person.
+    - `representa_parte_id` — on a PERSON party with papel 'representante':
+      the company party of the SAME atendimento this person signs for.
+
+    The side, the papel and the atendimento are read off the stored row
+    (`_parte_do_cliente` — the ownership check IS the authorisation), never
+    taken from the caller."""
+    row = dict(_parte_do_cliente(client, org_id, cliente_id, parte_id))
+    recusados = sorted(set(valores) - set(CAMPOS_CONTRATO_PARTE))
+    if recusados:
+        raise ValidationError_(f"Campos não editáveis: {', '.join(recusados)}", field=recusados[0])
+
+    patch: dict[str, Any] = {}
+    campos_pj = [c for c in valores if c in CAMPOS_PJ_CONTRATO]
+    if campos_pj:
+        if not row.get("empresa_id"):
+            raise ValidationError_(
+                "NIRE e sede só se aplicam a uma parte empresa (PJ).", field=campos_pj[0]
+            )
+        for campo in campos_pj:
+            valor = _texto_ou_none(valores[campo])
+            if campo == "pj_sede_uf" and valor is not None:
+                valor = valor.upper()
+                if not re.fullmatch(r"[A-Z]{2}", valor):
+                    raise ValidationError_("UF da sede deve ter 2 letras.", field=campo)
+            if campo == "pj_sede_cep" and valor is not None:
+                valor = re.sub(r"\D", "", valor)
+                if len(valor) != 8:
+                    raise ValidationError_("CEP da sede deve ter 8 dígitos.", field=campo)
+            patch[campo] = valor
+
+    if "representa_parte_id" in valores:
+        alvo = valores["representa_parte_id"]
+        if alvo is not None:
+            if not row.get("cliente_id") or row.get("papel") != PAPEL_REPRESENTANTE:
+                raise ValidationError_(
+                    "Só uma pessoa com o papel 'representante' representa uma empresa.",
+                    field="representa_parte_id",
+                )
+            empresa_parte = (
+                _t(client, TABLE)
+                .select("id, atendimento_id, empresa_id")
+                .eq("org_id", str(org_id))
+                .eq("id", str(alvo))
+                .execute()
+            ).data or []
+            if (
+                not empresa_parte
+                or str(empresa_parte[0].get("atendimento_id")) != str(row.get("atendimento_id"))
+                or not empresa_parte[0].get("empresa_id")
+            ):
+                raise ValidationError_(
+                    "A parte representada deve ser uma empresa deste mesmo atendimento.",
+                    field="representa_parte_id",
+                )
+            patch["representa_parte_id"] = str(alvo)
+        else:
+            patch["representa_parte_id"] = None
+
+    if patch:
+        _t(client, TABLE).update(patch).eq("id", str(parte_id)).eq("org_id", str(org_id)).execute()
+        row.update(patch)
+    out = _out(row, None)
+    out["empresa_id"] = row.get("empresa_id")
+    for campo in CAMPOS_PJ_CONTRATO:
+        out[campo] = row.get(campo)
     return out
 
 
@@ -793,11 +908,17 @@ def remover(client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID) -> None
 __all__ = [
     "PAPEIS",
     "PAPEIS_POR_LADO",
+    "CAMPOS_CONTRATO_PARTE",
+    "CAMPOS_PJ_CONTRATO",
+    "CAMPOS_SEDE_PJ",
     "PAPEL_ANTIGO_PROPRIETARIO",
+    "PAPEL_ANUENTE",
     "PAPEL_CONJUGE",
+    "PAPEL_REPRESENTANTE",
     "PAPEL_PADRAO",
     "TABLE",
     "adicionar",
+    "atualizar_dados_contrato",
     "atualizar_papel",
     "listar",
     "remover",

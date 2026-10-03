@@ -260,9 +260,10 @@ def partes_pj(
     client: Any, org_id: UUID, atendimento_id: str
 ) -> list[dict]:
     """The PJ parties of an atendimento (`parte_id, empresa_id, lado, papel,
-    nome, cnpj`) — what the contract loader needs to surface a `faltando`
-    for a company party instead of silently dropping it (the contract
-    generator qualifies natural persons only)."""
+    nome, cnpj, situacao_cadastral`, and since migration 193 the contract
+    qualification `nire` + `sede` {logradouro, numero, complemento, bairro,
+    cidade, uf, cep}) — what the contract loader qualifies a company party
+    with (`contrato_gerador.carregador._partes_juridicas`)."""
     partes = [
         p for p in _partes_do_atendimento(client, org_id, atendimento_id)
         if p.get("empresa_id")
@@ -287,6 +288,10 @@ def partes_pj(
             "papel": p.get("papel") or "",
             "nome": _nome_empresa(emp),
             "cnpj": _digitos(emp.get("cnpj")),
+            "situacao_cadastral": emp.get("situacao_cadastral"),
+            # Migration 193 — deal-scoped PJ qualification on the party row.
+            "nire": p.get("pj_nire"),
+            "sede": {campo: p.get(f"pj_sede_{campo}") for campo in comp_svc.CAMPOS_SEDE_PJ},
         })
     return out
 

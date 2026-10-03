@@ -36,10 +36,13 @@ Conventions (spec §2.0):
 
 Divergences from the sample contracts are the spec's merged forms (§2.3–2.17
 "Divergence" notes). Wording whose data is MISSING (§6.1: posse
-prorrogação/compensação, permuta delivery obligations, the permuta imóvel's
-own ônus) is not present at all — the gate reports the gap. A parcela split
-among several favorecidos (migration 192) prints as sub-items under its
-"Parcela NN" line (`p.subitens`, composed in `frases.subitem_divisao`).
+prorrogação/compensação, the permuta imóvel's own ônus) is not present at
+all — the gate reports the gap. A parcela split among several favorecidos
+(migration 192) prints as sub-items under its "Parcela NN" line
+(`p.subitens`, composed in `frases.subitem_divisao`). [Migration 193]
+Operator-typed obligations (`obrigacoes_vendedor`, `permuta_obrigacoes`)
+print VERBATIM, one paragraph per typed line, where the signed corpus places
+them (ÔNUS / permuta posse).
 """
 from __future__ import annotations
 
@@ -73,6 +76,9 @@ def _aplicar_termos_fixos(bruto: str) -> str:
 _TEMPLATE_BRUTO = r"""
 INSTRUMENTO PARTICULAR DE PROMESSA DE VENDA E COMPRA DE BEM IMÓVEL – {{ imovel.titulo_curto|upper }} – {{ imovel.cidade|upper }} - {{ imovel.uf|upper }}.
 Pelo presente Instrumento Particular de Promessa de Venda e Compra de Bem Imóvel, e na melhor forma de direito, de um lado, {{ V_qualificacao }}, {{ V.g('denominado','denominada','denominados') }} neste ato simplesmente **"{{ V.NOME }}"**;
+{%p for a in anuentes_linhas %}
+{{ a }}
+{%p endfor %}
 E de outro lado, {{ C_qualificacao }}, {{ C.g('denominado','denominada','denominados') }} neste ato simplesmente **"{{ C.NOME }}"**;
 Com fundamento na autonomia privada, por vontade livre dos contratantes, que se comprometem a observar os princípios de lealdade, boa-fé e transparência que norteiam o presente contrato, desde sua celebração até após a sua execução, têm entre si justo e contratado o disposto nas cláusulas seguintes do presente Contrato de Promessa de Venda e Compra de Bem Imóvel, que pactuam firmemente, a saber:
 
@@ -81,6 +87,12 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 **IMÓVEL:** {{r imovel.descricao_matricula }} Imóvel devidamente cadastrado pela Prefeitura Municipal de {{ imovel.cidade }} sob nº **{{ imovel.inscricao_municipal }}** e caracterizado na Matrícula Nº **{{ imovel.matricula_numero }}** do {{ imovel.cartorio }}.
 {%p if tem_itens_integrantes %}
 **{{ par('objeto') }}** As partes estabelecem de comum acordo, que fará parte integrante da presente transação os itens relacionados a seguir: {{ itens_integrantes }}
+{%p endif %}
+{%p if tem_onus_ja_quitado %}
+**{{ par('objeto') }}** {{ onus.ja_quitado_texto }}
+{%p endif %}
+{%p if tem_usufruto %}
+**{{ par('objeto') }}** {{ onus.usufruto_texto }}
 {%p endif %}
 
 <u>CLÁUSULA {{ cl.preco.ORD }}</u> – DO PREÇO E CONDIÇÕES DE PAGAMENTO
@@ -158,11 +170,17 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p if tem_saldo_devedor and onus.quitacao == 'compradores_prazo' %}
 **{{ par('onus') }}** {{ C.ART }} **{{ C.NOME }}** {{ C.pl('se compromete','se comprometem') }} a fazer a quitação do saldo devedor e apresentar a matrícula com o registro da baixa da alienação fiduciária, no prazo de até {{ dias(onus.prazo_dias) }} da assinatura do presente instrumento.
 {%p endif %}
+{%p for t in obrigacoes_vendedor %}
+{% if loop.first %}**{{ par('onus') }}** {% endif %}{{ t }}
+{%p endfor %}
 
 <u>CLÁUSULA {{ cl.posse.ORD }}</u> – DA POSSE SOBRE {{ 'OS IMÓVEIS' if tem_permuta else 'O IMÓVEL' }}
 {%p if tem_permuta %}
 {{ C.ART }} **{{ C.NOME }}**, {{ C.pl('assume','assumem') }} a obrigação de fazer a entrega da posse {{ 'dos imóveis situados' if permuta.plural else 'do imóvel situado' }} à {{ permuta.endereco_curto }} {{ V.aos }} **{{ V.NOME }}**, no prazo máximo de {{ dias(permuta.posse_prazo) }} a contar {{ permuta.posse_marco_texto }}.
 Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete','se comprometem') }} a permitir o acesso {{ 'aos imóveis' if permuta.plural else 'ao imóvel' }}, mediante prévio agendamento, a qualquer tempo, {{ V.aos }} **{{ V.NOME }}**, ao novo proprietário ou a terceiros por estes autorizados, para fins de vistoria, medição, planejamento ou quaisquer outras providências relacionadas ao imóvel.
+{%p for t in permuta_obrigacoes %}
+{{ t }}
+{%p endfor %}
 {{ V.ART }} **{{ V.NOME }}**, por sua vez, {{ V.pl('assume','assumem') }} a obrigação de entregar {{ C.aos }} **{{ C.NOME }}** a posse do imóvel situado à {{ imovel.endereco_curto }}, no prazo máximo de {{ dias(posse.prazo) }}, a contar {{ posse.marco_texto }}.
 **{{ par('posse') }}** As Partes se comprometem a entregar seus imóveis, de maneira limpa e organizada, livre e desimpedida de coisas e pessoas estranhas a esta negociação.
 {%p if tem_multa_diaria_posse %}
@@ -246,6 +264,12 @@ E, por estarem assim justos e contratados, os contraentes assinam o presente ins
 {%p for p in V_signatarios %}
 {{ p }}
 {%p endfor %}
+{%p if tem_anuentes %}
+**{{ A_NOME }}**
+{%p for p in A_signatarios %}
+{{ p }}
+{%p endfor %}
+{%p endif %}
 **{{ C.NOME }}**
 {%p for p in C_signatarios %}
 {{ p }}
@@ -264,6 +288,16 @@ TESTEMUNHAS:
 **{{ s.documento }}**
 {%p endif %}
 {%p endfor %}
+{%p if tem_anuentes %}
+**{{ A_NOME }}**
+{%p for s in A_assinantes_fisicos %}
+{{ linha_assinatura }}
+**{{ s.nome }}**
+{%p if s.documento %}
+**{{ s.documento }}**
+{%p endif %}
+{%p endfor %}
+{%p endif %}
 **{{ C.NOME }}**
 {%p for s in C_assinantes_fisicos %}
 {{ linha_assinatura }}

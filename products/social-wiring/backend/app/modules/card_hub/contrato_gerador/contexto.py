@@ -33,14 +33,20 @@ from app.modules.card_hub.contrato_gerador import frases
 from app.modules.card_hub.contrato_gerador.concordancia import genero_exigido, lado
 from app.modules.card_hub.contrato_gerador.dados import (
     DadosContrato,
+    ParteJuridica,
     Pessoa,
     PermutaImovel,
+    anuentes,
+    representantes,
     signatarios,
 )
 from app.modules.card_hub.contrato_gerador.derivacao import (
     _hoje_padrao,
     antigos_no_contrato,
     antigos_proprietarios,
+    anuentes_certificandos,
+    conjuge_do_anuente,
+    pj_certificandas,
     certidoes_imovel,
     corretagem_marcos,
     empresas_exigidas,
@@ -91,6 +97,24 @@ def _generos(pessoas: list[Pessoa]) -> list[str]:
     return [genero_exigido(p.genero, p.nome or p.nome_cadastro or "") for p in pessoas]
 
 
+def _pj_com_representante(d: DadosContrato, lado_nome: str) -> list[tuple[ParteJuridica, Pessoa]]:
+    """[Migration 193] The side's PJ parties, each with the ONE representante
+    the gate required (`derivacao._parte_juridica`)."""
+    return [
+        (pj, representantes(d.vendedores + d.compradores, pj.parte_id)[0])
+        for pj in d.partes_pj
+        if pj.lado == lado_nome
+    ]
+
+
+def _qualificacao_lado(pessoas: list[Pessoa], pjs: list[tuple[ParteJuridica, Pessoa]], politica: Politica) -> str:
+    """The side's persons (núcleos) then its companies — corpus 866's PJ
+    wording joined like any other party (", e ")."""
+    textos = [frases.qualificacao(pessoas, lei_6515_desde=politica.lei_6515_vigencia_desde)] if pessoas else []
+    textos += [frases.qualificacao_pj(pj, rep) for pj, rep in pjs]
+    return ", e ".join(textos)
+
+
 def _descricao_matricula_permuta(i: PermutaImovel, d: DadosContrato) -> str:
     """Migration 136: the SAME narrowing `_descricao_matricula_rica` applies
     to the OBJETO clause, for the SAME reason — a de-furnitured abertura
@@ -123,19 +147,22 @@ def _brl_negrito(valor: Decimal) -> str:
     return negrito(brl_por_extenso(valor))
 
 
-def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C, imoveis: list[PermutaImovel]) -> str:
+def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C, imoveis: list[PermutaImovel]) -> str:  # noqa: N803
     """A permuta parcela (spec §2.3 `p.tipo == 'permuta'`) — its value is the
     parcela's own, and each imóvel is one `permuta_ativos` link (114) carrying
     its own matrícula quote (115). `imoveis` are THIS parcela's (a deal may
     carry several permuta parcelas, each with its own imóveis — signed
     contract 873 is one parcela with two)."""
     # gated: derivacao._partes `qualificacao.nome_oficial` (every signatário)
-    nomes = juntar([nome_parte(p.nome or "") for p in signatarios(d.compradores)])
+    nomes = juntar(
+        [nome_parte(p.nome or "") for p in signatarios(d.compradores)]
+        + [nome_parte(pj.razao_social or "") for pj in d.partes_pj if pj.lado == "comprador"]
+    )
     # inscricao_municipal / cidade / matrícula / cartório: gated by derivacao._permuta.
     descricoes = " E ".join(
         f"{_descricao_matricula_permuta(i, d)} Imóvel devidamente cadastrado pela Prefeitura Municipal de "
         f"{i.endereco.cidade} sob nº {negrito(i.inscricao_municipal or '')} e caracterizado na Matrícula Nº "
-        f"{negrito(frases.matricula_numero(i.matricula_numero))} do {i.cartorio}."
+        f"{negrito(frases.matricula_numero(i.matricula_numero))} do {frases.cartorio_texto(i.cartorio)}."
         for i in imoveis
     )
     plural = len(imoveis) > 1
@@ -196,7 +223,12 @@ def montar_contexto(
     hoje = hoje or _hoje_padrao()
     cl = numerar_clausulas(sw)
     vend, comp_pessoas = signatarios(d.vendedores), signatarios(d.compradores)
-    V, C = lado(_generos(vend), "vendedor"), lado(_generos(comp_pessoas), "comprador")
+    pj_vend, pj_comp = _pj_com_representante(d, "vendedor"), _pj_com_representante(d, "comprador")
+    # [Migration 193] A company party agrees in the feminine ("a VENDEDORA" —
+    # corpus deal 866: "a pessoa jurídica").
+    V = lado(_generos(vend) + ["f"] * len(pj_vend), "vendedor")
+    C = lado(_generos(comp_pessoas) + ["f"] * len(pj_comp), "comprador")
+    anu = anuentes(d.vendedores)
     termos = d.termos
     im = d.imovel
     assert im is not None and d.valor_negociado is not None  # gated
@@ -368,7 +400,10 @@ def montar_contexto(
         "descricao_matricula": _descricao_matricula_rica(d, adapter),
         "inscricao_municipal": im.inscricao_municipal,
         "matricula_numero": frases.matricula_numero(im.numero_matricula),
-        "cartorio": im.numero_registro_imoveis,
+        # [Corpus catalog §6, 34/34] "Cartório de Registro de Imóveis de
+        # <cidade>" — never the transcribed heading ("SERVENTIA DO REGISTRO
+        # DE IMÓVEIS de Cotia"). Gated: `derivacao._imovel`.
+        "cartorio": frases.cartorio_texto(im.numero_registro_imoveis),
         "endereco_curto": endereco_curto,
         "em_condominio": em_condominio,
     }
@@ -398,10 +433,26 @@ def montar_contexto(
             for t in tipos_exigidos("cpf")
             if t in idx and idx[t].resultado == "nao_emitida"
         ]
+    # [Migration 193] A PJ PARTY's own group — its 11 CNPJ certidões.
+    for pj in pj_certificandas(d, sw):
+        idx = indice_certidoes(pj.certidoes, "cnpj")
+        nome_pj = pj.razao_social or pj.cnpj or ""
+        tipos = tipos_exigidos("cnpj")
+        itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
+        if not itens:
+            continue
+        n += 1
+        grupos.append({"num": n, "em_nome_de": nome_pj, "sufixo": None, "itens": itens})
+        pendentes_cert += [
+            frases.pendencia_certidao(t, nome_pj) for t in tipos if t in idx and idx[t].resultado == "nao_emitida"
+        ]
     # [E1/E4] PJ groups: DISTINCT required empresas of the certificandos
     # (never per-person — a company both spouses hold is printed ONCE).
+    empresas_partes = {pj.empresa_id for pj in d.partes_pj}
     for eex in empresas_exigidas(d, sw, hoje, politica):
         e = eex.empresa
+        if e.id in empresas_partes:
+            continue  # already printed as the party's own group above
         idx = indice_certidoes(e.certidoes, "cnpj")
         nome_pj = e.razao_social or e.cnpj
         tipos = tipos_exigidos("cnpj")
@@ -439,7 +490,12 @@ def montar_contexto(
         pendencias.append(frases.PENDENCIA_CONDOMINIO_PERMUTA if sw["tem_permuta"] else frases.PENDENCIA_CONDOMINIO)
     pendencias.append(frases.pendencia_estado_civil(politica.certidao_estado_civil_max_dias))
     pendencias.append(frases.PENDENCIA_DOCUMENTOS)
-    if "matricula" not in apresentadas:
+    if sw["tem_onus_ja_quitado"]:
+        # [Migration 193] Corpus deal 867: the matrícula requested WITH the
+        # baixa — even when a matrícula certidão was presented (it predates
+        # the baixa).
+        pendencias.append(frases.pendencia_matricula_baixa(im.situacao_onus or ""))
+    elif "matricula" not in apresentadas:
         pendencias.append(frases.PENDENCIA_MATRICULA)
     pendencias.append(frases.PENDENCIA_CONTAS_CONSUMO)
     if "cnd_iptu" not in apresentadas:
@@ -472,10 +528,21 @@ def montar_contexto(
         apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos))
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
+    seus_nomes = "seus nomes" if plural_apres else "seu nome"
+    anu_cert = anuentes_certificandos(d)
+    if anu_cert:
+        # [Migration 193] Corpus deal 141: "apresenta neste momento as
+        # certidões em seu nome, em nome da Anuente …".
+        ga = _generos(anu_cert)
+        if len(ga) == 1:
+            quem = "da Anuente" if ga[0] == "f" else "do Anuente"
+        else:
+            quem = "das Anuentes" if all(g == "f" for g in ga) else "dos Anuentes"
+        seus_nomes += f", em nome {quem}"
     certidoes = {
         "apresentantes_texto": apresentantes,
         "apresenta": "apresentam" if plural_apres else "apresenta",
-        "seus_nomes": "seus nomes" if plural_apres else "seu nome",
+        "seus_nomes": seus_nomes,
         "grupos": grupos,
         "grupos_imovel": grupos_imovel,
         "pendencias": [{"letra": letra(i), "texto": t} for i, t in enumerate(pendencias)],
@@ -483,6 +550,20 @@ def montar_contexto(
 
     # ── ônus / posse / permuta ──
     onus: dict[str, Any] = {"quitacao": None}
+    if sw["tem_onus_ja_quitado"]:
+        # gated: derivacao._imovel — protocolo date, exactly one R/AV ato, a
+        # cartório with a readable city.
+        partes_cartorio = frases.cartorio_partes(im.numero_registro_imoveis)
+        assert partes_cartorio is not None  # gated
+        onus = {
+            "quitacao": termos.onus_quitacao,
+            "ja_quitado_texto": frases.onus_ja_quitado_frase(
+                im.situacao_onus or "", im.onus_fonte_atos[0], termos.onus_baixa_protocolo_em,  # type: ignore[arg-type]
+                partes_cartorio[1], V=V, C=C,
+            ),
+        }
+    if sw["tem_usufruto"]:
+        onus["usufruto_texto"] = frases.usufruto_frase(V=V, C=C)
     if sw["tem_saldo_devedor"]:
         onus = {
             "credor": im.onus_credor,
@@ -606,6 +687,17 @@ def montar_contexto(
             "pct_rescisao": frases.pct_simples(d.pct_comissao),  # type: ignore[arg-type] — [Q5]
         }
 
+    # ── anuentes (migration 193) ──
+    # gated: derivacao._partes — every anuente is a signing seller's
+    # reciprocal spouse/companion (ANUENTE_SEM_REDACAO otherwise).
+    anuentes_textos = [
+        frases.qualificacao_anuente(
+            a, conjuge_do_anuente(d, a), lei_6515_desde=politica.lei_6515_vigencia_desde  # type: ignore[arg-type]
+        )
+        for a in anu
+    ]
+    A_NOME = "ANUENTES" if len(anu) > 1 else "ANUENTE"  # noqa: N806 — template token
+
     return {
         **sw,
         "cl": cl,
@@ -615,10 +707,22 @@ def montar_contexto(
         "pct_extenso": percentual_por_extenso,
         "V": V,
         "C": C,
-        "V_qualificacao": frases.qualificacao(vend, lei_6515_desde=politica.lei_6515_vigencia_desde),
-        "C_qualificacao": frases.qualificacao(comp_pessoas, lei_6515_desde=politica.lei_6515_vigencia_desde),
-        "V_signatarios": [frases.signatario_linha(p) for p in vend],
-        "C_signatarios": [frases.signatario_linha(p) for p in comp_pessoas],
+        "V_qualificacao": _qualificacao_lado(vend, pj_vend, politica),
+        "C_qualificacao": _qualificacao_lado(comp_pessoas, pj_comp, politica),
+        "V_signatarios": [frases.signatario_linha(p) for p in vend]
+        + [linha for pj, rep in pj_vend for linha in frases.signatario_pj_linhas(pj, rep)],
+        "C_signatarios": [frases.signatario_linha(p) for p in comp_pessoas]
+        + [linha for pj, rep in pj_comp for linha in frases.signatario_pj_linhas(pj, rep)],
+        # [Migration 193] The seller's spouse/companion signing as ANUENTE.
+        "anuentes_linhas": frases.linhas_anuentes(anuentes_textos, anu),
+        "A_NOME": A_NOME,
+        "A_signatarios": [frases.signatario_linha(p) for p in anu],
+        "A_assinantes_fisicos": [frases.assinante_fisico(p) for p in anu],
+        # [Migration 193] Operator-typed obligations, VERBATIM.
+        "obrigacoes_vendedor": frases.paragrafos_livres(termos.obrigacoes_vendedor),
+        "permuta_obrigacoes": (
+            frases.paragrafos_livres(termos.permuta_obrigacoes_entrega) if sw["tem_permuta"] else []
+        ),
         "imovel": imovel,
         "titulo_aquisitivo": _sem_adquirido_inicial((im.titulo_aquisitivo_texto or "").strip()),
         "itens_integrantes": (termos.itens_integrantes or "").strip(),
@@ -668,11 +772,14 @@ def montar_contexto(
         # line per signer and per witness; "vias" = one per signer (each
         # party keeps a signed copy), never fewer than two.
         "vias": numero_com_extenso(
-            max(2, len(vend) + len(comp_pessoas)), feminino=True, largura=2
+            max(2, len(vend) + len(comp_pessoas) + len(anu) + len(pj_vend) + len(pj_comp)),
+            feminino=True, largura=2,
         ),
         "linha_assinatura": frases.LINHA_ASSINATURA,
-        "V_assinantes_fisicos": [frases.assinante_fisico(p) for p in vend],
-        "C_assinantes_fisicos": [frases.assinante_fisico(p) for p in comp_pessoas],
+        "V_assinantes_fisicos": [frases.assinante_fisico(p) for p in vend]
+        + [frases.assinante_fisico_pj(pj, rep) for pj, rep in pj_vend],
+        "C_assinantes_fisicos": [frases.assinante_fisico(p) for p in comp_pessoas]
+        + [frases.assinante_fisico_pj(pj, rep) for pj, rep in pj_comp],
         "testemunhas_fisicas": [
             {
                 "nome": (t.nome or "").upper(),

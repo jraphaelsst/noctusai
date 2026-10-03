@@ -115,10 +115,18 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     # `pacto_antenupcial.parse_pacto_antenupcial` — the escritura (or its
     # Livro 3 registro): the couple's regime, the marriage date when the
     # registro states it, and the two contracting parties (nome + CPF,
-    # `conjuge`). The escritura's own livro/folhas/tabelionato/registro are
-    # document facts, not person fields — carried on the reading itself.
+    # `conjuge`). The escritura's own citation — `data_escritura`,
+    # `tabelionato`, `livro`, `folhas` — is what a contract's qualification
+    # cites for the couple ("conforme escritura de pacto antenupcial, lavrada
+    # aos …, pelo …, no Livro nº …, Página nº …"), so a product may persist it
+    # on the couple: claimable under the `pacto_antenupcial_*` names (the
+    # registro stays a document-only fact — no signed contract cites it).
     "pacto_antenupcial": frozenset(
-        {"regime_bens", "data_casamento", "nome", "cpf", "conjuge"}
+        {
+            "regime_bens", "data_casamento", "nome", "cpf", "conjuge",
+            "pacto_antenupcial_data", "pacto_antenupcial_tabelionato",
+            "pacto_antenupcial_livro", "pacto_antenupcial_folha",
+        }
     ),
     "comprovante_endereco": frozenset({"endereco"}),
     # `matricula.find_matricula` (the número off the header) PLUS

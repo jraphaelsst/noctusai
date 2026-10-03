@@ -58,21 +58,27 @@ LINHA = "______________________________"
 #: imobiliário e/ou moeda corrente nacional") instead of "através do uso de
 #: FGTS e financiamento imobiliário" (0/34 signed contracts). V1, V3-V6
 #: unchanged byte for byte.
+#: [Migration 193, 2026-10-03] Re-pinned ALL six (on top of the payment
+#: re-pin above): the registry prints in the signed
+#: corpus's form (34/34 CCVs) — "do 1º Cartório de Registro de Imóveis de
+#: Cidade Exemplo" instead of the stored "1º Oficial de …". Paragraph text of
+#: all 6 variants x digital/física diffed against the previous render: that
+#: one registry phrase (objeto + permuta parcela) is the ONLY difference.
 #: Variants 1..6 of `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("15bbcc5893cbd9f20de8a6f13e3013527f828bd17fffd4ee3fb5c87402cc8fa3",
-        "8d6313b9b0e4f2b3b70f26fdd46c7e19b5599df9a6d8f0556e02c6867db4018e"),
-    2: ("113467f2ecd1d817fd8da16e4a820b494ca8fbc1d36b861ce6ad01c933cc9d34",
-        "b3cc7868addd58cd1d6512fa5deba95356a61a825b3e109166ef9dff1ee59407"),
-    3: ("57fd5ba0a1f1ff0db32cc31bca689f038aceae6b67ad3754013ad143e09c6bc3",
-        "de54534fa2ac58111d8efdb5c30bea22910b9042cb179cc9b6daf7068af973cd"),
-    4: ("80c2c19cbb5d33a5a8991bdd969ad14e3e1821399c36c30c3b45114bfcaff98b",
-        "964fbf7c6b05182a066ec1d6b1453ebc4cbfee7733ee6a4bdf842d33ef2b2ea7"),
-    5: ("2bf4f586408a2a2f368b1743d7c3284fce462a9503d515c8effe23e39e1c51de",
-        "5a00dd577b8238167b168ae077597f83aec5702cdfb92cdb805946d6c2271cb3"),
-    6: ("c437a7f5a0cbdb2748bd53acb69bfd34a085712ba14f74d4dedc48b5614813bf",
-        "566e1f6c1ad73f06b175e23d1451bec7ff7e9f5b8a9cd2a2cc67339d36638a17"),
+    1: ("7f7c8c5842611e29c3b457c90e25e2bb52e914948b14e23a426359d7107135df",
+        "9e74463289a12a81e1cfaa9b1a9275add903e1e89f6c43a1d9001f093f138d98"),
+    2: ("8867f946cfd7d67b3925b3d81f1b773398766d673cae69efd8c69b22d80bcfa6",
+        "621624bff53219aebaa95804a37bad7994d0b3978c418cf02d8ae2227c755f35"),
+    3: ("cb70c18de3c9aa04801a6a5bc3bcdbccd73f4e9be9c3ca49a60542e20c856bbc",
+        "286c84d3a54247afac18ea685643f274985c8120162d54c7d40e8b8289a0412f"),
+    4: ("02b1b2d71d84361b775ea3276083be35a20228af03e244b2027c602f8d1cf7ce",
+        "d540f78d0404b760a63d66d66ba0adb25c2f738a374beddaf05e82bfddd95532"),
+    5: ("f9ba58fb56da6d3a29272a154e343dd86178d35b0b93e46174cc02ec4480752d",
+        "52435354f17b9893fac5770a8dd599951891ea00f211031b119e57e710538e0b"),
+    6: ("ae375f8df6d90d0b61ac06a8a5e4059d0f5431738747bc2a39bc5697e9ebec19",
+        "b6ed4a4dd68748a34d6aa64476336dcde015297e9abee30733501c160d542dec"),
 }
 
 

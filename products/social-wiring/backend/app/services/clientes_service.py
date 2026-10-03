@@ -1557,6 +1557,9 @@ CONFLITOS_TABLE = "cliente_campo_conflitos"
 _CAMPOS_COM_ORIGEM: tuple[str, ...] = (
     "nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento", "genero",
     "estado_civil", "regime_bens", "data_casamento", "nacionalidade", "profissao",
+    # Migration 193 — the pacto antenupcial citation (each with its quintet).
+    "pacto_antenupcial_data", "pacto_antenupcial_tabelionato",
+    "pacto_antenupcial_livro", "pacto_antenupcial_folha",
 )
 
 #: Migration 153 — fields whose provenance quintet covers a GROUP of columns.

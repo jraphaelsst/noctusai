@@ -154,6 +154,8 @@ TERMOS_CAMPOS: tuple[str, ...] = (
     "itens_integrantes", "itens_integrantes_ausente_confirmado", "ad_corpus",
     "obrigacoes_vendedor",
     "onus_quitacao", "onus_prazo_dias",
+    # Migration 193 — 'ja_quitado': the baixa request's filing date.
+    "onus_baixa_protocolo_em",
     "confissao_juros_am", "confissao_garantia",
     "corretagem_contratantes", "corretagem_num_parcelas",
 )
@@ -1407,6 +1409,8 @@ def _termos_linha(client: Any, org_id: UUID, atendimento_id: UUID) -> Optional[d
 def _termos_out(row: Optional[dict]) -> dict:
     row = row or {}
     out = {campo: row.get(campo) for campo in TERMOS_CAMPOS}
+    protocolo = row.get("onus_baixa_protocolo_em")
+    out["onus_baixa_protocolo_em"] = None if protocolo is None else str(protocolo)[:10]
     juros = _dec(row.get("confissao_juros_am"))
     out["confissao_juros_am"] = None if juros is None else str(juros)
     for campo in ("posse_marco_parcela_id", "permuta_posse_marco_parcela_id"):
@@ -1471,6 +1475,20 @@ def atualizar_termos(
                 field="confissao_juros_am",
             )
         termos["confissao_juros_am"] = str(juros)
+
+    # Migration 193 — a DATE column; the router hands a `date` (plain
+    # `model_dump()`), PostgREST needs its ISO string.
+    protocolo = termos["onus_baixa_protocolo_em"]
+    if protocolo is not None:
+        try:
+            termos["onus_baixa_protocolo_em"] = (
+                protocolo.isoformat() if hasattr(protocolo, "isoformat")
+                else date.fromisoformat(str(protocolo)[:10]).isoformat()
+            )
+        except ValueError:
+            raise ValidationError_(
+                "data do protocolo da baixa do ônus inválida", field="onus_baixa_protocolo_em"
+            ) from None
 
     if termos["ad_corpus"] is not None and not isinstance(termos["ad_corpus"], bool):
         raise ValidationError_("ad_corpus deve ser verdadeiro ou falso", field="ad_corpus")

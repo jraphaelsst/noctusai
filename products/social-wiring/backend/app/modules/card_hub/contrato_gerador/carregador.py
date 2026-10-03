@@ -63,11 +63,14 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Imovel,
     Intermediario,
     Matricula,
+    PactoAntenupcial,
     Parcela,
+    ParteJuridica,
     PermutaImovel,
     Pessoa,
     Termos,
     Testemunha,
+    anuentes,
     signatarios,
 )
 from app.modules.certidoes import service as certidoes_svc
@@ -233,8 +236,26 @@ def _rows_por_id_generico(client: Any, org_id: UUID, tabela: str, ids: list[str]
     }
 
 
+def _pacto(row: dict) -> Optional[PactoAntenupcial]:
+    """[Migration 193] The pacto antenupcial columns as read — `None` when
+    none is filled (the gate decides whether the regime needs one)."""
+    pacto = PactoAntenupcial(
+        data=_data(row.get("pacto_antenupcial_data")),
+        tabelionato=row.get("pacto_antenupcial_tabelionato"),
+        livro=row.get("pacto_antenupcial_livro"),
+        folha=row.get("pacto_antenupcial_folha"),
+    )
+    return None if pacto.vazio() else pacto
+
+
 def _pessoa(
-    client: Any, org_id: UUID, cliente_id: str, lado: str, papel: str, parte_id: Optional[str]
+    client: Any,
+    org_id: UUID,
+    cliente_id: str,
+    lado: str,
+    papel: str,
+    parte_id: Optional[str],
+    representa_parte_id: Optional[str] = None,
 ) -> Pessoa:
     row = svc.ensure_cliente(client, org_id, UUID(cliente_id))
     completude = checklist_svc.completude_contratual(client, org_id, UUID(cliente_id))
@@ -271,7 +292,40 @@ def _pessoa(
         certidao_estado_civil_emitida_em=_data(certidao_ec.get("emitida_em")),
         faltando_qualificacao=list(completude.get("faltando") or []),
         certidoes=[_certidao(r) for r in brutas],
+        # Migration 193.
+        identidade_tipo=row.get("identidade_tipo"),
+        pacto=_pacto(row),
+        representa_parte_id=representa_parte_id,
     )
+
+
+def _partes_juridicas(client: Any, org_id: UUID, atendimento_id: UUID) -> list[ParteJuridica]:
+    """[Migration 179 + 193] The company parties, each with its contract
+    qualification (NIRE, sede — deal-scoped on the party row) and its OWN
+    CNPJ certidões (`certidoes_por_empresa`, the same per-entity read
+    `_empresas` uses)."""
+    from app.modules.card_hub import partes_service
+
+    saida: list[ParteJuridica] = []
+    for pj in partes_service.partes_pj(client, org_id, str(atendimento_id)):
+        sede = pj.get("sede") or {}
+        saida.append(
+            ParteJuridica(
+                parte_id=pj["parte_id"],
+                empresa_id=pj["empresa_id"],
+                lado=pj["lado"],
+                papel=pj["papel"],
+                razao_social=pj.get("nome") or None,
+                cnpj=pj.get("cnpj"),
+                nire=pj.get("nire"),
+                sede=_endereco(sede, prefixo=""),
+                situacao_cadastral=pj.get("situacao_cadastral"),
+                certidoes=[
+                    _certidao(r) for r in _certidoes_da_empresa(client, org_id, pj["empresa_id"])
+                ],
+            )
+        )
+    return saida
 
 
 def _endereco_manual(catalogo: dict, dados: dict) -> Endereco:
@@ -475,6 +529,8 @@ def _termos(bruto: dict) -> Termos:
         obrigacoes_vendedor=bruto.get("obrigacoes_vendedor"),
         onus_quitacao=bruto.get("onus_quitacao"),
         onus_prazo_dias=_int(bruto.get("onus_prazo_dias")),
+        # Migration 193.
+        onus_baixa_protocolo_em=_data(bruto.get("onus_baixa_protocolo_em")),
         confissao_juros_am=_dec(bruto.get("confissao_juros_am")),
         confissao_garantia=bruto.get("confissao_garantia"),
         corretagem_contratantes=bruto.get("corretagem_contratantes"),
@@ -551,12 +607,13 @@ def carregar(
         )["items"]
         for parte in partes:
             destino.append(
-                _pessoa(client, org_id, str(parte["cliente_id"]), lado, parte["papel"], str(parte["id"]))
+                _pessoa(
+                    client, org_id, str(parte["cliente_id"]), lado, parte["papel"], str(parte["id"]),
+                    representa_parte_id=_id(parte.get("representa_parte_id")),
+                )
             )
 
-    from app.modules.card_hub import partes_service
-
-    partes_pj = partes_service.partes_pj(client, org_id, str(atendimento_id))
+    partes_pj = _partes_juridicas(client, org_id, atendimento_id)
 
     negociacao = negociacao_service.obter(client, org_id, cliente_id)
     estruturada = estruturada_svc.obter_estruturada(client, org_id, cliente_id)
@@ -615,7 +672,10 @@ def carregar(
     # [E1/E3/E6] Certificandos: signing vendedores + their cônjuges, plus
     # signing compradores + cônjuges only in a permuta (a comprador giving
     # an imóvel gets exactly the vendedor treatment).
-    certificandos = signatarios(vendedores)
+    # [Migration 193] An anuente who is a seller's spouse is a certificando
+    # (E3) — `certificando_ids` already reaches them through the seller's
+    # `conjuge_cliente_id`; listing them keeps the rule visible.
+    certificandos = signatarios(vendedores) + anuentes(vendedores)
     certificando_ids = {p.cliente_id for p in certificandos}
     certificando_ids |= {p.conjuge_cliente_id for p in certificandos if p.conjuge_cliente_id}
     if permutas:
