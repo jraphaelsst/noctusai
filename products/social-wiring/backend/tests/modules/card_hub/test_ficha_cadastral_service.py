@@ -62,7 +62,7 @@ def _endereco(**over) -> EnderecoLido:
 def _pessoa(**over) -> PessoaFichaCadastral:
     base = dict(
         # `"Ana"` matches `cliente_row`'s own default `nome` — the name-
-        # fallback (`_resolver_destino`) needs the two to agree unless a
+        # fallback (`resolver_destino`) needs the two to agree unless a
         # test overrides both together.
         papel="proponente", nome="Ana", nome_confianca=ALTA,
         cpf=CPF_PROPONENTE, cpf_confianca=ALTA,

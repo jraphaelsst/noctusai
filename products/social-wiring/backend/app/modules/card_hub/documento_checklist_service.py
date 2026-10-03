@@ -196,7 +196,7 @@ ITENS: tuple[dict[str, Any], ...] = (
     # already keys purely off `item["documentos"]`, no special-casing).
     {"key": "serasa_crednet", "label": "Serasa Crednet",
      "documento": "serasa_crednet", "documentos": ("serasa_crednet",)},
-    # Migration 190 — scoped (``escopo``, see `_ESCOPOS`): shown only when
+    # Migration 191 — scoped (``escopo``, see `_ESCOPOS`): shown only when
     # the party's regime de bens is one a pacto antenupcial must establish
     # (or a pacto is already on file), so a comunhão-parcial or single
     # party's card never asks for a document that does not exist for them.

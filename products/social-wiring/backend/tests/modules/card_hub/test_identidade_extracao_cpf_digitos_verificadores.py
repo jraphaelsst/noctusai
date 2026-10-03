@@ -79,7 +79,7 @@ class TestCpfInvalidoNaoEGravado:
 
 
 def test_an_invalid_cpf_is_never_a_holder_matching_key():
-    mapa = ficha_svc._mapa_cpf([
+    mapa = ficha_svc.mapa_cpf([
         {"id": "a", "cpf": CPF_INVALIDO},
         {"id": "b", "cpf": CPF_VALIDO},
     ])

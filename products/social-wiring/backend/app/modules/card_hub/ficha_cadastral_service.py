@@ -22,7 +22,7 @@ aplicar_leitura` uses (the seed's own reading is `FichaCadastralLida`, not
         card this document was UPLOADED onto, matched by name — a ficha is
         routinely the FIRST document a fresh card sees, so CPF alone could
         never fill the very CPF field it is meant to fill (see
-        `_resolver_destino`'s own docstring);
+        `resolver_destino`'s own docstring);
     (c) per MATCHED person, apply their identity fields (`nome_oficial`,
         `cpf`, `rg`(+`rg_orgao_expedidor`), `data_nascimento`,
         `estado_civil`, `regime_bens`, `nacionalidade`, `profissao`)
@@ -124,7 +124,7 @@ def _lidos_pessoa(pessoa: PessoaFichaCadastral) -> dict[str, tuple]:
     }
 
 
-def _linhas_do_atendimento(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
+def linhas_do_atendimento(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
     """Every party (INCLUDING `cliente_id` itself) of every atendimento
     this upload's own cliente sits on. `identidade_extracao_service.
     _pessoas_dos_cards` already answers "every OTHER person on any card
@@ -143,7 +143,7 @@ def _linhas_do_atendimento(client: Any, org_id: UUID, cliente_id: UUID) -> list[
     ).data or []
 
 
-def _mapa_cpf(linhas: list[dict]) -> dict[str, str]:
+def mapa_cpf(linhas: list[dict]) -> dict[str, str]:
     """digits-only CPF -> `cliente_id`, for every party with one ALREADY on
     file — the brief's own primary attribution rule."""
     mapa: dict[str, str] = {}
@@ -154,7 +154,7 @@ def _mapa_cpf(linhas: list[dict]) -> dict[str, str]:
     return mapa
 
 
-def _resolver_destino(
+def resolver_destino(
     pessoa: PessoaFichaCadastral,
     *,
     cliente_id: UUID,
@@ -164,6 +164,10 @@ def _resolver_destino(
     linhas: Optional[list[dict]] = None,
 ) -> Optional[str]:
     """Which atendimento party this person's own block belongs to.
+
+    Public (with `linhas_do_atendimento` / `mapa_cpf`): `pacto_antenupcial_
+    service` is the second consumer — it passes a `ConjugePacto`; only
+    `.nome` / `.cpf` are read, so any person reading with those two works.
 
     Primary rule (the brief's own): an EXACT CPF match against a party who
     already has one on file — covers every OTHER named person (a spouse/
@@ -314,8 +318,8 @@ async def aplicar_leitura(
         )
 
     async def _processar(lida: FichaCadastralLida, doc_row: dict) -> dict:
-        linhas = _linhas_do_atendimento(client, org_id, cliente_id)
-        mapa_cpf = _mapa_cpf(linhas)
+        linhas = linhas_do_atendimento(client, org_id, cliente_id)
+        cpfs = mapa_cpf(linhas)
         titular_row = next((r for r in linhas if str(r["id"]) == str(cliente_id)), None)
         conflitos: list[dict] = []
         destinos: list[Optional[str]] = []
@@ -323,8 +327,8 @@ async def aplicar_leitura(
         ja_atribuidos: set[str] = set()
 
         for pessoa in lida.pessoas:
-            destino = _resolver_destino(
-                pessoa, cliente_id=cliente_id, mapa_cpf=mapa_cpf,
+            destino = resolver_destino(
+                pessoa, cliente_id=cliente_id, mapa_cpf=cpfs,
                 titular_row=titular_row, ja_atribuidos=ja_atribuidos, linhas=linhas,
             )
             destinos.append(destino)
@@ -463,7 +467,7 @@ def reaplicar_fichas_pelo_cpf(
     """
     if not idf.cabe("cpf", cpf):
         return {"documentos": [], "pessoas": 0, "conflitos": []}
-    ids = [str(r["id"]) for r in _linhas_do_atendimento(client, org_id, cliente_id)]
+    ids = [str(r["id"]) for r in linhas_do_atendimento(client, org_id, cliente_id)]
     docs = (
         _t(client, DOCUMENTOS_TABLE)
         .select("id,extracao_status,extracao_ficha_cadastral")

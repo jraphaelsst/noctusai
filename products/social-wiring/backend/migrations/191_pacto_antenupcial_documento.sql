@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 190 · social_wiring: `pacto_antenupcial` — the couple's escritura
+-- Migration 191 · social_wiring: `pacto_antenupcial` — the couple's escritura
 -- pública de pacto antenupcial (or its Livro 3 registro at the Registro de
 -- Imóveis) as an uploadable + extractable `cliente_documentos` type.
 --
@@ -58,7 +58,7 @@ INSERT INTO social_wiring.documento_retencao_politicas
     (org_id, superficie, tipo_documento, retencao_dias, motivo)
 VALUES
     (NULL, 'cliente', 'pacto_antenupcial', 1825,
-     'Mesma política de identidade adjacente (RG/CNH/CIN/ficha) — migration 190.')
+     'Mesma política de identidade adjacente (RG/CNH/CIN/ficha) — migration 191.')
 ON CONFLICT (superficie, tipo_documento) WHERE org_id IS NULL DO NOTHING;
 
 ALTER TABLE social_wiring.cliente_documentos
@@ -69,4 +69,4 @@ COMMENT ON COLUMN social_wiring.cliente_documentos.extracao_pacto_antenupcial IS
     'regime_bens, regime_bens_confianca, data_escritura, tabelionato, livro, '
     'folhas, registro{numero,livro,cartorio,data}, data_casamento, '
     'conjuges[{nome,cpf,cliente_id_aplicado}], source. Held on the document '
-    '(mirrors extracao_ficha_cadastral, 176). Migration 190.';
+    '(mirrors extracao_ficha_cadastral, 176). Migration 191.';

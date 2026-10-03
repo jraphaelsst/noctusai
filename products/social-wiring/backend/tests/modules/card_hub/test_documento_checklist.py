@@ -431,7 +431,7 @@ class TestIdentidadeItem:
 
 
 class TestPactoAntenupcialEscopo:
-    """Migration 190 — the pacto item is LISTED only for a regime a pacto
+    """Migration 191 — the pacto item is LISTED only for a regime a pacto
     must establish (or when one is on file); never a permanently-red row
     for a comunhão-parcial / single party."""
 

@@ -434,7 +434,7 @@ ORIGEM_CONJUGE_DOMICILIO = "conjuge_domicilio"
 
 #: The address sources that carry no printed holder because the document IS
 #: the party's own declaration — a `ficha_cadastral` row reaches a cliente
-#: only after `ficha_cadastral_service._resolver_destino` matched that very
+#: only after `ficha_cadastral_service.resolver_destino` matched that very
 #: person (CPF first, name on the uploaded-to card as the fallback). For the
 #: holder rule such an address is the party's OWN, never "titular unknown":
 #: live prod test 2026-10-01 (deal 875) — the buyer's own older utility bill

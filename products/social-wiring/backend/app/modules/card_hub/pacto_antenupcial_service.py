@@ -24,7 +24,7 @@ PactoAntenupcialLido`) names two people, not one titular.
         for a human). `PRECISAO` carries no `pacto_antenupcial` cell, so
         the pacto can never silently outrank a value already on file;
     (c) record the WHOLE reading on the document (`cliente_documentos.
-        extracao_pacto_antenupcial`, migration 190) — the escritura's own
+        extracao_pacto_antenupcial`, migration 191) — the escritura's own
         facts (data, tabelionato, livro, folhas, registro) are document
         facts, not person fields, and the contract reads them from there.
 
@@ -67,7 +67,7 @@ def _iso(d) -> Optional[str]:
 
 def serializar(lida: PactoAntenupcialLido, destinos: list[Optional[str]]) -> dict:
     """The stored shape of `extracao_pacto_antenupcial` — the field names
-    the contract generator reads (see migration 190's column comment)."""
+    the contract generator reads (see migration 191's column comment)."""
     reg = lida.registro
     return {
         "regime_bens": lida.regime_bens,
@@ -119,8 +119,8 @@ async def aplicar_leitura(
         )
 
     async def _processar(lida: PactoAntenupcialLido, doc_row: dict) -> dict:
-        linhas = ficha_svc._linhas_do_atendimento(client, org_id, cliente_id)
-        mapa_cpf = ficha_svc._mapa_cpf(linhas)
+        linhas = ficha_svc.linhas_do_atendimento(client, org_id, cliente_id)
+        cpfs = ficha_svc.mapa_cpf(linhas)
         titular_row = next((r for r in linhas if str(r["id"]) == str(cliente_id)), None)
         conflitos: list[dict] = []
         destinos: list[Optional[str]] = []
@@ -128,8 +128,8 @@ async def aplicar_leitura(
         aplicados: list[dict] = []
 
         for conjuge in lida.conjuges:
-            destino = ficha_svc._resolver_destino(
-                conjuge, cliente_id=cliente_id, mapa_cpf=mapa_cpf,
+            destino = ficha_svc.resolver_destino(
+                conjuge, cliente_id=cliente_id, mapa_cpf=cpfs,
                 titular_row=titular_row, ja_atribuidos=ja_atribuidos, linhas=linhas,
             )
             destinos.append(destino)

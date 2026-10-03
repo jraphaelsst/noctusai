@@ -1,7 +1,7 @@
 /**
  * The married party's NAMED document slots, in display order — the
  * certidão de casamento (migration 103) and the pacto antenupcial
- * (migration 190). Both are rendered by `DocumentoTipoSlot` behind the
+ * (migration 191). Both are rendered by `DocumentoTipoSlot` behind the
  * same `estadoCivilExigeConjuge` gate (`PessoaDocumentosPanel`,
  * `ClienteCardDialog`); one list so a third couple document is one entry,
  * never a third copy of the slot's wiring.

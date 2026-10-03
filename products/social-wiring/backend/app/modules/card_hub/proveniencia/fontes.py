@@ -288,7 +288,7 @@ FONTES_REGISTRO: tuple[Fonte, ...] = (
     # existing different value becomes a conflict, never an overwrite. The
     # escritura's own facts (data/tabelionato/livro/folhas/registro) are
     # carried on `cliente_documentos.extracao_pacto_antenupcial` (migration
-    # 190), not on any person.
+    # 191), not on any person.
     Fonte(
         tipo_documento="pacto_antenupcial",
         dominio="cliente",
