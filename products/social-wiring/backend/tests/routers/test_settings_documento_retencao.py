@@ -331,3 +331,53 @@ class TestEscrita:
         ][0]
         assert alvo["retencao_dias"] == 730
         assert alvo["personalizado"] is False
+
+
+# ─── every superficie the table allows must survive the response model ──
+
+
+class TestSuperficieEmpresa:
+    """Migration 167 widened the table's CHECK to `empresa` and seeded a
+    platform row `('empresa', 'cartao_cnpj')`; the service's `SUPERFICIES`
+    gained it too — but the response model's `Literal` did not. Every GET
+    then raised a pydantic ValidationError on that row → 500 → the screen
+    showed "Não foi possível carregar a política de retenção de documentos."
+    for EVERY org, since a platform row is visible to all of them."""
+
+    def test_a_platform_empresa_row_does_not_break_the_read(self, admin_client):
+        from app.dependencies import get_scoped_admin_client
+
+        get_scoped_admin_client("social_wiring").set_table_data(
+            TABLE, [dict(r) for r in _SEED] + [_politica("empresa", "cartao_cnpj", 1825)]
+        )
+        resp = admin_client.get(_URL, headers=_auth())
+
+        assert resp.status_code == 200, resp.text
+        empresa = [i for i in resp.json()["items"] if i["superficie"] == "empresa"]
+        assert [i["tipo_documento"] for i in empresa] == ["cartao_cnpj"]
+        assert empresa[0]["ancora"] == "envio"
+
+    def test_an_empresa_policy_can_be_written(self, admin_client):
+        from app.dependencies import get_scoped_admin_client
+
+        get_scoped_admin_client("social_wiring").set_table_data(
+            TABLE, [dict(r) for r in _SEED] + [_politica("empresa", "cartao_cnpj", 1825)]
+        )
+        resp = admin_client.put(
+            _URL,
+            json={"superficie": "empresa", "tipo_documento": "cartao_cnpj", "retencao_dias": 730},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_the_schema_literal_is_the_service_allow_list(self):
+        """One source of truth: a fifth surface added to the service (and the
+        table's CHECK) can never again be rejected by the schema."""
+        from typing import get_args
+
+        from app.schemas.settings import DocumentoRetencaoPolitica, DocumentoRetencaoUpdate
+        from app.services.documento_retencao import SUPERFICIES
+
+        for model in (DocumentoRetencaoPolitica, DocumentoRetencaoUpdate):
+            ann = model.model_fields["superficie"].annotation
+            assert set(get_args(ann)) == set(SUPERFICIES), model.__name__

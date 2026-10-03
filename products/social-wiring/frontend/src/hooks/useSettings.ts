@@ -369,13 +369,18 @@ export function useSaveClientesInactivityConfig() {
 }
 
 // ─── Document retention policy tab (migration 079) ──────────────────────
+/** Every surface the retention table accepts (migration 167's CHECK). */
+export type DocumentoRetencaoSuperficie = "cliente" | "atendimento" | "imovel" | "empresa";
+
 /** One document type's retention policy for this org. */
 export interface DocumentoRetencaoPolitica {
   /** Which document surface this type belongs to. `imovel` joined in
    * migration 111 — `imovel_documento_acessos` (109) gave the surface an
    * access log, closing the reason 079 originally excluded it (a retention
-   * control with nothing logging its use would be a lying UI). */
-  superficie: "cliente" | "atendimento" | "imovel";
+   * control with nothing logging its use would be a lying UI). `empresa`
+   * joined in migration 167 (`cartao_cnpj`). Mirrors the backend
+   * `documento_retencao.Superficie` — the ONE server spelling. */
+  superficie: DocumentoRetencaoSuperficie;
   tipo_documento: string;
   /** The EFFECTIVE value. `null` means "manter indefinidamente" — a real
    * policy, not a missing value, and it must never render as a blank field. */
@@ -407,7 +412,11 @@ export const DOCUMENTO_RETENCAO_KEY = ["settings", "documento-retencao"] as cons
  * Read is open to any authenticated org member; only the write is
  * admin-gated (same split every other org config on this router uses).
  *
- * 🔴 `loading` gates on `isPending || isFetching`, never `isLoading`.
+ * 🔴 `loading` = `isPending && !data` (the skeleton signal), never
+ * `isLoading` and never a bare `isFetching`: a save invalidates this key, and
+ * gating on `isFetching` unmounted the whole tab — the row being edited
+ * included — on every refetch. `isRefreshing` is the indicator-only half.
+ * → KB § PATTERNS/frontend/lying-loading-state.md
  */
 export function useDocumentoRetencao() {
   const query = useQuery({
@@ -415,11 +424,15 @@ export function useDocumentoRetencao() {
     queryFn: () =>
       api.get<DocumentoRetencaoLista>("/api/settings/documento-retencao"),
   });
-  return { ...query, loading: query.isPending || query.isFetching };
+  return {
+    ...query,
+    loading: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
 }
 
 export interface DocumentoRetencaoSave {
-  superficie: "cliente" | "atendimento" | "imovel";
+  superficie: DocumentoRetencaoSuperficie;
   tipo_documento: string;
   retencao_dias: number | null;
   motivo?: string | null;

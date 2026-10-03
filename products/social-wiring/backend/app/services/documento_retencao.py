@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional, get_args
 from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import ValidationError_
@@ -58,7 +58,11 @@ TABLE = "documento_retencao_politicas"
 #: access log from the start (`empresa_documento_acessos`), so it never had
 #: `imovel`'s gap. Mirrors migration 111/167's CHECK on `documento_retencao_
 #: politicas.superficie`; these must move together.
-SUPERFICIES: tuple[str, ...] = ("cliente", "atendimento", "imovel", "empresa")
+#: `Superficie` is the ONE spelling — `app.schemas.settings` imports it for
+#: both the response and the PUT model. A hand-copied `Literal` there once
+#: missed `empresa` and every GET 500'd on 167's platform row.
+Superficie = Literal["cliente", "atendimento", "imovel", "empresa"]
+SUPERFICIES: tuple[str, ...] = get_args(Superficie)
 
 #: What the countdown starts from, per surface. See the module header.
 #: `imovel`/`empresa` use `envio` (upload time): unlike an `atendimento`,

@@ -18,6 +18,8 @@ from typing import Literal
 from noctusai_lib.api import StrictHttpModel
 from pydantic import BaseModel, EmailStr, Field, model_validator
 
+from app.services.documento_retencao import Superficie
+
 
 # ─── Notifications tab — recipients ────────────────────────────────────
 class RecipientCreate(BaseModel):
@@ -233,7 +235,7 @@ class DocumentoRetencaoPolitica(BaseModel):
     would have no way to know five years from what.
     """
 
-    superficie: Literal["cliente", "atendimento", "imovel"]
+    superficie: Superficie
     tipo_documento: str
     retencao_dias: int | None
     padrao_dias: int | None
@@ -266,7 +268,7 @@ class DocumentoRetencaoUpdate(BaseModel):
     upload path uses. Mirrors migration 079's CHECK.
     """
 
-    superficie: Literal["cliente", "atendimento", "imovel"]
+    superficie: Superficie
     tipo_documento: str = Field(min_length=1, max_length=100)
     retencao_dias: int | None = Field(default=None, ge=1)
     motivo: str | None = Field(default=None, max_length=500)
