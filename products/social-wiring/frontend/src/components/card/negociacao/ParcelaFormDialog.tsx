@@ -24,7 +24,7 @@
  * 🔴 Money stays a decimal STRING (`lerValorDigitado` → `"1000.00"`), see
  * `@/lib/moedaDecimal`.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertCircle, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -68,10 +68,14 @@ import {
 } from "./parcelaPagamento";
 
 // Backend `max_length` caps (`ParcelaCreateBody`/`ParcelaPatchBody`) — the
-// aditivo's `ParcelaAditivoIn` allows MORE (500/60), so the narrower pair
+// aditivo's `ParcelaAditivoIn` allows MORE evento (500), so the narrower value
 // keeps one form valid for both schedules.
 export const PARCELA_EVENTO_MAX = 200;
-export const PARCELA_FORMA_PAGAMENTO_MAX = 50;
+// `forma_pagamento` is prose, not a code: the backend's
+// `FORMA_PAGAMENTO_MAX_LENGTH` (card_hub/schemas.py, shared by both schedules)
+// is the house free-text cap, a request-size guard. It was 50 until
+// 2026-10-03 — `maxLength` silently stopped the typing at 50 chars.
+export const PARCELA_FORMA_PAGAMENTO_MAX = 2000;
 
 /** The fields this dialog edits — structurally satisfied by both a
  *  `NegociacaoParcela` and an aditivo parcela. */
@@ -187,6 +191,18 @@ export function ParcelaFormDialog({
   useEffect(() => {
     if (open) setDraft(toParcelaDraft(parcela));
   }, [open, parcela]);
+
+  // A refused save must be SEEN: the banner sits at the bottom of a form that
+  // can scroll (max-h 90dvh) — bring it into view and announce it, instead of
+  // leaving the operator looking at an unchanged dialog. A callback ref, not
+  // an effect: Radix mounts the dialog content a render later (portal), and a
+  // new `error` swaps the callback, so each new refusal scrolls again.
+  const erroRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (el && error) el.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+    },
+    [error],
+  );
 
   function submit() {
     const payload: ParcelaCreate = {
@@ -441,6 +457,8 @@ export function ParcelaFormDialog({
           )}
           {error && (
             <div
+              ref={erroRef}
+              role="alert"
               className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
               data-testid="negest-parcela-erro"
             >

@@ -34,3 +34,29 @@ def clientes_por_cpf(client: Any, params: dict) -> MockSelectBuilder:
     ]
     achados.sort(key=lambda r: (str(r.get("created_at") or ""), str(r.get("id"))))
     return MockSelectBuilder(achados)
+
+
+def reordenar_negociacao_parcelas(client: Any, params: dict) -> MockSelectBuilder:
+    """Migration 195 `social_wiring.reordenar_negociacao_parcelas(p_org_id,
+    p_atendimento_id, p_parcela_ids, p_usuario_id)`: refuses unless the ids are
+    exactly the atendimento's current parcela set, then sets `ordem` to each
+    id's 0-based position. Returns the count of rows whose `ordem` changed."""
+    tabela = "atendimento_negociacao_parcelas"
+    org, aid = str(params["p_org_id"]), str(params["p_atendimento_id"])
+    ids = [str(i) for i in params.get("p_parcela_ids") or []]
+    atuais = [
+        r
+        for r in client.table(tabela).select("*").execute().data or []
+        if str(r.get("org_id")) == org and str(r.get("atendimento_id")) == aid
+    ]
+    if len(set(ids)) != len(ids) or set(ids) != {str(r["id"]) for r in atuais}:
+        raise ValueError("22023: a nova ordem deve listar exatamente as parcelas atuais")
+    alterados = 0
+    for pos, pid in enumerate(ids):
+        atual = next(r for r in atuais if str(r["id"]) == pid)
+        if atual.get("ordem") != pos:
+            client.table(tabela).update(
+                {"ordem": pos, "updated_por": params.get("p_usuario_id")}
+            ).eq("id", pid).execute()
+            alterados += 1
+    return MockSelectBuilder([alterados])

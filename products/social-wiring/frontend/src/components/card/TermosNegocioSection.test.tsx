@@ -211,14 +211,33 @@ describe("marco = 'parcela' exige uma parcela", () => {
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByText("No pagamento de uma parcela"));
-    // 🔴 Formatted BRL, not the raw Decimal string — see
-    // `ParcelaMarcoSelect`'s `formatBRL` fix (the picker used to print
-    // "p1 — 1000.00" instead of "R$ 1.000,00", the same raw-float class the
-    // parcelas table three inches above never had).
-    fireEvent.click(getByText("p1 — R$ 1.000,00"));
+    // Formatted BRL, never the raw Decimal string ("1000.00").
+    fireEvent.click(getByText("Parcela 01 — Direta — R$ 1.000,00"));
 
     expect(queryByTestId("termos-posse-parcela-erro")).toBeNull();
     expect(getByTestId("negest-termos-salvar")).toHaveProperty("disabled", false);
+  });
+
+  it("🔴 uma parcela sem evento NUNCA aparece pelo UUID — 'Parcela NN — tipo — R$ x', na ordem", async () => {
+    const uuid = "6666c10e-0000-4000-8000-000000000001";
+    const { getByText, queryByText, getAllByRole } = await render(
+      aggregate({
+        parcelas: [
+          parcela({ id: uuid, tipo: "financiamento", valor: "400000.00", ordem: 2 }),
+          parcela({ id: "p-sinal", tipo: "sinal", valor: "50000.00", ordem: 0, evento: "no ato" }),
+          parcela({ id: "p-venc", tipo: "intermediaria", valor: "1000.00", ordem: 1, vencimento: "2026-12-10" }),
+        ],
+      }),
+    );
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByText("No pagamento de uma parcela"));
+
+    expect(queryByText(new RegExp(uuid))).toBeNull();
+    expect(getByText("Parcela 01 — Sinal — no ato — R$ 50.000,00")).toBeTruthy();
+    expect(getByText("Parcela 02 — Intermediária — 10/12/2026 — R$ 1.000,00")).toBeTruthy();
+    expect(getByText("Parcela 03 — Financiamento — R$ 400.000,00")).toBeTruthy();
+    expect(getAllByRole("button").some((b) => b.textContent?.includes(uuid))).toBe(false);
   });
 });
 

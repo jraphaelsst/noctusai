@@ -95,6 +95,19 @@ export function useDeleteParcela(clienteId: string) {
   });
 }
 
+/** Migration 195 — the FULL ordered id list; the server rewrites every
+ *  `ordem` in one transaction and refuses a partial/stale list (400). */
+export function useReordenarParcelas(clienteId: string) {
+  const onSuccess = useSeedOnSuccess(clienteId);
+  return useMutation({
+    mutationFn: (parcelaIds: string[]) =>
+      api.put<NegociacaoEstruturada>(`${base(clienteId)}/parcelas/ordem`, {
+        parcela_ids: parcelaIds,
+      }),
+    onSuccess,
+  });
+}
+
 export function useDividirSaldo(clienteId: string) {
   const onSuccess = useSeedOnSuccess(clienteId);
   return useMutation({

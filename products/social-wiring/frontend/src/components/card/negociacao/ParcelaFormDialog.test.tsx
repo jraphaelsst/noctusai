@@ -169,3 +169,38 @@ describe("ParcelaFormDialog — FGTS", () => {
     expect(tipos.querySelector('button[data-value="fgts"]')).toBeTruthy();
   });
 });
+
+describe("ParcelaFormDialog — forma de pagamento longa (owner, 2026-10-03)", () => {
+  // 65 chars — the live shape a 50-char cap refused (synthetic wording).
+  const FORMA_LONGA = "Transferência bancária com recursos do financiamento Banco Exemplo";
+
+  it("🔴 a forma longer than 50 characters is typed in full and sent verbatim", async () => {
+    const { screen, fireEvent, onSubmit } = await render({ parcela: parcela({ tipo: "financiamento", forma_pagamento: null }) });
+    const userEvent = (await import("@testing-library/user-event")).default;
+    const user = userEvent.setup();
+    expect(FORMA_LONGA.length).toBeGreaterThan(60);
+
+    await user.type(screen.getByTestId("parc-forma"), FORMA_LONGA);
+    fireEvent.click(screen.getByTestId("negest-parcela-salvar"));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0][0].forma_pagamento).toBe(FORMA_LONGA);
+  });
+
+  it("🔴 a refused save is announced ON the dialog (role=alert) and scrolled into view", async () => {
+    const scroll = vi.fn();
+    Element.prototype.scrollIntoView = scroll;
+    const rtl = await render({ parcela: parcela() });
+    expect(rtl.screen.queryByRole("alert")).toBeNull();
+
+    rtl.cleanup();
+    await render({
+      parcela: parcela(),
+      error: "forma_pagamento: Deve ter no máximo 2000 caracteres",
+    });
+
+    const alerta = rtl.screen.getByRole("alert");
+    expect(alerta.textContent).toContain("forma_pagamento: Deve ter no máximo 2000 caracteres");
+    expect(scroll).toHaveBeenCalled();
+  });
+});

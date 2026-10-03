@@ -15,7 +15,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { ArrowDown, ArrowUp, Loader2, Pencil, Plus, Save, Trash2, Undo2 } from "lucide-react";
+import { Loader2, Pencil, Plus, Save, Trash2, Undo2 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,6 +35,8 @@ import {
   ParcelaFormDialog,
   type FavorecidoOpcao,
 } from "@/components/card/negociacao/ParcelaFormDialog";
+import { BotoesOrdem } from "@/components/card/negociacao/BotoesOrdem";
+import { moverNaLista, numeroParcela } from "@/components/card/negociacao/parcelaOrdem";
 import {
   ADITIVO_ESTILO_LABEL,
   ADITIVO_ESTILO_OPTIONS,
@@ -586,12 +588,9 @@ function ParcelasAditivoEditor({
   // DISPLAY-ONLY sum (the gate checks it against the price exactly).
   const soma = parcelas.reduce((acc, p) => acc + Number(p.valor || 0), 0);
 
-  function mover(i: number, delta: number) {
-    const j = i + delta;
-    if (j < 0 || j >= parcelas.length) return;
-    const nova = [...parcelas];
-    [nova[i], nova[j]] = [nova[j], nova[i]];
-    onChange(nova);
+  function mover(i: number, delta: -1 | 1) {
+    const nova = moverNaLista(parcelas, i, delta);
+    if (nova) onChange(nova);
   }
 
   return (
@@ -627,7 +626,7 @@ function ParcelasAditivoEditor({
                 data-testid={`aditivo-parcela-${aditivoId}-${i}`}
               >
                 <span className="min-w-0">
-                  <span className="font-medium">Parcela {String(i + 1).padStart(2, "0")}</span>
+                  <span className="font-medium">{numeroParcela(i + 1)}</span>
                   {" · "}
                   {PARCELA_TIPO_LABELS[p.tipo]} · {exibirMoeda(p.valor)} ·{" "}
                   {exibirData(p.vencimento) ?? p.evento ?? "sem vencimento"}
@@ -639,28 +638,7 @@ function ParcelasAditivoEditor({
                   )}
                 </span>
                 <span className="flex shrink-0 items-center gap-0.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={i === 0}
-                    onClick={() => mover(i, -1)}
-                    aria-label="Mover parcela para cima"
-                  >
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    disabled={i === parcelas.length - 1}
-                    onClick={() => mover(i, 1)}
-                    aria-label="Mover parcela para baixo"
-                  >
-                    <ArrowDown className="h-3.5 w-3.5" />
-                  </Button>
+                  <BotoesOrdem indice={i} total={parcelas.length} onMover={(d) => mover(i, d)} />
                   <Button
                     type="button"
                     variant="ghost"
@@ -759,7 +737,7 @@ function AditivoResumo({
         <ol className="ml-3 space-y-0.5">
           {parcelas.map((p, i) => (
             <li key={p.id}>
-              Parcela {String(i + 1).padStart(2, "0")} · {PARCELA_TIPO_LABELS[p.tipo]} ·{" "}
+              {numeroParcela(i + 1)} · {PARCELA_TIPO_LABELS[p.tipo]} ·{" "}
               {exibirMoeda(p.valor)} · {exibirData(p.vencimento) ?? p.evento ?? "—"} ·{" "}
               {nomeFavorecido(p.favorecido_id)}
             </li>

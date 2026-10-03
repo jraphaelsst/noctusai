@@ -30,6 +30,8 @@ _ROUTES: tuple[tuple[str, str], ...] = (
     ("patch", "/api/clientes/{cliente_id}/negociacao/parcelas/{parcela_id}"),
     ("delete", "/api/clientes/{cliente_id}/negociacao/parcelas/{parcela_id}"),
     ("post", "/api/clientes/{cliente_id}/negociacao/parcelas/dividir-saldo"),
+    # Migration 195 — atomic reorder.
+    ("put", "/api/clientes/{cliente_id}/negociacao/parcelas/ordem"),
     ("post", "/api/clientes/{cliente_id}/negociacao/favorecidos"),
     ("patch", "/api/clientes/{cliente_id}/negociacao/favorecidos/{favorecido_id}"),
     ("delete", "/api/clientes/{cliente_id}/negociacao/favorecidos/{favorecido_id}"),

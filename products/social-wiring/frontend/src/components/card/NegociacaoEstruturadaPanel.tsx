@@ -78,6 +78,7 @@ import {
   useDeleteIntermediario,
   useDeleteParcela,
   useDividirSaldo,
+  useReordenarParcelas,
   useNegociacaoEstruturada,
   useNegociacaoPosseMutation,
   useUpdateFavorecido,
@@ -109,6 +110,12 @@ import {
   PARCELA_FORMA_PAGAMENTO_MAX,
   ParcelaFormDialog,
 } from "@/components/card/negociacao/ParcelaFormDialog";
+import { BotoesOrdem } from "@/components/card/negociacao/BotoesOrdem";
+import {
+  moverNaLista,
+  numeroParcela,
+  ordenarPorOrdem,
+} from "@/components/card/negociacao/parcelaOrdem";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import { exibirData, exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
 
@@ -468,6 +475,7 @@ function ParcelasSection({
   const atualizar = useUpdateParcela(clienteId);
   const excluir = useDeleteParcela(clienteId);
   const dividir = useDividirSaldo(clienteId);
+  const reordenar = useReordenarParcelas(clienteId);
   // Only the swap-CURRENCY ativos (natureza permuta_imovel) — a catalog
   // listing or an automóvel is not something a parcela can be "paid" with.
   const permutaAtivos = usePermutaAtivos("permuta_imovel");
@@ -484,7 +492,7 @@ function ParcelasSection({
   const favorecidoNome = (id: string | null) =>
     data.favorecidos.find((f) => f.id === id)?.nome ?? "—";
 
-  const parcelasOrdenadas = [...data.parcelas].sort((a, b) => a.ordem - b.ordem);
+  const parcelasOrdenadas = ordenarPorOrdem(data.parcelas);
   const saldoZerado = isZeroDecimal(data.saldo_nao_alocado);
 
   // H4 (owner, 2026-09-25) — "intermediária = valor − sinal − financiamento"
@@ -505,6 +513,21 @@ function ParcelasSection({
     setEditando(p);
     setFormError(null);
     setFormOpen(true);
+  }
+
+  // `ordem` IS the contract's "Parcela NN" — a sinal created after an
+  // auto-suggested financiamento must be movable to the front (owner,
+  // 2026-10-03). The whole order goes in one request (migration 195).
+  function mover(i: number, delta: -1 | 1) {
+    const nova = moverNaLista(parcelasOrdenadas, i, delta);
+    if (!nova) return;
+    reordenar.mutate(
+      nova.map((p) => p.id),
+      {
+        onError: (err: unknown) =>
+          toast.error(mensagemErroServidor(err, "Não foi possível reordenar as parcelas.")),
+      },
+    );
   }
 
   function remover(p: NegociacaoParcela) {
@@ -586,17 +609,21 @@ function ParcelasSection({
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead className="w-24">Nº</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead>Valor</TableHead>
                 <TableHead>Vencimento / evento</TableHead>
                 <TableHead>Favorecido</TableHead>
                 <TableHead>Confissão</TableHead>
-                <TableHead className="w-20">Ações</TableHead>
+                <TableHead className="w-36">Ações</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {parcelasOrdenadas.map((p) => (
+              {parcelasOrdenadas.map((p, i) => (
                 <TableRow key={p.id} data-testid={`parcela-${p.id}`}>
+                  <TableCell className="whitespace-nowrap text-xs text-muted-foreground" data-testid={`parcela-numero-${p.id}`}>
+                    {numeroParcela(i + 1)}
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-1.5">
                       {PARCELA_TIPO_LABELS[p.tipo]}
@@ -653,6 +680,14 @@ function ParcelasSection({
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1">
+                      <BotoesOrdem
+                        indice={i}
+                        total={parcelasOrdenadas.length}
+                        onMover={(d) => mover(i, d)}
+                        disabled={reordenar.isPending}
+                        testIdPrefixo={`parcela-${p.id}`}
+                        className="h-8 w-8 p-0"
+                      />
                       <Button
                         variant="ghost"
                         size="sm"

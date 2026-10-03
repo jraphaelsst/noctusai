@@ -44,8 +44,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-import { formatBRL } from "@/hooks/useNegociacao";
 import { useAtualizarTermos } from "@/hooks/useNegociacaoEstruturada";
+import { ordenarPorOrdem, rotuloParcela } from "@/components/card/negociacao/parcelaOrdem";
 import {
   CORRETAGEM_CONTRATANTES,
   CORRETAGEM_CONTRATANTES_LABELS,
@@ -279,9 +279,9 @@ function ParcelaMarcoSelect({
       </SelectTrigger>
       <SelectContent>
         <SelectItem value={NENHUMA_PARCELA}>Nenhuma</SelectItem>
-        {parcelas.map((p) => (
+        {ordenarPorOrdem(parcelas).map((p, i) => (
           <SelectItem key={p.id} value={p.id}>
-            {p.evento ?? p.vencimento ?? p.id} — {formatBRL(p.valor)}
+            {rotuloParcela(p, i + 1)}
           </SelectItem>
         ))}
       </SelectContent>

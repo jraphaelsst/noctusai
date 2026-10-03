@@ -108,24 +108,31 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
 
 
 @pytest.fixture(autouse=True)
-def _simulate_clientes_por_cpf_rpc(monkeypatch):
-    """`MockSupabaseClient.rpc` cannot execute SQL; route the one product RPC
-    the CPF lookups use (migration 185) to its contract fake, every other name
-    to the mock's own behaviour."""
-    from tests.support.rpc_fakes import clientes_por_cpf
+def _simulate_product_rpcs(monkeypatch):
+    """`MockSupabaseClient.rpc` cannot execute SQL; route the product RPCs the
+    services call to their contract fakes (`tests/support/rpc_fakes.py`, each
+    pinned against its migration by a `test_migration_<NNN>_*` file), every
+    other name to the mock's own behaviour. Migrations 185 (CPF lookup) and
+    195 (atomic parcela reorder)."""
+    from tests.support import rpc_fakes
 
+    fakes = {
+        "clientes_por_cpf": rpc_fakes.clientes_por_cpf,
+        "reordenar_negociacao_parcelas": rpc_fakes.reordenar_negociacao_parcelas,
+    }
     original = MockSupabaseClient.rpc
 
     def rpc(self, name, params=None):
-        if name == "clientes_por_cpf":
-            return clientes_por_cpf(self, params or {})
+        fake = fakes.get(name)
+        if fake is not None:
+            return fake(self, params or {})
         return original(self, name, params)
 
     # The patched thing is the TEST DOUBLE, which cannot execute SQL: this
-    # installs the contract fake of the migration-185 function on it (pinned by
-    # `test_migration_185_*`); no product logic is neutered. Seed follow-up: a
-    # public `register_rpc_simulator` on the mock would make this a registration.
-    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)  # self-patch-ok: test double cannot run SQL; contract fake of migration 185
+    # installs the contract fakes of the product's SQL functions on it (pinned
+    # by their migration tests); no product logic is neutered. Seed follow-up:
+    # a public `register_rpc_simulator` on the mock would make this a registration.
+    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)  # self-patch-ok: test double cannot run SQL; contract fakes of migrations 185/195
 
 
 def pytest_configure(config):

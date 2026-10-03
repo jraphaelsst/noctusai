@@ -1219,6 +1219,46 @@ def remover_parcela(
         sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
 
 
+#: Migration 195's SQL function — the one atomic write of a new parcela order.
+RPC_REORDENAR_PARCELAS = "reordenar_negociacao_parcelas"
+
+
+def reordenar_parcelas(
+    client: Any, org_id: UUID, cliente_id: UUID, *,
+    parcela_ids: list[UUID], usuario_id: Optional[UUID],
+) -> dict:
+    """Set every parcela's `ordem` to its position in `parcela_ids` (dense
+    0..N-1) — the contract's "Parcela NN" numbering follows. `parcela_ids`
+    must be EXACTLY this atendimento's current parcela set (none missing,
+    extra or repeated): a stale client must not drop a parcela out of the
+    numbering. Checked here for a named 400; migration 195's function checks
+    it again and writes the whole order in one transaction (N PATCHes could
+    fail halfway and leave two parcelas tied on one `ordem`)."""
+    atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
+    atuais = {str(r["id"]) for r in _listar_parcelas_rows(client, org_id, atendimento_id)}
+    pedidos = [str(i) for i in parcela_ids]
+    if len(set(pedidos)) != len(pedidos):
+        raise ValidationError_(
+            "a nova ordem repete uma parcela", field="parcela_ids"
+        )
+    if set(pedidos) != atuais:
+        raise ValidationError_(
+            "a nova ordem deve listar exatamente as parcelas atuais desta "
+            "negociação — recarregue a página e tente de novo",
+            field="parcela_ids",
+        )
+    client.rpc(
+        RPC_REORDENAR_PARCELAS,
+        {
+            "p_org_id": str(org_id),
+            "p_atendimento_id": str(atendimento_id),
+            "p_parcela_ids": pedidos,
+            "p_usuario_id": str(usuario_id) if usuario_id else None,
+        },
+    ).execute()
+    return obter_estruturada(client, org_id, cliente_id)
+
+
 def dividir_saldo_em_parcelas(
     client: Any, org_id: UUID, cliente_id: UUID, *, num_parcelas: int,
     tipo: str, forma_pagamento: Optional[str], favorecido_id: Optional[UUID],
@@ -1672,6 +1712,7 @@ __all__ = [
     "POSSE_MARCOS",
     "TABLE_FAVORECIDOS",
     "TABLE_INTERMEDIARIOS",
+    "RPC_REORDENAR_PARCELAS",
     "TABLE_PARCELAS",
     "TABLE_PARCELA_PERMUTA_ATIVOS",
     "TABLE_TERMOS",
@@ -1692,4 +1733,5 @@ __all__ = [
     "remover_favorecido",
     "remover_intermediario",
     "remover_parcela",
+    "reordenar_parcelas",
 ]

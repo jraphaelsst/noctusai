@@ -37,6 +37,7 @@ from app.modules.card_hub.schemas import (
     ParcelaCreateBody,
     ParcelaPatchBody,
     ParcelasDividirBody,
+    ParcelasReordenarBody,
     TermosNegocioPutBody,
 )
 
@@ -124,6 +125,22 @@ async def delete_parcela_route(
     _user, org_id = _auth_parts(auth)
     svc.remover_parcela(client, org_id, cliente_id, parcela_id)
 
+
+
+@router.put("/{cliente_id}/negociacao/parcelas/ordem")
+async def reordenar_parcelas_route(
+    cliente_id: UUID,
+    body: ParcelasReordenarBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+) -> dict:
+    """Replace the parcelas' order as a whole (atomic — migration 195). The
+    response is the `GET .../negociacao/estruturada` aggregate."""
+    user, org_id = _auth_parts(auth)
+    return svc.reordenar_parcelas(
+        client, org_id, cliente_id,
+        parcela_ids=body.parcela_ids, usuario_id=getattr(user, "id", None),
+    )
 
 @router.post("/{cliente_id}/negociacao/parcelas/dividir-saldo", status_code=201)
 async def dividir_saldo_route(

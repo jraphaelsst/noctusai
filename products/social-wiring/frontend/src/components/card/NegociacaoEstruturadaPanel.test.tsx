@@ -52,6 +52,7 @@ const mockCreateParcela = vi.fn();
 const mockUpdateParcela = vi.fn();
 const mockDeleteParcela = vi.fn();
 const mockDividirSaldo = vi.fn();
+const mockReordenarParcelas = vi.fn();
 const mockCreateFavorecido = vi.fn();
 const mockUpdateFavorecido = vi.fn();
 const mockDeleteFavorecido = vi.fn();
@@ -72,6 +73,7 @@ vi.mock("@/hooks/useNegociacaoEstruturada", async () => {
     useUpdateParcela: () => ({ mutate: mockUpdateParcela, isPending: false }),
     useDeleteParcela: () => ({ mutate: mockDeleteParcela, isPending: false }),
     useDividirSaldo: () => ({ mutate: mockDividirSaldo, isPending: false }),
+    useReordenarParcelas: () => ({ mutate: mockReordenarParcelas, isPending: false }),
     useCreateFavorecido: () => ({
       mutate: mockCreateFavorecido,
       isPending: false,
@@ -407,14 +409,40 @@ describe("nova parcela — o 422 do backend é renderizado NO DIÁLOGO (não só
     expect(queryByTestId("negest-parcela-erro")).toBeNull();
   });
 
-  it("🔴 forma_pagamento e evento carregam o mesmo cap do backend (max_length) — não dá para digitar além dele", async () => {
+  it("🔴 forma_pagamento e evento carregam o mesmo cap do backend (max_length) — forma é prosa (2000, não 50)", async () => {
     const { getByTestId } = await render();
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-parcela-nova"));
 
-    expect(getByTestId("parc-forma")).toHaveProperty("maxLength", 50);
+    expect(getByTestId("parc-forma")).toHaveProperty("maxLength", 2000);
     expect(getByTestId("parc-evento")).toHaveProperty("maxLength", 200);
+  });
+
+  it("🔴 uma recusa do servidor (ApiError 422, envelope pt-BR) aparece NO diálogo, com a frase do servidor", async () => {
+    const { ApiError } = await import("@noctusai/lib");
+    mockCreateParcela.mockImplementation(
+      (_payload: unknown, opts?: { onError?: (e: unknown) => void }) => {
+        opts?.onError?.(
+          new ApiError(422, "forma_pagamento: Deve ter no máximo 2000 caracteres", {
+            error: {
+              code: "VALIDATION_ERROR",
+              message: "forma_pagamento: Deve ter no máximo 2000 caracteres",
+            },
+          }),
+        );
+      },
+    );
+    const { getByTestId, getByRole } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("negest-parcela-nova"));
+    fireEvent.change(getByTestId("parc-valor"), { target: { value: "1000" } });
+    fireEvent.click(getByTestId("negest-parcela-salvar"));
+
+    const alerta = getByRole("alert");
+    expect(alerta.textContent).toContain("forma_pagamento: Deve ter no máximo 2000 caracteres");
+    expect(alerta.textContent).not.toContain("[422]");
   });
 });
 
@@ -1069,5 +1097,65 @@ describe("conflitos (migration 171 atendimento_campo_conflitos)", () => {
     );
     const { queryByTestId } = await render();
     expect(queryByTestId("negest-conflitos")).toBeNull();
+  });
+});
+
+// ─── Reordenar parcelas (migration 195, owner 2026-10-03) ─────────────────
+
+describe("reordenar parcelas", () => {
+  function comTres() {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          parcelas: [
+            parcelaBase({ id: "p-fin", tipo: "financiamento", valor: "400000.00", ordem: 0 }),
+            parcelaBase({ id: "p-int", tipo: "intermediaria", valor: "50000.00", ordem: 1 }),
+            parcelaBase({ id: "p-sinal", tipo: "sinal", valor: "50000.00", ordem: 2 }),
+          ],
+        }),
+      }),
+    );
+  }
+
+  it("🔴 cada linha mostra o seu número de contrato ('Parcela NN'), na ordem", async () => {
+    comTres();
+    const { getByTestId } = await render();
+    expect(getByTestId("parcela-numero-p-fin").textContent).toBe("Parcela 01");
+    expect(getByTestId("parcela-numero-p-sinal").textContent).toBe("Parcela 03");
+  });
+
+  it("🔴 subir o sinal envia a ordem COMPLETA nova num único pedido", async () => {
+    comTres();
+    const { getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("parcela-p-sinal-subir"));
+
+    expect(mockReordenarParcelas).toHaveBeenCalledTimes(1);
+    expect(mockReordenarParcelas.mock.calls[0][0]).toEqual(["p-fin", "p-sinal", "p-int"]);
+  });
+
+  it("a primeira não sobe e a última não desce", async () => {
+    comTres();
+    const { getByTestId } = await render();
+    expect(getByTestId("parcela-p-fin-subir")).toHaveProperty("disabled", true);
+    expect(getByTestId("parcela-p-sinal-descer")).toHaveProperty("disabled", true);
+    expect(getByTestId("parcela-p-int-subir")).toHaveProperty("disabled", false);
+  });
+
+  it("uma recusa do servidor chega por toast com a frase do servidor", async () => {
+    comTres();
+    mockReordenarParcelas.mockImplementation(
+      (_ids: unknown, opts?: { onError?: (e: unknown) => void }) => {
+        opts?.onError?.({ body: { error: { message: "a nova ordem deve listar exatamente as parcelas atuais" } } });
+      },
+    );
+    const { getByTestId } = await render();
+    const { fireEvent } = await import("@testing-library/react");
+    const { toast } = await import("sonner");
+
+    fireEvent.click(getByTestId("parcela-p-int-descer"));
+
+    expect(toast.error).toHaveBeenCalledWith("a nova ordem deve listar exatamente as parcelas atuais");
   });
 });

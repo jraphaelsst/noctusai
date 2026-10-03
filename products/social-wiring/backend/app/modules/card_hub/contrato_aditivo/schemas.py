@@ -20,6 +20,8 @@ from pydantic import Field, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
+from app.modules.card_hub.schemas import FORMA_PAGAMENTO_MAX_LENGTH
+
 ESTILOS: tuple[str, ...] = ("house", "formal")
 TIPOS_ALTERACAO: tuple[str, ...] = ("pagamento", "posse", "comissao", "outro")
 #: `atendimento_negociacao_parcelas`' vocabulary minus 'permuta' — migration
@@ -107,7 +109,7 @@ class ParcelaAditivoIn(StrictHttpModel):
     valor: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     vencimento: Optional[date] = None
     evento: Optional[str] = Field(default=None, max_length=500)
-    forma_pagamento: Optional[str] = Field(default=None, max_length=60)
+    forma_pagamento: Optional[str] = Field(default=None, max_length=FORMA_PAGAMENTO_MAX_LENGTH)
     favorecido_id: Optional[UUID] = None
     confissao_divida: bool = False
 

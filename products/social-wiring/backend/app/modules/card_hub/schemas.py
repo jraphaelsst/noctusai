@@ -461,6 +461,15 @@ class ParcelaFavorecidoDivisaoBody(StrictHttpModel):
         return self
 
 
+#: A parcela's `forma_pagamento` is PROSE ("transferência bancária com recursos
+#: do financiamento da instituição X, liberados após o registro"), not a
+#: vocabulary code — the DB column is unbounded TEXT (108/190). The bound is
+#: the house cap for free text at the HTTP boundary (same as the negociação's
+#: own `formas_pagamento`), a request-size guard, not a content limit. It was
+#: 50 (60 on the aditivo twin) until 2026-10-03, when a 65-char financing
+#: forma was refused. Shared by `ParcelaAditivoIn` so the twins never diverge.
+FORMA_PAGAMENTO_MAX_LENGTH = 2000
+
 class ParcelaCreateBody(StrictHttpModel):
     """One structured installment. `favorecido_id` is validated in the
     service against THIS atendimento — see migration 108's header for why
@@ -473,7 +482,9 @@ class ParcelaCreateBody(StrictHttpModel):
     valor: Decimal = Field(ge=0)
     vencimento: Optional[str] = Field(default=None, max_length=10)
     evento: Optional[str] = Field(default=None, max_length=200)
-    forma_pagamento: Optional[str] = Field(default=None, max_length=50)
+    forma_pagamento: Optional[str] = Field(
+        default=None, max_length=FORMA_PAGAMENTO_MAX_LENGTH
+    )
     favorecido_id: Optional[UUID] = None
     confissao_divida: bool = False
     #: Payment of this parcela triggers the brokerage payment (114).
@@ -505,7 +516,9 @@ class ParcelaPatchBody(StrictHttpModel):
     valor: Optional[Decimal] = Field(default=None, ge=0)
     vencimento: Optional[str] = Field(default=None, max_length=10)
     evento: Optional[str] = Field(default=None, max_length=200)
-    forma_pagamento: Optional[str] = Field(default=None, max_length=50)
+    forma_pagamento: Optional[str] = Field(
+        default=None, max_length=FORMA_PAGAMENTO_MAX_LENGTH
+    )
     favorecido_id: Optional[UUID] = None
     confissao_divida: Optional[bool] = None
     dispara_corretagem: Optional[bool] = None
@@ -519,6 +532,14 @@ class ParcelaPatchBody(StrictHttpModel):
     )
 
 
+
+class ParcelasReordenarBody(StrictHttpModel):
+    """The atendimento's parcelas in their new order — ALL of them (migration
+    195): the server refuses a partial list rather than guess where the
+    missing ones go."""
+
+    parcela_ids: list[UUID] = Field(min_length=1, max_length=360)
+
 class ParcelasDividirBody(StrictHttpModel):
     """Auto-suggest an even split of the current `saldo_nao_alocado` across
     `num_parcelas` — a starting point the operator edits afterward, never a
@@ -529,7 +550,9 @@ class ParcelasDividirBody(StrictHttpModel):
     tipo: Literal[
         "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta"
     ] = "direta"
-    forma_pagamento: Optional[str] = Field(default=None, max_length=50)
+    forma_pagamento: Optional[str] = Field(
+        default=None, max_length=FORMA_PAGAMENTO_MAX_LENGTH
+    )
     favorecido_id: Optional[UUID] = None
     #: First due date; each subsequent parcela lands one month later. `None`
     #: leaves every generated parcela's `vencimento` unset — the split is

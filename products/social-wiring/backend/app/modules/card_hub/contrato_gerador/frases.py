@@ -495,9 +495,41 @@ def assinante_fisico(p: Pessoa) -> dict[str, str]:
 # ─── preço / parcelas (spec §2.3) ─────────────────────────────────────────
 
 
+#: Lower-case connectives a Title-Cased vocabulary label may carry ("Cartão de
+#: Crédito") without stopping being a label.
+_FORMA_CONECTIVOS = frozenset(
+    {"a", "o", "e", "de", "da", "do", "das", "dos", "em", "no", "na", "com", "por", "via", "para"}
+)
+
+
+def _sigla(palavra: str) -> bool:
+    return len(palavra) > 1 and palavra.isupper()
+
+
 def _forma(forma: Optional[str]) -> str:
-    f = (forma or "").strip()
-    return f if f.isupper() else f.lower()
+    """`forma_pagamento` as it reads after "por meio de …".
+
+    Two shapes reach here. A vocabulary LABEL (`FORMAS_PAGAMENTO_SUGERIDAS`,
+    Title Case: "Transferência", "Cartão de Crédito") reads in lower case,
+    acronyms kept ("PIX"). Free PROSE (the field is unbounded since
+    2026-10-03: "Transferência bancária com recursos liberados pela Caixa
+    Econômica Federal") keeps what the person typed — only its sentence-initial
+    capital drops — because lower-casing it whole would print "caixa econômica
+    federal". Whitespace runs collapse (a pasted double space would trip the
+    lint's spacing rule)."""
+    f = " ".join((forma or "").split())
+    if not f or f.isupper():
+        return f
+    palavras = f.split(" ")
+    rotulo = all(
+        not p[:1].isalpha() or p[:1].isupper() or p.lower() in _FORMA_CONECTIVOS
+        for p in palavras
+    )
+    if rotulo:
+        return " ".join(p if _sigla(p) else p.lower() for p in palavras)
+    if not _sigla(palavras[0]):
+        palavras[0] = palavras[0][:1].lower() + palavras[0][1:]
+    return " ".join(palavras)
 
 
 def banco_texto(fav: Favorecido) -> str:
