@@ -405,6 +405,89 @@ class TestPropostaLetterBelongsByProponente:
         assert resultado["aviso"] == "documento_de_outro_negocio"
 
 
+class TestGuiaVisaoBelongsByComprador:
+    """Vision-read ITBI guides (2026-10-03): none yielded a comprador before,
+    so every one read `pertencimento_nao_verificado` and its valor opened a
+    conflict against an EMPTY field instead of filling it (H1). Read through
+    the REAL seed parser. Invented names/numbers; real layouts."""
+
+    _NOME = "Fulana Sintética de Teste"
+
+    def _aplicar(self, scoped, texto: str, **seed_over):
+        from noctusai_lib.integrations.documents.guia_itbi import parse_guia_itbi
+        from noctusai_lib.integrations.documents.types import TextSource
+
+        cid, aid = _seed(scoped, **{"com_negociacao": False, **seed_over})
+        doc_id = str(uuid4())
+        scoped.set_table_data("atendimento_documentos", [_documento(doc_id, aid, "guia_itbi")])
+        leitura = parse_guia_itbi(texto, TextSource.OCR)
+        return nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "guia_itbi", leitura)
+
+    def _valor(self, scoped):
+        return _t(scoped, "atendimento_negociacao").select("*").execute().data[0]["valor_negociado"]
+
+    def test_contribuinte_line_with_the_comprador_cpf_below_fills_directly(self, scoped):
+        texto = (
+            "CONTRIBUINTE: Fulana Sintetica de Teste\n"
+            "CPF/CNPJ: 390.533.447-05\n"
+            "Valor da Transação: R$ 640.000,00\n"
+        )
+        resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
+        assert "pertencimento_nao_verificado" not in (resultado["aviso"] or "")
+        assert resultado["conflitos"] == []
+        assert self._valor(scoped) == "640000.00"
+
+    def test_blank_cpf_but_every_named_adquirente_is_a_comprador_fills(self, scoped):
+        texto = (
+            "Adquirente: Fulana Sintetica de Teste - CPF/CNPJ: [EM BRANCO]\n"
+            "Transmitente: Ciclano Vendedor - CPF/CNPJ: [EM BRANCO]\n"
+            "Valor da Transação: R$ 640.000,00\n"
+        )
+        resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
+        assert resultado["conflitos"] == []
+        assert self._valor(scoped) == "640000.00"
+
+    def test_one_named_stranger_withholds_it(self, scoped):
+        texto = (
+            "CONTRIBUINTE: Fulana Sintetica de Teste e Beltrano Estranho Silva\n"
+            "CPF/CNPJ: [EM BRANCO]\n"
+            "Valor da Transação: R$ 640.000,00\n"
+        )
+        resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+        assert self._valor(scoped) is None
+
+    def test_a_guide_naming_only_someone_else_is_refused(self, scoped):
+        texto = (
+            "Adquirente: Beltrano Estranho Silva - CPF/CNPJ: [EM BRANCO]\n"
+            "Valor da Transação: R$ 640.000,00\n"
+        )
+        resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
+        assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
+        assert self._valor(scoped) is None
+
+    def test_a_valid_cpf_of_someone_else_refuses_the_guide(self, scoped):
+        texto = (
+            "CONTRIBUINTE: Fulana Sintetica de Teste\n"
+            "CPF/CNPJ: 529.982.247-25\n"
+            "Valor da Transação: R$ 640.000,00\n"
+        )
+        resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
+        assert resultado["aviso"] == "documento_de_outro_negocio"
+
+    def test_a_differing_value_on_file_still_opens_a_conflict(self, scoped):
+        texto = (
+            "CONTRIBUINTE: Fulana Sintetica de Teste\n"
+            "CPF/CNPJ: 390.533.447-05\n"
+            "Valor da Transação: R$ 640.000,00\n"
+        )
+        resultado = self._aplicar(
+            scoped, texto, nome_comprador=self._NOME, com_negociacao=True,
+        )
+        assert [c["campo"] for c in resultado["conflitos"]] == ["valor_negociado"]
+        assert self._valor(scoped) == "500000.00"
+
+
 class TestValorNegociado:
     def test_fills_an_empty_value(self, scoped):
         cid, aid = _seed(scoped, com_negociacao=False)

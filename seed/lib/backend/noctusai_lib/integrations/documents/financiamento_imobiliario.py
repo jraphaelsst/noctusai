@@ -75,8 +75,12 @@ from typing import Literal, Mapping, Optional, Protocol, Sequence, runtime_check
 from noctusai_lib.integrations.documents.caixa_rotulada import (
     campo as _caixa_campo,
     data_br as _caixa_data_br,
+    cpfs_em,
+    limpar_nome,
+    parear_nomes_cpfs,
     percentual as _caixa_percentual,
     pessoas_com_cpf,
+    separar_nomes,
     temperar_alta_por_fonte,
 )
 from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as _cpf_is_valid
@@ -431,56 +435,36 @@ _NOMES_ROTULO_RE = re.compile(
     r"(?:COMPRADOR|PROPONENTE|MUTUARIO|CLIENTE)\s*(?:\(\s*E?S\s*\)|ES|S)?\s*:\s*(.+)$"
 )
 _CPFS_ROTULO_RE = re.compile(r"\bCPF\s*(?:\(\s*S\s*\)|S)?\s*:\s*(.+)$")
-_CPF_RE = re.compile(r"\d{3}\.\d{3}\.\d{3}-\d{2}|(?<!\d)\d{11}(?!\d)")
-
-
-def _limpar_nome(nome: str) -> Optional[str]:
-    limpo = " ".join(nome.strip(" .,;:!").split())
-    return limpo or None
 
 
 def _proponentes(
     linhas: list[str],
 ) -> tuple[tuple[PessoaFinanciamento, ...], tuple[str, ...]]:
     """`(pessoas pareadas com CPF, todos os nomes lidos)` for a proposta's
-    proponente(s) — see the block comment above. A name is paired with a
-    CPF only when the label pair reads the SAME number of names and CPFs
-    (a masked "***.456.789-**" CPF is no CPF at all, so a masked letter
-    yields names only); a name is never invented, never fuzzily
-    completed — the caller matches it strictly."""
+    proponente(s) — see the block comment above. Pairing and name
+    splitting are `caixa_rotulada`'s shared rule (`separar_nomes` /
+    `parear_nomes_cpfs`: equal counts only; a masked CPF is no CPF); a
+    name is never invented, never fuzzily completed — the caller matches
+    it strictly."""
     nomes: list[str] = []
-    rotulados: list[str] = []
+    texto_rotulado: Optional[str] = None
     cpfs: list[str] = []
     for linha in linhas:
         m = _SAUDACAO_RE.search(linha)
-        if m and (nome := _limpar_nome(m.group(1))):
+        if m and (nome := limpar_nome(m.group(1))):
             nomes.append(nome)
             continue
         m = _NOMES_ROTULO_RE.search(linha)
         if m:
-            rotulados.extend(
-                n for parte in m.group(1).split(";") if (n := _limpar_nome(parte))
-            )
+            texto_rotulado = m.group(1) if texto_rotulado is None else f"{texto_rotulado};{m.group(1)}"
             continue
         m = _CPFS_ROTULO_RE.search(linha)
         if m and not cpfs:
-            cpfs = _CPF_RE.findall(m.group(1))
-    if cpfs and len(rotulados) == 1 and len(cpfs) > 1:
-        # "FULANO E BELTRANA" for two CPFs — split on " E " only when that
-        # yields exactly one name per CPF.
-        partes = [n for p in rotulados[0].split(" E ") if (n := _limpar_nome(p))]
-        if len(partes) == len(cpfs):
-            rotulados = partes
-    pareadas: list[PessoaFinanciamento] = []
-    if cpfs and len(cpfs) == len(rotulados):
-        for nome, cpf_bruto in zip(rotulados, cpfs):
-            cpf_fmt = format_cpf(cpf_bruto)
-            if cpf_fmt is not None:
-                pareadas.append(
-                    PessoaFinanciamento(nome=nome, cpf=cpf_fmt, cpf_valido=_cpf_is_valid(cpf_bruto))
-                )
+            cpfs = cpfs_em(m.group(1))
+    rotulados = separar_nomes(texto_rotulado, len(cpfs))
+    pareadas = parear_nomes_cpfs(rotulados, cpfs, PessoaFinanciamento)
     todos = tuple(dict.fromkeys([*nomes, *rotulados]))
-    return tuple(pareadas), todos
+    return pareadas, todos
 
 
 #: The account-detail fields inside the `conta_credito_vendedor` box — its
@@ -632,12 +616,12 @@ class FinanciamentoImobiliarioFields:
     sistema_amortizacao: Optional[str] = None
     compradores: tuple[PessoaFinanciamento, ...] = ()
     vendedores: tuple[PessoaFinanciamento, ...] = ()
-    #: Every proponente NAME the document printed outside the "Nome - CPF"
+    #: Every comprador/proponente NAME the document printed outside the "Nome - CPF"
     #: box — a proposta letter's greeting / "Nome do(s) Comprador(es)"
     #: label (see `_proponentes`), with or without a CPF beside it. The
     #: evidence a belongs-to-this-deal check matches STRICTLY by name when
     #: the letter carries no verifiable CPF.
-    nomes_proponentes: tuple[str, ...] = ()
+    nomes_compradores: tuple[str, ...] = ()
     #: Pages the WINNING (or, if neither pass found the Quadro, every
     #: attempted) read actually covered — set by the extractor, not the
     #: pure parser below, which has no page concept of its own. `()` for
@@ -822,7 +806,7 @@ def parse_financiamento_imobiliario(
 
     compradores = _pessoas(brutos["compradores"])
     vendedores = _pessoas(brutos["vendedores"])
-    pareadas, nomes_proponentes = _proponentes(linhas)
+    pareadas, nomes_compradores = _proponentes(linhas)
     if not compradores and pareadas:
         compradores = pareadas
     for campo, pessoas in (("compradores", compradores), ("vendedores", vendedores)):
@@ -895,7 +879,7 @@ def parse_financiamento_imobiliario(
         sistema_amortizacao=brutos["sistema_amortizacao"],
         compradores=compradores,
         vendedores=vendedores,
-        nomes_proponentes=nomes_proponentes,
+        nomes_compradores=nomes_compradores,
         quadro_encontrado=quadro,
         conta_credito_vendedor=conta_credito_vendedor,
         confiancas=confiancas,

@@ -53,6 +53,8 @@ exactly that.
 """
 from __future__ import annotations
 
+import dataclasses
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -61,16 +63,25 @@ from typing import Mapping, Optional, Protocol, Sequence, runtime_checkable
 
 from noctusai_lib.integrations.documents.caixa_rotulada import (
     campo as _caixa_campo,
+    cpfs_em,
     data_br as _caixa_data_br,
+    limpar_nome,
     linhas_unidas,
     localizar,
+    parear_nomes_cpfs,
     percentual as _caixa_percentual,
     pessoas_com_cpf,
+    separar_nomes,
     temperar_alta_por_fonte,
     valor_em_coluna,
 )
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.money import ValorLido, ler_valor
+from noctusai_lib.integrations.documents.providers import (
+    DEFAULT_DOCUMENT_PROVIDER,
+    ESCALATION_OCR_MODELS,
+    OCR_MODELS,
+)
 from noctusai_lib.integrations.documents.text import normalize_lines, strip_accents_upper
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
 
@@ -91,6 +102,8 @@ DOCUMENT_PROMPT_GUIA_ITBI = (
     "[EM BRANCO]. Transcreva também qualquer valor por extenso impresso "
     "entre parênteses logo após um valor monetário."
 )
+
+logger = logging.getLogger(__name__)
 
 _ILEGIVEL = "[ILEGÍVEL]"
 _EM_BRANCO = "[EM BRANCO]"
@@ -230,6 +243,32 @@ def _campo(
     )
 
 
+#: "<label> <MORE WORDS>: value" — the matched label is only the PREFIX of a
+#: longer, different box's label. Measured (vision, Carapicuíba, 2026-10-03):
+#: "Valor da Transação Atualizado" / "... Avaliado" / "... Anotados" sit
+#: beside the real "Valor da Transação" — a corrected or appraised figure,
+#: never the price — and the first in document order used to win.
+_QUALIFICADOR_RE = re.compile(r"^[A-Z][A-Z .()/-]*:")
+
+
+def _campo_sem_qualificador(
+    linhas: list[str], sinonimos: Sequence[str], todos: Sequence[str]
+) -> tuple[Optional[str], Optional[str]]:
+    """`_campo` for the transaction value, skipping every box whose label
+    merely STARTS with a synonym (`_QUALIFICADOR_RE`). A skipped line is
+    blanked for the retry, so the next occurrence — the real box — wins."""
+    restantes = list(linhas)
+    for _ in range(len(linhas) + 1):
+        valor, achado, _ = _campo(restantes, sinonimos, todos_rotulos=todos)
+        if valor is None or not _QUALIFICADOR_RE.match(valor):
+            return valor, achado
+        loc = localizar(restantes, sinonimos, todos_rotulos=todos)
+        if loc is None:
+            return None, None
+        restantes[loc[0]] = ""
+    return None, None
+
+
 def _eh_rotulo_monetario(linha: str) -> bool:
     """A money box's label line, as printed: "VALOR ..." or any money
     synonym of `_ROTULOS` — the label side of `valor_em_coluna`."""
@@ -360,16 +399,9 @@ def _pessoas_por_layout(
     the joined-pairs read (a text layer wraps "FULANO - CPF: ... E" /
     "BELTRANA - CPF: ..." mid-list, Embu das Artes) — whichever names MORE
     people; and, for the comprador only, Cotia's columnar contribuinte
-    block when neither found anyone.
-
-    NOC-REMEDIATE[guia-itbi-pessoas-vision]: the 3 vision-read guides of
-    the corpus name their people in shapes none of these read — a
-    "CONTRIBUINTE: A e B" line paired with a separate "CPF/CNPJ: x / y"
-    line, or "ADQUIRENTE: nome - CPF/CNPJ: [EM BRANCO]" (name only) — so
-    SW's belongs-check stays `pertencimento_nao_verificado` for them (a
-    pending conflict, never a wrong fill); the label-pair reader
-    `financiamento_imobiliario._proponentes` already does for the proposta
-    is the shape to share here. — 2026-10-03"""
+    block, then the comprador block's own label/value lines
+    (`_bloco_comprador` — the vision-read shapes), when neither found
+    anyone."""
     sinonimos = tuple(strip_accents_upper(s) for s in _ROTULOS[campo])
     pessoas = _pessoas(brutos[campo])
     loc = localizar(linhas, sinonimos, todos_rotulos=todos)
@@ -384,7 +416,101 @@ def _pessoas_por_layout(
             pessoas = pessoas_unidas
     if not pessoas and campo == "compradores":
         pessoas = _contribuinte_colunar(linhas)
+    if not pessoas and campo == "compradores":
+        pessoas, _ = _bloco_comprador(linhas)
     return pessoas
+
+
+# ─── the comprador block as a vision transcription prints it ──────────────
+# Measured on the corpus's 3 vision-read guides (2026-10-03) — before this
+# none of them yielded a comprador, so SW could never verify one:
+# - Carapicuíba A: "CONTRIBUINTE: A e B" then, on the NEXT line,
+#   "CPF/CNPJ: x / y" (one CPF per name, in order);
+# - Carapicuíba B: "ADQUIRENTE: A - CPF/CNPJ: [EM BRANCO]" — a name, its CPF
+#   box printed blank;
+# - Cotia: a "1 - Contribuinte(Comprador)" heading, then "Nome: A" and
+#   "CGC/CPF: x" on lines of their own;
+# - the escalation re-read of Carapicuíba A: "NOME: A - CPF: x; B - CPF: y"
+#   with no heading, above the transmitente.
+# The contribuinte is the municipality's choice (CTN art. 42): usually the
+# adquirente, but Embu das Artes prints the cadastro's OWNER there. That is
+# why these are only EVIDENCE for SW's belongs-check, never a party record:
+# a seller's name fails the strict all-names-are-compradores match, and a
+# seller's valid CPF still proves the guide is THIS deal's. Only the FIRST
+# block carrying a name is read: the transmitente / the prefeitura's own
+# CNPJ come later and stop the look-ahead.
+
+_CABECALHO_COMPRADOR_RE = re.compile(
+    r"^(?:\d+\s*[-–)]\s*)?(?:CONTRIBUINTE|ADQUIRENTES?|COMPRADOR(?:ES)?)"
+    r"\s*(?:\(\s*(?:COMPRADOR|ADQUIRENTE)(?:\s*\(?E?S\)?)?\s*\))?\s*:?\s*(.*)$"
+)
+_ROTULO_NOME_RE = re.compile(r"^NOMES?\s*:\s*(.+)$")
+#: A bare "NOME: A - CPF: x" line ABOVE the transmitente, with no
+#: contribuinte heading at all — how the escalation model transcribed the
+#: Carapicuíba guide whose contribuinte label it could not read (measured).
+#: Only with a CPF beside the name: a bare "NOME: A" is anyone's.
+_NOME_COM_CPF_RE = re.compile(r"^NOMES?\s*:\s*(.+\bCPF\b.*)$")
+_ROTULO_DOC_RE = re.compile(r"^(?:CPF|CNPJ|CGC)\b[^:]*:\s*(.*)$")
+_DOC_NA_LINHA_RE = re.compile(r"\s*[-–—]?\s*\b(?:CPF|CNPJ|CGC)\b[^:]*:\s*(.*)$")
+_OUTRO_BLOCO_RE = re.compile(
+    r"^(?:\d+\s*[-–)]\s*)?(?:TRANSMITENTES?|VENDEDOR(?:ES)?|ALIENANTES?)\b"
+)
+#: How far below its heading a block's name / CPF line may sit.
+_ALCANCE_BLOCO = 5
+
+
+def _bloco_comprador(linhas: list[str]) -> tuple[tuple[PessoaItbi, ...], tuple[str, ...]]:
+    """`(pessoas pareadas com CPF, nomes lidos)` of the guide's comprador
+    block — see the block comment above. Names pair with CPFs only on
+    equal counts (`caixa_rotulada.parear_nomes_cpfs`); a blank/masked CPF
+    leaves the names alone. `((), ())` when no such block exists."""
+    for i, linha in enumerate(linhas):
+        if _OUTRO_BLOCO_RE.match(linha):
+            # Past the transmitente: any later "NOME:" is the seller's.
+            return (), ()
+        m = _CABECALHO_COMPRADOR_RE.match(linha) or _NOME_COM_CPF_RE.match(linha)
+        if not m:
+            continue
+        resto = m.group(1).strip()
+        pares = _pessoas(resto)
+        if pares:
+            # "A - CPF: x; B - CPF: y" on the line itself — the prompt's own
+            # format, already paired per person.
+            return pares, tuple(p.nome for p in pares if p.nome)
+        texto_nomes: Optional[str] = None
+        texto_cpfs: Optional[str] = None
+        if resto:
+            doc = _DOC_NA_LINHA_RE.search(resto)
+            if doc:
+                texto_nomes, texto_cpfs = resto[: doc.start()], doc.group(1)
+            else:
+                texto_nomes = resto
+        for prox in linhas[i + 1 : i + 1 + _ALCANCE_BLOCO]:
+            if _OUTRO_BLOCO_RE.match(prox) or _CABECALHO_COMPRADOR_RE.match(prox):
+                break
+            if texto_nomes is None and (mn := _ROTULO_NOME_RE.match(prox)):
+                texto_nomes = mn.group(1)
+            elif texto_cpfs is None and (md := _ROTULO_DOC_RE.match(prox)):
+                texto_cpfs = md.group(1)
+        if not texto_nomes:
+            continue
+        cpfs = cpfs_em(texto_cpfs)
+        nomes = separar_nomes(texto_nomes, len(cpfs))
+        if not nomes:
+            continue
+        return parear_nomes_cpfs(nomes, cpfs, PessoaItbi), tuple(nomes)
+    return (), ()
+
+
+def _nomes_compradores(
+    linhas: list[str], compradores: Sequence[PessoaItbi]
+) -> tuple[str, ...]:
+    """Every comprador NAME the guide printed — the paired ones and the
+    comprador block's bare names alike (`_bloco_comprador`), deduplicated
+    in order. The evidence a strict name match uses when no CPF verifies."""
+    _, nomes_bloco = _bloco_comprador(linhas)
+    lidos = [p.nome for p in compradores if p.nome]
+    return tuple(dict.fromkeys(n for n in (*lidos, *nomes_bloco) if limpar_nome(n)))
 
 
 # ─── public value object ───────────────────────────────────────────────────
@@ -408,6 +534,11 @@ class GuiaItbiFields:
     numero_matricula: Optional[str] = None
     compradores: tuple[PessoaItbi, ...] = ()
     vendedores: tuple[PessoaItbi, ...] = ()
+    #: Every comprador NAME the guide printed, with or without a CPF beside
+    #: it (see `_nomes_compradores`) — what a belongs-to-this-deal check
+    #: matches strictly when no CPF verifies. Same field, same meaning, as
+    #: `FinanciamentoImobiliarioFields.nomes_compradores`.
+    nomes_compradores: tuple[str, ...] = ()
     municipio: Optional[str] = None
     confiancas: Mapping[str, ExtractionConfidence] = field(default_factory=dict)
     rotulos: Mapping[str, Optional[str]] = field(default_factory=dict)
@@ -433,7 +564,10 @@ def parse_guia_itbi(text: str, source: TextSource) -> GuiaItbiFields:
     unidas = linhas_unidas(linhas)
     for campo, sinonimos in _ROTULOS.items():
         sinonimos_norm = tuple(strip_accents_upper(s) for s in sinonimos)
-        valor, achado, _mascarado = _campo(linhas, sinonimos_norm, todos_rotulos=todos_norm)
+        if campo == "valor_transacao":
+            valor, achado = _campo_sem_qualificador(linhas, sinonimos_norm, todos_norm)
+        else:
+            valor, achado, _mascarado = _campo(linhas, sinonimos_norm, todos_rotulos=todos_norm)
         if campo in _CAMPOS_MONETARIOS:
             valor, achado = _valor_monetario_por_layout(
                 linhas, unidas, sinonimos_norm, todos_norm, valor, achado
@@ -530,6 +664,7 @@ def parse_guia_itbi(text: str, source: TextSource) -> GuiaItbiFields:
         numero_matricula=brutos["numero_matricula"],
         compradores=compradores,
         vendedores=vendedores,
+        nomes_compradores=_nomes_compradores(linhas, compradores),
         municipio=brutos["municipio"],
         confiancas=confiancas,
         rotulos=rotulos,
@@ -601,8 +736,86 @@ class FakeGuiaItbiExtractor:
         )
 
 
+# ─── re-read escalation (2026-10-03, measured) ─────────────────────────────
+# Same posture as `releitura.py` for identity documents: when the cheap
+# vision pass is untrustworthy, read the SAME pages once more with
+# `providers.ESCALATION_OCR_MODELS` and merge deterministically — never a
+# tie-break. Measured on the corpus's stamped Carapicuíba guide: the cheap
+# model misread both comprador CPFs (check digits fail) and one name; the
+# escalation model read both CPFs check-digit-valid, both names exact.
+
+AVISO_RELEITURA_GUIA = "releitura_modelo_superior"
+AVISO_RELEITURA_VALOR_DIVERGENTE = "releitura_valor_divergente"
+
+
+def deve_escalar(fields: GuiaItbiFields) -> bool:
+    """Is a vision read worth a second, stronger read? Only off vision (a
+    text layer is exact), and only when it is untrustworthy on what SW
+    needs: no transaction value, or a comprador CPF that fails its check
+    digit (a misread a second read can fix — a CPF box printed BLANK is
+    not, so names-only does not escalate)."""
+    if fields.error is not None or fields.source is not TextSource.OCR:
+        return False
+    if fields.valor_transacao is None:
+        return True
+    return any(not p.cpf_valido for p in fields.compradores)
+
+
+def _compradores_verificaveis(fields: GuiaItbiFields) -> bool:
+    return bool(fields.compradores) and all(p.cpf_valido for p in fields.compradores)
+
+
+def mesclar(original: GuiaItbiFields, escalada: GuiaItbiFields) -> GuiaItbiFields:
+    """The honest combination of two reads of the same guide.
+
+    - People: the read whose compradores ALL pass their check digits (a
+      valid CPF verifies itself, whichever read produced it) — the
+      original first. Neither ⇒ the original's people, with the names of
+      BOTH reads (a strict every-name match then has to clear all of them).
+    - `valor_transacao`: one read only ⇒ that one; both and equal ⇒ kept;
+      both and DIFFERENT ⇒ `None`, `AVISO_RELEITURA_VALOR_DIVERGENTE` —
+      neither read outranks the other on a money value.
+    Every other field stays the original's."""
+    if escalada.error is not None:
+        return original
+    mudancas: dict = {}
+    avisos = [a for a in (original.aviso or "").split(",") if a]
+    if not _compradores_verificaveis(original) and _compradores_verificaveis(escalada):
+        mudancas["compradores"] = escalada.compradores
+        mudancas["nomes_compradores"] = escalada.nomes_compradores
+    elif not _compradores_verificaveis(original):
+        mudancas["nomes_compradores"] = tuple(
+            dict.fromkeys((*original.nomes_compradores, *escalada.nomes_compradores))
+        )
+    confiancas = dict(original.confiancas)
+    rotulos = dict(original.rotulos)
+    if original.valor_transacao is None and escalada.valor_transacao is not None:
+        mudancas["valor_transacao"] = escalada.valor_transacao
+        confiancas["valor_transacao"] = escalada.confiancas.get(
+            "valor_transacao", ExtractionConfidence.BAIXA
+        )
+        rotulos["valor_transacao"] = escalada.rotulos.get("valor_transacao")
+    elif (
+        original.valor_transacao is not None
+        and escalada.valor_transacao is not None
+        and original.valor_transacao != escalada.valor_transacao
+    ):
+        mudancas["valor_transacao"] = None
+        confiancas["valor_transacao"] = ExtractionConfidence.NENHUMA
+        avisos.append(AVISO_RELEITURA_VALOR_DIVERGENTE)
+    avisos.append(AVISO_RELEITURA_GUIA)
+    return dataclasses.replace(
+        original,
+        **mudancas,
+        confiancas=confiancas,
+        rotulos=rotulos,
+        aviso=",".join(dict.fromkeys(avisos)),
+    )
+
+
 class LadderGuiaItbiExtractor:
-    """Text-layer-first, vision-second Guia de ITBI reader.
+    """Text-layer-first, vision-second Guia de ITBI reader, with the
+    re-read escalation (`deve_escalar` / `mesclar`) when `escalar_releitura`.
 
     Construct via `make_guia_itbi_extractor(real=True)`."""
 
@@ -612,13 +825,38 @@ class LadderGuiaItbiExtractor:
         org_id: Optional[str] = None,
         resolver=None,
         provider: Optional[str] = None,
+        ladder: Optional[DocumentTextLadder] = None,
+        escalar_releitura: bool = False,
+        escalation_ladder: Optional[DocumentTextLadder] = None,
     ) -> None:
-        self._ladder = DocumentTextLadder(
+        # `ladder` / `escalation_ladder` — DI seams for tests that drive
+        # both reads without a real model; every real caller omits them.
+        self._ladder = ladder or DocumentTextLadder(
             org_id=org_id,
             document_prompt=DOCUMENT_PROMPT_GUIA_ITBI,
             resolver=resolver,
             provider=provider,
         )
+        # `False` here, `True` at the factory — a raw construction never pays
+        # for a surprise second vision call (same split as
+        # `documents.real.LadderIdentityExtractor`).
+        self._escalar_releitura = escalar_releitura
+        self._escalation_ladder = escalation_ladder
+        self._org_id = org_id
+        self._provider = provider
+
+    def _get_escalation_ladder(self) -> DocumentTextLadder:
+        if self._escalation_ladder is None:
+            self._escalation_ladder = DocumentTextLadder(
+                org_id=self._org_id,
+                document_prompt=DOCUMENT_PROMPT_GUIA_ITBI,
+                provider=self._provider,
+                ocr_model=ESCALATION_OCR_MODELS.get(
+                    self._provider or DEFAULT_DOCUMENT_PROVIDER,
+                    OCR_MODELS[DEFAULT_DOCUMENT_PROVIDER],
+                ),
+            )
+        return self._escalation_ladder
 
     async def extract(
         self,
@@ -636,7 +874,21 @@ class LadderGuiaItbiExtractor:
         if not text.strip():
             return GuiaItbiFields(source=source)
 
-        return parse_guia_itbi(text, source)
+        fields = parse_guia_itbi(text, source)
+        if not (self._escalar_releitura and deve_escalar(fields)):
+            return fields
+        texto2, fonte2, err2 = await self._get_escalation_ladder().to_text(
+            content, mimetype, filename, pular_camada_texto=True
+        )
+        if err2 is not None:
+            logger.warning(
+                "guia_itbi releitura: escalation transcription failed for org=%s: %s",
+                self._org_id, err2,
+            )
+            return fields
+        if not texto2.strip():
+            return fields
+        return mesclar(fields, parse_guia_itbi(texto2, fonte2))
 
 
 def make_guia_itbi_extractor(
@@ -644,11 +896,16 @@ def make_guia_itbi_extractor(
     real: bool = False,
     org_id: Optional[str] = None,
     provider: Optional[str] = None,
+    escalar_releitura: bool = True,
 ) -> GuiaItbiExtractor:
-    """Return a Guia de ITBI extractor. Fake-by-default."""
+    """Return a Guia de ITBI extractor. Fake-by-default. The real one
+    re-reads an untrustworthy vision read with the stronger model by
+    default (`deve_escalar`); `escalar_releitura=False` turns it off."""
     if not real:
         return FakeGuiaItbiExtractor()
-    return LadderGuiaItbiExtractor(org_id=org_id, provider=provider)
+    return LadderGuiaItbiExtractor(
+        org_id=org_id, provider=provider, escalar_releitura=escalar_releitura
+    )
 
 
 __all__ = [
@@ -656,8 +913,12 @@ __all__ = [
     "FakeGuiaItbiExtractor",
     "GuiaItbiExtractor",
     "GuiaItbiFields",
+    "AVISO_RELEITURA_GUIA",
+    "AVISO_RELEITURA_VALOR_DIVERGENTE",
     "LadderGuiaItbiExtractor",
     "PessoaItbi",
+    "deve_escalar",
+    "mesclar",
     "make_guia_itbi_extractor",
     "parse_guia_itbi",
 ]

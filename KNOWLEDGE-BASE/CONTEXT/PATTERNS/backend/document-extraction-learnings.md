@@ -115,6 +115,17 @@ Extraction is its own process, measured separately from contract generation (own
   People too: Cotia dumps "Nome:/Endereço:/CGC/CPF:" then the three values (the contribuinte is
   the comprador); Embu wraps "A - CPF: … E" / "B - CPF: …". Without them no guide's CPF reached
   the belongs-check (0/6 → 5/6 verified; the 6th names a CPF absent from the deal → refused).
+- **Guia ITBI (vision)** — the comprador block comes in four shapes: "CONTRIBUINTE: A e B" with
+  "CPF/CNPJ: x / y" on the NEXT line; "ADQUIRENTE: A - CPF/CNPJ: [EM BRANCO]" (name only); a
+  "Contribuinte(Comprador)" heading then "Nome:"/"CGC/CPF:" lines; a headless "Nome: A - CPF: x"
+  above the transmitente. Names pair with CPFs only on equal counts
+  (`caixa_rotulada.parear_nomes_cpfs`); the contribuinte is sometimes the OWNER (Embu), so it is
+  belongs-check evidence, never a party record. A stamped scan defeats the cheap model (both CPFs
+  misread): an untrustworthy vision read (CPF failing its check digit, or no valor) is re-read
+  once with `ESCALATION_OCR_MODELS` and merged (`guia_itbi.deve_escalar`/`mesclar`: valid CPFs
+  win, differing valores are withheld). "Valor da Transação Atualizado/Avaliado" is a different
+  box — a label followed by more words before the colon never reads as the price.
+  Belonging without a valid CPF = EVERY named comprador strictly (`chave_nome`) on the deal.
 - **Proposta de financiamento (Itaú "Carta de Crédito", 10/11 of the corpus)** — names the
   proponente only in a greeting ("Oi, <Nome>. Sua proposta foi aprovada") and prints NO CPF;
   another bank prints "Nome do(s) Comprador(es):" and "CPF(s):" on separate lines. Belonging is

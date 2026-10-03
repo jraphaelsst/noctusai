@@ -318,15 +318,15 @@ OUTRO_NEGOCIO = "outro_negocio"
 
 
 def _nomes_lidos(leitura: Any) -> list[str]:
-    """Every proponente/comprador NAME the reading carries whose CPF did NOT
-    verify — a proposta letter's `nomes_proponentes` (Itaú's prints no CPF
-    at all; a masked CPF is none either) plus a comprador whose CPF failed
-    its check digit. `chave_nome`-normalized."""
-    nomes = [chave_nome(n) for n in (getattr(leitura, "nomes_proponentes", None) or ())]
+    """Every comprador/proponente NAME the reading carries —
+    `nomes_compradores` (a proposta letter's proponente, a guide's
+    contribuinte/adquirente block, CPF printed or not) plus the name of
+    every comprador read with a CPF. `chave_nome`-normalized, deduplicated.
+    """
+    nomes = [chave_nome(n) for n in (getattr(leitura, "nomes_compradores", None) or ())]
     for pessoa in getattr(leitura, "compradores", None) or []:
-        if not getattr(pessoa, "cpf_valido", False):
-            nomes.append(chave_nome(getattr(pessoa, "nome", None)))
-    return [n for n in nomes if n]
+        nomes.append(chave_nome(getattr(pessoa, "nome", None)))
+    return list(dict.fromkeys(n for n in nomes if n))
 
 
 def _pertence_ao_negocio(
@@ -355,12 +355,14 @@ def _pertence_ao_negocio(
       valido`) as evidence TOO, not just `compradores`/`vendedores` — the
       live case this closes (deal 883): party-header CPFs all misread by
       vision, but the account-box CPF is valid and matches the vendedora.
-      ALSO `PERTENCE` when NO validated CPF was read but a name the
-      document prints (`_nomes_lidos`) is EXACTLY (`chave_nome`, never
-      fuzzy) the name of one of the deal's COMPRADORES — the bank proposta
+      ALSO `PERTENCE` when NO validated CPF was read but EVERY comprador
+      name the document prints (`_nomes_lidos`) is EXACTLY (`chave_nome`,
+      never fuzzy) the name of one of the deal's COMPRADORES — one named
+      stranger is enough to withhold it — the bank proposta
       letter, which names its proponente and prints no CPF (Itaú, 10/11
       real proposals, 2026-10-03; 5/5 live uploads read
-      `pertencimento_nao_verificado` before this). A name that matches no
+      `pertencimento_nao_verificado` before this), and the vision-read
+      ITBI guide whose CPF box is blank or misread. A name that matches no
       comprador stays `NAO_VERIFICADO` (a vision misread of one letter is
       indistinguishable from a different person, so a human decides); a
       VALIDATED CPF always outranks a name — a letter whose valid CPF is
@@ -373,7 +375,8 @@ def _pertence_ao_negocio(
         if cpf_conta:
             lidos = [*lidos, (cpf_docs.only_digits(str(cpf_conta)), conta)]
     if not lidos:
-        if any(nome in nomes_compradores for nome in _nomes_lidos(leitura)):
+        nomes = _nomes_lidos(leitura)
+        if nomes and all(nome in nomes_compradores for nome in nomes):
             return PERTENCE
         return NAO_VERIFICADO
     if any(cpf_norm in cpfs_negocio for cpf_norm, _ in lidos):

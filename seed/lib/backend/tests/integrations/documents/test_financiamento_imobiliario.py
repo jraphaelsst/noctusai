@@ -741,13 +741,13 @@ class TestPropostaProponentes:
             "Valor do Imóvel: R$ 640.000,00\n"
         )
         r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
-        assert r.nomes_proponentes == ("FULANA SINTETICA DE TESTE",)
+        assert r.nomes_compradores == ("FULANA SINTETICA DE TESTE",)
         assert r.compradores == ()
 
     def test_greeting_without_a_full_stop(self) -> None:
         texto = "Oi, Fulana Sintetica Sua proposta foi aprovada e agora ...\n"
         r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
-        assert r.nomes_proponentes == ("FULANA SINTETICA",)
+        assert r.nomes_compradores == ("FULANA SINTETICA",)
 
     def test_name_and_cpf_on_separate_label_lines_are_paired(self) -> None:
         texto = (
@@ -760,7 +760,7 @@ class TestPropostaProponentes:
         assert r.compradores[0].nome == "FULANA SINTETICA DE TESTE"
         assert r.compradores[0].cpf == CPF_VALIDO
         assert r.compradores[0].cpf_valido is True
-        assert r.nomes_proponentes == ("FULANA SINTETICA DE TESTE",)
+        assert r.nomes_compradores == ("FULANA SINTETICA DE TESTE",)
 
     def test_two_names_joined_by_e_split_only_to_match_two_cpfs(self) -> None:
         texto = (
@@ -777,4 +777,4 @@ class TestPropostaProponentes:
         )
         r = parse_financiamento_imobiliario(texto, TextSource.OCR, "proposta")
         assert r.compradores == ()
-        assert r.nomes_proponentes == ("FULANA SINTETICA DE TESTE",)
+        assert r.nomes_compradores == ("FULANA SINTETICA DE TESTE",)

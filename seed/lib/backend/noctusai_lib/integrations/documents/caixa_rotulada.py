@@ -438,3 +438,68 @@ def pessoas_com_cpf(
                 continue
             pessoas.append(criar(nome, cpf_fmt, _cpf_is_valid(cpf_bruto)))
     return tuple(pessoas)
+
+
+# ─── names ↔ CPFs printed apart (2026-10-03, measured) ────────────────────
+# A bank proposta letter and a vision-read Guia de ITBI often print the
+# people's NAMES on one line and their CPFs on another ("CONTRIBUINTE: A e
+# B" / "CPF/CNPJ: x / y"), or a name beside a BLANK CPF ("ADQUIRENTE: A -
+# CPF/CNPJ: [EM BRANCO]") — shapes `pessoas_com_cpf`'s "Nome - CPF: ..."
+# parser never sees. These helpers are the one pairing rule both readers
+# use: a name is paired with a CPF only when the two lists have the SAME
+# length; otherwise the names stand alone (a caller matches them strictly).
+
+#: A CPF token — formatted or bare 11 digits — never part of a CNPJ
+#: ("12.345.678/0001-90") or a longer digit run.
+_CPF_TOKEN_RE = re.compile(r"(?<![\d./-])(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})(?![\d./-])")
+
+
+def limpar_nome(nome: Optional[str]) -> Optional[str]:
+    """Trim punctuation off both ends and collapse whitespace — `None` for
+    a blank or a masked-value token."""
+    limpo = " ".join((nome or "").strip(" .,;:!-–—").split())
+    if not limpo or limpo.startswith("["):
+        return None
+    return limpo
+
+
+def cpfs_em(texto: Optional[str]) -> list[str]:
+    """Every CPF-shaped token in `texto`, in order. A masked CPF
+    ("***.456.789-**") or a CNPJ is no CPF."""
+    return _CPF_TOKEN_RE.findall(texto or "")
+
+
+def separar_nomes(texto: Optional[str], n_cpfs: int) -> list[str]:
+    """The names in one printed list. `;` always separates; " E " (the
+    Portuguese "and") separates when that yields exactly one name per CPF,
+    or when every part still has at least two words (a bare " E " also
+    occurs inside names) — then a CPF count that disagrees leaves the names
+    UNPAIRED (`parear_nomes_cpfs`), never one CPF glued to two people."""
+    nomes = [n for parte in (texto or "").split(";") if (n := limpar_nome(parte))]
+    if len(nomes) != 1:
+        return nomes
+    partes = [n for p in nomes[0].split(" E ") if (n := limpar_nome(p))]
+    if len(partes) < 2:
+        return nomes
+    if n_cpfs and len(partes) == n_cpfs:
+        return partes
+    return partes if all(len(p.split()) >= 2 for p in partes) else nomes
+
+
+def parear_nomes_cpfs(
+    nomes: Sequence[str],
+    cpfs: Sequence[str],
+    criar: Callable[[Optional[str], str, bool], T],
+) -> tuple[T, ...]:
+    """`criar(nome, cpf_formatado, cpf_valido)` per name↔CPF, in order —
+    ONLY when the two lists have the same length (never a guess at which
+    CPF is whose). `()` otherwise."""
+    if not cpfs or len(nomes) != len(cpfs):
+        return ()
+    pessoas: list[T] = []
+    for nome, cpf_bruto in zip(nomes, cpfs):
+        cpf_fmt = _format_cpf(cpf_bruto)
+        if cpf_fmt is None:
+            return ()
+        pessoas.append(criar(nome, cpf_fmt, _cpf_is_valid(cpf_bruto)))
+    return tuple(pessoas)

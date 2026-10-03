@@ -410,3 +410,170 @@ class TestPessoasLayoutsTextLayer:
         r = parse_guia_itbi(texto, TextSource.TEXT_LAYER)
         assert [p.nome for p in r.compradores] == ["FULANO SINTETICO", "BELTRANA SINTETICA"]
         assert all(p.cpf_valido for p in r.compradores)
+
+
+# ─── vision-read comprador blocks + re-read escalation (2026-10-03) ──────
+# Before this, none of the corpus's 3 vision-read guides yielded a comprador
+# or a comprador name, so SW could never verify one. Invented data; real
+# layouts.
+
+CPF_VALIDO_2 = "529.982.247-25"
+
+
+class TestBlocoCompradorVisao:
+    def test_contribuinte_names_paired_with_the_cpf_line_below(self) -> None:
+        texto = (
+            "CONTRIBUINTE: Fulano Sintetico e Beltrana Sintetica Silva\n"
+            f"CPF/CNPJ: {CPF_VALIDO} / {CPF_VALIDO_2}\n"
+            "Transmitente: Ciclano Vendedor\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert [(p.nome, p.cpf, p.cpf_valido) for p in r.compradores] == [
+            ("FULANO SINTETICO", CPF_VALIDO, True),
+            ("BELTRANA SINTETICA SILVA", CPF_VALIDO_2, True),
+        ]
+        assert r.nomes_compradores == ("FULANO SINTETICO", "BELTRANA SINTETICA SILVA")
+
+    def test_unequal_name_and_cpf_counts_pair_nothing(self) -> None:
+        texto = (
+            "CONTRIBUINTE: Fulano Sintetico e Beltrana Sintetica\n"
+            f"CPF/CNPJ: {CPF_VALIDO}\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert r.compradores == ()
+        assert r.nomes_compradores == ("FULANO SINTETICO", "BELTRANA SINTETICA")
+
+    def test_adquirente_with_a_blank_cpf_box_is_a_name_only(self) -> None:
+        texto = (
+            "Adquirente: Fulano Sintetico de Tal - CPF/CNPJ: [EM BRANCO]\n"
+            "Transmitente: Ciclano Vendedor - CPF/CNPJ: [EM BRANCO]\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert r.compradores == ()
+        assert r.nomes_compradores == ("FULANO SINTETICO DE TAL",)
+
+    def test_cotia_heading_then_nome_and_cpf_lines(self) -> None:
+        texto = (
+            "1 - Contribuinte(Comprador)\n"
+            "Nome: Fulano Sintetico de Tal\n"
+            "Endereço: Rua Inventada nº 1 - SP\n"
+            f"CGC/CPF: {CPF_VALIDO}\n"
+            "2 - Transmitente: Ciclano Vendedor\n"
+            "CNPJ/CPF: 12.345.678/0001-90\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert [(p.nome, p.cpf) for p in r.compradores] == [("FULANO SINTETICO DE TAL", CPF_VALIDO)]
+
+    def test_headless_nome_with_cpfs_above_the_transmitente(self) -> None:
+        texto = (
+            f"Nome: Fulano Sintetico - CPF: {CPF_VALIDO}; Beltrana Sintetica - CPF: {CPF_VALIDO_2}\n"
+            "Transmitente (V): Ciclano Vendedor\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert [p.nome for p in r.compradores] == ["FULANO SINTETICO", "BELTRANA SINTETICA"]
+
+    def test_a_nome_below_the_transmitente_is_the_seller_s_never_read(self) -> None:
+        texto = f"Transmitente: Ciclano Vendedor\nNome: Ciclano Vendedor - CPF: {CPF_VALIDO}\n"
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert r.compradores == ()
+        assert r.nomes_compradores == ()
+
+
+class TestValorTransacaoQualificado:
+    def test_a_longer_label_starting_with_the_synonym_is_another_box(self) -> None:
+        texto = (
+            "Valor da Transação Atualizado: R$ 1.300.000,00\n"
+            "Valor da Transação: R$ 1.234.567,89\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert r.valor_transacao == Decimal("1234567.89")
+
+    def test_only_the_qualified_box_reads_none(self) -> None:
+        r = parse_guia_itbi("Valor da Transação Avaliado: R$ 1.300.000,00\n", TextSource.OCR)
+        assert r.valor_transacao is None
+
+
+class _LadderFake:
+    def __init__(self, texto: str, fonte: TextSource = TextSource.OCR) -> None:
+        self._texto, self._fonte = texto, fonte
+        self.chamadas = 0
+
+    async def to_text(self, content, mimetype=None, filename=None, *, pular_camada_texto=False):
+        self.chamadas += 1
+        return self._texto, self._fonte, None
+
+
+_LEITURA_RUIM = (
+    "CONTRIBUINTE: Fulano Sintetico e Beltrana Sintetica\n"
+    f"CPF/CNPJ: {CPF_INVALIDO} / 529.982.247-26\n"
+    "Valor da Transação: R$ 1.234.567,89\n"
+)
+_LEITURA_BOA = (
+    f"Nome: Fulano Sintetico - CPF: {CPF_VALIDO}; Beltrana Sintetica - CPF: {CPF_VALIDO_2}\n"
+    "Transmitente: Ciclano Vendedor\n"
+    "Valor da Transação: R$ 1.234.567,89\n"
+)
+
+
+class TestReleituraGuia:
+    def test_escalates_only_an_untrustworthy_vision_read(self) -> None:
+        from noctusai_lib.integrations.documents.guia_itbi import deve_escalar
+
+        assert deve_escalar(parse_guia_itbi(_LEITURA_RUIM, TextSource.OCR))
+        assert not deve_escalar(parse_guia_itbi(_LEITURA_BOA, TextSource.OCR))
+        assert not deve_escalar(parse_guia_itbi(_LEITURA_RUIM, TextSource.TEXT_LAYER))
+        so_nome = "Adquirente: Fulano - CPF/CNPJ: [EM BRANCO]\nValor da Transação: R$ 1,00\n"
+        assert not deve_escalar(parse_guia_itbi(so_nome, TextSource.OCR))
+
+    def test_valid_cpfs_of_the_escalated_read_replace_the_misread_ones(self) -> None:
+        from noctusai_lib.integrations.documents.guia_itbi import mesclar
+
+        r = mesclar(
+            parse_guia_itbi(_LEITURA_RUIM, TextSource.OCR),
+            parse_guia_itbi(_LEITURA_BOA, TextSource.OCR),
+        )
+        assert all(p.cpf_valido for p in r.compradores) and len(r.compradores) == 2
+        assert r.valor_transacao == Decimal("1234567.89")
+        assert "releitura_modelo_superior" in r.aviso
+
+    def test_disagreeing_values_are_withheld_never_tie_broken(self) -> None:
+        from noctusai_lib.integrations.documents.guia_itbi import mesclar
+
+        r = mesclar(
+            parse_guia_itbi(_LEITURA_RUIM, TextSource.OCR),
+            parse_guia_itbi(_LEITURA_BOA.replace("1.234.567,89", "1.234.567,80"), TextSource.OCR),
+        )
+        assert r.valor_transacao is None
+        assert "releitura_valor_divergente" in r.aviso
+
+    def test_neither_read_verifiable_keeps_the_names_of_both(self) -> None:
+        from noctusai_lib.integrations.documents.guia_itbi import mesclar
+
+        outra = _LEITURA_RUIM.replace("Beltrana Sintetica", "Beltrana Sintetiea")
+        r = mesclar(
+            parse_guia_itbi(_LEITURA_RUIM, TextSource.OCR), parse_guia_itbi(outra, TextSource.OCR)
+        )
+        assert "BELTRANA SINTETIEA" in r.nomes_compradores
+        assert "BELTRANA SINTETICA" in r.nomes_compradores
+
+    @pytest.mark.asyncio
+    async def test_extractor_runs_the_second_read_and_merges(self) -> None:
+        primeira, segunda = _LadderFake(_LEITURA_RUIM), _LadderFake(_LEITURA_BOA)
+        ext = LadderGuiaItbiExtractor(
+            ladder=primeira, escalar_releitura=True, escalation_ladder=segunda
+        )
+        r = await ext.extract(b"%PDF-fake", mimetype="application/pdf")
+        assert segunda.chamadas == 1
+        assert all(p.cpf_valido for p in r.compradores)
+
+    @pytest.mark.asyncio
+    async def test_raw_extractor_never_pays_for_a_second_read(self) -> None:
+        primeira, segunda = _LadderFake(_LEITURA_RUIM), _LadderFake(_LEITURA_BOA)
+        ext = LadderGuiaItbiExtractor(ladder=primeira, escalation_ladder=segunda)
+        await ext.extract(b"%PDF-fake", mimetype="application/pdf")
+        assert segunda.chamadas == 0
+
+    def test_factory_turns_escalation_on_for_the_real_reader(self) -> None:
+        ext = make_guia_itbi_extractor(real=True)
+        assert isinstance(ext, LadderGuiaItbiExtractor)
+        assert ext._escalar_releitura is True
