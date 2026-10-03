@@ -1280,6 +1280,17 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
         ids_lado = {p.cliente_id: p for p in lado_pessoas}
         for p in lado_pessoas:
             _identidade(av, p)
+            # [Owner decision, 2026-10-03] a missing BAIRRO warns, never blocks
+            # (the other address fields still gate via `faltando_qualificacao`).
+            if (
+                "endereco" not in p.faltando_qualificacao
+                and p.endereco is not None
+                and not (p.endereco.bairro or "").strip()
+            ):
+                av.avisa(
+                    "ENDERECO_SEM_BAIRRO",
+                    f"Endereço de {_nome(p)} sem bairro — o contrato sai sem o bairro.",
+                )
             for chave in p.faltando_qualificacao:
                 if e_representante and chave in _CHAVES_SEM_EFEITO_NO_REPRESENTANTE:
                     continue

@@ -1067,9 +1067,13 @@ _CAMPOS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
 
 #: `endereco` is satisfied only when every one of these is filled — a street
 #: with no city is not an address a contract can print. `endereco_complemento`
-#: is deliberately absent: most addresses genuinely have none.
+#: is deliberately absent: most addresses genuinely have none. So is
+#: `endereco_bairro` (owner decision 2026-10-03: a missing bairro WARNS —
+#: `ENDERECO_SEM_BAIRRO` in the contract derivation — it never blocks; signed
+#: contracts sometimes omit it). The bairro column is still READ
+#: (`_COLUNAS_QUALIFICACAO_CONTRATO`) so the aviso can fire.
 _ENDERECO_CAMPOS_OBRIGATORIOS: tuple[str, ...] = (
-    "endereco_logradouro", "endereco_numero", "endereco_bairro",
+    "endereco_logradouro", "endereco_numero",
     "endereco_cidade", "endereco_uf", "endereco_cep",
 )
 
@@ -1111,7 +1115,7 @@ _COLUNAS_QUALIFICACAO_CONTRATO: tuple[str, ...] = (
     "profissao", "estado_civil", "regime_bens", "data_casamento",
     "conjuge_cliente_id",
     "cpf", "rg", "rg_orgao_expedidor",
-    *_ENDERECO_CAMPOS_OBRIGATORIOS,
+    *_ENDERECO_CAMPOS_OBRIGATORIOS, "endereco_bairro",
 )
 
 #: Migration 117 (contract F6). The office's Lei 6.515/77 citation depends on

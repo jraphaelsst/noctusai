@@ -336,3 +336,18 @@ class TestCertidaoEstadoCivilInResponse:
         assert out["certidao_estado_civil"]["documento_id"] == did
         assert out["certidao_estado_civil"]["emitida_em"] == "2024-03-15"
         assert isinstance(out["certidao_estado_civil"]["dias"], int)
+
+
+class TestBairroNaoObrigatorio:
+    def test_missing_bairro_is_still_complete(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [_qualificado(cid, endereco_bairro=None)])
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert "endereco" not in out["faltando"]
+        assert out["completo"] is True
+
+    def test_missing_cidade_still_missing_endereco(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [_qualificado(cid, endereco_cidade=None)])
+        out = svc.completude_contratual(scoped, ORG_UUID, cid)
+        assert "endereco" in out["faltando"]

@@ -356,3 +356,48 @@ class TestTermosFixosDoEscritorio:
     def test_a_marker_without_a_constant_fails_loudly(self):
         with pytest.raises(RuntimeError):
             modelo_texto._aplicar_termos_fixos("multa de ⟪TERMO_INEXISTENTE⟫")
+
+
+# ─── 7. a missing BAIRRO warns, never blocks (owner decision 2026-10-03) ─
+
+
+class TestEnderecoSemBairro:
+    @staticmethod
+    def _sem_bairro():
+        d = fx.variante(1)
+        vend = replace(d.vendedores[0], endereco=replace(d.vendedores[0].endereco, bairro=None))
+        return replace(d, vendedores=[vend, *d.vendedores[1:]]), vend
+
+    def test_gate_does_not_block_and_warns(self):
+        d, vend = self._sem_bairro()
+        av = _avaliar(1, d)
+        assert av.pronto, (av.faltando, av.bloqueios)
+        assert "qualificacao.endereco" not in _campos(av)
+        assert "ENDERECO_SEM_BAIRRO" in _codigos(av.avisos)
+        assert "sem bairro" in next(
+            a["mensagem"] for a in av.avisos if a["codigo"] == "ENDERECO_SEM_BAIRRO"
+        )
+
+    def test_other_address_fields_still_required(self):
+        d = fx.variante(1)
+        vend = replace(
+            d.vendedores[0],
+            endereco=replace(d.vendedores[0].endereco, bairro=None),
+            faltando_qualificacao=["endereco"],
+        )
+        av = _avaliar(1, replace(d, vendedores=[vend, *d.vendedores[1:]]))
+        assert "qualificacao.endereco" in _campos(av)
+        assert "ENDERECO_SEM_BAIRRO" not in _codigos(av.avisos)
+
+    def test_render_reads_naturally_and_lint_is_clean(self):
+        d, vend = self._sem_bairro()
+        r = _render(1, d)
+        texto = "\n".join(r.paragrafos)
+        assert "Rua das Amostras, nº 10 - Cidade Exemplo/SP" in texto
+        assert "None" not in texto and " -  - " not in texto
+        assert lint.lint(r.paragrafos, referencias=r.referencias, clausulas=r.clausulas) == []
+
+    def test_frase_with_bairro_unchanged(self):
+        assert frases.endereco_texto(fx.endereco()) == (
+            "Rua das Amostras, nº 10 - Bairro Teste - Cidade Exemplo/SP – CEP: 01000-000"
+        )

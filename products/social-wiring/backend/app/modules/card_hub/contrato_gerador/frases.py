@@ -75,7 +75,11 @@ def endereco_texto(e: Endereco) -> str:
     texto = f"{e.logradouro}, nº {e.numero}"
     if e.complemento:
         texto += f" - {e.complemento}"
-    return f"{texto} - {e.bairro} - {e.cidade}/{(e.uf or '').upper()} – CEP: {cep(e.cep)}"
+    # A missing bairro is an aviso upstream (`ENDERECO_SEM_BAIRRO`), never a
+    # dangling " -  - ": the segment is simply omitted.
+    if (e.bairro or "").strip():
+        texto += f" - {e.bairro.strip()}"
+    return f"{texto} - {e.cidade}/{(e.uf or '').upper()} – CEP: {cep(e.cep)}"
 
 
 def matricula_numero(valor: Optional[str]) -> str:
