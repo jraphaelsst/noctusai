@@ -617,3 +617,165 @@ class TestCertidoesRoute:
         seed(scoped)
         r = client.get("/api/imoveis/NOPE9999/certidoes", headers=auth())
         assert r.status_code == 404
+
+
+def _paginas(*paginas):
+    """`extract_text` returning `PaginaLida` pages — `(texto, via_visao)`."""
+    async def _fn(conteudo, mimetype, org_id):
+        return tuple(
+            documentos_service.PaginaLida(texto=t, via_visao=v) for t, v in paginas
+        )
+    return _fn
+
+
+def _analise_por_pagina(por_texto):
+    async def _fn(texto, tipo_documento, org_id):
+        return por_texto.get(texto)
+    return _fn
+
+
+def _digitos(v):
+    return "".join(c for c in str(v or "") if c.isdigit())
+
+
+#: Synthetic inscrições: the right one, and the same with its two leading
+#: digits transposed — the measured vision misread shape (2026-10-03).
+CERTA = "11223.44.55.0666.00.000"
+TRANSPOSTA_VISAO = "21123-44-55-0666-00-000"
+
+
+class TestInscricaoLidaPorVisao:
+    """Extraction defect (live prod test, 2026-10-03): a guia de IPTU
+    photographed on a phone (no text layer) had its inscrição transcribed by
+    vision with the leading digits transposed, while the CND and the
+    matrícula both read the right number. A vision inscrição is written only
+    when another source of the same imóvel corroborates it; otherwise a
+    conflict asks a human."""
+
+    async def _ler_guia(self, scoped, fake_storage, did, paginas, por_texto):
+        return await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_paginas(*paginas),
+            analyze_estrutura=_analise_por_pagina(por_texto),
+        )
+
+    def _pendentes(self, scoped):
+        return [
+            c for c in scoped.table("imovel_campo_conflitos").select("*").execute().data
+            if c["status"] == "pendente"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_vision_misread_never_replaces_the_matriculas_value(
+        self, client, scoped, fake_storage
+    ):
+        """Before: the prefeitura-precedence rule let the vision guia replace
+        the matrícula's (correct) value silently."""
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/g"
+        seed(
+            scoped,
+            documentos=[documento_row(did, tipo_documento="guia_iptu", storage_path=path)],
+            dados=[dados_row(
+                prefeitura_cadastro_imobiliario=CERTA,
+                prefeitura_cadastro_imobiliario_origem="matricula",
+            )],
+        )
+        await _seed_storage(fake_storage, path)
+        out = await self._ler_guia(
+            scoped, fake_storage, did, [("foto", True)],
+            {"foto": {"inscricao_imobiliaria": TRANSPOSTA_VISAO}},
+        )
+        assert out["status"] == "ok"
+        assert out["sugerido_em_dados"] is False
+        assert out["conflito_aberto"] is True
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert _digitos(dados["prefeitura_cadastro_imobiliario"]) == _digitos(CERTA)
+        [conflito] = self._pendentes(scoped)
+        assert _digitos(conflito["valor_proposto"]) == _digitos(TRANSPOSTA_VISAO)
+        assert conflito["confianca_proposta"] == "baixa"
+
+    @pytest.mark.asyncio
+    async def test_a_lone_vision_read_opens_a_conflict_instead_of_a_write(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/g"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="guia_iptu", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+        out = await self._ler_guia(
+            scoped, fake_storage, did, [("foto", True)],
+            {"foto": {"inscricao_imobiliaria": TRANSPOSTA_VISAO}},
+        )
+        assert out["sugerido_em_dados"] is False
+        assert out["conflito_aberto"] is True
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert dados["prefeitura_cadastro_imobiliario"] is None
+        [conflito] = self._pendentes(scoped)
+        assert conflito["valor_anterior"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_vision_read_another_document_corroborates_is_written(
+        self, client, scoped, fake_storage
+    ):
+        did, cnd = str(uuid4()), str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/g"
+        seed(scoped, documentos=[
+            documento_row(did, tipo_documento="guia_iptu", storage_path=path),
+            documento_row(cnd, tipo_documento="cnd_iptu", inscricao_imobiliaria=CERTA),
+        ])
+        await _seed_storage(fake_storage, path)
+        out = await self._ler_guia(
+            scoped, fake_storage, did, [("foto", True)],
+            {"foto": {"inscricao_imobiliaria": CERTA.replace(".", "-")}},
+        )
+        assert out["sugerido_em_dados"] is True
+        assert out["conflito_aberto"] is False
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert _digitos(dados["prefeitura_cadastro_imobiliario"]) == _digitos(CERTA)
+
+    @pytest.mark.asyncio
+    async def test_a_vision_read_matching_the_value_on_file_asks_nothing(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/g"
+        seed(
+            scoped,
+            documentos=[documento_row(did, tipo_documento="guia_iptu", storage_path=path)],
+            dados=[dados_row(
+                prefeitura_cadastro_imobiliario=CERTA,
+                prefeitura_cadastro_imobiliario_origem="cnd_iptu",
+            )],
+        )
+        await _seed_storage(fake_storage, path)
+        out = await self._ler_guia(
+            scoped, fake_storage, did, [("foto", True)],
+            {"foto": {"inscricao_imobiliaria": CERTA.replace(".", "-")}},
+        )
+        assert out["conflito_aberto"] is False
+        assert self._pendentes(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_the_text_layer_page_wins_over_a_vision_page(
+        self, client, scoped, fake_storage
+    ):
+        """A document with BOTH rungs: the text-layer answer is preferred,
+        whatever the page order, and it is applied as an ordinary read."""
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/g"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="guia_iptu", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+        out = await self._ler_guia(
+            scoped, fake_storage, did, [("foto", True), ("texto", False)],
+            {
+                "foto": {"inscricao_imobiliaria": TRANSPOSTA_VISAO},
+                "texto": {"inscricao_imobiliaria": CERTA},
+            },
+        )
+        assert out["sugerido_em_dados"] is True
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert _digitos(dados["prefeitura_cadastro_imobiliario"]) == _digitos(CERTA)
+        docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
+        guia = next(d for d in docs["items"] if d["id"] == did)
+        assert _digitos(guia["inscricao_imobiliaria"]) == _digitos(CERTA)

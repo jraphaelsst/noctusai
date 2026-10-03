@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 from uuid import UUID
@@ -718,9 +719,26 @@ def _merge_estrutura_por_pagina(
     return (merged or None, tuple(avisos))
 
 
+@dataclass(frozen=True)
+class PaginaLida:
+    """One page's text AND the rung that produced it. `via_visao` is the
+    load-bearing bit: a text layer is exact, a vision transcription of a
+    phone photo is not (extraction defect, 2026-10-03 — a guia de IPTU JPG
+    read the inscrição's leading digits transposed). The `extract_text` DI
+    seam may still return bare `str` pages (read as NOT vision — a stub has
+    no rung to report)."""
+
+    texto: str
+    via_visao: bool = False
+
+
+def _pagina(p: Any) -> PaginaLida:
+    return p if isinstance(p, PaginaLida) else PaginaLida(texto=str(p))
+
+
 async def _extrair_paginas(
     conteudo: bytes, mimetype: Optional[str], org_id: Optional[str]
-) -> tuple[str, ...]:
+) -> tuple[PaginaLida, ...]:
     """Bytes → the document's PAGES, text only, via the seed transcription
     ladder (`noctusai_lib.integrations.documents.make_document_transcriber`)
     — the "seed documents pipeline" half of the reused seam. Text-layer
@@ -730,8 +748,8 @@ async def _extrair_paginas(
     transcriber's own global `MAX_VISION_PAGES` (40) safety ceiling, which
     still fails LOUDLY (`too_many_vision_pages`) rather than truncating.
 
-    One string per page that carries text, in page order — blank pages
-    dropped, same rule `Transcription.text` uses to join them, kept apart
+    One `PaginaLida` per page that carries text, in page order, tagged with
+    whether vision produced it (`TextSource.OCR`) — blank pages dropped, same rule `Transcription.text` uses to join them, kept apart
     here instead so the caller can ask each page its own question
     (`_analisar_estrutura`) rather than one call over the whole joined
     document.
@@ -764,7 +782,13 @@ async def _extrair_paginas(
         raise EstruturaFalhou(
             resultado.error or "transcription_failed", resultado.error_message or ""
         )
-    return tuple(p.text for p in resultado.pages if p.text)
+    from noctusai_lib.integrations.documents import TextSource
+
+    return tuple(
+        PaginaLida(texto=p.text, via_visao=p.source != TextSource.TEXT_LAYER)
+        for p in resultado.pages
+        if p.text
+    )
 
 
 #: tipo → (structured field, `imovel_dados` field it feeds under D1). The
@@ -899,15 +923,29 @@ async def extrair_estrutura(
         )
         return _falhou("objeto_ausente", "objeto ausente no storage")
 
+    inscricao_via_visao = False
     try:
-        paginas = await extract_text(blob.data, doc.get("mime_type"), str(org_id))
+        paginas = tuple(
+            _pagina(p) for p in await extract_text(blob.data, doc.get("mime_type"), str(org_id))
+        )
         via_ia: Optional[dict] = None
         if paginas:
             respostas = [
-                await analyze_estrutura(pagina, tipo, str(org_id)) for pagina in paginas
+                (await analyze_estrutura(p.texto, tipo, str(org_id)), p.via_visao)
+                for p in paginas
             ]
             campos = CAMPOS_ESTRUTURA_POR_TIPO.get(tipo) or ()
-            via_ia, avisos = _merge_estrutura_por_pagina(respostas, campos)
+            # 🔴 TEXT LAYER FIRST (extraction defect, 2026-10-03): the merge
+            # keeps the first page that answered a field, so text-layer
+            # pages' answers are ordered ahead of vision pages' — an exact
+            # read always beats an approximate one of the same field.
+            do_texto = [r for r, visao in respostas if not visao]
+            da_visao = [r for r, visao in respostas if visao]
+            via_ia, avisos = _merge_estrutura_por_pagina([*do_texto, *da_visao], campos)
+            inscricao_via_visao = bool(
+                (via_ia or {}).get("inscricao_imobiliaria")
+                and not any((r or {}).get("inscricao_imobiliaria") for r in do_texto)
+            )
             if avisos:
                 logger.warning(
                     "extracao estrutura %s: paginas divergem: %s",
@@ -950,6 +988,16 @@ async def extrair_estrutura(
     try:
         alimenta = _ALIMENTA_IMOVEL_DADOS.get(tipo)
         if alimenta and via_ia.get(alimenta[0]):
+            # A vision-read inscrição is never a lone authority: it lands
+            # only when the value on file or another document of this imóvel
+            # agrees; else a conflict asks a human (`campos_extraidos_service`
+            # module docstring).
+            visao = alimenta[0] == "inscricao_imobiliaria" and inscricao_via_visao
+            if visao:
+                logger.info(
+                    "extracao estrutura %s: inscricao lida por visao — exige corroboracao",
+                    documento_id,
+                )
             resultado = campos_svc.aplicar(
                 client,
                 org_id,
@@ -958,8 +1006,10 @@ async def extrair_estrutura(
                 via_ia[alimenta[0]],
                 origem=tipo,
                 documento_id=documento_id,
+                confianca="baixa" if visao else None,
                 fonte_tabela=campos_svc.FONTE_DOCUMENTOS,
                 fonte_id=documento_id,
+                exige_corroboracao=visao,
             )
             sugerido = resultado.preenchido
             if resultado.conflito is not None:

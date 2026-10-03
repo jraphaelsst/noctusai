@@ -21,6 +21,17 @@ outranks it. A HUMAN-touched value (`confirmado_por` or `confirmado_em` set)
 is NEVER silently replaced — that still opens a conflict like any other
 disagreement. See `_substituivel_por_prefeitura`.
 
+🔴 A VISION READ IS NEVER A LONE AUTHORITY (extraction defect, 2026-10-03).
+A guia de IPTU photographed on a phone has no text layer; its inscrição is a
+vision transcription, and one read the leading digits transposed
+(`32252-...` for `23252-...`) while the CND and the matrícula both printed
+the right number. A caller passes `exige_corroboracao=True` for such a
+reading: it is written only when ANOTHER source of the same imóvel (the
+value on file, or another document's own reading) already says the same
+thing; otherwise — contradicted, or simply alone — a conflict is opened for
+a human, and the prefeitura-precedence exception and the automatic resolver
+never apply it.
+
 This module is the ONE place that policy lives for `imovel_dados`. Every
 extraction path (the número read off an uploaded matrícula, the full
 transcription, a guia de IPTU / CND read) calls `aplicar`; none of them
@@ -390,6 +401,7 @@ def aplicar(
     confianca: Optional[str] = None,
     fonte_tabela: Optional[str] = None,
     fonte_id: Optional[Any] = None,
+    exige_corroboracao: bool = False,
 ) -> Resultado:
     """Apply ONE machine reading to ONE field, per D1. Never raises for a
     disagreement — that is a `CONFLITO`, a normal outcome. May instead
@@ -408,6 +420,11 @@ def aplicar(
     `documento_id` lands in `<campo>_documento_id` (only fields that have
     one). For `numero_matricula` it must be an `imovel_documentos.id` or
     None (075's FK); the caller knows which.
+
+    `exige_corroboracao=True` (a vision transcription — see the module
+    docstring): the reading lands only when it agrees with the value on
+    file or with another document's own reading of the same imóvel; else a
+    conflict is opened, never a write.
     """
     campo = CAMPOS[chave]
     if _vazio(valor):
@@ -430,12 +447,32 @@ def aplicar(
     atual = _valor_atual(row, campo)
 
     if _vazio(atual):
+        if exige_corroboracao and not _corroborada_por_outro_documento(
+            client, org_id, codigo, campo, valor, documento_id
+        ):
+            return _conflito_sem_corroboracao(
+                client, org_id, codigo, campo, row, atual, valor,
+                origem=origem, documento_id=documento_id, confianca=confianca,
+                fonte_tabela=fonte_tabela, fonte_id=fonte_id,
+            )
         patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
         dados_service.gravar_extraido(client, org_id, codigo, row, patch)
         return Resultado(PREENCHIDO)
 
-    if iguais(campo, atual, valor):
+    if iguais(campo, atual, valor) or (
+        exige_corroboracao and _iguais_no_imovel(client, org_id, codigo)(campo, atual, valor)
+    ):
         return Resultado(IGUAL)
+
+    if exige_corroboracao:
+        # Contradicted by the value on file: the vision reading never
+        # replaces it — not by the prefeitura-precedence exception, not as a
+        # same-document re-read, not by the automatic resolver.
+        return _conflito_sem_corroboracao(
+            client, org_id, codigo, campo, row, atual, valor,
+            origem=origem, documento_id=documento_id, confianca=confianca,
+            fonte_tabela=fonte_tabela, fonte_id=fonte_id,
+        )
 
     if _substituivel_por_prefeitura(chave, row, campo, origem):
         patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
@@ -526,6 +563,89 @@ def aplicar(
     logger.info(
         "imovel %s: conflict opened on %s (atual origem=%s, proposto origem=%s)",
         codigo, chave, origem_anterior, origem,
+    )
+    return Resultado(CONFLITO, conflito=linha)
+
+
+# ─── vision readings: corroborate or ask ───────────────────────────────────
+
+
+def _corroborada_por_outro_documento(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    campo: CampoImovel,
+    valor: Any,
+    documento_id: Optional[Any],
+) -> bool:
+    """Does ANOTHER live document of this imóvel already read the same value?
+    Only `prefeitura_cadastro_imobiliario` has a per-document reading
+    (`imovel_documentos.inscricao_imobiliaria`, migration 118); every other
+    field has nothing to corroborate against here."""
+    if campo.chave != "prefeitura_cadastro_imobiliario":
+        return False
+    rows = (
+        _t(client, FONTE_DOCUMENTOS)
+        .select("id,inscricao_imobiliaria,deleted_at")
+        .eq("org_id", str(org_id))
+        .eq("codigo", codigo)
+        .limit(200)
+        .execute()
+    ).data or []
+    comparar = _iguais_no_imovel(client, org_id, codigo)
+    for r in rows:
+        if r.get("deleted_at") or _vazio(r.get("inscricao_imobiliaria")):
+            continue
+        if documento_id is not None and str(r.get("id")) == str(documento_id):
+            continue
+        if comparar(campo, r["inscricao_imobiliaria"], valor):
+            return True
+    return False
+
+
+def _conflito_sem_corroboracao(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    campo: CampoImovel,
+    row: Optional[dict],
+    atual: Any,
+    valor: Any,
+    *,
+    origem: str,
+    documento_id: Optional[Any],
+    confianca: Optional[str],
+    fonte_tabela: Optional[str],
+    fonte_id: Optional[Any],
+) -> Resultado:
+    """Open (or keep) the conflict a vision reading asks for instead of a
+    write. Same dedupe as `aplicar`'s own tail: a value a human already
+    rejected is never re-asked, an identical pending proposal is not
+    duplicated."""
+    if campo_conflitos.ja_rejeitado_pelo_usuario(
+        client, campo_conflitos.IMOVEL, org_id, codigo, campo.chave, valor,
+        igual=lambda proposto: iguais(campo, proposto, valor),
+    ):
+        return Resultado(REJEITADO_ANTES)
+    pendentes = _conflitos(client, org_id, codigo, campo.chave, "pendente")
+    if any(iguais(campo, p.get("valor_proposto"), valor) for p in pendentes):
+        return Resultado(CONFLITO_EXISTENTE)
+    origem_anterior = (row or {}).get(campo.origem)
+    linha = campo_conflitos.registrar_conflito(
+        client, campo_conflitos.IMOVEL, org_id, codigo, campo.chave,
+        valor_anterior=None if _vazio(atual) else atual,
+        origem_anterior=origem_anterior,
+        valor_proposto=valor,
+        origem_proposto=origem,
+        confianca_proposta=confianca,
+        fonte_tabela=fonte_tabela,
+        fonte_id=fonte_id,
+        documento_id_proposto=documento_id,
+    )
+    logger.info(
+        "imovel %s: %s — vision reading not corroborated (%s), conflict opened "
+        "instead of a write (origem=%s)",
+        codigo, campo.chave, "vazio" if _vazio(atual) else "diverge", origem,
     )
     return Resultado(CONFLITO, conflito=linha)
 
