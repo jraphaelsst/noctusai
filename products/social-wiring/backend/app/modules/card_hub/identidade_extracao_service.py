@@ -1300,14 +1300,46 @@ def aplicar_campos_ao_cliente(
     # joins this call's own, so the caller announces it. Local import:
     # ficha_cadastral_service imports this module.
     if aplicados.get("cpf") and updates.get("cpf"):
-        from app.modules.card_hub import ficha_cadastral_service
-
-        reaplicado = ficha_cadastral_service.reaplicar_fichas_pelo_cpf(
-            client, org_id, cliente_id, updates["cpf"], excluir_documento_id=documento_id,
+        conflitos.extend(
+            cpf_conhecido(client, org_id, cliente_id, updates["cpf"], excluir_documento_id=documento_id)
         )
-        conflitos.extend(reaplicado["conflitos"])
 
     return aplicados, conflitos
+
+
+def cpf_conhecido(
+    client: Any, org_id: UUID, cliente_id: Any, cpf: Any,
+    *, excluir_documento_id: Optional[UUID] = None,
+) -> list[dict]:
+    """A person's CPF just landed on file — by ANY path (an extraction, an
+    admin accepting a conflict, a confirmed suggestion, the automatic
+    resolver, a hand edit). Every already-read bank form of their card(s)
+    that named this CPF but could not be attributed at read time is applied
+    to them RIGHT NOW from its stored reading (`ficha_cadastral_service.
+    reaplicar_fichas_pelo_cpf` — zero model calls, idempotent). The P4 live
+    loop measured the alternative: a form re-queued for the sweep waited up
+    to ~80 minutes for a CPF that was already known.
+
+    Returns the conflict rows the re-apply opened (recorded and listed in the
+    queue; an async caller announces them). Best-effort: a failure is logged
+    loudly and never fails the write that made the CPF known. Local import:
+    ficha_cadastral_service imports this module."""
+    from app.modules.card_hub import ficha_cadastral_service
+
+    try:
+        out = ficha_cadastral_service.reaplicar_fichas_pelo_cpf(
+            client, org_id, UUID(str(cliente_id)), cpf,
+            excluir_documento_id=excluir_documento_id,
+        )
+    except Exception:  # noqa: BLE001 - the CPF write already landed
+        logger.exception("cpf_conhecido: re-applying stored bank forms failed for %s", cliente_id)
+        return []
+    if out["pessoas"]:
+        logger.info(
+            "cpf_conhecido: %d bank-form person(s) applied to %s from %d stored reading(s)",
+            out["pessoas"], cliente_id, len(out["documentos"]),
+        )
+    return out["conflitos"]
 
 
 # ─── The endereço group (migration 153) ──────────────────────────────────────
@@ -2639,6 +2671,8 @@ def backfill_resolver_conflitos_pendentes(
                     "updated_at": now,
                 }
             ).eq("id", str(row["cliente_id"])).execute()
+            if campo.item_key == "cpf" and row.get("valor_proposto"):
+                cpf_conhecido(client, org_id, row["cliente_id"], row["valor_proposto"])
         resolvidos.append(
             {**row, "decisao_regra": decisao.regra, "decisao_vencedor": decisao.vencedor}
         )
@@ -2781,6 +2815,8 @@ def resolver_conflito(
         _t(client, CLIENTES_TABLE).update(updates).eq(
             "id", str(conflito["cliente_id"])
         ).execute()
+        if item_key == "cpf" and conflito.get("valor_proposto"):
+            cpf_conhecido(client, org_id, conflito["cliente_id"], conflito["valor_proposto"])
 
     return {**conflito, **patch}
 
@@ -4247,6 +4283,8 @@ def confirmar_sugestao(
             }
         )
     _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
+    if campo.item_key == "cpf" and valor:
+        cpf_conhecido(client, org_id, cliente_id, valor, excluir_documento_id=documento_id)
 
     return {
         "confirmado": True,
@@ -4400,6 +4438,7 @@ __all__ = [
     "propagar_endereco_domicilio",
     "resolver_conflito",
     "revalidar_negociacao",
+    "cpf_conhecido",
     "vincular_conjuges",
     "CAMPO_POR_CHAVE",
     "CAMPO_POR_ITEM",

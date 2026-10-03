@@ -2058,6 +2058,15 @@ def update_cliente(
             decidido_por=acting_user_id,
         )
 
+    if payload.get("cpf"):
+        # The CPF just became known by hand: a bank form of this person's
+        # card(s) that named it while unattributable is applied now, from
+        # its stored reading — not left for a sweep (2026-10-03, P4 loop).
+        # Local import: the card_hub identity module imports this one.
+        from app.modules.card_hub import identidade_extracao_service as identidade_svc
+
+        identidade_svc.cpf_conhecido(client, org_id, cliente_id, payload["cpf"])
+
     return {**resultado, "pendente_confirmacao": pendentes}
 
 

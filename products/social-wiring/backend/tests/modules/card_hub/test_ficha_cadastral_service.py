@@ -351,6 +351,52 @@ class TestFichaLidaAntesDaIdentidade:
         assert _documento(scoped, did)["extracao_status"] != "pendente"
 
 
+class TestCpfConhecidoPorQualquerCaminho:
+    """2026-10-03 (P4 live loop): a CPF can land WITHOUT an extraction — an
+    admin accepting a conflict, a hand edit. Each is the same "CPF became
+    known" event, so the stored bank-form reading is applied immediately
+    (`identidade_extracao_service.cpf_conhecido`), never left for a sweep.
+    Pre-fix these two paths never re-applied the form at all."""
+
+    _base = TestFichaLidaAntesDaIdentidade._ficha_com_terceiro_nao_casado
+
+    @pytest.mark.asyncio
+    async def test_an_admin_accepting_a_cpf_conflict_applies_the_stored_form(
+        self, client, scoped,
+    ):
+        _cid, did, outro_id, _storage, _lida = await self._base(scoped)
+        conflito_id = str(uuid4())
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": conflito_id, "org_id": ORG_ID, "cliente_id": outro_id, "campo": "cpf",
+            "valor_anterior": None, "origem_anterior": None,
+            "valor_proposto": CPF_CONJUGE, "origem_proposto": "cnh",
+            "fonte_tabela": None, "fonte_id": None, "status": "pendente",
+            "decidido_por": None, "decidido_em": None,
+            "created_at": "2026-10-01T00:00:00+00:00",
+        }])
+
+        svc.resolver_conflito(
+            scoped, ORG_UUID, UUID(conflito_id), aceitar=True, decidido_por=uuid4(),
+        )
+
+        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        assert pessoas[1]["cliente_id_aplicado"] == outro_id
+        assert _cliente(scoped, outro_id)["profissao"] == "médico"
+
+    @pytest.mark.asyncio
+    async def test_a_hand_typed_cpf_applies_the_stored_form(self, client, scoped):
+        from app.services import clientes_service
+
+        _cid, did, outro_id, _storage, _lida = await self._base(scoped)
+
+        clientes_service.update_cliente(scoped, ORG_UUID, UUID(outro_id), cpf=CPF_CONJUGE)
+
+        pessoas = _documento(scoped, did)["extracao_ficha_cadastral"]["pessoas"]
+        assert pessoas[1]["cliente_id_aplicado"] == outro_id
+        assert _cliente(scoped, outro_id)["profissao"] == "médico"
+        assert _documento(scoped, did)["extracao_status"] != "pendente"
+
+
 class TestNomeUnicoOutraParte:
     """Live 2026-10-01 (deal 871): a party whose ONLY CPF source is the bank
     form itself could never be matched by CPF. A UNIQUE strict name match
