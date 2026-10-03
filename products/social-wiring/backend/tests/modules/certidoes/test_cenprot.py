@@ -42,21 +42,32 @@ def _pdf_com_captura() -> bytes:
 PDF = _pdf_com_captura()
 
 
+HAIKU = "claude-haiku-4-5"
+SONNET = "claude-sonnet-5"
+
+
 class _Leitor:
-    """Fake vision: answers per prompt, in call order; records calls."""
+    """Fake vision: answers per prompt, in call order; records calls.
 
-    def __init__(self, protocolos, data):
+    `protocolos` answer the cheap model's protocol reads, `fortes` the
+    escalated model's; `data` is one answer for every date read, or a list
+    (one per date read, in order)."""
+
+    def __init__(self, protocolos, data, fortes=()):
         self.protocolos = list(protocolos)
+        self.fortes = list(fortes)
         self.data = data
-        self.chamadas: list[tuple[int, str]] = []
+        self.chamadas: list[tuple[int, str, str]] = []
 
-    async def __call__(self, imagem: bytes, prompt: str) -> str:
-        self.chamadas.append((len(imagem), prompt))
+    async def __call__(self, imagem: bytes, prompt: str, modelo: str) -> str:
+        self.chamadas.append((len(imagem), prompt, modelo))
         if prompt == PROMPT_DATA:
-            if isinstance(self.data, Exception):
-                raise self.data
-            return json.dumps({"data": self.data})
-        r = self.protocolos.pop(0)
+            d = self.data.pop(0) if isinstance(self.data, list) else self.data
+            if isinstance(d, Exception):
+                raise d
+            return json.dumps({"data": d})
+        fila = self.protocolos if modelo == HAIKU else self.fortes
+        r = fila.pop(0)
         if isinstance(r, Exception):
             raise r
         return r if isinstance(r, str) else json.dumps(r)
@@ -89,11 +100,13 @@ class TestEstruturarCenprot:
     async def test_tres_leituras_em_recortes_diferentes(self):
         leitor = _Leitor([_leitura(), _leitura()], "17/06/2026")
         await _rodar(leitor)
-        prompts = [p for _, p in leitor.chamadas]
-        assert prompts.count(PROMPT_PROTOCOLO) == 2
-        assert prompts.count(PROMPT_DATA) == 1
-        tamanhos = {n for n, p in leitor.chamadas if p == PROMPT_PROTOCOLO}
-        assert len(tamanhos) == 2  # two DIFFERENT crops, never the same pixels
+        prompts = [(p, m) for _, p, m in leitor.chamadas]
+        assert prompts.count((PROMPT_PROTOCOLO, HAIKU)) == 2
+        assert prompts.count((PROMPT_DATA, SONNET)) == 2
+        assert len(prompts) == 4  # no escalation when the cheap reads agree
+        for prompt in (PROMPT_PROTOCOLO, PROMPT_DATA):
+            tamanhos = {n for n, p, _ in leitor.chamadas if p == prompt}
+            assert len(tamanhos) == 2  # two DIFFERENT crops, never the same pixels
 
     @pytest.mark.asyncio
     async def test_protocolo_divergente_nao_grava_nada(self):
@@ -166,14 +179,18 @@ class TestEstruturarCenprot:
         assert leitor.chamadas == []  # no spend on an unmeasured path
 
     @pytest.mark.asyncio
-    async def test_pdf_sem_imagem_nao_le(self):
+    async def test_pdf_sem_captura_le_a_pagina_e_sem_rotulo_nao_grava(self):
+        # No landscape screenshot ⇒ the printed-page layout path: the page
+        # itself is read; a page without the label yields nothing.
         import fitz
 
         doc = fitz.open()
         doc.new_page()
-        leitor = _Leitor([], "17/06/2026")
+        nada = {"protocolo": None, "documento": None}
+        leitor = _Leitor([nada, nada], "17/06/2026", fortes=[nada, nada])
         r = await _rodar(leitor, pdf=doc.tobytes())
-        assert r.numero is None and leitor.chamadas == []
+        assert (r.numero, r.emitida_em) == (None, None)
+        assert all(p == PROMPT_PROTOCOLO for _, p, _ in leitor.chamadas)
 
     @pytest.mark.asyncio
     async def test_falhas_de_leitura_nao_levantam(self):
@@ -201,3 +218,82 @@ class TestEstruturarCenprot:
                 for valor in (CPF, "123.456.789-09", PROTOCOLO, "0123456780",
                               "17/06/2026", "17/06/2024", "52998224725"):
                     assert valor not in aviso
+
+
+def _pdf_impresso() -> bytes:
+    """The printed-page layout: the browser's print-to-PDF of the result —
+    portrait page, no landscape screenshot, no taskbar."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    page.insert_text((40, 120), "Protocolo da Consulta: (sintetico)")
+    return doc.tobytes()
+
+
+class TestEscalonamento:
+    """Rung 2: the stronger model reads the same two crops only when the
+    cheap reads did not self-validate — and must agree with itself."""
+
+    @pytest.mark.asyncio
+    async def test_divergencia_barata_escalona_e_forte_concordante_grava(self):
+        leitor = _Leitor(
+            [_leitura(), _leitura("012345678")], "17/06/2026",
+            fortes=[_leitura(), _leitura()],
+        )
+        r = await _rodar(leitor)
+        assert (r.numero, r.emitida_em) == (PROTOCOLO, "2026-06-17")
+        modelos = [m for _, p, m in leitor.chamadas if p == PROMPT_PROTOCOLO]
+        assert modelos.count(SONNET) == 2
+
+    @pytest.mark.asyncio
+    async def test_forte_discordante_de_si_mesmo_nao_grava(self):
+        leitor = _Leitor(
+            [_leitura(), _leitura("0123456780")], "17/06/2026",
+            fortes=[_leitura(), _leitura("0123456781")],
+        )
+        r = await _rodar(leitor)
+        assert (r.numero, r.emitida_em) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_identidade_ilegivel_escalona_e_forte_le_documento(self):
+        ruim = _leitura(documento="123.456.789-00")
+        leitor = _Leitor([ruim, ruim], "17/06/2026", fortes=[_leitura(), _leitura()])
+        r = await _rodar(leitor, documento=None)
+        assert r.numero == PROTOCOLO
+
+    @pytest.mark.asyncio
+    async def test_barato_e_forte_concordam_em_numeros_diferentes_nao_grava(self):
+        # Each model agrees with itself on a DIFFERENT number: no winner.
+        ruim = _leitura(documento="123.456.789-00")
+        leitor = _Leitor(
+            [ruim, ruim], "17/06/2026",
+            fortes=[_leitura("0123456780"), _leitura("0123456780")],
+        )
+        r = await _rodar(leitor)
+        assert r.numero is None
+        assert any("Protocolo da Consulta" in a for a in r.avisos)
+
+
+class TestData:
+    @pytest.mark.asyncio
+    async def test_duas_leituras_da_data_discordantes_nao_gravam(self):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], ["17/06/2026", "16/06/2026"]))
+        assert (r.numero, r.emitida_em) == (PROTOCOLO, None)
+        assert any("não concordaram" in a for a in r.avisos)
+
+    @pytest.mark.asyncio
+    async def test_digito_cortado_marcado_com_interrogacao_nao_e_completado(self):
+        r = await _rodar(_Leitor([_leitura(), _leitura()], "17/06/202?"))
+        assert (r.numero, r.emitida_em) == (PROTOCOLO, None)
+
+
+class TestPaginaImpressa:
+    @pytest.mark.asyncio
+    async def test_pagina_impressa_le_o_topo_da_pagina_e_nao_le_data(self):
+        leitor = _Leitor([_leitura(), _leitura()], "17/06/2026")
+        r = await _rodar(leitor, pdf=_pdf_impresso())
+        assert r.numero == PROTOCOLO
+        assert r.emitida_em is None
+        assert any("página impressa" in a for a in r.avisos)
+        assert all(p == PROMPT_PROTOCOLO for _, p, _ in leitor.chamadas)

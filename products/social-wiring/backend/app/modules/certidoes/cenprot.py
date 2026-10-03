@@ -21,17 +21,41 @@ keys, verdicts only)
   were "validated" by same-image agreement) — agreement only protects when
   the two reads see DIFFERENT pixels.
 
-THE READER (this module) — three small reads, one per crop:
-- `_RECORTE_CORPO` and `_RECORTE_ESTREITO`: two different crops around the
-  result body, each read for "Protocolo da Consulta" + "Documento
-  Pesquisado". Different crops = different downscaling = errors that do not
-  coincide. The número is kept only when BOTH crops return the same 10
-  digits.
-- `_RECORTE_RELOGIO`: the bottom-right taskbar corner, read for the date
-  alone, at a resolution where the year is legible.
+THE READER (this module)
+------------------------
+- Layout first. A landscape dominant image is the SCREENSHOT layout; a
+  portrait strip (or none) is the PRINTED-page layout (print-to-PDF of the
+  result page, no taskbar) — page 1 is rendered whole and read at its top.
+- Número: two different crops around the result body ("Protocolo da
+  Consulta" + "Documento Pesquisado"). Different crops = different
+  downscaling = errors that do not coincide. Kept only when the two reads
+  of ONE model return the same 10 digits.
+- Escalation: only when the cheap model (`OCR_MODELS`, Haiku) did not
+  self-validate — its two reads disagree, or neither carries a valid
+  Documento — the stronger model (`ESCALATION_OCR_MODELS`, Sonnet) reads the
+  SAME two crops and must agree with itself. If both models self-agree on
+  DIFFERENT numbers, nothing is written.
+- Date: the stronger model reads two different crops of the taskbar clock
+  (the corner, and the date line alone) with an instruction to write "?"
+  for a digit cut by the screen edge — they must agree exactly. Haiku was
+  measured unfit for the date: it read the year 1+ years EARLY on 15/55
+  clocks (its date prior, not the pixels — the year's last digit is often
+  half-cut by the screenshot's right edge) and 3 wrong dates landed INSIDE
+  the plausibility window on the date-line crop; Sonnet read 49/50
+  resolvable clocks right with 0 wrong inside the window.
 
-Measured with this design (Haiku 4.5): número 41 right / 0 wrong / 14 left
-empty; date 27 right / 0 wrong / 28 left empty (55 files).
+MEASURED (55 real files vs the signed contracts, verdicts only)
+- 2026-10-01 (Haiku only, fixed crops): número 41 right / 0 wrong / 14
+  empty; date 27 right / 0 wrong / 28 empty. Empties by cause: 3 printed
+  layout, 4 Documento check-digit misread, 6 crop disagreement (a dropped
+  or changed digit), 1 different consulta; dates: 15 year misreads, rest
+  gated by the número.
+- 2026-10-03 (this design): número 54 right / 0 misread / 1 differs from
+  the contract — a faithful read (both models, three crops, verified by
+  eye) of a screenshot of a DIFFERENT consulta than the contract cites; it
+  was empty before only because Haiku misread its CPF; date 49 right / 1
+  (same file) / 5 empty (3 printed pages have no clock, 2 date reads
+  disagreed). Escalation fired on 11/55 files.
 
 SELF-VALIDATION
 ---------------
@@ -39,9 +63,10 @@ SELF-VALIDATION
    CPF/CNPJ check digits AND, when the consulta carries one, equal the
    party's own document — a protocol that belongs to someone else is as
    wrong as a misread digit.
-2. Número: both crops agree, exactly 10 digits.
-3. Date: only alongside a validated número (it is THAT consulta's date), a
-   real calendar date, and inside [referência − 180 d, referência + 45 d].
+2. Número: one model's two crop reads agree, exactly 10 digits; a second
+   model agreeing on a different number blocks it.
+3. Date: only alongside a validated número (it is THAT consulta's date),
+   both clock reads equal, a real calendar date, and inside [referência − 180 d, referência + 45 d].
    The signed contracts put the CENPROT date between 120 days before and 30
    days after the deal opened (114/114 items), so a year misread can never
    land inside the window. `referencia` is the consulta's own creation date.
@@ -69,7 +94,10 @@ from noctusai_lib.integrations.documents import dominant_embedded_image
 from noctusai_lib.integrations.documents.cnpj import is_valid as _cnpj_is_valid
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_is_valid
 from noctusai_lib.integrations.documents.cpf import only_digits
-from noctusai_lib.integrations.documents.providers import OCR_MODELS
+from noctusai_lib.integrations.documents.providers import (
+    ESCALATION_OCR_MODELS,
+    OCR_MODELS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +107,19 @@ logger = logging.getLogger(__name__)
 _RECORTE_CORPO = (0.0, 0.15, 0.65, 0.6)
 _RECORTE_ESTREITO = (0.0, 0.2, 0.45, 0.5)
 _RECORTE_RELOGIO = (0.86, 0.93, 1.0, 1.0)
+#: Just the clock's date line — a second, different-pixel view of the date.
+_RECORTE_DATA = (0.935, 0.955, 1.0, 1.0)
+
+#: The PRINTED-page layout (2026-10-03): the browser's "print to PDF" of the
+#: result page, not a screenshot — A4 portrait, the result body at the top,
+#: no taskbar. 3/55 corpus files; the screenshot crops above land on the
+#: wrong part of the page for them (both reads came back without the label).
+_RECORTE_PAGINA_TOPO = (0.0, 0.0, 1.0, 0.4)
+_RECORTE_PAGINA_TOPO_ESQ = (0.0, 0.05, 0.7, 0.3)
+_DPI_PAGINA = 200
+#: A screenshot is landscape (~1.73 measured); the dominant image of a
+#: printed page is a portrait strip (or absent).
+_ASPECTO_MIN_CAPTURA = 1.2
 
 #: The only provider the measurement above covers.
 _PROVEDOR_MEDIDO = "anthropic"
@@ -95,12 +136,13 @@ Leia EXATAMENTE, dígito por dígito, sem adivinhar:
 Se o rótulo não aparecer ou algum dígito estiver ilegível, use null.
 Responda SOMENTE com JSON: {"protocolo": ..., "documento": ...}"""
 
-PROMPT_DATA = """Esta imagem é o canto inferior direito de uma tela de computador (relógio da barra de tarefas): a hora em cima e a data embaixo.
-Leia a DATA exatamente, dígito por dígito, inclusive o ano completo de 4 dígitos. Não deduza o ano; leia o que está escrito. Se ilegível, use null.
+PROMPT_DATA = """Esta imagem é um recorte do relógio da barra de tarefas de um computador (hora em cima, data embaixo).
+Transcreva a linha da DATA caractere por caractere, exatamente como aparece na imagem.
+Se algum dígito estiver cortado na borda da imagem, parcialmente visível ou ilegível, escreva "?" no lugar dele — nunca complete nem deduza.
 Responda SOMENTE com JSON: {"data": "dd/mm/aaaa"}"""
 
-#: `(image_bytes, prompt) -> raw model text`. The DI seam tests use.
-LerImagem = Callable[[bytes, str], Awaitable[str]]
+#: `(image_bytes, prompt, model) -> raw model text`. The DI seam tests use.
+LerImagem = Callable[[bytes, str, str], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -125,6 +167,23 @@ def _recortar(imagem: bytes, caixa: tuple[float, float, float, float]) -> bytes:
     saida = io.BytesIO()
     recorte.save(saida, "JPEG", quality=92)
     return saida.getvalue()
+
+
+def _aspecto(imagem: bytes) -> float:
+    from PIL import Image
+
+    w, h = Image.open(io.BytesIO(imagem)).size
+    return w / h if h else 0.0
+
+
+def _renderizar_pagina(pdf_bytes: bytes) -> Optional[bytes]:
+    """Page 1 rasterized whole — the printed-page layout's own pixels."""
+    import fitz  # type: ignore  # PyMuPDF
+
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    if doc.page_count < 1:
+        return None
+    return doc[0].get_pixmap(dpi=_DPI_PAGINA).tobytes("jpg", jpg_quality=92)
 
 
 def _json(texto: Optional[str]) -> dict:
@@ -159,7 +218,8 @@ def _documento_valido(documento: Optional[str], tipo_documento: Optional[str]) -
 
 
 def _data(valor) -> Optional[date]:
-    """`"17/06/2026"` → `date`, or `None` for anything not a real date."""
+    """`"17/06/2026"` → `date`, or `None` for anything not a real date
+    (a `?` the model wrote for a cut-off digit included)."""
     if not isinstance(valor, str):
         return None
     m = re.fullmatch(r"\s*(\d{2})/(\d{2})/(\d{4})\s*", valor)
@@ -172,19 +232,41 @@ def _data(valor) -> Optional[date]:
 
 
 def _leitor_padrao(org_id: Optional[str], provider: str) -> LerImagem:
-    async def ler(imagem: bytes, prompt: str) -> str:
+    async def ler(imagem: bytes, prompt: str, modelo: str) -> str:
+        # Usage + cost are recorded by the seed provider itself
+        # (`llm.usage.record_usage` → the configured usage sink).
         from noctusai_lib.integrations.llm.vision import analyze_image
 
         return await analyze_image(
             imagem,
             prompt,
             provider=provider,
-            model=OCR_MODELS[provider],
+            model=modelo,
             org_id=org_id,
             max_tokens=_MAX_TOKENS,
         )
 
     return ler
+
+
+async def _ler_varios(
+    ler: LerImagem, pedidos: list[tuple[bytes, str, str]], nome_display: str,
+) -> list[dict]:
+    respostas = await asyncio.gather(
+        *(ler(img, prompt, modelo) for img, prompt, modelo in pedidos),
+        return_exceptions=True,
+    )
+    for r in respostas:
+        if isinstance(r, BaseException):
+            logger.warning("CENPROT %s: leitura falhou: %s", nome_display, r)
+    return [_json(r) if isinstance(r, str) else {} for r in respostas]
+
+
+def _protocolo_concordante(a: dict, b: dict) -> Optional[str]:
+    p1, p2 = _digitos(a.get("protocolo")), _digitos(b.get("protocolo"))
+    if p1 and p1 == p2 and len(p1) == _DIGITOS_PROTOCOLO:
+        return p1
+    return None
 
 
 async def estruturar_cenprot(
@@ -208,12 +290,17 @@ async def estruturar_cenprot(
             "Leitura do CENPROT só é feita com o provedor de documentos "
             "medido (Anthropic) — número e data não gravados.",
         ))
+    modelo = OCR_MODELS[provider]
+    modelo_forte = ESCALATION_OCR_MODELS[provider]
 
     try:
         imagem = dominant_embedded_image(pdf_bytes, 1)
+        captura = imagem is not None and _aspecto(imagem) >= _ASPECTO_MIN_CAPTURA
+        if not captura:
+            imagem = _renderizar_pagina(pdf_bytes)
     except Exception as exc:  # noqa: BLE001 - background job must not die
-        logger.warning("CENPROT %s: recorte da imagem falhou: %s", nome_display, exc)
-        imagem = None
+        logger.warning("CENPROT %s: imagem da página falhou: %s", nome_display, exc)
+        imagem, captura = None, False
     if imagem is None:
         return CenprotEstrutura(avisos=(
             "O PDF não contém a captura de tela esperada do CENPROT — "
@@ -221,12 +308,12 @@ async def estruturar_cenprot(
         ))
 
     ler = ler or _leitor_padrao(org_id, provider)
+    caixas = (
+        (_RECORTE_CORPO, _RECORTE_ESTREITO) if captura
+        else (_RECORTE_PAGINA_TOPO, _RECORTE_PAGINA_TOPO_ESQ)
+    )
     try:
-        recortes = [
-            _recortar(imagem, _RECORTE_CORPO),
-            _recortar(imagem, _RECORTE_ESTREITO),
-            _recortar(imagem, _RECORTE_RELOGIO),
-        ]
+        recortes = [_recortar(imagem, c) for c in caixas]
     except Exception as exc:  # noqa: BLE001
         logger.warning("CENPROT %s: recorte falhou: %s", nome_display, exc)
         return CenprotEstrutura(avisos=(
@@ -234,64 +321,86 @@ async def estruturar_cenprot(
             "número e data não gravados.",
         ))
 
-    respostas = await asyncio.gather(
-        ler(recortes[0], PROMPT_PROTOCOLO),
-        ler(recortes[1], PROMPT_PROTOCOLO),
-        ler(recortes[2], PROMPT_DATA),
-        return_exceptions=True,
-    )
-    for r in respostas:
-        if isinstance(r, BaseException):
-            logger.warning("CENPROT %s: leitura falhou: %s", nome_display, r)
-    corpo, estreito, relogio = (
-        _json(r) if isinstance(r, str) else {} for r in respostas
-    )
-
     esperado = _digitos(documento_esperado)
-    documentos = [_digitos(corpo.get("documento")), _digitos(estreito.get("documento"))]
-    identidade_ok = any(
-        d and _documento_valido(d, tipo_documento_esperado)
-        and (esperado is None or d == esperado)
-        for d in documentos
+
+    def identidade_ok(leituras: list[dict]) -> bool:
+        return any(
+            (d := _digitos(r.get("documento")))
+            and _documento_valido(d, tipo_documento_esperado)
+            and (esperado is None or d == esperado)
+            for r in leituras
+        )
+
+    # Rung 1 — the cheap model on two different crops.
+    leituras = await _ler_varios(
+        ler, [(r, PROMPT_PROTOCOLO, modelo) for r in recortes], nome_display,
     )
-    if not identidade_ok:
+    concordantes = {p for p in [_protocolo_concordante(*leituras)] if p}
+
+    # Rung 2 — only when rung 1 did not self-validate: the stronger model on
+    # the SAME two crops (its own two reads must agree with each other).
+    if not concordantes or not identidade_ok(leituras):
+        fortes = await _ler_varios(
+            ler, [(r, PROMPT_PROTOCOLO, modelo_forte) for r in recortes], nome_display,
+        )
+        leituras += fortes
+        p_forte = _protocolo_concordante(*fortes)
+        if p_forte:
+            concordantes.add(p_forte)
+
+    if not identidade_ok(leituras):
         return CenprotEstrutura(avisos=(
             "Documento Pesquisado: ilegível, dígito verificador inválido ou "
             "diferente do CPF/CNPJ da parte na consulta — número e data não "
             "gravados.",
         ))
+    if len(concordantes) != 1:
+        return CenprotEstrutura(avisos=(
+            "Protocolo da Consulta: as leituras não concordaram em 10 "
+            "dígitos — número e data não gravados.",
+        ))
+    numero = concordantes.pop()
+
+    if not captura:
+        return CenprotEstrutura(numero=numero, avisos=(
+            "Data: página impressa do CENPROT, sem relógio da barra de "
+            "tarefas — data não gravada.",
+        ))
+
+    try:
+        recortes_data = [_recortar(imagem, _RECORTE_RELOGIO), _recortar(imagem, _RECORTE_DATA)]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("CENPROT %s: recorte do relógio falhou: %s", nome_display, exc)
+        recortes_data = []
+    datas = await _ler_varios(
+        ler, [(r, PROMPT_DATA, modelo_forte) for r in recortes_data], nome_display,
+    )
+    lidas = [_data(d.get("data")) for d in datas]
 
     avisos: list[str] = []
-    p1, p2 = _digitos(corpo.get("protocolo")), _digitos(estreito.get("protocolo"))
-    numero: Optional[str] = None
-    if p1 and p1 == p2 and len(p1) == _DIGITOS_PROTOCOLO:
-        numero = p1
-    else:
-        avisos.append(
-            "Protocolo da Consulta: as duas leituras não concordaram em 10 "
-            "dígitos — número e data não gravados."
-        )
-        return CenprotEstrutura(avisos=tuple(avisos))
-
     emitida_em: Optional[str] = None
-    lida = _data(relogio.get("data"))
-    if lida is None:
+    if len(lidas) != 2 or lidas[0] is None or lidas[1] is None:
         avisos.append(
-            "Data (relógio da barra de tarefas): ilegível ou inválida — data "
-            "não gravada."
+            "Data (relógio da barra de tarefas): ilegível, cortada ou "
+            "inválida — data não gravada."
+        )
+    elif lidas[0] != lidas[1]:
+        avisos.append(
+            "Data (relógio da barra de tarefas): as duas leituras não "
+            "concordaram — data não gravada."
         )
     elif referencia is None:
         avisos.append(
             "Data (relógio da barra de tarefas): sem data de referência para "
             "conferir — data não gravada."
         )
-    elif not (referencia - _JANELA_ANTES <= lida <= referencia + _JANELA_DEPOIS):
+    elif not (referencia - _JANELA_ANTES <= lidas[0] <= referencia + _JANELA_DEPOIS):
         avisos.append(
             "Data (relógio da barra de tarefas): fora da janela plausível em "
             "relação à consulta — data não gravada."
         )
     else:
-        emitida_em = lida.isoformat()
+        emitida_em = lidas[0].isoformat()
 
     return CenprotEstrutura(numero=numero, emitida_em=emitida_em, avisos=tuple(avisos))
 
