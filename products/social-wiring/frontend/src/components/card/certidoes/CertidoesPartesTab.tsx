@@ -44,7 +44,11 @@ export function CertidoesPartesTab(props: {
   const remover = useRemoverLinhaPartes(clienteId);
   const invalidar = useInvalidatePartes(clienteId);
 
-  const [detalhes, setDetalhes] = useState<CertidaoParte | null>(null);
+  // 🔴 The KEY of the party whose dialog is open, never a snapshot of the
+  // row: the dialog reads the LIVE row off `q.data`, so a CPF that arrives
+  // after it opened (the tab's query refetches) reaches the "Registrar
+  // certidões manualmente" prefill without a reload.
+  const [detalhesChave, setDetalhesChave] = useState<string | null>(null);
   const [adicionando, setAdicionando] = useState(false);
   const [novoNome, setNovoNome] = useState("");
   const [renomeando, setRenomeando] = useState<CertidaoParteLinha | null>(null);
@@ -81,6 +85,9 @@ export function CertidoesPartesTab(props: {
     );
   }
 
+  const detalhes: CertidaoParte | null =
+    (detalhesChave && data.partes.find((p) => p.chave === detalhesChave)) || null;
+
   const fecharAdicionar = () => { setAdicionando(false); setNovoNome(""); };
 
   return (
@@ -104,7 +111,7 @@ export function CertidoesPartesTab(props: {
             onSolicitar={(i) => emissao.mutate(i)}
             onReemitir={(id) => reemitir.mutate(id)}
             onUpload={(i) => upload.mutate(i)}
-            onDetalhes={setDetalhes}
+            onDetalhes={(p) => setDetalhesChave(p.chave)}
             onAdicionar={() => setAdicionando(true)}
             onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}
             onRemover={setRemovendo}
@@ -113,7 +120,7 @@ export function CertidoesPartesTab(props: {
         ))}
       </TooltipProvider>
 
-      <Dialog open={!!detalhes} onOpenChange={(o) => { if (!o) { setDetalhes(null); void invalidar(); } }}>
+      <Dialog open={!!detalhes} onOpenChange={(o) => { if (!o) { setDetalhesChave(null); void invalidar(); } }}>
         <DialogContent className="max-w-5xl">
           <DialogHeader>
             <DialogTitle>Certidões — {detalhes?.nome}</DialogTitle>

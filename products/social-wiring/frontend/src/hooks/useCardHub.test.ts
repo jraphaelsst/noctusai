@@ -354,6 +354,25 @@ describe("useDadosPessoaisMutation — Bug F: a save must not leave Qualificaç�
   });
 });
 
+describe("useDadosPessoaisMutation — a PARTY's save reaches the titular's card", () => {
+  it("🔴 invalidates every card's compradores list, not only the saved person's", async () => {
+    mockPatch.mockResolvedValue({ cpf: "52998224725" });
+    // Instantiated with the PARTY's id — the titular's card that lists this
+    // party is keyed under a different id the mutation never learns.
+    const mutation = useDadosPessoaisMutation("parte-cliente") as any;
+    await mutation.mutateAsync({ cpf: "52998224725" });
+
+    const predicados = invalidateQueriesMock.mock.calls
+      .map(([arg]: any[]) => arg?.predicate)
+      .filter(Boolean);
+    const alcanca = (queryKey: unknown[]) => predicados.some((p: any) => p({ queryKey }));
+    expect(alcanca(["sw", "cardHub", "titular-1", "compradores", "comprador"])).toBe(true);
+    expect(alcanca(["sw", "cardHub", "titular-1", "compradores", "vendedor"])).toBe(true);
+    expect(alcanca(["sw", "cardHub", "titular-1", "card"])).toBe(false);
+    expect(alcanca(["sw", "clientes", "titular-1", "compradores"])).toBe(false);
+  });
+});
+
 describe("useDadosPessoaisMutation — body carries ONLY ClientePatchBody's columns", () => {
   it("🔴 strips non-editable cliente columns a wider seed object carries (the prod 422)", async () => {
     mockPatch.mockResolvedValue({ celular: "11999999999" });

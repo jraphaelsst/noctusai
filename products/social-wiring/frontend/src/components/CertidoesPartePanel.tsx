@@ -29,7 +29,7 @@
  * Each is `enabled` only for its own id (`@/hooks/useCertidoes`), so the
  * unused one never fires a request — only its inert query object exists.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -202,6 +202,19 @@ export function CertidoesPartePanel({
   const [manualNome, setManualNome] = useState(nomeParte ?? "");
   const [manualTipoDocumento, setManualTipoDocumento] = useState<"cpf" | "cnpj">("cpf");
   const [manualDocumento, setManualDocumento] = useState(documento ?? "");
+  // 🔴 The prefill FOLLOWS `documento` when it arrives later (the party's CPF
+  // saved/extracted while this panel — or its dialog — is already open):
+  // previously it was copied once, at open, so the field stayed blank until
+  // a page reload. Only an untouched field follows; what the operator typed
+  // is never overwritten.
+  const documentoAnteriorRef = useRef(documento ?? "");
+  useEffect(() => {
+    const novo = documento ?? "";
+    const anterior = documentoAnteriorRef.current;
+    documentoAnteriorRef.current = novo;
+    if (novo === anterior) return;
+    setManualDocumento((atual) => (atual.trim() === "" || atual === anterior ? novo : atual));
+  }, [documento]);
 
   const handleCopiarTranscricao = (resultadoId: string) => {
     copiarTranscricao(resultadoId, () => {

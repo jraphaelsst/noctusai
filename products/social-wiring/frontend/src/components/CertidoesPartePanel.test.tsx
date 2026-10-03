@@ -398,6 +398,44 @@ describe("CertidoesPartePanel — registrar certidões manualmente", () => {
     expect((getByLabelText("Documento") as HTMLInputElement).value).toBe("");
   });
 
+  it("🔴 follows a CPF that arrives AFTER the dialog opened (no reload needed)", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    const React = (await import("react")).default;
+    const { CertidoesPartePanel } = await import("./CertidoesPartePanel");
+    const { getByText, getByLabelText, fireEvent, rerender } = await renderPanel({
+      atendimentoParteId: "parte-1",
+      nomeParte: "Maria de Teste",
+    });
+    fireEvent.click(getByText("Registrar certidões manualmente"));
+    expect((getByLabelText("Documento") as HTMLInputElement).value).toBe("");
+    rerender(
+      React.createElement(CertidoesPartePanel, {
+        atendimentoParteId: "parte-1",
+        nomeParte: "Maria de Teste",
+        documento: "12345678901",
+      }),
+    );
+    expect((getByLabelText("Documento") as HTMLInputElement).value).toBe("12345678901");
+  });
+
+  it("never overwrites what the operator typed when the CPF arrives later", async () => {
+    mockUseResultadosPorParte.mockReturnValue(queryStub({ data: [] }));
+    const React = (await import("react")).default;
+    const { CertidoesPartePanel } = await import("./CertidoesPartePanel");
+    const { getByText, getByLabelText, fireEvent, rerender } = await renderPanel({
+      atendimentoParteId: "parte-1",
+    });
+    fireEvent.click(getByText("Registrar certidões manualmente"));
+    fireEvent.change(getByLabelText("Documento"), { target: { value: "99988877766" } });
+    rerender(
+      React.createElement(CertidoesPartePanel, {
+        atendimentoParteId: "parte-1",
+        documento: "12345678901",
+      }),
+    );
+    expect((getByLabelText("Documento") as HTMLInputElement).value).toBe("99988877766");
+  });
+
   it("routes the titular's manual registration through clienteId, not atendimentoParteId", async () => {
     mockUseResultadosPorCliente.mockReturnValue(queryStub({ data: [] }));
     const { getByTestId, getByText, getByLabelText, fireEvent } = await renderPanel({

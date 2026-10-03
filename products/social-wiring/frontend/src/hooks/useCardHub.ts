@@ -173,6 +173,30 @@ const COMPRADORES_KEY = (clienteId: string, lado: LadoParte = "comprador") =>
  * regardless of which one the caller currently has mounted.
  */
 const CONFLITOS_ROOT_KEY = [...ROOT_KEY, "conflitos"] as const;
+
+/**
+ * 🔴 EVERY card's compradores/vendedores list, not one card's. A party's own
+ * `clientes` row (CPF, nome, …) is shown on the TITULAR's card through that
+ * card's `compradores` list (`parte.cliente.cpf` — e.g. the prefill of
+ * "Registrar certidões manualmente"), keyed under the TITULAR's family. A
+ * write to the party (`useDadosPessoaisMutation(parteClienteId)`, an
+ * extraction landing on the party's document, a conflict decided for the
+ * party) only knows the PARTY's id, so `COMPRADORES_KEY(parteClienteId)`
+ * never reached the list actually on screen — the CPF showed up only after a
+ * page reload (2026-10-03). Matched by shape (`[...ROOT_KEY, <id>,
+ * "compradores", …]`), so it lands whichever card is open.
+ */
+function invalidateCompradoresDeTodosOsCards(
+  qc: ReturnType<typeof useQueryClient>,
+): Promise<void> {
+  return qc.invalidateQueries({
+    predicate: (q) =>
+      q.queryKey.length >= 4 &&
+      q.queryKey[0] === ROOT_KEY[0] &&
+      q.queryKey[1] === ROOT_KEY[1] &&
+      q.queryKey[3] === "compradores",
+  });
+}
 const CONFLITOS_KEY = (clienteId?: string) =>
   [...CONFLITOS_ROOT_KEY, clienteId ?? "__org__"] as const;
 
@@ -602,6 +626,10 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
       void qc.invalidateQueries({ queryKey: DOC_CHECKLIST_KEY(clienteId) });
       void qc.invalidateQueries({ queryKey: DOCUMENTOS_KEY(clienteId) });
       void qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY });
+      // A confirmed `cpf`/`rg` suggestion also moves what a titular's card
+      // shows for this person as a party.
+      void invalidateCompradoresDeTodosOsCards(qc);
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes"] });
     },
   });
 }
@@ -654,6 +682,9 @@ export function invalidateExtracaoDependentes(
     qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
     qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId) }),
     qc.invalidateQueries({ queryKey: COMPRADORES_KEY(clienteId, "vendedor") }),
+    // `clienteId` here is routinely a PARTY's id (each party's documentos
+    // panel mounts this) — its CPF lives on the titular's list too.
+    invalidateCompradoresDeTodosOsCards(qc),
     // Broad prefix, same pattern `useDadosPessoaisMutation` /
     // `useDecidirConflitoMutation` already use for this exact class of
     // problem — covers `useNegociacao`'s `["sw","clientes",id,"negociacao"]`
@@ -970,6 +1001,8 @@ export function useDadosPessoaisMutation(clienteId: string) {
         // up on the very next read, not only in THIS mutation's own
         // transient `data.pendente_confirmacao`.
         qc.invalidateQueries({ queryKey: CONFLITOS_KEY(clienteId) }),
+        // Instantiated per PARTY too — the titular's card lists this person.
+        invalidateCompradoresDeTodosOsCards(qc),
       ]),
   });
 }
@@ -1043,6 +1076,7 @@ export function useDecidirConflitoMutation() {
       void qc.invalidateQueries({ queryKey: CARD_KEY(result.cliente_id) });
       void qc.invalidateQueries({ queryKey: ["sw", "clientes"] });
       void qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY });
+      void invalidateCompradoresDeTodosOsCards(qc);
     },
   });
 }
