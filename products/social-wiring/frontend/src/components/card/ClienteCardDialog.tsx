@@ -112,7 +112,7 @@ import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { PessoaLink } from "@/components/pessoa/PessoaLink";
 import { RoteirosSection } from "./RoteirosSection";
 import { CARD_SUBPAGES, partesPjDoLado, type CardSubpageKey } from "./cardSubpages";
-import type { ParteContratoOut, ParteContratoPatch, ParteItem } from "@/types/partes";
+import type { ParteContratoPatch, ParteItem } from "@/types/partes";
 import { ParteEmpresaContratoForm, RepresentanteEmpresaSelect } from "./partes/ParteContratoCampos";
 import type { GeracaoDestino } from "./GeradorContratoSection";
 import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
@@ -227,9 +227,6 @@ export interface ClienteCardDialogProps {
   onSalvarContratoParte?: (parteId: string, patch: ParteContratoPatch) => void;
   /** The party whose contract fields are being saved. */
   salvandoContratoParteId?: string | null;
-  /** The last save's response per party (`parte_id` → row), this session —
-   *  `GET …/partes` does not return the PJ fields yet. */
-  contratoParteSalvo?: Record<string, ParteContratoOut>;
   /**
    * Renders one party's OWN checklist + documents panel.
    *
@@ -616,9 +613,8 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
           </p>
           {props.onSalvarContratoParte && parte.parte_id && (
             <ParteEmpresaContratoForm
-              parteId={parte.parte_id}
+              parte={parte}
               salvando={props.salvandoContratoParteId === parte.parte_id}
-              salvo={props.contratoParteSalvo?.[parte.parte_id] ?? null}
               onSalvar={(patch) => props.onSalvarContratoParte?.(parte.parte_id as string, patch)}
             />
           )}

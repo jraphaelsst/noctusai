@@ -9,12 +9,10 @@
  *     One representante per company — an option already taken by another
  *     representante is disabled (the gate's `PJ_MAIS_DE_UM_REPRESENTANTE`).
  *
- * 🔴 KNOWN GAP: `GET …/partes` does not return `pj_nire` / `pj_sede_*` (the
- * contract keeps that read unchanged), so the form cannot show what is
- * stored. It therefore sends ONLY the fields typed (PATCH semantics — a
- * blank field never clears a stored value), shows what the last save
- * returned, and points at "Gerar contrato", whose readiness names each
- * missing `partes.pj.*` field. Remove this note when the read lands.
+ * The current values come from the party's own `GET …/partes` item
+ * (`pj_nire`, `pj_sede`, `representa_parte_id`), so the form opens prefilled
+ * and sends ONLY the fields that changed — an emptied field is sent as `null`
+ * (clears it), an untouched one is never re-sent.
  *
  * Presentational (S3) — the caller owns `useAtualizarContratoParte`.
  */
@@ -25,12 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-import {
-  CAMPOS_SEDE_PJ,
-  type ParteContratoOut,
-  type ParteContratoPatch,
-  type ParteItem,
-} from "@/types/partes";
+import { CAMPOS_SEDE_PJ, type ParteContratoPatch, type ParteItem } from "@/types/partes";
 
 type CampoPj = "pj_nire" | `pj_sede_${(typeof CAMPOS_SEDE_PJ)[number]}`;
 
@@ -57,59 +50,81 @@ export function errosEmpresaContrato(draft: Partial<Record<CampoPj, string>>): s
   return erros;
 }
 
+/** The stored value of one field, read off the party's list item. */
+function valorAtual(parte: ParteItem, campo: CampoPj): string {
+  if (campo === "pj_nire") return parte.pj_nire ?? "";
+  const chave = campo.replace("pj_sede_", "") as keyof NonNullable<ParteItem["pj_sede"]>;
+  return parte.pj_sede?.[chave] ?? "";
+}
+
+/** Only what changed: a trimmed new value, or `null` for an emptied field. */
+export function patchEmpresaContrato(
+  parte: ParteItem,
+  draft: Partial<Record<CampoPj, string>>,
+): ParteContratoPatch {
+  const patch: ParteContratoPatch = {};
+  for (const c of CAMPOS) {
+    if (draft[c] === undefined) continue;
+    const novo = draft[c]!.trim();
+    const normalizado = c === "pj_sede_uf" ? novo.toUpperCase() : novo;
+    if (normalizado === valorAtual(parte, c)) continue;
+    patch[c] = normalizado || null;
+  }
+  return patch;
+}
+
 export function ParteEmpresaContratoForm({
-  parteId,
+  parte,
   salvando,
-  salvo,
   onSalvar,
 }: {
-  parteId: string;
+  /** The company party's `GET …/partes` item — carries the stored values. */
+  parte: ParteItem;
   salvando: boolean;
-  /** The last PATCH response for this party (this session). */
-  salvo?: ParteContratoOut | null;
   onSalvar: (patch: ParteContratoPatch) => void;
 }) {
+  const parteId = parte.parte_id as string;
   const [aberto, setAberto] = useState(false);
   const [draft, setDraft] = useState<Partial<Record<CampoPj, string>>>({});
   const erros = errosEmpresaContrato(draft);
-  const patch: ParteContratoPatch = {};
-  for (const c of CAMPOS) {
-    const v = draft[c]?.trim();
-    if (v) patch[c] = c === "pj_sede_uf" ? v.toUpperCase() : v;
-  }
+  const patch = patchEmpresaContrato(parte, draft);
   const temAlgo = Object.keys(patch).length > 0;
+  const sede = parte.pj_sede;
+  const faltam = CAMPOS.filter((c) => c !== "pj_sede_complemento" && !valorAtual(parte, c));
 
   if (!aberto) {
     return (
       <div className="mt-1 space-y-1">
+        <p className="text-xs text-muted-foreground" data-testid={`parte-empresa-contrato-resumo-${parteId}`}>
+          NIRE {parte.pj_nire || "—"}
+          {sede?.logradouro
+            ? ` · sede: ${sede.logradouro}, ${sede.numero ?? "s/n"}${sede.complemento ? ` ${sede.complemento}` : ""} — ${sede.bairro ?? ""}, ${sede.cidade ?? ""}/${sede.uf ?? ""}`
+            : " · sede não informada"}
+        </p>
+        {faltam.length > 0 && (
+          <p className="text-[11px] text-amber-700" data-testid={`parte-empresa-contrato-faltam-${parteId}`}>
+            Falta para o contrato: {faltam.map((c) => ROTULO[c]).join(", ")}.
+          </p>
+        )}
         <Button
           type="button"
           size="sm"
           variant="outline"
           className="h-7 text-xs"
-          onClick={() => setAberto(true)}
+          onClick={() => {
+            setDraft({});
+            setAberto(true);
+          }}
           data-testid={`parte-empresa-contrato-abrir-${parteId}`}
         >
-          NIRE e sede (para o contrato)
+          Editar NIRE e sede
         </Button>
-        {salvo && (
-          <p className="text-xs text-muted-foreground" data-testid={`parte-empresa-contrato-salvo-${parteId}`}>
-            Salvo: NIRE {salvo.pj_nire ?? "—"}
-            {salvo.pj_sede_logradouro
-              ? ` · ${salvo.pj_sede_logradouro}, ${salvo.pj_sede_numero ?? "s/n"} — ${salvo.pj_sede_cidade ?? ""}/${salvo.pj_sede_uf ?? ""}`
-              : ""}
-          </p>
-        )}
       </div>
     );
   }
 
   return (
     <div className="mt-2 space-y-2 rounded-md border p-2.5" data-testid={`parte-empresa-contrato-${parteId}`}>
-      <p className="text-[11px] text-muted-foreground">
-        Preencha só o que quer gravar — campos em branco mantêm o valor já salvo. O que ainda falta
-        aparece em “Gerar contrato”, na aba Contratos.
-      </p>
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {CAMPOS.map((c) => (
           <div
@@ -122,8 +137,7 @@ export function ParteEmpresaContratoForm({
             <Input
               id={`${parteId}-${c}`}
               className="h-8"
-              value={draft[c] ?? ""}
-              placeholder={salvo?.[c] ?? ""}
+              value={draft[c] ?? valorAtual(parte, c)}
               maxLength={c === "pj_sede_uf" ? 2 : undefined}
               onChange={(e) => setDraft((d) => ({ ...d, [c]: e.target.value }))}
               data-testid={`parte-empresa-${c}-${parteId}`}
@@ -147,7 +161,6 @@ export function ParteEmpresaContratoForm({
           disabled={!temAlgo || erros.length > 0 || salvando}
           onClick={() => {
             onSalvar(patch);
-            setDraft({});
             setAberto(false);
           }}
           data-testid={`parte-empresa-contrato-salvar-${parteId}`}

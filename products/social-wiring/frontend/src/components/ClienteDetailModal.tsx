@@ -75,7 +75,6 @@ import { AtendimentoImoveisSection } from "@/components/card/AtendimentoImoveisS
 import { useAdicionarParte, useAtualizarContratoParte, usePartes } from "@/hooks/usePartes";
 import { toastServerError } from "@/lib/erroServidor";
 import { QualificacaoContratoContainer } from "@/components/QualificacaoContratoContainer";
-import type { ParteContratoOut } from "@/types/partes";
 import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
 import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
@@ -249,10 +248,8 @@ export function ClienteDetailModal({
   const adicionarParte = useAdicionarParte(id ?? "__none__");
   const partes = usePartes(id, atendimentoId);
   // Migration 193 — a party's contract-qualification fields (PJ NIRE + sede,
-  // a representante's company). The last response per party is kept for
-  // display: `GET …/partes` does not return the PJ fields yet.
+  // a representante's company); read back through `partes` above.
   const contratoParte = useAtualizarContratoParte(id ?? "__none__");
-  const [contratoParteSalvo, setContratoParteSalvo] = useState<Record<string, ParteContratoOut>>({});
   const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
   // Durable pending-state read (owner directive, 2026-09-19) —
   // `DadosPessoaisForm`'s notice must survive a reload, unlike the last
@@ -823,10 +820,7 @@ export function ClienteDetailModal({
         contratoParte.mutate(
           { parteId, patch },
           {
-            onSuccess: (row) => {
-              setContratoParteSalvo((m) => ({ ...m, [parteId]: row }));
-              toast.success("Dados do contrato salvos.");
-            },
+            onSuccess: () => toast.success("Dados do contrato salvos."),
             onError: (err) => toastServerError(err, "Não foi possível salvar os dados do contrato."),
           },
         )
@@ -834,7 +828,6 @@ export function ClienteDetailModal({
       salvandoContratoParteId={
         contratoParte.isPending ? (contratoParte.variables?.parteId ?? null) : null
       }
-      contratoParteSalvo={contratoParteSalvo}
       papelSalvandoParteId={
         compradorMutations.atualizarPapel.isPending
           ? compradorMutations.atualizarPapel.variables?.parteId ?? null

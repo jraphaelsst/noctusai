@@ -21,37 +21,47 @@ function pj(id: string, nome: string): ParteItem {
 }
 
 describe("ParteEmpresaContratoForm", () => {
-  it("🔴 sends ONLY the fields typed (a blank never clears a stored value), UF upper-cased", async () => {
-    const { render, screen, fireEvent } = await import("@testing-library/react");
-    const onSalvar = vi.fn();
-    render(<ParteEmpresaContratoForm parteId="p1" salvando={false} onSalvar={onSalvar} />);
-    fireEvent.click(screen.getByTestId("parte-empresa-contrato-abrir-p1"));
-    fireEvent.change(screen.getByTestId("parte-empresa-pj_nire-p1"), { target: { value: "35200000001" } });
-    fireEvent.change(screen.getByTestId("parte-empresa-pj_sede_uf-p1"), { target: { value: "sp" } });
-    fireEvent.click(screen.getByTestId("parte-empresa-contrato-salvar-p1"));
-    expect(onSalvar).toHaveBeenCalledWith({ pj_nire: "35200000001", pj_sede_uf: "SP" });
+  const comDados = () => ({
+    ...pj("p1", "Empresa Um Ltda"),
+    pj_nire: "35200000001",
+    pj_sede: {
+      logradouro: "Rua Exemplo", numero: "7", complemento: null, bairro: "Centro",
+      cidade: "Cotia", uf: "SP", cep: "06700000",
+    },
   });
 
-  it("mirrors the server's UF / CEP 400s", async () => {
+  it("🔴 opens PREFILLED from the party's list item and shows what is stored", async () => {
     const { render, screen, fireEvent } = await import("@testing-library/react");
-    render(<ParteEmpresaContratoForm parteId="p1" salvando={false} onSalvar={vi.fn()} />);
+    render(<ParteEmpresaContratoForm parte={comDados()} salvando={false} onSalvar={vi.fn()} />);
+    expect(screen.getByTestId("parte-empresa-contrato-resumo-p1").textContent).toContain("35200000001");
+    expect(screen.queryByTestId("parte-empresa-contrato-faltam-p1")).toBeNull();
+    fireEvent.click(screen.getByTestId("parte-empresa-contrato-abrir-p1"));
+    expect((screen.getByTestId("parte-empresa-pj_nire-p1") as HTMLInputElement).value).toBe("35200000001");
+    expect((screen.getByTestId("parte-empresa-pj_sede_cidade-p1") as HTMLInputElement).value).toBe("Cotia");
+    // Nothing changed ⇒ nothing to save.
+    expect((screen.getByTestId("parte-empresa-contrato-salvar-p1") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("🔴 sends ONLY what changed — an emptied field as null, UF upper-cased", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    const onSalvar = vi.fn();
+    render(<ParteEmpresaContratoForm parte={comDados()} salvando={false} onSalvar={onSalvar} />);
+    fireEvent.click(screen.getByTestId("parte-empresa-contrato-abrir-p1"));
+    fireEvent.change(screen.getByTestId("parte-empresa-pj_sede_numero-p1"), { target: { value: "70" } });
+    fireEvent.change(screen.getByTestId("parte-empresa-pj_sede_bairro-p1"), { target: { value: "" } });
+    fireEvent.change(screen.getByTestId("parte-empresa-pj_sede_uf-p1"), { target: { value: "sp" } });
+    fireEvent.click(screen.getByTestId("parte-empresa-contrato-salvar-p1"));
+    expect(onSalvar).toHaveBeenCalledWith({ pj_sede_numero: "70", pj_sede_bairro: null });
+  });
+
+  it("names what is still missing for the contract; mirrors the server's CEP 400", async () => {
+    const { render, screen, fireEvent } = await import("@testing-library/react");
+    render(<ParteEmpresaContratoForm parte={pj("p1", "Empresa Um Ltda")} salvando={false} onSalvar={vi.fn()} />);
+    expect(screen.getByTestId("parte-empresa-contrato-faltam-p1").textContent).toContain("NIRE");
     fireEvent.click(screen.getByTestId("parte-empresa-contrato-abrir-p1"));
     fireEvent.change(screen.getByTestId("parte-empresa-pj_sede_cep-p1"), { target: { value: "0670" } });
     expect(screen.getByText("CEP da sede deve ter 8 dígitos.")).toBeTruthy();
     expect((screen.getByTestId("parte-empresa-contrato-salvar-p1") as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it("shows what the last save returned", async () => {
-    const { render, screen } = await import("@testing-library/react");
-    render(
-      <ParteEmpresaContratoForm
-        parteId="p1"
-        salvando={false}
-        onSalvar={vi.fn()}
-        salvo={{ id: "p1", pj_nire: "35200000001", pj_sede_logradouro: "Rua X", pj_sede_numero: "7", pj_sede_cidade: "Cotia", pj_sede_uf: "SP" }}
-      />,
-    );
-    expect(screen.getByTestId("parte-empresa-contrato-salvo-p1").textContent).toContain("35200000001");
   });
 });
 

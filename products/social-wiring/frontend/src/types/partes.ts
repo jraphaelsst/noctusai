@@ -31,6 +31,23 @@ export interface ParteItem {
   observacao: string | null;
   cliente: Record<string, unknown> | null;
   empresa: ParteEmpresaResumo | null;
+  /** [Migration 193] On a `representante`: the company party it signs for.
+   *  Optional for a pre-193 backend. */
+  representa_parte_id?: string | null;
+  /** [Migration 193] A company party's NIRE — `null` on a PF row. */
+  pj_nire?: string | null;
+  /** [Migration 193] A company party's sede — `null` on a PF row. */
+  pj_sede?: ParteSedePj | null;
+}
+
+export interface ParteSedePj {
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+  cep: string | null;
 }
 
 export interface PartesResponse {
