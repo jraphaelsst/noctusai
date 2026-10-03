@@ -37,6 +37,9 @@ export interface CertidaoParteCelula {
   stale_para_contrato: boolean;
   arquivo_url: string | null;
   tem_arquivo: boolean;
+  /** The stored file is a human's manual upload (not a live emission) — the
+   *  only kind "Ler o documento novamente" can re-read. */
+  arquivo_manual: boolean;
   arquivo_nome: string | null;
   origem: "api" | "ia" | "manual" | null;
   confirmado: boolean;
@@ -145,4 +148,13 @@ export interface UploadCelulaInput {
   alvoId: string;
   linhaChave: string;
   file: File;
+}
+
+/** `POST /api/clientes/{cliente_id}/certidoes/reler` — counts at request time;
+ *  the readings themselves run in the background. */
+export interface RelerCertidoesResponse {
+  relidos: number;
+  sem_arquivo: number;
+  em_andamento: number;
+  erros: number;
 }

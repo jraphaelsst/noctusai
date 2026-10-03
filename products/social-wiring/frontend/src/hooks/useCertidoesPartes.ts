@@ -18,6 +18,7 @@ import type {
   CertidaoParteCelula,
   CertidoesPartesResponse,
   EmissaoResponse,
+  RelerCertidoesResponse,
   SolicitarEmissaoInput,
   UploadCelulaInput,
 } from "@/types/certidoesPartes";
@@ -117,6 +118,66 @@ export function useCienciaPcen(clienteId: string) {
       void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "contratos"] });
     },
     onError: (e) => toast.error("Não foi possível registrar", { description: erroMsg(e) }),
+  });
+}
+
+/** Every certidões read a re-read can change: this tab, the per-party /
+ *  per-cliente / per-empresa panels and the consulta screens. */
+function useInvalidateCertidoes(clienteId: string) {
+  const qc = useQueryClient();
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "certidoes", "partes"] }),
+      qc.invalidateQueries({ queryKey: ["certidao-resultados-parte"] }),
+      qc.invalidateQueries({ queryKey: ["certidao-resultados-cliente"] }),
+      qc.invalidateQueries({ queryKey: ["certidao-resultados-empresa"] }),
+      qc.invalidateQueries({ queryKey: ["certidao-consulta"] }),
+    ]);
+}
+
+/** `POST /api/certidoes/resultados/{id}/reler` — re-read the PDF already
+ *  uploaded for one certidão (no new file, no new live query; a value a
+ *  person confirmed is kept). */
+export function useRelerResultado(clienteId: string) {
+  const invalidate = useInvalidateCertidoes(clienteId);
+  return useMutation({
+    mutationFn: (resultadoId: string) =>
+      api.post(`/api/certidoes/resultados/${encodeURIComponent(resultadoId)}/reler`, {}),
+    onSuccess: () => {
+      toast.success("Lendo o documento novamente…");
+      void invalidate();
+    },
+    onError: (e) => toast.error("Não foi possível ler o documento novamente", { description: erroMsg(e) }),
+  });
+}
+
+/** `POST /api/clientes/{id}/certidoes/reler` — every uploaded certidão of the
+ *  card's parties, re-read on the files already stored. */
+export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidateCertidoes(clienteId);
+  return useMutation({
+    mutationFn: () =>
+      api.post<RelerCertidoesResponse>(`${clienteBase(clienteId)}/certidoes/reler`, {
+        atendimento_id: atendimentoId ?? null,
+      }),
+    onSuccess: (r) => {
+      if (r.relidos === 0) {
+        toast.info("Nenhuma certidão enviada em PDF para ler novamente.");
+      } else {
+        toast.success(
+          r.relidos === 1 ? "Lendo 1 certidão novamente…" : `Lendo ${r.relidos} certidões novamente…`,
+        );
+      }
+      if (r.erros > 0) {
+        toast.error(
+          r.erros === 1
+            ? "1 certidão não pôde ser lida novamente — envie o PDF de novo se o problema continuar."
+            : `${r.erros} certidões não puderam ser lidas novamente — envie os PDFs de novo se o problema continuar.`,
+        );
+      }
+      void invalidate();
+    },
+    onError: (e) => toast.error("Não foi possível reler as certidões", { description: erroMsg(e) }),
   });
 }
 

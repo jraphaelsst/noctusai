@@ -13,7 +13,7 @@ vi.mock("@noctusai/seed/infra", () => ({
   api: { get: mockGet, post: mockPost, upload: mockUpload, patch: mockPatch, delete: mockDelete },
   supabase: { auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) } },
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 vi.mock("@/components/CertidoesPartePanel", () => ({
   CertidoesPartePanel: ({ nomeParte }: { nomeParte?: string }) => <div data-testid="panel-stub">{nomeParte}</div>,
 }));
@@ -25,7 +25,7 @@ function cel(over: Partial<CertidaoParteCelula> = {}): CertidaoParteCelula {
   return {
     status: "pendente", texto: "Pendente", tipo: "cnd_federal", resultado_id: null, consulta_id: null,
     status_processamento: null, resultado: null, numero: null, emitida_em: null, validade_ate: null,
-    idade_dias: null, stale_para_contrato: false, arquivo_url: null, tem_arquivo: false,
+    idade_dias: null, stale_para_contrato: false, arquivo_url: null, tem_arquivo: false, arquivo_manual: false,
     arquivo_nome: null, origem: null, confirmado: false, analise_ia: null, erro_mensagem: null, segunda_via: false, pcen: null, ...over,
   };
 }
@@ -88,6 +88,70 @@ describe("CertidoesPartesTab", () => {
     open("c:cli-1");
     fireEvent.click(screen.getByTestId("parte-reemitir-c:cli-1-cnd_federal"));
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/resultados/res-1/reemitir", {}));
+  });
+
+  describe("ler o documento novamente", () => {
+    const comUpload = () => parte({
+      celulas: {
+        cnd_federal: cel({ status: "nao_constam", status_processamento: "sucesso", resultado_id: "res-1", tem_arquivo: true, arquivo_url: "k/api.pdf" }),
+        serasa: cel({ tipo: "serasa", status: "nao_constam", status_processamento: "sucesso", resultado_id: "res-2", tem_arquivo: true, arquivo_manual: true, arquivo_url: "k/up.pdf" }),
+      },
+    });
+
+    it("is offered only on a row whose stored file is a manual upload", async () => {
+      mockGet.mockResolvedValue(resp([comUpload()]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      expect(screen.getByTestId("parte-linha-c:cli-1-serasa-reextrair").textContent).toContain("Ler o documento novamente");
+      // a live emission's file (tem_arquivo without arquivo_manual) is not re-readable
+      expect(screen.queryByTestId("parte-linha-c:cli-1-cnd_federal-reextrair")).toBeNull();
+      expect(screen.getByTestId("certidoes-partes-reextrair")).toBeTruthy();
+    });
+
+    it("is hidden while the certidão is still being read, and with no manual upload at all", async () => {
+      const lendo = comUpload();
+      lendo.celulas.serasa = { ...lendo.celulas.serasa, status_processamento: "processando" };
+      mockGet.mockResolvedValue(resp([lendo]));
+      const { unmount } = render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      expect(screen.queryByTestId("parte-linha-c:cli-1-serasa-reextrair")).toBeNull();
+      unmount();
+      mockGet.mockResolvedValue(resp([parte()]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      expect(screen.queryByTestId("certidoes-partes-reextrair")).toBeNull();
+    });
+
+    it("re-reads one certidão and refreshes every certidões query", async () => {
+      mockGet.mockResolvedValue(resp([comUpload()]));
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const spy = vi.spyOn(qc, "invalidateQueries");
+      render(
+        <QueryClientProvider client={qc}><CertidoesPartesTab clienteId="cli-1" /></QueryClientProvider>,
+      );
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-linha-c:cli-1-serasa-reextrair"));
+      await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/certidoes/resultados/res-2/reler", {}));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["sw", "clientes", "cli-1", "certidoes", "partes"] }));
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["certidao-resultados-parte"] });
+      expect(spy).toHaveBeenCalledWith({ queryKey: ["certidao-consulta"] });
+    });
+
+    it("'Reler todas as certidões' posts the card-level re-read with the atendimento", async () => {
+      mockGet.mockResolvedValue(resp([comUpload()]));
+      mockPost.mockResolvedValue({ relidos: 2, sem_arquivo: 1, em_andamento: 0, erros: 0 });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      const spy = vi.spyOn(qc, "invalidateQueries");
+      render(
+        <QueryClientProvider client={qc}><CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" /></QueryClientProvider>,
+      );
+      fireEvent.click(await screen.findByTestId("certidoes-partes-reextrair"));
+      await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/reler", { atendimento_id: "at-1" }));
+      await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["sw", "clientes", "cli-1", "certidoes", "partes"] }));
+    });
   });
 
   it("solicitar todas / selecionadas post to the emissao path", async () => {

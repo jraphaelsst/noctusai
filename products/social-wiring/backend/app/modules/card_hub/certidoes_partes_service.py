@@ -238,7 +238,7 @@ def _na(tipo: Optional[str]) -> dict:
         "resultado_id": None, "consulta_id": None, "status_processamento": None,
         "resultado": None, "numero": None, "emitida_em": None, "validade_ate": None,
         "idade_dias": None, "stale_para_contrato": False, "arquivo_url": None,
-        "tem_arquivo": False, "arquivo_nome": None, "origem": None,
+        "tem_arquivo": False, "arquivo_manual": False, "arquivo_nome": None, "origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
         "segunda_via": False, "pcen": None, "pendencia": None,
     }
@@ -292,6 +292,9 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         "stale_para_contrato": vencida,
         "arquivo_url": row.get("arquivo_url"),
         "tem_arquivo": bool(row.get("arquivo_url")),
+        # A human's upload sits in our bucket — the "Ler o documento
+        # novamente" action re-reads it (`certidoes.service.tem_arquivo_manual`).
+        "arquivo_manual": certidoes_svc.tem_arquivo_manual(row),
         "arquivo_nome": row.get("arquivo_nome"),
         "origem": _origem_da_celula(row),
         "confirmado": row.get("confirmado_em") is not None,
@@ -831,6 +834,78 @@ def garantir_celula(
     }, True
 
 
+# ─── Re-read every stored manual upload of the card ───────────────────────
+
+
+def resultados_do_card(
+    client: Any, org_id: UUID, cliente_id: UUID, *, atendimento_id: Optional[UUID]
+) -> list[dict]:
+    """Every live resultado of every party of the card's atendimento —
+    titular, compradores, vendedores and the derived `EMP n` empresas — the
+    whole history, not only each cell's winner (an older manual upload was
+    read by the same outdated reader). De-duplicated by id."""
+    ensure_cliente(client, org_id, cliente_id)
+    alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
+    partes = _todas_as_partes(client, org_id, cliente_id, alvo)
+    por_alvo = certidoes_svc.certidoes_por_alvos(
+        client, org_id,
+        cliente_ids=[p["cliente_id"] for p in partes if p["cliente_id"]],
+        empresa_ids=[p["empresa_id"] for p in partes if p["empresa_id"]],
+    )
+    vistos: dict[str, dict] = {}
+    for lista in por_alvo.values():
+        for row in lista:
+            vistos.setdefault(row["id"], row)
+    return list(vistos.values())
+
+
+async def reler_certidoes_do_card(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    *,
+    atendimento_id: Optional[UUID],
+    storage: Any,
+    http_client: Any,
+    preparar: Callable[..., Any],
+) -> tuple[dict, list[dict]]:
+    """`POST …/certidoes/reler` → `(contagem, extracoes)`.
+
+    For each resultado of the card (`resultados_do_card`): one with no stored
+    manual file counts `sem_arquivo`; one already being read counts
+    `em_andamento`; otherwise `preparar` (`certidoes.service.preparar_
+    releitura` — validates, fetches the bytes, marks `processando`) and its
+    `process_manual_extraction` kwargs join `extracoes`, which the caller
+    schedules — one `BackgroundTasks` job each, run sequentially in order.
+    A blob that is gone, or any unexpected failure on one row, counts `erros`
+    (logged) and never stops the others.
+    """
+    contagem = {"relidos": 0, "sem_arquivo": 0, "em_andamento": 0, "erros": 0}
+    extracoes: list[dict] = []
+    for row in resultados_do_card(client, org_id, cliente_id, atendimento_id=atendimento_id):
+        if not certidoes_svc.tem_arquivo_manual(row):
+            contagem["sem_arquivo"] += 1
+            continue
+        try:
+            _marca, pdf_bytes = await preparar(
+                row, org_id=str(org_id), db=client, storage=storage, http_client=http_client,
+            )
+        except certidoes_svc.ReleituraRecusada as exc:
+            chave = "em_andamento" if exc.motivo == certidoes_svc.RELEITURA_EM_ANDAMENTO else "erros"
+            if chave == "erros":
+                logger.warning("reler-card: resultado %s recusado (%s)", row["id"], exc.motivo)
+            contagem[chave] += 1
+            continue
+        except Exception:  # noqa: BLE001 — one row's failure must not sink the batch
+            logger.error("reler-card: resultado %s falhou ao preparar", row["id"], exc_info=True)
+            contagem["erros"] += 1
+            continue
+        extracoes.append(
+            certidoes_svc.kwargs_extracao_releitura(row, pdf_bytes, str(org_id), client)
+        )
+        contagem["relidos"] += 1
+    return contagem, extracoes
+
 __all__ = [
     "garantir_celula",
     "indexar_vencedores",
@@ -840,6 +915,8 @@ __all__ = [
     "montar_linhas",
     "montar_parte",
     "reemitir",
+    "reler_certidoes_do_card",
+    "resultados_do_card",
     "registrar_ciencia_pcen",
     "solicitar_emissao",
 ]

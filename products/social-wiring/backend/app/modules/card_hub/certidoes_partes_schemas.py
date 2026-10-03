@@ -27,6 +27,14 @@ class ReemitirBody(StrictHttpModel):
     """`POST …/certidoes/resultados/{resultado_id}/reemitir` — empty body."""
 
 
+class RelerBody(StrictHttpModel):
+    """`POST …/certidoes/reler` — re-read every stored manual upload of the
+    card's parties; `atendimento_id` picks the deal when the card has more
+    than one open."""
+
+    atendimento_id: Optional[UUID] = None
+
+
 class CienciaPcenBody(StrictHttpModel):
     """`POST …/certidoes/resultados/{resultado_id}/ciencia-pcen` — `entendi`
     acknowledges the Receita PCEN 2ª via; `duvida` records a support question
@@ -44,4 +52,4 @@ class CelulaBody(StrictHttpModel):
     atendimento_id: Optional[UUID] = None
 
 
-__all__ = ["CelulaBody", "EmissaoBody", "ReemitirBody"]
+__all__ = ["CelulaBody", "CienciaPcenBody", "EmissaoBody", "ReemitirBody", "RelerBody"]

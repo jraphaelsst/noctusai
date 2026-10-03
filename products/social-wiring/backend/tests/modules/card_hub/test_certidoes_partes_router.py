@@ -10,6 +10,7 @@ stub's.
 """
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -106,6 +107,9 @@ class TestAuth:
             f"{BASE}/{uuid4()}/certidoes/resultados/{uuid4()}/ciencia-pcen", json={"acao": "entendi"},
         )
         assert resp.status_code == 401
+
+    def test_reler_sem_token_401(self, api):
+        assert api.post(f"{BASE}/{uuid4()}/certidoes/reler", json={}).status_code == 401
 
     def test_celulas_sem_token_401(self, api):
         body = {"kind": "pessoa", "alvo_id": str(uuid4()), "linha_chave": "serasa"}
@@ -418,4 +422,84 @@ class TestCienciaPcen:
         resp = api.post(
             f"{BASE}/{cid}/certidoes/resultados/{self.RID}/ciencia-pcen", json={"acao": "x"}, headers=AUTH,
         )
+        assert resp.status_code == 422
+
+
+class TestRelerCard:
+    """`POST …/certidoes/reler` — every stored manual upload of the card's
+    parties (titular + vendedor here), re-read on the bytes already stored;
+    a live emission / a fileless row is `sem_arquivo`, never touched."""
+
+    @pytest.fixture
+    def reler(self, client, scoped):
+        from app.main import app as base_app
+        from app.modules.certidoes import service as certidoes_service
+
+        storage = FakeStorageBackend()
+        extrair = AsyncMock()
+        local = FastAPI()
+        local.exception_handlers.update(base_app.exception_handlers)
+        local.include_router(certidoes_partes_router.router, prefix=BASE)
+        fake = dataclasses.replace(build_default_service(), process_manual_extraction=extrair)
+        local.dependency_overrides[get_certidoes_service] = lambda: fake
+        local.dependency_overrides[get_storage_backend] = lambda: storage
+
+        def _blob(key):
+            asyncio.run(storage.put(bucket=certidoes_service.BUCKET, key=key, data=b"%PDF-" + key.encode()))
+
+        return TestClient(local), extrair, _blob
+
+    def test_conta_e_agenda_so_os_uploads_manuais(self, reler, scoped):
+        api, extrair, blob = reler
+        cid, aid, vid = _card(scoped)
+        k_tit, k_vend, k_sumiu = (f"{ORG_ID}/certidoes/c{i}/x.pdf" for i in range(3))
+        blob(k_tit)
+        blob(k_vend)
+        scoped.set_table_data("certidao_consultas", [
+            _consulta("c1", cliente_id=cid), _consulta("c2", cliente_id=vid),
+        ])
+        scoped.set_table_data("certidao_resultados", [
+            _resultado("manual-tit", "c1", "cenprot", status="sucesso", arquivo_url=k_tit,
+                       api_response=None, confirmado_por="user-1", resultado_origem="ia"),
+            _resultado("manual-vend", "c2", "serasa", status="sucesso", arquivo_url=k_vend,
+                       api_response=None),
+            _resultado("ao-vivo", "c2", "cnd_federal", status="sucesso", arquivo_url=k_vend,
+                       api_response={"code": 200}),
+            _resultado("vazio", "c2", "trf3", status="pendente", arquivo_url=None, api_response=None),
+            _resultado("lendo", "c1", "serasa", status="processando", arquivo_url=k_tit,
+                       api_response=None),
+            _resultado("sumiu", "c1", "tjsp_esaj", status="sucesso", arquivo_url=k_sumiu,
+                       api_response=None),
+        ])
+
+        resp = api.post(f"{BASE}/{cid}/certidoes/reler", json={"atendimento_id": aid}, headers=AUTH)
+
+        assert resp.status_code == 200
+        assert resp.json() == {"relidos": 2, "sem_arquivo": 2, "em_andamento": 1, "erros": 1}
+        agendados = {c.kwargs["resultado_id"]: c.kwargs for c in extrair.await_args_list}
+        assert set(agendados) == {"manual-tit", "manual-vend"}
+        assert agendados["manual-tit"]["pdf_bytes"] == b"%PDF-" + k_tit.encode()
+        # D1: the confirmed row's lock rides along — the extraction keeps it.
+        assert agendados["manual-tit"]["confirmado_por_atual"] == "user-1"
+        status = {r["id"]: r["status"] for r in scoped.table("certidao_resultados").select("*").execute().data}
+        assert status["manual-tit"] == status["manual-vend"] == "processando"
+        assert status["ao-vivo"] == "sucesso" and status["sumiu"] == "sucesso"
+
+    def test_sem_certidoes_tudo_zero(self, reler, scoped):
+        api, extrair, _ = reler
+        cid, aid, vid = _card(scoped)
+        resp = api.post(f"{BASE}/{cid}/certidoes/reler", json={}, headers=AUTH)
+        assert resp.status_code == 200
+        assert resp.json() == {"relidos": 0, "sem_arquivo": 0, "em_andamento": 0, "erros": 0}
+        extrair.assert_not_awaited()
+
+    def test_cliente_de_outra_org_404(self, reler, scoped):
+        api, _, _ = reler
+        _seed_tables(scoped)
+        assert api.post(f"{BASE}/{uuid4()}/certidoes/reler", json={}, headers=AUTH).status_code == 404
+
+    def test_corpo_com_campo_desconhecido_422(self, reler, scoped):
+        api, _, _ = reler
+        cid, aid, vid = _card(scoped)
+        resp = api.post(f"{BASE}/{cid}/certidoes/reler", json={"x": 1}, headers=AUTH)
         assert resp.status_code == 422

@@ -8,6 +8,7 @@
  * !!data` (indicator only) → KB § PATTERNS/frontend/lying-loading-state.md.
  */
 import { useState } from "react";
+import { FileSearch, Loader2 } from "lucide-react";
 
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -23,7 +24,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
   useCertidoesPartes, useCienciaPcen, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
-  useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
+  useRelerCertidoesCard, useRelerResultado, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
@@ -38,6 +39,8 @@ export function CertidoesPartesTab(props: {
   const emissao = useSolicitarEmissao(clienteId, atendimentoId);
   const reemitir = useReemitirResultado(clienteId);
   const ciencia = useCienciaPcen(clienteId);
+  const reler = useRelerResultado(clienteId);
+  const relerTodas = useRelerCertidoesCard(clienteId, atendimentoId);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
   const criar = useCriarLinhaPartes(clienteId);
   const renomear = useRenomearLinhaPartes(clienteId);
@@ -89,6 +92,8 @@ export function CertidoesPartesTab(props: {
     (detalhesChave && data.partes.find((p) => p.chave === detalhesChave)) || null;
 
   const fecharAdicionar = () => { setAdicionando(false); setNovoNome(""); };
+  const temArquivoManual = data.partes.some((p) => Object.values(p.celulas).some((c) => c.arquivo_manual));
+  const relendoId = reler.isPending ? (reler.variables ?? null) : null;
 
   return (
     <div className="space-y-3" data-testid="certidoes-partes">
@@ -97,8 +102,21 @@ export function CertidoesPartesTab(props: {
           Falha ao atualizar — exibindo os últimos dados carregados.
         </p>
       )}
-      {isRefreshing && (
-        <p className="text-xs text-muted-foreground" data-testid="certidoes-partes-refreshing">Atualizando…</p>
+      {(isRefreshing || temArquivoManual) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {isRefreshing ? (
+            <p className="text-xs text-muted-foreground" data-testid="certidoes-partes-refreshing">Atualizando…</p>
+          ) : <span />}
+          {temArquivoManual && (
+            <Button size="sm" variant="outline" disabled={relerTodas.isPending}
+              title="Lê de novo todos os PDFs de certidão já enviados das partes deste atendimento. Valores confirmados não são alterados."
+              onClick={() => relerTodas.mutate()}
+              data-testid="certidoes-partes-reextrair">
+              {relerTodas.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileSearch className="mr-1 h-4 w-4" />}
+              Reler todas as certidões
+            </Button>
+          )}
+        </div>
       )}
       <TooltipProvider delayDuration={200}>
         {data.partes.map((parte) => (
@@ -111,6 +129,8 @@ export function CertidoesPartesTab(props: {
             onSolicitar={(i) => emissao.mutate(i)}
             onReemitir={(id) => reemitir.mutate(id)}
             onUpload={(i) => upload.mutate(i)}
+            onReler={(id) => reler.mutate(id)}
+            relendoId={relendoId}
             onDetalhes={(p) => setDetalhesChave(p.chave)}
             onAdicionar={() => setAdicionando(true)}
             onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}

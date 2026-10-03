@@ -1770,6 +1770,7 @@ class TestAuthBoundary:
             ("get", f"{BASE}/download?url=x&filename=y"),
             ("get", f"{BASE}/consultas/consulta-001/download-zip"),
             ("post", f"{BASE}/resultados/r1/upload"),
+            ("post", f"{BASE}/resultados/r1/reler"),
             ("get", f"{BASE}/fila-tjsp"),
             ("get", f"{BASE}/resultados/r1/transcricao"),
             ("get", f"{BASE}/resultados/r1/transcricao/pdf"),
@@ -2162,3 +2163,132 @@ class TestPartePJ:
         )
         assert resp.status_code == 422
         assert db.table("certidao_consultas").inserted_payloads == []
+
+
+# ---------------------------------------------------------------------------
+# POST /resultados/{id}/reler — re-read the STORED manual PDF
+# ---------------------------------------------------------------------------
+
+_KEY = f"{CALLER_ORG}/certidoes/consulta-001/cenprot.pdf"
+
+
+class TestRelerManual:
+    @staticmethod
+    def _manual(**over) -> dict:
+        return _resultado(**{
+            "id": "r1", "tipo": "cenprot", "nome_display": "CENPROT",
+            "status": "sucesso", "arquivo_url": _KEY, "excluida_em": None,
+            "resultado_origem": "manual", "confirmado_por": "user-1",
+            "numero": "111", **over,
+        })
+
+    def test_agenda_a_extracao_com_os_bytes_armazenados_e_a_trava(
+        self, client, certidoes_db, override_service
+    ):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[self._manual()])
+        _put_blob(storage, _KEY, b"%PDF-armazenado")
+        extrair = AsyncMock(return_value={"status": "sucesso"})
+        override_service(process_manual_extraction=extrair)
+
+        resp = client.post(f"{BASE}/resultados/r1/reler")
+
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert body["status"] == "processando" and body["id"] == "r1"
+        assert "api_response" not in body
+        ekw = extrair.await_args.kwargs
+        assert ekw["pdf_bytes"] == b"%PDF-armazenado"
+        assert ekw["resultado_id"] == "r1" and ekw["tipo"] == "cenprot"
+        assert ekw["org_id"] == CALLER_ORG
+        # D1 — the SAME file: the human lock is handed through, never cleared.
+        assert ekw["resultado_origem_atual"] == "manual"
+        assert ekw["confirmado_por_atual"] == "user-1"
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert gravado["numero"] == "111" and gravado["confirmado_por"] == "user-1"
+        # No new storage object — the stored one is re-read.
+        chaves = asyncio.run(storage.list_keys(bucket=service.BUCKET, prefix=""))
+        assert list(chaves) == [_KEY]
+
+    def test_emissao_ao_vivo_e_409(self, client, certidoes_db, override_service):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[
+            self._manual(api_response={"code": 200}),
+        ])
+        _put_blob(storage, _KEY)
+        extrair = AsyncMock()
+        override_service(process_manual_extraction=extrair)
+        resp = client.post(f"{BASE}/resultados/r1/reler")
+        assert resp.status_code == 409
+        assert "enviado manualmente" in _msg(resp)
+        extrair.assert_not_awaited()
+
+    def test_sem_arquivo_e_409(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[self._manual(arquivo_url=None)])
+        override_service(process_manual_extraction=AsyncMock())
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 409
+
+    def test_ja_em_leitura_e_409(self, client, certidoes_db, override_service):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[self._manual(status="processando")])
+        _put_blob(storage, _KEY)
+        override_service(process_manual_extraction=AsyncMock())
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 409
+
+    def test_blob_sumiu_e_409(self, client, certidoes_db, override_service):
+        db, _ = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[self._manual()])
+        override_service(process_manual_extraction=AsyncMock())
+        resp = client.post(f"{BASE}/resultados/r1/reler")
+        assert resp.status_code == 409
+        assert "não foi encontrado" in _msg(resp)
+
+    def test_de_outra_org_e_404(self, client, certidoes_db, override_service):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[self._manual(org_id=OTHER_ORG)])
+        _put_blob(storage, _KEY)
+        override_service(process_manual_extraction=AsyncMock())
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 404
+
+    def test_excluida_e_404(self, client, certidoes_db, override_service):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[
+            self._manual(excluida_em="2026-10-01T00:00:00+00:00"),
+        ])
+        _put_blob(storage, _KEY)
+        override_service(process_manual_extraction=AsyncMock())
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 404
+
+    def test_releitura_ponta_a_ponta_corrige_numero_e_data(
+        self, client, certidoes_db, override_service
+    ):
+        """Real `process_manual_extraction` (its own DI seams carry the
+        reader Fake) run by the background job the route scheduled."""
+        import functools
+
+        from app.modules.certidoes.cenprot import CenprotEstrutura
+
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[
+            self._manual(resultado_origem="ia", confirmado_por=None, emitida_em="2026-10-03"),
+        ])
+        _put_blob(storage, _KEY)
+        override_service(process_manual_extraction=functools.partial(
+            service.process_manual_extraction,
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia="texto", texto_extraido="texto",
+            )),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={"resultado": "negativa"}),
+            estruturar_cenprot_fn=AsyncMock(return_value=CenprotEstrutura(
+                numero="0123456789", emitida_em="2025-06-17",
+            )),
+        ))
+
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 200
+
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert gravado["numero"] == "0123456789"
+        assert gravado["emitida_em"] == "2025-06-17"
+        assert gravado["status"] == "sucesso"

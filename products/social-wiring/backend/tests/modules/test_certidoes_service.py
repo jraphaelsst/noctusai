@@ -4790,3 +4790,165 @@ class TestCertidoesPorAlvos:
 
     def test_sem_alvos_nao_consulta_nada(self):
         assert service.certidoes_por_alvos(_db(), ORG) == {}
+
+
+# ---------------------------------------------------------------------------
+# Re-read a stored manual upload (`preparar_releitura` + the extraction it
+# feeds) — an improved reader reaches existing rows without a re-upload.
+# ---------------------------------------------------------------------------
+
+_KEY_MANUAL = f"{ORG}/certidoes/consulta-001/cenprot.pdf"
+
+
+class TestTemArquivoManual:
+    def test_chave_do_bucket_sem_api_response_e_upload_manual(self):
+        assert service.tem_arquivo_manual({"arquivo_url": _KEY_MANUAL, "api_response": None})
+
+    def test_emissao_ao_vivo_nao_e(self):
+        assert not service.tem_arquivo_manual(
+            {"arquivo_url": _KEY_MANUAL, "api_response": {"code": 200}}
+        )
+
+    def test_sem_arquivo_nao_e(self):
+        assert not service.tem_arquivo_manual({"arquivo_url": None, "api_response": None})
+
+    def test_url_da_origem_nao_e(self):
+        assert not service.tem_arquivo_manual(
+            {"arquivo_url": "https://origem.example/c.pdf", "api_response": None}
+        )
+
+
+class TestPrepararReleitura:
+    @staticmethod
+    def _row(**over):
+        return _resultado(**{
+            "tipo": "cenprot", "nome_display": "CENPROT", "status": "sucesso",
+            "arquivo_url": _KEY_MANUAL, "numero": "111", "emitida_em": "2025-01-02",
+            "resultado_origem": "manual", "confirmado_por": "user-1",
+            "estrutura_tentativas": 3, "estrutura_erro": "velho", **over,
+        })
+
+    @staticmethod
+    async def _preparar(row, db, storage):
+        async with httpx.AsyncClient() as client:
+            return await service.preparar_releitura(
+                row, org_id=ORG, db=db, storage=storage, http_client=client,
+            )
+
+    @pytest.mark.asyncio
+    async def test_marca_processando_sem_limpar_trava_nem_campos(self):
+        row = self._row()
+        db = _db(certidao_resultados=[row])
+        storage = FakeStorageBackend()
+        await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-x")
+
+        update_data, pdf = await self._preparar(row, db, storage)
+
+        assert pdf == b"%PDF-x"
+        assert update_data["status"] == "processando"
+        assert update_data["estrutura_tentativas"] == 0
+        assert update_data["estrutura_erro"] is None
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        # D1: same file, same evidence — the human lock and its values stay.
+        assert gravado["confirmado_por"] == "user-1"
+        assert gravado["resultado_origem"] == "manual"
+        assert gravado["numero"] == "111"
+        assert gravado["arquivo_url"] == _KEY_MANUAL
+        assert gravado["status"] == "processando"
+        assert gravado["api_requested_at"]
+
+    @pytest.mark.asyncio
+    async def test_emissao_ao_vivo_e_recusada_sem_escrever(self):
+        row = self._row(api_response={"code": 200})
+        db = _db(certidao_resultados=[row])
+        with pytest.raises(service.ReleituraRecusada) as exc:
+            await self._preparar(row, db, FakeStorageBackend())
+        assert exc.value.motivo == service.RELEITURA_SEM_ARQUIVO
+        assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "sucesso"
+
+    @pytest.mark.asyncio
+    async def test_ja_em_leitura_e_recusada(self):
+        row = self._row(status="processando")
+        with pytest.raises(service.ReleituraRecusada) as exc:
+            await self._preparar(row, _db(certidao_resultados=[row]), FakeStorageBackend())
+        assert exc.value.motivo == service.RELEITURA_EM_ANDAMENTO
+
+    @pytest.mark.asyncio
+    async def test_blob_ausente_e_recusada_sem_escrever(self):
+        row = self._row()
+        db = _db(certidao_resultados=[row])
+        with pytest.raises(service.ReleituraRecusada) as exc:
+            await self._preparar(row, db, FakeStorageBackend())
+        assert exc.value.motivo == service.RELEITURA_ARQUIVO_INDISPONIVEL
+        assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "sucesso"
+
+    def test_kwargs_levam_a_trava_da_propria_linha(self):
+        row = self._row()
+        kw = service.kwargs_extracao_releitura(row, b"%PDF", ORG, "db")
+        assert kw["resultado_origem_atual"] == "manual"
+        assert kw["confirmado_por_atual"] == "user-1"
+        assert kw["tipo"] == "cenprot" and kw["pdf_bytes"] == b"%PDF"
+
+
+class TestReleituraComLeitorMelhorado:
+    """The point of the feature: the improved CENPROT reader (its Fake here)
+    rewrites `numero`/`emitida_em` on an EXISTING unlocked row from the bytes
+    already stored — and never touches a human-confirmed one (D1)."""
+
+    @staticmethod
+    async def _reler(row, estruturar):
+        db = _db(
+            certidao_consultas=[_consulta_row(documento="12345678909")],
+            certidao_resultados=[row],
+        )
+        storage = FakeStorageBackend()
+        await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-armazenado")
+        async with httpx.AsyncClient() as client:
+            _marca, pdf = await service.preparar_releitura(
+                row, org_id=ORG, db=db, storage=storage, http_client=client,
+            )
+        await service.process_manual_extraction(
+            **service.kwargs_extracao_releitura(row, pdf, ORG, db),
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia="texto", texto_extraido="texto",
+            )),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={"resultado": "negativa"}),
+            estruturar_cenprot_fn=estruturar,
+        )
+        return db.table("certidao_resultados").select("*").execute().data[0]
+
+    @pytest.mark.asyncio
+    async def test_releitura_corrige_numero_e_data(self):
+        from app.modules.certidoes.cenprot import CenprotEstrutura
+
+        estruturar = AsyncMock(return_value=CenprotEstrutura(
+            numero="0123456789", emitida_em="2025-06-17",
+        ))
+        row = _resultado(
+            tipo="cenprot", nome_display="CENPROT", status="sucesso",
+            arquivo_url=_KEY_MANUAL, numero="9999", emitida_em="2026-10-03",
+            resultado_origem="ia",
+        )
+        gravado = await self._reler(row, estruturar)
+        assert gravado["numero"] == "0123456789"
+        assert gravado["emitida_em"] == "2025-06-17"
+        assert gravado["status"] == "sucesso"
+        assert estruturar.await_args.args[0] == b"%PDF-armazenado"
+
+    @pytest.mark.asyncio
+    async def test_valor_confirmado_por_humano_nao_e_sobrescrito(self):
+        from app.modules.certidoes.cenprot import CenprotEstrutura
+
+        estruturar = AsyncMock(return_value=CenprotEstrutura(
+            numero="0123456789", emitida_em="2025-06-17",
+        ))
+        row = _resultado(
+            tipo="cenprot", nome_display="CENPROT", status="sucesso",
+            arquivo_url=_KEY_MANUAL, numero="CONFIRMADO", emitida_em="2025-01-01",
+            resultado_origem="ia", confirmado_por="user-1",
+        )
+        gravado = await self._reler(row, estruturar)
+        assert gravado["numero"] == "CONFIRMADO"
+        assert gravado["emitida_em"] == "2025-01-01"
+        estruturar.assert_not_awaited()

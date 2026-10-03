@@ -111,6 +111,15 @@ class TestCelula:
         )
         assert c["status"] == "constam"
 
+    def test_arquivo_manual_so_para_upload_no_bucket(self):
+        """The FE shows "Ler o documento novamente" off this flag: a stored
+        key with no `api_response` is a human's upload; a live emission is not."""
+        base = {"id": "r", "status": "sucesso", "arquivo_url": "org/certidoes/c/x.pdf"}
+        assert svc.montar_celula("serasa", {**base, "api_response": None}, HOJE, 30)["arquivo_manual"] is True
+        ao_vivo = svc.montar_celula("cnd_federal", {**base, "api_response": {"code": 200}}, HOJE, 30)
+        assert ao_vivo["arquivo_manual"] is False and ao_vivo["tem_arquivo"] is True
+        assert svc.montar_celula("trf3", None, HOJE, 30)["arquivo_manual"] is False
+
     def test_placeholder_de_consulta_manual_le_origem_manual(self):
         placeholder = {"id": "r", "status": "pendente", "consulta_origem": "manual"}
         assert svc.montar_celula("serasa", placeholder, HOJE, 30)["origem"] == "manual"
@@ -181,7 +190,7 @@ class TestMontar:
         assert set(parte["celulas"]["cnd_federal"]) == {
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
-            "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_nome", "origem",
+            "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "arquivo_nome", "origem",
             "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia",
         }
 

@@ -12,6 +12,7 @@
     GET    /api/certidoes/download                       one file, proxied
     GET    /api/certidoes/consultas/{id}/download-zip    all of them, zipped
     POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline (async extraction)
+    POST   /api/certidoes/resultados/{id}/reler          re-read the stored manual PDF (lock kept)
     GET    /api/certidoes/fila-tjsp                      queue + live cooldown
     POST   /api/certidoes/consultas/{id}/vincular-parte  attach to an atendimento_parte
     GET    /api/certidoes/partes/{id}/resultados          every certidão for one parte
@@ -1137,6 +1138,73 @@ async def upload_certidao_manual(
     )
 
     return success_response({**resultado, **update_data})
+
+
+@router.post("/resultados/{resultado_id}/reler")
+async def reler_certidao_manual(
+    resultado_id: str,
+    background_tasks: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    db=Depends(get_certidoes_client),
+    storage: StorageBackend = Depends(get_storage_backend),
+    svc: CertidoesService = Depends(get_certidoes_service),
+):
+    """Re-read the PDF a human already uploaded — the same extraction the
+    upload schedules, on the bytes already in the bucket (no new object).
+
+    Exists because a reader that improves (the CENPROT reader) could
+    otherwise never reach an existing row without a re-upload, and
+    "Re-emitir" is a NEW live query dated today — wrong for a historical
+    deal. Same response shape as `upload_certidao_manual` (the resultado
+    as `processando`; the extraction runs as a `BackgroundTasks` job).
+
+    🔴 D1: unlike the upload, the human lock is KEPT — same file, same
+    evidence — so a confirmed/manual value is never overwritten; the
+    extraction receives the row's own `resultado_origem`/`confirmado_por`.
+
+    404 for a resultado absent from this org (or soft-deleted); 409 when it
+    carries no manually uploaded file (a live emission), is already being
+    read, or its stored blob is gone — `service.preparar_releitura`.
+
+    The INFO line is the actor/when trace — this product has no audit-log
+    table (see `excluir_consulta`'s note); no PII, ids only.
+    """
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+
+    resultado_rows = (
+        db.table(RESULTADOS)
+        .select(service.RELEITURA_COLUNAS)
+        .eq("id", resultado_id)
+        .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
+        .execute()
+    ).data or []
+    if not resultado_rows:
+        raise HTTPException(status_code=404, detail="Resultado não encontrado")
+    resultado = resultado_rows[0]
+
+    try:
+        async with httpx.AsyncClient() as client:
+            update_data, pdf_bytes = await svc.preparar_releitura(
+                resultado, org_id=str(org_id), db=db, storage=storage,
+                http_client=client,
+            )
+    except service.ReleituraRecusada as exc:
+        raise HTTPException(status_code=409, detail=exc.mensagem) from exc
+
+    background_tasks.add_task(
+        svc.process_manual_extraction,
+        **service.kwargs_extracao_releitura(resultado, pdf_bytes, str(org_id), db),
+    )
+
+    logger.info(
+        "certidoes: resultado relido user_id=%s org_id=%s resultado_id=%s tipo=%s",
+        _user.id, org_id, resultado_id, resultado.get("tipo"),
+    )
+
+    publico = {k: v for k, v in resultado.items() if k != "api_response"}
+    return success_response({**publico, **update_data})
 
 
 @router.get("/fila-tjsp")

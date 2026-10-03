@@ -4,7 +4,8 @@ integration patch (CONTRACT §10; `card_hub/router.py` includes this `router`).
 Paths (final): `GET /{cliente_id}/certidoes/partes`,
 `POST /{cliente_id}/certidoes/partes/{kind}/{alvo_id}/emissao`,
 `POST /{cliente_id}/certidoes/resultados/{resultado_id}/reemitir`,
-`POST /{cliente_id}/certidoes/celulas`. Raw-dict responses, no `{"data":…}`
+`POST /{cliente_id}/certidoes/celulas`,
+`POST /{cliente_id}/certidoes/reler`. Raw-dict responses, no `{"data":…}`
 envelope (card routes' convention, CONTRACT §0). All the logic lives in
 `certidoes_partes_service`; this file only unpacks auth, schedules the
 background InfoSimples run for the two emission routes, and sets status codes.
@@ -15,6 +16,9 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
+import logging
+
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from noctusai_lib.integrations.storage import StorageBackend
 
@@ -26,6 +30,7 @@ from app.modules.card_hub.certidoes_partes_schemas import (
     CienciaPcenBody,
     EmissaoBody,
     ReemitirBody,
+    RelerBody,
 )
 from app.modules.card_hub.deps import get_card_hub_client
 from app.modules.certidoes.deps import (
@@ -33,6 +38,8 @@ from app.modules.certidoes.deps import (
     get_certidoes_service,
     get_storage_backend,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -123,3 +130,34 @@ async def garantir_celula_route(
     )
     response.status_code = 201 if criado else 200
     return out
+
+
+@router.post("/{cliente_id}/certidoes/reler")
+async def reler_certidoes_route(
+    cliente_id: UUID,
+    body: RelerBody,
+    background_tasks: BackgroundTasks,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_card_hub_client),
+    storage: StorageBackend = Depends(get_storage_backend),
+    certidoes: CertidoesService = Depends(get_certidoes_service),
+) -> dict:
+    """Re-read every manually uploaded certidão of the card's parties on the
+    files already stored — `POST /api/certidoes/resultados/{id}/reler` for
+    the whole card. Counts come back now; the extractions run as
+    `BackgroundTasks` jobs, sequentially. Human-confirmed values are kept
+    (D1). The INFO line is the actor/when trace (no audit table)."""
+    user, org_id = auth_parts(auth)
+    async with httpx.AsyncClient() as http_client:
+        contagem, extracoes = await svc.reler_certidoes_do_card(
+            client, org_id, cliente_id,
+            atendimento_id=body.atendimento_id, storage=storage,
+            http_client=http_client, preparar=certidoes.preparar_releitura,
+        )
+    for kwargs in extracoes:
+        background_tasks.add_task(certidoes.process_manual_extraction, **kwargs)
+    logger.info(
+        "certidoes: card relido user_id=%s org_id=%s cliente_id=%s %s",
+        user.id, org_id, cliente_id, contagem,
+    )
+    return contagem

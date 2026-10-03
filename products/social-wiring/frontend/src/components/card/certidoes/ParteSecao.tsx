@@ -4,7 +4,7 @@
  * when open): that party's levantamento table with per-row actions.
  */
 import { Fragment, useRef, useState } from "react";
-import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronRight, ExternalLink, FileSearch, Loader2, Pencil, RefreshCw, Trash2, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -37,6 +37,10 @@ export interface ParteSecaoProps {
   onSolicitar: (input: SolicitarEmissaoInput) => void;
   onReemitir: (resultadoId: string) => void;
   onUpload: (input: UploadCelulaInput) => void;
+  /** Re-read the PDF already uploaded for this certidão (no new file). */
+  onReler: (resultadoId: string) => void;
+  /** The resultado whose re-read request is in flight, if any. */
+  relendoId: string | null;
   onDetalhes: (parte: CertidaoParte) => void;
   onAdicionar: () => void;
   onRenomear: (linha: CertidaoParteLinha) => void;
@@ -238,6 +242,18 @@ export function ParteSecao(p: ParteSecaoProps) {
                               <Upload className="mr-1 h-3 w-3" />
                               Enviar PDF
                             </Button>
+                            {c.arquivo_manual && c.resultado_id && c.status_processamento !== "processando" && (
+                              <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
+                                disabled={p.relendoId === c.resultado_id}
+                                title="Lê de novo o PDF já enviado, com o leitor mais recente. Valores confirmados não são alterados."
+                                onClick={() => p.onReler(c.resultado_id as string)}
+                                data-testid={`parte-linha-${parte.chave}-${linha.chave}-reextrair`}>
+                                {p.relendoId === c.resultado_id
+                                  ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                  : <FileSearch className="mr-1 h-3 w-3" />}
+                                Ler o documento novamente
+                              </Button>
+                            )}
                             {c.tem_arquivo && c.resultado_id && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => abrirArquivo(c.resultado_id as string)}>
                                 Ver PDF

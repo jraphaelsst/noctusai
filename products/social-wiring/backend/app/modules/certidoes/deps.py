@@ -151,6 +151,7 @@ class CertidoesService:
     renderizar_transcricao_pdf: Callable
     soft_delete_consulta: Callable
     restaurar_consulta: Callable
+    preparar_releitura: Callable
 
 
 def _build_default_service() -> CertidoesService:
@@ -185,6 +186,7 @@ def _build_default_service() -> CertidoesService:
         renderizar_transcricao_pdf=service.renderizar_transcricao_pdf,
         soft_delete_consulta=service.soft_delete_consulta,
         restaurar_consulta=service.restaurar_consulta,
+        preparar_releitura=service.preparar_releitura,
     )
 
 

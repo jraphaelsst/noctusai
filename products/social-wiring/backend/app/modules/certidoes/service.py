@@ -2864,6 +2864,121 @@ async def _retomar_extracao_manual(
     )
 
 
+# --------------- Re-read a stored manual upload ---------------
+#
+# An uploaded certidão PDF used to be readable exactly once — at upload. A
+# reader that improves later (the CENPROT region-crop reader is the case
+# that surfaced this) could never reach the rows that already exist without
+# somebody re-uploading every file, and "Re-emitir" is a NEW live query that
+# stamps TODAY's date, wrong for a historical deal. The re-read runs the SAME
+# `process_manual_extraction` on the bytes already in the bucket.
+
+#: What a re-read needs off a resultado: the stored-manual-file discriminator
+#: (`arquivo_url` + `api_response`), the human lock (`resultado_origem` /
+#: `confirmado_por`), and what `process_manual_extraction` takes.
+RELEITURA_COLUNAS = (
+    "id, consulta_id, tipo, nome_display, status, arquivo_url, api_response, "
+    "resultado_origem, confirmado_por"
+)
+
+RELEITURA_SEM_ARQUIVO = "sem_arquivo"
+RELEITURA_EM_ANDAMENTO = "em_andamento"
+RELEITURA_ARQUIVO_INDISPONIVEL = "arquivo_indisponivel"
+
+
+class ReleituraRecusada(Exception):
+    """A resultado that cannot be re-read — `motivo` is one of the
+    `RELEITURA_*` codes, `mensagem` the pt-BR text a caller shows."""
+
+    def __init__(self, motivo: str, mensagem: str) -> None:
+        super().__init__(mensagem)
+        self.motivo = motivo
+        self.mensagem = mensagem
+
+
+def tem_arquivo_manual(row: dict) -> bool:
+    """True exactly when `row` carries a MANUALLY UPLOADED file in our bucket.
+
+    `process_manual_upload` always writes a bucket key AND clears
+    `api_response`; every live InfoSimples write (`_process_single_certidao`
+    and the 2ª-via retry) stamps `api_response`. So a stored key with no
+    `api_response` is a human's upload — the only kind a re-read may touch:
+    a live emission's structured fields came from the registry's own
+    response, and re-deriving them from the PDF text would demote that.
+    """
+    return bool(
+        is_storage_key(row.get("arquivo_url")) and row.get("api_response") is None
+    )
+
+
+async def preparar_releitura(
+    row: dict,
+    *,
+    org_id: str,
+    db,
+    storage: StorageBackend,
+    http_client: httpx.AsyncClient,
+) -> tuple[dict, bytes]:
+    """Validate a resultado for a re-read, fetch its stored bytes, and mark it
+    `processando` — the synchronous half; the caller schedules
+    `process_manual_extraction` with the returned bytes.
+
+    Unlike `process_manual_upload`, NOTHING is cleared: the file is the SAME
+    evidence, so a human lock (`resultado_origem='manual'` / `confirmado_por`)
+    still owns the structured fields — `process_manual_extraction` honours it
+    when handed the row's own values (owner decision D1). Only the
+    in-flight markers move: `api_requested_at` (so `recover_stale_
+    processando` retries an interrupted re-read exactly as it does an
+    interrupted upload) and the extraction-leg status, reset so the retry
+    budget starts fresh for this new read.
+
+    Raises `ReleituraRecusada` — never writes — when the row has no stored
+    manual file, is already being read, or its blob is gone.
+    """
+    if not tem_arquivo_manual(row):
+        raise ReleituraRecusada(
+            RELEITURA_SEM_ARQUIVO,
+            "Esta certidão não tem um PDF enviado manualmente para ler novamente.",
+        )
+    if row.get("status") == "processando":
+        raise ReleituraRecusada(
+            RELEITURA_EM_ANDAMENTO, "Esta certidão já está sendo lida.",
+        )
+    pdf_bytes = await read_certidao_bytes(row["arquivo_url"], storage, http_client)
+    if not pdf_bytes:
+        raise ReleituraRecusada(
+            RELEITURA_ARQUIVO_INDISPONIVEL,
+            "O PDF armazenado desta certidão não foi encontrado.",
+        )
+    update_data = {
+        "status": "processando",
+        "api_requested_at": datetime.now(timezone.utc).isoformat(),
+        "erro_mensagem": None,
+        "estrutura_erro": None,
+        "estrutura_tentativas": 0,
+    }
+    db.table(RESULTADOS).update(update_data).eq("id", row["id"]).eq(
+        "org_id", str(org_id)
+    ).execute()
+    return update_data, pdf_bytes
+
+
+def kwargs_extracao_releitura(row: dict, pdf_bytes: bytes, org_id: str, db) -> dict:
+    """The `process_manual_extraction` kwargs for a re-read — the row's OWN
+    lock values (D1), never the upload's cleared `None`s."""
+    return {
+        "pdf_bytes": pdf_bytes,
+        "resultado_id": row["id"],
+        "consulta_id": row["consulta_id"],
+        "nome_display": row.get("nome_display") or row.get("tipo") or "certidão",
+        "org_id": str(org_id),
+        "db": db,
+        "tipo": row.get("tipo"),
+        "resultado_origem_atual": row.get("resultado_origem"),
+        "confirmado_por_atual": row.get("confirmado_por"),
+    }
+
+
 # --------------- TJSP On-Demand Scheduler ---------------
 #
 # Instead of polling every N seconds, TJSP items are scheduled to fire at the
@@ -3859,7 +3974,12 @@ __all__ = [
     "CONSULTAS",
     "RESULTADOS",
     "RESULTADO_ACESSOS",
+    "RELEITURA_ARQUIVO_INDISPONIVEL",
+    "RELEITURA_COLUNAS",
+    "RELEITURA_EM_ANDAMENTO",
+    "RELEITURA_SEM_ARQUIVO",
     "RESULTADO_COLUNAS_SEM_TEXTO",
+    "ReleituraRecusada",
     "STALE_PROCESSANDO_SECONDS",
     "TJSP_COOLDOWN_SECONDS",
     "TJSP_TIPO",
@@ -3873,6 +3993,8 @@ __all__ = [
     "confirmar_resultado",
     "delete_storage_files",
     "is_storage_key",
+    "kwargs_extracao_releitura",
+    "preparar_releitura",
     "mint_resultado_url",
     "obter_transcricao_resultado",
     "process_manual_upload",
@@ -3888,5 +4010,6 @@ __all__ = [
     "schedule_tjsp_for_org",
     "status_counts_por_consulta",
     "storage_key",
+    "tem_arquivo_manual",
     "tjsp_cooldown_status",
 ]
