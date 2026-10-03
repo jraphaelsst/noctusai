@@ -1,5 +1,7 @@
 # social-wiring-contract-automation-2026-09 — Promessa de Venda e Compra generated from the funnel card
 
+> **Status 2026-10-03:** parts of this roadmap are stale — see `sw-contract-reliability-2026-10.md` § "Superseded lines in older roadmaps" for what changed (single legal review per contract, Q-endereco resolved, P0c–P4 ran).
+
 > **Durable record** (per `KB § PATTERNS/common/roadmap-tracking.md`).
 > Origin: the office assembles every "Instrumento Particular de Promessa de Venda e Compra de Bem Imóvel" by hand-copying the previous contract, and the 8 signed samples carry numbering, reference, extenso, gender-agreement and price errors.
 > Decision: **ship the structured data (F1–F4) and a generator that refuses with a named missing-data list (F5) now; fill the missing fields (F6), apply the office's policy answers and enforce retention when their triggers fire.**

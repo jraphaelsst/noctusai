@@ -1,5 +1,7 @@
 # sw-drive-extraction-2026-09 — real deal folders → trusted extraction → correct contracts
 
+> **Status 2026-10-03:** parts of this roadmap are stale — see `sw-contract-reliability-2026-10.md` § "Superseded lines in older roadmaps" for what changed (single legal review per contract, Q-endereco resolved, P0c–P4 ran).
+
 > Durable record (`KB § PATTERNS/common/roadmap-tracking.md`). Origin: 2026-09-23/24 owner session
 > (noctusai-3e). Follows `project-history/roadmaps/sw-extraction-contract-gate-2026-09.md` (D1–D4 stay in force).
 > Source: the owner's shared Drive folder "2 - PROCESSOS EM ANDAMENTO" (~40 deal folders 685→897 + two

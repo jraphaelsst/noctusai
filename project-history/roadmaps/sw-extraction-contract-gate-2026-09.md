@@ -1,5 +1,7 @@
 # sw-extraction-contract-gate-2026-09 — file extraction feeds 100% of the contract + human validation gate
 
+> **Status 2026-10-03:** parts of this roadmap are stale — see `sw-contract-reliability-2026-10.md` § "Superseded lines in older roadmaps" for what changed (single legal review per contract, Q-endereco resolved, P0c–P4 ran).
+
 > Durable record (`KB § PATTERNS/common/roadmap-tracking.md`). Origin: 2026-09-22 owner session —
 > "make sure all data a contract needs is correctly extracted from files and stored on the DB";
 > contract generation itself was validated 100% by a previous session.
