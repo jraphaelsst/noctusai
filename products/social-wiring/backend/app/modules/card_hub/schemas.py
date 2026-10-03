@@ -426,6 +426,22 @@ class ProcessoLegadoBody(StrictHttpModel):
 # ─── Negociação estruturada (migration 108) ──────────────────────────────
 
 
+class ParcelaFavorecidoDivisaoBody(StrictHttpModel):
+    """[Migration 192] One share of a parcela split among several
+    favorecidos — a `valor` OR a `percentual` of the parcela (never both;
+    both blank = not decided yet, the generator names it)."""
+
+    favorecido_id: UUID
+    valor: Optional[Decimal] = Field(default=None, gt=0)
+    percentual: Optional[Decimal] = Field(default=None, gt=0, le=100)
+
+    @model_validator(mode="after")
+    def _valor_ou_percentual(self) -> "ParcelaFavorecidoDivisaoBody":
+        if self.valor is not None and self.percentual is not None:
+            raise ValueError("informe valor OU percentual, não os dois")
+        return self
+
+
 class ParcelaCreateBody(StrictHttpModel):
     """One structured installment. `favorecido_id` is validated in the
     service against THIS atendimento — see migration 108's header for why
@@ -446,6 +462,14 @@ class ParcelaCreateBody(StrictHttpModel):
     #: `tipo='permuta'` only — the `permuta_ativos` (natureza permuta_imovel)
     #: this parcela is paid with. One swap can hand over several matrículas.
     permuta_ativo_ids: list[UUID] = Field(default_factory=list, max_length=20)
+    #: [Migration 192] `tipo='financiamento'` only — the FGTS portion of the
+    #: parcela (financed part = valor - valor_fgts).
+    valor_fgts: Optional[Decimal] = Field(default=None, gt=0)
+    #: [Migration 192] sinal/intermediaria/direta/saldo only — the parcela
+    #: split among >= 2 favorecidos; mutually exclusive with `favorecido_id`.
+    favorecidos_divisao: list[ParcelaFavorecidoDivisaoBody] = Field(
+        default_factory=list, max_length=20
+    )
 
 
 class ParcelaPatchBody(StrictHttpModel):
@@ -468,6 +492,12 @@ class ParcelaPatchBody(StrictHttpModel):
     dispara_corretagem: Optional[bool] = None
     permuta_ativo_ids: Optional[list[UUID]] = Field(default=None, max_length=20)
     ordem: Optional[int] = None
+    #: [Migration 192] Explicit `null` clears it.
+    valor_fgts: Optional[Decimal] = Field(default=None, gt=0)
+    #: [Migration 192] When sent, REPLACES the split (`[]` removes it).
+    favorecidos_divisao: Optional[list[ParcelaFavorecidoDivisaoBody]] = Field(
+        default=None, max_length=20
+    )
 
 
 class ParcelasDividirBody(StrictHttpModel):
@@ -593,7 +623,10 @@ class TermosNegocioPutBody(StrictHttpModel):
     obrigacoes_vendedor: Optional[str] = Field(default=None, max_length=4000)
 
     onus_quitacao: Optional[
-        Literal["compradores_prazo", "interveniente_quitante", "parcela", "ja_quitado"]
+        Literal[
+            "compradores_prazo", "interveniente_quitante", "parcela", "ja_quitado",
+            "vendedores_boleto",
+        ]
     ] = None
     onus_prazo_dias: Optional[int] = None
 

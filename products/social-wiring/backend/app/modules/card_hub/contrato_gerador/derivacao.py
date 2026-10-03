@@ -37,7 +37,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
@@ -60,6 +60,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Parcela,
     Pessoa,
     parcela_permuta,
+    parcelas_permuta,
     signatarios,
 )
 from app.modules.card_hub.contrato_gerador.numeracao import num2
@@ -588,24 +589,66 @@ def parcelas_ordenadas(d: DadosContrato) -> list[Parcela]:
     return sorted(d.parcelas, key=lambda p: p.ordem)
 
 
+def grupos_de_parcelas(d: DadosContrato) -> list[list[Parcela]]:
+    """The PRINTED parcelas — one list per "Parcela NN" line, in schedule
+    order. Two shapes print several stored parcelas as ONE line, both read
+    off the office's signed contracts (clause catalog §2):
+
+    - consecutive `sinal` parcelas: the sinal paid in tranches inside
+      Parcela 01 ("Sinal e princípio de pagamento: {TOTAL}, a serem pagos da
+      seguinte forma: {A} no ato da assinatura …, e {B} …" — the only signed
+      shape with more than one sinal payment; no contract labels two
+      parcelas "Sinal"). Non-consecutive sinais are NOT folded — the gate
+      refuses them (`SINAIS_NAO_CONSECUTIVOS`).
+    - an `fgts` parcela next to exactly ONE `financiamento` parcela: FGTS is
+      printed inside the financing parcela with the split amounts in every
+      signed contract that names it (5 deals; 0 print it as its own
+      parcela). The fgts parcela joins the financing parcela's line; any
+      other fgts shape is refused (`derivacao._financiamento`).
+
+    Every number the contract prints — the parcela lines, the posse marco,
+    the corretagem marcos, the sinal/financiamento references — is computed
+    from these groups, so a folded parcela never leaves a gap."""
+    ordenadas = parcelas_ordenadas(d)
+    fins = [p for p in ordenadas if p.tipo == "financiamento"]
+    fgts = [p for p in ordenadas if p.tipo == "fgts"]
+    fgts_dobrado = fgts[0] if len(fins) == 1 and len(fgts) == 1 else None
+    grupos: list[list[Parcela]] = []
+    for p in ordenadas:
+        if p is fgts_dobrado:
+            continue
+        if p.tipo == "sinal" and grupos and grupos[-1][0].tipo == "sinal":
+            grupos[-1].append(p)
+            continue
+        grupos.append([p])
+        if fgts_dobrado is not None and p is fins[0]:
+            grupos[-1].append(fgts_dobrado)
+    return grupos
+
+
+def numeros_impressos(d: DadosContrato) -> dict[str, str]:
+    """`{parcela_id: printed number}` — a folded parcela carries its line's
+    number (`grupos_de_parcelas`)."""
+    return {
+        p.id: num2(i) for i, grupo in enumerate(grupos_de_parcelas(d), start=1) for p in grupo
+    }
+
+
 def numero_da_parcela(d: DadosContrato, parcela_id: Optional[str]) -> Optional[str]:
     """The printed number (`num2`) of the parcela an id NAMES, or None when it
     names one that is not in this deal. Used for [§6.1 #12]'s posse marco:
     the clause cites a COMPUTED number, never a typed one."""
     if not parcela_id:
         return None
-    for i, p in enumerate(parcelas_ordenadas(d), start=1):
-        if p.id == parcela_id:
-            return num2(i)
-    return None
+    return numeros_impressos(d).get(parcela_id)
 
 
 def parcelas_antes_de(d: DadosContrato, parcela_id: Optional[str]) -> list[str]:
     """The numbers of the parcelas that fall BEFORE the marco parcela — the
     posse condition ("com a condição que as parcelas 01 e 02 …")."""
     numeros: list[str] = []
-    for i, p in enumerate(parcelas_ordenadas(d), start=1):
-        if p.id == parcela_id:
+    for i, grupo in enumerate(grupos_de_parcelas(d), start=1):
+        if any(p.id == parcela_id for p in grupo):
             return numeros
         numeros.append(num2(i))
     return []
@@ -616,8 +659,28 @@ def corretagem_marcos(d: DadosContrato) -> list[str]:
     as computed numbers — the marco is `Parcela.dispara_corretagem` (114),
     never a typed parcela index."""
     return [
-        num2(i) for i, p in enumerate(parcelas_ordenadas(d), start=1) if p.dispara_corretagem
+        num2(i)
+        for i, grupo in enumerate(grupos_de_parcelas(d), start=1)
+        if any(p.dispara_corretagem for p in grupo)
     ]
+
+
+def valores_da_divisao(p: Parcela) -> list[Optional[Decimal]]:
+    """[Migration 192] Each share's amount in reais: its `valor`, or its
+    `percentual` of the parcela rounded to the cent (the office prints both,
+    "{VALOR}, correspondentes a {PCT}% … da parcela"). `None` when the share
+    has neither yet. Whether they add up to the parcela is the gate's call
+    (`DIVISAO_SOMA_DIVERGE` / `DIVISAO_PERCENTUAL_INEXATO`) — nothing here
+    absorbs a rounding cent into some share."""
+    saida: list[Optional[Decimal]] = []
+    for q in p.divisao:
+        if q.valor is not None:
+            saida.append(q.valor)
+        elif q.percentual is not None and p.valor is not None:
+            saida.append((p.valor * q.percentual / Decimal("100")).quantize(Decimal("0.01"), ROUND_HALF_UP))
+        else:
+            saida.append(None)
+    return saida
 
 
 def certidoes_imovel(d: DadosContrato) -> tuple[CertidaoImovel, ...]:
@@ -1246,6 +1309,12 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             av.bloqueia("ONUS_QUITACAO_INVALIDA", f"Forma de quitação desconhecida: {termos.onus_quitacao}.")
         elif termos.onus_quitacao == "compradores_prazo" and not termos.onus_prazo_dias:
             av.falta("negociacao.onus_prazo_dias", "Prazo (dias) para os compradores quitarem o saldo", "negociacao")
+        elif termos.onus_quitacao == frases.QUITACAO_ONUS_VENDEDORES_BOLETO and not termos.onus_prazo_dias:
+            av.falta(
+                "negociacao.onus_prazo_dias",
+                "Prazo (dias) para os vendedores quitarem o saldo por boleto",
+                "negociacao",
+            )
         elif termos.onus_quitacao == "parcela" and not any(p.tipo == "saldo" for p in d.parcelas):
             av.bloqueia("ONUS_QUITACAO_SEM_PARCELA_SALDO", "A quitação do ônus é por parcela, mas não há parcela de saldo.")
 
@@ -1284,7 +1353,21 @@ def _certidoes_do_imovel(
             )
 
 
-def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura: date) -> None:
+def _negociacao(
+    av: Avaliacao,
+    d: DadosContrato,
+    sw: dict[str, bool],
+    assinatura: date,
+    *,
+    agrupar_parcelas: bool = False,
+) -> None:
+    """`agrupar_parcelas` — the caller prints parcelas through
+    `grupos_de_parcelas` (the contract itself, `avaliar`): several sinais
+    become one tranche line and an fgts parcela joins the financing line,
+    so both are accepted. A caller that prints one line per stored parcela
+    (the aditivo's restated schedule, `contrato_aditivo.avaliacao`) keeps the
+    default `False` and with it the refusal of what it cannot print
+    (`MAIS_DE_UM_SINAL`, an fgts parcela with no moment)."""
     if d.valor_negociado is None:
         av.falta("negociacao.valor_negociado", "Valor negociado", "negociacao")
     parcelas = parcelas_ordenadas(d)
@@ -1294,38 +1377,44 @@ def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura
         sinais = [p for p in parcelas if p.tipo == "sinal"]
         if not sinais:
             av.falta("negociacao.parcela_sinal", "Parcela de sinal", "negociacao")
+        elif len(sinais) > 1 and agrupar_parcelas:
+            _sinal_em_parcelas(av, d, sinais)
         elif len(sinais) > 1:
             av.bloqueia("MAIS_DE_UM_SINAL", "O contrato admite exatamente uma parcela de sinal.")
-        if len([p for p in parcelas if p.tipo == "permuta"]) > 1:
-            # The permuta clauses speak about "the" permuta parcela; with two,
-            # which one they mean is a guess.
-            av.bloqueia("MAIS_DE_UMA_PARCELA_PERMUTA", "O contrato admite no máximo uma parcela de permuta.")
 
     favorecidos = {f.id: f for f in d.favorecidos}
     cpfs_vendedores = {frases.so_digitos(p.cpf) for p in signatarios(d.vendedores) if p.cpf}
+    numeros = (
+        numeros_impressos(d)
+        if agrupar_parcelas
+        else {p.id: num2(i) for i, p in enumerate(parcelas, start=1)}
+    )
+    sem_momento_proprio = ("permuta", "fgts") if agrupar_parcelas else ("permuta",)
     ultimo_venc: Optional[date] = None
-    for i, p in enumerate(parcelas, start=1):
-        rot = f"Parcela {num2(i)}"
+    for p in parcelas:
+        rot = f"Parcela {numeros[p.id]}"
         if p.valor is None or p.valor <= 0:
             av.falta(f"negociacao.parcela.{p.id}.valor", f"Valor da {rot}", "negociacao")
-        if not p.vencimento and not (p.evento or "").strip() and p.tipo != "permuta":
+        if not p.vencimento and not (p.evento or "").strip() and p.tipo not in sem_momento_proprio:
             # A permuta parcela is settled by the deed, not on a date: its
-            # wording carries the imóveis, never a vencimento/evento.
+            # wording carries the imóveis, never a vencimento/evento. An fgts
+            # parcela prints inside the financing parcela, on ITS moment
+            # (`grupos_de_parcelas`; any other fgts shape is refused).
             av.falta(f"negociacao.parcela.{p.id}.momento", f"Vencimento ou evento da {rot}", "negociacao")
+        if p.divisao:
+            _divisao(av, p, rot, favorecidos, cpfs_vendedores)
         if p.tipo in TIPOS_PAGOS_A_FAVORECIDO:
-            if not p.favorecido_id:
+            # A divided parcela's payees are its shares (`_divisao` above).
+            if p.divisao:
+                pass
+            elif not p.favorecido_id:
                 av.falta(f"negociacao.parcela.{p.id}.favorecido", f"Favorecido da {rot}", "negociacao")
             else:
                 fav = favorecidos.get(p.favorecido_id)
                 if fav is None:
                     av.bloqueia("FAVORECIDO_INEXISTENTE", f"O favorecido da {rot} não existe mais.")
                 else:
-                    if not fav.conta and not fav.pix:
-                        av.falta(f"negociacao.favorecido.{fav.id}.conta", f"Conta ou chave PIX de {fav.nome}", "negociacao")
-                    if fav.conta and not (fav.banco and fav.agencia):
-                        av.falta(f"negociacao.favorecido.{fav.id}.banco", f"Banco e agência de {fav.nome}", "negociacao")
-                    if frases.so_digitos(fav.cpf_cnpj) not in cpfs_vendedores:
-                        av.avisa("FAVORECIDO_TERCEIRO", f"{fav.nome} ({rot}) não é um dos vendedores.")
+                    _checar_favorecido(av, fav, rot, cpfs_vendedores)
             if not (p.forma_pagamento or "").strip():
                 av.falta(f"negociacao.parcela.{p.id}.forma_pagamento", f"Forma de pagamento da {rot}", "negociacao")
         if "financiamento" in (p.evento or "").lower() and not sw["tem_financiamento"]:
@@ -1365,6 +1454,124 @@ def _negociacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], assinatura
                 av.bloqueia("CONFISSAO_VENCIMENTO_PASSADO", f"A Parcela {num2(i)} da confissão vence antes da assinatura.")
 
 
+def _checar_favorecido(av: Avaliacao, fav, rot: str, cpfs_vendedores: set[str]) -> None:
+    """The account a favorecido is paid into must be printable (spec §5.1),
+    whether it receives a whole parcela or one share of it (192)."""
+    if not fav.conta and not fav.pix:
+        av.falta(f"negociacao.favorecido.{fav.id}.conta", f"Conta ou chave PIX de {fav.nome}", "negociacao")
+    if fav.conta and not (fav.banco and fav.agencia):
+        av.falta(f"negociacao.favorecido.{fav.id}.banco", f"Banco e agência de {fav.nome}", "negociacao")
+    if frases.so_digitos(fav.cpf_cnpj) not in cpfs_vendedores:
+        av.avisa("FAVORECIDO_TERCEIRO", f"{fav.nome} ({rot}) não é um dos vendedores.")
+
+
+def _divisao(
+    av: Avaliacao, p: Parcela, rot: str, favorecidos: dict, cpfs_vendedores: set[str]
+) -> None:
+    """[Migration 192] One parcela paid to several favorecidos (6 signed
+    deals). Every share names an existing favorecido with a printable
+    account and ONE amount kind; the shares must add up to the parcela
+    EXACTLY — a mismatch is the deal's own data disagreeing with itself
+    (same footing as `SOMA_PARCELAS_DIFERENTE_DO_PRECO`)."""
+    if p.tipo not in TIPOS_PAGOS_A_FAVORECIDO:
+        av.bloqueia(
+            "DIVISAO_EM_PARCELA_SEM_FAVORECIDO",
+            f"A {rot} não é paga em conta (tipo {p.tipo}) e não pode ser dividida entre favorecidos.",
+        )
+        return
+    if p.favorecido_id:
+        av.bloqueia(
+            "FAVORECIDO_E_DIVISAO",
+            f"A {rot} tem um favorecido único E uma divisão entre favorecidos — deixe só um dos dois.",
+        )
+    if len(p.divisao) < 2:
+        av.bloqueia(
+            "DIVISAO_COM_UM_FAVORECIDO",
+            f"A divisão da {rot} tem um só favorecido — use o favorecido da parcela.",
+        )
+    vistos: set[str] = set()
+    for n, q in enumerate(p.divisao, start=1):
+        alvo = f"negociacao.parcela.{p.id}.divisao.{n}"
+        if not q.favorecido_id:
+            av.falta(f"{alvo}.favorecido", f"Favorecido {n} da divisão da {rot}", "negociacao")
+        elif q.favorecido_id in vistos:
+            av.bloqueia("DIVISAO_FAVORECIDO_REPETIDO", f"Um favorecido aparece duas vezes na divisão da {rot}.")
+        else:
+            vistos.add(q.favorecido_id)
+            fav = favorecidos.get(q.favorecido_id)
+            if fav is None:
+                av.bloqueia("FAVORECIDO_INEXISTENTE", f"Um favorecido da divisão da {rot} não existe mais.")
+            else:
+                _checar_favorecido(av, fav, rot, cpfs_vendedores)
+        if q.valor is not None and q.percentual is not None:
+            av.bloqueia("DIVISAO_VALOR_E_PERCENTUAL", f"A parte {n} da {rot} tem valor e percentual — deixe só um.")
+        elif q.valor is None and q.percentual is None:
+            av.falta(f"{alvo}.valor", f"Valor ou percentual da parte {n} da {rot}", "negociacao")
+    com_valor = [q for q in p.divisao if q.valor is not None]
+    com_pct = [q for q in p.divisao if q.percentual is not None]
+    if com_valor and com_pct:
+        av.bloqueia("DIVISAO_MISTA", f"A divisão da {rot} mistura valores e percentuais — use só um dos dois.")
+        return
+    if p.valor is None:
+        return
+    if com_valor and len(com_valor) == len(p.divisao):
+        soma = sum((q.valor for q in com_valor), Decimal("0"))  # type: ignore[misc]
+        if soma != p.valor:
+            av.bloqueia(
+                "DIVISAO_SOMA_DIVERGE",
+                f"As partes da {rot} somam {formatar_brl(soma)}, mas a parcela é {formatar_brl(p.valor)}.",
+            )
+    elif com_pct and len(com_pct) == len(p.divisao):
+        soma_pct = sum((q.percentual for q in com_pct), Decimal("0"))  # type: ignore[misc]
+        if soma_pct != Decimal("100"):
+            av.bloqueia(
+                "DIVISAO_PERCENTUAL_DIVERGE",
+                f"Os percentuais da divisão da {rot} somam {frases.pct_simples(soma_pct)}, não 100%.",
+            )
+        else:
+            soma = sum((v for v in valores_da_divisao(p) if v is not None), Decimal("0"))
+            if soma != p.valor:
+                # Refusing beats absorbing the stray cent into some share.
+                av.bloqueia(
+                    "DIVISAO_PERCENTUAL_INEXATO",
+                    f"Os percentuais da {rot} não dividem {formatar_brl(p.valor)} em centavos exatos "
+                    "— informe o valor de cada parte.",
+                )
+
+
+def _sinal_em_parcelas(av: Avaliacao, d: DadosContrato, sinais: list[Parcela]) -> None:
+    """More than one sinal parcela prints as ONE "Sinal e princípio de
+    pagamento" line paid in tranches (`grupos_de_parcelas`, signed contract
+    783's shape), and the multa rescisória is their sum [Q3]. That shape
+    only exists when the tranches are consecutive and the line cannot
+    mis-state what any of them triggers."""
+    grupo = next((g for g in grupos_de_parcelas(d) if g[0].tipo == "sinal"), [])
+    if len(grupo) != len(sinais):
+        av.bloqueia(
+            "SINAIS_NAO_CONSECUTIVOS",
+            "As parcelas de sinal precisam ser consecutivas no preço — elas são impressas como "
+            "uma só parcela de sinal paga em partes.",
+        )
+        return
+    if any(p.divisao for p in grupo):
+        # No signed contract splits a tranche of the sinal among payees;
+        # the tranche wording carries ONE account per tranche.
+        av.bloqueia(
+            "SINAL_EM_PARCELAS_COM_DIVISAO",
+            "Uma parte do sinal está dividida entre favorecidos — o contrato não tem redação para "
+            "sinal em partes com divisão; use um favorecido por parte.",
+        )
+    disparos = [p.dispara_corretagem for p in grupo]
+    if any(disparos) and not all(disparos):
+        # "por ocasião do recebimento da Parcela 01" means the WHOLE sinal;
+        # flagging only some tranches would print a later marco than agreed.
+        av.bloqueia(
+            "CORRETAGEM_SINAL_PARCIAL",
+            "O disparo da corretagem está marcado só em algumas partes do sinal — o contrato cita a "
+            "parcela de sinal inteira; marque todas as partes ou nenhuma.",
+        )
+
+
 def _posse(
     av: Avaliacao,
     d: DadosContrato,
@@ -1391,6 +1598,17 @@ def _posse(
             "POSSE_MARCO_PARCELA_DESCONHECIDA",
             f"O marco {rotulo} aponta para uma parcela que não está no preço deste contrato.",
         )
+    elif marco == "parcela":
+        # A sinal paid in tranches prints as ONE parcela, so "do recebimento
+        # da parcela 01" means its LAST tranche — a marco on an earlier one
+        # would print a later posse than agreed.
+        grupo = next(g for g in grupos_de_parcelas(d) if any(p.id == marco_parcela_id for p in g))
+        if grupo[0].tipo == "sinal" and len(grupo) > 1 and grupo[-1].id != marco_parcela_id:
+            av.bloqueia(
+                "POSSE_MARCO_PARTE_DO_SINAL",
+                f"O marco {rotulo} aponta para uma parte do sinal que não é a última — o contrato "
+                "cita a parcela de sinal inteira; aponte para a última parte.",
+            )
 
 
 def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
@@ -1418,14 +1636,67 @@ def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
                 f"O financiamento deste atendimento ainda não está aprovado (situação: {situacao}); "
                 "o contrato prevê uma parcela paga por financiamento.",
             )
-    # [Q6] ONE parcela: FGTS is worded inside the financiamento parcela.
-    for i, p in enumerate(parcelas_ordenadas(d), start=1):
-        if p.tipo == "fgts":
+    # [Q6, revised by the signed contracts] FGTS is printed INSIDE the
+    # financiamento parcela — with the split amounts when known. It may be
+    # stored either way: as `valor_fgts` on the financing parcela (192), or
+    # as its own `fgts` parcela, which then joins the financing parcela's
+    # line (`grupos_de_parcelas`). Any shape where that join is a guess is
+    # refused.
+    parcelas = parcelas_ordenadas(d)
+    numeros = numeros_impressos(d)
+    fins = [p for p in parcelas if p.tipo == "financiamento"]
+    fgts = [p for p in parcelas if p.tipo == "fgts"]
+    if len(fgts) > 1:
+        av.bloqueia(
+            "MAIS_DE_UMA_PARCELA_FGTS",
+            "Há mais de uma parcela de FGTS: o FGTS entra na parcela de financiamento — junte-as "
+            "numa só (ou informe o valor de FGTS na parcela de financiamento).",
+        )
+    elif fgts and len(fins) != 1:
+        av.bloqueia(
+            "PARCELA_FGTS_SEM_FINANCIAMENTO",
+            f"A Parcela {numeros[fgts[0].id]} é de FGTS, mas o contrato "
+            + ("não tem parcela de financiamento" if not fins else "tem mais de uma parcela de financiamento")
+            + ": o FGTS é impresso dentro de UMA parcela de financiamento.",
+        )
+    elif fgts:
+        fin, pf = fins[0], fgts[0]
+        if fin.valor_fgts is not None:
             av.bloqueia(
-                "PARCELA_FGTS_SEPARADA",
-                f"A Parcela {num2(i)} é de FGTS: o FGTS entra na parcela de financiamento — junte o valor "
-                "na parcela de financiamento e marque o uso de FGTS no financiamento.",
+                "FGTS_EM_DUPLICIDADE",
+                f"O FGTS está informado duas vezes: como parcela própria e como valor de FGTS da "
+                f"Parcela {numeros[fin.id]} (financiamento) — deixe só um.",
             )
+        evento_fgts = (pf.evento or "").strip()
+        if (pf.vencimento and pf.vencimento != fin.vencimento) or (
+            evento_fgts and evento_fgts != (fin.evento or "").strip()
+        ):
+            av.bloqueia(
+                "PARCELA_FGTS_MOMENTO_DIVERGENTE",
+                "A parcela de FGTS tem vencimento/evento diferente da parcela de financiamento — o "
+                "contrato imprime o FGTS dentro dela, no mesmo prazo; apague o da parcela de FGTS.",
+            )
+    for p in parcelas:
+        if p.valor_fgts is None:
+            continue
+        if p.tipo != "financiamento":
+            av.bloqueia(
+                "VALOR_FGTS_FORA_DO_FINANCIAMENTO",
+                f"A Parcela {numeros[p.id]} tem valor de FGTS, mas não é de financiamento.",
+            )
+        elif p.valor is not None and p.valor_fgts >= p.valor:
+            av.bloqueia(
+                "FGTS_MAIOR_QUE_PARCELA",
+                f"O valor de FGTS da Parcela {numeros[p.id]} não é menor que a parcela — o restante "
+                "é o valor financiado.",
+            )
+    usa_fgts_nas_parcelas = bool(fgts) or any(p.valor_fgts is not None for p in parcelas)
+    if usa_fgts_nas_parcelas and not d.financiamento.fgts:
+        av.bloqueia(
+            "FGTS_NAO_MARCADO_NO_FINANCIAMENTO",
+            "As parcelas usam FGTS, mas o financiamento não marca uso de FGTS — marque-o no "
+            "financiamento (os documentos de FGTS dependem disso).",
+        )
     if d.financiamento.fgts and not sw["tem_financiamento"]:
         av.avisa(
             "FGTS_SEM_PARCELA",
@@ -1436,13 +1707,39 @@ def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
 def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if not sw["tem_permuta"]:
         return
-    parcela = parcela_permuta(d)
-    assert parcela is not None  # the switch IS this parcela
-    if not parcela.permuta_ativo_ids:
-        av.falta(
-            "negociacao.permuta_imoveis",
-            "Imóvel(is) de permuta vinculado(s) à parcela de permuta",
-            "negociacao",
+    # Several permuta parcelas are allowed: each prints its OWN imóveis
+    # (`contexto._texto_parcela_permuta`), so every link must resolve and
+    # every loaded imóvel must belong to exactly one parcela.
+    numeros = numeros_impressos(d)
+    carregados = {i.permuta_ativo_id for i in d.permuta_imoveis}
+    vinculados: set[str] = set()
+    permutas = parcelas_permuta(d)
+    for parcela in permutas:
+        if not parcela.permuta_ativo_ids:
+            # One permuta parcela keeps its historical field name.
+            av.falta(
+                "negociacao.permuta_imoveis"
+                if len(permutas) == 1
+                else f"negociacao.parcela.{parcela.id}.permuta_imoveis",
+                f"Imóvel(is) de permuta vinculado(s) à Parcela {numeros[parcela.id]} (permuta)",
+                "negociacao",
+            )
+        for ativo_id in parcela.permuta_ativo_ids:
+            if ativo_id in vinculados:
+                av.bloqueia(
+                    "PERMUTA_IMOVEL_EM_DUAS_PARCELAS",
+                    "Um imóvel de permuta está vinculado a mais de uma parcela.",
+                )
+            vinculados.add(ativo_id)
+            if ativo_id not in carregados:
+                av.bloqueia(
+                    "PERMUTA_IMOVEL_NAO_CARREGADO",
+                    f"Um imóvel de permuta da Parcela {numeros[parcela.id]} não foi encontrado.",
+                )
+    if carregados - vinculados:
+        av.bloqueia(
+            "PERMUTA_IMOVEL_SEM_PARCELA",
+            "Há imóvel de permuta que não está vinculado a nenhuma parcela de permuta.",
         )
     for imovel in d.permuta_imoveis:
         alvo = f"negociacao.permuta.{imovel.permuta_ativo_id}"
@@ -2020,7 +2317,7 @@ def avaliar(
     )
     _partes(av, d)
     _imovel(av, d, switches, politica, assinatura)
-    _negociacao(av, d, switches, assinatura)
+    _negociacao(av, d, switches, assinatura, agrupar_parcelas=True)
     _financiamento(av, d, switches)
     _permuta(av, d, switches)
     _certidoes(av, d, switches, politica, assinatura, hoje)

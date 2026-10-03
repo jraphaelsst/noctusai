@@ -683,18 +683,26 @@ class TestQ4Q3Rescisao:
 
 
 class TestQ6Fgts:
+    """[Q6, revised 2026-10-03] The signed contracts' wording — the split
+    form and the separate-fgts-parcela shape live in
+    `test_contrato_gerador_pagamentos.py`."""
+
     def test_fgts_is_worded_inside_the_financiamento_parcela(self):
         r = _render(2)
         financiamento = next(p for p in r.paragrafos if p.startswith("Parcela 03:"))
-        assert "através do uso de FGTS e financiamento imobiliário" in financiamento
+        assert (
+            "por meio do uso das contas vinculadas ao FGTS e de recursos de financiamento "
+            "imobiliário e/ou moeda corrente nacional"
+        ) in financiamento
+        assert "através do uso de FGTS" not in financiamento
         assert not any(p.startswith("Parcela 04:") for p in r.paragrafos)
 
-    def test_a_separate_fgts_parcela_blocks(self):
+    def test_a_separate_fgts_parcela_with_its_own_moment_blocks(self):
         d = fx.variante(2)
         parcelas = [d.parcelas[0], d.parcelas[1], replace(d.parcelas[2], valor=Decimal("300000.00")),
                     fx.parcela("p4", "fgts", "100000.00", 4, evento="na liberação do FGTS")]
         _d, _pol, _sw, av = _avaliar(2, replace(d, parcelas=parcelas))
-        assert _codigos(av.bloqueios) == ["PARCELA_FGTS_SEPARADA"]
+        assert _codigos(av.bloqueios) == ["PARCELA_FGTS_MOMENTO_DIVERGENTE"]
 
 
 class TestQ8Tjsp:

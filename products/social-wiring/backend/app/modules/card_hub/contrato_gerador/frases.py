@@ -18,6 +18,7 @@ from noctusai_lib.domain.texto_ptbr import (
     formatar_data_br,
     formatar_inteiro_br,
     numero_com_extenso,
+    percentual_por_extenso,
 )
 from noctusai_lib.integrations.documents.cpf import format_cpf
 from noctusai_lib.integrations.documents.nacionalidade import (
@@ -312,6 +313,60 @@ def banco_texto(fav: Favorecido) -> str:
     return texto
 
 
+def _momento_parcela(p: Parcela, *, tem_financiamento: bool, ref_financiamento: str) -> str:
+    """WHEN a parcela is paid — its date, the financing contract (an
+    intermediária in a financed deal), or the agreed evento."""
+    if p.vencimento:
+        return f"com vencimento em {formatar_data_br(p.vencimento)}"
+    if p.tipo == "intermediaria" and tem_financiamento:
+        return (
+            "por ocasião da assinatura do Contrato de Financiamento Imobiliário, "
+            f"previsto para quitação da Parcela {ref_financiamento}"
+        )
+    return (p.evento or "").strip()
+
+
+def _em_favor_de(favorecido: Favorecido, vendedor_favorecido: Optional[Pessoa]) -> str:
+    """"em favor do VENDEDOR: NOME, CPF: …, Banco …" — the payee and the
+    account it is paid into (spec §5.1)."""
+    if vendedor_favorecido is not None:
+        gv = concordancia_lado(
+            [genero_exigido(vendedor_favorecido.genero, vendedor_favorecido.nome or "")],
+            "vendedor",
+        )
+        em_favor = f"em favor {gv.dos} {negrito(gv.NOME)}: "
+    else:
+        em_favor = "em favor de "
+    rotulo, numero = documento(favorecido.cpf_cnpj)
+    return f"{em_favor}{nome_parte(favorecido.nome)}, {rotulo}: {numero}{banco_texto(favorecido)}"
+
+
+def _frase_favorecido(
+    forma_pagamento: Optional[str],
+    favorecido: Favorecido,
+    *,
+    repetido: bool,
+    vendedor_favorecido: Optional[Pessoa],
+) -> str:
+    if repetido:
+        return f"por meio de {_forma(forma_pagamento)} na mesma conta corrente anteriormente informada"
+    return (
+        f"por meio de {_forma(forma_pagamento)} a ser realizada "
+        f"{_em_favor_de(favorecido, vendedor_favorecido)}"
+    )
+
+
+def _quitacao_sinal(V: Concordancia, C: Concordancia, *, varias_contas: bool) -> str:
+    conta = "nas contas correntes ora indicadas" if varias_contas else "na conta corrente ora indicada"
+    return (
+        f"operando-se automaticamente a quitação em favor {C.dos} {C.NOME.title()} com o "
+        f"efetivo crédito {conta} {V.pelos} {V.NOME.title()}"
+    )
+
+
+_CABECA_SINAL = "Sinal e princípio de pagamento:"
+
+
 def texto_parcela(
     p: Parcela,
     *,
@@ -324,58 +379,122 @@ def texto_parcela(
     favorecido_repetido: bool,
     vendedor_favorecido: Optional[Pessoa],
     juros_am: Optional[Decimal],
+    fgts_valores: Optional[tuple[Decimal, Decimal]] = None,
+    dividida: bool = False,
+    divisao_ref: Optional[str] = None,
 ) -> str:
-    """Everything after "Parcela NN:" for one parcela."""
+    """Everything after "Parcela NN:" for one parcela.
+
+    - `fgts_valores` = (FGTS, financiado) when the financing parcela's split
+      is known (migration 192's `valor_fgts`, or a folded `fgts` parcela).
+      The printed value is their sum.
+    - `dividida` — the parcela is split among several favorecidos (192): the
+      line ends "… a ser realizada da seguinte forma:" and the shares follow
+      as sub-items (`subitem_divisao`).
+    - `divisao_ref` — the parcela repeats an earlier split's accounts AND
+      proportions: the office writes "nas mesmas contas correntes e
+      proporções informadas na Parcela NN".
+    """
     valor = negrito(brl_por_extenso(p.valor))  # type: ignore[arg-type] — gate guarantees it
     if p.tipo == "financiamento":
-        # [Q6] FGTS + financiamento are ONE parcela (contract 03's wording).
-        if fgts:
-            valor += ", através do uso de FGTS e financiamento imobiliário"
+        # [Q6, revised 2026-10-03] FGTS + financiamento are ONE parcela, in
+        # the wording of the office's SIGNED contracts (catalog §2): the split
+        # form (5 deals) when the amounts are known, else the combined form
+        # (871, 888). The old "através do uso de FGTS e financiamento
+        # imobiliário" appears in none of the 34.
+        if fgts_valores is not None:
+            valor_fgts, valor_fin = fgts_valores
+            valor = (
+                f"{negrito(brl_por_extenso(valor_fgts + valor_fin))}, onde será utilizado "
+                f"{negrito(brl_por_extenso(valor_fgts))}, por meio do uso das contas vinculadas ao FGTS e "
+                f"{negrito(brl_por_extenso(valor_fin))} por meio de recursos de financiamento imobiliário "
+                "e/ou moeda corrente nacional"
+            )
+        elif fgts:
+            valor += (
+                ", por meio do uso das contas vinculadas ao FGTS e de recursos de financiamento "
+                "imobiliário e/ou moeda corrente nacional"
+            )
         else:
             valor += ", por meio de recursos de financiamento imobiliário e/ou moeda corrente nacional"
     elif p.tipo == "saldo":
         # [Q7] saldo = payoff of the seller's existing financing.
         valor += ", destinada à quitação do saldo devedor do financiamento que onera o imóvel"
-    frases = [valor]
+    frases = [valor, _momento_parcela(p, tem_financiamento=tem_financiamento, ref_financiamento=ref_financiamento)]
 
-    if p.vencimento:
-        frases.append(f"com vencimento em {formatar_data_br(p.vencimento)}")
-    elif p.tipo == "intermediaria" and tem_financiamento:
+    if divisao_ref is not None:
         frases.append(
-            "por ocasião da assinatura do Contrato de Financiamento Imobiliário, "
-            f"previsto para quitação da Parcela {ref_financiamento}"
+            f"por meio de {_forma(p.forma_pagamento)} nas mesmas contas correntes e proporções "
+            f"informadas na Parcela {divisao_ref}"
         )
-    else:
-        frases.append((p.evento or "").strip())
-
-    if favorecido is not None:
-        if favorecido_repetido:
-            frases.append(
-                f"por meio de {_forma(p.forma_pagamento)} na mesma conta corrente anteriormente informada"
+    elif favorecido is not None and not dividida:
+        frases.append(
+            _frase_favorecido(
+                p.forma_pagamento, favorecido,
+                repetido=favorecido_repetido, vendedor_favorecido=vendedor_favorecido,
             )
-        else:
-            if vendedor_favorecido is not None:
-                gv = concordancia_lado(
-                    [genero_exigido(vendedor_favorecido.genero, vendedor_favorecido.nome or "")],
-                    "vendedor",
-                )
-                em_favor = f"em favor {gv.dos} {negrito(gv.NOME)}: "
-            else:
-                em_favor = "em favor de "
-            rotulo, numero = documento(favorecido.cpf_cnpj)
-            frases.append(
-                f"por meio de {_forma(p.forma_pagamento)} a ser realizada {em_favor}"
-                f"{nome_parte(favorecido.nome)}, {rotulo}: {numero}{banco_texto(favorecido)}"
-            )
+        )
     if juros_am is not None:
         frases.append(f"acrescidos de {pct_simples(juros_am)} de juros a.m., calculados pro rata die")
     if p.tipo == "sinal":
-        frases.append(
-            f"operando-se automaticamente a quitação em favor {C.dos} {C.NOME.title()} com o "
-            f"efetivo crédito na conta corrente ora indicada {V.pelos} {V.NOME.title()}"
-        )
-    cabeca = " " + negrito("Sinal e princípio de pagamento:") if p.tipo == "sinal" else ""
+        frases.append(_quitacao_sinal(V, C, varias_contas=dividida or divisao_ref is not None))
+    cabeca = " " + negrito(_CABECA_SINAL) if p.tipo == "sinal" else ""
+    if dividida:
+        frases.append(f"por meio de {_forma(p.forma_pagamento)} a ser realizada da seguinte forma")
+        return f"{cabeca} " + ", ".join(frases) + ":"
     return f"{cabeca} " + ", ".join(frases) + "."
+
+
+def subitem_divisao(
+    num: str,
+    indice: int,
+    valor: Decimal,
+    percentual: Optional[Decimal],
+    favorecido: Favorecido,
+    *,
+    repetido: bool,
+    vendedor_favorecido: Optional[Pessoa],
+) -> str:
+    """[Migration 192] One share of a divided parcela, in the office's two
+    signed layouts merged (catalog §2): "1.1) {VALOR} em favor de …" and
+    "{VALOR}, correspondentes a {PCT}% ({extenso}) da parcela, em favor …".
+    The template adds the closing ';' / '.'."""
+    texto = f"{num}.{indice}) {negrito(brl_por_extenso(valor))}"
+    if percentual is not None:
+        texto += f", correspondentes a {percentual_por_extenso(percentual)} da parcela,"
+    if repetido:
+        return f"{texto} em favor de {nome_parte(favorecido.nome)}, na mesma conta corrente anteriormente informada"
+    return f"{texto} {_em_favor_de(favorecido, vendedor_favorecido)}"
+
+
+def texto_sinal_em_partes(
+    partes: Sequence[tuple[Parcela, Favorecido, bool, Optional[Pessoa]]],
+    *,
+    V: Concordancia,
+    C: Concordancia,
+    tem_financiamento: bool,
+    ref_financiamento: str,
+) -> str:
+    """More than one sinal parcela, printed as ONE parcela paid in tranches —
+    signed contract 783: "Sinal e princípio de pagamento: {TOTAL}, a serem
+    pagos da seguinte forma: {A} no ato da assinatura …, e {B} … com
+    vencimento …, operando-se automaticamente a quitação …". Each tranche is
+    `(parcela, favorecido, favorecido_repetido, vendedor_favorecido)`; every
+    field is gated (valor, momento, favorecido, forma)."""
+    total = sum((p.valor for p, _f, _r, _v in partes), Decimal("0"))  # type: ignore[misc]
+    itens = []
+    for p, fav, repetido, vendedor in partes:
+        momento = _momento_parcela(p, tem_financiamento=tem_financiamento, ref_financiamento=ref_financiamento)
+        itens.append(
+            f"{negrito(brl_por_extenso(p.valor))} {momento}, "  # type: ignore[arg-type] — gated
+            + _frase_favorecido(p.forma_pagamento, fav, repetido=repetido, vendedor_favorecido=vendedor)
+        )
+    enumeracao = ", ".join(itens[:-1]) + ", e " + itens[-1]
+    varias_contas = len({fav.id for _p, fav, _r, _v in partes}) > 1
+    return (
+        f" {negrito(_CABECA_SINAL)} {negrito(brl_por_extenso(total))}, a serem pagos da seguinte forma: "
+        f"{enumeracao}, {_quitacao_sinal(V, C, varias_contas=varias_contas)}."
+    )
 
 
 # ─── certidões (spec §2.5 label table) ────────────────────────────────────
@@ -523,7 +642,13 @@ def pendencia_certidao(tipo: str, nome: str) -> str:
 
 # ─── ônus / posse / rescisão / tributos (spec §2.6–2.9) ───────────────────
 
-QUITACOES_ONUS: tuple[str, ...] = ("compradores_prazo", "interveniente_quitante", "parcela")
+#: [Migration 192] The seller pays the lien off by bank slip within
+#: `Termos.onus_prazo_dias` — 2 signed contracts (catalog §4).
+QUITACAO_ONUS_VENDEDORES_BOLETO = "vendedores_boleto"
+
+QUITACOES_ONUS: tuple[str, ...] = (
+    "compradores_prazo", "interveniente_quitante", "parcela", QUITACAO_ONUS_VENDEDORES_BOLETO,
+)
 
 #: Stored by migration 114, but NO sample contract carries a clause for it
 #: (spec §6.1 #11's "already paid, has termo" state). The gate refuses it by
@@ -551,7 +676,28 @@ def onus_fonte_texto(atos: Sequence[AtoCitado]) -> str:
     return "nos atos " + juntar([ato_rotulo(a) for a in atos])
 
 
-def onus_quitacao_texto(quitacao: str, *, C: Concordancia, ref_saldo: str, ref_clausula_preco: str) -> str:
+def onus_quitacao_texto(
+    quitacao: str,
+    *,
+    C: Concordancia,
+    ref_saldo: str,
+    ref_clausula_preco: str,
+    V: Optional[Concordancia] = None,
+    prazo_dias: Optional[int] = None,
+) -> str:
+    if quitacao == QUITACAO_ONUS_VENDEDORES_BOLETO:
+        # Signed contract 884, verbatim but for the agreement: "o qual deverá
+        # ser quitado através de boleto bancário emitido pela instituição
+        # financeira responsável, onde OS VENDEDORES terão o prazo de até N
+        # dias corridos para realizar a quitação e apresentar o comprovante
+        # de pagamento." Gated: `V` + `negociacao.onus_prazo_dias`.
+        if V is None or not prazo_dias:
+            raise ValueError("onus_quitacao_texto: boleto exige V e prazo_dias (o gate garante)")
+        return (
+            "o qual deverá ser quitado através de boleto bancário emitido pela instituição financeira "
+            f"responsável, onde {V.ART} {negrito(V.NOME)} {V.pl('terá', 'terão')} o prazo de até "
+            f"{dias_por_extenso(prazo_dias)} para realizar a quitação e apresentar o comprovante de pagamento"
+        )
     if quitacao == "compradores_prazo":
         return f"que deverá ser quitado {C.pelos} {negrito(C.NOME)}"
     if quitacao == "interveniente_quitante":

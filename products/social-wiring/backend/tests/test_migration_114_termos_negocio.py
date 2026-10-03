@@ -56,7 +56,8 @@ def flat_all_termos_migrations() -> str:
     but a service clause added afterwards (e.g. migration 163's
     `itens_integrantes_ausente_confirmado`) legitimately lives in its OWN
     migration file, never a hand-edit of 114 (forward-only, §1). Scoped
-    ONLY to `test_every_service_clause_is_a_column` below — every other
+    ONLY to `test_every_service_clause_is_a_column` and
+    `test_onus_quitacao_check_matches_the_service` below — every other
     test here still pins 114's OWN declared shape specifically."""
     partes = [MIGRATION.read_text(encoding="utf-8")]
     for caminho in sorted(MIGRATION.parent.glob("*.sql")):
@@ -107,11 +108,19 @@ def test_every_service_clause_is_a_column(flat_all_termos_migrations: str):
 
 @pytest.mark.parametrize(
     "valores",
-    [svc.POSSE_MARCOS, svc.ONUS_QUITACOES, svc.CORRETAGEM_CONTRATANTES],
+    [svc.POSSE_MARCOS, svc.CORRETAGEM_CONTRATANTES],
 )
 def test_vocabulary_checks_match_the_service(flat: str, valores):
     lista = ", ".join(f"'{v}'" for v in valores)
     assert f"IN ({lista})" in flat
+
+
+def test_onus_quitacao_check_matches_the_service(flat_all_termos_migrations: str):
+    """`onus_quitacao` grew 'vendedores_boleto' in migration 192 (a forward
+    drop-then-add of 114's CHECK, never a hand-edit of 114) — the service's
+    vocabulary must match the LATEST declaration."""
+    lista = ", ".join(f"'{v}'" for v in svc.ONUS_QUITACOES)
+    assert f"IN ({lista})" in flat_all_termos_migrations
 
 
 def test_marco_parcela_check_is_null_safe(flat: str):

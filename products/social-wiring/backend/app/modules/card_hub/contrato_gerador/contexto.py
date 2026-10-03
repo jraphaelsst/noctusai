@@ -45,20 +45,22 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     corretagem_marcos,
     empresas_exigidas,
     indice_certidoes,
+    grupos_de_parcelas,
     numero_da_parcela,
+    numeros_impressos,
     parcelas_antes_de,
     parcelas_ordenadas,
     pessoas_certificadas,
     prazo_pendencias,
     resolver_endereco_posse,
     tipos_exigidos,
+    valores_da_divisao,
 )
 from app.modules.card_hub.contrato_gerador.estilo import negrito, nome_parte
 from app.modules.card_hub.contrato_gerador.numeracao import (
     ContadorParagrafos,
     juntar,
     letra,
-    num2,
     numerar_clausulas,
 )
 from app.modules.card_hub.contrato_gerador.politica import (
@@ -121,11 +123,12 @@ def _brl_negrito(valor: Decimal) -> str:
     return negrito(brl_por_extenso(valor))
 
 
-def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
-    """The permuta parcela (spec §2.3 `p.tipo == 'permuta'`) — its value is the
+def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C, imoveis: list[PermutaImovel]) -> str:
+    """A permuta parcela (spec §2.3 `p.tipo == 'permuta'`) — its value is the
     parcela's own, and each imóvel is one `permuta_ativos` link (114) carrying
-    its own matrícula quote (115)."""
-    imoveis = d.permuta_imoveis
+    its own matrícula quote (115). `imoveis` are THIS parcela's (a deal may
+    carry several permuta parcelas, each with its own imóveis — signed
+    contract 873 is one parcela with two)."""
     # gated: derivacao._partes `qualificacao.nome_oficial` (every signatário)
     nomes = juntar([nome_parte(p.nome or "") for p in signatarios(d.compradores)])
     # inscricao_municipal / cidade / matrícula / cartório: gated by derivacao._permuta.
@@ -200,12 +203,15 @@ def montar_contexto(
 
     # ── parcelas + references ──
     parcelas = parcelas_ordenadas(d)
-    nums = {p.id: num2(i) for i, p in enumerate(parcelas, start=1)}
+    grupos = grupos_de_parcelas(d)
+    nums = numeros_impressos(d)
 
     def refs(tipo: str) -> str:
-        return juntar([nums[p.id] for p in parcelas if p.tipo == tipo])
+        return juntar(list(dict.fromkeys(nums[p.id] for p in parcelas if p.tipo == tipo)))
 
     p_ref = {
+        # A sinal paid in tranches is ONE printed parcela
+        # (`derivacao.grupos_de_parcelas`), so this is still one number.
         "sinal": refs("sinal"),
         "financiamento": refs("financiamento"),
         "saldo": refs("saldo"),
@@ -215,18 +221,81 @@ def montar_contexto(
     }
     favorecidos = {f.id: f for f in d.favorecidos}
     cpf_vendedor = {frases.so_digitos(p.cpf): p for p in vend if p.cpf}
+    imoveis_permuta = {i.permuta_ativo_id: i for i in d.permuta_imoveis}
+
+    def vendedor_de(fav):
+        return cpf_vendedor.get(frases.so_digitos(fav.cpf_cnpj)) if fav else None
+
     ja_usados: set[str] = set()
+    #: [192] Each printed split: (number, {favorecido_id: share/parcela}) —
+    #: a later parcela with the SAME accounts and proportions cites it.
+    divisoes_impressas: list[tuple[str, dict[str, Decimal]]] = []
     linhas_parcelas = []
-    for p in parcelas:
+    for grupo in grupos:
+        p = grupo[0]
+        num = nums[p.id]
         if p.tipo == "permuta":
+            # gated: derivacao._permuta — every linked ativo is loaded.
+            imoveis = [imoveis_permuta[a] for a in p.permuta_ativo_ids]
             linhas_parcelas.append(
-                {"num": nums[p.id], "texto": _texto_parcela_permuta(p.valor, d, C)}  # type: ignore[arg-type] — gated
+                {"num": num, "texto": _texto_parcela_permuta(p.valor, d, C, imoveis), "subitens": []}  # type: ignore[arg-type] — gated
             )
             continue
-        fav = favorecidos.get(p.favorecido_id or "") if p.tipo in {"sinal", "intermediaria", "direta", "saldo"} else None
+        if p.tipo == "sinal" and len(grupo) > 1:
+            # gated: derivacao._sinal_em_parcelas (consecutive, no split) +
+            # `_negociacao` (each tranche's valor/momento/favorecido/forma).
+            partes = []
+            for t in grupo:
+                fav = favorecidos[t.favorecido_id or ""]
+                partes.append((t, fav, fav.id in ja_usados, vendedor_de(fav)))
+                ja_usados.add(fav.id)
+            linhas_parcelas.append(
+                {
+                    "num": num,
+                    "texto": frases.texto_sinal_em_partes(
+                        partes, V=V, C=C, tem_financiamento=sw["tem_financiamento"],
+                        ref_financiamento=p_ref["financiamento"],
+                    ),
+                    "subitens": [],
+                }
+            )
+            continue
+        fgts_valores = None
+        if p.tipo == "financiamento":
+            # gated: derivacao._financiamento — at most one FGTS source, a
+            # strict part of the parcela, FGTS marked on the financing.
+            dobrada = next((q for q in grupo[1:] if q.tipo == "fgts"), None)
+            if dobrada is not None:
+                fgts_valores = (dobrada.valor, p.valor)
+            elif p.valor_fgts is not None:
+                fgts_valores = (p.valor_fgts, p.valor - p.valor_fgts)  # type: ignore[operator]
+        fav = (
+            favorecidos.get(p.favorecido_id or "")
+            if p.tipo in {"sinal", "intermediaria", "direta", "saldo"} and not p.divisao
+            else None
+        )
+        subitens: list[str] = []
+        divisao_ref = None
+        if p.divisao:
+            # gated: derivacao._divisao — every share names a loaded
+            # favorecido and the shares add up to the parcela exactly.
+            valores = valores_da_divisao(p)
+            proporcoes = {q.favorecido_id: v / p.valor for q, v in zip(p.divisao, valores)}  # type: ignore[operator]
+            divisao_ref = next((n for n, prop in divisoes_impressas if prop == proporcoes), None)
+            if divisao_ref is None:
+                for i, (q, v) in enumerate(zip(p.divisao, valores), start=1):
+                    fq = favorecidos[q.favorecido_id or ""]
+                    subitens.append(
+                        frases.subitem_divisao(
+                            num, i, v, q.percentual, fq,  # type: ignore[arg-type] — gated
+                            repetido=fq.id in ja_usados, vendedor_favorecido=vendedor_de(fq),
+                        )
+                    )
+                    ja_usados.add(fq.id)
+                divisoes_impressas.append((num, proporcoes))
         linhas_parcelas.append(
             {
-                "num": nums[p.id],
+                "num": num,
                 "texto": frases.texto_parcela(
                     p,
                     V=V,
@@ -236,15 +305,19 @@ def montar_contexto(
                     ref_financiamento=p_ref["financiamento"],
                     favorecido=fav,
                     favorecido_repetido=bool(fav and fav.id in ja_usados),
-                    vendedor_favorecido=cpf_vendedor.get(frases.so_digitos(fav.cpf_cnpj)) if fav else None,
+                    vendedor_favorecido=vendedor_de(fav),
                     juros_am=termos.confissao_juros_am if p.confissao_divida else None,
+                    fgts_valores=fgts_valores,
+                    dividida=bool(subitens),
+                    divisao_ref=divisao_ref,
                 ),
+                "subitens": subitens,
             }
         )
         if fav is not None:
             ja_usados.add(fav.id)
 
-    sinal = next(p for p in parcelas if p.tipo == "sinal")
+    sinais = [p for p in parcelas if p.tipo == "sinal"]
     confissao_parcelas = [p for p in parcelas if p.confissao_divida]
 
     # ── imóvel ──
@@ -421,6 +494,9 @@ def montar_contexto(
                 C=C,
                 ref_saldo=p_ref["saldo"],
                 ref_clausula_preco=cl["preco"].ref if termos.onus_quitacao == "parcela" else "",
+                # [192] read only by the 'vendedores_boleto' wording.
+                V=V,
+                prazo_dias=termos.onus_prazo_dias,
             ),
             "prazo_dias": termos.onus_prazo_dias,
         }
@@ -452,16 +528,33 @@ def montar_contexto(
         # Same rule as `imovel["endereco_curto"]` above — NEVER
         # `d.permuta_imoveis[0].endereco` (the CRM's público endereço).
         # Gated `faltando` by `derivacao._permuta`, so never `None` here.
-        permuta_imovel = d.permuta_imoveis[0]
-        # gated: derivacao._permuta (atos selected + registry address resolved)
-        endereco_curto_permuta = resolver_endereco_posse(
-            permuta_imovel.endereco_registro_texto,
-            permuta_imovel.descricao_imovel_texto or permuta_imovel.descricao_matricula or "",
-            permuta_imovel.descricao_matricula or "",
+        # EVERY permuta imóvel (several parcelas / several imóveis per
+        # parcela): one posse clause names them all, distinct addresses
+        # joined; "imóveis" whenever there is more than one imóvel.
+        enderecos: list[str] = []
+        for permuta_imovel in d.permuta_imoveis:
+            # gated: derivacao._permuta (atos selected + registry address resolved)
+            endereco = resolver_endereco_posse(
+                permuta_imovel.endereco_registro_texto,
+                permuta_imovel.descricao_imovel_texto or permuta_imovel.descricao_matricula or "",
+                permuta_imovel.descricao_matricula or "",
+            )
+            assert endereco is not None  # gated
+            if endereco not in enderecos:
+                enderecos.append(endereco)
+        plural_permuta = len(d.permuta_imoveis) > 1
+        permutas_nums = juntar(
+            list(dict.fromkeys(nums[p.id] for p in parcelas if p.tipo == "permuta"))
         )
-        assert endereco_curto_permuta is not None  # gated
+        varias_parcelas_permuta = len([p for p in parcelas if p.tipo == "permuta"]) > 1
         permuta = {
-            "endereco_curto": endereco_curto_permuta,
+            "endereco_curto": " e à ".join(enderecos),
+            "plural": plural_permuta,
+            # The preço ¶ citing where the permuta imóvel(is) are described.
+            "escritura_ref": (
+                f"{'dos imóveis melhor descritos' if plural_permuta else 'do imóvel melhor descrito'} "
+                f"{'nas Parcelas' if varias_parcelas_permuta else 'na Parcela'} {permutas_nums}"
+            ),
             "posse_prazo": termos.permuta_posse_prazo_dias,
             "posse_marco_texto": frases.posse_marco_texto(
                 termos.permuta_posse_marco or "",
@@ -546,8 +639,9 @@ def montar_contexto(
         "permuta": permuta,
         # [Q4] ¶2 wording is fixed in the template (multa + proven costs).
         "rescisao": {"cura_frase": frases.cura_rescisao_frase(politica.rescisao_cura_dias)},
-        # [Q3] multa rescisória = the sinal's valor.
-        "multa_rescisoria": sinal.valor,
+        # [Q3] multa rescisória = the sinal's valor — the SUM of its
+        # tranches when it is paid in parts (owner, 2026-10-03).
+        "multa_rescisoria": sum((p.valor for p in sinais), Decimal("0")),  # type: ignore[misc] — gated
         "resolutiva_notificacao_email": politica.resolutiva_notificacao_email,
         "corretagem": corretagem,
         # [Owner directive, 2026-09-23] The matrícula-derived comarca

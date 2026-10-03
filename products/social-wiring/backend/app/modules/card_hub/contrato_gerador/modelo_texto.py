@@ -35,9 +35,11 @@ Conventions (spec §2.0):
   (`C`), never the seller side a naive reading of "buy FROM him" suggests.
 
 Divergences from the sample contracts are the spec's merged forms (§2.3–2.17
-"Divergence" notes). Wording whose data is MISSING (§6.1: parcela splits,
-posse prorrogação/compensação, permuta delivery obligations, the permuta
-imóvel's own ônus) is not present at all — the gate reports the gap.
+"Divergence" notes). Wording whose data is MISSING (§6.1: posse
+prorrogação/compensação, permuta delivery obligations, the permuta imóvel's
+own ônus) is not present at all — the gate reports the gap. A parcela split
+among several favorecidos (migration 192) prints as sub-items under its
+"Parcela NN" line (`p.subitens`, composed in `frases.subitem_divisao`).
 """
 from __future__ import annotations
 
@@ -85,12 +87,15 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {{ V.ART }} **{{ V.NOME }}** {{ V.pl('compromete-se','comprometem-se') }} a vender para {{ C.art }} **{{ C.NOME }}** e, {{ C.estes }} a comprar-{{ C.pl('lhe','lhes') }} o referido imóvel{% if ad_corpus %} na situação ad corpus (no estado em que se encontra){% endif %}, descrito na {{ cl.objeto.ref }}, pelo preço certo, firme e irreajustável de {{ brl(preco) }}, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
 {%p for p in parcelas %}
 **Parcela {{ p.num }}:**{{ p.texto }}
+{%p for s in p.subitens %}
+{{ s }}{{ '.' if loop.last else ';' }}
+{%p endfor %}
 {%p endfor %}
 {%p if tem_financiamento %}
 **{{ par('preco') }}** {{ C.ART }} **{{ C.NOME }}**, {{ C.pl('declara','declaram') }} estar {{ C.g('ciente','ciente','cientes') }} das regras de financiamento bancário, sendo de sua inteira e total responsabilidade a obtenção de crédito imobiliário, para a quitação da parcela {{ p_ref.financiamento }} deste presente instrumento.
 {%p endif %}
 {%p if tem_permuta and tem_financiamento %}
-**{{ par('preco') }}** As Partes estabelecem que a Escritura Pública de Permuta do imóvel melhor descrito na Parcela {{ p_ref.permuta }} acima, deverá ocorrer de maneira concomitante, a assinatura do Contrato de Financiamento bancário, previsto para quitação da parcela {{ p_ref.financiamento }}.
+**{{ par('preco') }}** As Partes estabelecem que a Escritura Pública de Permuta {{ permuta.escritura_ref }} acima, deverá ocorrer de maneira concomitante, a assinatura do Contrato de Financiamento bancário, previsto para quitação da parcela {{ p_ref.financiamento }}.
 {%p endif %}
 
 {%p if tem_confissao %}
@@ -156,13 +161,13 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 
 <u>CLÁUSULA {{ cl.posse.ORD }}</u> – DA POSSE SOBRE {{ 'OS IMÓVEIS' if tem_permuta else 'O IMÓVEL' }}
 {%p if tem_permuta %}
-{{ C.ART }} **{{ C.NOME }}**, {{ C.pl('assume','assumem') }} a obrigação de fazer a entrega da posse do imóvel situado à {{ permuta.endereco_curto }} {{ V.aos }} **{{ V.NOME }}**, no prazo máximo de {{ dias(permuta.posse_prazo) }} a contar {{ permuta.posse_marco_texto }}.
-Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete','se comprometem') }} a permitir o acesso ao imóvel, mediante prévio agendamento, a qualquer tempo, {{ V.aos }} **{{ V.NOME }}**, ao novo proprietário ou a terceiros por estes autorizados, para fins de vistoria, medição, planejamento ou quaisquer outras providências relacionadas ao imóvel.
+{{ C.ART }} **{{ C.NOME }}**, {{ C.pl('assume','assumem') }} a obrigação de fazer a entrega da posse {{ 'dos imóveis situados' if permuta.plural else 'do imóvel situado' }} à {{ permuta.endereco_curto }} {{ V.aos }} **{{ V.NOME }}**, no prazo máximo de {{ dias(permuta.posse_prazo) }} a contar {{ permuta.posse_marco_texto }}.
+Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete','se comprometem') }} a permitir o acesso {{ 'aos imóveis' if permuta.plural else 'ao imóvel' }}, mediante prévio agendamento, a qualquer tempo, {{ V.aos }} **{{ V.NOME }}**, ao novo proprietário ou a terceiros por estes autorizados, para fins de vistoria, medição, planejamento ou quaisquer outras providências relacionadas ao imóvel.
 {{ V.ART }} **{{ V.NOME }}**, por sua vez, {{ V.pl('assume','assumem') }} a obrigação de entregar {{ C.aos }} **{{ C.NOME }}** a posse do imóvel situado à {{ imovel.endereco_curto }}, no prazo máximo de {{ dias(posse.prazo) }}, a contar {{ posse.marco_texto }}.
 **{{ par('posse') }}** As Partes se comprometem a entregar seus imóveis, de maneira limpa e organizada, livre e desimpedida de coisas e pessoas estranhas a esta negociação.
 {%p if tem_multa_diaria_posse %}
 **{{ par('posse') }}** Fica convencionada multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ V.art }} **{{ V.NOME }}**, {{ V.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel situado à {{ imovel.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
-**{{ par('posse') }}** Fica convencionada a mesma multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ C.art }} **{{ C.NOME }}**, {{ C.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel situado à {{ permuta.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
+**{{ par('posse') }}** Fica convencionada a mesma multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ C.art }} **{{ C.NOME }}**, {{ C.pl('apresente','apresentem') }} obstáculos para acesso {{ 'aos imóveis situados' if permuta.plural else 'ao imóvel situado' }} à {{ permuta.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
 {%p endif %}
 {%p else %}
 {{ V.ART }} **{{ V.NOME }}** {{ V.pl('outorgará','outorgarão') }} a posse do imóvel objeto deste contrato {{ C.aos }} **{{ C.NOME }}**, em até {{ dias(posse.prazo) }} a contar {{ posse.marco_texto }}{{ posse.condicao_frase }}.

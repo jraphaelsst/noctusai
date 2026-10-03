@@ -95,6 +95,15 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
         ("origem", "upload", {"docx_storage_path": False, "docx_tamanho_bytes": False}),
         ("origem", "assinado", {"docx_storage_path": False, "docx_tamanho_bytes": False}),
     ],
+    # Migration 192's `atendimento_negociacao_parcelas_valor_fgts_check`: the
+    # FGTS portion exists only on the financing parcela, so every OTHER tipo
+    # forbids `valor_fgts` (financiamento leaves it optional, no entry).
+    "atendimento_negociacao_parcelas": [
+        (
+            "tipo", tipo, {"valor_fgts": False},
+        )
+        for tipo in ("sinal", "intermediaria", "fgts", "saldo", "direta", "permuta")
+    ],
 }
 
 

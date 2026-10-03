@@ -100,7 +100,19 @@ _MAX_WORKERS = 4
 #: `ConditionalPresenceManifest` entry or is a genuine gap this gate should
 #: flag. Add an entry here ONLY with a reviewed reason — never to silence a
 #: finding nobody looked at.
-_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {}
+_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {
+    # Reviewed 2026-10-03 (migration 192). "valor OR percentual, never both"
+    # has no discriminant column, so a ConditionalPresenceManifest cannot
+    # express it. It is pinned three times above the DB: the request schema
+    # refuses it (`ParcelaFavorecidoDivisaoBody`, 422), the service refuses it
+    # (`negociacao_estruturada_service._validar_divisao`, 400), and the
+    # generator gate blocks it (`DIVISAO_VALOR_E_PERCENTUAL`). The DB refusal
+    # itself is proven by the `verify_db_guards` probe
+    # `atendimento_parcela_favorecidos.valor_ou_percentual`.
+    "social-wiring/atendimento_parcela_favorecidos/atendimento_parcela_favorecidos_valor_ou_percentual": (
+        "no discriminant column; refused by request schema + service + gate, DB guard probed"
+    ),
+}
 
 
 # ---------------------------------------------------------------------------

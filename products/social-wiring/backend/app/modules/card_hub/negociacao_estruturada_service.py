@@ -71,6 +71,8 @@ TABLE_FAVORECIDOS = "atendimento_favorecidos"
 TABLE_INTERMEDIARIOS = "atendimento_intermediarios"
 TABLE_TERMOS = "atendimento_negociacao_termos"
 TABLE_PARCELA_PERMUTA_ATIVOS = "atendimento_parcela_permuta_ativos"
+#: Migration 192 — one parcela paid to several favorecidos.
+TABLE_PARCELA_FAVORECIDOS = "atendimento_parcela_favorecidos"
 
 TIPOS_PARCELA: tuple[str, ...] = (
     "sinal", "intermediaria", "financiamento", "fgts", "saldo", "direta",
@@ -88,6 +90,8 @@ PESSOA_TIPOS: tuple[str, ...] = ("pf", "pj")
 POSSE_MARCOS: tuple[str, ...] = ("assinatura", "parcela", "protocolo_registro")
 ONUS_QUITACOES: tuple[str, ...] = (
     "compradores_prazo", "interveniente_quitante", "parcela", "ja_quitado",
+    # Migration 192 — the seller pays the lien off by bank slip.
+    "vendedores_boleto",
 )
 CORRETAGEM_CONTRATANTES: tuple[str, ...] = ("vendedores", "compradores", "partes")
 
@@ -112,7 +116,13 @@ FORMAS_PAGAMENTO_SUGERIDAS: tuple[str, ...] = (
 _PARCELA_CAMPOS_EDITAVEIS: tuple[str, ...] = (
     "tipo", "valor", "vencimento", "evento", "forma_pagamento",
     "favorecido_id", "confissao_divida", "ordem", "dispara_corretagem",
+    # Migration 192 — the FGTS portion of a financiamento parcela.
+    "valor_fgts",
 )
+#: The parcela tipos paid INTO an account (the generator's
+#: `TIPOS_PAGOS_A_FAVORECIDO`) — the only ones a favorecido split
+#: (migration 192) can apply to.
+TIPOS_PARCELA_COM_FAVORECIDO: tuple[str, ...] = ("sinal", "intermediaria", "direta", "saldo")
 #: NOT NULL columns on the parcela row — an explicit `null` in a PATCH is a
 #: 400 naming the field, never a driver-level 500.
 _PARCELA_CAMPOS_NAO_NULOS: tuple[str, ...] = (
@@ -760,11 +770,175 @@ def _apagar_links(client: Any, org_id: UUID, parcela_id: Any) -> None:
     ).execute()
 
 
+# ─── one parcela, several favorecidos (192) ───────────────────────────────
+
+
+def _divisao_por_parcela(
+    client: Any, org_id: UUID, parcela_ids: Iterable[str]
+) -> dict[str, list[dict]]:
+    """`{parcela_id: [share row, ...]}` in `ordem`. Same batched + paged read
+    as `_links_por_parcela`."""
+    ids = [str(p) for p in parcela_ids]
+    mapa: dict[str, list[dict]] = {pid: [] for pid in ids}
+    if not ids:
+        return mapa
+    rows: list[dict] = []
+    for lote in table_reads.batched(ids):
+        rows.extend(
+            table_reads.paged_rows(
+                client, TABLE_PARCELA_FAVORECIDOS, org_id,
+                refine=lambda q, lote=lote: q.in_("parcela_id", lote),
+            )
+        )
+    rows.sort(key=lambda r: (r.get("ordem", 0), r.get("created_at") or ""))
+    for r in rows:
+        mapa.setdefault(str(r["parcela_id"]), []).append(r)
+    return mapa
+
+
+def _divisao_out(row: dict) -> dict:
+    valor = _dec(row.get("valor"))
+    percentual = _dec(row.get("percentual"))
+    return {
+        "id": row["id"],
+        "favorecido_id": row.get("favorecido_id"),
+        "valor": None if valor is None else str(valor),
+        "percentual": None if percentual is None else str(percentual),
+        "ordem": row.get("ordem", 0),
+    }
+
+
+def _validar_divisao(
+    client: Any, org_id: UUID, atendimento_id: UUID, *, tipo: str,
+    favorecido_id: Any, entradas: list[dict],
+) -> list[dict]:
+    """The split, once each share is proven well-formed. Refuses (400) what
+    is WRONG — never what is merely missing (an amount still blank is the
+    generator's `faltando`, and Σ shares ≠ parcela is its bloqueio, because
+    terms are drafted over several sittings):
+
+    - a split on a tipo that is not paid into an account;
+    - a split of ONE share (that is `favorecido_id`);
+    - a parcela carrying both `favorecido_id` and a split;
+    - a share with both `valor` and `percentual`, or shares mixing the two;
+    - the same favorecido twice;
+    - a favorecido of another deal (404, `_exigir_favorecido`).
+    """
+    if not entradas:
+        return []
+    if tipo not in TIPOS_PARCELA_COM_FAVORECIDO:
+        raise ValidationError_(
+            "só parcelas de sinal, intermediária, direta ou saldo podem ser "
+            "divididas entre favorecidos",
+            field="favorecidos_divisao",
+        )
+    if len(entradas) < 2:
+        raise ValidationError_(
+            "uma divisão precisa de pelo menos dois favorecidos — para um só, "
+            "use o favorecido da parcela",
+            field="favorecidos_divisao",
+        )
+    if favorecido_id:
+        raise ValidationError_(
+            "a parcela já tem um favorecido único — remova-o (favorecido_id "
+            "nulo) para dividi-la entre favorecidos",
+            field="favorecidos_divisao",
+        )
+    normalizadas: list[dict] = []
+    vistos: set[str] = set()
+    tipos_valor: set[str] = set()
+    for i, bruta in enumerate(entradas):
+        # A PATCH hands over the body models themselves, a POST their dump.
+        e = bruta.model_dump() if hasattr(bruta, "model_dump") else bruta
+        fav = str(e["favorecido_id"])
+        if fav in vistos:
+            raise ValidationError_(
+                f"o favorecido {fav} aparece duas vezes na divisão",
+                field="favorecidos_divisao",
+            )
+        vistos.add(fav)
+        _exigir_favorecido(client, org_id, atendimento_id, UUID(fav))
+        valor = _dec(e.get("valor"))
+        percentual = _dec(e.get("percentual"))
+        if valor is not None and percentual is not None:
+            raise ValidationError_(
+                "cada favorecido da divisão recebe um valor OU um percentual, não os dois",
+                field="favorecidos_divisao",
+            )
+        if valor is not None:
+            tipos_valor.add("valor")
+        if percentual is not None:
+            tipos_valor.add("percentual")
+        normalizadas.append(
+            {"favorecido_id": fav, "valor": valor, "percentual": percentual, "ordem": i}
+        )
+    if len(tipos_valor) > 1:
+        raise ValidationError_(
+            "a divisão mistura valores e percentuais — use só um dos dois",
+            field="favorecidos_divisao",
+        )
+    return normalizadas
+
+
+def _gravar_divisao(
+    client: Any, org_id: UUID, parcela_id: str, entradas: list[dict],
+    *, usuario_id: Optional[UUID],
+) -> None:
+    if not entradas:
+        return
+    _t(client, TABLE_PARCELA_FAVORECIDOS).insert([
+        {
+            "id": str(uuid4()),
+            "org_id": str(org_id),
+            "parcela_id": str(parcela_id),
+            "favorecido_id": e["favorecido_id"],
+            "valor": None if e["valor"] is None else str(e["valor"]),
+            "percentual": None if e["percentual"] is None else str(e["percentual"]),
+            "ordem": e["ordem"],
+            "created_at": _now(),
+            "created_por": str(usuario_id) if usuario_id else None,
+        }
+        for e in entradas
+    ]).execute()
+
+
+def _apagar_divisao(client: Any, org_id: UUID, parcela_id: Any) -> None:
+    _t(client, TABLE_PARCELA_FAVORECIDOS).delete().eq("org_id", str(org_id)).eq(
+        "parcela_id", str(parcela_id)
+    ).execute()
+
+
+def _validar_valor_fgts(tipo: str, valor: Optional[Decimal], valor_fgts: Optional[Decimal]) -> None:
+    """[Migration 192] The FGTS portion lives on the financiamento parcela
+    (the office's signed wording: "onde será utilizado {FGTS} … e {FIN} por
+    meio de recursos de financiamento"), so it must be a strict part of it:
+    the DB CHECK holds `> 0` + tipo; `< valor` is checked here (valor is
+    nullable since 171, so a CHECK could not)."""
+    if valor_fgts is None:
+        return
+    if tipo != "financiamento":
+        raise ValidationError_(
+            "o valor de FGTS só existe na parcela de financiamento", field="valor_fgts"
+        )
+    if valor_fgts <= 0:
+        raise ValidationError_("o valor de FGTS precisa ser positivo", field="valor_fgts")
+    if valor is not None and valor_fgts >= valor:
+        raise ValidationError_(
+            "o valor de FGTS precisa ser menor que o valor da parcela de financiamento "
+            "(o restante é o valor financiado)",
+            field="valor_fgts",
+        )
+
+
 # ─── parcelas ─────────────────────────────────────────────────────────────
 
 
-def _parcela_out(row: dict, links: dict[str, list[str]]) -> dict:
+def _parcela_out(
+    row: dict, links: dict[str, list[str]],
+    divisao: Optional[dict[str, list[dict]]] = None,
+) -> dict:
     valor = _dec(row.get("valor"))
+    valor_fgts = _dec(row.get("valor_fgts"))
     return {
         "id": row["id"],
         "tipo": row["tipo"],
@@ -781,6 +955,12 @@ def _parcela_out(row: dict, links: dict[str, list[str]]) -> dict:
         "confissao_divida": bool(row.get("confissao_divida", False)),
         "dispara_corretagem": bool(row.get("dispara_corretagem", False)),
         "permuta_ativo_ids": list(links.get(str(row["id"]), [])),
+        # Migration 192 — the FGTS portion of a financiamento parcela, and
+        # the split of a parcela among several favorecidos.
+        "valor_fgts": None if valor_fgts is None else str(valor_fgts),
+        "favorecidos_divisao": [
+            _divisao_out(r) for r in (divisao or {}).get(str(row["id"]), [])
+        ],
         "ordem": row.get("ordem", 0),
         # S2 contract §E5.5 — `None` for every parcela created before
         # migration 171 or typed by hand; `derivado` for the H4 suggestion.
@@ -837,6 +1017,14 @@ def criar_parcela(
     if ativos_pedidos and tipo != "permuta":
         raise ValidationError_(_MSG_ATIVOS_SO_EM_PERMUTA, field="permuta_ativo_ids")
     ativos = _validar_ativos_permuta(client, org_id, atendimento_id, ativos_pedidos)
+    # Migration 192.
+    valor_fgts = _dec(valores.get("valor_fgts"))
+    _validar_valor_fgts(tipo, _dec(valores.get("valor")), valor_fgts)
+    divisao = _validar_divisao(
+        client, org_id, atendimento_id, tipo=tipo,
+        favorecido_id=valores.get("favorecido_id"),
+        entradas=list(valores.get("favorecidos_divisao") or []),
+    )
 
     # 🔴 `ordem` is ALWAYS server-computed on create — same "next slot after
     # the current max" rule `dividir_saldo_em_parcelas` already uses for its
@@ -864,6 +1052,7 @@ def criar_parcela(
         ),
         "confissao_divida": bool(valores.get("confissao_divida", False)),
         "dispara_corretagem": bool(valores.get("dispara_corretagem", False)),
+        "valor_fgts": None if valor_fgts is None else str(valor_fgts),
         "ordem": ordem,
         # S2 contract §C.7 — a human-created parcela is 'manual',
         # confirmed-by-construction (same convention every other D1 writer
@@ -879,6 +1068,7 @@ def criar_parcela(
     _t(client, TABLE_PARCELAS).insert(row).execute()
     # After the parcela exists: migration 114's link trigger reads its tipo.
     _gravar_links(client, org_id, row["id"], ativos, usuario_id=usuario_id)
+    _gravar_divisao(client, org_id, row["id"], divisao, usuario_id=usuario_id)
     sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
     return obter_estruturada(client, org_id, cliente_id)
 
@@ -911,6 +1101,37 @@ def atualizar_parcela(
                 field="tipo",
             )
 
+    # Migration 192 — the FGTS portion and the favorecido split are judged
+    # on the FINAL row (this PATCH over the stored one), like the links above.
+    valor_final = _dec(valores["valor"]) if "valor" in valores else _dec(atual.get("valor"))
+    fgts_final = (
+        _dec(valores["valor_fgts"]) if "valor_fgts" in valores else _dec(atual.get("valor_fgts"))
+    )
+    _validar_valor_fgts(tipo_final, valor_final, fgts_final)
+    favorecido_final = (
+        valores["favorecido_id"] if "favorecido_id" in valores else atual.get("favorecido_id")
+    )
+    substituir_divisao = "favorecidos_divisao" in valores
+    if substituir_divisao:
+        divisao_final = _validar_divisao(
+            client, org_id, atendimento_id, tipo=tipo_final,
+            favorecido_id=favorecido_final,
+            entradas=list(valores["favorecidos_divisao"] or []),
+        )
+    else:
+        existente = _divisao_por_parcela(client, org_id, [str(parcela_id)])[str(parcela_id)]
+        if existente and favorecido_final:
+            raise ValidationError_(
+                "a parcela está dividida entre favorecidos — envie favorecidos_divisao "
+                "vazia para usar um favorecido único",
+                field="favorecido_id",
+            )
+        if existente and tipo_final not in TIPOS_PARCELA_COM_FAVORECIDO:
+            raise ValidationError_(
+                "remova a divisão entre favorecidos desta parcela antes de mudar o tipo",
+                field="tipo",
+            )
+
     patch: dict = {}
     for campo in _PARCELA_CAMPOS_EDITAVEIS:
         if campo not in valores:
@@ -932,6 +1153,8 @@ def atualizar_parcela(
                 patch[campo] = str(valores[campo])
             else:
                 patch[campo] = None
+        elif campo == "valor_fgts":
+            patch[campo] = None if fgts_final is None else str(fgts_final)
         else:
             patch[campo] = valores[campo]
 
@@ -948,6 +1171,9 @@ def atualizar_parcela(
     ).execute()
     if substituir_links:
         _gravar_links(client, org_id, str(parcela_id), links_finais, usuario_id=usuario_id)
+    if substituir_divisao:
+        _apagar_divisao(client, org_id, parcela_id)
+        _gravar_divisao(client, org_id, str(parcela_id), divisao_final, usuario_id=usuario_id)
     sincronizar_parcela_intermediaria_derivada(client, org_id, cliente_id)
     return obter_estruturada(client, org_id, cliente_id)
 
@@ -976,6 +1202,7 @@ def remover_parcela(
     # The DB CASCADEs these; deleting them explicitly first keeps the service
     # correct on its own terms rather than on a side effect.
     _apagar_links(client, org_id, parcela_id)
+    _apagar_divisao(client, org_id, parcela_id)
     _t(client, TABLE_PARCELAS).delete().eq("org_id", str(org_id)).eq(
         "id", str(parcela_id)
     ).execute()
@@ -1371,6 +1598,7 @@ def obter_estruturada(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     intermediarios_rows = _listar_intermediarios_rows(client, org_id, atendimento_id)
     termos = _termos_out(_termos_linha(client, org_id, atendimento_id))
     links = _links_por_parcela(client, org_id, [str(p["id"]) for p in parcelas_rows])
+    divisao = _divisao_por_parcela(client, org_id, [str(p["id"]) for p in parcelas_rows])
 
     valor_negociado = _dec(negociacao.get("valor_negociado"))
     saldo_nao_alocado: Optional[str] = None
@@ -1409,7 +1637,7 @@ def obter_estruturada(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         "posse_data": negociacao.get("posse_data"),
         "posse_condicoes": negociacao.get("posse_condicoes"),
         "permuta_ativo_id": negociacao.get("permuta_ativo_id"),
-        "parcelas": [_parcela_out(r, links) for r in parcelas_rows],
+        "parcelas": [_parcela_out(r, links, divisao) for r in parcelas_rows],
         "favorecidos": [_favorecido_out(r) for r in favorecidos_rows],
         "intermediarios": [_intermediario_out(r) for r in intermediarios_rows],
         "termos": termos,

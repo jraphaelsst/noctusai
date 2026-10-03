@@ -54,6 +54,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Certidao,
     CertidaoImovel,
     DadosContrato,
+    DivisaoFavorecido,
     Empresa,
     Endereco,
     Favorecido,
@@ -591,6 +592,17 @@ def carregar(
             # Migration 114.
             dispara_corretagem=bool(p.get("dispara_corretagem")),
             permuta_ativo_ids=tuple(str(a) for a in p.get("permuta_ativo_ids") or ()),
+            # Migration 192 — the FGTS portion of the financiamento parcela,
+            # and the parcela's split among several favorecidos.
+            valor_fgts=_dec(p.get("valor_fgts")),
+            divisao=tuple(
+                DivisaoFavorecido(
+                    favorecido_id=_id(q.get("favorecido_id")),
+                    valor=_dec(q.get("valor")),
+                    percentual=_dec(q.get("percentual")),
+                )
+                for q in p.get("favorecidos_divisao") or ()
+            ),
         )
         for p in estruturada.get("parcelas") or []
     ]

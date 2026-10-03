@@ -180,6 +180,18 @@ class Empresa:
 
 
 @dataclass
+class DivisaoFavorecido:
+    """[Migration 192] One share of a parcela paid to several favorecidos —
+    a `valor` OR a `percentual` of the parcela. `favorecido_id` is `None`
+    only when the favorecido was deleted after the split was drafted (the
+    FK is ON DELETE SET NULL); the gate names it."""
+
+    favorecido_id: Optional[str]
+    valor: Optional[Decimal] = None
+    percentual: Optional[Decimal] = None
+
+
+@dataclass
 class Parcela:
     id: str
     tipo: str
@@ -196,6 +208,12 @@ class Parcela:
     #: [§6.1 #1, #2] The `permuta_ativos` this `tipo='permuta'` parcela is paid
     #: with. More than one is normal (contract 01 swaps two matrículas).
     permuta_ativo_ids: tuple[str, ...] = ()
+    #: [Migration 192] The FGTS portion of a `tipo='financiamento'` parcela
+    #: (financed part = valor - valor_fgts); `None` = split not known.
+    valor_fgts: Optional[Decimal] = None
+    #: [Migration 192] The parcela split among >= 2 favorecidos, in order;
+    #: empty when it is paid to `favorecido_id` alone.
+    divisao: tuple[DivisaoFavorecido, ...] = ()
 
 
 @dataclass
@@ -584,13 +602,18 @@ def signatarios(pessoas: list[Pessoa]) -> list[Pessoa]:
 
 
 def parcela_permuta(d: DadosContrato) -> Optional[Parcela]:
-    """The deal's permuta parcela (spec §2.3 `tipo == 'permuta'`), or None.
-
-    One per deal: `derivacao` blocks a second one rather than guessing which
-    of them the permuta clauses are about.
-    """
-    permutas = [p for p in d.parcelas if p.tipo == "permuta"]
+    """The deal's FIRST permuta parcela (spec §2.3 `tipo == 'permuta'`), or
+    None — what the `tem_permuta` switch keys on. A deal may carry several
+    (each paid with its own imóveis); `parcelas_permuta` lists them all."""
+    permutas = parcelas_permuta(d)
     return permutas[0] if permutas else None
+
+
+def parcelas_permuta(d: DadosContrato) -> list[Parcela]:
+    """Every permuta parcela, in schedule order. Each is paid with ITS OWN
+    `permuta_ativo_ids` (an ativo pays at most one parcela —
+    `negociacao_estruturada_service._validar_ativos_permuta`)."""
+    return sorted((p for p in d.parcelas if p.tipo == "permuta"), key=lambda p: p.ordem)
 
 
 __all__ = [
@@ -598,6 +621,7 @@ __all__ = [
     "Certidao",
     "CertidaoImovel",
     "DadosContrato",
+    "DivisaoFavorecido",
     "Empresa",
     "Endereco",
     "Favorecido",
@@ -614,5 +638,6 @@ __all__ = [
     "Termos",
     "Testemunha",
     "parcela_permuta",
+    "parcelas_permuta",
     "signatarios",
 ]

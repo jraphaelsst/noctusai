@@ -52,13 +52,19 @@ LINHA = "______________________________"
 #: favorecido/PJ names (no wording change). The PDF text hash moves because
 #: bold runs re-wrap lines. Regenerated with the same `_render` this file uses.
 #: (Previous pin: migration 168's witness block printing CPF instead of RG.)
+#: [Payment shapes, 2026-10-03] V2 ONLY re-pinned, on purpose: its FGTS
+#: financing parcela now prints the signed contracts' combined wording ("por
+#: meio do uso das contas vinculadas ao FGTS e de recursos de financiamento
+#: imobiliário e/ou moeda corrente nacional") instead of "através do uso de
+#: FGTS e financiamento imobiliário" (0/34 signed contracts). V1, V3-V6
+#: unchanged byte for byte.
 #: Variants 1..6 of `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
     1: ("15bbcc5893cbd9f20de8a6f13e3013527f828bd17fffd4ee3fb5c87402cc8fa3",
         "8d6313b9b0e4f2b3b70f26fdd46c7e19b5599df9a6d8f0556e02c6867db4018e"),
-    2: ("4791e773e0cece4f3634c84cc3c8bef0f3f561381d4dfa47238991e691936efc",
-        "d30953ee604ecb959d77ecc90b592044b3e258b34ef6d8fd95402dbde2242ea2"),
+    2: ("113467f2ecd1d817fd8da16e4a820b494ca8fbc1d36b861ce6ad01c933cc9d34",
+        "b3cc7868addd58cd1d6512fa5deba95356a61a825b3e109166ef9dff1ee59407"),
     3: ("57fd5ba0a1f1ff0db32cc31bca689f038aceae6b67ad3754013ad143e09c6bc3",
         "de54534fa2ac58111d8efdb5c30bea22910b9042cb179cc9b6daf7068af973cd"),
     4: ("80c2c19cbb5d33a5a8991bdd969ad14e3e1821399c36c30c3b45114bfcaff98b",

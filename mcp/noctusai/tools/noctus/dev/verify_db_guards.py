@@ -3415,6 +3415,68 @@ _SW_190_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M192 = "192_parcela_divisao_fgts_quitacao_boleto.sql"
+
+#: Migration 192 — the contract payment shapes (social-wiring). Each probe
+#: writes the forbidden row inside the rolled-back transaction, against a
+#: borrowed atendimento (`atendimento_org` fixture).
+_SW_192_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="atendimento_parcela_favorecidos.valor_ou_percentual",
+        guard_name="atendimento_parcela_favorecidos_valor_ou_percentual",
+        migration=_M192,
+        rationale=(
+            "A share of a divided parcela is a valor OR a percentual of it; with both, "
+            "the contract would print two possibly-contradictory amounts for one payee."
+        ),
+        fixtures=("atendimento_org",),
+        tabelas=(f"{_S}.atendimento_parcela_favorecidos",),
+        ops_sql=(
+            f"    WITH p AS (\n"
+            f"      INSERT INTO {_S}.atendimento_negociacao_parcelas (org_id, atendimento_id, tipo, valor)\n"
+            "      VALUES (v_org, v_atendimento, 'sinal', 1) RETURNING id\n"
+            "    )\n"
+            f"    INSERT INTO {_S}.atendimento_parcela_favorecidos (org_id, parcela_id, valor, percentual)\n"
+            "    SELECT v_org, p.id, 1, 50 FROM p;"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a parcela share carrying both valor and percentual",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_negociacao_parcelas.valor_fgts_so_no_financiamento",
+        guard_name="atendimento_negociacao_parcelas_valor_fgts_check",
+        migration=_M192,
+        rationale=(
+            "valor_fgts is the FGTS portion of the FINANCING parcela; on any other tipo the "
+            "generator would have no line to print it in."
+        ),
+        fixtures=("atendimento_org",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_negociacao_parcelas (org_id, atendimento_id, tipo, valor, valor_fgts)\n"
+            "    VALUES (v_org, v_atendimento, 'sinal', 100, 10);"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a non-financiamento parcela with valor_fgts",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_negociacao_termos.onus_quitacao_vocabulario",
+        guard_name="atendimento_negociacao_termos_onus_quitacao_check",
+        migration=_M192,
+        rationale=(
+            "onus_quitacao picks the ÔNUS clause wording; an unknown value has no wording "
+            "and the generator would refuse every contract of the deal."
+        ),
+        fixtures=("atendimento_org",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_negociacao_termos (atendimento_id, org_id, onus_quitacao)\n"
+            "    VALUES (v_atendimento, v_org, 'noc_probe_bogus');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an out-of-vocabulary onus_quitacao",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -3448,6 +3510,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_COMMUNITY_PROBES,
     *_SW_179_183_PROBES,
     *_SW_190_PROBES,
+    *_SW_192_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

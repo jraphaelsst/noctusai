@@ -109,8 +109,9 @@ class Politica:
     # casado without `Pessoa.data_casamento` is `faltando`.
     lei_6515_vigencia_desde: date = date(1977, 12, 26)
 
-    # [Q3] Answered: the multa rescisória IS the sinal's valor, always.
-    # Fixed rule (contexto `multa_rescisoria`) — no override field.
+    # [Q3] Answered: the multa rescisória IS the sinal's valor, always — the
+    # SUM of the sinal parcelas when the sinal is paid in tranches (owner,
+    # 2026-10-03). Fixed rule (contexto `multa_rescisoria`) — no override.
 
     # [Q4] Answered: rescisão ¶2 is always "multa (valor do sinal) + every
     # cost proven to have been generated during the purchase-and-sale process
@@ -120,10 +121,15 @@ class Politica:
     # [Q5] Answered: the corretagem % owed on rescisão is the deal's
     # `pct_comissao`, always. Fixed rule (contexto `corretagem.pct_rescisao`).
 
-    # [Q6] Answered: FGTS + financiamento are ONE parcela. A `financiamento`
-    # parcela with `Financiamento.fgts` reads "através do uso de FGTS e
-    # financiamento imobiliário"; a separate `tipo='fgts'` parcela BLOCKS
-    # (PARCELA_FGTS_SEPARADA). Fixed rule — no toggle.
+    # [Q6] Answered: FGTS + financiamento are ONE printed parcela. Revised
+    # 2026-10-03 against the signed contracts (the old "através do uso de
+    # FGTS e financiamento imobiliário" appears in 0/34): the parcela reads
+    # "onde será utilizado {FGTS}, por meio do uso das contas vinculadas ao
+    # FGTS e {FIN} por meio de recursos de financiamento imobiliário …" when
+    # the split is known (`Parcela.valor_fgts`, migration 192, OR a separate
+    # `tipo='fgts'` parcela, which joins the financing parcela's line), and
+    # the combined "por meio do uso das contas vinculadas ao FGTS e de
+    # recursos de financiamento …" otherwise. Fixed rule — no toggle.
 
     # [Q7] Answered: `tipo='saldo'` is the open financing balance on the
     # imóvel, to be paid off. A saldo parcela without an active ônus BLOCKS
