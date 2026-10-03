@@ -30,7 +30,7 @@ from noctusai_lib.integrations.documents.abnt import clip_ranges, runs_from_rang
 from noctusai_lib.integrations.docx_render import DocxRenderAdapter
 
 from app.modules.card_hub.contrato_gerador import frases
-from app.modules.card_hub.contrato_gerador.concordancia import lado, normalizar_genero
+from app.modules.card_hub.contrato_gerador.concordancia import genero_exigido, lado
 from app.modules.card_hub.contrato_gerador.dados import (
     DadosContrato,
     Pessoa,
@@ -39,11 +39,11 @@ from app.modules.card_hub.contrato_gerador.dados import (
 )
 from app.modules.card_hub.contrato_gerador.derivacao import (
     _hoje_padrao,
+    antigos_no_contrato,
     antigos_proprietarios,
     certidoes_imovel,
     corretagem_marcos,
     empresas_exigidas,
-    exige_antigo_proprietario,
     indice_certidoes,
     numero_da_parcela,
     parcelas_antes_de,
@@ -85,7 +85,8 @@ def _sem_adquirido_inicial(texto: str) -> str:
 
 
 def _generos(pessoas: list[Pessoa]) -> list[str]:
-    return [normalizar_genero(p.genero) or "m" for p in pessoas]
+    # Never a default — every signatário's gender is gated (`qualificacao.genero`).
+    return [genero_exigido(p.genero, p.nome or p.nome_cadastro or "") for p in pessoas]
 
 
 def _descricao_matricula_permuta(i: PermutaImovel, d: DadosContrato) -> str:
@@ -99,7 +100,8 @@ def _descricao_matricula_permuta(i: PermutaImovel, d: DadosContrato) -> str:
 
     Falls back to `i.descricao_matricula` (the whole selection, the pre-136
     behaviour) ONLY when the extraction carries no `descricao_imovel` block
-    — logged at WARNING so the fallback is visible, never silent.
+    — surfaced to the operator as the `MATRICULA_PERMUTA_SEM_DESCRICAO_IMOVEL`
+    aviso (`derivacao._permuta`) and logged at WARNING, never silent.
     """
     if i.descricao_imovel_texto is not None:
         return i.descricao_imovel_texto
@@ -110,7 +112,7 @@ def _descricao_matricula_permuta(i: PermutaImovel, d: DadosContrato) -> str:
         d.contrato_id,
         i.permuta_ativo_id,
     )
-    return i.descricao_matricula or ""
+    return i.descricao_matricula or ""  # gated: derivacao._permuta `matricula.permuta.<id>.atos`
 
 
 def _brl_negrito(valor: Decimal) -> str:
@@ -124,7 +126,9 @@ def _texto_parcela_permuta(valor: Decimal, d: DadosContrato, C) -> str:
     parcela's own, and each imóvel is one `permuta_ativos` link (114) carrying
     its own matrícula quote (115)."""
     imoveis = d.permuta_imoveis
+    # gated: derivacao._partes `qualificacao.nome_oficial` (every signatário)
     nomes = juntar([nome_parte(p.nome or "") for p in signatarios(d.compradores)])
+    # inscricao_municipal / cidade / matrícula / cartório: gated by derivacao._permuta.
     descricoes = " E ".join(
         f"{_descricao_matricula_permuta(i, d)} Imóvel devidamente cadastrado pela Prefeitura Municipal de "
         f"{i.endereco.cidade} sob nº {negrito(i.inscricao_municipal or '')} e caracterizado na Matrícula Nº "
@@ -151,7 +155,8 @@ def _descricao_matricula_rica(d: DadosContrato, adapter: DocxRenderAdapter) -> A
     names the PREVIOUS owners and would put the wrong parties in a deed.
     Falls back to the whole selection (`d.matricula.texto` / `formatacao`,
     the pre-136 behaviour) ONLY when the extraction carries no such block —
-    logged at WARNING so the fallback is visible, never silent.
+    surfaced to the operator as the `MATRICULA_SEM_DESCRICAO_IMOVEL` aviso
+    (`derivacao._imovel`) and logged at WARNING, never silent.
 
     `.rstrip()` matches the plain-string behaviour it replaces; ranges are
     re-clipped to the (possibly shortened) stripped length so a range
@@ -315,6 +320,7 @@ def montar_contexto(
         n += 1
         grupos.append({"num": n, "em_nome_de": p.nome, "sufixo": None, "itens": itens})
         pendentes_cert += [
+            # gated: signatários by `_partes`, antigos by `_certidoes` (`nome_oficial`)
             frases.pendencia_certidao(t, p.nome or "")
             for t in tipos_exigidos("cpf")
             if t in idx and idx[t].resultado == "nao_emitida"
@@ -366,6 +372,7 @@ def montar_contexto(
     if "cnd_iptu" not in apresentadas:
         pendencias.append(frases.PENDENCIA_IPTU)
     if sw["tem_saldo_devedor"]:
+        # gated: `imovel.situacao_onus` (tem_saldo_devedor ⇒ an ONUS_COM_SALDO value)
         pendencias.append(frases.pendencia_baixa_onus(im.situacao_onus or ""))
     pendencias += pendentes_cert
 
@@ -374,7 +381,7 @@ def montar_contexto(
     else:
         apresentantes_lista, plural_apres = [f"{V.ART} {negrito(V.NOME)}"], V.plural
     antigos = antigos_proprietarios(d)
-    if antigos and exige_antigo_proprietario(d, assinatura, politica):
+    if antigos and antigos_no_contrato(d, assinatura, politica):
         # [Q9] the previous owner(s) present certidões too.
         #
         # 🔴 `antigos` MUST be checked here, not only the window predicate.
@@ -386,7 +393,9 @@ def montar_contexto(
         # phrase naming an EMPTY list and died with `IndexError: list index
         # out of range` inside `frases.antigos_proprietarios_texto` — a 500
         # on POST .../gerar, live 2026-09-22, on a contract the gate had just
-        # declared `pronto`. Gate and template must agree on who exists.
+        # declared `pronto`. Gate and template must agree on who exists —
+        # `antigos_no_contrato` (2026-10-03) also keeps a legacy deal that
+        # DOES record antigos from printing parties the gate never checked.
         apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos))
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
@@ -406,6 +415,7 @@ def montar_contexto(
             "credor": im.onus_credor,
             "fonte_texto": frases.onus_fonte_texto(im.onus_fonte_atos),
             "quitacao": termos.onus_quitacao,
+            # gated: derivacao._imovel `negociacao.onus_quitacao` (+ known value)
             "quitacao_texto": frases.onus_quitacao_texto(
                 termos.onus_quitacao or "",
                 C=C,
@@ -417,6 +427,9 @@ def montar_contexto(
 
     # [§6.1 #12] The marco names its parcela (114); the clause prints THAT
     # parcela's computed number, and the condition covers what precedes it.
+    # gated: derivacao._posse — marco present + known; a 'parcela' marco's
+    # parcela must be in the schedule (POSSE_MARCO_PARCELA_DESCONHECIDA). The
+    # ref is read only by the 'parcela' wording, so "" never prints.
     marco = termos.posse_marco or ""
     ref_marco = numero_da_parcela(d, termos.posse_marco_parcela_id) or ""
     if marco == "parcela":
@@ -440,6 +453,7 @@ def montar_contexto(
         # `d.permuta_imoveis[0].endereco` (the CRM's público endereço).
         # Gated `faltando` by `derivacao._permuta`, so never `None` here.
         permuta_imovel = d.permuta_imoveis[0]
+        # gated: derivacao._permuta (atos selected + registry address resolved)
         endereco_curto_permuta = resolver_endereco_posse(
             permuta_imovel.endereco_registro_texto,
             permuta_imovel.descricao_imovel_texto or permuta_imovel.descricao_matricula or "",
@@ -472,6 +486,7 @@ def montar_contexto(
             for i in d.intermediarios
             if not i.corretor_id and i.natureza == "intermediario"
         ]
+        # gated: derivacao._intermediacao `negociacao.corretagem_contratantes` (+ known value)
         texto, texto_cap, contrata = frases.corretagem_contratantes(
             termos.corretagem_contratantes or "", V=V, C=C
         )

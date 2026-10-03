@@ -42,8 +42,12 @@ WHAT REMAINS WITHOUT A HOME (spec §6.1, named refusals — see `derivacao`)
   no sample contract has it, so there is no wording to generate.
 - `Termos.onus_quitacao='ja_quitado'` (#11's "already paid, has termo" state)
   and `Termos.obrigacoes_vendedor` / `.permuta_obrigacoes_entrega`: stored by
-  114, but the sample contracts carry no clause for them — the gate refuses by
-  name rather than printing a clause the office never wrote.
+  114, but the sample contracts carry no clause for them. Each is a named
+  BLOQUEIO (`ONUS_QUITACAO_SEM_REDACAO`, `OBRIGACOES_VENDEDOR_SEM_REDACAO`,
+  `PERMUTA_OBRIGACOES_SEM_REDACAO`) — never an aviso: generating without the
+  typed obligation would silently drop a term the parties agreed to, and
+  printing it would be a clause the office never wrote. The operator clears
+  the field or waits for the clause.
 """
 from __future__ import annotations
 
@@ -74,8 +78,10 @@ class Certidao:
     emitida_em: Optional[date]
     validade_ate: Optional[date]
     #: The consulta this result belongs to: 'cpf' (the person) or 'cnpj'
-    #: (a company linked to the person).
-    consulta_tipo_documento: str = "cpf"
+    #: (a company linked to the person). `None` = unknown — the loader
+    #: infers it from `consulta_documento`'s digit count, and when even that
+    #: fails the gate names it (never a silent "cpf").
+    consulta_tipo_documento: Optional[str] = None
     consulta_nome: Optional[str] = None
     consulta_documento: Optional[str] = None
     #: [Q9] Receita situação cadastral of the CNPJ consulta — 'ativa' |
@@ -209,7 +215,8 @@ class Intermediario:
     corretor_id: Optional[str]
     nome: str
     creci: Optional[str]
-    tipo: str  # "percentual" | "valor_fixo"
+    #: "percentual" | "valor_fixo"; `None` = not entered (a `faltando`).
+    tipo: Optional[str]
     valor: Optional[Decimal]
     #: [§6.1 #22] Which favorecido receives this intermediário's corretagem.
     favorecido_id: Optional[str] = None
@@ -401,7 +408,9 @@ class PermutaImovel:
 @dataclass
 class Financiamento:
     existe: bool = False
-    situacao: str = "pendente"
+    #: 'pendente' | 'aprovado' | 'recusado' (migration 078); `None` = not
+    #: read — a `faltando` when the deal's financing exists.
+    situacao: Optional[str] = None
     fgts: bool = False
 
 

@@ -93,6 +93,7 @@ def certidoes_completas(emitida: date = date(2026, 9, 1)) -> list[Certidao]:
             numero=f"SIM-{i:04d}",
             emitida_em=emitida,
             validade_ate=date(2026, 12, 1),
+            consulta_tipo_documento="cpf",
         )
         for i, (tipo, *_resto) in enumerate(CERTIDOES, start=1)
     ]

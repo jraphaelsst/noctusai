@@ -114,6 +114,25 @@ def _endereco(fonte: dict, prefixo: str = "endereco_") -> Endereco:
     )
 
 
+def _consulta_tipo_documento(r: dict) -> Optional[str]:
+    """'cpf' | 'cnpj' — the consulta kind a certidão result belongs to.
+
+    🔴 Never a silent "cpf" default: a CNPJ consulta read as a CPF one puts a
+    company's certidão under the PERSON's group (or hides the person's own
+    gap behind it). The stored value wins; without one, the consulta's own
+    document decides by its digit count (11 = CPF, 14 = CNPJ); anything else
+    stays `None` and the gate names it (`derivacao._certidoes`)."""
+    tipo = (r.get("consulta_tipo_documento") or "").strip().lower()
+    if tipo:
+        return tipo
+    digitos = "".join(ch for ch in str(r.get("consulta_documento") or "") if ch.isdigit())
+    if len(digitos) == 11:
+        return "cpf"
+    if len(digitos) == 14:
+        return "cnpj"
+    return None
+
+
 def _certidao(r: dict) -> Certidao:
     return Certidao(
         tipo=r["tipo"],
@@ -121,7 +140,7 @@ def _certidao(r: dict) -> Certidao:
         numero=r.get("numero"),
         emitida_em=_data(r.get("emitida_em")),
         validade_ate=_data(r.get("validade_ate")),
-        consulta_tipo_documento=r.get("consulta_tipo_documento") or "cpf",
+        consulta_tipo_documento=_consulta_tipo_documento(r),
         consulta_nome=r.get("consulta_nome"),
         consulta_documento=r.get("consulta_documento"),
         # Migration 116 — the CNPJ/CPF's registration state, denormalised onto
@@ -633,7 +652,10 @@ def carregar(
         intermediarios=[
             Intermediario(
                 id=str(i["id"]), corretor_id=i.get("corretor_id"), nome=i["nome"], creci=i.get("creci"),
-                tipo=i.get("tipo") or "percentual", valor=_dec(i.get("valor")),
+                # Never a silent "percentual": a valor_fixo read as a
+                # percentage prints a commission off by orders of magnitude.
+                # Missing stays `None` — `derivacao._intermediacao` names it.
+                tipo=i.get("tipo") or None, valor=_dec(i.get("valor")),
                 # Migration 114 — the favorecido link + PF/PJ qualification.
                 favorecido_id=_id(i.get("favorecido_id")),
                 pessoa_tipo=i.get("pessoa_tipo"),
@@ -651,7 +673,9 @@ def carregar(
         ],
         financiamento=Financiamento(
             existe=bool(financiamento.get("existe")),
-            situacao=financiamento.get("situacao") or "pendente",
+            # Never a silent "pendente": missing stays `None` and
+            # `derivacao._financiamento` names it when financing exists.
+            situacao=financiamento.get("situacao") or None,
             fgts=bool(financiamento.get("fgts")),
         ),
         imobiliaria=imobiliaria,

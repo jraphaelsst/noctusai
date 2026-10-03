@@ -519,6 +519,8 @@ class TestGate:
             "tipo": "serasa",
             "status": "pendente",  # never advanced — no automation ran for it
             "resultado_origem": "manual",
+            # Denormalised from the consulta the manual registration created.
+            "consulta_tipo_documento": "cpf",
             "resultado": "negativa",
             "numero": "MANUAL-0001",
             "emitida_em": "2026-09-01",

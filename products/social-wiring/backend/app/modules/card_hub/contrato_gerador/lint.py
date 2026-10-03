@@ -33,6 +33,23 @@ _RE_LETRA = re.compile(r"^([a-z]{1,2})-\) ")
 _RE_BRL = re.compile(r"R\$ ([\d.]+,\d{2}) \(([^)]*)\)")
 _RE_ANO5 = re.compile(r"\b\d{2}/\d{2}/\d{5,}\b")
 
+#: A programming-language "no value" that leaked into the text — a slot whose
+#: value was None/null/undefined, formatted as a string instead of refused.
+_RE_VALOR_NULO = re.compile(r"\b(?:None|null|undefined|NaN)\b")
+#: The shape an EMPTY slot leaves behind once its neighbours are rendered:
+#: "Rua X, , Bairro", "nº ,", "( )", "CPF: ,", "Bairro  ,". Each is a value
+#: the template printed blank — the gate should have named it.
+_RES_LACUNA: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r",\s*,"), "vírgulas sem valor entre elas (', ,')"),
+    (re.compile(r"\bnº\s*[,.;:)]"), "'nº' sem número"),
+    (re.compile(r"\(\s*\)"), "parênteses vazios"),
+    (re.compile(r":\s*[,;]"), "rótulo ':' sem valor"),
+    (re.compile(r"[^\S\n]{2,}[,.;:)]"), "espaços duplicados antes de pontuação"),
+)
+#: A placeholder some layer wrote INSTEAD of refusing ("[DATA AUSENTE]",
+#: "[NOME]", "[A PREENCHER]") — upper-case, bracketed, never legal wording.
+_RE_PLACEHOLDER = re.compile(r"\[[A-ZÀ-Ý0-9][A-ZÀ-Ý0-9 _/\-]{2,}\]")
+
 
 def _hit(hits: list[dict], codigo: str, mensagem: str) -> None:
     hits.append({"codigo": codigo, "mensagem": mensagem})
@@ -81,6 +98,20 @@ def lint(
         # run-straddling pair — `**`/`<u>` would reach a signed instrument.
         if has_raw_markup(texto):
             _hit(hits, "MARCACAO_NAO_CONVERTIDA", f"Parágrafo {i + 1} contém marcação de formatação (**, <u>) não convertida.")
+        m_nulo = _RE_VALOR_NULO.search(texto)
+        if m_nulo:
+            _hit(hits, "VALOR_NULO_IMPRESSO", f"Parágrafo {i + 1} contém '{m_nulo.group(0)}' no lugar de um valor.")
+        for padrao, descricao in _RES_LACUNA:
+            m_lac = padrao.search(texto)
+            if m_lac:
+                _hit(
+                    hits,
+                    "LACUNA_NO_TEXTO",
+                    f"Parágrafo {i + 1} tem um valor em branco ({descricao}): '…{texto[max(0, m_lac.start() - 20):m_lac.end() + 20]}…'.",
+                )
+        m_ph = _RE_PLACEHOLDER.search(texto)
+        if m_ph:
+            _hit(hits, "PLACEHOLDER_NO_TEXTO", f"Parágrafo {i + 1} contém o marcador '{m_ph.group(0)}' no lugar de um valor.")
         if _RE_ANO5.search(texto):
             _hit(hits, "ANO_INVALIDO", f"Parágrafo {i + 1} tem uma data com ano de 5 dígitos.")
         for m in _RE_BRL.finditer(texto):

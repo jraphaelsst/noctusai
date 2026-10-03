@@ -27,8 +27,8 @@ from noctusai_lib.integrations.documents.nacionalidade import (
 
 from app.modules.card_hub.contrato_gerador.concordancia import (
     Concordancia,
+    genero_exigido,
     lado as concordancia_lado,
-    normalizar_genero,
 )
 from app.modules.card_hub.contrato_gerador.dados import (
     AtoCitado,
@@ -114,9 +114,14 @@ REGIME_EXTENSO = {
 
 ESTADOS_EM_NUCLEO = ("casado", "uniao_estavel")
 
+#: Every estado civil the qualificação has wording for — `derivacao._partes`
+#: refuses any other (it would silently drop out of `texto_pessoa`).
+ESTADOS_COM_REDACAO: tuple[str, ...] = tuple(_ESTADO_CIVIL_FLEX) + ESTADOS_EM_NUCLEO
+
 
 def _g(p: Pessoa, m: str, f: str) -> str:
-    return f if normalizar_genero(p.genero) == "f" else m
+    # Never a default gender — `genero_exigido` refuses (the gate requires it).
+    return f if genero_exigido(p.genero, p.nome or p.nome_cadastro or "") == "f" else m
 
 
 def nacionalidade_flex(p: Pessoa) -> str:
@@ -229,7 +234,9 @@ def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
             textos.append(f"{ta}, que convive em união estável com {tb}{sufixo}")
         else:
             lei = lei_6515_frase(a.data_casamento, lei_6515_desde)  # type: ignore[arg-type] — gated
-            regime = REGIME_EXTENSO.get(a.regime_bens or "", a.regime_bens or "")
+            # Gated (`derivacao._partes` — REGIME_BENS_SEM_REDACAO): an
+            # unknown regime is refused, never printed as its raw enum.
+            regime = REGIME_EXTENSO[a.regime_bens or ""]
             textos.append(f"{ta}, e {tb}, casados no regime da {regime}{lei}{sufixo}")
     return ", e ".join(textos)
 
@@ -348,7 +355,10 @@ def texto_parcela(
             )
         else:
             if vendedor_favorecido is not None:
-                gv = concordancia_lado([normalizar_genero(vendedor_favorecido.genero) or "m"], "vendedor")
+                gv = concordancia_lado(
+                    [genero_exigido(vendedor_favorecido.genero, vendedor_favorecido.nome or "")],
+                    "vendedor",
+                )
                 em_favor = f"em favor {gv.dos} {negrito(gv.NOME)}: "
             else:
                 em_favor = "em favor de "
@@ -418,8 +428,13 @@ RESULTADOS_COM_APONTAMENTO: tuple[str, ...] = ("positiva",)
 
 
 def rotulo_certidao(tipo: str, resultado: Optional[str]) -> str:
+    """`resultado=None` is the deliberate un-qualified label (a PENDENTE line,
+    a readiness message). Any OTHER value must be a known one — the gate
+    refuses an unknown resultado (`CERTIDAO_RESULTADO_DESCONHECIDO`), so one
+    reaching here is a gate/template disagreement: refuse, never print an
+    empty slot ("Certidão  de Débitos...")."""
     modelo = next(c[1] for c in CERTIDOES if c[0] == tipo)
-    palavra = RESULTADO_ROTULO.get(resultado or "", "")
+    palavra = "" if resultado is None else RESULTADO_ROTULO[resultado]
     return re.sub(r"\s{2,}", " ", modelo.replace("{R}", palavra))
 
 
@@ -487,7 +502,7 @@ def pendencia_baixa_onus(situacao_onus: str) -> str:
 def antigos_proprietarios_texto(pessoas: Sequence[Pessoa]) -> str:
     """[Q9] "o antigo proprietário" / "a antiga proprietária" / "os antigos
     proprietários" / "as antigas proprietárias" (a mixed group is masculine)."""
-    generos = [normalizar_genero(p.genero) or "m" for p in pessoas]
+    generos = [genero_exigido(p.genero, p.nome or p.nome_cadastro or "") for p in pessoas]
     if not generos:
         # Refuse rather than invent a gender for nobody: an empty group means
         # the CALLER decided wrongly that previous owners take part. Silently

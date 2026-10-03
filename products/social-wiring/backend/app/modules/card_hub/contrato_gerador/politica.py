@@ -66,6 +66,32 @@ PAPEL_ANTIGO_PROPRIETARIO = "antigo_proprietario"
 #: The vocabulary itself lives in `frases.MARCOS_POSSE`.
 
 
+# ─── Termos fixos do escritório ──────────────────────────────────────────
+#
+# The office's STANDARD legal terms, printed verbatim in every contract
+# (`modelo_texto.TERMOS_FIXOS` splices them into the wording). Not one of the
+# Q1–Q15 answers and not a per-deal value: they come from the office's own
+# signed contracts, which all carry these exact terms. Kept here, named, so a
+# change to the office standard is ONE reviewed edit in the policy file —
+# never a hunt through clause text. Each value is the EXACT printed phrase
+# (number + por extenso), so moving it here changed no wording.
+#
+#: Confissão de dívida (encargo I) and DA MORA — multa moratória.
+MULTA_MORATORIA = "2% (dois por cento)"
+#: Confissão de dívida (encargo II) and DA MORA — juros moratórios ao mês.
+JUROS_MORATORIOS_AM = "1% (um por cento)"
+#: Confissão de dívida (encargo III) and DA MORA — correção monetária.
+INDICE_CORRECAO_MONETARIA = "IGPM"
+#: Confissão de dívida — the delay that accelerates every vincenda.
+VENCIMENTO_ANTECIPADO_ATRASO = "30 (trinta) dias"
+#: Confissão de dívida — the missed-parcelas count that accelerates them.
+VENCIMENTO_ANTECIPADO_PARCELAS = "02 (duas) parcelas"
+#: Irretratabilidade — how long the vendedor has to refund on rescisão.
+PRAZO_DEVOLUCAO_RESCISAO = "2 dias úteis"
+#: Tributos — how long after the posse the cadastros must be updated.
+PRAZO_ATUALIZACAO_CADASTROS = "30 dias"
+
+
 @dataclass(frozen=True)
 class Politica:
     # [Q1] Declaração das Partes (Lei 8.212/91; Dec. 93.240/86) — answered:
@@ -178,6 +204,13 @@ POLITICA_PADRAO = Politica()
 
 __all__ = [
     "EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO",
+    "INDICE_CORRECAO_MONETARIA",
+    "JUROS_MORATORIOS_AM",
+    "MULTA_MORATORIA",
+    "PRAZO_ATUALIZACAO_CADASTROS",
+    "PRAZO_DEVOLUCAO_RESCISAO",
+    "VENCIMENTO_ANTECIPADO_ATRASO",
+    "VENCIMENTO_ANTECIPADO_PARCELAS",
     "ONUS_COM_SALDO",
     "ONUS_SUPORTADOS",
     "PAPEL_ANTIGO_PROPRIETARIO",

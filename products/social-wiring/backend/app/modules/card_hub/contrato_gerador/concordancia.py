@@ -25,6 +25,24 @@ def normalizar_genero(valor: Optional[str]) -> Optional[str]:
     return None
 
 
+def genero_exigido(valor: Optional[str], quem: str = "") -> str:
+    """The gender of a person the contract PRINTS — 'm' | 'f', never guessed.
+
+    🔴 There is no default. Every printed person's gender is a `faltando`
+    in `derivacao` (`qualificacao.genero`), so by the time a template asks
+    for it the value is there; one that is not means gate and template
+    disagree about who is printed, and inventing "m" would put a woman in a
+    signed deed as "o VENDEDOR". Refuse instead — a loud 500 beats a
+    silently mis-gendered contract."""
+    g = normalizar_genero(valor)
+    if g is None:
+        raise ValueError(
+            f"genero_exigido: gênero ausente ou desconhecido{f' — {quem}' if quem else ''}; "
+            "o gate (derivacao) deveria ter recusado a geração."
+        )
+    return g
+
+
 class Concordancia:
     """Agreement tokens for one person or one side of the deal."""
 
@@ -91,4 +109,4 @@ def pessoa(genero: str) -> Concordancia:
     return Concordancia([genero])
 
 
-__all__ = ["Concordancia", "lado", "normalizar_genero", "pessoa"]
+__all__ = ["Concordancia", "genero_exigido", "lado", "normalizar_genero", "pessoa"]

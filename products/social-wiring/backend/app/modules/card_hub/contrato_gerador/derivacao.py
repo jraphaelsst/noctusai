@@ -14,7 +14,11 @@ Pure over `DadosContrato`. Three outputs, never mixed:
                 no clause).
 - `avisos`    — generation proceeds, but a human should know.
 
-`pronto` is `not faltando and not bloqueios`. A switch that needs a MISSING
+- `confirmacoes` — not wrong data, but something the operator must KNOW
+                (e.g. a Receita PCEN 2ª via): each carries `ciente`.
+
+`pronto` is `not faltando and not bloqueios and not pendentes_confirmacao`
+(every `confirmacoes` entry acknowledged). A switch that needs a MISSING
 field adds a `faltando`; optional wording whose switch is off is omitted.
 The office's policy answers (spec §6.2, answered 2026-09-15) are cited as
 [Qn] next to the rule that implements each — see `politica.py`.
@@ -74,6 +78,12 @@ from app.modules.card_hub.proveniencia import fontes as fontes_mod
 MODELO_COMPRA_VENDA = "compra_venda"
 MODELO_A_VISTA = "compra_venda_a_vista"
 MODELO_PERMUTA = "compra_venda_permuta"
+
+#: `atendimento_financiamento.situacao` vocabulary (migration 078's CHECK).
+SITUACOES_FINANCIAMENTO = frozenset({"pendente", "aprovado", "recusado"})
+
+#: `atendimento_intermediarios.tipo` vocabulary (migration 108's CHECK).
+TIPOS_INTERMEDIARIO = frozenset({"percentual", "valor_fixo"})
 
 #: Parcelas paid into an account the contract must print (spec §5.1).
 TIPOS_PAGOS_A_FAVORECIDO = frozenset({"sinal", "intermediaria", "direta", "saldo"})
@@ -697,6 +707,14 @@ def prazo_pendencias(d: DadosContrato, politica: Politica) -> int:
 # ─── certidões index ──────────────────────────────────────────────────────
 
 
+def _rotulo_certidao_seguro(tipo: str) -> str:
+    """A readiness-message label for ANY stored tipo — `frases.rotulo_
+    certidao` only knows the printed ones (e.g. the system `tjsp`)."""
+    if any(c[0] == tipo for c in frases.CERTIDOES):
+        return frases.rotulo_certidao(tipo, None)
+    return tipo
+
+
 def tipos_exigidos(tipo_documento: str) -> list[str]:
     coluna = 3 if tipo_documento == "cpf" else 4
     return [c[0] for c in frases.CERTIDOES if c[coluna]]
@@ -893,14 +911,23 @@ def exige_antigo_proprietario(d: DadosContrato, assinatura: date, politica: Poli
     return None
 
 
+def antigos_no_contrato(d: DadosContrato, assinatura: date, politica: Politica) -> bool:
+    """Do the previous owner(s) ENTER the instrument? [Q9] requires them —
+    except on a `processo_legado` deal, whose gate (`_certidoes`) skips them
+    and says so (`ANTIGO_PROPRIETARIO_PROCESSO_LEGADO`: "não entram no
+    contrato"). The ONE predicate gate and template share, so a legacy deal
+    never prints antigos the gate never checked (name, gênero, certidões)."""
+    return bool(exige_antigo_proprietario(d, assinatura, politica)) and not d.processo_legado
+
+
 def pessoas_certificadas(
     d: DadosContrato, sw: dict[str, bool], assinatura: date, politica: Politica
 ) -> list[Pessoa]:
     """Whose certidões the contract presents, in group order: the signing
     vendedores, the signing compradores in a permuta, then the previous
-    owner(s) when [Q9] requires them."""
+    owner(s) when they enter the contract (`antigos_no_contrato`)."""
     pessoas = signatarios(d.vendedores) + (signatarios(d.compradores) if sw["tem_permuta"] else [])
-    if exige_antigo_proprietario(d, assinatura, politica):
+    if antigos_no_contrato(d, assinatura, politica):
         pessoas += antigos_proprietarios(d)
     return pessoas
 
@@ -979,8 +1006,45 @@ def _partes(av: Avaliacao, d: DadosContrato) -> None:
                     p.parte_id,
                     ancora=_ancora(p),
                 )
+            # Gate-backed here, not only through the checklist service's
+            # `faltando_qualificacao` above (deduped by (campo, parte_id), so
+            # never named twice): the qualificação and the certidão
+            # pendências PRINT `p.nome`, and a blank would leave an empty
+            # bold slot in the deed.
+            if not (p.nome or "").strip():
+                av.falta(
+                    "qualificacao.nome_oficial",
+                    f"{ROTULO_QUALIFICACAO['nome_oficial']}{SUFIXO_DOCUMENTO_DE_IDENTIDADE} — {_nome(p)}",
+                    "partes",
+                    p.parte_id,
+                    ancora=_ancora(p),
+                )
             if normalizar_genero(p.genero) is None:
                 av.falta("qualificacao.genero", f"Gênero — {_nome(p)}", "partes", p.parte_id, ancora=_ancora(p))
+            # An estado civil with no wording would silently drop out of the
+            # qualificação (`frases.texto_pessoa` prints only the known ones).
+            if p.estado_civil and p.estado_civil not in frases.ESTADOS_COM_REDACAO:
+                av.bloqueia(
+                    "ESTADO_CIVIL_SEM_REDACAO",
+                    f"O estado civil de {_nome(p)} ('{p.estado_civil}') não tem redação no gerador.",
+                )
+            if p.estado_civil == "casado":
+                # The qualificação prints "casados no regime da <regime>": a
+                # missing regime would leave the slot empty and an unknown one
+                # would print its raw stored value — refuse both.
+                if not p.regime_bens:
+                    av.falta(
+                        "qualificacao.regime_bens",
+                        f"{ROTULO_QUALIFICACAO['regime_bens']} — {_nome(p)}",
+                        "partes",
+                        p.parte_id,
+                        ancora=_ancora(p),
+                    )
+                elif p.regime_bens not in frases.REGIME_EXTENSO:
+                    av.bloqueia(
+                        "REGIME_BENS_SEM_REDACAO",
+                        f"O regime de bens de {_nome(p)} ('{p.regime_bens}') não tem redação no gerador.",
+                    )
             if p.papel in PAPEIS_SEM_REDACAO:
                 # [§6.1 #20] Genuinely absent: no sample contract qualifies a
                 # procurador/inventariante, so there is no wording to generate.
@@ -1098,6 +1162,17 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             "O texto da matrícula selecionado contém marcação de formatação "
             "bruta (** ou <u>) em vez de negrito/sublinhado — a transcrição "
             "precisa ser reenviada antes de entrar no contrato.",
+        )
+    # Migration 136 fallback, surfaced to the OPERATOR (not only a server
+    # log): without a `descricao_imovel` block the IMÓVEL: clause quotes the
+    # WHOLE selection (`contexto._descricao_matricula_rica`), which on a
+    # resold property can name the PREVIOUS owners in the deed.
+    if d.matricula.texto.strip() and d.matricula.descricao_imovel_texto is None:
+        av.avisa(
+            "MATRICULA_SEM_DESCRICAO_IMOVEL",
+            "A leitura da matrícula não separou a descrição do imóvel: a cláusula IMÓVEL "
+            "cita a seleção inteira dos atos. Confira no contrato se ela não inclui "
+            "proprietários anteriores ou atos que não descrevem o imóvel.",
         )
     if not im.titulo_aquisitivo_confirmado:
         av.falta("matricula.titulo_aquisitivo", "Título aquisitivo confirmado na matrícula", "matricula")
@@ -1320,10 +1395,29 @@ def _posse(
 
 def _financiamento(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     if sw["tem_financiamento"]:
+        situacao = d.financiamento.situacao
         if not d.financiamento.existe:
             av.falta("financiamento", "Registro do financiamento do atendimento", "financiamento")
-        elif d.financiamento.situacao == "recusado":
+        elif not situacao:
+            # Never read as "pendente" by default — unknown is a named gap.
+            av.falta(
+                "financiamento.situacao",
+                "Situação do financiamento (pendente, aprovado ou recusado)",
+                "financiamento",
+            )
+        elif situacao == "recusado":
             av.bloqueia("FINANCIAMENTO_RECUSADO", "O financiamento deste atendimento está recusado.")
+        elif situacao not in SITUACOES_FINANCIAMENTO:
+            av.bloqueia(
+                "FINANCIAMENTO_SITUACAO_DESCONHECIDA",
+                f"Situação do financiamento desconhecida: {situacao}.",
+            )
+        elif situacao != "aprovado":
+            av.avisa(
+                "FINANCIAMENTO_NAO_APROVADO",
+                f"O financiamento deste atendimento ainda não está aprovado (situação: {situacao}); "
+                "o contrato prevê uma parcela paga por financiamento.",
+            )
     # [Q6] ONE parcela: FGTS is worded inside the financiamento parcela.
     for i, p in enumerate(parcelas_ordenadas(d), start=1):
         if p.tipo == "fgts":
@@ -1364,6 +1458,16 @@ def _permuta(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
                 "O texto da matrícula do imóvel dado em permuta contém "
                 "marcação de formatação bruta (** ou <u>) — a transcrição "
                 "precisa ser reenviada antes de entrar no contrato.",
+            )
+        if (imovel.descricao_matricula or "").strip() and imovel.descricao_imovel_texto is None:
+            # Same migration-136 fallback as the main imóvel's (`_imovel`),
+            # surfaced to the operator — `contexto._descricao_matricula_permuta`.
+            av.avisa(
+                "MATRICULA_PERMUTA_SEM_DESCRICAO_IMOVEL",
+                "A leitura da matrícula do imóvel dado em permuta não separou a descrição "
+                "do imóvel: a parcela de permuta cita a seleção inteira dos atos. Confira no "
+                "contrato se ela não inclui proprietários anteriores ou atos que não descrevem "
+                "o imóvel.",
             )
         for campo, rotulo in (
             ("inscricao_municipal", "Inscrição municipal do imóvel da permuta"),
@@ -1473,6 +1577,17 @@ def _certidoes(
         })
 
     def conferir(p: Pessoa, certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
+        # A result whose consulta kind (CPF/CNPJ) is unknown cannot be placed
+        # in either group — named, never silently read as one of them.
+        for c in certs:
+            if c.consulta_tipo_documento is None:
+                av.falta(
+                    f"certidao.{c.tipo}.consulta_tipo_documento",
+                    f"Tipo de consulta (CPF ou CNPJ) da certidão {_rotulo_certidao_seguro(c.tipo)} "
+                    f"— {nome_grupo}",
+                    "certidoes",
+                    p.parte_id,
+                )
         idx = indice_certidoes(certs, tipo_documento)
         for tipo in tipos_exigidos(tipo_documento):
             rotulo = frases.rotulo_certidao(tipo, None)
@@ -1489,6 +1604,14 @@ def _certidoes(
                 av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", p.parte_id)
                 continue
             if c.resultado == "nao_emitida":
+                continue
+            if c.resultado not in frases.RESULTADO_ROTULO:
+                # The label is built FROM the resultado ("Certidão Negativa
+                # de…"); an unknown one would print an empty slot.
+                av.bloqueia(
+                    "CERTIDAO_RESULTADO_DESCONHECIDO",
+                    f"{rotulo} de {nome_grupo} tem um resultado desconhecido ('{c.resultado}').",
+                )
                 continue
             if not c.numero:
                 av.falta(f"certidao.{tipo}.numero", f"Número da {rotulo} — {nome_grupo}", "certidoes", p.parte_id)
@@ -1742,6 +1865,19 @@ def _intermediacao(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None
         # a party the header DOES qualify — needs one.
         if it.natureza == "intermediario" and not it.creci:
             av.falta(f"negociacao.intermediario.{it.id}.creci", f"CRECI de {it.nome}", "negociacao")
+        # The tipo decides how `valor` prints (a percentage of the price or a
+        # fixed amount) — never assumed "percentual" when it is missing.
+        if not it.tipo:
+            av.falta(
+                f"negociacao.intermediario.{it.id}.tipo",
+                f"Tipo da corretagem de {it.nome} (percentual ou valor fixo)",
+                "negociacao",
+            )
+        elif it.tipo not in TIPOS_INTERMEDIARIO:
+            av.bloqueia(
+                "INTERMEDIARIO_TIPO_DESCONHECIDO",
+                f"Tipo de corretagem desconhecido para {it.nome}: {it.tipo}.",
+            )
         if it.valor is None:
             av.falta(f"negociacao.intermediario.{it.id}.valor", f"Valor da corretagem de {it.nome}", "negociacao")
         # [§6.1 #21] An EXTERNAL intermediário carries its own qualification
@@ -1820,8 +1956,13 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
             "negociacao.ad_corpus", "Venda ad corpus (sim ou não)", "negociacao",
             alvo=ALVO_AD_CORPUS,
         )
-    # Stored by 114, with no clause in any sample contract — announced so the
-    # operator knows the text they typed is NOT on the instrument.
+    # Stored by 114, with no clause in any sample contract. 🔴 A BLOQUEIO,
+    # never an aviso (owner goal 2026-10-03: "a generated contract must
+    # never be silently wrong"): the operator TYPED an obligation they
+    # believe binds a party, and a contract that generates without it is a
+    # signed instrument missing a term somebody agreed to. An aviso let that
+    # instrument through; refusing makes the operator choose — clear the
+    # field (the obligation is not part of this deal) or wait for the clause.
     for valor, codigo, rotulo in (
         (d.termos.obrigacoes_vendedor, "OBRIGACOES_VENDEDOR_SEM_REDACAO", "As obrigações do vendedor"),
         (
@@ -1831,7 +1972,12 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
         ),
     ):
         if (valor or "").strip():
-            av.avisa(codigo, f"{rotulo} foram preenchidas, mas o gerador ainda não tem cláusula para elas; o texto não entra no contrato.")
+            av.bloqueia(
+                codigo,
+                f"{rotulo} foram preenchidas, mas o gerador ainda não tem cláusula para elas — "
+                "o texto não entraria no contrato. Apague o campo (se não faz parte deste "
+                "negócio) ou aguarde a cláusula para gerar.",
+            )
     # [Owner revision, 2026-09-23 — supersedes an earlier `foro_comarca`
     # manual-field draft] NO manual field, NO imóvel-city fallback: the
     # comarca is read off the SAME matrícula transcription the contract
@@ -1898,6 +2044,7 @@ __all__ = [
     "SUFIXO_DOCUMENTO_DE_IDENTIDADE",
     "SUFIXO_PJ_BAIXADA",
     "anos_antes",
+    "antigos_no_contrato",
     "antigos_proprietarios",
     "avaliar",
     "certidoes_imovel",

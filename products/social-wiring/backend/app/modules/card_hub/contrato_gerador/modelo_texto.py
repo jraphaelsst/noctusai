@@ -41,7 +41,34 @@ imóvel's own ônus) is not present at all — the gate reports the gap.
 """
 from __future__ import annotations
 
-TEMPLATE = r"""
+from app.modules.card_hub.contrato_gerador import politica
+
+#: The office's FIXED legal terms (`politica.py`, "Termos fixos do
+#: escritório"), spliced into the wording ONCE at import. A `⟪NOME⟫` marker
+#: is NOT docxtpl syntax — it never reaches a render, and a marker with no
+#: constant behind it fails the import (`_aplicar_termos_fixos`), never the
+#: signed document.
+TERMOS_FIXOS: dict[str, str] = {
+    "MULTA_MORATORIA": politica.MULTA_MORATORIA,
+    "JUROS_MORATORIOS_AM": politica.JUROS_MORATORIOS_AM,
+    "INDICE_CORRECAO_MONETARIA": politica.INDICE_CORRECAO_MONETARIA,
+    "VENCIMENTO_ANTECIPADO_ATRASO": politica.VENCIMENTO_ANTECIPADO_ATRASO,
+    "VENCIMENTO_ANTECIPADO_PARCELAS": politica.VENCIMENTO_ANTECIPADO_PARCELAS,
+    "PRAZO_DEVOLUCAO_RESCISAO": politica.PRAZO_DEVOLUCAO_RESCISAO,
+    "PRAZO_ATUALIZACAO_CADASTROS": politica.PRAZO_ATUALIZACAO_CADASTROS,
+}
+
+
+def _aplicar_termos_fixos(bruto: str) -> str:
+    texto = bruto
+    for nome, valor in TERMOS_FIXOS.items():
+        texto = texto.replace(f"⟪{nome}⟫", valor)
+    if "⟪" in texto or "⟫" in texto:
+        raise RuntimeError("modelo_texto: marcador de termo fixo sem constante em politica.py")
+    return texto
+
+
+_TEMPLATE_BRUTO = r"""
 INSTRUMENTO PARTICULAR DE PROMESSA DE VENDA E COMPRA DE BEM IMÓVEL – {{ imovel.titulo_curto|upper }} – {{ imovel.cidade|upper }} - {{ imovel.uf|upper }}.
 Pelo presente Instrumento Particular de Promessa de Venda e Compra de Bem Imóvel, e na melhor forma de direito, de um lado, {{ V_qualificacao }}, {{ V.g('denominado','denominada','denominados') }} neste ato simplesmente **"{{ V.NOME }}"**;
 E de outro lado, {{ C_qualificacao }}, {{ C.g('denominado','denominada','denominados') }} neste ato simplesmente **"{{ C.NOME }}"**;
@@ -71,11 +98,11 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {{ C.ART }} **{{ C.NOME }}**, de forma livre, consciente, expressa, irrevogável e irretratável, {{ C.pl('reconhece, confessa e declara','reconhecem, confessam e declaram') }} dever {{ V.aos }} **{{ V.NOME }}** o saldo remanescente do preço da compra e venda objeto deste instrumento, correspondente às parcelas previstas na {{ cl.preco.ref }}, especialmente aquelas descritas como Parcelas {{ confissao.parcelas_nums }}, totalizando o valor nominal de {{ brl(confissao.total) }}, acrescido dos juros remuneratórios convencionados de {{ pct_extenso(confissao.juros_am) }} ao mês, observados os respectivos vencimentos contratualmente estabelecidos.
 **{{ par('confissao') }}** A presente confissão de dívida é realizada nos termos dos artigos 389, 394, 395 e seguintes do Código Civil, constituindo obrigação líquida, certa e exigível, ficando expressamente reconhecido {{ C.pelos }} **{{ C.NOME }}** que o presente instrumento particular, desde que assinado pelos devedores e por duas testemunhas, possui natureza de título executivo extrajudicial, nos termos do artigo 784, inciso III, do Código de Processo Civil, podendo ser promovida a execução judicial independentemente de prévia ação de conhecimento.
 **{{ par('confissao') }}** O inadimplemento de qualquer parcela sujeitará {{ C.art }} **{{ C.NOME }}**, automaticamente e independentemente de qualquer aviso, interpelação ou notificação judicial ou extrajudicial, ao pagamento dos seguintes encargos:
-**I –** multa moratória de 2% (dois por cento) sobre o valor da parcela em atraso;
-**II –** juros moratórios de 1% (um por cento) ao mês, calculados pro rata die;
-**III –** correção monetária pelo IGPM, ou por outro índice oficial que venha a substituí-lo, desde o vencimento até o efetivo pagamento;
+**I –** multa moratória de ⟪MULTA_MORATORIA⟫ sobre o valor da parcela em atraso;
+**II –** juros moratórios de ⟪JUROS_MORATORIOS_AM⟫ ao mês, calculados pro rata die;
+**III –** correção monetária pelo ⟪INDICE_CORRECAO_MONETARIA⟫, ou por outro índice oficial que venha a substituí-lo, desde o vencimento até o efetivo pagamento;
 **IV –** reembolso integral das despesas comprovadamente suportadas {{ V.pelos }} **{{ V.NOME }}** para cobrança do débito, inclusive custas, emolumentos e honorários advocatícios, judiciais ou extrajudiciais.
-**{{ par('confissao') }}** O atraso superior a 30 (trinta) dias no pagamento de qualquer parcela, ou o inadimplemento de 02 (duas) parcelas, consecutivas ou alternadas, importará, de pleno direito e independentemente de qualquer notificação, no vencimento antecipado de todas as parcelas vincendas, tornando imediatamente exigível o saldo devedor integral, acrescido dos encargos previstos neste contrato.
+**{{ par('confissao') }}** O atraso superior a ⟪VENCIMENTO_ANTECIPADO_ATRASO⟫ no pagamento de qualquer parcela, ou o inadimplemento de ⟪VENCIMENTO_ANTECIPADO_PARCELAS⟫, consecutivas ou alternadas, importará, de pleno direito e independentemente de qualquer notificação, no vencimento antecipado de todas as parcelas vincendas, tornando imediatamente exigível o saldo devedor integral, acrescido dos encargos previstos neste contrato.
 **{{ par('confissao') }}** {{ V.ART }} **{{ V.NOME }}** {{ V.pl('poderá','poderão') }} promover a execução judicial da obrigação pelo saldo integral antecipadamente vencido ou apenas pelas parcelas vencidas, a seu exclusivo critério, sem que isso importe em renúncia ao direito de exigir posteriormente as demais prestações ou configure novação da dívida.
 **{{ par('confissao') }}** A eventual tolerância {{ V.dos }} **{{ V.NOME }}** quanto ao atraso no pagamento, recebimento parcial de valores, renegociação verbal, concessão de prazo adicional ou qualquer outra liberalidade não importará novação, remissão, transação, renúncia de direitos ou alteração das condições pactuadas, permanecendo íntegros todos os direitos decorrentes deste contrato.
 **{{ par('confissao') }}** A obrigação ora confessada possui caráter autônomo quanto à sua exigibilidade, permanecendo plenamente válida e eficaz ainda que haja a lavratura da escritura pública, a imissão na posse, o registro da transmissão da propriedade ou qualquer outro ato decorrente da execução deste contrato, extinguindo-se somente mediante quitação expressa e escrita concedida {{ V.pelos }} **{{ V.NOME }}**.
@@ -147,11 +174,11 @@ Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete
 <u>CLÁUSULA {{ cl.tributos.ORD }}</u> - DO PAGAMENTO DOS TRIBUTOS, TAXAS E CONTRIBUIÇÕES
 {%p if tem_permuta %}
 {{ V.ART }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}**, cada qual se responsabilizará pelos pagamentos pontuais dos tributos, taxas e contribuições de melhoria, incidentes sobre seu imóvel, que se vencerem a partir da data da transmissão da posse sobre o imóvel adquirido, especialmente o IPTU, Condomínio, Luz, água e gás.
-**{{ par('tributos') }}** {{ V.ART }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}** se obrigam a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de 30 dias após a posse e se obrigam a dar ciência {{ V.aos }} **{{ V.NOME }}** e {{ C.aos }} **{{ C.NOME }}** das transferências feitas, apresentando os devidos protocolos ou a devida titularidade trocada.
+**{{ par('tributos') }}** {{ V.ART }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}** se obrigam a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de ⟪PRAZO_ATUALIZACAO_CADASTROS⟫ após a posse e se obrigam a dar ciência {{ V.aos }} **{{ V.NOME }}** e {{ C.aos }} **{{ C.NOME }}** das transferências feitas, apresentando os devidos protocolos ou a devida titularidade trocada.
 **{{ par('tributos') }}** As despesas decorrentes da transmissão de cada imóvel, tais como emolumentos de cartório, registro e ITBI, serão suportadas pela parte que o recebe.
 {%p else %}
 {{ C.ART }} **{{ C.NOME }}** se {{ C.pl('responsabilizará','responsabilizarão') }} pelos pagamentos pontuais dos tributos, taxas e contribuições de melhoria, que se vencerem a partir do recebimento da posse do imóvel, ficando {{ V.art }} **{{ V.NOME }}** {{ V.g('responsável','responsável','responsáveis') }} pelos pagamentos das contas de consumo como: água, luz e gás (se aplicável), tributos como IPTU e despesa condominial que tenham seu fato gerador antes da entrega da posse do imóvel.
-**{{ par('tributos') }}** {{ C.ART }} **{{ C.NOME }}** se {{ C.pl('obriga','obrigam') }} a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de 30 dias após a posse e se {{ C.pl('obriga','obrigam') }} a dar ciência {{ V.aos }} **{{ V.NOME }}** das transferências feitas, apresentando os protocolos ou a devida titularidade trocada.
+**{{ par('tributos') }}** {{ C.ART }} **{{ C.NOME }}** se {{ C.pl('obriga','obrigam') }} a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de ⟪PRAZO_ATUALIZACAO_CADASTROS⟫ após a posse e se {{ C.pl('obriga','obrigam') }} a dar ciência {{ V.aos }} **{{ V.NOME }}** das transferências feitas, apresentando os protocolos ou a devida titularidade trocada.
 **{{ par('tributos') }}** As despesas decorrentes deste instrumento, tais como, emolumentos de cartório, registro, ITBI, serão suportadas {{ C.pelos }} **{{ C.NOME }}**.
 {%p endif %}
 
@@ -159,11 +186,11 @@ Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete
 O presente Instrumento Particular de Promessa de Compra e Venda de Bem Imóvel, é firmado em caráter irrevogável e irretratável, não se admitindo arrependimento por nenhum dos contratantes, vinculando não só as partes, mas também seus herdeiros e/ou sucessores, que deverão fazer da presente venda sempre boa, firme e valiosa, tendo como base legal os artigos 417 a 420 do Código Civil, nos termos dos parágrafos seguintes.
 **{{ par('irretratabilidade') }}** Não obstante a irretratabilidade e irrevogabilidade do presente Instrumento, considerar-se-á rescindido o presente Instrumento, por descumprimento das obrigações assumidas {{ V.pelos }} **{{ V.NOME }}** ou {{ C.pelos }} **{{ C.NOME }}**{{ rescisao.cura_frase }}.
 **{{ par('irretratabilidade') }}** Fica ajustado entre as Partes, multa rescisória no valor de {{ brl(multa_rescisoria) }}, a ser paga pela parte que der causa à rescisão, que arcará ainda com todos os custos comprovadamente gerados durante o processo de compra e venda até a data da rescisão.
-**{{ par('irretratabilidade') }}** Caso a rescisão do Contrato seja motivada {{ V.pelos }} **{{ V.NOME }}**, {{ V.estes }} {{ V.pl('deverá','deverão') }}, além do pagamento da multa rescisória, devolver {{ C.aos }} **{{ C.NOME }}**, todas as importâncias efetivamente recebidas {{ C.g('deste','desta','destes') }}, no prazo máximo de 2 dias úteis após a rescisão do Contrato.
+**{{ par('irretratabilidade') }}** Caso a rescisão do Contrato seja motivada {{ V.pelos }} **{{ V.NOME }}**, {{ V.estes }} {{ V.pl('deverá','deverão') }}, além do pagamento da multa rescisória, devolver {{ C.aos }} **{{ C.NOME }}**, todas as importâncias efetivamente recebidas {{ C.g('deste','desta','destes') }}, no prazo máximo de ⟪PRAZO_DEVOLUCAO_RESCISAO⟫ após a rescisão do Contrato.
 **{{ par('irretratabilidade') }}** Caso a rescisão do Contrato seja motivada {{ C.pelos }} **{{ C.NOME }}**, caracterizada pela falta de pagamento de qualquer das parcelas, {{ C.estes }} {{ C.pl('perderá','perderão') }} o valor pago na Parcela {{ p_ref.sinal }} (Sinal) em favor {{ V.dos }} **{{ V.NOME }}**, a título indenizatório.
 
 <u>CLÁUSULA {{ cl.mora.ORD }}</u> – DA MORA E DO INADIMPLEMENTO
-Na hipótese de atraso no pagamento de qualquer das parcelas do preço, {{ C.art }} **{{ C.NOME }}** {{ C.pl('arcará','arcarão') }} com multa moratória de 2% (dois por cento) sobre o valor do débito, acrescido de juros moratórios de 1% (um por cento) ao mês e correção monetária pelo IGPM.
+Na hipótese de atraso no pagamento de qualquer das parcelas do preço, {{ C.art }} **{{ C.NOME }}** {{ C.pl('arcará','arcarão') }} com multa moratória de ⟪MULTA_MORATORIA⟫ sobre o valor do débito, acrescido de juros moratórios de ⟪JUROS_MORATORIOS_AM⟫ ao mês e correção monetária pelo ⟪INDICE_CORRECAO_MONETARIA⟫.
 
 {%p if tem_declaracao_partes %}
 <u>CLÁUSULA {{ cl.declaracao_partes.ORD }}</u> – DECLARAÇÃO DAS PARTES
@@ -251,10 +278,12 @@ TESTEMUNHAS:
 {%p endif %}
 """
 
+TEMPLATE = _aplicar_termos_fixos(_TEMPLATE_BRUTO)
+
 
 def linhas_do_template() -> list[str]:
     """Every non-blank template line — one Word paragraph each."""
     return [linha for linha in TEMPLATE.splitlines() if linha.strip()]
 
 
-__all__ = ["TEMPLATE", "linhas_do_template"]
+__all__ = ["TEMPLATE", "TERMOS_FIXOS", "linhas_do_template"]
