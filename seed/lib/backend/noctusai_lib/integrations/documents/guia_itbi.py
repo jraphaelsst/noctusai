@@ -61,9 +61,12 @@ from typing import Mapping, Optional, Protocol, Sequence, runtime_checkable
 from noctusai_lib.integrations.documents.caixa_rotulada import (
     campo as _caixa_campo,
     data_br as _caixa_data_br,
+    linhas_unidas,
+    localizar,
     percentual as _caixa_percentual,
     pessoas_com_cpf,
     temperar_alta_por_fonte,
+    valor_em_coluna,
 )
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.money import ValorLido, ler_valor
@@ -128,6 +131,10 @@ def _confianca_valor(lido: ValorLido, source: TextSource) -> ExtractionConfidenc
 #: string to the field's own tuple — never a new code path.
 _ROTULOS: dict[str, tuple[str, ...]] = {
     "valor_transacao": (
+        # Cotia's guide (measured on 5 real guides, 2026-10-03): the deed's
+        # declared price, printed under the "instrumento" label with the
+        # market-value gloss — NOT Carapicuíba's "(à vista)" cash part.
+        "VALOR DO INSTRUMENTO (VALOR VENAL DE MERCADO)",
         "VALOR DA TRANSACAO",
         "VALOR DECLARADO",
         "VALOR DE TRANSMISSAO",
@@ -222,6 +229,68 @@ def _campo(
     )
 
 
+def _eh_rotulo_monetario(linha: str) -> bool:
+    """A money box's label line, as printed: "VALOR ..." or any money
+    synonym of `_ROTULOS` — the label side of `valor_em_coluna`."""
+    if linha.startswith("VALOR"):
+        return True
+    return any(
+        r in linha for c in _CAMPOS_MONETARIOS for r in _ROTULOS[c]
+    )
+
+
+def _eh_valor_monetario(linha: str) -> bool:
+    """An `R$` amount `ler_valor` reads — the value side of
+    `valor_em_coluna`. The `R$` is required: a columnar dump also carries
+    areas/fractions ("123,45") that `ler_valor` would read as money."""
+    return "R$" in linha and ler_valor(linha).valor is not None
+
+
+def _valor_monetario_por_layout(
+    linhas: list[str],
+    unidas: list[str],
+    sinonimos: Sequence[str],
+    todos: Sequence[str],
+    valor: Optional[str],
+    achado: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """A money box's value when the text layer's LAYOUT defeats the
+    line-by-line box reader. Two shapes, both measured on real guides
+    (2026-10-03 — every text-layer guide in the corpus read 'sem_dados'
+    before this):
+
+    - COLUMNAR (Cotia): the row "Valor Venal IPTU | Valor do Instrumento"
+      is dumped as a label column followed by a value column, so the line
+      after a label is ANOTHER box's value (an area, "123,45", which
+      `ler_valor` happily reads as money). The columnar pairing
+      (`caixa_rotulada.valor_em_coluna`, money labels ↔ `R$` amounts, equal
+      counts only) takes precedence over the next-line fallback; a dump it
+      cannot pair reads `None` (never the first column's value).
+    - WRAPPED PROSE (Embu das Artes): "... E VALOR DA" / "TRANSAÇÃO: R$
+      ..." — the label straddles a line break, so no line carries it; the
+      joined-pairs pass (`caixa_rotulada.linhas_unidas`) finds it. Only
+      tried when the line-by-line pass never located the label at all."""
+    loc = localizar(linhas, sinonimos, todos_rotulos=todos)
+    if loc is not None:
+        valor_coluna, em_coluna = valor_em_coluna(
+            linhas,
+            loc[0],
+            eh_rotulo_do_tipo=_eh_rotulo_monetario,
+            eh_valor_do_tipo=_eh_valor_monetario,
+        )
+        if valor_coluna is not None:
+            return valor_coluna, loc[2]
+        if em_coluna:
+            # A columnar dump that could not be paired unambiguously: the
+            # next-line read would hand back the FIRST column's value.
+            return None, loc[2]
+        return valor, achado
+    valor_unido, achado_unido, _ = _campo(unidas, sinonimos, todos_rotulos=todos)
+    if achado_unido is not None:
+        return valor_unido, achado_unido
+    return valor, achado
+
+
 def _data_br(txt: Optional[str]) -> Optional[date]:
     """Shared with `cartao_cnpj`/`financiamento_imobiliario` — identical
     semantics — via `caixa_rotulada.data_br`."""
@@ -295,9 +364,14 @@ def parse_guia_itbi(text: str, source: TextSource) -> GuiaItbiFields:
     rotulos: dict[str, Optional[str]] = {c: None for c in _ROTULOS}
     brutos: dict[str, Optional[str]] = {}
 
+    unidas = linhas_unidas(linhas)
     for campo, sinonimos in _ROTULOS.items():
         sinonimos_norm = tuple(strip_accents_upper(s) for s in sinonimos)
         valor, achado, _mascarado = _campo(linhas, sinonimos_norm, todos_rotulos=todos_norm)
+        if campo in _CAMPOS_MONETARIOS:
+            valor, achado = _valor_monetario_por_layout(
+                linhas, unidas, sinonimos_norm, todos_norm, valor, achado
+            )
         brutos[campo] = valor
         rotulos[campo] = achado
         if valor is not None:

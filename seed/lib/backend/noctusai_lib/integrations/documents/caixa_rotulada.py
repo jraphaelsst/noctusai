@@ -251,25 +251,107 @@ def campo(
     `situacao_cadastral` field does NOT use this function — see
     `cartao_cnpj._campo_situacao_cadastral` for why a first-occurrence
     -wins contract is unsafe for that one field."""
+    achado = localizar(
+        linhas, sinonimos, todos_rotulos=todos_rotulos, titulo_documento=titulo_documento
+    )
+    if achado is None:
+        return (None, None, False)
+    i, idx, rotulo = achado
+    valor, mascarado = resolver_valor_caixa(
+        linhas,
+        i,
+        linhas[i],
+        idx,
+        rotulo,
+        todos_rotulos,
+        valores_mascarados=valores_mascarados,
+        titulo_documento=titulo_documento,
+    )
+    return (valor, rotulo, mascarado)
+
+
+def localizar(
+    linhas: list[str],
+    sinonimos: Sequence[str],
+    *,
+    todos_rotulos: Sequence[str],
+    titulo_documento: Optional[str] = None,
+) -> Optional[tuple[int, int, str]]:
+    """`(índice da linha, posição na linha, rótulo)` of the box `campo`
+    would read — same LONGEST-FIRST synonym order, same admissibility
+    guards — without resolving its value. For a caller that needs the
+    label's own POSITION (a columnar layout, see `valor_em_coluna`)."""
     for rotulo in sorted(sinonimos, key=len, reverse=True):
         for i, linha in enumerate(linhas):
             idx = proxima_ocorrencia(
                 linha, 0, rotulo, todos_rotulos, sinonimos, titulo_documento=titulo_documento
             )
-            if idx is None:
-                continue
-            valor, mascarado = resolver_valor_caixa(
-                linhas,
-                i,
-                linha,
-                idx,
-                rotulo,
-                todos_rotulos,
-                valores_mascarados=valores_mascarados,
-                titulo_documento=titulo_documento,
-            )
-            return (valor, rotulo, mascarado)
-    return (None, None, False)
+            if idx is not None:
+                return (i, idx, rotulo)
+    return None
+
+
+def linhas_unidas(linhas: list[str]) -> list[str]:
+    """Every pair of consecutive lines joined by one space — `linha[k] + " "
+    + linha[k+1]`. A text layer wraps prose wherever the page width falls,
+    so a label can be split across the break ("... E VALOR DA" /
+    "TRANSAÇÃO: R$ ..."): no single line carries it, every joined pair
+    that straddles the break does. A second-pass input for a label the
+    line-by-line pass never found — never the first pass (a pair repeats
+    each line twice, so its own document order is not the page's)."""
+    return [f"{a} {b}" for a, b in zip(linhas, linhas[1:])]
+
+
+def _tem_digito(linha: str) -> bool:
+    return any(c.isdigit() for c in linha)
+
+
+def valor_em_coluna(
+    linhas: list[str],
+    i: int,
+    *,
+    eh_rotulo_do_tipo: Callable[[str], bool],
+    eh_valor_do_tipo: Callable[[str], bool],
+) -> tuple[Optional[str], bool]:
+    """`(valor, em_coluna)` for the label on `linhas[i]` when the text layer dumped a
+    ROW of boxes as a COLUMN: a run of digit-free label lines, then a run
+    of value lines (every one carrying a digit), in the same order.
+
+    The two runs rarely have the same length — a blank box prints nothing,
+    a checkbox prints a bare "X", a free-text value carries no digit and
+    reads as a label — so position-in-run is NOT trusted on its own.
+    Instead only the labels of ONE TYPE (`eh_rotulo_do_tipo`, e.g. money
+    labels) are paired, in order, with the values of that SAME type
+    (`eh_valor_do_tipo`, e.g. an `R$` amount), and only when the two
+    counts are EQUAL — any mismatch is ambiguity, answered with `None`,
+    never a guess. `None` too when `linhas[i]` itself carries a digit
+    (its value sits on its own line — not a columnar dump) or is not a
+    label of the type.
+
+    `em_coluna` is `True` whenever the label's run holds TWO OR MORE
+    labels of the type — the row WAS dumped as a column, so the line right
+    after the label belongs to the run's FIRST box, not this one: a caller
+    must not fall back to a next-line read then, even when `valor` is
+    `None`."""
+    if i < 0 or i >= len(linhas) or _tem_digito(linhas[i]):
+        return (None, False)
+    inicio = i
+    while inicio > 0 and linhas[inicio - 1] and not _tem_digito(linhas[inicio - 1]):
+        inicio -= 1
+    fim = i
+    while fim + 1 < len(linhas) and linhas[fim + 1] and not _tem_digito(linhas[fim + 1]):
+        fim += 1
+    valores: list[str] = []
+    k = fim + 1
+    while k < len(linhas) and linhas[k] and _tem_digito(linhas[k]):
+        valores.append(linhas[k])
+        k += 1
+    rotulos_tipo = [j for j in range(inicio, fim + 1) if eh_rotulo_do_tipo(linhas[j])]
+    valores_tipo = [v for v in valores if eh_valor_do_tipo(v)]
+    em_coluna = len(rotulos_tipo) >= 2
+    if i not in rotulos_tipo or len(rotulos_tipo) != len(valores_tipo):
+        return (None, em_coluna)
+    return (valores_tipo[rotulos_tipo.index(i)], em_coluna)
 
 
 # ─── shared small parsers (identical across the 3 callers — see the module

@@ -294,3 +294,83 @@ class TestValorTransacaoDerivadoDasPartes:
         r = _parse(GUIA_PARTES + "Valor da Transação: 1.050.000,00\n", _S.OCR)
         assert r.valor_transacao == _D("1050000.00")
         assert "valor_transacao_derivado" not in (r.aviso or "")
+
+
+# ─── text-layer LAYOUT shapes measured on real guides (2026-10-03) ────────
+# Every text-layer guide in the corpus read `sem_dados` before this: 0/6.
+# The fixtures below copy the real LAYOUT only — every name, number and
+# value is invented.
+
+#: Cotia's text layer dumps the boxed row "Área do Terreno | Fração Ideal |
+#: Área Const. | Valor Venal IPTU | Valor do Instrumento" as a label column
+#: followed by a value column. The line after the instrumento label is an
+#: AREA ("412,50"), which a next-line reader takes for the price.
+_COTIA_COLUNAR = (
+    "Imposto Sobre Transmissão de Bens Imóveis - Inter-Vivos-ITBI\n"
+    "1 - Contribuinte(Comprador)\n"
+    "Natureza da Transação\n"
+    "12345.67.89.0001.00.000\n"
+    "54321\n"
+    "X\n"
+    "Compra e Venda\n"
+    "Área do Terreno\n"
+    "Fração Ideal\n"
+    "Área Const.\n"
+    "Valor Venal IPTU\n"
+    "Valor do Instrumento (Valor Venal de Mercado)\n"
+    "412,50\n"
+    "1\n"
+    "198,30\n"
+    "R$ 287.654,32\n"
+    "R$1.234.567,89\n"
+    "Aviso\n"
+    "Data de Vencimento\n"
+)
+
+
+class TestLayoutColunarCotia:
+    def test_transaction_value_is_the_instrument_column_value(self) -> None:
+        r = parse_guia_itbi(_COTIA_COLUNAR, TextSource.TEXT_LAYER)
+        assert r.valor_transacao == Decimal("1234567.89")
+        assert r.rotulos["valor_transacao"] == "VALOR DO INSTRUMENTO (VALOR VENAL DE MERCADO)"
+
+    def test_venal_pairs_with_its_own_column_value_not_an_area(self) -> None:
+        r = parse_guia_itbi(_COTIA_COLUNAR, TextSource.TEXT_LAYER)
+        assert r.valor_venal == Decimal("287654.32")
+
+    def test_instrument_with_market_gloss_is_not_the_cash_part(self) -> None:
+        r = parse_guia_itbi(_COTIA_COLUNAR, TextSource.TEXT_LAYER)
+        assert r.valor_a_vista is None
+
+    def test_unequal_money_label_and_value_counts_is_none_never_a_guess(self) -> None:
+        # One R$ amount for two money labels — ambiguous, so not paired.
+        texto = _COTIA_COLUNAR.replace("R$ 287.654,32\n", "287.654,32\n")
+        r = parse_guia_itbi(texto, TextSource.TEXT_LAYER)
+        assert r.valor_transacao is None
+
+    def test_vision_line_shape_of_the_same_guide(self) -> None:
+        texto = (
+            "VALOR VENAL IPTU: R$ 287.654,32\n"
+            "VALOR DO INSTRUMENTO (VALOR VENAL DE MERCADO): R$ 1.234.567,89\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.OCR)
+        assert r.valor_transacao == Decimal("1234567.89")
+        assert r.valor_venal == Decimal("287654.32")
+
+
+#: Embu das Artes prints the facts as prose in an observations box; the
+#: text layer wraps it where the page width falls — through the label.
+_EMBU_PROSA = (
+    "PREFEITURA DA ESTÂNCIA TURÍSTICA DE EMBU DAS ARTES\n"
+    "Total Lançado - R$:\n"
+    "MATRICULA - 123; VALOR VENAL 2026: R$ 287.654,32 E VALOR DA\n"
+    "TRANSAÇÃO: R$ 1.234.567,89.\n"
+    f"Adquirente: Fulano de Tal - CPF: {CPF_VALIDO}.\n"
+)
+
+
+class TestLayoutProsaQuebradaEmbu:
+    def test_label_split_across_a_line_break_is_found(self) -> None:
+        r = parse_guia_itbi(_EMBU_PROSA, TextSource.TEXT_LAYER)
+        assert r.valor_transacao == Decimal("1234567.89")
+        assert r.rotulos["valor_transacao"] == "VALOR DA TRANSACAO"
