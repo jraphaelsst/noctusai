@@ -13,6 +13,7 @@
  * a comprador/vendedor — see `NegociacoesBadgeLazy`'s docblock), so this one
  * fetch serves both brief items 2 and 3 for the titular.
  */
+import { rotuloDePapel } from "@/types/cardHub";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { Link } from "react-router-dom";
 
@@ -22,17 +23,10 @@ import { NegociacoesResumoBadges } from "@/components/clientes/NegociacoesResumo
 import { outrasNegociacoes, useNegociacoesDoCliente } from "@/hooks/useClientes";
 
 /** Same local pt-BR role map every negociações-facing file carries. */
-const PAPEL_LABEL: Record<string, string> = {
-  titular: "Titular",
-  comprador: "Comprador",
-  conjuge: "Cônjuge",
-  fiador: "Fiador",
-  procurador: "Procurador",
-  proprietario: "Proprietário",
-  inventariante: "Inventariante",
-  antigo_proprietario: "Antigo proprietário",
-  outro: "Outro",
-};
+/** `titular` is this list's own (the deal's owner is not a party row);
+ *  every party role reads through the shared `rotuloDePapel`. */
+const rotuloDoPapelNaNegociacao = (papel: string) =>
+  papel === "titular" ? "Titular" : rotuloDePapel(papel);
 
 export interface NegociacoesDoClienteSectionProps {
   clienteId: string;
@@ -99,7 +93,7 @@ export function NegociacoesDoClienteSection({
               <div className="min-w-0">
                 <p className="truncate font-medium">{n.titulo || "Negociação sem título"}</p>
                 <p className="text-xs text-muted-foreground">
-                  {n.lado === "comprador" ? "Compra" : "Venda"} · {PAPEL_LABEL[n.papel] ?? n.papel}
+                  {n.lado === "comprador" ? "Compra" : "Venda"} · {rotuloDoPapelNaNegociacao(n.papel)}
                   {n.etapa_label ? ` · ${n.etapa_label}` : ""}
                   {n.imovel_codigo ? ` · imóvel ${n.imovel_codigo}` : ""}
                 </p>

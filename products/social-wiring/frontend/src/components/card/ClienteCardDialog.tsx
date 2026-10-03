@@ -106,13 +106,14 @@ import type {
 // `compradores_service.PAPEIS_POR_LADO`, and the select offers exactly what
 // the API will accept. Re-listing them here would be the second copy that
 // drifts.
-import { PAPEIS_POR_LADO } from "@/types/cardHub";
+import { PAPEIS_POR_LADO, PAPEL_HINT, rotuloDePapel } from "@/types/cardHub";
 
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { PessoaLink } from "@/components/pessoa/PessoaLink";
 import { RoteirosSection } from "./RoteirosSection";
 import { CARD_SUBPAGES, partesPjDoLado, type CardSubpageKey } from "./cardSubpages";
-import type { ParteItem } from "@/types/partes";
+import type { ParteContratoOut, ParteContratoPatch, ParteItem } from "@/types/partes";
+import { ParteEmpresaContratoForm, RepresentanteEmpresaSelect } from "./partes/ParteContratoCampos";
 import type { GeracaoDestino } from "./GeradorContratoSection";
 import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
 import { SW_TIMELINE_RENDERERS } from "./Timeline";
@@ -220,6 +221,15 @@ export interface ClienteCardDialogProps {
    * card because both sides share one mutation.
    */
   papelSalvandoParteId?: string | null;
+  /** [Migration 193] Writes a party's contract-qualification fields
+   *  (`PATCH …/compradores/{parte_id}/contrato`): a PJ party's NIRE + sede,
+   *  a representante's company. Omitted ⇒ those controls are not offered. */
+  onSalvarContratoParte?: (parteId: string, patch: ParteContratoPatch) => void;
+  /** The party whose contract fields are being saved. */
+  salvandoContratoParteId?: string | null;
+  /** The last save's response per party (`parte_id` → row), this session —
+   *  `GET …/partes` does not return the PJ fields yet. */
+  contratoParteSalvo?: Record<string, ParteContratoOut>;
   /**
    * Renders one party's OWN checklist + documents panel.
    *
@@ -276,6 +286,10 @@ export interface ClienteCardDialogProps {
    * component never sees the titular's raw id).
    */
   renderConflitosPendentes?: () => ReactNode;
+  /** [Migration 193] The titular's contract-only person fields (identidade
+   *  tipo RG/RNE/RNM, pacto antenupcial) — a thunk, same reasoning as
+   *  `renderConflitosPendentes`. */
+  renderQualificacaoContratoDoTitular?: () => ReactNode;
   /**
    * The TITULAR's own "Negociações" block — every OTHER deal this person is
    * on (`pessoa-mesma-cpf-multideal-CONTRACT.md` §2/3, brief 2026-09-28) —
@@ -586,7 +600,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
     return (
       <div
         key={parte.parte_id}
-        className="mb-2 flex items-center justify-between gap-2 rounded-md border p-2"
+        className="mb-2 flex items-start justify-between gap-2 rounded-md border p-2"
         data-testid={`${lado}-empresa-${parte.parte_id}`}
       >
         <div className="min-w-0">
@@ -600,6 +614,14 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
             {rotuloDePapel(parte.papel)}
             {parte.documento ? ` · CNPJ ${formatIdentificador("cnpj", parte.documento)}` : ""}
           </p>
+          {props.onSalvarContratoParte && parte.parte_id && (
+            <ParteEmpresaContratoForm
+              parteId={parte.parte_id}
+              salvando={props.salvandoContratoParteId === parte.parte_id}
+              salvo={props.contratoParteSalvo?.[parte.parte_id] ?? null}
+              onSalvar={(patch) => props.onSalvarContratoParte?.(parte.parte_id as string, patch)}
+            />
+          )}
         </div>
         {onRemover && parte.parte_id && (
           <TooltipIconButton
@@ -674,6 +696,20 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       >
         {() => (
           <>
+            {parte.papel === "representante" && props.onSalvarContratoParte && (
+              <RepresentanteEmpresaSelect
+                parteId={parte.id}
+                valor={parte.representa_parte_id ?? null}
+                empresas={lado === "comprador" ? empresasCompradoras : empresasVendedoras}
+                ocupadas={(lado === "comprador" ? compradores : vendedores)
+                  .filter((p) => p.id !== parte.id && p.papel === "representante" && p.representa_parte_id)
+                  .map((p) => p.representa_parte_id as string)}
+                salvando={props.salvandoContratoParteId === parte.id}
+                onChange={(representaParteId) =>
+                  props.onSalvarContratoParte?.(parte.id, { representa_parte_id: representaParteId })
+                }
+              />
+            )}
             {props.renderNegociacoesBadgeDaParte?.(parte.cliente_id) ?? null}
             {props.renderDocumentosDePessoa?.(parte.cliente_id) ?? null}
             {props.renderCertidoesDaParte?.(
@@ -881,6 +917,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               pendenteConfirmacao={props.dadosPessoaisPendente}
               temCin={temArquivoCin(props.documentoChecklist)}
             />
+            {props.renderQualificacaoContratoDoTitular?.() ?? null}
             {props.renderConflitosPendentes?.() ?? null}
             {props.renderNegociacoesDoCliente?.() ?? null}
             {/* Same gate, same reasoning as the per-party panel
@@ -1196,45 +1233,9 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
 
 // ─── Sub-sections ───────────────────────────────────────────────────────────
 
-/**
- * How a party's role reads on screen. Keys mirror
- * `compradores_service.PAPEIS_POR_LADO` — EVERY value of BOTH tuples has an
- * entry, which `ClienteCardDialog.test.tsx` pins against `PAPEIS_POR_LADO`
- * itself rather than against a second hand-written list.
- *
- * An unmapped value falls through to the raw string rather than rendering
- * blank (`rotuloDePapel`), so a role added on the server shows up as itself
- * until someone gives it a label. That fallback matters more now that the
- * badge is a `<select>`: a blank option is indistinguishable from "no role".
- */
-const PAPEL_LABEL: Record<string, string> = {
-  comprador: "Comprador",
-  conjuge: "Cônjuge",
-  fiador: "Fiador",
-  procurador: "Procurador",
-  outro: "Outro",
-  // Seller-side roles (migration 098). One flat map rather than one per side:
-  // `conjuge` and `procurador` render identically on both, and splitting the
-  // map would duplicate them so that a label fix could land on one side only.
-  proprietario: "Proprietário",
-  inventariante: "Inventariante",
-  // Contract-automation F6: a PREVIOUS owner, not today's seller — see
-  // `PAPEIS_POR_LADO.vendedor`'s own docblock (`@/types/cardHub`).
-  antigo_proprietario: "Antigo proprietário",
-};
-
-/** The one role whose label alone does not say WHY it exists on the card —
- *  every other role signs the contract; this one exists purely so its
- *  certidões can be attached to the deal's due diligence. Read by
- *  `PapelSelect` as a per-option hint (native `title` tooltip). */
-const PAPEL_ANTIGO_PROPRIETARIO_HINT =
-  "Não assina o contrato — usado apenas para anexar as certidões do antigo proprietário.";
-
-/** The ONE place a role becomes words. Exported for the test that pins every
- *  `PAPEIS_POR_LADO` value against it. */
-export function rotuloDePapel(papel: string): string {
-  return PAPEL_LABEL[papel] ?? papel;
-}
+// Role labels + hints live beside `PAPEIS_POR_LADO` (`@/types/cardHub`) —
+// one map for every surface; re-exported for existing importers/tests.
+export { rotuloDePapel };
 
 /**
  * The best name we hold for a party.
@@ -1538,7 +1539,7 @@ function PapelSelect({
         <option
           key={p}
           value={p}
-          title={p === "antigo_proprietario" ? PAPEL_ANTIGO_PROPRIETARIO_HINT : undefined}
+          title={PAPEL_HINT[p]}
         >
           {rotuloDePapel(p)}
         </option>

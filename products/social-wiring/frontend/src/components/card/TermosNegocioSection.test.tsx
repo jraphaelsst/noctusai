@@ -175,6 +175,17 @@ describe("grupos condicionais", () => {
     expect(getByTestId("termos-onus-prazo-obrigatorio")).toBeTruthy();
   });
 
+  it("🔴 'ja_quitado' pede a data do protocolo da baixa (migração 193) e a envia", async () => {
+    const { getByTestId } = await render(
+      aggregate({ termos: { ...termosVazios(), onus_quitacao: "ja_quitado" } as any }),
+    );
+    const { fireEvent } = await import("@testing-library/react");
+    expect(getByTestId("termos-onus-baixa-protocolo-obrigatorio")).toBeTruthy();
+    fireEvent.change(getByTestId("termos-onus-baixa-protocolo"), { target: { value: "2026-09-10" } });
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[0][0].onus_baixa_protocolo_em).toBe("2026-09-10");
+  });
+
   it("a nota de ônus explica quando ele se aplica", async () => {
     const { getByTestId } = await render(aggregate());
     expect(getByTestId("termos-onus").textContent).toContain("financiamento");
@@ -212,7 +223,7 @@ describe("marco = 'parcela' exige uma parcela", () => {
 });
 
 describe("PUT — o corpo inteiro é sempre enviado", () => {
-  it("🔴 salvar envia as 17 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
+  it("🔴 salvar envia as 18 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
     const { getByTestId } = await render(aggregate());
     const { fireEvent } = await import("@testing-library/react");
 
@@ -235,6 +246,7 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "obrigacoes_vendedor",
         "onus_quitacao",
         "onus_prazo_dias",
+        "onus_baixa_protocolo_em",
         "confissao_juros_am",
         "confissao_garantia",
         "corretagem_contratantes",

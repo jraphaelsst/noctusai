@@ -110,3 +110,35 @@ export interface EmissaoCertidoesResponse {
   consulta_id: string;
   resultados: { resultado_id: string; tipo: string; status_processamento: string }[];
 }
+
+/** [Migration 193] `PATCH .../compradores/{parte_id}/contrato` — only the keys
+ *  sent are written; `null` clears. `pj_*` only on a company party;
+ *  `representa_parte_id` only on a person whose papel is `representante`
+ *  (a company party of the SAME atendimento). */
+export interface ParteContratoPatch {
+  pj_nire?: string | null;
+  pj_sede_logradouro?: string | null;
+  pj_sede_numero?: string | null;
+  pj_sede_complemento?: string | null;
+  pj_sede_bairro?: string | null;
+  pj_sede_cidade?: string | null;
+  pj_sede_uf?: string | null;
+  pj_sede_cep?: string | null;
+  representa_parte_id?: string | null;
+}
+
+/** The PATCH response: the party row plus the company qualification. */
+export interface ParteContratoOut extends ParteContratoPatch {
+  id: string;
+  empresa_id?: string | null;
+}
+
+export const CAMPOS_SEDE_PJ = [
+  "logradouro",
+  "numero",
+  "complemento",
+  "bairro",
+  "cidade",
+  "uf",
+  "cep",
+] as const;

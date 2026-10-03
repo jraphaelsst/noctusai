@@ -584,3 +584,34 @@ describe("confirmações — Receita PCEN 2ª via acknowledgment gate (owner 202
     expect(screen.getByTestId("gerador-contrato-erro-incompleto").textContent).toContain("Aguardando ciência: Receita:");
   });
 });
+
+describe("GeradorContratoSection — migration 193 (partes)", () => {
+  it("🔴 lists the wording the legal review will read (itens_revisao)", async () => {
+    const { screen } = await render({
+      status: status({
+        itens_revisao: [
+          { codigo: "OBRIGACOES_VENDEDOR", titulo: "Obrigações do vendedor", texto: "Entregar as chaves.\nQuitar o condomínio." },
+        ],
+      }),
+    });
+    const bloco = screen.getByTestId("gerador-contrato-itens-revisao");
+    expect(bloco.textContent).toContain("Obrigações do vendedor");
+    expect(bloco.textContent).toContain("Quitar o condomínio.");
+  });
+
+  it("🔴 PJ_REDACAO_A_CONFIRMAR stands out as its own titled box, not one more amber line", async () => {
+    const { screen } = await render({
+      status: status({
+        avisos: [
+          { codigo: "PJ_REDACAO_A_CONFIRMAR", mensagem: "redação de PJ derivada de um único contrato assinado — confirme na revisão jurídica" },
+          { codigo: "PARTE_SEM_EMAIL", mensagem: "Parte sem e-mail." },
+        ],
+      }),
+    });
+    const destaque = screen.getByTestId("gerador-contrato-aviso-destacado-PJ_REDACAO_A_CONFIRMAR");
+    expect(destaque.textContent).toContain("Redação da empresa (PJ) a confirmar");
+    const lista = screen.getByTestId("gerador-contrato-avisos").textContent ?? "";
+    expect(lista).toContain("Parte sem e-mail.");
+    expect(lista).not.toContain("redação de PJ");
+  });
+});

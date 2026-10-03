@@ -272,6 +272,10 @@ export interface NegociacaoTermos {
 
   onus_quitacao: OnusQuitacao | null;
   onus_prazo_dias: number | null;
+  /** Migration 193 — `YYYY-MM-DD`: the day the baixa request was filed at
+   *  the Registro de Imóveis. Required when `onus_quitacao = 'ja_quitado'`.
+   *  Optional for a pre-193 backend. */
+  onus_baixa_protocolo_em?: string | null;
 
   /** % ao mês, e.g. "1.5". Never parsed to float. */
   confissao_juros_am: string | null;

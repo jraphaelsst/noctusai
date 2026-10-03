@@ -15,6 +15,7 @@ import {
   CheckCircle2,
   Loader2,
   RefreshCw,
+  ShieldAlert,
   Sparkles,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -38,6 +39,7 @@ import {
 import type { CienciaPcenResult } from "@/types/certidoesPartes";
 
 import { PcenCiencia } from "./certidoes/PcenCiencia";
+import { ItensRevisaoLista } from "./ItensRevisaoLista";
 import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
@@ -380,6 +382,16 @@ function FaltandoLinha({
 }
 
 /**
+ * Avisos that must not read as one more amber line — a call the legal review
+ * has to make — rendered as their own titled box (code → title).
+ * `PJ_REDACAO_A_CONFIRMAR` (migration 193): the company party's wording was
+ * derived from a single signed contract.
+ */
+export const AVISOS_DESTACADOS: Record<string, string> = {
+  PJ_REDACAO_A_CONFIRMAR: "Redação da empresa (PJ) a confirmar na revisão jurídica",
+};
+
+/**
  * The readiness lists — `bloqueios` (red), `avisos` (amber) and `faltando`
  * grouped by WHERE to go fill it, each line actionable off its `destino`.
  * Shared by the contract generator (below) and the aditivo generator
@@ -420,13 +432,29 @@ export function ProntidaoListas({
 
       {entreBloqueiosEAvisos}
 
-      {avisos.length > 0 && (
+      {avisos.filter((a) => a.codigo in AVISOS_DESTACADOS).map((a) => (
+        <div
+          key={a.codigo}
+          className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-900"
+          data-testid={`${prefixo}-aviso-destacado-${a.codigo}`}
+        >
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p className="font-medium">{AVISOS_DESTACADOS[a.codigo]}</p>
+            <p>{a.mensagem}</p>
+          </div>
+        </div>
+      ))}
+
+      {avisos.some((a) => !(a.codigo in AVISOS_DESTACADOS)) && (
         <ul className="space-y-1" data-testid={`${prefixo}-avisos`}>
-          {avisos.map((a) => (
-            <li key={a.codigo} className="text-xs text-amber-700">
-              {a.mensagem}
-            </li>
-          ))}
+          {avisos
+            .filter((a) => !(a.codigo in AVISOS_DESTACADOS))
+            .map((a) => (
+              <li key={a.codigo} className="text-xs text-amber-700">
+                {a.mensagem}
+              </li>
+            ))}
         </ul>
       )}
 
@@ -642,6 +670,12 @@ export default function GeradorContratoSection({
             )}
           </>
         }
+      />
+
+      <ItensRevisaoLista
+        itens={status.itens_revisao}
+        titulo="Textos que a revisão jurídica vai ler"
+        testId="gerador-contrato-itens-revisao"
       />
 
       <div className="flex flex-wrap items-end gap-2">

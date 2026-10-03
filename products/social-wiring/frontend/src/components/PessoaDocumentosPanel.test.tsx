@@ -22,6 +22,12 @@ vi.mock("@/components/ConflitosPendentesPanel", () => ({
   ConflitosPendentesPanel: () => <div data-testid="conflitos-pendentes-stub" />,
 }));
 
+// Its own read/write container (migration 193) — stubbed like the conflicts
+// panel above; covered by `QualificacaoContratoForm.test.tsx`.
+vi.mock("@/components/QualificacaoContratoContainer", () => ({
+  QualificacaoContratoContainer: () => <div data-testid="qualificacao-contrato-stub" />,
+}));
+
 // 🔴 `useDocumentoChecklist`/`useDocumentoMutations` are keyed by the
 // `clienteId` ARGUMENT, never by call order — a blind `() => ({...})` mock
 // (the shape every test below but the multi-party one uses) would still pass

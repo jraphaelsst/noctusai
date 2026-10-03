@@ -52,6 +52,7 @@ import { DocumentoTipoSlot } from "@/components/card/DocumentoTipoSlot";
 import { SLOTS_DO_CASAMENTO } from "@/components/card/slotsDoCasamento";
 import { baixarArquivo } from "@noctusai/lib/components";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
+import { QualificacaoContratoContainer } from "@/components/QualificacaoContratoContainer";
 import { estadoCivilExigeConjuge, temArquivoCin } from "@/types/qualificacaoCompletude";
 
 export interface PessoaDocumentosPanelProps {
@@ -141,6 +142,7 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           })
         }
       />
+      <QualificacaoContratoContainer clienteId={clienteId} />
       <ConflitosPendentesPanel clienteId={clienteId} />
       <DocumentoChecklistSection
         // Scoped to THIS person. The titular's checklist is on the same screen

@@ -72,7 +72,10 @@ import {
   type AdicionarCompradorValues,
 } from "@/components/card/AdicionarCompradorDialog";
 import { AtendimentoImoveisSection } from "@/components/card/AtendimentoImoveisSection";
-import { useAdicionarParte, usePartes } from "@/hooks/usePartes";
+import { useAdicionarParte, useAtualizarContratoParte, usePartes } from "@/hooks/usePartes";
+import { toastServerError } from "@/lib/erroServidor";
+import { QualificacaoContratoContainer } from "@/components/QualificacaoContratoContainer";
+import type { ParteContratoOut } from "@/types/partes";
 import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
 import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
@@ -109,13 +112,8 @@ export interface ClienteDetailModalProps {
   atendimentoId?: string | null;
 }
 
-/** The server's own message when a mutation fails — never a silently
- *  swallowed rejection (e.g. the 409 on a second `descricao`, or the
- *  400 naming exactly which upload limit was hit). */
-function toastServerError(err: unknown, fallback: string) {
-  const message = err instanceof Error && err.message ? err.message : fallback;
-  toast.error(message);
-}
+// `toastServerError` — the server's own sentence (envelope `error.message`
+// first), shared with the contratos/aditivos containers: `@/lib/erroServidor`.
 
 export function ClienteDetailModal({
   clienteId,
@@ -250,6 +248,11 @@ export function ClienteDetailModal({
   // that carries the PJ parties `compradores` deliberately omits.
   const adicionarParte = useAdicionarParte(id ?? "__none__");
   const partes = usePartes(id, atendimentoId);
+  // Migration 193 — a party's contract-qualification fields (PJ NIRE + sede,
+  // a representante's company). The last response per party is kept for
+  // display: `GET …/partes` does not return the PJ fields yet.
+  const contratoParte = useAtualizarContratoParte(id ?? "__none__");
+  const [contratoParteSalvo, setContratoParteSalvo] = useState<Record<string, ParteContratoOut>>({});
   const dadosPessoaisMutation = useDadosPessoaisMutation(id ?? "__none__");
   // Durable pending-state read (owner directive, 2026-09-19) —
   // `DadosPessoaisForm`'s notice must survive a reload, unlike the last
@@ -816,6 +819,22 @@ export function ClienteDetailModal({
       // 🔴 The PARTE being saved, not a boolean. Both sides share one
       // mutation, so `isPending` alone would disable every role select on the
       // card while any one of them was in flight.
+      onSalvarContratoParte={(parteId, patch) =>
+        contratoParte.mutate(
+          { parteId, patch },
+          {
+            onSuccess: (row) => {
+              setContratoParteSalvo((m) => ({ ...m, [parteId]: row }));
+              toast.success("Dados do contrato salvos.");
+            },
+            onError: (err) => toastServerError(err, "Não foi possível salvar os dados do contrato."),
+          },
+        )
+      }
+      salvandoContratoParteId={
+        contratoParte.isPending ? (contratoParte.variables?.parteId ?? null) : null
+      }
+      contratoParteSalvo={contratoParteSalvo}
       papelSalvandoParteId={
         compradorMutations.atualizarPapel.isPending
           ? compradorMutations.atualizarPapel.variables?.parteId ?? null
@@ -859,6 +878,7 @@ export function ClienteDetailModal({
           />
         )
       }
+      renderQualificacaoContratoDoTitular={() => id && <QualificacaoContratoContainer clienteId={id} />}
       renderConflitosPendentes={() => id && <ConflitosPendentesPanel clienteId={id} />}
       // `pessoa-mesma-cpf-multideal-CONTRACT.md` §2/3 — the titular's own
       // "Negociações" block excludes THIS card's own atendimento

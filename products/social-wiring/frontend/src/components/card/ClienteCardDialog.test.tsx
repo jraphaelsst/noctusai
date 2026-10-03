@@ -2658,6 +2658,8 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
       "conjuge",
       "fiador",
       "procurador",
+      // Migration 193 — signs for a company party.
+      "representante",
       "outro",
     ]);
     expect(select.value).toBe("comprador");
@@ -2745,6 +2747,10 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
       // Contract-automation F6: a previous owner, not today's seller — see
       // `PAPEIS_POR_LADO.vendedor`'s own docblock (`@/types/cardHub`).
       "antigo_proprietario",
+      // Migration 193 — a seller's spouse who signs without owning, and the
+      // person who signs for a company party.
+      "anuente",
+      "representante",
       "outro",
     ]);
   });
@@ -2766,12 +2772,12 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
   it("🔴 renders an UNMAPPED role as itself rather than blank", async () => {
     const { render, screen } = await import("@testing-library/react");
     const { rotuloDePapel } = await import("./ClienteCardDialog");
-    expect(rotuloDePapel("anuente")).toBe("anuente");
+    expect(rotuloDePapel("papel_do_futuro")).toBe("papel_do_futuro");
 
     render(
       <ClienteCardDialog
         {...baseProps({
-          compradores: [parte({ papel: "anuente" })],
+          compradores: [parte({ papel: "papel_do_futuro" })],
           onAlterarPapelComprador: vi.fn(),
         })}
       />,
@@ -2782,8 +2788,8 @@ describe("ClienteCardDialog — o papel da parte é editável no lugar", () => {
     const select = screen.getByTestId(
       "papel-select-comprador-parte-1",
     ) as HTMLSelectElement;
-    expect(select.value).toBe("anuente");
-    expect([...select.options].map((o) => o.value)).toContain("anuente");
+    expect(select.value).toBe("papel_do_futuro");
+    expect([...select.options].map((o) => o.value)).toContain("papel_do_futuro");
   });
 });
 
@@ -2824,6 +2830,19 @@ describe("ClienteCardDialog — PJ parties + imóveis do atendimento (atendiment
     expect(rtl.screen.getByTestId("vendedor-empresa-pj-1").textContent).toContain("NEON PARK LTDA");
     rtl.fireEvent.click(rtl.screen.getByTestId("vendedor-empresa-remover-pj-1"));
     expect(onRemoverVendedor).toHaveBeenCalledWith("pj-1");
+  });
+
+  it("🔴 (migration 193) a PJ party offers NIRE + sede and saves them by parte_id", async () => {
+    const rtl = await import("@testing-library/react");
+    const onSalvarContratoParte = vi.fn();
+    rtl.render(
+      <ClienteCardDialog {...baseProps({ vendedores: [], partes: [pj()], onSalvarContratoParte })} />,
+    );
+    rtl.fireEvent.click(rtl.screen.getByTestId("card-subpage-tab-vendedor"));
+    rtl.fireEvent.click(rtl.screen.getByTestId("parte-empresa-contrato-abrir-pj-1"));
+    rtl.fireEvent.change(rtl.screen.getByTestId("parte-empresa-pj_nire-pj-1"), { target: { value: "35200000001" } });
+    rtl.fireEvent.click(rtl.screen.getByTestId("parte-empresa-contrato-salvar-pj-1"));
+    expect(onSalvarContratoParte).toHaveBeenCalledWith("pj-1", { pj_nire: "35200000001" });
   });
 
   it("a PJ comprador party shows in the Compradores block on Geral", async () => {

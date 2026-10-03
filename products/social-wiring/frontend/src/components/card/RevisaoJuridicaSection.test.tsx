@@ -138,6 +138,20 @@ describe("RevisaoJuridicaSection", () => {
     expect(livre).toContain("redigido pela equipe");
   });
 
+  it("🔴 lists the wording items (migration 193) as reading the reviewer must do", async () => {
+    const { screen, fireEvent } = await render({
+      versao: versao({
+        ...aguardando(),
+        itens: [{ codigo: "PJ_REDACAO", titulo: "Qualificação da empresa vendedora", texto: "EMPRESA EXEMPLO LTDA, inscrita no CNPJ…" }],
+      }),
+    });
+    const bloco = screen.getByTestId("contrato-revisao-itens-c1");
+    expect(bloco.textContent).toContain("leitura obrigatória");
+    expect(bloco.textContent).toContain("Qualificação da empresa vendedora");
+    fireEvent.click(screen.getByTestId("contrato-revisao-aprovar-c1"));
+    expect(document.body.textContent).toContain("incluindo o texto listado");
+  });
+
   it("🔴 'Aprovar revisão jurídica' asks for confirmation, then calls back with the version id", async () => {
     const onAprovar = vi.fn();
     const { screen, fireEvent } = await render({ onAprovar });

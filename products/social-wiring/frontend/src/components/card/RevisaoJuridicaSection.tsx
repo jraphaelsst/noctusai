@@ -47,6 +47,8 @@ import type { CampoRevisaoJuridica, VersaoOut } from "@/hooks/useContratos";
 import { revisaoJuridicaStatus } from "@/hooks/useContratos";
 import { CONFIANCA_ROTULO, ORIGEM_ROTULO } from "@/hooks/useValidacaoExtracao";
 
+import { ItensRevisaoLista } from "./ItensRevisaoLista";
+
 /** `origem` values that are NOT a machine reading of a document — an
  *  aditivo's generated wording and a clause the team wrote by hand. */
 const ORIGEM_NAO_EXTRAIDA: Record<string, string> = {
@@ -167,6 +169,12 @@ export function RevisaoJuridicaSection({
           ))}
         </ul>
       )}
+      <ItensRevisaoLista
+        itens={revisao.itens}
+        titulo="Textos para leitura obrigatória antes de aprovar"
+        testId={`${testIdPrefix}-itens-${contratoId}`}
+        tom="revisao"
+      />
       {onAprovar && isAdmin ? (
         <Button
           type="button"
@@ -198,7 +206,11 @@ export function RevisaoJuridicaSection({
               <DialogTitle>Aprovar revisão jurídica</DialogTitle>
               <DialogDescription>
                 Confirme que {documento === "aditivo" ? "o aditivo" : "o contrato"} da versão{" "}
-                {versao.numero} foi revisado por inteiro.
+                {versao.numero} foi revisado por inteiro
+                {(revisao.itens?.length ?? 0) > 0
+                  ? `, incluindo ${revisao.itens!.length === 1 ? "o texto listado" : `os ${revisao.itens!.length} textos listados`}`
+                  : ""}
+                .
                 {extraidos > 0 &&
                   (extraidos === 1
                     ? " O dado extraído automaticamente passa a constar como confirmado por você."

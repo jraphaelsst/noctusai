@@ -12,6 +12,8 @@ import { api } from "@noctusai/seed/infra";
 
 import type {
   EmissaoCertidoesResponse,
+  ParteContratoOut,
+  ParteContratoPatch,
   ParteCreateBody,
   ParteItem,
   ParteLookup,
@@ -131,6 +133,29 @@ export function useAdicionarParte(clienteId: string) {
       Promise.all([
         // The card family (compradores/vendedores lists, card summary,
         // qualificação) lives under the seed's `["sw","cardHub"]` root.
+        qc.invalidateQueries({ queryKey: ["sw", "cardHub"] }),
+        qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] }),
+      ]),
+  });
+}
+
+/**
+ * `PATCH /api/clientes/{id}/compradores/{parte_id}/contrato` (migration 193)
+ * — a company party's NIRE + sede, or a representante's link to the company
+ * party it signs for. Invalidates the parties lists (both shapes) and the
+ * contratos family: the generator's readiness (`partes.pj.*`,
+ * `PJ_MAIS_DE_UM_REPRESENTANTE`, …) reads exactly these columns.
+ */
+export function useAtualizarContratoParte(clienteId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ parteId, patch }: { parteId: string; patch: ParteContratoPatch }) =>
+      api.patch<ParteContratoOut>(
+        `${clienteBase(clienteId)}/compradores/${encodeURIComponent(parteId)}/contrato`,
+        patch,
+      ),
+    onSuccess: () =>
+      Promise.all([
         qc.invalidateQueries({ queryKey: ["sw", "cardHub"] }),
         qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] }),
       ]),

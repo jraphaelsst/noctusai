@@ -26,6 +26,10 @@ vi.mock("@/hooks/usePartes", () => ({
   usePartes: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
   useAdicionarParte: () => ({ mutate: vi.fn(), isPending: false }),
   useParteLookup: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
+  useAtualizarContratoParte: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+}));
+vi.mock("@/components/QualificacaoContratoContainer", () => ({
+  QualificacaoContratoContainer: () => null,
 }));
 vi.mock("@/components/card/AtendimentoImoveisSection", () => ({
   AtendimentoImoveisSection: () => null,

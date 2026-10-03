@@ -105,7 +105,20 @@ export interface DadosPessoais {
   endereco_bairro?: string | null;
   endereco_cidade?: string | null;
   endereco_uf?: string | null;
+
+  // ─── Contract qualification (migration 193) — edited in
+  // `QualificacaoContratoForm`, written through the SAME PATCH. ────────────
+  /** `null` reads as `rg`; `rne`/`rnm` = a foreign party's cédula. */
+  identidade_tipo?: IdentidadeTipo | null;
+  /** The escritura de pacto antenupcial the contract cites — stored on BOTH
+   *  spouses; filled by the pacto reader (provenance quintet per column). */
+  pacto_antenupcial_data?: string | null;
+  pacto_antenupcial_tabelionato?: string | null;
+  pacto_antenupcial_livro?: string | null;
+  pacto_antenupcial_folha?: string | null;
 }
+
+export type IdentidadeTipo = "rg" | "rne" | "rnm";
 
 /**
  * Every key of `DadosPessoais`, as a runtime value. A `Record` over
@@ -136,6 +149,11 @@ const CAMPOS_DADOS_PESSOAIS: Record<keyof DadosPessoais, true> = {
   endereco_bairro: true,
   endereco_cidade: true,
   endereco_uf: true,
+  identidade_tipo: true,
+  pacto_antenupcial_data: true,
+  pacto_antenupcial_tabelionato: true,
+  pacto_antenupcial_livro: true,
+  pacto_antenupcial_folha: true,
 };
 
 /**

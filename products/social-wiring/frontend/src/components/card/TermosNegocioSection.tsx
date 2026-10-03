@@ -93,6 +93,7 @@ interface TermosDraft {
 
   onus_quitacao: OnusQuitacao | "";
   onus_prazo_dias: string;
+  onus_baixa_protocolo_em: string;
 
   confissao_juros_am: string;
   confissao_garantia: string;
@@ -124,6 +125,7 @@ function toDraft(t: NegociacaoTermos): TermosDraft {
 
     onus_quitacao: t.onus_quitacao ?? "",
     onus_prazo_dias: t.onus_prazo_dias == null ? "" : String(t.onus_prazo_dias),
+    onus_baixa_protocolo_em: t.onus_baixa_protocolo_em ?? "",
 
     confissao_juros_am: t.confissao_juros_am ?? "",
     confissao_garantia: t.confissao_garantia ?? "",
@@ -179,6 +181,7 @@ function toPayload(d: TermosDraft): TermosNegocioPut {
 
     onus_quitacao: d.onus_quitacao || null,
     onus_prazo_dias: inteiroOuNulo(d.onus_prazo_dias),
+    onus_baixa_protocolo_em: d.onus_baixa_protocolo_em || null,
 
     confissao_juros_am: lerPercentual(d.confissao_juros_am),
     confissao_garantia: textoOuNulo(d.confissao_garantia),
@@ -592,6 +595,27 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                   </p>
                 )}
             </div>
+            {draft.onus_quitacao === "ja_quitado" && (
+              <div className="space-y-1.5">
+                <Label htmlFor="termos-onus-baixa-protocolo">
+                  Protocolo do pedido de baixa no Registro de Imóveis
+                </Label>
+                <Input
+                  id="termos-onus-baixa-protocolo"
+                  type="date"
+                  value={draft.onus_baixa_protocolo_em}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, onus_baixa_protocolo_em: e.target.value }))
+                  }
+                  data-testid="termos-onus-baixa-protocolo"
+                />
+                {!draft.onus_baixa_protocolo_em && (
+                  <p className="text-xs text-amber-700" data-testid="termos-onus-baixa-protocolo-obrigatorio">
+                    Informe a data — o contrato cita o protocolo da baixa do ônus já quitado.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </section>
 

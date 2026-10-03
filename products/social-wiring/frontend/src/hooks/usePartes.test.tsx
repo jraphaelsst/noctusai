@@ -7,12 +7,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, renderHook, waitFor } from "@testing-library/react";
 
-const { mockGet, mockPost } = vi.hoisted(() => ({ mockGet: vi.fn(), mockPost: vi.fn() }));
+const { mockGet, mockPost, mockPatch } = vi.hoisted(() => ({
+  mockGet: vi.fn(),
+  mockPost: vi.fn(),
+  mockPatch: vi.fn(),
+}));
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, post: mockPost, patch: vi.fn(), put: vi.fn(), delete: vi.fn() },
+  api: { get: mockGet, post: mockPost, patch: mockPatch, put: vi.fn(), delete: vi.fn() },
 }));
 
-import { useAdicionarParte, useParteLookup } from "./usePartes";
+import { useAdicionarParte, useAtualizarContratoParte, useParteLookup } from "./usePartes";
 
 function wrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -102,5 +106,17 @@ describe("useParteLookup", () => {
     expect(mockGet).toHaveBeenCalledWith(
       "/api/clientes/c1/partes/lookup?documento=52998224725&atendimento_id=at-1",
     );
+  });
+});
+
+describe("useAtualizarContratoParte (migration 193)", () => {
+  it("PATCHes only the keys sent to …/compradores/{parte_id}/contrato", async () => {
+    mockPatch.mockResolvedValueOnce({ id: "p1", representa_parte_id: "pj1" });
+    const { result } = renderHook(() => useAtualizarContratoParte("c1"), { wrapper: wrapper() });
+    result.current.mutate({ parteId: "p1", patch: { representa_parte_id: "pj1" } });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockPatch).toHaveBeenCalledWith("/api/clientes/c1/compradores/p1/contrato", {
+      representa_parte_id: "pj1",
+    });
   });
 });

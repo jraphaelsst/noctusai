@@ -862,6 +862,9 @@ export interface Comprador {
    * not to this edge row.
    */
   conjuge_cliente_id?: string | null;
+  /** [Migration 193] On a `representante`: the PJ party (`parte_id`) this
+   *  person signs for; `null` otherwise / not chosen yet. */
+  representa_parte_id?: string | null;
 }
 
 /** The two sides of a negotiation. */
@@ -882,16 +885,60 @@ export type LadoParte = "comprador" | "vendedor";
  * "previous" analogue.
  */
 export const PAPEIS_POR_LADO: Record<LadoParte, readonly string[]> = {
-  comprador: ["comprador", "conjuge", "fiador", "procurador", "outro"],
+  comprador: ["comprador", "conjuge", "fiador", "procurador", "representante", "outro"],
   vendedor: [
     "proprietario",
     "conjuge",
     "procurador",
     "inventariante",
     "antigo_proprietario",
+    "anuente",
+    "representante",
     "outro",
   ],
 } as const;
+
+/** [Migration 193] Papéis only a PERSON can hold — the server answers 400
+ *  for a company party (`compradores_service._PAPEIS_SO_PF`). */
+export const PAPEIS_SO_PESSOA_FISICA: readonly string[] = ["conjuge", "anuente", "representante"];
+
+/**
+ * How a party's role reads on screen — the ONE map (the card's role picker
+ * and the "Negociações" list both read it through `rotuloDePapel`). Keys
+ * mirror `compradores_service.PAPEIS_POR_LADO`; `ClienteCardDialog.test.tsx`
+ * pins every value of both tuples against it.
+ *
+ * An unmapped value falls through to the raw string rather than rendering
+ * blank, so a role added on the server shows up as itself until labelled.
+ */
+export const PAPEL_LABEL: Record<string, string> = {
+  comprador: "Comprador",
+  conjuge: "Cônjuge",
+  fiador: "Fiador",
+  procurador: "Procurador",
+  outro: "Outro",
+  proprietario: "Proprietário",
+  inventariante: "Inventariante",
+  // Contract-automation F6: a PREVIOUS owner, not today's seller.
+  antigo_proprietario: "Antigo proprietário",
+  // Migration 193.
+  anuente: "Anuente",
+  representante: "Representante (PJ)",
+};
+
+/** Per-option hints for roles whose label alone does not say why they exist. */
+export const PAPEL_HINT: Record<string, string> = {
+  antigo_proprietario:
+    "Não assina o contrato — usado apenas para anexar as certidões do antigo proprietário.",
+  anuente:
+    "Cônjuge ou companheiro(a) de um vendedor que assina sem ser proprietário — vincule o cônjuge no cadastro da pessoa.",
+  representante: "Assina pela empresa (PJ) desta parte — escolha qual empresa ele representa.",
+};
+
+/** The ONE place a role becomes words. */
+export function rotuloDePapel(papel: string): string {
+  return PAPEL_LABEL[papel] ?? papel;
+}
 
 export interface CompradoresResponse {
   /** Echoed back by the server so a caller can tell WHICH side came back

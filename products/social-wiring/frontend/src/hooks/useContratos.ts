@@ -120,9 +120,20 @@ export interface CampoRevisaoJuridica {
   confianca: string | null;
 }
 
+/** [Migration 193] A piece of WORDING the final legal review must read —
+ *  free-text obligations typed by the team, a company party's wording. No
+ *  per-item confirmation: the approval itself covers them. */
+export interface ItemRevisaoJuridica {
+  codigo: string;
+  titulo: string;
+  texto: string;
+}
+
 export interface RevisaoJuridica {
   status: RevisaoJuridicaStatus;
   campos: CampoRevisaoJuridica[];
+  /** Migration 193 — `[]` on older rows; absent on a pre-193 backend. */
+  itens?: ItemRevisaoJuridica[];
   revisado_por: ContratoActor | null;
   revisado_em: string | null;
 }
@@ -306,6 +317,9 @@ export interface ContratoGeracaoStatus {
   avisos: GeracaoAviso[];
   /** Absent on a pre-186 backend ⇒ none. */
   confirmacoes?: GeracaoConfirmacao[];
+  /** Migration 193 — the wording the final legal review will be pointed at
+   *  (absent on a pre-193 backend ⇒ none). */
+  itens_revisao?: ItemRevisaoJuridica[];
 }
 
 export interface GerarContratoInput {
