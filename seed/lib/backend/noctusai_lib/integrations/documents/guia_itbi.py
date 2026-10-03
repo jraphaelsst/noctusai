@@ -53,6 +53,7 @@ exactly that.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -321,6 +322,71 @@ def _pessoas(valor: Optional[str]) -> tuple[PessoaItbi, ...]:
     return pessoas_com_cpf(valor, PessoaItbi)
 
 
+#: Cotia's contribuinte block, text layer: three label lines then their
+#: three values in the same order (name, address, CPF) — measured on 5
+#: real guides, 2026-10-03. The contribuinte IS the comprador there
+#: ("1 - Contribuinte(Comprador)").
+_BLOCO_CONTRIBUINTE: tuple[str, ...] = ("NOME:", "ENDERECO:", "CGC/CPF:")
+_CPF_LINHA_RE = re.compile(r"^(\d{3}\.\d{3}\.\d{3}-\d{2}|\d{11})$")
+
+
+def _contribuinte_colunar(linhas: list[str]) -> tuple[PessoaItbi, ...]:
+    """The comprador of a guide whose text layer dumps its contribuinte
+    block as a column (see `_BLOCO_CONTRIBUINTE`). Only when the block is
+    headed as the COMPRADOR's and the third value is CPF-shaped — never a
+    guess at which line is which."""
+    n = len(_BLOCO_CONTRIBUINTE)
+    for i in range(len(linhas) - 2 * n + 1):
+        if tuple(linhas[i : i + n]) != _BLOCO_CONTRIBUINTE:
+            continue
+        if not any("COMPRADOR" in linha for linha in linhas[max(0, i - 2) : i]):
+            continue
+        nome, cpf_linha = linhas[i + n], linhas[i + n + 2]
+        if not _CPF_LINHA_RE.match(cpf_linha):
+            continue
+        return _pessoas(f"{nome} - CPF: {cpf_linha}")
+    return ()
+
+
+def _pessoas_por_layout(
+    linhas: list[str],
+    unidas: list[str],
+    campo: str,
+    todos: Sequence[str],
+    brutos: Mapping[str, Optional[str]],
+) -> tuple[PessoaItbi, ...]:
+    """A people field, robust to the same text-layer layouts the money
+    fields meet (see `_valor_monetario_por_layout`): the box read as-is;
+    the joined-pairs read (a text layer wraps "FULANO - CPF: ... E" /
+    "BELTRANA - CPF: ..." mid-list, Embu das Artes) — whichever names MORE
+    people; and, for the comprador only, Cotia's columnar contribuinte
+    block when neither found anyone.
+
+    NOC-REMEDIATE[guia-itbi-pessoas-vision]: the 3 vision-read guides of
+    the corpus name their people in shapes none of these read — a
+    "CONTRIBUINTE: A e B" line paired with a separate "CPF/CNPJ: x / y"
+    line, or "ADQUIRENTE: nome - CPF/CNPJ: [EM BRANCO]" (name only) — so
+    SW's belongs-check stays `pertencimento_nao_verificado` for them (a
+    pending conflict, never a wrong fill); the label-pair reader
+    `financiamento_imobiliario._proponentes` already does for the proposta
+    is the shape to share here. — 2026-10-03"""
+    sinonimos = tuple(strip_accents_upper(s) for s in _ROTULOS[campo])
+    pessoas = _pessoas(brutos[campo])
+    loc = localizar(linhas, sinonimos, todos_rotulos=todos)
+    if loc is not None and loc[0] < len(unidas):
+        # The pair STARTING at the label's own line — `unidas[i]` is
+        # `linhas[i] + " " + linhas[i + 1]`, i.e. the label's line plus its
+        # continuation (the pair ending at it would repeat the label's
+        # line and still cut the list).
+        valor_unido, _, _ = _campo([unidas[loc[0]]], sinonimos, todos_rotulos=todos)
+        pessoas_unidas = _pessoas(valor_unido)
+        if len(pessoas_unidas) > len(pessoas):
+            pessoas = pessoas_unidas
+    if not pessoas and campo == "compradores":
+        pessoas = _contribuinte_colunar(linhas)
+    return pessoas
+
+
 # ─── public value object ───────────────────────────────────────────────────
 
 
@@ -411,8 +477,8 @@ def parse_guia_itbi(text: str, source: TextSource) -> GuiaItbiFields:
     elif vencimento is not None:
         confiancas["vencimento"] = _temper(ExtractionConfidence.ALTA, source)
 
-    compradores = _pessoas(brutos["compradores"])
-    vendedores = _pessoas(brutos["vendedores"])
+    compradores = _pessoas_por_layout(linhas, unidas, "compradores", todos_norm, brutos)
+    vendedores = _pessoas_por_layout(linhas, unidas, "vendedores", todos_norm, brutos)
     for campo, pessoas in (("compradores", compradores), ("vendedores", vendedores)):
         if not pessoas:
             confiancas[campo] = ExtractionConfidence.NENHUMA

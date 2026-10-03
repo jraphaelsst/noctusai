@@ -424,13 +424,17 @@ def pessoas_com_cpf(
         return ()
     pessoas: list[T] = []
     for parte in valor.split(";"):
-        m = _NOME_CPF_RE.search(parte)
-        if not m:
-            continue
-        nome = m.group(1).strip(" ,") or None
-        cpf_bruto = m.group(2)
-        cpf_fmt = _format_cpf(cpf_bruto)
-        if cpf_fmt is None:
-            continue
-        pessoas.append(criar(nome, cpf_fmt, _cpf_is_valid(cpf_bruto)))
+        # EVERY "Nome - CPF" pair in the part, not only the first: a text
+        # layer (no prompt to obey) joins two people with " E " — "FULANO
+        # - CPF: ... E BELTRANA - CPF: ..." (Embu das Artes guide,
+        # measured 2026-10-03). The connector is dropped off the NEXT
+        # name's front; a real name never starts with a bare "E".
+        for m in _NOME_CPF_RE.finditer(parte):
+            nome = re.sub(r"^(?:E|AND)\s+", "", m.group(1).strip(" ,."), flags=re.IGNORECASE)
+            nome = nome.strip(" ,.") or None
+            cpf_bruto = m.group(2)
+            cpf_fmt = _format_cpf(cpf_bruto)
+            if cpf_fmt is None:
+                continue
+            pessoas.append(criar(nome, cpf_fmt, _cpf_is_valid(cpf_bruto)))
     return tuple(pessoas)

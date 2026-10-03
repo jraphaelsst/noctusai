@@ -299,3 +299,16 @@ class TestSharedSmallParsers:
     def test_pessoas_com_cpf_drops_an_unformattable_cpf_entry(self):
         resultado = pessoas_com_cpf("Fulano - CPF: 123", lambda *a: a)
         assert resultado == ()
+
+
+def test_pessoas_com_cpf_reads_every_pair_joined_by_e() -> None:
+    from noctusai_lib.integrations.documents.caixa_rotulada import pessoas_com_cpf
+
+    pessoas = pessoas_com_cpf(
+        "FULANO SINTETICO - CPF: 412.954.238-98 E BELTRANA SINTETICA - CPF: 529.982.247-25.",
+        lambda nome, cpf, ok: (nome, cpf, ok),
+    )
+    assert pessoas == (
+        ("FULANO SINTETICO", "412.954.238-98", True),
+        ("BELTRANA SINTETICA", "529.982.247-25", True),
+    )

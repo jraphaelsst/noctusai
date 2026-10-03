@@ -374,3 +374,39 @@ class TestLayoutProsaQuebradaEmbu:
         r = parse_guia_itbi(_EMBU_PROSA, TextSource.TEXT_LAYER)
         assert r.valor_transacao == Decimal("1234567.89")
         assert r.rotulos["valor_transacao"] == "VALOR DA TRANSACAO"
+
+
+class TestPessoasLayoutsTextLayer:
+    """Measured 2026-10-03: no text-layer guide read a single comprador
+    before this (0/6), so SW could never verify the guide belongs to the
+    deal. Invented names/CPFs; real layouts."""
+
+    def test_cotia_contribuinte_column_is_the_comprador(self) -> None:
+        texto = (
+            "Imposto Sobre Transmissão de Bens Imóveis - Inter-Vivos-ITBI\n"
+            "1 - Contribuinte(Comprador)\n"
+            "Nome:\nEndereço:\nCGC/CPF:\n"
+            "FULANO SINTETICO DE TAL\n"
+            "RUA INVENTADA nº 100 CS 2 COTIA - SP 06700000\n"
+            f"{CPF_VALIDO}\n"
+            "2 - Transmitente: BELTRANO VENDEDOR\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.TEXT_LAYER)
+        assert [(p.nome, p.cpf, p.cpf_valido) for p in r.compradores] == [
+            ("FULANO SINTETICO DE TAL", CPF_VALIDO, True)
+        ]
+
+    def test_a_contribuinte_column_not_headed_as_comprador_is_not_read(self) -> None:
+        texto = f"Nome:\nEndereço:\nCGC/CPF:\nFULANO\nRUA X 1\n{CPF_VALIDO}\n"
+        assert parse_guia_itbi(texto, TextSource.TEXT_LAYER).compradores == ()
+
+    def test_embu_two_adquirentes_wrapped_across_lines(self) -> None:
+        texto = (
+            "TRANSAÇÃO: R$ 1.234.567,89.\n"
+            f"Adquirente: FULANO SINTETICO - CPF: {CPF_VALIDO} E\n"
+            "BELTRANA SINTETICA - CPF: 529.982.247-25.\n"
+            "Transmitente: CICLANO VENDEDOR\n"
+        )
+        r = parse_guia_itbi(texto, TextSource.TEXT_LAYER)
+        assert [p.nome for p in r.compradores] == ["FULANO SINTETICO", "BELTRANA SINTETICA"]
+        assert all(p.cpf_valido for p in r.compradores)
