@@ -136,12 +136,15 @@ class TestCheckout:
         assert resp.status_code == 503
         assert pedidos.rows == {}
 
-    def test_gateway_failure_marks_pedido_falhou_502(self, store):
+    def test_gateway_failure_marks_pedido_falhou_502(self, store, caplog):
         from noctusai_lib.integrations.payments import PaymentGatewayError
 
         class _Boom:
             def create_checkout(self, request):
-                raise PaymentGatewayError("asaas", "boom", status=400, retryable=False)
+                raise PaymentGatewayError(
+                    "asaas", "Não há nenhum domínio configurado em sua conta.",
+                    status=400, code="invalid_object", retryable=False,
+                )
 
         from app import store_deps
         from app.main import app
@@ -154,6 +157,12 @@ class TestCheckout:
         assert resp.status_code == 502
         (row,) = store.pedidos.rows.values()
         assert row["status"] == "falhou"
+        # The gateway's own reason reaches the log — the status alone hid an
+        # Asaas account-setup gap on the first sandbox run (2026-10-03).
+        logged = " ".join(r.getMessage() for r in caplog.records if "gateway refused" in r.getMessage())
+        assert "invalid_object" in logged and "domínio configurado" in logged
+        # ...but never to the buyer.
+        assert "domínio" not in resp.text
 
     def test_unknown_field_422(self, store):
         assert self._post(store, extra="x").status_code == 422

@@ -126,7 +126,13 @@ class CheckoutService:
                 )
             )
         except PaymentGatewayError as exc:
-            logger.error("checkout: gateway refused pedido=%s status=%s retryable=%s", pedido_id, exc.status, exc.retryable)
+            # The gateway's own code + description are the actionable part (e.g.
+            # Asaas `invalid_object` "Não há nenhum domínio configurado em sua
+            # conta…" — an account-setup gap, invisible from the status alone).
+            logger.error(
+                "checkout: gateway refused pedido=%s status=%s code=%s retryable=%s message=%s",
+                pedido_id, exc.status, exc.code, exc.retryable, exc.message,
+            )
             self._pedidos.update(pedido_id, {"status": "falhou"})
             raise CheckoutError(
                 "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.",
