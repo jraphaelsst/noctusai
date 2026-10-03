@@ -3071,8 +3071,12 @@ def _sw_junction_probe(
     ops_sql: str,
     sqlstate_condition: str,
     what: str,
+    tabelas: tuple[str, ...] = (),
 ) -> GuardProbe:
-    """Build a probe over the 179-183 guards. `fixtures` names entries of
+    """Build a probe over the 179-183 (and 190) guards. `tabelas` names
+    schema-qualified tables the probe writes to that a not-yet-applied
+    migration creates — each is `no_fixture` when absent, never an
+    `ambiguous` "relation does not exist". `fixtures` names entries of
     `_SW_FIXTURES` (every one is `no_fixture` if its source has no row —
     never a silent pass). `ops_sql` is the forbidden write(s); the guard is
     proven only when the violated constraint's NAME is exactly `guard_name`."""
@@ -3081,7 +3085,7 @@ def _sw_junction_probe(
         "  v_org uuid;\n  v_codigo text;\n  v_atendimento uuid;\n"
         "  v_cliente uuid;\n  v_empresa uuid;\n  v_constraint text;\n"
     )
-    setup = ""
+    setup = "".join(_table_fixture_check(t) for t in tabelas)
     for name in fixtures:
         select_sql, into_vars = _SW_FIXTURES[name]
         last_var = into_vars.split(",")[-1].strip()
@@ -3306,6 +3310,111 @@ _SW_179_183_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Migration 190 — aditivos (amendments to a signed contract). Every probe
+# self-provisions its own contract → aditivo chain inside the rolled-back
+# transaction through data-modifying CTEs (one statement each), borrowing
+# only an existing atendimento (and its org).
+# ---------------------------------------------------------------------------
+
+_M190 = "190_contrato_aditivos.sql"
+_M190_TABELAS = (
+    f"{_S}.atendimento_contrato_aditivos",
+    f"{_S}.atendimento_contrato_aditivo_parcelas",
+    f"{_S}.atendimento_contrato_aditivo_versoes",
+)
+_M190_CONTRATO_CTE = (
+    f"    WITH c AS (INSERT INTO {_S}.atendimento_contratos (org_id, atendimento_id, titulo)\n"
+    "               VALUES (v_org, v_atendimento, 'noc probe aditivo') RETURNING id)"
+)
+_M190_ADITIVO_CTE = (
+    _M190_CONTRATO_CTE + ",\n"
+    f"    a AS (INSERT INTO {_S}.atendimento_contrato_aditivos (org_id, atendimento_id, contrato_id, ordinal)\n"
+    "          SELECT v_org, v_atendimento, c.id, 1 FROM c RETURNING id)"
+)
+_M190_VERSAO_COLS = (
+    f"    INSERT INTO {_S}.atendimento_contrato_aditivo_versoes\n"
+    "      (org_id, aditivo_id, storage_path, nome_original, mime_type, tamanho_bytes, tipo_documento,\n"
+    "       numero, origem, contexto_sha256, docx_storage_path, docx_tamanho_bytes, revisado_por, revisado_em)\n"
+)
+
+_SW_190_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="contrato_aditivos.ordinal_never_reused",
+        guard_name="uq_sw_contrato_aditivos_ordinal",
+        migration=_M190,
+        rationale="'o Segundo Termo Aditivo' must keep naming one instrument: an ordinal is never reused within a contract, deleted rows included.",
+        fixtures=("atendimento_org",),
+        tabelas=_M190_TABELAS,
+        ops_sql=(
+            _M190_CONTRATO_CTE + "\n"
+            f"    INSERT INTO {_S}.atendimento_contrato_aditivos (org_id, atendimento_id, contrato_id, ordinal)\n"
+            "    SELECT v_org, v_atendimento, c.id, 1 FROM c UNION ALL SELECT v_org, v_atendimento, c.id, 1 FROM c;"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two aditivos of one contract with the same ordinal",
+    ),
+    _sw_junction_probe(
+        probe_id="contrato_aditivo_parcelas.ordem_unique",
+        guard_name="uq_sw_contrato_aditivo_parcelas_ordem",
+        migration=_M190,
+        rationale="The printed 'Parcela NN' numbering rests on a distinct ordem per parcela of the restated schedule.",
+        fixtures=("atendimento_org",),
+        tabelas=_M190_TABELAS,
+        ops_sql=(
+            _M190_ADITIVO_CTE + "\n"
+            f"    INSERT INTO {_S}.atendimento_contrato_aditivo_parcelas (org_id, aditivo_id, tipo, valor, ordem)\n"
+            "    SELECT v_org, a.id, 'sinal', 1, 0 FROM a UNION ALL SELECT v_org, a.id, 'direta', 1, 0 FROM a;"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two parcelas of one aditivo with the same ordem",
+    ),
+    _sw_junction_probe(
+        probe_id="contrato_aditivo_versoes.numero_never_reused",
+        guard_name="uq_sw_contrato_aditivo_versoes_numero",
+        migration=_M190,
+        rationale="'versão 2' of an aditivo must keep naming the same bytes; numero is never reused.",
+        fixtures=("atendimento_org",),
+        tabelas=_M190_TABELAS,
+        ops_sql=(
+            _M190_ADITIVO_CTE + "\n" + _M190_VERSAO_COLS
+            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL, NULL, NULL, NULL, NULL FROM a\n"
+            "    UNION ALL SELECT v_org, a.id, 'noc/probe2', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL, NULL, NULL, NULL, NULL FROM a;"
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two versions of one aditivo with the same numero",
+    ),
+    _sw_junction_probe(
+        probe_id="contrato_aditivo_versoes.gerado_born_complete",
+        guard_name="atendimento_contrato_aditivo_versoes_gerado_completo",
+        migration=_M190,
+        rationale="A generated aditivo version is born with its PDF, its .docx sibling and the snapshot hash in ONE insert — never completed later.",
+        fixtures=("atendimento_org",),
+        tabelas=_M190_TABELAS,
+        ops_sql=(
+            _M190_ADITIVO_CTE + "\n" + _M190_VERSAO_COLS
+            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'gerado', NULL, NULL, NULL, NULL, NULL FROM a;"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a gerado aditivo version without its snapshot hash and .docx",
+    ),
+    _sw_junction_probe(
+        probe_id="contrato_aditivo_versoes.revisado_par",
+        guard_name="atendimento_contrato_aditivo_versoes_revisado_par",
+        migration=_M190,
+        rationale="A legal-review approval names WHO and WHEN together; a reviewer without a timestamp is not an approval.",
+        fixtures=("atendimento_org",),
+        tabelas=_M190_TABELAS,
+        ops_sql=(
+            _M190_ADITIVO_CTE + "\n" + _M190_VERSAO_COLS
+            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL, NULL, NULL, gen_random_uuid(), NULL FROM a;"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an aditivo version with revisado_por but no revisado_em",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -3338,6 +3447,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SW_RECIPIENT_CHANNEL_PROBE,
     *_COMMUNITY_PROBES,
     *_SW_179_183_PROBES,
+    *_SW_190_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

@@ -394,6 +394,12 @@ def _versao_out(row: dict, resolved: dict) -> dict:
     }
 
 
+#: Public name of the version projection — the aditivos' versions
+#: (`contrato_aditivo.store`, migration 190) carry the same row shape and are
+#: projected by this same function, never a copy of it.
+saida_versao = _versao_out
+
+
 def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
     contrato_id = UUID(str(row["id"]))
     linhas = VERSOES_STORE.listar_linhas(client, org_id, contrato_id)
@@ -1096,24 +1102,52 @@ async def url_versao(
         # 404 first for a foreign/missing id, then the review gate.
         exigir_revisao_juridica(VERSOES_STORE.exigir(client, org_id, owner, versao_id))
 
+    return await url_artefato_versao(
+        VERSOES_STORE, client, storage, org_id, owner, versao_id,
+        usuario_id=usuario_id, intent=intent, formato=formato,
+    )
+
+
+async def url_artefato_versao(
+    store: DocumentoStore,
+    client: Any,
+    storage: StorageBackend,
+    org_id: UUID,
+    owner: UUID,
+    versao_id: UUID,
+    *,
+    usuario_id: Optional[UUID],
+    intent: str = "view",
+    formato: str = "pdf",
+) -> dict:
+    """The PDF or `.docx` sibling of a GENERATED-version row of `store` —
+    the ONE signed-URL path for every version surface shaped like
+    `atendimento_contrato_versoes` (the contract's own, and the aditivos'
+    `contrato_aditivo.store.VERSOES_STORE`, migration 190). Same short TTL,
+    same access-log call keyed to the version's own id for both artifacts;
+    a foreign/missing id 404s before "has no docx" can be told apart."""
+    if formato not in ("pdf", "docx"):
+        raise ValidationError_(
+            f"formato inválido: {formato!r}. Permitidos: pdf, docx", field="formato"
+        )
     if formato == "pdf":
-        return await VERSOES_STORE.url(
+        return await store.url(
             client, storage, org_id, owner, versao_id,
             usuario_id=usuario_id, intent=intent,
         )
 
     if intent not in ("view", "download"):
         raise ValidationError_(f"intent inválido: {intent!r}", field="intent")
-    documento = VERSOES_STORE.exigir(client, org_id, owner, versao_id)
+    documento = store.exigir(client, org_id, owner, versao_id)
     docx_path = documento.get("docx_storage_path")
     if not docx_path:
-        raise NotFoundError(VERSOES_STORE.table, f"{versao_id} (.docx)")
+        raise NotFoundError(store.table, f"{versao_id} (.docx)")
 
     signed = await storage.signed_url(
-        bucket=VERSOES_STORE.bucket, key=docx_path,
+        bucket=store.bucket, key=docx_path,
         expires_in_seconds=SIGNED_URL_TTL_SECONDS,
     )
-    VERSOES_STORE.log_acesso(client, org_id, versao_id, usuario_id, intent)
+    store.log_acesso(client, org_id, versao_id, usuario_id, intent)
     expires_at = (
         datetime.now(timezone.utc) + timedelta(seconds=SIGNED_URL_TTL_SECONDS)
     ).isoformat()

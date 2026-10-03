@@ -60,6 +60,7 @@ from app.modules.card_hub import negociacao_extracao_service as negociacao_extra
 from app.modules.card_hub import negociacao_service as negociacao_svc
 from app.modules.card_hub.assinatura_router import router as assinatura_router
 from app.modules.card_hub.auth import auth_parts
+from app.modules.card_hub.contrato_aditivo.router import router as contrato_aditivo_router
 from app.modules.card_hub.contrato_gerador.router import (
     router as contrato_gerador_router,
 )
@@ -129,6 +130,8 @@ logger = logging.getLogger(__name__)
 router.include_router(negociacao_estruturada_router)
 # F5 — contract generation (GET .../contratos/{id}/geracao, POST .../gerar).
 router.include_router(contrato_gerador_router)
+# Aditivos (migration 190) — .../contratos/{id}/aditivos[...].
+router.include_router(contrato_aditivo_router)
 # Contract signing (migration 134) — .../contratos/{id}/assinatura[/cancelar].
 # The webhook (§3.4) is NOT here — see `assinatura_router.py`'s own docstring.
 router.include_router(assinatura_router)
