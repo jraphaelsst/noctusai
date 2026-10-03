@@ -34,7 +34,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -51,7 +50,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 // `Table` has no local copy in this product — the seed primitive is the
 // canonical source, same sourcing decision `pages/Certidoes.tsx` documents.
@@ -65,7 +63,6 @@ import {
 } from "@noctusai/seed/components/ui/table";
 
 import { usePermutaAtivos } from "@/hooks/usePermutas";
-import type { PermutaAtivo } from "@/hooks/usePermutas";
 import { formatarDocumento, limparDocumento } from "@/lib/utils";
 import {
   useNegociacaoConflitos,
@@ -90,7 +87,6 @@ import {
 import {
   INTERMEDIARIO_NATUREZA_LABELS,
   INTERMEDIARIO_TIPO_LABELS,
-  PARCELA_TIPOS_CRIAVEIS,
   PARCELA_TIPO_LABELS,
   type DividirSaldoPayload,
   type FavorecidoCreate,
@@ -109,6 +105,11 @@ import {
   rotuloNegociacaoOrigem,
 } from "@/types/negociacaoEstruturada";
 import TermosNegocioSection from "@/components/card/TermosNegocioSection";
+import {
+  PARCELA_FORMA_PAGAMENTO_MAX,
+  ParcelaFormDialog,
+} from "@/components/card/negociacao/ParcelaFormDialog";
+import { exibirData, exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
 
 interface Props {
   clienteId: string;
@@ -119,8 +120,6 @@ interface Props {
 // `FavorecidoPatchBody`, `_IntermediarioQualificacao` — card_hub/schemas.py).
 // `maxLength` on the `<Input>`/`<Textarea>` truncates on type AND on paste,
 // so these are a hard prevention, not just a hint.
-const PARCELA_EVENTO_MAX = 200;
-const PARCELA_FORMA_PAGAMENTO_MAX = 50;
 const FAVORECIDO_NOME_MAX = 255;
 const FAVORECIDO_CPF_CNPJ_MAX = 32;
 const FAVORECIDO_BANCO_MAX = 120;
@@ -144,31 +143,8 @@ function errorMessage(err: unknown, fallback: string): string {
 }
 
 // ─── Money / date display helpers — READING ONLY, never re-composed ────────
-
-function exibirMoeda(v: string | null | undefined): string {
-  if (v == null || v.trim() === "") return "—";
-  const n = Number(v);
-  if (!Number.isFinite(n)) return v;
-  return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-}
-
-/** Bare number for an EDITABLE field, no currency symbol: `850000` → `850.000,00`. */
-function formatarValorEditavel(v: string): string {
-  const n = Number(v);
-  if (v.trim() === "" || !Number.isFinite(n)) return v;
-  return n.toLocaleString("pt-BR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-/** Reads what a Brazilian actually types: `850.000,00`, `850000,00`, `850000`. */
-function lerValorDigitado(entrada: string): string {
-  const limpo = entrada.replace(/[^\d.,-]/g, "");
-  if (limpo.includes(",")) return limpo.replace(/\./g, "").replace(",", ".");
-  if (/^-?\d{1,3}(\.\d{3})+$/.test(limpo)) return limpo.replace(/\./g, "");
-  return limpo;
-}
+// `exibirMoeda` / `lerValorDigitado` / `exibirData` live in `@/lib/moedaDecimal`
+// (shared with the aditivo schedule editor).
 
 /** DISPLAY-ONLY preview of "X% do valor do imóvel" — mirrors `contexto.py`'s
  *  `d.valor_negociado * it.valor / 100` (the intermediário's own base) so an
@@ -256,13 +232,6 @@ function calcularSugestaoIntermediaria(data: NegociacaoEstruturada): string | nu
   const restante = total - sinal - financiamento;
   if (!Number.isFinite(restante) || restante <= 0) return null;
   return restante.toFixed(2);
-}
-
-function exibirData(v: string | null | undefined): string | null {
-  if (!v) return null;
-  const [ano, mes, dia] = v.split("-");
-  if (!ano || !mes || !dia) return v;
-  return `${dia}/${mes}/${ano}`;
 }
 
 function mascarar(v: string | null | undefined): string {
@@ -742,273 +711,6 @@ function ParcelasSection({
         }}
       />
     </Card>
-  );
-}
-
-interface ParcelaDraft {
-  tipo: ParcelaTipo;
-  valorTexto: string;
-  vencimento: string;
-  evento: string;
-  forma_pagamento: string;
-  favorecido_id: string;
-  confissao_divida: boolean;
-  dispara_corretagem: boolean;
-  permuta_ativo_ids: string[];
-}
-
-function toParcelaDraft(p: NegociacaoParcela | null): ParcelaDraft {
-  return {
-    tipo: p?.tipo ?? "direta",
-    // `p.valor` is `null` for an extracted parcela awaiting confirmation
-    // (migration 171) — editing it is exactly how a person FILLS it, so the
-    // form opens with an empty field rather than throwing on `.trim()`.
-    valorTexto: p && p.valor != null ? formatarValorEditavel(p.valor) : "",
-    vencimento: p?.vencimento ?? "",
-    evento: p?.evento ?? "",
-    forma_pagamento: p?.forma_pagamento ?? "",
-    favorecido_id: p?.favorecido_id ?? "",
-    confissao_divida: p?.confissao_divida ?? false,
-    dispara_corretagem: p?.dispara_corretagem ?? false,
-    permuta_ativo_ids: p?.permuta_ativo_ids ?? [],
-  };
-}
-
-function ParcelaFormDialog({
-  open,
-  onOpenChange,
-  parcela,
-  favorecidos,
-  permutaAtivos,
-  onSubmit,
-  saving,
-  error,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  parcela: NegociacaoParcela | null;
-  favorecidos: NegociacaoFavorecido[];
-  permutaAtivos: PermutaAtivo[];
-  onSubmit: (payload: ParcelaCreate) => void;
-  saving: boolean;
-  error: string | null;
-}) {
-  const [draft, setDraft] = useState<ParcelaDraft>(() => toParcelaDraft(parcela));
-
-  useEffect(() => {
-    if (open) setDraft(toParcelaDraft(parcela));
-  }, [open, parcela]);
-
-  function submit() {
-    onSubmit({
-      tipo: draft.tipo,
-      valor: lerValorDigitado(draft.valorTexto),
-      vencimento: draft.vencimento || null,
-      evento: draft.evento.trim() || null,
-      forma_pagamento: draft.forma_pagamento.trim() || null,
-      favorecido_id: draft.favorecido_id || null,
-      confissao_divida: draft.confissao_divida,
-      dispara_corretagem: draft.dispara_corretagem,
-      permuta_ativo_ids: draft.tipo === "permuta" ? draft.permuta_ativo_ids : [],
-    });
-  }
-
-  const podeSalvar = lerValorDigitado(draft.valorTexto).trim() !== "";
-
-  // `fgts` is no longer offered on a NEW parcela (the office folded it into
-  // `financiamento`) — but an existing `fgts` row keeps its tipo selectable
-  // in ITS OWN edit dialog, so opening it does not force an unrelated change.
-  const tiposDisponiveis: ParcelaTipo[] =
-    parcela?.tipo === "fgts"
-      ? ["fgts", ...PARCELA_TIPOS_CRIAVEIS]
-      : PARCELA_TIPOS_CRIAVEIS;
-
-  function alternarAtivo(id: string) {
-    setDraft((d) => ({
-      ...d,
-      permuta_ativo_ids: d.permuta_ativo_ids.includes(id)
-        ? d.permuta_ativo_ids.filter((a) => a !== id)
-        : [...d.permuta_ativo_ids, id],
-    }));
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{parcela ? "Editar parcela" : "Nova parcela"}</DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="parc-tipo">Tipo</Label>
-            <Select
-              value={draft.tipo}
-              onValueChange={(v) =>
-                setDraft((d) => ({ ...d, tipo: v as ParcelaTipo }))
-              }
-            >
-              <SelectTrigger id="parc-tipo">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {tiposDisponiveis.map((t) => (
-                  <SelectItem key={t} value={t}>
-                    {PARCELA_TIPO_LABELS[t]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          {draft.tipo === "permuta" && (
-            <div className="space-y-1.5" data-testid="parc-permuta-ativos">
-              <Label>Imóveis de permuta que pagam esta parcela</Label>
-              {permutaAtivos.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Nenhum imóvel de permuta cadastrado.
-                </p>
-              ) : (
-                <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border p-2">
-                  {permutaAtivos.map((a) => (
-                    <div key={a.id} className="flex items-center gap-2">
-                      <Checkbox
-                        id={`parc-permuta-ativo-${a.id}`}
-                        checked={draft.permuta_ativo_ids.includes(a.id)}
-                        onCheckedChange={() => alternarAtivo(a.id)}
-                        data-testid={`parc-permuta-ativo-${a.id}`}
-                      />
-                      <Label
-                        htmlFor={`parc-permuta-ativo-${a.id}`}
-                        className="font-normal"
-                      >
-                        {a.imovel_codigo ?? a.codigo ?? a.id}
-                        {a.cidade ? ` — ${a.cidade}` : ""}
-                      </Label>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-          <div className="space-y-1.5">
-            <Label htmlFor="parc-valor">Valor (R$)</Label>
-            <Input
-              id="parc-valor"
-              data-testid="parc-valor"
-              value={draft.valorTexto}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, valorTexto: e.target.value }))
-              }
-              placeholder="0,00"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="parc-venc">Vencimento</Label>
-              <Input
-                id="parc-venc"
-                type="date"
-                value={draft.vencimento}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, vencimento: e.target.value }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="parc-evento">Evento</Label>
-              <Input
-                id="parc-evento"
-                data-testid="parc-evento"
-                value={draft.evento}
-                maxLength={PARCELA_EVENTO_MAX}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, evento: e.target.value }))
-                }
-                placeholder="Ex.: na entrega das chaves"
-              />
-            </div>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="parc-forma">Forma de pagamento</Label>
-            <Input
-              id="parc-forma"
-              data-testid="parc-forma"
-              value={draft.forma_pagamento}
-              maxLength={PARCELA_FORMA_PAGAMENTO_MAX}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, forma_pagamento: e.target.value }))
-              }
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="parc-favorecido">Favorecido</Label>
-            <Select
-              value={draft.favorecido_id || "__none__"}
-              onValueChange={(v) =>
-                setDraft((d) => ({
-                  ...d,
-                  favorecido_id: v === "__none__" ? "" : v,
-                }))
-              }
-            >
-              <SelectTrigger id="parc-favorecido">
-                <SelectValue placeholder="Nenhum" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="__none__">Nenhum</SelectItem>
-                {favorecidos.map((f) => (
-                  <SelectItem key={f.id} value={f.id}>
-                    {f.nome}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id="parc-confissao"
-              checked={draft.confissao_divida}
-              onCheckedChange={(v) =>
-                setDraft((d) => ({ ...d, confissao_divida: v }))
-              }
-            />
-            <Label htmlFor="parc-confissao">Confissão de dívida</Label>
-          </div>
-          <div className="flex items-center gap-2">
-            <Switch
-              id="parc-dispara-corretagem"
-              data-testid="parc-dispara-corretagem"
-              checked={draft.dispara_corretagem}
-              onCheckedChange={(v) =>
-                setDraft((d) => ({ ...d, dispara_corretagem: v }))
-              }
-            />
-            <Label htmlFor="parc-dispara-corretagem">
-              Pagamento dispara a corretagem
-            </Label>
-          </div>
-          {error && (
-            <div
-              className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
-              data-testid="negest-parcela-erro"
-            >
-              <p className="flex items-center gap-1.5 text-destructive">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                {error}
-              </p>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button
-            onClick={submit}
-            disabled={!podeSalvar || saving}
-            data-testid="negest-parcela-salvar"
-          >
-            {saving ? "Salvando…" : "Salvar"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
