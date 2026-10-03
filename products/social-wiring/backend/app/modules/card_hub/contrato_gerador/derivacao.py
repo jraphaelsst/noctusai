@@ -1163,8 +1163,9 @@ def _pacto_do_casal(
     av: Avaliacao, a: Pessoa, b: Pessoa, politica: Politica, vistos: set[frozenset[str]]
 ) -> None:
     """[Migration 193] The pacto antenupcial a married couple's qualification
-    cites (corpus deal 858): required when the regime needs one, every field
-    named when half-entered, refused when the two spouses' rows disagree."""
+    cites (corpus deal 858): an aviso when the regime needs one and none is on
+    file, every missing field named when half-entered, refused when the two
+    spouses' rows disagree."""
     par = frozenset({a.cliente_id, b.cliente_id})
     if par in vistos or a.estado_civil != "casado":
         return
@@ -1177,14 +1178,17 @@ def _pacto_do_casal(
         )
     pacto = frases.pacto_do_casal(a, b)
     if pacto is None:
+        # [2026-10-03] An AVISO, not a faltando: the signed corpus cites the
+        # pacto in only 1 of 3 separação-total contracts (deal 858) — the
+        # office signs without the citation, so its absence cannot block.
+        # Once ANY citation data is on file, the missing pieces below stay
+        # faltando (a half-printed citation is worse than none).
         if frases.regime_exige_pacto(a.regime_bens, a.data_casamento, politica.lei_6515_vigencia_desde):
-            av.falta(
-                "qualificacao.pacto_antenupcial",
-                f"Escritura de pacto antenupcial (data, tabelionato, livro e página) — {_nome(a)}: "
-                f"o regime de {frases.REGIME_EXTENSO.get(a.regime_bens or '', a.regime_bens)} exige pacto",
-                "partes",
-                a.parte_id,
-                ancora=_ancora(a),
+            av.avisa(
+                "PACTO_ANTENUPCIAL_NAO_CITADO",
+                f"{_nome(a)}: o regime de "
+                f"{frases.REGIME_EXTENSO.get(a.regime_bens or '', a.regime_bens)} exige pacto "
+                "antenupcial; cite-o se houver a escritura (data, tabelionato, livro e página).",
             )
         return
     dono = preenchidos[0]
@@ -1588,12 +1592,29 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
             av.bloqueia("ONUS_QUITACAO_SEM_PARCELA_SALDO", "A quitação do ônus é por parcela, mas não há parcela de saldo.")
 
 
+def _regra_de_tempo(av: Avaliacao, d: DadosContrato, codigo: str, mensagem: str) -> None:
+    """A certidão TIME rule (emission age / validade) — party AND imóvel.
+
+    [Owner directive, 2026-09-22 / 2026-09-25] `d.processo_legado` (migration
+    151, set ONLY through `PUT .../processo-legado`, admin-only, never an
+    automatic date heuristic) dispenses the AGE gates for a deal that started
+    before the platform: a warning instead of a block, so the contract can
+    still generate while the dispensation stays visible on the readiness
+    report. A certidão emitted AFTER the signing date is a data
+    contradiction, not an age rule — it is never routed through here."""
+    if d.processo_legado:
+        av.avisa(codigo, f"{mensagem} (processo anterior à plataforma)")
+    else:
+        av.bloqueia(codigo, mensagem)
+
+
 def _certidoes_do_imovel(
     av: Avaliacao, d: DadosContrato, politica: Politica, assinatura: date
 ) -> None:
     """[§6.1 #14 / Q10] The imóvel's own certidões (migration 118) answer to
     the SAME 30-day rule as a party's — an old IPTU CND is as stale on the
-    signing table as an old federal one."""
+    signing table as an old federal one — and to the SAME `processo_legado`
+    dispensation of that rule (`_regra_de_tempo`)."""
     for c in certidoes_imovel(d):
         rotulo = (
             "Certidão da matrícula"
@@ -1608,13 +1629,17 @@ def _certidoes_do_imovel(
                 f"{rotulo} do imóvel tem emissão posterior à assinatura.",
             )
         elif (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
-            av.bloqueia(
+            _regra_de_tempo(
+                av,
+                d,
                 "CERTIDAO_IMOVEL_EMISSAO_ANTIGA",
                 f"{rotulo} do imóvel foi emitida há {(assinatura - c.emitida_em).days} dias; "
                 f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura.",
             )
         if c.validade_ate is not None and c.validade_ate < assinatura:
-            av.bloqueia("CERTIDAO_IMOVEL_VENCIDA", f"{rotulo} do imóvel está vencida na data da assinatura.")
+            _regra_de_tempo(
+                av, d, "CERTIDAO_IMOVEL_VENCIDA", f"{rotulo} do imóvel está vencida na data da assinatura."
+            )
         # [2026-10-03 bug fix] The printed line carries the certidão's OWN
         # resultado (`frases.CERTIDOES_IMOVEL_MODELO`) — it used to print
         # "Negativa" whatever it said. Missing/unknown is refused, never
@@ -2136,10 +2161,7 @@ def _certidoes(
         contract can still generate while the dispensation stays visible
         on the readiness report.
         """
-        if d.processo_legado:
-            av.avisa(codigo, f"{mensagem} (processo anterior à plataforma)")
-        else:
-            av.bloqueia(codigo, mensagem)
+        _regra_de_tempo(av, d, codigo, mensagem)
 
     def confirmar_pcen(parte_id: Optional[str], c: Certidao, rotulo: str, nome_grupo: str) -> None:
         """[Owner 2026-10-01, Option A + amendment] The Receita PCEN 2ª via is

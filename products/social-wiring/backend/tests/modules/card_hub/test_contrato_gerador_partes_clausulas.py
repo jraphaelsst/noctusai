@@ -252,14 +252,31 @@ class TestPactoAntenupcial:
         ("comunhao_parcial", date(2001, 3, 20), False),
         ("separacao_obrigatoria", date(2001, 3, 20), False),
     ])
-    def test_a_regime_that_needs_a_pacto_without_one_is_missing_it(self, regime, casamento, exige):
+    def test_a_regime_that_needs_a_pacto_without_one_is_warned_not_blocked(self, regime, casamento, exige):
+        """[2026-10-03] The signed corpus cites the pacto in only 1 of 3
+        separação-total contracts (deal 858) — the office signs without it,
+        so a missing citation is an aviso, never a faltando."""
         av = _avaliar(1, _casal_vendedor(regime, casamento))
-        assert ("qualificacao.pacto_antenupcial" in _campos(av)) is exige
+        assert not any(c.startswith("qualificacao.pacto_antenupcial") for c in _campos(av))
+        assert ("PACTO_ANTENUPCIAL_NAO_CITADO" in _codigos(av.avisos)) is exige
+        assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_a_half_entered_pacto_names_the_missing_field(self):
+    def test_the_aviso_says_to_cite_it_if_the_escritura_exists(self):
+        av = _avaliar(1, _casal_vendedor("separacao_total", date(2001, 3, 20)))
+        aviso = next(a for a in av.avisos if a["codigo"] == "PACTO_ANTENUPCIAL_NAO_CITADO")
+        assert "exige pacto antenupcial; cite-o se houver a escritura" in aviso["mensagem"]
+
+    def test_a_separacao_total_couple_without_a_pacto_renders_without_the_citation(self):
+        texto = _texto(1, _casal_vendedor("separacao_total", date(2001, 3, 20)))
+        assert "casados no regime da separação total de bens, na vigência da Lei 6.515/77, residentes" in texto
+        assert "pacto antenupcial" not in texto
+
+    def test_a_half_entered_pacto_names_only_the_missing_field(self):
         meio = replace(PACTO, livro=None)
         av = _avaliar(1, _casal_vendedor("separacao_total", date(2001, 3, 20), pacto_v1=meio))
-        assert "qualificacao.pacto_antenupcial_livro" in _campos(av)
+        pacto = {c for c in _campos(av) if c.startswith("qualificacao.pacto_antenupcial")}
+        assert pacto == {"qualificacao.pacto_antenupcial_livro"}
+        assert "PACTO_ANTENUPCIAL_NAO_CITADO" not in _codigos(av.avisos)
 
     def test_spouses_with_different_pactos_block(self):
         av = _avaliar(1, _casal_vendedor("separacao_total", date(2001, 3, 20), pacto_v1=PACTO,
@@ -302,8 +319,37 @@ class TestCartorio:
         ("1º OFICIAL DE REGISTRO DE IMÓVEIS DE COTIA", "1º Cartório de Registro de Imóveis de Cotia"),
         ("OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DE SÃO PAULO/SP",
          "Cartório de Registro de Imóveis de São Paulo"),
+        # [prod 2026-10-03] a leading book header + pipe separator.
+        ("LIVRO Nº 2 - REGISTRO GERAL | SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia",
+         "Cartório de Registro de Imóveis de Cotia"),
+        ("LIVRO Nº 2 - REGISTRO GERAL\nSERVENTIA DO REGISTRO DE IMÓVEIS de Cotia - CNS: 11991-7",
+         "Cartório de Registro de Imóveis de Cotia"),
+        # the book number is never read as the cartório's ordinal
+        ("LIVRO Nº 2 - REGISTRO GERAL - OFICIAL DE REGISTRO DE IMÓVEIS DE COTIA",
+         "Cartório de Registro de Imóveis de Cotia"),
+        ("LIVRO Nº 2 - REGISTRO GERAL - 3º OFICIAL DE REGISTRO DE IMÓVEIS DE COTIA",
+         "3º Cartório de Registro de Imóveis de Cotia"),
+        ("CNS: 12.345-6 | 2º Oficial de Registro de Imóveis de Barueri",
+         "2º Cartório de Registro de Imóveis de Barueri"),
+        ("2º Oficial de Registro de Imóveis, Títulos e Documentos e Civil de Pessoa Jurídica da Comarca de Cotia",
+         "2º Cartório de Registro de Imóveis de Cotia"),
+        ("Cartório de Registro de Imóveis de Cotia", "Cartório de Registro de Imóveis de Cotia"),
+        ("3.º Cartório de Registro de Imoveis de Barueri SP", "3º Cartório de Registro de Imóveis de Barueri"),
+        ("1o oficial de registro de imoveis de santana de parnaíba CNS 12.345-6",
+         "1º Cartório de Registro de Imóveis de Santana de Parnaíba"),
+        ("Oficial de Registro de Imóveis de Embu das Artes - SP",
+         "Cartório de Registro de Imóveis de Embu das Artes"),
+        ("SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia.", "Cartório de Registro de Imóveis de Cotia"),
+        # never guessed
         ("11991-7", None),
+        ("CNS: 11991-7", None),
+        ("LIVRO Nº 2 - REGISTRO GERAL", None),
+        ("Registro de Imóveis", None),
         ("18º OFICIAL DE REGISTRO DE IMÓVEIS DA CAPITAL", None),
+        ("LIVRO Nº 2 - REGISTRO GERAL | 18º OFICIAL DE REGISTRO DE IMÓVEIS DA CAPITAL", None),
+        ("OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DA CAPITAL - SP", None),
+        # two segments naming different registries — ambiguous, refused
+        ("1º Oficial de Registro de Imóveis de Cotia | 2º Oficial de Registro de Imóveis de Barueri", None),
     ])
     def test_the_corpus_form_is_derived_from_the_heading(self, bruto, impresso):
         assert frases.cartorio_texto(bruto) == impresso
@@ -314,6 +360,17 @@ class TestCartorio:
         texto = _texto(1, d)
         assert "do Cartório de Registro de Imóveis de Cotia." in texto
         assert "SERVENTIA" not in texto
+
+    def test_the_prod_reading_with_a_book_header_is_not_named_missing(self):
+        d = fx.variante(1)
+        d = replace(d, imovel=replace(
+            d.imovel,
+            numero_registro_imoveis="LIVRO Nº 2 - REGISTRO GERAL | SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia",
+        ))
+        assert "imovel.numero_registro_imoveis" not in _campos(_avaliar(1, d))
+        texto = _texto(1, d)
+        assert "do Cartório de Registro de Imóveis de Cotia." in texto
+        assert "LIVRO" not in texto
 
     def test_a_reading_with_no_city_is_named(self):
         d = fx.variante(1)

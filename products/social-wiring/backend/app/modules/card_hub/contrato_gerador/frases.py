@@ -262,8 +262,9 @@ def pacto_frase(pacto: Optional[PactoAntenupcial]) -> str:
     """[Migration 193] Corpus deal 858, verbatim shape: ", conforme escritura
     de pacto antenupcial, lavrada aos <data>, pelo <tabelionato>, no Livro nº
     <livro>, Página nº <folha>". "" when no pacto was entered — the gate
-    (`derivacao._partes`, `qualificacao.pacto_antenupcial`) decides whether
-    the regime needs one."""
+    (`derivacao._pacto_do_casal`) warns `PACTO_ANTENUPCIAL_NAO_CITADO` when
+    the regime needs one (most signed contracts omit the citation) and names
+    each missing piece of a half-entered one."""
     if pacto is None or pacto.vazio():
         return ""
     tabelionato = re.sub(r"^(?:o|pelo)\s+", "", (pacto.tabelionato or "").strip(), flags=re.IGNORECASE)
@@ -901,20 +902,32 @@ def usufruto_frase(*, V: Concordancia, C: Concordancia) -> str:
 # ─── cartório de registro (migration 193) ─────────────────────────────────
 
 #: A `numero_registro_imoveis` reading — the matrícula heading as
-#: `find_cartorio` returns it ("1º OFICIAL DE REGISTRO DE IMÓVEIS DE COTIA",
-#: "SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia - CNS: 11991-7", "OFICIAL DE
-#: REGISTRO DE IMÓVEIS DA COMARCA DE SÃO PAULO/SP"): optional ordinal, any
-#: office noun, "Registro de Imóveis", optional "da Comarca", the city, then
-#: an optional UF / CNS tail.
+#: `find_cartorio` returns it, or as the operator typed it: "1º OFICIAL DE
+#: REGISTRO DE IMÓVEIS DE COTIA", "SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia -
+#: CNS: 11991-7", "OFICIAL DE REGISTRO DE IMÓVEIS DA COMARCA DE SÃO PAULO/SP",
+#: "LIVRO Nº 2 - REGISTRO GERAL | SERVENTIA DO REGISTRO DE IMÓVEIS de Cotia"
+#: (a book header riding in front — prod, 2026-10-03), "2º Oficial de Registro
+#: de Imóveis, Títulos e Documentos da Comarca de Cotia".
+#:
+#: The value is split into segments on `|` / line breaks and each segment is
+#: SEARCHED (not anchored): a leading header or a CNS tail is not part of
+#: the registry's name. The ordinal is only the one written right in front
+#: of the office noun with an ordinal mark ("1º", "2.º", "3o") — a book
+#: number ("LIVRO Nº 2") is never read as the cartório's ordinal.
 _CARTORIO_RE = re.compile(
-    r"^\s*(?:(?P<ord>\d{1,2})\s*[ºo°ª]?\s*)?"
-    r"(?:[A-Za-zÀ-ÿ]+\s+){0,3}?"
-    r"registro\s+(?:de\s+im[óo]veis|imobili[áa]rio)\s+"
-    r"(?:(?:da|de)\s+comarca\s+)?(?:de|da|do|dos|das)\s+"
+    r"(?:(?<![\w.])(?P<ord>\d{1,2})\s*\.?\s*[ºo°ª]\.?\s+(?:[A-Za-zÀ-ÿ]+\s+){0,3}?)?"
+    r"registro\s+(?:de\s+im[óo]veis|imobili[áa]rio)"
+    # "…, Títulos e Documentos e Civil de Pessoa Jurídica" — the office's
+    # other attributions, never the city.
+    r"(?:[,\s]+(?:t[íi]tulos|documentos|civil|civis|pessoas?|jur[íi]dicas?|naturais|anexos|e)\b"
+    r"(?:\s+(?:de|da|do)(?=\s+(?:pessoas?|t[íi]tulos)\b))?)*"
+    r"\s*,?\s+(?:(?:da|de)\s+comarca\s+)?(?:de|da|do|dos|das|em)\s+"
     r"(?P<cidade>[A-Za-zÀ-ÿ'][A-Za-zÀ-ÿ' ]*?)"
-    r"\s*(?:[/\-–—]\s*(?:[A-Za-z]{2}\b|CNS\b).*)?[\s.,;]*$",
+    r"(?=\s*(?:$|[/\-–—,;:(.|]|\bCNS\b)|(?-i:\s+(?:AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN"
+    r"|RS|RO|RR|SC|SP|SE|TO))\s*$)",
     re.IGNORECASE,
 )
+_CARTORIO_SEPARADORES = re.compile(r"[|\n\r]+")
 _CONECTIVOS = {"de", "da", "do", "das", "dos", "e"}
 
 
@@ -926,17 +939,32 @@ def _cidade_titulo(cidade: str) -> str:
     )
 
 
-def cartorio_partes(valor: Optional[str]) -> Optional[tuple[Optional[int], str]]:
-    """(ordinal, cidade) read off a `numero_registro_imoveis` value, or
-    `None` when no city can be read (a bare CNS, free text) — the gate names
-    it (`imovel.numero_registro_imoveis`), never a guess."""
-    m = _CARTORIO_RE.match((valor or "").strip())
+def _cartorio_do_segmento(segmento: str) -> Optional[tuple[Optional[int], str]]:
+    m = _CARTORIO_RE.search(segmento)
+    if not m:
+        return None
+    cidade = m.group("cidade").strip()
     # "… DA CAPITAL" names no city by itself (which capital is a UF fact the
     # reading does not carry) — a named gap, never "de Capital".
-    if not m or not m.group("cidade").strip() or m.group("cidade").strip().lower() == "capital":
+    if not cidade or cidade.lower() == "capital":
         return None
     ordinal = int(m.group("ord")) if m.group("ord") else None
-    return ordinal, _cidade_titulo(m.group("cidade"))
+    return ordinal, _cidade_titulo(cidade)
+
+
+def cartorio_partes(valor: Optional[str]) -> Optional[tuple[Optional[int], str]]:
+    """(ordinal, cidade) read off a `numero_registro_imoveis` value, or
+    `None` when no city can be read (a bare CNS, "da Capital", free text) or
+    when two segments name DIFFERENT registries — the gate names it
+    (`imovel.numero_registro_imoveis`), never a guess."""
+    lidos = {
+        partes
+        for segmento in _CARTORIO_SEPARADORES.split(valor or "")
+        if (partes := _cartorio_do_segmento(segmento)) is not None
+    }
+    if len(lidos) != 1:
+        return None
+    return next(iter(lidos))
 
 
 def cartorio_texto(valor: Optional[str]) -> Optional[str]:

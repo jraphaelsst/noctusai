@@ -1132,6 +1132,50 @@ class TestProcessoLegado:
         with pytest.raises(ValueError):
             frases.antigos_proprietarios_texto([])
 
+    # ── [Owner rule 2026-09-25] the imóvel's certidões get the same relief ──
+
+    def _imovel_certidoes(self, certs, *, processo_legado=True):
+        d = fx.variante(1)
+        return replace(d, processo_legado=processo_legado, imovel=replace(d.imovel, certidoes=certs))
+
+    def test_an_old_imovel_certidao_warns_instead_of_blocking(self):
+        """Seen live: a matrícula certidão 4433 days old and an IPTU CND 53
+        days old blocked a legacy deal although the party certidões of the
+        same deal were (correctly) relaxed."""
+        certs = tuple(
+            replace(c, emitida_em=fx.dias_antes(4433 if c.tipo == "matricula" else 53))
+            for c in fx.certidoes_do_imovel()
+        )
+        _d, _pol, _sw, av = _avaliar(1, self._imovel_certidoes(certs))
+        assert "CERTIDAO_IMOVEL_EMISSAO_ANTIGA" not in _codigos(av.bloqueios)
+        avisos = [a for a in av.avisos if a["codigo"] == "CERTIDAO_IMOVEL_EMISSAO_ANTIGA"]
+        assert len(avisos) == 3
+        assert all(a["mensagem"].endswith("(processo anterior à plataforma)") for a in avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_an_expired_imovel_certidao_warns_instead_of_blocking(self):
+        certs = tuple(
+            replace(c, validade_ate=fx.dias_antes(1)) if c.tipo == "cnd_iptu" else c
+            for c in fx.certidoes_do_imovel()
+        )
+        _d, _pol, _sw, av = _avaliar(1, self._imovel_certidoes(certs))
+        assert "CERTIDAO_IMOVEL_VENCIDA" not in _codigos(av.bloqueios)
+        assert "CERTIDAO_IMOVEL_VENCIDA" in _codigos(av.avisos)
+        assert av.pronto, (av.faltando, av.bloqueios)
+
+    def test_an_imovel_certidao_emitted_after_signing_still_blocks(self):
+        """A contradiction in the data, not an age rule — never relaxed."""
+        certs = tuple(replace(c, emitida_em=fx.dias_antes(-1)) for c in fx.certidoes_do_imovel())
+        _d, _pol, _sw, av = _avaliar(1, self._imovel_certidoes(certs))
+        assert "CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA" in _codigos(av.bloqueios)
+        assert not av.pronto
+
+    def test_unflagged_contracts_still_block_on_old_imovel_certidoes(self):
+        certs = tuple(replace(c, emitida_em=fx.dias_antes(53)) for c in fx.certidoes_do_imovel())
+        _d, _pol, _sw, av = _avaliar(1, self._imovel_certidoes(certs, processo_legado=False))
+        assert "CERTIDAO_IMOVEL_EMISSAO_ANTIGA" in _codigos(av.bloqueios)
+        assert not av.pronto
+
     def test_a_non_legacy_contract_still_demands_the_previous_owner(self):
         """Regression: the downgrade never applies to an ordinary contract —
         only `processo_legado=True` triggers it."""
