@@ -1058,6 +1058,73 @@ export function useConflitosPendentes(
   });
 }
 
+/** `POST /api/clientes/conflitos/resolver-automaticamente` — per queue:
+ *  the cliente queue answers LISTS of rows, the `imoveis` queue COUNTS. */
+export interface ResolverConflitosAutoResposta {
+  resolvidos?: unknown[];
+  ainda_pendentes?: unknown[];
+  ignorado_composto?: unknown[];
+  imoveis?: Record<string, number>;
+}
+
+export interface ResolverConflitosAutoContagem {
+  resolvidos: number;
+  aindaPendentes: number;
+  ignorados: number;
+}
+
+const contar = (v: unknown): number =>
+  Array.isArray(v) ? v.length : typeof v === "number" ? v : 0;
+
+/** The counts the confirmation shows — `clientes` from the row lists,
+ *  `imoveis` from its own count map (its "skipped" key is `ignorados`). */
+export function contagemResolverConflitos(r: ResolverConflitosAutoResposta | null | undefined): {
+  clientes: ResolverConflitosAutoContagem;
+  imoveis: ResolverConflitosAutoContagem;
+} {
+  const im = r?.imoveis ?? {};
+  return {
+    clientes: {
+      resolvidos: contar(r?.resolvidos),
+      aindaPendentes: contar(r?.ainda_pendentes),
+      ignorados: contar(r?.ignorado_composto),
+    },
+    imoveis: {
+      resolvidos: contar(im.resolvidos),
+      aindaPendentes: contar(im.ainda_pendentes),
+      ignorados: contar(im.ignorados ?? im.ignorado_composto),
+    },
+  };
+}
+
+/**
+ * "Resolver conflitos automaticamente" — the ORG-WIDE one-shot sweep of the
+ * automatic divergence resolver over every `pendente` conflict (cliente and
+ * imóvel queues). Owner/admin only server-side (403 otherwise). It settles
+ * only what the policy can decide and never overrides a human-entered value
+ * (the resolver leaves an ambiguous row `pendente`).
+ *
+ * Invalidates broadly ON PURPOSE: an applied decision writes `clientes.<campo>`
+ * / imóvel fields for ANY card in the org, so every conflict read, every
+ * card-hub read (card, compradores, qualificação), the clientes family
+ * (negociação, contratos readiness) and the imóvel data family may have
+ * moved. A one-shot admin action — over-invalidating is cheap here.
+ */
+export function useResolverConflitosAutomaticamente() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<ResolverConflitosAutoResposta>("/api/clientes/conflitos/resolver-automaticamente", {}),
+    onSuccess: () =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: CONFLITOS_ROOT_KEY }),
+        qc.invalidateQueries({ queryKey: ROOT_KEY }),
+        qc.invalidateQueries({ queryKey: ["sw", "clientes"] }),
+        qc.invalidateQueries({ queryKey: ["sw", "imovel-dados"] }),
+      ]),
+  });
+}
+
 /** Owner/admin only on the server (`decidir_conflito_route`) — this
  *  mutation itself is unguarded; a non-admin's attempt simply 403s and
  *  surfaces through `onError`, same as any other write this file has. */

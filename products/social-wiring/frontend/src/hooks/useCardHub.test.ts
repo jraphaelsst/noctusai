@@ -105,6 +105,8 @@ import {
   useDadosPessoaisMutation,
   useDecidirConflitoMutation,
   useDocumentoMutations,
+  useResolverConflitosAutomaticamente,
+  contagemResolverConflitos,
   useNotaMutations,
   useSetClienteTagsMutation,
   useTags,
@@ -453,5 +455,34 @@ describe("nomeDoArquivo / baixarRoteiroPdf", () => {
     expect(nomes).toEqual(["roteiro-ab12cd34-2026-10-10.pdf", "roteiro-ab12cd34.pdf"]);
     click.mockRestore();
     vi.unstubAllGlobals();
+  });
+});
+
+describe("useResolverConflitosAutomaticamente", () => {
+  it("🔴 POSTs the org-wide sweep and invalidates every surface it can move", async () => {
+    mockPost.mockResolvedValue({ resolvidos: [], ainda_pendentes: [], ignorado_composto: [], imoveis: {} });
+    const mutation = useResolverConflitosAutomaticamente() as any;
+    await mutation.mutateAsync(undefined);
+    expect(mockPost).toHaveBeenCalledWith("/api/clientes/conflitos/resolver-automaticamente", {});
+    const keys = invalidateQueriesMock.mock.calls.map(([arg]: any[]) => JSON.stringify(arg.queryKey));
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub", "conflitos"]));
+    expect(keys).toContain(JSON.stringify(["sw", "cardHub"]));
+    expect(keys).toContain(JSON.stringify(["sw", "clientes"]));
+    expect(keys).toContain(JSON.stringify(["sw", "imovel-dados"]));
+  });
+
+  it("counts lists for the cliente queue and numbers for the imóvel queue", () => {
+    expect(
+      contagemResolverConflitos({
+        resolvidos: [1, 2],
+        ainda_pendentes: [3],
+        ignorado_composto: [4],
+        imoveis: { resolvidos: 5, ainda_pendentes: 6, ignorados: 7 },
+      }),
+    ).toEqual({
+      clientes: { resolvidos: 2, aindaPendentes: 1, ignorados: 1 },
+      imoveis: { resolvidos: 5, aindaPendentes: 6, ignorados: 7 },
+    });
+    expect(contagemResolverConflitos(null).imoveis.resolvidos).toBe(0);
   });
 });

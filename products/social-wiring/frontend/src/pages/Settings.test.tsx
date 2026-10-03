@@ -157,14 +157,21 @@ const mockUseConflitosPendentes = vi.fn(() => ({
   refetch: vi.fn(),
 }));
 const mockDecidirConflito = vi.fn();
-vi.mock("@/hooks/useCardHub", () => ({
-  useConflitosPendentes: mockUseConflitosPendentes,
-  useDecidirConflitoMutation: () => ({
-    mutate: mockDecidirConflito,
-    isPending: false,
-    variables: undefined,
-  }),
-}));
+const mockResolverAuto = vi.fn();
+vi.mock("@/hooks/useCardHub", async () => {
+  const real = await vi.importActual<typeof import("@/hooks/useCardHub")>("@/hooks/useCardHub");
+  return {
+    useConflitosPendentes: mockUseConflitosPendentes,
+    useDecidirConflitoMutation: () => ({
+      mutate: mockDecidirConflito,
+      isPending: false,
+      variables: undefined,
+    }),
+    useResolverConflitosAutomaticamente: () => ({ mutate: mockResolverAuto, isPending: false }),
+    // Pure — the real one, so the counts on screen are the real mapping.
+    contagemResolverConflitos: real.contagemResolverConflitos,
+  };
+});
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
@@ -1526,6 +1533,33 @@ describe("Settings — Pendências de dados tab (owner directive, 2026-09-19)", 
     expect(getByTestId("pendencias-dados-tab")).toBeTruthy();
     expect(getByText("Estado civil")).toBeTruthy();
     expect(getByText("cliente-abc")).toBeTruthy();
+  });
+
+  it("🔴 'Resolver conflitos automaticamente' asks first, then shows the per-queue counts", async () => {
+    setUser("owner");
+    mockUseConflitosPendentes.mockReturnValue({
+      data: [],
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    });
+    mockResolverAuto.mockImplementation((_v: unknown, opts: { onSuccess: (r: unknown) => void }) =>
+      opts.onSuccess({
+        resolvidos: [{ id: "c1" }, { id: "c2" }],
+        ainda_pendentes: [{ id: "c3" }],
+        ignorado_composto: [],
+        imoveis: { resolvidos: 1, ainda_pendentes: 0, ignorados: 0 },
+      }),
+    );
+    const { getByTestId, findByTestId, fireEvent, getByText } = await renderSettingsOnKeysTab();
+    fireEvent.click(getByTestId("resolver-conflitos-auto-btn"));
+    expect(mockResolverAuto).not.toHaveBeenCalled();
+    expect(getByText(/nunca é\s+substituído/)).toBeTruthy();
+    fireEvent.click(await findByTestId("resolver-conflitos-auto-confirmar"));
+    expect(mockResolverAuto).toHaveBeenCalled();
+    const resultado = (await findByTestId("resolver-conflitos-auto-resultado")).textContent ?? "";
+    expect(resultado).toContain("Pessoas: 2 resolvidos, 1 ainda pendente.");
+    expect(resultado).toContain("Imóveis: 1 resolvido, 0 ainda pendentes.");
   });
 
   it("Aprovar calls the decide mutation with aceitar=true", async () => {

@@ -80,7 +80,14 @@ import {
 } from "@/hooks/useSettings";
 import { useMarcas, type Marca } from "@/hooks/useMarcas";
 import { rotuloTipo } from "@/lib/documentoTipos";
-import { useConflitosPendentes, useDecidirConflitoMutation } from "@/hooks/useCardHub";
+import {
+  contagemResolverConflitos,
+  useConflitosPendentes,
+  useDecidirConflitoMutation,
+  useResolverConflitosAutomaticamente,
+} from "@/hooks/useCardHub";
+import { ResolverConflitosAutoAcao } from "@/components/card/ResolverConflitosAutoAcao";
+import { mensagemErroServidor } from "@/lib/erroServidor";
 import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
 import { IdentificadoresNaoConformesPanel } from "@/components/IdentificadoresNaoConformesCard";
 
@@ -2176,8 +2183,41 @@ function DocumentoRetencaoTab({ canEdit }: { canEdit: boolean }) {
 function PendenciasDadosTab() {
   const conflitos = useConflitosPendentes();
   const decidir = useDecidirConflitoMutation();
+  const resolverAuto = useResolverConflitosAutomaticamente();
+  const [resultadoAuto, setResultadoAuto] =
+    useState<ReturnType<typeof contagemResolverConflitos> | null>(null);
 
-  if (conflitos.isPending) {
+  // 🔴 Two signals off `data` (lying-loading-state): a refetch after a
+  // decision / the automatic sweep keeps the list on screen.
+  const showSkeleton = conflitos.isPending && !conflitos.data;
+
+  // The tab itself is owner/admin only (see the TabsTrigger gate), so the
+  // action is offered here unconditionally — the POST re-checks (403).
+  const acaoAutomatica = (
+    <ResolverConflitosAutoAcao
+      isAdmin
+      resolvendo={resolverAuto.isPending}
+      resultado={resultadoAuto}
+      onResolver={() =>
+        resolverAuto.mutate(undefined, {
+          onSuccess: (r) => {
+            const contagem = contagemResolverConflitos(r);
+            setResultadoAuto(contagem);
+            const total = contagem.clientes.resolvidos + contagem.imoveis.resolvidos;
+            toast.success(
+              total > 0
+                ? `${total} conflito(s) resolvido(s) automaticamente.`
+                : "Nenhum conflito pôde ser resolvido automaticamente.",
+            );
+          },
+          onError: (e) =>
+            toast.error(mensagemErroServidor(e, "Não foi possível resolver os conflitos automaticamente.")),
+        })
+      }
+    />
+  );
+
+  if (showSkeleton) {
     return (
       <Card>
         <CardContent className="flex items-center justify-center p-12">
@@ -2187,7 +2227,7 @@ function PendenciasDadosTab() {
     );
   }
 
-  if (conflitos.isError) {
+  if (conflitos.isError && !conflitos.data) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-3 p-12 text-center">
@@ -2204,35 +2244,41 @@ function PendenciasDadosTab() {
 
   if (!conflitos.data?.length) {
     return (
-      <Card>
-        <CardContent className="p-12 text-center text-sm text-muted-foreground">
-          Nenhuma pendência de confirmação no momento.
-        </CardContent>
-      </Card>
+      <div className="space-y-4">
+        {acaoAutomatica}
+        <Card>
+          <CardContent className="p-12 text-center text-sm text-muted-foreground">
+            Nenhuma pendência de confirmação no momento.
+          </CardContent>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <ConflitosPendentesCard
-      conflitos={conflitos.data}
-      isAdmin
-      mostrarCliente
-      decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}
-      onDecidir={(conflitoId, aceitar) =>
-        decidir.mutate(
-          { conflitoId, aceitar },
-          {
-            onError: (e) =>
-              toast.error(
-                e instanceof Error && e.message
-                  ? e.message
-                  : "Não foi possível decidir a pendência.",
-              ),
-          },
-        )
-      }
-      testId="pendencias-dados-tab"
-    />
+    <div className="space-y-4">
+      {acaoAutomatica}
+      <ConflitosPendentesCard
+        conflitos={conflitos.data}
+        isAdmin
+        mostrarCliente
+        decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}
+        onDecidir={(conflitoId, aceitar) =>
+          decidir.mutate(
+            { conflitoId, aceitar },
+            {
+              onError: (e) =>
+                toast.error(
+                  e instanceof Error && e.message
+                    ? e.message
+                    : "Não foi possível decidir a pendência.",
+                ),
+            },
+          )
+        }
+        testId="pendencias-dados-tab"
+      />
+    </div>
   );
 }
 
