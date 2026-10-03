@@ -40,8 +40,8 @@
  *   - the status `<Select/>` is disabled the moment ANY envelope exists at
  *     all, live or not — the manual `enviado_assinatura`/`assinado` picks are
  *     retired for good once a contract enters this flow.
- * 🔴 REVISÃO JURÍDICA (owner decision 2026-09-30, migration 177) — a version
- * generated from machine-extracted values nobody validated shows
+ * 🔴 REVISÃO JURÍDICA (owner decision 2026-09-30, migration 177) — EVERY
+ * version the system generated (extracted values or not) shows
  * `RevisaoJuridicaSection` ("Aguardando revisão jurídica" + the ONE
  * "Aprovar revisão jurídica"), is labelled "Rascunho", and has "Enviar para
  * assinatura" / "Baixar para impressão" disabled with the reason — the

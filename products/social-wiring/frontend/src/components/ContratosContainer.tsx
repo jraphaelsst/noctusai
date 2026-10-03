@@ -236,7 +236,7 @@ export function ContratosContainer({
           }
         }}
         // Migration 177 (owner decision 2026-09-30) — the ONE final legal
-        // review of a version generated from machine-extracted values.
+        // review every generated version waits for.
         onAprovarRevisaoJuridica={(contratoId, versaoId) =>
           mutations.aprovarRevisaoJuridica.mutate(
             { contratoId, versaoId },

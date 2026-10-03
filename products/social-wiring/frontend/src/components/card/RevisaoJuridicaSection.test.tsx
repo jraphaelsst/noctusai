@@ -92,6 +92,52 @@ describe("RevisaoJuridicaSection", () => {
     expect(linha.textContent).toContain("revisar no documento");
   });
 
+  it("🔴 counts the extracted values only when there are some", async () => {
+    const { screen } = await render();
+    const texto = screen.getByTestId("contrato-revisao-texto-c1").textContent ?? "";
+    expect(texto).toContain("gerada pelo sistema");
+    expect(texto).toContain("um dado extraído automaticamente");
+  });
+
+  it("🔴 a version with ZERO extracted values still waits — and never reads '0 dados'", async () => {
+    const { screen, fireEvent } = await render({ versao: versao(aguardando([])) });
+    expect(screen.getByTestId("contrato-revisao-aguardando-c1")).toBeTruthy();
+    const texto = screen.getByTestId("contrato-revisao-texto-c1").textContent ?? "";
+    expect(texto).not.toMatch(/\b0 dados?\b/);
+    expect(texto).toContain("Nenhum dado foi extraído automaticamente");
+    expect(texto).toContain("revise o contrato por inteiro");
+    expect(screen.queryByTestId("contrato-revisao-campos-c1")).toBeNull();
+    fireEvent.click(screen.getByTestId("contrato-revisao-aprovar-c1"));
+    const dialogo = document.body.textContent ?? "";
+    expect(dialogo).toContain("foi revisado por inteiro");
+    expect(dialogo).not.toContain("passa a constar");
+  });
+
+  it("an aditivo's generated wording and free clauses are not called 'extraído'", async () => {
+    const base = { ...CAMPO, entidade: "aditivo", entidade_id: "a1", grupo: "Aditivo",
+      fonte_documento_id: null, fonte_nome: null, confianca: null };
+    const { screen } = await render({
+      contratoId: "a1",
+      documento: "aditivo",
+      testIdPrefix: "aditivo-revisao",
+      versao: versao(
+        aguardando([
+          { ...base, chave: "aditivo:a1:redacao", campo: "redacao", origem: "gerado",
+            rotulo: "Redação do aditivo (revisão jurídica obrigatória)" },
+          { ...base, chave: "aditivo:a1:outro:1", campo: "outro", origem: "manual",
+            rotulo: "Cláusula livre: DA TRAVA" },
+        ]),
+      ),
+    });
+    const texto = screen.getByTestId("aditivo-revisao-texto-a1").textContent ?? "";
+    expect(texto).toContain("revise o aditivo por inteiro");
+    const redacao = screen.getByTestId("aditivo-revisao-campo-aditivo:a1:redacao").textContent ?? "";
+    expect(redacao).toContain("texto gerado pelo sistema");
+    expect(redacao).not.toContain("extraído");
+    const livre = screen.getByTestId("aditivo-revisao-campo-aditivo:a1:outro:1").textContent ?? "";
+    expect(livre).toContain("redigido pela equipe");
+  });
+
   it("🔴 'Aprovar revisão jurídica' asks for confirmation, then calls back with the version id", async () => {
     const onAprovar = vi.fn();
     const { screen, fireEvent } = await render({ onAprovar });

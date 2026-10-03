@@ -93,13 +93,20 @@ export interface VersaoOut {
   revisao_juridica?: RevisaoJuridica | null;
 }
 
-/** `nao_exigida` = nothing machine-derived was left unvalidated when the
- *  version was rendered; `aguardando` = it was, and nobody approved it yet
- *  (signature / print are refused); `aprovada` = the legal review approved. */
+/** Keyed on the version's ORIGEM, never on whether it relied on extracted
+ *  values (backend `contratos_service.revisao_juridica_status`):
+ *  `aguardando` = EVERY version the system generated (`origem: "gerado"`),
+ *  even one with zero machine-extracted values, until approved (signature /
+ *  print are refused); `nao_exigida` = only a document the system did not
+ *  write — an upload or a signed copy; `aprovada` = the legal review
+ *  approved. */
 export type RevisaoJuridicaStatus = "nao_exigida" | "aguardando" | "aprovada";
 
-/** One machine-derived value the version relied on — labels and provenance
- *  only; the value itself is read in the PDF ("revisar no documento"). */
+/** What the reviewer is pointed at FIRST — a machine-extracted value the
+ *  version relied on, or (aditivos) the generated wording / a free clause the
+ *  team wrote (`origem` `"gerado"` / `"manual"`). Labels and provenance only;
+ *  the value itself is read in the PDF ("revisar no documento"). An EMPTY
+ *  list does not mean "no review": see `RevisaoJuridicaStatus`. */
 export interface CampoRevisaoJuridica {
   chave: string;
   entidade: string;
@@ -126,8 +133,9 @@ export interface DownloadOpcoes {
   impressao?: boolean;
 }
 
-/** The version's review state — a row without the field (a pre-177
- *  backend) needs no review, same as the server reads a missing column. */
+/** The version's review state. A row without the field is one a pre-177
+ *  backend serialised — read as `nao_exigida`, the only state that backend
+ *  could mean; the current backend always sends the field. */
 export function revisaoJuridicaStatus(versao: VersaoOut | null | undefined): RevisaoJuridicaStatus {
   return versao?.revisao_juridica?.status ?? "nao_exigida";
 }
@@ -986,7 +994,8 @@ export function useContratoMutations(clienteId: string) {
   /**
    * `aprovarRevisaoJuridica` — POST .../versoes/{id}/revisao-juridica
    * (migration 177, owner decision 2026-09-30): the ONE contract-level legal
-   * review. Admin/owner only server-side (403 otherwise). Invalidates the
+   * review — every generated version waits for it, extracted values or not.
+   * Admin/owner only server-side (403 otherwise). Invalidates the
    * whole contratos prefix — the version's review state, and the
    * validação/proveniência reads whose values it just confirmed.
    */
