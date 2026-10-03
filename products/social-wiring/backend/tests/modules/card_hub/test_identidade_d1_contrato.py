@@ -1089,6 +1089,173 @@ class TestEnderecoCepAuthority:
         assert row["endereco_cidade"] is None
 
 
+def _cep_com_bairro(bairro="VILA EXEMPLO") -> FakeCepLookupAdapter:
+    return FakeCepLookupAdapter({
+        "01454-011": CepEndereco(
+            cep="01454-011", cidade="SÃO PAULO", uf="SP",
+            logradouro="Rua Professor Artur Ramos", bairro=bairro,
+        ),
+    })
+
+
+SEM_BAIRRO = EnderecoLido(
+    cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123", complemento="APTO 12",
+    bairro=None, cidade="SÃO PAULO", uf="SP",
+    titular="ANA PAULA SOUZA", confianca="alta", rotulo="ENDERECO",
+)
+
+
+class TestEnderecoBairroViaCep:
+    """Extraction defect (live prod test, 2026-10-03): two buyers had every
+    address part but the bairro, so the contract gate blocked on "Endereço
+    completo". The CEP lookup fills ONLY a missing bairro (`endereco_bairro_
+    origem='cep'`, migration 194); a document's own bairro always wins."""
+
+    @pytest.mark.asyncio
+    async def test_a_document_without_bairro_gets_the_ceps_bairro(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        await _extrair(
+            scoped, storage, cid, did, _comprovante(SEM_BAIRRO), cep_lookup=_cep_com_bairro()
+        )
+        row = _cliente(scoped, cid)
+        assert row["endereco_bairro"] == "VILA EXEMPLO"
+        assert row["endereco_bairro_origem"] == "cep"
+        assert row["endereco_origem"] == "comprovante_endereco"
+        # The document row keeps what the document itself printed: nothing.
+        assert _documento(scoped, did)["extracao_endereco_bairro"] is None
+
+    @pytest.mark.asyncio
+    async def test_the_documents_own_bairro_wins_over_a_different_cep_bairro(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"}
+        )
+        await _extrair(
+            scoped, storage, cid, did, _comprovante(), cep_lookup=_cep_com_bairro("GENERICO")
+        )
+        row = _cliente(scoped, cid)
+        assert row["endereco_bairro"] == "JARDIM PAULISTANO"
+        assert row.get("endereco_bairro_origem") is None
+
+    @pytest.mark.asyncio
+    async def test_a_record_missing_only_the_bairro_is_gap_filled_without_a_conflict(
+        self, client, scoped
+    ):
+        """The prod shape: the address is already on file (an earlier
+        document) with bairro NULL; a reading of the same address now
+        supplies it — a gap-fill, never a second-opinion conflict."""
+        outro_doc = str(uuid4())
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco",
+            cliente={
+                "nome": "Ana Paula Souza",
+                "endereco_cep": "01454-011", "endereco_logradouro": "R PROF ARTUR RAMOS",
+                "endereco_numero": "123", "endereco_complemento": "APTO 12",
+                "endereco_bairro": None, "endereco_cidade": "SÃO PAULO", "endereco_uf": "SP",
+                "endereco_origem": "comprovante_endereco",
+                "endereco_documento_id": outro_doc,
+            },
+        )
+        await _extrair(
+            scoped, storage, cid, did, _comprovante(SEM_BAIRRO), cep_lookup=_cep_com_bairro()
+        )
+        row = _cliente(scoped, cid)
+        assert row["endereco_bairro"] == "VILA EXEMPLO"
+        assert row["endereco_bairro_origem"] == "cep"
+        # The group's own provenance is untouched — only the bairro moved.
+        assert row["endereco_documento_id"] == outro_doc
+        assert [c for c in _conflitos(scoped) if c["status"] == "pendente"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_cep_bairro_never_disputes_a_recorded_document_bairro(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco",
+            cliente={
+                "nome": "Ana Paula Souza",
+                "endereco_cep": "01454-011", "endereco_logradouro": "R PROF ARTUR RAMOS",
+                "endereco_numero": "123", "endereco_complemento": "APTO 12",
+                "endereco_bairro": "JARDIM PAULISTANO", "endereco_cidade": "SÃO PAULO",
+                "endereco_uf": "SP", "endereco_origem": "comprovante_endereco",
+                "endereco_documento_id": str(uuid4()),
+            },
+        )
+        await _extrair(
+            scoped, storage, cid, did, _comprovante(SEM_BAIRRO), cep_lookup=_cep_com_bairro()
+        )
+        row = _cliente(scoped, cid)
+        assert row["endereco_bairro"] == "JARDIM PAULISTANO"
+        assert row.get("endereco_bairro_origem") is None
+        assert _conflitos(scoped) == []
+
+    @pytest.mark.asyncio
+    async def test_a_printed_bairro_replaces_a_cep_bairro(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco",
+            cliente={
+                "nome": "Ana Paula Souza",
+                "endereco_cep": "01454-011", "endereco_logradouro": "R PROF ARTUR RAMOS",
+                "endereco_numero": "123", "endereco_complemento": "APTO 12",
+                "endereco_bairro": "GENERICO", "endereco_bairro_origem": "cep",
+                "endereco_cidade": "SÃO PAULO", "endereco_uf": "SP",
+                "endereco_origem": "comprovante_endereco",
+                "endereco_documento_id": str(uuid4()),
+                "endereco_confirmado_em": _old(5),
+            },
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(), cep_lookup=_cep_com_bairro())
+        row = _cliente(scoped, cid)
+        assert row["endereco_bairro"] == "JARDIM PAULISTANO"
+        assert row["endereco_bairro_origem"] == "comprovante_endereco"
+        assert [c for c in _conflitos(scoped) if c["status"] == "pendente"] == []
+
+    @pytest.mark.asyncio
+    async def test_a_manual_address_is_never_gap_filled(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco",
+            cliente={
+                "nome": "Ana Paula Souza",
+                "endereco_cep": "01454-011", "endereco_logradouro": "R PROF ARTUR RAMOS",
+                "endereco_numero": "123", "endereco_complemento": "APTO 12",
+                "endereco_bairro": None, "endereco_cidade": "SÃO PAULO", "endereco_uf": "SP",
+                "endereco_origem": "manual",
+            },
+        )
+        await _extrair(
+            scoped, storage, cid, did, _comprovante(SEM_BAIRRO), cep_lookup=_cep_com_bairro()
+        )
+        assert _cliente(scoped, cid)["endereco_bairro"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_conflict_carries_the_cep_origin_and_resolving_writes_it_back(
+        self, client, scoped
+    ):
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco",
+            cliente={
+                "nome": "Ana Paula Souza",
+                "endereco_cep": "09999-000", "endereco_logradouro": "RUA OUTRA",
+                "endereco_numero": "9", "endereco_cidade": "SANTOS", "endereco_uf": "SP",
+                "endereco_origem": "manual",
+            },
+        )
+        await _extrair(
+            scoped, storage, cid, did, _comprovante(SEM_BAIRRO), cep_lookup=_cep_com_bairro()
+        )
+        pendentes = [c for c in _conflitos(scoped) if c["status"] == "pendente"]
+        assert len(pendentes) == 1
+        assert json.loads(pendentes[0]["valor_proposto"])["bairro_origem"] == "cep"
+        svc.resolver_conflito(
+            scoped, ORG_UUID, UUID(str(pendentes[0]["id"])), aceitar=True, decidido_por=None,
+        )
+        row = _cliente(scoped, cid)
+        assert (row["endereco_bairro"], row["endereco_bairro_origem"]) == ("VILA EXEMPLO", "cep")
+
+
 class TestEnderecoAttribution:
     """P2 (2026-09-28), measured against 9 real comprovantes vs 10 signed
     contracts: 7/9 bills named a deal party as the holder, and in every such

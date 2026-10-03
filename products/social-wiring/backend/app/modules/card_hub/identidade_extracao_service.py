@@ -114,6 +114,7 @@ from noctusai_lib.integrations.documents.nacionalidade_civil import (
     derivar_nacionalidade_civil,
 )
 from noctusai_lib.integrations.documents.rg import only_alnum
+from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
@@ -418,6 +419,12 @@ ENDERECO_COLUNAS: tuple[str, ...] = tuple(f"endereco_{p}" for p in ENDERECO_PART
 #: The `campo` a `cliente_campo_conflitos` row uses for the whole group, and
 #: the provenance prefix on `clientes`.
 CAMPO_ENDERECO = "endereco"
+#: Migration 194 — the bairro's OWN provenance when it differs from the
+#: group's (`endereco_origem`). NULL = same source as the group.
+COLUNA_BAIRRO_ORIGEM = "endereco_bairro_origem"
+#: `endereco_bairro_origem` for a bairro filled from the CEP lookup because
+#: the document printed none (extraction defect, 2026-10-03).
+ORIGEM_BAIRRO_CEP = "cep"
 #: Same for the spouse link (`conjuge_cliente_id`, provenance `conjuge_*`).
 CAMPO_CONJUGE = "conjuge_cliente_id"
 PREFIXO_CONJUGE = "conjuge"
@@ -1374,6 +1381,10 @@ def _endereco_json(partes: dict[str, Any], **extra: Any) -> str:
     JSON, so `resolver_conflito` can write the seven parts back exactly and
     the admin notification still reads as the address it is."""
     corpo = {p: partes.get(p) for p in ENDERECO_PARTES}
+    if partes.get("bairro_origem") and not _vazio(partes.get("bairro")):
+        # Migration 194 — a CEP-looked-up bairro says so on the conflict
+        # row too, and `resolver_conflito` writes it back verbatim.
+        corpo["bairro_origem"] = partes["bairro_origem"]
     corpo.update({k: v for k, v in extra.items() if v is not None})
     return json.dumps(corpo, ensure_ascii=False)
 
@@ -1395,6 +1406,12 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
         if _vazio(novo):
             continue
         velho = atual.get(f"endereco_{parte}")
+        if parte == "bairro" and proposto.get("bairro_origem") == ORIGEM_BAIRRO_CEP:
+            # A CEP-looked-up bairro is a GAP-FILL, never a second opinion:
+            # a recorded bairro (printed on a document) always wins, and a
+            # record without one is filled by `_preencher_so_bairro`, not by
+            # treating the whole group as a different address.
+            continue
         if _vazio(velho):
             return False
         if parte == "cep":
@@ -1519,6 +1536,11 @@ def _cidade_suspeita(cidade: str) -> bool:
     return len(cidade) > _CIDADE_MAX_CHARS or bool(re.search(r"\d", cidade))
 
 
+def _norm_bairro(valor: str) -> str:
+    """Accent/case/space-insensitive bairro comparison — log-only use."""
+    return " ".join(strip_accents_upper(valor).split())
+
+
 def _enriquecer_endereco_via_cep(
     partes: dict[str, Any],
     cep_lookup: Optional[CepLookupAdapter],
@@ -1565,6 +1587,23 @@ def _enriquecer_endereco_via_cep(
     if partes.get("uf") != resultado.uf:
         partes["uf"] = resultado.uf
 
+    # Extraction defect (2026-10-03): a document that prints no bairro left
+    # the group incomplete and the contract gate blocked on "Endereço
+    # completo". The CEP's bairro fills ONLY that gap (`bairro_origem='cep'`,
+    # migration 194). A document that DOES print a bairro keeps it, even when
+    # the CEP's differs — a CEP range's bairro name is often the generic one
+    # (a city-wide `NNNNN-000` CEP carries none at all).
+    if resultado.bairro:
+        if _vazio(partes.get("bairro")):
+            partes["bairro"] = resultado.bairro
+            partes["bairro_origem"] = ORIGEM_BAIRRO_CEP
+        elif _norm_bairro(str(partes["bairro"])) != _norm_bairro(resultado.bairro):
+            logger.info(
+                "identidade_extracao: bairro do CEP diverge do documento — "
+                "mantendo o do documento, documento=%s",
+                documento_id,
+            )
+
     logradouro_doc = partes.get("logradouro")
     if resultado.logradouro and logradouro_doc and (
         divergencia_resolucao.normalizar_logradouro(str(logradouro_doc))
@@ -1577,6 +1616,68 @@ def _enriquecer_endereco_via_cep(
         )
 
     return partes
+
+
+def _bairro_origem_da_leitura(partes: dict[str, Any]) -> Optional[str]:
+    """`endereco_bairro_origem` for a whole-group write of `partes`: `'cep'`
+    when the bairro came from the CEP lookup, NULL otherwise (the bairro, if
+    any, shares the group's own `endereco_origem`)."""
+    if _vazio(partes.get("bairro")):
+        return None
+    return partes.get("bairro_origem") or None
+
+
+def _preencher_so_bairro(
+    client: Any,
+    cliente_id: UUID,
+    atual: dict[str, Any],
+    partes: dict[str, Any],
+    origem: str,
+    documento_id: Optional[UUID],
+) -> bool:
+    """The conflict-safe D1 gap-fill for the bairro ALONE (extraction defect,
+    2026-10-03): the record already holds this very address (every OTHER
+    part the reading has agrees) and is only missing the bairro — or holds a
+    CEP-looked-up bairro the reading now prints for real (a document's
+    bairro always beats the lookup's). Writes `endereco_bairro` + its own
+    provenance (migration 194), nothing else: the group's provenance, and
+    any human confirmation of the parts already there, stay untouched.
+
+    Never fires on a human-typed/cleared group (`endereco_origem='manual'`),
+    never replaces a bairro a document printed, and never lets a CEP bairro
+    replace anything. Returns True when it wrote.
+    """
+    if atual.get("endereco_origem") == "manual":
+        return False
+    novo = partes.get("bairro")
+    if _vazio(novo):
+        return False
+    velho = atual.get("endereco_bairro")
+    novo_e_cep = partes.get("bairro_origem") == ORIGEM_BAIRRO_CEP
+    if not _vazio(velho):
+        if atual.get(COLUNA_BAIRRO_ORIGEM) != ORIGEM_BAIRRO_CEP or novo_e_cep:
+            return False
+        if _mesmo_nome(str(velho), str(novo)):
+            return False
+    sem_bairro = {p: v for p, v in partes.items() if p not in ("bairro", "bairro_origem")}
+    if not _mesmo_endereco(atual, sem_bairro):
+        return False
+    if novo_e_cep:
+        bairro_origem: Optional[str] = ORIGEM_BAIRRO_CEP
+    elif documento_id is not None and str(documento_id) == str(
+        atual.get("endereco_documento_id") or ""
+    ):
+        bairro_origem = None  # the group's own document — same source
+    else:
+        bairro_origem = origem
+    _t(client, CLIENTES_TABLE).update(
+        {"endereco_bairro": novo, COLUNA_BAIRRO_ORIGEM: bairro_origem, "updated_at": _now()}
+    ).eq("id", str(cliente_id)).execute()
+    logger.info(
+        "identidade_extracao: bairro preenchido sozinho (origem=%s), cliente=%s documento=%s",
+        bairro_origem or atual.get("endereco_origem"), cliente_id, documento_id,
+    )
+    return True
 
 
 def aplicar_endereco_ao_cliente(
@@ -1626,7 +1727,7 @@ def aplicar_endereco_ao_cliente(
         .select(",".join([
             "id", "nome", "nome_completo", "nome_oficial", "conjuge_cliente_id",
             "endereco_origem", "endereco_documento_id", "endereco_confirmado_em",
-            *ENDERECO_COLUNAS,
+            COLUNA_BAIRRO_ORIGEM, *ENDERECO_COLUNAS,
         ]))
         .eq("org_id", str(org_id))
         .eq("id", str(cliente_id))
@@ -1658,6 +1759,7 @@ def aplicar_endereco_ao_cliente(
         }
         updates.update(
             {
+                COLUNA_BAIRRO_ORIGEM: _bairro_origem_da_leitura(partes),
                 "endereco_origem": origem,
                 "endereco_documento_id": str(documento_id) if documento_id else None,
                 "endereco_em": agora,
@@ -1681,6 +1783,8 @@ def aplicar_endereco_ao_cliente(
             return False, conflito()
 
     if tem_endereco:
+        if _preencher_so_bairro(client, cliente_id, atual, partes, origem, documento_id):
+            return True, None
         if _mesmo_endereco(atual, partes):
             return False, None
         if campo_conflitos.mesmo_documento_pendente(
@@ -1878,6 +1982,7 @@ def _limpar_endereco_domicilio(client: Any, org_id: UUID, cliente_id: Any) -> No
     now = _now()
     updates: dict[str, Any] = {f"endereco_{p}": None for p in ENDERECO_PARTES}
     updates.update({
+        COLUNA_BAIRRO_ORIGEM: None,
         "endereco_origem": None, "endereco_documento_id": None, "endereco_em": None,
         "endereco_confirmado_por": None, "endereco_confirmado_em": None,
         "updated_at": now,
@@ -1894,6 +1999,7 @@ def _escrever_endereco_domicilio(client: Any, org_id: UUID, cliente_id: Any, fon
         f"endereco_{p}": fonte.get(f"endereco_{p}") for p in ENDERECO_PARTES
     }
     updates.update({
+        COLUNA_BAIRRO_ORIGEM: fonte.get(COLUNA_BAIRRO_ORIGEM),
         "endereco_origem": ORIGEM_CONJUGE_DOMICILIO,
         "endereco_documento_id": fonte.get("endereco_documento_id"),
         "endereco_em": now, "endereco_confirmado_por": None, "endereco_confirmado_em": None,
@@ -1903,7 +2009,8 @@ def _escrever_endereco_domicilio(client: Any, org_id: UUID, cliente_id: Any, fon
 
 
 _COLUNAS_DOMICILIO = (
-    "id,conjuge_cliente_id,endereco_origem,endereco_documento_id," + ",".join(ENDERECO_COLUNAS)
+    "id,conjuge_cliente_id,endereco_origem,endereco_documento_id,"
+    + COLUNA_BAIRRO_ORIGEM + "," + ",".join(ENDERECO_COLUNAS)
 )
 
 
@@ -2486,6 +2593,8 @@ def _decidir_endereco_pendente(
         return None, None
     atual = atuais[0]
     partes = {p: proposto.get(p) for p in ENDERECO_PARTES}
+    if proposto.get("bairro_origem"):
+        partes["bairro_origem"] = proposto["bairro_origem"]
     if atual.get("endereco_origem") == "manual" or atual.get("endereco_confirmado_em"):
         return divergencia_resolucao.Decisao(
             vencedor=None, regra="requer_humano",
@@ -2615,6 +2724,7 @@ def backfill_resolver_conflitos_pendentes(
                     for p in ENDERECO_PARTES
                 }
                 updates.update({
+                    COLUNA_BAIRRO_ORIGEM: _bairro_origem_da_leitura(partes),
                     "endereco_origem": row.get("origem_proposto"),
                     "endereco_documento_id": (
                         row.get("fonte_id") if row.get("fonte_tabela") == DOCUMENTOS_TABLE else None
@@ -2815,6 +2925,7 @@ def resolver_conflito(
             proposto = json.loads(conflito["valor_proposto"])
             for parte in ENDERECO_PARTES:
                 updates[f"endereco_{parte}"] = proposto.get(parte)
+            updates[COLUNA_BAIRRO_ORIGEM] = _bairro_origem_da_leitura(proposto)
             prefixo = "endereco"
         elif item_key == CAMPO_CONJUGE:
             updates[CAMPO_CONJUGE] = conflito["valor_proposto"]
@@ -4187,6 +4298,7 @@ def _confirmar_endereco(
     }
     updates.update(
         {
+            COLUNA_BAIRRO_ORIGEM: None,
             "endereco_origem": doc["tipo_documento"],
             "endereco_documento_id": str(doc["id"]),
             "endereco_em": now,

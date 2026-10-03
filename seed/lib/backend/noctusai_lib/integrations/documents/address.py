@@ -186,6 +186,23 @@ _COMPLEMENTO_RE = re.compile(
     r"SOB|TERREO|GALPAO|PAVIMENTO|PAV)\b"
 )
 
+#: A complemento run with a bairro glued after it, no separator: the
+#: complemento token(s), each followed by its identifier (a number, or a lone
+#: block letter), then a letters-only tail of 2+ words or one 4+-letter word
+#: that is NOT itself another complemento token. Applied to ONE segment
+#: `_parse_logradouro` already classified as complemento — never to a whole
+#: line. Measured: "AV X 1764 AP 603 A <BAIRRO>" (an Enel envelope block).
+_COMPLEMENTO_TOKEN = (
+    r"(?:APARTAMENTO|APTO|APT|AP|BLOCO|BL|CASA|CS|SALA|SL|CONJUNTO|CONJ|CJ|LOJA|LJ|"
+    r"LOTE|LT|QUADRA|QD|TORRE|TR|ANDAR|UNIDADE|UN|BOX)"
+)
+_COMPLEMENTO_COM_BAIRRO_RE = re.compile(
+    r"^\s*(?P<comp>" + _COMPLEMENTO_TOKEN + r"\.?\s*[A-Z]?\d+[A-Z]?(?:\s+[A-Z](?=\s))?"
+    r"(?:\s+" + _COMPLEMENTO_TOKEN + r"\.?\s*(?:[A-Z]?\d+[A-Z]?|[A-Z])(?=\s|$))*)"
+    r"\s+(?P<bairro>(?!" + _COMPLEMENTO_TOKEN + r"\b)[A-Z]+(?:\s+[A-Z]+)+|"
+    r"(?!" + _COMPLEMENTO_TOKEN + r"\b)[A-Z]{4,})\s*$"
+)
+
 _CEP_HIFEN_RE = re.compile(r"(?<![\d.])(\d{2})\.?(\d{3})\s?-\s?(\d{3})(?![\d-])")
 _CEP_ROTULO_RE = re.compile(r"\bCEP\b\s*[:.\-]?\s*(\d{2})\.?(\d{3})\s?-?\s?(\d{3})(?!\d)")
 
@@ -283,7 +300,14 @@ _RUIDO_FINAL_RE = re.compile(r"\s+\d{1,4}\s*/\s*\d{1,8}\s*$")
 
 
 #: Where a labelled value stops: two+ spaces, a pipe, or another label.
-_PARADA = r"(?=\s{2,}|\s*\||\s+(?:CEP|BAIRRO|CIDADE|MUNICIPIO|UF|ESTADO|COMPLEMENTO|NUMERO)\b\s*[:\-]|$)"
+#:
+#: Bairro fix (2026-10-03, measured on the cached comprovante corpus): a
+#: water bill prints `End:  AVENIDA X,344 -  - BAIRRO - CIDADE` — an EMPTY
+#: complemento slot rendered as `-  -`, whose double space used to end the
+#: value right after the número, so the bairro after it was never read. A
+#: 2+-space run touching a hyphen on either side is a separator INSIDE the
+#: value, never a column boundary.
+_PARADA = r"(?=(?<!-)\s{2,}(?![\s-])|\s*\||\s+(?:CEP|BAIRRO|CIDADE|MUNICIPIO|UF|ESTADO|COMPLEMENTO|NUMERO)\b\s*[:\-]|$)"
 
 
 @dataclass(frozen=True)
@@ -423,6 +447,21 @@ def _parse_logradouro(t: _Texto, base: int, linha: str) -> dict[str, Optional[st
         if not s or re.fullmatch(r"\s+-\s+|\s*,\s*|\s{2,}", seg):
             continue
         if _COMPLEMENTO_RE.match(s) or (complemento and re.fullmatch(r"[A-Z]?\d+[A-Z]?", s)):
+            # "AP 603 A JARDIM DA GLORIA" — a bill that prints the bairro on
+            # the street line with no separator after the complemento: the
+            # whole run used to land in `complemento` and the bairro was lost.
+            mb = _COMPLEMENTO_COM_BAIRRO_RE.match(seg)
+            if (
+                mb
+                and out["bairro"] is None
+                and not _nao_e_bairro(mb.group("bairro"))
+                and not _COMPLEMENTO_RE.match(mb.group("bairro"))
+            ):
+                complemento.append((ini, ini + mb.end("comp")))
+                out["bairro"] = t.literal(
+                    resto_ini + ini + mb.start("bairro"), resto_ini + ini + mb.end("bairro")
+                )
+                continue
             complemento.append((ini, fim))
         elif out["bairro"] is None and not _nao_e_bairro(s):
             out["bairro"] = t.literal(resto_ini + ini, resto_ini + fim)

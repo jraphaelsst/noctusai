@@ -651,3 +651,55 @@ class TestDispersoOneComponentPerLine:
         guard at the top of `_disperso`'s loop."""
         texto = "RUA DAS FLORES 123\nJARDIM PAULISTA\nSAO PAULO SP\n"
         assert not find_endereco(texto).presente
+
+
+class TestBairroGluedOrBehindAnEmptySlot:
+    """Bairro fix (2026-10-03), measured on the cached comprovante corpus:
+    two bill shapes printed a bairro the reader never returned — every one
+    of them left `bairro` NULL, and the contract gate then reported the
+    party's address incomplete. Synthetic values only."""
+
+    def test_labelled_end_with_an_empty_complemento_slot_reads_the_bairro(self):
+        texto = (
+            "Tipo de Fornecimento:\n"
+            "CEP:  01234000        End:  AVENIDA DAS PALMEIRAS,344 -  - VILA NOVA - CIDADE \n"
+            "EXEMPLO - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.logradouro == "AVENIDA DAS PALMEIRAS"
+        assert r.numero == "344"
+        assert r.bairro == "VILA NOVA"
+
+    def test_bairro_glued_after_the_complemento_is_split_off(self):
+        texto = (
+            "FULANO DE TAL\n"
+            "AV DAS PALMEIRAS 1234 AP 56 A JARDIM DAS ROSAS\n"
+            "CEP: 01234-567 COTIA - SP\n"
+        )
+        r = find_endereco(texto)
+        assert r.complemento == "AP 56 A"
+        assert r.bairro == "JARDIM DAS ROSAS"
+
+    def test_two_complemento_tokens_then_the_bairro(self):
+        texto = "FULANO\nRUA A 12 AP 3 BL C VILA SONIA\nCEP 01234-567 COTIA SP\n"
+        r = find_endereco(texto)
+        assert (r.complemento, r.bairro) == ("AP 3 BL C", "VILA SONIA")
+
+    def test_a_complemento_word_tail_is_never_taken_for_a_bairro(self):
+        for linha, comp in (
+            ("RUA A 12 CASA 2 FUNDOS", "CASA 2 FUNDOS"),
+            ("RUA A 12 AP 12 BLOCO B", "AP 12 BLOCO B"),
+            ("RUA A 12 APTO 5", "APTO 5"),
+        ):
+            r = find_endereco(f"FULANO\n{linha}\nCEP 01234-567 COTIA SP\n")
+            assert r.complemento == comp, linha
+            assert r.bairro is None, linha
+
+    def test_a_double_space_column_gap_still_ends_a_labelled_value(self):
+        """The `-  -` relaxation is hyphen-scoped: a plain 2+-space gap is
+        still a column boundary."""
+        texto = "Endereço: RUA A, 12  Fone: 1199999\nCEP 01234-567 COTIA SP\n"
+        r = find_endereco(texto)
+        assert r.logradouro == "RUA A"
+        assert r.numero == "12"
+        assert r.bairro is None

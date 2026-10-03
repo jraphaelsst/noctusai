@@ -2018,6 +2018,10 @@ def update_cliente(
         payload[f"{prefixo}_origem"] = "manual" if preenchido else None
         payload[f"{prefixo}_documento_id"] = None
         payload[f"{prefixo}_em"] = _now() if preenchido else None
+        if prefixo == "endereco" and "endereco_bairro" in payload:
+            # Migration 194 — a hand-typed bairro is the group's own
+            # ('manual'); a stale 'cep' bairro origin must not outlive it.
+            payload["endereco_bairro_origem"] = None
 
     # 148 — the manual certidão-emission date. Same stamping shape as above,
     # minus `_documento_id`/`_confirmado_*`: that migration's column pair

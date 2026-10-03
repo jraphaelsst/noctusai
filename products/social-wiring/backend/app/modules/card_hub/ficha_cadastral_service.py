@@ -240,6 +240,7 @@ def _aplicar_endereco_ficha(
         limpar: dict[str, Any] = {f"endereco_{p}": None for p in identidade_svc.ENDERECO_PARTES}
         limpar.update(
             {
+                identidade_svc.COLUNA_BAIRRO_ORIGEM: None,
                 "endereco_origem": None, "endereco_documento_id": None, "endereco_em": None,
                 "endereco_confirmado_por": None, "endereco_confirmado_em": None,
                 "updated_at": agora,
