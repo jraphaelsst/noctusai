@@ -11,13 +11,13 @@
  * list of ids, not a list of nullable slots — picking "quantidade = 3" and
  * filling only 2 of them is a mid-edit state the server has no shape for, so
  * the PUT waits until every slot the operator asked for has a witness (or
- * the operator drops the count back down). `quantidade = 0` saves
- * immediately (an explicit "no witnesses" is a valid, complete state).
+ * the operator drops the count back down). There is no "0": the count is
+ * 2–5 and an unselected contract shows 2 empty slots (`slotsDeTestemunhas`).
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { TestemunhasSelect } from "@/components/card/TestemunhasSelect";
+import { TestemunhasSelect, slotsDeTestemunhas } from "@/components/card/TestemunhasSelect";
 import {
   useContratoTestemunhas,
   useDefinirContratoTestemunhas,
@@ -73,14 +73,12 @@ export function TestemunhasSelectContainer({
         updated_at: null,
       })),
   ];
-  const selecionados = ids ?? [];
+  // Padded to the minimum (2) — the slots the operator sees ARE the slots
+  // edited; `mudarSlot` on an empty selection must land in slot 0.
+  const selecionados = slotsDeTestemunhas(ids ?? []);
 
   function salvar(proximos: (string | null)[]) {
     setIds(proximos);
-    if (proximos.length === 0) {
-      definir.mutate([], { onError: () => toast.error("Não foi possível salvar as testemunhas.") });
-      return;
-    }
     if (proximos.every((v): v is string => !!v)) {
       definir.mutate(proximos, {
         onError: () => toast.error("Não foi possível salvar as testemunhas."),
@@ -110,7 +108,9 @@ export function TestemunhasSelectContainer({
       selecionados={selecionados}
       onChangeQuantidade={mudarQuantidade}
       onChangeSlot={mudarSlot}
-      salvando={definir.isPending}
+      // Not editable until seeded from the server — a pick made before the
+      // selection loads would be overwritten by the seed.
+      salvando={definir.isPending || ids === null}
     />
   );
 }

@@ -78,9 +78,22 @@ async function render(props: Partial<Parameters<typeof TestemunhasSelect>[0]> = 
 }
 
 describe("quantidade", () => {
-  it("nenhum slot quando a quantidade é 0", async () => {
-    const { getByText } = await render({ selecionados: [] });
-    expect(getByText("Nenhuma testemunha selecionada.")).toBeTruthy();
+  it("🔴 sem testemunhas ainda, a quantidade padrão (2) JÁ mostra 2 slots — o número exibido é o número de slots", async () => {
+    const { getByTestId, queryByTestId, queryByText } = await render({ selecionados: [] });
+    const quantidade = getByTestId("testemunhas-quantidade").parentElement as HTMLElement;
+    expect(quantidade.getAttribute("data-value")).toBe("2");
+    expect(getByTestId("testemunhas-slot-0")).toBeTruthy();
+    expect(getByTestId("testemunhas-slot-1")).toBeTruthy();
+    expect(queryByTestId("testemunhas-slot-2")).toBeNull();
+    expect(queryByText("Nenhuma testemunha selecionada.")).toBeNull();
+  });
+
+  it("escolher no slot 0 de uma seleção vazia chama onChangeSlot(0, id)", async () => {
+    const { getByTestId, onChangeSlot } = await render({ selecionados: [] });
+    const { fireEvent, within } = await import("@testing-library/react");
+    const slot0 = getByTestId("testemunhas-slot-0").parentElement as HTMLElement;
+    fireEvent.click(within(slot0).getByText("Maria Souza"));
+    expect(onChangeSlot).toHaveBeenCalledWith(0, "t1");
   });
 
   it("um slot por unidade escolhida", async () => {
@@ -100,8 +113,8 @@ describe("quantidade", () => {
   it("mudar a quantidade chama onChangeQuantidade com o novo número", async () => {
     const { getByText, onChangeQuantidade } = await render({ selecionados: [] });
     const { fireEvent } = await import("@testing-library/react");
-    fireEvent.click(getByText("2"));
-    expect(onChangeQuantidade).toHaveBeenCalledWith(2);
+    fireEvent.click(getByText("3"));
+    expect(onChangeQuantidade).toHaveBeenCalledWith(3);
   });
 });
 

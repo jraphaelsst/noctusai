@@ -30,6 +30,19 @@ export interface TestemunhasSelectProps {
 /** Owner decision (2026-09-24): 2 to 5 witnesses per contract — mirrors
  *  `politica.MIN_TESTEMUNHAS`/`MAX_TESTEMUNHAS` on the backend. */
 const QUANTIDADES = [2, 3, 4, 5];
+export const MIN_TESTEMUNHAS = QUANTIDADES[0];
+
+/** The slots on screen: the selection, padded with empty slots up to the
+ *  minimum. A contract with no witnesses yet is "2, none picked" — the count
+ *  the selector shows MUST be the count of slots rendered (2026-10-03: it
+ *  showed "2" over zero slots, and re-picking "2" fired nothing because Radix
+ *  saw no change). Used by the container for its edits too, so a pick in
+ *  slot 0 of an empty selection lands. */
+export function slotsDeTestemunhas(selecionados: readonly (string | null)[]): (string | null)[] {
+  return selecionados.length >= MIN_TESTEMUNHAS
+    ? [...selecionados]
+    : [...selecionados, ...Array<null>(MIN_TESTEMUNHAS - selecionados.length).fill(null)];
+}
 
 export function TestemunhasSelect({
   registro,
@@ -38,14 +51,13 @@ export function TestemunhasSelect({
   onChangeSlot,
   salvando = false,
 }: TestemunhasSelectProps) {
+  const slots = slotsDeTestemunhas(selecionados);
   return (
     <div className="space-y-3" data-testid="testemunhas-select">
       <div className="flex items-center gap-2">
         <span className="text-xs text-muted-foreground">Quantidade de testemunhas</span>
         <Select
-          // No selection yet reads as an empty trigger, not a "0" the
-          // operator can't pick back (0 is not an allowed count).
-          value={selecionados.length ? String(selecionados.length) : undefined}
+          value={String(slots.length)}
           onValueChange={(v) => onChangeQuantidade(Number(v))}
           disabled={salvando}
         >
@@ -62,13 +74,9 @@ export function TestemunhasSelect({
         </Select>
       </div>
 
-      {selecionados.length === 0 && (
-        <p className="text-xs text-muted-foreground">Nenhuma testemunha selecionada.</p>
-      )}
-
-      {selecionados.map((atual, indice) => {
+      {slots.map((atual, indice) => {
         const outrosSelecionados = new Set(
-          selecionados.filter((_, i) => i !== indice).filter((v): v is string => !!v),
+          slots.filter((_, i) => i !== indice).filter((v): v is string => !!v),
         );
         return (
           <Select
