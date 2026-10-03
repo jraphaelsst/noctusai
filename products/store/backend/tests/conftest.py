@@ -183,3 +183,6 @@ def keyed(client):
         for dep in overrides:
             app.dependency_overrides.pop(dep, None)
         key_provider.reset()
+        from app.key_testers import checkout_probe
+
+        checkout_probe.reset()

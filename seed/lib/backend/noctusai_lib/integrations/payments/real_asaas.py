@@ -245,6 +245,12 @@ class AsaasPaymentGateway:
         canceled["status"] = "EXPIRED"
         return self._to_gateway_subscription(canceled)
 
+    def get_commercial_info(self) -> dict[str, Any]:
+        """`GET /myAccount/commercialInfo` — the account's registered business
+        data. `site` is what Asaas checks a hosted-checkout `callback.successUrl`
+        against (null ⇒ every redirect-back is refused with `invalid_object`)."""
+        return self._request("GET", "/myAccount/commercialInfo")
+
     def get_fee_breakdown(self, charge_id_at_gateway: str) -> FeeBreakdown:
         raw = self._request("GET", f"/payments/{charge_id_at_gateway}")
         gross_value = Decimal(str(raw["value"]))

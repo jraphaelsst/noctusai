@@ -183,3 +183,91 @@ class TestConsumption:
         # No product name -> the platform default name applies.
         keyed.settings.append(version=2, data={**DEFAULT_SETTINGS, "product_name": ""}, created_by=None)
         assert store_deps.get_email_sender(keyed.settings).config.from_name == "Plataforma"
+
+
+class TestTestarAsaasKey:
+    """`POST .../asaas_api_key/test` — key + account readiness, via the seed hosted-checkout
+    adapter over an httpx MockTransport (the Asaas HTTP boundary) injected through the probe's seam."""
+
+    URL = f"{BASE}/asaas_api_key/test"
+
+    @staticmethod
+    def _asaas(keyed, routes):
+        import httpx
+
+        from app.key_testers import checkout_probe
+        from noctusai_lib.integrations.payments.checkout import make_hosted_checkout
+
+        seen = []
+
+        def handler(request):
+            seen.append((request.method, str(request.url), request.headers.get("access_token")))
+            route = routes.get(f"{request.method} {request.url.path}")
+            return route if route is not None else httpx.Response(404, json={"errors": [{"description": "x"}]})
+
+        checkout_probe.use(
+            factory=lambda key, base: make_hosted_checkout(
+                provider="asaas", asaas_api_key=key, asaas_base_url=base,
+                asaas_transport=httpx.MockTransport(handler),
+            )
+        )
+        return seen
+
+    def test_requires_token_401_and_admin_403(self, keyed):
+        assert keyed.client.raw().post(self.URL).status_code == 401
+        as_other_user(keyed.client)
+        assert keyed.client.post(self.URL).status_code == 403
+
+    def test_unconfigured_key_is_422(self, keyed):
+        as_admin(keyed.client)
+        assert keyed.client.post(self.URL).status_code == 422
+
+    def test_ready_account_succeeds_with_environment_base_url(self, keyed):
+        import httpx
+
+        seen = self._asaas(keyed, {
+            "GET /v3/customers": httpx.Response(200, json={"data": []}),
+            "GET /v3/myAccount/commercialInfo": httpx.Response(200, json={"site": "https://store.noctusai.com"}),
+        })
+        as_admin(keyed.client)
+        _put(keyed.client, "asaas_api_key", "$aact_key")
+        body = keyed.client.post(self.URL).json()
+        assert body["success"] is True and body["key"] == "asaas_api_key"
+        assert body["message"].startswith("Chave válida e conta pronta para receber pagamentos.")
+        assert all("sandbox" in url and tok == "$aact_key" for _m, url, tok in seen)
+        assert "https://store.noctusai.com/obrigado" in body["message"]
+
+    def test_missing_site_fails_with_the_actionable_message(self, keyed):
+        import httpx
+
+        self._asaas(keyed, {
+            "GET /v3/customers": httpx.Response(200, json={"data": []}),
+            "GET /v3/myAccount/commercialInfo": httpx.Response(200, json={"site": None}),
+        })
+        as_admin(keyed.client)
+        _put(keyed.client, "asaas_api_key", "$aact_key")
+        body = keyed.client.post(self.URL).json()
+        assert body["success"] is False
+        assert body["message"] == (
+            "Cadastre o site da loja no Asaas: Minha Conta › Informações › Site — "
+            "sem isso o Asaas recusa o redirecionamento pós-pagamento."
+        )
+
+    def test_bad_key_fails_with_environment_hint(self, keyed):
+        import httpx
+
+        self._asaas(keyed, {
+            "GET /v3/customers": httpx.Response(
+                401, json={"errors": [{"code": "invalid_environment", "description": "env"}]}
+            ),
+        })
+        as_admin(keyed.client)
+        _put(keyed.client, "asaas_api_key", "$aact_prodkey")
+        body = keyed.client.post(self.URL).json()
+        assert body["success"] is False
+        assert "Chave inválida ou de outro ambiente (sandbox x produção)" in body["message"]
+
+    def test_other_keys_have_no_tester_400(self, keyed):
+        as_admin(keyed.client)
+        _put(keyed.client, "asaas_webhook_token", "tok-123456")
+        assert keyed.client.post(f"{BASE}/asaas_webhook_token/test").status_code == 400

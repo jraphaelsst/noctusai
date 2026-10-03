@@ -39,7 +39,7 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
             "botão de compra fica indisponível. Use a chave do mesmo ambiente escolhido abaixo."
         ),
         is_secret=True,
-        testable=False,
+        testable=True,
         input_type="password",
         placeholder="$aact_...",
     ),

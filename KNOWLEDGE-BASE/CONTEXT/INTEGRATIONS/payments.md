@@ -345,3 +345,15 @@ green). Consumers use only `make_hosted_checkout` + `parse_webhook_event` +
   dropped all but the first. Core acts on `SUBSCRIPTION_DELETED` /
   `SUBSCRIPTION_INACTIVATED` when they arrive; whether the live Asaas account
   emits them is unverified.
+
+## Asaas hosted checkout — the site prerequisite + `check_checkout_readiness` (2026-10-03)
+
+Asaas refuses a `callback.successUrl` (the post-payment redirect-back) unless the account has a website registered. Without it the first checkout fails with `400 invalid_object` — "Não há nenhum domínio configurado em sua conta. Cadastre um site em Minha Conta na aba Informações." `GET /v3/myAccount/commercialInfo` returns `site: null` in that state. Fix is operator-side: **Minha Conta › Informações › Site**.
+
+Every `HostedCheckout` (`noctusai_lib.integrations.payments.checkout`) now exposes `check_checkout_readiness(success_url) -> list[ReadinessIssue]` (`code`, pt-BR `message`, `severity` `error|info`; `readiness_ok(issues)` = no errors). Fake + Real + factory parity:
+
+- **Asaas**: `verify_credentials` first (401 / `invalid_environment` → "Chave inválida ou de outro ambiente (sandbox x produção)"); then `commercialInfo` — missing `site` → error `missing_site`; site present → `info` (`site_registered`) carrying the value. Whether Asaas also demands the callback domain equal the registered site is NOT a documented contract, so a domain mismatch is never raised as an error.
+- **Stripe**: credentials only.
+- **Fake**: `script_readiness([...])`, calls recorded.
+
+Consumer wiring: store's `asaas_api_key` is `testable`; `app/key_testers.py` runs the check from the admin "Testar" button (seed `ApiKeysPanel` already renders Testar for `testable` keys — no FE change).

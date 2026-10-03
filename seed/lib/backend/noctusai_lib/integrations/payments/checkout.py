@@ -58,6 +58,22 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class ReadinessIssue:
+    """One finding from `check_checkout_readiness`. `severity="error"` means a
+    checkout WILL fail; `"info"` is context the operator may want. `message` is
+    pt-BR, operator-facing."""
+
+    code: str
+    message: str
+    severity: str = "error"  # "error" | "info"
+
+
+def readiness_ok(issues: list["ReadinessIssue"]) -> bool:
+    """True when no issue is an error (info-only findings still pass)."""
+    return not any(i.severity == "error" for i in issues)
+
+
+@dataclass(frozen=True)
 class PixQr:
     """Asaas' Pix "Copia e Cola" payload + a scannable image, from the
     `GET /payments/{id}/pixQrCode` endpoint. `None` on the `CheckoutSession`
@@ -150,6 +166,11 @@ class HostedCheckout(Protocol):
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         ...
 
+    def check_checkout_readiness(self, success_url: Optional[str] = None) -> list[ReadinessIssue]:
+        """Non-mutating pre-flight: would a checkout with this `success_url`
+        be accepted by the gateway account? Empty list ⇒ ready."""
+        ...
+
 
 class StripeHostedCheckout:
     """`HostedCheckout` over a Stripe Checkout Session in subscription mode.
@@ -165,6 +186,15 @@ class StripeHostedCheckout:
 
     def __init__(self, gateway: StripePaymentGateway) -> None:
         self._gateway = gateway
+
+    def check_checkout_readiness(self, success_url: Optional[str] = None) -> list[ReadinessIssue]:
+        """Stripe: credentials only — a Checkout Session needs no account-level
+        site registration."""
+        try:
+            self._gateway.verify_credentials()
+        except PaymentGatewayError as exc:
+            return [ReadinessIssue("invalid_credentials", f"Chave do Stripe recusada: {exc.message}")]
+        return []
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         if request.is_one_off:
@@ -294,6 +324,54 @@ class AsaasHostedCheckout:
 
     def __init__(self, gateway: AsaasPaymentGateway) -> None:
         self._gateway = gateway
+
+    def check_checkout_readiness(self, success_url: Optional[str] = None) -> list[ReadinessIssue]:
+        """Asaas refuses a `callback.successUrl` unless the account has a website
+        registered (Minha Conta > Informações > Site) — a 400 `invalid_object`
+        only seen at the first real checkout. Verify the key, then the site.
+
+        The site value is reported as `info`, never an error: whether Asaas also
+        requires the callback domain to equal the registered site is not a
+        documented contract, so we surface the value and let the operator judge."""
+        try:
+            self._gateway.verify_credentials()
+        except PaymentGatewayError as exc:
+            if exc.status == 401 or exc.code in ("invalid_environment", "invalid_access_token"):
+                return [
+                    ReadinessIssue(
+                        "invalid_credentials",
+                        "Chave inválida ou de outro ambiente (sandbox x produção): "
+                        "use uma chave do mesmo ambiente escolhido.",
+                    )
+                ]
+            return [ReadinessIssue("gateway_unreachable", f"Não foi possível consultar o Asaas: {exc.message}")]
+        try:
+            info = self._gateway.get_commercial_info()
+        except PaymentGatewayError as exc:
+            return [
+                ReadinessIssue(
+                    "commercial_info_unavailable",
+                    f"Não foi possível ler os dados comerciais da conta Asaas: {exc.message}",
+                )
+            ]
+        site = (info.get("site") or "").strip() if isinstance(info, dict) else ""
+        if not site:
+            return [
+                ReadinessIssue(
+                    "missing_site",
+                    "Cadastre o site da loja no Asaas: Minha Conta › Informações › Site — "
+                    "sem isso o Asaas recusa o redirecionamento pós-pagamento.",
+                )
+            ]
+        if success_url:
+            return [
+                ReadinessIssue(
+                    "site_registered",
+                    f"Site cadastrado no Asaas: {site} (retorno pós-pagamento: {success_url}).",
+                    severity="info",
+                )
+            ]
+        return []
 
     def _create_one_off(self, request: CheckoutRequest) -> CheckoutSession:
         """A single charge: ensure_customer (with CPF) → `POST /payments` →
@@ -426,10 +504,19 @@ class FakeHostedCheckout:
         # Recorded calls, so a test can assert on intent, not just outcome.
         self.calls: list[tuple[str, object]] = []
         self._seq = 0
+        self._readiness: list[ReadinessIssue] = []
 
     def _next_id(self, prefix: str) -> str:
         self._seq += 1
         return f"{prefix}_{self._seq:06d}"
+
+    def script_readiness(self, issues: list[ReadinessIssue]) -> None:
+        """Script what `check_checkout_readiness` returns next (default: ready)."""
+        self._readiness = list(issues)
+
+    def check_checkout_readiness(self, success_url: Optional[str] = None) -> list[ReadinessIssue]:
+        self.calls.append(("check_checkout_readiness", success_url))
+        return list(self._readiness)
 
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         self.calls.append(("create_checkout", request))
@@ -500,6 +587,8 @@ __all__ = [
     "FakeHostedCheckout",
     "HostedCheckout",
     "PixQr",
+    "ReadinessIssue",
     "StripeHostedCheckout",
     "make_hosted_checkout",
+    "readiness_ok",
 ]

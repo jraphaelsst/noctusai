@@ -11,6 +11,7 @@ from noctusai_seed.api_keys_router import create_api_keys_router
 
 from app.api_keys import API_KEY_SPECS, key_provider
 from app.config import settings
+from app.key_testers import checkout_probe
 from app.dependencies import get_store_admin_org
 
 router = create_api_keys_router(
@@ -20,4 +21,5 @@ router = create_api_keys_router(
     store_factory=key_provider.build_store,
     get_current_user_org=get_store_admin_org,
     resolver=key_provider.platform_resolve,
+    testers={"asaas_api_key": checkout_probe.test_asaas_api_key},
 )
