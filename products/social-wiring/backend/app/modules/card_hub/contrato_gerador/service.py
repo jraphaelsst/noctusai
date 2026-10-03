@@ -214,6 +214,36 @@ def iniciar(
     }
 
 
+def precondicao_gerar(
+    client: Any,
+    org_id: UUID,
+    dados: DadosContrato,
+    *,
+    usuario_id: Optional[Any],
+    politica: Politica,
+) -> list[dict]:
+    """`gerar`'s extraction precondition, per mode — the ONE place that
+    decides it (the e2e harness/`noctus.dev.contract_score` call it too).
+    Returns the machine-pending values to record on the version
+    (`revisao_campos`); raises `ExtracaoPendenteValidacao` (409) when
+    generation must refuse."""
+    if politica.revisao_final_unica:
+        # Owner decision 2026-09-30: ONE final legal review of the finished
+        # contract replaces the per-field confirmations. Machine-derived,
+        # not-yet-validated values no longer refuse — they are RECORDED on
+        # the version `gerar` renders (migration 177), which then awaits
+        # "Aprovar revisão jurídica" before signature/print. An open
+        # extraction CONFLICT still refuses (409 EXTRACAO_PENDENTE_VALIDACAO,
+        # empty `pendentes`) — the system cannot pick between two readings.
+        return pendentes_para_revisao(client, org_id, dados, usuario_id=usuario_id)
+    # Owner decision D2 (migration 156), kept for rollback: nothing a
+    # machine extracted may reach the instrument before a human validated
+    # it, field by field. Checked FIRST in `gerar` — a rejected value turns
+    # into a `faltando` at the gate. 409 `EXTRACAO_PENDENTE_VALIDACAO`.
+    exigir_sem_pendentes(client, org_id, dados, usuario_id=usuario_id)
+    return []
+
+
 async def gerar(
     client: Any,
     storage: StorageBackend,
@@ -227,22 +257,7 @@ async def gerar(
     politica: Politica,
 ) -> dict:
     dados, atendimento_id = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
-    if politica.revisao_final_unica:
-        # Owner decision 2026-09-30: ONE final legal review of the finished
-        # contract replaces the per-field confirmations. Machine-derived,
-        # not-yet-validated values no longer refuse — they are RECORDED on
-        # the version rendered below (migration 177), which then awaits
-        # "Aprovar revisão jurídica" before signature/print. An open
-        # extraction CONFLICT still refuses (409 EXTRACAO_PENDENTE_VALIDACAO,
-        # empty `pendentes`) — the system cannot pick between two readings.
-        revisao_campos = pendentes_para_revisao(client, org_id, dados, usuario_id=usuario_id)
-    else:
-        # Owner decision D2 (migration 156), kept for rollback: nothing a
-        # machine extracted may reach the instrument before a human validated
-        # it, field by field. Checked FIRST — a rejected value turns into a
-        # `faltando` below. 409 `EXTRACAO_PENDENTE_VALIDACAO`.
-        exigir_sem_pendentes(client, org_id, dados, usuario_id=usuario_id)
-        revisao_campos = []
+    revisao_campos = precondicao_gerar(client, org_id, dados, usuario_id=usuario_id, politica=politica)
     data = data_assinatura(dados, assinatura)
     # [E1/H2] ONE `hoje()` snapshot for switches, the gate, AND the render —
     # a generation run reads a single "today" throughout, never one call
@@ -312,4 +327,5 @@ __all__ = [
     "hoje",
     "iniciar",
     "obter_geracao",
+    "precondicao_gerar",
 ]

@@ -27,9 +27,11 @@ WHAT IT DOES
    for the collision class), with the repo venv and this tree's seed on
    `PYTHONPATH`. The harness loads each card from the LIVE DB exactly like
    production (`carregador.carregar`), takes readiness from production's own
-   `service.obter_geracao` + the mode-switched extraction precondition
-   `service.gerar` runs, renders in memory (a not-`pronto` card with explicit
-   `[[LACUNA]]` gap markers, gaps reported apart from wording diffs) — and
+   `service.obter_geracao` + `service.precondicao_gerar` (the extraction
+   precondition `service.gerar` itself calls), renders in memory (a not-`pronto` card with explicit
+   `[[LACUNA]]` gap markers, gaps reported apart from wording diffs; a
+   reference clause the generator SWITCHED OFF for lack of data is a data gap,
+   not a missing clause) — and
    NEVER writes to the database.
 4. The harness writes the masked per-section scorecard to
    `~/.noctusai/private/scores/<ts>.json` (0600). This tool returns ONLY
@@ -67,7 +69,7 @@ Runner = Callable[..., subprocess.CompletedProcess]
 # ─── verdict-only filter ────────────────────────────────────────────────
 
 _CHAVES_NUMERICAS = (
-    "secoes_ref", "secoes_gerado", "secoes_alinhadas", "clausulas_faltando", "clausulas_extras",
+    "secoes_ref", "secoes_gerado", "secoes_alinhadas", "clausulas_faltando", "clausulas_extras", "clausulas_desligadas",
     "clausulas_explicadas_allowlist", "numeros_divergentes", "datas_divergentes", "lacunas",
     "numeros_em_lacuna", "allowlist_aplicadas", "allowlist_pendentes", "campos_marcados", "lint_achados",
 )
@@ -301,9 +303,9 @@ def register(server) -> None:
             "signed-contract answer key (~/.noctusai/private/answer-keys/, from "
             "noctus.dev.drive_census), renders the contract READ-ONLY from the "
             "live DB exactly like production (readiness = service.obter_geracao "
-            "+ gerar's own extraction precondition; a not-pronto card renders "
-            "with [[LACUNA]] gap markers, gaps reported apart from wording "
-            "diffs), scores it with tests/e2e_contrato/comparador.pontuar "
+            "+ service.precondicao_gerar; a not-pronto card renders with "
+            "[[LACUNA]] gap markers, gaps and clauses the generator switched off "
+            "for lack of data reported apart from wording diffs), scores it with tests/e2e_contrato/comparador.pontuar "
             "(per-section categories, EXACT numbers/dates, owner-approved "
             "allowlist.json, limiares.json thresholds), writes a masked 0600 "
             "scorecard to ~/.noctusai/private/scores/<ts>.json and RETURNS ONLY "

@@ -79,9 +79,13 @@ numbers only. CI's half is `tests/modules/card_hub/test_contrato_golden.py`
 (golden full-text snapshots of the 6 synthetic variants).
 
 Readiness comes from production's own functions — `service.obter_geracao`
-plus the mode-switched extraction precondition `service.gerar` runs
-(`pendentes_para_revisao` under `Politica.revisao_final_unica`, else
-`exigir_sem_pendentes`) — never a re-derivation.
+plus `service.precondicao_gerar` (the extraction precondition `service.gerar`
+itself calls) — never a re-derivation.
+
+A reference clause the generator SWITCHED OFF for this card (its switch is
+false — e.g. intermediação with no corretagem data; `numeracao.
+CLAUSULA_CONDICIONAL`) is reported as `clausulas_desligadas`, a DATA gap
+(verdict `incompleto`), never as a missing-clause failure.
 
 ## What "provenance" means here
 

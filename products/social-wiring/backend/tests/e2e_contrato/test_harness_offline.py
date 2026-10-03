@@ -83,3 +83,16 @@ def test_preenchimentos_estruturais_permitem_render_de_card_incompleto():
     )
     assert card.lacunas >= 3
     assert all("0.01" not in t and "999" not in t for r in card.resultados for t in r.numeros_extras)
+
+
+def test_clausulas_desligadas_vem_das_tabelas_do_gerador():
+    """V5 has no intermediários → `tem_intermediacao` off → the intermediação
+    title is reported as switched off (read from numeracao's own tables)."""
+    from app.modules.card_hub.contrato_gerador import derivacao
+
+    d5 = fx.variante(5)
+    sw = derivacao.derivar_switches(d5, fx.politica_variante(5), fx.REFERENCIA)
+    assert not sw["tem_intermediacao"]
+    assert "DA INTERMEDIAÇÃO" in harness.clausulas_desligadas(sw)
+    sw1 = derivacao.derivar_switches(fx.variante(1), fx.politica_variante(1), fx.REFERENCIA)
+    assert "DA INTERMEDIAÇÃO" not in harness.clausulas_desligadas(sw1)

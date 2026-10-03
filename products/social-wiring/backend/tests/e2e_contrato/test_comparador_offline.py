@@ -316,3 +316,26 @@ def test_sentinelas_estruturais_sao_lacunas():
     assert card.numeros_divergentes == 0 and card.datas_divergentes == 0, card.detalhe()["secoes"]
     assert card.lacunas == 2
     assert card.veredito == "incompleto", card.motivos()
+
+
+def test_clausula_desligada_e_gap_de_dado_nao_faltando():
+    """The reference has a clause the generator switched OFF for this card
+    (e.g. intermediação with no corretagem data): a DATA gap (`incompleto`),
+    not a missing-clause failure. Without the switch information the same
+    absence is a missing clause."""
+    gerado = [p for p in _REF if "DO PREÇO" not in p and "preço certo" not in p]
+    sem = comparador.pontuar(_REF, gerado)
+    assert sem.clausulas_faltando == ["clausula:do preco"]
+    com = comparador.pontuar(_REF, gerado, clausulas_desligadas=["DO PREÇO"])
+    assert com.clausulas_faltando == []
+    assert com.clausulas_desligadas == ["clausula:do preco"]
+    assert com.veredito == "incompleto", com.motivos()
+    assert com.resumo()["clausulas_desligadas"] == 1
+    assert com.categorias["estrutura"] == 1.0
+
+
+def test_clausula_desligada_nao_cobre_outra_clausula():
+    gerado = [p for p in _REF if "DO PREÇO" not in p and "preço certo" not in p]
+    card = comparador.pontuar(_REF, gerado, clausulas_desligadas=["DA INTERMEDIAÇÃO"])
+    assert card.clausulas_faltando == ["clausula:do preco"]
+    assert card.veredito == "reprovado"

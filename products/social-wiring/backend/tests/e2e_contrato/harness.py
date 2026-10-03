@@ -92,10 +92,9 @@ import comparador  # noqa: E402  (path insert must precede this)
 #
 # - `service.obter_geracao` — the GET readiness report (`pronto`, `faltando`,
 #   `bloqueios`, `avisos`, `confirmacoes`, `modelo_derivado`);
-# - the extraction precondition `service.gerar` runs first, per mode:
-#   `pendentes_para_revisao` (revisao_final_unica) / `exigir_sem_pendentes`
-#   (rollback) — called verbatim, their `ExtracaoPendenteValidacao` read as
-#   the refusal it is.
+# - `service.precondicao_gerar` — the extraction precondition `service.gerar`
+#   itself calls first (per mode), its `ExtracaoPendenteValidacao` read as the
+#   refusal it is.
 
 
 @dataclass
@@ -138,22 +137,15 @@ def carregar_dados(client: Any, org_id: UUID, cliente_id: UUID, contrato_id: UUI
 
 
 def precondicao_extracao(client: Any, org_id: UUID, dados, politica) -> dict:
-    """`service.gerar`'s first step, per mode, called verbatim. Returns
-    `{bloqueia, pendentes, conflitos, revisao_campos}`; never writes
-    (`pendentes_para_revisao` / `exigir_sem_pendentes` are reads — the write
-    happens later in `gerar`, on the version)."""
-    from app.modules.card_hub.contrato_gerador.validacao_extracao import (
-        ExtracaoPendenteValidacao,
-        exigir_sem_pendentes,
-        pendentes_para_revisao,
-    )
+    """`service.precondicao_gerar` — the very function `service.gerar` runs
+    first — with its refusal (`ExtracaoPendenteValidacao`) read as data.
+    Returns `{bloqueia, pendentes, conflitos, revisao_campos}`; never writes."""
+    from app.modules.card_hub.contrato_gerador.service import precondicao_gerar
+    from app.modules.card_hub.contrato_gerador.validacao_extracao import ExtracaoPendenteValidacao
 
     try:
-        if politica.revisao_final_unica:
-            revisao = pendentes_para_revisao(client, org_id, dados, usuario_id=None)
-            return {"bloqueia": False, "pendentes": [], "conflitos": [], "revisao_campos": revisao}
-        exigir_sem_pendentes(client, org_id, dados, usuario_id=None)
-        return {"bloqueia": False, "pendentes": [], "conflitos": [], "revisao_campos": []}
+        revisao = precondicao_gerar(client, org_id, dados, usuario_id=None, politica=politica)
+        return {"bloqueia": False, "pendentes": [], "conflitos": [], "revisao_campos": revisao}
     except ExtracaoPendenteValidacao as exc:
         return {
             "bloqueia": True,
@@ -308,6 +300,28 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
     if estruturais:
         marcado = dataclasses.replace(marcado, **estruturais)
     return marcado, contagem
+
+
+def switches_producao(dados) -> dict[str, bool]:
+    """`derivacao.derivar_switches` with the production policy and today —
+    the same call `service.gerar` makes before rendering."""
+    from app.modules.card_hub.contrato_gerador.derivacao import derivar_switches
+    from app.modules.card_hub.contrato_gerador.service import hoje
+
+    return derivar_switches(dados, politica_producao(), hoje())
+
+
+def clausulas_desligadas(switches: dict[str, bool]) -> list[str]:
+    """Heading titles of the conditional clauses these switches turn OFF
+    (`numeracao.CLAUSULA_CONDICIONAL` → `TITULO_CLAUSULA`) — read from the
+    generator's own tables, never a hand-kept list."""
+    from app.modules.card_hub.contrato_gerador.numeracao import CLAUSULA_CONDICIONAL, TITULO_CLAUSULA
+
+    return [
+        TITULO_CLAUSULA[chave]
+        for chave, switch in CLAUSULA_CONDICIONAL.items()
+        if not switches.get(switch, False) and chave in TITULO_CLAUSULA
+    ]
 
 
 def renderizar_em_memoria(dados, *, com_marcadores: bool = False) -> Any:
@@ -539,8 +553,14 @@ def pontuar_deal(
     try:
         renderizado = renderizar_em_memoria(dados, com_marcadores=com_marcadores)
     except Exception as exc:  # noqa: BLE001 — reported (class only), never swallowed
+        # A pronto card that fails to render is a generator defect
+        # (`render_falhou`). A not-pronto card whose gaps the template
+        # cannot be fed a neutral stand-in for (e.g. a missing gênero — the
+        # generator refuses to guess agreement since the 2026-10-03
+        # hardening, and guessing here would mislabel wording) is a gap that
+        # blocks rendering (`incompleto_sem_render`) — never a wording verdict.
         resumo = {
-            "veredito": "render_falhou",
+            "veredito": "incompleto_sem_render" if com_marcadores else "render_falhou",
             "render_modo": modo,
             "render_erro": type(exc).__name__,
             "gaps": gaps,
@@ -552,6 +572,7 @@ def pontuar_deal(
         comparador.paragrafos_de_lista(renderizado.paragrafos),
         allowlist=allowlist,
         limiares=limiares,
+        clausulas_desligadas=clausulas_desligadas(switches_producao(dados)),
     )
     veredito = card.veredito
     if veredito == "aprovado" and not prontidao.pode_gerar:
@@ -740,6 +761,7 @@ def executar(
                 gen_paragrafos,
                 allowlist=comparador.carregar_allowlist(),
                 limiares=comparador.Limiares.de_arquivo(),
+                clausulas_desligadas=clausulas_desligadas(switches_producao(dados)),
             )
             saida["scorecard"] = card.resumo() if redigir else card.detalhe()
     return saida

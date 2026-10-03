@@ -55,6 +55,7 @@
 
 ### Testing
 - noctus.dev.run_tests, noctus.dev.run_all_tests, noctus.dev.build_frontend, noctus.dev.build_all_frontends
+- `noctus.dev.contract_score` (added 2026-10-03) — social-wiring contract-generator reliability gate against REAL signed contracts: per deal in a private card map with a `drive_census` answer key, renders read-only from the live DB (readiness = `service.obter_geracao` + `service.precondicao_gerar`; a not-`pronto` card renders with `[[LACUNA]]` gap markers), scores with `products/social-wiring/backend/tests/e2e_contrato/comparador.pontuar` (per-section categories, EXACT numbers/dates, owner-approved patterns-only `allowlist.json`, `limiares.json`; a clause the generator switched off for lack of data is a data gap, not a missing clause), writes a masked 0600 scorecard to `~/.noctusai/private/scores/`, returns verdict-level numbers only. CI half: `tests/modules/card_hub/test_contrato_golden.py` (golden full-text snapshots; `CONTRATO_GOLDEN_REGENERAR=1`).
 
 ### Diff & Quality
 - noctus.dev.diff_against_seed, noctus.dev.find_orphans, noctus.dev.check_api_consistency

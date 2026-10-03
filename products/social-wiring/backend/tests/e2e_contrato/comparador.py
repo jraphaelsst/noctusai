@@ -561,6 +561,10 @@ class Scorecard:
     clausulas_faltando: list[str] = field(default_factory=list)  #: unexplained, title keys
     clausulas_extras: list[str] = field(default_factory=list)
     clausulas_faltando_explicadas: list[str] = field(default_factory=list)
+    #: Reference clauses the generator SWITCHED OFF for this card (a data gap:
+    #: the switch is false because the card lacks the data, e.g. intermediação
+    #: with no corretagem) — reported apart, never a missing-clause failure.
+    clausulas_desligadas: list[str] = field(default_factory=list)
     clausulas_extras_explicadas: list[str] = field(default_factory=list)
     categorias: dict[str, Optional[float]] = field(default_factory=dict)
     allowlist_aplicadas: dict[str, int] = field(default_factory=dict)
@@ -614,7 +618,7 @@ class Scorecard:
         failure, but gaps — the card is not complete yet)."""
         if self.motivos():
             return "reprovado"
-        if self.lacunas:
+        if self.lacunas or self.clausulas_desligadas:
             return "incompleto"
         return "aprovado"
 
@@ -633,6 +637,7 @@ class Scorecard:
             "secoes_alinhadas": len(self.resultados),
             "clausulas_faltando": len(self.clausulas_faltando),
             "clausulas_extras": len(self.clausulas_extras),
+            "clausulas_desligadas": len(self.clausulas_desligadas),
             "clausulas_explicadas_allowlist": len(self.clausulas_faltando_explicadas) + len(self.clausulas_extras_explicadas),
             "numeros_divergentes": self.numeros_divergentes,
             "datas_divergentes": self.datas_divergentes,
@@ -667,6 +672,7 @@ class Scorecard:
             ],
             "clausulas_faltando_chaves": self.clausulas_faltando,
             "clausulas_extras_chaves": self.clausulas_extras,
+            "clausulas_desligadas_chaves": self.clausulas_desligadas,
             "allowlist_aplicadas_por_id": self.allowlist_aplicadas,
             "allowlist_pendentes_ids": self.allowlist_pendentes,
         }
@@ -698,8 +704,15 @@ def pontuar(
     *,
     allowlist: Optional[list[EntradaAllowlist]] = None,
     limiares: Optional[Limiares] = None,
+    clausulas_desligadas: Optional[list[str]] = None,
 ) -> Scorecard:
-    """The measured verdict for one deal. Pure: no IO, no mutation."""
+    """The measured verdict for one deal. Pure: no IO, no mutation.
+
+    `clausulas_desligadas`: heading TITLES of the conditional clauses the
+    generator's switches turned OFF for this card (`harness.
+    clausulas_desligadas`). A reference clause absent from the render whose
+    title matches one of them is a DATA gap (`Scorecard.clausulas_desligadas`
+    → `incompleto`), not a missing clause."""
     limiares = limiares or Limiares()
     allowlist = allowlist or []
     aprovadas = [e for e in allowlist if e.aprovado_pelo_dono]
@@ -711,7 +724,19 @@ def pontuar(
 
     pares, faltando, extras = _alinhar_secoes(ref_s, gen_s)
 
+    desligadas = [_chave_titulo(t) for t in clausulas_desligadas or []]
+
+    def _desligada(chave: str) -> bool:
+        titulo = chave.split(":", 1)[-1]
+        return any(
+            d and (titulo.startswith(d) or d in titulo or difflib.SequenceMatcher(None, d, titulo).ratio() >= 0.8)
+            for d in desligadas
+        )
+
     for s in faltando:
+        if _desligada(s.chave):
+            card.clausulas_desligadas.append(s.chave)
+            continue
         hit = next(
             (e for e in aprovadas if e.categoria == "clausula_faltando" and re.search(e.padrao_ref or "", s.chave)),
             None,
@@ -788,8 +813,10 @@ def pontuar(
     )
     card.categorias["qualificacao"] = notas.get("preambulo") if any(s.chave == "preambulo" for s in ref_s) else None
     ref_clausulas = [s for s in ref_s if s.chave.startswith("clausula:")]
-    presentes = len(ref_clausulas) - len(card.clausulas_faltando)
-    card.categorias["estrutura"] = presentes / len(ref_clausulas) if ref_clausulas else None
+    # A switched-off clause is a data gap: out of the structure denominator.
+    avaliaveis = len(ref_clausulas) - len(card.clausulas_desligadas)
+    presentes = avaliaveis - len(card.clausulas_faltando)
+    card.categorias["estrutura"] = presentes / avaliaveis if avaliaveis > 0 else None
 
     def _matricula(ss: list[Secao]) -> Optional[str]:
         for s in ss:
