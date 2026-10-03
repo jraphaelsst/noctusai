@@ -11,7 +11,9 @@ module is the ONE human act that follows:
 
 `aprovar` — "Aprovar revisão jurídica":
   1. refuses unless the version is awaiting the review (409 `..._JA_APROVADA`
-     / `..._NAO_EXIGIDA`);
+     / `..._NAO_EXIGIDA` — the latter for an upload or signed copy only:
+     EVERY generated version awaits the review, even one that relied on no
+     machine-derived value at all);
   2. `validacao_extracao.confirmar_por_revisao` confirms each recorded value
      on its own row (the same write a per-field accept makes) and logs one
      `extracao_validacoes` row per value tagged with this version — after
@@ -56,15 +58,17 @@ class RevisaoJuridicaJaAprovada(AppException):
 
 
 class RevisaoJuridicaNaoExigida(AppException):
-    """Nothing machine-derived was left unvalidated when this version was
-    rendered (an upload, a signed copy, a per-field-mode or pre-177
-    rendering) — there is nothing for the review to vouch for, and stamping
-    it would claim a review that covered nothing."""
+    """The version was not written by the generator (an upload, a signed
+    copy) — there is no generated instrument for the review to vouch for,
+    and stamping it would claim a review that covered nothing."""
 
     def __init__(self) -> None:
         super().__init__(
             code="REVISAO_JURIDICA_NAO_EXIGIDA",
-            message="Esta versão não tem dados extraídos automaticamente a revisar.",
+            message=(
+                "Esta versão não foi gerada pelo sistema (envio de arquivo ou "
+                "cópia assinada); não há revisão jurídica a aprovar."
+            ),
             status_code=409,
         )
 
@@ -89,14 +93,22 @@ def aprovar(
     if estado == contratos_svc.REVISAO_NAO_EXIGIDA:
         raise RevisaoJuridicaNaoExigida()
 
-    confirmados = validacao_extracao.confirmar_por_revisao(
-        client,
-        org_id,
-        dados,
-        contrato_id,
-        str(versao_id),
-        contratos_svc.revisao_juridica_campos(versao),
-        usuario_id=usuario_id,
+    # A generated version that relied on no machine-derived value still
+    # awaits the review (the instrument itself is what is reviewed) — there
+    # is simply nothing to confirm before the stamp.
+    registrados = contratos_svc.revisao_juridica_campos(versao)
+    confirmados = (
+        validacao_extracao.confirmar_por_revisao(
+            client,
+            org_id,
+            dados,
+            contrato_id,
+            str(versao_id),
+            registrados,
+            usuario_id=usuario_id,
+        )
+        if registrados
+        else 0
     )
 
     (

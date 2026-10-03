@@ -6,14 +6,17 @@ WHAT THESE PIN
 - `gerar` SUCCEEDS with machine-extracted values nobody validated, and the
   version records them (`revisao_juridica_campos`: labels + provenance + a
   value fingerprint, never the value itself) — status "aguardando";
-- a fully human card generates a version that needs no review;
+- EVERY generated version awaits the review — a fully human card's too
+  (owner decision 2026-09-30: ONE final legal review PER CONTRACT; it used
+  to read "nao_exigida" and go to signature unreviewed);
 - an open extraction CONFLICT still refuses (the system cannot pick a
   reading), and the per-field mode (flag False) still refuses on pending;
 - "Aprovar revisão jurídica" is admin/owner only (trusted DB row — a JWT
   claim does not count), stamps `revisado_por/_em`, confirms every recorded
   value on its own row and logs one ledger row tagged with the version;
 - it refuses — writing nothing — when a recorded value changed after the
-  rendering, when already approved, when there was nothing to review;
+  rendering, when already approved, and for a version the generator did not
+  write (an upload / signed copy — nothing generated to vouch for);
 - sending for signature, "Baixar para impressão", marking a física contract
   signed and a manual PATCH to a final status are refused while the version
   awaits the review; a plain (rascunho) download is not.
@@ -145,13 +148,16 @@ class TestGerarComRevisaoFinal:
         assert vendedor["cpf_confirmado_em"] is None
         assert _rows(scoped, vx.LEDGER) == []
 
-    def test_a_fully_human_card_needs_no_review(self, client, scoped, fake_storage):
+    def test_a_fully_human_card_still_awaits_the_final_review(self, client, scoped, fake_storage):
+        """Zero machine-pending values used to read 'nao_exigida' — a
+        generated contract went to signature with NO legal review. The
+        review is of the finished instrument, so it is always due."""
         ids = _seed_completo(scoped)
         r = _gerar(client, ids)
         assert r.status_code == 201, r.text
         versao = r.json()["versao"]
         assert versao["revisao_juridica"] == {
-            "status": "nao_exigida", "campos": [], "revisado_por": None, "revisado_em": None,
+            "status": "aguardando", "campos": [], "revisado_por": None, "revisado_em": None,
         }
         assert not _versao_row(scoped, versao["id"]).get("revisao_juridica_campos")
 
@@ -237,10 +243,27 @@ class TestAprovarRevisaoJuridica:
         assert r.status_code == 409 and r.json()["error"]["code"] == "REVISAO_JURIDICA_JA_APROVADA"
         assert len(_rows(scoped, vx.LEDGER)) == 1
 
-    def test_a_version_with_nothing_to_review_is_refused(self, client, scoped, fake_storage):
+    def test_a_generated_version_with_no_recorded_value_is_approved_and_confirms_nothing(
+        self, client, scoped, fake_storage
+    ):
         _make_admin(client)
         ids = _seed_completo(scoped)
         versao = _gerar(client, ids).json()["versao"]
+        r = _aprovar(client, ids, versao["id"])
+        assert r.status_code == 200, r.text
+        assert r.json()["confirmados"] == 0
+        assert r.json()["contrato"]["versao_atual"]["revisao_juridica"]["status"] == "aprovada"
+        assert _versao_row(scoped, versao["id"])["revisado_em"] is not None
+        assert _rows(scoped, vx.LEDGER) == []
+
+    def test_a_version_the_generator_did_not_write_is_refused(self, client, scoped, fake_storage):
+        """An upload / signed copy — no generated instrument to vouch for."""
+        _make_admin(client)
+        ids = _seed_completo(scoped)
+        versao = _gerar(client, ids).json()["versao"]
+        scoped.set_table_data("atendimento_contrato_versoes", [
+            {**v, "origem": "upload"} for v in _rows(scoped, "atendimento_contrato_versoes")
+        ])
         r = _aprovar(client, ids, versao["id"])
         assert r.status_code == 409 and r.json()["error"]["code"] == "REVISAO_JURIDICA_NAO_EXIGIDA"
         assert _versao_row(scoped, versao["id"]).get("revisado_em") is None
@@ -365,14 +388,24 @@ class TestPortoesFinais:
         # A non-final status is never gated.
         assert client.patch(url, json={"status": "em_revisao"}, headers=_auth()).status_code == 200
 
-    def test_a_pre_177_generated_version_is_not_gated(
+    def test_a_generated_version_without_recorded_values_is_still_gated(
         self, client, scoped, fake_storage, fake_signature_adapter
     ):
-        """No `revisao_juridica_campos` column at all (a row read before the
-        migration) — it passed the per-field gate; nothing to review."""
+        """No `revisao_juridica_campos` at all (a pre-177 row, or a rendering
+        that relied on no machine value) — still a GENERATED instrument, so
+        it waits for the one final review like any other."""
         cid, aid = _seed(scoped)
         ids = _seed_versao_gerada(scoped, fake_storage, aid)
+        scoped.set_table_data("atendimento_contrato_versoes", [
+            {k: v for k, v in linha.items() if k not in ("revisado_em", "revisado_por")}
+            for linha in _rows(scoped, "atendimento_contrato_versoes")
+        ])
         assert "revisao_juridica_campos" not in _rows(scoped, "atendimento_contrato_versoes")[0]
+        r = _enviar(client, cid, ids["contrato_id"], versao_id=ids["versao_id"])
+        assert r.status_code == 409, r.text
+        assert r.json()["error"]["code"] == "CONTRATO_AGUARDANDO_REVISAO_JURIDICA"
+
+        _aprovar_direto(scoped)
         r = _enviar(client, cid, ids["contrato_id"], versao_id=ids["versao_id"])
         assert r.status_code == 201, r.text
 
@@ -387,9 +420,19 @@ def test_the_fake_pdf_exists_for_the_gate_tests(scoped, fake_storage):
 
 
 def test_status_vocabulary_is_derived_from_the_row():
-    assert contratos_svc.revisao_juridica_status({}) == "nao_exigida"
-    assert contratos_svc.revisao_juridica_status({"revisao_juridica_campos": []}) == "nao_exigida"
-    assert contratos_svc.revisao_juridica_status({"revisao_juridica_campos": [_CAMPO_REGISTRADO]}) == "aguardando"
+    # Keyed on the ORIGEM: every generated version awaits the review, with or
+    # without recorded machine values; uploads / signed copies never do.
+    assert contratos_svc.revisao_juridica_status({"origem": "gerado"}) == "aguardando"
     assert contratos_svc.revisao_juridica_status(
-        {"revisao_juridica_campos": [_CAMPO_REGISTRADO], "revisado_em": _T0}
+        {"origem": "gerado", "revisao_juridica_campos": []}
+    ) == "aguardando"
+    assert contratos_svc.revisao_juridica_status(
+        {"origem": "gerado", "revisao_juridica_campos": [_CAMPO_REGISTRADO]}
+    ) == "aguardando"
+    assert contratos_svc.revisao_juridica_status(
+        {"origem": "gerado", "revisao_juridica_campos": [_CAMPO_REGISTRADO], "revisado_em": _T0}
     ) == "aprovada"
+    assert contratos_svc.revisao_juridica_status({"origem": "gerado", "revisado_em": _T0}) == "aprovada"
+    assert contratos_svc.revisao_juridica_status({"origem": "upload"}) == "nao_exigida"
+    assert contratos_svc.revisao_juridica_status({"origem": "assinado"}) == "nao_exigida"
+    assert contratos_svc.revisao_juridica_status({}) == "nao_exigida"

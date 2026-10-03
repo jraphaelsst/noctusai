@@ -89,12 +89,16 @@ def _versao_gerada_row(versao_id: str, contrato_id: str, pdf_path: str) -> dict:
         "created_at": "2026-09-16T00:00:00+00:00",
         "contexto_sha256": "a" * 64,
         "docx_storage_path": f"{pdf_path}.docx", "docx_tamanho_bytes": 18,
+        # Every generated version awaits the one final legal review (owner
+        # decision 2026-09-30) — a version "ready to be sent" is an APPROVED one.
+        "revisado_por": None, "revisado_em": "2026-09-16T01:00:00+00:00",
     }
 
 
 def _seed_versao_gerada(scoped, fake_storage, aid: str, *, status: str = "em_revisao") -> dict:
-    """A contract with ONE `origem='gerado'` PDF version — ready to be sent
-    for signature. Mirrors `test_contratos.py::_seed_gerado`."""
+    """A contract with ONE `origem='gerado'` PDF version — legal review
+    approved, ready to be sent for signature. Mirrors
+    `test_contratos.py::_seed_gerado`."""
     contrato_id, versao_id = str(uuid4()), str(uuid4())
     pdf_path = f"{ORG_ID}/contratos/{contrato_id}/{versao_id}"
     asyncio.run(

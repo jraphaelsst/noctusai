@@ -283,6 +283,9 @@ def _seed(scoped, *, modalidade: str | None = None, status: str = "em_revisao",
             "delete_motivo": None, "delete_solicitado_por": None,
             "created_at": "2026-09-16T00:00:00+00:00", "contexto_sha256": "a" * 64,
             "docx_storage_path": f"{pdf_path}.docx", "docx_tamanho_bytes": 7,
+            # The one final legal review is approved — every generated version
+            # needs it before signature / marking signed (2026-09-30).
+            "revisado_por": None, "revisado_em": "2026-09-16T01:00:00+00:00",
         })
     scoped.set_table_data("atendimento_contrato_versoes", versoes)
     scoped.set_table_data("atendimento_contrato_versao_acessos", [])

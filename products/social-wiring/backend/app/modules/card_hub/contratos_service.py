@@ -159,28 +159,35 @@ class ContratoJaAssinado(AppException):
 
 # ─── migration 177 — one final legal review per generated version ────────
 
-#: `revisao_juridica_status` vocabulary. 'nao_exigida' = nothing machine-
-#: derived was left unvalidated when the version was rendered (every upload,
-#: every signed copy, every pre-177 or per-field-mode rendering);
-#: 'aguardando' = it relied on such values and nobody approved it yet;
-#: 'aprovada' = `revisado_por/_em` stamped.
+#: `revisao_juridica_status` vocabulary (owner decision 2026-09-30: ONE final
+#: legal review PER CONTRACT). 'aguardando' = a version the generator
+#: rendered (`origem='gerado'`) that nobody approved yet — EVERY generated
+#: version, including one with zero machine-pending values: the review is of
+#: the finished instrument, not only of the extracted values it relied on
+#: (`revisao_juridica_campos` is what the reviewer is pointed at FIRST, never
+#: the condition for being reviewed at all). 'nao_exigida' = a document the
+#: office did not have the system write (an upload, a signed copy) — there
+#: is no generated text to vouch for. 'aprovada' = `revisado_por/_em` stamped.
 REVISAO_NAO_EXIGIDA = "nao_exigida"
 REVISAO_AGUARDANDO = "aguardando"
 REVISAO_APROVADA = "aprovada"
 
+#: The ONE origem the final legal review applies to.
+ORIGEM_GERADO = "gerado"
+
 
 class ContratoAguardandoRevisaoJuridica(AppException):
     """Sending for signature, "Baixar para impressão" or marking a física
-    contract signed, on a version generated from machine-extracted values
-    the legal review has not approved yet (owner decision 2026-09-30)."""
+    contract signed, on a generated version the legal review has not
+    approved yet (owner decision 2026-09-30)."""
 
     def __init__(self, campos: list[dict]) -> None:
         super().__init__(
             code="CONTRATO_AGUARDANDO_REVISAO_JURIDICA",
             message=(
-                "Esta versão foi gerada com dados extraídos automaticamente e "
-                "aguarda a revisão jurídica. Aprove a revisão antes de enviar "
-                "para assinatura ou imprimir."
+                "Esta versão foi gerada pelo sistema e aguarda a revisão "
+                "jurídica final. Aprove a revisão antes de enviar para "
+                "assinatura ou imprimir."
             ),
             status_code=409,
             details={"campos": [c.get("rotulo") for c in campos]},
@@ -189,14 +196,18 @@ class ContratoAguardandoRevisaoJuridica(AppException):
 
 def revisao_juridica_campos(row: dict) -> list[dict]:
     """The machine-derived values a version relied on — `[]` for a row read
-    before migration 177 is applied (no column at all)."""
+    before migration 177 is applied (no column at all), or for a rendering
+    that relied on none."""
     return list(row.get("revisao_juridica_campos") or [])
 
 
 def revisao_juridica_status(row: dict) -> str:
     if row.get("revisado_em"):
         return REVISAO_APROVADA
-    if revisao_juridica_campos(row):
+    # 🔴 Keyed on the ORIGEM, never on `revisao_juridica_campos` being
+    # non-empty: a generated version with zero machine-pending values used
+    # to read 'nao_exigida' and go to signature with NO legal review at all.
+    if row.get("origem") == ORIGEM_GERADO:
         return REVISAO_AGUARDANDO
     return REVISAO_NAO_EXIGIDA
 
