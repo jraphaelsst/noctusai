@@ -47,6 +47,7 @@ import secrets
 import time
 from typing import Any, Awaitable, Callable, NamedTuple, Optional, Protocol
 
+from noctusai_lib.api.auth.mfa.aal import read_aal_issued
 from noctusai_lib.api.auth.session.store import SessionStore
 from noctusai_lib.api.auth.session.types import InvalidCredentialsError
 
@@ -244,6 +245,8 @@ class SupabaseTokenExchanger:
             refresh_token=result.refresh_token,  # rotated — write it back (SEC-2)
             access_token=result.access_token,
             access_expires_at=result.expires_at,
+            # Provider-issued (server-side refresh response) ⇒ safe to read.
+            aal=read_aal_issued(result.access_token),
         )
         return result.access_token
 

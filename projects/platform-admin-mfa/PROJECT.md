@@ -98,13 +98,13 @@ the instant off-switch.
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit
-- [ ] Re-read the files in §5 at the current tip; confirm Supabase TOTP availability on the project; confirm the four factory call sites.
-**Improvements:** NOC-FILL-IMPROVEMENTS
+### Phase 0 — Audit ✅
+- [x] Re-read the files in §5 at the current tip; confirm Supabase TOTP availability on the project; confirm the four factory call sites.
+**Improvements:** (1) The cookie-session `AuthContext` is built by `SessionStore.lookup` from a stored record and never sees a token per request, so `aal` must ride the record: `write_tokens(..., aal=)` is written by the token exchanger from the provider-issued refresh token (M1 did this). (2) Seed ships NO `AuthContext` construction on the legacy-JWT path — the products' `legacy_jwt_resolver`s (and core `trusted_auth.get_trusted_auth`, which builds `AuthContext` from `get_current_user` + `noctus_users`) fill it; M1 ships `validate_bearer_token_with_aal`, M2/M5 must adopt it there (core included). (3) Supabase TOTP availability on the project is NOT verifiable from the repo — stays an R0 manual check (Dashboard → Auth → MFA). (4) The four admin factories were re-read in `platform.py` / `session/scopes.py`; call sites for M2 unchanged.
 
-### Phase 1 — M1 (seed mfa module, default off)
-- [ ] `read_aal`, `AuthContext.aal`, `MfaPolicy`, `MfaClient` (Protocol/Fake/Real/factory) + tests.
-**Improvements:** NOC-FILL-IMPROVEMENTS
+### Phase 1 — M1 (seed mfa module, default off) ✅
+- [x] `read_aal`, `AuthContext.aal`, `MfaPolicy`, `MfaClient` (Protocol/Fake/Real/factory) + tests.
+**Improvements:** `read_aal` is shaped against misuse: it requires the `validated_user` from `auth.get_user` and binds on `sub`; `read_aal_issued` is the provider-issued-token variant. `SupabaseMfaClient` is raw GoTrue REST over httpx (no shared supabase-py client to poison, MockTransport seam). `MfaPolicy` table contract is a docstring + `MFA_POLICY_TABLE`; migration is M3. Gap for M2: `warn` mode needs the audit-row writer chosen (core.audit_logs vs `request.state`).
 
 ### Phase 2 — M2 + M3 (gate in factories; router + policy migration)
 - [ ] Gate composed in the four factories + strict tests; router + `public.mfa_policy` migration + guard probe.
@@ -146,3 +146,4 @@ Phases in order; each slice dispatched via `noctus.dev.task_branch` off `origin/
 - 2026-10-04 — Filed from the architect design review (owner go-ahead 2026-10-04). Note: `task_branch start`
   stamped the planning branch with a peer's project via pointer inheritance through `dev`; fixed at the root in
   `branch_pointer._inherit_project` (cbe9b81e3).
+- 2026-10-04 — M1 landed on `feat/admin-mfa-m1`: `noctusai_lib/api/auth/mfa/` (aal, policy, client), `AuthContext.aal`, `validate_bearer_token_with_aal`, store/exchanger `aal` plumbing. No gate, no router; runtime unchanged. Phase 0 finding: legacy-JWT + core `trusted_auth` `AuthContext` construction lives in products/core, so M2/M5 must adopt `validate_bearer_token_with_aal` there.

@@ -217,6 +217,20 @@ def validate_bearer_token(client: Any, token: str) -> Any:
     return user
 
 
+def validate_bearer_token_with_aal(client: Any, token: str) -> Tuple[Any, Optional[str]]:
+    """:func:`validate_bearer_token` + the token's ``aal`` — ``(user, aal)``.
+
+    The claim is read strictly AFTER ``auth.get_user`` accepted the token and
+    only if its ``sub`` matches that user (``mfa.read_aal``); a missing or
+    garbled claim is ``"aal1"``, never ``"aal2"``. Same 401/503 contract.
+    Use this where an ``AuthContext`` is built from a client-supplied JWT.
+    """
+    from noctusai_lib.api.auth.mfa.aal import read_aal
+
+    user = validate_bearer_token(client, token)
+    return user, read_aal(token, validated_user=user)
+
+
 async def _get_current_user(
     authorization: Optional[str] = Header(None),
     *,

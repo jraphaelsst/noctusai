@@ -109,6 +109,12 @@ class AuthContext(NamedTuple):
             never WHO holds it. Appended at the END (not interleaved)
             so every existing positional constructor call keeps
             working unchanged.
+        aal: Authenticator assurance level of the credential, ``"aal1"``
+            or ``"aal2"`` (a verified MFA factor). ``None`` = unknown /
+            not applicable (``pk_*`` product tokens, and any path that
+            has not filled it). Read via ``noctusai_lib.api.auth.mfa``
+            (never decoded ad hoc). Informational until the M2 gate
+            consumes it. Appended at the END like ``issuer``.
     """
 
     org_id: UUID
@@ -122,6 +128,7 @@ class AuthContext(NamedTuple):
     human_personal: bool = False
     minted_by: UUID | None = None
     issuer: str | None = None
+    aal: str | None = None
 
 
 class SessionTokens(NamedTuple):

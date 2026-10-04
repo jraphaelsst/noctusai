@@ -121,6 +121,7 @@ class SessionStore(Protocol):
         refresh_token: str,
         access_token: str | None,
         access_expires_at: int | None,
+        aal: str | None = None,
     ) -> None:
         """Persist a freshly-minted access token + rotated refresh token.
 
@@ -135,6 +136,10 @@ class SessionStore(Protocol):
         sliding-TTL is ``refresh_ttl``'s job). No-op when the session is
         absent (a race with logout/expiry — the caller re-resolves and 401s).
         Real implementations encrypt the tokens at rest (SEC-3).
+
+        ``aal`` is the assurance level of the new access token (read by the
+        exchanger from the provider-issued token); ``lookup`` echoes it onto
+        ``AuthContext.aal``. ``None`` leaves "unknown".
         """
         ...
 
@@ -221,6 +226,7 @@ class FakeSessionStore:
         refresh_token: str,
         access_token: str | None,
         access_expires_at: int | None,
+        aal: str | None = None,
     ) -> None:
         entry = self._entries.get(session_id)
         if entry is None:
@@ -229,6 +235,7 @@ class FakeSessionStore:
             refresh_token=refresh_token,
             access_token=access_token,
             access_expires_at=access_expires_at,
+            ctx=entry.ctx._replace(aal=aal),
         )
 
     def _get_live(self, session_id: str) -> "_Entry | None":

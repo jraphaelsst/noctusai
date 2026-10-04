@@ -190,6 +190,7 @@ class RedisSessionStore:
             scopes=list(record.get("scopes") or []),
             raw_token=session_id,
             api_token_id=None,
+            aal=record.get("aal"),
         )
 
     async def refresh_ttl(self, session_id: str, ttl_seconds: int = 86400) -> None:
@@ -220,6 +221,7 @@ class RedisSessionStore:
         refresh_token: str,
         access_token: str | None,
         access_expires_at: int | None,
+        aal: str | None = None,
     ) -> None:
         client = self._get_client()
         raw = await client.get(self._key(session_id))
@@ -236,6 +238,7 @@ class RedisSessionStore:
         record["refresh_token"] = self._enc(refresh_token)
         record["access_token"] = self._enc(access_token)
         record["access_expires_at"] = access_expires_at
+        record["aal"] = aal
         record["enc"] = self.encrypts_at_rest
         # keepttl: preserve the session's remaining lifetime. Rotating the
         # tokens is NOT activity — sliding-TTL is `refresh_ttl`'s job — so the
