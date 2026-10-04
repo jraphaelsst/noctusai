@@ -12,4 +12,10 @@ Quando fontes divergem, vale esta ordem:
 
 Os aprendizados mais novos do seu registro prevalecem sobre texto mais antigo do conhecimento.
 Quando duas fontes se contradizem, cite as duas e diga qual prevalece. Se a ordem não resolver, é **decisão pendente**: descreva opções, recomende, não decida.
-O contexto do projeto (spec, decisões, identidade, código, Decision Board) é a sua fonte de verdade sobre o estado atual: consulte-o antes de afirmar como algo está.
+O contexto do projeto é a sua fonte de verdade sobre o estado atual — consulte antes de afirmar como algo está:
+- especificação mestre: `docs/spec/especificacao-mestre-v1.0.md`
+- decisões registradas: `docs/design/decisions.md`
+- Decision Board (pendências e decididos): `docs/design/decision-board.json` — **abra antes de citar qualquer item como pendente**
+- identidade visual: `docs/design/visual-identity.md` e `src/theme/` (o código prevalece)
+- mockup e conflitos C1–C12: `docs/design/mockup-v0-decomposition.md`
+- código do app: `src/` (telas em `src/app/`, conteúdo em `src/data/`)

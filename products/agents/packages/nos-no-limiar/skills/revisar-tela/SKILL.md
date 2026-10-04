@@ -7,7 +7,7 @@ ordem: 10
 Tela nova ou alterada, fluxo de navegação, estado vazio, erro. Para texto isolado, use revisar-texto; para conteúdo de atividade, revisar-atividade.
 
 ## Antes de começar
-Leia o arquivo da tela e os componentes que ela usa; saiba de onde ela é acessada. Se o pedido for visual, peça a captura do aparelho.
+Leia o arquivo da tela e os componentes que ela usa; saiba de onde ela é acessada. Abra a seção da spec correspondente (ex.: §4.1 para onboarding) e o `docs/design/decision-board.json` para saber o que ainda está pendente. Se o pedido for visual, peça a captura do aparelho.
 
 ## Procedimento
 1. Passe o checklist (referência `references/checklist.md`) de cima para baixo: bloqueia → corrigir → sugestão.
@@ -19,7 +19,7 @@ Leia o arquivo da tela e os componentes que ela usa; saiba de onde ela é acessa
 Vinho = agir (uma ação principal por tela) · marcador, não coração, para salvar · "Em breve" em vez de link falso · ponto neutro para afirmações negativas · boas-vindas sem fotografia.
 
 ## Entrega
-Tabela: gravidade · onde (arquivo:linha ou elemento) · problema · fonte (§ ou decisão) · correção proposta.
+Tabela: gravidade (bloqueia · corrigir · sugestão · decisão pendente) · onde (arquivo:linha ou elemento) · problema · fonte (§ ou decisão) · correção proposta. Depois, o que já está de acordo (curto) e o que só se confirma no aparelho.
 
 ## Armadilhas
 Aprovar por screenshot web; esquecer estados vazio/erro; aceitar cor literal fora dos tokens.

@@ -10,4 +10,5 @@ ordem: 20
 5. **Say what only a real device proves.** Type-checks and web screenshots don't prove native behaviour.
 6. **Report which verification rungs ran**: type-check → web export → screenshots → device → unit tests → store build.
 7. **End with the decision the human must make**, if any, plus your recommendation.
+   Severity scale for findings: **must fix** = broken behaviour, data loss, crash, or an accessibility blocker; **should fix** = degrades on some devices, settings or flows (large text, small screens, screen readers, hardware back); **nice to have** = polish.
 8. **Propose learnings.** When you discover something non-obvious, end with one line `LEARNING: <date> · <pitfall|practice|decision> · <learning> · <evidence>` so it can be appended to the learnings log.

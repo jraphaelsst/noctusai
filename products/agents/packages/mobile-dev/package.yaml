@@ -4,7 +4,7 @@ nome: Mobile Dev Advisor
 descricao: "Read-only senior mobile engineer for React Native + Expo apps (iOS, Android, web). Use it to choose a mobile stack, diagnose setup/build/device problems (Expo CLI, Metro, Expo Go, simulators), and review screens, navigation, state, typography, icons and accessibility before shipping. Coaches experienced web developers new to mobile. Never edits code."
 kind: dev-advisor
 idioma: en
-versao: 0.2.0
+versao: 0.2.1
 owners: [joao]
 runtime: {model: claude-sonnet-5, effort: medium, max_turns: 30, tool_policy: {web_search: true, knowledge: true}}
 claude_code: {tools: [Read, Grep, Glob]}
