@@ -736,3 +736,30 @@ def test_bad_nao_segredos_entry_is_rejected_not_ignored(tmp_path):
     repo = _ack_repo(tmp_path, {"src/a.ts": "x\n"}, [{"impressao": "not-hex", "nota": ""}])
     out = agent_context_sync(str(repo), env={})
     assert out["ok"] is False and out["error_code"] == "bad_project"
+
+
+def test_publish_survives_a_transient_502_while_polling(studio, pk):
+    # First production push (2026-10-04): one Cloudflare 502 mid-poll failed a run the server finished fine.
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs/run-1")] = [
+        (200, {"id": "run-1", "status": "executando"}), (502, {"detail": "bad gateway"}), (200, EVAL_OK)]
+    r = publish(studio, pk, confirm=True)
+    assert r["ok"] and r["status"] == "published", r
+
+
+def test_publish_gives_up_after_repeated_transient_failures(studio, pk):
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs/run-1")] = [(503, {"detail": "unavailable"})] * 5
+    r = publish(studio, pk, confirm=True)
+    assert r["ok"] is False and r["status"] == "failed"
+
+
+def test_publish_non_transient_poll_error_fails_immediately(studio, pk):
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs/run-1")] = [(403, {"detail": "n", "code": "scope_missing"})]
+    r = publish(studio, pk, confirm=True)
+    assert r["ok"] is False and r["status"] == "failed"
+    assert [p for p in studio.paths() if p[1].endswith("/run-1")] == [("GET", f"{b}/evals/runs/run-1")]

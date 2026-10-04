@@ -39,6 +39,8 @@ logger = logging.getLogger("noctus.dev.agent_package_publish")
 
 _BASE = "/api/studio/agents"
 _FINAL = ("concluida", "falhou", "cancelada")
+_TRANSIENT_STATUSES = frozenset({429, 502, 503, 504})
+_MAX_TRANSIENT = 5
 
 
 def _fail(out: dict[str, Any], code: str, message: str) -> dict[str, Any]:
@@ -108,13 +110,31 @@ def _pipeline(out, creds, key, bundle, eval_timeout_s, poll_interval_s, sleep) -
     out["steps"].append("eval_started")
     deadline = time.monotonic() + eval_timeout_s
     state: dict[str, Any] = run.data or {}
+    transient = 0
     while state.get("status") not in _FINAL:
         if time.monotonic() >= deadline:
             raise SyncError("eval_timeout", f"eval run {run_id} not finished after {eval_timeout_s:.0f}s (draft left)")
         sleep(poll_interval_s)
-        poll = http_json("GET", creds, f"{_BASE}/{key}/evals/runs/{run_id}")
+        # The run lives server-side: a transient edge/origin hiccup on ONE poll (502/503/504/429, network)
+        # must not fail the publish (first prod push, 2026-10-04: a single Cloudflare 502). Keep polling
+        # until the deadline; give up only after _MAX_TRANSIENT consecutive transient failures.
+        try:
+            poll = http_json("GET", creds, f"{_BASE}/{key}/evals/runs/{run_id}")
+        except SyncError as exc:
+            if exc.code != "network":
+                raise
+            transient += 1
+            if transient >= _MAX_TRANSIENT:
+                raise
+            continue
         if not poll.ok:
+            if poll.status in _TRANSIENT_STATUSES:
+                transient += 1
+                if transient >= _MAX_TRANSIENT:
+                    raise http_failure(poll, "eval poll")
+                continue
             raise http_failure(poll, "eval poll")
+        transient = 0
         state = poll.data or {}
     out["eval"] = {k: state.get(k) for k in ("run_id", "status", "score", "limiar", "total", "aprovados", "completa", "custo_usd", "erro")}
     out["eval"]["run_id"] = run_id
