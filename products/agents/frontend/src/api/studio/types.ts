@@ -64,6 +64,8 @@ export interface ToolPolicy {
   knowledge: boolean;
 }
 
+export type AgentKind = "runtime" | "dev-advisor";
+
 export interface AgentSummary {
   id: string;
   key: string;
@@ -74,6 +76,8 @@ export interface AgentSummary {
   publicacao_limiar: number;
   versao_ativa: number | null;
   tem_rascunho: boolean;
+  /** Agent Packages §D1: `runtime` | `dev-advisor`. */
+  kind: AgentKind;
 }
 
 export interface AgentListResponse {
@@ -90,6 +94,9 @@ export interface VersionSummary {
   published_at: string | null;
   compiled_hash: string | null;
   eval_score: number | null;
+  /** Agent Packages §C4 — package identity of a dev-advisor version. */
+  versao_semver?: string | null;
+  package_sha?: string | null;
 }
 
 /** `GET /api/studio/agents/{key}` — `versoes` newest first. */

@@ -294,7 +294,15 @@ export default function VersionsTab({ agentKey }: { agentKey: string }) {
           <tbody>
             {versoes.map((v) => (
               <tr key={v.id} className="border-b border-border last:border-0" data-testid={`version-row-${v.versao}`}>
-                <td className="px-3 py-2 font-medium tabular-nums">v{v.versao}</td>
+                <td className="px-3 py-2 font-medium tabular-nums">
+                  v{v.versao}
+                  {v.versao_semver && (
+                    <span className="ml-1 font-mono text-xs text-muted-foreground" data-testid={`version-semver-${v.versao}`}>
+                      {v.versao_semver}
+                      {v.package_sha ? ` · ${v.package_sha.slice(0, 8)}` : ""}
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2">
                   <VersionStatusBadge status={v.status} />
                 </td>

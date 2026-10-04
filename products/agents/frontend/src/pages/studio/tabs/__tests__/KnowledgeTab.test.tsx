@@ -19,6 +19,7 @@ const mockUseCreateDocument = vi.fn();
 const mockUseUpdateDocument = vi.fn();
 const mockUseBatchCreateDocuments = vi.fn();
 const mockUseIsAdmin = vi.fn();
+const mockUsePackageProjects = vi.fn();
 
 vi.mock("@/hooks/studio/useKnowledge", () => ({
   useKnowledgeCollections: () => mockUseKnowledgeCollections(),
@@ -33,6 +34,7 @@ vi.mock("@/hooks/studio/useKnowledge", () => ({
   useBatchCreateDocuments: () => mockUseBatchCreateDocuments(),
 }));
 
+vi.mock("@/hooks/studio/usePackages", () => ({ usePackageProjects: () => mockUsePackageProjects() }));
 vi.mock("@/hooks/useIsAdmin", () => ({ useIsAdmin: () => mockUseIsAdmin() }));
 
 const COLLECTION = { id: "c1", slug: "audience", nome: "Audiência", tag: "AU", descricao: "", ordem: 1, total_documentos: 1 };
@@ -41,6 +43,7 @@ const DOC = { id: "d1", slug: "doc-1", titulo: "Doc 1", tipo: "fonte" as const, 
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseIsAdmin.mockReturnValue(false);
+  mockUsePackageProjects.mockReturnValue({ data: [], showSkeleton: false, isError: false });
   mockUseKnowledgeCollections.mockReturnValue({ data: [COLLECTION], showSkeleton: false, isError: false, error: null });
   mockUseDocuments.mockReturnValue({ data: { items: [DOC], total: 1 }, showSkeleton: false, isError: false });
   mockUseDocument.mockReturnValue({ data: undefined, showSkeleton: false, isError: false, error: null });
@@ -255,5 +258,45 @@ describe("KnowledgeTab — document metadata (titulo/tipo/ativo)", () => {
     fireEvent.click(screen.getByTestId("knowledge-document-row-doc-1"));
     await screen.findByTestId("knowledge-document-ativo");
     expect(screen.getByText(/não há exclusão de documentos, apenas arquivamento/i)).toBeTruthy();
+  });
+});
+
+describe("KnowledgeTab — projeto-<slug> collections (Agent Packages §D3)", () => {
+  const PROJECT_COLLECTION = { id: "c2", slug: "projeto-noc", nome: "noc", tag: null, descricao: "", ordem: 9, total_documentos: 4 };
+
+  beforeEach(() => {
+    mockUseKnowledgeCollections.mockReturnValue({ data: [COLLECTION, PROJECT_COLLECTION], showSkeleton: false, isError: false, error: null });
+    mockUsePackageProjects.mockReturnValue({
+      data: [{ slug: "noc", colecao_id: "c2", total_fontes: 4, ultima_sincronizacao: "2026-10-03T10:00:00Z", sources_sha: "abc" }],
+      showSkeleton: false,
+      isError: false,
+    });
+  });
+
+  it("groups project collections under 'Projeto: <slug>' with sync time and source count, read-only", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    await renderTab();
+    const group = screen.getByTestId("knowledge-project-group-noc");
+    expect(within(group).getByText("Projeto: noc")).toBeTruthy();
+    expect(screen.getByTestId("knowledge-project-sync-noc").textContent).toMatch(/Última sincronização/);
+    expect(screen.getByTestId("knowledge-project-sync-noc").textContent).toMatch(/4 fontes/);
+    expect(screen.getByTestId("knowledge-project-readonly")).toBeTruthy();
+    // Admin can edit the regular collection but never a project one.
+    expect(screen.getByTestId("knowledge-collection-edit-audience")).toBeTruthy();
+    expect(screen.queryByTestId("knowledge-collection-edit-projeto-noc")).toBeNull();
+  });
+
+  it("hides document-write controls while a project collection is active", async () => {
+    mockUseIsAdmin.mockReturnValue(true);
+    await renderTab();
+    fireEvent.click(screen.getByTestId("knowledge-collection-projeto-noc"));
+    expect(screen.queryByTestId("knowledge-new-document-toggle")).toBeNull();
+    expect(screen.queryByTestId("knowledge-upload-toggle")).toBeNull();
+  });
+
+  it("shows no project group nor notice when there are none", async () => {
+    mockUseKnowledgeCollections.mockReturnValue({ data: [COLLECTION], showSkeleton: false, isError: false, error: null });
+    await renderTab();
+    expect(screen.queryByTestId("knowledge-project-readonly")).toBeNull();
   });
 });

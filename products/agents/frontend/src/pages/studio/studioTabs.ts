@@ -15,6 +15,7 @@ export const STUDIO_TABS = [
   { id: "conhecimento", label: "Conhecimento" },
   { id: "avaliacoes", label: "Avaliações" },
   { id: "clientes", label: "Clientes" },
+  { id: "aprendizados", label: "Aprendizados" },
   { id: "versoes", label: "Versões" },
   { id: "compilado", label: "Prompt compilado" },
   { id: "conversar", label: "Conversar" },
@@ -26,6 +27,15 @@ export const DEFAULT_TAB: StudioTabId = "visao-geral";
 
 export function isStudioTab(value: string | null): value is StudioTabId {
   return !!value && STUDIO_TABS.some((t) => t.id === value);
+}
+
+/** Tabs that only exist for one agent kind (Agent Packages §D3). */
+const RUNTIME_ONLY: readonly StudioTabId[] = ["clientes"];
+const DEV_ADVISOR_ONLY: readonly StudioTabId[] = ["aprendizados"];
+
+export function isTabVisibleForKind(tab: StudioTabId, kind: string): boolean {
+  if (kind === "dev-advisor") return !RUNTIME_ONLY.includes(tab);
+  return !DEV_ADVISOR_ONLY.includes(tab);
 }
 
 /** Builds `/studio/:key?tab=…&…` for in-app links. */

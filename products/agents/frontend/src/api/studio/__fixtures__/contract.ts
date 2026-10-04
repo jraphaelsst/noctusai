@@ -39,6 +39,7 @@ export const AGENT_SUMMARY: AgentSummary = {
   publicacao_limiar: 0.8,
   versao_ativa: 1,
   tem_rascunho: true,
+  kind: "runtime",
 };
 
 export const LEGACY_SUMMARY: AgentSummary = {
@@ -51,6 +52,7 @@ export const LEGACY_SUMMARY: AgentSummary = {
   publicacao_limiar: 0.8,
   versao_ativa: null,
   tem_rascunho: false,
+  kind: "runtime",
 };
 
 export const AGENT_DETAIL: AgentDetail = {

@@ -13,13 +13,43 @@ import { SLUG_RE, type AgentSummary } from "@/api/studio/types";
 import { StudioEmpty, StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { ImportBundleDialog } from "@/components/studio/ImportBundleDialog";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
-import { useCreateStudioAgent, useStudioAgents, useUpdateStudioAgent } from "@/hooks/studio/useStudioAgents";
+import { useCreateStudioAgent, useStudioAgent, useStudioAgents, useUpdateStudioAgent } from "@/hooks/studio/useStudioAgents";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
 import { studioTabHref } from "./studioTabs";
 
 const INPUT_CLASS =
   "w-full h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50";
+
+function DevAdvisorSemver({ agentKey }: { agentKey: string }) {
+  // The list summary carries no semver; dev-advisors are few, so one detail
+  // read per row (cached under the same key the agent page uses).
+  const { data } = useStudioAgent(agentKey);
+  const ativa = data?.versoes.find((v) => v.status === "ativa" && v.versao_semver);
+  return ativa?.versao_semver ? (
+    <span className="font-mono text-xs" data-testid={`studio-semver-${agentKey}`}>
+      {ativa.versao_semver}
+    </span>
+  ) : null;
+}
+
+function KindBadge({ agent }: { agent: AgentSummary }) {
+  if (agent.kind === "dev-advisor") {
+    return (
+      <span className="inline-flex items-center gap-2">
+        <Badge variant="outline" data-testid={`studio-kind-${agent.key}`}>
+          Assessor de desenvolvimento
+        </Badge>
+        <DevAdvisorSemver agentKey={agent.key} />
+      </span>
+    );
+  }
+  return (
+    <Badge variant="muted" data-testid={`studio-kind-${agent.key}`}>
+      Runtime
+    </Badge>
+  );
+}
 
 function AtivoToggle({ agent, isAdmin }: { agent: AgentSummary; isAdmin: boolean }) {
   const update = useUpdateStudioAgent(agent.key);
@@ -195,6 +225,7 @@ export default function StudioList() {
                 <th className="px-4 py-2 font-medium">Agente</th>
                 <th className="px-4 py-2 font-medium">Chave</th>
                 <th className="px-4 py-2 font-medium">Modo</th>
+                <th className="px-4 py-2 font-medium">Tipo</th>
                 <th className="px-4 py-2 font-medium">Ativo</th>
                 <th className="px-4 py-2 font-medium">Versão ativa</th>
                 <th className="px-4 py-2 font-medium">Rascunho</th>
@@ -224,6 +255,9 @@ export default function StudioList() {
                         Legado · somente leitura
                       </Badge>
                     )}
+                  </td>
+                  <td className="px-4 py-3">
+                    <KindBadge agent={a} />
                   </td>
                   <td className="px-4 py-3">
                     <AtivoToggle agent={a} isAdmin={isAdmin} />

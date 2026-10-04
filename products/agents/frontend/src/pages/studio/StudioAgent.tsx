@@ -11,7 +11,7 @@ import { StudioError, StudioLoading } from "@/components/studio/StudioStates";
 import { useStudioAgent } from "@/hooks/studio/useStudioAgents";
 import { ApiError } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { DEFAULT_TAB, STUDIO_TABS, isStudioTab, type StudioTabId } from "./studioTabs";
+import { DEFAULT_TAB, STUDIO_TABS, isStudioTab, isTabVisibleForKind, type StudioTabId } from "./studioTabs";
 
 type TabComponent = LazyExoticComponent<ComponentType<{ agentKey: string }>>;
 
@@ -23,6 +23,7 @@ const TAB_COMPONENTS: Record<StudioTabId, TabComponent> = {
   conhecimento: lazy(() => import("./tabs/KnowledgeTab")),
   avaliacoes: lazy(() => import("./tabs/EvalsTab")),
   clientes: lazy(() => import("./tabs/ClientsTab")),
+  aprendizados: lazy(() => import("./tabs/LearningsTab")),
   versoes: lazy(() => import("./tabs/VersionsTab")),
   compilado: lazy(() => import("./tabs/CompiledTab")),
   conversar: lazy(() => import("./tabs/ChatTab")),
@@ -42,8 +43,10 @@ export default function StudioAgent() {
   const { key = "" } = useParams<{ key: string }>();
   const [params, setParams] = useSearchParams();
   const raw = params.get("tab");
-  const tab: StudioTabId = isStudioTab(raw) ? raw : DEFAULT_TAB;
   const { data: agent, showSkeleton, isRefreshing, isError, error, refetch } = useStudioAgent(key);
+  const kind = agent?.kind ?? "runtime";
+  const tab: StudioTabId = isStudioTab(raw) && isTabVisibleForKind(raw, kind) ? raw : DEFAULT_TAB;
+  const visibleTabs = STUDIO_TABS.filter((t) => isTabVisibleForKind(t.id, kind));
 
   function selectTab(next: StudioTabId) {
     // Deep-link params (secao/chave/skill/versao/cliente) belong to one tab;
@@ -75,12 +78,17 @@ export default function StudioAgent() {
             </div>
             <Badge variant={agent.ativo ? "default" : "muted"}>{agent.ativo ? "Ativo" : "Inativo"}</Badge>
             <Badge variant="outline">{agent.versao_ativa !== null ? `Versão ativa v${agent.versao_ativa}` : "Sem versão ativa"}</Badge>
+            {agent.kind === "dev-advisor" && (
+              <Badge variant="outline" data-testid="studio-agent-kind">
+                Assessor de desenvolvimento
+              </Badge>
+            )}
             {agent.tem_rascunho && <Badge variant="outline">Rascunho em edição</Badge>}
             {isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
           </div>
 
           <nav className="flex gap-1 overflow-x-auto border-b border-border" role="tablist" aria-label="Seções do agente">
-            {STUDIO_TABS.map((t) => (
+            {visibleTabs.map((t) => (
               <button
                 key={t.id}
                 type="button"

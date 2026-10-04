@@ -12,19 +12,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { BookOpen, FilePlus2, FolderPlus, History, Pencil, Save, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  ErrorState,
-  Field,
-  FormError,
-  Input,
-  PageSkeleton,
-  Select,
-  Textarea,
-} from "@noctusai/lib/design-system";
+import { Badge, Button, Card, EmptyState, ErrorState, Field, FormError, Input, PageSkeleton, Select, Textarea } from "@noctusai/lib/design-system";
 import { KnowledgeUploadDialog } from "@/components/studio/KnowledgeUploadDialog";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { errorMessage } from "@/lib/errors";
@@ -39,6 +27,8 @@ import {
   useUpdateDocument,
   useUpdateKnowledgeCollection,
 } from "@/hooks/studio/useKnowledge";
+import { usePackageProjects } from "@/hooks/studio/usePackages";
+import { formatDate } from "@/lib/utils";
 import type { DocumentTipo, KnowledgeCollection, Provenance } from "@/api/studio/types-ke";
 import { DOCUMENT_TIPOS } from "@/api/studio/types-ke";
 
@@ -52,8 +42,18 @@ const PROVENANCE_FIELDS: { key: keyof Provenance; label: string }[] = [
 ];
 
 function emptyProvenance(): Provenance {
-  return { autor: "", origem: "", referencia: "", pagina: "", licenca: "", notas: "" };
+  return {
+    autor: "",
+    origem: "",
+    referencia: "",
+    pagina: "",
+    licenca: "",
+    notas: "",
+  };
 }
+
+/** Agent Packages §G3: project docs live in `projeto-<slug>` collections. */
+const PROJECT_PREFIX = "projeto-";
 
 const PAGE_SIZE = 20;
 
@@ -70,7 +70,13 @@ function NewCollectionForm({ agentKey, onDone }: { agentKey: string; onDone: () 
     e.preventDefault();
     setError(null);
     try {
-      await create.mutateAsync({ slug, nome, tag: tag || null, descricao, ordem });
+      await create.mutateAsync({
+        slug,
+        nome,
+        tag: tag || null,
+        descricao,
+        ordem,
+      });
       toast.success("Coleção criada.");
       setSlug("");
       setNome("");
@@ -121,7 +127,10 @@ function EditCollectionForm({ agentKey, collection, onDone }: { agentKey: string
     e.preventDefault();
     setError(null);
     try {
-      await update.mutateAsync({ collectionId: collection.id, patch: { nome, tag: tag || null, descricao, ordem } });
+      await update.mutateAsync({
+        collectionId: collection.id,
+        patch: { nome, tag: tag || null, descricao, ordem },
+      });
       toast.success("Coleção salva.");
       onDone();
     } catch (err) {
@@ -182,9 +191,7 @@ function DocumentDetail({ agentKey, docId, isAdmin }: { agentKey: string; docId:
 
   async function handleSave() {
     setSaveError(null);
-    const provenienciaPayload = Object.fromEntries(
-      Object.entries(proveniencia).filter(([, v]) => !!v),
-    ) as Provenance;
+    const provenienciaPayload = Object.fromEntries(Object.entries(proveniencia).filter(([, v]) => !!v)) as Provenance;
     try {
       await update.mutateAsync({
         titulo,
@@ -313,12 +320,7 @@ function SearchPlayground({ agentKey }: { agentKey: string }) {
         <Search className="h-4 w-4" /> Testar busca (o que <code>kb_buscar</code> devolveria)
       </p>
       <div className="flex gap-2">
-        <Input
-          value={qInput}
-          onChange={(e) => setQInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && setQ(qInput.trim())}
-          placeholder="Consulta…"
-        />
+        <Input value={qInput} onChange={(e) => setQInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && setQ(qInput.trim())} placeholder="Consulta…" />
         <Button variant="outline" onClick={() => setQ(qInput.trim())}>
           Buscar
         </Button>
@@ -350,24 +352,80 @@ function SearchPlayground({ agentKey }: { agentKey: string }) {
 export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
   const isAdmin = useIsAdmin();
   const { data: collections, showSkeleton, isError, error } = useKnowledgeCollections(agentKey);
+  const { data: projects } = usePackageProjects(agentKey);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [showNewCollection, setShowNewCollection] = useState(false);
   const [editingCollectionId, setEditingCollectionId] = useState<string | null>(null);
   const [qInput, setQInput] = useState("");
-  const [filters, setFilters] = useState<{ q?: string; tipo?: DocumentTipo | ""; page: number }>({ page: 1 });
+  const [filters, setFilters] = useState<{
+    q?: string;
+    tipo?: DocumentTipo | "";
+    page: number;
+  }>({ page: 1 });
   const [selectedDoc, setSelectedDoc] = useState<string | null>(null);
   const [showNewDoc, setShowNewDoc] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
 
   const activeCollectionId = selectedCollection ?? collections?.[0]?.id ?? null;
 
-  const { data: docsPage, showSkeleton: docsLoading, isError: docsError } = useDocuments(agentKey, activeCollectionId, {
+  const {
+    data: docsPage,
+    showSkeleton: docsLoading,
+    isError: docsError,
+  } = useDocuments(agentKey, activeCollectionId, {
     q: filters.q,
     tipo: filters.tipo,
     page: filters.page,
     page_size: PAGE_SIZE,
   });
   const createDoc = useCreateDocument(agentKey, activeCollectionId ?? "");
+
+  const projectInfo = new Map((projects ?? []).map((p) => [p.slug, p]));
+  const isProjectCollection = (c: KnowledgeCollection) => c.slug.startsWith(PROJECT_PREFIX);
+  const regular = (collections ?? []).filter((c) => !isProjectCollection(c));
+  const projectGroups = (collections ?? []).filter(isProjectCollection).map((c) => ({
+    c,
+    slug: c.slug.slice(PROJECT_PREFIX.length),
+    info: projectInfo.get(c.slug.slice(PROJECT_PREFIX.length)),
+  }));
+  const activeCollection = (collections ?? []).find((c) => c.id === activeCollectionId);
+  const activeIsProject = !!activeCollection && isProjectCollection(activeCollection);
+  const canEditDocs = isAdmin && !activeIsProject;
+
+  const renderCollection = (c: KnowledgeCollection) =>
+    isAdmin && !isProjectCollection(c) && editingCollectionId === c.id ? (
+      <li key={c.id}>
+        <EditCollectionForm agentKey={agentKey} collection={c} onDone={() => setEditingCollectionId(null)} />
+      </li>
+    ) : (
+      <li key={c.id} className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => {
+            setSelectedCollection(c.id);
+            setSelectedDoc(null);
+            setFilters({ page: 1 });
+          }}
+          data-testid={`knowledge-collection-${c.slug}`}
+          className={`flex-1 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
+            activeCollectionId === c.id ? "bg-accent font-medium" : "text-foreground"
+          }`}
+        >
+          {c.nome} <span className="text-xs text-muted-foreground">({c.total_documentos})</span>
+        </button>
+        {isAdmin && !isProjectCollection(c) && (
+          <Button
+            size="icon"
+            variant="ghost"
+            aria-label={`Editar coleção ${c.nome}`}
+            onClick={() => setEditingCollectionId(c.id)}
+            data-testid={`knowledge-collection-edit-${c.slug}`}
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </Button>
+        )}
+      </li>
+    );
 
   const totalPages = useMemo(() => (docsPage ? Math.max(1, Math.ceil(docsPage.total / PAGE_SIZE)) : 1), [docsPage]);
 
@@ -383,43 +441,24 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
         {!collections || collections.length === 0 ? (
           <EmptyState message="Nenhuma coleção ainda." />
         ) : (
-          <ul className="space-y-1">
-            {collections.map((c) =>
-              isAdmin && editingCollectionId === c.id ? (
-                <li key={c.id}>
-                  <EditCollectionForm agentKey={agentKey} collection={c} onDone={() => setEditingCollectionId(null)} />
-                </li>
-              ) : (
-                <li key={c.id} className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setSelectedCollection(c.id);
-                      setSelectedDoc(null);
-                      setFilters({ page: 1 });
-                    }}
-                    data-testid={`knowledge-collection-${c.slug}`}
-                    className={`flex-1 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-accent ${
-                      activeCollectionId === c.id ? "bg-accent font-medium" : "text-foreground"
-                    }`}
-                  >
-                    {c.nome} <span className="text-xs text-muted-foreground">({c.total_documentos})</span>
-                  </button>
-                  {isAdmin && (
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      aria-label={`Editar coleção ${c.nome}`}
-                      onClick={() => setEditingCollectionId(c.id)}
-                      data-testid={`knowledge-collection-edit-${c.slug}`}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </li>
-              ),
+          <>
+            <ul className="space-y-1">{regular.map(renderCollection)}</ul>
+            {projectGroups.map(({ c, slug, info }) => (
+              <div key={c.id} className="space-y-1" data-testid={`knowledge-project-group-${slug}`}>
+                <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Projeto: {slug}</p>
+                <ul>{renderCollection(c)}</ul>
+                <p className="px-2.5 text-[11px] text-muted-foreground" data-testid={`knowledge-project-sync-${slug}`}>
+                  {info?.ultima_sincronizacao ? `Última sincronização ${formatDate(info.ultima_sincronizacao, true)}` : "Ainda não sincronizado"}
+                  {info ? ` · ${info.total_fontes} fonte${info.total_fontes === 1 ? "" : "s"}` : ""}
+                </p>
+              </div>
+            ))}
+            {projectGroups.length > 0 && (
+              <p className="rounded-md bg-muted/40 px-2.5 py-2 text-[11px] text-muted-foreground" data-testid="knowledge-project-readonly">
+                Coleções de projeto são somente leitura: sincronizam do repositório a cada push. Para alterar, edite os documentos no repositório.
+              </p>
             )}
-          </ul>
+          </>
         )}
         {isAdmin &&
           (showNewCollection ? (
@@ -448,7 +487,13 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
                 />
                 <Select
                   value={filters.tipo ?? ""}
-                  onChange={(e) => setFilters((f) => ({ ...f, tipo: (e.target.value || undefined) as DocumentTipo | undefined, page: 1 }))}
+                  onChange={(e) =>
+                    setFilters((f) => ({
+                      ...f,
+                      tipo: (e.target.value || undefined) as DocumentTipo | undefined,
+                      page: 1,
+                    }))
+                  }
                   className="w-40"
                 >
                   <option value="">Todos os tipos</option>
@@ -458,13 +503,13 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
                     </option>
                   ))}
                 </Select>
-                {isAdmin && (
+                {canEditDocs && (
                   <Button variant="outline" size="sm" onClick={() => setShowNewDoc((v) => !v)} data-testid="knowledge-new-document-toggle">
                     <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
                     Novo documento
                   </Button>
                 )}
-                {isAdmin && (
+                {canEditDocs && (
                   <Button variant="outline" size="sm" onClick={() => setShowUpload(true)} data-testid="knowledge-upload-toggle">
                     <Upload className="mr-1.5 h-3.5 w-3.5" />
                     Enviar arquivos
@@ -472,7 +517,7 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
                 )}
               </div>
 
-              {isAdmin && showNewDoc && (
+              {canEditDocs && showNewDoc && (
                 <NewDocumentForm
                   onCreate={async (payload) => {
                     await createDoc.mutateAsync(payload);
@@ -516,12 +561,7 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
                     <Button variant="outline" size="sm" disabled={filters.page <= 1} onClick={() => setFilters((f) => ({ ...f, page: f.page - 1 }))}>
                       Anterior
                     </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={filters.page >= totalPages}
-                      onClick={() => setFilters((f) => ({ ...f, page: f.page + 1 }))}
-                    >
+                    <Button variant="outline" size="sm" disabled={filters.page >= totalPages} onClick={() => setFilters((f) => ({ ...f, page: f.page + 1 }))}>
                       Próxima
                     </Button>
                   </div>
@@ -529,7 +569,7 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
               )}
             </Card>
 
-            {selectedDoc && <DocumentDetail agentKey={agentKey} docId={selectedDoc} isAdmin={isAdmin} />}
+            {selectedDoc && <DocumentDetail agentKey={agentKey} docId={selectedDoc} isAdmin={canEditDocs} />}
 
             <SearchPlayground agentKey={agentKey} />
 
@@ -546,14 +586,7 @@ export default function KnowledgeTab({ agentKey }: { agentKey: string }) {
 function NewDocumentForm({
   onCreate,
 }: {
-  onCreate: (payload: {
-    slug: string;
-    titulo: string;
-    tipo: DocumentTipo;
-    conteudo: string;
-    resumo?: string;
-    proveniencia?: Provenance;
-  }) => Promise<void>;
+  onCreate: (payload: { slug: string; titulo: string; tipo: DocumentTipo; conteudo: string; resumo?: string; proveniencia?: Provenance }) => Promise<void>;
 }) {
   const [slug, setSlug] = useState("");
   const [titulo, setTitulo] = useState("");
