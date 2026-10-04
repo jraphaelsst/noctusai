@@ -32,7 +32,7 @@
  * — not a child render prop — because it needs no per-card layout, only the
  * one open target (`envioAlvo`) this container already owns.
  */
-import { useState } from "react";
+import { memo, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
@@ -56,6 +56,12 @@ import {
 import { useContratoTestemunhas } from "@/hooks/useContratoTestemunhas";
 import { useNegociacao } from "@/hooks/useNegociacao";
 import { toastServerError } from "@/lib/erroServidor";
+
+const MatriculaAtosMemo = memo(MatriculaAtosContainer);
+const GeradorContratoMemo = memo(GeradorContratoContainer);
+const ProvenienciaMemo = memo(ProvenienciaContainer);
+const TestemunhasSelectMemo = memo(TestemunhasSelectContainer);
+const AditivosMemo = memo(AditivosContainer);
 
 export function ContratosContainer({
   clienteId,
@@ -105,6 +111,66 @@ export function ContratosContainer({
       setErroEnvio(null);
     }
   }
+
+  // 🔴 STABLE render props. `ContratosPanel`/`ContratoCard` memoize the heavy
+  // subtrees these build on `[renderProp, contratoId, aberto]`; a fresh inline
+  // arrow every render (this container re-renders on every query tick —
+  // `isRefreshing` alone toggles it) would defeat that and rebuild
+  // matrícula/gerador/aditivos/… each time. `onIrPara` arrives as a new closure
+  // from the card dialog on every render, so it is read through a ref.
+  const irParaRef = useRef(onIrPara);
+  irParaRef.current = onIrPara;
+  const temIrPara = !!onIrPara;
+  const irParaEstavel = useCallback(
+    (destino: GeracaoDestino) => irParaRef.current?.(destino),
+    [],
+  );
+  const irPara = temIrPara ? irParaEstavel : undefined;
+
+  const renderMatriculaAtos = useCallback(
+    (contratoId: string) => (
+      // `clienteId` is what lets the picker offer one section per PERMUTA
+      // ativo of this deal (migration 115): the ativos come from the deal's
+      // negociação estruturada, which is keyed by cliente, not by contract.
+      <MatriculaAtosMemo contratoId={contratoId} codigo={imovelCodigo} clienteId={clienteId} />
+    ),
+    [imovelCodigo, clienteId],
+  );
+  const renderGeradorContrato = useCallback(
+    (contratoId: string, aberto: boolean) => (
+      <GeradorContratoMemo
+        clienteId={clienteId}
+        contratoId={contratoId}
+        aberto={aberto}
+        onIrPara={irPara}
+      />
+    ),
+    [clienteId, irPara],
+  );
+  const renderProveniencia = useCallback(
+    (contratoId: string, aberto: boolean) => (
+      <ProvenienciaMemo clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+    ),
+    [clienteId],
+  );
+  const renderTestemunhasSelect = useCallback(
+    (contratoId: string, aberto: boolean) => (
+      <TestemunhasSelectMemo clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+    ),
+    [clienteId],
+  );
+  const renderAditivos = useCallback(
+    (contratoId: string, aberto: boolean) => (
+      <AditivosMemo
+        clienteId={clienteId}
+        contratoId={contratoId}
+        aberto={aberto}
+        isAdmin={isAdmin}
+        onIrPara={irPara}
+      />
+    ),
+    [clienteId, isAdmin, irPara],
+  );
 
   // 🔴 Two signals off `data`, never `isLoading`: it is false mid-refetch, so
   // an empty/error branch keyed off it would lie over data that is still
@@ -248,39 +314,11 @@ export function ContratosContainer({
             ? (mutations.aprovarRevisaoJuridica.variables?.contratoId ?? null)
             : null
         }
-        renderMatriculaAtos={(contratoId) => (
-          // `clienteId` is what lets the picker offer one section per PERMUTA
-          // ativo of this deal (migration 115): the ativos come from the deal's
-          // negociação estruturada, which is keyed by cliente, not by contract.
-          <MatriculaAtosContainer
-            contratoId={contratoId}
-            codigo={imovelCodigo}
-            clienteId={clienteId}
-          />
-        )}
-        renderGeradorContrato={(contratoId, aberto) => (
-          <GeradorContratoContainer
-            clienteId={clienteId}
-            contratoId={contratoId}
-            aberto={aberto}
-            onIrPara={onIrPara}
-          />
-        )}
-        renderProveniencia={(contratoId, aberto) => (
-          <ProvenienciaContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
-        )}
-        renderTestemunhasSelect={(contratoId, aberto) => (
-          <TestemunhasSelectContainer clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
-        )}
-        renderAditivos={(contratoId, aberto) => (
-          <AditivosContainer
-            clienteId={clienteId}
-            contratoId={contratoId}
-            aberto={aberto}
-            isAdmin={isAdmin}
-            onIrPara={onIrPara}
-          />
-        )}
+        renderMatriculaAtos={renderMatriculaAtos}
+        renderGeradorContrato={renderGeradorContrato}
+        renderProveniencia={renderProveniencia}
+        renderTestemunhasSelect={renderTestemunhasSelect}
+        renderAditivos={renderAditivos}
         assinaturas={assinaturas}
         onAbrirEnvioAssinatura={(contratoId, versaoId) => {
           setErroEnvio(null);
