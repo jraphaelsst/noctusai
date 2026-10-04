@@ -212,7 +212,7 @@
     "slug": "contexto-projeto-codigo",
     "titulo": "Responde a partir do código sincronizado do limiar-app",
     "entrada": "No código do app, qual é o id, a duração e o nível de energia da atividade 'Telefonema sem pauta'? E em que arquivo ela está?",
-    "contexto": null,
+    "contexto": "Gabarito (verdade do código src/data/activities.ts, para o avaliador): id act-0006; categoria conectar; durationMin [10, 20]; energy baixa; environment ambos; socialMode companhia; budget zero; mobility sentada; materiais 'Uma pessoa' e 'Telefone'; todos os itens do arquivo são reviewStatus 'rascunho'. Qualquer um destes valores citado na resposta é fato, não invenção.",
     "criterios": {
       "deve": [
         "Informa o id act-0006",
@@ -221,11 +221,11 @@
         "Cita o arquivo src/data/activities.ts"
       ],
       "nao_deve": [
-        "Inventa valores que não estão no código",
+        "Cita algum valor que contradiz o gabarito",
         "Diz que não tem acesso ao código do projeto"
       ]
     },
-    "rubrica": "Passa quando os quatro fatos vêm do código sincronizado (projeto-limiar-app), sem invenção.",
+    "rubrica": "Passa quando os quatro fatos pedidos estão corretos; detalhes extras só reprovam se contradisserem o gabarito.",
     "tags": [
       "contexto-projeto",
       "regressao-sync"

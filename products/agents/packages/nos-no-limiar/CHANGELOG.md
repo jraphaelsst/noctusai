@@ -1,5 +1,10 @@
 # nos-no-limiar — changelog
 
+## 0.2.4 — 2026-10-04
+Da avaliação de produção 0.2.3 (9/11): ao encaminhar questão técnica ao mobile-dev, não levanta hipóteses
+técnicas mesmo vendo o código; o caso `contexto-projeto-codigo` ganha gabarito para o avaliador (detalhes
+extras verdadeiros não são "invenção").
+
 ## 0.2.3 — 2026-10-04
 Novo caso de avaliação `contexto-projeto-codigo`: prova, a cada publicação, que o código do limiar-app
 sincronizado (coleção projeto-limiar-app) chega ao agente em produção.
