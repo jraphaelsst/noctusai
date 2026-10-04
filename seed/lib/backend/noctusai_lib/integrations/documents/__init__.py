@@ -138,6 +138,12 @@ from noctusai_lib.integrations.documents.matricula_ato_detalhes import (
     frase_titulo_aquisitivo,
     parse_detalhes_json,
 )
+from noctusai_lib.integrations.documents.matricula_certidao import (
+    TIPOS_DOCUMENTO_MATRICULA,
+    CertidaoMatriculaLida,
+    classificar_documento_matricula,
+    ler_certidao_matricula,
+)
 from noctusai_lib.integrations.documents.matricula_extractor import (
     FakeMatriculaExtractor,
     MatriculaExtractor,
@@ -392,6 +398,7 @@ __all__ = [
     "OcorrenciaCrednet",
     "Paragraph",
     "ParagraphKind",
+    "CertidaoMatriculaLida",
     "ParticipacaoCrednet",
     "PessoaFichaCadastral",
     "PessoaFinanciamento",
@@ -403,6 +410,7 @@ __all__ = [
     "RuidoKind",
     "RuidoSpan",
     "Run",
+    "TIPOS_DOCUMENTO_MATRICULA",
     "TextSource",
     "TitularEsperado",
     "TranscribedPage",
@@ -410,6 +418,8 @@ __all__ = [
     "UnsupportedGlyphError",
     "ValorLido",
     "ato_hint_span",
+    "classificar_documento_matricula",
+    "ler_certidao_matricula",
     "classificar_campo",
     "classify_kind",
     "derivar_endereco",

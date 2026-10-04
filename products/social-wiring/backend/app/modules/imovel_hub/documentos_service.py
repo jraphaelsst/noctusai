@@ -65,6 +65,11 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 from uuid import UUID
 
+from noctusai_lib.integrations.documents.matricula_certidao import (
+    MOTIVO_ANTERIOR_AO_ULTIMO_ATO,
+    MOTIVO_NAO_ENCONTRADA,
+    ler_certidao_matricula,
+)
 from noctusai_lib.integrations.llm import chat_completion
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.integrations.storage import StorageBackend
@@ -201,6 +206,10 @@ def _documento_out(row: dict, resolved: dict) -> dict:
         "validade_ate": row.get("validade_ate"),
         "resultado": row.get("resultado"),
         "inscricao_imobiliaria": row.get("inscricao_imobiliaria"),
+        # Migration 199 — a matrícula upload's kind (certidao | visualizacao)
+        # and why its emitida_em is empty (P5 B1).
+        "tipo_documento_matricula": row.get("tipo_documento_matricula"),
+        "emissao_motivo": row.get("emissao_motivo"),
         "origem": row.get("origem"),
         "confirmado_por": table_reads.actor(resolved, row.get("confirmado_por")),
         "confirmado_em": row.get("confirmado_em"),
@@ -819,6 +828,81 @@ def _preencher_onus_certidao_em(
     return True
 
 
+def _estrutura_da_matricula(
+    paginas: Sequence["PaginaLida"], via_ia: Optional[dict]
+) -> dict:
+    """🔴 P5 B1 (2026-10): the matrícula's `emitida_em` is decided by the
+    SEED's deterministic read (`ler_certidao_matricula`), never by the
+    per-page LLM answer alone.
+
+    On all ten audited deals the upload was the registry's "Visualização de
+    Matrícula" printout — no certification, no emission date — and the LLM
+    answered "data de emissão" with the first ACT's date (1984-2017), so
+    every deal blocked on "certidão vencida". Now:
+
+    - a visualização → `emitida_em=None`, `tipo_documento_matricula=
+      "visualizacao"`, `emissao_motivo="visualizacao_sem_valor_de_certidao"`
+      (readiness says "envie a Certidão", not "vencida");
+    - a certidão's own certification date (labelled emission or the
+      "dou fé" closing) wins over the LLM;
+    - otherwise the LLM's date stands only if it clears the chronology
+      floor (not earlier than the last act — an earlier date IS an act
+      date), else `None` with the reason.
+
+    Returns the three columns, always all three — a re-read must CLEAR a
+    stale `emitida_em` an older read wrote, not leave it standing.
+    """
+    leitura = ler_certidao_matricula("\n\n".join(p.texto for p in paginas))
+    if leitura.visualizacao:
+        return {
+            "emitida_em": None,
+            "tipo_documento_matricula": leitura.tipo_documento_matricula,
+            "emissao_motivo": leitura.motivo,
+        }
+    if leitura.data_emissao is not None:
+        return {
+            "emitida_em": leitura.data_emissao.isoformat(),
+            "tipo_documento_matricula": leitura.tipo_documento_matricula,
+            "emissao_motivo": None,
+        }
+    externa = (via_ia or {}).get("emitida_em")
+    # `_parse_json_estrutura` already admits only well-formed ISO dates.
+    candidata = date.fromisoformat(externa) if _data_valida(externa) else None
+    if leitura.aceita_data_externa(candidata):
+        return {
+            "emitida_em": externa,
+            "tipo_documento_matricula": leitura.tipo_documento_matricula,
+            "emissao_motivo": None,
+        }
+    motivo = leitura.motivo
+    if candidata is not None:
+        motivo = MOTIVO_ANTERIOR_AO_ULTIMO_ATO
+    return {
+        "emitida_em": None,
+        "tipo_documento_matricula": leitura.tipo_documento_matricula,
+        "emissao_motivo": motivo or MOTIVO_NAO_ENCONTRADA,
+    }
+
+
+def _retratar_onus_certidao_em(
+    client: Any, org_id: UUID, codigo: str, anterior: Optional[str], nova: Optional[str]
+) -> bool:
+    """Undo what THIS document's previous read fed into `imovel_dados.
+    onus_certidao_em` when the new read no longer stands behind it (P5 B1:
+    an act date read off a visualização sat there as "the certidão date").
+    Only when the column still holds exactly that previous value — a human
+    edit or another document's date is never touched."""
+    if not anterior or str(anterior)[:10] == (nova or "")[:10]:
+        return False
+    atual = dados_service.linha(client, org_id, codigo)
+    if not atual or str(atual.get("onus_certidao_em") or "")[:10] != str(anterior)[:10]:
+        return False
+    dados_service.atualizar(
+        client, org_id, codigo, valores={"onus_certidao_em": None}, usuario_id=None
+    )
+    return True
+
+
 async def extrair_estrutura(
     client: Any,
     storage: StorageBackend,
@@ -885,6 +969,9 @@ async def extrair_estrutura(
     if doc.get("deleted_at"):
         return {"status": "erro", "erro": "documento_removido"}
     tipo = doc["tipo_documento"]
+    # Captured BEFORE any write: what this document's previous read fed into
+    # `imovel_dados.onus_certidao_em`, for `_retratar_onus_certidao_em`.
+    emitida_anterior = doc.get("emitida_em")
     if not deve_extrair_estrutura(tipo):
         return {"status": "erro", "erro": "tipo_nao_extraivel"}
     if doc.get("origem") == "manual" or doc.get("confirmado_por"):
@@ -951,6 +1038,15 @@ async def extrair_estrutura(
                     "extracao estrutura %s: paginas divergem: %s",
                     documento_id, "; ".join(avisos),
                 )
+            if tipo == "matricula":
+                matricula = _estrutura_da_matricula(paginas, via_ia)
+                via_ia = {**(via_ia or {}), **matricula}
+                if matricula["emissao_motivo"]:
+                    logger.info(
+                        "extracao estrutura %s: matricula sem emissao (%s, tipo=%s)",
+                        documento_id, matricula["emissao_motivo"],
+                        matricula["tipo_documento_matricula"],
+                    )
     except EstruturaFalhou as falha:
         return _falhou(falha.codigo, str(falha).split(": ", 1)[-1])
     except Exception as exc:  # noqa: BLE001 - background job must not die
@@ -966,11 +1062,26 @@ async def extrair_estrutura(
             estrutura_status="sem_dados", estrutura_erro=None, estrutura_em=now_iso(),
         )
         return {"status": "sem_dados", "erro": "sem_texto"}
-    if not via_ia:
+    if not via_ia or not any(
+        v is not None for k, v in via_ia.items() if k != "emissao_motivo"
+    ):
+        # A matrícula read that found nothing still WRITES its (null) fields
+        # and reason — a stale emitida_em from an older read must not stand.
         _marcar(
             client, documento_id,
+            **(via_ia or {}),
             estrutura_status="sem_dados", estrutura_erro=None, estrutura_em=now_iso(),
         )
+        if tipo == "matricula":
+            try:
+                _retratar_onus_certidao_em(
+                    client, org_id, codigo, emitida_anterior, None
+                )
+            except Exception as exc:  # noqa: BLE001 - the read itself is recorded above
+                logger.error(
+                    "extracao estrutura %s: onus_certidao_em not retracted: %s",
+                    documento_id, exc, exc_info=True,
+                )
         return {"status": "sem_dados"}
 
     _marcar(
@@ -1014,6 +1125,10 @@ async def extrair_estrutura(
             sugerido = resultado.preenchido
             if resultado.conflito is not None:
                 conflitos.append(resultado.conflito)
+        if tipo == "matricula":
+            _retratar_onus_certidao_em(
+                client, org_id, codigo, emitida_anterior, via_ia.get("emitida_em")
+            )
         if tipo == "matricula" and via_ia.get("emitida_em"):
             sugerido = _preencher_onus_certidao_em(
                 client, org_id, codigo, via_ia["emitida_em"]
@@ -1027,7 +1142,7 @@ async def extrair_estrutura(
 
     return {
         "status": "ok",
-        "campos": sorted(via_ia),
+        "campos": sorted(k for k, v in via_ia.items() if v is not None),
         "sugerido_em_dados": sugerido,
         "conflito_aberto": bool(conflitos),
         "tentativas": tentativas,
@@ -1183,6 +1298,13 @@ def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
             "validade_ate": row.get("validade_ate"),
             "resultado": row.get("resultado"),
             "inscricao_imobiliaria": row.get("inscricao_imobiliaria"),
+            # Migration 199 (P5 B1) — matrícula only: 'certidao' |
+            # 'visualizacao' | None, and why `emitida_em` is None. A
+            # 'visualizacao' row has NO emission by construction: the
+            # contract must ask for the Certidão de Matrícula, not call it
+            # "vencida".
+            "tipo_documento_matricula": row.get("tipo_documento_matricula"),
+            "emissao_motivo": row.get("emissao_motivo"),
             "confirmado": row.get("origem") == "manual" or bool(row.get("confirmado_por")),
         }
         for tipo in CERTIDOES_TIPOS

@@ -459,9 +459,21 @@ def _datas(norm: str, desde: int = 0, ate: Optional[int] = None) -> list[tuple[i
 #: The date sits right after the header: `R-1/45.678 - Em 10 de março de 2001`.
 _ANCORA_INICIO = re.compile(r"^[\s\-–—.:,]*(?:EM\s+|DATA\s*[:\-–—]?\s*)?$")
 
+#: 🔴 P5 B4 (2026-10): the usual SP layout puts the act's TITLE between the
+#: header and the date — `R.5/12.345 - VENDA E COMPRA - Em 10 de março de
+#: 2020` / `AV.4 - CANCELAMENTO. Data: 10/03/2021` — which `_ANCORA_INICIO`
+#: (separators only) never matched, so those acts carried no data_registro.
+#: A title is letters only (no digit — `Protocolo 99.999 de` is not one),
+#: closed by a separator, then the optional `EM` / `DATA:`.
+_ANCORA_TITULO = re.compile(
+    r"^[\s\-–—.:,]*[A-Z][A-Z'/ ]{1,80}?\s*[-–—.:,]\s*"
+    r"(?:EM\s+|DATA\s*(?:D[OA]\s+(?:REGISTRO|AVERBACAO|ATO)\s*)?[:\-–—]?\s*)?$"
+)
+
 #: A registration label ends right before the date.
 _ROTULO_REGISTRO = re.compile(
     r"(?:(?<![A-Z])(?:REGISTRAD[OA]|AVERBAD[OA])\s+(?:EM|NO\s+DIA)"
+    r"|(?<![A-Z])(?:REGISTRO|AVERBACAO)\s+(?:FEIT[OA]|EFETUAD[OA]|PROCEDID[OA])\s+(?:EM|NO\s+DIA)"
     r"|(?<![A-Z])DATA\s+D[OA]\s+(?:REGISTRO|AVERBACAO|ATO)\s*[:\-–—]?"
     r"|(?<![A-Z])DATA\s*[:\-–—]"
     r"|(?:^|[.;]\s*)EM)\s*$"
@@ -478,7 +490,11 @@ def _data_registro(t: _Texto, corpo: int) -> tuple[Optional[date], str]:
     fracas: list[date] = []
     for inicio, _fim, valor in _datas(t.norm, corpo):
         prefixo = t.norm[corpo:inicio]
-        if _ANCORA_INICIO.match(prefixo) or _ROTULO_REGISTRO.search(prefixo):
+        if (
+            _ANCORA_INICIO.match(prefixo)
+            or _ANCORA_TITULO.match(prefixo)
+            or _ROTULO_REGISTRO.search(prefixo)
+        ):
             fortes.append(valor)
         elif inicio >= len(t.norm) - _JANELA_FECHO and _CIDADE_VIRGULA.search(prefixo):
             fracas.append(valor)
@@ -631,7 +647,12 @@ _SEPARA_PESSOA = re.compile(
 #: matches at a `pos` that is not the real start of the string — with it, the
 #: prefix silently never stripped anything.
 _PREFIXO_NOME = re.compile(
-    r"[\s:\-–—,.]*(?:\(?\d{1,2}\)\s*)?(?:E\s+)?(?:(?:O|A|OS|AS)\s+)?(?:(?:SR|SRA|DR|DRA)\.?\s+)?"
+    r"[\s:\-–—,.]*(?:\(?\d{1,2}\)\s*)?(?:E\s+)?(?:(?:O|A|OS|AS)\s+)?"
+    # P5 B4: a narrated party is often introduced by its ROLE — "partilhado
+    # à herdeira X", "adjudicado ao credor X" — which is not part of the name.
+    r"(?:(?:HERDEIR|MEEIR|VIUV|DONATARI|ADQUIRENTE|COMPRADOR|CESSIONARI|ADJUDICATARI"
+    r"|ARREMATANTE|CONJUGE\s+SUPERSTITE)(?:ES|AS|OS|A|O)?\s+(?:(?:E\s+)?MEEIR[OA]S?\s+)?)?"
+    r"(?:(?:SR|SRA|DR|DRA)\.?\s+)?"
 )
 
 _FIM_NOME = re.compile(
@@ -749,31 +770,145 @@ def _confianca_partes(achados: list[tuple[Parte, bool]], rotulado: bool) -> str:
 #: object-description clause real acts insert ("transmitiram POR PERMUTA O
 #: IMOVEL MATRICULADO a NOME") without letting the search run away — it
 #: still requires the FIRST bare `A/AO/AOS/AS/PARA` token to end it.
+#: P5 B4: partilha / adjudicação / arrematação participles added — "o imóvel
+#: foi partilhado à herdeira X" / "adjudicado a X" named no adquirente.
 _VERBOS_TRANSMISSAO = (
     r"TRANSMITID[OA]S?|TRANSMITIU|TRANSMITIRAM|VENDID[OA]S?|VENDA|VENDEU|VENDERAM"
     r"|ALIENOU|ALIENARAM|CEDEU|CEDERAM|PERMUTOU|PERMUTARAM|DOAD[OA]S?|DOACAO|DOOU|DOARAM"
+    r"|PARTILHAD[OA]S?|ADJUDICAD[OA]S?|ARREMATAD[OA]S?|ATRIBUID[OA]S?"
 )
 
 _NARRATIVA_ADQUIRENTE = _rx(
     rf"(?:{_VERBOS_TRANSMISSAO})(?:\s+[A-Z]+){{0,6}}?\s+(?:A|AO|AOS|AS|PARA)"
 )
 
-#: The bare verb, for the TRANSMITENTE side: whoever is named BEFORE it,
-#: back to the previous party boundary (or the act's own start), is on the
-#: transferring side — no preposition needed, since the subject precedes the
-#: verb directly in Portuguese sentence order.
-#: NOC-REMEDIATE[matricula-partes]: an UNNUMBERED, unlabelled seller
-#: introduced AFTER the verb ("o imóvel foi vendido POR JOÃO EXEMPLO, ...",
-#: the mirror of `_NARRATIVA_ADQUIRENTE`'s "...vendido A NOME") is not
-#: covered here — this fallback only reads the subject-before-verb shape,
-#: which still needs a structural boundary (numbered list / semicolon /
-#: block start) ahead of it. A symmetric "verb + POR + name" cue, mirrored
-#: in `matricula_qualificacao._NOME_INTRODUZIDO` too, would close it —
-#: deferred until the real corpus actually shows this shape — 2026-09-18
-_NARRATIVA_TRANSMITENTE_VERBO = _rx(_VERBOS_TRANSMISSAO)
+#: The FINITE / participle verbs that can have the seller as their subject —
+#: deliberately WITHOUT the nouns `VENDA` / `DOACAO`. 🔴 P5 B4 (2026-10): with
+#: the nouns in, the act's own TITLE ("VENDA E COMPRA", "DOAÇÃO") was the
+#: first "verb" found, the subject block before it was empty, and every
+#: narrated transfer came back with no transmitente at all.
+_VERBOS_SUJEITO = _rx(
+    r"TRANSMITIU|TRANSMITIRAM|VENDEU|VENDERAM|ALIENOU|ALIENARAM|CEDEU|CEDERAM"
+    r"|PERMUTOU|PERMUTARAM|DOOU|DOARAM|PROMETEU\s+VENDER|PROMETERAM\s+VENDER"
+)
+
+#: The role noun that introduces the subject: "os proprietários X e sua
+#: mulher Y venderam" / "os doadores X doaram". Its end is where the names
+#: start.
+_CUE_TRANSMITENTE = _rx(
+    rf"(?:CO-?)?PROPRIETARI{_W}|(?:PROMITENTES?\s+)?VENDEDOR{_W}|TRANSMITENTE{_W}"
+    rf"|OUTORGANTE{_W}(?:\s+(?:VENDEDOR|DOADOR|TRANSMITENTE){_W})?|DOADOR{_W}|ALIENANTE{_W}"
+    rf"|CEDENTE{_W}|PERMUTANTE{_W}"
+)
+
+#: The seller named AFTER the transfer (no verb subject): the deceased of a
+#: partilha ("inventário de X", "espólio de X", "bens deixados por X"), the
+#: debtor of an adjudicação/arrematação ("executado X"), and the passive
+#: agent ("vendido por X") that `NOC-REMEDIATE[matricula-partes]` deferred.
+_CUE_TRANSMITENTE_DEPOIS = _rx(
+    r"(?:INVENTARIO|ARROLAMENTO|ESPOLIO|SUCESSAO)\s+(?:D[OAE]S?\s+BENS\s+DEIXADOS\s+POR|D[OAE]S?)"
+    r"|BENS\s+DEIXADOS\s+POR|FALECID[OA]\s+|DE\s+CUJUS"
+    r"|(?:SENDO\s+)?EXECUTAD[OA]S?\s*:?|(?:SENDO\s+)?DEVEDOR(?:ES|A|AS)?\s*:?"
+    r"|(?:VENDID|TRANSMITID|ALIENAD|DOAD|CEDID|PERMUTAD)[OA]S?\s+(?:POR|PEL[OA]S?)"
+)
+
+#: Words a comma-delimited piece of the subject block may start with that
+#: make it NOT a name (instrument preamble, notarial furniture).
+_NAO_NOME_SUJEITO = frozenset(
+    {
+        "DO", "DA", "DOS", "DAS", "DE", "NO", "NA", "NOS", "NAS", "AO", "AOS", "EM", "COM",
+        "LAVRADA", "LAVRADO", "LIVRO", "FLS", "FOLHAS", "TABELIAO", "TABELIONATO", "OFICIO",
+        "CARTORIO", "NOTAS", "PROTOCOLO", "PRENOTACAO", "MEDIANTE", "SENDO", "QUE", "ONDE",
+        "TENDO", "FICA", "FOI", "FORAM", "ESTE", "ESTA", "AVERBA", "REGISTRA",
+    }
+)
+
+#: Words that end a passive agent / deceased name candidate early.
+_NAO_NOME_DEPOIS = frozenset(
+    {"PERMUTA", "MEIO", "FORCA", "CONTA", "OCASIAO", "SENTENCA", "DECISAO", "ORDEM", "MANDADO",
+     "CARTA", "ALVARA", "ESCRITURA", "INSTRUMENTO", "VALOR", "PRECO"}
+)
 
 
-def _partes(t: _Texto, corpo: int, blocos: list[tuple[str, int, int]]):
+_FIM_PERIODO = re.compile(r"\.(?=\s|$)")
+
+
+def _sujeito_desde(t: _Texto, inicio: int, verbo: int) -> list[tuple[Parte, bool]]:
+    cue = None
+    for m in _CUE_TRANSMITENTE.finditer(t.norm, inicio, verbo):
+        cue = m
+    if cue is not None:
+        achados = _pessoas(t, cue.end(), verbo)
+        if achados:
+            return achados
+        inicio = cue.end()
+    achados = _pessoas(t, inicio, verbo)
+    if achados:
+        return achados
+    pos = inicio
+    while pos < verbo:
+        virgula = t.norm.find(",", pos, verbo)
+        fim_peca = virgula if virgula >= 0 else verbo
+        peca = _PREFIXO_NOME.match(t.norm, pos, fim_peca)
+        n_ini = peca.end() if peca else pos
+        n_fim = _fim_nome(t.norm, n_ini, fim_peca)
+        candidato = t.norm[n_ini:n_fim].split()
+        if candidato and candidato[0] not in _NAO_NOME_SUJEITO and _nome_valido(
+            t.norm[n_ini:n_fim]
+        ):
+            return _pessoas(t, n_ini, verbo)
+        if virgula < 0:
+            break
+        pos = virgula + 1
+    return []
+
+
+def _sujeito(t: _Texto, corpo: int, verbo: int) -> list[tuple[Parte, bool]]:
+    """Parties named as the SUBJECT of the transfer verb at `verbo`.
+
+    Tried from the NEAREST sentence end before the verb outwards to the act
+    body start (a `S.A.` / `fls.` dot is not a real boundary, so a start that
+    yields nobody falls back to the previous one). From each start: a role
+    cue ("os proprietários") if present, else the block itself, else — when
+    the block opens with an instrument preamble ("Por escritura de …, do 1º
+    Tabelião de Notas de X, FULANO, …, vendeu") — the first comma-delimited
+    piece that reads as a name. `;` is a party separator, never a start.
+    """
+    inicios = [m.end() for m in _FIM_PERIODO.finditer(t.norm, corpo, verbo)]
+    for inicio in [*reversed(inicios), corpo]:
+        achados = _sujeito_desde(t, inicio, verbo)
+        if achados:
+            return achados
+    return []
+
+
+def _transmitente_depois(t: _Texto, corpo: int) -> list[tuple[Parte, bool]]:
+    """The seller named after a cue (`inventário de X`, `executado X`,
+    `vendido por X`) — see `_CUE_TRANSMITENTE_DEPOIS`."""
+    for m in _CUE_TRANSMITENTE_DEPOIS.finditer(t.norm, corpo):
+        inicio = m.end()
+        corte = _FIM_FRASE.search(t.norm, inicio)
+        fim = corte.start() if corte else len(t.norm)
+        primeira = t.norm[inicio:fim].split()[:1]
+        if not primeira or primeira[0] in _NAO_NOME_DEPOIS:
+            continue
+        # Only the FIRST party block: stop at the clause that names the
+        # other side (", a CICLANO" / ", o imóvel").
+        achados = _pessoas(t, inicio, fim)
+        if achados:
+            return achados
+    return []
+
+
+def _partes(
+    t: _Texto, corpo: int, blocos: list[tuple[str, int, int]], natureza: Optional[str] = None
+):
+    #: The after-the-fact seller cues (`executado X`, `inventário de X`) only
+    #: mean "transmitente" on an act that MOVES ownership — on a penhora the
+    #: executado is the debtor of an encumbrance, nobody's seller.
+    transferencia = natureza in NATUREZAS_TRANSFERENCIA or bool(
+        re.search(r"ADJUDICA|ARREMATA", t.norm[corpo:])
+    )
     trans = [x for lado, a, b in blocos if lado == "t" for x in _pessoas(t, a, b)]
     adq = [x for lado, a, b in blocos if lado == "a" for x in _pessoas(t, a, b)]
     trans_rotulado = bool(trans)
@@ -787,11 +922,17 @@ def _partes(t: _Texto, corpo: int, blocos: list[tuple[str, int, int]]):
                 adq = achados
                 break
     if not trans:
-        verbo = _NARRATIVA_TRANSMITENTE_VERBO.search(t.norm, corpo)
-        if verbo:
-            achados = _pessoas(t, corpo, verbo.start())
+        for verbo in _VERBOS_SUJEITO.finditer(t.norm, corpo):
+            achados = _sujeito(t, corpo, verbo.start())
             if achados:
                 trans = achados
+                break
+    if not trans and transferencia:
+        trans = _transmitente_depois(t, corpo)
+    if trans and adq:
+        # A narrated reading must not name the same person on both sides.
+        nomes_adq = {normalize(p.nome) for p, _ in adq}
+        trans = [x for x in trans if normalize(x[0].nome) not in nomes_adq]
     return (
         tuple(p for p, _ in trans),
         _confianca_partes(trans, trans_rotulado),
@@ -953,8 +1094,15 @@ def _instrumento(
 
 # ─── atos referidos ───────────────────────────────────────────────────────
 
+#: 🔴 P5 B3 (2026-10): two citation spellings real cancellations use were
+#: missed — the number glued to the kind (`R3/12.345`, `AV4`; OCR drops the
+#: separator) and a `nº` between them (`R. nº 3`). Glued is accepted only
+#: when nothing alphanumeric follows (or a `/` suffix does), so `R2D2`-like
+#: tokens stay out.
 _CITACAO = re.compile(
-    r"(?<![A-Z0-9$])(?P<k>AV|R)(?:\s*[-.–—]\s*|\s+)(?P<n>\d{1,4})(?![\d])(?!,\d)(?!\.\d)"
+    r"(?<![A-Z0-9$])(?P<k>AV|R)"
+    r"(?:\s*[-.–—]\s*(?:N(?:\s*\.?\s*O|[°º])?\.?\s*)?|\s+(?:N(?:\s*\.?\s*O|[°º])\.?\s*)?|(?=\d))"
+    r"(?P<n>\d{1,4})(?![\d])(?!,\d)(?!\.\d)(?![A-Z])"
     r"(?P<suf>\s*/\s*(?:M\s*[.-]?\s*)?\d+(?:\.\d+)*)?"
 )
 # The wordings the real cancellation acts use to name what they release
@@ -968,11 +1116,17 @@ _CITACAO = re.compile(
 _NUM_ATO = r"(?P<n>\d{1,4})(?![\d/]|[,.]\d)"
 _NR = r"(?:N(?:\s*\.?\s*O|[°º])?\.?|NUMERO)"
 _ANCORA_DESTA = r"(?=\s+(?:DESTA|NESTA|DESTE|DESSA|DA\s+PRESENTE)\b)"
+#: `registro nº 3` · `registro de nº 03` · `registro sob nº 3` (P5 B3: the
+#: `de`/`sob` connector between the noun and the number was not tolerated).
 _CITACAO_VERBAL = re.compile(
-    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+" + _NR + r"\s*" + _NUM_ATO
+    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+(?:(?:DE|SOB(?:\s+O)?)\s+)?" + _NR + r"\s*" + _NUM_ATO
 )
+#: `registrada sob nº 1` · `feito sob nº 3` / `registro feito sob o nº 3`
+#: (P5 B3: the `feito/efetuado/praticado sob` participles of the NOUN).
 _CITACAO_VERBAL_SOB = re.compile(
-    r"(?<![A-Z])(?P<k>REGISTRAD[OA]|AVERBAD[OA]|INSCRIT[OA])\s+SOB\s+(?:O\s+)?"
+    r"(?<![A-Z])(?P<k>REGISTRAD[OA]|AVERBAD[OA]|INSCRIT[OA]"
+    r"|(?:REGISTRO|AVERBACAO)\s+(?:FEIT[OA]|EFETUAD[OA]|PRATICAD[OA])"
+    r"|(?:FEIT[OA]|EFETUAD[OA]|PRATICAD[OA]))\s+SOB\s+(?:O\s+)?"
     + _NR
     + r"\s*"
     + _NUM_ATO
@@ -992,16 +1146,48 @@ _CITACAO_VERBAL_ORDINAL = re.compile(
     + r")\b"
     + _ANCORA_DESTA
 )
+#: `registro número três` — a spelled cardinal after an explicit `nº`/
+#: `número` (P5 B3), which already anchors it as an act number.
+_CARDINAIS = {
+    "UM": 1, "UMA": 1, "DOIS": 2, "DUAS": 2, "TRES": 3, "QUATRO": 4, "CINCO": 5,
+    "SEIS": 6, "SETE": 7, "OITO": 8, "NOVE": 9, "DEZ": 10, "ONZE": 11, "DOZE": 12,
+    "TREZE": 13, "QUATORZE": 14, "CATORZE": 14, "QUINZE": 15, "DEZESSEIS": 16,
+    "DEZESSETE": 17, "DEZOITO": 18, "DEZENOVE": 19, "VINTE": 20,
+}
+_CITACAO_VERBAL_CARDINAL = re.compile(
+    r"(?<![A-Z])(?P<k>REGISTRO|AVERBACAO)\s+(?:(?:DE|SOB(?:\s+O)?)\s+)?" + _NR + r"\s*(?P<o>"
+    + "|".join(sorted(_CARDINAIS, key=len, reverse=True))
+    + r")(?![A-Z])"
+)
 # `R.13 E AV.14 DA MATRICULA 5.390` — acts of ANOTHER matrícula, named by
 # number after the act list; never ours, so never a release of ours.
 _OUTRA_MATRICULA = re.compile(
-    r"^(?:\s*(?:,|E|OU)\s*(?:AV|R)\s*[-.]?\s*\d{1,4})*\s+D[AO]\s+MATRICULA\s+(?:N(?:\s*\.?\s*O|[°º])?\.?\s*)?\d"
+    r"^(?:\s*(?:,|E|OU)\s*(?:AV|R)\s*[-.]?\s*\d{1,4})*\s+(?:D[AO]|N[AO]|NESTA|DESTA)\s+MATRICULA\s+"
+    r"(?:N(?:\s*\.?\s*O|[°º])?\.?\s*)?(?P<mat>\d{1,3}(?:\.\d{3})+|\d+)"
 )
 _CITACAO_ISCA_ANTES = re.compile(
     r"(?:QUADRA|LOTE|RUA|AVENIDA|UNIDADE|APARTAMENTO|APTO|BLOCO|TORRE|FICHA|LIVRO|FOLHA"
     r"|ZONA|SETOR|REGISTRO\s+ANTERIOR|TRANSCRICAO)\s*[:.]?\s*$"
 )
-_CITACAO_ISCA_DEPOIS = re.compile(r"^\s+DE\s+[A-Z]")
+#: `R. 25 DE MARCO` is a street (Rua), not an act — but `R.3 DE ALIENACAO
+#: FIDUCIARIA` / `R-1 de hipoteca` IS the act, qualified by what it
+#: registered (P5 B3: those were discarded as bait).
+_CITACAO_ISCA_DEPOIS = re.compile(
+    r"^\s+DE\s+(?!(?:HIPOTECA|ALIENACAO|PENHORA|USUFRUTO|INDISPONIBILIDADE|CAUCAO|ARRESTO"
+    r"|SEQUESTRO|COMPRA|VENDA|DOACAO|PERMUTA|PARTILHA|CEDULA|PROMESSA|COMPROMISSO|CONSTITUICAO"
+    r"|PROPRIEDADE|CESSAO|LOCACAO|SERVIDAO|ANTICRESE|BEM)(?![A-Z]))[A-Z]"
+)
+
+
+def _outra_matricula(resto: str, sufixo_proprio: str) -> bool:
+    """Is the citation just read followed by `da matrícula N` naming a
+    DIFFERENT matrícula? `da matrícula N` naming THIS one (the act header's
+    own `/N` suffix) is ours — P5 B3: `cancelado o R.3 da matrícula 12.345`
+    on matrícula 12.345 was being discarded as a foreign act."""
+    m = _OUTRA_MATRICULA.match(resto)
+    if not m:
+        return False
+    return not (sufixo_proprio and _digitos(m.group("mat")) == sufixo_proprio)
 
 
 def _atos_referidos(
@@ -1015,7 +1201,7 @@ def _atos_referidos(
         if (
             _CITACAO_ISCA_ANTES.search(antes)
             or _CITACAO_ISCA_DEPOIS.match(resto)
-            or _OUTRA_MATRICULA.match(resto)
+            or _outra_matricula(resto, sufixo_proprio)
         ):
             continue
         sufixo = _digitos(m.group("suf"))
@@ -1029,14 +1215,22 @@ def _atos_referidos(
         (_CITACAO_VERBAL_SOB, "n"),
         (_CITACAO_VERBAL_NUA, "n"),
         (_CITACAO_VERBAL_ORDINAL, "o"),
+        (_CITACAO_VERBAL_CARDINAL, "c"),
     )
     for rx, grupo in verbais:
         for m in rx.finditer(t.norm, corpo):
             antes = t.norm[max(corpo, m.start() - 24) : m.start()]
-            if _CITACAO_ISCA_ANTES.search(antes) or _OUTRA_MATRICULA.match(t.norm[m.end() :]):
+            if _CITACAO_ISCA_ANTES.search(antes) or _outra_matricula(
+                t.norm[m.end() :], sufixo_proprio
+            ):
                 continue
             kind = "AV" if m.group("k").startswith("AVERBA") else "R"
-            numero = _ORDINAIS[m.group("o")] if grupo == "o" else int(m.group("n"))
+            if grupo == "o":
+                numero = _ORDINAIS[m.group("o")]
+            elif grupo == "c":
+                numero = _CARDINAIS[m.group("o")]
+            else:
+                numero = int(m.group("n"))
             ref = AtoReferido(kind=kind, numero=numero)  # type: ignore[arg-type]
             if (ref.kind, ref.numero) != proprio and ref not in vistos:
                 vistos.append(ref)
@@ -1074,7 +1268,7 @@ def extrair_detalhes_ato(
     data_registro, data_conf = _data_registro(t, corpo)
     valor, valor_conf = _valor(t, corpo)
     blocos = _blocos_rotulados(t, corpo)
-    transmitentes, trans_conf, adquirentes, adq_conf = _partes(t, corpo, blocos)
+    transmitentes, trans_conf, adquirentes, adq_conf = _partes(t, corpo, blocos, natureza)
     credor, credor_conf = _credor(t, corpo, natureza, blocos)
     instrumento, inst_conf = _instrumento(t, corpo, blocos)
     referidos, ref_conf = _atos_referidos(t, corpo, proprio, sufixo_proprio)

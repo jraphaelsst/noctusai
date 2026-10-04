@@ -798,3 +798,141 @@ def test_cancellation_wordings_resolve_their_object(texto, esperado):
 )
 def test_non_citations_are_not_referenced_acts(texto):
     assert extrair_detalhes_ato(texto).atos_referidos == ()
+
+
+# ─── P5 audit (2026-10): B3 cancellation links · B4 transfer parties/dates ──
+# Synthetic acts mimicking the shapes the audit found unread on real
+# matrículas; every name/number below is invented.
+
+
+@pytest.mark.parametrize(
+    "texto",
+    [
+        # the number glued to the kind (OCR dropped the separator)
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Cancela-se o R3/12.345.",
+        # `de`/`sob` between the noun and the number
+        "AV.4/12.345 - BAIXA DE ALIENAÇÃO FIDUCIÁRIA. Em 10/03/2021. Fica cancelado o "
+        "registro de nº 03 desta matrícula.",
+        # `feito sob nº` + THIS matrícula's own number
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Fica cancelado o registro feito sob "
+        "nº 3 na matrícula nº 12.345.",
+        # the act qualified by what it registered (was discarded as `R. 25 de Março` bait)
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Procede-se ao cancelamento do R.3 de "
+        "alienação fiduciária.",
+        # `nº` between kind and number
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Cancelamento do R. nº 3 desta matrícula.",
+        # `da matrícula N` where N is this matrícula
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Fica cancelada a alienação fiduciária "
+        "objeto do R.3 da matrícula 12.345.",
+        # spelled cardinal after `número`
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Fica cancelada a alienação fiduciária "
+        "objeto do registro número três.",
+    ],
+)
+def test_b3_cancellation_names_the_act_it_cancels(texto):
+    d = extrair_detalhes_ato(texto)
+    assert d.natureza == "cancelamento"
+    assert AtoReferido("R", 3) in d.atos_referidos
+
+
+def test_b3_a_citation_of_another_matricula_is_still_not_ours():
+    d = extrair_detalhes_ato(
+        "AV.4/12.345 - CANCELAMENTO - Em 10/03/2021. Conforme o R.3 da matrícula 9.876."
+    )
+    assert d.atos_referidos == ()
+
+
+@pytest.mark.parametrize(
+    "texto, esperada",
+    [
+        ("R.5/12.345 - VENDA E COMPRA - Em 10 de março de 2020. Pela escritura...", date(2020, 3, 10)),
+        ("AV.4/12.345 - CANCELAMENTO. Data: 10/03/2021. Fica cancelado o R.3.", date(2021, 3, 10)),
+        ("R.6/12.345 - PARTILHA - Em 10/03/2018. Pelo formal de partilha...", date(2018, 3, 10)),
+        ("R.8/12.345 - COMPRA E VENDA - 15/03/2015 - Por escritura de 02/03/2015...", date(2015, 3, 15)),
+    ],
+)
+def test_b4_the_registration_date_after_the_act_title(texto, esperada):
+    d = extrair_detalhes_ato(texto)
+    assert d.data_registro == esperada
+    assert d.data_registro_confianca == "alta"
+
+
+def test_b4_a_protocol_date_before_the_title_is_not_a_title_anchor():
+    d = extrair_detalhes_ato(
+        "R.5/12.345 - Protocolo 99.999 de 01/03/2020. VENDA E COMPRA. Por escritura, "
+        "JOAO EXEMPLO SILVA vendeu o imóvel a CARLOS FICTICIO SOUZA."
+    )
+    assert d.data_registro is None
+
+
+def test_b4_owners_cue_before_the_verb_with_the_title_carrying_the_noun():
+    """The title `VENDA E COMPRA` used to be the first 'verb' found, leaving
+    an empty subject block — no transmitente on any narrated sale."""
+    d = extrair_detalhes_ato(
+        "R.5/12.345 - VENDA E COMPRA - Em 10 de março de 2020. Pela escritura pública de "
+        "02/03/2020, do 2º Tabelião de Notas de Cidade Exemplo, livro 100, fls. 20, os "
+        "proprietários JOAO EXEMPLO SILVA, RG 1.234.567-8, CPF 123.456.789-09, e sua mulher "
+        "MARIA EXEMPLO SILVA, venderam o imóvel a CARLOS FICTICIO SOUZA, brasileiro, pelo "
+        "valor de R$ 300.000,00."
+    )
+    assert [p.nome for p in d.transmitentes] == ["JOAO EXEMPLO SILVA", "MARIA EXEMPLO SILVA"]
+    assert d.transmitentes_confianca == "baixa"
+    assert [p.nome for p in d.adquirentes] == ["CARLOS FICTICIO SOUZA"]
+
+
+def test_b4_seller_after_an_instrument_preamble():
+    d = extrair_detalhes_ato(
+        "R.8/12.345 - COMPRA E VENDA - Por escritura de 02/03/2015, do 1º Tabelião de Notas "
+        "de Cidade Exemplo, JOAO EXEMPLO SILVA, brasileiro, casado, vendeu o imóvel a CARLOS "
+        "FICTICIO SOUZA. Registrado em 15 de março de 2015."
+    )
+    assert [p.nome for p in d.transmitentes] == ["JOAO EXEMPLO SILVA"]
+    assert d.data_registro == date(2015, 3, 15)
+
+
+def test_b4_donors_cue():
+    d = extrair_detalhes_ato(
+        "R.11/12.345 - DOAÇÃO - Data: 05 de maio de 2019. Por escritura de 01/05/2019, os "
+        "doadores JOAO EXEMPLO SILVA e sua mulher MARIA EXEMPLO SILVA doaram o imóvel a "
+        "PEDRO FICTICIO SILVA."
+    )
+    assert [p.nome for p in d.transmitentes] == ["JOAO EXEMPLO SILVA", "MARIA EXEMPLO SILVA"]
+    assert [p.nome for p in d.adquirentes] == ["PEDRO FICTICIO SILVA"]
+
+
+def test_b4_partilha_deceased_is_the_transmitente_and_the_heir_role_is_not_a_name():
+    d = extrair_detalhes_ato(
+        "R.6/12.345 - PARTILHA - Em 10/03/2018. Pelo formal de partilha expedido em "
+        "01/02/2018 pelo Juízo da 1ª Vara de Cidade Exemplo, extraído dos autos do "
+        "inventário de JOAO EXEMPLO SILVA, o imóvel foi partilhado à herdeira MARIA "
+        "EXEMPLO SILVA."
+    )
+    assert [p.nome for p in d.transmitentes] == ["JOAO EXEMPLO SILVA"]
+    assert [p.nome for p in d.adquirentes] == ["MARIA EXEMPLO SILVA"]
+
+
+def test_b4_adjudicacao_parties():
+    d = extrair_detalhes_ato(
+        "R.7/12.345 - ADJUDICAÇÃO - Em 10/03/2018. Pela carta de adjudicação expedida em "
+        "01/02/2018, o imóvel foi adjudicado a CARLOS FICTICIO SOUZA, sendo executado JOAO "
+        "EXEMPLO SILVA."
+    )
+    assert [p.nome for p in d.adquirentes] == ["CARLOS FICTICIO SOUZA"]
+    assert [p.nome for p in d.transmitentes] == ["JOAO EXEMPLO SILVA"]
+
+
+def test_b4_passive_agent_seller():
+    """Closes NOC-REMEDIATE[matricula-partes]: `vendido por X`."""
+    d = extrair_detalhes_ato(
+        "R-8 - Em 15/03/2015 - Por escritura de 02/03/2015, o imóvel foi vendido por JOAO "
+        "EXEMPLO SILVA, brasileiro, a CARLOS FICTICIO SOUZA."
+    )
+    assert [p.nome for p in d.transmitentes] == ["JOAO EXEMPLO SILVA"]
+
+
+def test_b4_an_executado_of_a_penhora_is_still_nobodys_seller():
+    d = extrair_detalhes_ato(
+        "AV.8/9.876 - PENHORA - Em 10/10/2021. Mandado de penhora; sendo executado JOAO "
+        "EXEMPLO SILVA."
+    )
+    assert d.transmitentes == ()

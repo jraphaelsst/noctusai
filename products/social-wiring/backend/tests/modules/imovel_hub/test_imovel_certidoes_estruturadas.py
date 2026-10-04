@@ -779,3 +779,149 @@ class TestInscricaoLidaPorVisao:
         docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
         guia = next(d for d in docs["items"] if d["id"] == did)
         assert _digitos(guia["inscricao_imobiliaria"]) == _digitos(CERTA)
+
+
+# ─── P5 audit B1 (2026-10): visualização vs certidão de matrícula ──────────
+# Synthetic transcriptions only (invented cartório / names / dates) that
+# mimic a registry "Visualização de Matrícula" printout and a certidão.
+
+_ATOS_P5 = (
+    "R.1/12.345 - VENDA E COMPRA - Em 10 de março de 1984. Por escritura de "
+    "01/03/1984, JOAO EXEMPLO SILVA vendeu o imóvel a CARLOS FICTICIO SOUZA.\n"
+    "AV.2/12.345 - CONSTRUÇÃO - Em 02/02/2017. Averba-se a construção.\n"
+)
+_VISUALIZACAO_P5 = (
+    "VISUALIZAÇÃO DE MATRÍCULA\nEsta visualização não tem valor de certidão.\n"
+    "MATRÍCULA Nº 12.345\n" + _ATOS_P5
+)
+_CERTIDAO_P5 = (
+    "CERTIDÃO DE INTEIRO TEOR\nMATRÍCULA Nº 12.345\n" + _ATOS_P5
+    + "CERTIFICO que a presente é reprodução autêntica. O referido é verdade e dou fé. "
+    "Cidade Exemplo, 1º de setembro de 2026.\n"
+)
+
+
+class TestMatriculaVisualizacao:
+    @pytest.mark.asyncio
+    async def test_a_visualizacao_gets_no_emission_date_and_says_why(
+        self, client, scoped, fake_storage
+    ):
+        """B1: the LLM answered the printout's first ACT date as its
+        emission — every deal then blocked on 'certidão vencida'."""
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="matricula", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+
+        out = await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo(_VISUALIZACAO_P5),
+            analyze_estrutura=_analise_fixa({"emitida_em": "1984-03-10"}),
+        )
+        assert out["status"] == "ok"
+        assert out["sugerido_em_dados"] is False
+
+        certidoes = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()
+        mat = {i["tipo"]: i for i in certidoes["items"]}["matricula"]
+        assert mat["emitida_em"] is None
+        assert mat["tipo_documento_matricula"] == "visualizacao"
+        assert mat["emissao_motivo"] == "visualizacao_sem_valor_de_certidao"
+
+        docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
+        assert docs["items"][0]["tipo_documento_matricula"] == "visualizacao"
+
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert dados["onus_certidao_em"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_re_read_clears_the_act_date_an_older_read_wrote(
+        self, client, scoped, fake_storage
+    ):
+        """The re-extract path (`POST .../documentos/{id}/extrair` → this job)
+        must retract the stale date from the document AND from
+        `imovel_dados.onus_certidao_em`, which the old read had fed."""
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(
+            scoped,
+            dados=[dados_row(onus_certidao_em="1984-03-10")],
+            documentos=[
+                documento_row(
+                    did, tipo_documento="matricula", storage_path=path,
+                    emitida_em="1984-03-10", origem="ia", estrutura_status="ok",
+                )
+            ],
+        )
+        await _seed_storage(fake_storage, path)
+
+        await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo(_VISUALIZACAO_P5),
+            analyze_estrutura=_analise_fixa({"emitida_em": "1984-03-10"}),
+        )
+        docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
+        assert docs["items"][0]["emitida_em"] is None
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert dados["onus_certidao_em"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_human_typed_onus_certidao_em_is_never_retracted(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(
+            scoped,
+            dados=[dados_row(onus_certidao_em="2026-08-01")],
+            documentos=[
+                documento_row(
+                    did, tipo_documento="matricula", storage_path=path, emitida_em="1984-03-10",
+                )
+            ],
+        )
+        await _seed_storage(fake_storage, path)
+        await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo(_VISUALIZACAO_P5),
+            analyze_estrutura=_analise_fixa(None),
+        )
+        dados = client.get(f"/api/imoveis/{CODIGO}/dados", headers=auth()).json()
+        assert dados["onus_certidao_em"] == "2026-08-01"
+
+    @pytest.mark.asyncio
+    async def test_a_certidao_emission_is_its_certification_date_not_the_llms_act_date(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="matricula", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+
+        await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo(_CERTIDAO_P5),
+            analyze_estrutura=_analise_fixa({"emitida_em": "1984-03-10"}),
+        )
+        mat = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()["items"][0]
+        assert mat["emitida_em"] == "2026-09-01"
+        assert mat["tipo_documento_matricula"] == "certidao"
+        assert mat["emissao_motivo"] is None
+
+    @pytest.mark.asyncio
+    async def test_an_llm_date_older_than_the_last_act_is_refused(
+        self, client, scoped, fake_storage
+    ):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/x"
+        seed(scoped, documentos=[documento_row(did, tipo_documento="matricula", storage_path=path)])
+        await _seed_storage(fake_storage, path)
+
+        out = await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo("CERTIDÃO DIGITAL\nMATRÍCULA Nº 12.345\n" + _ATOS_P5),
+            analyze_estrutura=_analise_fixa({"emitida_em": "1984-03-10"}),
+        )
+        mat = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()["items"][0]
+        assert mat["emitida_em"] is None
+        assert mat["emissao_motivo"] == "emissao_anterior_ao_ultimo_ato"
+        assert out["sugerido_em_dados"] is False
