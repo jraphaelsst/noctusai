@@ -213,6 +213,26 @@ describe("ContratosPanel", () => {
       expect(onSetProcessoLegado).not.toHaveBeenCalled();
     });
 
+    it("🔴 ticking shows visible feedback and an INLINE form — never a nested modal (prod: inert click)", async () => {
+      const onSetProcessoLegado = vi.fn();
+      const { screen, fireEvent } = await render({
+        contratos: [contrato()],
+        isAdmin: true,
+        onSetProcessoLegado,
+      });
+      const cb = screen.getByTestId("contrato-processo-legado-checkbox-c1");
+      expect(cb.getAttribute("aria-checked")).toBe("false");
+      fireEvent.click(cb);
+      expect(cb.getAttribute("aria-checked")).toBe("true");
+      const form = screen.getByTestId("processo-legado-dialog");
+      expect(form.closest('[role="dialog"]')).toBeNull();
+      // Cancelling reverts — nothing persisted, nothing called.
+      fireEvent.click(screen.getByText("Cancelar"));
+      expect(cb.getAttribute("aria-checked")).toBe("false");
+      expect(screen.queryByTestId("processo-legado-dialog")).toBeNull();
+      expect(onSetProcessoLegado).not.toHaveBeenCalled();
+    });
+
     it("🔴 the dialog requires a 3-char motivo before confirming", async () => {
       const onSetProcessoLegado = vi.fn();
       const { screen, fireEvent } = await render({

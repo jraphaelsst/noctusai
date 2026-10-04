@@ -487,7 +487,7 @@ function ContratoCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [historicoAberto, setHistoricoAberto] = useState(false);
-  const [processoLegadoDialogOpen, setProcessoLegadoDialogOpen] = useState(false);
+  const [processoLegadoAberto, setProcessoLegadoAberto] = useState(false);
   const [matriculaAberta, setMatriculaAberta] = useState(recemIniciado);
   const [geradorAberto, setGeradorAberto] = useState(recemIniciado);
   const [provenienciaAberta, setProvenienciaAberta] = useState(false);
@@ -726,13 +726,16 @@ function ContratoCard({
           >
             <Checkbox
               id={`contrato-processo-legado-checkbox-${contrato.id}`}
-              checked={contrato.processo_legado}
+              checked={contrato.processo_legado || processoLegadoAberto}
               disabled={settingProcessoLegado}
               onCheckedChange={(checked) => {
                 if (checked === true) {
-                  setProcessoLegadoDialogOpen(true);
-                } else {
+                  setProcessoLegadoAberto(true);
+                } else if (contrato.processo_legado) {
                   onSetProcessoLegado(false);
+                } else {
+                  // Unchecking a not-yet-confirmed request just cancels it.
+                  setProcessoLegadoAberto(false);
                 }
               }}
               data-testid={`contrato-processo-legado-checkbox-${contrato.id}`}
@@ -744,6 +747,17 @@ function ContratoCard({
               Processo anterior à plataforma — dispensar prazos de certidões
             </Label>
           </div>
+        )}
+        {isAdmin && onSetProcessoLegado && !contrato.processo_legado && (
+          <_ProcessoLegadoForm
+            open={processoLegadoAberto}
+            onCancelar={() => setProcessoLegadoAberto(false)}
+            onConfirmar={(motivo) => {
+              onSetProcessoLegado(true, motivo);
+              setProcessoLegadoAberto(false);
+            }}
+            enviando={settingProcessoLegado}
+          />
         )}
 
         <div className="flex flex-wrap items-center gap-2">
@@ -921,17 +935,6 @@ function ContratoCard({
           </Collapsible>
         )}
       </CardContent>
-      {onSetProcessoLegado && (
-        <_ProcessoLegadoDialog
-          open={processoLegadoDialogOpen}
-          onOpenChange={setProcessoLegadoDialogOpen}
-          onConfirmar={(motivo) => {
-            onSetProcessoLegado(true, motivo);
-            setProcessoLegadoDialogOpen(false);
-          }}
-          enviando={settingProcessoLegado}
-        />
-      )}
     </Card>
   );
 }
@@ -1239,20 +1242,20 @@ const MOTIVO_PROCESSO_LEGADO_MIN = 3;
 const MOTIVO_PROCESSO_LEGADO_MAX = 500;
 
 /**
- * `_ProcessoLegadoDialog` — migration 151's motivo, 3..500 chars, same
- * shape as `_CancelarEnvioDialog` above. Only asked when turning the flag
- * ON: `ContratoCard` calls `onSetProcessoLegado(false)` directly for the
- * OFF case, since there is nothing left to explain once the dispensation
- * is lifted.
+ * `_ProcessoLegadoForm` — migration 151's motivo, 3..500 chars. INLINE, not a
+ * modal: the contract card already lives inside `ClienteCardDialog`'s Dialog,
+ * and a Dialog nested in it fights the outer focus trap (see the header note)
+ * — it never visibly opened in prod, so ticking the checkbox looked inert.
+ * Only asked when turning the flag ON; OFF calls back directly.
  */
-function _ProcessoLegadoDialog({
+function _ProcessoLegadoForm({
   open,
-  onOpenChange,
+  onCancelar,
   onConfirmar,
   enviando,
 }: {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onCancelar: () => void;
   onConfirmar: (motivo: string) => void;
   enviando: boolean;
 }) {
@@ -1262,42 +1265,43 @@ function _ProcessoLegadoDialog({
     if (!open) setMotivo("");
   }, [open]);
 
+  if (!open) return null;
+
   const motivoValido =
     motivo.trim().length >= MOTIVO_PROCESSO_LEGADO_MIN &&
     motivo.trim().length <= MOTIVO_PROCESSO_LEGADO_MAX;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="processo-legado-dialog">
-        <DialogHeader>
-          <DialogTitle>Processo anterior à plataforma</DialogTitle>
-          <DialogDescription>
-            Este deal começou antes da plataforma — as certidões podem ter sido emitidas
-            fora do fluxo atual. Explique por que (3 a 500 caracteres); os prazos de
-            certidões passam a ser avisos, não bloqueios, apenas para este contrato.
-          </DialogDescription>
-        </DialogHeader>
-        <Textarea
-          value={motivo}
-          maxLength={MOTIVO_PROCESSO_LEGADO_MAX}
-          onChange={(e) => setMotivo(e.target.value)}
-          placeholder="Motivo"
-          data-testid="processo-legado-motivo"
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={enviando}>
-            Voltar
-          </Button>
-          <Button
-            disabled={!motivoValido || enviando}
-            onClick={() => onConfirmar(motivo.trim())}
-            data-testid="processo-legado-confirmar"
-          >
-            {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Marcar como processo anterior
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div
+      className="space-y-2 rounded-md border border-amber-300 bg-amber-50/50 p-3"
+      data-testid="processo-legado-dialog"
+    >
+      <p className="text-xs text-muted-foreground">
+        Este deal começou antes da plataforma — as certidões podem ter sido emitidas fora do
+        fluxo atual. Explique por que (3 a 500 caracteres); os prazos de certidões passam a
+        ser avisos, não bloqueios, apenas para este contrato.
+      </p>
+      <Textarea
+        value={motivo}
+        maxLength={MOTIVO_PROCESSO_LEGADO_MAX}
+        onChange={(e) => setMotivo(e.target.value)}
+        placeholder="Motivo"
+        data-testid="processo-legado-motivo"
+      />
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onCancelar} disabled={enviando}>
+          Cancelar
+        </Button>
+        <Button
+          size="sm"
+          disabled={!motivoValido || enviando}
+          onClick={() => onConfirmar(motivo.trim())}
+          data-testid="processo-legado-confirmar"
+        >
+          {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Marcar como processo anterior
+        </Button>
+      </div>
+    </div>
   );
 }
