@@ -130,33 +130,54 @@ describe("CPF pendente nunca é selecionável", () => {
 });
 
 describe("sem duplicatas", () => {
-  it("uma testemunha já escolhida em outro slot fica desabilitada aqui", async () => {
-    const { getAllByText } = await render({ selecionados: ["t1", null] });
-    // Slot 1's "Maria Souza" option (already chosen in slot 0) is disabled.
-    const opcoes = getAllByText("Maria Souza");
-    const botaoSlot1 = opcoes[opcoes.length - 1].closest("button") as HTMLButtonElement;
-    expect(botaoSlot1.disabled).toBe(true);
+  it("🔴 uma testemunha já escolhida em outro slot NÃO aparece aqui (removida, não desabilitada)", async () => {
+    const { getByTestId } = await render({ selecionados: ["t1", null] });
+    const { within } = await import("@testing-library/react");
+    const slot1 = getByTestId("testemunhas-slot-1").parentElement as HTMLElement;
+    expect(within(slot1).queryByText("Maria Souza")).toBeNull();
+    expect(within(slot1).getByText("João Lima")).toBeTruthy();
+    // ...but stays on the slot that holds it.
+    const slot0 = getByTestId("testemunhas-slot-0").parentElement as HTMLElement;
+    expect(within(slot0).getByText("Maria Souza")).toBeTruthy();
+  });
+
+  it("🔴 um cadastro com a mesma testemunha repetida vira UMA opção por slot", async () => {
+    const { getByTestId } = await render({
+      registro: [testemunha(), testemunha(), testemunha({ id: "t2", nome: "João Lima" })],
+      selecionados: [],
+    });
+    const { within } = await import("@testing-library/react");
+    const slot0 = getByTestId("testemunhas-slot-0").parentElement as HTMLElement;
+    expect(within(slot0).getAllByText("Maria Souza")).toHaveLength(1);
   });
 
   it("escolher uma testemunha em um slot chama onChangeSlot com o índice certo", async () => {
-    const { getAllByText, onChangeSlot } = await render({ selecionados: [null, null] });
-    const { fireEvent } = await import("@testing-library/react");
-    const opcoes = getAllByText("João Lima");
-    fireEvent.click(opcoes[0]);
-    expect(onChangeSlot).toHaveBeenCalledWith(0, "t2");
+    const { getByTestId, onChangeSlot } = await render({ selecionados: [null, null] });
+    const { fireEvent, within } = await import("@testing-library/react");
+    const slot1 = getByTestId("testemunhas-slot-1").parentElement as HTMLElement;
+    fireEvent.click(within(slot1).getByText("João Lima"));
+    expect(onChangeSlot).toHaveBeenCalledWith(1, "t2");
+    expect(onChangeSlot).toHaveBeenCalledTimes(1);
+  });
+
+  it("🔴 um slot vazio é controlado com value=\"\" — nunca undefined (Select não-controlado)", async () => {
+    const { getByTestId } = await render({ selecionados: [] });
+    const slot0 = getByTestId("testemunhas-slot-0").parentElement as HTMLElement;
+    expect(slot0.getAttribute("data-value")).toBe("");
   });
 });
 
 describe("testemunha removida do cadastro", () => {
-  it("continua no slot que já a tinha, mas não pode ser escolhida em outro", async () => {
-    const { getAllByText } = await render({
+  it("continua no slot que já a tinha, mas não é oferecida em outro", async () => {
+    const { getByTestId } = await render({
       registro: [testemunha({ excluida: true }), testemunha({ id: "t2", nome: "João Lima" })],
       selecionados: ["t1", null],
     });
-    const opcoes = getAllByText(/Maria Souza — removida do cadastro/);
-    const noProprioSlot = opcoes[0].closest("button") as HTMLButtonElement;
-    const noOutroSlot = opcoes[1].closest("button") as HTMLButtonElement;
+    const { within } = await import("@testing-library/react");
+    const slot0 = getByTestId("testemunhas-slot-0").parentElement as HTMLElement;
+    const slot1 = getByTestId("testemunhas-slot-1").parentElement as HTMLElement;
+    const noProprioSlot = within(slot0).getByText(/Maria Souza — removida do cadastro/).closest("button") as HTMLButtonElement;
     expect(noProprioSlot.disabled).toBe(false);
-    expect(noOutroSlot.disabled).toBe(true);
+    expect(within(slot1).queryByText(/Maria Souza/)).toBeNull();
   });
 });

@@ -14,10 +14,15 @@
  * the operator drops the count back down). There is no "0": the count is
  * 2–5 and an unselected contract shows 2 empty slots (`slotsDeTestemunhas`).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { TestemunhasSelect, slotsDeTestemunhas } from "@/components/card/TestemunhasSelect";
+import {
+  MAX_TESTEMUNHAS,
+  MIN_TESTEMUNHAS,
+  TestemunhasSelect,
+  slotsDeTestemunhas,
+} from "@/components/card/TestemunhasSelect";
 import {
   useContratoTestemunhas,
   useDefinirContratoTestemunhas,
@@ -41,7 +46,15 @@ export function TestemunhasSelectContainer({
   const registroQuery = useTestemunhas();
   const definir = useDefinirContratoTestemunhas(clienteId, contratoId);
 
-  const [ids, setIds] = useState<(string | null)[] | null>(null);
+  const [ids, setIdsState] = useState<(string | null)[] | null>(null);
+  // Every edit is computed off the LATEST selection, not the render-time
+  // closure — two picks in the same tick (or a Radix callback delivered from
+  // an effect) must never rebuild the list from a stale snapshot.
+  const idsRef = useRef<(string | null)[] | null>(null);
+  function setIds(proximos: (string | null)[]) {
+    idsRef.current = proximos;
+    setIdsState(proximos);
+  }
   // Seeds local state from the server once per contract — mirrors
   // `EnviarAssinaturaDialog`'s "seed once, never re-seed on background
   // refetch" discipline so a save-in-flight is never clobbered mid-edit.
@@ -79,15 +92,21 @@ export function TestemunhasSelectContainer({
 
   function salvar(proximos: (string | null)[]) {
     setIds(proximos);
-    if (proximos.every((v): v is string => !!v)) {
-      definir.mutate(proximos, {
+    const completos = proximos.filter((v): v is string => !!v);
+    if (
+      completos.length === proximos.length &&
+      completos.length >= MIN_TESTEMUNHAS &&
+      completos.length <= MAX_TESTEMUNHAS &&
+      new Set(completos).size === completos.length
+    ) {
+      definir.mutate(completos, {
         onError: () => toast.error("Não foi possível salvar as testemunhas."),
       });
     }
   }
 
   function mudarQuantidade(quantidade: number) {
-    const atual = selecionados;
+    const atual = slotsDeTestemunhas(idsRef.current ?? []);
     const proximos =
       quantidade <= atual.length
         ? atual.slice(0, quantidade)
@@ -96,8 +115,12 @@ export function TestemunhasSelectContainer({
   }
 
   function mudarSlot(indice: number, testemunhaId: string) {
-    const proximos = selecionados.map((v, i) => (i === indice ? testemunhaId : v));
-    salvar(proximos);
+    const atual = slotsDeTestemunhas(idsRef.current ?? []);
+    if (indice < 0 || indice >= atual.length) return;
+    // Never the same witness twice — the options already hide it, this keeps
+    // the invariant even if a stale option is clicked.
+    if (atual.some((v, i) => i !== indice && v === testemunhaId)) return;
+    salvar(atual.map((v, i) => (i === indice ? testemunhaId : v)));
   }
 
   if (!aberto) return null;

@@ -11,7 +11,18 @@
  *
  * No duplicates: once a witness is picked in one slot it is removed from
  * every OTHER slot's options — never merely disabled there (a disabled-but-
- * visible duplicate reads as "still pickable, just not right now").
+ * visible duplicate reads as "still pickable, just not right now"). The
+ * registry itself is de-duplicated by id before it becomes options: two
+ * `SelectItem`s sharing a value/key make Radix + React reconcile the list
+ * against the wrong node (`opcoesDoSlot`).
+ *
+ * 🔴 Every slot `Select` is CONTROLLED for its whole lifetime — an empty slot
+ * is `value=""` (Radix renders the placeholder), never `undefined`. An
+ * `undefined` value made each empty slot an UNCONTROLLED Radix Select that
+ * kept its own internal value and reported picks from a deferred effect, then
+ * flipped to controlled on the first pick (2026-10-03: a contract with no
+ * witnesses padded to two such slots; slot 0's pick never stuck and nothing
+ * saved). One source of truth: the `selecionados` prop.
  */
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { Testemunha } from "@/hooks/useTestemunhas";
@@ -31,6 +42,7 @@ export interface TestemunhasSelectProps {
  *  `politica.MIN_TESTEMUNHAS`/`MAX_TESTEMUNHAS` on the backend. */
 const QUANTIDADES = [2, 3, 4, 5];
 export const MIN_TESTEMUNHAS = QUANTIDADES[0];
+export const MAX_TESTEMUNHAS = QUANTIDADES[QUANTIDADES.length - 1];
 
 /** The slots on screen: the selection, padded with empty slots up to the
  *  minimum. A contract with no witnesses yet is "2, none picked" — the count
@@ -42,6 +54,31 @@ export function slotsDeTestemunhas(selecionados: readonly (string | null)[]): (s
   return selecionados.length >= MIN_TESTEMUNHAS
     ? [...selecionados]
     : [...selecionados, ...Array<null>(MIN_TESTEMUNHAS - selecionados.length).fill(null)];
+}
+
+/** The options one slot offers, in registry order: de-duplicated by id,
+ *  minus every witness already chosen in ANOTHER slot, minus a soft-deleted
+ *  witness unless THIS slot already holds it. A CPF-pendente row stays (it
+ *  renders disabled — the operator must see why it cannot be picked). */
+export function opcoesDoSlot(
+  registro: readonly Testemunha[],
+  slots: readonly (string | null)[],
+  indice: number,
+): Testemunha[] {
+  const atual = slots[indice] ?? null;
+  const emOutros = new Set(
+    slots.filter((v, i): v is string => i !== indice && !!v),
+  );
+  const vistos = new Set<string>();
+  const opcoes: Testemunha[] = [];
+  for (const t of registro) {
+    if (vistos.has(t.id)) continue;
+    vistos.add(t.id);
+    if (emOutros.has(t.id)) continue;
+    if (t.excluida && t.id !== atual) continue;
+    opcoes.push(t);
+  }
+  return opcoes;
 }
 
 export function TestemunhasSelect({
@@ -75,14 +112,15 @@ export function TestemunhasSelect({
       </div>
 
       {slots.map((atual, indice) => {
-        const outrosSelecionados = new Set(
-          slots.filter((_, i) => i !== indice).filter((v): v is string => !!v),
-        );
+        const opcoes = opcoesDoSlot(registro, slots, indice);
         return (
           <Select
-            key={indice}
-            value={atual ?? undefined}
-            onValueChange={(v) => onChangeSlot(indice, v)}
+            key={`slot-${indice}`}
+            value={atual ?? ""}
+            onValueChange={(v) => {
+              // Radix reports "" on an internal reset — never a pick.
+              if (v && v !== atual) onChangeSlot(indice, v);
+            }}
             disabled={salvando}
           >
             <SelectTrigger
@@ -92,23 +130,15 @@ export function TestemunhasSelect({
               <SelectValue placeholder="Selecione uma testemunha" />
             </SelectTrigger>
             <SelectContent>
-              {registro.length === 0 && (
+              {opcoes.length === 0 && (
                 <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                  Nenhuma testemunha cadastrada.
+                  {registro.length === 0
+                    ? "Nenhuma testemunha cadastrada."
+                    : "Nenhuma outra testemunha disponível."}
                 </div>
               )}
-              {registro.map((t) => (
-                <SelectItem
-                  key={t.id}
-                  value={t.id}
-                  disabled={
-                    t.cpf_pendente ||
-                    outrosSelecionados.has(t.id) ||
-                    // Kept on the slot that already holds it; not pickable
-                    // anywhere else.
-                    (!!t.excluida && t.id !== atual)
-                  }
-                >
+              {opcoes.map((t) => (
+                <SelectItem key={t.id} value={t.id} disabled={t.cpf_pendente}>
                   {t.nome}
                   {t.cpf_pendente ? " — CPF pendente" : ""}
                   {t.excluida ? " — removida do cadastro" : ""}
