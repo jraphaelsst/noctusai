@@ -6,6 +6,7 @@ Tipos: `armadilha` · `prática` · `decisão`. Status: `novo` → `absorvido` (
 
 | Data | Tipo | Aprendizado | Evidência | Status |
 |---|---|---|---|---|
+| 2026-10-03 | decisão | Mônica creditada no app só como autora; tese só como fundo; lista "evitar" vira regra (corrigir) | decisions.md 2026-10-03; conhecimento: marca/monica-e-tese, voz/voz-e-linguagem | absorvido |
 | 2026-10-03 | armadilha | Frase aprovada pela spec pode estar falsa no estado atual ("fontes revisadas" com catálogo em rascunho): revisar veracidade, não só a origem | limiar-app src/app/sobre.tsx:23; spec §9 (revisão real) | absorvido |
 | 2026-10-03 | decisão | Acentos altos do Cormorant aceitos como caráter da marca | decisions.md; conhecimento: produto/identidade-visual | absorvido |
 | 2026-10-03 | decisão | Boas-vindas sem fotografia (pluralidade, procedência da imagem, coerência com colagem) | decisions.md; conhecimento: produto/identidade-visual | absorvido |

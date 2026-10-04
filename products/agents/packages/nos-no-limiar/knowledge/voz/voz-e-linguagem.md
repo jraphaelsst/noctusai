@@ -9,7 +9,7 @@ proveniencia:
 
 Duas fontes: a **especificação do app** (obrigatória) e a **base editorial da marca** (pasta
 `NoctusAI/nos-no-limiar/KNOWLEDGE-BASE/VOZ`, feita para Instagram). Quando divergem, **o app segue a
-spec**. Itens marcados ⚠️ estão pendentes de decisão no Decision Board.
+spec**. As decisões tomadas estão no fim deste documento e em `docs/design/decisions.md`.
 
 ## Regras da spec (§2, §2.1) — obrigatórias
 - Português brasileiro simples, adulto, natural. Frases concretas.
@@ -42,11 +42,10 @@ spec**. Itens marcados ⚠️ estão pendentes de decisão no Decision Board.
 - Proibição de hífen, aspas, itálico e bullets: é regra de legenda de Instagram, não de interface.
 - Hooks com "cansaço", "esgota", "pesa por dentro" — tom pesado demais para o app.
 
-## ⚠️ Pendências de decisão (Decision Board)
-- Adotar a lista "evitar" da marca como regra do app (recomendado: sim).
-- Botão primário em pílula: a marca diz "CTA primário nunca em pílula"; o mockup e o app usam pílula.
-- Erro em formulário na cor da marca (vinho) em vez de vermelho, por "vermelho ser clínico demais";
-  o app hoje usa `brick #8B2420` como cor de erro.
+## Decisões tomadas (2026-10-03, Decision Board)
+- **Lista "evitar" da marca adotada como regra do app**: ocorrência em copy = **corrigir**.
+- **Botão principal continua em pílula** (o mockup aprovado manda na aparência; a regra da marca vale para redes/impresso).
+- **Erro continua em `brick #8B2420`**, sempre com palavras: vinho significa "agir" no app.
 
 ## Exemplos aplicados no app
 - "Uma nova fase. Muitas possibilidades." + "Pequenas experiências, jogos e ideias para descobrir o

@@ -8,7 +8,7 @@ proveniencia:
 # Mônica, a tese e a marca fora do app
 
 Fonte: pasta `NoctusAI/nos-no-limiar/KNOWLEDGE-BASE/` (projeto editorial de Instagram; absorvido em
-2026-10-03, ainda **em refinamento com o João** — ver Decision Board).
+2026-10-03; decisões de uso tomadas no mesmo dia — ver abaixo).
 
 ## Quem é
 **Mônica Tangerino** — "psicanalista clínica, graduanda em psicologia e autora" (texto exato).
@@ -16,13 +16,12 @@ Regra da marca: **nunca chamá-la apenas de "psicóloga"** (ainda não é formad
 Livro: *Funcionar não é estar bem — o custo emocional de dar conta de tudo* (2026); prefácio de Joice
 Hilário, sua analista e professora. Na marca editorial, é o rosto público; o João (Rapha) é o estrategista.
 
-## ⚠️ Cuidado regulatório no app
-A spec exige que o app **não** se apresente como atendimento psicológico (§1.5, §9). Mencionar a
-credencial clínica da autora dentro do app pode aproximá-lo de "serviço psicológico" (CFP 9/2024).
-Até decisão (Decision Board): **não citar a credencial clínica em telas do app**; se houver crédito,
-preferir "conteúdo editorial de Mônica Tangerino, autora" e a frase da spec §9.
+## Crédito no app (decidido 2026-10-03)
+A spec exige que o app **não** se apresente como atendimento psicológico (§1.5, §9). Por isso, no app, Mônica
+é creditada **somente como autora**: "Conteúdo editorial de Mônica Tangerino, autora." (tela Sobre). A
+credencial clínica não aparece em telas do app até parecer jurídico. Mônica pode reabrir a decisão.
 
-## A tese (fundo conceitual, não enquadramento)
+## A tese — decidido: só como fundo conceitual (2026-10-03)
 - "Algumas formas de força são apenas sofrimento que aprendeu a funcionar."
 - "Existe uma diferença entre sustentar a vida e conseguir se sentir vivo dentro dela."
 - **Limiar** = "a soleira… o instante em que a pessoa percebe que não está mais onde estava, mesmo
