@@ -229,6 +229,32 @@ def _empresas(
     return saida
 
 
+#: `cliente_documentos.tipo_documento` of the Serasa Crednet report — the
+#: document `cliente_empresa_participacoes` (the `_empresas` source) is
+#: read from.
+TIPO_DOCUMENTO_CREDNET = "serasa_crednet"
+
+
+def _clientes_com_crednet(client: Any, org_id: UUID, cliente_ids: Iterable[str]) -> tuple[str, ...]:
+    """[P5 F7] Which of `cliente_ids` have a Serasa Crednet READ on file
+    (status `ok`, not deleted) — sorted, so the context snapshot hash stays
+    deterministic. A `sem_dados`/`erro` reading verified nothing."""
+    ids = sorted({str(i) for i in cliente_ids if i})
+    if not ids:
+        return ()
+    linhas = table_reads.in_batched_rows(
+        client, "cliente_documentos", org_id, "cliente_id", ids,
+        select="id, cliente_id, tipo_documento, extracao_status, deleted_at",
+    )
+    return tuple(sorted({
+        str(r["cliente_id"])
+        for r in linhas
+        if r.get("tipo_documento") == TIPO_DOCUMENTO_CREDNET
+        and r.get("extracao_status") == "ok"
+        and not r.get("deleted_at")
+    }))
+
+
 def _rows_por_id_generico(client: Any, org_id: UUID, tabela: str, ids: list[str]) -> dict[str, dict]:
     return {
         str(r["id"]): r
@@ -627,7 +653,9 @@ def carregar(
     # enough; `selecao["texto"]` can legitimately still be empty).
     comarca = (
         derivacao.comarca_de_texto(
-            estrutura_service.texto_da_extracao(client, org_id, selecao["extracao_id"])
+            estrutura_service.texto_da_extracao(client, org_id, selecao["extracao_id"]),
+            # "Comarca da Capital" names its city only through a UF.
+            uf=imovel.endereco.uf if imovel is not None else None,
         )
         if selecao.get("extracao_id")
         else None
@@ -684,6 +712,7 @@ def carregar(
         certificando_ids |= {p.conjuge_cliente_id for p in comp_certificandos if p.conjuge_cliente_id}
     pessoas_por_id = {p.cliente_id: p for p in vendedores + compradores}
     empresas = _empresas(client, org_id, certificando_ids, pessoas_por_id)
+    clientes_com_crednet = _clientes_com_crednet(client, org_id, certificando_ids)
 
     dados = DadosContrato(
         contrato_id=str(contrato_id),
@@ -693,6 +722,7 @@ def carregar(
         # financiamento, parcelas, favorecidos).
         atendimento_id=str(atendimento_id),
         partes_pj=partes_pj,
+        clientes_com_crednet=clientes_com_crednet,
         modelo=contrato["modelo"],
         vendedores=vendedores,
         compradores=compradores,

@@ -113,6 +113,7 @@ def obter_geracao(
     *,
     usuario_id: Optional[Any],
     politica: Politica,
+    assinatura: Optional[date] = None,
 ) -> dict:
     dados, _ = carregar(client, org_id, cliente_id, contrato_id, usuario_id=usuario_id)
     # [E1/H2] ONE `hoje()` snapshot for both switches and the gate — never
@@ -120,15 +121,25 @@ def obter_geracao(
     # boundary between the two.
     referencia = hoje()
     switches = derivar_switches(dados, politica, referencia)
-    # No date is "asked for" on a GET, so this is the stored one or today —
-    # the same value `gerar` will use for a POST with no explicit date, which
-    # is what makes this answer the POST's precondition rather than an
-    # approximation of it.
-    avaliacao = avaliar(dados, switches, politica, data_assinatura(dados, None), referencia)
+    # [2026-10-03, P5 F2] `assinatura` = the date the Gerar dialog will send
+    # on the POST (`?assinatura_data=`), resolved through the SAME
+    # `data_assinatura` precedence `gerar` uses — so every certidão age on
+    # this report is measured against the date the instrument will carry.
+    # Absent, it is the stored date or today: again exactly a POST with no
+    # explicit date. Either way this answer IS the POST's precondition, not
+    # an approximation of it (the panel used to measure against today while
+    # the dialog dated the contract otherwise).
+    data = data_assinatura(dados, assinatura)
+    avaliacao = avaliar(dados, switches, politica, data, referencia)
     derivado = modelo_derivado(switches)
     return {
         "contrato_id": str(contrato_id),
         "pronto": avaliacao.pronto,
+        # The date every age above was measured against — the dialog shows it
+        # as its default, so what it sends is what was checked.
+        "assinatura_referencia": data.isoformat(),
+        # The date stored on the contract (migration 114), when any.
+        "assinatura_data": dados.assinatura_data.isoformat() if dados.assinatura_data else None,
         "modelo_derivado": derivado,
         "modelo_confere": dados.modelo == derivado,
         # True = `gerar` will set the contract's modelo to `modelo_derivado`

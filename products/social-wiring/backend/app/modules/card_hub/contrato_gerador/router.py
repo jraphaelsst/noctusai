@@ -90,10 +90,14 @@ async def post_contrato_iniciar_route(
 async def get_contrato_geracao_route(
     cliente_id: UUID,
     contrato_id: UUID,
+    assinatura_data: Optional[date] = None,
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
     politica=Depends(get_politica_contrato),
 ) -> dict:
+    """Readiness report. `?assinatura_data=` = the date the Gerar dialog will
+    send on `POST …/gerar` — the report measures every certidão age against
+    it (same precedence: asked > stored > today), so panel and POST agree."""
     user, org_id = auth_parts(auth)
     return service.obter_geracao(
         client,
@@ -102,6 +106,7 @@ async def get_contrato_geracao_route(
         contrato_id,
         usuario_id=getattr(user, "id", None),
         politica=politica,
+        assinatura=assinatura_data,
     )
 
 

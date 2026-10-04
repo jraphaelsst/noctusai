@@ -505,6 +505,55 @@ class TestAntigosProprietarios:
         )
         assert limpo["manual"] is None
 
+    def test_manual_override_answers_a_derived_act_with_no_date(self, client, scoped):
+        """Deal 859's dead end: the derived transfer act has NO
+        `data_registro`, so the readiness report says "confirme na página do
+        imóvel" — and the override typed there used to be stored but never
+        read (the dateless act returned first)."""
+        hoje = date(2026, 9, 15)
+        ext = extracao_row(texto=texto_com_venda(date(2021, 9, 15)))
+        seed(scoped, registry=[registry_row()], extracoes=[ext])
+        ato_id = titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=hoje)[
+            "ultima_transferencia"
+        ]["ato_id"]
+        client.put(f"/api/matriculas/atos/{ato_id}/detalhes", json={"data_registro": None})
+        assert titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=hoje)["data_desconhecida"]
+
+        client.put(
+            f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+            json={"data": "2010-03-01", "natureza": "compra_e_venda", "sem_registro": False},
+        )
+        data = titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=hoje)
+
+        assert data["origem"] == "manual"
+        assert data["data_desconhecida"] is False
+        assert data["ultima_transferencia"]["data_registro"] == "2010-03-01"
+        assert data["exige_certidoes"] is False
+        assert data["ato_sem_data"]["ato_id"] == ato_id
+        assert data["transmitentes"] == [
+            {"nome": "SEGUNDO DONO FICTICIO", "cpf_cnpj": "135.792.468-28"}
+        ]
+
+        client.put(
+            f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+            json={"data": None, "sem_registro": True},
+        )
+        sem = titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=hoje)
+        assert (sem["origem"], sem["sem_registro"], sem["exige_certidoes"]) == ("manual", True, False)
+
+    def test_a_dated_derived_act_still_beats_the_override(self, client, scoped):
+        hoje = date(2026, 9, 15)
+        ext = extracao_row(texto=texto_com_venda(date(2024, 1, 10)))
+        seed(scoped, registry=[registry_row()], extracoes=[ext])
+        client.put(
+            f"/api/matriculas/imoveis/{CODIGO}/ultima-transferencia",
+            json={"data": "2010-03-01", "sem_registro": False},
+        )
+        data = titulo_service.antigos_proprietarios(scoped, ORG, CODIGO, hoje=hoje)
+        assert data["origem"] == "extracao"
+        assert data["ultima_transferencia"]["data_registro"] == "2024-01-10"
+        assert "ato_sem_data" not in data
+
     def test_sem_registro_is_recorded_as_an_answer_not_a_fallback(self, client, scoped):
         seed(scoped, registry=[registry_row()])
 

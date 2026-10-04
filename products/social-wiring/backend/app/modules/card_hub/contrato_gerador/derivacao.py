@@ -48,6 +48,7 @@ from noctusai_lib.integrations.documents import (
     has_raw_markup,
     segment_matricula_atos,
 )
+from noctusai_lib.integrations.documents.address import normalizar_uf
 from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
@@ -55,6 +56,7 @@ from app.modules.card_hub.contrato_gerador import certidao_pcen, frases
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
     PAPEIS_SEM_REDACAO,
+    PAPEL_ANUENTE,
     Certidao,
     CertidaoImovel,
     DadosContrato,
@@ -242,59 +244,135 @@ def _area_da_matricula(texto: str) -> Optional[Decimal]:
         return None
 
 
-#: "nesta cidade, município e comarca de Carapicuíba" — the abertura's own
-#: registry boilerplate. Deliberately narrow: "Foro e Comarca de Sorocaba"
-#: (a citation INSIDE an averbação, about a DIFFERENT instrument) never
-#: reads "município e comarca de" and so never matches.
-_COMARCA_MUNICIPIO_RE = re.compile(r"munic[íi]pio\s+e\s+comarca\s+de\s+([^,;.\n]+)", re.IGNORECASE)
+#: [2026-10-03, deal 869] The abertura's own registry boilerplate, in every
+#: phrasing the office's matrículas use: "nesta cidade, município e comarca
+#: de Carapicuíba", "desta cidade e comarca de Cotia", "município e comarca
+#: de …". Deliberately narrow on the noun in front: "Foro e Comarca de
+#: Sorocaba" (a citation INSIDE an averbação, about a DIFFERENT instrument)
+#: never reads "cidade/município e comarca" and so never matches.
+_COMARCA_MUNICIPIO_RE = re.compile(
+    r"(?:cidade|munic[íi]pio)\s+e\s+comarca\s+d[aeo]\s+([^,;.\n()]+)", re.IGNORECASE
+)
 #: "Registro de imóveis da comarca de Cotia – SP" — the cartório's own
 #: heading. Deliberately narrow: "registro civil da comarca de X" (a
 #: person's marriage/birth registry, cited in a qualificação paragraph)
 #: reads "civil", never "de imóveis", and so never matches either.
 _COMARCA_REGISTRO_RE = re.compile(
-    r"registro\s+de\s+im[óo]veis\s+da\s+comarca\s+de\s+"
-    r"([^,;.\n\-–—]+?)(?:\s*[-–—]\s*([A-Za-z]{2}))?(?=[,;.\n]|$)",
+    r"registro\s+de\s+im[óo]veis\s+da\s+comarca\s+d[aeo]\s+"
+    r"([^,;.\n\-–—()]+?)(?:\s*[-–—]\s*([A-Za-z]{2}))?(?=[,;.\n(]|$)",
     re.IGNORECASE,
 )
+#: [2026-10-03] The bare "Comarca de Cotia" / "Comarca da Capital" a
+#: matrícula heading also uses on its own. Only trusted when no clause-local
+#: context names ANOTHER office (`_COMARCA_ALHEIA_RE`) and every bare
+#: citation in the abertura agrees.
+_COMARCA_SOLTA_RE = re.compile(r"(?<!\w)comarca\s+d[aeo]\s+([^,;.\n()]+)", re.IGNORECASE)
+#: Within the same clause as a bare "comarca de X": a registro CIVIL, a
+#: notary, a court/foro — a comarca that is NOT the matrícula's own.
+_COMARCA_ALHEIA_RE = re.compile(
+    r"civil|naturais|nota|tabeli|foro|vara|ju[íi]z|trabalh|cart[óo]rio\s+de\s+paz"
+    r"|resid|domicil|nascid|natural",
+    re.IGNORECASE,
+)
+#: A captured city's tails: " - SP" / "/SP" / "-SP" / " SP", and
+#: "[do] Estado de São Paulo" — the UF they name, if any, is kept apart.
+_COMARCA_TRAVESSAO_RE = re.compile(r"\s+[-–—]\s+")
+_COMARCA_UF_INICIAL_RE = re.compile(r"([A-Za-z]{2})(?![\wÀ-ÿ])")
+_COMARCA_UF_FINAL_RE = re.compile(r"\s*[/\-–—]\s*([A-Za-z]{2})$|(?-i:\s+([A-Z]{2}))$")
+_COMARCA_ESTADO_RE = re.compile(r"[\s,]+(?:do\s+|no\s+)?estado\s+d[eo]\s+(.+)$", re.IGNORECASE)
+
+#: UF -> capital — "Comarca da Capital" names no city by itself; the UF
+#: (written next to it, or the imóvel's own) says which.
+_CAPITAL_POR_UF: dict[str, str] = {
+    "AC": "Rio Branco", "AL": "Maceió", "AP": "Macapá", "AM": "Manaus", "BA": "Salvador",
+    "CE": "Fortaleza", "DF": "Brasília", "ES": "Vitória", "GO": "Goiânia", "MA": "São Luís",
+    "MT": "Cuiabá", "MS": "Campo Grande", "MG": "Belo Horizonte", "PA": "Belém",
+    "PB": "João Pessoa", "PR": "Curitiba", "PE": "Recife", "PI": "Teresina",
+    "RJ": "Rio de Janeiro", "RN": "Natal", "RS": "Porto Alegre", "RO": "Porto Velho",
+    "RR": "Boa Vista", "SC": "Florianópolis", "SP": "São Paulo", "SE": "Aracaju",
+    "TO": "Palmas",
+}
 
 
 def _mesma_cidade(com_uf: str, sem_uf: str) -> bool:
-    """Case/accent-insensitive city-name compare — `com_uf` may carry the
-    registry header's "/UF" suffix (`_COMARCA_REGISTRO_RE`'s shape),
-    `sem_uf` never does (`_COMARCA_MUNICIPIO_RE`'s) — only the city name
-    itself is compared."""
-    return _dobra_acentos(com_uf.split("/", 1)[0]) == _dobra_acentos(sem_uf)
+    """Case/accent-insensitive city-name compare — either side may carry a
+    "/UF" suffix (`_COMARCA_REGISTRO_RE`'s shape); only the city name itself
+    is compared."""
+    return _dobra_acentos(com_uf.split("/", 1)[0]) == _dobra_acentos(sem_uf.split("/", 1)[0])
 
 
-def comarca_de_texto(texto: Optional[str]) -> Optional[str]:
+def _cidade_da_comarca(bruto: str, uf_padrao: Optional[str]) -> Optional[str]:
+    """One captured "comarca de <…>" tail -> the city, or `None`.
+
+    Strips a UF/"Estado de …" tail; resolves "Capital" through the UF written
+    beside it ("Capital do Estado de São Paulo", "Capital/SP") or, failing
+    that, `uf_padrao` (the imóvel's UF) — never guessed without one."""
+    texto = re.sub(r"\s+", " ", bruto).strip(" .")
+    if not texto:
+        return None
+    uf: Optional[str] = None
+    cabeca, *resto = _COMARCA_TRAVESSAO_RE.split(texto, maxsplit=1)
+    if resto and (m := _COMARCA_UF_INICIAL_RE.match(resto[0])):
+        uf = normalizar_uf(m.group(1))
+    m = _COMARCA_ESTADO_RE.search(cabeca)
+    if m:
+        uf = uf or normalizar_uf(m.group(1).strip(" ."))
+        cabeca = cabeca[: m.start()]
+    m = _COMARCA_UF_FINAL_RE.search(cabeca)
+    if m and (sigla := normalizar_uf(m.group(1) or m.group(2))):
+        uf = uf or sigla
+        cabeca = cabeca[: m.start()]
+    cidade = cabeca.strip(" .,")
+    if not cidade:
+        return None
+    if _dobra_acentos(cidade) == "CAPITAL":
+        uf = uf or normalizar_uf(uf_padrao)
+        return _CAPITAL_POR_UF.get(uf) if uf else None
+    # An all-caps heading ("COMARCA DE ITAPEVI") prints as a name in the
+    # foro clause, the same casing `frases.cartorio_texto` gives a city.
+    return frases.cidade_titulo(cidade) if cidade.isupper() else cidade
+
+
+def _comarcas_soltas(escopo: str, uf_padrao: Optional[str]) -> set[str]:
+    """Every bare "comarca de X" in the abertura whose own clause does not
+    name another office (`_COMARCA_ALHEIA_RE`), folded for comparison."""
+    lidas: dict[str, str] = {}
+    for m in _COMARCA_SOLTA_RE.finditer(escopo):
+        inicio_clausula = max(escopo.rfind(sep, 0, m.start()) for sep in (".", ";", "\n"))
+        if _COMARCA_ALHEIA_RE.search(escopo[inicio_clausula + 1 : m.start()]):
+            continue
+        cidade = _cidade_da_comarca(m.group(1), uf_padrao)
+        if cidade:
+            lidas.setdefault(_dobra_acentos(cidade), cidade)
+    return set(lidas.values())
+
+
+def comarca_de_texto(texto: Optional[str], *, uf: Optional[str] = None) -> Optional[str]:
     """[Owner directive, 2026-09-23] The DA ELEIÇÃO DO FORO clause's
-    comarca, read off a matrícula's OWN transcription — never a manual
-    field, never the imóvel's registration address (which can legitimately
-    differ from the registering comarca). Called once at load time
-    (`carregador.carregar`) over the resolved extraction's FULL raw text,
-    independent of which acts the operator selected to quote — the comarca
-    is a fact about the property's registry, not a clause excerpt.
+    comarca, read off a matrícula's OWN transcription — never the imóvel's
+    registration address (which can legitimately differ from the registering
+    comarca). Called once at load time (`carregador.carregar`) over the
+    resolved extraction's FULL raw text, independent of which acts the
+    operator selected to quote — the comarca is a fact about the property's
+    registry, not a clause excerpt. When the text names none, `foro_comarca`
+    falls back to the cartório the operator confirmed on the imóvel.
 
     🔴 [foro-comarca-abertura-scope] Scoped to the matrícula's OWN abertura
     — everything before the first accepted R./AV header
-    (`segment_matricula_atos`'s own boundary, the same segmenter that backs
-    `matricula_atos`). Unscoped, an ACT's body can legitimately name an
-    unrelated "município e comarca de X" (a notary's own city, cited inside
-    an instrumento) or a different deal's elected foro, and whichever such
-    citation happened to sit first in the raw text used to win over the
-    matrícula's own registry heading — a Cotia matrícula whose R.5 cites a
-    "Tabelião de Notas do Município e Comarca de São Paulo" must never
-    resolve to São Paulo. Within the abertura, the registry's own heading
-    (`_COMARCA_REGISTRO_RE`) is PREFERRED over the generic boilerplate
-    phrase (`_COMARCA_MUNICIPIO_RE`); when both are present and name
-    DIFFERENT cidades, neither is trusted — `None`, the SAME named gap
-    (`negociacao.foro_comarca`, `_contrato` below) an unreadable matrícula
-    already produces, never a silent pick between the two.
+    (`segment_matricula_atos`'s own boundary). Unscoped, an ACT's body can
+    legitimately name an unrelated "município e comarca de X" (a notary's
+    own city, cited inside an instrumento) — a Cotia matrícula whose R.5
+    cites a "Tabelião de Notas do Município e Comarca de São Paulo" must
+    never resolve to São Paulo.
 
-    Matches ONLY the two shapes a matrícula's own abertura/registry
-    boilerplate uses (see the two regexes above); `None` when neither is
-    found — the caller (`_contrato`) treats that as a real gap to name,
-    never a guess."""
+    Precedence inside the abertura, most specific first: the registry's own
+    heading (`_COMARCA_REGISTRO_RE`), then the "cidade/município e comarca
+    de" boilerplate (`_COMARCA_MUNICIPIO_RE`) — when both are present and
+    name DIFFERENT cidades neither is trusted (`None`) — then, only when
+    neither exists, a bare "comarca de X" (`_COMARCA_SOLTA_RE`) provided
+    every such citation not about another office agrees. "Comarca da
+    Capital" resolves through the UF written beside it, else `uf` (the
+    imóvel's). `None` is a real gap the caller names, never a guess."""
     if not texto:
         return None
     abertura = next(
@@ -305,21 +383,38 @@ def comarca_de_texto(texto: Optional[str]) -> Optional[str]:
     cabecalho: Optional[str] = None
     m = _COMARCA_REGISTRO_RE.search(escopo)
     if m:
-        cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
+        cidade = _cidade_da_comarca(m.group(1), m.group(2) or uf)
         if cidade:
-            uf = m.group(2)
-            cabecalho = f"{cidade}/{uf.upper()}" if uf else cidade
+            sigla = normalizar_uf(m.group(2)) if m.group(2) else None
+            cabecalho = f"{cidade}/{sigla}" if sigla else cidade
 
     boilerplate: Optional[str] = None
     m = _COMARCA_MUNICIPIO_RE.search(escopo)
     if m:
-        cidade = re.sub(r"\s+", " ", m.group(1)).strip(" .")
-        if cidade:
-            boilerplate = cidade
+        boilerplate = _cidade_da_comarca(m.group(1), uf)
 
     if cabecalho and boilerplate:
         return cabecalho if _mesma_cidade(cabecalho, boilerplate) else None
-    return cabecalho or boilerplate
+    if cabecalho or boilerplate:
+        return cabecalho or boilerplate
+    soltas = _comarcas_soltas(escopo, uf)
+    return next(iter(soltas)) if len(soltas) == 1 else None
+
+
+def foro_comarca(d: DadosContrato) -> Optional[str]:
+    """The DA ELEIÇÃO DO FORO comarca — the ONE reader gate and template
+    share. The matrícula's own text first (`comarca_de_texto`, resolved at
+    load time onto `d.matricula.comarca`); otherwise the city of the cartório
+    de registro de imóveis the operator confirmed on the imóvel
+    (`imovel.numero_registro_imoveis`, itself a gated field) — the comarca
+    IS the registering cartório's, so this is the same fact typed by a
+    human, never the imóvel's street address."""
+    if d.matricula.comarca:
+        return d.matricula.comarca
+    if d.imovel is None:
+        return None
+    partes = frases.cartorio_partes(d.imovel.numero_registro_imoveis)
+    return partes[1] if partes else None
 
 
 def _verificar_coerencia_endereco(
@@ -844,7 +939,9 @@ class EmpresaExigida:
     owner: Pessoa
 
 
-def _empresas_de_certificandos(d: DadosContrato, sw: dict[str, bool]) -> list[tuple[Empresa, Pessoa]]:
+def _empresas_de_certificandos(
+    d: DadosContrato, sw: dict[str, bool], politica: Politica = POLITICA_PADRAO
+) -> list[tuple[Empresa, Pessoa]]:
     """[E1/E3/E6] Every `d.empresas` row a certificando pessoa holds a
     participação in — signing vendedores + their cônjuges (E3: a married
     vendedor's cônjuge is a vendedor too), plus signing compradores +
@@ -853,11 +950,16 @@ def _empresas_de_certificandos(d: DadosContrato, sw: dict[str, bool]) -> list[tu
     (from `empresa.owners`) the readiness report attributes it to — one
     pair per `Empresa` (E4; `d.empresas` already carries one row per
     DISTINCT company, `owners` holding every participant)."""
-    certificandos = signatarios(d.vendedores) + anuentes_certificandos(d) + (
-        signatarios(d.compradores) if sw["tem_permuta"] else []
-    )
+    certificandos = signatarios_certificandos(d, sw, politica) + anuentes_certificandos(d, politica)
     ids = {p.cliente_id for p in certificandos}
-    ids |= {p.conjuge_cliente_id for p in certificandos if p.conjuge_cliente_id}
+    # A spouse is a certificando (E3); a companion is not (P5 F8).
+    dispensados = {
+        p.cliente_id for p in d.vendedores + d.compradores if companheiro_dispensado(d, p, politica)
+    }
+    ids |= {
+        p.conjuge_cliente_id for p in certificandos
+        if p.conjuge_cliente_id and p.conjuge_cliente_id not in dispensados
+    }
     pares: list[tuple[Empresa, Pessoa]] = []
     for e in d.empresas:
         dono = next((o for o in e.owners if o.cliente_id in ids), None)
@@ -975,7 +1077,7 @@ def empresas_exigidas(
     `_empresas_certidoes`, which walks EVERY certificando-owned company,
     not just this filtered set)."""
     saida: list[EmpresaExigida] = []
-    for e, dono in _empresas_de_certificandos(d, sw):
+    for e, dono in _empresas_de_certificandos(d, sw, politica):
         motivo = classificar_empresa(e, referencia, politica)
         if motivo == PJ_EXIGIDO:
             saida.append(EmpresaExigida(empresa=e, sufixo=None, owner=dono))
@@ -1002,13 +1104,54 @@ def conjuge_do_anuente(d: DadosContrato, a: Pessoa) -> Optional[Pessoa]:
     return conjuge
 
 
-def anuentes_certificandos(d: DadosContrato) -> list[Pessoa]:
-    """[E3 + migration 193] An anuente who is a signing vendedor's spouse/
-    companion is treated as a vendedor FOR CERTIDÕES (owner rule: "the
-    cônjuge of a married vendedor IS a vendedor") — the full CPF set plus the
-    estado-civil certidão. An anuente who is not a spouse never is (and is
-    refused anyway: `ANUENTE_SEM_REDACAO`)."""
-    return [a for a in anuentes(d.vendedores) if conjuge_do_anuente(d, a) is not None]
+#: Estados civis that say a person is NOT married to whoever they are
+#: linked to — the link is then a companionship (união estável de fato).
+_ESTADOS_SEM_CASAMENTO = frozenset({"solteiro", "divorciado", "viuvo", "separado_judicialmente"})
+
+
+def companheiro_dispensado(d: DadosContrato, p: Pessoa, politica: Politica = POLITICA_PADRAO) -> bool:
+    """[P5 F8] Is `p` a NON-OWNER signing as a seller's companion — not a
+    spouse — and therefore not a certificando (`Politica.
+    companheiro_apresenta_certidoes`)? Only papel `conjuge`/`anuente`, only
+    with a linked partner on the card, and only when the couple is not
+    married: either says `uniao_estavel`, or the partner's own estado civil
+    says unmarried (deal 867: divorciado seller + companion whose estado
+    civil is not even set). Unknown on both sides ⇒ not dispensed (the
+    estado civil is its own `faltando`)."""
+    if politica.companheiro_apresenta_certidoes or p.papel not in ("conjuge", PAPEL_ANUENTE):
+        return False
+    par = next(
+        (q for q in d.vendedores + d.compradores if q.cliente_id == p.conjuge_cliente_id), None
+    )
+    if par is None:
+        return False
+    estados = {p.estado_civil, par.estado_civil}
+    if "casado" in estados:
+        return False
+    return "uniao_estavel" in estados or par.estado_civil in _ESTADOS_SEM_CASAMENTO
+
+
+def anuentes_certificandos(d: DadosContrato, politica: Politica = POLITICA_PADRAO) -> list[Pessoa]:
+    """[E3 + migration 193] An anuente who is a signing vendedor's spouse is
+    treated as a vendedor FOR CERTIDÕES (owner rule: "the cônjuge of a
+    married vendedor IS a vendedor") — the full CPF set plus the estado-civil
+    certidão. A companion is not (`companheiro_dispensado`, P5 F8), unless
+    the policy says so. An anuente who is not a spouse/companion never is
+    (and is refused anyway: `ANUENTE_SEM_REDACAO`)."""
+    return [
+        a for a in anuentes(d.vendedores)
+        if conjuge_do_anuente(d, a) is not None and not companheiro_dispensado(d, a, politica)
+    ]
+
+
+def signatarios_certificandos(
+    d: DadosContrato, sw: dict[str, bool], politica: Politica = POLITICA_PADRAO
+) -> list[Pessoa]:
+    """The SIGNING certificandos: every signing vendedor — a companion
+    excepted (`companheiro_dispensado`) — plus the signing compradores in a
+    permuta (E6). The one list gate, template and empresa lookup share."""
+    pessoas = signatarios(d.vendedores) + (signatarios(d.compradores) if sw["tem_permuta"] else [])
+    return [p for p in pessoas if not companheiro_dispensado(d, p, politica)]
 
 
 def pj_certificandas(d: DadosContrato, sw: dict[str, bool]) -> list[ParteJuridica]:
@@ -1054,11 +1197,7 @@ def pessoas_certificadas(
     """Whose certidões the contract presents, in group order: the signing
     vendedores, the signing compradores in a permuta, then the previous
     owner(s) when they enter the contract (`antigos_no_contrato`)."""
-    pessoas = (
-        signatarios(d.vendedores)
-        + anuentes_certificandos(d)
-        + (signatarios(d.compradores) if sw["tem_permuta"] else [])
-    )
+    pessoas = signatarios_certificandos(d, sw, politica) + anuentes_certificandos(d, politica)
     if antigos_no_contrato(d, assinatura, politica):
         pessoas += antigos_proprietarios(d)
     return pessoas
@@ -1085,6 +1224,20 @@ def _doc_norm(valor: Optional[str]) -> str:
 def _ancora(p: Pessoa) -> str:
     return _ANCORA_POR_LADO.get(p.lado, "geral")
 
+
+#: [P5 F7] A profissão that says the person runs a company.
+_PROFISSAO_SOCIO_RE = re.compile(r"empres[áa]ri|s[óo]ci[oa]|administrador|comerciante", re.IGNORECASE)
+
+#: [P5 F8] Qualificação keys a missing value of which WARNS instead of
+#: blocking — the signed corpus omits them (see the call site), and the
+#: wording omits the fragment cleanly. key -> (aviso code, message tail).
+_CHAVES_QUALIFICACAO_AVISO: dict[str, tuple[str, str]] = {
+    "profissao": ("PARTE_SEM_PROFISSAO", "não tem profissão; a qualificação sai sem ela."),
+    "rg_orgao_expedidor": (
+        "RG_SEM_ORGAO_EXPEDIDOR",
+        "não tem órgão expedidor do RG; a qualificação sai só com o número.",
+    ),
+}
 
 #: [Migration 193] Qualificação keys a REPRESENTANTE never prints: they sign
 #: for a company and are qualified alone ("casada", no regime, no spouse) —
@@ -1297,12 +1450,19 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
                 conjuge = ids_lado.get(p.conjuge_cliente_id or "")
                 if chave == "conjuge_qualificacao" and conjuge is not None:
                     continue  # the spouse is a signatory and is gated on their own
-                # [Owner directive, 2026-09-23] "all those data are
-                # mandatory for the deal contract" — `profissao` is no
-                # longer waved through with `PARTE_SEM_PROFISSAO` (a
-                # 2026-09-22 aviso arguing the office's own reference
-                # contract 08 qualifies a party with none): it now blocks
-                # like every other qualificação field, generic path below.
+                # [P5 F8, 2026-10-03 — owner delegated, under his rule "if
+                # the signed contracts have it, it is required; if they
+                # don't, it is a doubt"] supersedes the 2026-09-23 "all
+                # mandatory": the office's signed contracts routinely
+                # qualify a party with no profissão (deals 855/859/869/871/
+                # 875) and with no RG órgão expedidor (871), and the
+                # qualificação renders cleanly without either
+                # (`frases.texto_pessoa` omits the profissão slot,
+                # `frases.rg_texto` the "-ÓRGÃO" tail). A doubt, so an aviso.
+                if chave in _CHAVES_QUALIFICACAO_AVISO:
+                    codigo, texto = _CHAVES_QUALIFICACAO_AVISO[chave]
+                    av.avisa(codigo, f"{_nome(p)} {texto}")
+                    continue
                 sufixo = (
                     SUFIXO_DOCUMENTO_DE_IDENTIDADE
                     if chave in _CHAVES_DO_DOCUMENTO_DE_IDENTIDADE
@@ -1732,8 +1892,20 @@ def _negociacao(
             # A divided parcela's payees are its shares (`_divisao` above).
             if p.divisao:
                 pass
-            elif not p.favorecido_id:
+            elif not p.favorecido_id and p.tipo == "sinal":
+                # The sinal's wording settles it INTO an account ("quitação
+                # … com o efetivo crédito na conta corrente ora indicada") —
+                # every signed sinal names one, so it stays required.
                 av.falta(f"negociacao.parcela.{p.id}.favorecido", f"Favorecido da {rot}", "negociacao")
+            elif not p.favorecido_id:
+                # [P5 F8] An intermediária/direta/saldo with no account: the
+                # signed corpus has them (884's intermediária "com prazo
+                # máximo …", 783's consórcio) — the line prints its value,
+                # moment and forma, no "em favor de". A doubt, so an aviso.
+                av.avisa(
+                    "PARCELA_SEM_FAVORECIDO",
+                    f"A {rot} não tem favorecido; sai sem a conta de pagamento.",
+                )
             else:
                 fav = favorecidos.get(p.favorecido_id)
                 if fav is None:
@@ -2154,9 +2326,14 @@ def _certidoes(
     hoje: Optional[date] = None,
 ) -> None:
     hoje = hoje or _hoje_padrao()
-    signatarios_certificados = signatarios(d.vendedores) + (
-        signatarios(d.compradores) if sw["tem_permuta"] else []
-    )
+    signatarios_certificados = signatarios_certificandos(d, sw, politica)
+    for p in d.vendedores:
+        if companheiro_dispensado(d, p, politica):
+            av.avisa(
+                "COMPANHEIRO_SEM_CERTIDOES",
+                f"{_nome(p)} assina como companheiro(a) de um vendedor (não casados): não apresenta "
+                "certidões.",
+            )
     com_apontamento: list[str] = []
 
     def tempo(codigo: str, mensagem: str) -> None:
@@ -2281,7 +2458,7 @@ def _certidoes(
         `faltando`, never a silent skip (E1, H4); required companies get
         the same 11-item CNPJ certidão check as a person (E5)."""
         partes_pj = {pj.empresa_id for pj in d.partes_pj}
-        for e, dono in _empresas_de_certificandos(d, sw):
+        for e, dono in _empresas_de_certificandos(d, sw, politica):
             if e.id in partes_pj:
                 continue  # the company IS a party: its own group below (`conferir_pj`)
             nome_pj = e.razao_social or e.cnpj
@@ -2321,10 +2498,37 @@ def _certidoes(
                 ancora=_ancora(p),
             )
 
+    def conferir_crednet() -> None:
+        """[P5 F7] A certificando with no READ Serasa Crednet had their
+        companies never looked for — `d.empresas` (the only source of the
+        company certidão groups) comes from it. An aviso naming that, never
+        a silent "no companies, nothing to demand"; never a block either
+        (owner: the office decides whether to chase it). Stronger wording
+        when the person's own data says sócio/administrador."""
+        if d.clientes_com_crednet is None:
+            return
+        verificados = set(d.clientes_com_crednet)
+        vistos: set[str] = set()
+        for p in signatarios_certificados + anuentes_certificandos(d, politica):
+            if p.cliente_id in verificados or p.cliente_id in vistos:
+                continue
+            vistos.add(p.cliente_id)
+            indicio = (
+                " — a profissão indica sócio(a)/administrador(a)"
+                if _PROFISSAO_SOCIO_RE.search(p.profissao or "")
+                else ""
+            )
+            av.avisa(
+                "EMPRESAS_NAO_VERIFICADAS",
+                f"Empresas de {_nome(p)} não verificadas — sem Serasa Crednet lido{indicio}: o "
+                "contrato não pede certidões de empresas dele(a).",
+            )
+
     conferir_empresas()
+    conferir_crednet()
     conferir_pj()
     conferir_conjuges_ausentes()
-    for p in signatarios_certificados + anuentes_certificandos(d):
+    for p in signatarios_certificados + anuentes_certificandos(d, politica):
         conferir_pessoa(p)
         # [Q11] the estado-civil certidão is less than 90 days old.
         emitida = p.certidao_estado_civil_emitida_em
@@ -2639,13 +2843,32 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
     # this imóvel's matrícula was never uploaded/read, or its text lacks the
     # cartório heading — both are fixed where the imóvel's matrícula lives.
     # Still GROUPED under "Matrícula" (`onde`), since that is what it is.
-    if d.imovel is not None and not d.matricula.comarca:
+    #
+    # [2026-10-03, deal 869] When the text names no comarca the cartório the
+    # operator confirmed on the imóvel answers it (`foro_comarca`) — the
+    # manual path the readiness item points at, no new field: the comarca is
+    # the registering cartório's. Only when NEITHER resolves is it a gap,
+    # and the falta now says where to type it.
+    if d.imovel is not None and foro_comarca(d) is None:
         av.falta(
             "negociacao.foro_comarca",
-            "Comarca do cartório da matrícula (não encontrada no texto da matrícula)",
+            "Comarca do cartório da matrícula — não encontrada no texto da matrícula; informe o "
+            "cartório de registro de imóveis na página do imóvel (ex.: \"1º Oficial de Registro de "
+            "Imóveis de Cotia\")",
             "matricula",
             destino_em="imovel",
             alvo=ALVO_DOCUMENTOS_DO_IMOVEL,
+        )
+    elif (
+        d.imovel is not None
+        and d.matricula.comarca
+        and (cartorio := frases.cartorio_partes(d.imovel.numero_registro_imoveis)) is not None
+        and not _mesma_cidade(d.matricula.comarca, cartorio[1])
+    ):
+        av.avisa(
+            "FORO_COMARCA_DIFERENTE_DO_CARTORIO",
+            f"A comarca lida na matrícula ({d.matricula.comarca}) difere da cidade do cartório "
+            f"informado ({cartorio[1]}); o foro sai como {d.matricula.comarca}.",
         )
 
 
@@ -2698,6 +2921,7 @@ __all__ = [
     "anos_antes",
     "antigos_no_contrato",
     "anuentes_certificandos",
+    "companheiro_dispensado",
     "conjuge_do_anuente",
     "pj_certificandas",
     "antigos_proprietarios",
@@ -2707,6 +2931,7 @@ __all__ = [
     "classificar_empresa",
     "classificar_situacao_pj",
     "comarca_de_texto",
+    "foro_comarca",
     "corretagem_marcos",
     "derivar_switches",
     "empresas_exigidas",
@@ -2720,6 +2945,7 @@ __all__ = [
     "parcelas_ordenadas",
     "pct_intermediarios",
     "pessoas_certificadas",
+    "signatarios_certificandos",
     "prazo_pendencias",
     "tipos_exigidos",
 ]

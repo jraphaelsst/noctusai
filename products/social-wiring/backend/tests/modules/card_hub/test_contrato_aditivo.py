@@ -235,9 +235,11 @@ class TestGate:
 
     def test_a_party_missing_qualification_blocks(self):
         d = fx.base_v1()
-        d = replace(d, vendedores=[replace(d.vendedores[0], faltando_qualificacao=["profissao"])])
+        # `nacionalidade`, not `profissao`: a missing profissão only warns
+        # since P5 F8 (the signed corpus omits it).
+        d = replace(d, vendedores=[replace(d.vendedores[0], faltando_qualificacao=["nacionalidade"])])
         av = _gate(d, _aditivo(POSSE))
-        assert "qualificacao.profissao" in {f["campo"] for f in av.faltando}
+        assert "qualificacao.nacionalidade" in {f["campo"] for f in av.faltando}
         assert av.pronto is False
 
     def test_no_amendment_at_all_is_faltando(self):

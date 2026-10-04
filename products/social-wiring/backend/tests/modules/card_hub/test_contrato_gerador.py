@@ -477,17 +477,75 @@ class TestGate:
         assert not any(f["campo"] == "qualificacao.cpf" for f in av.faltando)
         assert not av.pronto
 
-    def test_missing_profissao_blocks(self):
-        """🔴 [Owner directive, 2026-09-23 — supersedes the 2026-09-22
-        PARTE_SEM_PROFISSAO aviso] "all those data are mandatory for the
-        deal contract": a missing profissão now blocks like every other
-        qualificação field, generic path."""
+    @pytest.mark.parametrize(
+        "chave, codigo",
+        [("profissao", "PARTE_SEM_PROFISSAO"), ("rg_orgao_expedidor", "RG_SEM_ORGAO_EXPEDIDOR")],
+    )
+    def test_missing_profissao_or_rg_orgao_warns_never_blocks(self, chave, codigo):
+        """[P5 F8, owner rule "if the signed contracts have it, it is
+        required; if they don't, it is a doubt" — supersedes the 2026-09-23
+        "all mandatory"] the office's signed contracts routinely omit the
+        profissão and sometimes the RG órgão; the qualificação renders
+        cleanly without them."""
         d = fx.variante(1)
-        v = replace(d.vendedores[0], faltando_qualificacao=["profissao"])
+        v = replace(d.vendedores[0], faltando_qualificacao=[chave])
         _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
-        assert "PARTE_SEM_PROFISSAO" not in _codigos(av.avisos)
-        assert any(f["campo"] == "qualificacao.profissao" for f in av.faltando)
+        assert codigo in _codigos(av.avisos)
+        assert not any(f["campo"] == f"qualificacao.{chave}" for f in av.faltando)
+        assert av.pronto
+
+    def test_an_intermediaria_with_no_favorecido_warns_and_prints_without_an_account(self):
+        """[P5 F8] Signed contracts carry intermediárias with no account
+        (884: "com prazo máximo …"; 783: consórcio) — an aviso, and the line
+        prints value + moment + forma, no "em favor de"."""
+        d = fx.variante(1)
+        parcelas = [replace(p, favorecido_id=None) if p.id == "p2" else p for p in d.parcelas]
+        d = replace(d, parcelas=parcelas)
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "PARCELA_SEM_FAVORECIDO" in _codigos(av.avisos)
+        assert not any(f["campo"].endswith(".favorecido") for f in av.faltando)
+        linha = next(l for l in _texto(1, d).split("\n") if "Parcela 02" in l)
+        assert linha.endswith("previsto para quitação da Parcela 03, por meio de transferência.")
+        assert "em favor" not in linha and "conta corrente" not in linha
+
+    def test_a_sinal_with_no_favorecido_still_blocks(self):
+        """The sinal's own wording settles it into "a conta corrente ora
+        indicada" — every signed sinal names one."""
+        d = fx.variante(1)
+        parcelas = [replace(p, favorecido_id=None) if p.id == "p1" else p for p in d.parcelas]
+        _d, _pol, _sw, av = _avaliar(1, replace(d, parcelas=parcelas))
+        assert "negociacao.parcela.p1.favorecido" in {f["campo"] for f in av.faltando}
+
+    def test_companies_unverified_without_crednet_is_an_aviso_naming_a_socio(self):
+        """[P5 F7] `clientes_com_crednet` empty ⇒ nobody's companies were
+        looked for: an aviso (stronger when the profissão says sócio),
+        never a block; `None` (not loaded) checks nothing."""
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], profissao="empresário")
+        d = replace(d, vendedores=[v] + d.vendedores[1:], clientes_com_crednet=())
+        _d, _pol, _sw, av = _avaliar(1, d)
+        msgs = [a["mensagem"] for a in av.avisos if a["codigo"] == "EMPRESAS_NAO_VERIFICADAS"]
+        assert msgs and "sócio(a)/administrador(a)" in msgs[0]
+        assert av.pronto
+
+        verificado = replace(d, clientes_com_crednet=tuple(p.cliente_id for p in d.vendedores))
+        assert "EMPRESAS_NAO_VERIFICADAS" not in _codigos(_avaliar(1, verificado)[3].avisos)
+        nao_carregado = replace(d, clientes_com_crednet=None)
+        assert "EMPRESAS_NAO_VERIFICADAS" not in _codigos(_avaliar(1, nao_carregado)[3].avisos)
+
+    def test_a_still_required_qualificacao_key_blocks(self):
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], faltando_qualificacao=["nacionalidade"])
+        _d, _pol, _sw, av = _avaliar(1, replace(d, vendedores=[v]))
+        assert any(f["campo"] == "qualificacao.nacionalidade" for f in av.faltando)
         assert not av.pronto
+
+    def test_a_qualificacao_with_no_rg_orgao_has_no_dangling_hyphen(self):
+        d = fx.variante(1)
+        v = replace(d.vendedores[0], rg_orgao=None, profissao=None)
+        texto = frases.texto_pessoa(v, em_nucleo=False)
+        assert f"identidade RG {v.rg.strip()} e inscrit" in texto
+        assert "-," not in texto and "- e" not in texto and "None" not in texto and ", ," not in texto
 
     def test_a_missing_certidao_is_named_per_parte(self):
         """Buyer-side (a permuta signatory) certidões are fully required —
@@ -816,17 +874,47 @@ class TestQ9CertidoesDeEmpresa:
         — a married vendedor's cônjuge who IS a card party is treated
         exactly like any other certificando."""
         d = fx.variante(1)
-        titular = replace(d.vendedores[0], conjuge_cliente_id="v2")
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2", estado_civil="casado")
         conjuge = replace(
             fx.pessoa("v2", "vendedor", "conjuge", "Cônjuge Exemplo", "Feminino",
                       "444555666", "55.555.555-5"),
-            conjuge_cliente_id="v1",
+            conjuge_cliente_id="v1", estado_civil="casado",
         )
         e = fx.empresa("emp-6", CNPJ, "Empresa da Cônjuge Ltda", "ativa",
                         owners=[conjuge], sem_tipo="cnd_federal")
         d = replace(d, vendedores=[titular, conjuge], empresas=[e])
         _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
         assert ("certidao.cnd_federal", conjuge.parte_id) in _campos(av)
+
+    @pytest.mark.parametrize(
+        "estado_titular, estado_companheira",
+        [("divorciado", None), ("divorciado", "solteiro"), ("uniao_estavel", "uniao_estavel")],
+    )
+    def test_a_companion_in_uniao_estavel_is_not_a_certificando(self, estado_titular, estado_companheira):
+        """[P5 F8, deal 867] A divorciado seller's companion signs (papel
+        conjuge) but the signed contract presents no certidão group for her:
+        not a certificando — no CPF set, no estado-civil certidão, no
+        company — unless the policy says so. An aviso names it."""
+        d = fx.variante(1)
+        titular = replace(d.vendedores[0], conjuge_cliente_id="v2", estado_civil=estado_titular)
+        companheira = replace(
+            fx.pessoa("v2", "vendedor", "conjuge", "Companheira Exemplo", "Feminino",
+                      "444555666", "55.555.555-5"),
+            conjuge_cliente_id="v1", estado_civil=estado_companheira, certidoes=[],
+            certidao_estado_civil_emitida_em=None,
+        )
+        e = fx.empresa("emp-7", CNPJ, "Empresa da Companheira Ltda", "ativa",
+                        owners=[companheira], sem_tipo="cnd_federal")
+        d = replace(d, vendedores=[titular, companheira], empresas=[e])
+        _d, _pol, _sw, av = _avaliar(1, d, hoje=fx.REFERENCIA)
+        assert not [c for c in _campos(av) if c[1] == companheira.parte_id and c[0].startswith("certidao")]
+        assert ("qualificacao.certidao_estado_civil_emissao", companheira.parte_id) not in _campos(av)
+        assert "COMPANHEIRO_SEM_CERTIDOES" in _codigos(av.avisos)
+        assert companheira not in derivacao.pessoas_certificadas(d, _sw, fx.ASSINATURA, _pol)
+
+        exige = replace(_pol, companheiro_apresenta_certidoes=True)
+        av2 = derivacao.avaliar(d, _sw, exige, fx.ASSINATURA, fx.REFERENCIA)
+        assert ("certidao.cnd_federal", companheira.parte_id) in _campos(av2)
 
     def test_a_spouse_missing_from_the_card_is_named_as_faltando(self):
         """[E3, tech-lead review] `conjuge_cliente_id` points at a cliente
@@ -1568,7 +1656,8 @@ class TestTextoPessoaSemProfissao:
 class TestComarcaDaMatricula:
     """[Owner directive, 2026-09-23] `derivacao.comarca_de_texto` — the DA
     ELEIÇÃO DO FORO clause's comarca, read off the matrícula's OWN
-    transcription. NO manual field, NO imóvel-address fallback."""
+    transcription — else the confirmed cartório's city
+    (`derivacao.foro_comarca`). NO imóvel-address fallback."""
 
     def test_matches_municipio_e_comarca_shape(self):
         texto = "O imóvel está situado nesta cidade, município e comarca de Carapicuíba, Estado de São Paulo."
@@ -1623,10 +1712,62 @@ class TestComarcaDaMatricula:
         )
         assert derivacao.comarca_de_texto(texto) is None
 
-    def test_an_unresolvable_comarca_blocks_generation(self):
+    @pytest.mark.parametrize(
+        "texto, esperado",
+        [
+            ("Imóvel situado desta cidade e comarca de Cotia, Estado de São Paulo.", "Cotia"),
+            ("Imóvel situado nesta Cidade e Comarca de Embu das Artes/SP, a saber.", "Embu das Artes"),
+            ("MATRÍCULA 1.234 - COMARCA DE ITAPEVI - SP\nIMÓVEL: casa nº 5.", "Itapevi"),
+            ("Comarca da Capital do Estado de São Paulo - Imóvel: apartamento.", "São Paulo"),
+            ("Oficial de Registro - Comarca da Capital/RJ\nImóvel: sala.", "Rio de Janeiro"),
+        ],
+    )
+    def test_matches_the_other_abertura_phrasings(self, texto, esperado):
+        """[Deal 869, 2026-10-03] "desta cidade e comarca de …", a bare
+        "Comarca de X" heading and "Comarca da Capital" used to read as no
+        comarca at all — a dead end with no manual field."""
+        assert derivacao.comarca_de_texto(texto) == esperado
+
+    def test_comarca_da_capital_resolves_through_the_imovel_uf_only(self):
+        texto = "Comarca da Capital\nImóvel: apartamento nº 11."
+        assert derivacao.comarca_de_texto(texto) is None, "which capital is a UF fact — never guessed"
+        assert derivacao.comarca_de_texto(texto, uf="SP") == "São Paulo"
+
+    @pytest.mark.parametrize(
+        "texto",
+        [
+            "PROPRIETÁRIA: Fulana Exemplo, residente na comarca de Osasco.\nImóvel: casa.",
+            "casados conforme certidão do Registro Civil das Pessoas Naturais da comarca de Barueri.",
+            "Comarca de Cotia.\nImóvel: casa, Comarca de Jandira.",
+        ],
+    )
+    def test_a_bare_comarca_about_something_else_or_ambiguous_is_none(self, texto):
+        assert derivacao.comarca_de_texto(texto) is None
+
+    def test_the_confirmed_cartorio_answers_when_the_text_names_no_comarca(self):
+        """The manual path: the imóvel's cartório field (already gated, typed
+        by the operator) — the comarca IS the registering cartório's."""
         d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca=None))
+        assert derivacao.foro_comarca(d) == "Cidade Exemplo"
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "negociacao.foro_comarca" not in {f["campo"] for f in av.faltando}
+
+    def test_a_comarca_differing_from_the_cartorio_city_warns(self):
+        d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca="Outra Cidade"))
+        _d, _pol, _sw, av = _avaliar(1, d)
+        assert "FORO_COMARCA_DIFERENTE_DO_CARTORIO" in _codigos(av.avisos)
+
+    def test_an_unresolvable_comarca_blocks_generation(self):
+        base = fx.variante(1)
+        d = replace(
+            base,
+            matricula=replace(base.matricula, comarca=None),
+            imovel=replace(base.imovel, numero_registro_imoveis=None),
+        )
         _d, _pol, _sw, av = _avaliar(1, d)
         assert ("negociacao.foro_comarca", None) in _campos(av)
+        item = next(f for f in av.faltando if f["campo"] == "negociacao.foro_comarca")
+        assert "cartório de registro de imóveis na página do imóvel" in item["rotulo"]
 
     @pytest.mark.parametrize(
         "constante, arquivo",
@@ -1650,7 +1791,12 @@ class TestComarcaDaMatricula:
         """🔴 Not the generic `/matriculas` extractor list: the imóvel's own
         page, on the documents card where its matrícula is uploaded — still
         grouped under "Matrícula"."""
-        d = replace(fx.variante(1), matricula=replace(fx.variante(1).matricula, comarca=None))
+        base = fx.variante(1)
+        d = replace(
+            base,
+            matricula=replace(base.matricula, comarca=None),
+            imovel=replace(base.imovel, numero_registro_imoveis=None),
+        )
         _d, _pol, _sw, av = _avaliar(1, d)
         item = next(f for f in av.faltando if f["campo"] == "negociacao.foro_comarca")
         assert item["onde"] == "matricula"

@@ -142,12 +142,12 @@ async function render(aberto = true) {
 describe("GeradorContratoContainer", () => {
   it("🔴 LAZY FETCH — `aberto=false` is passed straight through as the readiness query's enabled gate", async () => {
     await render(false);
-    expect(mockUseContratoGeracao).toHaveBeenCalledWith("cli1", "c1", false);
+    expect(mockUseContratoGeracao).toHaveBeenCalledWith("cli1", "c1", false, undefined);
   });
 
   it("`aberto=true` (the section is open) enables the readiness query", async () => {
     await render(true);
-    expect(mockUseContratoGeracao).toHaveBeenCalledWith("cli1", "c1", true);
+    expect(mockUseContratoGeracao).toHaveBeenCalledWith("cli1", "c1", true, undefined);
   });
 
   it("'Gerar versão' calls gerar.mutate with the contract id and a non-empty assinatura_data draft", async () => {
@@ -158,6 +158,28 @@ describe("GeradorContratoContainer", () => {
     expect(vars.contratoId).toBe("c1");
     expect(typeof vars.assinaturaData).toBe("string");
     expect(vars.assinaturaData.length).toBeGreaterThan(0);
+  });
+
+  it("🔴 [P5 F2] the field defaults to the date the report measured against, and gerar sends it", async () => {
+    mockUseContratoGeracao.mockReturnValue({
+      data: { ...statusFixture(), assinatura_referencia: "2026-07-25" },
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      refetch: mockRefetch,
+    });
+    const { screen, fireEvent } = await render();
+    expect((screen.getByTestId("gerador-contrato-data") as HTMLInputElement).value).toBe("2026-07-25");
+    fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
+    expect(mockGerarMutate.mock.calls[0][0].assinaturaData).toBe("2026-07-25");
+  });
+
+  it("🔴 [P5 F2] a typed date re-measures the readiness report against that same date", async () => {
+    const { screen, fireEvent } = await render();
+    fireEvent.change(screen.getByTestId("gerador-contrato-data"), { target: { value: "2026-08-11" } });
+    expect(mockUseContratoGeracao).toHaveBeenLastCalledWith("cli1", "c1", true, "2026-08-11");
+    fireEvent.click(screen.getByTestId("gerador-contrato-btn"));
+    expect(mockGerarMutate.mock.calls[0][0].assinaturaData).toBe("2026-08-11");
   });
 
   it("🔴 a 400 CONTRATO_INCOMPLETO shows details.faltando/bloqueios via the section", async () => {

@@ -13,7 +13,7 @@
  * `api` client (raw `fetch` + the auth header pulled from supabase), JSON
  * mutations go through `api`.
  */
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError } from "@noctusai/lib";
 import { api, supabase } from "@noctusai/seed/infra";
 
@@ -297,6 +297,13 @@ export interface ContratoGeracaoStatus {
   /** `false` = the derived model disagrees with the contract's own `modelo`
    *  — shown as a flag, never silently overridden. */
   modelo_confere: boolean;
+  /** The date every certidão age in this report was measured against —
+   *  the `?assinatura_data=` asked for, else the stored one, else today
+   *  (same precedence as `POST …/gerar`). The dialog defaults to it, so the
+   *  date it sends is the date that was checked. Absent on an older backend. */
+  assinatura_referencia?: string;
+  /** Migration 114 — the date stored on the contract, when any. */
+  assinatura_data?: string | null;
   /** `true` = a contract started by "Gerar contrato": generating sets its
    *  `modelo` to `modelo_derivado`. `false` = an upload — only flagged. */
   modelo_automatico: boolean;
@@ -605,14 +612,24 @@ export function useContratoGeracao(
   clienteId: string | null,
   contratoId: string | null,
   aberto: boolean,
+  /** The Gerar dialog's date (`YYYY-MM-DD`): the report measures every
+   *  certidão age against the SAME date `POST …/gerar` will be sent with.
+   *  Absent = the backend's own default (stored date, else today). */
+  assinaturaData?: string,
 ) {
+  const query = assinaturaData ? `?assinatura_data=${encodeURIComponent(assinaturaData)}` : "";
   return useQuery({
-    queryKey: GERACAO_KEY(clienteId ?? "__none__", contratoId ?? "__none__"),
+    // The date rides at the END of the key, so every invalidation of the
+    // GERACAO_KEY prefix still reaches it.
+    queryKey: [...GERACAO_KEY(clienteId ?? "__none__", contratoId ?? "__none__"), assinaturaData ?? null] as const,
     queryFn: () =>
       api.get<ContratoGeracaoStatus>(
-        `${base(clienteId as string)}/${encodeURIComponent(contratoId as string)}/geracao`,
+        `${base(clienteId as string)}/${encodeURIComponent(contratoId as string)}/geracao${query}`,
       ),
     enabled: aberto && !!clienteId && !!contratoId,
+    // A date change is a key change: keep the report on screen while the
+    // re-measured one loads (`KB § PATTERNS/frontend/lying-loading-state.md`).
+    placeholderData: keepPreviousData,
   });
 }
 

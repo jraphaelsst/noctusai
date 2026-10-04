@@ -172,8 +172,11 @@ def e_brasileiro(p: Pessoa) -> bool:
 
 
 def rg_texto(p: Pessoa) -> str:
+    """"<número>-<ÓRGÃO>" — or the number alone when no órgão is on file
+    (an aviso, `RG_SEM_ORGAO_EXPEDIDOR`; never a dangling "-")."""
     orgao = re.sub(r"[\s/]+", "-", (p.rg_orgao or "").strip().upper())
-    return f"{(p.rg or '').strip()}-{orgao}"
+    numero = (p.rg or "").strip()
+    return f"{numero}-{orgao}" if orgao else numero
 
 
 #: [Migration 193] `clientes.identidade_tipo` — the identity documents a
@@ -194,7 +197,7 @@ def identidade_texto(p: Pessoa) -> str:
     if sigla is None:
         return f"{portador} da cédula de identidade RG {rg_texto(p)}"
     orgao = re.sub(r"\s+", " ", (p.rg_orgao or "").strip().upper())
-    return f"{portador} da cédula de identidade {sigla} {(p.rg or '').strip()} {orgao}"
+    return f"{portador} da cédula de identidade {sigla} {(p.rg or '').strip()} {orgao}".rstrip()
 
 
 #: [Migration 193] A person qualified ALONE whose estado civil is one the
@@ -665,6 +668,11 @@ def texto_parcela(
                 repetido=favorecido_repetido, vendedor_favorecido=vendedor_favorecido,
             )
         )
+    elif not dividida and p.tipo in ("intermediaria", "direta", "saldo") and (p.forma_pagamento or "").strip():
+        # [P5 F8] A parcela with no favorecido (aviso `PARCELA_SEM_FAVORECIDO`):
+        # the forma alone, no account — corpus 783 "por meio de recursos de
+        # consórcio imobiliário".
+        frases.append(f"por meio de {_forma(p.forma_pagamento)}")
     if juros_am is not None:
         frases.append(f"acrescidos de {pct_simples(juros_am)} de juros a.m., calculados pro rata die")
     if p.tipo == "sinal":
@@ -967,7 +975,7 @@ _CARTORIO_SEPARADORES = re.compile(r"[|\n\r]+")
 _CONECTIVOS = {"de", "da", "do", "das", "dos", "e"}
 
 
-def _cidade_titulo(cidade: str) -> str:
+def cidade_titulo(cidade: str) -> str:
     palavras = re.sub(r"\s+", " ", cidade).strip().lower().split(" ")
     return " ".join(
         w if (i > 0 and w in _CONECTIVOS) else w[:1].upper() + w[1:]
@@ -985,7 +993,7 @@ def _cartorio_do_segmento(segmento: str) -> Optional[tuple[Optional[int], str]]:
     if not cidade or cidade.lower() == "capital":
         return None
     ordinal = int(m.group("ord")) if m.group("ord") else None
-    return ordinal, _cidade_titulo(cidade)
+    return ordinal, cidade_titulo(cidade)
 
 
 def cartorio_partes(valor: Optional[str]) -> Optional[tuple[Optional[int], str]]:

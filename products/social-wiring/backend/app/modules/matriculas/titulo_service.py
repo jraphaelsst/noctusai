@@ -492,6 +492,9 @@ def antigos_proprietarios(
     3. Otherwise, the operator's manual override: a typed date, or an
        explicit "não consta transferência registrada" statement that
        resolves `exige_certidoes` to `False` instead of leaving it unknown.
+       ALSO the answer when 1./2. found an act whose `data_registro` is
+       blank: a dateless act cannot answer "when", the override can (the
+       act is still reported as `ato_sem_data`, and its `transmitentes`).
     `manual` in the response always reports the raw override state, even
     when a derivation above wins — the property page shows/edits it either
     way.
@@ -545,10 +548,20 @@ def antigos_proprietarios(
                 det = detalhes[str(ato["id"])]
                 origem_derivacao = "extracao"
 
+    manual = saida["manual"]
+    manual_responde = bool(manual and (manual.get("data_registro") or manual.get("sem_registro")))
+    data_registro: Optional[date] = None
     if ato is not None and det is not None:
         detalhes_svc.log_leitura_detalhes(client, org_id, extracao["id"], usuario_id)
         bruto = det.get("data_registro")
         data_registro = date.fromisoformat(str(bruto)[:10]) if bruto else None
+        # The derived act's sellers are still who sold, whatever answers the
+        # date question below.
+        saida["transmitentes"] = [
+            {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
+            for p in det.get("transmitentes") or []
+        ]
+    if ato is not None and det is not None and (data_registro is not None or not manual_responde):
         limite = _anos_antes(hoje, ANOS_CERTIDOES_ANTIGOS_PROPRIETARIOS)
         saida.update(
             {
@@ -559,10 +572,6 @@ def antigos_proprietarios(
                     "data_registro": data_registro.isoformat() if data_registro else None,
                     "detalhes_origem": det.get("origem"),
                 },
-                "transmitentes": [
-                    {"nome": p.get("nome"), "cpf_cnpj": p.get("cpf_cnpj")}
-                    for p in det.get("transmitentes") or []
-                ],
                 "exige_certidoes": data_registro is None or data_registro > limite,
                 "data_desconhecida": data_registro is None,
                 "origem": origem_derivacao,
@@ -570,7 +579,15 @@ def antigos_proprietarios(
         )
         return saida
 
-    manual = saida["manual"]
+    # [2026-10-03 fix, deal 859] Reached ALSO when a transfer act WAS derived
+    # but carries no `data_registro` (reader left it blank) and an operator
+    # confirmed an override: the override answers the question the act
+    # cannot. Returning the dateless act first used to make the property
+    # page's "confirme na página do imóvel" a dead end — the override was
+    # stored but never read, so `data_desconhecida` stayed True forever.
+    # The dateless act stays visible as `ato_sem_data` (never silently lost).
+    if ato is not None:
+        saida["ato_sem_data"] = {"ato_id": str(ato["id"]), "ato_ref": _ato_ref(ato)}
     if manual and manual.get("sem_registro"):
         saida["sem_registro"] = True
         saida["origem"] = "manual"

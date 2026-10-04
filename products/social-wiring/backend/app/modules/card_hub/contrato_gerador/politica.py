@@ -171,6 +171,14 @@ class Politica:
     # [Q11] Answered: the estado-civil certidão must be less than 90 days old
     # at the assinatura (`Pessoa.certidao_estado_civil_emitida_em`).
     certidao_estado_civil_max_dias: int = 90
+    # [P5 F8, 2026-10-03] A non-owner who signs as a seller's COMPANION
+    # (união estável — or the partner of a seller whose own estado civil is
+    # solteiro/divorciado/viúvo/separado, i.e. not married to them) is NOT a
+    # certificando: the signed corpus (deal 867) presents no certidão group
+    # for her. The owner rule "the cônjuge of a married vendedor IS a
+    # vendedor" stays exactly that — MARRIED. True = the office wants the
+    # companion's full certidão set too.
+    companheiro_apresenta_certidoes: bool = False
 
     # [Q12] Answered: the posse multa diária is the office's value
     # (`Imobiliaria.posse_multa_diaria`, missing → faltando) and applies in

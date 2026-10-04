@@ -596,6 +596,13 @@ class DadosContrato:
     #: (E4), `owners` names who. `carregador._empresas` loads it; unit tests
     #: build it directly via `fx.empresa(...)`.
     empresas: list[Empresa] = field(default_factory=list)
+    #: [P5 F7] The certificandos (by `cliente_id`, sorted) with a READ Serasa
+    #: Crednet on file (`cliente_documentos.tipo_documento='serasa_crednet'`,
+    #: `extracao_status='ok'`) — the only source of `empresas` above. A
+    #: certificando missing from it had their companies never verified, which
+    #: the gate names (`EMPRESAS_NAO_VERIFICADAS`) instead of silently
+    #: demanding nothing. `None` = not loaded (unit fixtures): no check.
+    clientes_com_crednet: Optional[tuple[str, ...]] = None
     #: [Q11] Per-contract pendências prazo (days), overriding the office's
     #: `Imobiliaria.prazo_pendencias_padrao_dias`; None = use that default.
     prazo_pendencias_dias: Optional[int] = None

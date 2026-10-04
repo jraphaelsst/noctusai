@@ -539,7 +539,8 @@ class TestGeracao:
         r = client.get(_url(ids, "geracao"), headers=_auth())
         assert r.status_code == 200, r.text
         body = r.json()
-        assert set(body) == {"contrato_id", "pronto", "modelo_derivado", "modelo_confere",
+        assert set(body) == {"contrato_id", "pronto", "assinatura_referencia", "assinatura_data",
+                             "modelo_derivado", "modelo_confere",
                              "modelo_automatico", "processo_legado", "modalidade_assinatura",
                              "revisao_final_unica", "switches", "faltando", "bloqueios",
                              "avisos", "confirmacoes", "itens_revisao"}
@@ -777,6 +778,44 @@ class TestAssinaturaData:
         assert r.status_code == 201, r.text
         assert len(_rows(scoped, "atendimento_contrato_versoes")) == 1
 
+    def test_the_readiness_report_measures_against_the_dialogs_date(self, client, scoped, fake_storage):
+        """[P5 F2] The Gerar dialog sends a date on the POST; the panel used to
+        measure against stored-or-today regardless, so the two disagreed. The
+        GET now takes the SAME date (`?assinatura_data=`) and says which date
+        it measured against."""
+        ids = _seed_completo(scoped)
+        _contrato_over(scoped, ids, assinatura_data=(hoje() - timedelta(days=40)).isoformat())
+
+        armazenada = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert armazenada["assinatura_referencia"] == (hoje() - timedelta(days=40)).isoformat()
+        assert armazenada["assinatura_data"] == armazenada["assinatura_referencia"]
+        assert armazenada["pronto"] is False
+
+        pedida = client.get(
+            _url(ids, "geracao"), params={"assinatura_data": hoje().isoformat()}, headers=_auth()
+        ).json()
+        assert pedida["assinatura_referencia"] == hoje().isoformat()
+        assert "CERTIDAO_EMITIDA_APOS_ASSINATURA" not in {b["codigo"] for b in pedida["bloqueios"]}
+        assert pedida["pronto"] is True
+        r = client.post(_url(ids, "gerar"), json={"assinatura_data": hoje().isoformat()}, headers=_auth())
+        assert r.status_code == 201, r.text
+
+    def test_a_seller_with_no_read_crednet_warns_companies_unverified(self, client, scoped, fake_storage):
+        """[P5 F7] No Serasa Crednet read ⇒ no companies were ever looked
+        for: an aviso, never a block — and it clears once one is read."""
+        ids = _seed_completo(scoped)
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert "EMPRESAS_NAO_VERIFICADAS" in {a["codigo"] for a in geracao["avisos"]}
+        assert "EMPRESAS_NAO_VERIFICADAS" not in {b["codigo"] for b in geracao["bloqueios"]}
+
+        crednet = {
+            **_documento_estado_civil(ids["vendedor"]),
+            "id": str(uuid4()), "tipo_documento": "serasa_crednet", "extracao_status": "ok",
+        }
+        scoped.set_table_data("cliente_documentos", _rows(scoped, "cliente_documentos") + [crednet])
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert "EMPRESAS_NAO_VERIFICADAS" not in {a["codigo"] for a in geracao["avisos"]}
+
     def test_the_contract_prazo_overrides_the_office_default(self, client, scoped, fake_storage):
         ids = _seed_completo(scoped)
         _contrato_over(scoped, ids, prazo_pendencias_dias=0)
@@ -821,12 +860,14 @@ class TestIniciar:
         seed's matrícula never went through the imóvel-page upload flow
         `estrutura_service._extracao_padrao_do_imovel` resolves against, so
         a brand-new contract's `obter_selecao` finds no default extraction
-        either — the readiness report names all three gaps."""
+        either — but the cartório confirmed on the imóvel answers the foro
+        (`derivacao.foro_comarca`, P5 F5), so the report names the two
+        per-contract selections only."""
         ids = _seed_completo(scoped)
         body = self._iniciar(client, ids).json()
         assert body["contrato"]["modelo"] == "compra_venda"
         assert {f["campo"] for f in body["geracao"]["faltando"]} == {
-            "matricula.atos", "negociacao.foro_comarca", "imobiliaria.testemunhas",
+            "matricula.atos", "imobiliaria.testemunhas",
         }
 
     def test_a_card_with_no_open_atendimento_is_refused_and_writes_nothing(self, client, scoped, fake_storage):

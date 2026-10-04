@@ -60,8 +60,9 @@ export interface GeradorContratoContainerProps {
 }
 
 /**
- * Today in São Paulo as `YYYY-MM-DD` — the same default the backend applies
- * when `assinatura_data` is omitted. `toISOString()` is UTC, which after 21h
+ * Today in São Paulo as `YYYY-MM-DD` — the field's value only until the
+ * readiness report answers with the date it measured against
+ * (`assinatura_referencia`: the stored contract date, else this same today). `toISOString()` is UTC, which after 21h
  * local time is already tomorrow and would silently date the contract a day
  * late.
  */
@@ -80,11 +81,16 @@ export function GeradorContratoContainer({
   aberto,
   onIrPara,
 }: GeradorContratoContainerProps) {
-  const query = useContratoGeracao(clienteId, contratoId, aberto);
+  // [P5 F2] The date the operator typed — "" until they type one. Until
+  // then the backend's own default (stored contract date, else today) is
+  // what the report measured against (`assinatura_referencia`), and that is
+  // what the field shows and `gerar` sends: the panel and the POST always
+  // measure certidão ages against the SAME date.
+  const [assinaturaDigitada, setAssinaturaDigitada] = useState("");
+  const query = useContratoGeracao(clienteId, contratoId, aberto, assinaturaDigitada || undefined);
   const { gerar } = useContratoMutations(clienteId);
   const ciencia = useCienciaPcen(clienteId);
-
-  const [assinaturaData, setAssinaturaData] = useState(hoje);
+  const assinaturaData = assinaturaDigitada || query.data?.assinatura_referencia || hoje();
   const [erroGeracao, setErroGeracao] = useState<ContratoGeracaoError | null>(null);
   const [avisosGerados, setAvisosGerados] = useState<string[] | null>(null);
 
@@ -226,7 +232,7 @@ export function GeradorContratoContainer({
         isError={query.isError && !query.data}
         onRetry={() => query.refetch()}
         assinaturaData={assinaturaData}
-        onAssinaturaDataChange={setAssinaturaData}
+        onAssinaturaDataChange={setAssinaturaDigitada}
         gerando={gerar.isPending || verificar.isPending}
         onGerar={handleGerar}
         erroGeracao={erroGeracao}

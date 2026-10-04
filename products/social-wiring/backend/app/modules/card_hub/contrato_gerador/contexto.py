@@ -50,6 +50,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     certidoes_imovel,
     corretagem_marcos,
     empresas_exigidas,
+    foro_comarca,
     indice_certidoes,
     grupos_de_parcelas,
     numero_da_parcela,
@@ -529,7 +530,7 @@ def montar_contexto(
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
     seus_nomes = "seus nomes" if plural_apres else "seu nome"
-    anu_cert = anuentes_certificandos(d)
+    anu_cert = anuentes_certificandos(d, politica)
     if anu_cert:
         # [Migration 193] Corpus deal 141: "apresenta neste momento as
         # certidões em seu nome, em nome da Anuente …".
@@ -749,10 +750,11 @@ def montar_contexto(
         "resolutiva_notificacao_email": politica.resolutiva_notificacao_email,
         "corretagem": corretagem,
         # [Owner directive, 2026-09-23] The matrícula-derived comarca
-        # (`carregador.carregar` -> `derivacao.comarca_de_texto`) — never
-        # the imóvel address; gated `faltando` by `derivacao._contrato`,
-        # so this is never blank.
-        "foro": {"comarca": d.matricula.comarca},
+        # (`carregador.carregar` -> `derivacao.comarca_de_texto`), else the
+        # confirmed cartório's city (`derivacao.foro_comarca`) — never the
+        # imóvel address; gated `faltando` by `derivacao._contrato`, so this
+        # is never blank.
+        "foro": {"comarca": foro_comarca(d)},
         "assinatura": {
             "local": d.imobiliaria.endereco.cidade,
             "data_extenso": data_por_extenso(assinatura),
