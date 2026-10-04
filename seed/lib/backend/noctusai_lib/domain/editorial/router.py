@@ -4,7 +4,8 @@ A factory (mirrors ``pipeline_stages_router``): the seed cannot know the product
 auth dependency, its store, or its permission names, so those are injected.
 
 Routes (under the caller's prefix):
-    GET   ""                        queue by state (paged): ?state=&kind=&page=&page_size=
+    GET   ""                        queue by state (paged): ?state=&kind=&awaiting_me=&page=&page_size=
+                                    (also returns ``counts`` per state — same filters minus ``state``)
     POST  ""                        create item (version 1, author = actor)
     GET   "/{item_id}"              item + versions + events
     POST  "/{item_id}/versions"     new draft version (the ``edit`` action; author = actor)
@@ -39,7 +40,8 @@ from noctusai_lib.domain.editorial.store import (
     EditorialNotFound,
     EditorialStore,
 )
-from noctusai_lib.domain.editorial.workflow import Action, Code, Grant
+from noctusai_lib.domain.editorial.store import round_approvals
+from noctusai_lib.domain.editorial.workflow import Action, Code, Grant, decide_transition
 
 # Denial code -> HTTP status. Authorization-shaped refusals are 403, state/ordering
 # refusals are 409, malformed-request refusals are 422.
@@ -54,6 +56,13 @@ _STATUS_BY_CODE: dict[str, int] = {
     Code.CONTENT_REQUIRED.value: 422,
     Code.UNKNOWN_ACTION.value: 422,
 }
+
+# Forward (review-pipeline) actions that make an item "awaiting" its next actor.
+# archive / send_back / edit are deliberate side exits, not queue work.
+_AWAITING_ACTIONS = (
+    Action.SUBMIT, Action.APPROVE_EDITORIAL, Action.APPROVE_SECURITY, Action.PUBLISH,
+)
+_STATES = ("rascunho", "revisao_editorial", "revisao_seguranca", "publicado", "arquivado")
 
 _VERSION_ACTIONS = {Action.CREATE.value, Action.EDIT.value}
 
@@ -172,24 +181,55 @@ def editorial_router(
     def _missing(e: Exception) -> HTTPException:
         return HTTPException(404, detail={"detail": str(e), "code": "not_found"})
 
+    def _awaits(store: EditorialStore, ctx: EditorialContext, item: Any, grants: list[str]) -> bool:
+        """True when the caller may perform the item's next forward transition.
+        Rules are NOT re-implemented here: ``decide_transition`` decides (grant +
+        separation of duties against this version's author and review-round approvals)."""
+        if item.state in ("publicado", "arquivado"):
+            return False
+        author = next(
+            (v.author_id for v in store.list_versions(ctx.org_id, item.id) if v.n == item.current_version_n),
+            None,
+        )
+        approvals = round_approvals(store.list_events(ctx.org_id, item.id), item.current_version_n)
+        return any(
+            decide_transition(
+                action=a, state=item.state, actor_id=ctx.user_id, grants=grants,
+                author_id=author, approvals=approvals,
+            ).allowed
+            for a in _AWAITING_ACTIONS
+        )
+
     @router.get("")
     async def fila(
         state: str | None = None,
         kind: str | None = None,
+        awaiting_me: bool = False,
         page: int = Query(1, ge=1),
         page_size: int = Query(50, ge=1, le=200),
         auth=Depends(auth_dependency),
     ):
-        """The review queue: items by state, newest-updated first, paged."""
+        """The review queue: items by state, newest-updated first, paged.
+
+        ``counts`` = per-state totals for the caller's org under the same ``kind`` /
+        ``awaiting_me`` filters but ignoring ``state`` (so the tabs stay stable)."""
         ctx = _ctx(auth)
+        store = get_store()
+        base = store.list_items(ctx.org_id, kind=kind)
+        if awaiting_me:
+            grants = await _grants(ctx)
+            base = [i for i in base if _awaits(store, ctx, i, grants)]
+        counts = {s: 0 for s in _STATES}
+        for i in base:
+            counts[str(_jsonable(i.state))] = counts.get(str(_jsonable(i.state)), 0) + 1
         items = sorted(
-            get_store().list_items(ctx.org_id, state=state, kind=kind),
+            [i for i in base if state is None or str(_jsonable(i.state)) == state],
             key=lambda i: i.updated_at, reverse=True,
         )
         start = (page - 1) * page_size
         return success_response({
             "items": _jsonable(items[start:start + page_size]),
-            "total": len(items), "page": page, "page_size": page_size,
+            "total": len(items), "counts": counts, "page": page, "page_size": page_size,
         })
 
     @router.post("", status_code=201)

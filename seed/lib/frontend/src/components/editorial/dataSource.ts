@@ -20,26 +20,47 @@ export interface EditorialApi {
   post: <T = any>(path: string, body?: unknown) => Promise<T>;
 }
 
-/** Real adapter. `basePath` defaults to `/api/editorial`. */
-export function createEditorialHttpSource(
-  api: EditorialApi,
-  basePath = '/api/editorial',
-): EditorialDataSource {
+/** `success_response` envelope: `{success, data, total?}`; tolerate a bare payload. */
+function unwrap<T>(res: any): T {
+  return res && typeof res === 'object' && 'data' in res && 'success' in res ? res.data : res;
+}
+
+/**
+ * Real adapter for `editorial_router` (backend `domain/editorial/router.py`).
+ * `basePath` is the consumer's mount prefix, e.g. `/api/knowledge/editorial`.
+ */
+export function createEditorialHttpSource(api: EditorialApi, basePath: string): EditorialDataSource {
+  const getItem = async (id: string) =>
+    unwrap<EditorialItemDetail>(await api.get(`${basePath}/${id}`));
   return {
-    listQueue: (p) =>
-      api.get<EditorialQueuePage>(`${basePath}/queue`, {
-        ...(p.state ? { state: p.state } : {}),
-        ...(p.awaiting_me ? { awaiting_me: true } : {}),
-        page: p.page,
-        page_size: p.page_size,
-      }),
-    getItem: (id) => api.get<EditorialItemDetail>(`${basePath}/items/${id}`),
-    createVersion: (id, content) =>
-      api.post<EditorialVersion>(`${basePath}/items/${id}/versions`, { content }),
-    transition: (id, action, motivo) =>
-      api.post(`${basePath}/items/${id}/transition`, { action, motivo: motivo ?? null }),
-    diff: (id, fromN, toN) =>
-      api.get(`${basePath}/items/${id}/diff`, { from: fromN, to: toN }),
+    listQueue: async (p) =>
+      unwrap<EditorialQueuePage>(
+        await api.get(basePath, {
+          ...(p.state ? { state: p.state } : {}),
+          ...(p.awaiting_me ? { awaiting_me: true } : {}),
+          page: p.page,
+          page_size: p.page_size,
+        }),
+      ),
+    getItem,
+    createVersion: async (id, content) => {
+      const res = unwrap<{ version: EditorialVersion }>(
+        await api.post(`${basePath}/${id}/versions`, { content }),
+      );
+      return res.version;
+    },
+    transition: async (id, action, motivo) =>
+      unwrap(await api.post(`${basePath}/${id}/transitions`, { action, motivo: motivo ?? null })),
+    // The diff is computed client-side from the two versions (GET /{id} already carries them).
+    diff: async (id, fromN, toN) => {
+      const { versions } = await getItem(id);
+      const find = (n: number) => {
+        const v = versions.find((x) => x.n === n);
+        if (!v) throw new Error(`Versão ${n} não encontrada.`);
+        return v;
+      };
+      return { from: find(fromN), to: find(toN) };
+    },
   };
 }
 

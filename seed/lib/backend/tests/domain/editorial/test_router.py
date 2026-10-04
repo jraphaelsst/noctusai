@@ -59,8 +59,8 @@ def H(u):
     return {"Authorization": f"Bearer {u}"}
 
 
-def _create(c, who=AUTHOR, content=None):
-    return c.post("/editorial/", json={"kind": "doc", "ref": "a", "content": content or {"t": "v1"}}, headers=H(who))
+def _create(c, who=AUTHOR, content=None, ref="a"):
+    return c.post("/editorial/", json={"kind": "doc", "ref": ref, "content": content or {"t": "v1"}}, headers=H(who))
 
 
 def _tr(c, item, who, action, motivo=None):
@@ -71,8 +71,8 @@ def _code(r):
     return r.json()["detail"]["code"]
 
 
-def _to_security_review(c):
-    item = _create(c).json()["data"]["item"]["id"]
+def _to_security_review(c, ref="a"):
+    item = _create(c, ref=ref).json()["data"]["item"]["id"]
     assert _tr(c, item, AUTHOR, "submit").status_code == 200
     assert _tr(c, item, EDITOR, "approve_editorial").status_code == 200
     return item
@@ -218,3 +218,77 @@ class TestDiff:
 
     def test_diff_identical_is_empty(self):
         assert diff_content({"a": [1, 2]}, {"a": [1, 2]}) == []
+
+
+class TestQueueCountsAndAwaitingMe:
+    def _q(self, c, who, **params):
+        r = c.get("/editorial", params=params, headers=H(who))
+        assert r.status_code == 200
+        return r.json()["data"]
+
+    def _seed(self, c):
+        """draft d, in editorial review e, in security review s, published p."""
+        d = _create(c).json()["data"]["item"]["id"]
+        e = _create(c, ref="e").json()["data"]["item"]["id"]
+        _tr(c, e, AUTHOR, "submit")
+        s = _to_security_review(c, ref="s")
+        p = _to_security_review(c, ref="p")
+        assert _tr(c, p, SECURITY, "approve_security").status_code == 200
+        assert _tr(c, p, PUBLISHER, "publish").status_code == 200
+        return d, e, s, p
+
+    def test_counts_per_state_and_ignore_state_filter(self):
+        c, _ = _build()
+        self._seed(c)
+        data = self._q(c, AUTHOR)
+        assert data["counts"] == {
+            "rascunho": 1, "revisao_editorial": 1, "revisao_seguranca": 1, "publicado": 1, "arquivado": 0,
+        }
+        filt = self._q(c, AUTHOR, state="publicado")
+        assert filt["total"] == 1 and filt["counts"] == data["counts"]
+
+    def test_counts_respect_kind_filter(self):
+        c, _ = _build()
+        self._seed(c)
+        assert sum(self._q(c, AUTHOR, kind="nope")["counts"].values()) == 0
+
+    def test_awaiting_me_author(self):
+        c, _ = _build()
+        d, e, s, p = self._seed(c)
+        data = self._q(c, AUTHOR, awaiting_me="true")
+        # the author can submit the draft; cannot approve own work
+        assert {i["id"] for i in data["items"]} == {d}
+        assert data["counts"]["rascunho"] == 1 and data["counts"]["revisao_editorial"] == 0
+
+    def test_awaiting_me_editorial_reviewer(self):
+        c, _ = _build()
+        d, e, s, p = self._seed(c)
+        assert {i["id"] for i in self._q(c, EDITOR, awaiting_me="true")["items"]} == {e}
+
+    def test_awaiting_me_security_reviewer_then_publisher(self):
+        c, _ = _build()
+        d, e, s, p = self._seed(c)
+        assert {i["id"] for i in self._q(c, SECURITY, awaiting_me="true")["items"]} == {s}
+        # publisher is only awaited once sign-off exists
+        assert self._q(c, PUBLISHER, awaiting_me="true")["total"] == 0
+        assert _tr(c, s, SECURITY, "approve_security").status_code == 200
+        assert {i["id"] for i in self._q(c, PUBLISHER, awaiting_me="true")["items"]} == {s}
+        assert self._q(c, SECURITY, awaiting_me="true")["total"] == 0  # sign-off already given
+
+    def test_awaiting_me_respects_separation_of_duties(self):
+        # an author who also holds `revisar` is NOT awaited on their own submission
+        c, _ = _build(grants={**ALL, AUTHOR: [Grant.EDITAR, Grant.REVISAR]})
+        d, e, s, p = self._seed(c)
+        assert {i["id"] for i in self._q(c, AUTHOR, awaiting_me="true")["items"]} == {d}
+
+    def test_queue_never_crosses_orgs(self):
+        c, store = _build()
+        self._seed(c)
+        store.create_item(
+            org_id=OTHER_ORG, kind="doc", ref="x", content={"t": 1}, actor_id=OUTSIDER,
+            grants=[Grant.EDITAR.value],
+        )
+        for params in ({}, {"awaiting_me": "true"}):
+            data = self._q(c, AUTHOR, **params)
+            assert all(i["org_id"] == str(ORG) for i in data["items"])
+        assert sum(self._q(c, AUTHOR)["counts"].values()) == 4

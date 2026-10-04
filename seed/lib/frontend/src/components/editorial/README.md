@@ -5,15 +5,18 @@
 `EditorialDataSource` (types.ts); `createEditorialHttpSource(api, basePath='/api/editorial')` is the
 real adapter, `FakeEditorialDataSource` the in-memory one. JSON field names = backend dataclass fields.
 
-## Expected endpoints (E3 router must match, or adjust `dataSource.ts` only)
+## Backend contract (E3 `editorial_router`, mounted under a consumer prefix)
 
-| Method + path | Request | Response |
+Responses use the seed `success_response` envelope `{success, data}`; `createEditorialHttpSource(api, basePath)`
+unwraps it. Backend = contract of record.
+
+| Method + path | Request | `data` |
 |---|---|---|
-| `GET {base}/queue` | query `state?`, `awaiting_me?` (bool), `page`, `page_size` | `{items: EditorialItem[], total, counts: {<state>: n}}` — `counts` under the same `awaiting_me` filter, ignoring `state`; `awaiting_me` is server-derived from the caller's grants |
-| `GET {base}/items/{id}` | — | `{item, versions: EditorialVersion[], events: EditorialEvent[]}` |
-| `POST {base}/items/{id}/versions` | `{content}` | `EditorialVersion` |
-| `POST {base}/items/{id}/transition` | `{action, motivo?}` | `{item, event}` |
-| `GET {base}/items/{id}/diff` | query `from`, `to` (version numbers) | `{from: EditorialVersion, to: EditorialVersion}` |
+| `GET {base}` | `state?`, `kind?`, `awaiting_me?`, `page`, `page_size` | `{items, total, counts, page, page_size}` — `counts` per state under the same `kind`/`awaiting_me` filters, ignoring `state`; `awaiting_me` is computed server-side with `decide_transition` over the caller's derived grants |
+| `POST {base}` | `{kind, ref, content}` | create item (not used by the organs) |
+| `GET {base}/{id}` | — | `{item, versions, events}` |
+| `POST {base}/{id}/versions` | `{content}` | `{item, event, version}` |
+| `POST {base}/{id}/transitions` | `{action, motivo?}` | `{item, event, version}` |
+| `GET {base}/{id}/diff` | `from_n`, `to_n` | `{from_n, to_n, changes}` — the adapter does NOT use it; `VersionDiff` diffs the two versions from `GET {base}/{id}` client-side (`diffContent`) |
 
-Items may carry an optional `title` (else `ref` is shown). Errors: non-2xx surfaces `Error.message`.
-The diff itself is computed client-side (`diffContent`) from the two versions' `content`.
+Errors: `detail.code` machine codes; non-2xx surfaces `Error.message`.
