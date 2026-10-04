@@ -38,7 +38,7 @@ import warnings
 from typing import Optional
 from fastapi import Header, HTTPException, Request
 from noctusai_lib.api.audit import AuditActor
-from noctusai_lib.api.auth import make_resolve_platform_role
+from noctusai_lib.api.auth import make_resolve_platform_role, validate_bearer_token
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 
 logger = logging.getLogger(__name__)
@@ -163,28 +163,24 @@ class ProductDependencies:
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Token ausente")
         token = authorization.replace("Bearer ", "")
-        try:
-            admin = self._db.get_client()
-            user_response = admin.auth.get_user(token)
-            if not user_response or not user_response.user:
-                raise HTTPException(status_code=401, detail="Token invalido")
-            user = user_response.user
-            # `request.state`, NOT a ContextVar — see
-            # `noctusai_lib.api.audit` module docstring +
-            # `noctusai_lib.api.auth.make_get_current_user_org`'s same
-            # stash. This dependency doesn't resolve org_id/role (that's
-            # `get_current_user_org`'s job); a request authenticated only
-            # through this base dep still gets a `user_id`-only actor
-            # rather than no actor at all. `request` is `None` for the
-            # many imperative (non-`Depends`) callers above — nothing to
-            # stash onto in that shape, and nothing reads it there either.
-            if request is not None:
-                request.state.audit_actor = AuditActor(user_id=getattr(user, "id", None))
-            return user, token
-        except HTTPException:
-            raise
-        except Exception:
-            raise HTTPException(status_code=401, detail="Nao autenticado")
+        # 401 ONLY when Supabase Auth rejected the token; 503 + Retry-After
+        # when it could not be asked (transport failure, provider 5xx/429).
+        # This used to be `except Exception -> 401`, which turned a deploy-
+        # window blip into "your session is dead" in every seed SPA — the
+        # 2026-10-03 logouts. See `noctusai_lib.api.auth.validate_bearer_token`.
+        user = validate_bearer_token(self._db.get_client(), token)
+        # `request.state`, NOT a ContextVar — see
+        # `noctusai_lib.api.audit` module docstring +
+        # `noctusai_lib.api.auth.make_get_current_user_org`'s same
+        # stash. This dependency doesn't resolve org_id/role (that's
+        # `get_current_user_org`'s job); a request authenticated only
+        # through this base dep still gets a `user_id`-only actor
+        # rather than no actor at all. `request` is `None` for the
+        # many imperative (non-`Depends`) callers above — nothing to
+        # stash onto in that shape, and nothing reads it there either.
+        if request is not None:
+            request.state.audit_actor = AuditActor(user_id=getattr(user, "id", None))
+        return user, token
 
     def get_user_role(self, user) -> str:
         """Resolve the caller's role from the TRUSTED DB — never ``user_metadata``.

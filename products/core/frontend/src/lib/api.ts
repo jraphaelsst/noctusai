@@ -1,7 +1,12 @@
 /**
  * NoctusAI Core -- API Client (powered by shared factory)
  */
-import { createApiClient } from '@noctusai/lib/api';
+import {
+  createApiClient,
+  isTransientHttpStatus,
+  refreshWithBackoff,
+  type RefreshAttempt,
+} from '@noctusai/lib/api';
 
 // core's API is SAME-ORIGIN (single-container house model serves FE + API on
 // one host). Default to window.location.origin so core is deploy-host-agnostic
@@ -22,29 +27,50 @@ function getToken(): string | null {
 let _handlingDeadSession = false;
 
 /**
- * Refresh the access token via core's stored refresh token. Raw `fetch`
+ * ONE refresh attempt via core's stored refresh token, classified. Raw `fetch`
  * (not the `api`/`client` object being constructed below) — routing this
  * through the client would re-enter `onTokenExpired` if the refresh call
  * itself 401s.
+ *
+ * Only an ANSWERED 4xx from `/api/auth/refresh` (core answers 401 only when
+ * Supabase refused the refresh token) means the session is dead. A network
+ * error, a 5xx, a Cloudflare 52x (the tunnel restarts on every deploy) or a
+ * 429 is transient — `refreshWithBackoff` retries it and, if it persists,
+ * throws `TransientAuthError`, which the api client treats as "keep the
+ * session". Treating both as "dead" logged the owner out after prod deploys
+ * (2026-10-03).
  */
-async function refreshAccessToken(): Promise<string | null> {
+async function refreshAttempt(): Promise<RefreshAttempt> {
   const refreshToken = getRefreshToken();
-  if (!refreshToken) return null;
+  if (!refreshToken) return { kind: 'dead' };
+  let response: Response;
   try {
-    const response = await fetch(`${API_URL}/api/auth/refresh`, {
+    response = await fetch(`${API_URL}/api/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refreshToken }),
     });
-    if (!response.ok) return null;
-    const data = await response.json();
-    if (!data.access_token) return null;
-    setToken(data.access_token);
-    if (data.refresh_token) setRefreshToken(data.refresh_token);
-    return data.access_token;
-  } catch {
-    return null;
+  } catch (err) {
+    return { kind: 'transient', reason: err instanceof Error ? err.message : 'network error' };
   }
+  if (isTransientHttpStatus(response.status)) {
+    return { kind: 'transient', reason: `HTTP ${response.status}` };
+  }
+  if (!response.ok) return { kind: 'dead' };
+  const data = await response.json().catch(() => null);
+  if (!data?.access_token) {
+    // A 2xx without a token is not an authoritative refusal (e.g. an edge
+    // serving an HTML page) — do not log out on it.
+    return { kind: 'transient', reason: 'refresh answered without a token' };
+  }
+  setToken(data.access_token);
+  if (data.refresh_token) setRefreshToken(data.refresh_token);
+  return { kind: 'token', token: data.access_token };
+}
+
+/** `onTokenExpired`: token | null (refused → dead) | throws (unanswered → keep). */
+function refreshAccessToken(): Promise<string | null> {
+  return refreshWithBackoff(refreshAttempt);
 }
 
 /**

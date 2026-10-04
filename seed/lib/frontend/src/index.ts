@@ -22,11 +22,11 @@ export type { IdentificadorOpts, Leitura as LeituraIdentificador } from './ident
 export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneDigits } from './phone';
 
 // API client
-export { createApiClient, extractErrorMessage, ApiError } from './api';
-export type { ApiClient, CreateApiClientOptions } from './api';
+export { createApiClient, extractErrorMessage, ApiError, TransientAuthError, isTransientHttpStatus, refreshWithBackoff } from './api';
+export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth
-export { useSupabaseAuthInit, useAuthReady } from './auth';
+export { useSupabaseAuthInit, useAuthReady, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler } from './auth';
 
 // SSO
 export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from './sso';

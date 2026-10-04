@@ -11,6 +11,9 @@ reimplementing.
 **What's here:**
 
 - `first_or_none(result)` — Supabase list-response helper.
+- `validate_bearer_token(client, token)` — THE Supabase access-token → user step;
+  401 only on an authoritative rejection, 503 + Retry-After otherwise
+  (`is_authoritative_token_rejection` / `auth_provider_unavailable`, 2026-10-03).
 - `make_get_current_user(fn)` — factory for product-specific JWT validation.
 - `resolve_sso_role(user)` — reads `org_role` / `noctus_role` from user_metadata.
 - `get_sso_context(user)` — extracts full SSO context from user_metadata.
@@ -101,6 +104,119 @@ def first_or_none(result) -> Optional[dict]:
     return result.data[0]
 
 
+# ---------------------------------------------------------------------------
+# Bearer-token validation — 401 ONLY when the auth provider said "no"
+# ---------------------------------------------------------------------------
+#
+# 🔴 A 401 is not "something went wrong while checking auth". Every seed SPA
+# reads a 401 its refresh cannot recover as "this session is dead" and logs
+# the user out (`seed/framework/frontend/src/infra.tsx::handleDeadSession`).
+# So a backend that answers 401 for "I could not ASK whether this token is
+# valid" logs real users out for a server-side blip.
+#
+# That is what a prod deploy did to the owner three times on 2026-10-03:
+# token validation is a network call to Supabase Auth (`auth.get_user`), and
+# it sat under a bare `except Exception -> 401`. gotrue wraps EVERY failure
+# of that call — connection refused/reset, DNS, TLS, a timeout, a 502/503/504
+# from the Auth server — into its own `AuthRetryableError` (gotrue
+# `helpers.handle_exception`), which is neither `OSError` nor `TimeoutError`
+# (and httpx's transport errors are not `OSError` either: `httpx.ConnectError`
+# MRO is ConnectError → NetworkError → TransportError → RequestError →
+# HTTPError → Exception). The 2026-08-18 `(TimeoutError, OSError) -> 503`
+# branch this replaces therefore never fired in production — its tests
+# raised a raw `OSError` that the real client never raises (and the
+# framework's `ProductDependencies.get_current_user` copy had no 503 branch
+# at all).
+#
+# The rule, stated positively: 401 iff the auth provider ANSWERED and
+# rejected the token (an HTTP 4xx from GoTrue other than 408/429 — a bad,
+# expired or revoked JWT comes back as 401/403 `bad_jwt`), or answered with
+# no user. Anything else — a transport failure, a provider 5xx/429, or an
+# exception we cannot classify — is 503 + `Retry-After`: no access is granted
+# (still fail-closed), but the client is told to retry, not to log out.
+
+#: Exception class names (anywhere in the MRO) that mean "the auth provider
+#: could not be reached / did not answer". Matched by NAME so this module
+#: does not import gotrue/supabase_auth/httpx (the supabase client's auth
+#: package has been renamed across the pinned range).
+_TRANSIENT_AUTH_ERROR_NAMES = frozenset({
+    "AuthRetryableError",       # gotrue / supabase_auth: transport + 502/503/504
+    "AuthRetryableFetchError",  # supabase_auth >= 2.x spelling
+    "TransportError",           # httpx (ConnectError, ReadTimeout, ...)
+    "TimeoutException",         # httpx timeouts
+})
+
+#: Seconds the client should wait before retrying a 503 from token validation.
+AUTH_PROVIDER_RETRY_AFTER_SECONDS = 2
+
+
+def is_authoritative_token_rejection(exc: BaseException) -> bool:
+    """True iff ``exc`` is the auth provider ANSWERING "this token is not valid".
+
+    Only an HTTP 4xx response from the provider qualifies (408 Request
+    Timeout and 429 Too Many Requests excluded — both are "try again", not
+    "you are not who you say"). Transport failures, provider 5xx, and any
+    exception without an HTTP status are NOT authoritative — see the block
+    comment above for the incident this distinction exists for.
+    """
+    if isinstance(exc, (TimeoutError, OSError)):
+        return False
+    if any(cls.__name__ in _TRANSIENT_AUTH_ERROR_NAMES for cls in type(exc).__mro__):
+        return False
+    status = getattr(exc, "status", None)
+    if not isinstance(status, int) or isinstance(status, bool):
+        return False
+    return 400 <= status < 500 and status not in (408, 429)
+
+
+def auth_provider_unavailable(exc: BaseException) -> HTTPException:
+    """The 503 a caller raises when token validation could not get an answer.
+
+    Logged at ERROR — an unreachable/erroring auth provider is an outage, and
+    it is invisible otherwise (the request is refused either way).
+    """
+    logger.error(
+        "auth: could not get an answer from the auth provider while "
+        "validating a token — reporting 503, NOT 401 (the caller's "
+        "credentials are not in question here): %s: %s",
+        type(exc).__name__,
+        exc,
+    )
+    return HTTPException(
+        status_code=503,
+        detail="Serviço de autenticação indisponível. Tente novamente.",
+        headers={"Retry-After": str(AUTH_PROVIDER_RETRY_AFTER_SECONDS)},
+    )
+
+
+def validate_bearer_token(client: Any, token: str) -> Any:
+    """Validate a Supabase access token via ``client.auth.get_user(token)``.
+
+    Returns the Supabase ``User``. Raises ``HTTPException(401)`` only on an
+    authoritative rejection (:func:`is_authoritative_token_rejection`, or the
+    provider answered with no user); raises ``HTTPException(503)`` with
+    ``Retry-After`` for everything else. The ONE place the fleet turns a
+    Supabase access token into a user — `_get_current_user` (lib) and
+    ``noctusai_seed.ProductDependencies.get_current_user`` (framework) both
+    call it, so the 401-vs-503 contract cannot drift between them again.
+    """
+    try:
+        user_response = client.auth.get_user(token)
+    except Exception as exc:  # noqa: BLE001 — classified below, never swallowed
+        if is_authoritative_token_rejection(exc):
+            logger.info(
+                "auth: token rejected by the auth provider (%s, status=%s)",
+                type(exc).__name__,
+                getattr(exc, "status", None),
+            )
+            raise HTTPException(status_code=401, detail="Não autenticado") from exc
+        raise auth_provider_unavailable(exc) from exc
+    user = getattr(user_response, "user", None) if user_response else None
+    if not user:
+        raise HTTPException(status_code=401, detail="Token inválido")
+    return user
+
+
 async def _get_current_user(
     authorization: Optional[str] = Header(None),
     *,
@@ -111,7 +227,8 @@ async def _get_current_user(
     obtain a product-specific dependency — never import this directly.
 
     Extract and validate the JWT from the Authorization header.
-    Returns (user, token) tuple.
+    Returns (user, token) tuple. 401 only when the auth provider rejected the
+    token; 503 when it could not be asked (see :func:`validate_bearer_token`).
 
     The _get_supabase_client parameter is injected by each product's
     dependencies.py to supply the product-specific client factory. This
@@ -122,52 +239,14 @@ async def _get_current_user(
         raise HTTPException(status_code=401, detail="Token ausente")
 
     token = authorization.replace("Bearer ", "")
-    try:
-        if _get_supabase_client is None:
-            raise RuntimeError(
-                "get_current_user must be called via a product-specific wrapper "
-                "that supplies _get_supabase_client"
-            )
-        admin = _get_supabase_client()  # service role to validate
-        user_response = admin.auth.get_user(token)
-        if not user_response or not user_response.user:
-            raise HTTPException(status_code=401, detail="Token inválido")
-        return user_response.user, token
-    except HTTPException:
-        raise
-    except (TimeoutError, OSError) as exc:
-        # 🔴 NOT a 401. Validation here is a NETWORK CALL to Supabase, so a
-        # transport failure (DNS, TLS handshake, connection reset, timeout)
-        # means "I could not ask whether this token is valid" — which is
-        # nothing like "this token is invalid". Reporting it as 401 tells
-        # the user they are logged out and sends the SPA to the login page,
-        # while the real fault is server-side and the credentials are fine.
-        #
-        # That is not hypothetical: on 2026-08-18 a VPN MTU mismatch (host
-        # tunnel 1380, container 1500) broke the TLS 1.3 handshake to
-        # Supabase from inside a container. Login succeeded in the browser,
-        # every API call then 401'd, and the app bounced to home — the UI
-        # blamed the user's session for what was a dropped packet. Twenty
-        # minutes went into "why is login broken" because the error said
-        # the wrong thing.
-        #
-        # `ssl.SSLError`, `socket.timeout`, `ConnectionError` and httpx's
-        # transport errors are all `OSError`/`TimeoutError` subclasses, so
-        # this catches the transport family without guessing at any one
-        # client library's exception tree.
-        logger.error(
-            "auth: could not reach the auth provider to validate a token — "
-            "reporting 503, NOT 401 (the caller's credentials are not in "
-            "question here): %s: %s",
-            type(exc).__name__,
-            exc,
+    if _get_supabase_client is None:
+        # A wiring bug, not a credential problem — never a 401.
+        raise RuntimeError(
+            "get_current_user must be called via a product-specific wrapper "
+            "that supplies _get_supabase_client"
         )
-        raise HTTPException(
-            status_code=503,
-            detail="Serviço de autenticação indisponível. Tente novamente.",
-        ) from exc
-    except Exception:
-        raise HTTPException(status_code=401, detail="Não autenticado")
+    admin = _get_supabase_client()  # service role to validate
+    return validate_bearer_token(admin, token), token
 
 
 def make_get_current_user(get_supabase_client_fn):

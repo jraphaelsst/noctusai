@@ -99,4 +99,74 @@ describe('core api client — dead-session seam wiring', () => {
 
     expect(window.location.assign).not.toHaveBeenCalled();
   });
+  // 2026-10-03: every prod deploy restarts the cloudflared tunnel. A refresh
+  // that hit that window got a Cloudflare 502/530 (or a network error),
+  // `refreshAccessToken` returned null for it, and the owner was sent to
+  // /login with tokens wiped. Only an ANSWERED 4xx may do that.
+  it.each([
+    ['Cloudflare 530 (tunnel restarting)', () => Promise.resolve(jsonResponse(530, {}))],
+    ['502 from the edge', () => Promise.resolve(jsonResponse(502, {}))],
+    ['503 from core (Supabase unreachable)', () => Promise.resolve(jsonResponse(503, {}))],
+    ['network error', () => Promise.reject(new TypeError('Failed to fetch'))],
+  ])('keeps the session when every refresh attempt is transient: %s', async (_label, refreshResponse) => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      localStorage.setItem('noctus_token', 'old-token');
+      localStorage.setItem('noctus_refresh_token', 'good-refresh');
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) =>
+        String(url).includes('/api/auth/refresh')
+          ? refreshResponse()
+          : jsonResponse(401, { detail: 'expired' }),
+      );
+
+      const { api } = await import('./api');
+      const pending = expect(api.get('/api/x')).rejects.toThrow('[401]');
+      await vi.runAllTimersAsync();
+      await pending;
+
+      expect(localStorage.getItem('noctus_token')).toBe('old-token');
+      expect(localStorage.getItem('noctus_refresh_token')).toBe('good-refresh');
+      expect(window.location.assign).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('recovers when the refresh succeeds after the tunnel comes back', async () => {
+    vi.useFakeTimers();
+    try {
+      localStorage.setItem('noctus_token', 'old-token');
+      localStorage.setItem('noctus_refresh_token', 'good-refresh');
+      vi.spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(jsonResponse(401, { detail: 'expired' })) // original call
+        .mockResolvedValueOnce(jsonResponse(530, {})) // refresh during tunnel restart
+        .mockResolvedValueOnce(jsonResponse(200, { access_token: 'new-token', refresh_token: 'new-refresh' }))
+        .mockResolvedValueOnce(jsonResponse(200, { ok: true })); // retried call
+
+      const { api } = await import('./api');
+      const pending = expect(api.get('/api/x')).resolves.toEqual({ ok: true });
+      await vi.runAllTimersAsync();
+      await pending;
+
+      expect(localStorage.getItem('noctus_token')).toBe('new-token');
+      expect(window.location.assign).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still logs out when core AUTHORITATIVELY refuses the refresh token (401)', async () => {
+    localStorage.setItem('noctus_token', 'old-token');
+    localStorage.setItem('noctus_refresh_token', 'revoked');
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(jsonResponse(401, { detail: 'expired' }))
+      .mockResolvedValueOnce(jsonResponse(401, { detail: 'Falha ao renovar token' }));
+
+    const { api } = await import('./api');
+    await expect(api.get('/api/x')).rejects.toThrow('[401]');
+    expect(localStorage.getItem('noctus_token')).toBeNull();
+    expect(window.location.assign).toHaveBeenCalledWith('/login');
+  });
 });

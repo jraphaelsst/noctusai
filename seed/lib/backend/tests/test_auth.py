@@ -1133,6 +1133,14 @@ class TestTransportFailureIsNot401:
     from inside a container. Login worked in the browser, every API call
     then 401'd, and the SPA bounced to the login page — the UI blamed the
     user's session for a dropped packet.
+
+    Hardened 2026-10-03: the 2026-08-18 fix only caught ``OSError`` /
+    ``TimeoutError`` and these tests only ever RAISED those — but the real
+    client (gotrue) never does. It wraps every transport failure and every
+    502/503/504 into ``AuthRetryableError`` (and httpx's own errors are not
+    ``OSError``), so in production the 503 branch was dead and every blip
+    still came back 401. The owner was logged out three times by prod
+    deploys. The cases below raise what gotrue/httpx ACTUALLY raise.
     """
 
     @staticmethod
@@ -1149,40 +1157,87 @@ class TestTransportFailureIsNot401:
 
         return _factory
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "exc",
-        [
+    @staticmethod
+    def _transient_cases():
+        import httpx
+        from gotrue.errors import AuthApiError, AuthRetryableError
+
+        req = httpx.Request("GET", "https://x.supabase.co/auth/v1/user")
+        return [
             ConnectionError("connection reset"),
             TimeoutError("timed out"),
             OSError("[SSL: UNEXPECTED_EOF_WHILE_READING] EOF in violation of protocol"),
+            # What gotrue's `handle_exception` turns a refused/reset socket into:
+            AuthRetryableError("[Errno 111] Connection refused", 0),
+            # ...and a 502/503/504 from the Auth server:
+            AuthRetryableError("Bad Gateway", 502),
+            AuthRetryableError("Service Unavailable", 503),
+            # An Auth server 500 / a rate limit: the provider answered, but
+            # not with "this token is invalid".
+            AuthApiError("Internal Server Error", 500, None),
+            AuthApiError("Too Many Requests", 429, "over_request_rate_limit"),
+            # httpx raised directly (not an OSError subclass):
+            httpx.ConnectError("Name or service not known", request=req),
+            httpx.ReadTimeout("read timed out", request=req),
+            # Something we cannot classify is not an authoritative "no".
+            RuntimeError("unexpected response shape"),
+        ]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "case_index",
+        range(11),
+        ids=[
+            "connection-reset", "timeout", "tls-eof",
+            "gotrue-retryable-conn-refused", "gotrue-retryable-502",
+            "gotrue-retryable-503", "gotrue-api-500", "gotrue-api-429",
+            "httpx-connect-error", "httpx-read-timeout", "unclassifiable",
         ],
-        ids=["connection-reset", "timeout", "tls-eof"],
     )
-    async def test_unreachable_auth_provider_is_503_not_401(self, exc):
+    async def test_unanswered_validation_is_503_not_401(self, case_index):
         from noctusai_lib.api.auth import _get_current_user
 
+        exc = self._transient_cases()[case_index]
         with pytest.raises(HTTPException) as ei:
             await _get_current_user(
                 authorization="Bearer some-token",
                 _get_supabase_client=self._client_raising(exc),
             )
         assert ei.value.status_code == 503, (
-            f"{type(exc).__name__} is a transport failure; reporting it as "
-            f"{ei.value.status_code} tells the user they are logged out when "
-            "the real fault is that the auth provider was unreachable"
+            f"{type(exc).__name__} is not the auth provider rejecting the "
+            f"token; reporting it as {ei.value.status_code} tells the user "
+            "they are logged out when the real fault is server-side"
         )
+        assert ei.value.headers == {"Retry-After": "2"}
 
     @pytest.mark.asyncio
-    async def test_a_genuinely_bad_token_is_still_401(self):
-        """The 503 path must not swallow real auth failures — an
-        application-level rejection stays a 401."""
+    @pytest.mark.parametrize("status", [401, 403], ids=["401", "403-bad-jwt"])
+    async def test_a_genuinely_bad_token_is_still_401(self, status):
+        """The 503 path must not swallow real auth failures — the auth
+        provider ANSWERING "invalid/expired JWT" stays a 401. This is the
+        exact shape gotrue raises for a bad token (GoTrue answers 401/403
+        ``bad_jwt``)."""
+        from gotrue.errors import AuthApiError
+        from noctusai_lib.api.auth import _get_current_user
+
+        exc = AuthApiError("invalid JWT: unable to parse or verify signature", status, "bad_jwt")
+        with pytest.raises(HTTPException) as ei:
+            await _get_current_user(
+                authorization="Bearer bad-token",
+                _get_supabase_client=self._client_raising(exc),
+            )
+        assert ei.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_provider_answering_no_user_is_401(self):
         from noctusai_lib.api.auth import _get_current_user
 
         def _factory():
             class _Auth:
                 def get_user(self, _token):
-                    raise ValueError("invalid JWT")
+                    from types import SimpleNamespace
+
+                    return SimpleNamespace(user=None)
 
             class _Client:
                 auth = _Auth()
@@ -1191,7 +1246,7 @@ class TestTransportFailureIsNot401:
 
         with pytest.raises(HTTPException) as ei:
             await _get_current_user(
-                authorization="Bearer bad-token", _get_supabase_client=_factory
+                authorization="Bearer t", _get_supabase_client=_factory
             )
         assert ei.value.status_code == 401
 
@@ -1202,3 +1257,28 @@ class TestTransportFailureIsNot401:
         with pytest.raises(HTTPException) as ei:
             await _get_current_user(authorization=None)
         assert ei.value.status_code == 401
+
+
+class TestIsAuthoritativeTokenRejection:
+    """The classifier core's `/api/auth/refresh` also uses."""
+
+    @pytest.mark.parametrize("status,expected", [
+        (400, True), (401, True), (403, True), (404, True), (422, True),
+        (408, False), (429, False), (500, False), (502, False), (503, False),
+    ])
+    def test_status_classification(self, status, expected):
+        from gotrue.errors import AuthApiError
+        from noctusai_lib.api.auth import is_authoritative_token_rejection
+
+        assert is_authoritative_token_rejection(AuthApiError("x", status, None)) is expected
+
+    def test_retryable_error_is_never_authoritative_even_with_a_4xx_status(self):
+        from gotrue.errors import AuthRetryableError
+        from noctusai_lib.api.auth import is_authoritative_token_rejection
+
+        assert is_authoritative_token_rejection(AuthRetryableError("x", 400)) is False
+
+    def test_exception_without_status_is_not_authoritative(self):
+        from noctusai_lib.api.auth import is_authoritative_token_rejection
+
+        assert is_authoritative_token_rejection(ValueError("invalid JWT")) is False

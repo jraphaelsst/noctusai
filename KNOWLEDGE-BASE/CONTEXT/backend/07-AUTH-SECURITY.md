@@ -22,7 +22,13 @@ Shared hook: `useActivityRefresh` (5 min refresh cycle).
 
 ## Reactive 401 Retry
 
-If proactive refresh fails: API call returns 401 → `createApiClient`'s `onTokenExpired()` forces `refreshSession()` → retries once → if retry fails → redirect to login.
+If proactive refresh fails: API call returns 401 → `createApiClient`'s `onTokenExpired()` forces a refresh (single-flight across concurrent 401s) → retries once → if the session is authoritatively dead → `onUnauthenticated` → login.
+
+**A deploy must never log anyone out (2026-10-03 — the owner was logged out by 3 prod deploys in a day).** Every deploy swaps the container AND restarts the cloudflared tunnel, so for seconds requests answer Cloudflare 502/530 or fail at the network layer. The contract that keeps sessions alive:
+
+- **Backend: 401 iff the auth provider REJECTED the token.** `noctusai_lib.api.auth.validate_bearer_token` is the one place a Supabase access token becomes a user (lib `_get_current_user`, framework `ProductDependencies.get_current_user`, p-studio). GoTrue answering a 4xx (≠408/429 — `bad_jwt` comes back 401/403) or no user ⇒ 401; a transport failure, an Auth 5xx/429, or anything unclassifiable ⇒ **503 + `Retry-After`**. gotrue wraps every transport failure + 502/503/504 into `AuthRetryableError`, which is neither `OSError` nor `TimeoutError` — the 2026-08-18 `(TimeoutError, OSError) → 503` branch was dead in prod because its tests raised an `OSError` the real client never raises. Core's `/api/auth/refresh` uses the same classifier (`is_authoritative_token_rejection`).
+- **Frontend: `onTokenExpired` has three outcomes** — token (retry), `null` (refresh REFUSED ⇒ dead ⇒ `onUnauthenticated`), **throw** (refresh UNANSWERED ⇒ keep the session; the 401 propagates, no logout). `refreshWithBackoff` (`@noctusai/lib/api`) retries transient attempts (`isTransientHttpStatus`: network/0, 408, 425, 429, 5xx incl. CF 52x) at 0.5s/1.5s/4s — inside Supabase's 10s refresh-token reuse window — then throws `TransientAuthError`. Seed products get it via `createSupabaseTokenRefresher` (`@noctusai/lib/auth`, wired by `createProductInfra`); core wires `refreshWithBackoff` around its `/api/auth/refresh` call.
+- **A dead session signs out with scope `"local"`** (`createDeadSessionHandler`). The supabase-js default `"global"` revokes EVERY refresh token the user holds — one product tab judging its session dead logged the user out of core and every other product.
 
 ## Logout Behavior
 

@@ -184,9 +184,23 @@ export interface CreateApiClientOptions {
   getAuthToken: () => Promise<string | null>;
   /**
    * Called when a request receives a 401 response. Should force a session
-   * refresh and return a fresh token, or `null` if refresh failed.
-   * When provided, the client automatically retries the failed request once
-   * with the new token before propagating the error.
+   * refresh and return a fresh token.
+   *
+   * The return/throw contract is load-bearing — it decides whether the user
+   * gets logged out:
+   *  - a token  → the failed request is retried once with it;
+   *  - `null`   → the refresh endpoint AUTHORITATIVELY refused (invalid /
+   *               revoked refresh token): the session is dead →
+   *               `onUnauthenticated`;
+   *  - throws   → the refresh could not get an answer (network error, 5xx,
+   *               Cloudflare 52x during a deploy/tunnel restart, 429). That is
+   *               NOT a dead session: the 401 propagates to the caller but
+   *               `onUnauthenticated` is NOT called, so the user stays logged
+   *               in. Throw `TransientAuthError` (see `refreshWithBackoff`,
+   *               which retries transient failures before giving up).
+   *
+   * Concurrent 401s share ONE in-flight call (single-flight) — a page firing
+   * ten requests on an expired token refreshes once, not ten times.
    */
   onTokenExpired?: () => Promise<string | null>;
   /**
@@ -198,8 +212,97 @@ export interface CreateApiClientOptions {
    * page). Invoked at most conceptually-once per dead session (the product's
    * handler should be idempotent / re-entrancy-guarded, since many concurrent
    * requests can 401 together). The 401 is still propagated to the caller.
+   *
+   * NEVER called when `onTokenExpired` threw (refresh unanswered — see above):
+   * a deploy's container swap / tunnel restart must not log anyone out.
    */
   onUnauthenticated?: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Session refresh resilience — a deploy must never log a user out
+// ---------------------------------------------------------------------------
+//
+// 2026-10-03: the owner was logged out of social.noctusai.com by three prod
+// deploys in one day. A deploy swaps the product container AND restarts the
+// cloudflared tunnel, so for a few seconds every request answers a Cloudflare
+// 502/530 or fails at the network layer. The api client used to treat a
+// refresh that could not get an answer exactly like a refresh that was
+// REFUSED (`onTokenExpired` returned null for both) and logged the user out.
+// The split below is the contract: only an authoritative refusal is "dead".
+
+/**
+ * Thrown by an `onTokenExpired` implementation when the refresh could not get
+ * an authoritative answer (network error, 5xx, Cloudflare 52x, 429). The api
+ * client keeps the session (no `onUnauthenticated`) and propagates the
+ * original 401 to the caller.
+ */
+export class TransientAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TransientAuthError';
+    Object.setPrototypeOf(this, TransientAuthError.prototype);
+  }
+}
+
+/**
+ * True for an HTTP status that means "try again", never "you are not logged
+ * in": 0 (no response — fetch/network failure), 408, 425, 429, and every 5xx
+ * (incl. Cloudflare's 520-530 origin/tunnel errors).
+ */
+export function isTransientHttpStatus(status: number | null | undefined): boolean {
+  if (status === null || status === undefined || status === 0) return true;
+  return status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+/** The result of ONE refresh attempt, as classified by the caller. */
+export type RefreshAttempt =
+  | { kind: 'token'; token: string }
+  | { kind: 'dead' }
+  | { kind: 'transient'; reason: string };
+
+export interface RefreshWithBackoffOptions {
+  /** Waits between attempts (ms). Default `[500, 1500, 4000]` → 4 attempts
+   *  over ~6s — long enough to ride out a container swap + tunnel restart,
+   *  short enough to stay inside Supabase's 10s refresh-token reuse window. */
+  delaysMs?: number[];
+  /** Injected for tests; defaults to `setTimeout`. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Run a refresh attempt, retrying TRANSIENT outcomes with backoff.
+ *
+ * Resolves the token, resolves `null` on the first authoritative refusal
+ * (`dead` — never retried: a revoked token stays revoked), and throws
+ * `TransientAuthError` when every attempt was transient. An attempt that
+ * THROWS is treated as transient (it did not answer "dead"). Plug the result
+ * straight into `createApiClient({ onTokenExpired })`.
+ */
+export async function refreshWithBackoff(
+  attempt: () => Promise<RefreshAttempt>,
+  options: RefreshWithBackoffOptions = {},
+): Promise<string | null> {
+  const delays = options.delaysMs ?? [500, 1500, 4000];
+  const sleep = options.sleep ?? defaultSleep;
+  let lastReason = 'unknown';
+  for (let i = 0; i <= delays.length; i++) {
+    let outcome: RefreshAttempt;
+    try {
+      outcome = await attempt();
+    } catch (err) {
+      outcome = { kind: 'transient', reason: err instanceof Error ? err.message : String(err) };
+    }
+    if (outcome.kind === 'token') return outcome.token;
+    if (outcome.kind === 'dead') return null;
+    lastReason = outcome.reason;
+    if (i < delays.length) await sleep(delays[i]);
+  }
+  throw new TransientAuthError(
+    `Nao foi possivel renovar a sessao agora (${lastReason}). A sessao foi mantida.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -264,16 +367,36 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
    * Execute a fetch request. On a 401: if `onTokenExpired` is configured, force a
    * token refresh and retry exactly once. If the 401 cannot be recovered (no
    * refresh, refresh returned null, or the retry ALSO 401'd), the session is dead
-   * → signal `onUnauthenticated` so the product bounces to login instead of
+   * → signal `onUnauthenticated` — UNLESS the refresh threw (unanswered,
+   * transient): then the session is kept. Otherwise the product bounces to login instead of
    * stranding the user on a shell that 401s every call. The 401 is still returned
    * (and thrown by `handleResponse`), but the redirect will already be in flight.
    */
+  // Single-flight: concurrent 401s share one refresh.
+  let inflightRefresh: Promise<string | null> | null = null;
+  function refreshOnce(): Promise<string | null> {
+    if (!inflightRefresh) {
+      inflightRefresh = onTokenExpired!().finally(() => { inflightRefresh = null; });
+    }
+    return inflightRefresh;
+  }
+
   async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
     const response = await safeFetch(url, init);
     if (response.status !== 401) return response;
 
     if (onTokenExpired) {
-      const freshToken = await onTokenExpired();
+      let freshToken: string | null;
+      try {
+        freshToken = await refreshOnce();
+      } catch (err) {
+        // The refresh did not get an authoritative answer (deploy window,
+        // network blip). The session is NOT known to be dead — keep it, and
+        // let the caller see this request's 401 instead of logging out.
+        // eslint-disable-next-line no-console
+        console.warn('[api] session refresh unanswered; keeping the session:', err);
+        return response;
+      }
       if (freshToken) {
         const retryHeaders = { ...init.headers as Record<string, string> };
         retryHeaders['Authorization'] = `Bearer ${freshToken}`;

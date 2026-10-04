@@ -18,6 +18,7 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
+from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
 from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.primitives.roles import customer_may_access_product
 
@@ -366,8 +367,15 @@ async def refresh_token(request: Request, body: RefreshRequest):
         }
     except HTTPException:
         raise
-    except Exception:
-        raise HTTPException(status_code=401, detail="Falha ao renovar token")
+    except Exception as exc:  # noqa: BLE001 — classified, never swallowed
+        # 401 ONLY when Supabase Auth rejected the refresh token (invalid /
+        # revoked / reused). A transport failure or an Auth 5xx/429 is 503 +
+        # Retry-After: the core SPA logs the user out on a refresh 401, so
+        # answering 401 for "could not reach Supabase" turned a blip into a
+        # forced re-login (2026-10-03).
+        if is_authoritative_token_rejection(exc):
+            raise HTTPException(status_code=401, detail="Falha ao renovar token") from exc
+        raise auth_provider_unavailable(exc) from exc
 
 
 @router.patch("/profile")

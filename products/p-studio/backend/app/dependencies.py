@@ -15,6 +15,8 @@ from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from supabase import Client
 
+from noctusai_lib.api.auth import validate_bearer_token
+
 from app.config import settings
 from app.database import get_admin_client, get_anon_client, get_user_client
 
@@ -38,12 +40,10 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Não autenticado")
     token = credentials.credentials
 
-    try:
-        user = get_anon_client().auth.get_user(token).user
-    except Exception:
-        user = None
-    if user is None:
-        raise HTTPException(status_code=401, detail="Sessão inválida ou expirada")
+    # 401 só quando o Supabase Auth RECUSOU o token; 503 + Retry-After quando
+    # não deu para perguntar (falha de rede, 5xx/429 do provedor). O antigo
+    # `except Exception -> 401` fazia um soluço de deploy deslogar o usuário.
+    user = validate_bearer_token(get_anon_client(), token)
 
     # `settings.org_id` tem default "" para que IMPORTAR `app.config` não
     # exija a env var (ver o comentário longo em config.py). Este é o único

@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 
 import { env } from './env';
+import { isTransientHttpStatus, refreshWithBackoff, type RefreshAttempt, type RefreshWithBackoffOptions } from './api';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -64,6 +65,93 @@ export function useAuthReady(): boolean {
     };
   }, []);
   return ready;
+}
+
+// ---------------------------------------------------------------------------
+// Supabase session refresh — transient ≠ dead
+// ---------------------------------------------------------------------------
+
+/**
+ * Classify ONE `supabase.auth.refreshSession()` result.
+ *
+ * supabase-js reports a refresh it could not complete as `{ error }` with
+ * either `AuthRetryableFetchError` (no response, or a 502/503/504 — status 0
+ * or 5xx) or `AuthApiError` (the Auth server answered). Only an answered 4xx
+ * (invalid / revoked / already-used refresh token, no session) means the
+ * session is dead; a 5xx/429/network error means "ask again later".
+ */
+export function classifySupabaseRefresh(result: {
+  data?: { session?: { access_token?: string } | null } | null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  error?: any;
+}): RefreshAttempt {
+  const token = result?.data?.session?.access_token;
+  if (token) return { kind: 'token', token };
+  const error = result?.error;
+  if (!error) return { kind: 'dead' }; // answered: there is no session
+  const status: number | undefined = typeof error.status === 'number' ? error.status : undefined;
+  if (error.name === 'AuthRetryableFetchError' || isTransientHttpStatus(status)) {
+    return { kind: 'transient', reason: `${error.name ?? 'AuthError'} ${status ?? ''}`.trim() };
+  }
+  return { kind: 'dead' };
+}
+
+/**
+ * `onTokenExpired` for any seed product on a supabase-js session: refreshes,
+ * retries transient failures with backoff, resolves `null` only when Supabase
+ * authoritatively refused, and throws `TransientAuthError` otherwise — so a
+ * deploy window never logs the user out (2026-10-03). Wired by
+ * `createProductInfra` (`@noctusai/seed/infra`).
+ */
+export function createSupabaseTokenRefresher(
+  supabase: AnySupabaseClient,
+  options?: RefreshWithBackoffOptions,
+): () => Promise<string | null> {
+  return () =>
+    refreshWithBackoff(async () => classifySupabaseRefresh(await supabase.auth.refreshSession()), options);
+}
+
+/**
+ * The `onUnauthenticated` handler for a supabase-js product: a request came
+ * back 401 with no recovery (no token, or the refresh was REFUSED / the retry
+ * still 401'd) — the session is dead. Clears the local auth state + signs out
+ * (purging the stale token from storage), which flips the app's `!user` gate
+ * in `createProductApp` and redirects to Landing/login. Without this the user
+ * is stranded on a logged-in-looking shell that 401s every call ("[401] Token
+ * ausente" on every page — the 2026-07-03 report).
+ *
+ * 🔴 Signs out with scope `"local"`, NEVER the supabase-js default
+ * `"global"`. A global signOut REVOKES every refresh token the user holds —
+ * core's session and every other product's — so one product tab judging its
+ * session dead logged the user out of the whole platform (2026-10-03: after a
+ * social-wiring deploy, core asked for the password too). Only this tab's
+ * session is dead; purge only this tab's stored copy. An explicit "Sair" is a
+ * different action and keeps its own scope.
+ *
+ * Idempotent (a page fires many requests at once, so a dead session produces
+ * a BURST of 401s — collapsed to one logout; the guard resets after 3s so a
+ * later genuine re-login → expiry can redirect again); never acts on a public
+ * auth route (/login, /sso) to avoid a loop; best-effort throughout (never
+ * throws into the fetch path). Clearing `user` drives a CLIENT-side redirect
+ * (React Router `<Navigate>`), so no full reload; `signOut()` also fires
+ * `onAuthStateChange` → `setUser(null)` as a belt.
+ */
+export function createDeadSessionHandler(
+  supabase: AnySupabaseClient,
+  useAuthStore: { getState: () => { setUser?: (u: null) => void } },
+): () => void {
+  let handling = false;
+  return () => {
+    if (handling) return;
+    const path = typeof window !== 'undefined' ? window.location.pathname : '';
+    if (path.startsWith('/login') || path.startsWith('/sso')) return;
+    handling = true;
+    try { useAuthStore.getState().setUser?.(null); } catch { /* best-effort */ }
+    try { void supabase.auth.signOut?.({ scope: 'local' })?.catch?.(() => {}); } catch { /* best-effort */ }
+    if (typeof window !== 'undefined') {
+      window.setTimeout(() => { handling = false; }, 3000);
+    }
+  };
 }
 
 // ---------------------------------------------------------------------------

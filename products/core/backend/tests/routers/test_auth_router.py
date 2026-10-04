@@ -8,6 +8,7 @@ POST  /api/auth/logout
 """
 import pytest
 from unittest.mock import MagicMock, patch
+from gotrue.errors import AuthApiError, AuthRetryableError
 from tests.conftest import MockUser, MockUserResponse, MockQueryBuilder
 
 
@@ -209,4 +210,46 @@ class TestLogout:
 
     def test_logout_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/auth/logout")
+        assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST /api/auth/refresh — 401 only when Supabase rejected the refresh token
+# ---------------------------------------------------------------------------
+
+class TestRefreshDistinguishesOutageFromDeadSession:
+    """The core SPA logs the user out when /api/auth/refresh answers 401, so
+    that status must mean "this refresh token is dead" — never "Supabase was
+    unreachable for a moment" (2026-10-03: forced re-logins after deploys).
+    gotrue wraps transport failures + Auth 502/503/504 into
+    `AuthRetryableError`; those used to fall under `except Exception -> 401`.
+    """
+
+    def test_refresh_success(self, client):
+        mock_sb = client.mock_supabase
+        session = MagicMock(access_token="new-access", refresh_token="new-refresh")
+        mock_sb.auth.refresh_session = MagicMock(
+            return_value=MagicMock(session=session, user=None)
+        )
+        resp = client.post("/api/auth/refresh", json={"refresh_token": "r"})
+        assert resp.status_code == 200
+        assert resp.json() == {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    @pytest.mark.parametrize("exc", [
+        AuthRetryableError("Connection refused", 0),
+        AuthRetryableError("Bad Gateway", 502),
+        AuthApiError("Internal", 500, None),
+        AuthApiError("rate", 429, None),
+    ], ids=["conn-refused", "502", "api-500", "api-429"])
+    def test_supabase_not_answering_is_503_not_401(self, client, exc):
+        client.mock_supabase.auth.refresh_session = MagicMock(side_effect=exc)
+        resp = client.post("/api/auth/refresh", json={"refresh_token": "r"})
+        assert resp.status_code == 503
+        assert resp.headers.get("retry-after") == "2"
+
+    def test_rejected_refresh_token_is_401(self, client):
+        client.mock_supabase.auth.refresh_session = MagicMock(
+            side_effect=AuthApiError("Invalid Refresh Token: Already Used", 400, "refresh_token_already_used")
+        )
+        resp = client.post("/api/auth/refresh", json={"refresh_token": "r"})
         assert resp.status_code == 401

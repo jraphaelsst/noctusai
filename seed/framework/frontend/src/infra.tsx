@@ -19,6 +19,7 @@
 import { createProductSupabase } from "@noctusai/lib/supabase";
 import { createAuthStore } from "@noctusai/lib/stores";
 import { createApiClient } from "@noctusai/lib/api";
+import { createDeadSessionHandler, createSupabaseTokenRefresher } from "@noctusai/lib/auth";
 import { createNotificationHooks } from "@noctusai/lib/notifications";
 import { createAuthProvider } from "@noctusai/lib/components";
 import { NotificationBell as SharedNotificationBell } from "@noctusai/lib/design-system";
@@ -27,39 +28,6 @@ interface ProductInfraConfig {
   /** Database schema name. Optional — auto-detected from VITE_PRODUCT_SCHEMA
    *  (injected by createViteConfig). Only pass explicitly if overriding. */
   schema?: string;
-}
-
-// Re-entrancy guard: a page fires many requests at once, so a dead session
-// produces a BURST of 401s. Collapse them to a single logout + redirect.
-let _handlingDeadSession = false;
-
-/**
- * A request came back 401 with no recovery (no token, or refresh failed / the
- * retry still 401'd) — the session is dead. Clear the local auth state + sign
- * out (purging the stale token from storage), which flips the app's `!user`
- * gate in `createProductApp` and redirects to Landing/login. Without this the
- * user is stranded on a logged-in-looking shell that 401s every call
- * ("[401] Token ausente" on every page — the 2026-07-03 report).
- *
- * Idempotent (guarded); never redirects when already on a public auth route
- * (/login, /sso) to avoid a loop; best-effort throughout (never throws into the
- * fetch path). Clearing `user` drives a CLIENT-side redirect (React Router
- * `<Navigate>`), so no full reload; `signOut()` also fires `onAuthStateChange`
- * → `setUser(null)` as a belt.
- */
-function handleDeadSession(supabase: { auth: { signOut?: () => Promise<unknown> } }, useAuthStore: {
-  getState: () => { setUser?: (u: null) => void };
-}): void {
-  if (_handlingDeadSession) return;
-  const path = typeof window !== "undefined" ? window.location.pathname : "";
-  if (path.startsWith("/login") || path.startsWith("/sso")) return;
-  _handlingDeadSession = true;
-  try { useAuthStore.getState().setUser?.(null); } catch { /* best-effort */ }
-  try { void supabase.auth.signOut?.()?.catch?.(() => {}); } catch { /* best-effort */ }
-  // Reset the guard so a later genuine re-login → expiry can redirect again.
-  if (typeof window !== "undefined") {
-    window.setTimeout(() => { _handlingDeadSession = false; }, 3000);
-  }
 }
 
 /**
@@ -110,16 +78,26 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
     return data?.session?.access_token ?? null;
   };
 
+  /**
+   * Refresh on a 401: `null` ONLY when Supabase refused the refresh token;
+   * a network error / 5xx / Cloudflare 52x is retried with backoff and, if it
+   * persists, thrown as `TransientAuthError` — which the api client treats as
+   * "keep the session", not "log out". A prod deploy (container swap +
+   * tunnel restart) logged the owner out 3x on 2026-10-03 because both cases
+   * used to return `null`. Shared by `api` and `coreApi`.
+   */
+  const onTokenExpired = createSupabaseTokenRefresher(supabase);
+
+  // Dead session (401 the refresh authoritatively couldn't recover) → clear
+  // auth + redirect to login, instead of stranding the user on a shell that
+  // 401s every call. Signs out with scope "local" — see the factory.
+  const onUnauthenticated = createDeadSessionHandler(supabase, useAuthStore);
+
   const api = createApiClient({
     getBaseUrl: () => backendUrl,
     getAuthToken,
-    onTokenExpired: async () => {
-      const { data: { session } } = await supabase.auth.refreshSession();
-      return session?.access_token ?? null;
-    },
-    // Dead session (401 the refresh couldn't recover) → clear auth + redirect to
-    // login, instead of stranding the user on a shell that 401s every call.
-    onUnauthenticated: () => handleDeadSession(supabase, useAuthStore),
+    onTokenExpired,
+    onUnauthenticated,
   });
 
   /**
@@ -141,11 +119,8 @@ export function createProductInfra(config: ProductInfraConfig = {}) {
     getBaseUrl: () =>
       import.meta.env.VITE_CORE_API_URL ?? import.meta.env.VITE_CORE_URL ?? "",
     getAuthToken,
-    onTokenExpired: async () => {
-      const { data: { session } } = await supabase.auth.refreshSession();
-      return session?.access_token ?? null;
-    },
-    onUnauthenticated: () => handleDeadSession(supabase, useAuthStore),
+    onTokenExpired,
+    onUnauthenticated,
   });
 
   // Auth provider
