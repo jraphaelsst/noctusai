@@ -20,6 +20,16 @@ and field lengths.
   clients by slug;
 * NEVER publishes; refreshes the draft's ``compiled_hash`` at the end;
 * ``dry_run`` performs ZERO writes and returns the same summary shape.
+
+Agent Packages (``agent-packages/CONTRACT.md`` §C4, §D2): ``agente.kind``,
+``versao.versao_semver`` and ``versao.package_sha`` are the ONLY identity
+additions; a ``dev-advisor`` bundle must carry all three. ``kind`` can be set
+to ``dev-advisor`` only when the agent is NEW or already a dev-advisor — a
+runtime agent (IsaIA, Julia) is never flipped (409 ``kind_change_refused``,
+and 017's ``guard_agent_kind_immutable`` is the DB backstop). One optional
+extra key, ``claude`` (``[{caminho, conteudo}]`` — the build's
+``dist/claude/`` tree), is stored on the draft so ``GET /api/agent-packages``
+serves exactly what was built; it is only meaningful for a dev-advisor.
 """
 from __future__ import annotations
 
@@ -49,11 +59,18 @@ BUNDLE_FORMAT = "noctus.agent-bundle/v1"
 #: §D5 — the ONE route whose body cap is raised (``app.main``).
 MAX_BUNDLE_BYTES = 25 * 1024 * 1024
 
+AgentKind = Literal["runtime", "dev-advisor"]
 ModelName = Literal[MODELS]  # type: ignore[valid-type]
 EffortName = Literal[EFFORTS]  # type: ignore[valid-type]
 DocumentTipo = Literal[DOCUMENT_TYPES]  # type: ignore[valid-type]
 
 _Slug = Field(..., min_length=1, max_length=64, pattern=SLUG_PATTERN)
+
+#: ``agent_versions.versao_semver`` CHECK (017).
+SEMVER_PATTERN = r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$"
+#: A path inside the materialised Claude Code tree (leading dots allowed —
+#: ``.claude/agents/<key>.md``); the ``..`` ban is validated separately.
+CLAUDE_CAMINHO_PATTERN = r"^[A-Za-z0-9._][A-Za-z0-9._/-]*$"
 
 
 def _unique(values: list[str], what: str) -> None:
@@ -71,6 +88,8 @@ class BundleAgente(StrictHttpModel):
     key: str = _Slug
     nome: str = Field(..., min_length=1, max_length=200)
     descricao: str | None = Field(default=None, max_length=2000)
+    #: §C4. ``None`` = unspecified (a new agent defaults to ``runtime``).
+    kind: AgentKind | None = None
 
 
 class BundleToolPolicy(StrictHttpModel):
@@ -85,6 +104,9 @@ class BundleVersao(StrictHttpModel):
     max_turns: int = Field(default=40, ge=1, le=200)
     idioma: str = Field(default="pt-BR", min_length=1, max_length=16)
     tool_policy: BundleToolPolicy = Field(default_factory=BundleToolPolicy)
+    #: §C4 — the package identity (semver + sha256 over the package tree).
+    versao_semver: str | None = Field(default=None, max_length=64, pattern=SEMVER_PATTERN)
+    package_sha: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class BundleSecao(StrictHttpModel):
@@ -194,6 +216,18 @@ class BundleCliente(StrictHttpModel):
     entradas: list[BundleEntrada] = Field(default_factory=list, max_length=500)
 
 
+class BundleClaudeFile(StrictHttpModel):
+    caminho: str = Field(..., min_length=1, max_length=255, pattern=CLAUDE_CAMINHO_PATTERN)
+    conteudo: str = Field(..., max_length=2_000_000)
+
+    @field_validator("caminho")
+    @classmethod
+    def _no_parent_segments(cls, v: str) -> str:
+        if ".." in v.split("/") or v.endswith("/") or "//" in v:
+            raise ValueError("caminho must be a clean relative path")
+        return v
+
+
 class AgentBundle(StrictHttpModel):
     formato: Literal["noctus.agent-bundle/v1"]
     agente: BundleAgente
@@ -203,9 +237,12 @@ class AgentBundle(StrictHttpModel):
     conhecimento: list[BundleColecao] = Field(default_factory=list, max_length=50)
     evals: list[BundleEval] = Field(default_factory=list, max_length=500)
     clientes: list[BundleCliente] = Field(default_factory=list, max_length=100)
+    #: The build's ``dist/claude/`` tree (optional; dev-advisor only).
+    claude: list[BundleClaudeFile] = Field(default_factory=list, max_length=3000)
 
     @model_validator(mode="after")
     def _unique_keys(self) -> "AgentBundle":
+        _unique([f.caminho for f in self.claude], "claude.caminho")
         _unique([s.chave for s in self.secoes], "secoes.chave")
         _unique([s.nome for s in self.skills], "skills.nome")
         _unique([c.slug for c in self.conhecimento], "conhecimento.slug")
@@ -245,6 +282,8 @@ class _Summary:
     evals_atualizados: int = 0
     clientes_criados: int = 0
     avisos: list[str] = field(default_factory=list)
+    #: 017 — set only for a dev-advisor bundle.
+    pacote: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -265,6 +304,7 @@ class _Summary:
             "evals": {"criados": self.evals_criados, "atualizados": self.evals_atualizados},
             "clientes": {"criados": self.clientes_criados},
             "avisos": list(self.avisos),
+            "pacote": self.pacote,
         }
 
 
@@ -315,13 +355,29 @@ def import_bundle(
         raise ImportRefused(409, "not_studio_agent", "Este agente não é gerenciado pelo Studio.")
     out.criado = agent is None
 
+    kind = _resolve_kind(bundle, agent)
+    if kind == "dev-advisor":
+        _check_package_identity(bundle, agent, org_id=org_id, definitions=definitions)
+        out.pacote = {
+            "kind": kind,
+            "versao_semver": bundle.versao.versao_semver,
+            "package_sha": bundle.versao.package_sha,
+            "arquivos_claude": len(bundle.claude),
+        }
+        if not bundle.claude:
+            out.avisos.append(
+                "pacote sem árvore `claude`: GET /api/agent-packages não servirá esta versão depois de publicada"
+            )
+
     if dry_run:
         _plan(bundle, agent, org_id=org_id, definitions=definitions, knowledge=knowledge, evals=evals, out=out)
         return out.to_dict()
 
     # ── agent + draft
     if agent is None:
-        agent = definitions.create_studio_agent(org_id, key, bundle.agente.nome, bundle.agente.descricao)
+        agent = definitions.create_studio_agent(
+            org_id, key, bundle.agente.nome, bundle.agente.descricao, kind=kind
+        )
         draft = definitions.create_draft(org_id, agent.id, None, user_id)
     else:
         draft = definitions.get_draft(org_id, agent.id)
@@ -331,18 +387,22 @@ def import_bundle(
     out.version_id = draft.id
 
     v = bundle.versao
-    definitions.update_draft(
-        org_id,
-        draft.id,
-        {
-            "notas": v.notas,
-            "model": v.model,
-            "effort": v.effort,
-            "max_turns": v.max_turns,
-            "idioma": v.idioma,
-            "tool_policy": {"web_search": v.tool_policy.web_search, "knowledge": v.tool_policy.knowledge},
-        },
-    )
+    draft_fields: dict[str, Any] = {
+        "notas": v.notas,
+        "model": v.model,
+        "effort": v.effort,
+        "max_turns": v.max_turns,
+        "idioma": v.idioma,
+        "tool_policy": {"web_search": v.tool_policy.web_search, "knowledge": v.tool_policy.knowledge},
+    }
+    if kind == "dev-advisor":
+        draft_fields["versao_semver"] = v.versao_semver
+        draft_fields["package_sha"] = v.package_sha
+    definitions.update_draft(org_id, draft.id, draft_fields)
+    if kind == "dev-advisor":
+        definitions.set_package_tree(
+            org_id, agent.id, draft.id, [{"caminho": f.caminho, "conteudo": f.conteudo} for f in bundle.claude]
+        )
     # One transactional entry point for the draft's content (sections +
     # skills + skill files) — provided by the definitions store.
     definitions.replace_draft_bundle(
@@ -437,6 +497,58 @@ def import_bundle(
     for aviso in compiled.avisos:
         out.avisos.append(f"compilação: {aviso.mensagem}")
     return out.to_dict()
+
+
+def _resolve_kind(bundle: AgentBundle, agent: Any) -> str:
+    """The agent's kind after this import (§D2). Never flips an existing agent."""
+    requested = bundle.agente.kind
+    if agent is None:
+        kind = requested or "runtime"
+    else:
+        existing = getattr(agent, "kind", "runtime")
+        if requested is not None and requested != existing:
+            raise ImportRefused(
+                409, "kind_change_refused",
+                f"O agente já é '{existing}'; o import nunca altera o tipo de um agente existente.",
+            )
+        kind = existing
+    if kind != "dev-advisor":
+        extras = [
+            name for name, present in (
+                ("versao.versao_semver", bundle.versao.versao_semver is not None),
+                ("versao.package_sha", bundle.versao.package_sha is not None),
+                ("claude", bool(bundle.claude)),
+            ) if present
+        ]
+        if extras:
+            raise ImportRefused(
+                422, "package_fields_require_dev_advisor",
+                f"{', '.join(extras)} só se aplica a agentes dev-advisor.",
+            )
+    return kind
+
+
+def _check_package_identity(bundle: AgentBundle, agent: Any, *, org_id: UUID, definitions: Any) -> None:
+    """A dev-advisor bundle carries its package identity, and a PUBLISHED
+    semver is never re-imported (bump ``versao`` in ``package.yaml``)."""
+    missing = [
+        name for name, value in (
+            ("versao.versao_semver", bundle.versao.versao_semver),
+            ("versao.package_sha", bundle.versao.package_sha),
+        ) if value is None
+    ]
+    if missing:
+        raise ImportRefused(422, "package_identity_required", f"dev-advisor exige {', '.join(missing)}.")
+    if agent is None:
+        return
+    for existing in definitions.list_versions(org_id, agent.id):
+        if existing.status != "rascunho" and existing.versao_semver == bundle.versao.versao_semver:
+            same = existing.package_sha == bundle.versao.package_sha
+            raise ImportRefused(
+                409, "semver_published",
+                f"A versão {bundle.versao.versao_semver} já foi publicada"
+                + (" com o mesmo conteúdo." if same else " com outro conteúdo — aumente `versao` no package.yaml."),
+            )
 
 
 def _case_differs(current: Any, case: BundleEval, criterios: dict[str, Any]) -> bool:

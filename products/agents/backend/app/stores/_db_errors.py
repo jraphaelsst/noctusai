@@ -71,6 +71,8 @@ _P0001_CODES: dict[str, Callable[[str], Exception]] = {
     "chave_conflict": _conflict("chave_conflict"),
     "skill_exists": _conflict("skill_exists"),
     "client_entries_cap": _conflict("client_entries_cap"),
+    "kind_immutable": _conflict("kind_immutable"),
+    "learning_content_immutable": _conflict("learning_content_immutable"),
     "version_not_found": NotFound,
     "agent_not_found": NotFound,
     "eval_case_not_found": NotFound,

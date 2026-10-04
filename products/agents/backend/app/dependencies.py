@@ -225,6 +225,55 @@ require_member = require_scopes(
 )
 
 
+# ── Agent Packages scoped gates (agent-packages CONTRACT §A8, §I) ───────────
+#
+# The ONLY routes a `pk_*` product token may reach. `restrict="any"` branches
+# per caller kind (seed `require_scopes`): a product token must carry the
+# listed scope (else 403 `scope_missing`), a human user needs the role set.
+# Every OTHER route keeps `restrict="user_only"` above → 403 `user_required`.
+SCOPE_PACKAGES_READ = "packages:read"
+SCOPE_PROJECT_KNOWLEDGE_WRITE = "project-knowledge:write"
+SCOPE_LEARNINGS_WRITE = "learnings:write"
+SCOPE_LEARNINGS_READ = "learnings:read"
+#: The scopes an admin may put on a minted token (`POST /api/settings/api-tokens`
+#: accepts any string; this is the documented, product-honoured set).
+PACKAGE_TOKEN_SCOPES = frozenset({
+    SCOPE_PACKAGES_READ, SCOPE_PROJECT_KNOWLEDGE_WRITE, SCOPE_LEARNINGS_WRITE, SCOPE_LEARNINGS_READ,
+})
+
+require_packages_read = require_scopes(
+    SCOPE_PACKAGES_READ,
+    user_roles=MEMBER_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+require_project_knowledge_write = require_scopes(
+    SCOPE_PROJECT_KNOWLEDGE_WRITE,
+    user_roles=ADMIN_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+require_learnings_write = require_scopes(
+    SCOPE_LEARNINGS_WRITE,
+    user_roles=ADMIN_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+require_learnings_read = require_scopes(
+    SCOPE_LEARNINGS_READ,
+    user_roles=MEMBER_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+
 # Credenciais e integrações + Configurações do agente (2026-09-16): the
 # NoctusAI OPERATOR only — `noctus_users.role == 'admin'`, never an org
 # owner/admin (seed `noctusai_lib.api.auth.platform`). These pages hold the
@@ -348,6 +397,15 @@ def get_build_julia_spec_dep():
 
 
 __all__ = [
+    "PACKAGE_TOKEN_SCOPES",
+    "SCOPE_LEARNINGS_READ",
+    "SCOPE_LEARNINGS_WRITE",
+    "SCOPE_PACKAGES_READ",
+    "SCOPE_PROJECT_KNOWLEDGE_WRITE",
+    "require_learnings_read",
+    "require_learnings_write",
+    "require_packages_read",
+    "require_project_knowledge_write",
     "ADMIN_ROLES",
     "MEMBER_ROLES",
     "AuthContext",

@@ -308,7 +308,7 @@ def _summary(store, org_id: UUID, agent: StudioAgentRecord) -> AgentSummaryOut:
         id=agent.id, key=agent.key, nome=agent.nome, descricao=agent.descricao,
         definition_mode=agent.definition_mode, ativo=agent.ativo,
         publicacao_limiar=agent.publicacao_limiar, versao_ativa=versao_ativa,
-        tem_rascunho=tem_rascunho,
+        tem_rascunho=tem_rascunho, kind=agent.kind,
     )
 
 
@@ -316,7 +316,7 @@ def _version_summary(v: VersionRecord, eval_score: float | None) -> dict[str, An
     return dict(
         id=v.id, versao=v.versao, status=v.status, notas=v.notas, model=v.model,
         created_at=v.created_at, published_at=v.published_at, compiled_hash=v.compiled_hash,
-        eval_score=eval_score,
+        eval_score=eval_score, versao_semver=v.versao_semver, package_sha=v.package_sha,
     )
 
 

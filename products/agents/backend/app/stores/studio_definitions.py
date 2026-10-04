@@ -42,6 +42,7 @@ URL-length batching is needed.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -108,7 +109,15 @@ DRAFT_DEFAULTS = {
 }
 
 _AGENT_FIELDS = ("nome", "descricao", "ativo", "publicacao_limiar")
-_DRAFT_FIELDS = ("notas", "model", "effort", "max_turns", "idioma", "tool_policy")
+_DRAFT_FIELDS = (
+    "notas", "model", "effort", "max_turns", "idioma", "tool_policy",
+    # 017 (Agent Packages §C4): the package identity the importer stamps.
+    "versao_semver", "package_sha",
+)
+#: 017 `agents.kind` CHECK — immutable once the row exists.
+AGENT_KINDS = ("runtime", "dev-advisor")
+_SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$")
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 #: The version-row settings that feed the compile — changing one invalidates
 #: a draft's ``compiled_hash`` (012 ``guard_agent_version_immutable``).
 _COMPILED_SETTINGS = ("model", "effort", "max_turns", "idioma", "tool_policy")
@@ -142,6 +151,8 @@ class StudioAgentRecord:
     publicacao_limiar: float
     created_at: datetime
     updated_at: datetime
+    #: 017: ``runtime`` (IsaIA, Julia, ...) | ``dev-advisor`` (a package).
+    kind: str = "runtime"
 
 
 @dataclass(frozen=True)
@@ -169,6 +180,9 @@ class VersionRecord:
     #: H2 snapshots, set by ``publish_agent_version`` (NULL on a draft).
     limiar_aplicado: float | None = None
     eval_score: float | None = None
+    #: 017 (§C4): package identity recorded by the importer (NULL otherwise).
+    versao_semver: str | None = None
+    package_sha: str | None = None
 
 
 @dataclass(frozen=True)
@@ -391,6 +405,12 @@ def _validate_draft_fields(fields: dict[str, Any]) -> None:
         raise ValueError(f"max_turns must be between 1 and 200; got {fields['max_turns']!r}")
     if "tool_policy" in fields and not isinstance(fields["tool_policy"], dict):
         raise ValueError("tool_policy must be an object")
+    semver = fields.get("versao_semver")
+    if semver is not None and not _SEMVER_RE.match(str(semver)):
+        raise ValueError(f"versao_semver must be a semver; got {semver!r}")
+    sha = fields.get("package_sha")
+    if sha is not None and not _SHA256_RE.match(str(sha)):
+        raise ValueError("package_sha must be 64 lowercase hex chars")
 
 
 def _validate_entry(fields: dict[str, Any]) -> None:
@@ -414,10 +434,10 @@ class StudioDefinitionStore(Protocol):
     def list_agents(self, org_id: UUID) -> list[StudioAgentRecord]: ...
     def get_agent(self, org_id: UUID, key: str) -> StudioAgentRecord: ...
     def create_studio_agent(
-        self, org_id: UUID, key: str, nome: str, descricao: str | None
+        self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
     ) -> StudioAgentRecord:
-        """``definition_mode='studio'``, ``runtime='claude_sdk'``, ``ativo=false``.
-        Raises ``StudioConflict('key_taken')``."""
+        """``definition_mode='studio'``, ``runtime='claude_sdk'``, ``ativo=false``,
+        ``kind`` (017; immutable afterwards). Raises ``StudioConflict('key_taken')``."""
         ...
     def update_agent(
         self, org_id: UUID, key: str, fields: dict[str, Any], *, actor: UUID | None = None
@@ -538,6 +558,15 @@ class StudioDefinitionStore(Protocol):
         untouched (never updated)."""
         ...
     def get_compiled_prompt(self, org_id: UUID, hash: str) -> CompiledPromptRecord: ...
+    # package tree (017) — the materialised Claude Code tree of a version
+    def get_package_tree(self, org_id: UUID, version_id: UUID) -> list[dict[str, str]] | None:
+        """``[{"caminho", "conteudo"}]`` or ``None`` when the version has none."""
+        ...
+    def set_package_tree(
+        self, org_id: UUID, agent_id: UUID, version_id: UUID, files: list[dict[str, str]]
+    ) -> None:
+        """Replace the tree of a DRAFT (raises :class:`VersionImmutable` otherwise)."""
+        ...
     def erase_client_compiled_prompts(self, org_id: UUID, client_id: UUID) -> int:
         """LGPD erasure (``agents.erase_compiled_prompts``) — the ONLY
         deletion path for compiled prompts. Returns the rows erased."""
@@ -574,6 +603,8 @@ class FakeStudioDefinitionStore:
         self._entries: dict[UUID, ClientEntryRecord] = {}
         self._compiled: dict[tuple[UUID, str], CompiledPromptRecord] = {}
         self._audit: list[AuditRecord] = []
+        #: version_id -> the 017 `agent_package_trees.files` of that version.
+        self._trees: dict[UUID, list[dict[str, str]]] = {}
         #: run_id -> the `eval_runs` columns publish_agent_version reads.
         self._eval_runs: dict[UUID, dict[str, Any]] = {}
         #: agent_id -> number of active eval cases (publish needs >= 1).
@@ -627,6 +658,7 @@ class FakeStudioDefinitionStore:
     def seed_agent(
         self, org_id: UUID, key: str, *, agent_id: UUID | None = None, nome: str | None = None,
         definition_mode: str = "studio", ativo: bool = True, publicacao_limiar: float = 0.8,
+        kind: str = "runtime",
     ) -> StudioAgentRecord:
         """Test helper: an ``agents.agents`` row with explicit columns (the
         knowledge/eval router suites resolve agents through this store)."""
@@ -634,7 +666,7 @@ class FakeStudioDefinitionStore:
         rec = StudioAgentRecord(
             id=agent_id or uuid4(), org_id=org_id, key=key, nome=nome or key, descricao=None,
             definition_mode=definition_mode, runtime="claude_sdk", ativo=ativo,
-            publicacao_limiar=publicacao_limiar, created_at=now, updated_at=now,
+            publicacao_limiar=publicacao_limiar, created_at=now, updated_at=now, kind=kind,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -652,15 +684,17 @@ class FakeStudioDefinitionStore:
         return rec
 
     def create_studio_agent(
-        self, org_id: UUID, key: str, nome: str, descricao: str | None
+        self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
     ) -> StudioAgentRecord:
+        if kind not in AGENT_KINDS:
+            raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
         if (org_id, key) in self._agents:
             raise StudioConflict("key_taken", f"agent key {key!r} already exists")
         now = self._now()
         rec = StudioAgentRecord(
             id=uuid4(), org_id=org_id, key=key, nome=nome, descricao=descricao,
             definition_mode="studio", runtime="claude_sdk", ativo=False,
-            publicacao_limiar=0.8, created_at=now, updated_at=now,
+            publicacao_limiar=0.8, created_at=now, updated_at=now, kind=kind,
         )
         self._agents[(org_id, key)] = rec
         return rec
@@ -851,6 +885,8 @@ class FakeStudioDefinitionStore:
         # 013 `eval_runs.version_id ON DELETE CASCADE`.
         for rid in [r for r, row in self._eval_runs.items() if row["version_id"] == version_id]:
             del self._eval_runs[rid]
+        # 017 `agent_package_trees.version_id ON DELETE CASCADE`.
+        self._trees.pop(version_id, None)
         del self._versions[version_id]
         self._audit_append(
             org_id, v.agent_id, actor, "rascunho_descartado",
@@ -1147,6 +1183,21 @@ class FakeStudioDefinitionStore:
             raise NotFound(f"compiled prompt {hash} not found")
         return rec
 
+    # ── package trees (017)
+    def get_package_tree(self, org_id: UUID, version_id: UUID) -> list[dict[str, str]] | None:
+        v = self._versions.get(version_id)
+        if v is None or v.org_id != org_id:
+            return None
+        tree = self._trees.get(version_id)
+        return [dict(f) for f in tree] if tree is not None else None
+
+    def set_package_tree(
+        self, org_id: UUID, agent_id: UUID, version_id: UUID, files: list[dict[str, str]]
+    ) -> None:
+        # 017 `guard_package_tree_immutable`: only a draft's tree is writable.
+        self._require_draft(org_id, version_id)
+        self._trees[version_id] = [{"caminho": f["caminho"], "conteudo": f["conteudo"]} for f in files]
+
     def erase_client_compiled_prompts(self, org_id: UUID, client_id: UUID) -> int:
         keys = [k for k, c in self._compiled.items() if c.org_id == org_id and c.client_id == client_id]
         for k in keys:
@@ -1212,6 +1263,7 @@ class SupabaseStudioDefinitionStore:
             ativo=bool(row.get("ativo", False)),
             publicacao_limiar=_float(row.get("publicacao_limiar", 0.8)),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            kind=row.get("kind") or "runtime",
         )
 
     @staticmethod
@@ -1231,6 +1283,7 @@ class SupabaseStudioDefinitionStore:
             created_at=row["created_at"], updated_at=row["updated_at"],
             limiar_aplicado=_float(row["limiar_aplicado"]) if row.get("limiar_aplicado") is not None else None,
             eval_score=_float(row["eval_score"]) if row.get("eval_score") is not None else None,
+            versao_semver=row.get("versao_semver"), package_sha=row.get("package_sha"),
         )
 
     @staticmethod
@@ -1298,11 +1351,13 @@ class SupabaseStudioDefinitionStore:
         return self._agent(self._one(resp, f"agent {key!r}"))
 
     def create_studio_agent(
-        self, org_id: UUID, key: str, nome: str, descricao: str | None
+        self, org_id: UUID, key: str, nome: str, descricao: str | None, *, kind: str = "runtime",
     ) -> StudioAgentRecord:
+        if kind not in AGENT_KINDS:
+            raise ValueError(f"kind must be one of {AGENT_KINDS}; got {kind!r}")
         payload = {
             "org_id": str(org_id), "key": key, "nome": nome, "descricao": descricao,
-            "runtime": "claude_sdk", "definition_mode": "studio", "ativo": False,
+            "runtime": "claude_sdk", "definition_mode": "studio", "ativo": False, "kind": kind,
         }
         resp = self._exec(self._t("agents").insert(payload), unique_code="key_taken")
         return self._agent(self._one(resp, f"agent {key!r}"))
@@ -1679,6 +1734,26 @@ class SupabaseStudioDefinitionStore:
     def get_compiled_prompt(self, org_id: UUID, hash: str) -> CompiledPromptRecord:
         resp = self._t("compiled_prompts").select("*").eq("org_id", str(org_id)).eq("hash", hash).execute()
         return self._compiled(self._one(resp, f"compiled prompt {hash}"))
+
+    # ── package trees (017)
+    def get_package_tree(self, org_id: UUID, version_id: UUID) -> list[dict[str, str]] | None:
+        resp = (
+            self._t("agent_package_trees").select("files")
+            .eq("org_id", str(org_id)).eq("version_id", str(version_id)).limit(1).execute()
+        )
+        rows = resp.data or []
+        if not rows:
+            return None
+        return [dict(f) for f in (rows[0].get("files") or [])]
+
+    def set_package_tree(
+        self, org_id: UUID, agent_id: UUID, version_id: UUID, files: list[dict[str, str]]
+    ) -> None:
+        payload = {
+            "org_id": str(org_id), "agent_id": str(agent_id), "version_id": str(version_id),
+            "files": [{"caminho": f["caminho"], "conteudo": f["conteudo"]} for f in files],
+        }
+        self._exec(self._t("agent_package_trees").upsert(payload, on_conflict="version_id"))
 
     def erase_client_compiled_prompts(self, org_id: UUID, client_id: UUID) -> int:
         resp = self._rpc("erase_compiled_prompts", {"p_org_id": str(org_id), "p_client_id": str(client_id)})

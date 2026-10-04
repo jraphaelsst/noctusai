@@ -12020,6 +12020,58 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 174 unapplied — the widened motivo CHECK (+'CPF', "
         "alongside C1-C6) has no live constraint to probe against yet.",
     ),
+    # Migration 017 (agents, Agent Packages contract §D1/§H2/§I,
+    # `products/agents/projects/agent-packages/CONTRACT.md`) is FILE-ONLY until
+    # the owner asks for a prod deploy — it is applied by `migrate_product`
+    # then, never by the slice that wrote it. Same reasoning as 167/171/174
+    # above: `verify_db_guards`'s `SqlExecutor` runs a probe against LIVE
+    # production and cannot exercise a guard on a column/table/trigger that
+    # does not exist there yet (an unverifiable GuardProbe would also be
+    # unvalidated SQL). Remove these seven entries and register real
+    # `GuardProbe`s in `verify_db_guards.DEFAULT_REGISTRY` in the SAME change
+    # that applies migration 017.
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "agents_kind_check",
+        "Migration 017 unapplied — the agents.kind allowlist CHECK has no live object to probe "
+        "against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "guard_agent_kind_immutable",
+        "Migration 017 unapplied — the agents.kind immutability trigger has no live object to probe "
+        "against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "agent_versions_versao_semver_check",
+        "Migration 017 unapplied — the versao_semver shape CHECK has no live object to probe "
+        "against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "agent_versions_package_sha_check",
+        "Migration 017 unapplied — the package_sha shape CHECK has no live object to probe "
+        "against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "agent_versions_published_semver_idx",
+        "Migration 017 unapplied — the published-semver partial unique index has no live object to probe "
+        "against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "guard_package_tree_immutable",
+        "Migration 017 unapplied — the agent_package_trees write-once trigger has no live object to probe "
+        "against yet.",
+    ),
+    (
+        "products/agents/backend/migrations/017_agent_packages.sql",
+        "guard_agent_learning_content",
+        "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
+        "against yet.",
+    ),
 )
 
 

@@ -48,6 +48,7 @@ from app.dependencies import (
 from app.rate_limit import limiter
 from app.routers.admin_credentials_router import router as admin_credentials_router
 from app.routers.agent_settings_router import router as agent_settings_router
+from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
@@ -66,6 +67,9 @@ from app.routers.studio_knowledge_router import (
     DOCUMENTS_BATCH_MAX_BYTES,
 )
 from app.routers.studio_knowledge_router import router as studio_knowledge_router
+from app.routers.studio_package_sync_router import SOURCES_BODY_LIMIT_PATTERN
+from app.routers.studio_package_sync_router import router as studio_package_sync_router
+from app.schemas.packages import SOURCES_MAX_BYTES
 from app.studio.importer import MAX_BUNDLE_BYTES
 from app.studio.wiring import install_studio_seams, register_anthropic_credential_override
 from app.runtime.slots import get_slot_pool
@@ -198,6 +202,9 @@ app = create_product_app(
         studio_knowledge_router,
         studio_evals_router,
         studio_import_router,
+        # Agent Packages (CONTRACT §I): package serving + consumer sync routes.
+        agent_packages_router,
+        studio_package_sync_router,
     ],
     lifespan_startup=on_startup,
     lifespan_shutdown=on_shutdown,
@@ -220,6 +227,8 @@ app = create_product_app(
         IMPORT_BODY_LIMIT_PATTERN: MAX_BUNDLE_BYTES,
         DOCUMENTS_BATCH_BODY_LIMIT_PATTERN: DOCUMENTS_BATCH_MAX_BYTES,
         SKILL_FILES_BATCH_BODY_LIMIT_PATTERN: SKILL_FILES_BATCH_MAX_BYTES,
+        # Agent Packages §G2: the full project manifest (25 MB cap per call).
+        SOURCES_BODY_LIMIT_PATTERN: SOURCES_MAX_BYTES,
     },
 )
 

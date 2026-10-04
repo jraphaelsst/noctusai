@@ -61,6 +61,8 @@ class AgentSummaryOut(BaseModel):
     publicacao_limiar: float
     versao_ativa: int | None
     tem_rascunho: bool
+    #: Agent Packages (§D1): ``runtime`` | ``dev-advisor``.
+    kind: str = "runtime"
 
 
 class AgentListOut(BaseModel):
@@ -77,6 +79,9 @@ class VersionSummaryOut(BaseModel):
     published_at: datetime | None
     compiled_hash: str | None
     eval_score: float | None
+    #: Agent Packages (§C4) — the package identity of a dev-advisor version.
+    versao_semver: str | None = None
+    package_sha: str | None = None
 
 
 class AgentDetailOut(AgentSummaryOut):

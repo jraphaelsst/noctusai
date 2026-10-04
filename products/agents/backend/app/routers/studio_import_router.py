@@ -64,6 +64,13 @@ class ImportClientesOut(BaseModel):
     criados: int
 
 
+class ImportPacoteOut(BaseModel):
+    kind: str
+    versao_semver: str | None
+    package_sha: str | None
+    arquivos_claude: int
+
+
 class ImportSummaryOut(BaseModel):
     dry_run: bool
     agente: ImportAgenteOut
@@ -72,6 +79,8 @@ class ImportSummaryOut(BaseModel):
     evals: ImportEvalsOut
     clientes: ImportClientesOut
     avisos: list[str]
+    #: Agent Packages (§D2) — present only for a dev-advisor bundle.
+    pacote: ImportPacoteOut | None = None
 
 
 @router.post("/{key}/import", response_model=ImportSummaryOut)
