@@ -29,6 +29,7 @@ from noctusai_seed import (
     select_get_current_user,
 )
 from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
+from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
@@ -161,6 +162,9 @@ async def _legacy_jwt_resolver(token: str) -> AuthContext | None:
         scopes=[],
         raw_token=token,
         api_token_id=None,
+        # platform-admin-mfa M2: the bearer was just accepted by `get_current_user`
+        # for `user`, so its `aal` claim is readable (bound to that user's `sub`).
+        aal=read_aal(token, validated_user=user),
     )
 
 

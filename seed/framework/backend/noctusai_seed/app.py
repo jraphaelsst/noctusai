@@ -47,6 +47,7 @@ from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
 
 from noctusai_seed.database import create_database_module
 from noctusai_seed.dependencies import create_dependencies
+from noctusai_lib.api.auth.mfa.gate import build_mfa_gate_config
 from noctusai_seed.health import HealthEndpointConfig, mount_health_endpoints
 from noctusai_seed.llm_defaults import default_llm_config
 from noctusai_seed.routers import build_standard_routers
@@ -470,6 +471,16 @@ def create_product_app(
         # log line carries.
         product_slug=app_name,
         audit_sink=audit_sink,
+    )
+
+    # 8a. Admin-MFA gate config (platform-admin-mfa M2). Read at request time by
+    #     the four admin gate factories; policy `off` (the default) ⇒ no
+    #     behavioural change. Flip per product via `public.mfa_policy`.
+    app.state.mfa_gate = build_mfa_gate_config(
+        product=app_name, settings=settings,
+        core_client_factory=lambda: db.get_core_client(),
+        audit_sink=getattr(app.state, "audit_sink", None),
+        audit_enabled=getattr(app.state, "audit_enabled", False),
     )
 
     # 9. Register the standard routers the product opted into.

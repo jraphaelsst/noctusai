@@ -275,6 +275,10 @@ def configure_app(
 
         audit_sink = FakeAuditSink()
         _audit_enabled = False
+    # Exposed so the admin-MFA gate (`noctusai_lib.api.auth.mfa.gate`) can write
+    # its warn-mode audit row through the SAME sink/enabled flag.
+    app.state.audit_sink = audit_sink
+    app.state.audit_enabled = _audit_enabled
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(AuditMiddleware, sink=audit_sink, product_slug=_product_slug, enabled=_audit_enabled)
     app.add_middleware(CorrelationIdMiddleware)

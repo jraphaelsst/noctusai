@@ -14792,6 +14792,7 @@ def check_all_products() -> tuple[int, list]:
     # gap hid `meta`/`instagram_insights` in prod.
     # KB § PATTERNS/frontend/status-pagina-dev-visibility.md.
     all_issues.extend(check_status_pagina_role_parity())
+    all_issues.extend(check_admin_gate_hand_rolled())
     # SEC-2 customer-role isolation (2026-09-28) — every re-declaration of the
     # shared public.current_org_id() & co must equal the canonical rendering;
     # one stale copy re-opens the fleet's RLS to end customers on a fresh apply.
@@ -20688,6 +20689,70 @@ def check_prod_exposure_consent(repo_root: Path | None = None) -> list[dict]:
             "severity": "high",
             "symbol": "prod-exposure-consent-missing",
         })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_admin_gate_hand_rolled` — platform-admin-mfa §5 point 8. The admin-MFA
+# gate lives INSIDE the four seed admin factories (`require_platform_admin`,
+# `require_org_admin`, `require_scopes`/`require_org_admin_role`,
+# `make_require_role`). A product that decides "is this caller an admin" with
+# its OWN `role in ("admin", ...)` / `role == "admin"` skips that gate — so the
+# MFA policy never reaches it. Observe-first (severity `warning`): existing hits
+# are follow-ups in projects/platform-admin-mfa/PROJECT.md §5, not a blocker.
+# Escape hatch for a non-gate comparison (display logic, a value being SET, a
+# non-authorization column): `# admin-gate-ok: <reason>` on the line.
+# KB § PATTERNS/compliance/auth-boundary-false-green.md.
+# ---------------------------------------------------------------------------
+_ADMIN_LITERAL_RE = re.compile(r"""['"](?:admin|owner|platform_admin)['"]""")
+_ADMIN_EQ_RE = re.compile(
+    r"""(?:\brole\w*|\w*_role\b)\s*(?:==|!=)\s*['"](?:admin|owner|platform_admin)['"]"""
+    r"""|['"](?:admin|owner|platform_admin)['"]\s*(?:==|!=)\s*(?:\brole\w*|\w*_role\b)"""
+)
+_ADMIN_IN_RE = re.compile(r"(?:\brole\w*|\w*_role\b)\s+(?:not\s+)?in\s*[(\[{]([^)\]}]*)")
+_ADMIN_GATE_OK = "# admin-gate-ok:"
+
+
+def check_admin_gate_hand_rolled(repo_root: Path | None = None) -> list[dict]:
+    """Flag a product backend that hand-rolls an admin-role comparison
+    (`role in ("admin", ...)`, `role == "admin"`) instead of composing a seed
+    admin gate factory — the MFA gate would be skipped there. Scans
+    `products/*/backend/**/*.py` (not tests/migrations). Severity `warning`."""
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    products = root / "products"
+    if not products.exists():
+        return issues
+    for path in sorted(products.glob("*/backend/**/*.py")):
+        rel = path.relative_to(root)
+        parts = rel.parts
+        if "tests" in parts or "migrations" in parts or path.name.startswith("test_"):
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError) as exc:
+            issues.append({"file": str(rel), "issue": f"unreadable: {exc}", "severity": "warning"})
+            continue
+        for n, line in enumerate(lines, 1):
+            code = line.split("#", 1)[0] if _ADMIN_GATE_OK not in line else ""
+            if not code.strip():
+                continue
+            hit = bool(_ADMIN_EQ_RE.search(code))
+            if not hit:
+                m = _ADMIN_IN_RE.search(code)
+                hit = bool(m and _ADMIN_LITERAL_RE.search(m.group(1)))
+            if hit:
+                issues.append({
+                    "file": f"{rel}:{n}",
+                    "product": parts[1],
+                    "issue": (
+                        "hand-rolled admin check — compose `require_platform_admin` / "
+                        "`require_org_admin` / `require_scopes` / `make_require_role` "
+                        "so the admin-MFA gate applies (or `# admin-gate-ok: <reason>`). "
+                        f"`{line.strip()[:100]}`"
+                    ),
+                    "severity": "warning",
+                })
     return issues
 
 

@@ -30,12 +30,23 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request, Response
 
+from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.domain.permissions.repo import PermissionGrantRepository
 from noctusai_lib.primitives.roles import MANAGE_TEAM_ROLES
+
+async def _assure(request: Request, response: Response, ctx: AuthContext, role: str | None) -> None:
+    """Admin-MFA gate (``platform-admin-mfa`` M2) — runs AFTER the role check
+    passed, so it only ever sees an authorized admin. No-op unless the app
+    carries an ``MfaGateConfig`` AND the policy is not ``off``."""
+    await require_admin_assurance(
+        request, response, caller_kind=ctx.caller_kind, aal=ctx.aal,
+        user_id=ctx.user_id, org_id=ctx.org_id, role=role,
+    )
+
 
 # ---------------------------------------------------------------------------
 # Platform admin
@@ -110,6 +121,8 @@ def require_platform_admin(
 
     async def _dependency(
         ctx: AuthContext = Depends(get_auth_context),
+        request: Request = None,
+        response: Response = None,
     ) -> AuthContext:
         role = resolve_platform_admin_role(get_core_client(), ctx.user_id)
         if role != "admin":
@@ -120,6 +133,7 @@ def require_platform_admin(
                     "code": "platform_admin_required",
                 },
             )
+        await _assure(request, response, ctx, role)
         return ctx
 
     return _dependency
@@ -176,6 +190,8 @@ def require_org_admin(
         async def _dependency(
             ctx: AuthContext = Depends(get_auth_context),
             target_org_id: Any = Depends(get_target_org_id),
+            request: Request = None,
+            response: Response = None,
         ) -> AuthContext:
             if str(ctx.org_id) != str(target_org_id):
                 raise HTTPException(
@@ -194,12 +210,15 @@ def require_org_admin(
                         "code": "org_admin_required",
                     },
                 )
+            await _assure(request, response, ctx, role)
             return ctx
 
         return _dependency
 
     async def _dependency_self_org(
         ctx: AuthContext = Depends(get_auth_context),
+        request: Request = None,
+        response: Response = None,
     ) -> AuthContext:
         role = resolve_org_role(get_core_client(), ctx.user_id)
         if role not in MANAGE_TEAM_ROLES:
@@ -210,6 +229,7 @@ def require_org_admin(
                     "code": "org_admin_required",
                 },
             )
+        await _assure(request, response, ctx, role)
         return ctx
 
     return _dependency_self_org

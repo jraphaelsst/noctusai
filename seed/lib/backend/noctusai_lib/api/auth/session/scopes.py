@@ -39,8 +39,9 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Literal, Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request, Response
 
+from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
 from noctusai_lib.api.auth.session.types import AuthContext
 
 CallerRestriction = Literal["any", "product_only", "user_only"]
@@ -154,6 +155,39 @@ def require_org_admin_role(
         )
 
 
+async def assure_legacy_admin(
+    request: Request, response: Response, user: Any, token: str, org_id: Any,
+    role: str | None = None,
+) -> None:
+    """Admin-MFA gate for the legacy ``(user, token, org_id)`` shape: the
+    caller's ``aal`` is read from the bearer ``token`` (already accepted by
+    ``auth.get_user`` for ``user``) — never decoded unbound. No-op when the
+    app has no ``MfaGateConfig`` (or policy ``off``)."""
+    from noctusai_lib.api.auth.mfa.aal import read_aal
+
+    await require_admin_assurance(
+        request, response, caller_kind="user",
+        aal=read_aal(token, validated_user=user) if token else None,
+        user_id=getattr(user, "id", None), org_id=org_id, role=role,
+    )
+
+
+async def require_org_admin_role_assured(
+    core_client: Any, user_id: Any, context: str, *, request: Request,
+    response: Response | None = None, aal: str | None,
+    admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+) -> None:
+    """:func:`require_org_admin_role` + the admin-MFA gate. The sync
+    imperative form cannot await the policy, so a route body that holds a
+    ``Request`` and the caller's ``aal`` (``AuthContext.aal`` or
+    ``read_aal``) uses THIS twin; the 403 contract is unchanged."""
+    require_org_admin_role(core_client, user_id, context, admin_roles=admin_roles)
+    await require_admin_assurance(
+        request, response, caller_kind="user", aal=aal, user_id=user_id,
+        role=resolve_org_role(core_client, user_id),
+    )
+
+
 def make_require_org_admin(
     get_current_user_org: Callable[..., Awaitable[tuple]],
     get_core_client: Callable[[], Any],
@@ -172,12 +206,17 @@ def make_require_org_admin(
     success, so no route body needs to change shape.
     """
 
-    async def _dependency(auth: tuple = Depends(get_current_user_org)) -> tuple:
-        user, _token, _org_id = auth
+    async def _dependency(
+        auth: tuple = Depends(get_current_user_org),
+        request: Request = None,
+        response: Response = None,
+    ) -> tuple:
+        user, token, org_id = auth
         if not is_org_admin(
             get_core_client(), getattr(user, "id", None), admin_roles=admin_roles
         ):
             raise HTTPException(status_code=403, detail=detail)
+        await assure_legacy_admin(request, response, user, token, org_id)
         return auth
 
     return _dependency
@@ -230,6 +269,8 @@ def require_scopes(
 
     async def _dependency(
         ctx: AuthContext = Depends(get_auth_context),
+        request: Request = None,
+        response: Response = None,
     ) -> AuthContext:
         if restrict == "product_only" and ctx.caller_kind != "product":
             raise HTTPException(
@@ -274,6 +315,13 @@ def require_scopes(
                     "code": "role_missing",
                 },
             )
+        if role in ADMIN_TIER_ROLES:
+            # platform-admin-mfa M2: an owner/admin satisfying a role-gated
+            # route is an admin action — gate on assurance (no-op when off).
+            await require_admin_assurance(
+                request, response, caller_kind="user", aal=ctx.aal,
+                user_id=ctx.user_id, org_id=ctx.org_id, role=role,
+            )
         return ctx
 
     return _dependency
@@ -282,9 +330,11 @@ def require_scopes(
 __all__ = [
     "ADMIN_ORG_ROLES",
     "CallerRestriction",
+    "assure_legacy_admin",
     "is_org_admin",
     "make_require_org_admin",
     "require_org_admin_role",
+    "require_org_admin_role_assured",
     "require_scopes",
     "resolve_org_role",
 ]

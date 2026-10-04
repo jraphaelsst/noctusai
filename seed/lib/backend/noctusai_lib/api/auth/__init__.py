@@ -64,7 +64,7 @@ import time
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import jwt
-from fastapi import Header, HTTPException, Request
+from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.audit import AuditActor
 
@@ -399,13 +399,30 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
             ...
     """
     def require_role(*allowed_roles: str):
-        async def _check_role(authorization: Optional[str] = Header(None)):
+        async def _check_role(
+            authorization: Optional[str] = Header(None),
+            request: Request = None,
+            response: Response = None,
+        ):
             user, token = await get_current_user_fn(authorization)
             role = get_user_role_fn(user)
             if role not in allowed_roles:
                 raise HTTPException(
                     status_code=403,
                     detail=f"Acesso negado. Restrito a: {', '.join(allowed_roles)}",
+                )
+            # platform-admin-mfa M2: an admin-tier role passing here is an
+            # admin action — gate on assurance (no-op unless the app carries
+            # an MfaGateConfig and the policy is not `off`).
+            from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
+
+            if role in ADMIN_TIER_ROLES:
+                from noctusai_lib.api.auth.mfa.aal import read_aal
+
+                await require_admin_assurance(
+                    request, response, caller_kind="user",
+                    aal=read_aal(token, validated_user=user) if token else None,
+                    user_id=getattr(user, "id", None), role=role,
                 )
             return user, token, role
         return _check_role

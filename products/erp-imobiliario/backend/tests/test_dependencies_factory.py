@@ -277,8 +277,6 @@ class TestRequireRoleFactoryBinding:
         assert callable(dep)
         sig = inspect.signature(dep)
         params = list(sig.parameters.values())
-        # The seed-factory wraps in `async def _check_role(authorization: ...)`.
-        assert len(params) == 1, (
-            f"Expected 1 param (authorization), got {[p.name for p in params]}"
-        )
-        assert params[0].name == "authorization"
+        # The seed-factory wraps in `async def _check_role(authorization, request,
+        # response)` — the trailing pair feeds the admin-MFA gate (platform-admin-mfa M2).
+        assert [p.name for p in params] == ["authorization", "request", "response"]

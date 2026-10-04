@@ -1,7 +1,6 @@
 """Admin-MFA building blocks (project ``platform-admin-mfa``, slice M1).
 
-M1 ships the pieces only — NO gate, NO router: nothing here changes runtime
-behaviour until M2 composes the gate into the admin factories. See
+M1 shipped the pieces; M2 adds ``gate`` (composed inside the admin factories, default off). See
 ``projects/platform-admin-mfa/PROJECT.md`` §5.
 """
 from noctusai_lib.api.auth.mfa.aal import Aal, read_aal, read_aal_issued
@@ -14,7 +13,12 @@ from noctusai_lib.api.auth.mfa.policy import (
     SupabaseMfaPolicy, make_mfa_policy, pick_mode,
 )
 
+from noctusai_lib.api.auth.mfa.gate import (
+    ADMIN_TIER_ROLES, MFA_WARN_HEADER, MfaGateConfig, require_admin_assurance,
+)
+
 __all__ = [
+    "ADMIN_TIER_ROLES", "MFA_WARN_HEADER", "MfaGateConfig", "require_admin_assurance",
     "Aal", "read_aal", "read_aal_issued",
     "FakeMfaClient", "MfaChallenge", "MfaClient", "MfaEnrollment", "MfaError", "MfaFactor",
     "MfaSession", "SupabaseMfaClient", "make_mfa_client",
