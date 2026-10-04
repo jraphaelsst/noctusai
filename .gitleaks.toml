@@ -179,6 +179,13 @@ regexes = [
   '''x9J2kLmQ8pZ7vN4rT1sW6yU3bH0dF5gA7cE1nR6''',
   '''3f9a1c2e7b8d4f6a0c5e2b9d7f1a4c8e6b3d0f9a2c7e5b1d8f4a6c0e3b7d9f2a''',
 
+  # ── Verified false positive, triaged 2026-10-03 ───────────────────────────
+  # `seed/lib/backend/tests/test_auth.py` parametrize id for the "Auth answered
+  # 429 → transient, 503 not 401" case (dd75567e9). generic-api-key fires on the
+  # `*-api-<digits>` shape inside the `ids=[...]` list; it is a test-case label,
+  # never a credential. Allowlisted BY EXACT VALUE, per the rule above.
+  '''gotrue-api-429''',
+
   # n8n env-pointer form in workflow JSON — the CORRECT safe replacement.
   # Pattern: ={{ $env.VAR_NAME }} — resolves at runtime from container env.
   # This allowlist entry covers the global scan (both custom rules above
