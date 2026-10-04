@@ -103,6 +103,18 @@ def _pipeline(out, creds, key, bundle, eval_timeout_s, poll_interval_s, sleep) -
     out["steps"].append("imported")
     out["version_id"] = version_id
 
+    # Reuse a complete, passing run for THIS draft (e.g. a retry after a transient failure, or a push whose
+    # content didn't change): ask the server to publish; it re-checks the run's compiled hash against the
+    # draft's CURRENT hash and answers 409 eval_required if anything changed — then we run evals as usual.
+    # The server stays the gate's sole arbiter; this only avoids paying for an identical eval run twice.
+    reused = _try_publish_with_existing_run(creds, key, version_id)
+    if reused is not None:
+        out["steps"] += ["eval_reused", "published"]
+        out["eval"] = reused["eval"]
+        out["published"] = reused["published"]
+        out["status"] = "published"
+        return out
+
     run = http_json("POST", creds, f"{_BASE}/{key}/evals/runs", body={"version_id": version_id})
     if not run.ok:
         raise http_failure(run, "eval run")
@@ -171,3 +183,25 @@ def register(server) -> None:
     )
     def _agent_package_publish(key: str, confirm: bool = False, worktree_path: str | None = None) -> dict[str, Any]:
         return agent_package_publish(key=key, confirm=confirm, worktree_path=worktree_path)
+
+
+def _try_publish_with_existing_run(creds: Any, key: str, version_id: str) -> dict[str, Any] | None:
+    """Publish via an already-concluded passing run of this draft, or None (caller runs evals)."""
+    runs = http_json("GET", creds, f"{_BASE}/{key}/evals/runs")
+    if not runs.ok:
+        return None
+    candidates = [
+        r for r in (runs.data or {}).get("items", [])
+        if r.get("version_id") == version_id and r.get("status") == "concluida" and r.get("completa")
+        and r.get("modelo_geracao") is None and r.get("score") is not None and r["score"] >= r.get("limiar", 1.0)
+    ]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda r: r.get("finished_at") or "")
+    pub = http_json("POST", creds, f"{_BASE}/{key}/draft/publish", body={})
+    if not pub.ok:
+        return None  # e.g. 409 eval_required (content/knowledge changed since that run) → run evals
+    return {
+        "eval": {k: best.get(k) for k in ("status", "score", "limiar", "total", "aprovados", "completa")} | {"run_id": best.get("id"), "reused": True},
+        "published": {k: (pub.data or {}).get(k) for k in ("id", "numero", "status", "versao_semver")},
+    }

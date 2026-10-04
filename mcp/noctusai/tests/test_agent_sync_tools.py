@@ -171,12 +171,12 @@ def test_publish_confirm_happy_path_orders_calls_and_sends_claude_tree(studio, p
     r = publish(studio, pk, confirm=True)
     assert r["ok"] and r["status"] == "published", r
     b = f"/api/studio/agents/{KEY}"
-    assert studio.paths() == [("POST", f"{b}/import"), ("POST", f"{b}/evals/runs"), ("GET", f"{b}/evals/runs/run-1"),
+    assert studio.paths() == [("POST", f"{b}/import"), ("GET", f"{b}/evals/runs"), ("POST", f"{b}/evals/runs"), ("GET", f"{b}/evals/runs/run-1"),
                               ("GET", f"{b}/evals/runs/run-1"), ("POST", f"{b}/draft/publish")]
     assert all(c["auth"] == f"Bearer {TOKEN}" for c in studio.calls)
     imported = studio.calls[0]["body"]
     assert imported["versao"]["package_sha"] == r["sha"] and imported["claude"]
-    assert studio.calls[1]["body"] == {"version_id": "v-1"}
+    assert studio.calls[2]["body"] == {"version_id": "v-1"}
     assert TOKEN not in json.dumps(r)
 
 
@@ -763,3 +763,36 @@ def test_publish_non_transient_poll_error_fails_immediately(studio, pk):
     r = publish(studio, pk, confirm=True)
     assert r["ok"] is False and r["status"] == "failed"
     assert [p for p in studio.paths() if p[1].endswith("/run-1")] == [("GET", f"{b}/evals/runs/run-1")]
+
+
+def test_publish_reuses_a_passing_run_of_the_same_draft(studio, pk):
+    # A retry (or an unchanged re-push) must not pay for an identical eval run; the server re-checks the hash.
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs")] = (200, {"items": [dict(EVAL_OK, version_id="v-1", modelo_geracao=None,
+                                                                      finished_at="2026-10-04T03:05:00Z")]})
+    r = publish(studio, pk, confirm=True)
+    assert r["ok"] and r["status"] == "published" and r["eval"]["reused"] is True, r
+    assert ("POST", f"{b}/evals/runs") not in studio.paths()
+
+
+def test_publish_runs_evals_when_the_server_refuses_the_reused_run(studio, pk):
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs")] = (200, {"items": [dict(EVAL_OK, version_id="v-1", modelo_geracao=None)]})
+    studio.routes[("POST", f"{b}/draft/publish")] = [(409, {"detail": "x", "code": "eval_required"}),
+                                                     (200, {"id": "v-1", "status": "publicada"})]
+    r = publish(studio, pk, confirm=True)
+    assert r["ok"] and r["status"] == "published" and "eval_passed" in r["steps"], r
+    assert ("POST", f"{b}/evals/runs") in studio.paths()
+
+
+def test_publish_ignores_runs_of_other_versions_or_subset_runs(studio, pk):
+    happy_routes(studio)
+    b = f"/api/studio/agents/{KEY}"
+    studio.routes[("GET", f"{b}/evals/runs")] = (200, {"items": [
+        dict(EVAL_OK, version_id="v-OLD", modelo_geracao=None),
+        dict(EVAL_OK, version_id="v-1", completa=False, modelo_geracao=None),
+        dict(EVAL_OK, version_id="v-1", modelo_geracao="claude-haiku-4-5-20251001")]})
+    r = publish(studio, pk, confirm=True)
+    assert r["status"] == "published" and "eval_passed" in r["steps"], r
