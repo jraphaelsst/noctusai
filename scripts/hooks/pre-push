@@ -465,4 +465,13 @@ if [[ "$blocked" -ne 0 ]]; then
     echo "pre-push BLOCKED (client-side branch protection — main is sacred, § 0)." >&2
     exit 1
 fi
+
+# ─── agent packages (agent-packages CONTRACT §F / A5) ───────────────────────
+# A push to `dev` that changed products/agents/packages/<key>/** publishes that package to Agent Studio
+# (build -> import -> evals -> publish ONLY if the gate passes). Instant no-op when nothing under packages
+# changed and no `.agents-sync-pending` retry marker exists. NEVER blocks the push and is never silent
+# (loud stderr + marker, retried next push). Runs only after every guard above passed.
+if [[ -f "$REPO_ROOT_PP/scripts/agent-hooks/noc-pre-push-publish.sh" ]]; then
+    bash "$REPO_ROOT_PP/scripts/agent-hooks/noc-pre-push-publish.sh" "$_ld_py" "$REPO_ROOT_PP" <<< "$PUSH_LINES" || true
+fi
 exit 0

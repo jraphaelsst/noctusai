@@ -858,6 +858,10 @@ def build_package(root: Path, backend_dir: Path, *, now: datetime | None = None)
         files[f"agents/{key}/{rel}"] = text
     for rel, text in pkg.knowledge_files.items():
         files[f"agents/{key}/{rel}"] = text
+    bundle["claude"] = [{"caminho": rel, "conteudo": text} for rel, text in sorted(files.items())]
+    validation = validate_bundle(bundle, studio)
+    if validation["status"] == "rejected":
+        raise PackageError([f"importer: {e}" for e in validation["errors"]])
     return BuildResult(
         key=key, versao=pkg.meta["versao"], sha=sha, compiled_hash=compiled.hash, bundle=bundle,
         claude_files=files, importer_validation=validation,

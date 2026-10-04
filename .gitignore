@@ -193,3 +193,6 @@ products/*/contracts/
 
 # IsaIA raw source package (third-party course material; repo is public — content lives in the agents DB)
 products/agents/projects/IsaIA/
+
+# agent-packages A5 retry marker (written by the sync hooks)
+.agents-sync-pending

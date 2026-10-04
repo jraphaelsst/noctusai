@@ -137,6 +137,10 @@ def register_all(server) -> None:
     from . import dispatch_resume
     from . import agent_package_build
     from . import agent_pull
+    from . import agent_package_publish
+    from . import agent_context_sync
+    from . import agent_learnings_push
+    from . import agent_learnings_promote
     from . import task_branch
     from . import testing
     from . import three_way_sync
@@ -276,6 +280,10 @@ def register_all(server) -> None:
     dispatch_resume.register(server)
     agent_package_build.register(server)
     agent_pull.register(server)
+    agent_package_publish.register(server)
+    agent_context_sync.register(server)
+    agent_learnings_push.register(server)
+    agent_learnings_promote.register(server)
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)

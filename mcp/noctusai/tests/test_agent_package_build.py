@@ -224,7 +224,7 @@ def test_pull_confirm_writes_lock_and_is_idempotent(packages, tmp_path):
     repo = tmp_path / "consumer"
     repo.mkdir()
     r = pull(packages, repo, confirm=True, install_hook=True)
-    assert r["status"] == "pulled" and r["install_hook"]["status"] == "not_yet"
+    assert r["status"] == "pulled" and r["install_hook"]["hook"] == "install"  # full hook coverage: test_agent_sync_tools.py
     lock = json.loads((repo / "agents.lock.json").read_text())
     assert lock["formato"] == "noctus.agents-lock/v1"
     assert lock["agents"] == [{"key": KEY, "versao": "0.1.0", "sha": apb.package_sha(packages / KEY)}]
@@ -287,3 +287,17 @@ def test_check_ignores_consumer_learnings_and_built_at(packages, tmp_path):
     d["built_at"] = "1999-01-01T00:00:00Z"
     pj.write_text(json.dumps(d))
     assert build(packages, check=str(repo))["ok"]
+
+
+def test_bundle_carries_claude_tree_matching_dist(packages):
+    """§C4 (amended 2026-10-03): top-level `claude: [{caminho, conteudo}]` == the dist/claude tree."""
+    r = build(packages)
+    assert r["ok"], r
+    dist = packages / KEY / "dist"
+    bundle = json.loads((dist / "bundle.json").read_text(encoding="utf-8"))
+    claude = bundle["claude"]
+    assert [c["caminho"] for c in claude] == sorted(r["files"])
+    for c in claude:
+        assert (dist / "claude" / c["caminho"]).read_text(encoding="utf-8") == c["conteudo"]
+    assert f".claude/agents/{KEY}.md" in {c["caminho"] for c in claude}
+    assert r["importer_validation"]["status"] in {"ok", "skipped"}
