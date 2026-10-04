@@ -238,7 +238,8 @@ def _na(tipo: Optional[str]) -> dict:
         "resultado_id": None, "consulta_id": None, "status_processamento": None,
         "resultado": None, "numero": None, "emitida_em": None, "validade_ate": None,
         "idade_dias": None, "stale_para_contrato": False, "arquivo_url": None,
-        "tem_arquivo": False, "arquivo_manual": False, "arquivo_nome": None, "origem": None,
+        "tem_arquivo": False, "arquivo_manual": False, "pode_reler": False, "releitura": None,
+        "arquivo_nome": None, "origem": None,
         "confirmado": False, "analise_ia": None, "erro_mensagem": None,
         "segunda_via": False, "pcen": None, "pendencia": None,
     }
@@ -295,6 +296,11 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         # A human's upload sits in our bucket — the "Ler o documento
         # novamente" action re-reads it (`certidoes.service.tem_arquivo_manual`).
         "arquivo_manual": certidoes_svc.tem_arquivo_manual(row),
+        # Any PDF in our bucket — upload OR live receipt — can be re-read
+        # ("Reler", `certidoes.service.pode_reler`); `releitura` is the last
+        # re-read's state + divergences (migration 196).
+        "pode_reler": certidoes_svc.pode_reler(row),
+        "releitura": _releitura_publica(row),
         "arquivo_nome": row.get("arquivo_nome"),
         "origem": _origem_da_celula(row),
         "confirmado": row.get("confirmado_em") is not None,
@@ -305,6 +311,21 @@ def montar_celula(tipo: Optional[str], row: Optional[dict], hoje: date, limite: 
         # PENDING for a reason a human can fix (not an error): the org has no
         # GOV.BR login for this tipo, `erro_mensagem` carries the pt-BR text.
         "pendencia": PENDENCIA_CREDENCIAL_GOVBR if e_pendencia_de_credencial(row) else None,
+    }
+
+
+def _releitura_publica(row: dict) -> Optional[dict]:
+    """The cell's view of `certidao_resultados.releitura`: `em_andamento`
+    only while it is genuinely in flight (`certidoes.service.
+    releitura_em_andamento` — an interrupted one stops reading as running),
+    plus the divergences a human must decide."""
+    estado = row.get("releitura")
+    if not isinstance(estado, dict):
+        return None
+    return {
+        "em_andamento": certidoes_svc.releitura_em_andamento({"releitura": estado}),
+        "concluida_em": estado.get("concluida_em"),
+        "divergencias": list(estado.get("divergencias") or []),
     }
 
 
@@ -868,14 +889,16 @@ async def reler_certidoes_do_card(
     storage: Any,
     http_client: Any,
     preparar: Callable[..., Any],
+    usuario_id: Any = None,
 ) -> tuple[dict, list[dict]]:
     """`POST …/certidoes/reler` → `(contagem, extracoes)`.
 
     For each resultado of the card (`resultados_do_card`): one with no stored
-    manual file counts `sem_arquivo`; one already being read counts
+    PDF (`certidoes.service.pode_reler` — upload or live receipt) counts
+    `sem_arquivo`; one already being read counts
     `em_andamento`; otherwise `preparar` (`certidoes.service.preparar_
     releitura` — validates, fetches the bytes, marks `processando`) and its
-    `process_manual_extraction` kwargs join `extracoes`, which the caller
+    `executar_releitura` kwargs join `extracoes`, which the caller
     schedules — one `BackgroundTasks` job each, run sequentially in order.
     A blob that is gone, or any unexpected failure on one row, counts `erros`
     (logged) and never stops the others.
@@ -883,12 +906,13 @@ async def reler_certidoes_do_card(
     contagem = {"relidos": 0, "sem_arquivo": 0, "em_andamento": 0, "erros": 0}
     extracoes: list[dict] = []
     for row in resultados_do_card(client, org_id, cliente_id, atendimento_id=atendimento_id):
-        if not certidoes_svc.tem_arquivo_manual(row):
+        if not certidoes_svc.pode_reler(row):
             contagem["sem_arquivo"] += 1
             continue
         try:
             _marca, pdf_bytes = await preparar(
                 row, org_id=str(org_id), db=client, storage=storage, http_client=http_client,
+                usuario_id=usuario_id,
             )
         except certidoes_svc.ReleituraRecusada as exc:
             chave = "em_andamento" if exc.motivo == certidoes_svc.RELEITURA_EM_ANDAMENTO else "erros"

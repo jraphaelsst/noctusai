@@ -152,6 +152,7 @@ class CertidoesService:
     soft_delete_consulta: Callable
     restaurar_consulta: Callable
     preparar_releitura: Callable
+    executar_releitura: Callable
 
 
 def _build_default_service() -> CertidoesService:
@@ -187,6 +188,7 @@ def _build_default_service() -> CertidoesService:
         soft_delete_consulta=service.soft_delete_consulta,
         restaurar_consulta=service.restaurar_consulta,
         preparar_releitura=service.preparar_releitura,
+        executar_releitura=service.executar_releitura,
     )
 
 

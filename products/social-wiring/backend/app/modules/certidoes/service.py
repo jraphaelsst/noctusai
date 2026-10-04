@@ -122,7 +122,7 @@ RESULTADO_COLUNAS_SEM_TEXTO = (
     "arquivo_url,arquivo_nome,api_response,erro_mensagem,api_requested_at,"
     "created_at,updated_at,numero,emitida_em,validade_ate,resultado,"
     "resultado_origem,confirmado_por,confirmado_em,tem_transcricao,"
-    "estrutura_erro,estrutura_tentativas,"
+    "estrutura_erro,estrutura_tentativas,releitura,"
     "pcen_ciente_por,pcen_ciente_em,pcen_ciente_validade,pcen_duvida_por,pcen_duvida_em"
 )
 
@@ -2615,6 +2615,8 @@ async def process_manual_extraction(
     resultado_origem_atual: Optional[str] = None,
     confirmado_por_atual: Optional[str] = None,
     tentativa: int = 1,
+    releitura: bool = False,
+    valores_atuais: Optional[dict] = None,
     extract_text: Optional[Callable[..., Any]] = None,
     analyze: Optional[Callable[..., Any]] = None,
     analyze_estrutura: Optional[Callable[..., Any]] = None,
@@ -2668,6 +2670,14 @@ async def process_manual_extraction(
     region-crop reader instead of the generic structured read, which is
     measured-wrong for CENPROT screenshots (see that module's docstring) —
     REPLACING them, `None` included. `estruturar_cenprot_fn` is its DI seam.
+
+    `releitura=True` (a "Reler" of the stored file — `executar_releitura`):
+    the final write also closes the row's `releitura` state (migration 196).
+    On a human-locked row the structured read STILL runs, into a candidate
+    that is never written: where it differs from `valores_atuais` (the row's
+    current `numero`/`emitida_em`/`validade_ate`/`resultado`) the difference
+    lands in `releitura.divergencias` — the aviso the card shows, resolved
+    only by a human (`confirmar_resultado`).
     """
     extract_text = extract_text or _extract_pdf_text
     analyze = analyze or _analyze_with_ai
@@ -2756,7 +2766,16 @@ async def process_manual_extraction(
             nome_display, resultado_id, tentativa, extracted.erro,
         )
 
-    if not travado and paginas_texto:
+    # A locked row is read ONLY on an explicit re-read, into a candidate
+    # that is compared, never written (D1).
+    if not travado:
+        destino: Optional[dict] = update_data
+    elif releitura:
+        destino = {}
+    else:
+        destino = None
+
+    if destino is not None and paginas_texto:
         # PAGE BY PAGE, never the joined-and-truncated blob (owner
         # requirement, 2026-09-28) — see `_analyze_estrutura_por_pagina`.
         via_ia = await _analyze_estrutura_por_pagina(
@@ -2764,14 +2783,21 @@ async def process_manual_extraction(
             analyze_estrutura=analyze_estrutura,
         )
         if via_ia:
-            update_data.update(via_ia)
-            update_data["resultado_origem"] = "ia"
+            destino.update(via_ia)
+            destino["resultado_origem"] = "ia"
 
-    if not travado and tipo == "cenprot":
+    if destino is not None and tipo == "cenprot":
         await _aplicar_leitura_cenprot(
-            update_data, pdf_bytes, resultado_id, consulta_id, nome_display,
+            destino, pdf_bytes, resultado_id, consulta_id, nome_display,
             org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
         )
+
+    if releitura:
+        divergencias = (
+            divergencias_da_releitura(valores_atuais or {}, destino or {})
+            if travado else []
+        )
+        update_data["releitura"] = estado_releitura_concluida(divergencias)
 
     # 🔴 `persist_data` is a SUPERSET of `update_data`, built for the DB write
     # ONLY — see this docstring's leak note. `update_data` itself never gains
@@ -2807,6 +2833,7 @@ async def _retomar_extracao_manual(
     arquivo_url: str,
     tentativa: int,
     tipo: Optional[str] = None,
+    extrair: Optional[Callable[..., Any]] = None,
 ) -> None:
     """`recover_stale_processando`'s retry half: re-read a manually uploaded
     certidão's already-stored bytes and re-run `process_manual_extraction`.
@@ -2817,6 +2844,9 @@ async def _retomar_extracao_manual(
     Re-reads `resultado_origem`/`confirmado_por` FRESH rather than trusting a
     value the sweep captured earlier — a human confirmation that landed while
     this row sat stale must still lock the row against being overwritten.
+    An interrupted RE-READ (`releitura.estado='em_andamento'`, migration
+    196) resumes as one. `extrair` is the DI seam for
+    `process_manual_extraction`. → KB § PATTERNS/backend/di-test-seam.md
     """
     try:
         pdf_bytes = await read_certidao_bytes(arquivo_url, storage, http_client)
@@ -2838,7 +2868,10 @@ async def _retomar_extracao_manual(
     try:
         atual = (
             db.table(RESULTADOS)
-            .select("resultado_origem, confirmado_por")
+            .select(
+                "resultado_origem, confirmado_por, releitura, "
+                "numero, emitida_em, validade_ate, resultado"
+            )
             .eq("id", resultado_id)
             .execute()
         ).data or []
@@ -2850,7 +2883,7 @@ async def _retomar_extracao_manual(
         )
         return
 
-    await process_manual_extraction(
+    await (extrair or process_manual_extraction)(
         pdf_bytes=pdf_bytes,
         resultado_id=resultado_id,
         consulta_id=consulta_id,
@@ -2861,29 +2894,54 @@ async def _retomar_extracao_manual(
         resultado_origem_atual=(atual[0].get("resultado_origem") if atual else None),
         confirmado_por_atual=(atual[0].get("confirmado_por") if atual else None),
         tentativa=tentativa,
+        # An interrupted RE-READ resumes as one: it still closes its own
+        # `releitura` state and still records divergences on a locked row.
+        releitura=bool(atual) and _releitura_marcada(atual[0]),
+        valores_atuais=(atual[0] if atual else None),
     )
 
 
-# --------------- Re-read a stored manual upload ---------------
+# --------------- Re-read a stored certidão PDF ("Reler") ---------------
 #
-# An uploaded certidão PDF used to be readable exactly once — at upload. A
-# reader that improves later (the CENPROT region-crop reader is the case
-# that surfaced this) could never reach the rows that already exist without
-# somebody re-uploading every file, and "Re-emitir" is a NEW live query that
-# stamps TODAY's date, wrong for a historical deal. The re-read runs the SAME
-# `process_manual_extraction` on the bytes already in the bucket.
+# A certidão PDF used to be readable exactly once — at upload / emission. A
+# reader that improves later (the CENPROT reader is the case that surfaced
+# this) could never reach the rows that already exist without somebody
+# re-uploading every file, and "Re-emitir" is a NEW live query that stamps
+# TODAY's date, wrong for a historical deal. "Reler" re-extracts the bytes
+# already in our bucket with the current reader, for EVERY row that has
+# them — a human's upload AND a live emission's stored receipt.
+#
+# 🔴 WHAT A RE-READ MAY WRITE (owner rule D1 + the registry's own word):
+# - a MANUAL upload, unlocked → `process_manual_extraction` refreshes its
+#   machine-read fields, exactly as the upload's own read did;
+# - a LIVE emission, unlocked → only fields that are still EMPTY are filled
+#   (`_reler_emissao`) — a value InfoSimples returned outranks a PDF read;
+# - a human-locked row (`resultado_origem='manual'` or `confirmado_por`) of
+#   either kind → nothing.
+# Wherever the new reading DIFFERS from a value it may not overwrite, the
+# difference lands in `releitura.divergencias` (migration 196) — the aviso
+# the card shows next to the row, resolved only by a human
+# (`confirmar_resultado`, which clears it).
 
-#: What a re-read needs off a resultado: the stored-manual-file discriminator
-#: (`arquivo_url` + `api_response`), the human lock (`resultado_origem` /
-#: `confirmado_por`), and what `process_manual_extraction` takes.
+#: What a re-read needs off a resultado: the stored-file discriminator
+#: (`arquivo_url` + `api_response`), the human lock, the current structured
+#: values (for the divergence check), the in-flight markers, and what the
+#: extraction takes.
 RELEITURA_COLUNAS = (
     "id, consulta_id, tipo, nome_display, status, arquivo_url, api_response, "
-    "resultado_origem, confirmado_por"
+    "resultado_origem, confirmado_por, numero, emitida_em, validade_ate, "
+    "resultado, releitura"
 )
+
+#: The structured fields a re-read reads and compares.
+CAMPOS_ESTRUTURADOS = ("numero", "emitida_em", "validade_ate", "resultado")
 
 RELEITURA_SEM_ARQUIVO = "sem_arquivo"
 RELEITURA_EM_ANDAMENTO = "em_andamento"
 RELEITURA_ARQUIVO_INDISPONIVEL = "arquivo_indisponivel"
+
+RELEITURA_ESTADO_EM_ANDAMENTO = "em_andamento"
+RELEITURA_ESTADO_CONCLUIDA = "concluida"
 
 
 class ReleituraRecusada(Exception):
@@ -2902,13 +2960,91 @@ def tem_arquivo_manual(row: dict) -> bool:
     `process_manual_upload` always writes a bucket key AND clears
     `api_response`; every live InfoSimples write (`_process_single_certidao`
     and the 2ª-via retry) stamps `api_response`. So a stored key with no
-    `api_response` is a human's upload — the only kind a re-read may touch:
-    a live emission's structured fields came from the registry's own
-    response, and re-deriving them from the PDF text would demote that.
+    `api_response` is a human's upload. Decides HOW a re-read writes, not
+    WHETHER it may run — that is `pode_reler`.
     """
     return bool(
         is_storage_key(row.get("arquivo_url")) and row.get("api_response") is None
     )
+
+
+def pode_reler(row: dict) -> bool:
+    """True when `row` has a PDF in our bucket — the only precondition of a
+    re-read (an external `https://` fallback URL is not ours to re-fetch)."""
+    return is_storage_key(row.get("arquivo_url"))
+
+
+def _agora_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _releitura_marcada(row: dict) -> bool:
+    estado = row.get("releitura")
+    return isinstance(estado, dict) and estado.get("estado") == RELEITURA_ESTADO_EM_ANDAMENTO
+
+
+def releitura_em_andamento(row: dict, *, agora: Optional[datetime] = None) -> bool:
+    """A read of this row is in flight: `processando` (a manual upload's
+    extraction, re-read or not), or a live emission's re-read marked less
+    than `STALE_PROCESSANDO_SECONDS` ago — past that it was interrupted (a
+    deploy) and a new "Reler" is allowed; the stale window is the same one
+    the processando sweep uses."""
+    if row.get("status") == "processando":
+        return True
+    if not _releitura_marcada(row):
+        return False
+    iniciada = (row.get("releitura") or {}).get("iniciada_em")
+    try:
+        quando = datetime.fromisoformat(str(iniciada).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    if quando.tzinfo is None:
+        quando = quando.replace(tzinfo=timezone.utc)
+    agora = agora or datetime.now(timezone.utc)
+    return (agora - quando).total_seconds() < STALE_PROCESSANDO_SECONDS
+
+
+def estado_releitura_concluida(divergencias: list[dict]) -> dict:
+    return {
+        "estado": RELEITURA_ESTADO_CONCLUIDA,
+        "concluida_em": _agora_iso(),
+        "divergencias": divergencias,
+    }
+
+
+def _normalizar(campo: str, valor: Any) -> Optional[str]:
+    if valor is None:
+        return None
+    texto = str(valor).strip()
+    if not texto:
+        return None
+    if campo in ("emitida_em", "validade_ate"):
+        return texto[:10]
+    if campo == "numero":
+        # "0123.456-7" and "01234567" are the same printed number.
+        return re.sub(r"[^0-9A-Za-z]", "", texto).casefold() or None
+    return texto
+
+
+def divergencias_da_releitura(atual: dict, lido: dict) -> list[dict]:
+    """Every structured field the new reading HAS a value for that differs
+    from the stored one (an empty stored value included — on a row the
+    re-read may not write, "the reader now finds X" is still news).
+    A field the reader could not read is never a divergence."""
+    saida: list[dict] = []
+    for campo in CAMPOS_ESTRUTURADOS:
+        valor_lido = lido.get(campo)
+        lido_n = _normalizar(campo, valor_lido)
+        if lido_n is None:
+            continue
+        if _normalizar(campo, atual.get(campo)) == lido_n:
+            continue
+        saida.append({
+            "campo": campo,
+            "valor_atual": atual.get(campo),
+            "valor_lido": valor_lido,
+        })
+    return saida
 
 
 async def preparar_releitura(
@@ -2918,29 +3054,34 @@ async def preparar_releitura(
     db,
     storage: StorageBackend,
     http_client: httpx.AsyncClient,
+    usuario_id: Any = None,
 ) -> tuple[dict, bytes]:
-    """Validate a resultado for a re-read, fetch its stored bytes, and mark it
-    `processando` — the synchronous half; the caller schedules
-    `process_manual_extraction` with the returned bytes.
+    """Validate a resultado for a re-read, fetch its stored bytes, log the
+    content read, and mark it in flight — the synchronous half; the caller
+    schedules `executar_releitura(**kwargs_extracao_releitura(...))`.
 
-    Unlike `process_manual_upload`, NOTHING is cleared: the file is the SAME
-    evidence, so a human lock (`resultado_origem='manual'` / `confirmado_por`)
-    still owns the structured fields — `process_manual_extraction` honours it
-    when handed the row's own values (owner decision D1). Only the
-    in-flight markers move: `api_requested_at` (so `recover_stale_
-    processando` retries an interrupted re-read exactly as it does an
-    interrupted upload) and the extraction-leg status, reset so the retry
-    budget starts fresh for this new read.
+    Marks: `releitura.estado='em_andamento'` always. A MANUAL upload is also
+    marked `processando` with a fresh `api_requested_at` and a reset
+    extraction budget, so `recover_stale_processando` retries an interrupted
+    re-read exactly as it does an interrupted upload. A LIVE emission keeps
+    `status='sucesso'` — the sweep would read a stale `processando` row with
+    a file as a manual upload and re-derive its registry fields from the PDF.
+    NOTHING is cleared: the file is the SAME evidence, so a human lock still
+    owns the structured fields (D1).
+
+    The access is written to `certidao_resultado_acessos` (`acao=
+    'releitura'`, migration 196) BEFORE the mark — fail-closed like
+    `mint_resultado_url`: no logged read, no read.
 
     Raises `ReleituraRecusada` — never writes — when the row has no stored
-    manual file, is already being read, or its blob is gone.
+    PDF, is already being read, or its blob is gone.
     """
-    if not tem_arquivo_manual(row):
+    if not pode_reler(row):
         raise ReleituraRecusada(
             RELEITURA_SEM_ARQUIVO,
-            "Esta certidão não tem um PDF enviado manualmente para ler novamente.",
+            "Esta certidão não tem um PDF armazenado para ler novamente.",
         )
-    if row.get("status") == "processando":
+    if releitura_em_andamento(row):
         raise ReleituraRecusada(
             RELEITURA_EM_ANDAMENTO, "Esta certidão já está sendo lida.",
         )
@@ -2950,13 +3091,23 @@ async def preparar_releitura(
             RELEITURA_ARQUIVO_INDISPONIVEL,
             "O PDF armazenado desta certidão não foi encontrado.",
         )
-    update_data = {
-        "status": "processando",
-        "api_requested_at": datetime.now(timezone.utc).isoformat(),
-        "erro_mensagem": None,
-        "estrutura_erro": None,
-        "estrutura_tentativas": 0,
+    _log_resultado_acesso(db, org_id, row["id"], usuario_id, "releitura")
+    update_data: dict = {
+        "releitura": {
+            "estado": RELEITURA_ESTADO_EM_ANDAMENTO,
+            "iniciada_em": _agora_iso(),
+            "concluida_em": None,
+            "divergencias": [],
+        },
     }
+    if tem_arquivo_manual(row):
+        update_data.update({
+            "status": "processando",
+            "api_requested_at": _agora_iso(),
+            "erro_mensagem": None,
+            "estrutura_erro": None,
+            "estrutura_tentativas": 0,
+        })
     db.table(RESULTADOS).update(update_data).eq("id", row["id"]).eq(
         "org_id", str(org_id)
     ).execute()
@@ -2964,8 +3115,8 @@ async def preparar_releitura(
 
 
 def kwargs_extracao_releitura(row: dict, pdf_bytes: bytes, org_id: str, db) -> dict:
-    """The `process_manual_extraction` kwargs for a re-read — the row's OWN
-    lock values (D1), never the upload's cleared `None`s."""
+    """The `executar_releitura` kwargs for a re-read — the row's OWN lock and
+    current values (D1), never the upload's cleared `None`s."""
     return {
         "pdf_bytes": pdf_bytes,
         "resultado_id": row["id"],
@@ -2974,9 +3125,206 @@ def kwargs_extracao_releitura(row: dict, pdf_bytes: bytes, org_id: str, db) -> d
         "org_id": str(org_id),
         "db": db,
         "tipo": row.get("tipo"),
+        "manual": tem_arquivo_manual(row),
         "resultado_origem_atual": row.get("resultado_origem"),
         "confirmado_por_atual": row.get("confirmado_por"),
+        "valores_atuais": {c: row.get(c) for c in CAMPOS_ESTRUTURADOS},
     }
+
+
+async def executar_releitura(
+    *,
+    pdf_bytes: bytes,
+    resultado_id: str,
+    consulta_id: str,
+    nome_display: str,
+    org_id: Optional[str],
+    db,
+    tipo: Optional[str],
+    manual: bool,
+    resultado_origem_atual: Optional[str],
+    confirmado_por_atual: Optional[str],
+    valores_atuais: Optional[dict],
+    extract_text: Optional[Callable[..., Any]] = None,
+    analyze: Optional[Callable[..., Any]] = None,
+    analyze_estrutura: Optional[Callable[..., Any]] = None,
+    estruturar_cenprot_fn: Optional[Callable[..., Any]] = None,
+) -> dict:
+    """The background half of "Reler" — one entry point for both kinds of
+    stored PDF (the router and the card's bulk re-read schedule only this).
+    Never raises (both legs state their own boundary).
+
+    The lock and current values handed in were read at REQUEST time; a
+    manual re-read re-reads them here, at run time, so a human confirmation
+    that landed in between still wins (the live leg reads its own)."""
+    if manual:
+        try:
+            frescos = (
+                db.table(RESULTADOS)
+                .select(
+                    "resultado_origem, confirmado_por, numero, emitida_em, "
+                    "validade_ate, resultado"
+                )
+                .eq("id", resultado_id)
+                .execute()
+            ).data or []
+        except Exception as exc:  # noqa: BLE001 - fall back to request-time values
+            logger.warning(
+                "Certidão %s (resultado %s): releitura — estado atual ilegível, "
+                "usando o do pedido: %s", nome_display, resultado_id, exc,
+            )
+            frescos = []
+        if frescos:
+            resultado_origem_atual = frescos[0].get("resultado_origem")
+            confirmado_por_atual = frescos[0].get("confirmado_por")
+            valores_atuais = {c: frescos[0].get(c) for c in CAMPOS_ESTRUTURADOS}
+        return await process_manual_extraction(
+            pdf_bytes=pdf_bytes,
+            resultado_id=resultado_id,
+            consulta_id=consulta_id,
+            nome_display=nome_display,
+            org_id=org_id,
+            db=db,
+            tipo=tipo,
+            resultado_origem_atual=resultado_origem_atual,
+            confirmado_por_atual=confirmado_por_atual,
+            releitura=True,
+            valores_atuais=valores_atuais,
+            extract_text=extract_text,
+            analyze=analyze,
+            analyze_estrutura=analyze_estrutura,
+            estruturar_cenprot_fn=estruturar_cenprot_fn,
+        )
+    return await _reler_emissao(
+        pdf_bytes=pdf_bytes,
+        resultado_id=resultado_id,
+        consulta_id=consulta_id,
+        nome_display=nome_display,
+        org_id=org_id,
+        db=db,
+        tipo=tipo,
+        extract_text=extract_text,
+        analyze_estrutura=analyze_estrutura,
+        estruturar_cenprot_fn=estruturar_cenprot_fn,
+    )
+
+
+async def _reler_emissao(
+    *,
+    pdf_bytes: bytes,
+    resultado_id: str,
+    consulta_id: str,
+    nome_display: str,
+    org_id: Optional[str],
+    db,
+    tipo: Optional[str],
+    extract_text: Optional[Callable[..., Any]] = None,
+    analyze_estrutura: Optional[Callable[..., Any]] = None,
+    estruturar_cenprot_fn: Optional[Callable[..., Any]] = None,
+) -> dict:
+    """Re-read a LIVE emission's stored receipt: FILL-EMPTY only.
+
+    The row's structured fields came from the registry's own response
+    (`registry.parse_resultado`) or its AI read; a PDF re-read never demotes
+    them — it fills a field that is still empty (an unlocked row only) and
+    records every other difference as a divergence. `status`,
+    `analise_ia` and `api_response` are never touched (they are the
+    emission's). The transcription (`texto_extraido`/`formatacao`) IS
+    refreshed — it is machine output of this very file.
+
+    Reads the row's lock + values FRESH (a confirmation that landed after
+    the request still wins). Returns the patch written (without the
+    transcription), `{}` on a failure — logged, never raised.
+    """
+    extract_text = extract_text or _extract_pdf_text
+    analyze_estrutura = analyze_estrutura or _analyze_estrutura_with_ai
+    try:
+        atual_rows = (
+            db.table(RESULTADOS)
+            .select("numero, emitida_em, validade_ate, resultado, resultado_origem, confirmado_por")
+            .eq("id", resultado_id)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): releitura — leitura do estado atual "
+            "falhou: %s", nome_display, resultado_id, exc, exc_info=True,
+        )
+        return {}
+    if not atual_rows:
+        logger.warning(
+            "Certidão %s (resultado %s): releitura — resultado não existe mais",
+            nome_display, resultado_id,
+        )
+        return {}
+    atual = atual_rows[0]
+    travado = atual.get("resultado_origem") == "manual" or bool(atual.get("confirmado_por"))
+
+    try:
+        extracted = await extract_text(
+            pdf_bytes, nome_display, org_id,
+            max_vision_pages=CERTIDAO_MANUAL_MAX_VISION_PAGES,
+        )
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): releitura — extract_text falhou: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        extracted = ExtractedPdfText(para_ia=None, erro="falha_extracao")
+
+    lido: dict = {}
+    paginas_texto: tuple[str, ...] = extracted.paginas_texto or (
+        (extracted.para_ia,) if extracted.para_ia else ()
+    )
+    try:
+        if paginas_texto:
+            via_ia = await _analyze_estrutura_por_pagina(
+                paginas_texto, extracted.para_ia, nome_display, org_id,
+                analyze_estrutura=analyze_estrutura,
+            )
+            if via_ia:
+                lido.update(via_ia)
+        if tipo == "cenprot":
+            await _aplicar_leitura_cenprot(
+                lido, pdf_bytes, resultado_id, consulta_id, nome_display,
+                org_id, db, estruturar=estruturar_cenprot_fn or estruturar_cenprot,
+            )
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): releitura — leitura estruturada "
+            "falhou: %s", nome_display, resultado_id, exc, exc_info=True,
+        )
+
+    patch: dict = {}
+    divergencias: list[dict] = []
+    for item in divergencias_da_releitura(atual, lido):
+        if not travado and _normalizar(item["campo"], item["valor_atual"]) is None:
+            patch[item["campo"]] = item["valor_lido"]
+        else:
+            divergencias.append(item)
+    if "resultado" in patch:
+        # `resultado_origem` tracks the VERDICT (see `_derive_estrutura`).
+        patch["resultado_origem"] = "ia"
+    patch["releitura"] = estado_releitura_concluida(divergencias)
+
+    persist = dict(patch)
+    if extracted.texto_extraido:
+        persist["texto_extraido"] = extracted.texto_extraido
+        persist["formatacao"] = ranges_to_json(extracted.formatacao)
+    try:
+        db.table(RESULTADOS).update(persist).eq("id", resultado_id).execute()
+    except Exception as exc:  # noqa: BLE001 - background job must not die
+        logger.error(
+            "Certidão %s (resultado %s): releitura — falha ao persistir: %s",
+            nome_display, resultado_id, exc, exc_info=True,
+        )
+        return {}
+    if extracted.erro:
+        logger.warning(
+            "Certidão %s (resultado %s): releitura sem leitura completa (%s)",
+            nome_display, resultado_id, extracted.erro,
+        )
+    return patch
 
 
 # --------------- TJSP On-Demand Scheduler ---------------
@@ -3611,6 +3959,9 @@ def confirmar_resultado(
         "resultado_origem": "manual",
         "confirmado_por": str(usuario_id) if usuario_id else None,
         "confirmado_em": datetime.now(timezone.utc).isoformat(),
+        # A human just decided the structured fields — any re-read
+        # divergence (migration 196) shown against the old values is moot.
+        "releitura": None,
     }
     updated = (
         db.table(RESULTADOS)
@@ -3978,6 +4329,7 @@ __all__ = [
     "RELEITURA_COLUNAS",
     "RELEITURA_EM_ANDAMENTO",
     "RELEITURA_SEM_ARQUIVO",
+    "CAMPOS_ESTRUTURADOS",
     "RESULTADO_COLUNAS_SEM_TEXTO",
     "ReleituraRecusada",
     "STALE_PROCESSANDO_SECONDS",
@@ -3993,8 +4345,12 @@ __all__ = [
     "confirmar_resultado",
     "delete_storage_files",
     "is_storage_key",
+    "divergencias_da_releitura",
+    "executar_releitura",
     "kwargs_extracao_releitura",
+    "pode_reler",
     "preparar_releitura",
+    "releitura_em_andamento",
     "mint_resultado_url",
     "obter_transcricao_resultado",
     "process_manual_upload",

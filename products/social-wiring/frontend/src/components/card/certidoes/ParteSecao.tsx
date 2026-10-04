@@ -12,6 +12,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { formatDate } from "@/lib/utils";
 import { useMintResultadoUrl } from "@/hooks/useCertidoes";
 import type {
+  CertidaoDivergencia,
   CienciaPcenResult,
   CertidaoParte,
   CertidaoParteLinha,
@@ -24,7 +25,10 @@ import { PcenCiencia } from "./PcenCiencia";
 import {
   avisoVencida,
   formatarDocumento,
+  linhaDivergencia,
   notaSegundaVia,
+  podeReler,
+  relendoCelula,
   resumoDaParte,
   tipoAutomatico,
 } from "./certidoesCelula";
@@ -37,10 +41,18 @@ export interface ParteSecaoProps {
   onSolicitar: (input: SolicitarEmissaoInput) => void;
   onReemitir: (resultadoId: string) => void;
   onUpload: (input: UploadCelulaInput) => void;
-  /** Re-read the PDF already uploaded for this certidão (no new file). */
+  /** Re-read the PDF already stored for this certidão (no new file). */
   onReler: (resultadoId: string) => void;
   /** The resultado whose re-read request is in flight, if any. */
   relendoId: string | null;
+  /** "Reler todas" for this party — every re-readable cell not already being read. */
+  onRelerParte: (resultadoIds: string[]) => void;
+  /** This party's "Reler todas" request is in flight. */
+  relendoParte: boolean;
+  /** Apply what a re-read found (human decision; locks the row). */
+  onAplicarLidos: (resultadoId: string, divergencias: CertidaoDivergencia[]) => void;
+  /** The resultado whose "Aplicar valores lidos" request is in flight. */
+  aplicandoId: string | null;
   onDetalhes: (parte: CertidaoParte) => void;
   onAdicionar: () => void;
   onRenomear: (linha: CertidaoParteLinha) => void;
@@ -67,6 +79,12 @@ export function ParteSecao(p: ParteSecaoProps) {
       else n.add(tipo);
       return n;
     });
+
+  // Every cell whose stored PDF can be re-read right now (nothing in flight).
+  const relerIds = linhas
+    .map((l) => parte.celulas[l.chave])
+    .filter((c) => c && c.status !== "na" && podeReler(c) && !relendoCelula(c))
+    .map((c) => c.resultado_id as string);
 
   const abrirArquivo = (resultadoId: string) =>
     mint.mutate(
@@ -133,6 +151,15 @@ export function ParteSecao(p: ParteSecaoProps) {
               <Button size="sm" variant="outline" onClick={p.onAdicionar} data-testid={`parte-adicionar-${parte.chave}`}>
                 + Adicionar certidão
               </Button>
+              {(relerIds.length > 0 || p.relendoParte) && (
+                <Button size="sm" variant="outline" disabled={p.relendoParte || relerIds.length === 0}
+                  title="Lê de novo, com o leitor mais recente, todos os PDFs de certidão já armazenados desta parte. Valores confirmados não são alterados."
+                  onClick={() => p.onRelerParte(relerIds)}
+                  data-testid={`parte-reler-todas-${parte.chave}`}>
+                  {p.relendoParte ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileSearch className="mr-1 h-4 w-4" />}
+                  Reler todas
+                </Button>
+              )}
             </div>
           </div>
 
@@ -168,6 +195,8 @@ export function ParteSecao(p: ParteSecaoProps) {
                   const na = c.status === "na";
                   const auto = tipoAutomatico(linha.tipo);
                   const aviso = avisoVencida(c);
+                  const relendo = relendoCelula(c);
+                  const divergencias = !relendo ? (c.releitura?.divergencias ?? []) : [];
                   return (
                     <Fragment key={linha.chave}>
                     <tr className="border-b last:border-b-0" data-testid={`parte-linha-${parte.chave}-${linha.chave}`}>
@@ -203,6 +232,11 @@ export function ParteSecao(p: ParteSecaoProps) {
                       </td>
                       <td className="p-2">
                         {c.emitida_em ? formatDate(c.emitida_em) : "—"}
+                        {c.numero && (
+                          <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-numero-${parte.chave}-${linha.chave}`}>
+                            Nº {c.numero}
+                          </p>
+                        )}
                         {notaSegundaVia(c) && (
                           <p className="mt-0.5 text-xs text-muted-foreground" data-testid={`parte-segunda-via-${parte.chave}-${linha.chave}`}>
                             {notaSegundaVia(c)}
@@ -242,16 +276,16 @@ export function ParteSecao(p: ParteSecaoProps) {
                               <Upload className="mr-1 h-3 w-3" />
                               Enviar PDF
                             </Button>
-                            {c.arquivo_manual && c.resultado_id && c.status_processamento !== "processando" && (
+                            {podeReler(c) && (
                               <Button size="sm" variant="ghost" className="h-7 px-2 text-xs"
-                                disabled={p.relendoId === c.resultado_id}
-                                title="Lê de novo o PDF já enviado, com o leitor mais recente. Valores confirmados não são alterados."
+                                disabled={relendo || p.relendoId === c.resultado_id}
+                                title="Lê de novo o PDF já armazenado, com o leitor mais recente. Valores confirmados não são alterados."
                                 onClick={() => p.onReler(c.resultado_id as string)}
                                 data-testid={`parte-linha-${parte.chave}-${linha.chave}-reextrair`}>
-                                {p.relendoId === c.resultado_id
+                                {relendo || p.relendoId === c.resultado_id
                                   ? <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                                   : <FileSearch className="mr-1 h-3 w-3" />}
-                                Ler o documento novamente
+                                {relendo ? "Relendo…" : "Reler"}
                               </Button>
                             )}
                             {c.tem_arquivo && c.resultado_id && (
@@ -263,6 +297,29 @@ export function ParteSecao(p: ParteSecaoProps) {
                         )}
                       </td>
                     </tr>
+                    {divergencias.length > 0 && c.resultado_id && (
+                      <tr className="border-b last:border-b-0">
+                        <td colSpan={5} className="p-2">
+                          <div className="flex flex-wrap items-start justify-between gap-2 rounded border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200"
+                            data-testid={`parte-divergencia-${parte.chave}-${linha.chave}`}>
+                            <div className="space-y-0.5">
+                              <p className="flex items-center gap-1 font-medium">
+                                <AlertTriangle className="h-3 w-3" />
+                                A releitura encontrou valores diferentes dos registrados — nada foi alterado.
+                              </p>
+                              {divergencias.map((d) => <p key={d.campo}>{linhaDivergencia(d)}</p>)}
+                            </div>
+                            <Button size="sm" variant="outline" className="h-7 px-2 text-xs"
+                              disabled={p.aplicandoId === c.resultado_id}
+                              onClick={() => p.onAplicarLidos(c.resultado_id as string, divergencias)}
+                              data-testid={`parte-aplicar-lidos-${parte.chave}-${linha.chave}`}>
+                              {p.aplicandoId === c.resultado_id && <Loader2 className="mr-1 h-3 w-3 animate-spin" />}
+                              Aplicar valores lidos
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
                     {c.pcen && !c.pcen.vencida && c.resultado_id && (
                       <tr className="border-b last:border-b-0">
                         <td colSpan={5} className="p-2">

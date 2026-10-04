@@ -3,7 +3,12 @@
  * automation eligibility, and the per-party status summary line. Kept out of
  * the components so they are unit-testable without rendering.
  */
-import type { CertidaoParte, CertidaoParteCelula } from "@/types/certidoesPartes";
+import type {
+  CampoEstruturado,
+  CertidaoDivergencia,
+  CertidaoParte,
+  CertidaoParteCelula,
+} from "@/types/certidoesPartes";
 
 import { formatarDocumentoArmazenado } from "../documentoBr";
 
@@ -114,4 +119,44 @@ export function resumoDaParte(p: CertidaoParte): string {
 export function formatarDocumento(doc: string | null): string {
   if (!doc) return "sem documento";
   return formatarDocumentoArmazenado(doc);
+}
+
+/** The cell has a stored PDF "Reler" can re-extract (upload or live receipt).
+ *  `pode_reler` is absent on an older payload — the manual-upload flag is the
+ *  narrower answer it replaced. */
+export function podeReler(c: CertidaoParteCelula): boolean {
+  return !!c.resultado_id && (c.pode_reler ?? c.arquivo_manual);
+}
+
+/** A read of this cell's PDF is running (a manual upload's extraction, or a
+ *  live receipt's re-read, which keeps its `sucesso` status). */
+export function relendoCelula(c: CertidaoParteCelula): boolean {
+  return c.status_processamento === "processando" || !!c.releitura?.em_andamento;
+}
+
+const ROTULO_CAMPO: Record<CampoEstruturado, string> = {
+  numero: "Número",
+  emitida_em: "Emissão",
+  validade_ate: "Validade",
+  resultado: "Resultado",
+};
+
+const ROTULO_RESULTADO: Record<string, string> = {
+  negativa: "Negativa",
+  negativa_com_homonimos: "Negativa (homônimos)",
+  positiva: "Positiva",
+  positiva_com_efeito_de_negativa: "Positiva c/ efeito de negativa",
+  nao_emitida: "Não emitida",
+};
+
+function valorBr(campo: CampoEstruturado, valor: string | null): string {
+  if (!valor) return "vazio";
+  if (campo === "emitida_em" || campo === "validade_ate") return dataBr(valor);
+  if (campo === "resultado") return ROTULO_RESULTADO[valor] ?? valor;
+  return valor;
+}
+
+/** "Número: lido 0123456789 (atual: vazio)" — one line per divergence. */
+export function linhaDivergencia(d: CertidaoDivergencia): string {
+  return `${ROTULO_CAMPO[d.campo] ?? d.campo}: lido ${valorBr(d.campo, d.valor_lido)} (atual: ${valorBr(d.campo, d.valor_atual)})`;
 }

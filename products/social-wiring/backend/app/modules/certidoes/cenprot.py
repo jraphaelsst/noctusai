@@ -23,6 +23,21 @@ keys, verdicts only)
 
 THE READER (this module)
 ------------------------
+- Text layer first (2026-10-03). Two of the common layouts carry their
+  values as real PDF text, not pixels: the PRINTED page (Chrome's print-to-
+  PDF of the result — "Protocolo da Consulta: <10 digits>" + "Documento
+  Pesquisado: <CPF/CNPJ>" as text) and InfoSimples' SYNTHESIZED receipt for
+  a "nada consta" (no protocol exists; "Horário: dd/mm/aaaa hh:mm:ss" + the
+  queried document under "Parâmetros"). Measured on the local corpus
+  (verdicts only): 10/10 printed pages give a 10-digit protocol + a
+  check-digit-valid Documento from text alone; 6/6 receipts give a
+  Documento + a date (3 standalone, 3 inside merged bundles — the receipt's
+  own block is parsed, never another API's). Text is the document's own characters, so
+  no vision call is made and no agreement rule is needed — only the same
+  identity check. A text-layer Documento of SOMEONE ELSE blocks everything
+  (no vision fallback: the characters are exact). Runs before the provider
+  gate — no model is involved. Measured note: the site's 10-digit protocol
+  is NOT date-prefixed (0/13 parse as YYMMDD), so it never yields a date.
 - Layout first. A landscape dominant image is the SCREENSHOT layout; a
   portrait strip (or none) is the PRINTED-page layout (print-to-PDF of the
   result page, no taskbar) — page 1 is rendered whole and read at its top.
@@ -269,6 +284,131 @@ def _protocolo_concordante(a: dict, b: dict) -> Optional[str]:
     return None
 
 
+_RE_PROTOCOLO_TEXTO = re.compile(r"Protocolo\s+da\s+Consulta\s*:\s*([0-9][0-9 .]*[0-9])", re.I)
+_RE_DOCUMENTO_TEXTO = re.compile(r"Documento\s+Pesquisado\s*:\s*([^\n]*)", re.I)
+_RE_RECIBO_SINTETIZADO = re.compile(r"API\s*:\s*CENPROT", re.I)
+_RE_HORARIO_RECIBO = re.compile(r"Hor[áa]rio\s*:\s*(\d{2}/\d{2}/\d{4})")
+_RE_PARAMETRO_DOCUMENTO = re.compile(r"Par[âa]metros\s*:\s*(?:cpf|cnpj)\s+([0-9./\-]+)", re.I)
+
+
+@dataclass(frozen=True)
+class LeituraTexto:
+    """What a CENPROT PDF's TEXT LAYER says — every field `None` when the
+    PDF carries no such text (a screenshot is pixels only).
+
+    `recibo` is InfoSimples' synthesized "nada consta" receipt: no protocol
+    exists on it; `horario` is the date it printed for the consulta."""
+
+    protocolo: Optional[str] = None
+    documento: Optional[str] = None
+    horario: Optional[date] = None
+    recibo: bool = False
+
+
+def _texto_do_pdf(pdf_bytes: bytes) -> str:
+    """Every page's text layer, joined — `""` when there is none or the PDF
+    does not open (never raises: the vision path still runs after it)."""
+    try:
+        import fitz  # type: ignore  # PyMuPDF
+
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        return "\n".join(pagina.get_text() for pagina in doc)
+    except Exception as exc:  # noqa: BLE001 - the vision path still runs
+        logger.warning("CENPROT: camada de texto ilegível: %s", exc)
+        return ""
+
+
+def ler_camada_texto(texto: str) -> LeituraTexto:
+    """Parse the two text-layer layouts (module docstring). Pure."""
+    if not texto:
+        return LeituraTexto()
+    protocolo = None
+    m = _RE_PROTOCOLO_TEXTO.search(texto)
+    if m:
+        digitos = only_digits(m.group(1))
+        if len(digitos) == _DIGITOS_PROTOCOLO:
+            protocolo = digitos
+    documento = None
+    m = _RE_DOCUMENTO_TEXTO.search(texto)
+    if m:
+        documento = _digitos(m.group(1))
+    recibo_m = _RE_RECIBO_SINTETIZADO.search(texto)
+    horario = None
+    if recibo_m:
+        # Only the CENPROT receipt's OWN block: a merged bundle carries other
+        # APIs' synthesized receipts ("API: …", "Horário: …") too.
+        bloco = texto[recibo_m.end():]
+        proximo = re.search(r"\bAPI\s*:", bloco)
+        if proximo:
+            bloco = bloco[:proximo.start()]
+        m = _RE_HORARIO_RECIBO.search(bloco)
+        horario = _data(m.group(1)) if m else None
+        if documento is None:
+            m = _RE_PARAMETRO_DOCUMENTO.search(bloco)
+            documento = _digitos(m.group(1)) if m else None
+    recibo = recibo_m is not None
+    return LeituraTexto(protocolo=protocolo, documento=documento, horario=horario, recibo=recibo)
+
+
+def _na_janela(dia: date, referencia: date) -> bool:
+    return referencia - _JANELA_ANTES <= dia <= referencia + _JANELA_DEPOIS
+
+
+def _estrutura_da_camada_texto(
+    leitura: LeituraTexto,
+    *,
+    tipo_documento_esperado: Optional[str],
+    documento_esperado: Optional[str],
+    referencia: Optional[date],
+) -> Optional[CenprotEstrutura]:
+    """The answer when the text layer is decisive, else `None` (→ vision).
+
+    Decisive = a 10-digit protocol, OR the synthesized receipt — both with
+    a text-layer Documento. A Documento that fails identity is decisive too
+    (blocks everything): exact characters of another party's consulta."""
+    if not (leitura.protocolo or leitura.recibo):
+        return None
+    if not leitura.documento:
+        return None
+    esperado = _digitos(documento_esperado)
+    if not (
+        _documento_valido(leitura.documento, tipo_documento_esperado)
+        and (esperado is None or leitura.documento == esperado)
+    ):
+        return CenprotEstrutura(avisos=(
+            "Documento Pesquisado (texto do PDF): dígito verificador inválido "
+            "ou diferente do CPF/CNPJ da parte na consulta — número e data "
+            "não gravados.",
+        ))
+    avisos: list[str] = []
+    emitida_em: Optional[str] = None
+    if leitura.recibo:
+        if leitura.horario is None:
+            avisos.append("Recibo sem horário legível — data não gravada.")
+        elif referencia is None:
+            avisos.append("Recibo: sem data de referência para conferir — data não gravada.")
+        elif not _na_janela(leitura.horario, referencia):
+            avisos.append(
+                "Recibo: horário fora da janela plausível em relação à consulta "
+                "— data não gravada."
+            )
+        else:
+            emitida_em = leitura.horario.isoformat()
+        if not leitura.protocolo:
+            avisos.append(
+                "Recibo de \"nada consta\" sintetizado — a consulta não tem "
+                "protocolo; número não gravado."
+            )
+    else:
+        avisos.append(
+            "Data: página impressa do CENPROT, sem relógio da barra de "
+            "tarefas — data não gravada."
+        )
+    return CenprotEstrutura(
+        numero=leitura.protocolo, emitida_em=emitida_em, avisos=tuple(avisos),
+    )
+
+
 async def estruturar_cenprot(
     pdf_bytes: bytes,
     nome_display: str,
@@ -283,8 +423,17 @@ async def estruturar_cenprot(
     """Read and self-validate a CENPROT screenshot's número + date.
 
     Never raises — the caller is a background job; any failure is
-    `CenprotEstrutura(avisos=...)`.
+    `CenprotEstrutura(avisos=...)`. The text layer is consulted first
+    (`ler_camada_texto`) — exact characters, no model, no spend.
     """
+    pela_camada = _estrutura_da_camada_texto(
+        ler_camada_texto(_texto_do_pdf(pdf_bytes)),
+        tipo_documento_esperado=tipo_documento_esperado,
+        documento_esperado=documento_esperado,
+        referencia=referencia,
+    )
+    if pela_camada is not None:
+        return pela_camada
     if provider != _PROVEDOR_MEDIDO:
         return CenprotEstrutura(avisos=(
             "Leitura do CENPROT só é feita com o provedor de documentos "
@@ -394,7 +543,7 @@ async def estruturar_cenprot(
             "Data (relógio da barra de tarefas): sem data de referência para "
             "conferir — data não gravada."
         )
-    elif not (referencia - _JANELA_ANTES <= lidas[0] <= referencia + _JANELA_DEPOIS):
+    elif not _na_janela(lidas[0], referencia):
         avisos.append(
             "Data (relógio da barra de tarefas): fora da janela plausível em "
             "relação à consulta — data não gravada."
@@ -407,7 +556,9 @@ async def estruturar_cenprot(
 
 __all__ = [
     "CenprotEstrutura",
+    "LeituraTexto",
     "PROMPT_DATA",
     "PROMPT_PROTOCOLO",
     "estruturar_cenprot",
+    "ler_camada_texto",
 ]

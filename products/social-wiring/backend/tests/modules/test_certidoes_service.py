@@ -4818,6 +4818,58 @@ class TestTemArquivoManual:
         )
 
 
+class TestPodeReler:
+    def test_upload_manual_pode(self):
+        assert service.pode_reler({"arquivo_url": _KEY_MANUAL, "api_response": None})
+
+    def test_emissao_ao_vivo_com_pdf_armazenado_pode(self):
+        assert service.pode_reler({"arquivo_url": _KEY_MANUAL, "api_response": {"code": 200}})
+
+    def test_sem_arquivo_ou_url_externa_nao_pode(self):
+        assert not service.pode_reler({"arquivo_url": None})
+        assert not service.pode_reler({"arquivo_url": "https://origem.example/c.pdf"})
+
+
+class TestDivergencias:
+    def test_valor_lido_diferente_e_divergencia(self):
+        d = service.divergencias_da_releitura(
+            {"numero": "111", "emitida_em": "2025-01-02"},
+            {"numero": "0123456789", "emitida_em": "2025-01-02"},
+        )
+        assert d == [{"campo": "numero", "valor_atual": "111", "valor_lido": "0123456789"}]
+
+    def test_campo_vazio_com_leitura_e_divergencia(self):
+        d = service.divergencias_da_releitura({"numero": None}, {"numero": "0123456789"})
+        assert [x["campo"] for x in d] == ["numero"]
+
+    def test_campo_nao_lido_nunca_e_divergencia(self):
+        assert service.divergencias_da_releitura({"numero": "111"}, {"numero": None}) == []
+
+    def test_pontuacao_e_hora_nao_sao_divergencia(self):
+        assert service.divergencias_da_releitura(
+            {"numero": "0123.456-789", "emitida_em": "2025-01-02T00:00:00"},
+            {"numero": "0123456789", "emitida_em": "2025-01-02"},
+        ) == []
+
+
+class TestReleituraEmAndamento:
+    def test_processando_esta_em_andamento(self):
+        assert service.releitura_em_andamento({"status": "processando"})
+
+    def test_marca_recente_esta_em_andamento(self):
+        agora = datetime.now(timezone.utc)
+        row = {"status": "sucesso", "releitura": {"estado": "em_andamento", "iniciada_em": agora.isoformat()}}
+        assert service.releitura_em_andamento(row, agora=agora + timedelta(minutes=1))
+
+    def test_marca_antiga_foi_interrompida(self):
+        agora = datetime.now(timezone.utc)
+        row = {"status": "sucesso", "releitura": {"estado": "em_andamento", "iniciada_em": agora.isoformat()}}
+        assert not service.releitura_em_andamento(row, agora=agora + timedelta(hours=1))
+
+    def test_concluida_nao_esta(self):
+        assert not service.releitura_em_andamento({"status": "sucesso", "releitura": {"estado": "concluida"}})
+
+
 class TestPrepararReleitura:
     @staticmethod
     def _row(**over):
@@ -4829,16 +4881,17 @@ class TestPrepararReleitura:
         })
 
     @staticmethod
-    async def _preparar(row, db, storage):
+    async def _preparar(row, db, storage, usuario_id="user-9"):
         async with httpx.AsyncClient() as client:
             return await service.preparar_releitura(
                 row, org_id=ORG, db=db, storage=storage, http_client=client,
+                usuario_id=usuario_id,
             )
 
     @pytest.mark.asyncio
     async def test_marca_processando_sem_limpar_trava_nem_campos(self):
         row = self._row()
-        db = _db(certidao_resultados=[row])
+        db = _db(certidao_resultados=[row], certidao_resultado_acessos=[])
         storage = FakeStorageBackend()
         await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-x")
 
@@ -4848,6 +4901,7 @@ class TestPrepararReleitura:
         assert update_data["status"] == "processando"
         assert update_data["estrutura_tentativas"] == 0
         assert update_data["estrutura_erro"] is None
+        assert update_data["releitura"]["estado"] == "em_andamento"
         gravado = db.table("certidao_resultados").select("*").execute().data[0]
         # D1: same file, same evidence — the human lock and its values stay.
         assert gravado["confirmado_por"] == "user-1"
@@ -4858,13 +4912,40 @@ class TestPrepararReleitura:
         assert gravado["api_requested_at"]
 
     @pytest.mark.asyncio
-    async def test_emissao_ao_vivo_e_recusada_sem_escrever(self):
-        row = self._row(api_response={"code": 200})
-        db = _db(certidao_resultados=[row])
+    async def test_registra_o_acesso_com_o_autor(self):
+        row = self._row()
+        db = _db(certidao_resultados=[row], certidao_resultado_acessos=[])
+        storage = FakeStorageBackend()
+        await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-x")
+        await self._preparar(row, db, storage, usuario_id="user-9")
+        acessos = db.table("certidao_resultado_acessos").select("*").execute().data
+        assert [(a["documento_id"], a["usuario_id"], a["acao"]) for a in acessos] == [
+            (row["id"], "user-9", "releitura"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_emissao_ao_vivo_e_marcada_sem_virar_processando(self):
+        row = self._row(api_response={"code": 200}, resultado_origem="api", confirmado_por=None)
+        db = _db(certidao_resultados=[row], certidao_resultado_acessos=[])
+        storage = FakeStorageBackend()
+        await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-x")
+        update_data, _pdf = await self._preparar(row, db, storage)
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        # The stale sweep must never read a live row as a manual upload.
+        assert gravado["status"] == "sucesso"
+        assert "status" not in update_data
+        assert gravado["releitura"]["estado"] == "em_andamento"
+        assert service.kwargs_extracao_releitura(row, b"x", ORG, db)["manual"] is False
+
+    @pytest.mark.asyncio
+    async def test_sem_pdf_armazenado_e_recusada_sem_escrever(self):
+        row = self._row(arquivo_url="https://origem.example/c.pdf")
+        db = _db(certidao_resultados=[row], certidao_resultado_acessos=[])
         with pytest.raises(service.ReleituraRecusada) as exc:
             await self._preparar(row, db, FakeStorageBackend())
         assert exc.value.motivo == service.RELEITURA_SEM_ARQUIVO
         assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "sucesso"
+        assert db.table("certidao_resultado_acessos").select("*").execute().data == []
 
     @pytest.mark.asyncio
     async def test_ja_em_leitura_e_recusada(self):
@@ -4874,32 +4955,45 @@ class TestPrepararReleitura:
         assert exc.value.motivo == service.RELEITURA_EM_ANDAMENTO
 
     @pytest.mark.asyncio
+    async def test_releitura_ao_vivo_em_andamento_e_recusada(self):
+        row = self._row(api_response={"code": 200}, releitura={
+            "estado": "em_andamento", "iniciada_em": datetime.now(timezone.utc).isoformat(),
+        })
+        with pytest.raises(service.ReleituraRecusada) as exc:
+            await self._preparar(row, _db(certidao_resultados=[row]), FakeStorageBackend())
+        assert exc.value.motivo == service.RELEITURA_EM_ANDAMENTO
+
+    @pytest.mark.asyncio
     async def test_blob_ausente_e_recusada_sem_escrever(self):
         row = self._row()
-        db = _db(certidao_resultados=[row])
+        db = _db(certidao_resultados=[row], certidao_resultado_acessos=[])
         with pytest.raises(service.ReleituraRecusada) as exc:
             await self._preparar(row, db, FakeStorageBackend())
         assert exc.value.motivo == service.RELEITURA_ARQUIVO_INDISPONIVEL
         assert db.table("certidao_resultados").select("*").execute().data[0]["status"] == "sucesso"
 
-    def test_kwargs_levam_a_trava_da_propria_linha(self):
+    def test_kwargs_levam_a_trava_e_os_valores_da_propria_linha(self):
         row = self._row()
         kw = service.kwargs_extracao_releitura(row, b"%PDF", ORG, "db")
         assert kw["resultado_origem_atual"] == "manual"
         assert kw["confirmado_por_atual"] == "user-1"
         assert kw["tipo"] == "cenprot" and kw["pdf_bytes"] == b"%PDF"
+        assert kw["manual"] is True
+        assert kw["valores_atuais"]["numero"] == "111"
 
 
 class TestReleituraComLeitorMelhorado:
     """The point of the feature: the improved CENPROT reader (its Fake here)
-    rewrites `numero`/`emitida_em` on an EXISTING unlocked row from the bytes
-    already stored — and never touches a human-confirmed one (D1)."""
+    reaches EXISTING rows from the bytes already stored — rewriting an
+    unlocked manual upload, filling only the gaps of a live emission, and on
+    a human-locked row writing nothing but the divergence aviso (D1)."""
 
     @staticmethod
-    async def _reler(row, estruturar):
+    async def _reler(row, estruturar, analyze_estrutura=None):
         db = _db(
             certidao_consultas=[_consulta_row(documento="12345678909")],
             certidao_resultados=[row],
+            certidao_resultado_acessos=[],
         )
         storage = FakeStorageBackend()
         await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-armazenado")
@@ -4907,24 +5001,26 @@ class TestReleituraComLeitorMelhorado:
             _marca, pdf = await service.preparar_releitura(
                 row, org_id=ORG, db=db, storage=storage, http_client=client,
             )
-        await service.process_manual_extraction(
+        await service.executar_releitura(
             **service.kwargs_extracao_releitura(row, pdf, ORG, db),
             extract_text=AsyncMock(return_value=service.ExtractedPdfText(
                 para_ia="texto", texto_extraido="texto",
             )),
             analyze=AsyncMock(return_value="resumo"),
-            analyze_estrutura=AsyncMock(return_value={"resultado": "negativa"}),
+            analyze_estrutura=analyze_estrutura or AsyncMock(return_value={"resultado": "negativa"}),
             estruturar_cenprot_fn=estruturar,
         )
         return db.table("certidao_resultados").select("*").execute().data[0]
 
-    @pytest.mark.asyncio
-    async def test_releitura_corrige_numero_e_data(self):
+    @staticmethod
+    def _cenprot(numero="0123456789", emitida_em="2025-06-17"):
         from app.modules.certidoes.cenprot import CenprotEstrutura
 
-        estruturar = AsyncMock(return_value=CenprotEstrutura(
-            numero="0123456789", emitida_em="2025-06-17",
-        ))
+        return AsyncMock(return_value=CenprotEstrutura(numero=numero, emitida_em=emitida_em))
+
+    @pytest.mark.asyncio
+    async def test_releitura_corrige_numero_e_data(self):
+        estruturar = self._cenprot()
         row = _resultado(
             tipo="cenprot", nome_display="CENPROT", status="sucesso",
             arquivo_url=_KEY_MANUAL, numero="9999", emitida_em="2026-10-03",
@@ -4934,21 +5030,121 @@ class TestReleituraComLeitorMelhorado:
         assert gravado["numero"] == "0123456789"
         assert gravado["emitida_em"] == "2025-06-17"
         assert gravado["status"] == "sucesso"
+        assert gravado["releitura"]["estado"] == "concluida"
+        assert gravado["releitura"]["divergencias"] == []
         assert estruturar.await_args.args[0] == b"%PDF-armazenado"
 
     @pytest.mark.asyncio
-    async def test_valor_confirmado_por_humano_nao_e_sobrescrito(self):
-        from app.modules.certidoes.cenprot import CenprotEstrutura
-
-        estruturar = AsyncMock(return_value=CenprotEstrutura(
-            numero="0123456789", emitida_em="2025-06-17",
-        ))
+    async def test_valor_confirmado_por_humano_nao_e_sobrescrito_e_vira_aviso(self):
+        estruturar = self._cenprot()
         row = _resultado(
             tipo="cenprot", nome_display="CENPROT", status="sucesso",
-            arquivo_url=_KEY_MANUAL, numero="CONFIRMADO", emitida_em="2025-01-01",
-            resultado_origem="ia", confirmado_por="user-1",
+            arquivo_url=_KEY_MANUAL, numero="CONFIRMADO", emitida_em="2025-06-17",
+            resultado="negativa", resultado_origem="ia", confirmado_por="user-1",
         )
         gravado = await self._reler(row, estruturar)
         assert gravado["numero"] == "CONFIRMADO"
-        assert gravado["emitida_em"] == "2025-01-01"
-        estruturar.assert_not_awaited()
+        assert gravado["emitida_em"] == "2025-06-17"
+        assert gravado["confirmado_por"] == "user-1"
+        assert gravado["releitura"]["divergencias"] == [
+            {"campo": "numero", "valor_atual": "CONFIRMADO", "valor_lido": "0123456789"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_emissao_ao_vivo_so_preenche_o_que_esta_vazio(self):
+        estruturar = self._cenprot(numero="0123456789", emitida_em="2025-06-17")
+        row = _resultado(
+            tipo="cenprot", nome_display="CENPROT", status="sucesso",
+            arquivo_url=_KEY_MANUAL, api_response={"code": 200}, analise_ia="da API",
+            numero=None, emitida_em="2025-06-10", resultado="negativa", resultado_origem="api",
+        )
+        gravado = await self._reler(row, estruturar)
+        assert gravado["numero"] == "0123456789"         # was empty → filled
+        assert gravado["emitida_em"] == "2025-06-10"     # registry value kept
+        assert gravado["resultado_origem"] == "api"
+        assert gravado["analise_ia"] == "da API"
+        assert gravado["api_response"] == {"code": 200}
+        assert gravado["status"] == "sucesso"
+        assert gravado["releitura"]["divergencias"] == [
+            {"campo": "emitida_em", "valor_atual": "2025-06-10", "valor_lido": "2025-06-17"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_emissao_ao_vivo_travada_nao_preenche_nada(self):
+        estruturar = self._cenprot()
+        row = _resultado(
+            tipo="cenprot", nome_display="CENPROT", status="sucesso",
+            arquivo_url=_KEY_MANUAL, api_response={"code": 200},
+            numero=None, emitida_em=None, resultado="negativa",
+            resultado_origem="manual", confirmado_por="user-1",
+        )
+        gravado = await self._reler(row, estruturar)
+        assert (gravado["numero"], gravado["emitida_em"]) == (None, None)
+        assert {d["campo"] for d in gravado["releitura"]["divergencias"]} == {"numero", "emitida_em"}
+
+    @pytest.mark.asyncio
+    async def test_releitura_de_outro_tipo_usa_a_leitura_por_pagina(self):
+        row = _resultado(
+            tipo="cnd_federal", status="sucesso", arquivo_url=_KEY_MANUAL,
+            api_response={"code": 200}, numero=None, emitida_em="2025-06-10",
+            resultado="negativa", resultado_origem="api",
+        )
+        analyze = AsyncMock(return_value={"numero": "ABC.123", "emitida_em": "2025-06-10"})
+        gravado = await self._reler(row, AsyncMock(), analyze_estrutura=analyze)
+        assert gravado["numero"] == "ABC.123"
+        assert gravado["releitura"]["divergencias"] == []
+
+    @pytest.mark.asyncio
+    async def test_confirmar_resultado_limpa_o_aviso(self):
+        row = _resultado(status="sucesso", releitura={
+            "estado": "concluida", "divergencias": [{"campo": "numero", "valor_atual": None, "valor_lido": "1"}],
+        })
+        db = _db(certidao_resultados=[row])
+        service.confirmar_resultado(db, ORG, row["id"], {"numero": "1"}, "user-1")
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert gravado["releitura"] is None
+        assert gravado["numero"] == "1"
+
+
+class TestRetomadaDeReleitura:
+    @pytest.mark.asyncio
+    async def test_releitura_interrompida_retoma_como_releitura(self):
+        """The stale sweep's retry of an interrupted manual RE-READ still
+        closes the `releitura` state and records the locked row's aviso."""
+        from app.modules.certidoes.cenprot import CenprotEstrutura
+
+        row = _resultado(
+            tipo="cnd_federal", status="processando", arquivo_url=_KEY_MANUAL,
+            numero="111", resultado_origem="manual", confirmado_por="user-1",
+            releitura={"estado": "em_andamento", "iniciada_em": "2026-01-01T00:00:00+00:00"},
+        )
+        db = _db(certidao_consultas=[_consulta_row()], certidao_resultados=[row])
+        storage = FakeStorageBackend()
+        await storage.put(bucket=service.BUCKET, key=_KEY_MANUAL, data=b"%PDF-x")
+        original = service.process_manual_extraction
+        chamadas = {}
+
+        async def _espiao(**kw):
+            chamadas.update(kw)
+            return await original(
+                **kw,
+                extract_text=AsyncMock(return_value=service.ExtractedPdfText(para_ia="t", texto_extraido="t")),
+                analyze=AsyncMock(return_value="r"),
+                analyze_estrutura=AsyncMock(return_value={"numero": "222"}),
+                estruturar_cenprot_fn=AsyncMock(return_value=CenprotEstrutura()),
+            )
+
+        async with httpx.AsyncClient() as client:
+            await service._retomar_extracao_manual(
+                db=db, storage=storage, http_client=client, resultado_id=row["id"],
+                consulta_id=row["consulta_id"], org_id=ORG, nome_display="CND",
+                arquivo_url=_KEY_MANUAL, tentativa=2, tipo="cnd_federal",
+                extrair=_espiao,
+            )
+        assert chamadas["releitura"] is True
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert gravado["numero"] == "111"
+        assert gravado["releitura"]["estado"] == "concluida"
+        assert gravado["releitura"]["divergencias"] == [
+            {"campo": "numero", "valor_atual": "111", "valor_lido": "222"},
+        ]

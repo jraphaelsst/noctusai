@@ -142,20 +142,22 @@ async def reler_certidoes_route(
     storage: StorageBackend = Depends(get_storage_backend),
     certidoes: CertidoesService = Depends(get_certidoes_service),
 ) -> dict:
-    """Re-read every manually uploaded certidão of the card's parties on the
-    files already stored — `POST /api/certidoes/resultados/{id}/reler` for
+    """Re-read every stored certidão PDF (upload or live receipt) of the
+    card's parties on the files already stored — `POST /api/certidoes/resultados/{id}/reler` for
     the whole card. Counts come back now; the extractions run as
     `BackgroundTasks` jobs, sequentially. Human-confirmed values are kept
-    (D1). The INFO line is the actor/when trace (no audit table)."""
+    (D1); each re-read is logged with the actor in `certidao_resultado_acessos`
+    (`acao='releitura'`)."""
     user, org_id = auth_parts(auth)
     async with httpx.AsyncClient() as http_client:
         contagem, extracoes = await svc.reler_certidoes_do_card(
             client, org_id, cliente_id,
             atendimento_id=body.atendimento_id, storage=storage,
             http_client=http_client, preparar=certidoes.preparar_releitura,
+            usuario_id=user.id,
         )
     for kwargs in extracoes:
-        background_tasks.add_task(certidoes.process_manual_extraction, **kwargs)
+        background_tasks.add_task(certidoes.executar_releitura, **kwargs)
     logger.info(
         "certidoes: card relido user_id=%s org_id=%s cliente_id=%s %s",
         user.id, org_id, cliente_id, contagem,

@@ -14,6 +14,7 @@ import { api } from "@noctusai/seed/infra";
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
 import type {
   CelulaEnsureResponse,
+  CertidaoDivergencia,
   CienciaPcenResult,
   CertidaoParteCelula,
   CertidoesPartesResponse,
@@ -36,6 +37,8 @@ const clienteBase = (clienteId: string) => `/api/clientes/${encodeURIComponent(c
 export function certidaoEmAndamento(c: CertidaoParteCelula): boolean {
   const s = c.status_processamento;
   if (s === "processando" || s === "na_fila") return true;
+  // A live emission's re-read keeps `sucesso`; its own marker says "running".
+  if (c.releitura?.em_andamento) return true;
   return s === "pendente" && c.origem !== "manual";
 }
 
@@ -136,8 +139,9 @@ function useInvalidateCertidoes(clienteId: string) {
 }
 
 /** `POST /api/certidoes/resultados/{id}/reler` — re-read the PDF already
- *  uploaded for one certidão (no new file, no new live query; a value a
- *  person confirmed is kept). */
+ *  stored for one certidão (no new file, no new live query; a value a
+ *  person confirmed or the registry returned is kept — differences come
+ *  back as `releitura.divergencias`). */
 export function useRelerResultado(clienteId: string) {
   const invalidate = useInvalidateCertidoes(clienteId);
   return useMutation({
@@ -151,8 +155,66 @@ export function useRelerResultado(clienteId: string) {
   });
 }
 
-/** `POST /api/clientes/{id}/certidoes/reler` — every uploaded certidão of the
- *  card's parties, re-read on the files already stored. */
+/** "Reler todas" for ONE party: `POST /api/certidoes/resultados/{id}/reler`
+ *  for each of its re-readable cells, one after the other (each call only
+ *  schedules the read). Resolves with how many were accepted / refused. */
+export function useRelerResultados(clienteId: string) {
+  const invalidate = useInvalidateCertidoes(clienteId);
+  return useMutation({
+    mutationFn: async (resultadoIds: string[]) => {
+      let relidos = 0;
+      let recusados = 0;
+      for (const id of resultadoIds) {
+        try {
+          await api.post(`/api/certidoes/resultados/${encodeURIComponent(id)}/reler`, {});
+          relidos += 1;
+        } catch {
+          recusados += 1;
+        }
+      }
+      return { relidos, recusados };
+    },
+    onSuccess: ({ relidos, recusados }) => {
+      if (relidos > 0) {
+        toast.success(relidos === 1 ? "Lendo 1 certidão novamente…" : `Lendo ${relidos} certidões novamente…`);
+      }
+      if (recusados > 0) {
+        toast.error(
+          recusados === 1
+            ? "1 certidão não pôde ser lida novamente (já em leitura ou PDF ausente)."
+            : `${recusados} certidões não puderam ser lidas novamente (já em leitura ou PDF ausente).`,
+        );
+      }
+      void invalidate();
+    },
+    onError: (e) => toast.error("Não foi possível reler as certidões", { description: erroMsg(e) }),
+  });
+}
+
+/** Apply what a re-read found (its divergences) — the human's decision, via
+ *  the EXISTING confirm/correct route (`PATCH /api/certidoes/resultados/{id}`),
+ *  which also locks the row and clears the aviso. */
+export function useAplicarValoresLidos(clienteId: string) {
+  const qc = useQueryClient();
+  const invalidate = useInvalidateCertidoes(clienteId);
+  return useMutation({
+    mutationFn: ({ resultadoId, divergencias }: { resultadoId: string; divergencias: CertidaoDivergencia[] }) =>
+      api.patch(
+        `/api/certidoes/resultados/${encodeURIComponent(resultadoId)}`,
+        Object.fromEntries(divergencias.map((d) => [d.campo, d.valor_lido])),
+      ),
+    onSuccess: () => {
+      toast.success("Valores lidos aplicados.");
+      void invalidate();
+      void qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "contratos"] });
+    },
+    onError: (e) => toast.error("Não foi possível aplicar os valores lidos", { description: erroMsg(e) }),
+  });
+}
+
+/** `POST /api/clientes/{id}/certidoes/reler` — every stored certidão PDF of
+ *  the card's parties (uploads and live receipts), re-read on the files
+ *  already stored. */
 export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string | null) {
   const invalidate = useInvalidateCertidoes(clienteId);
   return useMutation({
@@ -162,7 +224,7 @@ export function useRelerCertidoesCard(clienteId: string, atendimentoId?: string 
       }),
     onSuccess: (r) => {
       if (r.relidos === 0) {
-        toast.info("Nenhuma certidão enviada em PDF para ler novamente.");
+        toast.info("Nenhuma certidão com PDF armazenado para ler novamente.");
       } else {
         toast.success(
           r.relidos === 1 ? "Lendo 1 certidão novamente…" : `Lendo ${r.relidos} certidões novamente…`,

@@ -1018,6 +1018,39 @@ _ACAO_CHECK_PROBE = GuardProbe(
 )
 
 
+_CERTIDAO_ACAO_CHECK_PROBE = GuardProbe(
+    id="certidao_resultado_acessos.acao.shape_check",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="certidao_resultado_acessos_acao_check",
+    kind="write_refusal",
+    migrations=(
+        "107_certidoes_estruturadas.sql",
+        "196_certidao_releitura.sql",
+    ),
+    rationale=(
+        "`acao` is the certidão LGPD content-read log's closed vocabulary — "
+        "readers match it by exact string, so a free-text value would vanish "
+        "from every one of them instead of erroring where it was written. "
+        "Enforced by the CHECK constraint `certidao_resultado_acessos_acao_"
+        "check` (107 'view'/'download'/'delete' -> 196 adds 'releitura'), "
+        "never loosened to accept anything outside the named set."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="certidao_resultado_acessos",
+        columns_sql="org_id, documento_id, acao",
+        values_sql="org_id, id, 'noc-probe-not-a-real-acao'",
+        fixture_from=f"{_SW_SCHEMA}.certidao_resultados",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.certidao_resultados to attach a probe "
+            "access-log row to (via documento_id)"
+        ),
+        guard_fragment='constraint "certidao_resultado_acessos_acao_check"',
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — social_wiring.matricula_abertura_blocos constraints (136).
 # ---------------------------------------------------------------------------
@@ -3483,6 +3516,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _TITULO_PAREADO_PROBE,
     _ONUS_CREDOR_PAREADO_PROBE,
     _ACAO_CHECK_PROBE,
+    _CERTIDAO_ACAO_CHECK_PROBE,
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,

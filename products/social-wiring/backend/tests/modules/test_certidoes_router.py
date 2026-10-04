@@ -2189,7 +2189,7 @@ class TestRelerManual:
         _seed(db, consultas=[_consulta()], resultados=[self._manual()])
         _put_blob(storage, _KEY, b"%PDF-armazenado")
         extrair = AsyncMock(return_value={"status": "sucesso"})
-        override_service(process_manual_extraction=extrair)
+        override_service(executar_releitura=extrair)
 
         resp = client.post(f"{BASE}/resultados/r1/reler")
 
@@ -2204,42 +2204,70 @@ class TestRelerManual:
         # D1 — the SAME file: the human lock is handed through, never cleared.
         assert ekw["resultado_origem_atual"] == "manual"
         assert ekw["confirmado_por_atual"] == "user-1"
+        assert ekw["manual"] is True
         gravado = db.table("certidao_resultados").select("*").execute().data[0]
         assert gravado["numero"] == "111" and gravado["confirmado_por"] == "user-1"
         # No new storage object — the stored one is re-read.
         chaves = asyncio.run(storage.list_keys(bucket=service.BUCKET, prefix=""))
         assert list(chaves) == [_KEY]
 
-    def test_emissao_ao_vivo_e_409(self, client, certidoes_db, override_service):
+    def test_emissao_ao_vivo_com_pdf_tambem_e_relida(self, client, certidoes_db, override_service):
         db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[
-            self._manual(api_response={"code": 200}),
+            self._manual(api_response={"code": 200}, resultado_origem="api", confirmado_por=None),
+        ])
+        _put_blob(storage, _KEY, b"%PDF-recibo")
+        extrair = AsyncMock()
+        override_service(executar_releitura=extrair)
+        resp = client.post(f"{BASE}/resultados/r1/reler")
+        assert resp.status_code == 200
+        assert resp.json()["data"]["status"] == "sucesso"  # never flipped to processando
+        ekw = extrair.await_args.kwargs
+        assert ekw["manual"] is False and ekw["pdf_bytes"] == b"%PDF-recibo"
+        gravado = db.table("certidao_resultados").select("*").execute().data[0]
+        assert gravado["releitura"]["estado"] == "em_andamento"
+
+    def test_segunda_chamada_durante_a_leitura_ao_vivo_e_409(
+        self, client, certidoes_db, override_service
+    ):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[
+            self._manual(api_response={"code": 200}, confirmado_por=None, resultado_origem="api"),
         ])
         _put_blob(storage, _KEY)
-        extrair = AsyncMock()
-        override_service(process_manual_extraction=extrair)
+        override_service(executar_releitura=AsyncMock())
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 200
         resp = client.post(f"{BASE}/resultados/r1/reler")
         assert resp.status_code == 409
-        assert "enviado manualmente" in _msg(resp)
-        extrair.assert_not_awaited()
+        assert "sendo lida" in _msg(resp)
+
+    def test_registra_o_acesso_do_usuario(self, client, certidoes_db, override_service):
+        db, storage = certidoes_db
+        _seed(db, consultas=[_consulta()], resultados=[self._manual()])
+        _put_blob(storage, _KEY)
+        override_service(executar_releitura=AsyncMock())
+        assert client.post(f"{BASE}/resultados/r1/reler").status_code == 200
+        acessos = db.table("certidao_resultado_acessos").select("*").execute().data
+        assert [(a["documento_id"], a["acao"]) for a in acessos] == [("r1", "releitura")]
+        assert acessos[0]["usuario_id"]
 
     def test_sem_arquivo_e_409(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[self._manual(arquivo_url=None)])
-        override_service(process_manual_extraction=AsyncMock())
+        override_service(executar_releitura=AsyncMock())
         assert client.post(f"{BASE}/resultados/r1/reler").status_code == 409
 
     def test_ja_em_leitura_e_409(self, client, certidoes_db, override_service):
         db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[self._manual(status="processando")])
         _put_blob(storage, _KEY)
-        override_service(process_manual_extraction=AsyncMock())
+        override_service(executar_releitura=AsyncMock())
         assert client.post(f"{BASE}/resultados/r1/reler").status_code == 409
 
     def test_blob_sumiu_e_409(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[self._manual()])
-        override_service(process_manual_extraction=AsyncMock())
+        override_service(executar_releitura=AsyncMock())
         resp = client.post(f"{BASE}/resultados/r1/reler")
         assert resp.status_code == 409
         assert "não foi encontrado" in _msg(resp)
@@ -2248,7 +2276,7 @@ class TestRelerManual:
         db, storage = certidoes_db
         _seed(db, consultas=[_consulta()], resultados=[self._manual(org_id=OTHER_ORG)])
         _put_blob(storage, _KEY)
-        override_service(process_manual_extraction=AsyncMock())
+        override_service(executar_releitura=AsyncMock())
         assert client.post(f"{BASE}/resultados/r1/reler").status_code == 404
 
     def test_excluida_e_404(self, client, certidoes_db, override_service):
@@ -2257,7 +2285,7 @@ class TestRelerManual:
             self._manual(excluida_em="2026-10-01T00:00:00+00:00"),
         ])
         _put_blob(storage, _KEY)
-        override_service(process_manual_extraction=AsyncMock())
+        override_service(executar_releitura=AsyncMock())
         assert client.post(f"{BASE}/resultados/r1/reler").status_code == 404
 
     def test_releitura_ponta_a_ponta_corrige_numero_e_data(
@@ -2274,8 +2302,8 @@ class TestRelerManual:
             self._manual(resultado_origem="ia", confirmado_por=None, emitida_em="2026-10-03"),
         ])
         _put_blob(storage, _KEY)
-        override_service(process_manual_extraction=functools.partial(
-            service.process_manual_extraction,
+        override_service(executar_releitura=functools.partial(
+            service.executar_releitura,
             extract_text=AsyncMock(return_value=service.ExtractedPdfText(
                 para_ia="texto", texto_extraido="texto",
             )),

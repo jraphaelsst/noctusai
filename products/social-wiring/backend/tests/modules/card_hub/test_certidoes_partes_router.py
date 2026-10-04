@@ -426,9 +426,9 @@ class TestCienciaPcen:
 
 
 class TestRelerCard:
-    """`POST …/certidoes/reler` — every stored manual upload of the card's
-    parties (titular + vendedor here), re-read on the bytes already stored;
-    a live emission / a fileless row is `sem_arquivo`, never touched."""
+    """`POST …/certidoes/reler` — every stored certidão PDF of the card's
+    parties (titular + vendedor here; upload or live receipt), re-read on the
+    bytes already stored; a fileless row is `sem_arquivo`, never touched."""
 
     @pytest.fixture
     def reler(self, client, scoped):
@@ -440,7 +440,7 @@ class TestRelerCard:
         local = FastAPI()
         local.exception_handlers.update(base_app.exception_handlers)
         local.include_router(certidoes_partes_router.router, prefix=BASE)
-        fake = dataclasses.replace(build_default_service(), process_manual_extraction=extrair)
+        fake = dataclasses.replace(build_default_service(), executar_releitura=extrair)
         local.dependency_overrides[get_certidoes_service] = lambda: fake
         local.dependency_overrides[get_storage_backend] = lambda: storage
 
@@ -449,7 +449,7 @@ class TestRelerCard:
 
         return TestClient(local), extrair, _blob
 
-    def test_conta_e_agenda_so_os_uploads_manuais(self, reler, scoped):
+    def test_conta_e_agenda_todo_pdf_armazenado(self, reler, scoped):
         api, extrair, blob = reler
         cid, aid, vid = _card(scoped)
         k_tit, k_vend, k_sumiu = (f"{ORG_ID}/certidoes/c{i}/x.pdf" for i in range(3))
@@ -475,15 +475,20 @@ class TestRelerCard:
         resp = api.post(f"{BASE}/{cid}/certidoes/reler", json={"atendimento_id": aid}, headers=AUTH)
 
         assert resp.status_code == 200
-        assert resp.json() == {"relidos": 2, "sem_arquivo": 2, "em_andamento": 1, "erros": 1}
+        assert resp.json() == {"relidos": 3, "sem_arquivo": 1, "em_andamento": 1, "erros": 1}
         agendados = {c.kwargs["resultado_id"]: c.kwargs for c in extrair.await_args_list}
-        assert set(agendados) == {"manual-tit", "manual-vend"}
+        assert set(agendados) == {"manual-tit", "manual-vend", "ao-vivo"}
         assert agendados["manual-tit"]["pdf_bytes"] == b"%PDF-" + k_tit.encode()
         # D1: the confirmed row's lock rides along — the extraction keeps it.
         assert agendados["manual-tit"]["confirmado_por_atual"] == "user-1"
+        assert agendados["ao-vivo"]["manual"] is False
         status = {r["id"]: r["status"] for r in scoped.table("certidao_resultados").select("*").execute().data}
         assert status["manual-tit"] == status["manual-vend"] == "processando"
+        # A live emission's re-read never flips its status (the stale sweep).
         assert status["ao-vivo"] == "sucesso" and status["sumiu"] == "sucesso"
+        acessos = scoped.table("certidao_resultado_acessos").select("*").execute().data
+        assert sorted(a["documento_id"] for a in acessos) == ["ao-vivo", "manual-tit", "manual-vend"]
+        assert all(a["acao"] == "releitura" and a["usuario_id"] for a in acessos)
 
     def test_sem_certidoes_tudo_zero(self, reler, scoped):
         api, extrair, _ = reler

@@ -37,9 +37,13 @@ export interface CertidaoParteCelula {
   stale_para_contrato: boolean;
   arquivo_url: string | null;
   tem_arquivo: boolean;
-  /** The stored file is a human's manual upload (not a live emission) — the
-   *  only kind "Ler o documento novamente" can re-read. */
+  /** The stored file is a human's manual upload (not a live emission). */
   arquivo_manual: boolean;
+  /** A PDF sits in our bucket (upload OR live receipt) — "Reler" can
+   *  re-extract it with the current reader. Optional for older payloads. */
+  pode_reler?: boolean;
+  /** The last re-read: in flight, and what it found but did not write. */
+  releitura?: CertidaoReleitura | null;
   arquivo_nome: string | null;
   origem: "api" | "ia" | "manual" | null;
   confirmado: boolean;
@@ -55,6 +59,22 @@ export interface CertidaoParteCelula {
    *  Dívida Ativa SP needs the office's GOV.BR login; `erro_mensagem` carries the
    *  pt-BR text. The cell stays uploadable (Enviar PDF). */
   pendencia?: "credencial_govbr" | null;
+}
+
+export type CampoEstruturado = "numero" | "emitida_em" | "validade_ate" | "resultado";
+
+/** A value the re-read found but did not write — the stored one is a
+ *  human's (confirmed/typed) or the registry's. A human decides. */
+export interface CertidaoDivergencia {
+  campo: CampoEstruturado;
+  valor_atual: string | null;
+  valor_lido: string;
+}
+
+export interface CertidaoReleitura {
+  em_andamento: boolean;
+  concluida_em: string | null;
+  divergencias: CertidaoDivergencia[];
 }
 
 export interface CertidaoPcen {

@@ -12,7 +12,7 @@
     GET    /api/certidoes/download                       one file, proxied
     GET    /api/certidoes/consultas/{id}/download-zip    all of them, zipped
     POST   /api/certidoes/resultados/{id}/upload         manual PDF, same pipeline (async extraction)
-    POST   /api/certidoes/resultados/{id}/reler          re-read the stored manual PDF (lock kept)
+    POST   /api/certidoes/resultados/{id}/reler          re-read the stored PDF (lock kept, audited)
     GET    /api/certidoes/fila-tjsp                      queue + live cooldown
     POST   /api/certidoes/consultas/{id}/vincular-parte  attach to an atendimento_parte
     GET    /api/certidoes/partes/{id}/resultados          every certidão for one parte
@@ -1141,7 +1141,7 @@ async def upload_certidao_manual(
 
 
 @router.post("/resultados/{resultado_id}/reler")
-async def reler_certidao_manual(
+async def reler_certidao(
     resultado_id: str,
     background_tasks: BackgroundTasks,
     auth=Depends(get_current_user_org),
@@ -1149,25 +1149,27 @@ async def reler_certidao_manual(
     storage: StorageBackend = Depends(get_storage_backend),
     svc: CertidoesService = Depends(get_certidoes_service),
 ):
-    """Re-read the PDF a human already uploaded — the same extraction the
-    upload schedules, on the bytes already in the bucket (no new object).
+    """Re-read the PDF already in our bucket with the CURRENT reader — a
+    human's upload or a live emission's stored receipt alike — no new object,
+    no new live query. Same auth as the manual upload (an org member).
 
     Exists because a reader that improves (the CENPROT reader) could
     otherwise never reach an existing row without a re-upload, and
     "Re-emitir" is a NEW live query dated today — wrong for a historical
-    deal. Same response shape as `upload_certidao_manual` (the resultado
-    as `processando`; the extraction runs as a `BackgroundTasks` job).
+    deal. Returns the resultado with its in-flight marks; the read itself
+    runs as a `BackgroundTasks` job (`service.executar_releitura`).
 
-    🔴 D1: unlike the upload, the human lock is KEPT — same file, same
-    evidence — so a confirmed/manual value is never overwritten; the
-    extraction receives the row's own `resultado_origem`/`confirmado_por`.
+    🔴 D1: a human-entered/confirmed value is never overwritten, and a live
+    emission's registry values are only ever FILLED where empty; any
+    difference lands in `releitura.divergencias` for a human to apply
+    (`PATCH /resultados/{id}`) — see the service's re-read section header.
 
     404 for a resultado absent from this org (or soft-deleted); 409 when it
-    carries no manually uploaded file (a live emission), is already being
-    read, or its stored blob is gone — `service.preparar_releitura`.
-
-    The INFO line is the actor/when trace — this product has no audit-log
-    table (see `excluir_consulta`'s note); no PII, ids only.
+    has no stored PDF, is already being read, or its stored blob is gone —
+    `service.preparar_releitura`. Idempotent in effect: a second call while
+    the first is in flight is the 409; after it, it reads the same bytes
+    again. The content read is logged in `certidao_resultado_acessos`
+    (`acao='releitura'`) with the actor — fail-closed.
     """
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
@@ -1188,13 +1190,13 @@ async def reler_certidao_manual(
         async with httpx.AsyncClient() as client:
             update_data, pdf_bytes = await svc.preparar_releitura(
                 resultado, org_id=str(org_id), db=db, storage=storage,
-                http_client=client,
+                http_client=client, usuario_id=_user.id,
             )
     except service.ReleituraRecusada as exc:
         raise HTTPException(status_code=409, detail=exc.mensagem) from exc
 
     background_tasks.add_task(
-        svc.process_manual_extraction,
+        svc.executar_releitura,
         **service.kwargs_extracao_releitura(resultado, pdf_bytes, str(org_id), db),
     )
 

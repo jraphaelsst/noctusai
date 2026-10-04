@@ -461,6 +461,11 @@ def _cenprot_protocolo_date(protocolo: Any) -> Optional[str]:
     `None` on anything that does not look like that shape — a malformed or
     unexpectedly-shaped protocol must fall through to "undetermined", never
     a guessed date."""
+    # NOC-REMEDIATE[cenprot-protocolo-data]: the CENPROT SITE's 10-digit
+    # protocol is NOT date-prefixed (0/13 text-layer files parse as YYMMDD,
+    # cenprot.py header); if InfoSimples' protocolo_consulta is that number,
+    # this yields a wrong date or None for every live CENPROT — verify on one
+    # real 200 response and drop the fallback if so. — 2026-10-03
     if not isinstance(protocolo, str) or len(protocolo) < 6 or not protocolo[:6].isdigit():
         return None
     try:

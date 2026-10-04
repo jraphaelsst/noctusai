@@ -297,3 +297,116 @@ class TestPaginaImpressa:
         assert r.emitida_em is None
         assert any("página impressa" in a for a in r.avisos)
         assert all(p == PROMPT_PROTOCOLO for _, p, _ in leitor.chamadas)
+
+
+# ─── Text layer first (printed page + synthesized receipt) ────────────────
+
+
+def _pdf_texto(*linhas: str, paginas: int = 1) -> bytes:
+    """A PDF whose values are real TEXT (no raster) — the shape of Chrome's
+    print-to-PDF of the CENPROT result page and of InfoSimples' synthesized
+    receipt. Every value is synthetic."""
+    import fitz
+
+    doc = fitz.open()
+    for _ in range(paginas):
+        page = doc.new_page(width=595, height=842)
+        y = 80
+        for linha in linhas:
+            page.insert_text((40, y), linha)
+            y += 18
+    return doc.tobytes()
+
+
+def _impresso_texto(documento: str = "123.456.789-09") -> bytes:
+    return _pdf_texto(
+        "Consulta Gratuita - CENPROT SP",
+        f"Protocolo da Consulta: {PROTOCOLO}",
+        f"Documento Pesquisado: {documento}",
+        "NAO CONSTAM PROTESTOS nos cartorios participantes",
+    )
+
+
+def _recibo(horario: str = "17/06/2026 10:11:12", documento: str = CPF) -> list[str]:
+    return [
+        "Este e um arquivo de visualizacao de consulta sintetizado.",
+        "API: CENPROT SP / Protestos",
+        f"Horário: {horario}",
+        "Parâmetros:",
+        f"cpf {documento}",
+        "Nao constam protestos nos cartorios participantes",
+    ]
+
+
+class TestCamadaTexto:
+    @pytest.mark.asyncio
+    async def test_pagina_impressa_com_texto_le_o_protocolo_sem_visao(self):
+        leitor = _Leitor([], "17/06/2026")
+        r = await _rodar(leitor, pdf=_impresso_texto())
+        assert r.numero == PROTOCOLO
+        assert r.emitida_em is None  # a printed page has no clock
+        assert any("página impressa" in a for a in r.avisos)
+        assert leitor.chamadas == []  # exact characters: no spend
+
+    @pytest.mark.asyncio
+    async def test_documento_de_outra_pessoa_no_texto_bloqueia_sem_visao(self):
+        leitor = _Leitor([_leitura(), _leitura()], "17/06/2026")
+        r = await _rodar(leitor, pdf=_impresso_texto(), documento="52998224725")
+        assert (r.numero, r.emitida_em) == (None, None)
+        assert leitor.chamadas == []
+
+    @pytest.mark.asyncio
+    async def test_camada_texto_nao_depende_do_provedor(self):
+        r = await _rodar(_Leitor([], "x"), pdf=_impresso_texto(), provider="openai")
+        assert r.numero == PROTOCOLO
+
+    @pytest.mark.asyncio
+    async def test_recibo_sintetizado_da_a_data_e_nao_tem_protocolo(self):
+        leitor = _Leitor([], "x")
+        r = await _rodar(leitor, pdf=_pdf_texto(*_recibo()))
+        assert (r.numero, r.emitida_em) == (None, "2026-06-17")
+        assert any("protocolo" in a for a in r.avisos)
+        assert leitor.chamadas == []
+
+    @pytest.mark.asyncio
+    async def test_recibo_dentro_de_pacote_usa_o_proprio_bloco(self):
+        # A merged bundle: another API's receipt (different date) comes FIRST.
+        outro = ["API: TRF3 / Certidao", "Horário: 01/01/2026 08:00:00", "Parâmetros:", "cpf 52998224725"]
+        r = await _rodar(_Leitor([], "x"), pdf=_pdf_texto(*outro, *_recibo()))
+        assert r.emitida_em == "2026-06-17"
+
+    @pytest.mark.asyncio
+    async def test_recibo_fora_da_janela_nao_grava_data(self):
+        r = await _rodar(_Leitor([], "x"), pdf=_pdf_texto(*_recibo(horario="17/06/2024 10:00:00")))
+        assert r.emitida_em is None
+        assert any("janela" in a for a in r.avisos)
+
+    @pytest.mark.asyncio
+    async def test_recibo_de_outro_documento_bloqueia(self):
+        r = await _rodar(_Leitor([], "x"), pdf=_pdf_texto(*_recibo(documento="52998224725")))
+        assert (r.numero, r.emitida_em) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_protocolo_sem_documento_no_texto_cai_na_visao(self):
+        pdf = _pdf_texto(f"Protocolo da Consulta: {PROTOCOLO}")
+        leitor = _Leitor([_leitura(), _leitura()], "17/06/2026")
+        r = await _rodar(leitor, pdf=pdf)
+        assert r.numero == PROTOCOLO
+        assert leitor.chamadas  # vision ran
+
+    def test_protocolo_de_6_digitos_do_serasa_nao_e_protocolo_cenprot(self):
+        from app.modules.certidoes.cenprot import ler_camada_texto
+
+        assert ler_camada_texto("PROTOCOLO DA CONSULTA : 123456").protocolo is None
+
+    @pytest.mark.asyncio
+    async def test_avisos_da_camada_texto_nao_carregam_valores(self):
+        casos = [
+            await _rodar(_Leitor([], "x"), pdf=_impresso_texto()),
+            await _rodar(_Leitor([], "x"), pdf=_impresso_texto(), documento="52998224725"),
+            await _rodar(_Leitor([], "x"), pdf=_pdf_texto(*_recibo(horario="17/06/2024 10:00:00"))),
+        ]
+        for r in casos:
+            for aviso in r.avisos:
+                for valor in (CPF, "123.456.789-09", PROTOCOLO, "17/06/2024", "52998224725"):
+                    assert valor not in aviso

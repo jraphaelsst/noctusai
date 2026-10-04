@@ -24,10 +24,11 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
   useCertidoesPartes, useCienciaPcen, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
-  useRelerCertidoesCard, useRelerResultado, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
+  useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
+import { podeReler } from "./certidoesCelula";
 import { ParteSecao } from "./ParteSecao";
 
 export function CertidoesPartesTab(props: {
@@ -41,6 +42,10 @@ export function CertidoesPartesTab(props: {
   const ciencia = useCienciaPcen(clienteId);
   const reler = useRelerResultado(clienteId);
   const relerTodas = useRelerCertidoesCard(clienteId, atendimentoId);
+  const relerParte = useRelerResultados(clienteId);
+  const aplicarLidos = useAplicarValoresLidos(clienteId);
+  // Which party's "Reler todas" is in flight (one mutation, keyed by the party).
+  const [relendoParteChave, setRelendoParteChave] = useState<string | null>(null);
   const upload = useUploadNaCelula(clienteId, atendimentoId);
   const criar = useCriarLinhaPartes(clienteId);
   const renomear = useRenomearLinhaPartes(clienteId);
@@ -92,8 +97,9 @@ export function CertidoesPartesTab(props: {
     (detalhesChave && data.partes.find((p) => p.chave === detalhesChave)) || null;
 
   const fecharAdicionar = () => { setAdicionando(false); setNovoNome(""); };
-  const temArquivoManual = data.partes.some((p) => Object.values(p.celulas).some((c) => c.arquivo_manual));
+  const temPdfArmazenado = data.partes.some((p) => Object.values(p.celulas).some(podeReler));
   const relendoId = reler.isPending ? (reler.variables ?? null) : null;
+  const aplicandoId = aplicarLidos.isPending ? (aplicarLidos.variables?.resultadoId ?? null) : null;
 
   return (
     <div className="space-y-3" data-testid="certidoes-partes">
@@ -102,14 +108,14 @@ export function CertidoesPartesTab(props: {
           Falha ao atualizar — exibindo os últimos dados carregados.
         </p>
       )}
-      {(isRefreshing || temArquivoManual) && (
+      {(isRefreshing || temPdfArmazenado) && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           {isRefreshing ? (
             <p className="text-xs text-muted-foreground" data-testid="certidoes-partes-refreshing">Atualizando…</p>
           ) : <span />}
-          {temArquivoManual && (
+          {temPdfArmazenado && (
             <Button size="sm" variant="outline" disabled={relerTodas.isPending}
-              title="Lê de novo todos os PDFs de certidão já enviados das partes deste atendimento. Valores confirmados não são alterados."
+              title="Lê de novo, com o leitor mais recente, todos os PDFs de certidão já armazenados das partes deste atendimento. Valores confirmados não são alterados."
               onClick={() => relerTodas.mutate()}
               data-testid="certidoes-partes-reextrair">
               {relerTodas.isPending ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <FileSearch className="mr-1 h-4 w-4" />}
@@ -131,6 +137,13 @@ export function CertidoesPartesTab(props: {
             onUpload={(i) => upload.mutate(i)}
             onReler={(id) => reler.mutate(id)}
             relendoId={relendoId}
+            onRelerParte={(ids) => {
+              setRelendoParteChave(parte.chave);
+              relerParte.mutate(ids, { onSettled: () => setRelendoParteChave(null) });
+            }}
+            relendoParte={relerParte.isPending && relendoParteChave === parte.chave}
+            onAplicarLidos={(resultadoId, divergencias) => aplicarLidos.mutate({ resultadoId, divergencias })}
+            aplicandoId={aplicandoId}
             onDetalhes={(p) => setDetalhesChave(p.chave)}
             onAdicionar={() => setAdicionando(true)}
             onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}

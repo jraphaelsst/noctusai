@@ -90,7 +90,7 @@ describe("CertidoesPartesTab", () => {
     await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/resultados/res-1/reemitir", {}));
   });
 
-  describe("ler o documento novamente", () => {
+  describe("reler", () => {
     const comUpload = () => parte({
       celulas: {
         cnd_federal: cel({ status: "nao_constam", status_processamento: "sucesso", resultado_id: "res-1", tem_arquivo: true, arquivo_url: "k/api.pdf" }),
@@ -98,25 +98,46 @@ describe("CertidoesPartesTab", () => {
       },
     });
 
-    it("is offered only on a row whose stored file is a manual upload", async () => {
+    it("is offered on every row with a stored PDF — upload or live receipt", async () => {
+      const p = comUpload();
+      p.celulas.cnd_federal = { ...p.celulas.cnd_federal, pode_reler: true };
+      p.celulas.serasa = { ...p.celulas.serasa, pode_reler: true };
+      mockGet.mockResolvedValue(resp([p]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      expect(screen.getByTestId("parte-linha-c:cli-1-serasa-reextrair").textContent).toContain("Reler");
+      expect(screen.getByTestId("parte-linha-c:cli-1-cnd_federal-reextrair").textContent).toContain("Reler");
+      expect(screen.getByTestId("certidoes-partes-reextrair")).toBeTruthy();
+    });
+
+    it("falls back to the manual-upload flag on a payload without pode_reler", async () => {
       mockGet.mockResolvedValue(resp([comUpload()]));
       render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
       await screen.findByTestId("parte-secao-c:cli-1");
       open("c:cli-1");
-      expect(screen.getByTestId("parte-linha-c:cli-1-serasa-reextrair").textContent).toContain("Ler o documento novamente");
-      // a live emission's file (tem_arquivo without arquivo_manual) is not re-readable
+      expect(screen.getByTestId("parte-linha-c:cli-1-serasa-reextrair")).toBeTruthy();
       expect(screen.queryByTestId("parte-linha-c:cli-1-cnd_federal-reextrair")).toBeNull();
-      expect(screen.getByTestId("certidoes-partes-reextrair")).toBeTruthy();
     });
 
-    it("is hidden while the certidão is still being read, and with no manual upload at all", async () => {
+    it("shows 'Relendo…' disabled while the certidão is being read, and nothing with no stored PDF", async () => {
       const lendo = comUpload();
       lendo.celulas.serasa = { ...lendo.celulas.serasa, status_processamento: "processando" };
+      lendo.celulas.cnd_federal = {
+        ...lendo.celulas.cnd_federal, pode_reler: true,
+        releitura: { em_andamento: true, concluida_em: null, divergencias: [] },
+      };
       mockGet.mockResolvedValue(resp([lendo]));
       const { unmount } = render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
       await screen.findByTestId("parte-secao-c:cli-1");
       open("c:cli-1");
-      expect(screen.queryByTestId("parte-linha-c:cli-1-serasa-reextrair")).toBeNull();
+      for (const linha of ["serasa", "cnd_federal"]) {
+        const b = screen.getByTestId(`parte-linha-c:cli-1-${linha}-reextrair`) as HTMLButtonElement;
+        expect(b.textContent).toContain("Relendo…");
+        expect(b.disabled).toBe(true);
+      }
+      // Nothing left to re-read on this party ⇒ its "Reler todas" is gone.
+      expect(screen.queryByTestId("parte-reler-todas-c:cli-1")).toBeNull();
       unmount();
       mockGet.mockResolvedValue(resp([parte()]));
       render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
@@ -151,6 +172,48 @@ describe("CertidoesPartesTab", () => {
       fireEvent.click(await screen.findByTestId("certidoes-partes-reextrair"));
       await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/reler", { atendimento_id: "at-1" }));
       await waitFor(() => expect(spy).toHaveBeenCalledWith({ queryKey: ["sw", "clientes", "cli-1", "certidoes", "partes"] }));
+    });
+
+    it("'Reler todas' of one party re-reads each of its stored PDFs", async () => {
+      const p = comUpload();
+      p.celulas.cnd_federal = { ...p.celulas.cnd_federal, pode_reler: true };
+      p.celulas.serasa = { ...p.celulas.serasa, pode_reler: true };
+      mockGet.mockResolvedValue(resp([p]));
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      fireEvent.click(screen.getByTestId("parte-reler-todas-c:cli-1"));
+      await waitFor(() => expect(mockPost).toHaveBeenCalledWith("/api/certidoes/resultados/res-2/reler", {}));
+      expect(mockPost).toHaveBeenCalledWith("/api/certidoes/resultados/res-1/reler", {});
+    });
+
+    it("surfaces a re-read divergence and applies the read values only on a human click", async () => {
+      const p = comUpload();
+      p.celulas.serasa = {
+        ...p.celulas.serasa, numero: "CONFIRMADO", pode_reler: true,
+        releitura: {
+          em_andamento: false, concluida_em: "2026-10-03T10:00:00+00:00",
+          divergencias: [{ campo: "numero", valor_atual: "CONFIRMADO", valor_lido: "0123456789" }],
+        },
+      };
+      mockGet.mockResolvedValue(resp([p]));
+      mockPatch.mockResolvedValue({ data: {} });
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      await screen.findByTestId("parte-secao-c:cli-1");
+      open("c:cli-1");
+      const aviso = screen.getByTestId("parte-divergencia-c:cli-1-serasa");
+      expect(aviso.textContent).toContain("nada foi alterado");
+      expect(aviso.textContent).toContain("Número: lido 0123456789 (atual: CONFIRMADO)");
+      expect(screen.getByTestId("parte-numero-c:cli-1-serasa").textContent).toContain("CONFIRMADO");
+      expect(mockPatch).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByTestId("parte-aplicar-lidos-c:cli-1-serasa"));
+      await waitFor(() => expect(mockPatch).toHaveBeenCalledWith("/api/certidoes/resultados/res-2", { numero: "0123456789" }));
+    });
+
+    it("keeps polling while a live receipt is being re-read", () => {
+      const c = cel({ status_processamento: "sucesso", releitura: { em_andamento: true, concluida_em: null, divergencias: [] } });
+      expect(certidaoEmAndamento(c)).toBe(true);
+      expect(certidaoEmAndamento({ ...c, releitura: { em_andamento: false, concluida_em: null, divergencias: [] } })).toBe(false);
     });
   });
 

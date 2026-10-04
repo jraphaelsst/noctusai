@@ -120,6 +120,30 @@ class TestCelula:
         assert ao_vivo["arquivo_manual"] is False and ao_vivo["tem_arquivo"] is True
         assert svc.montar_celula("trf3", None, HOJE, 30)["arquivo_manual"] is False
 
+    def test_pode_reler_todo_pdf_no_bucket_e_expoe_a_releitura(self):
+        from datetime import datetime, timezone
+
+        base = {"id": "r", "status": "sucesso", "arquivo_url": "org/certidoes/c/x.pdf"}
+        ao_vivo = svc.montar_celula("cenprot", {**base, "api_response": {"code": 200}}, HOJE, 30)
+        assert ao_vivo["pode_reler"] is True and ao_vivo["releitura"] is None
+        externo = svc.montar_celula("cenprot", {**base, "arquivo_url": "https://x.example/a.pdf"}, HOJE, 30)
+        assert externo["pode_reler"] is False
+        div = [{"campo": "numero", "valor_atual": None, "valor_lido": "0123456789"}]
+        lendo = svc.montar_celula("cenprot", {**base, "releitura": {
+            "estado": "em_andamento", "iniciada_em": datetime.now(timezone.utc).isoformat(),
+        }}, HOJE, 30)
+        assert lendo["releitura"]["em_andamento"] is True
+        feita = svc.montar_celula("cenprot", {**base, "releitura": {
+            "estado": "concluida", "concluida_em": "2026-10-03T10:00:00+00:00", "divergencias": div,
+        }}, HOJE, 30)
+        assert feita["releitura"] == {
+            "em_andamento": False, "concluida_em": "2026-10-03T10:00:00+00:00", "divergencias": div,
+        }
+        interrompida = svc.montar_celula("cenprot", {**base, "releitura": {
+            "estado": "em_andamento", "iniciada_em": "2026-01-01T00:00:00+00:00",
+        }}, HOJE, 30)
+        assert interrompida["releitura"]["em_andamento"] is False
+
     def test_placeholder_de_consulta_manual_le_origem_manual(self):
         placeholder = {"id": "r", "status": "pendente", "consulta_origem": "manual"}
         assert svc.montar_celula("serasa", placeholder, HOJE, 30)["origem"] == "manual"
@@ -190,7 +214,7 @@ class TestMontar:
         assert set(parte["celulas"]["cnd_federal"]) == {
             "status", "texto", "tipo", "resultado_id", "consulta_id", "status_processamento",
             "resultado", "numero", "emitida_em", "validade_ate", "idade_dias",
-            "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "arquivo_nome", "origem",
+            "stale_para_contrato", "arquivo_url", "tem_arquivo", "arquivo_manual", "pode_reler", "releitura", "arquivo_nome", "origem",
             "confirmado", "analise_ia", "erro_mensagem", "segunda_via", "pcen", "pendencia",
         }
 
