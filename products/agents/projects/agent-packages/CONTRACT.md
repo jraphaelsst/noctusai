@@ -89,7 +89,10 @@ C3. Outputs under `products/agents/packages/<key>/dist/` (gitignored by the root
   (sorted paths + contents), `compiled_hash` = `prompt_hash` of the compiled text.
 
 C4. Bundle additions (Studio importer must accept them; strict validation stays): `agente.kind`,
-`versao.versao_semver`, `versao.package_sha`. Nothing else.
+`versao.versao_semver`, `versao.package_sha`, and top-level `claude: [{caminho, conteudo}]` = the `dist/claude`
+tree, stored at import (amended 2026-10-03 by BE-API: LEARNINGS.md/PACKAGE.json are not derivable server-side).
+A dev-advisor import must carry semver + sha; a published semver is never re-imported (409 `semver_published`);
+an existing agent's kind never flips (409 `kind_change_refused`).
 
 C5. `--check` mode: build + compare against the committed consumer files (used by consumer CI to detect a
 hand-edited materialized file → fail with the diff).
@@ -168,9 +171,14 @@ H3. `noctus.dev.agent_learnings_promote key=` (run in noc): pulls `aceito` rows 
 | `GET /api/agent-packages/{key}/{versao}` | `packages:read` | the `dist/claude/` tree as `{files:[{path, conteudo}], package}` |
 | `PUT /api/studio/agents/{key}/projects/{slug}/sources` | `project-knowledge:write` | §G2 |
 | `POST /api/studio/agents/{key}/learnings` | `learnings:write` | §H2 |
+| `GET /api/studio/agents/{key}/learnings` | `learnings:read` / member | list (promote tool, UI) |
 | `PATCH /api/studio/agents/{key}/learnings/{id}` | admin user | review |
+| `GET /api/studio/agents/{key}/projects` | member | per-project sync info (UI) |
 
-Tokens: Studio's `agents.api_tokens` gain a `scopes text[]` column; a product-caller is accepted ONLY on
+Tokens: Studio's `agents.api_tokens.scopes` (already present since migration 007); scopes are `packages:read`,
+`project-knowledge:write`, `learnings:write`, plus `learnings:read` (amended: needed by `agent_learnings_promote`).
+Mint via `POST /api/settings/api-tokens {label, scopes, expires_at ≤ 90 days}` (owner/admin) — re-mint every 90 days.
+Previously planned wording: a product-caller is accepted ONLY on
 routes whose scope it holds (all other routes keep 403 `user_required`). Token lives in
 `~/.config/noctus/agents.env` (`NOCTUS_AGENTS_TOKEN`, `NOCTUS_AGENTS_URL=https://agents.noctusai.com`).
 

@@ -1,7 +1,7 @@
 # Agent Packages — PROJECT
 
 - **Created:** 2026-10-03
-- **Status:** 🟡 wave 1 shipped (limiar-app consumes 0.2.0); wave 2 BE-API in progress
+- **Status:** 🟡 waves 1–2 on dev (BE-API not deployed; migration 017 not applied); wave 3 in progress
 - **Owner / stakeholders:** João (owner) · orchestrator session (tech-lead) · engineers per slice
 - **Contract:** `CONTRACT.md` (same folder) — binding
 - **Related:** `../agent-studio-isaia/CONTRACT.md` (Studio, extended not changed) · consumer `jraphaelsst/limiar-app`
@@ -48,7 +48,13 @@ back on every push. First agents: `mobile-dev`, `nos-no-limiar`.
 - `agent_pull` does not remove consumer files outside the generated set (old hand-written `AGENT.md` was removed by hand) — acceptable for v1; a `--prune` list in the lock would make migrations clean.
 - The mcp suite gate timed out at 89 s at integrate — not a measured green for the whole suite (fixture tests were green).
 
-### Phase 3 — Wave 2
+### Phase 3 — Wave 2 ✅ (on dev, not deployed)
+- [x] BE-API: migration 017 (kind, semver/sha, package trees, project sources, learnings), importer §C4 + `claude` tree, §I routes, scoped tokens — dev 340f4091e; agents pytest 1527 passed
+
+**Improvements:**
+- Two contract amendments came from implementation reality (`claude` tree in the bundle; `learnings:read` scope) — recorded in CONTRACT §C4/§I the same day.
+- 017's DB guards are allow-listed in compliance.py until real GuardProbes are registered at apply time (named destination: apply step).
+
 ### Phase 4 — Wave 3 + live end-to-end (Studio chat with `nos-no-limiar` answering a question that requires limiar-app source)
 
 ## 5. Open questions
@@ -59,3 +65,4 @@ back on every push. First agents: `mobile-dev`, `nos-no-limiar`.
 |---|---|---|
 | 2026-10-03 | Contract v1 + project created | orchestrator |
 | 2026-10-03 | Wave 1 shipped; limiar-app on 0.2.0; BE-API (wave 2) dispatched | orchestrator |
+| 2026-10-03 | Wave 2 on dev (not deployed); contract amended (§C4 claude tree, §I learnings:read); wave 3 dispatched | orchestrator |
