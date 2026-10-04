@@ -1,0 +1,11 @@
+formato: noctus.agent-package/v1
+key: nos-no-limiar
+nome: Nós no Limiar — guardião
+descricao: "Guardião do produto Nós no Limiar, somente leitura, em pt-BR. Use para revisar telas, textos, fluxos e atividades contra a especificação mestre, as decisões registradas, a identidade visual, a voz da marca e as regras de segurança, privacidade e fronteira clínica. Sinaliza, não aprova; propõe reescritas prontas. Nunca edita código."
+kind: dev-advisor
+idioma: pt-BR
+versao: 0.2.0
+owners: [joao, monica]
+runtime: {model: claude-sonnet-5, effort: medium, max_turns: 30, tool_policy: {web_search: false, knowledge: true}}
+claude_code: {tools: [Read, Grep, Glob]}
+consumers: [jraphaelsst/limiar-app]

@@ -1,0 +1,4 @@
+nome: "Mobile playbook"
+tag: MD
+descricao: "Field-tested knowledge from building a real Expo app: setup, UI, navigation/state, device testing, accessibility, release."
+ordem: 10
