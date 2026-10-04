@@ -179,6 +179,30 @@ class SeedSettings(ProductSettings):
     # migration 014 CHECK) or lower per-run value.
     studio_eval_run_budget_usd: float = 2.00
 
+    # ── Public ask (projects/limiar-open-question S3) ──────────────────
+    # The anonymous `POST /api/public/ask/{app_slug}` surface. OFF by default:
+    # the route 404s until the owner's public-surface consent
+    # (`noctus.dev.prod_consent`) — `PUBLIC_ASK_ENABLED=true` is the switch.
+    public_ask_enabled: bool = False
+    # Decision Board `nnl-classifier-outage` (OPEN): what an unavailable /
+    # indeterminate classifier answers. "amarelo_editorial" (recommended) |
+    # "seguranca". Rules-red always wins either way.
+    on_classifier_outage: str = "amarelo_editorial"
+    # Global daily cost circuit breaker (model-spending requests per UTC day).
+    public_ask_daily_call_cap: int = 2000
+    # Where the Limiar agent's curated knowledge lives. Unset ⇒ no retrieval
+    # ⇒ the editorial fallback (never an improvised answer).
+    public_ask_org_id: str = ""
+    public_ask_agent_id: str = ""
+    public_ask_colecao: str = ""
+
+    @field_validator("on_classifier_outage")
+    @classmethod
+    def _on_classifier_outage_known(cls, v: str) -> str:
+        if v not in ("amarelo_editorial", "seguranca"):
+            raise ValueError('on_classifier_outage must be "amarelo_editorial" or "seguranca"')
+        return v
+
     @model_validator(mode="after")
     def _turn_lock_ttl_outlives_turn_timeout(self) -> "SeedSettings":
         """Fail loud at boot (contract §E.11 "Route order": "`_TURN_LOCK_

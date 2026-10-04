@@ -53,6 +53,9 @@ from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
 from app.routers.persona_router import router as persona_router
+from app.public_ask.router import BODY_LIMIT_PATTERN as PUBLIC_ASK_BODY_LIMIT_PATTERN
+from app.public_ask.router import MAX_BODY_BYTES as PUBLIC_ASK_MAX_BODY_BYTES
+from app.public_ask.router import router as public_ask_router
 from app.routers.studio_agents_router import (
     SKILL_FILES_BATCH_BODY_LIMIT_PATTERN,
     SKILL_FILES_BATCH_MAX_BYTES,
@@ -205,6 +208,8 @@ app = create_product_app(
         # Agent Packages (CONTRACT §I): package serving + consumer sync routes.
         agent_packages_router,
         studio_package_sync_router,
+        # Anonymous public ask (limiar-open-question S3) — 404 unless PUBLIC_ASK_ENABLED.
+        public_ask_router,
     ],
     lifespan_startup=on_startup,
     lifespan_shutdown=on_shutdown,
@@ -229,6 +234,8 @@ app = create_product_app(
         SKILL_FILES_BATCH_BODY_LIMIT_PATTERN: SKILL_FILES_BATCH_MAX_BYTES,
         # Agent Packages §G2: the full project manifest (25 MB cap per call).
         SOURCES_BODY_LIMIT_PATTERN: SOURCES_MAX_BYTES,
+        # Public ask: a 600-char text + JSON envelope — 2 KB, rejected before parsing.
+        PUBLIC_ASK_BODY_LIMIT_PATTERN: PUBLIC_ASK_MAX_BODY_BYTES,
     },
 )
 

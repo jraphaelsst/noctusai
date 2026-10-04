@@ -118,8 +118,8 @@ injection steering the classifier — nonce delimiting, enum output check, the r
 ## 6. Implementation phases
 
 ### Phase 0 — Audit
-- [ ] Re-read the §5 files at the current tip; confirm Postgres statement logging on the search RPC; confirm the compiler's input shape for the §7.2 prompt.
-**Improvements:** NOC-FILL-IMPROVEMENTS
+- [x] Re-read the §5 files at the current tip (S3) · [x] search RPC: `agents.search_knowledge(p_query)` takes the text as an RPC arg into `websearch_to_tsquery`; Postgres statement-logging config is NOT verifiable from the repo ⇒ treated as capturable, retrieval uses a static per-tema query · [ ] compiler input shape for the §7.2 prompt (still open; prompt is a versioned constant)
+**Improvements:** retrieval never sees user words; the seed AuditMiddleware/RequestLogging already record no body (route template, status, path only) so no exclusion seam was needed — the no-log test pins it.
 
 ### Phase 1 — S0 + S2 (rules pack export + limiar-app CI; seed risk_classifier)
 - [x] S0 (limiar-app cd03756, first CI green) · [x] S2 (`feat/risk-classifier-s2`)
@@ -130,8 +130,8 @@ injection steering the classifier — nonce delimiting, enum output check, the r
 **Improvements:** S4: lexicons/fallback/path enum are DATA in `safety_pack/limiar/posfiltro.json` (`status: rascunho`, pending Mônica H4), lock-covered; matching reuses the engine's normalize (whole-word: `garanto` trips, `garantia` does not). `safety_pack_sync` now preserves non-fetched lock entries. FOLLOW-UP: `posfiltro.json` is server-authored; if it moves to limiar-app as the source, extend the sync tool to vendor it. Route should use `pacote_posfiltro_padrao()` (cached). S1: TS→Python port needed no divergence fixes - `re.ASCII` + the JSON-spelled `espaco` class made every vector (994 triage + 38 normalization) pass first run. The pack is the single source: the engine holds zero constants. Lock sha is checked on every `load_engine`. Future: expose `load_engine` as a cached singleton in S3/S4.
 
 ### Phase 3 — S3 + S5 (route with Fake provider + no-log proof; sync tool + recall eval harness)
-- [ ] S3 · [ ] S5 (sync tool `noctus.dev.safety_pack_sync` DONE; recall eval harness pending)
-**Improvements:** Sync tool: dry-run carries the CI-visible staleness warning (lock versao vs ref's versao; offline = `fetch_failed`, logged, never raised) - no separate CI job added.
+- [x] S3 (`feat/public-ask-s3`; route default-OFF behind `PUBLIC_ASK_ENABLED`) · [ ] S5 (sync tool `noctus.dev.safety_pack_sync` DONE; recall eval harness pending)
+**Improvements:** S3: body parsed in-handler (not FastAPI binding) so a bad input is a custom 400 with no echo, scoped to the router; the in-process daily breaker is per worker (NOC-REMEDIATE[public-ask-breaker-shared]); prompt still a constant (NOC-REMEDIATE[public-ask-prompt-from-studio]); classifier sinais renamed `agressao` (LabelSet forbids a label being both nivel and sinal); `ON_CLASSIFIER_OUTAGE` switch defaults to amarelo_editorial pending Decision Board `nnl-classifier-outage`. Sync tool: dry-run carries the CI-visible staleness warning (lock versao vs ref's versao; offline = `fetch_failed`, logged, never raised) - no separate CI job added.
 
 ### Phase 4 — Gate + go-live 🅿️
 - [ ] Fresh blind set (human, outside the tuning loop) · [ ] live recall ≥ 95% · [ ] H1–H4 · [ ] `prod_consent` · [ ] app feature
@@ -167,3 +167,4 @@ branch in a limiar-app worktree. Gates: limiar-app tsc + jest; seed lib pytest; 
 - 2026-10-04 — S1 shipped: engine + vendored pack (limiar-app `cd037564851a59afbc573acee08e109c9b8f89cf`, versao `triagem-2026.10.04`) + conformance tests; S5 sync tool `noctus.dev.safety_pack_sync` shipped (branch `feat/safety-pack-s1`).
 - 2026-10-04 — S2 landed: seed `integrations/risk_classifier` (Protocol/Fake/Real/factory, 40 tests) + KB `INTEGRATIONS/risk-classifier.md`.
 - 2026-10-04 — S4 landed: `app/public_ask/postfilter.py` (+ `posfiltro.json` draft pack, lock-covered, 11 checks, tests).
+- 2026-10-04 — S3 landed: `POST /api/public/ask/{app_slug}` (flag-off by default), service pipeline, 2 KB cap, 5/min+30/day limits, daily breaker, no-log proof, real post-filter integration test.
