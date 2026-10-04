@@ -32,7 +32,7 @@ from app.schemas.packages import SOURCE_FILE_MAX_BYTES, SourceItem
 from app.stores.agent_packages import AgentPackageStore, ProjectSourceRecord
 from app.stores.errors import NotFound
 from app.stores.studio_knowledge import CollectionInput, StudioKnowledgeStore, source_sha_of
-from noctusai_lib.security import has_secret
+from noctusai_lib.security import find_secret_findings
 
 __all__ = [
     "PROJECT_COLLECTION_TAG",
@@ -144,6 +144,7 @@ def sync_project_sources(
     author_id: UUID | None,
     packages: AgentPackageStore,
     knowledge: StudioKnowledgeStore,
+    acknowledged: frozenset[str] = frozenset(),
 ) -> dict:
     """Apply the full manifest ``items`` (see module docstring). Raises
     :class:`SourcesRefused` (nothing written) on a forbidden path, a sha
@@ -161,7 +162,13 @@ def sync_project_sources(
         raise SourcesRefused(
             422, "sha_mismatch", "sha256 diverge do conteúdo (sha256 do texto em UTF-8).", caminhos=mismatched,
         )
-    leaked = [it.path for it in items if has_secret(it.conteudo)]
+    # A hit is exempt ONLY when a human acknowledged that exact token (its fingerprint) in the consumer's
+    # lock — the scan rules themselves are never relaxed (CONTRACT agent-packages §J2).
+    leaked = [
+        it.path for it in items
+        if any(hashlib.sha256(v.encode("utf-8")).hexdigest()[:16] not in acknowledged
+               for _p, v in find_secret_findings(it.conteudo))
+    ]
     if leaked:
         # Paths only — never the matched text.
         raise SourcesRefused(

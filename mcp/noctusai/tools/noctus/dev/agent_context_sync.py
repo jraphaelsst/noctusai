@@ -245,7 +245,8 @@ def agent_context_sync(
             return {"ok": True, "status": "no_project_block", "repo": str(repo_path),
                     "message": f"{LOCK_NAME} has no `project` block (§G1) — nothing to sync; add one to enable project context"}
         slug, fontes, agentes = _validate_project(project)
-        man = collect_manifest(repo_path, fontes, _acknowledged(project))
+        acknowledged = _acknowledged(project)
+        man = collect_manifest(repo_path, fontes, acknowledged)
     except SyncError as exc:
         return {"ok": False, "status": "failed", "error_code": exc.code, "errors": [exc.message]}
     out: dict[str, Any] = {
@@ -286,7 +287,7 @@ def agent_context_sync(
         try:
             with agent_lock(key, lock_dir):
                 res = http_json("PUT", creds, f"/api/studio/agents/{key}/projects/{slug}/sources",
-                                body=man["items"], timeout=120)
+                                body={"fontes": man["items"], "nao_segredos": sorted(acknowledged)}, timeout=120)
             if not res.ok:
                 raise http_failure(res, f"sources PUT for {key}")
             data = res.data or {}

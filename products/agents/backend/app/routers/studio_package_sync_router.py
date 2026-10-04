@@ -48,6 +48,7 @@ from app.schemas.packages import (
     ProjectOut,
     SourceItem,
     SourcesBody,
+    acknowledged_fingerprints,
     SourcesSyncOut,
     manifest_items,
 )
@@ -111,6 +112,7 @@ async def put_project_sources(
             result = sync_project_sources(
                 org_id=ctx.org_id, agent_id=agent.id, project_slug=project, items=items,
                 author_id=ctx.user_id, packages=packages, knowledge=knowledge,
+                acknowledged=acknowledged_fingerprints(body),
             )
     except SourcesRefused as exc:
         raise http_error(exc.status, exc.code, exc.detail, **exc.extra) from exc

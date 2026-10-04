@@ -6,6 +6,7 @@ Request bodies are :class:`~noctusai_lib.api.StrictHttpModel` (``extra=
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
@@ -76,6 +77,21 @@ class SourcesBody(StrictHttpModel):
     array is accepted too — the contract writes the body as ``[{...}]``."""
 
     fontes: list[SourceItem] = Field(..., max_length=SOURCES_MAX_FILES)
+    #: Fingerprints (first 16 hex of sha256 of the matched text) of scanner hits a HUMAN
+    #: acknowledged as not-a-secret in the consumer's agents.lock.json (`project.nao_segredos`).
+    #: Exact-token exemption only — the scan rules are never relaxed (CONTRACT agent-packages §J2).
+    nao_segredos: list[str] = Field(default_factory=list, max_length=500)
+
+    @field_validator("nao_segredos")
+    @classmethod
+    def _fingerprints(cls, v: list[str]) -> list[str]:
+        if any(not re.fullmatch(r"[0-9a-f]{16}", f) for f in v):
+            raise ValueError("nao_segredos entries must be 16 lowercase hex chars")
+        return v
+
+
+def acknowledged_fingerprints(body: "SourcesBody | list[SourceItem]") -> frozenset[str]:
+    return frozenset(body.nao_segredos) if isinstance(body, SourcesBody) else frozenset()
 
 
 def manifest_items(body: "SourcesBody | list[SourceItem]") -> list[SourceItem]:

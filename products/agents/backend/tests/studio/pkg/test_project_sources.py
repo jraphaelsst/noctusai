@@ -256,3 +256,36 @@ class TestProjectsView:
 
     def test_no_credential_is_401(self, advisor):
         assert advisor.rt.client.raw().get("/api/studio/agents/mobile-dev/projects").status_code == 401
+
+
+class TestAcknowledgedNonSecrets:
+    """`nao_segredos` (CONTRACT agent-packages §J2): a scanner hit a human acknowledged by fingerprint in the
+    consumer's lock is exempt — ONLY that exact token; the scan rules are never relaxed."""
+
+    FONT = "CormorantGaramond_600SemiBold"  # trips the entropy heuristic; not a secret
+    REAL = "pk_" + "Q7xZ2mK9vR4tL8nB3wY6pD1sF5hJ0cGa"
+
+    @staticmethod
+    def fp(text):
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+    def _put_obj(self, advisor, items, nao_segredos):
+        return advisor.put(URL, json={"fontes": items, "nao_segredos": nao_segredos})
+
+    def test_unacknowledged_false_positive_is_refused(self, advisor):
+        resp = self._put_obj(advisor, [A, item("src/fonts.ts", f"const f = '{self.FONT}'")], [])
+        assert resp.status_code == 422 and resp.json()["code"] == "secret_detected"
+
+    def test_acknowledged_fingerprint_passes(self, advisor):
+        resp = self._put_obj(advisor, [A, item("src/fonts.ts", f"const f = '{self.FONT}'")], [self.fp(self.FONT)])
+        assert resp.status_code == 200, resp.text
+
+    def test_a_real_secret_beside_an_acknowledged_token_is_still_refused(self, advisor):
+        text = f"const f = '{self.FONT}'\nconst k = '{self.REAL}'"
+        resp = self._put_obj(advisor, [A, item("src/fonts.ts", text)], [self.fp(self.FONT)])
+        assert resp.status_code == 422 and resp.json()["code"] == "secret_detected"
+        assert self.REAL not in resp.text
+
+    def test_a_malformed_fingerprint_is_422(self, advisor):
+        resp = self._put_obj(advisor, [A], ["not-a-fingerprint"])
+        assert resp.status_code == 422

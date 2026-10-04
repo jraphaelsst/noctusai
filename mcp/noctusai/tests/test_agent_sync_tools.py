@@ -280,7 +280,8 @@ def make_consumer(tmp_path, project=True, agentes=(KEY, "mobile-dev")) -> Path:
 
 
 def sources_ok(body):
-    return 200, {"projeto": "limiar", "total": len(body), "criados": len(body), "atualizados": 0,
+    items = body["fontes"] if isinstance(body, dict) else body  # the client sends {fontes, nao_segredos}
+    return 200, {"projeto": "limiar", "total": len(items), "criados": len(items), "atualizados": 0,
                  "inalterados": 0, "removidos": 1, "ignorados": [], "avisos": []}
 
 
@@ -325,7 +326,9 @@ def test_context_sync_confirm_puts_full_manifest_per_agent(studio, tmp_path):
     r = sync(studio, repo, confirm=True)
     assert r["ok"] and r["status"] == "synced", r
     assert [c["path"] for c in studio.calls] == [f"/api/studio/agents/{k}/projects/limiar/sources" for k in (KEY, "mobile-dev")]
-    body = studio.calls[0]["body"]
+    sent = studio.calls[0]["body"]
+    assert set(sent) == {"fontes", "nao_segredos"} and sent["nao_segredos"] == []
+    body = sent["fontes"]
     assert isinstance(body, list) and len(body) == 6
     item = next(i for i in body if i["path"] == "docs/a.md")
     assert item["sha256"] == hashlib.sha256("# A\nolá\n".encode("utf-8")).hexdigest() and item["tipo"] == "doc"
