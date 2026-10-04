@@ -252,3 +252,31 @@ class TestFindSecretFindings:
         hits = find_secret_findings("two: CormorantGaramond_600SemiBold and predictiveBackGestureEnabled")
         assert [p for p, _ in hits] == ["high_entropy_token", "high_entropy_token"]
         assert {v for _, v in hits} == {"CormorantGaramond_600SemiBold", "predictiveBackGestureEnabled"}
+
+
+class TestModuleSpecifierExemption:
+    """JS/TS import specifiers name modules, never hold credentials (2026-10-04, limiar-app: PascalCase component
+    imports tripped the entropy heuristic on every new component). Only the entropy check skips them."""
+
+    def test_component_imports_are_not_secrets(self):
+        src = (
+            "import { ActivityFeedback } from '@/components/ActivityFeedback';\n"
+            "import { ActivityNotFound } from '@/components/ActivityNotFound';\n"
+            "export { X } from \"phosphor-react-native/src/icons/BookmarkSimple\";\n"
+            "const Lazy = import('../screens/DetalhesDaAtividadeGrande');\n"
+            "const y = require('./components/ActivityFeedbackSection');\n"
+        )
+        assert find_secret(src) is None
+
+    def test_the_same_token_outside_an_import_is_still_flagged(self):
+        assert find_secret("const label = '/components/ActivityFeedback';") == "high_entropy_token"
+
+    def test_a_random_secret_beside_an_import_is_still_flagged(self):
+        src = "import { A } from '@/components/ActivityFeedback';\nconst k = 'Q7xZ2mK9vR4tL8nB3wY6pD1sF5hJ0cGaTq';\n"
+        assert find_secret(src) == "high_entropy_token"
+
+    def test_a_known_key_pattern_inside_a_specifier_is_still_flagged(self):
+        assert find_secret("import x from 'ghp_" + "a" * 36 + "';") is not None
+
+    def test_a_base64_looking_specifier_is_not_exempt(self):
+        assert find_secret("import x from 'Q7xZ2mK9vR4tL8nB3wY6pD1sF5hJ0cGa+Tq=';") == "high_entropy_token"

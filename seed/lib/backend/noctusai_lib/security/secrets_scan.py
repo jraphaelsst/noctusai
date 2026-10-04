@@ -178,6 +178,35 @@ def _looks_like_code_path(token: str) -> bool:
     return digit_segments * 2 <= len(segments)
 
 
+# A JS/TS module specifier — the string in `import … from '<x>'`, `export … from '<x>'`, `import('<x>')`,
+# `require('<x>')` or a bare `import '<x>'`. It names a module (`@/components/ActivityFeedback`,
+# `phosphor-react-native/src/icons/BookmarkSimple`), never holds a credential; PascalCase component paths fail
+# the lowercase code-path grammar above, so without this every new component import read as a "secret"
+# (2026-10-04, limiar-app: 5 hits in one push). Only the ENTROPY heuristic skips these spans — the known
+# key patterns still scan them — and a specifier carrying `+`/`=`/whitespace (base64-ish) is not exempt.
+_MODULE_SPECIFIER_RE = re.compile(
+    r"""(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*|^\s*import\s+)(['"])([@./A-Za-z0-9_\-\[\]]{1,300})\1""",
+    re.MULTILINE,
+)
+
+
+def _module_specifier_spans(content: str) -> list[tuple[int, int]]:
+    return [m.span(2) for m in _MODULE_SPECIFIER_RE.finditer(content)]
+
+
+def _entropy_findings(content: str):
+    """Yield every long token the entropy heuristic flags, after the code-path and module-specifier exemptions."""
+    spans = _module_specifier_spans(content)
+    for m in _TOKEN_RE.finditer(content):
+        token = m.group(0)
+        if "/" in token and _looks_like_code_path(token):
+            continue
+        if any(a <= m.start() and m.end() <= b for a, b in spans):
+            continue
+        if _shannon_entropy(token) >= _ENTROPY_THRESHOLD:
+            yield token
+
+
 def find_secret(content: str) -> str | None:
     """Return the NAME of the first secret pattern ``content`` trips, or
     ``None`` if it looks clean.
@@ -193,11 +222,8 @@ def find_secret(content: str) -> str | None:
         if pattern.search(content):
             return name
 
-    for token in _TOKEN_RE.findall(content):
-        if "/" in token and _looks_like_code_path(token):
-            continue
-        if _shannon_entropy(token) >= _ENTROPY_THRESHOLD:
-            return _ENTROPY_PATTERN_NAME
+    for _token in _entropy_findings(content):
+        return _ENTROPY_PATTERN_NAME
 
     return None
 
@@ -215,11 +241,7 @@ def find_secret_findings(content: str) -> list[tuple[str, str]]:
     findings: list[tuple[str, str]] = []
     for name, pattern in _KNOWN_PATTERNS:
         findings.extend((name, m.group(0)) for m in pattern.finditer(content))
-    for token in _TOKEN_RE.findall(content):
-        if "/" in token and _looks_like_code_path(token):
-            continue
-        if _shannon_entropy(token) >= _ENTROPY_THRESHOLD:
-            findings.append((_ENTROPY_PATTERN_NAME, token))
+    findings.extend((_ENTROPY_PATTERN_NAME, token) for token in _entropy_findings(content))
     return findings
 
 
