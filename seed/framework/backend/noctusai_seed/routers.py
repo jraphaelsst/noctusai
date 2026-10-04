@@ -669,6 +669,19 @@ _STANDARD_ROUTERS = {
     "mfa":            _build_mfa_router,
 }
 
+#: Modules whose standard-router endpoints authenticate INSIDE the framework (a manual check over
+#: `Header(None)`, or the router's own caller dependency) rather than through the consuming product's
+#: `Depends(get_current_user)`. A product test that walks its route tree for auth (e.g. p-studio's
+#: `test_toda_rota_exige_autenticacao_ou_esta_isenta`) must DERIVE from this set, never hand-list modules:
+#: the hand-listed copy went red the day `mfa` joined the standard routers (2026-10-04). Routes in these
+#: modules that need NO token are still declared by the product as exemptions; every module here carries its
+#: own strict `== 401` boundary tests (`tests/test_mfa_router.py`, the products' AuthBoundarySuite).
+HANDLER_AUTHENTICATED_ROUTER_MODULES: frozenset[str] = frozenset({
+    "noctusai_seed.routers",
+    "noctusai_seed.status_pagina_router",
+    "noctusai_seed.mfa_router",
+})
+
 
 def build_standard_routers(
     deps,

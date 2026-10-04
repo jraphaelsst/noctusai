@@ -133,13 +133,12 @@ ISENTAS = {
 # de `tests/integration/test_e2e_flows.py::TestAuthBoundary` (subclasse de
 # `noctusai_lib.testing.AuthBoundarySuite`) — este guard não precisa
 # reprovar o que aquela suíte já prova; ele confia no MÓDULO (conjunto
-# fechado: só os dois arquivos do framework), não no nome da rota, então uma
+# fechado, exportado pelo próprio framework), não no nome da rota, então uma
 # rota nova do framework continua coberta automaticamente, e uma rota nova
 # do P Studio que esqueça `Depends(get_current_user)` continua caindo aqui.
-_MODULOS_FRAMEWORK_AUTENTICADOS = {
-    "noctusai_seed.routers",
-    "noctusai_seed.status_pagina_router",
-}
+# Derivado do framework (nunca uma lista à mão: a cópia manual ficou vermelha quando o router `mfa`
+# entrou nos standard routers, 2026-10-04).
+from noctusai_seed.routers import HANDLER_AUTHENTICATED_ROUTER_MODULES as _MODULOS_FRAMEWORK_AUTENTICADOS  # noqa: E402
 
 
 def _depende_de_autenticacao(rota) -> bool:
