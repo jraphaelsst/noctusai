@@ -116,6 +116,14 @@ class CertidaoImovel:
     resultado: Optional[str] = None
     inscricao_imobiliaria: Optional[str] = None
     confirmado: bool = False
+    #: Migration 199 — matrícula only: 'certidao' | 'visualizacao' | None
+    #: (unclassified, pre-199). A visualização has no value as a certidão.
+    tipo_documento_matricula: Optional[str] = None
+    #: Migration 199 — why `emitida_em` is None (`noctusai_lib.integrations.
+    #: documents.matricula_certidao.MOTIVOS_EMISSAO`), else None.
+    emissao_motivo: Optional[str] = None
+    #: The `imovel_documentos` row — what "Resolver" opens.
+    documento_id: Optional[str] = None
 
 
 @dataclass

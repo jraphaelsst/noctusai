@@ -68,6 +68,7 @@ from uuid import UUID
 from noctusai_lib.integrations.documents.matricula_certidao import (
     MOTIVO_ANTERIOR_AO_ULTIMO_ATO,
     MOTIVO_NAO_ENCONTRADA,
+    TIPO_VISUALIZACAO,
     ler_certidao_matricula,
 )
 from noctusai_lib.integrations.llm import chat_completion
@@ -1288,6 +1289,21 @@ def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
         tipo = row["tipo_documento"]
         if tipo in CERTIDOES_TIPOS and tipo not in por_tipo:
             por_tipo[tipo] = row
+    # [P5] A matrícula VISUALIZAÇÃO never hides a certidão on file: newest
+    # certidão (or unclassified, pre-199) wins over a newer visualização — the
+    # contract presents the certidão and only asks for one when none exists.
+    atual = por_tipo.get("matricula")
+    if atual is not None and atual.get("tipo_documento_matricula") == TIPO_VISUALIZACAO:
+        certidao = next(
+            (
+                r for r in rows
+                if r["tipo_documento"] == "matricula"
+                and r.get("tipo_documento_matricula") != TIPO_VISUALIZACAO
+            ),
+            None,
+        )
+        if certidao is not None:
+            por_tipo["matricula"] = certidao
 
     items = [
         {

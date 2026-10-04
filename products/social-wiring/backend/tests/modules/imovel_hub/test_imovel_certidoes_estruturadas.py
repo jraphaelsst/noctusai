@@ -595,6 +595,45 @@ class TestCertidoesRoute:
         assert por_tipo["cnd_iptu"]["emitida_em"] == "2026-09-01"
         assert por_tipo["matricula"]["emitida_em"] == "2026-07-01"
 
+    def test_a_newer_matricula_visualizacao_never_hides_the_certidao(self, client, scoped):
+        """[P5] The certidão wins: a visualização uploaded later is not what
+        the contract presents while a certidão is on file."""
+        seed(
+            scoped,
+            documentos=[
+                documento_row(
+                    str(uuid4()), tipo_documento="matricula", emitida_em="2026-07-01",
+                    tipo_documento_matricula="certidao",
+                    created_at="2026-07-01T00:00:00+00:00",
+                ),
+                documento_row(
+                    str(uuid4()), tipo_documento="matricula", emitida_em=None,
+                    tipo_documento_matricula="visualizacao",
+                    emissao_motivo="visualizacao_sem_valor_de_certidao",
+                    created_at="2026-09-01T00:00:00+00:00",
+                ),
+            ],
+        )
+        items = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()["items"]
+        assert [(i["tipo"], i["tipo_documento_matricula"], i["emitida_em"]) for i in items] == [
+            ("matricula", "certidao", "2026-07-01")
+        ]
+
+    def test_a_lone_visualizacao_is_returned_with_its_motivo(self, client, scoped):
+        seed(
+            scoped,
+            documentos=[
+                documento_row(
+                    str(uuid4()), tipo_documento="matricula", emitida_em=None,
+                    tipo_documento_matricula="visualizacao",
+                    emissao_motivo="visualizacao_sem_valor_de_certidao",
+                ),
+            ],
+        )
+        item = client.get(f"/api/imoveis/{CODIGO}/certidoes", headers=auth()).json()["items"][0]
+        assert item["tipo_documento_matricula"] == "visualizacao"
+        assert item["emissao_motivo"] == "visualizacao_sem_valor_de_certidao"
+
     def test_confirmado_reflects_a_manual_origem_or_a_confirmed_stamp(self, client, scoped):
         seed(
             scoped,

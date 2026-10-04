@@ -816,6 +816,23 @@ class TestAssinaturaData:
         geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
         assert "EMPRESAS_NAO_VERIFICADAS" not in {a["codigo"] for a in geracao["avisos"]}
 
+    def test_a_matricula_visualizacao_on_the_imovel_blocks_readiness(self, client, scoped, fake_storage):
+        """[P5, migration 199] The loader carries `tipo_documento_matricula`
+        onto the certidão: a visualização is a named gap, never dropped (and
+        never answered by the old `onus_certidao_em`)."""
+        ids = _seed_completo(scoped)
+        scoped.set_table_data("imovel_documentos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "codigo": "EX001",
+            "storage_path": f"{ORG_ID}/imoveis/EX001/vis", "nome_original": "matricula.pdf",
+            "mime_type": "application/pdf", "tamanho_bytes": 10, "tipo_documento": "matricula",
+            "emitida_em": None, "tipo_documento_matricula": "visualizacao",
+            "emissao_motivo": "visualizacao_sem_valor_de_certidao",
+            "deleted_at": None, "created_at": "2026-09-01T00:00:00+00:00",
+        }])
+        geracao = client.get(_url(ids, "geracao"), headers=_auth()).json()
+        assert "imovel.certidao.matricula" in {f["campo"] for f in geracao["faltando"]}
+        assert geracao["pronto"] is False
+
     def test_the_contract_prazo_overrides_the_office_default(self, client, scoped, fake_storage):
         ids = _seed_completo(scoped)
         _contrato_over(scoped, ids, prazo_pendencias_dias=0)

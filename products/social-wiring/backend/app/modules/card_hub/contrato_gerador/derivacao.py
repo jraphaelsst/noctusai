@@ -49,6 +49,13 @@ from noctusai_lib.integrations.documents import (
     segment_matricula_atos,
 )
 from noctusai_lib.integrations.documents.address import normalizar_uf
+from noctusai_lib.integrations.documents.matricula_certidao import (
+    MOTIVO_ANTERIOR_AO_ULTIMO_ATO,
+    MOTIVO_DIVERGENTE,
+    MOTIVO_NAO_ENCONTRADA,
+    MOTIVO_VISUALIZACAO,
+    TIPO_VISUALIZACAO,
+)
 from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 
@@ -570,6 +577,14 @@ ALVO_AD_CORPUS = "termos-ad-corpus-resposta"
 ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos"
 
 
+def alvo_emissao_certidao_imovel(tipo: str) -> str:
+    """The imóvel page's certidão card input where an operator types a
+    certidão's emission date by hand (`ImovelCertidoesCard`: id
+    `certidao-${tipo}-${campo}`, saved through `PATCH …/documentos/{id}/
+    extracao`, which locks the row against a later re-read)."""
+    return f"certidao-{tipo}-emitida_em"
+
+
 def _sugestoes_para_campo(campo: str) -> list[dict]:
     """`fontes.FONTES` candidates for a `falta()` `campo` string (S2,
     additive) — matched on its LAST dotted segment (`qualificacao.
@@ -806,12 +821,28 @@ def certidoes_imovel(d: DadosContrato) -> tuple[CertidaoImovel, ...]:
     im = d.imovel
     if im is None:
         return ()
-    por_tipo = {c.tipo: c for c in im.certidoes if c.emitida_em}
-    if "matricula" not in por_tipo and im.onus_certidao_em and im.numero_matricula:
+    # [P5] A matrícula VISUALIZAÇÃO (migration 199) is never presented as a
+    # certidão, dated or not — `_certidoes_imovel_pendentes` asks for one.
+    por_tipo = {c.tipo: c for c in im.certidoes if c.emitida_em and not _e_visualizacao(c)}
+    # The pre-118 `onus_certidao_em` fallback answers ONLY a card with no
+    # matrícula document at all: a visualização or an undated certidão on
+    # file is a named gap, never silently answered by an older field (the
+    # false-ready P5 found).
+    tem_documento_matricula = any(c.tipo == "matricula" for c in im.certidoes)
+    if (
+        "matricula" not in por_tipo
+        and not tem_documento_matricula
+        and im.onus_certidao_em
+        and im.numero_matricula
+    ):
         por_tipo["matricula"] = CertidaoImovel(
             tipo="matricula", numero=im.numero_matricula, emitida_em=im.onus_certidao_em
         )
     return tuple(por_tipo[tipo] for tipo in ORDEM_CERTIDOES_IMOVEL if tipo in por_tipo)
+
+
+def _e_visualizacao(c: CertidaoImovel) -> bool:
+    return c.tipo == "matricula" and c.tipo_documento_matricula == TIPO_VISUALIZACAO
 
 
 def derivar_switches(
@@ -1828,13 +1859,72 @@ def _regra_de_tempo(av: Avaliacao, d: DadosContrato, codigo: str, mensagem: str)
         av.bloqueia(codigo, mensagem)
 
 
+#: [P5] Why a certidão has no emission date (`emissao_motivo`, migration 199
+#: — `noctusai_lib.integrations.documents.matricula_certidao.MOTIVOS_EMISSAO`)
+#: in the words the readiness list shows.
+MOTIVO_EMISSAO_TEXTO: dict[str, str] = {
+    MOTIVO_NAO_ENCONTRADA: "a data de emissão não foi encontrada no documento",
+    MOTIVO_DIVERGENTE: "o documento traz datas de emissão divergentes",
+    MOTIVO_ANTERIOR_AO_ULTIMO_ATO: "a data lida é anterior ao último ato da matrícula — não pode ser a emissão",
+    MOTIVO_VISUALIZACAO: "o arquivo é uma visualização, sem valor de certidão",
+}
+
+
+def _rotulo_certidao_imovel(tipo: str) -> str:
+    return "Certidão da matrícula" if tipo == "matricula" else frases.CERTIDOES_IMOVEL_ROTULO[tipo]
+
+
+def _certidoes_imovel_pendentes(av: Avaliacao, d: DadosContrato) -> None:
+    """[P5, migration 199] What `certidoes_imovel` CANNOT present, named
+    instead of silently dropped (a visualização used to read as "nothing to
+    check" — a false-ready):
+
+    - a matrícula on file that is only a VISUALIZAÇÃO, with no certidão-typed
+      matrícula beside it → `imovel.certidao.matricula` (upload the Certidão
+      de Matrícula; the certidão wins when both exist);
+    - a certidão with no emission date → `imovel.certidao.<tipo>.emitida_em`,
+      saying why (`emissao_motivo`) and pointing at the field where it is
+      typed by hand.
+
+    PRESENCE and TYPE — `processo_legado` waives only the AGE rule
+    (`_regra_de_tempo`), never these."""
+    im = d.imovel
+    if im is None:
+        return
+    matriculas = [c for c in im.certidoes if c.tipo == "matricula"]
+    certidoes_matricula = [c for c in matriculas if not _e_visualizacao(c)]
+    if matriculas and not certidoes_matricula:
+        av.falta(
+            "imovel.certidao.matricula",
+            "Envie a Certidão de Matrícula — o arquivo enviado é uma visualização, sem valor de certidão",
+            "imovel",
+            alvo=ALVO_DOCUMENTOS_DO_IMOVEL,
+        )
+    matricula_datada = any(c.emitida_em for c in certidoes_matricula)
+    for c in im.certidoes:
+        if c.emitida_em is not None or _e_visualizacao(c):
+            continue
+        if c.tipo == "matricula" and matricula_datada:
+            continue  # another matrícula certidão on file answers it
+        motivo = MOTIVO_EMISSAO_TEXTO.get(c.emissao_motivo or "", "a data de emissão não foi lida")
+        av.falta(
+            f"imovel.certidao.{c.tipo}.emitida_em",
+            f"Data de emissão da {_rotulo_certidao_imovel(c.tipo).replace('Certidão', 'certidão', 1)} "
+            f"do imóvel — {motivo}; informe-a na página do imóvel (Certidões do imóvel)",
+            "imovel",
+            alvo=alvo_emissao_certidao_imovel(c.tipo),
+        )
+
+
 def _certidoes_do_imovel(
     av: Avaliacao, d: DadosContrato, politica: Politica, assinatura: date
 ) -> None:
     """[§6.1 #14 / Q10] The imóvel's own certidões (migration 118) answer to
     the SAME 30-day rule as a party's — an old IPTU CND is as stale on the
     signing table as an old federal one — and to the SAME `processo_legado`
-    dispensation of that rule (`_regra_de_tempo`)."""
+    dispensation of that rule (`_regra_de_tempo`). What cannot be presented
+    at all (a visualização, an undated certidão) is named first."""
+    _certidoes_imovel_pendentes(av, d)
     for c in certidoes_imovel(d):
         rotulo = (
             "Certidão da matrícula"
@@ -2994,7 +3084,9 @@ __all__ = [
     "MODELO_A_VISTA",
     "MODELO_COMPRA_VENDA",
     "MODELO_PERMUTA",
+    "MOTIVO_EMISSAO_TEXTO",
     "ORDEM_CERTIDOES_IMOVEL",
+    "alvo_emissao_certidao_imovel",
     "SUFIXO_DOCUMENTO_DE_IDENTIDADE",
     "SUFIXO_PJ_BAIXADA",
     "PJ_REDACAO_A_CONFIRMAR",

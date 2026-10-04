@@ -460,6 +460,11 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
                 resultado=i.get("resultado"),
                 inscricao_imobiliaria=i.get("inscricao_imobiliaria"),
                 confirmado=bool(i.get("confirmado")),
+                # Migration 199 — a visualização / a missing emission date is
+                # named by the gate, never silently dropped.
+                tipo_documento_matricula=i.get("tipo_documento_matricula"),
+                emissao_motivo=i.get("emissao_motivo"),
+                documento_id=str(i["documento_id"]) if i.get("documento_id") else None,
             )
             for i in imovel_docs_svc.certidoes(client, org_id, codigo)["items"]
         ),
