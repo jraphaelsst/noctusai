@@ -44,6 +44,9 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     _hoje_padrao,
     antigos_no_contrato,
     antigos_proprietarios,
+    antigos_proprietarios_pj,
+    empresas_impressas_como_parte,
+    partes_pj_contratantes,
     anuentes_certificandos,
     conjuge_do_anuente,
     pj_certificandas,
@@ -103,7 +106,7 @@ def _pj_com_representante(d: DadosContrato, lado_nome: str) -> list[tuple[ParteJ
     the gate required (`derivacao._parte_juridica`)."""
     return [
         (pj, representantes(d.vendedores + d.compradores, pj.parte_id)[0])
-        for pj in d.partes_pj
+        for pj in partes_pj_contratantes(d)
         if pj.lado == lado_nome
     ]
 
@@ -447,9 +450,24 @@ def montar_contexto(
         pendentes_cert += [
             frases.pendencia_certidao(t, nome_pj) for t in tipos if t in idx and idx[t].resultado == "nao_emitida"
         ]
+    # [P5] A COMPANY antigo proprietário's own group — its CNPJ certidões,
+    # only when the antigos enter the contract (same predicate as a person).
+    antigos_pj = antigos_proprietarios_pj(d) if antigos_no_contrato(d, assinatura, politica) else []
+    for pj in antigos_pj:
+        idx = indice_certidoes(pj.certidoes, "cnpj")
+        nome_pj = pj.razao_social or pj.cnpj or ""
+        tipos = tipos_exigidos("cnpj")
+        itens = [frases.item_certidao(t, idx[t]) for t in tipos if t in idx]
+        if not itens:
+            continue
+        n += 1
+        grupos.append({"num": n, "em_nome_de": nome_pj, "sufixo": None, "itens": itens})
+        pendentes_cert += [
+            frases.pendencia_certidao(t, nome_pj) for t in tipos if t in idx and idx[t].resultado == "nao_emitida"
+        ]
     # [E1/E4] PJ groups: DISTINCT required empresas of the certificandos
     # (never per-person — a company both spouses hold is printed ONCE).
-    empresas_partes = {pj.empresa_id for pj in d.partes_pj}
+    empresas_partes = empresas_impressas_como_parte(d, assinatura, politica)
     for eex in empresas_exigidas(d, sw, hoje, politica):
         e = eex.empresa
         if e.id in empresas_partes:
@@ -511,7 +529,7 @@ def montar_contexto(
     else:
         apresentantes_lista, plural_apres = [f"{V.ART} {negrito(V.NOME)}"], V.plural
     antigos = antigos_proprietarios(d)
-    if antigos and antigos_no_contrato(d, assinatura, politica):
+    if (antigos or antigos_pj) and antigos_no_contrato(d, assinatura, politica):
         # [Q9] the previous owner(s) present certidões too.
         #
         # 🔴 `antigos` MUST be checked here, not only the window predicate.
@@ -526,7 +544,7 @@ def montar_contexto(
         # declared `pronto`. Gate and template must agree on who exists —
         # `antigos_no_contrato` (2026-10-03) also keeps a legacy deal that
         # DOES record antigos from printing parties the gate never checked.
-        apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos))
+        apresentantes_lista.append(frases.antigos_proprietarios_texto(antigos, empresas=antigos_pj))
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
     seus_nomes = "seus nomes" if plural_apres else "seu nome"

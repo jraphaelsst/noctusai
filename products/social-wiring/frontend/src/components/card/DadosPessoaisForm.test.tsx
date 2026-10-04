@@ -118,6 +118,25 @@ describe("DadosPessoaisForm", () => {
     });
   });
 
+  describe("🔴 Convive em união estável (migration 198)", () => {
+    it("is offered beside a legal status that does not pair, and Save sends it", async () => {
+      const { onSave, fireEvent, screen } = await abrir({ valores: { estado_civil: "Divorciado(a)" } });
+      fireEvent.click(screen.getByTestId("dados-pessoais-convive-uniao-estavel-checkbox"));
+      fireEvent.click(screen.getByTestId("dados-pessoais-salvar"));
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({ estado_civil: "Divorciado(a)", convive_uniao_estavel: true }),
+      );
+    });
+
+    it("is not offered beside Casado(a) or União estável", async () => {
+      for (const estado of ["Casado(a)", "União estável"]) {
+        const { screen } = await abrir({ valores: { estado_civil: estado } });
+        expect(screen.queryByTestId("dados-pessoais-convive-uniao-estavel")).toBeNull();
+        (await import("@testing-library/react")).cleanup();
+      }
+    });
+  });
+
   it("sends nome_oficial and certidao_estado_civil_emitida_em", async () => {
     const { onSave, fireEvent, screen } = await abrir();
     fireEvent.change(screen.getByTestId("dados-pessoais-nome-oficial"), {

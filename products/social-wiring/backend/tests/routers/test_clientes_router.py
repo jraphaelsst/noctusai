@@ -544,6 +544,24 @@ class TestPatchCliente:
         assert body["inativo_threshold_dias"] is None
         assert body["reativado_em"] is not None
 
+    def test_patch_convive_uniao_estavel_and_contract_qualification_land(self, client, scoped):
+        """Migration 198's flag, and 193's contract-qualification fields that
+        `ClientePatchBody` accepted but `update_cliente` silently dropped
+        (missing from its `allowed` set) — every save returned 200."""
+        a1 = str(uuid4())
+        scoped.set_table_data("clientes", [_cliente(a1, "Ana")])
+        resp = client.patch(
+            f"/api/clientes/{a1}",
+            json={"convive_uniao_estavel": True, "identidade_tipo": "rne",
+                  "pacto_antenupcial_livro": "123"},
+            headers=_auth(),
+        )
+        assert resp.status_code == 200, resp.text
+        payload = scoped.table("clientes").updated_payloads[-1]
+        assert payload["convive_uniao_estavel"] is True
+        assert payload["identidade_tipo"] == "rne"
+        assert payload["pacto_antenupcial_livro"] == "123"
+
     def test_patch_404(self, client, scoped):
         scoped.set_table_data("clientes", [])
         resp = client.patch(

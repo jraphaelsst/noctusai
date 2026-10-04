@@ -2845,6 +2845,33 @@ describe("ClienteCardDialog — PJ parties + imóveis do atendimento (atendiment
     expect(onSalvarContratoParte).toHaveBeenCalledWith("pj-1", { pj_nire: "35200000001" });
   });
 
+  it("🔴 (P5) a PJ party's role is editable — a construtora can be made 'Antigo proprietário'", async () => {
+    const rtl = await import("@testing-library/react");
+    const onAlterarPapelVendedor = vi.fn();
+    rtl.render(
+      <ClienteCardDialog {...baseProps({ vendedores: [], partes: [pj()], onAlterarPapelVendedor })} />,
+    );
+    rtl.fireEvent.click(rtl.screen.getByTestId("card-subpage-tab-vendedor"));
+    const select = rtl.screen.getByTestId("papel-select-vendedor-empresa-pj-1") as HTMLSelectElement;
+    const opcoes = Array.from(select.options).map((o) => o.value);
+    expect(opcoes).toContain("antigo_proprietario");
+    // Roles only a PERSON can hold are not offered to a company.
+    for (const so of ["conjuge", "anuente", "representante"]) expect(opcoes).not.toContain(so);
+    rtl.fireEvent.change(select, { target: { value: "antigo_proprietario" } });
+    expect(onAlterarPapelVendedor).toHaveBeenCalledWith("pj-1", "antigo_proprietario");
+  });
+
+  it("an antiga proprietária PJ is not asked for NIRE/sede (it is not qualified)", async () => {
+    const rtl = await import("@testing-library/react");
+    rtl.render(
+      <ClienteCardDialog
+        {...baseProps({ vendedores: [], partes: [pj({ papel: "antigo_proprietario" })], onSalvarContratoParte: vi.fn() })}
+      />,
+    );
+    rtl.fireEvent.click(rtl.screen.getByTestId("card-subpage-tab-vendedor"));
+    expect(rtl.screen.queryByTestId("parte-empresa-contrato-abrir-pj-1")).toBeNull();
+  });
+
   it("a PJ comprador party shows in the Compradores block on Geral", async () => {
     const rtl = await import("@testing-library/react");
     rtl.render(

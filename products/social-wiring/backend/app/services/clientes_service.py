@@ -1873,6 +1873,15 @@ def update_cliente(
         # Never gated (see that migration's header): no extractor ever
         # writes this column, so there is no document value to protect.
         "certidao_estado_civil_emitida_em",
+        # 193 — contract qualification. 🔴 `ClientePatchBody` accepted these
+        # since 193 but they were missing HERE, so every save of the
+        # "Qualificação para o contrato" form silently dropped them (found
+        # 2026-10-04 adding 198 beside them).
+        "identidade_tipo",
+        "pacto_antenupcial_data", "pacto_antenupcial_tabelionato",
+        "pacto_antenupcial_livro", "pacto_antenupcial_folha",
+        # 198 — união estável beside the legal estado civil.
+        "convive_uniao_estavel",
     }
     payload = {k: v for k, v in updates.items() if k in allowed}
     if not payload:

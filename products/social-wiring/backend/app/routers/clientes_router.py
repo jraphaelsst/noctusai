@@ -358,6 +358,10 @@ class ClientePatchBody(StrictHttpModel):
     #: hold: 'rg' (cédula de identidade) or a foreign party's 'rne'/'rnm'.
     #: The contract qualifies by it ("cédula de identidade RNE …").
     identidade_tipo: Optional[Literal["rg", "rne", "rnm"]] = None
+    #: Migration 198 — lives in união estável with `conjuge_cliente_id` while
+    #: `estado_civil` keeps the legal status (divorciado/solteiro/…); the
+    #: contract prints both ("divorciado, … que convive em união estável com").
+    convive_uniao_estavel: Optional[bool] = None
     #: Migration 193 — the escritura de pacto antenupcial the contract cites
     #: for a married couple (data, tabelionato, livro, página); typed by hand
     #: until a pacto document reader fills it. Stored on each spouse's row.

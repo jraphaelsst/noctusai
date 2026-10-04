@@ -53,7 +53,7 @@ import {
   rgIgualAoCpf,
 } from "@/types/qualificacaoCompletude";
 
-import { TooltipIconButton } from "@noctusai/lib/components";
+import { TokenCheckbox, TooltipIconButton } from "@noctusai/lib/components";
 
 /** The taxonomy the UI offers. The COLUMN is unconstrained TEXT on purpose
  *  (migration 068) — a CHECK would freeze a product decision into the schema —
@@ -88,6 +88,10 @@ export interface DadosPessoais {
   rg_orgao_expedidor?: string | null;
   /** 🔴 Decides whether a spouse must sign. Not a preference field. */
   estado_civil?: string | null;
+  /** Migration 198 — lives in união estável with the linked companion while
+   *  `estado_civil` keeps the LEGAL status (divorciado, solteiro…). The
+   *  contract prints both: "divorciado, … que convive em união estável com". */
+  convive_uniao_estavel?: boolean | null;
   regime_bens?: string | null;
   nacionalidade?: string | null;
   /** Migration 117 (contract F6) — the marriage CELEBRATION date. Shown
@@ -138,6 +142,7 @@ const CAMPOS_DADOS_PESSOAIS: Record<keyof DadosPessoais, true> = {
   rg: true,
   rg_orgao_expedidor: true,
   estado_civil: true,
+  convive_uniao_estavel: true,
   regime_bens: true,
   nacionalidade: true,
   data_casamento: true,
@@ -279,6 +284,7 @@ export function DadosPessoaisForm({
     valores.rg,
     valores.rg_orgao_expedidor,
     valores.estado_civil,
+    valores.convive_uniao_estavel,
     valores.regime_bens,
     valores.nacionalidade,
     valores.data_casamento,
@@ -514,9 +520,14 @@ export function DadosPessoaisForm({
         <Campo rotulo="Estado civil" htmlFor={`${testId}-estado-civil`}>
           <Select
             value={draft.estado_civil ?? NAO_INFORMADO}
-            onValueChange={(v) =>
-              campo("estado_civil", v === NAO_INFORMADO ? "" : v)
-            }
+            onValueChange={(v) => {
+              campo("estado_civil", v === NAO_INFORMADO ? "" : v);
+              // A marriage / união estável estado civil already pairs the
+              // person — the 198 flag (hidden then) must not linger beside it.
+              if (estadoCivilExigeConjuge(v) && draft.convive_uniao_estavel) {
+                setDraft((d) => ({ ...d, convive_uniao_estavel: false }));
+              }
+            }}
           >
             <SelectTrigger
               id={`${testId}-estado-civil`}
@@ -572,6 +583,22 @@ export function DadosPessoaisForm({
           </Campo>
         )}
       </div>
+
+      {/* Migration 198 — "divorciado + união estável": offered whenever the
+          estado civil is not one that already pairs the person (casado /
+          união estável). The companion is linked like a spouse (papel
+          "Cônjuge" on the card, or the cônjuge field). */}
+      {!estadoCivilExigeConjuge(draft.estado_civil) && (
+        <div className="flex items-center gap-2" data-testid={`${testId}-convive-uniao-estavel`}>
+          <TokenCheckbox
+            checked={!!draft.convive_uniao_estavel}
+            onCheckedChange={(v) => setDraft((d) => ({ ...d, convive_uniao_estavel: v }))}
+            label="Convive em união estável"
+            testId={`${testId}-convive-uniao-estavel-checkbox`}
+          />
+          <span className="text-xs text-muted-foreground">Convive em união estável</span>
+        </div>
+      )}
 
       {/* Migration 117 (contract F6) — shown only for a LEGALLY married party
           (`uniao_estavel` has no "casamento" to date — see

@@ -106,7 +106,7 @@ import type {
 // `compradores_service.PAPEIS_POR_LADO`, and the select offers exactly what
 // the API will accept. Re-listing them here would be the second copy that
 // drifts.
-import { PAPEIS_POR_LADO, PAPEL_HINT, rotuloDePapel } from "@/types/cardHub";
+import { PAPEIS_POR_LADO, PAPEIS_SO_PESSOA_FISICA, PAPEL_HINT, rotuloDePapel } from "@/types/cardHub";
 
 import { AgendamentoPopover } from "./popovers/AgendamentoPopover";
 import { PessoaLink } from "@/components/pessoa/PessoaLink";
@@ -593,7 +593,15 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
    *  remove action. */
   function renderParteEmpresa(parte: ParteItem, lado: "comprador" | "vendedor") {
     const onRemover = lado === "comprador" ? props.onRemoverComprador : props.onRemoverVendedor;
+    const onAlterarPapel =
+      lado === "comprador" ? props.onAlterarPapelComprador : props.onAlterarPapelVendedor;
     const nome = parte.empresa?.razao_social || parte.empresa?.nome_fantasia || parte.nome;
+    // A company's role is editable like a person's — e.g. the construtora
+    // that sold in the last transfer becomes "Antigo proprietário" (it then
+    // only presents certidões). Roles only a person can hold are not offered
+    // (`compradores_service._PAPEIS_SO_PF` refuses them with a 400).
+    const papeisEmpresa = PAPEIS_POR_LADO[lado].filter((p) => !PAPEIS_SO_PESSOA_FISICA.includes(p));
+    const antiga = parte.papel === "antigo_proprietario";
     return (
       <div
         key={parte.parte_id}
@@ -607,11 +615,24 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               PJ
             </span>
           </p>
-          <p className="truncate text-xs text-muted-foreground">
-            {rotuloDePapel(parte.papel)}
+          <p className="flex min-w-0 items-center gap-1 truncate text-xs text-muted-foreground">
+            {onAlterarPapel && parte.parte_id ? (
+              <PapelSelect
+                papel={parte.papel}
+                opcoes={papeisEmpresa}
+                onChange={(papel) => onAlterarPapel(parte.parte_id as string, papel)}
+                salvando={props.papelSalvandoParteId === parte.parte_id}
+                testId={`${lado}-empresa-${parte.parte_id}`}
+                nome={nome}
+              />
+            ) : (
+              rotuloDePapel(parte.papel)
+            )}
             {parte.documento ? ` · CNPJ ${formatIdentificador("cnpj", parte.documento)}` : ""}
           </p>
-          {props.onSalvarContratoParte && parte.parte_id && (
+          {/* An antiga proprietária is not qualified in the contract — no
+              NIRE/sede to collect, only its certidões (Certidões tab). */}
+          {props.onSalvarContratoParte && parte.parte_id && !antiga && (
             <ParteEmpresaContratoForm
               parte={parte}
               salvando={props.salvandoContratoParteId === parte.parte_id}

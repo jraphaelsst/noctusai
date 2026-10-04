@@ -122,6 +122,25 @@ REGIME_EXTENSO = {
 
 ESTADOS_EM_NUCLEO = ("casado", "uniao_estavel")
 
+
+def em_uniao_estavel(p: Pessoa) -> bool:
+    """[Migration 198] Lives in união estável: the estado civil says so, OR
+    the flag beside a legal status that does not (deal 867's divorciado)."""
+    return p.estado_civil == "uniao_estavel" or bool(p.convive_uniao_estavel)
+
+
+def forma_nucleo(p: Pessoa) -> bool:
+    """Pairs with a linked partner in ONE qualificação núcleo — married, or
+    in união estável (either way of saying it)."""
+    return p.estado_civil == "casado" or em_uniao_estavel(p)
+
+
+def _uniao_com_estado_proprio(a: Pessoa, b: Optional[Pessoa]) -> bool:
+    """[Migration 198] A união estável carried by the FLAG (not by the estado
+    civil): each partner is then qualified with their OWN legal status —
+    "divorciado, …, que convive em união estável com …, solteira, …"."""
+    return any(x is not None and x.convive_uniao_estavel and x.estado_civil != "casado" for x in (a, b))
+
 #: Every estado civil the qualificação has wording for — `derivacao._partes`
 #: refuses any other (it would silently drop out of `texto_pessoa`).
 ESTADOS_COM_REDACAO: tuple[str, ...] = tuple(_ESTADO_CIVIL_FLEX) + ESTADOS_EM_NUCLEO
@@ -250,7 +269,7 @@ def nucleos(pessoas: Sequence[Pessoa]) -> list[tuple[Pessoa, Optional[Pessoa]]]:
             continue
         usados.add(p.cliente_id)
         par = por_id.get(p.conjuge_cliente_id or "")
-        if p.estado_civil in ESTADOS_EM_NUCLEO and par is not None and par.cliente_id not in usados:
+        if forma_nucleo(p) and par is not None and par.cliente_id not in usados:
             usados.add(par.cliente_id)
             saida.append((p, par))
         else:
@@ -322,14 +341,16 @@ def qualificacao(pessoas: Sequence[Pessoa], *, lei_6515_desde: date) -> str:
             )
             continue
         mesmo_endereco = endereco_texto(a.endereco) == endereco_texto(b.endereco)
+        # [198] A flag-carried união estável prints each one's legal status.
+        nucleo = not _uniao_com_estado_proprio(a, b)
         if mesmo_endereco:
-            ta, tb = texto_pessoa(a, em_nucleo=True), texto_pessoa(b, em_nucleo=True)
+            ta, tb = texto_pessoa(a, em_nucleo=nucleo), texto_pessoa(b, em_nucleo=nucleo)
             sufixo = f", residentes e domiciliados na {endereco_texto(a.endereco)}"
         else:
-            ta = f"{texto_pessoa(a, em_nucleo=True)}, {_residente(a)} na {endereco_texto(a.endereco)}"
-            tb = f"{texto_pessoa(b, em_nucleo=True)}, {_residente(b)} na {endereco_texto(b.endereco)}"
+            ta = f"{texto_pessoa(a, em_nucleo=nucleo)}, {_residente(a)} na {endereco_texto(a.endereco)}"
+            tb = f"{texto_pessoa(b, em_nucleo=nucleo)}, {_residente(b)} na {endereco_texto(b.endereco)}"
             sufixo = ""
-        if a.estado_civil == "uniao_estavel":
+        if a.estado_civil != "casado" and (em_uniao_estavel(a) or em_uniao_estavel(b)):
             textos.append(f"{ta}, que convive em união estável com {tb}{sufixo}")
         else:
             lei = lei_6515_frase(a.data_casamento, lei_6515_desde)  # type: ignore[arg-type] — gated
@@ -351,10 +372,10 @@ def qualificacao_anuente(a: Pessoa, conjuge: Pessoa, *, lei_6515_desde: date) ->
     VENDEDOR>, já qualificado anteriormente"; a companion takes deal 867's
     "que convive em união estável com". The address is printed only when it
     differs from the seller's (the corpus states it once, on the seller)."""
-    texto = texto_pessoa(a, em_nucleo=True)
+    texto = texto_pessoa(a, em_nucleo=not _uniao_com_estado_proprio(a, conjuge))
     nome_conjuge = nome_parte(conjuge.nome or "")
     ja = _g(conjuge, "já qualificado", "já qualificada")
-    if a.estado_civil == "uniao_estavel":
+    if a.estado_civil != "casado" and (em_uniao_estavel(a) or em_uniao_estavel(conjuge)):
         texto += f", que convive em união estável com {nome_conjuge}, {ja} anteriormente"
     else:
         lei = lei_6515_frase(a.data_casamento, lei_6515_desde)  # type: ignore[arg-type] — gated
@@ -876,10 +897,12 @@ def pendencia_matricula_baixa(situacao_onus: str) -> str:
     return f"Matrícula Atualizada do Imóvel com a baixa da {gravame}"
 
 
-def antigos_proprietarios_texto(pessoas: Sequence[Pessoa]) -> str:
+def antigos_proprietarios_texto(pessoas: Sequence[Pessoa], *, empresas: Sequence[object] = ()) -> str:
     """[Q9] "o antigo proprietário" / "a antiga proprietária" / "os antigos
-    proprietários" / "as antigas proprietárias" (a mixed group is masculine)."""
+    proprietários" / "as antigas proprietárias" (a mixed group is masculine).
+    A company antigo (`empresas`, P5) agrees as "a empresa": feminine."""
     generos = [genero_exigido(p.genero, p.nome or p.nome_cadastro or "") for p in pessoas]
+    generos += ["f"] * len(empresas)
     if not generos:
         # Refuse rather than invent a gender for nobody: an empty group means
         # the CALLER decided wrongly that previous owners take part. Silently

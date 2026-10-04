@@ -34,6 +34,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     _negociacao,
     _partes,
     derivar_switches,
+    partes_pj_contratantes,
     resolver_endereco_posse,
 )
 from app.modules.card_hub.contrato_gerador.numeracao import numerar_clausulas
@@ -296,7 +297,8 @@ def _partes_sem_redacao_no_aditivo(av: Avaliacao, d: DadosContrato) -> None:
     qualification (`documento.py`: `frases.qualificacao` over PF signatários
     only) does not print either — refused by name rather than silently left
     out of the amendment."""
-    if d.partes_pj:
+    # A company ANTIGO proprietário is no party to the aditivo — not refused.
+    if partes_pj_contratantes(d):
         av.bloqueia(
             "ADITIVO_PARTE_PJ_SEM_REDACAO",
             "O aditivo ainda não qualifica partes empresa (PJ); a empresa não entraria no aditivo.",

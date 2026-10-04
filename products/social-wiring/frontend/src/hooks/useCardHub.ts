@@ -875,6 +875,9 @@ export function useCompradorMutations(clienteId: string) {
       }),
       qc.invalidateQueries({ queryKey: CARD_KEY(clienteId) }),
       qc.invalidateQueries({ queryKey: QUALIFICACAO_ROOT_KEY }),
+      // The all-parties list (`usePartes`) — where a COMPANY party's role is
+      // shown and edited; without this a PJ relabel stayed stale on screen.
+      qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "partes"] }),
     ]);
 
   const adicionar = useMutation({

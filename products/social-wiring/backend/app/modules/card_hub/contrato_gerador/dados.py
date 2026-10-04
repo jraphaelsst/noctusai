@@ -149,6 +149,11 @@ class Pessoa:
     nacionalidade: Optional[str] = None
     genero: Optional[str] = None
     estado_civil: Optional[str] = None
+    #: Migration 198 — lives in união estável with `conjuge_cliente_id` while
+    #: `estado_civil` keeps the legal status (deal 867: "divorciado, … que
+    #: convive em união estável com …"). `frases.em_uniao_estavel` is the one
+    #: reader: the flag OR `estado_civil == 'uniao_estavel'`.
+    convive_uniao_estavel: bool = False
     regime_bens: Optional[str] = None
     profissao: Optional[str] = None
     cpf: Optional[str] = None

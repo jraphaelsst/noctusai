@@ -306,6 +306,8 @@ def _pessoa(
         genero=row.get("genero"),
         # The canonical token (legacy "Casado(a)" mapped) — completude's reading.
         estado_civil=completude.get("estado_civil"),
+        # Migration 198.
+        convive_uniao_estavel=bool(row.get("convive_uniao_estavel")),
         regime_bens=row.get("regime_bens"),
         profissao=row.get("profissao"),
         cpf=row.get("cpf"),
