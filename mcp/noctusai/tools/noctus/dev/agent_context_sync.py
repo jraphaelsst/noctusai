@@ -144,9 +144,33 @@ def _validate_project(project: dict[str, Any]) -> tuple[str, dict[str, Any], lis
     return slug, fontes, agentes
 
 
-def collect_manifest(repo: Path, fontes: dict[str, Any]) -> dict[str, Any]:
-    """-> {items: [{path,sha256,tipo,conteudo}], skipped: [{path,motivo}], secrets: [{path,padrao}], warnings: []}."""
-    from noctusai_lib.security import find_secret
+_FINGERPRINT_RE = re.compile(r"^[0-9a-f]{16}$")
+
+
+def secret_fingerprint(text: str) -> str:
+    """16-hex fingerprint of a matched token — what a human acknowledges, never the value itself."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _acknowledged(project: dict[str, Any]) -> set[str]:
+    """`project.nao_segredos`: [{impressao, nota}] — scanner hits a human confirmed are NOT secrets.
+    Exact-token exemptions only (by fingerprint): the scanner rules themselves are never relaxed."""
+    raw = project.get("nao_segredos", [])
+    if not isinstance(raw, list):
+        raise SyncError("bad_project", "project.nao_segredos must be a list of {impressao, nota}")
+    out: set[str] = set()
+    for e in raw:
+        if not (isinstance(e, dict) and isinstance(e.get("impressao"), str) and _FINGERPRINT_RE.match(e["impressao"])
+                and isinstance(e.get("nota"), str) and e["nota"].strip()):
+            raise SyncError("bad_project", "each project.nao_segredos entry needs impressao (16 hex) and a non-empty nota")
+        out.add(e["impressao"])
+    return out
+
+
+def collect_manifest(repo: Path, fontes: dict[str, Any], acknowledged: frozenset[str] | set[str] = frozenset()) -> dict[str, Any]:
+    """-> {items: [{path,sha256,tipo,conteudo}], skipped: [{path,motivo}], secrets: [{path,padrao,impressao}],
+    acknowledged: int, warnings: []}."""
+    from noctusai_lib.security import find_secret_findings
 
     wanted: dict[str, str] = {}  # path -> tipo (first source wins: docs, codigo, quadro)
     cand = _candidates(repo)
@@ -165,6 +189,7 @@ def collect_manifest(repo: Path, fontes: dict[str, Any]) -> dict[str, Any]:
     items: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
     secrets: list[dict[str, str]] = []
+    acknowledged_hits = 0
     for rel in sorted(wanted):
         why = forbidden_reason(rel)
         p = repo / rel
@@ -184,13 +209,24 @@ def collect_manifest(repo: Path, fontes: dict[str, Any]) -> dict[str, Any]:
         if why:
             skipped.append({"path": rel, "motivo": why})
             continue
-        hit = find_secret(text)
-        if hit:
-            secrets.append({"path": rel, "padrao": hit})  # NAME of the pattern only, never the value
+        hits = find_secret_findings(text)
+        open_hits = []
+        for padrao, value in hits:
+            fp = secret_fingerprint(value)  # the value itself is never stored, logged or returned
+            if fp in acknowledged:
+                acknowledged_hits += 1
+            else:
+                open_hits.append({"path": rel, "padrao": padrao, "impressao": fp})
+        if open_hits:
+            seen = set()
+            for h in open_hits:
+                if h["impressao"] not in seen:
+                    seen.add(h["impressao"])
+                    secrets.append(h)
             continue
         items.append({"path": rel, "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
                       "tipo": wanted[rel], "conteudo": text})
-    return {"items": items, "skipped": skipped, "secrets": secrets, "warnings": warnings}
+    return {"items": items, "skipped": skipped, "secrets": secrets, "acknowledged": acknowledged_hits, "warnings": warnings}
 
 
 def agent_context_sync(
@@ -209,19 +245,21 @@ def agent_context_sync(
             return {"ok": True, "status": "no_project_block", "repo": str(repo_path),
                     "message": f"{LOCK_NAME} has no `project` block (§G1) — nothing to sync; add one to enable project context"}
         slug, fontes, agentes = _validate_project(project)
-        man = collect_manifest(repo_path, fontes)
+        man = collect_manifest(repo_path, fontes, _acknowledged(project))
     except SyncError as exc:
         return {"ok": False, "status": "failed", "error_code": exc.code, "errors": [exc.message]}
     out: dict[str, Any] = {
         "ok": True, "repo": str(repo_path), "project": slug, "agentes": agentes,
         "files": len(man["items"]), "paths": [i["path"] for i in man["items"]],
-        "skipped": man["skipped"], "warnings": man["warnings"],
+        "skipped": man["skipped"], "warnings": man["warnings"], "nao_segredos_reconhecidos": man["acknowledged"],
         "credentials": "present" if load_credentials(env, env_file) else "missing",
     }
     if man["secrets"]:
         out.update(ok=False, status="failed", error_code="secret_detected", secrets=man["secrets"],
-                   errors=[f"secret scan hit in {len(man['secrets'])} file(s) — sync aborted, nothing sent: "
-                           + ", ".join(f"{s['path']} ({s['padrao']})" for s in man["secrets"])])
+                   errors=[f"secret scan hit ({len(man['secrets'])} finding(s)) — sync aborted, nothing sent: "
+                           + ", ".join(f"{s['path']} ({s['padrao']}, impressao {s['impressao']})" for s in man["secrets"])
+                           + f". If a finding is NOT a secret, a human adds {{\"impressao\": \"<16 hex>\", \"nota\": \"why\"}}"
+                           + f" to project.nao_segredos in {LOCK_NAME}; a real secret must be removed from the file instead."])
         return out
     if not man["items"]:
         out.update(ok=False, status="failed", error_code="empty_manifest",

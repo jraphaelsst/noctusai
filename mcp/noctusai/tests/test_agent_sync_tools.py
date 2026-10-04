@@ -553,6 +553,8 @@ def _fake_noctus_home(tmp_path) -> Path:
             (home / "mcp/noctusai" / entry.name).symlink_to(entry)
     (home / "scripts").mkdir()
     (home / "scripts/agent-hooks").symlink_to(REPO_ROOT / "scripts/agent-hooks")
+    (home / "seed/lib").mkdir(parents=True)
+    (home / "seed/lib/backend").symlink_to(REPO_ROOT / "seed/lib/backend")
     return home
 
 
@@ -679,3 +681,55 @@ def test_existing_pre_push_still_syntactically_valid_and_calls_leg_last():
     assert subprocess.run(["bash", "-n", str(REPO_ROOT / "scripts/hooks/pre-push")]).returncode == 0
     assert text.rstrip().endswith("exit 0")
     assert text.index("noc-pre-push-publish.sh") > text.index('if [[ "$blocked" -ne 0 ]]')
+
+
+# ── nao_segredos: human-acknowledged scanner hits (fingerprint, exact token) ─────────────────────────────
+
+def _ack_repo(tmp_path, files, nao_segredos=None):
+    repo = tmp_path / "consumer"
+    for rel, text in files.items():
+        _w(repo / rel, text)
+    project = {"slug": "app", "fontes": {"docs": [], "codigo": ["src/**/*.ts"]}, "agentes": ["mobile-dev"]}
+    if nao_segredos is not None:
+        project["nao_segredos"] = nao_segredos
+    _w(repo / "agents.lock.json", json.dumps({"formato": "noctus.agents-lock/v1", "agents": [], "project": project}))
+    return repo
+
+
+_FONT = "CormorantGaramond_600SemiBold"  # trips the entropy heuristic, not a secret
+_REAL = "pk_" + "Q7xZ2mK9vR4tL8nB3wY6pD1sF5hJ0cGa"  # a real-looking random token
+
+
+def test_entropy_false_positive_blocks_with_a_fingerprint_and_never_the_value(tmp_path):
+    from tools.noctus.dev.agent_context_sync import agent_context_sync, secret_fingerprint
+    repo = _ack_repo(tmp_path, {"src/fonts.ts": f"export const f = '{_FONT}';\n"})
+    out = agent_context_sync(str(repo), env={})
+    assert out["ok"] is False and out["error_code"] == "secret_detected"
+    assert out["secrets"] == [{"path": "src/fonts.ts", "padrao": "high_entropy_token", "impressao": secret_fingerprint(_FONT)}]
+    assert _FONT not in json.dumps(out)
+
+
+def test_acknowledged_fingerprint_lets_that_exact_token_through(tmp_path):
+    from tools.noctus.dev.agent_context_sync import agent_context_sync, secret_fingerprint
+    ack = [{"impressao": secret_fingerprint(_FONT), "nota": "font family name"}]
+    repo = _ack_repo(tmp_path, {"src/fonts.ts": f"export const f = '{_FONT}';\n"}, ack)
+    out = agent_context_sync(str(repo), env={})
+    assert out.get("error_code") != "secret_detected", out
+    assert out["nao_segredos_reconhecidos"] == 1 and out["paths"] == ["src/fonts.ts"]
+
+
+def test_a_real_secret_in_the_same_file_still_blocks(tmp_path):
+    from tools.noctus.dev.agent_context_sync import agent_context_sync, secret_fingerprint
+    ack = [{"impressao": secret_fingerprint(_FONT), "nota": "font family name"}]
+    repo = _ack_repo(tmp_path, {"src/fonts.ts": f"export const f = '{_FONT}';\nconst k = '{_REAL}';\n"}, ack)
+    out = agent_context_sync(str(repo), env={})
+    assert out["ok"] is False and out["error_code"] == "secret_detected"
+    assert [s["impressao"] for s in out["secrets"]] == [secret_fingerprint(_REAL)]
+    assert _REAL not in json.dumps(out)
+
+
+def test_bad_nao_segredos_entry_is_rejected_not_ignored(tmp_path):
+    from tools.noctus.dev.agent_context_sync import agent_context_sync
+    repo = _ack_repo(tmp_path, {"src/a.ts": "x\n"}, [{"impressao": "not-hex", "nota": ""}])
+    out = agent_context_sync(str(repo), env={})
+    assert out["ok"] is False and out["error_code"] == "bad_project"

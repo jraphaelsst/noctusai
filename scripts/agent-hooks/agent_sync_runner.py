@@ -113,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         sys.path.insert(0, str(_toolkit_root() / "mcp" / "noctusai"))
+        # Use the SAME checkout's seed lib as the tools (not whatever copy the venv has installed):
+        # tools and seed must match, or a new seed API used by a tool is missing at hook time.
+        seed = _toolkit_root() / "seed" / "lib" / "backend"
+        if seed.is_dir():
+            sys.path.insert(0, str(seed))
         if args.mode == "consumer":
             return _consumer(Path(args.repo))
         keys = [k for k in args.keys.split(",") if k]

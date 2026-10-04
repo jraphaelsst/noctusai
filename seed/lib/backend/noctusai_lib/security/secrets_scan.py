@@ -202,9 +202,30 @@ def find_secret(content: str) -> str | None:
     return None
 
 
+def find_secret_findings(content: str) -> list[tuple[str, str]]:
+    """EVERY ``(pattern_name, matched_text)`` the scanner trips, in order —
+    the same rules as :func:`find_secret` (known patterns, then the entropy
+    heuristic with the code-path exemption), never weakened.
+
+    For callers that let a human ACKNOWLEDGE a specific false positive by a
+    fingerprint of the matched text (e.g. ``noctus.dev.agent_context_sync``).
+    The matched text is returned so the caller can fingerprint it; callers
+    MUST NOT log or surface it — surface only the pattern name + a hash.
+    """
+    findings: list[tuple[str, str]] = []
+    for name, pattern in _KNOWN_PATTERNS:
+        findings.extend((name, m.group(0)) for m in pattern.finditer(content))
+    for token in _TOKEN_RE.findall(content):
+        if "/" in token and _looks_like_code_path(token):
+            continue
+        if _shannon_entropy(token) >= _ENTROPY_THRESHOLD:
+            findings.append((_ENTROPY_PATTERN_NAME, token))
+    return findings
+
+
 def has_secret(content: str) -> bool:
     """Boolean convenience wrapper over :func:`find_secret`."""
     return find_secret(content) is not None
 
 
-__all__ = ["find_secret", "has_secret"]
+__all__ = ["find_secret", "find_secret_findings", "has_secret"]

@@ -226,3 +226,29 @@ class TestCodePathExemptionDoesNotHideSecrets:
         for prefix in ("sk_live_", "rk_live_", "sk_test_"):
             content = f"STRIPE={prefix}" + "a" * 24
             assert find_secret(content) == "stripe_live_or_restricted_key", prefix
+
+
+class TestFindSecretFindings:
+    """``find_secret_findings`` reports EVERY hit with the same rules as ``find_secret`` (never relaxed):
+    a text has findings iff ``find_secret`` flags it."""
+
+    SAMPLES = [
+        "plain prose with no tokens at all",
+        "backend/app/services/agent_runner.py",
+        "CormorantGaramond_600SemiBold",
+        "key = 'pk_" + "Q7xZ2mK9vR4tL8nB3wY6pD1sF5hJ0cGa'",
+        "ghp_" + "abcdefghijklmnopqrstuvwxyz0123",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "two: CormorantGaramond_600SemiBold and predictiveBackGestureEnabled",
+    ]
+
+    def test_parity_with_find_secret(self):
+        from noctusai_lib.security import find_secret, find_secret_findings
+        for text in self.SAMPLES:
+            assert bool(find_secret_findings(text)) == (find_secret(text) is not None), text
+
+    def test_reports_every_hit_with_its_pattern(self):
+        from noctusai_lib.security import find_secret_findings
+        hits = find_secret_findings("two: CormorantGaramond_600SemiBold and predictiveBackGestureEnabled")
+        assert [p for p, _ in hits] == ["high_entropy_token", "high_entropy_token"]
+        assert {v for _, v in hits} == {"CormorantGaramond_600SemiBold", "predictiveBackGestureEnabled"}

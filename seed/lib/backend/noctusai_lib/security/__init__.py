@@ -65,7 +65,7 @@ from noctusai_lib.security.webhook_signatures import (
     webhook_endpoint,
 )
 from noctusai_lib.security import oauth
-from noctusai_lib.security.secrets_scan import find_secret, has_secret
+from noctusai_lib.security.secrets_scan import find_secret, find_secret_findings, has_secret
 from noctusai_lib.security.token_store import (
     CredentialDecryptError,
     CredentialStore,
@@ -116,6 +116,7 @@ __all__ = [
     "decrypt",
     "encrypt",
     "find_secret",
+    "find_secret_findings",
     "generate_key",
     "has_secret",
     "oauth",
