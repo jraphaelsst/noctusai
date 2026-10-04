@@ -853,18 +853,43 @@ class TestEndereco:
         assert doc["extracao_endereco_cep"] == "01454-011"
 
     @pytest.mark.asyncio
-    async def test_a_comprovante_in_a_relatives_name_is_a_conflict_not_a_fill(self, client, scoped):
+    async def test_a_comprovante_in_a_relatives_name_fills_an_empty_group_flagged(
+        self, client, scoped
+    ):
+        """🔴 P5 audit F1/B5 (owner rule H1, 2026-10-03): a bill in a
+        relative's name used to open a conflict against the EMPTY group
+        (`valor_anterior=None`) — the address never landed and a human had
+        to accept it by hand. The first document fills the empty group,
+        machine-pending; the mismatching holder is flagged on the document."""
         cid, did, storage = await _setup(
             scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"}
         )
         notifier = FakeNotificationService()
-        await _extrair(scoped, storage, cid, did, _comprovante(), notifier)
-        assert _cliente(scoped, cid).get("endereco_cep") is None
+        out = await _extrair(scoped, storage, cid, did, _comprovante(), notifier)
+        row = _cliente(scoped, cid)
+        assert out["aplicado_ao_cliente"]["endereco"] is True
+        assert (row["endereco_cep"], row["endereco_logradouro"]) == ("01454-011", "R PROF ARTUR RAMOS")
+        assert row["endereco_origem"] == "comprovante_endereco"
+        assert row["endereco_documento_id"] == did
+        assert row.get("endereco_confirmado_em") is None
+        assert _conflitos(scoped) == []
+        assert notifier.conflitos == []
+        assert _documento(scoped, did)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
+
+    @pytest.mark.asyncio
+    async def test_a_relatives_bill_against_a_different_address_is_still_a_conflict(
+        self, client, scoped
+    ):
+        """The H1 change is about EMPTY only — a set group never yields to a
+        bill in someone else's name."""
+        cid, did, storage = await _setup(scoped, tipo="comprovante_endereco", cliente={
+            "nome": "Carlos Eduardo Lima", "endereco_cep": "04000-000",
+            "endereco_logradouro": "RUA B", "endereco_origem": "manual",
+        })
+        await _extrair(scoped, storage, cid, did, _comprovante())
+        assert _cliente(scoped, cid)["endereco_cep"] == "04000-000"
         (c,) = _conflitos(scoped)
-        assert c["campo"] == "endereco"
-        assert c["valor_anterior"] is None
         assert json.loads(c["valor_proposto"])["titular"] == "ANA PAULA SOUZA"
-        assert len(notifier.conflitos) == 1
 
     @pytest.mark.asyncio
     async def test_a_different_address_on_file_is_a_conflict(self, client, scoped):
@@ -905,9 +930,10 @@ class TestEndereco:
 
     @pytest.mark.asyncio
     async def test_accepting_the_conflict_writes_the_group_with_provenance(self, client, scoped):
-        cid, did, storage = await _setup(
-            scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"}
-        )
+        cid, did, storage = await _setup(scoped, tipo="comprovante_endereco", cliente={
+            "nome": "Carlos Eduardo Lima", "endereco_cep": "04000-000",
+            "endereco_logradouro": "RUA B", "endereco_origem": "manual",
+        })
         await _extrair(scoped, storage, cid, did, _comprovante())
         (c,) = _conflitos(scoped)
         admin = uuid4()
@@ -1316,19 +1342,37 @@ class TestEnderecoAttribution:
         assert out["aplicado_ao_cliente"]["endereco"] is True
 
     @pytest.mark.asyncio
-    async def test_a_titular_matching_nobody_on_the_card_is_still_a_review_conflict(
+    async def test_a_titular_matching_nobody_on_the_card_fills_an_empty_group_flagged(
         self, client, scoped
     ):
-        """No card link at all between Carlos and Ana — unchanged from the
-        pre-P2 behaviour: never applied, opened as a conflict an admin
-        reviews (the JSON payload carries the bill's own titular)."""
+        """No card link at all between Carlos and Ana. Owner rule H1
+        (2026-10-03) supersedes the pre-P5 review conflict for an EMPTY
+        group: filled machine-pending, the document flagged."""
         cid, did, storage = await _setup(
             scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"}
         )
         await _extrair(scoped, storage, cid, did, _comprovante())
-        assert _cliente(scoped, cid).get("endereco_cep") is None
-        (c,) = _conflitos(scoped)
-        assert json.loads(c["valor_proposto"])["titular"] == "ANA PAULA SOUZA"
+        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        assert _conflitos(scoped) == []
+        assert _documento(scoped, did)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
+
+    @pytest.mark.asyncio
+    async def test_a_joint_holder_line_naming_the_cliente_matches(self, client, scoped):
+        """P5 audit B5 (deal 875): a bill whose holder line prints BOTH
+        buyers ("A E B") matched neither — each name is now checked."""
+        cid, did, storage = await _setup(
+            scoped, tipo="comprovante_endereco", cliente={"nome": "Ana Paula Souza"},
+        )
+        conjunto = EnderecoLido(
+            cep="01454-011", logradouro="R PROF ARTUR RAMOS", numero="123",
+            complemento=None, bairro=None, cidade=None, uf=None,
+            titular="BRUNO SOUZA E ANA PAULA SOUZA", confianca="alta", rotulo="CEP",
+        )
+        await _extrair(scoped, storage, cid, did, _comprovante(conjunto))
+        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        # Matched — so NOT flagged as a holder mismatch.
+        assert _documento(scoped, did).get("extracao_aviso") is None
+        assert _conflitos(scoped) == []
 
     @pytest.mark.asyncio
     async def test_an_unreadable_titular_still_fills_the_uploaded_to_card(
@@ -2213,9 +2257,15 @@ class TestUploadRouteNotifies:
 
 class TestR1RevalidacaoAposNovaEvidencia:
     """Live-test evidence, 5 historical deals re-run on prod, 2026-09-30: a
-    pending conflict opened with nothing to compare a holder against must
-    settle the moment that evidence lands — on THIS cliente or on ANOTHER
-    party of the same atendimento — without anyone re-opening the card."""
+    bill whose holder could not be matched at read time must not leave the
+    address off the card until that evidence lands.
+
+    Owner rule H1 (2026-10-03, P5 audit F1/B5) supersedes the original shape
+    of these tests: the holder check used to open a conflict against the
+    EMPTY group and wait for R1 to settle it; an empty group is now simply
+    FILLED by the first document (flagged `comprovante_titular_nao_confere`
+    on the document), so the address is on the card from the first read and
+    the later identity read changes nothing."""
 
     @pytest.mark.asyncio
     async def test_a_name_arriving_later_settles_this_persons_own_pending_address(
@@ -2230,9 +2280,9 @@ class TestR1RevalidacaoAposNovaEvidencia:
             titular="CARLOS PEREIRA", confianca="baixa", rotulo="ENDERECO",
         )
         await _extrair(scoped, storage, cid, did_bill, _comprovante(sem_nome_ainda))
-        assert _cliente(scoped, cid).get("endereco_cep") is None
-        (pendente,) = _conflitos(scoped)
-        assert pendente["status"] == "pendente"
+        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        assert _conflitos(scoped) == []
+        assert _documento(scoped, did_bill)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
 
         # The SAME person's CNH arrives later, naming them "CARLOS PEREIRA"
         # — the bill's holder all along, unreadable as a match until now.
@@ -2255,8 +2305,8 @@ class TestR1RevalidacaoAposNovaEvidencia:
         assert (row["endereco_cep"], row["endereco_logradouro"]) == (
             "01454-011", "R PROF ARTUR RAMOS",
         )
-        estados = {c["campo"]: c["status"] for c in _conflitos(scoped)}
-        assert estados["endereco"] == "resolvido_automatico"
+        assert row["endereco_documento_id"] == did_bill
+        assert [c for c in _conflitos(scoped) if c["campo"] == "endereco"] == []
 
     @pytest.mark.asyncio
     async def test_a_co_partys_name_arriving_later_settles_a_bills_holder_check(
@@ -2281,10 +2331,9 @@ class TestR1RevalidacaoAposNovaEvidencia:
             titular="DANIELA FERREIRA LIMA", confianca="baixa", rotulo="ENDERECO",
         )
         await _extrair(scoped, storage, cid, did_bill, _comprovante(titular_co_parte))
-        assert _cliente(scoped, cid).get("endereco_cep") is None
-        assert _cliente(scoped, outra).get("endereco_cep") is None
-        (pendente,) = _conflitos(scoped)
-        assert pendente["status"] == "pendente"
+        # H1: the uploaded-to card's EMPTY group is filled at once.
+        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        assert _conflitos(scoped) == []
 
         # The co-party's own CNH arrives later.
         did_cnh = str(uuid4())
@@ -2301,14 +2350,11 @@ class TestR1RevalidacaoAposNovaEvidencia:
             nome="DANIELA FERREIRA LIMA", nome_confianca=A, source=TextSource.TEXT_LAYER,
         ))
 
-        # The address was opened as a conflict on `cid` (the card it was
-        # uploaded onto) — the co-party's arriving name settles THAT row.
         row = _cliente(scoped, cid)
         assert (row["endereco_cep"], row["endereco_logradouro"]) == (
             "01454-011", "R PROF ARTUR RAMOS",
         )
-        estados = {c["campo"]: c["status"] for c in _conflitos(scoped) if c["cliente_id"] == cid}
-        assert estados["endereco"] == "resolvido_automatico"
+        assert [c for c in _conflitos(scoped) if c["cliente_id"] == cid] == []
 
 
 # ─── R3: household address propagation (owner directive, 2026-09-30) ───────

@@ -187,6 +187,37 @@ class TestBackfillRoute:
         assert body["ainda_pendentes"] == []
         assert _cliente(scoped, cid)["cpf"] == "412.954.238-98"
 
+    def test_the_deal_queue_settles_conflicts_against_empty_fields(self, client, scoped):
+        """P5 audit F1 — the button also sweeps `atendimento_campo_conflitos`:
+        a conflict opened against an EMPTY valor negociado is settled by
+        filling it (additive `negociacao` key)."""
+        _make_admin(client)
+        cid = _seed(scoped)
+        aid = str(uuid4())
+        scoped.set_table_data("atendimentos", [{"id": aid, "org_id": ORG_ID, "cliente_id": cid}])
+        scoped.set_table_data("atendimento_documentos", [])
+        scoped.set_table_data("atendimento_negociacao", [{
+            "atendimento_id": aid, "org_id": ORG_ID, "valor_negociado": None,
+            "valor_negociado_origem": None, "tem_parceria": False,
+            "financiamento": False, "fgts": False,
+        }])
+        scoped.set_table_data("atendimento_campo_conflitos", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid,
+            "campo": "valor_negociado", "valor_anterior": None, "origem_anterior": None,
+            "valor_proposto": "640000.00", "origem_proposto": "proposta_financiamento",
+            "confianca_proposta": None, "fonte_tabela": "atendimento_documentos",
+            "fonte_id": str(uuid4()), "documento_id_proposto": None, "status": "pendente",
+            "notificado_em": None, "decidido_por": None, "decidido_em": None,
+            "created_at": "2026-10-02T00:00:00+00:00",
+        }])
+
+        r = client.post("/api/clientes/conflitos/resolver-automaticamente", headers=_auth())
+
+        assert r.status_code == 200, r.text
+        assert r.json()["negociacao"]["conflitos_vazios_resolvidos"] == 1
+        neg = scoped.table("atendimento_negociacao").select("*").execute().data[0]
+        assert neg["valor_negociado"] == "640000.00"
+
     def test_a_bank_form_orgao_without_uf_is_settled_by_the_backfill(self, client, scoped):
         """2026-10-03 (P3/P4): the largest blocking class — `SSP/SP` from the
         CNH vs `SSP` from the bank form. Same órgão; the complete reading is

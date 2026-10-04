@@ -449,6 +449,11 @@ ORIGEM_CONJUGE_DOMICILIO = "conjuge_domicilio"
 #: signed contract actually used, because the form's holder read as `None`.
 ORIGENS_ENDERECO_DECLARADO = frozenset({"ficha_cadastral"})
 
+#: `extracao_aviso` for a comprovante whose printed holder matches nobody on
+#: the card, applied anyway because the address group was EMPTY (owner rule
+#: H1) — the human gate sees WHY the source deserves a second look.
+AVISO_TITULAR_NAO_CONFERE = "comprovante_titular_nao_confere"
+
 #: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
 #: see `types.IdentityFields.data_emissao`'s own comment. It is the
 #: certidão's OWN issuance date, not a fact about the holder, so there is no
@@ -469,6 +474,18 @@ _COLUNAS_DATA_EMISSAO = (
 #: that carry an estado-civil-relevant `data_emissao` (see
 #: `TIPOS_LEITURA_INTEGRAL`).
 _TIPOS_CERTIDAO_ESTADO_CIVIL = ("certidao_casamento", "certidao_nascimento")
+
+#: F4 (P5 audit, 2026-10-03): a certidão de NASCIMENTO that records no
+#: averbação of a marriage is the document that proves "solteiro" — the
+#: signed contracts qualify those parties as solteiros, yet no reader ever
+#: produced the value (the averbação is what the parser looks for, and its
+#: ABSENCE was read as "nothing"). Inferred only when the party has no
+#: marriage evidence at all (no live certidão de casamento of their own or
+#: of a linked spouse, no spouse link) — the D1 empty-fill rule then fills
+#: an empty `estado_civil` machine-pending, and a DIFFERENT value on file
+#: opens a conflict, never an overwrite.
+ESTADO_CIVIL_SOLTEIRO = "solteiro"
+ROTULO_SOLTEIRO_INFERIDO = "inferido: certidão de nascimento sem averbação de casamento"
 
 CAMPO_POR_CHAVE: dict[str, CampoExtraido] = {c.item_key: c for c in CAMPOS}
 
@@ -653,7 +670,20 @@ def _mesmo_nome(a: Optional[str], b: Optional[str]) -> bool:
 
 
 def _vazio(valor: Any) -> bool:
-    return valor is None or (isinstance(valor, str) and not valor.strip())
+    """EMPTY for D1 — `campo_conflitos.valor_vazio`, the one predicate every
+    apply path shares (P5 audit F1: a `'—'`/`'null'` placeholder on file read
+    as a value and opened a conflict instead of being filled)."""
+    return campo_conflitos.valor_vazio(valor)
+
+
+def _limpo_por_humano(valor_atual: Any, origem_atual: Optional[str]) -> bool:
+    """An operator explicitly CLEARED this field (`origem='manual'`, value
+    genuinely blank) — a human decision the machine respects. A manual
+    PLACEHOLDER (`'—'`, `'null'`) is not a clear: it says "unknown", and the
+    first document fills it (owner rule H1)."""
+    if origem_atual != "manual":
+        return False
+    return valor_atual is None or (isinstance(valor_atual, str) and not valor_atual.strip())
 
 
 def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
@@ -1307,7 +1337,7 @@ def aplicar_campos_ao_cliente(
                     updates[campo.confirmado_em] = now
                     aplicados[campo.item_key] = True
             continue
-        if atual.get(campo.origem) == "manual":
+        if _limpo_por_humano(presente, atual.get(campo.origem)):
             continue
 
         updates[campo.item_key] = valor
@@ -1691,14 +1721,26 @@ def aplicar_endereco_ao_cliente(
     confianca: Optional[str] = None,
     documento_id: Optional[UUID] = None,
     cep_lookup: Optional[CepLookupAdapter] = None,
+    avisos: Optional[list[str]] = None,
 ) -> tuple[bool, Optional[dict]]:
     """Apply one comprovante's address to the cliente as ONE group (D1).
 
-    - The comprovante prints a holder whose name does NOT match this cliente
-      (a bill in a spouse's or a parent's name, routinely) -> conflict, never
-      a silent fill. The proposed value records whose name the bill carries.
     - Group EMPTY -> all seven parts written, `endereco_*` provenance,
-      machine-pending.
+      machine-pending — WHOEVER the bill names (owner rule H1, 2026-10-03:
+      "the first document fills empty fields"; P5 audit F1/B5: a bill in a
+      relative's name, or a joint "A E B" holder line, used to open a
+      conflict against an EMPTY group, so the address never landed and a
+      human had to accept it by hand). When the printed holder matches
+      nobody, `AVISO_TITULAR_NAO_CONFERE` is appended to `avisos` so the
+      caller flags the SOURCE document — the value stays machine-pending
+      for the contract's validation gate either way.
+    - Group SET and the comprovante prints a holder whose name does NOT
+      match this cliente -> conflict (unless it states the address already
+      on file), never a silent replace. The proposed value records whose
+      name the bill carries.
+    - Only the LOGRADOURO is required to apply (a bill whose CEP was not
+      read still carries the address; the contract gate's completeness
+      check is where a missing part is shown).
     - Group SET and the reading differs -> conflict; same -> nothing.
     - Group SET, the reading differs, but it's a RE-READ of the SAME still
       machine-pending document (`campo_conflitos.mesmo_documento_pendente`,
@@ -1716,12 +1758,15 @@ def aplicar_endereco_ao_cliente(
 
     Returns `(aplicado, conflito_novo_ou_None)`.
     """
-    if _vazio(partes.get("cep")) or _vazio(partes.get("logradouro")):
+    if _vazio(partes.get("logradouro")):
         return False, None
     partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
     # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
     # `13010-110`; one that does not fit stays as read.
-    partes = {**partes, "cep": idf.canonico_ou_bruto("cep", partes.get("cep"))}
+    partes = {
+        **partes,
+        "cep": None if _vazio(partes.get("cep")) else idf.canonico_ou_bruto("cep", partes.get("cep")),
+    }
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join([
@@ -1770,17 +1815,29 @@ def aplicar_endereco_ao_cliente(
         )
         _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
 
-    if titular_documento:
-        nomes = [atual.get("nome_oficial"), atual.get("nome_completo"), atual.get("nome")]
-        if not any(nomes_compativeis(titular_documento, n) for n in nomes if n):
-            # A bill in someone else's name that states the address ALREADY
-            # on file asks nothing — there is no second value to choose
-            # between (prod, 2026-09-29: two conflicts were a re-read of the
-            # very document on file, same address, differing only in whose
-            # name the bill carries).
-            if tem_endereco and _mesmo_endereco(atual, partes):
+    grupo_limpo_por_humano = atual.get("endereco_origem") == "manual" and all(
+        v is None or (isinstance(v, str) and not v.strip()) for v in anterior.values()
+    )
+
+    if titular_documento and not _nomes_bate(atual, titular_documento):
+        if not tem_endereco:
+            # Owner rule H1 — an EMPTY group is filled by the first
+            # document, whoever the bill names; the mismatch is flagged on
+            # the document, never turned into a conflict against nothing.
+            if grupo_limpo_por_humano:
                 return False, None
-            return False, conflito()
+            if avisos is not None:
+                avisos.append(AVISO_TITULAR_NAO_CONFERE)
+            escrever(_now())
+            return True, None
+        # A bill in someone else's name that states the address ALREADY
+        # on file asks nothing — there is no second value to choose
+        # between (prod, 2026-09-29: two conflicts were a re-read of the
+        # very document on file, same address, differing only in whose
+        # name the bill carries).
+        if _mesmo_endereco(atual, partes):
+            return False, None
+        return False, conflito()
 
     if tem_endereco:
         if _preencher_so_bairro(client, cliente_id, atual, partes, origem, documento_id):
@@ -1855,7 +1912,7 @@ def aplicar_endereco_ao_cliente(
         # the verified holder printed — nothing to write, the audit row
         # alone records the resolver ran.
         return False, None
-    if atual.get("endereco_origem") == "manual":
+    if grupo_limpo_por_humano:
         return False, None
 
     escrever(_now())
@@ -1883,7 +1940,26 @@ def aplicar_endereco_ao_cliente(
 
 def _nomes_bate(row: dict, nome: str) -> bool:
     candidatos = [row.get("nome_oficial"), row.get("nome_completo"), row.get("nome")]
-    return any(nomes_compativeis(nome, n) for n in candidatos if n)
+    return any(
+        nomes_compativeis(parte, n)
+        for parte in _nomes_do_titular(nome)
+        for n in candidatos
+        if n
+    )
+
+
+#: A joint holder line — "ANA SOUZA E BRUNO SOUZA", "ANA SOUZA & BRUNO
+#: SOUZA", "ANA SOUZA / BRUNO SOUZA" (P5 audit B5, deal 875: a comprovante
+#: whose holder printed BOTH buyers matched neither, so the address never
+#: landed). Each name is checked on its own.
+_SEPARADOR_TITULARES = re.compile(r"\s+E\s+|\s*[&/;]\s*", re.IGNORECASE)
+
+
+def _nomes_do_titular(titular: str) -> list[str]:
+    """Every person a comprovante's holder line names — the whole line
+    first (a single name is the common case), then each joint part."""
+    partes = [p.strip() for p in _SEPARADOR_TITULARES.split(titular or "") if p and p.strip()]
+    return list(dict.fromkeys([titular.strip(), *partes])) if titular and titular.strip() else []
 
 
 def _pessoa_do_card_por_nome(
@@ -2633,6 +2709,113 @@ def _decidir_endereco_pendente(
     ), partes
 
 
+#: `motivo_resolucao` rule name for a pending conflict whose on-file side
+#: is EMPTY — settled by filling it (owner rule H1, P5 audit F1).
+REGRA_VAZIO_PREENCHIDO = "vazio_preenchido"
+
+
+def _preencher_conflito_vazio(
+    client: Any, org_id: UUID, row: dict, cliente_row: Optional[dict], now: str,
+) -> bool:
+    """F1 data repair — a `pendente` conflict whose CURRENT value on
+    `clientes` is empty was never a disagreement: D1/H1 says the document
+    simply fills it. Applies `valor_proposto` with the document's own
+    provenance (`<campo>_origem = origem_proposto`, `_documento_id = fonte`,
+    machine-pending — the contract gate still asks a human to vouch), and
+    closes the row `resolvido_automatico` (`decidido_por=NULL`,
+    `motivo_resolucao='[vazio_preenchido] ... evidência: <documento>'`).
+
+    Refuses (returns False, row left for the ordinary resolver) when the
+    field is NOT empty today, when the conflict's own `valor_anterior`
+    snapshot was not empty (a value cleared after the conflict opened is a
+    human matter), when an operator explicitly cleared it
+    (`origem='manual'`, genuinely blank), when the proposal itself is empty
+    or an invalid CPF, and for the spouse link (a cliente id, decided by
+    `vincular_conjuges`). Idempotent: a settled row is no longer `pendente`.
+    """
+    if cliente_row is None:
+        return False
+    if not _vazio(row.get("valor_anterior")):
+        # The conflict opened against a REAL value that has since gone —
+        # someone cleared it after the fact. Not the F1 shape; a human
+        # decides.
+        return False
+    campo_chave = row["campo"]
+    doc_fonte = row.get("fonte_id") if row.get("fonte_tabela") == DOCUMENTOS_TABLE else None
+    updates: dict[str, Any]
+    if campo_chave == CAMPO_ENDERECO:
+        anterior = {p: cliente_row.get(f"endereco_{p}") for p in ENDERECO_PARTES}
+        if any(not _vazio(v) for v in anterior.values()):
+            return False
+        if cliente_row.get("endereco_origem") == "manual" and all(
+            v is None or (isinstance(v, str) and not v.strip()) for v in anterior.values()
+        ):
+            return False
+        try:
+            proposto = json.loads(row.get("valor_proposto") or "null")
+        except ValueError:
+            return False
+        if not isinstance(proposto, dict) or _vazio(proposto.get("logradouro")):
+            return False
+        partes = {p: proposto.get(p) for p in ENDERECO_PARTES}
+        if proposto.get("bairro_origem"):
+            partes["bairro_origem"] = proposto["bairro_origem"]
+        updates = {
+            f"endereco_{p}": (None if _vazio(partes.get(p)) else partes.get(p))
+            for p in ENDERECO_PARTES
+        }
+        updates.update({
+            COLUNA_BAIRRO_ORIGEM: _bairro_origem_da_leitura(partes),
+            "endereco_origem": row.get("origem_proposto"),
+            "endereco_documento_id": doc_fonte,
+            "endereco_em": now,
+            "endereco_confirmado_por": None,
+            "endereco_confirmado_em": None,
+        })
+    else:
+        campo = CAMPO_POR_CHAVE.get(campo_chave)
+        if campo_chave == CAMPO_CONJUGE or campo is None:
+            return False
+        presente = cliente_row.get(campo.item_key)
+        if not _vazio(presente) or _limpo_por_humano(presente, cliente_row.get(campo.origem)):
+            return False
+        proposto = row.get("valor_proposto")
+        if _vazio(proposto):
+            return False
+        if campo.item_key == "cpf" and not cpf_valido(str(proposto)):
+            return False
+        updates = {
+            campo.item_key: proposto,
+            campo.origem: row.get("origem_proposto"),
+            campo.documento_id: doc_fonte,
+            campo.em: now,
+            campo.confirmado_por: None,
+            campo.confirmado_em: None,
+        }
+    updates["updated_at"] = now
+    _t(client, CLIENTES_TABLE).update(updates).eq("org_id", str(org_id)).eq(
+        "id", str(row["cliente_id"])
+    ).execute()
+    cliente_row.update(updates)  # the caller's per-run snapshot stays truthful
+    campo_conflitos.registrar_decisao_automatica(
+        client, campo_conflitos.CLIENTE, org_id, row["cliente_id"], campo_chave,
+        valor_anterior=row.get("valor_anterior"),
+        origem_anterior=row.get("origem_anterior"),
+        valor_proposto=row.get("valor_proposto"),
+        origem_proposto=row.get("origem_proposto"),
+        decisao=_resolvido(
+            "proposto", REGRA_VAZIO_PREENCHIDO,
+            f"{campo_chave}: o valor em registro estava vazio — o documento "
+            "preenche o campo (D1/H1: o primeiro documento preenche campos vazios).",
+        ),
+        conflito_existente_id=row["id"],
+        evidencia_ids=[doc_fonte] if doc_fonte else (),
+    )
+    if campo_chave == "cpf":
+        cpf_conhecido(client, org_id, row["cliente_id"], row["valor_proposto"])
+    return True
+
+
 def backfill_resolver_conflitos_pendentes(
     client: Any, org_id: UUID, *, cliente_id: Optional[UUID] = None,
     campos: Optional[frozenset[str]] = None,
@@ -2701,6 +2884,15 @@ def backfill_resolver_conflitos_pendentes(
     for row in pendentes:
         campo_chave = row["campo"]
         campo = CAMPO_POR_CHAVE.get(campo_chave)
+        # F1 — a conflict against an EMPTY field is settled by filling it,
+        # before any divergence rule runs (there is no divergence).
+        if _preencher_conflito_vazio(
+            client, org_id, row, clientes_rows.get(str(row["cliente_id"])), now,
+        ):
+            resolvidos.append(
+                {**row, "decisao_regra": REGRA_VAZIO_PREENCHIDO, "decisao_vencedor": "proposto"}
+            )
+            continue
         if campo_chave == CAMPO_ENDERECO:
             decisao_end, partes = _decidir_endereco_pendente(client, org_id, row)
             if decisao_end is None:
@@ -2851,6 +3043,13 @@ def revalidar_negociacao(client: Any, org_id: UUID, cliente_id: UUID) -> None:
         except Exception:  # noqa: BLE001 — one person's propagation must not block the sweep
             logger.exception(
                 "revalidar_negociacao: propagar_endereco_domicilio falhou para %s", pid,
+            )
+    for pid in sorted(pessoas):
+        try:
+            inferir_solteiro_por_certidao_nascimento(client, org_id, UUID(pid))
+        except Exception:  # noqa: BLE001 — one person's inference must not block the sweep
+            logger.exception(
+                "revalidar_negociacao: inferir_solteiro_por_certidao_nascimento falhou para %s", pid,
             )
     for pid in sorted(pessoas):
         try:
@@ -3311,6 +3510,17 @@ async def extrair_identidade(
             or any(v is not None for v, _, _, _ in lidos.values())
         )
 
+        # F4 — a certidão de nascimento with no averbação read and no
+        # marriage evidence anywhere proves "solteiro" (see
+        # `ESTADO_CIVIL_SOLTEIRO`). Same D1 path as every other field below.
+        if (
+            tipo == "certidao_nascimento"
+            and not fields.leitura_comprometida
+            and lidos["estado_civil"][0] is None
+            and not _casamento_evidenciado(client, org_id, cliente_id)
+        ):
+            lidos["estado_civil"] = _solteiro_inferido()
+
         # Resolves the brief this module opened alongside `nacionalidade`
         # itself (migration 146): 12/26 of the P2 corpus's real identity
         # documents (older CNH models, some RGs/CINs) never print the field
@@ -3452,36 +3662,48 @@ async def extrair_identidade(
             avisos_tipo_trocado=avisos_tipo_trocado,
         )
         conflitos += abertos
-        if avisos_cpf_invalido and not fields.aviso and not avisos_outra_pessoa:
-            _marcar(client, documento_id, extracao_aviso="cpf_invalido")
-        # A reading that is a valid identifier of ANOTHER type (a CPF in the
-        # RG field) was not written — flagged on the document so the human
-        # sees WHY the field stayed empty and can type the right one (the
-        # existing `extracao_aviso` hand-in, `canonical-identifiers`).
-        if avisos_tipo_trocado and not fields.aviso and not avisos_outra_pessoa and not avisos_cpf_invalido:
-            _marcar(
-                client, documento_id,
-                extracao_aviso="identificador_de_outro_tipo",
-                extracao_aviso_mensagem=(
-                    "O número lido em "
-                    + ", ".join(sorted(avisos_tipo_trocado)).upper()
-                    + " é válido como outro tipo de documento (ex.: um CPF no campo do RG) — "
-                    "não foi gravado; confira o documento."
-                ),
-            )
-        # R4 — this document read at least one field that belongs to
-        # ANOTHER party of the negotiation (rejected above, never applied).
-        # Flagged on the document row through the existing `extracao_aviso`
-        # mechanism so the UI can suggest moving it — never clobbering a
-        # transcription-quality warning already recorded (`fields.aviso`
-        # takes precedence; both are visible in the logs either way).
-        if avisos_outra_pessoa and not fields.aviso:
-            _marcar(client, documento_id, extracao_aviso="documento_de_outra_parte")
+
+        def _sinalizar(codigo: str, mensagem: Optional[str] = None) -> None:
+            """Flag what the APPLY step found on the document row. The
+            seed's own transcription aviso (`fields.aviso`) is KEPT and the
+            apply code appended `+`-joined (the same multi-code shape the
+            seed already writes) — it used to be dropped whenever the seed
+            had flagged anything (P5 audit B5: an RG read with
+            `campos_nucleo_ausentes` whose RG was then refused for an
+            apply-side reason showed no reason at all for the empty field)."""
+            aviso = f"{fields.aviso}+{codigo}" if fields.aviso else codigo
+            partes_msg = [m for m in (fields.aviso_mensagem, mensagem) if m]
+            extra: dict[str, Any] = {"extracao_aviso": aviso}
+            if partes_msg:
+                extra["extracao_aviso_mensagem"] = " | ".join(partes_msg)
+            _marcar(client, documento_id, **extra)
+
+        # One apply code per document, highest-precedence first — R4 (the
+        # document belongs to another party) explains everything below it.
+        if avisos_outra_pessoa:
+            # R4 — this document read at least one field that belongs to
+            # ANOTHER party of the negotiation (rejected above, never
+            # applied). Flagged so the UI can suggest moving it.
+            _sinalizar("documento_de_outra_parte")
             logger.info(
                 "extracao %s: campo(s) %s pertencem a outra parte da "
                 "negociação — rejeitados automaticamente, documento "
                 "sinalizado",
                 documento_id, avisos_outra_pessoa,
+            )
+        elif avisos_cpf_invalido:
+            _sinalizar("cpf_invalido")
+        elif avisos_tipo_trocado:
+            # A reading that is a valid identifier of ANOTHER type (a CPF in
+            # the RG field) was not written — flagged so the human sees WHY
+            # the field stayed empty and can type the right one
+            # (`canonical-identifiers`).
+            _sinalizar(
+                "identificador_de_outro_tipo",
+                "O número lido em "
+                + ", ".join(sorted(avisos_tipo_trocado)).upper()
+                + " é válido como outro tipo de documento (ex.: um CPF no campo do RG) — "
+                "não foi gravado; confira o documento.",
             )
 
         # A CPF read now may be the key a matrícula qualificação was waiting
@@ -3538,13 +3760,22 @@ async def extrair_identidade(
                 # `alvo_id == cliente_id` and a matched titular are mutually
                 # exclusive with the "nobody matched" branch above.
                 titular_guard = titular if alvo_id == cliente_id else None
+                avisos_endereco: list[str] = []
                 aplicado_end, conflito_end = aplicar_endereco_ao_cliente(
                     client, org_id, alvo_id, tipo, partes_endereco,
                     titular_documento=titular_guard,
                     confianca=endereco.confianca,
                     documento_id=documento_id,
                     cep_lookup=cep_lookup,
+                    avisos=avisos_endereco,
                 )
+                if AVISO_TITULAR_NAO_CONFERE in avisos_endereco:
+                    _sinalizar(
+                        AVISO_TITULAR_NAO_CONFERE,
+                        "O titular impresso no comprovante não confere com nenhuma "
+                        "pessoa do card — o endereço preencheu o campo vazio e "
+                        "aguarda confirmação.",
+                    )
                 aplicados[CAMPO_ENDERECO] = aplicado_end
                 if conflito_end is not None:
                     conflitos.append(conflito_end)
@@ -3674,6 +3905,137 @@ async def extrair_identidade(
         client, identity_config, documento_id, doc, blob, tipo,
     )
     return {**resultado, "tentativas": doc.get("extracao_tentativas")}
+
+
+def _casamento_evidenciado(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+    """Is there ANY evidence this person married — a spouse link, or a live
+    (not deleted, not discarded) certidão de casamento on their own card or
+    their linked spouse's? `True` blocks F4's solteiro inference."""
+    conjuge = _conjuge_vinculado(client, org_id, cliente_id)
+    if conjuge:
+        return True
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("tipo_documento", "certidao_casamento")
+        .is_("deleted_at", "null")
+        .is_("extracao_descartada_em", "null")
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows)
+
+
+def _solteiro_inferido() -> tuple[Any, str, Optional[str], bool]:
+    """The `lidos` entry F4 contributes — `baixa`, labelled as an inference
+    so a human reading the document row knows it was not printed."""
+    return (ESTADO_CIVIL_SOLTEIRO, "baixa", ROTULO_SOLTEIRO_INFERIDO, True)
+
+
+def inferir_solteiro_por_certidao_nascimento(
+    client: Any, org_id: UUID, cliente_id: UUID,
+) -> list[dict]:
+    """F4 for certidões ALREADY read before the inference existed (and
+    re-checked whenever the deal moves — `revalidar_negociacao`): the
+    newest live, successfully read certidão de nascimento with no
+    estado-civil reading and no compromised transcription proposes
+    `solteiro` through the SAME `aplicar_campos_ao_cliente` D1 write (fill
+    empty machine-pending, conflict when different, never overwrite).
+    Fills an EMPTY field only: a DIFFERENT value already on file is the
+    live read's job to conflict (`_processar`, once, when the certidão is
+    read/re-read) — re-proposing it from here on every revalidation would
+    re-run the resolver and stack audit rows. Idempotent — a no-op once the
+    field holds any value. Returns the newly opened conflicts (none today,
+    kept for the caller's notify contract)."""
+    atual = (
+        _t(client, CLIENTES_TABLE)
+        .select("id,estado_civil,estado_civil_origem")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not atual or not _vazio(atual[0].get("estado_civil")):
+        return []
+    if _limpo_por_humano(atual[0].get("estado_civil"), atual[0].get("estado_civil_origem")):
+        return []
+    if _casamento_evidenciado(client, org_id, cliente_id):
+        return []
+    docs = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("id,extracao_status,extracao_estado_civil,extracao_aviso,created_at")
+        .eq("org_id", str(org_id))
+        .eq("cliente_id", str(cliente_id))
+        .eq("tipo_documento", "certidao_nascimento")
+        .is_("deleted_at", "null")
+        .is_("extracao_descartada_em", "null")
+        .execute()
+    ).data or []
+    candidatos = [
+        d for d in docs
+        if d.get("extracao_status") == "ok"
+        and (_vazio(d.get("extracao_estado_civil")) or d.get("extracao_estado_civil") == ESTADO_CIVIL_SOLTEIRO)
+        and AVISO_LEITURA_COMPROMETIDA not in str(d.get("extracao_aviso") or "")
+    ]
+    if not candidatos:
+        return []
+    doc = max(candidatos, key=lambda d: str(d.get("created_at") or ""))
+    if _vazio(doc.get("extracao_estado_civil")):
+        valor, confianca, rotulo, _ = _solteiro_inferido()
+        _marcar(
+            client, UUID(str(doc["id"])),
+            extracao_estado_civil=valor,
+            extracao_estado_civil_confianca=confianca,
+            extracao_estado_civil_rotulo=rotulo,
+        )
+    lidos = _lidos_vazios()
+    lidos["estado_civil"] = _solteiro_inferido()
+    _, conflitos = aplicar_campos_ao_cliente(
+        client, org_id, cliente_id, "certidao_nascimento", lidos,
+        documento_id=UUID(str(doc["id"])),
+        fonte_tabela=DOCUMENTOS_TABLE,
+        fonte_id=UUID(str(doc["id"])),
+    )
+    return conflitos
+
+
+def backfill_solteiro_por_certidao_nascimento(client: Any, org_id: UUID) -> int:
+    """Org-wide F4 one-shot (the "Resolver conflitos" button): every cliente
+    with a successfully read certidão de nascimento gets
+    `inferir_solteiro_por_certidao_nascimento`. Best-effort per cliente,
+    logged. Returns how many clientes now hold an inferred `solteiro`."""
+    ids = sorted({
+        str(r["cliente_id"])
+        for r in table_reads.paged_rows(
+            client, DOCUMENTOS_TABLE, org_id,
+            eq_filters={"tipo_documento": "certidao_nascimento", "extracao_status": "ok"},
+            refine=lambda q: q.is_("deleted_at", "null"),
+            select="id,cliente_id",
+        )
+        if r.get("cliente_id")
+    })
+    preenchidos = 0
+    for cid in ids:
+        try:
+            inferir_solteiro_por_certidao_nascimento(client, org_id, UUID(cid))
+        except Exception:  # noqa: BLE001 — one cliente must not stop the org-wide pass
+            logger.exception("backfill_solteiro: cliente %s falhou", cid)
+            continue
+        row = (
+            _t(client, CLIENTES_TABLE)
+            .select("estado_civil,estado_civil_origem")
+            .eq("org_id", str(org_id))
+            .eq("id", cid)
+            .limit(1)
+            .execute()
+        ).data or []
+        if row and row[0].get("estado_civil") == ESTADO_CIVIL_SOLTEIRO and row[0].get(
+            "estado_civil_origem"
+        ) == "certidao_nascimento":
+            preenchidos += 1
+    return preenchidos
 
 
 def _pessoas_dos_cards(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]:

@@ -84,6 +84,7 @@ which vendor method and which extra context (`cliente_nome`, `codigo`,
 """
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -102,6 +103,48 @@ def _now() -> str:
 
 def _t(client: Any, table: str):
     return table_reads.table(client, table)
+
+
+#: Stored placeholders that MEAN "nothing here" — an import or a human who
+#: typed a dash for "unknown", a serialised null. Compared case-insensitively
+#: after `strip()`.
+_MARCADORES_VAZIO = frozenset(
+    {"", "-", "--", "—", "–", "null", "none", "nil", "n/a", "na", "nan", "undefined"}
+)
+
+
+def valor_vazio(valor: Any) -> bool:
+    """Is `valor` EMPTY for the D1 write policy — the ONE predicate every
+    apply path consults before deciding "fill" vs "conflict" (owner rule
+    H1, 2026-10-03: "the first document fills empty fields"; P5 audit F1:
+    conflicts were being opened against values that were empty in all but
+    representation).
+
+    Empty = `None`; a string that is blank or a placeholder in
+    `_MARCADORES_VAZIO` (`'—'`, `'null'`, ...); an empty container; or a
+    JSON-object string whose every value is itself empty (an `endereco`
+    group serialised with seven nulls). A number — `0` included — is never
+    empty: zero is a value."""
+    if valor is None:
+        return True
+    if isinstance(valor, bool):
+        return False
+    if isinstance(valor, str):
+        texto = valor.strip()
+        if texto.lower() in _MARCADORES_VAZIO:
+            return True
+        if texto.startswith("{") and texto.endswith("}"):
+            try:
+                corpo = json.loads(texto)
+            except ValueError:
+                return False
+            return isinstance(corpo, dict) and all(valor_vazio(v) for v in corpo.values())
+        return False
+    if isinstance(valor, (dict, list, tuple, set, frozenset)):
+        if isinstance(valor, dict):
+            return all(valor_vazio(v) for v in valor.values())
+        return len(valor) == 0
+    return False
 
 
 @dataclass(frozen=True)
@@ -591,4 +634,5 @@ __all__ = [
     "registrar_conflito",
     "registrar_decisao_automatica",
     "resolver_e_registrar",
+    "valor_vazio",
 ]

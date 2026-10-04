@@ -866,6 +866,15 @@ async def backfill_resolver_conflitos_route(
     # additive key, the cliente keys above keep their shape.
     imoveis = campos_extraidos_svc.backfill_resolver_conflitos_pendentes(client, org_id)
     resultado["imoveis"] = {k: len(v) for k, v in imoveis.items()}
+    # The deal queue (P5 audit F1/F3, 2026-10-03) — stored financing
+    # readings re-applied (zero model calls) and every conflict against an
+    # EMPTY deal field settled by filling it. Additive key.
+    resultado["negociacao"] = negociacao_extracao_svc.backfill_negociacao(client, org_id)
+    # F4 — a read certidão de nascimento with no marriage evidence fills an
+    # empty estado civil with `solteiro` (machine-pending). Additive key.
+    resultado["solteiro_inferido"] = identidade_svc.backfill_solteiro_por_certidao_nascimento(
+        client, org_id,
+    )
     return resultado
 
 

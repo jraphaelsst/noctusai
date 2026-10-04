@@ -551,3 +551,23 @@ class TestResolverERegistrar:
         )
         assert decisao.vencedor == "atual"
         assert decisao.regra == "corroboracao"
+
+
+class TestValorVazio:
+    """P5 audit F1 (owner rule H1, 2026-10-03): the ONE "empty" predicate
+    every D1 apply path consults before deciding fill vs conflict — a
+    placeholder on file is empty, so the first document fills it."""
+
+    @pytest.mark.parametrize("valor", [
+        None, "", "   ", "-", "—", "–", "null", "NULL", " None ", "n/a", "N/A", "nan",
+        "undefined", {}, [], '{"cep": null, "logradouro": "  "}', {"cep": None, "uf": ""},
+    ])
+    def test_empty_in_all_but_representation(self, valor):
+        assert campo_conflitos.valor_vazio(valor) is True
+
+    @pytest.mark.parametrize("valor", [
+        "solteiro", "0", 0, 0.0, False, True, "R PROF ARTUR RAMOS",
+        '{"cep": "01454-011"}', {"cep": "01454-011"}, ["x"], "{not json",
+    ])
+    def test_a_value_is_a_value(self, valor):
+        assert campo_conflitos.valor_vazio(valor) is False

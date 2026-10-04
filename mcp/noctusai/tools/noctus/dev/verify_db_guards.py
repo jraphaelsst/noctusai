@@ -2095,6 +2095,35 @@ _EMPRESA_CONFLITO_STATUS_PROBE = GuardProbe(
     ),
 )
 
+_ATENDIMENTO_CONFLITO_STATUS_PROBE = GuardProbe(
+    id="atendimento_campo_conflitos.status.allowed_values",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="atendimento_campo_conflitos_status_check",
+    kind="write_refusal",
+    migrations=("200_atendimento_campo_conflitos_resolucao_automatica.sql",),
+    rationale=(
+        "Same vocabulary contract as `cliente_campo_conflitos` above, for the "
+        "deal-side conflicts `card_hub.negociacao_extracao_service` opens — "
+        "`listar_conflitos` and the contract gate filter on it; a value "
+        "outside it would silently vanish from both. Holds before AND after "
+        "200 (171's inline CHECK carries the same name), so the probe is "
+        "valid whether or not 200 has been applied."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="atendimento_campo_conflitos",
+        columns_sql="org_id, atendimento_id, campo, valor_proposto, origem_proposto, status",
+        values_sql=(
+            "org_id, id, 'noc_probe_campo', '\"noc_probe_valor\"'::jsonb, "
+            "'noc_probe_origem', 'noc_probe_bogus'"
+        ),
+        fixture_from=f"{_SW_SCHEMA}.atendimentos",
+        fixture_description=f"no row in {_SW_SCHEMA}.atendimentos to borrow (org_id, id) from",
+        guard_fragment='constraint "atendimento_campo_conflitos_status_check"',
+    ),
+)
+
 
 # ---------------------------------------------------------------------------
 # Registry — igig CRM foundation (migrations 017 pipelines, 018 CRM, 019 card
@@ -3533,6 +3562,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _IMOVEL_CONFLITO_ABERTO_PROBE,
     _CLIENTE_CONFLITO_STATUS_PROBE,
     _EMPRESA_CONFLITO_STATUS_PROBE,
+    _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,

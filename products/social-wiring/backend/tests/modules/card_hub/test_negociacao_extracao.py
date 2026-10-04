@@ -251,7 +251,7 @@ class TestBelongsToThisDeal:
         negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
         assert negociacao == []
 
-    def test_no_cpf_read_at_all_routes_to_pending_conflict_not_a_direct_fill(
+    def test_no_cpf_read_at_all_fills_the_empty_field_flagged_never_a_conflict(
         self, scoped
     ):
         """🔴 Finding [MEDIUM] (audit, 2026-09-28): the OLD behaviour here
@@ -264,7 +264,15 @@ class TestBelongsToThisDeal:
         PENDING conflict (never a direct fill), aviso `pertencimento_nao_
         verificado`, so a human decides whether it even belongs here.
         Preserves `test_no_matching_cpf_applies_nothing`'s "present-and-
-        WRONG" behaviour untouched — this is the OTHER branch, "absent"."""
+        WRONG" behaviour untouched — this is the OTHER branch, "absent".
+
+        🔴 P5 audit F1 (owner rule H1, 2026-10-03): that pending conflict
+        had `valor_anterior=None` — a "divergence" with nothing, which
+        blocked contract generation on 4 audited deals until a human
+        accepted the very value the document carried. The empty field is
+        now FILLED, machine-pending (`confirmado_em IS NULL` — the contract
+        gate still asks a human to vouch), the aviso stays on the
+        document."""
         cid, aid = _seed(scoped, com_negociacao=False)
         doc_id = str(uuid4())
         scoped.set_table_data("atendimento_documentos", [_documento(doc_id, aid, "guia_itbi")])
@@ -274,13 +282,13 @@ class TestBelongsToThisDeal:
 
         assert resultado["status"] == nx.OK
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
-        assert len(resultado["conflitos"]) == 1
-        conflito = resultado["conflitos"][0]
-        assert conflito["campo"] == "valor_negociado"
-        assert conflito["valor_anterior"] is None
-        assert conflito["valor_proposto"] == "500000.00"
+        assert resultado["conflitos"] == []
+        assert _t(scoped, "atendimento_campo_conflitos").select("*").execute().data == []
         negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
-        assert negociacao[0]["valor_negociado"] is None  # NOT filled directly
+        assert negociacao[0]["valor_negociado"] == "500000.00"
+        assert negociacao[0]["valor_negociado_origem"] == "guia_itbi"
+        assert negociacao[0]["valor_negociado_documento_id"] == doc_id
+        assert negociacao[0]["valor_negociado_confirmado_em"] is None
 
     def test_a_valid_conta_credito_cpf_counts_as_membership_evidence(self, scoped):
         """Finding [MEDIUM] (a), audit 2026-09-28 (live case, deal 883):
@@ -369,14 +377,19 @@ class TestPropostaLetterBelongsByProponente:
         assert "pertencimento_nao_verificado" not in (resultado["aviso"] or "")
         assert resultado["conflitos"] == []
 
-    def test_letter_naming_someone_else_is_still_refused(self, scoped):
+    def test_letter_naming_someone_else_fills_the_empty_field_flagged(self, scoped):
+        """Unverified (a name that matches no comprador — a stranger or a
+        one-letter misread, indistinguishable) — H1: the empty field is
+        filled machine-pending and the document flagged; never a conflict
+        against an empty value (P5 audit F1)."""
         resultado = self._aplicar(
             scoped, "Beltrana Outra Pessoa", nome_comprador=self._NOME,
         )
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
         negociacao = _t(scoped, "atendimento_negociacao").select("*").execute().data
-        assert negociacao[0]["valor_negociado"] is None
-        assert {c["campo"] for c in resultado["conflitos"]} >= {"valor_negociado"}
+        assert negociacao[0]["valor_negociado"] == "640000.00"
+        assert negociacao[0]["valor_negociado_confirmado_em"] is None
+        assert resultado["conflitos"] == []
 
     def test_a_one_letter_misread_is_not_a_match(self, scoped):
         resultado = self._aplicar(
@@ -454,17 +467,20 @@ class TestGuiaVisaoBelongsByComprador:
             "Valor da Transação: R$ 640.000,00\n"
         )
         resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
+        # Unverified -> flagged; H1 fills the EMPTY field machine-pending.
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
-        assert self._valor(scoped) is None
+        assert resultado["conflitos"] == []
+        assert self._valor(scoped) == "640000.00"
 
-    def test_a_guide_naming_only_someone_else_is_refused(self, scoped):
+    def test_a_guide_naming_only_someone_else_is_flagged(self, scoped):
         texto = (
             "Adquirente: Beltrano Estranho Silva - CPF/CNPJ: [EM BRANCO]\n"
             "Valor da Transação: R$ 640.000,00\n"
         )
         resultado = self._aplicar(scoped, texto, nome_comprador=self._NOME)
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
-        assert self._valor(scoped) is None
+        assert resultado["conflitos"] == []
+        assert self._valor(scoped) == "640000.00"
 
     def test_a_valid_cpf_of_someone_else_refuses_the_guide(self, scoped):
         texto = (
@@ -496,7 +512,8 @@ class TestValorNegociado:
 
         # A validated, matching CPF — this document's membership IS
         # verified, so its empty `valor_negociado` fills directly (contrast
-        # `TestBelongsToThisDeal`'s NAO_VERIFICADO case, which does not).
+        # `TestBelongsToThisDeal`'s NAO_VERIFICADO case, which fills but
+        # flags the document).
         leitura = _GuiaItbiLeitura(
             valor_transacao=Decimal("500000.00"),
             compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
@@ -672,13 +689,11 @@ class TestFinanciamentoParcela:
         assert parcelas[0]["origem"] == "contrato_financiamento"
         assert parcelas[0]["documento_id"] == doc_id
 
-    def test_unverified_membership_routes_the_parcela_to_a_pending_conflict(
-        self, scoped
-    ):
-        """Finding [MEDIUM] (b) (audit, 2026-09-28): no CPF at all was read
-        — the financiamento parcela must not fill directly; the ROW still
-        gets created (so a later accept has something to UPDATE) but
-        `valor`/`origem`/`documento_id` stay empty until a human decides."""
+    def test_unverified_membership_fills_the_new_parcela_flagged(self, scoped):
+        """No CPF at all was read. Finding [MEDIUM] (b) (2026-09-28) used to
+        create the parcela EMPTY plus a conflict against it; P5 audit F1
+        (owner rule H1, 2026-10-03): the new parcela carries the read value
+        machine-pending, the document is flagged, no conflict."""
         cid, aid = _seed(scoped, com_negociacao=True)
         doc_id = str(uuid4())
         scoped.set_table_data(
@@ -692,16 +707,16 @@ class TestFinanciamentoParcela:
         )
 
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
-        assert len(resultado["conflitos"]) == 1
-        assert resultado["conflitos"][0]["valor_anterior"] is None
-        assert resultado["conflitos"][0]["valor_proposto"] == "400000.00"
+        assert resultado["conflitos"] == []
         parcelas = (
             _t(scoped, "atendimento_negociacao_parcelas")
             .select("*").eq("tipo", "financiamento").execute().data
         )
         assert len(parcelas) == 1
-        assert parcelas[0]["valor"] is None
-        assert parcelas[0]["origem"] is None
+        assert parcelas[0]["valor"] == "400000.00"
+        assert parcelas[0]["origem"] == "contrato_financiamento"
+        assert parcelas[0]["documento_id"] == doc_id
+        assert parcelas[0]["confirmado_em"] is None
 
     def test_fgts_label_not_found_on_contrato_refuses_the_whole_compose(self, scoped):
         """Finding [MED-HIGH] (audit, 2026-09-28): a Quadro Resumo whose
@@ -821,8 +836,7 @@ class TestFgts:
         )
         # A validated, matching CPF — this document's membership IS
         # verified, so its empty `fgts` fills directly (contrast
-        # `test_unverified_membership_routes_to_a_pending_conflict`, which
-        # does not).
+        # the `test_unverified_membership_*` sibling, filled but flagged).
         leitura = _FinanciamentoLeitura(
             valor_fgts=Decimal("15000.00"),
             compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
@@ -833,9 +847,9 @@ class TestFgts:
         assert row["fgts"] is True
         assert row["fgts_origem"] == "contrato_financiamento"
 
-    def test_unverified_membership_routes_to_a_pending_conflict(self, scoped):
-        """`NOC-REMEDIATE[sw-neg-pertencimento-demais-campos]` (2026-09-28):
-        no CPF at all was read — `fgts` must not fill directly."""
+    def test_unverified_membership_fills_empty_fgts_flagged(self, scoped):
+        """No CPF at all was read — H1 (P5 audit F1): the EMPTY `fgts`
+        (no provenance) is filled machine-pending, flagged, no conflict."""
         aid = str(uuid4())
         cid, aid = _seed(
             scoped, aid=aid, com_negociacao=True, financiamento=_financiamento_row(aid),
@@ -851,9 +865,10 @@ class TestFgts:
 
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
         row = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
-        assert row["fgts"] is False  # NOT filled directly
-        assert row["fgts_origem"] is None
-        assert any(c["campo"] == "financiamento.fgts" for c in resultado["conflitos"])
+        assert row["fgts"] is True
+        assert row["fgts_origem"] == "contrato_financiamento"
+        assert row["fgts_confirmado_em"] is None
+        assert resultado["conflitos"] == []
 
     def test_a_false_boolean_with_origem_set_disagrees_and_conflicts(self, scoped):
         aid = str(uuid4())
@@ -890,7 +905,7 @@ class TestSituacaoAprovada:
         )
         # A validated, matching CPF — this document's membership IS
         # verified, so `situacao` fills directly (contrast
-        # `test_unverified_membership_routes_to_a_pending_conflict`).
+        # the `test_unverified_membership_*` sibling (filled but flagged)).
         leitura = _FinanciamentoLeitura(
             quadro_encontrado=True,
             compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
@@ -901,9 +916,10 @@ class TestSituacaoAprovada:
         assert row["situacao"] == "aprovado"
         assert row["situacao_origem"] == "contrato_financiamento"
 
-    def test_unverified_membership_routes_to_a_pending_conflict(self, scoped):
-        """`NOC-REMEDIATE[sw-neg-pertencimento-demais-campos]` (2026-09-28):
-        no CPF at all was read — `situacao` must not fill directly."""
+    def test_unverified_membership_fills_the_default_situacao_flagged(self, scoped):
+        """No CPF at all was read — H1 (P5 audit F1): the provenance-less
+        `pendente` default IS the empty value; filled, flagged, no
+        conflict."""
         aid = str(uuid4())
         cid, aid = _seed(
             scoped, aid=aid, com_negociacao=True, financiamento=_financiamento_row(aid),
@@ -919,8 +935,9 @@ class TestSituacaoAprovada:
 
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
         row = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
-        assert row["situacao"] == "pendente"  # NOT filled directly
-        assert any(c["campo"] == "financiamento.situacao" for c in resultado["conflitos"])
+        assert row["situacao"] == "aprovado"
+        assert row["situacao_origem"] == "contrato_financiamento"
+        assert resultado["conflitos"] == []
 
     def test_never_overrides_recusado_opens_a_conflict_instead(self, scoped):
         aid = str(uuid4())
@@ -976,7 +993,7 @@ class TestAgenteFinanceiro:
         )
         # A validated, matching CPF — membership IS verified, so the field
         # fills directly (contrast
-        # `test_unverified_membership_routes_to_a_pending_conflict`).
+        # the `test_unverified_membership_*` sibling (filled but flagged)).
         leitura = _FinanciamentoLeitura(
             banco_nome="Itaú", banco_codigo="341",
             compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
@@ -1020,11 +1037,10 @@ class TestAgenteFinanceiro:
         financiamento = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
         assert financiamento["agente_financeiro_id"] == agente_id
 
-    def test_unverified_membership_routes_to_a_pending_conflict(self, scoped):
-        """`NOC-REMEDIATE[sw-neg-pertencimento-demais-campos]` (2026-09-28):
-        no CPF at all was read — `agente_financeiro_id` must not fill
-        directly, even though the bank-code lookup/auto-create itself
-        (an org-wide registry, not scoped to this atendimento) still runs."""
+    def test_unverified_membership_fills_the_empty_agente_flagged(self, scoped):
+        """No CPF at all was read — H1 (P5 audit F1): the EMPTY
+        `agente_financeiro_id` is filled machine-pending, flagged, no
+        conflict."""
         agente_id = str(uuid4())
         aid = str(uuid4())
         cid, aid = _seed(
@@ -1048,8 +1064,9 @@ class TestAgenteFinanceiro:
 
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
         financiamento = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
-        assert financiamento["agente_financeiro_id"] is None  # NOT filled directly
-        assert any(c["campo"] == "financiamento.agente_financeiro" for c in resultado["conflitos"])
+        assert financiamento["agente_financeiro_id"] == agente_id
+        assert financiamento["agente_financeiro_confirmado_em"] is None
+        assert resultado["conflitos"] == []
 
 
 class TestNumeroProposta:
@@ -1064,7 +1081,7 @@ class TestNumeroProposta:
         )
         # A validated, matching CPF — membership IS verified, so
         # `numero_proposta` fills directly (contrast
-        # `test_unverified_membership_routes_to_a_pending_conflict`).
+        # the `test_unverified_membership_*` sibling (filled but flagged)).
         leitura = _FinanciamentoLeitura(
             numero_proposta="PROP-123",
             compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
@@ -1075,9 +1092,9 @@ class TestNumeroProposta:
         assert row["numero_proposta"] == "PROP-123"
         assert row["numero_proposta_origem"] == "proposta_financiamento"
 
-    def test_unverified_membership_routes_to_a_pending_conflict(self, scoped):
-        """`NOC-REMEDIATE[sw-neg-pertencimento-demais-campos]` (2026-09-28):
-        no CPF at all was read — `numero_proposta` must not fill directly."""
+    def test_unverified_membership_fills_the_empty_numero_flagged(self, scoped):
+        """No CPF at all was read — H1 (P5 audit F1): filled
+        machine-pending, flagged, no conflict."""
         aid = str(uuid4())
         cid, aid = _seed(
             scoped, aid=aid, com_negociacao=True, financiamento=_financiamento_row(aid),
@@ -1093,10 +1110,9 @@ class TestNumeroProposta:
 
         assert "pertencimento_nao_verificado" in (resultado["aviso"] or "")
         row = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
-        assert row["numero_proposta"] is None  # NOT filled directly
-        assert any(
-            c["campo"] == "financiamento.numero_proposta" for c in resultado["conflitos"]
-        )
+        assert row["numero_proposta"] == "PROP-123"
+        assert row["numero_proposta_confirmado_em"] is None
+        assert resultado["conflitos"] == []
 
 
 # ─── H5 — favorecido bank data from the Quadro Resumo ───────────────────
@@ -1503,3 +1519,186 @@ class TestManualWritersStampProvenance:
 # ─── the fontes REGISTRO / MANUAL_APENAS sweep stays exhaustive ─────────
 # (already exercised by `test_proveniencia_fontes.py::TestRegistroCoberto`
 # — this file does not duplicate that guard.)
+
+
+# ─── P5 audit (2026-10-03): F1 repair + F3 financing record ─────────────
+
+
+def _conflito_atd(aid: str, campo: str, *, anterior=None, proposto="640000.00",
+                  origem="proposta_financiamento", fonte=None) -> dict:
+    return {
+        "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": aid, "campo": campo,
+        "valor_anterior": anterior, "origem_anterior": None,
+        "valor_proposto": proposto, "origem_proposto": origem,
+        "confianca_proposta": None, "fonte_tabela": "atendimento_documentos",
+        "fonte_id": fonte or str(uuid4()), "documento_id_proposto": fonte,
+        "status": "pendente", "notificado_em": None, "decidido_por": None,
+        "decidido_em": None, "created_at": "2026-10-02T00:00:00+00:00",
+    }
+
+
+class TestP5F3FinancingRecord:
+    """F3: a financing document that read a bank or a financed value is
+    evidence the deal has a financing operation — the record the contract
+    requires ("Registro do financiamento") must exist."""
+
+    def _proposta(self, scoped, leitura, **seed_over):
+        cid, aid = _seed(scoped, com_negociacao=True, **seed_over)
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "proposta_financiamento")],
+        )
+        resultado = nx.aplicar_leitura(
+            scoped, ORG_UUID, aid, doc_id, "proposta_financiamento", leitura,
+        )
+        return aid, doc_id, resultado
+
+    def test_a_financed_value_alone_creates_the_record(self, scoped):
+        aid, _doc, _ = self._proposta(scoped, _FinanciamentoLeitura(
+            documento="proposta", valor_financiado=Decimal("400000.00"),
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        ))
+        (row,) = _t(scoped, "atendimento_financiamento").select("*").execute().data
+        assert row["atendimento_id"] == aid
+        assert row["situacao"] == "pendente"
+        parcelas = (
+            _t(scoped, "atendimento_negociacao_parcelas")
+            .select("*").eq("tipo", "financiamento").execute().data
+        )
+        assert len(parcelas) == 1  # the parcela is the value's home — no duplicate
+
+    def test_a_bank_known_only_by_name_matches_the_registry(self, scoped):
+        agente_id = str(uuid4())
+        _aid, doc_id, _ = self._proposta(scoped, _FinanciamentoLeitura(
+            documento="proposta", banco_nome="BANCO SINTETICO S.A.",
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        ), agentes=[{
+            "id": agente_id, "org_id": ORG_ID, "nome": "Sintético", "codigo_banco": None,
+            "ativo": True, "origem": "manual", "agencia": None,
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }])
+        (row,) = _t(scoped, "atendimento_financiamento").select("*").execute().data
+        assert row["agente_financeiro_id"] == agente_id
+        assert row["agente_financeiro_origem"] == "proposta_financiamento"
+        assert row["agente_financeiro_documento_id"] == doc_id
+        assert len(_t(scoped, "agentes_financeiros").select("*").execute().data) == 1
+
+    def test_an_unknown_bank_name_is_auto_created_without_a_code(self, scoped):
+        self._proposta(scoped, _FinanciamentoLeitura(
+            documento="proposta", banco_nome="Banco Sintetico Novo",
+            compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+        ))
+        (agente,) = _t(scoped, "agentes_financeiros").select("*").execute().data
+        assert agente["nome"] == "Banco Sintetico Novo"
+        assert agente.get("codigo_banco") is None
+        assert agente["origem"] == "auto"
+        (row,) = _t(scoped, "atendimento_financiamento").select("*").execute().data
+        assert row["agente_financeiro_id"] == agente["id"]
+
+    def test_a_provenance_less_recusado_is_never_reopened(self, scoped):
+        """H6 — a pre-171 human refusal carries no `situacao_origem`; it is
+        NOT the empty default and must conflict, never flip to aprovado."""
+        aid = str(uuid4())
+        cid, aid = _seed(
+            scoped, aid=aid, com_negociacao=True,
+            financiamento=_financiamento_row(aid, situacao="recusado"),
+        )
+        doc_id = str(uuid4())
+        scoped.set_table_data(
+            "atendimento_documentos", [_documento(doc_id, aid, "contrato_financiamento")],
+        )
+        resultado = nx.aplicar_leitura(scoped, ORG_UUID, aid, doc_id, "contrato_financiamento",
+                                       _FinanciamentoLeitura(
+                                           quadro_encontrado=True,
+                                           compradores=[_Pessoa(cpf=CPF_COMPRADOR, cpf_valido=True)],
+                                       ))
+        row = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
+        assert row["situacao"] == "recusado"
+        assert [c["campo"] for c in resultado["conflitos"]] == ["financiamento.situacao"]
+
+    def test_stored_readings_are_reapplied_without_a_model_call(self, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True)
+        doc_id = str(uuid4())
+        scoped.set_table_data("atendimento_documentos", [_documento(
+            doc_id, aid, "proposta_financiamento", extracao_status="ok",
+            extracao_dados={
+                "documento": "proposta", "valor_financiado": "400000.00",
+                "banco_nome": "Banco Sintetico Novo",
+                "compradores": [{"nome": "Comprador", "cpf": CPF_COMPRADOR, "cpf_valido": True}],
+                "confiancas": {}, "rotulos": {},
+            },
+        )])
+        out = nx.backfill_negociacao(scoped, ORG_UUID)
+        assert out["documentos_reaplicados"] == 1
+        (row,) = _t(scoped, "atendimento_financiamento").select("*").execute().data
+        assert row["agente_financeiro_documento_id"] == doc_id
+        parcela = (
+            _t(scoped, "atendimento_negociacao_parcelas")
+            .select("*").eq("tipo", "financiamento").execute().data
+        )[0]
+        assert parcela["valor"] == "400000.00"
+        assert parcela["documento_id"] == doc_id
+        # Idempotent: a second pass creates nothing new.
+        nx.backfill_negociacao(scoped, ORG_UUID)
+        assert len(_t(scoped, "atendimento_financiamento").select("*").execute().data) == 1
+        assert len(
+            _t(scoped, "atendimento_negociacao_parcelas").select("*").eq("tipo", "financiamento")
+            .execute().data
+        ) == 1
+        assert _t(scoped, "atendimento_campo_conflitos").select("*").execute().data == []
+
+
+class TestP5F1RepairDealConflicts:
+    def test_a_conflict_against_an_empty_valor_negociado_is_settled_by_filling(self, scoped):
+        cid, aid = _seed(scoped, com_negociacao=True, negociacao_over={
+            "valor_negociado": None, "valor_negociado_origem": None,
+            "valor_negociado_confirmado_em": None,
+        })
+        doc_id = str(uuid4())
+        c = _conflito_atd(aid, "valor_negociado", fonte=doc_id)
+        scoped.set_table_data("atendimento_campo_conflitos", [c])
+
+        (settled,) = nx.resolver_conflitos_vazios(scoped, ORG_UUID)
+        assert settled["id"] == c["id"]
+        neg = _t(scoped, "atendimento_negociacao").select("*").execute().data[0]
+        assert neg["valor_negociado"] == "640000.00"
+        assert neg["valor_negociado_origem"] == "proposta_financiamento"
+        assert neg["valor_negociado_documento_id"] == doc_id
+        assert neg["valor_negociado_confirmado_em"] is None  # machine-pending
+        row = _t(scoped, "atendimento_campo_conflitos").select("*").execute().data[0]
+        assert row["status"] == "resolvido_automatico"
+        assert row["decidido_por"] is None
+        assert row["motivo_resolucao"].startswith(f"[{nx.REGRA_VAZIO_PREENCHIDO}]")
+        assert doc_id in row["motivo_resolucao"]
+
+    def test_an_empty_parcela_and_financing_fields_are_settled(self, scoped):
+        aid = str(uuid4())
+        parcela = _parcela_row(aid, "financiamento", valor=None)
+        cid, aid = _seed(
+            scoped, aid=aid, com_negociacao=True, parcelas=[parcela],
+            financiamento=_financiamento_row(aid),
+        )
+        doc_id = str(uuid4())
+        scoped.set_table_data("atendimento_campo_conflitos", [
+            _conflito_atd(aid, f"parcela.{parcela['id']}.valor", proposto="400000.00", fonte=doc_id),
+            _conflito_atd(aid, "financiamento.situacao", anterior="pendente", proposto="aprovado",
+                          origem="contrato_financiamento", fonte=doc_id),
+        ])
+        assert len(nx.resolver_conflitos_vazios(scoped, ORG_UUID)) == 2
+        p = _t(scoped, "atendimento_negociacao_parcelas").select("*").execute().data[0]
+        assert p["valor"] == "400000.00" and p["confirmado_em"] is None
+        f = _t(scoped, "atendimento_financiamento").select("*").execute().data[0]
+        assert f["situacao"] == "aprovado" and f["situacao_origem"] == "contrato_financiamento"
+
+    def test_a_conflict_against_a_real_value_is_left_for_a_human(self, scoped):
+        """H2 — valor_negociado has no authoritative document."""
+        cid, aid = _seed(scoped, com_negociacao=True)  # 500000.00 manual
+        c = _conflito_atd(aid, "valor_negociado", anterior="500000.00")
+        scoped.set_table_data("atendimento_campo_conflitos", [c])
+        assert nx.resolver_conflitos_vazios(scoped, ORG_UUID) == []
+        assert _t(scoped, "atendimento_negociacao").select("*").execute().data[0][
+            "valor_negociado"
+        ] == "500000.00"
+        assert _t(scoped, "atendimento_campo_conflitos").select("*").execute().data[0][
+            "status"
+        ] == "pendente"

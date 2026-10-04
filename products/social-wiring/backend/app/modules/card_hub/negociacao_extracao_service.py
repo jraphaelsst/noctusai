@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import re
 from dataclasses import is_dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -68,13 +69,14 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import cpf as cpf_docs
 from noctusai_lib.integrations.documents.name import chave_nome
+from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.card_hub import financiamento_service
 from app.modules.card_hub import negociacao_estruturada_service as neg_estruturada
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub.proveniencia import fontes
-from app.services import campo_conflitos, extracao_job, table_reads
+from app.services import campo_conflitos, divergencia_resolucao, extracao_job, table_reads
 from app.services import identificadores as idf
 
 logger = logging.getLogger(__name__)
@@ -145,7 +147,32 @@ def _dec(value: Any) -> Optional[Decimal]:
 
 
 def _vazio(valor: Any) -> bool:
-    return valor is None or valor == ""
+    """EMPTY for D1 — the shared `campo_conflitos.valor_vazio` (P5 audit F1)."""
+    return campo_conflitos.valor_vazio(valor)
+
+
+def _limpo_por_humano(valor: Any, origem: Optional[str]) -> bool:
+    """An operator explicitly cleared this value (`origem='manual'`, value
+    NULL/blank) — respected, never re-filled by a machine. Anything else
+    empty is filled by the first document (owner rule H1)."""
+    if origem != "manual":
+        return False
+    return valor is None or (isinstance(valor, str) and not valor.strip())
+
+
+def _aviso_vazio(verificado: bool) -> Optional[str]:
+    """The aviso an EMPTY-field fill carries. P5 audit F1 (owner rule H1,
+    2026-10-03: "the first document fills empty fields"): an unverified
+    document (`_pertence_ao_negocio` == `NAO_VERIFICADO`) used to open a
+    PENDING CONFLICT against the empty field — `valor_anterior=None`, a
+    "divergence" with nothing — which blocked the contract until a human
+    accepted the very value the document already carried. It now FILLS the
+    field like any other D1 write (machine-pending: `confirmado_em IS NULL`,
+    so the contract's validation gate still asks a human to vouch) and the
+    document row is flagged `pertencimento_nao_verificado` so that human
+    sees WHY to look twice. A document with a VALIDATED CPF of another deal
+    (`OUTRO_NEGOCIO`) still applies nothing."""
+    return None if verificado else AVISO_PERTENCIMENTO_NAO_VERIFICADO
 
 
 def _json_seguro(valor: Any) -> Any:
@@ -441,19 +468,8 @@ def _aplicar_valor_negociado(
         ).execute()
 
     if atual is None:
-        if not verificado:
-            novo = campo_conflitos.registrar_conflito(
-                client, ATENDIMENTO, org_id, atendimento_id, "valor_negociado",
-                valor_anterior=None,
-                origem_anterior=(atual_row or {}).get("valor_negociado_origem"),
-                valor_proposto=str(proposto),
-                origem_proposto=tipo_documento,
-                confianca_proposta=_confianca(leitura, campo),
-                fonte_tabela=DOCUMENTOS_TABLE,
-                fonte_id=documento_id,
-                documento_id_proposto=documento_id,
-            )
-            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
+        if _limpo_por_humano((atual_row or {}).get("valor_negociado"), (atual_row or {}).get("valor_negociado_origem")):
+            return None, None
         now = _now()
         patch = {
             "valor_negociado": str(proposto),
@@ -466,7 +482,7 @@ def _aplicar_valor_negociado(
         _t(client, NEGOCIACAO_TABLE).update(patch).eq(
             "org_id", str(org_id)
         ).eq("atendimento_id", str(atendimento_id)).execute()
-        return None, None
+        return _aviso_vazio(verificado), None
 
     if atual == proposto:
         return None, None
@@ -567,49 +583,25 @@ def _aplicar_financiamento_parcela(
             "org_id": str(org_id),
             "atendimento_id": str(atendimento_id),
             "tipo": "financiamento",
-            "valor": str(proposto) if verificado else None,
+            "valor": str(proposto),
             "confissao_divida": False,
             "dispara_corretagem": False,
             "ordem": ordem,
-            "origem": tipo_documento if verificado else None,
-            "documento_id": str(documento_id) if verificado else None,
-            "extraido_em": now if verificado else None,
+            "origem": tipo_documento,
+            "documento_id": str(documento_id),
+            "extraido_em": now,
             "confirmado_por": None,
             "confirmado_em": None,
             "created_at": now,
         }
         _t(client, PARCELAS_TABLE).insert(row).execute()
-        if verificado:
-            return None, None
-        novo = campo_conflitos.registrar_conflito(
-            client, ATENDIMENTO, org_id, atendimento_id, f"parcela.{parcela_id}.valor",
-            valor_anterior=None,
-            origem_anterior=None,
-            valor_proposto=str(proposto),
-            origem_proposto=tipo_documento,
-            confianca_proposta=_confianca(leitura, "valor_financiado"),
-            fonte_tabela=DOCUMENTOS_TABLE,
-            fonte_id=documento_id,
-            documento_id_proposto=documento_id,
-        )
-        return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
+        return _aviso_vazio(verificado), None
 
     parcela = parcelas[0]
     atual = _dec(parcela.get("valor"))
     if atual is None:
-        if not verificado:
-            novo = campo_conflitos.registrar_conflito(
-                client, ATENDIMENTO, org_id, atendimento_id, f"parcela.{parcela['id']}.valor",
-                valor_anterior=None,
-                origem_anterior=parcela.get("origem"),
-                valor_proposto=str(proposto),
-                origem_proposto=tipo_documento,
-                confianca_proposta=_confianca(leitura, "valor_financiado"),
-                fonte_tabela=DOCUMENTOS_TABLE,
-                fonte_id=documento_id,
-                documento_id_proposto=documento_id,
-            )
-            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
+        if _limpo_por_humano(parcela.get("valor"), parcela.get("origem")):
+            return None, None
         _t(client, PARCELAS_TABLE).update(
             {
                 "valor": str(proposto),
@@ -621,7 +613,7 @@ def _aplicar_financiamento_parcela(
                 "updated_at": now,
             }
         ).eq("id", parcela["id"]).execute()
-        return None, None
+        return _aviso_vazio(verificado), None
 
     if atual == proposto:
         return None, None
@@ -723,19 +715,6 @@ def _aplicar_fgts(
 
     atual = _linha_financiamento(client, org_id, atendimento_id)
     if atual is None or atual.get("fgts_origem") is None:
-        if not verificado:
-            novo = campo_conflitos.registrar_conflito(
-                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.fgts",
-                valor_anterior=(atual or {}).get("fgts"),
-                origem_anterior=(atual or {}).get("fgts_origem"),
-                valor_proposto=True,
-                origem_proposto=tipo_documento,
-                confianca_proposta=_confianca(leitura, "valor_fgts"),
-                fonte_tabela=DOCUMENTOS_TABLE,
-                fonte_id=documento_id,
-                documento_id_proposto=documento_id,
-            )
-            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -747,7 +726,7 @@ def _aplicar_fgts(
                 "fgts_confirmado_em": None,
             },
         )
-        return None, None
+        return _aviso_vazio(verificado), None
 
     if bool(atual.get("fgts")) == True:  # noqa: E712 - explicit boolean compare, matches proposto
         return None, None
@@ -800,20 +779,9 @@ def _aplicar_numero_proposta(
         return None, None
 
     atual = _linha_financiamento(client, org_id, atendimento_id)
-    if atual is None or atual.get("numero_proposta_origem") is None:
-        if not verificado:
-            novo = campo_conflitos.registrar_conflito(
-                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.numero_proposta",
-                valor_anterior=(atual or {}).get("numero_proposta"),
-                origem_anterior=(atual or {}).get("numero_proposta_origem"),
-                valor_proposto=proposto,
-                origem_proposto=tipo_documento,
-                confianca_proposta="baixa",
-                fonte_tabela=DOCUMENTOS_TABLE,
-                fonte_id=documento_id,
-                documento_id_proposto=documento_id,
-            )
-            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
+    if (atual is None or atual.get("numero_proposta_origem") is None) and _vazio(
+        (atual or {}).get("numero_proposta")
+    ):
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -825,7 +793,7 @@ def _aplicar_numero_proposta(
                 "numero_proposta_confirmado_em": None,
             },
         )
-        return None, None
+        return _aviso_vazio(verificado), None
 
     if str(atual.get("numero_proposta")) == str(proposto):
         return None, None
@@ -872,6 +840,49 @@ def _aplicar_numero_proposta(
     return None, novo
 
 
+def _nome_banco_norm(nome: Any) -> str:
+    """Accent/case/punctuation-insensitive bank name, without the generic
+    words a letterhead adds ("BANCO", "S.A.", "S/A") — `Banco Itaú S.A.`
+    and `ITAU` compare equal."""
+    if _vazio(nome):
+        return ""
+    texto = re.sub(r"[^A-Z0-9 ]", " ", strip_accents_upper(str(nome)))
+    palavras = [w for w in texto.split() if w not in {"BANCO", "S", "A", "SA", "DO", "DA", "DE"}]
+    return " ".join(palavras)
+
+
+def _garantir_financiamento(
+    client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str, leitura: Any,
+) -> bool:
+    """F3 (P5 audit, 2026-10-03): a financing document that read a bank or
+    a financed value is evidence the deal HAS a financing operation — the
+    `atendimento_financiamento` row (the contract's "Registro do
+    financiamento", `derivacao._financiamento`) must exist, `situacao=
+    'pendente'` until a document or a human says otherwise. Before this the
+    row was only ever created as a side effect of one of the four field
+    writes, so a proposta with no `numero_proposta`/code (or a contract
+    without a recognised Quadro) left it missing on 6 of 10 audited deals
+    even though the financing parcela was already there. Never duplicates
+    (one row per atendimento) and never writes a field — the per-field
+    appliers above own those, with their own provenance. Returns True when
+    it created the row."""
+    if tipo_documento not in financiamento_service.TIPOS_FINANCIAMENTO_DOCS:
+        return False
+    sinais = (
+        _dec(getattr(leitura, "valor_financiado", None)) is not None
+        or not _vazio(getattr(leitura, "banco_codigo", None))
+        or not _vazio(getattr(leitura, "banco_nome", None))
+    )
+    if not sinais or _linha_financiamento(client, org_id, atendimento_id) is not None:
+        return False
+    _gravar_financiamento(client, org_id, atendimento_id, None, {})
+    logger.info(
+        "negociacao_extracao: atendimento_financiamento criado (pendente) para %s "
+        "a partir de %s", atendimento_id, tipo_documento,
+    )
+    return True
+
+
 def _aplicar_agente_financeiro(
     client: Any, org_id: UUID, atendimento_id: UUID, tipo_documento: str,
     documento_id: UUID, leitura: Any, *, verificado: bool,
@@ -886,17 +897,35 @@ def _aplicar_agente_financeiro(
     auto-create above (an org-wide registry lookup by bank code — a
     legitimate discovery regardless of which document prompted it)."""
     codigo = getattr(leitura, "banco_codigo", None)
-    if _vazio(codigo):
+    nome_banco = getattr(leitura, "banco_nome", None)
+    if _vazio(codigo) and _vazio(nome_banco):
         return None, None
 
-    ativos = (
-        _t(client, "agentes_financeiros")
-        .select("id,codigo_banco")
-        .eq("org_id", str(org_id))
-        .eq("ativo", True)
-        .eq("codigo_banco", str(codigo))
-        .execute()
-    ).data or []
+    if not _vazio(codigo):
+        ativos = (
+            _t(client, "agentes_financeiros")
+            .select("id,codigo_banco")
+            .eq("org_id", str(org_id))
+            .eq("ativo", True)
+            .eq("codigo_banco", str(codigo))
+            .execute()
+        ).data or []
+    else:
+        # F3 (P5 audit, 2026-10-03): a proposta letter / carta de crédito
+        # prints the bank's NAME, rarely its code — the code-only lookup
+        # left `agente_financeiro_id` (and with it the whole financing
+        # record) unset on every such deal. Matched by normalized name.
+        alvo = _nome_banco_norm(nome_banco)
+        ativos = [
+            r for r in (
+                _t(client, "agentes_financeiros")
+                .select("id,codigo_banco,nome")
+                .eq("org_id", str(org_id))
+                .eq("ativo", True)
+                .execute()
+            ).data or []
+            if alvo and _nome_banco_norm(r.get("nome")) == alvo
+        ]
 
     if len(ativos) > 1:
         return "agente_financeiro_nao_cadastrado", None
@@ -904,10 +933,13 @@ def _aplicar_agente_financeiro(
     if not ativos:
         from app.modules.agentes_financeiros import service as agentes_svc
 
-        nome = getattr(leitura, "banco_nome", None) or f"Banco {codigo}"
+        nome = nome_banco or f"Banco {codigo}"
+        dados_agente: dict[str, Any] = {"nome": nome}
+        if not _vazio(codigo):
+            dados_agente["codigo_banco"] = str(codigo)
         criado = agentes_svc.criar(
             client, org_id,
-            dados={"nome": nome, "codigo_banco": str(codigo)},
+            dados=dados_agente,
             user_id=None,
             origem="auto",
         )
@@ -921,20 +953,9 @@ def _aplicar_agente_financeiro(
         agente_id = ativos[0]["id"]
 
     atual = _linha_financiamento(client, org_id, atendimento_id)
-    if atual is None or atual.get("agente_financeiro_origem") is None:
-        if not verificado:
-            novo = campo_conflitos.registrar_conflito(
-                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.agente_financeiro",
-                valor_anterior=(atual or {}).get("agente_financeiro_id"),
-                origem_anterior=(atual or {}).get("agente_financeiro_origem"),
-                valor_proposto=str(agente_id),
-                origem_proposto=tipo_documento,
-                confianca_proposta=_confianca(leitura, "banco_codigo"),
-                fonte_tabela=DOCUMENTOS_TABLE,
-                fonte_id=documento_id,
-                documento_id_proposto=documento_id,
-            )
-            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
+    if (atual is None or atual.get("agente_financeiro_origem") is None) and _vazio(
+        (atual or {}).get("agente_financeiro_id")
+    ):
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -946,7 +967,7 @@ def _aplicar_agente_financeiro(
                 "agente_financeiro_confirmado_em": None,
             },
         )
-        return None, None
+        return _aviso_vazio(verificado), None
 
     if str(atual.get("agente_financeiro_id")) == str(agente_id):
         return None, None
@@ -1038,19 +1059,11 @@ def _aplicar_situacao(
                 {"situacao_origem": tipo_documento, "situacao_documento_id": str(documento_id)},
             )
             return None, None
-        if not verificado:
-            novo = campo_conflitos.registrar_conflito(
-                client, ATENDIMENTO, org_id, atendimento_id, "financiamento.situacao",
-                valor_anterior=situacao_atual,
-                origem_anterior=origem_atual,
-                valor_proposto="aprovado",
-                origem_proposto=tipo_documento,
-                confianca_proposta=None,
-                fonte_tabela=DOCUMENTOS_TABLE,
-                fonte_id=documento_id,
-                documento_id_proposto=documento_id,
-            )
-            return AVISO_PERTENCIMENTO_NAO_VERIFICADO, novo
+    if origem_atual is None and situacao_atual in (None, "pendente"):
+        # `pendente` with no provenance is the column DEFAULT — empty.
+        # A provenance-less `recusado` (a pre-171 human refusal) is NOT
+        # empty: it falls through to the conflict path below, never
+        # silently reopened (H6).
         _gravar_financiamento(
             client, org_id, atendimento_id, atual,
             {
@@ -1066,7 +1079,7 @@ def _aplicar_situacao(
             "— quadro_encontrado on %s",
             situacao_atual, atendimento_id, org_id, documento_id,
         )
-        return None, None
+        return _aviso_vazio(verificado), None
 
     if situacao_atual == "aprovado":
         return None, None
@@ -1323,6 +1336,7 @@ def aplicar_leitura(
     _aplicar_favorecido_vendedor(
         client, org_id, atendimento_id, tipo_documento, documento_id, leitura, cpfs_negocio,
     )
+    _garantir_financiamento(client, org_id, atendimento_id, tipo_documento, leitura)
 
     # H4 — recompute the derived intermediária suggestion now that
     # valor_negociado and/or the financiamento parcela may have moved.
@@ -1616,11 +1630,21 @@ def resolver_conflito(
     return {**conflito, **patch}
 
 
-def _aplicar_conflito_aceito(client: Any, org_id: UUID, conflito: dict, *, decidido_por: Optional[UUID]) -> None:
+def _aplicar_conflito_aceito(
+    client: Any, org_id: UUID, conflito: dict, *, decidido_por: Optional[UUID],
+    confirmar: bool = True,
+) -> None:
+    """Write `valor_proposto` onto the conflict's target. `confirmar=True`
+    (an admin's accept) stamps `confirmado_*` with `decidido_por`;
+    `confirmar=False` (the F1 empty-field repair, a SYSTEM fill) leaves the
+    value machine-pending, exactly like a live D1 fill."""
     campo = conflito["campo"]
     atendimento_id = conflito["atendimento_id"]
     now = _now()
     quem = str(decidido_por) if decidido_por else None
+    confirmado_em = now if confirmar else None
+    if not confirmar:
+        quem = None
     proposto = conflito["valor_proposto"]
     documento_id = conflito.get("fonte_id")
 
@@ -1632,7 +1656,7 @@ def _aplicar_conflito_aceito(client: Any, org_id: UUID, conflito: dict, *, decid
                 "valor_negociado_documento_id": documento_id,
                 "valor_negociado_em": now,
                 "valor_negociado_confirmado_por": quem,
-                "valor_negociado_confirmado_em": now,
+                "valor_negociado_confirmado_em": confirmado_em,
             }
         ).eq("org_id", str(org_id)).eq("atendimento_id", str(atendimento_id)).execute()
         return
@@ -1646,7 +1670,7 @@ def _aplicar_conflito_aceito(client: Any, org_id: UUID, conflito: dict, *, decid
                 "documento_id": documento_id,
                 "extraido_em": now,
                 "confirmado_por": quem,
-                "confirmado_em": now,
+                "confirmado_em": confirmado_em,
                 "updated_at": now,
             }
         ).eq("id", parcela_id).execute()
@@ -1666,12 +1690,206 @@ def _aplicar_conflito_aceito(client: Any, org_id: UUID, conflito: dict, *, decid
                 f"{prefixo}_documento_id": documento_id,
                 f"{prefixo}_em": now,
                 f"{prefixo}_confirmado_por": quem,
-                f"{prefixo}_confirmado_em": now,
+                f"{prefixo}_confirmado_em": confirmado_em,
             }
         ).eq("org_id", str(org_id)).eq("atendimento_id", str(atendimento_id)).execute()
         return
 
     logger.warning("resolver_conflito: campo %r has no apply rule — accepted, not applied", campo)
+
+
+# ─── F1 repair + stored-reading re-apply (P5 audit, 2026-10-03) ─────────
+
+#: `motivo_resolucao` rule name — shared vocabulary with
+#: `identidade_extracao_service.REGRA_VAZIO_PREENCHIDO`.
+REGRA_VAZIO_PREENCHIDO = "vazio_preenchido"
+
+
+def _alvo_vazio(client: Any, org_id: UUID, conflito: dict) -> bool:
+    """Is the conflict's TARGET empty today (and not explicitly cleared by
+    a human)? Per campo family — the same "empty" each live applier uses."""
+    campo = conflito["campo"]
+    atendimento_id = conflito["atendimento_id"]
+    if campo == "valor_negociado":
+        rows = (
+            _t(client, NEGOCIACAO_TABLE).select("*").eq("org_id", str(org_id))
+            .eq("atendimento_id", str(atendimento_id)).limit(1).execute()
+        ).data or []
+        if not rows:
+            return False  # nothing to write onto — the live path creates it
+        row = rows[0]
+        return _dec(row.get("valor_negociado")) is None and not _limpo_por_humano(
+            row.get("valor_negociado"), row.get("valor_negociado_origem")
+        )
+    if campo.startswith("parcela.") and campo.endswith(".valor"):
+        parcela_id = campo.split(".", 2)[1]
+        rows = (
+            _t(client, PARCELAS_TABLE).select("*").eq("org_id", str(org_id))
+            .eq("id", parcela_id).limit(1).execute()
+        ).data or []
+        if not rows:
+            return False
+        row = rows[0]
+        return _dec(row.get("valor")) is None and not _limpo_por_humano(
+            row.get("valor"), row.get("origem")
+        )
+    if campo.startswith("financiamento."):
+        prefixo = campo.split(".", 1)[1]
+        row = _linha_financiamento(client, org_id, atendimento_id)
+        if row is None:
+            return True
+        origem = row.get(f"{prefixo}_origem")
+        if prefixo == "fgts":
+            return origem is None and not row.get("fgts")
+        if prefixo == "situacao":
+            return origem is None and row.get("situacao") in (None, "pendente")
+        coluna = "agente_financeiro_id" if prefixo == "agente_financeiro" else prefixo
+        return _vazio(row.get(coluna)) and not _limpo_por_humano(row.get(coluna), origem)
+    return False
+
+
+def _anterior_vazio(campo: str, valor: Any) -> bool:
+    """Was the conflict's own `valor_anterior` snapshot EMPTY when it
+    opened — the F1 shape? `fgts`'s boolean `false` and `situacao`'s
+    column default `pendente` are that field's empty."""
+    if _vazio(valor):
+        return True
+    if campo == "financiamento.fgts":
+        return str(valor).strip().lower() in ("false", "0")
+    if campo == "financiamento.situacao":
+        return str(valor).strip().lower() == "pendente"
+    return False
+
+
+def resolver_conflitos_vazios(
+    client: Any, org_id: UUID, *, atendimento_id: Optional[UUID] = None,
+) -> list[dict]:
+    """F1 data repair — every `pendente` `atendimento_campo_conflitos` row
+    whose target is EMPTY today is settled by FILLING it with the proposed
+    value (document provenance, machine-pending — the contract's validation
+    gate still asks a human to vouch) and closed `resolvido_automatico`
+    (`decidido_por=NULL`, `motivo_resolucao='[vazio_preenchido] ...
+    evidência: <documento>'`). Idempotent (a settled row is no longer
+    `pendente`); a conflict against a REAL value is left untouched for a
+    human (H2). Returns the settled rows."""
+    resolvidos: list[dict] = []
+    for conflito in listar_conflitos(client, org_id, atendimento_id):
+        if (
+            _vazio(conflito.get("valor_proposto"))
+            or not _anterior_vazio(conflito["campo"], conflito.get("valor_anterior"))
+            or not _alvo_vazio(client, org_id, conflito)
+        ):
+            continue
+        if conflito["campo"].startswith("financiamento.") and _linha_financiamento(
+            client, org_id, conflito["atendimento_id"]
+        ) is None:
+            _gravar_financiamento(client, org_id, conflito["atendimento_id"], None, {})
+        _aplicar_conflito_aceito(client, org_id, conflito, decidido_por=None, confirmar=False)
+        campo_conflitos.registrar_decisao_automatica(
+            client, ATENDIMENTO, org_id, conflito["atendimento_id"], conflito["campo"],
+            valor_anterior=conflito.get("valor_anterior"),
+            origem_anterior=conflito.get("origem_anterior"),
+            valor_proposto=conflito.get("valor_proposto"),
+            origem_proposto=conflito.get("origem_proposto"),
+            decisao=divergencia_resolucao.Decisao(
+                vencedor="proposto", regra=REGRA_VAZIO_PREENCHIDO,
+                motivo=(
+                    f"{conflito['campo']}: o valor em registro estava vazio — o "
+                    "documento preenche o campo (D1/H1)."
+                ),
+                requer_humano=False,
+            ),
+            conflito_existente_id=conflito["id"],
+            evidencia_ids=[conflito["fonte_id"]] if conflito.get("fonte_id") else (),
+        )
+        resolvidos.append(conflito)
+    return resolvidos
+
+
+def _como_leitura(dados: Any) -> Any:
+    """A stored `extracao_dados` JSON back into the duck-typed `leitura`
+    shape every applier reads with `getattr` — nested dicts become
+    namespaces, lists stay lists."""
+    if isinstance(dados, dict):
+        return SimpleNamespace(**{k: _como_leitura(v) for k, v in dados.items()})
+    if isinstance(dados, list):
+        return [_como_leitura(v) for v in dados]
+    return dados
+
+
+def reaplicar_leituras_armazenadas(
+    client: Any, org_id: UUID, atendimento_id: UUID,
+) -> dict:
+    """Re-run the D1 apply over every already-read financing/ITBI document
+    of a deal from its STORED reading (`extracao_dados`) — zero model calls.
+    The repair for deals read before an apply rule existed (P5 audit F3:
+    the financing record, a bank known only by name); also what any future
+    apply-rule fix converges existing deals through. Oldest document first
+    (H1: the first document fills). Discarded readings
+    (`extracao_descartada_em`) are skipped. Never raises past one document —
+    logged. Returns `{"reaplicados": n, "conflitos": [...]}`; the new
+    conflicts are listed in the queue (no notifier here)."""
+    docs = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("id,tipo_documento,extracao_status,extracao_dados,extracao_descartada_em,created_at")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", str(atendimento_id))
+        .eq("extracao_status", "ok")
+        .is_("deleted_at", "null")
+        .execute()
+    ).data or []
+    docs = sorted(
+        (
+            d for d in docs
+            if d.get("tipo_documento") in financiamento_service.TIPOS_NEGOCIACAO_EXTRAIVEIS
+            and isinstance(d.get("extracao_dados"), dict)
+            and not d.get("extracao_descartada_em")
+        ),
+        key=lambda d: str(d.get("created_at") or ""),
+    )
+    reaplicados = 0
+    conflitos: list[dict] = []
+    for doc in docs:
+        try:
+            resultado = aplicar_leitura(
+                client, org_id, atendimento_id, UUID(str(doc["id"])),
+                doc["tipo_documento"], _como_leitura(doc["extracao_dados"]),
+            )
+        except Exception:  # noqa: BLE001 - one document must not stop the deal's repair
+            logger.exception(
+                "reaplicar_leituras_armazenadas: documento %s falhou", doc.get("id"),
+            )
+            continue
+        reaplicados += 1
+        conflitos += resultado.get("conflitos") or []
+    return {"reaplicados": reaplicados, "conflitos": conflitos}
+
+
+def backfill_negociacao(client: Any, org_id: UUID) -> dict:
+    """The org-wide one-shot behind the admin's "Resolver conflitos" button
+    (`POST /api/clientes/conflitos/resolver-automaticamente`) for the deal
+    side: (1) re-apply every deal's stored financing/ITBI readings (F3 —
+    creates the missing financing record, fills empties), then (2) settle
+    every remaining conflict whose target is empty (F1). Returns counts."""
+    atendimentos = sorted({
+        str(r["atendimento_id"])
+        for r in table_reads.paged_rows(
+            client, DOCUMENTOS_TABLE, org_id,
+            eq_filters={"extracao_status": "ok"},
+            refine=lambda q: q.is_("deleted_at", "null"),
+            select="id,atendimento_id,tipo_documento,extracao_status",
+        )
+        if r.get("atendimento_id")
+        and r.get("tipo_documento") in financiamento_service.TIPOS_NEGOCIACAO_EXTRAIVEIS
+    })
+    reaplicados = 0
+    for atd in atendimentos:
+        reaplicados += reaplicar_leituras_armazenadas(client, org_id, UUID(atd))["reaplicados"]
+    vazios = resolver_conflitos_vazios(client, org_id)
+    return {
+        "documentos_reaplicados": reaplicados,
+        "conflitos_vazios_resolvidos": len(vazios),
+    }
 
 
 # ─── D3: the recovery sweep, via the shared `extracao_varredura` ─────────
@@ -1744,9 +1962,12 @@ __all__ = [
     "OK",
     "SEM_DADOS",
     "aplicar_leitura",
+    "backfill_negociacao",
     "configure",
     "confirmar_leitura",
     "extrair",
     "listar_conflitos",
+    "reaplicar_leituras_armazenadas",
     "resolver_conflito",
+    "resolver_conflitos_vazios",
 ]
