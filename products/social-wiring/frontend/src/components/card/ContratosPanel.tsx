@@ -51,7 +51,7 @@
  * mounted by `ContratosContainer`, not here — it needs compradores/vendedores/
  * testemunhas data this presentational file must not fetch; this panel only
  * calls `onAbrirEnvioAssinatura` to open it. "Cancelar envio" is a plain
- * motivo dialog (`_CancelarEnvioDialog` below) since it needs no such data —
+ * inline motivo form (`_CancelarEnvioForm` below) since it needs no such data —
  * same reasoning as `excluirContrato`'s `window.prompt`, but with a length
  * gate (§3.3: 3..500 chars) a bare `prompt()` cannot express well.
  */
@@ -1157,9 +1157,9 @@ function _AssinaturaSection({
             )}
             Cancelar envio
           </Button>
-          <_CancelarEnvioDialog
+          <_CancelarEnvioForm
             open={cancelarAberto}
-            onOpenChange={setCancelarAberto}
+            onCancelar={() => setCancelarAberto(false)}
             onConfirmar={(motivo) => {
               onCancelar(motivo);
               setCancelarAberto(false);
@@ -1176,20 +1176,19 @@ const MOTIVO_CANCELAMENTO_MIN = 3;
 const MOTIVO_CANCELAMENTO_MAX = 500;
 
 /**
- * `_CancelarEnvioDialog` — §3.3's motivo, 3..500 chars. A plain `Dialog`
- * (not lifted to `ClienteDetailModal`) rather than `window.prompt`: unlike
- * `excluirContrato`'s prompt, this needs live length feedback a bare
- * `prompt()` cannot give — see this file's header note on the "sibling
- * dialog" discipline not applying here (no partes/testemunhas data needed).
+ * `_CancelarEnvioForm` — §3.3's motivo, 3..500 chars. INLINE, not a modal:
+ * the card already lives inside `ClienteCardDialog`'s Dialog and a nested
+ * Dialog there fights the outer focus trap (same defect as the
+ * processo-legado form above). Live length feedback is kept.
  */
-function _CancelarEnvioDialog({
+function _CancelarEnvioForm({
   open,
-  onOpenChange,
+  onCancelar,
   onConfirmar,
   enviando,
 }: {
   open: boolean;
-  onOpenChange: (open: boolean) => void;
+  onCancelar: () => void;
   onConfirmar: (motivo: string) => void;
   enviando: boolean;
 }) {
@@ -1199,42 +1198,43 @@ function _CancelarEnvioDialog({
     if (!open) setMotivo("");
   }, [open]);
 
+  if (!open) return null;
+
   const motivoValido =
     motivo.trim().length >= MOTIVO_CANCELAMENTO_MIN &&
     motivo.trim().length <= MOTIVO_CANCELAMENTO_MAX;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent data-testid="cancelar-envio-dialog">
-        <DialogHeader>
-          <DialogTitle>Cancelar envio para assinatura</DialogTitle>
-          <DialogDescription>
-            Explique por que este envio está sendo cancelado (3 a 500 caracteres).
-          </DialogDescription>
-        </DialogHeader>
-        <Textarea
-          value={motivo}
-          maxLength={MOTIVO_CANCELAMENTO_MAX}
-          onChange={(e) => setMotivo(e.target.value)}
-          placeholder="Motivo do cancelamento"
-          data-testid="cancelar-envio-motivo"
-        />
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={enviando}>
-            Voltar
-          </Button>
-          <Button
-            variant="destructive"
-            disabled={!motivoValido || enviando}
-            onClick={() => onConfirmar(motivo.trim())}
-            data-testid="cancelar-envio-confirmar"
-          >
-            {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Cancelar envio
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+    <div
+      className="w-full space-y-2 rounded-md border border-destructive/40 p-3"
+      data-testid="cancelar-envio-dialog"
+    >
+      <p className="text-xs text-muted-foreground">
+        Explique por que este envio está sendo cancelado (3 a 500 caracteres).
+      </p>
+      <Textarea
+        value={motivo}
+        maxLength={MOTIVO_CANCELAMENTO_MAX}
+        onChange={(e) => setMotivo(e.target.value)}
+        placeholder="Motivo do cancelamento"
+        data-testid="cancelar-envio-motivo"
+      />
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={onCancelar} disabled={enviando}>
+          Voltar
+        </Button>
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={!motivoValido || enviando}
+          onClick={() => onConfirmar(motivo.trim())}
+          data-testid="cancelar-envio-confirmar"
+        >
+          {enviando && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Cancelar envio
+        </Button>
+      </div>
+    </div>
   );
 }
 

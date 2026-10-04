@@ -829,6 +829,21 @@ describe("assinatura digital (signature-integration-CONTRACT §4)", () => {
     expect(onCancelarAssinatura).toHaveBeenCalledWith("c1", "Cliente desistiu do negócio");
   });
 
+  it("🔴 'Cancelar envio' form is INLINE — never a nested modal inside the card dialog", async () => {
+    const onCancelarAssinatura = vi.fn();
+    const { screen, fireEvent } = await render({
+      contratos: [contrato({ versao_atual: versao({ id: "v1", origem: "gerado" }) })],
+      assinaturas: { c1: entry({ data: envelope({ status: "parcial" }) }) },
+      onCancelarAssinatura,
+    });
+    fireEvent.click(screen.getByTestId("contrato-cancelar-envio-c1"));
+    const form = screen.getByTestId("cancelar-envio-dialog");
+    expect(form.closest('[role="dialog"]')).toBeNull();
+    fireEvent.click(screen.getByText("Voltar"));
+    expect(screen.queryByTestId("cancelar-envio-dialog")).toBeNull();
+    expect(onCancelarAssinatura).not.toHaveBeenCalled();
+  });
+
   it("🔴 a version with origem 'assinado' shows the Assinado badge, current and historic", async () => {
     const v1 = versao({ id: "v1", numero: 1, origem: "gerado" });
     const v2 = versao({ id: "v2", numero: 2, origem: "assinado" });
