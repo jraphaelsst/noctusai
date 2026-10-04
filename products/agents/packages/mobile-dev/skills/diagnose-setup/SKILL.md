@@ -12,6 +12,7 @@ Get the exact command, the exact error text, OS, `node -v`, `npm -v`, and how th
 ## Procedure
 1. Reproduce from the error text; match it against the known signatures in Repertoire.
 2. Check the machine before the project: stray `~/node_modules`/`~/package.json`, which `npm` the tool actually resolved (npm debug log first lines), Xcode developer dir.
+   If a parent-folder `node_modules` is the cause, ALWAYS add: before moving it, check whether other projects silently resolve dependencies from it (for each project, `require.resolve(dep, {paths:[projectDir]})` must not land there) — moving it can break them, and they may already be running the wrong versions.
 3. Check the project: lockfile present, `npx expo install --check`, `expo-env.d.ts` present for `tsc`.
 4. Propose the smallest fix, and how to verify it fixed the cause (not just the symptom).
 

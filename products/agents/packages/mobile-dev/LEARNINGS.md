@@ -7,6 +7,7 @@ Status: `new` (not yet in knowledge/) → `absorbed` (folded into a knowledge fi
 
 | Date | Kind | Learning | Evidence | Status |
 |---|---|---|---|---|
+| 2026-10-04 | practice | The publish eval gate is a refinement loop: 2/10 failed cases (missed 'check other projects' step; asked for a file instead of giving the fix) became 0.2.2 | Studio eval run f8e41db8 (prod) | absorbed |
 | 2026-10-03 | pitfall | `router.replace('/X')` used to "go back for another" stacks a fresh copy of X and loses its params/state; use `router.back()` | limiar-app src/app/atividade/[id].tsx:41 (live review); knowledge: skill review-mobile-screen | absorbed |
 | 2026-10-03 | pitfall | Default Expo Router tab bar (49 pt) clips 12-pt labels; use 64 pt + bottom inset | limiar-app 6a89db7; knowledge: playbook/navigation-state | absorbed |
 | 2026-10-03 | pitfall | Cormorant Garamond defaults to old-style figures ("192" ≈ "1g2"); force `lining-nums` | limiar-app 6a89db7; knowledge: playbook/ui-typography-icons | absorbed |
