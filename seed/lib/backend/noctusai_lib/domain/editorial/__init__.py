@@ -26,6 +26,7 @@ from noctusai_lib.domain.editorial.store import (
     make_editorial_store,
     round_approvals,
 )
+from noctusai_lib.domain.editorial.router import EditorialContext, diff_content, editorial_router
 from noctusai_lib.domain.editorial.workflow import (
     DEFAULT_WORKFLOW,
     Action,
@@ -39,6 +40,7 @@ from noctusai_lib.domain.editorial.workflow import (
 )
 
 __all__ = [
+    "EditorialContext", "diff_content", "editorial_router",
     "Action", "Code", "DEFAULT_WORKFLOW", "EditorialConflict", "EditorialDenied", "EditorialError",
     "EditorialEvent", "EditorialItem", "EditorialNotFound", "EditorialStore", "EditorialVersion",
     "EditorialWorkflow", "FakeEditorialStore", "Grant", "State", "Transition", "TransitionDecision",
