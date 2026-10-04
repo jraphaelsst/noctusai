@@ -158,11 +158,15 @@ def test_supabase_policy_override_wins_and_default_off():
     assert _run(SupabaseMfaPolicy(_Db(_Query([]))).resolve("agents")) == "off"
 
 
-def test_supabase_policy_read_error_is_off_and_logged(caplog):
-    pol = SupabaseMfaPolicy(_Db(_Query(exc=RuntimeError("db down"))))
-    with caplog.at_level(logging.ERROR):
+def test_supabase_policy_read_error_is_off_and_logged_once(caplog):
+    pol = SupabaseMfaPolicy(_Db(_Query(exc=RuntimeError("db down m1-unique"))))
+    with caplog.at_level(logging.DEBUG):
         assert _run(pol.resolve("agents")) == "off"
-    assert "defaulting to off" in caplog.text
+        assert _run(pol.resolve("agents")) == "off"
+    recs = [r for r in caplog.records if "defaulting to off" in r.getMessage()]
+    # first occurrence is a visible WARNING, the repeat is demoted to DEBUG
+    assert [r.levelno for r in recs] == [logging.WARNING, logging.DEBUG]
+    assert not any(r.levelno >= logging.ERROR for r in recs)
 
 
 def test_policy_factory():

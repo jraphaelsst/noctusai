@@ -2653,6 +2653,84 @@ _CORE_AUDIT_LOGS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — public.mfa_policy (migration 060, platform-admin-mfa).
+# (1) mode CHECK refuses an unknown mode; (2) the table is SERVICE-ROLE-ONLY:
+# `authenticated` (and `anon`) must not be able to write it — an admin who
+# could would switch MFA off for themselves. Self-provisioning: each probe
+# writes a throwaway scope inside the rollback-only wrapper.
+# ---------------------------------------------------------------------------
+
+_MFA_POLICY_MIGRATIONS = ("060_mfa_policy.sql",)
+
+
+def _mfa_policy_probe(*, probe_id: str, guard_name: str, setup_sql: str, what: str, refused_test: str) -> GuardProbe:
+    what_lit = _sql_lit(what)
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=_MFA_POLICY_MIGRATIONS,
+        sql=_do_block(f"""
+BEGIN
+  IF to_regclass('public.mfa_policy') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.mfa_policy does not exist (migration 060 not applied)';
+  END IF;
+  BEGIN
+{setup_sql}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF {refused_test} THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+        rationale=(
+            "mfa_policy is the admin-MFA off-switch/enforce switch. The mode "
+            "CHECK keeps a typo from reading as a mode; service-role-only "
+            "access keeps an admin from lowering their own assurance bar."
+        ),
+    )
+
+
+_MFA_POLICY_PROBES: tuple[GuardProbe, ...] = (
+    _mfa_policy_probe(
+        probe_id="mfa_policy.mode_check_refuses_unknown",
+        guard_name="mfa_policy_mode_check",
+        setup_sql="    INSERT INTO public.mfa_policy (scope, mode) VALUES ('noc-probe', 'bogus');",
+        what="INSERT of mfa_policy.mode='bogus'",
+        refused_test=f"SQLERRM LIKE '%{_sql_lit('mfa_policy_mode_check')}%'",
+    ),
+    _mfa_policy_probe(
+        probe_id="mfa_policy.authenticated_cannot_write",
+        guard_name="mfa_policy_service_role_only",
+        setup_sql=(
+            "    SET LOCAL ROLE authenticated;\n"
+            "    INSERT INTO public.mfa_policy (scope, mode) VALUES ('noc-probe', 'off');"
+        ),
+        what="INSERT into mfa_policy as role authenticated",
+        refused_test="SQLSTATE = '42501'",
+    ),
+    _mfa_policy_probe(
+        probe_id="mfa_policy.anon_cannot_write",
+        guard_name="mfa_policy_service_role_only",
+        setup_sql=(
+            "    SET LOCAL ROLE anon;\n"
+            "    INSERT INTO public.mfa_policy (scope, mode) VALUES ('noc-probe', 'off');"
+        ),
+        what="INSERT into mfa_policy as role anon",
+        refused_test="SQLSTATE = '42501'",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — public.erase_test_org_audit_logs's own org-category guard
 # (migration 054). Companion to _CORE_AUDIT_LOGS_PROBES above: that pair
 # proves the append-only TRIGGER still refuses a plain UPDATE/DELETE
@@ -3860,6 +3938,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    *_MFA_POLICY_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,

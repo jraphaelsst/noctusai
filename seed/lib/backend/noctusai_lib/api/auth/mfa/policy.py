@@ -18,6 +18,7 @@ Expected table (migration lands in M3, NOT here)::
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal, Optional, Protocol, runtime_checkable
 
@@ -28,6 +29,11 @@ MfaMode = Literal["off", "warn", "enforce"]
 MFA_POLICY_TABLE = "mfa_policy"
 FLEET_SCOPE = "fleet"
 _MODES = ("off", "warn", "enforce")
+#: Distinct read-failure signatures already reported in this process. The
+#: first occurrence is a WARNING (visible), repeats drop to DEBUG — so an
+#: ordering slip (policy table not applied yet) cannot spam fleet-wide
+#: ERROR lines every cache TTL, yet the failure is never silent.
+_SEEN_READ_ERRORS: set[str] = set()
 
 
 @runtime_checkable
@@ -71,19 +77,29 @@ class SupabaseMfaPolicy:
     def __init__(self, core_client: Any) -> None:
         self._db = core_client
 
+    def _read_rows(self, product: str) -> dict[str, Any]:
+        resp = (
+            self._db.from_(MFA_POLICY_TABLE)
+            .select("scope,mode")
+            .in_("scope", [product, FLEET_SCOPE])
+            .execute()
+        )
+        return {r["scope"]: r["mode"] for r in (resp.data or [])}
+
     async def resolve(self, product: str) -> MfaMode:
         try:
-            resp = (
-                self._db.from_(MFA_POLICY_TABLE)
-                .select("scope,mode")
-                .in_("scope", [product, FLEET_SCOPE])
-                .execute()
-            )
-            rows = {r["scope"]: r["mode"] for r in (resp.data or [])}
-        except Exception as exc:  # noqa: BLE001 — logged, default off
-            logger.error(
-                "mfa.policy: could not read %s (%s: %s) — defaulting to off",
-                MFA_POLICY_TABLE, type(exc).__name__, exc,
+            # supabase-py's `.execute()` is synchronous HTTP — run it off the
+            # event loop (a cache miss must never stall every request).
+            rows = await asyncio.to_thread(self._read_rows, product)
+        except Exception as exc:  # noqa: BLE001 — logged once per signature, default off
+            sig = f"{type(exc).__name__}: {exc}"
+            level = logging.DEBUG if sig in _SEEN_READ_ERRORS else logging.WARNING
+            _SEEN_READ_ERRORS.add(sig)
+            logger.log(
+                level,
+                "mfa.policy: could not read %s (%s) — defaulting to off%s",
+                MFA_POLICY_TABLE, sig,
+                "" if level == logging.WARNING else " (repeat, suppressed to debug)",
             )
             return "off"
         return pick_mode(rows, product)

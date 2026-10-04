@@ -61,9 +61,9 @@ class MfaGateConfig:
     client: Optional[MfaClient] = None
     audit_sink: Any = None
     audit_enabled: bool = False
-    #: Seconds a resolved mode is reused. Short on purpose: the policy row is
-    #: the instant off-switch. ``0`` disables caching (tests).
-    cache_ttl: float = 5.0
+    #: Seconds a resolved mode is reused (per product, per process). The DB
+    #: off-switch therefore takes effect within <= 30s. ``0`` disables caching (tests).
+    cache_ttl: float = 30.0
     _cached: Optional[tuple[float, MfaMode]] = field(default=None, repr=False)
 
     async def mode(self) -> MfaMode:
