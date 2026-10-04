@@ -666,3 +666,71 @@ class TestIgigCrmProbes:
             parser.parse_plpgsql_json(p.sql.replace(
                 "DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1
             ))
+
+
+class TestEditorialProbes:
+    """Seed editorial workflow (`editorial_tables` template): every guard the
+    template defines has a behaviour probe, and every probe builds its OWN
+    scratch schema from the template inside the rolled-back transaction."""
+
+    @staticmethod
+    def _probes():
+        return [p for p in DEFAULT_REGISTRY if p.product == "seed-editorial"]
+
+    def test_every_detected_guard_in_the_template_is_registered(self):
+        from noctusai_lib.domain.sql_templates import editorial_tables
+        from tools.noctus.dev.compliance import _detect_guard_objects
+
+        detected = {g["guard_name"] for g in _detect_guard_objects(editorial_tables("demo"))}
+        registered = {p.guard_name for p in self._probes()}
+        assert detected, "detector found no guard in the template — the test would be vacuous"
+        assert detected <= registered, detected - registered
+        assert {
+            "editorial_guard_immutable", "editorial_guard_via_transition", "editorial_transition",
+            "editorial_create_item", "editorial_items_state_check", "editorial_versions_sha_check",
+            "editorial_events_motivo_check", "editorial_items_org_kind_ref_key",
+        } <= registered
+
+    def test_separation_of_duties_and_write_once_paths_are_probed(self):
+        ids = {p.id for p in self._probes()}
+        assert {
+            "editorial_versions.update_refused", "editorial_versions.delete_refused",
+            "editorial_events.update_refused", "editorial_events.delete_refused",
+            "editorial_items.direct_state_write_refused", "editorial_events.forged_insert_refused",
+            "editorial_transition.self_approval_refused", "editorial_transition.same_approver_refused",
+            "editorial_transition.publish_without_signoff_refused", "editorial_transition.missing_grant_refused",
+            "editorial_transition.illegal_transition_refused", "editorial_transition.full_round_allowed",
+        } <= ids
+
+    def test_the_sanctioned_path_has_an_inverse_polarity_probe(self):
+        allowed = [p for p in self._probes() if p.kind == "write_allowed"]
+        assert [p.id for p in allowed] == ["editorial_transition.full_round_allowed"]
+        assert "NOC_PROBE:allowed" in allowed[0].sql and "NOC_PROBE:blocked" in allowed[0].sql
+
+    def test_probes_self_provision_a_scratch_schema_and_borrow_nothing(self):
+        for p in self._probes():
+            assert "CREATE SCHEMA noc_probe_editorial" in p.sql, p.id
+            assert "EXECUTE $tpl$" in p.sql and "editorial_create_item" in p.sql, p.id
+            assert "SELECT org_id" not in p.sql, p.id
+            assert "v_org uuid := gen_random_uuid()" in p.sql, p.id
+            assert "no_fixture" in p.sql, p.id
+            assert p.schema == "noc_probe_editorial"
+
+    def test_probe_wraps_as_one_rollback_only_statement(self):
+        for p in self._probes():
+            wrapped = wrap_rollback_only(p.sql)
+            assert wrapped.startswith("BEGIN;") and wrapped.endswith("ROLLBACK;")
+
+    def test_probe_bodies_parse_as_plpgsql(self):
+        parser = pytest.importorskip("pglast.parser")
+        for p in self._probes():
+            parser.parse_plpgsql_json(p.sql.replace(
+                "DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1
+            ))
+
+    def test_a_refusal_sentinel_classifies_as_pass(self):
+        p = next(p for p in self._probes() if p.id == "editorial_transition.self_approval_refused")
+        ex = _CannedExecutor(ok=False, error="NOC_PROBE:refused: editorial_self_approval")
+        assert run_probe(p, ex)["status"] == "pass"
+        ex = _CannedExecutor(ok=False, error="NOC_PROBE:permitted: the author approving ... succeeded")
+        assert run_probe(p, ex)["status"] == "finding"

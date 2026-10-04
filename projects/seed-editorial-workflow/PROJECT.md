@@ -2,7 +2,7 @@
 
 - **Created:** 2026-10-04
 - **Last updated:** 2026-10-04
-- **Status:** Design locked (architect review 2026-10-04) → Phase 1 ready · 🅿️ one owner decision open (§7)
+- **Status:** Phase 0 ✅ · Phase 1 ✅ (E1+E2 on `feat/editorial-e1-e2`, awaiting integrate) → Phase 2 ready · 🅿️ one owner decision open (§7)
 - **Owner / stakeholders:** João (owner) · Mônica Tangerino (first editor) · first consumer: Nós no Limiar content (activities + AI knowledge base; spec §22)
 - **Related docs:** `projects/platform-admin-mfa/PROJECT.md` (sibling; editorial admins need MFA) · limiar-app `docs/plan/fase-1-mvp.md` §6 (b) · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/architect/project-execution.md` (recurrence rule)
 - **Project slug:** `seed-editorial-workflow` (seed organ + first consumer in `agents` ⇒ `projects/`)
@@ -88,13 +88,14 @@ existing document to `publicado` v1 (nothing disappears in prod).
 
 ## 6. Implementation phases
 
-### Phase 0 — Audit
-- [ ] Re-read §5 files at the current tip; confirm the permissions organ API; inventory the knowledge read paths E5 must switch.
-**Improvements:** NOC-FILL-IMPROVEMENTS
+### Phase 0 — Audit ✅
+- [x] Re-read §5 files at the current tip; confirm the permissions organ API; inventory the knowledge read paths E5 must switch.
+  - Knowledge read paths E5 must switch to "published version only": `agents.search_knowledge` (013, filters `d.ativo = true`), `agents.list_knowledge_documents` (013:430), store `get_document` / `get_document_by_slug` / `read_document_part` / `list_documents` (`studio_knowledge.py`), `upsert_document_by_source_sha` (importer + package sync 017 — today live immediately), `studio_knowledge_router.py`. The retrieval SQL joins on `ativo`, so the cheapest switch is a published-version predicate in `search_knowledge`, not a new read path.
+**Improvements:** (1) §5's line refs "013:337,505" no longer hold — 012/013/017 contain NO publish RPC; publish is an app-side status flip (`studio_agents_router` + `require_publish_write`) under the `guard_agent_version_immutable` trigger, so "eval gate as a transition guard hook" (§4, later) means a hook in the router/store, not in the DB function. (2) Permissions organ grants are USER-GLOBAL (`public.user_permission_grants(user_id, permission)`, core 046) — no org/product dimension; an `editorial:publicar` holder can publish in every org. E3's router MUST also require org membership + item `org_id` match (the store already filters by org), and E5 should decide whether editor grants need an org-scoped variant. (3) `has_permission` is not callable from the editorial functions without cross-schema coupling, so the DB receives `p_grants` from the service-role caller and re-checks legality + separation of duties only; the grant TRUTH stays with the permissions organ (the router must derive grants server-side, never from the request body).
 
-### Phase 1 — E1 + E2 (domain + store + SQL template; default unused)
-- [ ] State machine + Fake store + tests; SQL template + Supabase store + guard probes.
-**Improvements:** NOC-FILL-IMPROVEMENTS
+### Phase 1 — E1 + E2 (domain + store + SQL template; default unused) ✅
+- [x] State machine + Fake store + tests (`seed/lib/backend/noctusai_lib/domain/editorial/`, 65 tests); SQL template `sql_templates.editorial_tables(schema)` + `SupabaseEditorialStore`; 23 `verify_db_guards` probes (product `seed-editorial`, each builds the template in a rolled-back scratch schema — template not applied anywhere).
+**Improvements:** (1) The spec's four grants vs five states left "who publishes after security sign-off" open: modelled as `approve_security` (sign-off, state unchanged, `revisar_seguranca`) then `publish` (`publicar`, needs the sign-off, publisher != author) — flag to the owner with §7 Q1. (2) Approvals are scoped to (version, review round): a send-back + re-submit clears them. (3) The SQL was validated by `pglast` parse (SQL + every plpgsql body) and by shape tests, NOT executed — no local Postgres/docker was available; the 23 probes are the executable proof and should be run via `noctus.dev.verify_db_guards` before E5 applies a migration. (4) `arquivado` is terminal (no un-archive) — revisit if editors need it. (5) Dead-simple extension point left: `editorial_tables(schema, workflow)` generates `editorial_rules()` from the Python workflow, so a stricter subset never drifts from the DB.
 
 ### Phase 2 — E3 + E4 (router factory + FE organs)
 - [ ] Router + strict auth tests; organs + organ.yaml.
@@ -127,3 +128,4 @@ Gates: seed lib pytest, agents suite, `verify_db_guards`, MCP tests, `gate_sweep
 ## 11. Change log
 
 - 2026-10-04 — Filed from the architect design review (owner go-ahead 2026-10-04).
+- 2026-10-04 — Phase 0 audit: §5 line refs for the agents publish RPC are stale (none exists; publish is app-side); permissions grants are user-global, not org-scoped (E3 must add org membership; E5 decides on org-scoped grants); DB receives grants from the caller. Phase 1 (E1+E2) built on `feat/editorial-e1-e2`: state machine + Fake/Supabase stores + `editorial_tables` + 23 guard probes.

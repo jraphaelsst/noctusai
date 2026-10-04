@@ -60,6 +60,12 @@ business logic" namespace.
   and the seed LLM stack (`integrations/llm`). Frontend counterpart:
   `@noctusai/lib`'s `HelpChatBubble` (`seed/lib/frontend/src/components/
   help-chat/`). See `help_chat/README.md`.
+- `editorial/` — editorial workflow organ: fixed rascunho → revisão editorial →
+  revisão de segurança → publicado → arquivado machine, per-transition grants,
+  separation of duties (code + DB), immutable versions, append-only events;
+  `EditorialStore` Protocol + Fake + Supabase + `make_editorial_store`; DDL via
+  `sql_templates.editorial_tables`. Built 2026-10-04 (`projects/seed-editorial-workflow/`);
+  not wired to any product yet.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)

@@ -398,3 +398,329 @@ def invitation_token_lockdown_all_sql() -> str:
         "$lock_all$;"
     )
 
+
+
+# ---------------------------------------------------------------------------
+# Editorial workflow tables (seed `domain/editorial`)
+# ---------------------------------------------------------------------------
+
+EDITORIAL_IN_TRANSITION_GUC = "editorial.in_transition"
+
+_EDITORIAL_SQL = r"""
+-- Editorial workflow (seed domain/editorial). Three tables, write-once / append-only,
+-- every state change through __S__.editorial_create_item / editorial_transition.
+-- RLS deny-by-default: no policy but service_role_bypass; consumers add an org-scoped
+-- SELECT policy only if a client reads directly. The DB re-checks legality + separation
+-- of duties; the GRANTS it receives (p_grants) come from the caller (the permissions
+-- organ) — the DB cannot see them, so only the service-role API may call these functions.
+
+CREATE TABLE IF NOT EXISTS __S__.editorial_items (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL,
+    kind                TEXT NOT NULL,
+    ref                 TEXT NOT NULL,
+    state               TEXT NOT NULL DEFAULT 'rascunho',
+    published_version_n INTEGER NULL,
+    current_version_n   INTEGER NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT editorial_items_state_check CHECK (state IN (__STATES__)),
+    CONSTRAINT editorial_items_org_kind_ref_key UNIQUE (org_id, kind, ref),
+    CONSTRAINT editorial_items_version_order_check
+        CHECK (published_version_n IS NULL OR published_version_n <= current_version_n)
+);
+
+CREATE TABLE IF NOT EXISTS __S__.editorial_versions (
+    item_id     UUID NOT NULL REFERENCES __S__.editorial_items(id) ON DELETE RESTRICT,
+    n           INTEGER NOT NULL CHECK (n >= 1),
+    content     JSONB NOT NULL,
+    content_sha TEXT NOT NULL,
+    author_id   UUID NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (item_id, n),
+    CONSTRAINT editorial_versions_sha_check CHECK (content_sha ~ '^[0-9a-f]{64}$')
+);
+
+CREATE TABLE IF NOT EXISTS __S__.editorial_events (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_id    UUID NOT NULL,
+    version_n  INTEGER NOT NULL,
+    action     TEXT NOT NULL CHECK (action IN (__ACTIONS__)),
+    from_state TEXT NULL,
+    to_state   TEXT NOT NULL,
+    actor_id   UUID NOT NULL,
+    grant_name TEXT NULL,
+    motivo     TEXT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (item_id, version_n) REFERENCES __S__.editorial_versions(item_id, n) ON DELETE RESTRICT,
+    CONSTRAINT editorial_events_motivo_check
+        CHECK (action NOT IN (__MOTIVO_ACTIONS__) OR length(btrim(coalesce(motivo, ''))) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_editorial_items_org_state ON __S__.editorial_items (org_id, state);
+CREATE INDEX IF NOT EXISTS idx_editorial_events_item ON __S__.editorial_events (item_id, id);
+
+ALTER TABLE __S__.editorial_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE __S__.editorial_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE __S__.editorial_events ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "service_role_bypass" ON __S__.editorial_items FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON __S__.editorial_versions FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "service_role_bypass" ON __S__.editorial_events FOR ALL TO service_role USING (true) WITH CHECK (true);
+REVOKE ALL ON __S__.editorial_items, __S__.editorial_versions, __S__.editorial_events FROM anon, authenticated;
+
+-- The rule table, GENERATED from the Python workflow (never hand-edited here).
+CREATE OR REPLACE FUNCTION __S__.editorial_rules()
+RETURNS TABLE (action TEXT, from_state TEXT, to_state TEXT, grant_name TEXT, needs_motivo BOOLEAN,
+               not_author BOOLEAN, not_editorial_approver BOOLEAN, needs_security_signoff BOOLEAN,
+               creates_version BOOLEAN)
+LANGUAGE sql IMMUTABLE SET search_path = __S__, public
+AS $fn$
+    SELECT * FROM (VALUES
+__RULES__
+    ) AS r(action, from_state, to_state, grant_name, needs_motivo, not_author,
+           not_editorial_approver, needs_security_signoff, creates_version)
+$fn$;
+
+-- Immutability: versions are write-once, events append-only. DELETE is refused too.
+CREATE OR REPLACE FUNCTION __S__.editorial_guard_immutable()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = __S__, public
+AS $fn$
+BEGIN
+    IF TG_TABLE_NAME = 'editorial_versions' THEN
+        RAISE EXCEPTION 'editorial_version_immutable' USING ERRCODE = 'P0001';
+    END IF;
+    RAISE EXCEPTION 'editorial_event_append_only' USING ERRCODE = 'P0001';
+END;
+$fn$;
+
+-- Writes only inside editorial_create_item / editorial_transition (they raise the
+-- transaction-local flag). A direct service-role INSERT/UPDATE/DELETE cannot forge a
+-- state, a version or an audit event around the legality + separation-of-duties checks.
+CREATE OR REPLACE FUNCTION __S__.editorial_guard_via_transition()
+RETURNS TRIGGER
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = __S__, public
+AS $fn$
+BEGIN
+    IF current_setting('__GUC__', true) IS DISTINCT FROM 'on' THEN
+        RAISE EXCEPTION 'editorial_write_via_transition_only' USING ERRCODE = 'P0001';
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'editorial_write_via_transition_only' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION __S__.editorial_create_item(
+    p_org_id UUID, p_kind TEXT, p_ref TEXT, p_actor_id UUID, p_grants TEXT[],
+    p_content JSONB, p_content_sha TEXT
+) RETURNS UUID
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = __S__, public
+AS $fn$
+DECLARE
+    v_rule RECORD;
+    v_id UUID;
+BEGIN
+    SELECT * INTO v_rule FROM __S__.editorial_rules() r WHERE r.action = 'create';
+    IF p_actor_id IS NULL THEN
+        RAISE EXCEPTION 'editorial_actor_required' USING ERRCODE = 'P0001';
+    END IF;
+    IF NOT (v_rule.grant_name = ANY (coalesce(p_grants, ARRAY[]::TEXT[]))) THEN
+        RAISE EXCEPTION 'editorial_missing_grant' USING ERRCODE = 'P0001';
+    END IF;
+    IF p_content IS NULL OR p_content_sha IS NULL THEN
+        RAISE EXCEPTION 'editorial_content_required' USING ERRCODE = 'P0001';
+    END IF;
+    PERFORM set_config('__GUC__', 'on', true);
+    INSERT INTO __S__.editorial_items (org_id, kind, ref, state, current_version_n)
+    VALUES (p_org_id, p_kind, p_ref, v_rule.to_state, 1) RETURNING id INTO v_id;
+    INSERT INTO __S__.editorial_versions (item_id, n, content, content_sha, author_id)
+    VALUES (v_id, 1, p_content, p_content_sha, p_actor_id);
+    INSERT INTO __S__.editorial_events (item_id, version_n, action, from_state, to_state, actor_id, grant_name)
+    VALUES (v_id, 1, 'create', NULL, v_rule.to_state, p_actor_id, v_rule.grant_name);
+    PERFORM set_config('__GUC__', 'off', true);
+    RETURN v_id;
+END;
+$fn$;
+
+CREATE OR REPLACE FUNCTION __S__.editorial_transition(
+    p_org_id UUID, p_item_id UUID, p_action TEXT, p_actor_id UUID, p_grants TEXT[],
+    p_motivo TEXT DEFAULT NULL, p_content JSONB DEFAULT NULL, p_content_sha TEXT DEFAULT NULL
+) RETURNS BIGINT
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = __S__, public
+AS $fn$
+DECLARE
+    v_item __S__.editorial_items%ROWTYPE;
+    v_rule RECORD;
+    v_n INTEGER;
+    v_new_n INTEGER;
+    v_author UUID;
+    v_last_submit BIGINT;
+    v_ed_approver UUID;
+    v_signed BOOLEAN;
+    v_published INTEGER;
+    v_event BIGINT;
+BEGIN
+    SELECT * INTO v_item FROM __S__.editorial_items
+     WHERE id = p_item_id AND org_id = p_org_id FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'editorial_item_not_found' USING ERRCODE = 'P0001';
+    END IF;
+    SELECT * INTO v_rule FROM __S__.editorial_rules() r
+     WHERE r.action = p_action AND r.from_state = v_item.state;
+    IF NOT FOUND THEN
+        IF NOT EXISTS (SELECT 1 FROM __S__.editorial_rules() r WHERE r.action = p_action) THEN
+            RAISE EXCEPTION 'editorial_unknown_action' USING ERRCODE = 'P0001';
+        END IF;
+        RAISE EXCEPTION 'editorial_illegal_transition' USING ERRCODE = 'P0001';
+    END IF;
+
+    v_n := v_item.current_version_n;
+    SELECT v.author_id INTO v_author FROM __S__.editorial_versions v
+     WHERE v.item_id = p_item_id AND v.n = v_n;
+    SELECT coalesce(max(e.id), 0) INTO v_last_submit FROM __S__.editorial_events e
+     WHERE e.item_id = p_item_id AND e.version_n = v_n AND e.action = 'submit';
+    SELECT e.actor_id INTO v_ed_approver FROM __S__.editorial_events e
+     WHERE e.item_id = p_item_id AND e.version_n = v_n AND e.action = 'approve_editorial'
+       AND e.id > v_last_submit ORDER BY e.id DESC LIMIT 1;
+    SELECT EXISTS (SELECT 1 FROM __S__.editorial_events e
+     WHERE e.item_id = p_item_id AND e.version_n = v_n AND e.action = 'approve_security'
+       AND e.id > v_last_submit) INTO v_signed;
+
+    IF p_action = 'approve_security' AND v_signed THEN
+        RAISE EXCEPTION 'editorial_illegal_transition' USING ERRCODE = 'P0001';
+    END IF;
+    IF p_actor_id IS NULL THEN
+        RAISE EXCEPTION 'editorial_actor_required' USING ERRCODE = 'P0001';
+    END IF;
+    IF NOT (v_rule.grant_name = ANY (coalesce(p_grants, ARRAY[]::TEXT[]))) THEN
+        RAISE EXCEPTION 'editorial_missing_grant' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_rule.needs_motivo AND length(btrim(coalesce(p_motivo, ''))) = 0 THEN
+        RAISE EXCEPTION 'editorial_motivo_required' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_rule.creates_version AND (p_content IS NULL OR p_content_sha IS NULL) THEN
+        RAISE EXCEPTION 'editorial_content_required' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_rule.not_author AND p_actor_id = v_author THEN
+        RAISE EXCEPTION 'editorial_self_approval' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_rule.not_editorial_approver AND p_actor_id IS NOT DISTINCT FROM v_ed_approver THEN
+        RAISE EXCEPTION 'editorial_same_approver' USING ERRCODE = 'P0001';
+    END IF;
+    IF v_rule.needs_security_signoff AND NOT v_signed THEN
+        RAISE EXCEPTION 'editorial_security_signoff_missing' USING ERRCODE = 'P0001';
+    END IF;
+
+    PERFORM set_config('__GUC__', 'on', true);
+    v_new_n := v_n;
+    IF v_rule.creates_version THEN
+        v_new_n := v_n + 1;
+        INSERT INTO __S__.editorial_versions (item_id, n, content, content_sha, author_id)
+        VALUES (p_item_id, v_new_n, p_content, p_content_sha, p_actor_id);
+    END IF;
+    v_published := v_item.published_version_n;
+    IF p_action = 'publish' THEN
+        v_published := v_n;
+    ELSIF p_action = 'archive' THEN
+        v_published := NULL;
+    END IF;
+    UPDATE __S__.editorial_items
+       SET state = v_rule.to_state, current_version_n = v_new_n,
+           published_version_n = v_published, updated_at = now()
+     WHERE id = p_item_id;
+    INSERT INTO __S__.editorial_events
+        (item_id, version_n, action, from_state, to_state, actor_id, grant_name, motivo)
+    VALUES (p_item_id, v_new_n, p_action, v_rule.from_state, v_rule.to_state, p_actor_id,
+            v_rule.grant_name, nullif(btrim(coalesce(p_motivo, '')), ''))
+    RETURNING id INTO v_event;
+    PERFORM set_config('__GUC__', 'off', true);
+    RETURN v_event;
+END;
+$fn$;
+
+DROP TRIGGER IF EXISTS editorial_guard_versions_immutable ON __S__.editorial_versions;
+CREATE TRIGGER editorial_guard_versions_immutable
+    BEFORE UPDATE OR DELETE ON __S__.editorial_versions
+    FOR EACH ROW EXECUTE FUNCTION __S__.editorial_guard_immutable();
+DROP TRIGGER IF EXISTS editorial_guard_events_append_only ON __S__.editorial_events;
+CREATE TRIGGER editorial_guard_events_append_only
+    BEFORE UPDATE OR DELETE ON __S__.editorial_events
+    FOR EACH ROW EXECUTE FUNCTION __S__.editorial_guard_immutable();
+DROP TRIGGER IF EXISTS editorial_guard_items_via_transition ON __S__.editorial_items;
+CREATE TRIGGER editorial_guard_items_via_transition
+    BEFORE INSERT OR UPDATE OR DELETE ON __S__.editorial_items
+    FOR EACH ROW EXECUTE FUNCTION __S__.editorial_guard_via_transition();
+DROP TRIGGER IF EXISTS editorial_guard_versions_via_transition ON __S__.editorial_versions;
+CREATE TRIGGER editorial_guard_versions_via_transition
+    BEFORE INSERT ON __S__.editorial_versions
+    FOR EACH ROW EXECUTE FUNCTION __S__.editorial_guard_via_transition();
+DROP TRIGGER IF EXISTS editorial_guard_events_via_transition ON __S__.editorial_events;
+CREATE TRIGGER editorial_guard_events_via_transition
+    BEFORE INSERT ON __S__.editorial_events
+    FOR EACH ROW EXECUTE FUNCTION __S__.editorial_guard_via_transition();
+
+-- SECURITY DEFINER EXECUTE LOCKDOWN: Postgres grants EXECUTE to PUBLIC by default.
+REVOKE ALL ON FUNCTION __S__.editorial_guard_immutable() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION __S__.editorial_guard_via_transition() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION __S__.editorial_create_item(UUID, TEXT, TEXT, UUID, TEXT[], JSONB, TEXT)
+    FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION __S__.editorial_transition(UUID, UUID, TEXT, UUID, TEXT[], TEXT, JSONB, TEXT)
+    FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION __S__.editorial_create_item(UUID, TEXT, TEXT, UUID, TEXT[], JSONB, TEXT)
+    TO service_role;
+GRANT EXECUTE ON FUNCTION __S__.editorial_transition(UUID, UUID, TEXT, UUID, TEXT[], TEXT, JSONB, TEXT)
+    TO service_role;
+"""
+
+
+def _sql_text_lit(value: str | None) -> str:
+    return "NULL::text" if value is None else "'" + value.replace("'", "''") + "'"
+
+
+def editorial_tables(schema: str, workflow: object | None = None) -> str:
+    """Emit the editorial-workflow DDL for ``<schema>`` (migration-authoring helper).
+
+    Three tables (``editorial_items`` / ``editorial_versions`` — write-once /
+    ``editorial_events`` — append-only), ``editorial_rules()`` GENERATED from the
+    Python workflow, the immutability + write-via-transition triggers, and the two
+    SECURITY DEFINER entry points ``editorial_create_item`` / ``editorial_transition``
+    that re-check legality + separation of duties in the DB. RLS deny-by-default
+    (service-role only). Pure string emission; applying it is a migration decision.
+
+    ``schema`` must be a plain lower-case identifier — it is interpolated into DDL.
+    """
+    import re
+
+    from noctusai_lib.domain.editorial.workflow import ACTIONS, DEFAULT_WORKFLOW, STATES
+
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", schema or ""):
+        raise ValueError(f"invalid schema name {schema!r}")
+    wf = workflow or DEFAULT_WORKFLOW
+    lit = _sql_text_lit
+    rows = ",\n".join(
+        "        ("
+        + ", ".join([
+            lit(t.action.value), lit(t.from_state.value if t.from_state else None),
+            lit(t.to_state.value), lit(t.grant.value),
+            *("true" if f else "false" for f in (
+                t.needs_motivo, t.not_author, t.not_editorial_approver,
+                t.needs_security_signoff, t.creates_version,
+            )),
+        ])
+        + ")"
+        for t in wf.transitions
+    )
+    motivo_actions = sorted({t.action.value for t in wf.transitions if t.needs_motivo})
+    out = _EDITORIAL_SQL
+    for key, value in (
+        ("__RULES__", rows),
+        ("__STATES__", ", ".join(lit(s) for s in STATES)),
+        ("__ACTIONS__", ", ".join(lit(a) for a in ACTIONS)),
+        ("__MOTIVO_ACTIONS__", ", ".join(lit(a) for a in motivo_actions)),
+        ("__GUC__", EDITORIAL_IN_TRANSITION_GUC),
+        ("__S__", schema),
+    ):
+        out = out.replace(key, value)
+    return out.strip() + "\n"

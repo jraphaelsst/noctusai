@@ -3539,6 +3539,301 @@ _SW_192_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+
+# ---------------------------------------------------------------------------
+# Registry — seed editorial workflow (`noctusai_lib.domain.sql_templates.
+# editorial_tables`; project `seed-editorial-workflow`, slice E2).
+#
+# THE TEMPLATE IS NOT APPLIED ANYWHERE YET, so these probes cannot depend on a
+# product schema: every probe CREATEs a scratch schema (`noc_probe_editorial`)
+# and EXECUTEs the template's own DDL inside the rolled-back probe transaction
+# (Postgres DDL is transactional), then attacks it. They therefore prove the
+# TEMPLATE — write-once versions, append-only events, write-via-transition-only,
+# the separation-of-duties re-check, the CHECK/UNIQUE guards — and keep proving
+# whatever migration renders it later (a consumer's migration is `editorial_
+# tables("<schema>")` output; same text, same behaviour). Nothing is borrowed
+# from production, and a `no_fixture` only means the DDL itself failed to build.
+# ---------------------------------------------------------------------------
+
+_EDITORIAL_SCHEMA = "noc_probe_editorial"
+_EDITORIAL_PRODUCT = "seed-editorial"
+_EDITORIAL_PROVENANCE = ("seed:noctusai_lib.domain.sql_templates.editorial_tables",)
+_E = _EDITORIAL_SCHEMA
+_EDITORIAL_FN_SIG = f"{_E}.editorial_transition(uuid,uuid,text,uuid,text[],text,jsonb,text)"
+_EDITORIAL_GUC = "editorial.in_transition"
+
+
+def _e_create() -> str:
+    return (
+        f"v_item := {_E}.editorial_create_item(v_org, 'doc', 'probe', v_a, "
+        "ARRAY['editorial:editar'], '{\"t\":1}'::jsonb, repeat('a', 64));"
+    )
+
+
+def _e_step(action: str, actor: str, grant: str, motivo: str | None = None) -> str:
+    m = "NULL" if motivo is None else f"'{motivo}'"
+    return f"PERFORM {_E}.editorial_transition(v_org, v_item, '{action}', {actor}, ARRAY['editorial:{grant}'], {m});"
+
+
+_E_SUBMIT = _e_step("submit", "v_a", "editar")
+_E_APPROVE_ED = _e_step("approve_editorial", "v_b", "revisar")
+_E_SIGNOFF = _e_step("approve_security", "v_c", "revisar_seguranca")
+_E_FLAG_ON = f"PERFORM set_config('{_EDITORIAL_GUC}', 'on', true);"
+
+
+def _editorial_probe(
+    *, probe_id: str, guard_name: str, steps: tuple[str, ...], guard_fragment: str, what: str,
+    rationale: str, allowed: bool = False,
+) -> GuardProbe:
+    """One probe against the template as built in a rolled-back scratch schema.
+    `allowed=True` is the inverse polarity (the sanctioned path must succeed)."""
+    from noctusai_lib.domain.sql_templates import editorial_tables
+
+    ddl = editorial_tables(_E)
+    assert "$tpl$" not in ddl and _PROBE_TAG not in ddl, "editorial DDL collides with a probe dollar-tag"
+    fragment_lit = _sql_lit(guard_fragment)
+    what_lit = _sql_lit(what)
+    body = "\n    ".join(steps)
+    ok_word, bad_word = ("allowed", "blocked") if allowed else ("permitted", "refused")
+    if allowed:
+        tail = (
+            f"RAISE EXCEPTION 'NOC_PROBE:allowed: {what_lit} succeeded — the sanctioned path is not blocked';"
+        )
+        handler = f"""    IF SQLERRM LIKE 'NOC_PROBE:allowed:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:blocked: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;"""
+    else:
+        tail = f"RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the guard under test did not fire';"
+        handler = f"""    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{fragment_lit}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;"""
+    sql = _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_a uuid := gen_random_uuid();
+  v_b uuid := gen_random_uuid();
+  v_c uuid := gen_random_uuid();
+  v_d uuid := gen_random_uuid();
+  v_item uuid;
+BEGIN
+  EXECUTE 'CREATE SCHEMA {_E}';
+  EXECUTE $tpl$
+{ddl}
+  $tpl$;
+  IF to_regprocedure('{_EDITORIAL_FN_SIG}') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_E}.editorial_transition was not built from the editorial_tables DDL';
+  END IF;
+  BEGIN
+    {body}
+    {tail}
+  EXCEPTION WHEN OTHERS THEN
+{handler}
+  END;
+END;
+""")
+    return GuardProbe(
+        id=probe_id,
+        product=_EDITORIAL_PRODUCT,
+        schema=_E,
+        guard_name=guard_name,
+        kind="write_allowed" if allowed else "write_refusal",
+        migrations=_EDITORIAL_PROVENANCE,
+        rationale=rationale,
+        sql=sql,
+    )
+
+
+_E_VER = f"{_E}.editorial_versions"
+_E_EVT = f"{_E}.editorial_events"
+_E_ITM = f"{_E}.editorial_items"
+
+_EDITORIAL_PROBES: tuple[GuardProbe, ...] = (
+    _editorial_probe(
+        probe_id="editorial_versions.update_refused", guard_name="editorial_guard_immutable",
+        steps=(_e_create(), f"UPDATE {_E_VER} SET content = '{{\"t\":2}}'::jsonb WHERE item_id = v_item;"),
+        guard_fragment="editorial_version_immutable", what="UPDATE of an editorial version's content",
+        rationale="A version is write-once: the approval trail points at exactly what was approved.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_versions.delete_refused", guard_name="editorial_guard_immutable",
+        steps=(_e_create(), f"DELETE FROM {_E_VER} WHERE item_id = v_item;"),
+        guard_fragment="editorial_version_immutable", what="DELETE of an editorial version",
+        rationale="Deleting a version would erase what a reviewer approved.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_events.update_refused", guard_name="editorial_guard_immutable",
+        steps=(_e_create(), f"UPDATE {_E_EVT} SET actor_id = v_b WHERE item_id = v_item;"),
+        guard_fragment="editorial_event_append_only", what="UPDATE of an editorial event's actor",
+        rationale="The event log records who approved; rewriting an actor falsifies the audit trail.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_events.delete_refused", guard_name="editorial_guard_immutable",
+        steps=(_e_create(), f"DELETE FROM {_E_EVT} WHERE item_id = v_item;"),
+        guard_fragment="editorial_event_append_only", what="DELETE of an editorial event",
+        rationale="Append-only: an event can never be removed.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_items.direct_state_write_refused", guard_name="editorial_guard_via_transition",
+        steps=(_e_create(), f"UPDATE {_E_ITM} SET state = 'publicado', published_version_n = 1 WHERE id = v_item;"),
+        guard_fragment="editorial_write_via_transition_only", what="a direct UPDATE of editorial_items.state",
+        rationale="State moves only through editorial_transition — a direct write would skip legality and separation of duties.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_items.direct_delete_refused", guard_name="editorial_guard_via_transition",
+        steps=(_e_create(), f"DELETE FROM {_E_ITM} WHERE id = v_item;"),
+        guard_fragment="editorial_write_via_transition_only", what="a direct DELETE of an editorial item",
+        rationale="Items are archived through the workflow, never deleted around it.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_events.forged_insert_refused", guard_name="editorial_guard_via_transition",
+        steps=(
+            _e_create(),
+            f"INSERT INTO {_E_EVT} (item_id, version_n, action, from_state, to_state, actor_id) "
+            "VALUES (v_item, 1, 'publish', 'revisao_seguranca', 'publicado', v_d);",
+        ),
+        guard_fragment="editorial_write_via_transition_only", what="a forged 'publish' event inserted directly",
+        rationale="An event can only be written by a transition that passed the checks.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_versions.forged_insert_refused", guard_name="editorial_guard_via_transition",
+        steps=(
+            _e_create(),
+            f"INSERT INTO {_E_VER} (item_id, n, content, content_sha, author_id) "
+            "VALUES (v_item, 2, '{\"t\":2}'::jsonb, repeat('b', 64), v_b);",
+        ),
+        guard_fragment="editorial_write_via_transition_only", what="a version inserted directly",
+        rationale="A new version is minted only by an `edit` transition that passed the grant check.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.self_approval_refused", guard_name="editorial_transition",
+        steps=(_e_create(), _E_SUBMIT, _e_step("approve_editorial", "v_a", "revisar")),
+        guard_fragment="editorial_self_approval", what="the author approving their own version",
+        rationale="Separation of duties: the approver of a version is never its author.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.same_approver_refused", guard_name="editorial_transition",
+        steps=(_e_create(), _E_SUBMIT, _E_APPROVE_ED, _e_step("approve_security", "v_b", "revisar_seguranca")),
+        guard_fragment="editorial_same_approver", what="the editorial approver also giving the security sign-off",
+        rationale="Two different people must look at a version before it can publish.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.publish_without_signoff_refused", guard_name="editorial_transition",
+        steps=(_e_create(), _E_SUBMIT, _E_APPROVE_ED, _e_step("publish", "v_d", "publicar")),
+        guard_fragment="editorial_security_signoff_missing", what="publishing before the security sign-off",
+        rationale="No publish without this round's security/source sign-off.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.missing_grant_refused", guard_name="editorial_transition",
+        steps=(_e_create(), _e_step("submit", "v_a", "revisar")),
+        guard_fragment="editorial_missing_grant", what="a submit by a caller holding the wrong grant",
+        rationale="Each transition names the grant it needs; the DB re-checks the grants it is handed.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.illegal_transition_refused", guard_name="editorial_transition",
+        steps=(_e_create(), _e_step("publish", "v_d", "publicar")),
+        guard_fragment="editorial_illegal_transition", what="publishing a draft straight from rascunho",
+        rationale="The state machine is fixed: rascunho cannot jump to publicado.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.edit_during_review_refused", guard_name="editorial_transition",
+        steps=(
+            _e_create(), _E_SUBMIT,
+            f"PERFORM {_E}.editorial_transition(v_org, v_item, 'edit', v_a, ARRAY['editorial:editar'], NULL, "
+            "'{\"t\":2}'::jsonb, repeat('c', 64));",
+        ),
+        guard_fragment="editorial_illegal_transition", what="editing a version that is under review",
+        rationale="One working draft at a time: a version under review cannot be replaced silently.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.send_back_needs_motivo", guard_name="editorial_transition",
+        steps=(_e_create(), _E_SUBMIT, _e_step("send_back", "v_b", "revisar")),
+        guard_fragment="editorial_motivo_required", what="a send-back with no motivo",
+        rationale="A send-back must say why.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.other_org_item_not_found", guard_name="editorial_transition",
+        steps=(
+            _e_create(),
+            f"PERFORM {_E}.editorial_transition(gen_random_uuid(), v_item, 'submit', v_a, ARRAY['editorial:editar']);",
+        ),
+        guard_fragment="editorial_item_not_found", what="a transition on another org's item",
+        rationale="The org filter is part of the function, not only of the API above it.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_create_item.missing_grant_refused", guard_name="editorial_create_item",
+        steps=(
+            f"v_item := {_E}.editorial_create_item(v_org, 'doc', 'probe', v_a, ARRAY['editorial:revisar'], "
+            "'{\"t\":1}'::jsonb, repeat('a', 64));",
+        ),
+        guard_fragment="editorial_missing_grant", what="creating an item without editorial:editar",
+        rationale="Drafting needs editorial:editar like every other step.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_items.state_vocabulary", guard_name="editorial_items_state_check",
+        steps=(
+            _E_FLAG_ON,
+            f"INSERT INTO {_E_ITM} (org_id, kind, ref, state) VALUES (v_org, 'doc', 'probe', 'bogus');",
+        ),
+        guard_fragment="editorial_items_state_check", what="an out-of-vocabulary item state",
+        rationale="States are the fixed five; the CHECK is the last line if a function is ever edited.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_items.published_not_after_current", guard_name="editorial_items_version_order_check",
+        steps=(
+            _E_FLAG_ON,
+            f"INSERT INTO {_E_ITM} (org_id, kind, ref, state, published_version_n, current_version_n) "
+            "VALUES (v_org, 'doc', 'probe', 'publicado', 3, 1);",
+        ),
+        guard_fragment="editorial_items_version_order_check", what="a published version newer than the current one",
+        rationale="published_version_n can never point past the newest version.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_items.org_kind_ref_unique", guard_name="editorial_items_org_kind_ref_key",
+        steps=(_e_create(), _e_create()),
+        guard_fragment="editorial_items_org_kind_ref_key", what="a second item with the same (org, kind, ref)",
+        rationale="One governed item per (org, kind, ref) — the consumer's natural key.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_versions.sha_shape", guard_name="editorial_versions_sha_check",
+        steps=(
+            _e_create(), _E_FLAG_ON,
+            f"INSERT INTO {_E_VER} (item_id, n, content, content_sha, author_id) "
+            "VALUES (v_item, 2, '{}'::jsonb, 'not-a-sha', v_a);",
+        ),
+        guard_fragment="editorial_versions_sha_check", what="a version with a malformed content_sha",
+        rationale="content_sha is the integrity witness; it must be a sha256 hex digest.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_events.motivo_required_for_send_back_and_archive", guard_name="editorial_events_motivo_check",
+        steps=(
+            _e_create(), _E_FLAG_ON,
+            f"INSERT INTO {_E_EVT} (item_id, version_n, action, from_state, to_state, actor_id) "
+            "VALUES (v_item, 1, 'archive', 'rascunho', 'arquivado', v_a);",
+        ),
+        guard_fragment="editorial_events_motivo_check", what="an archive event with no motivo",
+        rationale="Even a function bug cannot log an unexplained send-back/archive.",
+    ),
+    _editorial_probe(
+        probe_id="editorial_transition.full_round_allowed", guard_name="editorial_transition", allowed=True,
+        steps=(
+            _e_create(), _E_SUBMIT, _E_APPROVE_ED, _E_SIGNOFF, _e_step("publish", "v_d", "publicar"),
+            f"IF (SELECT published_version_n FROM {_E_ITM} WHERE id = v_item) IS DISTINCT FROM 1 THEN "
+            "RAISE EXCEPTION 'editorial_publish_did_not_set_published_version_n'; END IF;",
+        ),
+        guard_fragment="editorial_", what="a full create/submit/approve/sign-off/publish round",
+        rationale="The guards must not block the sanctioned path (the transition flag must work, "
+        "three different people + the right grants must publish).",
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -3575,6 +3870,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_179_183_PROBES,
     *_SW_190_PROBES,
     *_SW_192_PROBES,
+    *_EDITORIAL_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
