@@ -1,5 +1,9 @@
 # nos-no-limiar — changelog
 
+## 0.2.3 — 2026-10-04
+Novo caso de avaliação `contexto-projeto-codigo`: prova, a cada publicação, que o código do limiar-app
+sincronizado (coleção projeto-limiar-app) chega ao agente em produção.
+
 ## 0.2.2 — 2026-10-03
 Decisões delegadas aplicadas: lista "evitar" vira regra; pílula e cor de erro mantidas; Mônica creditada só
 como autora no app; tese só como fundo. Pendências removidas do conhecimento.
