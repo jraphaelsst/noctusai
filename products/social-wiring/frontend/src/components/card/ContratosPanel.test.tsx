@@ -233,6 +233,29 @@ describe("ContratosPanel", () => {
       expect(onSetProcessoLegado).not.toHaveBeenCalled();
     });
 
+    it("🔴 perf: ticking the box / typing the motivo / cancelling re-renders NONE of the heavy render-prop siblings", async () => {
+      const renderGerador = vi.fn(() => null);
+      const renderMatricula = vi.fn(() => null);
+      const { screen, fireEvent } = await render({
+        contratos: [contrato()],
+        isAdmin: true,
+        onSetProcessoLegado: vi.fn(),
+        contratoIniciadoId: "c1", // card opens with matrícula + gerador mounted
+        renderGeradorContrato: renderGerador,
+        renderMatriculaAtos: renderMatricula,
+      });
+      const antesG = renderGerador.mock.calls.length;
+      const antesM = renderMatricula.mock.calls.length;
+      expect(antesG).toBeGreaterThan(0);
+      fireEvent.click(screen.getByTestId("contrato-processo-legado-checkbox-c1"));
+      fireEvent.change(screen.getByTestId("processo-legado-motivo"), {
+        target: { value: "Deal anterior à plataforma" },
+      });
+      fireEvent.click(screen.getByText("Cancelar"));
+      expect(renderGerador.mock.calls.length).toBe(antesG);
+      expect(renderMatricula.mock.calls.length).toBe(antesM);
+    });
+
     it("🔴 the dialog requires a 3-char motivo before confirming", async () => {
       const onSetProcessoLegado = vi.fn();
       const { screen, fireEvent } = await render({

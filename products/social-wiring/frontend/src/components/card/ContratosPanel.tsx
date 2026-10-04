@@ -55,7 +55,7 @@
  * same reasoning as `excluirContrato`'s `window.prompt`, but with a length
  * gate (§3.3: 3..500 chars) a bare `prompt()` cannot express well.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import {
   AlertCircle,
@@ -487,12 +487,39 @@ function ContratoCard({
   const inputRef = useRef<HTMLInputElement>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [historicoAberto, setHistoricoAberto] = useState(false);
-  const [processoLegadoAberto, setProcessoLegadoAberto] = useState(false);
   const [matriculaAberta, setMatriculaAberta] = useState(recemIniciado);
   const [geradorAberto, setGeradorAberto] = useState(recemIniciado);
   const [provenienciaAberta, setProvenienciaAberta] = useState(false);
   const [testemunhasAberta, setTestemunhasAberta] = useState(false);
   const [aditivosAberto, setAditivosAberto] = useState(false);
+
+  // 🔴 Memoized ELEMENTS (identity-stable), not memo components: each render
+  // prop returns a heavy container (matrícula atos, gerador readiness lists,
+  // aditivos…). `ContratoCard` owns a dozen bits of local UI state (the
+  // collapsibles, the prazos inputs); an un-memoized `{render(...)}` rebuilt
+  // every one of those subtrees on EVERY keystroke/toggle — measured live at
+  // ~0.8 s up to 45 s for one click on a real card. Same element reference ⇒
+  // React skips the subtree. The render props are called eagerly, as before.
+  const matriculaEl = useMemo(
+    () => renderMatriculaAtos?.(contrato.id),
+    [renderMatriculaAtos, contrato.id],
+  );
+  const geradorEl = useMemo(
+    () => renderGeradorContrato?.(contrato.id, geradorAberto),
+    [renderGeradorContrato, contrato.id, geradorAberto],
+  );
+  const testemunhasEl = useMemo(
+    () => renderTestemunhasSelect?.(contrato.id, testemunhasAberta),
+    [renderTestemunhasSelect, contrato.id, testemunhasAberta],
+  );
+  const aditivosEl = useMemo(
+    () => renderAditivos?.(contrato.id, aditivosAberto),
+    [renderAditivos, contrato.id, aditivosAberto],
+  );
+  const provenienciaEl = useMemo(
+    () => renderProveniencia?.(contrato.id, provenienciaAberta),
+    [renderProveniencia, contrato.id, provenienciaAberta],
+  );
 
   // Local drafts for the two migration-114 fields — a plain string, parsed
   // only on save. `prazo_pendencias_dias` null reads as "" (the placeholder
@@ -720,43 +747,11 @@ function ContratoCard({
         </div>
 
         {isAdmin && onSetProcessoLegado && (
-          <div
-            className="flex items-start gap-2 rounded-md border p-2.5"
-            data-testid={`contrato-processo-legado-${contrato.id}`}
-          >
-            <Checkbox
-              id={`contrato-processo-legado-checkbox-${contrato.id}`}
-              checked={contrato.processo_legado || processoLegadoAberto}
-              disabled={settingProcessoLegado}
-              onCheckedChange={(checked) => {
-                if (checked === true) {
-                  setProcessoLegadoAberto(true);
-                } else if (contrato.processo_legado) {
-                  onSetProcessoLegado(false);
-                } else {
-                  // Unchecking a not-yet-confirmed request just cancels it.
-                  setProcessoLegadoAberto(false);
-                }
-              }}
-              data-testid={`contrato-processo-legado-checkbox-${contrato.id}`}
-            />
-            <Label
-              htmlFor={`contrato-processo-legado-checkbox-${contrato.id}`}
-              className="text-xs font-normal leading-snug text-muted-foreground"
-            >
-              Processo anterior à plataforma — dispensar prazos de certidões
-            </Label>
-          </div>
-        )}
-        {isAdmin && onSetProcessoLegado && !contrato.processo_legado && (
-          <_ProcessoLegadoForm
-            open={processoLegadoAberto}
-            onCancelar={() => setProcessoLegadoAberto(false)}
-            onConfirmar={(motivo) => {
-              onSetProcessoLegado(true, motivo);
-              setProcessoLegadoAberto(false);
-            }}
-            enviando={settingProcessoLegado}
+          <_ProcessoLegadoControl
+            contratoId={contrato.id}
+            processoLegado={contrato.processo_legado}
+            onSet={onSetProcessoLegado}
+            setting={settingProcessoLegado}
           />
         )}
 
@@ -850,7 +845,7 @@ function ContratoCard({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              {renderMatriculaAtos(contrato.id)}
+              {matriculaEl}
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -870,7 +865,7 @@ function ContratoCard({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              {renderGeradorContrato(contrato.id, geradorAberto)}
+              {geradorEl}
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -890,7 +885,7 @@ function ContratoCard({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              {renderTestemunhasSelect(contrato.id, testemunhasAberta)}
+              {testemunhasEl}
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -910,7 +905,7 @@ function ContratoCard({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              {renderAditivos(contrato.id, aditivosAberto)}
+              {aditivosEl}
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -930,7 +925,7 @@ function ContratoCard({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-2">
-              {renderProveniencia(contrato.id, provenienciaAberta)}
+              {provenienciaEl}
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -1235,6 +1230,67 @@ function _CancelarEnvioForm({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * `_ProcessoLegadoControl` — the checkbox + inline motivo form, owning its
+ * own open state so ticking it re-renders ONLY this block, never the whole
+ * `ContratoCard` and its heavy children.
+ */
+function _ProcessoLegadoControl({
+  contratoId,
+  processoLegado,
+  onSet,
+  setting,
+}: {
+  contratoId: string;
+  processoLegado: boolean;
+  onSet: (ativo: boolean, motivo?: string) => void;
+  setting: boolean;
+}) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <>
+      <div
+        className="flex items-start gap-2 rounded-md border p-2.5"
+        data-testid={`contrato-processo-legado-${contratoId}`}
+      >
+        <Checkbox
+          id={`contrato-processo-legado-checkbox-${contratoId}`}
+          checked={processoLegado || aberto}
+          disabled={setting}
+          onCheckedChange={(checked) => {
+            if (checked === true) {
+              setAberto(true);
+            } else if (processoLegado) {
+              onSet(false);
+            } else {
+              // Unchecking a not-yet-confirmed request just cancels it.
+              setAberto(false);
+            }
+          }}
+          data-testid={`contrato-processo-legado-checkbox-${contratoId}`}
+        />
+        <Label
+          htmlFor={`contrato-processo-legado-checkbox-${contratoId}`}
+          className="text-xs font-normal leading-snug text-muted-foreground"
+        >
+          Processo anterior à plataforma — dispensar prazos de certidões
+        </Label>
+      </div>
+      {!processoLegado && (
+        <_ProcessoLegadoForm
+          open={aberto}
+          onCancelar={() => setAberto(false)}
+          onConfirmar={(motivo) => {
+            onSet(true, motivo);
+            setAberto(false);
+          }}
+          enviando={setting}
+        />
+      )}
+    </>
   );
 }
 
