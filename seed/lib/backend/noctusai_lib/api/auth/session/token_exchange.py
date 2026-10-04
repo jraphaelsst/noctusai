@@ -388,3 +388,28 @@ __all__ = [
     "make_default_refresh_fn",
     "make_token_exchanger",
 ]
+
+
+def make_token_exchanger_from_settings(
+    store: SessionStore,
+    *,
+    redis_url: Optional[str] = None,
+    supabase_url: Optional[str] = None,
+    supabase_anon_key: Optional[str] = None,
+) -> TokenExchanger:
+    """:func:`make_token_exchanger` that builds the Redis lock client itself.
+
+    Real (``SupabaseTokenExchanger``) when ``redis_url`` is set; the Fake
+    otherwise. The lock client is a SEPARATE ``redis.asyncio`` connection from
+    the store's (Redis IS the shared state, not the Python handle) — so seed
+    framework code never imports ``redis`` directly (it lives in this lib).
+    """
+    lock_client = None
+    if redis_url:
+        from redis.asyncio import Redis
+
+        lock_client = Redis.from_url(redis_url, decode_responses=True)
+    return make_token_exchanger(
+        store, supabase_url=supabase_url, supabase_anon_key=supabase_anon_key,
+        lock_client=lock_client,
+    )

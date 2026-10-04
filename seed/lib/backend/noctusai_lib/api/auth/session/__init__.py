@@ -81,6 +81,7 @@ from noctusai_lib.api.auth.session.token_exchange import (
     TokenExchanger,
     make_default_refresh_fn,
     make_token_exchanger,
+    make_token_exchanger_from_settings,
 )
 from noctusai_lib.api.auth.session.token_admin import (
     ApiTokenInfo,
@@ -146,6 +147,7 @@ __all__ = [
     "make_session_revoker",
     "make_session_store",
     "make_token_exchanger",
+    "make_token_exchanger_from_settings",
     "mint_token_secret",
     "require_org_admin_role",
     "require_scopes",

@@ -489,7 +489,10 @@ def create_product_app(
     #    project. A product that forgets to declare the kwarg gets none
     #    of the bundled capabilities.
     for router in build_standard_routers(
-        deps, settings, product_name=name, version=version, names=standard_routers,
+        deps, settings, product_name=name, version=version,
+        # "mfa" (platform-admin-mfa M3) rides on EVERY product: it is the step-up
+        # half of the M2 gate, so opting out would strand an enforced admin.
+        names=[*standard_routers, *(() if "mfa" in standard_routers else ("mfa",))],
         team_policy=team,
     ):
         app.include_router(router)

@@ -10,6 +10,7 @@ Bundled routers live here:
   - "ai_feedback"  → `/api/ai/feedback` (thumbs feedback on AI outputs; P1)
   - "scheduler"    → `/api/scheduler/jobs[/{job_id}]` (read-only APScheduler view)
   - "status_paginas" → `/api/status-paginas` (list + change page-visibility status; admin/dev-gated)
+  - "mfa"          → `/api/auth/mfa/*` (TOTP step-up; auto-mounted on every product)
 
 Products declare which ones they want via the `standard_routers=[...]` kwarg
 on `create_product_app()`. `build_standard_routers()` resolves that list
@@ -640,6 +641,13 @@ def _build_auth_router(deps, settings, product_name: str, version: str) -> APIRo
     return create_auth_router(deps, settings)
 
 
+def _build_mfa_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Deferred import — keeps the session/exchanger chain off the hot path of
+    # tests that build only other routers. Auto-mounted by create_product_app.
+    from noctusai_seed.mfa_router import create_mfa_router
+    return create_mfa_router(deps, settings)
+
+
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
@@ -658,6 +666,7 @@ _STANDARD_ROUTERS = {
     "scheduler":    _build_scheduler_router,
     "status_paginas": _build_status_paginas_router,
     "auth":           _build_auth_router,
+    "mfa":            _build_mfa_router,
 }
 
 

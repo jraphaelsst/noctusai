@@ -40,6 +40,7 @@ class MfaFactor:
     factor_type: str
     status: Literal["verified", "unverified"] | str
     friendly_name: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class MfaClient(Protocol):
     async def challenge(self, access_token: str, factor_id: str) -> MfaChallenge: ...
     async def verify(self, access_token: str, factor_id: str, challenge_id: str, code: str) -> MfaSession: ...
     async def delete_factor(self, user_id: str, factor_id: str) -> None: ...
+    async def admin_list_factors(self, user_id: str) -> list[MfaFactor]: ...
 
 
 class FakeMfaClient:
@@ -82,8 +84,13 @@ class FakeMfaClient:
         self.valid_code = valid_code
         self.factors: dict[str, list[MfaFactor]] = {}
         self.admin_deleted: list[tuple[str, str]] = []
+        self.user_tokens: dict[str, str] = {}  # user_id -> access_token (``bind_user``)
         self._challenges: dict[str, str] = {}
         self._n = 0
+
+    def bind_user(self, user_id: str, access_token: str) -> None:
+        """Test seam: which Fake token belongs to which user (for the admin read)."""
+        self.user_tokens[str(user_id)] = access_token
 
     def _next(self, prefix: str) -> str:
         self._n += 1
@@ -113,7 +120,7 @@ class FakeMfaClient:
             raise MfaError("invalid_code")
         del self._challenges[challenge_id]
         self.factors[access_token] = [
-            MfaFactor(f.id, f.factor_type, "verified", f.friendly_name) if f.id == factor_id else f
+            MfaFactor(f.id, f.factor_type, "verified", f.friendly_name, f.created_at) if f.id == factor_id else f
             for f in self.factors.get(access_token, [])
         ]
         return MfaSession(
@@ -125,6 +132,9 @@ class FakeMfaClient:
         self.admin_deleted.append((user_id, factor_id))
         for tok, fs in self.factors.items():
             self.factors[tok] = [f for f in fs if f.id != factor_id]
+
+    async def admin_list_factors(self, user_id: str) -> list[MfaFactor]:
+        return list(self.factors.get(self.user_tokens.get(str(user_id), ""), []))
 
 
 class SupabaseMfaClient:
@@ -159,7 +169,7 @@ class SupabaseMfaClient:
     async def list_factors(self, access_token: str) -> list[MfaFactor]:
         user = await self._call("GET", "/user", bearer=access_token, apikey=self._anon)
         return [
-            MfaFactor(f["id"], f.get("factor_type", ""), f.get("status", ""), f.get("friendly_name"))
+            MfaFactor(f["id"], f.get("factor_type", ""), f.get("status", ""), f.get("friendly_name"), f.get("created_at"))
             for f in (user or {}).get("factors") or []
         ]
 
@@ -186,6 +196,15 @@ class SupabaseMfaClient:
             raise MfaError("service_role_required")
         await self._call("DELETE", f"/admin/users/{user_id}/factors/{factor_id}",
                          bearer=self._service, apikey=self._service)
+
+    async def admin_list_factors(self, user_id: str) -> list[MfaFactor]:
+        if not self._service:
+            raise MfaError("service_role_required")
+        user = await self._call("GET", f"/admin/users/{user_id}", bearer=self._service, apikey=self._service)
+        return [
+            MfaFactor(f["id"], f.get("factor_type", ""), f.get("status", ""), f.get("friendly_name"), f.get("created_at"))
+            for f in (user or {}).get("factors") or []
+        ]
 
 
 def make_mfa_client(*, use_fake: bool = False, supabase_url: Optional[str] = None,
