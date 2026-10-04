@@ -246,3 +246,15 @@ def _guard_release_default_runner_never_pushes(monkeypatch):
         return real(cmd, env_extra=env_extra, stdin=stdin)
 
     monkeypatch.setattr(_release_mod, "_default_run_local", _guarded)
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _release_studio_app_package():
+    """`agent_package_build._load_studio` (reached via build/publish/pull tests) leaves the agents
+    product's top-level `app` package in sys.modules. Evict it at module teardown so a later module
+    importing another product's `app` (e.g. core's `app.routers.credentials`) is not shadowed — the
+    full single-process run failed those tests while every isolated/sharded run passed."""
+    yield
+    apb = sys.modules.get("tools.noctus.dev.agent_package_build")
+    if apb is not None:
+        apb.reset_studio()

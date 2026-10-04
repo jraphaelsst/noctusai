@@ -663,6 +663,16 @@ def _load_studio(backend_dir: Path) -> dict[str, Any]:
     return _STUDIO
 
 
+def reset_studio() -> None:
+    """Undo ``_load_studio``: drop the cached handles AND evict the ``app``/``app.*`` modules it left in
+    ``sys.modules``. The CLI process never needs this (one build per process); a long-lived process that
+    ALSO imports another product's ``app`` package (the test session) calls it, else the agents ``app``
+    shadows that product's and its imports fail (order-dependent pollution, 2026-10-04)."""
+    _STUDIO.clear()
+    for name in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
+        del sys.modules[name]
+
+
 def build_bundle(pkg: PackageData, sha: str) -> dict[str, Any]:
     """The Studio import body: Studio §F + the §C4 keys."""
     rt = pkg.meta["runtime"]
