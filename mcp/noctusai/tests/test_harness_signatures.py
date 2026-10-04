@@ -197,3 +197,9 @@ def test_bash_advisory_accepts_alternate_exit_code_key_spellings():
         result = HS.bash_advisory({"stdout": "", "stderr": "", key: 127})
         assert result is not None, key
         assert result["signature"] == "command_not_found"
+
+
+def test_dangling_vite_temp_enoent_is_harness_suspect():
+    out = "error during build:\nError: ENOENT: no such file or directory, mkdir '/x/frontend/node_modules/.vite-temp'"
+    hit = HS.harness_suspect(out, 1)
+    assert hit and hit["signature"] == "node_modules_dangling_link"

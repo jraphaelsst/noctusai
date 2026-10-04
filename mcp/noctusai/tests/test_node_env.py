@@ -59,3 +59,25 @@ def test_require_narrows_to_one_package(tmp_path):
     assert node_deps_ready(pkg, require="ts-morph") is False
     (pkg / "node_modules" / "ts-morph").mkdir()
     assert node_deps_ready(pkg, require="ts-morph") is True
+
+
+def test_transient_entry_predicate():
+    from node_env import is_transient_node_modules_entry as t
+    for n in (".vite", ".vite-temp", ".cache", ".tmp", ".foo-temp", ".eslintcache"):
+        assert t(n), n
+    for n in ("react", "@noctusai", ".bin", ".package-lock.json", "vite"):
+        assert not t(n), n
+
+
+def test_prune_removes_only_dangling_transient_links(tmp_path):
+    from node_env import prune_dangling_node_modules_links
+    nm = tmp_path / "node_modules"
+    nm.mkdir()
+    (nm / ".vite-temp").symlink_to(tmp_path / "gone")
+    (nm / "dangling-pkg").symlink_to(tmp_path / "gone")
+    live = tmp_path / "live"
+    live.mkdir()
+    (nm / ".cache").symlink_to(live)
+    assert prune_dangling_node_modules_links(tmp_path) == [".vite-temp"]
+    assert not (nm / ".vite-temp").is_symlink()
+    assert (nm / "dangling-pkg").is_symlink() and (nm / ".cache").is_symlink()

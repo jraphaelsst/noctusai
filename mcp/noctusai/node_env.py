@@ -21,7 +21,41 @@ DIAGNOSTIC half for the worktrees that were forked some other way (a bare
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
+
+
+_TRANSIENT_RE = re.compile(r"^\.(?:.*-temp|.*cache.*|vite.*|tmp.*|turbo|parcel-cache)$", re.I)
+
+
+def is_transient_node_modules_entry(name: str) -> bool:
+    """True for tool-scratch dot-dirs under node_modules (`.vite`, `.vite-temp`,
+    `.cache`, `.tmp`, `.*-temp`, `.*cache*`). They are created and DELETED by
+    tooling (vite removes `.vite-temp` after every build), so a worktree must
+    never symlink them to the primary: when the primary's copy vanishes the
+    link dangles and the next build dies on `ENOENT mkdir .vite-temp`."""
+    return bool(_TRANSIENT_RE.match(name))
+
+
+def prune_dangling_node_modules_links(pkg_dir: Path | str) -> list[str]:
+    """Self-heal: remove DANGLING symlinks directly under `<pkg_dir>/node_modules`
+    that are transient tool dirs (left by worktrees wired before the filter).
+    Never touches live links, real dirs, or non-transient entries. Returns the
+    removed names."""
+    nm = Path(pkg_dir) / "node_modules"
+    removed: list[str] = []
+    try:
+        entries = list(nm.iterdir())
+    except OSError:
+        return removed
+    for e in entries:
+        if is_transient_node_modules_entry(e.name) and e.is_symlink() and not e.exists():
+            try:
+                e.unlink()
+                removed.append(e.name)
+            except OSError:
+                pass
+    return removed
 
 
 def node_deps_ready(pkg_dir: Path | str, *, require: str | None = None) -> bool:

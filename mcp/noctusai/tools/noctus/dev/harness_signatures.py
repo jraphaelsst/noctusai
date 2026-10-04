@@ -98,6 +98,14 @@ HARNESS_SIGNATURES: tuple[HarnessSignature, ...] = (
         "the report are noise.",
     ),
     HarnessSignature(
+        "node_modules_dangling_link",
+        r"ENOENT[^\n]*mkdir[^\n]*node_modules/\.[A-Za-z0-9_.-]+",
+        "a tool-scratch dir under node_modules (.vite-temp/.cache) is a "
+        "DANGLING symlink to a primary dir that no longer exists — remove "
+        "the link (`find node_modules -maxdepth 1 -xtype l -delete`) and "
+        "re-run; this judges the setup, not the code.",
+    ),
+    HarnessSignature(
         "node_deps_missing",
         r"Cannot find module '(?!\.)"
         r"|ERR_MODULE_NOT_FOUND"

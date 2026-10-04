@@ -38,7 +38,7 @@ import subprocess
 from typing import Any, Callable
 
 from deploy_state import DEPLOY_LOCAL_FILES
-from node_env import node_deps_ready
+from node_env import node_deps_ready, prune_dangling_node_modules_links
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -735,6 +735,10 @@ def _default_run_check(
                 "`noctus.dev.task_branch(action='start', wire_env=True)` "
                 f"already provisions this by default, or `cd {fe} && npm install`."
             )
+        # Self-heal a harness fault: dangling transient links (.vite-temp…)
+        # left by a worktree wired before the wire_env filter make vite die on
+        # ENOENT mkdir — that judges the setup, not the code.
+        prune_dangling_node_modules_links(fe)
         r = subprocess.run(["npx", "vite", "build"], cwd=fe, capture_output=True, text=True)
         return r.returncode == 0, (r.stdout + r.stderr)
     if check == "backend_tests":

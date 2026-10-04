@@ -94,6 +94,7 @@ from tools.noctus.dev._benign_stash import (
     # into a different path.
     strip_status_code as _strip_status_code,
 )
+from node_env import is_transient_node_modules_entry as _is_transient_nm_entry
 from tools.noctus.dev import toolkit_freshness as _toolkit_freshness
 
 logger = logging.getLogger(__name__)
@@ -764,6 +765,8 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
         for entry in fs.list_dir(src):
             if entry == "@noctusai":
                 continue  # worktree-owned; wired below via the derived repoints
+            if _is_transient_nm_entry(entry):
+                continue  # tool scratch (.vite-temp/.cache…): deleted by tooling ⇒ would dangle
             wire.append({"link": os.path.join(link_dir, entry),
                         "target": os.path.join(src, entry), "kind": "node_modules_entry"})
         return True

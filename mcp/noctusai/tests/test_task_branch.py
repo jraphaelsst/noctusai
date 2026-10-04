@@ -2890,3 +2890,15 @@ def test_cleanup_dirty_check_uses_absolute_worktree_cwd(tmp_path):
     assert res["status"] == "error"
     status_cwds = [c for cmd, c in fake.calls if cmd[1:2] == ["status"]]
     assert status_cwds == [str(tmp_path / ".claude/worktrees/x")]
+
+
+def test_plan_env_wiring_never_links_transient_node_modules_dirs(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "alpha"
+    _seed_primary(primary, slugs=("alpha",),
+                  product_nm_entries=("react", ".vite-temp", ".vite", ".cache"))
+    _seed_worktree_tree(wt_root)
+    wire, _ = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
+    names = {os.path.basename(w["link"]) for w in wire if w["kind"] == "node_modules_entry"}
+    assert "react" in names
+    assert not names & {".vite-temp", ".vite", ".cache"}
