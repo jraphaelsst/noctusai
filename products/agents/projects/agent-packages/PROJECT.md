@@ -55,6 +55,13 @@ back on every push. First agents: `mobile-dev`, `nos-no-limiar`.
 - Two contract amendments came from implementation reality (`claude` tree in the bundle; `learnings:read` scope) — recorded in CONTRACT §C4/§I the same day.
 - 017's DB guards are allow-listed in compliance.py until real GuardProbes are registered at apply time (named destination: apply step).
 
+### Phase 3b — `studio:publish` token scope ✅ (on dev, not deployed)
+- [x] BE: scope `studio:publish` on import / eval-run start+read / draft publish, dev-advisor only; override refused for tokens; token id as audit actor; CONTRACT §A8/§I amended; agents pytest 1543 passed
+
+**Improvements:**
+- The scope is a pre-push-pipeline credential: mint it separately from the consumer-repo token and never put it in a consumer's `agents.env`.
+- Token actor is the `api_tokens` row id (UUID columns); a human-readable label needs a join on `agents.api_tokens` — named destination if the audit UI ever shows it.
+
 ### Phase 4 — Wave 3 + live end-to-end (Studio chat with `nos-no-limiar` answering a question that requires limiar-app source)
 
 ## 5. Open questions
@@ -66,3 +73,4 @@ back on every push. First agents: `mobile-dev`, `nos-no-limiar`.
 | 2026-10-03 | Contract v1 + project created | orchestrator |
 | 2026-10-03 | Wave 1 shipped; limiar-app on 0.2.0; BE-API (wave 2) dispatched | orchestrator |
 | 2026-10-03 | Wave 2 on dev (not deployed); contract amended (§C4 claude tree, §I learnings:read); wave 3 dispatched | orchestrator |
+| 2026-10-03 | `studio:publish` scope added (import/eval/publish, dev-advisor only; contract §A8/§I amended) | backend-engineer |

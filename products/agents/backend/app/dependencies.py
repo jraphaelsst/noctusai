@@ -235,10 +235,16 @@ SCOPE_PACKAGES_READ = "packages:read"
 SCOPE_PROJECT_KNOWLEDGE_WRITE = "project-knowledge:write"
 SCOPE_LEARNINGS_WRITE = "learnings:write"
 SCOPE_LEARNINGS_READ = "learnings:read"
+#: 2026-10-03 — the noc pre-push publish leg ONLY (never minted for consumer
+#: repos). Accepted on import / eval-run start+read / draft publish, and only
+#: for a `dev-advisor` agent (the handler enforces the kind; runtime agents
+#: stay `user_required`). A token can never use the publish override.
+SCOPE_STUDIO_PUBLISH = "studio:publish"
 #: The scopes an admin may put on a minted token (`POST /api/settings/api-tokens`
 #: accepts any string; this is the documented, product-honoured set).
 PACKAGE_TOKEN_SCOPES = frozenset({
     SCOPE_PACKAGES_READ, SCOPE_PROJECT_KNOWLEDGE_WRITE, SCOPE_LEARNINGS_WRITE, SCOPE_LEARNINGS_READ,
+    SCOPE_STUDIO_PUBLISH,
 })
 
 require_packages_read = require_scopes(
@@ -267,6 +273,22 @@ require_learnings_write = require_scopes(
 
 require_learnings_read = require_scopes(
     SCOPE_LEARNINGS_READ,
+    user_roles=MEMBER_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+require_publish_write = require_scopes(
+    SCOPE_STUDIO_PUBLISH,
+    user_roles=ADMIN_ROLES,
+    get_auth_context=get_auth_context,
+    get_core_client=get_core_client,
+    restrict="any",
+)
+
+require_publish_read = require_scopes(
+    SCOPE_STUDIO_PUBLISH,
     user_roles=MEMBER_ROLES,
     get_auth_context=get_auth_context,
     get_core_client=get_core_client,
@@ -434,6 +456,9 @@ __all__ = [
     "get_user_client",
     "get_user_role",
     "require_admin",
+    "require_publish_read",
+    "require_publish_write",
+    "SCOPE_STUDIO_PUBLISH",
     "require_member",
     "require_platform_admin",
     "resolve_sso_role",

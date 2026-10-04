@@ -39,7 +39,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.config import settings
-from app.dependencies import require_admin, require_member
+from app.dependencies import require_admin, require_member, require_publish_write
 from app.schemas.studio import (
     AgentDetailOut,
     AgentListOut,
@@ -155,6 +155,24 @@ def get_compiled_hash_provider(
 
 def http_error(status_code: int, code: str, detail: str, **extra: Any) -> HTTPException:
     return HTTPException(status_code=status_code, detail={"detail": detail, "code": code, **extra})
+
+
+def actor_id(ctx: AuthContext) -> UUID:
+    """The audit actor of a write: the human's user id, or — for the scoped
+    ``studio:publish`` token — the token row id (never ``None``: the actor
+    columns of the audit log + ``published_by``/``created_by`` are UUIDs)."""
+    actor = ctx.user_id or ctx.api_token_id
+    if actor is None:  # pragma: no cover — a product ctx always carries its token id
+        raise http_error(403, "user_required", "Restricted to human users")
+    return actor
+
+
+def require_user_or_dev_advisor(ctx: AuthContext, agent: Any) -> None:
+    """A ``studio:publish`` token acts ONLY on a dev-advisor agent; a runtime
+    agent (Julia, IsaIA) stays human-only → 403 ``user_required``, exactly
+    as before the scope existed."""
+    if ctx.caller_kind == "product" and getattr(agent, "kind", "runtime") != "dev-advisor":
+        raise http_error(403, "user_required", "Restricted to human users")
 
 
 @contextmanager
@@ -759,7 +777,7 @@ async def diff_versions(
 async def publish_draft(
     key: str,
     payload: PublishRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_publish_write),
     store=Depends(get_studio_definition_store_dep),
     gate=Depends(get_eval_gate_dep),
     catalog=Depends(get_knowledge_catalog_dep),
@@ -774,6 +792,9 @@ async def publish_draft(
     hash below was stamped (M1), and stores the proof-of-use prompt in the
     same transaction as the flip."""
     agent = resolve_agent(store, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent)
+    if ctx.caller_kind == "product" and payload.override_reason is not None:
+        raise http_error(403, "override_requires_user", "O override do portão de avaliação é exclusivo de usuários.")
     draft = resolve_draft(store, ctx.org_id, agent)
     if payload.notas is not None:
         with store_errors():
@@ -818,7 +839,7 @@ async def publish_draft(
     with store_errors():
         # Proof of use (§A7) is stored INSIDE the publish transaction.
         published = store.publish_version(
-            ctx.org_id, draft.id, ctx.user_id, eval_run_id, override_reason,
+            ctx.org_id, draft.id, actor_id(ctx), eval_run_id, override_reason,
             expected_hash=compiled.hash, texto=compiled.texto, manifest=compiled.manifest_json(),
         )
     return _version_detail(store, gate, ctx.org_id, published)
@@ -845,6 +866,8 @@ async def get_prompt_by_hash(
 
 __all__ = [
     "router",
+    "actor_id",
+    "require_user_or_dev_advisor",
     "get_compiled_hash_provider",
     "get_eval_gate_dep",
     "get_knowledge_catalog_dep",

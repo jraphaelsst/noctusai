@@ -28,6 +28,16 @@ TOKEN_ROUTES = {
     ("GET", "/api/studio/agents/{key}/learnings"): "learnings:read",
 }
 
+#: `studio:publish` (2026-10-03, the noc pre-push publish leg): token-reachable
+#: too, but only for a dev-advisor agent — pinned in `test_publish_scope.py`.
+PUBLISH_ROUTES = {
+    ("POST", "/api/studio/agents/{key}/import"),
+    ("POST", "/api/studio/agents/{key}/evals/runs"),
+    ("GET", "/api/studio/agents/{key}/evals/runs"),
+    ("GET", "/api/studio/agents/{key}/evals/runs/{run_id}"),
+    ("POST", "/api/studio/agents/{key}/draft/publish"),
+}
+
 #: Prefixes of the product's business API. `/api/auth`, `/api/settings/api-tokens`
 #: (the seed's own auth surface, with its own human-only rules) and health are out.
 BUSINESS_PREFIXES = (
@@ -58,10 +68,10 @@ def _fill(path: str) -> str:
 def test_the_matrix_actually_covers_the_product(pkg):
     routes = _business_routes()
     assert len(routes) > 60, "route discovery found too few routes — the matrix would be vacuous"
-    assert set(TOKEN_ROUTES) <= set(routes)
+    assert set(TOKEN_ROUTES) | PUBLISH_ROUTES <= set(routes)
 
 
-@pytest.mark.parametrize("method,path", [r for r in _business_routes() if r not in TOKEN_ROUTES])
+@pytest.mark.parametrize("method,path", [r for r in _business_routes() if r not in TOKEN_ROUTES and r not in PUBLISH_ROUTES])
 def test_every_other_route_refuses_a_fully_scoped_token_with_user_required(pkg, method, path):
     with pkg.as_token(*ALL):
         resp = pkg.rt.client.raw().request(method, _fill(path), json={})
@@ -104,8 +114,8 @@ def test_each_token_route_demands_exactly_its_scope(pkg, method, path):
     assert allowed.status_code == 200, f"{method} {url}: {allowed.status_code} {allowed.text[:200]}"
 
 
-def test_the_documented_scope_set_is_exactly_the_four_the_routes_use():
-    assert PACKAGE_TOKEN_SCOPES == set(TOKEN_ROUTES.values())
+def test_the_documented_scope_set_is_exactly_the_five_the_routes_use():
+    assert PACKAGE_TOKEN_SCOPES == set(TOKEN_ROUTES.values()) | {"studio:publish"}
 
 
 class TestExistingSurfacesUnchanged:

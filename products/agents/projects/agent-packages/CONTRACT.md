@@ -30,7 +30,7 @@ for the Nós no Limiar app). First consumer: `jraphaelsst/limiar-app`.
 | A5 | **Sync runs on every push** (git `pre-push`) in BOTH directions that apply: noc pushes publish packages to Studio (§F); consumer pushes sync project context + learnings to Studio (§G, §H). A sync failure never blocks the push and is never silent: loud stderr + a `.agents-sync-pending` marker retried on the next push. | Owner chose push; offline pushes must still work. |
 | A6 | **Studio's copy sees what Claude Code sees**: package content + the consumer's project docs, source snapshot, decision-board snapshot and learnings, as knowledge collections (§G). | Owner requirement: the product agent works "as if it were the Claude Code session". |
 | A7 | **Learnings are local-first**: appended to `agents/<key>/LEARNINGS.md` in the consumer in the same commit as the work; pushed to Studio (§H); promoted into the package in noc by an explicit tool (§H3) → new version → consumers pull. | Learning must never wait on network; promotion is reviewed. |
-| A8 | **Machine auth = scoped project token** (`pk_…`, Studio's existing `agents.api_tokens`), kept in the developer's local env, never committed. Scopes (§I) grant only package read, project-knowledge write and learnings write. | A git hook can't do SSO; today every route refuses non-user callers (403 `user_required`). |
+| A8 | **Machine auth = scoped project token** (`pk_…`, Studio's existing `agents.api_tokens`), kept in the developer's local env, never committed. Scopes (§I) grant only package read, project-knowledge write and learnings write (plus `studio:publish`, see §I — the noc pre-push publish leg only). | A git hook can't do SSO; today every route refuses non-user callers (403 `user_required`). |
 | A9 | `agents.kind ∈ {runtime, dev-advisor}`; one registry, same versions/sections/skills/knowledge/evals/audit. Tabs that don't apply to dev-advisors (Clientes) hide. | Owner: "build them alike IsaIA". |
 | A10 | Dev-advisors are **read-only**: Claude Code wrapper `tools: Read, Grep, Glob`; Studio toolset = Studio §E3 read-only tools. No write tools on either surface. | Owner: advisors, never editors. |
 
@@ -174,10 +174,19 @@ H3. `noctus.dev.agent_learnings_promote key=` (run in noc): pulls `aceito` rows 
 | `GET /api/studio/agents/{key}/learnings` | `learnings:read` / member | list (promote tool, UI) |
 | `PATCH /api/studio/agents/{key}/learnings/{id}` | admin user | review |
 | `GET /api/studio/agents/{key}/projects` | member | per-project sync info (UI) |
+| `POST /api/studio/agents/{key}/import` | `studio:publish` / admin user | token: dev-advisor only (existing, or new with the bundle declaring it) |
+| `POST /api/studio/agents/{key}/evals/runs`, `GET …/evals/runs`, `GET …/evals/runs/{id}` | `studio:publish` / admin (write) · member (read) | token: dev-advisor only |
+| `POST /api/studio/agents/{key}/draft/publish` | `studio:publish` / admin user | token: dev-advisor only, must pass the eval gate; override → 403 `override_requires_user` |
 
 Tokens: Studio's `agents.api_tokens.scopes` (already present since migration 007); scopes are `packages:read`,
 `project-knowledge:write`, `learnings:write`, plus `learnings:read` (amended: needed by `agent_learnings_promote`).
 Mint via `POST /api/settings/api-tokens {label, scopes, expires_at ≤ 90 days}` (owner/admin) — re-mint every 90 days.
+**Amendment 2026-10-03 — `studio:publish`** (found by the HOOKS slice: import/eval/publish were user-only, so the
+pre-push pipeline's token got 403 `user_required`). Used by the noc pre-push publish leg ONLY; never given to consumer
+repos (they hold `packages:read`, `project-knowledge:write`, `learnings:*`). Accepted only on the five routes above and
+only when the target agent is `kind='dev-advisor'`; Julia/IsaIA stay user-only (403 `user_required`). A token never
+reaches the publish override (403 `override_requires_user`) — the eval gate always decides. Audit rows
+(`agent_audit_log.actor`, `published_by`, `created_by`, run `started_by`) carry the token row id. Mint like any other scope.
 Previously planned wording: a product-caller is accepted ONLY on
 routes whose scope it holds (all other routes keep 403 `user_required`). Token lives in
 `~/.config/noctus/agents.env` (`NOCTUS_AGENTS_TOKEN`, `NOCTUS_AGENTS_URL=https://agents.noctusai.com`).

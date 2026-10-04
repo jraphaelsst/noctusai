@@ -34,8 +34,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.config import settings
-from app.dependencies import require_admin, require_member
+from app.dependencies import require_admin, require_member, require_publish_read, require_publish_write
 from app.routers.studio_agents_router import (
+    actor_id,
+    require_user_or_dev_advisor,
     get_studio_definition_store_dep,
     http_error,
     resolve_version,
@@ -207,13 +209,14 @@ async def delete_case(
 async def create_run(
     key: str,
     payload: EvalRunCreateRequest,
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_publish_write),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
     scheduler=Depends(get_eval_scheduler_dep),
     current_hash: CurrentHash = Depends(get_current_hash_dep),
 ) -> EvalRunOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent)
     version = resolve_version(defs, ctx.org_id, agent, payload.version_id)
     compiled_hash = current_hash(ctx.org_id, agent, version)
 
@@ -236,7 +239,7 @@ async def create_run(
         run = store.create_run(
             ctx.org_id, agent.id, version.id,
             compiled_hash=compiled_hash, limiar=agent.publicacao_limiar,
-            case_ids=case_ids, started_by=ctx.user_id,
+            case_ids=case_ids, started_by=actor_id(ctx),
             modelo_geracao=payload.modelo_geracao, limite_usd=limite_usd,
         )
     except NotFound as exc:
@@ -262,11 +265,12 @@ async def create_run(
 async def list_runs(
     key: str,
     version_id: UUID | None = Query(None),
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_publish_read),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunListOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent)
     runs = store.list_runs(ctx.org_id, agent.id, version_id)
     return EvalRunListOut(items=[_run_out(r) for r in runs])
 
@@ -275,11 +279,12 @@ async def list_runs(
 async def get_run(
     key: str,
     run_id: UUID,
-    ctx: AuthContext = Depends(require_member),
+    ctx: AuthContext = Depends(require_publish_read),
     store=Depends(get_eval_store_dep),
     defs=Depends(get_studio_definition_store_dep),
 ) -> EvalRunDetailOut:
     agent = resolve_studio_agent(defs, ctx.org_id, key)
+    require_user_or_dev_advisor(ctx, agent)
     try:
         run = store.get_run(ctx.org_id, agent.id, run_id)
     except NotFound as exc:

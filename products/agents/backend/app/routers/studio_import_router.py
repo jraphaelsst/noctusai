@@ -20,9 +20,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from app.dependencies import require_admin
+from app.dependencies import require_publish_write
 from app.routers.studio_agents_router import (
     get_knowledge_catalog_dep,
+    actor_id,
     get_studio_definition_store_dep,
     store_errors,
 )
@@ -88,19 +89,28 @@ async def import_agent_bundle(
     key: str,
     bundle: AgentBundle,
     dry_run: bool = Query(default=False),
-    ctx: AuthContext = Depends(require_admin),
+    ctx: AuthContext = Depends(require_publish_write),
     definitions=Depends(get_studio_definition_store_dep),
     knowledge=Depends(get_studio_knowledge_store_dep),
     evals=Depends(get_eval_store_dep),
     catalog=Depends(get_knowledge_catalog_dep),
 ) -> ImportSummaryOut:
+    if ctx.caller_kind == "product":
+        # A `studio:publish` token imports only a dev-advisor: the existing
+        # agent is one, or the agent is new and the bundle declares it.
+        existing = next((a for a in definitions.list_agents(ctx.org_id) if a.key == key), None)
+        kind = bundle.agente.kind if existing is None else existing.kind
+        if kind != "dev-advisor":
+            raise HTTPException(
+                status_code=403, detail={"detail": "Restricted to human users", "code": "user_required"}
+            )
     try:
         with store_errors():
             summary = import_bundle(
                 bundle,
                 org_id=ctx.org_id,
                 key=key,
-                user_id=ctx.user_id,
+                user_id=actor_id(ctx),
                 dry_run=dry_run,
                 definitions=definitions,
                 knowledge=knowledge,
