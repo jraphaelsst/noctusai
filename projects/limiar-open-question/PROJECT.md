@@ -122,8 +122,8 @@ injection steering the classifier — nonce delimiting, enum output check, the r
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
 ### Phase 1 — S0 + S2 (rules pack export + limiar-app CI; seed risk_classifier)
-- [ ] S0 · [ ] S2
-**Improvements:** NOC-FILL-IMPROVEMENTS
+- [ ] S0 · [x] S2 (`feat/risk-classifier-s2`)
+**Improvements:** S2: the Anthropic provider only maps `json_object` response_format (no JSON-schema mode), so schema validation is ours and strict. `chat_completion` caches only when `temperature == 0` AND cache enabled — the classifier is exactly that case, hence `cache=False` is load-bearing (test proves it). `indeterminado` is reserved and rejected as a label. Provider errors may echo input, so only the exception type is logged.
 
 ### Phase 2 — S1 + S4 (Python interpreter + vendored pack; post-filter)
 - [x] S1 (vendored @ limiar-app cd03756; 1037 conformance tests pass) · [ ] S4
@@ -165,3 +165,4 @@ branch in a limiar-app worktree. Gates: limiar-app tsc + jest; seed lib pytest; 
 
 - 2026-10-04 — Filed from the architect design (owner go-ahead on the MVP, decisions log 2026-10-04).
 - 2026-10-04 — S1 shipped: engine + vendored pack (limiar-app `cd037564851a59afbc573acee08e109c9b8f89cf`, versao `triagem-2026.10.04`) + conformance tests; S5 sync tool `noctus.dev.safety_pack_sync` shipped (branch `feat/safety-pack-s1`).
+- 2026-10-04 — S2 landed: seed `integrations/risk_classifier` (Protocol/Fake/Real/factory, 40 tests) + KB `INTEGRATIONS/risk-classifier.md`.
