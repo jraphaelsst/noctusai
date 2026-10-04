@@ -135,6 +135,8 @@ def register_all(server) -> None:
     from . import list_pending_surfaces
     from . import respond_and_resume
     from . import dispatch_resume
+    from . import agent_package_build
+    from . import agent_pull
     from . import task_branch
     from . import testing
     from . import three_way_sync
@@ -272,6 +274,8 @@ def register_all(server) -> None:
     list_pending_surfaces.register(server)
     respond_and_resume.register(server)
     dispatch_resume.register(server)
+    agent_package_build.register(server)
+    agent_pull.register(server)
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)
