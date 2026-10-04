@@ -136,9 +136,17 @@ class HttpResult:
         d = self.data
         if isinstance(d, dict):
             inner = d.get("detail", d)
+            # The server names the offending files (paths only — never the matched text); without them a
+            # `secret_detected`/`forbidden_path` refusal is unactionable (2026-10-04, limiar-app's first sync).
+            caminhos = inner.get("caminhos") if isinstance(inner, dict) else d.get("caminhos")
             if isinstance(inner, dict):
                 inner = inner.get("detail", inner)
-            return inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)[:500]
+            msg = inner if isinstance(inner, str) else json.dumps(inner, ensure_ascii=False)[:500]
+            if isinstance(caminhos, list) and caminhos:
+                names = [c.get("path", "?") if isinstance(c, dict) else str(c) for c in caminhos]
+                more = f" (+{len(names) - 20})" if len(names) > 20 else ""
+                msg += f" — caminhos: {', '.join(names[:20])}{more}"
+            return msg
         return self.text[:300]
 
 

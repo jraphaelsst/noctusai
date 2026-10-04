@@ -796,3 +796,11 @@ def test_publish_ignores_runs_of_other_versions_or_subset_runs(studio, pk):
         dict(EVAL_OK, version_id="v-1", modelo_geracao="claude-haiku-4-5-20251001")]})
     r = publish(studio, pk, confirm=True)
     assert r["status"] == "published" and "eval_passed" in r["steps"], r
+
+
+def test_context_sync_secret_refusal_names_the_paths():
+    from tools.noctus.dev.agent_sync_client import HttpResult
+    res = acs.http_failure(HttpResult(status=422, data={"detail": {"detail": "Possível segredo", "code": "secret_detected",
+                                                                   "caminhos": ["src/a.ts", "docs/b.md"]}}, text=""),
+                           "sources PUT")
+    assert "src/a.ts" in res.message and "docs/b.md" in res.message
