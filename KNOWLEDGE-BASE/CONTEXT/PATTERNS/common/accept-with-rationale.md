@@ -761,6 +761,13 @@ state change, not a removal.
 - **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 - **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke MCP directly flips this to formalize.
 
+### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
+
+- **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).
+- **Decision `[A]`:** stay scripts, `[carve:hook]` bucket — git invokes pre-push hooks as processes (in noc AND in consumer repos that have no MCP server at all). The logic lives in `noctus.dev.agent_package_publish`, `agent_context_sync`, `agent_learnings_push`; the runner only imports them by path and enforces the never-block/never-silent protocol.
+- **Scope:** the three files, each with its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke MCP directly flips this to formalize.
+
 ### Recurrence-expansion stays product-local across daily-life/erp/PF — domain-divergent, no `N≥3` unifiable contract
 
 - **Subject:** §3a seed-first audit of the daily-life recurring-events gap asked whether windowed recurrence-expansion is `N≥3`-duplicated → a seed primitive (`noctusai_lib.domain.scheduling`).

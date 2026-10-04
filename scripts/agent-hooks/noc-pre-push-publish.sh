@@ -14,7 +14,7 @@ PY="${1:-}"
 ROOT="${2:-}"
 [[ -n "$ROOT" ]] || { echo "[agents-publish] usage: noc-pre-push-publish.sh <python> <repo_root>" >&2; exit 0; }
 
-PRIMARY="$(cd "$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || echo "$ROOT")"
+PRIMARY="$(cd "$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/.." 2>/dev/null && pwd || echo "$ROOT")"
 MARKER="$PRIMARY/.agents-sync-pending"
 
 keys=""
