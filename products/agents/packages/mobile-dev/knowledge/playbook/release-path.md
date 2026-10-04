@@ -1,9 +1,9 @@
 ---
 titulo: "Path to the stores — status: NOT YET EXERCISED"
-tipo: guia
+tipo: sintese
 proveniencia:
-  fonte: "limiar-app agents/mobile-dev/knowledge/07-release-path.md (v0.1.0)"
-  data: "2026-10-03"
+  origem: "limiar-app agents/mobile-dev/knowledge/07-release-path.md (v0.1.0)"
+  notas: "Sintetizado em 2026-10-03 a partir da sessão de desenvolvimento do limiar-app."
 ---
 # Path to the stores — status: NOT YET EXERCISED
 

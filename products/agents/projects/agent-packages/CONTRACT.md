@@ -81,9 +81,9 @@ C2. **Surface adapter block** — the ONLY surface-specific text, appended by th
   Project context = the repository itself." (rendered in the package language)
 - Studio: nothing extra — Studio §E3 tools already render in its compiled `_tools_block`.
 
-C3. Outputs (`dist/` is gitignored, never committed in noc):
-- `dist/<key>/bundle.json` — Studio import body;
-- `dist/<key>/claude/` — `.claude/agents/<key>.md` (frontmatter `name`, `description`, `tools`; body =
+C3. Outputs under `products/agents/packages/<key>/dist/` (gitignored by the root `dist/` rule, never committed):
+- `dist/bundle.json` — Studio import body;
+- `dist/claude/` — `.claude/agents/<key>.md` (frontmatter `name`, `description`, `tools`; body =
   compiled prompt + adapter) and `agents/<key>/{PACKAGE.json, skills/, knowledge/, LEARNINGS.md}`;
 - `PACKAGE.json` = `{key, versao, sha, compiled_hash, built_at}`; `sha` = sha256 over the package tree
   (sorted paths + contents), `compiled_hash` = `prompt_hash` of the compiled text.
@@ -165,7 +165,7 @@ H3. `noctus.dev.agent_learnings_promote key=` (run in noc): pulls `aceito` rows 
 | Route | Scope | |
 |---|---|---|
 | `GET /api/agent-packages/{key}/versions` | `packages:read` | published semvers + sha |
-| `GET /api/agent-packages/{key}/{versao}` | `packages:read` | the `dist/<key>/claude/` tree as `{files:[{path, conteudo}], package}` |
+| `GET /api/agent-packages/{key}/{versao}` | `packages:read` | the `dist/claude/` tree as `{files:[{path, conteudo}], package}` |
 | `PUT /api/studio/agents/{key}/projects/{slug}/sources` | `project-knowledge:write` | §G2 |
 | `POST /api/studio/agents/{key}/learnings` | `learnings:write` | §H2 |
 | `PATCH /api/studio/agents/{key}/learnings/{id}` | admin user | review |

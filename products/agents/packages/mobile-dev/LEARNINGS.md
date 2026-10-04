@@ -7,13 +7,13 @@ Status: `new` (not yet in knowledge/) → `absorbed` (folded into a knowledge fi
 
 | Date | Kind | Learning | Evidence | Status |
 |---|---|---|---|---|
-| 2026-10-03 | pitfall | Default Expo Router tab bar (49 pt) clips 12-pt labels; use 64 pt + bottom inset | limiar-app 6a89db7 | absorbed → 04 |
-| 2026-10-03 | pitfall | Cormorant Garamond defaults to old-style figures ("192" ≈ "1g2"); force `lining-nums` | limiar-app 6a89db7 | absorbed → 03 |
-| 2026-10-03 | practice | Phosphor per-icon deep imports cut the web bundle 7.1 MB → 1.4 MB | limiar-app 6a89db7 | absorbed → 03 |
-| 2026-10-03 | pitfall | Stray `~/node_modules` (npm 5.1.0) broke create-expo-app and `expo install`, and silently fed old majors to other projects | session 2026-10-03; noc frontends reinstalled | absorbed → 02 |
-| 2026-10-03 | pitfall | Expo Go signed in but CLI not → project won't open; browser login must complete on the computer (localhost callback) | session 2026-10-03 | absorbed → 05 |
-| 2026-10-03 | pitfall | Headless Chrome min width ~500 px, plain static server breaks router URLs, fonts need ≥15 s budget | session 2026-10-03 | absorbed → 05 |
-| 2026-10-03 | practice | `Stack.Protected` guards for onboarding; help screens outside both guards | limiar-app 319c167 | absorbed → 04 |
-| 2026-10-03 | practice | AsyncStorage: versioned keys + shape validation; invalid data is logged, removed, reset | limiar-app 319c167 | absorbed → 04 |
+| 2026-10-03 | pitfall | Default Expo Router tab bar (49 pt) clips 12-pt labels; use 64 pt + bottom inset | limiar-app 6a89db7; knowledge: playbook/navigation-state | absorbed |
+| 2026-10-03 | pitfall | Cormorant Garamond defaults to old-style figures ("192" ≈ "1g2"); force `lining-nums` | limiar-app 6a89db7; knowledge: playbook/ui-typography-icons | absorbed |
+| 2026-10-03 | practice | Phosphor per-icon deep imports cut the web bundle 7.1 MB → 1.4 MB | limiar-app 6a89db7; knowledge: playbook/ui-typography-icons | absorbed |
+| 2026-10-03 | pitfall | Stray `~/node_modules` (npm 5.1.0) broke create-expo-app and `expo install`, and silently fed old majors to other projects | session 2026-10-03; noc frontends reinstalled; knowledge: playbook/expo-project-setup | absorbed |
+| 2026-10-03 | pitfall | Expo Go signed in but CLI not → project won't open; browser login must complete on the computer (localhost callback) | session 2026-10-03; knowledge: playbook/device-testing | absorbed |
+| 2026-10-03 | pitfall | Headless Chrome min width ~500 px, plain static server breaks router URLs, fonts need ≥15 s budget | session 2026-10-03; knowledge: playbook/device-testing | absorbed |
+| 2026-10-03 | practice | `Stack.Protected` guards for onboarding; help screens outside both guards | limiar-app 319c167; knowledge: playbook/navigation-state | absorbed |
+| 2026-10-03 | practice | AsyncStorage: versioned keys + shape validation; invalid data is logged, removed, reset | limiar-app 319c167; knowledge: playbook/navigation-state | absorbed |
 | 2026-10-03 | practice | Duration ranges must not repeat the unit ("30–90 min") — found only on device | limiar-app d327081 | new |
-| 2026-10-03 | decision | Expo chosen for a React/TS web developer needing iOS+Android+web, offline, push, stores | limiar-app docs/design/decisions.md | absorbed → 01 |
+| 2026-10-03 | decision | Expo chosen for a React/TS web developer needing iOS+Android+web, offline, push, stores | limiar-app docs/design/decisions.md; knowledge: playbook/web-to-mobile | absorbed |

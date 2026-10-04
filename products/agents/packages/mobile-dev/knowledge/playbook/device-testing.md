@@ -1,9 +1,9 @@
 ---
 titulo: "Running on a real device and verifying"
-tipo: guia
+tipo: sintese
 proveniencia:
-  fonte: "limiar-app agents/mobile-dev/knowledge/05-device-testing.md (v0.1.0)"
-  data: "2026-10-03"
+  origem: "limiar-app agents/mobile-dev/knowledge/05-device-testing.md (v0.1.0)"
+  notas: "Sintetizado em 2026-10-03 a partir da sessão de desenvolvimento do limiar-app."
 ---
 # Running on a real device and verifying
 

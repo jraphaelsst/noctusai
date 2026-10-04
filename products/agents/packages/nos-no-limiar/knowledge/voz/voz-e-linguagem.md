@@ -1,9 +1,9 @@
 ---
 titulo: "Voz e linguagem do app"
-tipo: guia
+tipo: sintese
 proveniencia:
-  fonte: "limiar-app agents/nos-no-limiar/knowledge/03-voz-e-linguagem.md (v0.1.0)"
-  data: "2026-10-03"
+  origem: "limiar-app agents/nos-no-limiar/knowledge/03-voz-e-linguagem.md (v0.1.0)"
+  notas: "Sintetizado em 2026-10-03 a partir da sessão de desenvolvimento do limiar-app."
 ---
 # Voz e linguagem do app
 

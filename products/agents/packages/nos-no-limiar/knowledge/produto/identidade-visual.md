@@ -1,9 +1,9 @@
 ---
 titulo: "Identidade visual — o essencial para revisar uma tela"
-tipo: guia
+tipo: sintese
 proveniencia:
-  fonte: "limiar-app agents/nos-no-limiar/knowledge/04-identidade-visual.md (v0.1.0)"
-  data: "2026-10-03"
+  origem: "limiar-app agents/nos-no-limiar/knowledge/04-identidade-visual.md (v0.1.0)"
+  notas: "Sintetizado em 2026-10-03 a partir da sessão de desenvolvimento do limiar-app."
 ---
 # Identidade visual — o essencial para revisar uma tela
 

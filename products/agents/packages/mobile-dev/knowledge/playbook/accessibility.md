@@ -1,9 +1,9 @@
 ---
 titulo: "Accessibility checklist (review every screen against it)"
-tipo: guia
+tipo: sintese
 proveniencia:
-  fonte: "limiar-app agents/mobile-dev/knowledge/06-accessibility.md (v0.1.0)"
-  data: "2026-10-03"
+  origem: "limiar-app agents/mobile-dev/knowledge/06-accessibility.md (v0.1.0)"
+  notas: "Sintetizado em 2026-10-03 a partir da sessão de desenvolvimento do limiar-app."
 ---
 # Accessibility checklist (review every screen against it)
 

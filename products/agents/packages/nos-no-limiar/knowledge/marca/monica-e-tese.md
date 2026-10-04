@@ -1,9 +1,9 @@
 ---
 titulo: "Mônica, a tese e a marca fora do app"
-tipo: guia
+tipo: sintese
 proveniencia:
-  fonte: "limiar-app agents/nos-no-limiar/knowledge/05-monica-e-tese.md (v0.1.0)"
-  data: "2026-10-03"
+  origem: "limiar-app agents/nos-no-limiar/knowledge/05-monica-e-tese.md (v0.1.0)"
+  notas: "Sintetizado em 2026-10-03 a partir da sessão de desenvolvimento do limiar-app."
 ---
 # Mônica, a tese e a marca fora do app
 
