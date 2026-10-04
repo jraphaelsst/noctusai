@@ -4,7 +4,8 @@
 # learnings (agent_learnings_push) to Agent Studio. NEVER blocks the push and is never silent: on any
 # failure it prints a loud message on stderr, writes `.agents-sync-pending` and exits 0; the next push
 # retries and clears the marker on success.
-# Needs NOCTUS_HOME = path to your noctusai checkout, and ~/.config/noctus/agents.env (or env):
+# Needs ~/.config/noctus/agents.env (or the same names exported):
+#   NOCTUS_HOME=<path to your noctusai checkout>
 #   NOCTUS_AGENTS_URL=https://agents.noctusai.com
 #   NOCTUS_AGENTS_TOKEN=pk_...
 cat >/dev/null   # discard the ref lines git pipes to pre-push
@@ -22,7 +23,13 @@ fail() {
     exit 0
 }
 
-[ -n "${NOCTUS_HOME:-}" ] || fail "NOCTUS_HOME is not set (export the path of your noctusai checkout)"
+# NOCTUS_HOME may live in the same env file as the token (a git hook does not see your shell's exports
+# when pushed from an IDE or GUI client); an exported value wins.
+ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/noctus/agents.env"
+if [ -z "${NOCTUS_HOME:-}" ] && [ -f "$ENV_FILE" ]; then
+    NOCTUS_HOME="$(sed -n 's/^NOCTUS_HOME=//p' "$ENV_FILE" | tail -1)"
+fi
+[ -n "${NOCTUS_HOME:-}" ] || fail "NOCTUS_HOME is not set (export it, or add NOCTUS_HOME=<noctusai checkout> to $ENV_FILE)"
 PY="$NOCTUS_HOME/mcp/noctusai/.venv/bin/python"
 RUNNER="$NOCTUS_HOME/scripts/agent-hooks/agent_sync_runner.py"
 [ -x "$PY" ] && [ -f "$RUNNER" ] || fail "noctusai toolkit not found under NOCTUS_HOME=$NOCTUS_HOME (need $PY and $RUNNER)"

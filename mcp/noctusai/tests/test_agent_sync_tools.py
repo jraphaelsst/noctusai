@@ -557,7 +557,9 @@ def _fake_noctus_home(tmp_path) -> Path:
 
 
 def run_hook(repo, env_extra):
-    env = {k: v for k, v in os.environ.items() if k != "NOCTUS_HOME"}
+    # Hermetic: never read the developer's real ~/.config/noctus/agents.env (it may define NOCTUS_HOME).
+    env = {k: v for k, v in os.environ.items() if k not in ("NOCTUS_HOME", "XDG_CONFIG_HOME")}
+    env["HOME"] = str(Path(repo).parent / "hook-home")
     env.update(env_extra)
     return subprocess.run(["bash", str(REPO_ROOT / "scripts/agent-hooks/consumer-pre-push.sh")], cwd=repo, input="",
                           capture_output=True, text=True, env=env, timeout=120)
@@ -570,6 +572,16 @@ def test_consumer_hook_without_noctus_home_never_blocks_but_marks(tmp_path):
     assert (repo / ".agents-sync-pending").is_file()
     p2 = run_hook(repo, {"NOCTUS_HOME": str(tmp_path / "nowhere")})
     assert p2.returncode == 0 and "toolkit not found" in p2.stderr
+
+
+def test_consumer_hook_reads_noctus_home_from_the_env_file(tmp_path):
+    repo = git_repo(tmp_path)
+    home = tmp_path / "hook-home" / ".config" / "noctus"
+    home.mkdir(parents=True)
+    (home / "agents.env").write_text(f"NOCTUS_AGENTS_URL=http://x\nNOCTUS_HOME={tmp_path / 'from-file'}\n")
+    p = run_hook(repo, {"HOME": str(tmp_path / "hook-home")})
+    assert p.returncode == 0 and "NOCTUS_HOME is not set" not in p.stderr
+    assert f"NOCTUS_HOME={tmp_path / 'from-file'}" in p.stderr  # it used the file's value (toolkit not there → loud, not silent)
 
 
 def test_consumer_hook_end_to_end_syncs_then_clears_marker(studio, tmp_path):
