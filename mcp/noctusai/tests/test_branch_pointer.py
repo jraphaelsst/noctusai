@@ -527,6 +527,18 @@ class TestProjectField:
                         runner=FakeRunner(dev_content=_ndjson([sib])), **_append_kwargs())
         assert res["row"]["project"] == "sw-extraction"
 
+    @pytest.mark.parametrize("anchor", ["dev", "main", "origin/dev"])
+    def test_self_branch_never_inherits_a_peer_project_through_an_integration_ref(self, tmp_path, monkeypatch, anchor):
+        # 2026-10-04: every self-branch is parented on `dev`; "siblings of dev" = the whole fleet, so a new
+        # branch was stamped with whatever project a PEER session claimed last.
+        peer = {**_row("feat/peer-work", "2026-09-01T00:00:00+00:00"), "parent": anchor,
+                "project": "sw-contract-reliability"}
+        _ledger_at(tmp_path, monkeypatch, [peer])
+        res = BP.append(branch="feat/mine", parent=anchor,
+                        runner=FakeRunner(dev_content=_ndjson([peer])), **_append_kwargs())
+        assert "project" not in res["row"]
+        assert BP.effective_project(res["row"]) == "feat/mine"
+
     def test_unmapped_append_omits_project_and_reads_as_branch(self, tmp_path, monkeypatch):
         _ledger_at(tmp_path, monkeypatch)
         res = BP.append(branch="feat/solo", parent="tech-lead",

@@ -255,6 +255,14 @@ def project_for_branch(branch: str, rows: list[dict]) -> str:
     return effective_project(row) if row else branch
 
 
+_INTEGRATION_REFS = frozenset({"dev", "main", "prod", "prod-backup", "HEAD"})
+
+
+def _is_integration_ref(ref: str) -> bool:
+    ref = ref.strip()
+    return ref in _INTEGRATION_REFS or ref.startswith(("origin/", "refs/"))
+
+
 def _inherit_project(parent: str, rows: list[dict]) -> str | None:
     """An engineer inherits its PARENT's project (owner decision 2026-09-22:
     the approval unit is the project/roadmap, not the branch).
@@ -266,7 +274,10 @@ def _inherit_project(parent: str, rows: list[dict]) -> str | None:
     Returns None when neither resolves — the row then stays unmapped and
     `effective_project` falls back to the branch name (documented default).
     """
-    if not parent:
+    # A shared integration ref is NOT an orchestrator: every self-branch is parented on `dev`, so "siblings of
+    # dev" is the whole fleet and rule 2 handed each new self-branch whatever project a PEER claimed last
+    # (2026-10-04: a platform-MFA branch was stamped `sw-contract-reliability`). Never inherit through one.
+    if not parent or _is_integration_ref(parent):
         return None
     best = _latest_per_branch(rows)
     prow = best.get(parent)
