@@ -141,6 +141,7 @@ def register_all(server) -> None:
     from . import agent_context_sync
     from . import agent_learnings_push
     from . import agent_learnings_promote
+    from . import safety_pack_sync
     from . import task_branch
     from . import testing
     from . import three_way_sync
@@ -284,6 +285,7 @@ def register_all(server) -> None:
     agent_context_sync.register(server)
     agent_learnings_push.register(server)
     agent_learnings_promote.register(server)
+    safety_pack_sync.register(server)
     task_branch.register(server)
     testing.register(server)
     three_way_sync.register(server)

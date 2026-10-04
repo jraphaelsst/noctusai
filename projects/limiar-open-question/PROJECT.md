@@ -126,12 +126,12 @@ injection steering the classifier — nonce delimiting, enum output check, the r
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
 ### Phase 2 — S1 + S4 (Python interpreter + vendored pack; post-filter)
-- [ ] S1 · [ ] S4
-**Improvements:** NOC-FILL-IMPROVEMENTS
+- [x] S1 (vendored @ limiar-app cd03756; 1037 conformance tests pass) · [ ] S4
+**Improvements:** S1: TS→Python port needed no divergence fixes - `re.ASCII` + the JSON-spelled `espaco` class made every vector (994 triage + 38 normalization) pass first run. The pack is the single source: the engine holds zero constants. Lock sha is checked on every `load_engine`. Future: expose `load_engine` as a cached singleton in S3/S4.
 
 ### Phase 3 — S3 + S5 (route with Fake provider + no-log proof; sync tool + recall eval harness)
-- [ ] S3 · [ ] S5
-**Improvements:** NOC-FILL-IMPROVEMENTS
+- [ ] S3 · [ ] S5 (sync tool `noctus.dev.safety_pack_sync` DONE; recall eval harness pending)
+**Improvements:** Sync tool: dry-run carries the CI-visible staleness warning (lock versao vs ref's versao; offline = `fetch_failed`, logged, never raised) - no separate CI job added.
 
 ### Phase 4 — Gate + go-live 🅿️
 - [ ] Fresh blind set (human, outside the tuning loop) · [ ] live recall ≥ 95% · [ ] H1–H4 · [ ] `prod_consent` · [ ] app feature
@@ -164,3 +164,4 @@ branch in a limiar-app worktree. Gates: limiar-app tsc + jest; seed lib pytest; 
 ## 11. Change log
 
 - 2026-10-04 — Filed from the architect design (owner go-ahead on the MVP, decisions log 2026-10-04).
+- 2026-10-04 — S1 shipped: engine + vendored pack (limiar-app `cd037564851a59afbc573acee08e109c9b8f89cf`, versao `triagem-2026.10.04`) + conformance tests; S5 sync tool `noctus.dev.safety_pack_sync` shipped (branch `feat/safety-pack-s1`).

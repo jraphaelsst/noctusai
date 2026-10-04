@@ -1,0 +1,9 @@
+{
+  "repo": "jraphaelsst/limiar-app",
+  "commit": "cd037564851a59afbc573acee08e109c9b8f89cf",
+  "versao": "triagem-2026.10.04",
+  "files": {
+    "regras.json": "dd6ec8c5ed024104ad0931fcd18784ed2e799346ef9de6bb8233f6c2da3ed7ae",
+    "conformance.json": "818f5e00d9226900aef249adbe5f164d9533d50c5a97f8fd4691f4f2dc12578c"
+  }
+}
