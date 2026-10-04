@@ -223,7 +223,12 @@ def create_mfa_router(
         token = await _access_token(caller)
         try:
             factors = await mfa_client.list_factors(token)
-            if sum(1 for f in factors if f.status == "verified") >= MAX_VERIFIED_FACTORS:
+            verified = sum(1 for f in factors if f.status == "verified")
+            # Adding a factor to an account that already has one is itself a second-factor action: otherwise a
+            # password alone could enroll an attacker's device, verify it and reach aal2 (review 2026-10-04).
+            if verified and caller.aal != "aal2":
+                raise _err(403, "Verificação em duas etapas (MFA) obrigatória para esta ação", "mfa_required")
+            if verified >= MAX_VERIFIED_FACTORS:
                 raise _err(409, "Limite de fatores atingido", "mfa_factor_limit")
             enrollment = await mfa_client.enroll_totp(token, friendly_name=body.friendly_name)
         except MfaError as exc:

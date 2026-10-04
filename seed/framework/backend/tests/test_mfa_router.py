@@ -166,6 +166,20 @@ def test_enroll_factor_limit_409(env):
     assert r.status_code == 409 and code_of(r) == "mfa_factor_limit"
 
 
+def test_enroll_another_factor_at_aal1_is_403_mfa_required(env):
+    # Review 2026-10-04: with a verified factor already on the account, adding another is a second-factor action —
+    # else a stolen password could enroll an attacker's device, verify it and reach aal2.
+    _enrolled(env, "tok-admin1")
+    r = env.http.post(BASE + "/enroll", headers=H("tok-admin1"), json={"friendly_name": "intruder"})
+    assert r.status_code == 403 and code_of(r) == "mfa_required"
+
+
+def test_enroll_second_factor_at_aal2_is_allowed(env):
+    _enrolled(env, "tok-admin2")
+    r = env.http.post(BASE + "/enroll", headers=H("tok-admin2"), json={"friendly_name": "backup"})
+    assert r.status_code == 200
+
+
 # ─── verify ─────────────────────────────────────────────────────────────
 
 def test_verify_bearer_returns_tokens(env):
@@ -275,9 +289,9 @@ def test_reset_admin_at_aal1_refused_mfa_required(env):
 
 def test_reset_admin_aal2_deletes_and_audits(env):
     env.client.bind_user("u-member", "tok-member")
-    _enrolled(env, "tok-member", n=2)
+    _enrolled(env, "tok-member")  # a 2nd factor would need aal2 — the Fake's tok-member is fixed at aal1
     r = env.http.post(BASE + "/admin/reset/u-member", headers=H("tok-admin2"))
-    assert r.status_code == 200 and r.json() == {"deleted": 2}
+    assert r.status_code == 200 and r.json() == {"deleted": 1}
     assert env.http.get(BASE + "/status", headers=H("tok-member")).json()["factors"] == []
     assert len(env.sink.entries) == 1
     e = env.sink.entries[0]
