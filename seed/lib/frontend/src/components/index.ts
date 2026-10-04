@@ -150,3 +150,34 @@ export type {
   TeamInviteResponse,
   TeamInviteBody,
 } from './team';
+
+// Editorial workflow organs — review queue, audit timeline, version diff
+// (backend: noctusai_lib/domain/editorial). See ./editorial/README.md.
+export {
+  ReviewQueue,
+  EditorialTimeline,
+  VersionDiff,
+  diffContent,
+  flattenContent,
+  hasChanges,
+  createEditorialHttpSource,
+  FakeEditorialDataSource,
+  EDITORIAL_STATES,
+} from './editorial';
+export type {
+  ReviewQueueProps,
+  EditorialTimelineProps,
+  VersionDiffProps,
+  FieldChange,
+  FieldChangeKind,
+  EditorialApi,
+  EditorialState,
+  EditorialAction,
+  EditorialItem,
+  EditorialVersion,
+  EditorialEvent,
+  EditorialQueueParams,
+  EditorialQueuePage,
+  EditorialItemDetail,
+  EditorialDataSource,
+} from './editorial';

@@ -1,0 +1,21 @@
+name: VersionDiff
+path: seed/lib/frontend/src/components/editorial/VersionDiff.tsx
+phase: pilot-seed
+registered_at: '2026-10-04'
+validation_status: emerging
+known_facts:
+- "Compares two immutable versions: structured per-field JSON diff (diffContent) plus MarkdownRenderer for prose fields."
+- Part of the editorial workflow organ (projects/seed-editorial-workflow, E4). Backend domain noctusai_lib/domain/editorial; the HTTP contract is documented in editorial/README.md and consumed through the typed EditorialDataSource seam (HTTP adapter + Fake).
+- Loading follows lying-loading-state (showSkeleton = isPending && !data; isRefreshing = isFetching && !!data; never isLoading). pt-BR copy, design tokens only.
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+- Binding to the router paths directly — rejected; router (E3) is built in parallel, so the organs depend on an interface with a Fake and one adapter that maps paths.
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
