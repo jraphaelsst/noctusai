@@ -166,7 +166,10 @@ def safety_pack_sync(
     pack_dir.mkdir(parents=True, exist_ok=True)
     for n, data in new.items():
         (pack_dir / n).write_bytes(data)
-    lock = {"repo": repo, "commit": commit, "versao": new_versao, "files": new_shas}
+    # Server-authored pack files (e.g. posfiltro.json) are not fetched from the source repo;
+    # keep their lock entries so a sync never silently drops them from SOURCE.lock.
+    kept = {n: v for n, v in (old_lock.get("files") or {}).items() if n not in _FILES}
+    lock = {"repo": repo, "commit": commit, "versao": new_versao, "files": {**new_shas, **kept}}
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 
     ok, detail = (validator or _pytest_validator)(root)

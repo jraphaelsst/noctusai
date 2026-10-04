@@ -126,8 +126,8 @@ injection steering the classifier — nonce delimiting, enum output check, the r
 **Improvements:** S2: the Anthropic provider only maps `json_object` response_format (no JSON-schema mode), so schema validation is ours and strict. `chat_completion` caches only when `temperature == 0` AND cache enabled — the classifier is exactly that case, hence `cache=False` is load-bearing (test proves it). `indeterminado` is reserved and rejected as a label. Provider errors may echo input, so only the exception type is logged.
 
 ### Phase 2 — S1 + S4 (Python interpreter + vendored pack; post-filter)
-- [x] S1 (vendored @ limiar-app cd03756; 1037 conformance tests pass) · [ ] S4
-**Improvements:** S1: TS→Python port needed no divergence fixes - `re.ASCII` + the JSON-spelled `espaco` class made every vector (994 triage + 38 normalization) pass first run. The pack is the single source: the engine holds zero constants. Lock sha is checked on every `load_engine`. Future: expose `load_engine` as a cached singleton in S3/S4.
+- [x] S1 (vendored @ limiar-app cd03756; 1037 conformance tests pass) · [x] S4 (`feat/postfilter-s4`)
+**Improvements:** S4: lexicons/fallback/path enum are DATA in `safety_pack/limiar/posfiltro.json` (`status: rascunho`, pending Mônica H4), lock-covered; matching reuses the engine's normalize (whole-word: `garanto` trips, `garantia` does not). `safety_pack_sync` now preserves non-fetched lock entries. FOLLOW-UP: `posfiltro.json` is server-authored; if it moves to limiar-app as the source, extend the sync tool to vendor it. Route should use `pacote_posfiltro_padrao()` (cached). S1: TS→Python port needed no divergence fixes - `re.ASCII` + the JSON-spelled `espaco` class made every vector (994 triage + 38 normalization) pass first run. The pack is the single source: the engine holds zero constants. Lock sha is checked on every `load_engine`. Future: expose `load_engine` as a cached singleton in S3/S4.
 
 ### Phase 3 — S3 + S5 (route with Fake provider + no-log proof; sync tool + recall eval harness)
 - [ ] S3 · [ ] S5 (sync tool `noctus.dev.safety_pack_sync` DONE; recall eval harness pending)
@@ -166,3 +166,4 @@ branch in a limiar-app worktree. Gates: limiar-app tsc + jest; seed lib pytest; 
 - 2026-10-04 — Filed from the architect design (owner go-ahead on the MVP, decisions log 2026-10-04).
 - 2026-10-04 — S1 shipped: engine + vendored pack (limiar-app `cd037564851a59afbc573acee08e109c9b8f89cf`, versao `triagem-2026.10.04`) + conformance tests; S5 sync tool `noctus.dev.safety_pack_sync` shipped (branch `feat/safety-pack-s1`).
 - 2026-10-04 — S2 landed: seed `integrations/risk_classifier` (Protocol/Fake/Real/factory, 40 tests) + KB `INTEGRATIONS/risk-classifier.md`.
+- 2026-10-04 — S4 landed: `app/public_ask/postfilter.py` (+ `posfiltro.json` draft pack, lock-covered, 11 checks, tests).

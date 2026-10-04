@@ -1,0 +1,81 @@
+{
+  "status": "rascunho",
+  "aprovacao": "pendente - Monica Tangerino (spec §22, H4). Lexicos e texto de fallback sao RASCUNHOS.",
+  "origem": "server-authored (agents); se migrar para limiar-app como fonte, o sync tool passa a vendorizar este arquivo",
+  "versao": "posfiltro-2026.10.04-rascunho",
+  "palavras": {"min": 80, "max": 130},
+  "max_caminhos": 2,
+  "caminhos_permitidos": ["quero_pensar_mais", "prefiro_fazer_algo_agora"],
+  "fallback": {
+    "texto": "O app não tem base confiável para responder isso agora. Prefiro não arriscar uma resposta que possa não te ajudar. Você pode escolher como seguir: pensar mais um pouco sobre o que escreveu, ou fazer algo pequeno agora, no seu ritmo.",
+    "caminhos": ["quero_pensar_mais", "prefiro_fazer_algo_agora"]
+  },
+  "verificacoes": {
+    "diagnostico": {
+      "nota": "Termos de diagnostico/transtorno. Sintomas do dia a dia (tristeza, ansiedade como sentimento) NAO entram.",
+      "frases": [
+        "diagnostico*", "diagnosticad*", "transtorno*", "disturbio*", "depressao", "depressiv*",
+        "bipolar*", "borderline", "tdah", "toc", "tept", "esquizofreni*", "autismo", "psicose",
+        "sindrome do panico", "sindrome de burnout", "estresse pos traumatico", "crise de panico",
+        "ansiedade generalizada", "narcisista*", "psicopata*"
+      ]
+    },
+    "medicacao": {
+      "frases": [
+        "medicacao*", "medicamento*", "remedio*", "antidepressiv*", "ansiolitic*", "calmante*",
+        "comprimido*", "dosagem", "dose", "doses", "miligrama*", "mg", "tarja preta",
+        "rivotril", "clonazepam", "sertralina", "fluoxetina", "escitalopram", "zolpidem",
+        "ritalina", "diazepam", "receita medica"
+      ]
+    },
+    "promessa": {
+      "nota": "Palavra inteira: 'garanto' dispara; 'garantia' (outra palavra) nao.",
+      "frases": [
+        "vai ficar tudo bem", "tudo vai ficar bem", "tudo vai se resolver", "tudo vai passar",
+        "vai dar tudo certo", "tudo vai dar certo", "vai melhorar com certeza", "com certeza vai melhorar",
+        "sem duvida vai melhorar", "voce vai se curar", "garanto", "te garanto", "prometo", "te prometo",
+        "eu prometo", "pode ter certeza que vai", "tenho certeza de que vai"
+      ]
+    },
+    "vinculo": {
+      "nota": "spec §7.2 regra 5: o app nao cria laco nem dependencia.",
+      "frases": [
+        "estou aqui com voce", "estou aqui por voce", "estou aqui pra voce", "estou aqui para voce",
+        "estou aqui", "estou com voce", "estou ao seu lado", "conte comigo", "pode contar comigo",
+        "sempre estarei", "estarei sempre", "estarei aqui", "nunca vou te deixar", "nao vou te abandonar",
+        "vou te acompanhar", "pode confiar em mim", "volte sempre", "me procure", "fale comigo",
+        "conte pra mim", "sempre que precisar", "eu te escuto", "somos amigas", "sou sua amiga"
+      ]
+    },
+    "substituicao": {
+      "padroes": [
+        "nao (?:precisa|necessita|tem que|tem necessidade) (?:de |ir (?:a|ao|na) |procurar |buscar )?(?:um |uma |o |a )?(?:terapia|terapeuta|psicolog\\w+|psiquiatra|ajuda profissional|profissional|acompanhamento)",
+        "nao (?:e|eh) (?:preciso|necessario) (?:de |ir (?:a|ao|na) |procurar |buscar )?(?:um |uma |o |a )?(?:terapia|terapeuta|psicolog\\w+|psiquiatra|ajuda profissional|profissional|acompanhamento)",
+        "(?:substitu\\w+|dispensa\\w*) (?:a |o |um |uma )?(?:terapia|terapeuta|psicolog\\w+|psiquiatra|acompanhamento)",
+        "no lugar d[aeo] (?:terapia|terapeuta|psicolog\\w+|psiquiatra|acompanhamento)",
+        "(?:melhor|mais eficaz) (?:que|do que) (?:a |o )?(?:terapia|psicolog\\w+|psiquiatra)"
+      ]
+    },
+    "aconselhamento_individual": {
+      "nota": "Orientacao medica/juridica/financeira individualizada esta fora do escopo.",
+      "padroes": [
+        "voce (?:deve|deveria|precisa|tem que) (?:se )?(?:divorciar|separar|demitir|processar|investir|largar|abandonar|terminar|mudar de remedio)",
+        "(?:divorcie|separe|demita|processe|invista|largue|abandone|termine) (?:se|ele|ela|o|a|seu|sua)\\b",
+        "pare de tomar",
+        "volte a tomar",
+        "(?:aumente|diminua|reduza|troque) (?:a|o|sua|seu) (?:dose|medicacao|remedio)",
+        "contrate (?:um|uma) advogad\\w+",
+        "(?:seus|os) direitos (?:legais|juridicos|trabalhistas)",
+        "(?:compre|venda|aplique|invista) (?:em )?(?:acoes|bitcoin|fundos|imoveis)"
+      ]
+    },
+    "nao_e_x_e_y": {
+      "nota": "Construcao 'nao e X, e Y' (e variantes proximas) - tique de IA que soa sentenciosa.",
+      "padroes": [
+        "nao (?:e|era|foi|eh) [^.]{1,60}\\. (?:e|era|foi|eh) ",
+        "nao (?:e|era|foi|eh) [^.]{1,60} (?:e|era|foi) sim ",
+        "nao (?:e|era|foi|eh) [^.]{1,60} mas sim "
+      ]
+    }
+  }
+}
