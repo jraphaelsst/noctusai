@@ -16,6 +16,7 @@
  *   instead of `useSupabaseAuthInit`. First consumer: social-wiring.
  */
 import { useSupabaseAuthInit, useSessionAuthInit } from '../auth';
+import { MfaChallengeHost } from './mfa/MfaChallengeHost';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -33,7 +34,12 @@ export function createAuthProvider(
   return function AuthProvider({ children }: { children: React.ReactNode }) {
     const { setUser, setInitialized } = useAuthStore();
     useSupabaseAuthInit(supabase, setUser, setInitialized);
-    return <>{children}</>;
+    return (
+      <>
+        {children}
+        <MfaChallengeHost />
+      </>
+    );
   };
 }
 
@@ -53,6 +59,11 @@ export function createSessionAuthProvider(
   return function SessionAuthProvider({ children }: { children: React.ReactNode }) {
     const { setUser, setInitialized } = useAuthStore();
     useSessionAuthInit(setUser, setInitialized);
-    return <>{children}</>;
+    return (
+      <>
+        {children}
+        <MfaChallengeHost />
+      </>
+    );
   };
 }

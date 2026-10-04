@@ -151,6 +151,16 @@ export type {
   TeamInviteBody,
 } from './team';
 
+// Admin MFA organs — device enrolment + step-up challenge dialog (platform-admin-mfa M4).
+export { MfaEnrollPanel, MfaChallengeDialog, MfaChallengeHost, MFA_BASE } from './mfa';
+export type {
+  MfaEnrollPanelProps,
+  MfaChallengeDialogProps,
+  MfaFactor,
+  MfaStatus,
+  MfaEnrollResult,
+} from './mfa';
+
 // Editorial workflow organs — review queue, audit timeline, version diff
 // (backend: noctusai_lib/domain/editorial). See ./editorial/README.md.
 export {

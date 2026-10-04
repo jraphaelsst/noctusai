@@ -126,6 +126,12 @@ export class ApiError extends Error {
   }
 }
 
+import { mfaChallenge } from './mfaChallenge';
+import type { MfaVerifyResult } from './mfaChallenge';
+
+/** Base path of the seed `mfa` router (`standard_routers`). */
+export const MFA_BASE_PATH = '/api/auth/mfa';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -217,6 +223,18 @@ export interface CreateApiClientOptions {
    * a deploy's container swap / tunnel restart must not log anyone out.
    */
   onUnauthenticated?: () => void;
+  /**
+   * Admin step-up. When an admin call answers `403 {code:"mfa_required"}` the
+   * client opens ONE `MfaChallengeDialog` (via `<MfaChallengeHost/>`, mounted
+   * by the seed AuthProviders), then RETRIES the call once on success — or
+   * throws the original 403 on cancel. Concurrent 403s share one dialog.
+   *
+   * `/api/auth/mfa/verify` returns fresh tokens for Bearer SPAs: hand them to
+   * the storage this client already reads in `getAuthToken` (e.g. the Supabase
+   * `setSession`). Cookie-session products need no handler. Awaited before the
+   * retry so the retry carries the aal2 token.
+   */
+  onMfaVerified?: (result: MfaVerifyResult) => Promise<void> | void;
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +328,7 @@ export async function refreshWithBackoff(
 // ---------------------------------------------------------------------------
 
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
-  const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated } = options;
+  const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated, onMfaVerified } = options;
 
   async function buildHeaders(token?: string | null): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
@@ -381,7 +399,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     return inflightRefresh;
   }
 
-  async function fetchWithRetry(url: string, init: RequestInit): Promise<Response> {
+  async function fetchWithAuthRetry(url: string, init: RequestInit): Promise<Response> {
     const response = await safeFetch(url, init);
     if (response.status !== 401) return response;
 
@@ -412,6 +430,39 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     return response;
   }
 
+  /** `mfa_required` from a 403 body (nested or flat shape) → `enrolled` flag. */
+  async function readMfaRequired(response: Response): Promise<{ enrolled: boolean | null } | null> {
+    if (response.status !== 403) return null;
+    const data = await response.clone().json().catch(() => null);
+    // Flat `{code, enrolled}` (contract), nested `{error:{...}}`, or FastAPI `{detail:{...}}`.
+    const body = data?.error ?? (data?.detail && typeof data.detail === 'object' ? data.detail : data);
+    if (body?.code !== 'mfa_required') return null;
+    const enrolled = body.enrolled;
+    return { enrolled: typeof enrolled === 'boolean' ? enrolled : null };
+  }
+
+  // The MFA interceptor wraps the auth-retrying fetch. `raw` (no interceptor)
+  // is what the dialog itself talks through — a 403 there must never reopen it.
+  let rawClient: ApiClient;
+  async function fetchWithMfa(url: string, init: RequestInit): Promise<Response> {
+    const response = await fetchWithAuthRetry(url, init);
+    const required = await readMfaRequired(response);
+    if (!required) return response;
+    const verified = await mfaChallenge.request({
+      enrolled: required.enrolled,
+      api: rawClient,
+      onVerified: async (result) => {
+        await onMfaVerified?.(result);
+      },
+    });
+    if (!verified) return response; // cancelled → caller throws the original 403
+    const token = await getAuthToken();
+    const headers = { ...(init.headers as Record<string, string>) };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    return fetchWithAuthRetry(url, { ...init, headers });
+  }
+
+  function buildClient(fetcher: (url: string, init: RequestInit) => Promise<Response>): ApiClient {
   return {
     async get<T = any>(path: string, params?: Record<string, any>): Promise<T> {
       const headers = await buildHeaders();
@@ -424,14 +475,14 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
           }
         });
       }
-      const response = await fetchWithRetry(url.toString(), { headers });
+      const response = await fetcher(url.toString(), { headers });
       return handleResponse<T>(response);
     },
 
     async post<T = any>(path: string, body?: unknown): Promise<T> {
       const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await fetchWithRetry(`${base}${path}`, {
+      const response = await fetcher(`${base}${path}`, {
         method: 'POST',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -447,7 +498,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       const headers = await buildHeaders();
       delete headers['Content-Type'];
       const base = getBaseUrl();
-      const response = await fetchWithRetry(`${base}${path}`, {
+      const response = await fetcher(`${base}${path}`, {
         method: 'POST',
         headers,
         body: form,
@@ -458,7 +509,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     async patch<T = any>(path: string, body?: unknown): Promise<T> {
       const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await fetchWithRetry(`${base}${path}`, {
+      const response = await fetcher(`${base}${path}`, {
         method: 'PATCH',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -469,7 +520,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     async put<T = any>(path: string, body?: unknown): Promise<T> {
       const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await fetchWithRetry(`${base}${path}`, {
+      const response = await fetcher(`${base}${path}`, {
         method: 'PUT',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -480,7 +531,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     async delete<T = any>(path: string, body?: unknown): Promise<T> {
       const headers = await buildHeaders();
       const base = getBaseUrl();
-      const response = await fetchWithRetry(`${base}${path}`, {
+      const response = await fetcher(`${base}${path}`, {
         method: 'DELETE',
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -492,7 +543,7 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       const headers = await buildHeaders();
       delete headers['Content-Type']; // GET has no body — no reason to declare one
       const base = getBaseUrl();
-      const response = await fetchWithRetry(`${base}${path}`, { headers });
+      const response = await fetcher(`${base}${path}`, { headers });
       if (!response.ok) {
         const data = await response.json().catch(() => null);
         const message = data
@@ -504,4 +555,8 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       return response.blob();
     },
   };
+  }
+
+  rawClient = buildClient(fetchWithAuthRetry);
+  return buildClient(fetchWithMfa);
 }

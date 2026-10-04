@@ -23,6 +23,8 @@ export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneD
 
 // API client
 export { createApiClient, extractErrorMessage, ApiError, TransientAuthError, isTransientHttpStatus, refreshWithBackoff } from './api';
+export { mfaChallenge } from './mfaChallenge';
+export type { MfaTransport, MfaVerifyResult, MfaChallengeRequest } from './mfaChallenge';
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth

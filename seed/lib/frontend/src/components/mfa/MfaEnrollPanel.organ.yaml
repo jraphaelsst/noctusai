@@ -1,0 +1,21 @@
+name: MfaEnrollPanel
+path: seed/lib/frontend/src/components/mfa/MfaEnrollPanel.tsx
+phase: pilot-seed
+registered_at: '2026-10-04'
+validation_status: emerging
+known_facts:
+- "Status + devices list; enrol flow (name, QR, manual otpauth uri with copy, 6-digit confirm via POST /verify); remove factor (DELETE /factors/{id}). Recommends TWO devices for recovery."
+- "Part of platform-admin-mfa M4. Wire contract fixed with the backend M3 router: GET /api/auth/mfa/status, POST enroll/verify, DELETE factors/{id}; any admin call may answer 403 {code: mfa_required, enrolled}. The api client interceptor (api.ts + mfaChallenge.ts broker) raises the dialog via MfaChallengeHost, mounted by the seed AuthProviders; concurrent 403s share one dialog and are all retried after verify."
+- "Loading follows lying-loading-state (showSkeleton = pending && no data; isRefreshing = refreshing && data; never isLoading). pt-BR copy, design tokens only."
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+- "react-query hooks inside the organ: rejected, the host lives in AuthProvider which can sit above QueryClientProvider; plain state over the injected client keeps it provider-free."
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
