@@ -187,4 +187,5 @@ class LearningListOut(BaseModel):
 
 class LearningReviewIn(StrictHttpModel):
     status: Literal["aceito", "descartado"]
-    nota: str | None = Field(default=None, max_length=2000)
+    # CONTRACT agent-packages §H2: a review always carries a note (enforced here, not only in the UI).
+    nota: str = Field(min_length=3, max_length=2000, pattern=r"\S")

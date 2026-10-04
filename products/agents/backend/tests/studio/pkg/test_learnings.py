@@ -52,17 +52,17 @@ class TestAuthBoundary:
     def test_review_is_admin_user_only_a_token_is_403_user_required(self, advisor):
         new = push(advisor, [row()]).json()["novos"][0]["id"]
         with advisor.as_token("learnings:write", "learnings:read", "packages:read", "project-knowledge:write"):
-            resp = advisor.patch(f"{URL}/{new}", json={"status": "aceito"})
+            resp = advisor.patch(f"{URL}/{new}", json={"status": "aceito", "nota": "revisado pelo dono"})
         assert resp.status_code == 403
         assert resp.json()["code"] == "user_required"
 
     def test_review_without_credential_is_401(self, advisor):
-        assert advisor.rt.client.raw().patch(f"{URL}/{advisor.rt.user_id}", json={"status": "aceito"}).status_code == 401
+        assert advisor.rt.client.raw().patch(f"{URL}/{advisor.rt.user_id}", json={"status": "aceito", "nota": "revisado pelo dono"}).status_code == 401
 
     def test_review_by_a_non_admin_member_is_403_role_missing(self, advisor):
         new = push(advisor, [row()]).json()["novos"][0]["id"]
         seed_org_role(advisor.rt.client, role="member")
-        resp = advisor.patch(f"{URL}/{new}", json={"status": "aceito"})
+        resp = advisor.patch(f"{URL}/{new}", json={"status": "aceito", "nota": "revisado pelo dono"})
         assert resp.status_code == 403
         assert resp.json()["code"] == "role_missing"
 
@@ -160,23 +160,29 @@ class TestListAndReview:
     def test_discard_and_the_content_never_changes(self, advisor):
         new = push(advisor, [row()]).json()["novos"][0]["id"]
         before = advisor.get(URL).json()["items"][0]
-        out = advisor.patch(f"{URL}/{new}", json={"status": "descartado"}).json()
+        out = advisor.patch(f"{URL}/{new}", json={"status": "descartado", "nota": "não se aplica ao pacote"}).json()
         assert out["status"] == "descartado"
         assert (out["texto"], out["data"], out["tipo"], out["row_sha"]) == (
             before["texto"], before["data"], before["tipo"], before["row_sha"])
 
-    @pytest.mark.parametrize("body", [{"status": "novo"}, {"status": "promovido"}, {}, {"status": "aceito", "x": 1}])
+    @pytest.mark.parametrize("body", [{"status": "novo", "nota": "ok ok"}, {"status": "promovido", "nota": "ok ok"}, {}, {"status": "aceito", "nota": "ok ok", "x": 1}])
     def test_review_status_is_aceito_or_descartado_only(self, advisor, body):
         new = push(advisor, [row()]).json()["novos"][0]["id"]
         assert advisor.patch(f"{URL}/{new}", json=body).status_code == 422
 
+    @pytest.mark.parametrize("body", [{"status": "aceito"}, {"status": "aceito", "nota": ""}, {"status": "descartado", "nota": "   "}])
+    def test_review_requires_a_note(self, advisor, body):
+        # CONTRACT agent-packages §H2: the note is required server-side, not only in the UI.
+        new = push(advisor, [row()]).json()["novos"][0]["id"]
+        assert advisor.patch(f"{URL}/{new}", json=body).status_code == 422
+
     def test_unknown_learning_is_404(self, advisor):
-        resp = advisor.patch(f"{URL}/{advisor.rt.user_id}", json={"status": "aceito"})
+        resp = advisor.patch(f"{URL}/{advisor.rt.user_id}", json={"status": "aceito", "nota": "revisado pelo dono"})
         assert resp.status_code == 404 and resp.json()["code"] == "learning_not_found"
 
     def test_a_learning_of_another_agent_is_404_not_403(self, pkg):
         pkg.advisor("mobile-dev")
         pkg.advisor("outro-advisor")
         new = push(pkg, [row()], url="/api/studio/agents/outro-advisor/learnings").json()["novos"][0]["id"]
-        resp = pkg.patch(f"{URL}/{new}", json={"status": "aceito"})
+        resp = pkg.patch(f"{URL}/{new}", json={"status": "aceito", "nota": "revisado pelo dono"})
         assert resp.status_code == 404
