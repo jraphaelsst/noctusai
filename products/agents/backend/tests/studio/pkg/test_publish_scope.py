@@ -232,3 +232,22 @@ class TestScopeIsMintable:
         })
         assert resp.status_code == 201, resp.text
         assert resp.json()["scopes"] == [SCOPE]
+
+
+class TestEvalRunThroughProductionWiring:
+    """Regression (2026-10-04): the PRODUCTION scheduler binding
+    (``app.studio.wiring.studio_eval_scheduler``) carried its own user-only
+    ``require_admin``, so a ``studio:publish`` token got 403 ``user_required``
+    in prod while every test above passed — they fake the scheduler seam.
+    This test leaves the scheduler on its real binding (no ``seams`` fixture)."""
+
+    def test_token_run_is_scheduled_and_concluded_by_the_real_runner(self, pkg):
+        from tests.routers.conftest import install_runtime, wait_until
+
+        install_runtime(pkg.rt.client, [])
+        agent, draft = _advisor_draft(pkg)
+        with pkg.as_token(SCOPE):
+            created = pkg.rt.client.raw().post(f"{BASE}/mobile-dev/evals/runs", json={"version_id": str(draft.id)})
+        assert created.status_code == 202, created.text
+        run_id = UUID(created.json()["id"])
+        assert wait_until(lambda: pkg.rt.evals.get_run(pkg.rt.org_id, agent.id, run_id).status == "concluida")

@@ -32,6 +32,7 @@ from app.dependencies import (
     get_agent_runtime_dep,
     get_approval_broker_dep,
     require_admin,
+    require_publish_write,
 )
 from app.routers.studio_agents_router import (
     get_compiled_hash_provider,
@@ -87,7 +88,11 @@ def studio_knowledge_catalog(knowledge=Depends(get_studio_knowledge_store_dep)) 
 
 def studio_eval_scheduler(
     request: Request,
-    ctx: AuthContext = Depends(require_admin),
+    # Same guard as the route it serves (POST .../evals/runs): a human admin OR a
+    # `studio:publish` token on a dev-advisor (the route then enforces the kind).
+    # Was `require_admin` (user-only) — invisible to tests that fake this seam,
+    # it refused every token in production (2026-10-04).
+    ctx: AuthContext = Depends(require_publish_write),
     evals=Depends(get_eval_store_dep),
     runs=Depends(get_eval_run_writer_dep),
     definitions=Depends(get_studio_definition_store_dep),
