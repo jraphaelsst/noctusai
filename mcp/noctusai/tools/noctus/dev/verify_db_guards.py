@@ -3518,8 +3518,8 @@ _SW_190_PROBES: tuple[GuardProbe, ...] = (
         tabelas=_M190_TABELAS,
         ops_sql=(
             _M190_ADITIVO_CTE + "\n" + _M190_VERSAO_COLS
-            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL, NULL, NULL, NULL, NULL FROM a\n"
-            "    UNION ALL SELECT v_org, a.id, 'noc/probe2', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL, NULL, NULL, NULL, NULL FROM a;"
+            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL::text, NULL::text, NULL::bigint, NULL::uuid, NULL::timestamptz FROM a\n"
+            "    UNION ALL SELECT v_org, a.id, 'noc/probe2', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL::text, NULL::text, NULL::bigint, NULL::uuid, NULL::timestamptz FROM a;"
         ),
         sqlstate_condition=_UNIQ,
         what="two versions of one aditivo with the same numero",
@@ -3533,7 +3533,7 @@ _SW_190_PROBES: tuple[GuardProbe, ...] = (
         tabelas=_M190_TABELAS,
         ops_sql=(
             _M190_ADITIVO_CTE + "\n" + _M190_VERSAO_COLS
-            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'gerado', NULL, NULL, NULL, NULL, NULL FROM a;"
+            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'gerado', NULL::text, NULL::text, NULL::bigint, NULL::uuid, NULL::timestamptz FROM a;"
         ),
         sqlstate_condition=_CHECK,
         what="a gerado aditivo version without its snapshot hash and .docx",
@@ -3547,7 +3547,7 @@ _SW_190_PROBES: tuple[GuardProbe, ...] = (
         tabelas=_M190_TABELAS,
         ops_sql=(
             _M190_ADITIVO_CTE + "\n" + _M190_VERSAO_COLS
-            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL, NULL, NULL, gen_random_uuid(), NULL FROM a;"
+            + "    SELECT v_org, a.id, 'noc/probe', 'p.pdf', 'application/pdf', 1, 'aditivo', 1, 'upload', NULL::text, NULL::text, NULL::bigint, gen_random_uuid(), NULL::timestamptz FROM a;"
         ),
         sqlstate_condition=_CHECK,
         what="an aditivo version with revisado_por but no revisado_em",
