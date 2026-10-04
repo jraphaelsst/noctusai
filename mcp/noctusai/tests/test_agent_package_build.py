@@ -301,3 +301,20 @@ def test_bundle_carries_claude_tree_matching_dist(packages):
         assert (dist / "claude" / c["caminho"]).read_text(encoding="utf-8") == c["conteudo"]
     assert f".claude/agents/{KEY}.md" in {c["caminho"] for c in claude}
     assert r["importer_validation"]["status"] in {"ok", "skipped"}
+
+
+def test_load_studio_leaves_sys_modules_exactly_as_found(monkeypatch):
+    # 2026-10-04: the loader left the agents `app` package in sys.modules, shadowing every later
+    # `from app.… import` of ANOTHER product in the same process (MCP server, test session).
+    import sys
+    import types
+
+    other = types.ModuleType("app")
+    other.__file__ = "/elsewhere/products/core/backend/app/__init__.py"
+    monkeypatch.setitem(sys.modules, "app", other)
+    apb.reset_studio()
+    studio = apb._load_studio(REPO_ROOT / "products" / "agents" / "backend")
+    assert sys.modules["app"] is other  # the other product's package is back, untouched
+    assert not [k for k in sys.modules if k.startswith("app.studio")]  # nothing of the agents app left behind
+    assert callable(studio["compile_prompt"])  # and the loader still works through its cached handles
+    apb.reset_studio()

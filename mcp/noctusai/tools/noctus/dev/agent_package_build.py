@@ -624,24 +624,22 @@ def _load_studio(backend_dir: Path) -> dict[str, Any]:
     Import chain: ``app.studio`` -> ``compiler`` -> ``models`` — stdlib only (no pydantic, no
     supabase), so ``sys.path`` insertion of ``products/agents/backend`` is enough. The importer
     pulls pydantic + ``noctusai_lib`` + the agents stores; it is optional (``importer`` is None if
-    its chain does not resolve in this interpreter). The modules stay in ``sys.modules`` (pydantic
-    resolves forward refs through it); if a DIFFERENT product's ``app`` package is already loaded we
-    refuse loudly rather than silently compiling against the wrong code.
+    its chain does not resolve in this interpreter).
+
+    ISOLATED: ``sys.modules`` is left exactly as found. Any ``app``/``app.*`` already imported (another
+    product's package — e.g. core's, in the long-lived MCP server or a test session) is set aside for
+    the import and restored after; the agents modules are kept alive only through the handles cached in
+    ``_STUDIO`` (their classes are fully built at import, so nothing re-resolves them by module name).
+    Leaving the agents ``app`` in ``sys.modules`` shadowed every later ``from app.… import`` of another
+    product in the same process (2026-10-04: order-dependent MCP-suite failures in
+    test_llm_endpoints; the same shadowing would hit the MCP server after one package build).
     """
     if _STUDIO:
         return _STUDIO
     comp_file = backend_dir / "app" / "studio" / "compiler.py"
     if not comp_file.is_file():
         raise StudioUnavailable(f"compiler not found: {comp_file}")
-    existing = sys.modules.get("app")
-    if existing is not None:
-        loaded_from = Path(getattr(existing, "__file__", "") or "").resolve()
-        if backend_dir.resolve() not in loaded_from.parents:
-            raise StudioUnavailable(
-                f"a different 'app' package is already imported ({loaded_from}); "
-                "run the build in a fresh process (python mcp/noctusai/cli.py) — seam: extract compile_prompt "
-                "into noctusai_lib if this recurs"
-            )
+    stashed = {k: sys.modules.pop(k) for k in [k for k in sys.modules if k == "app" or k.startswith("app.")]}
     sys.path.insert(0, str(backend_dir))
     try:
         from app.studio import models as m  # type: ignore[import-not-found]
@@ -659,18 +657,17 @@ def _load_studio(backend_dir: Path) -> dict[str, Any]:
             sys.path.remove(str(backend_dir))
         except ValueError:
             pass
+        for k in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
+            del sys.modules[k]
+        sys.modules.update(stashed)
     _STUDIO.update(models=m, compile_prompt=compile_prompt, importer=importer, importer_error=importer_error)
     return _STUDIO
 
 
 def reset_studio() -> None:
-    """Undo ``_load_studio``: drop the cached handles AND evict the ``app``/``app.*`` modules it left in
-    ``sys.modules``. The CLI process never needs this (one build per process); a long-lived process that
-    ALSO imports another product's ``app`` package (the test session) calls it, else the agents ``app``
-    shadows that product's and its imports fail (order-dependent pollution, 2026-10-04)."""
+    """Drop the cached studio handles (tests that need a fresh load). ``_load_studio`` never leaves its
+    ``app`` modules in ``sys.modules``, so there is nothing else to undo."""
     _STUDIO.clear()
-    for name in [k for k in sys.modules if k == "app" or k.startswith("app.")]:
-        del sys.modules[name]
 
 
 def build_bundle(pkg: PackageData, sha: str) -> dict[str, Any]:
