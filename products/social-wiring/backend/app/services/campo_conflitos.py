@@ -344,6 +344,7 @@ def resolver_e_registrar(
     uf: Optional[str] = None,
     cpf_proprio: Optional[Any] = None,
     atual_humano: bool = False,
+    confianca_anterior: Optional[str] = None,
 ) -> Decisao:
     """THE automatic divergence resolver — owner directive, 2026-09-29:
     "resolve divergencies without the need of a human [...] using docs and
@@ -393,6 +394,7 @@ def resolver_e_registrar(
         cpf_proprio=cpf_proprio,
         atual_humano=atual_humano,
         confianca_proposta=confianca_proposta,
+        confianca_atual=confianca_anterior,
     )
     return registrar_decisao_automatica(
         client, table, org_id, owner, campo,

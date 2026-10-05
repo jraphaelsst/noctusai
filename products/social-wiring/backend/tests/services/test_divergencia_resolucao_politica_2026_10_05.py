@@ -21,7 +21,8 @@ def _r(campo, atual, prop, oa="cnh", op="ficha_cadastral", **kw):
 class TestConfianca:
     def test_low_confidence_never_contests_filled_value(self):
         for c in ("baixa", "nenhuma", "desconhecida"):
-            d = _r("nome_oficial", "Maria Teste Silva", "Mariana Teste", confianca_proposta=c)
+            d = _r("nome_oficial", "Maria Teste Silva", "Mariana Teste", confianca_proposta=c,
+                   confianca_atual="alta")
             assert (d.vencedor, d.regra, d.requer_humano) == ("atual", "confianca_baixa", False)
 
     def test_high_confidence_still_reaches_policy(self):
@@ -31,7 +32,7 @@ class TestConfianca:
 
     def test_value_changing_between_reads_is_low_confidence(self):
         d = _r("data_nascimento", "1980-03-10", "1980-07-10", confianca_proposta="alta",
-               leituras_mesmo_documento=["1980-05-10", "1980-07-10"])
+               confianca_atual="alta", leituras_mesmo_documento=["1980-05-10", "1980-07-10"])
         assert d.regra == "confianca_baixa" and d.vencedor == "atual"
 
 
@@ -111,3 +112,35 @@ class TestNormalizacao:
 
     def test_name_particles(self):
         assert _r("nome_oficial", "Maria da Silva", "MARIA SILVA").regra == "equivalencia"
+
+
+class TestBaixaConfiancaNuncaSobrescreve:
+    """Shape of the two H-class records (low-confidence endereco vs a
+    different filled one). A weak proposal holds back only against a human
+    or firmly-read stored value; if the stored side is itself weak or its
+    confidence unknown, a human decides (never silently entrench garbage)."""
+
+    CASOS = (("comprovante_endereco", "baixa"), ("ficha_cadastral", "desconhecida"))
+
+    def test_unknown_stored_confidence_needs_human(self):
+        for op, conf in self.CASOS:
+            d = _r("endereco", "Rua Um 10", "Rua Dois 20", oa="comprovante_endereco", op=op,
+                   confianca_proposta=conf)
+            assert d.requer_humano and d.vencedor is None and d.sugerido is None
+
+    def test_stored_also_low_needs_human(self):
+        d = _r("endereco", "Rua Um 10", "Rua Dois 20", oa="comprovante_endereco",
+               op="ficha_cadastral", confianca_proposta="baixa", confianca_atual="baixa")
+        assert d.requer_humano
+
+    def test_human_stored_value_holds(self):
+        for op, conf in self.CASOS:
+            d = _r("endereco", "Rua Um 10", "Rua Dois 20", oa="manual", op=op,
+                   confianca_proposta=conf, atual_humano=True)
+            assert (d.vencedor, d.regra) == ("atual", "confianca_baixa")
+            assert op in d.motivo
+
+    def test_firm_stored_read_holds(self):
+        d = _r("endereco", "Rua Um 10", "Rua Dois 20", oa="comprovante_endereco",
+               op="ficha_cadastral", confianca_proposta="baixa", confianca_atual="media")
+        assert d.vencedor == "atual" and not d.requer_humano

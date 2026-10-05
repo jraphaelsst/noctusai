@@ -160,7 +160,11 @@ from typing import Any, Callable, Optional, Sequence
 
 from noctusai_lib.integrations.documents.cnpj import is_valid as _cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
+from noctusai_lib.integrations.documents.address import (
+    normalizar_logradouro as _seed_normalizar_logradouro,
+)
 from noctusai_lib.integrations.documents.cpf import only_digits
+from noctusai_lib.integrations.documents.rg import rg_shape_valido
 from noctusai_lib.primitives import identificador as _ident
 
 from app.services import identificadores as _ids
@@ -390,15 +394,8 @@ _LOGRADOURO_CANONICO: dict[str, str] = {
 }
 
 
-#: Title/abbreviation tokens that mean the same person-title in a street name
-#: (`PROF`/`PRF`/`PROFA` -> PROFESSOR), mapped like the street types above.
-_TITULO_CANONICO: dict[str, str] = {
-    "PROF": "PROFESSOR", "PRF": "PROFESSOR", "PROFESSOR": "PROFESSOR",
-    "PROFA": "PROFESSORA", "PRFA": "PROFESSORA", "PROFESSORA": "PROFESSORA",
-    "DR": "DOUTOR", "DOUTOR": "DOUTOR", "DRA": "DOUTORA", "DOUTORA": "DOUTORA",
-}
-
 _CONECTORES = frozenset({"DE", "DA", "DO", "DAS", "DOS", "E"})
+_TIPOS_LOGRADOURO = frozenset(_LOGRADOURO_CANONICO.values())
 
 
 def _sem_acento_upper(valor: str) -> str:
@@ -407,43 +404,22 @@ def _sem_acento_upper(valor: str) -> str:
     return re.sub(r"\s+", " ", sem_acento.upper()).strip()
 
 
-def _tokens_logradouro(valor: Optional[str]) -> list[str]:
-    """Upper/accent-free tokens with the leading street type (and a DOUBLED
-    one — `Estrada EST do Embu` — collapsed) and title abbreviations
-    rewritten onto canonical spellings."""
-    if not valor:
-        return []
-    texto = _sem_acento_upper(valor)
-    if not texto:
-        return []
-    tokens = [t.rstrip(".,") for t in re.split(r"[\s,]+", texto) if t.rstrip(".,")]
-    tipos = set(_LOGRADOURO_CANONICO.values())
-    tokens[0] = _LOGRADOURO_CANONICO.get(tokens[0], tokens[0])
-    # doubled street type: `Estrada EST do Embu` -> `ESTRADA ESTRADA DO EMBU`
-    # -> one type.
-    if len(tokens) > 1 and tokens[0] in tipos:
-        segundo = _LOGRADOURO_CANONICO.get(tokens[1], tokens[1])
-        if segundo == tokens[0]:
-            tokens = [tokens[0]] + tokens[2:]
-    return [_TITULO_CANONICO.get(t, t) for t in tokens]
-
-
 def normalizar_logradouro(valor: Optional[str]) -> str:
-    """Accent/case/space-normalised, with its leading street type (the
-    abbreviation or its spelled-out form, even doubled) rewritten onto one
-    canonical spelling and title abbreviations (PROF/PRF) unified —
-    `"AV Paulista"` and `"Avenida Paulista"` normalise to the same string, so
-    comparing the two is no longer a conflict. Connectors (DO/DA/DE) are kept
+    """Comparison string for a logradouro: the seed's
+    `address.normalizar_logradouro` (doubled-type collapse, type and
+    PROF/PRF abbreviation expansion, connector case) folded to accent-free
+    upper case — `"AV Paulista"` == `"Avenida Paulista"`. Connectors are kept
     here; `chave_logradouro` drops them and the type for the loosest compare."""
-    return " ".join(_tokens_logradouro(valor))
+    if not valor or not valor.strip():
+        return ""
+    return _sem_acento_upper(_seed_normalizar_logradouro(valor) or valor)
 
 
 def chave_logradouro(valor: Optional[str]) -> str:
     """The street NAME alone — type and connectors stripped. A CEP lookup says
     `Estrada X`, the document says `Rua X`: same street, so the same key."""
-    tipos = set(_LOGRADOURO_CANONICO.values())
-    tokens = _tokens_logradouro(valor)
-    if tokens and tokens[0] in tipos:
+    tokens = normalizar_logradouro(valor).replace(",", " ").split()
+    if tokens and (tokens[0].rstrip(".") in _TIPOS_LOGRADOURO):
         tokens = tokens[1:]
     return " ".join(t for t in tokens if t not in _CONECTORES)
 
@@ -483,7 +459,7 @@ def _rne_digitos(valor: Any) -> Optional[str]:
 def rg_rne_equivalente(a: Any, b: Any) -> bool:
     """An RNE RG shaped `X-###.###-X` carries the same number as the bare
     `######` the other source prints."""
-    if _vazio(a) or _vazio(b):
+    if _vazio(a) or _vazio(b) or not (rg_shape_valido(str(a)) and rg_shape_valido(str(b))):
         return False
     da, db = _rne_digitos(a), _rne_digitos(b)
     if da is not None and re.fullmatch(r"\d{6}", only_digits(str(b)) or "") and not re.search(r"[A-Za-z]", str(b)):
@@ -497,6 +473,25 @@ def rg_rne_equivalente(a: Any, b: Any) -> bool:
 
 #: Confidence labels that must never contest a filled value.
 CONFIANCAS_BAIXAS = frozenset({"baixa", "nenhuma", "desconhecida"})
+
+
+#: A stored read at these confidences (or a human value) may hold against a
+#: weak proposal.
+CONFIANCAS_FIRMES = frozenset({"media", "alta"})
+
+
+def _atual_firme(atual_humano: bool, confianca_atual: Optional[str]) -> bool:
+    return bool(atual_humano) or (
+        isinstance(confianca_atual, str)
+        and _sem_acento_upper(confianca_atual).lower() in CONFIANCAS_FIRMES
+    )
+
+
+def _leitura_instavel(
+    campo: str, proposto: Any, leituras: Sequence[Any],
+    mesmo_valor: Callable[[str, Any, Any], bool],
+) -> bool:
+    return any(not _vazio(v) and not mesmo_valor(campo, v, proposto) for v in leituras)
 
 
 def confianca_baixa(confianca: Any) -> bool:
@@ -738,6 +733,7 @@ def resolver_divergencia(
     leituras_mesmo_documento: Sequence[Any] = (),
     proposto_inferido: bool = False,
     data_negocio: Optional[date] = None,
+    confianca_atual: Optional[str] = None,
 ) -> Decisao:
     """Decide `'atual'` vs `'proposto'` for one disagreeing (campo, valores)
     pair, or admit a human is needed. Pure — no I/O, no DB. `mesmo_valor` is
@@ -773,7 +769,10 @@ def resolver_divergencia(
     differ from the proposal the reading is unstable and counts as low
     confidence. `proposto_inferido` — the proposal is an inference, not an
     attestation (`ROTULO_SOLTEIRO_INFERIDO`). `data_negocio` — reference date
-    for the age plausibility proof (default today).
+    for the age plausibility proof (default today). `confianca_atual` — the
+    stored value's own read confidence; unknown (None) is the conservative
+    path: a weak proposal against a stored value that is neither human nor
+    read with real confidence needs a human.
     """
     decisao = _resolver(
         campo,
@@ -784,7 +783,19 @@ def resolver_divergencia(
         confianca_proposta=confianca_proposta,
         leituras_mesmo_documento=leituras_mesmo_documento,
         proposto_inferido=proposto_inferido, data_negocio=data_negocio,
+        confianca_atual=confianca_atual, atual_humano=atual_humano,
     )
+    if (
+        decisao.vencedor == "proposto"
+        and decisao.regra in ("tier", "corroboracao", "retratado")
+        and not _vazio(valor_atual)
+        and (confianca_baixa(confianca_proposta) or _leitura_instavel(
+            campo, valor_proposto, leituras_mesmo_documento, mesmo_valor))
+        and not _atual_firme(atual_humano, confianca_atual)
+    ):
+        # a weak proposal never wins on soft evidence over a weak/unknown
+        # stored value either — a human decides.
+        return _HUMANO
     if (
         atual_humano
         and decisao.vencedor == "proposto"
@@ -810,6 +821,8 @@ def _resolver(
     leituras_mesmo_documento: Sequence[Any] = (),
     proposto_inferido: bool = False,
     data_negocio: Optional[date] = None,
+    confianca_atual: Optional[str] = None,
+    atual_humano: bool = False,
 ) -> Decisao:
     """`resolver_divergencia`'s steps 0-4, before the human guard."""
     # 0. Equivalence — format-only differences are not a disagreement.
@@ -864,21 +877,24 @@ def _resolver(
     if not _vazio(valor_atual):
         # C. Confidence — a weak or unstable reading never contests a filled
         # value; it is recorded, no human conflict.
-        instavel = any(
-            not _vazio(v) and not mesmo_valor(campo, v, valor_proposto)
-            for v in leituras_mesmo_documento
-        )
+        instavel = _leitura_instavel(
+            campo, valor_proposto, leituras_mesmo_documento, mesmo_valor)
         if confianca_baixa(confianca_proposta) or instavel:
             motivo = (
                 "o mesmo documento deu valores diferentes entre leituras"
                 if instavel and not confianca_baixa(confianca_proposta)
                 else f"confiança {confianca_proposta or 'baixa'} na leitura proposta"
             )
-            return _decisao(
-                "atual", "confianca_baixa",
-                f"{campo}: {motivo} ({origem_proposto}) — nunca contesta um "
-                f"valor preenchido; registrada sem conflito.",
-            )
+            if _atual_firme(atual_humano, confianca_atual):
+                return _decisao(
+                    "atual", "confianca_baixa",
+                    f"{campo}: {motivo} ({origem_proposto}) — o valor em "
+                    f"registro é humano ou foi lido com confiança firme; "
+                    f"registrada sem conflito.",
+                )
+            # Stored side is itself weak/unknown: do NOT short-circuit and do
+            # NOT entrench it — fall through to validators / tier, which may
+            # still decide on evidence; otherwise the generic human verdict.
         # A. Attestation — a source that cannot attest this field (or only
         # infers it) never contests a filled value.
         if proposto_inferido or (origem_proposto, campo) in FONTE_NAO_ATESTA:
@@ -1037,6 +1053,7 @@ __all__ = [
     "orgao_conhecido",
     "confianca_baixa",
     "CONFIANCAS_BAIXAS",
+    "CONFIANCAS_FIRMES",
     "FONTE_NAO_ATESTA",
     "only_digits",
     "precisao_de",
