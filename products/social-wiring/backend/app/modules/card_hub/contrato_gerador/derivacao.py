@@ -716,7 +716,28 @@ def _hoje_padrao() -> date:
 
 
 def parcelas_ordenadas(d: DadosContrato) -> list[Parcela]:
-    return sorted(d.parcelas, key=lambda p: p.ordem)
+    """THE ordering point of the payment schedule — the printed "Parcela NN"
+    numbers, every reference to them and every amount are derived from this
+    one list (`grupos_de_parcelas` → `numeros_impressos`), never re-sorted.
+
+    Rule: the persisted `ordem` (the operator's order, written by
+    `PUT /negociacao/parcelas/ordem`; ties fall back to the read order, i.e.
+    `created_at`) is the source of truth, with ONE invariant on top — the
+    sinal is the first payment (all signed contracts print it as Parcela 01).
+    A sinal created after an auto-suggested financiamento/intermediária
+    stores a LATER `ordem` and used to print as "Parcela 03 (Sinal)" with
+    every amount shifted; when the first sinal is not first, its consecutive
+    run (a sinal paid in tranches, kept together) is hoisted to the front.
+    Non-consecutive sinais stay where `ordem` put them so the
+    `SINAIS_NAO_CONSECUTIVOS` gate still sees them."""
+    por_ordem = sorted(d.parcelas, key=lambda p: p.ordem)  # stable: ties keep read order
+    primeiro = next((i for i, p in enumerate(por_ordem) if p.tipo == "sinal"), None)
+    if not primeiro:  # no sinal, or already first
+        return por_ordem
+    fim = primeiro
+    while fim < len(por_ordem) and por_ordem[fim].tipo == "sinal":
+        fim += 1
+    return por_ordem[primeiro:fim] + por_ordem[:primeiro] + por_ordem[fim:]
 
 
 def grupos_de_parcelas(d: DadosContrato) -> list[list[Parcela]]:
