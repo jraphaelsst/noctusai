@@ -72,7 +72,8 @@ class TestConviveUniaoEstavel:
         d = _divorciado_com_companheira()
         sw = derivacao.derivar_switches(d, pol, fx.REFERENCIA)
         exige = derivacao.avaliar(d, sw, pol, fx.ASSINATURA, fx.REFERENCIA)
-        assert any(f["campo"].startswith("certidao.") and f["parte_id"] == "parte-an1" for f in exige.faltando)
+        # [Owner 2026-10-05] an anuente is never certified, whatever the policy.
+        assert not any(f["campo"].startswith("certidao.") and f["parte_id"] == "parte-an1" for f in exige.faltando)
 
     def test_a_couple_both_flagged_pairs_in_one_nucleo_as_co_sellers(self):
         d = fx.variante(1)

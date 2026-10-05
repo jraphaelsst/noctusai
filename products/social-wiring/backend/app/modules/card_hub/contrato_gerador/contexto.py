@@ -47,7 +47,6 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     antigos_proprietarios_pj,
     empresas_impressas_como_parte,
     partes_pj_contratantes,
-    anuentes_certificandos,
     conjuge_do_anuente,
     pj_certificandas,
     certidoes_imovel,
@@ -479,7 +478,7 @@ def montar_contexto(
     # [E1/E4] PJ groups: DISTINCT required empresas of the certificandos
     # (never per-person — a company both spouses hold is printed ONCE).
     empresas_partes = empresas_impressas_como_parte(d, assinatura, politica)
-    for eex in empresas_exigidas(d, sw, hoje, politica):
+    for eex in empresas_exigidas(d, sw, hoje, politica, assinatura):
         e = eex.empresa
         if e.id in empresas_partes:
             continue  # already printed as the party's own group above
@@ -559,16 +558,6 @@ def montar_contexto(
         plural_apres = True
     apresentantes = juntar(apresentantes_lista)
     seus_nomes = "seus nomes" if plural_apres else "seu nome"
-    anu_cert = anuentes_certificandos(d, politica)
-    if anu_cert:
-        # [Migration 193] Corpus deal 141: "apresenta neste momento as
-        # certidões em seu nome, em nome da Anuente …".
-        ga = _generos(anu_cert)
-        if len(ga) == 1:
-            quem = "da Anuente" if ga[0] == "f" else "do Anuente"
-        else:
-            quem = "das Anuentes" if all(g == "f" for g in ga) else "dos Anuentes"
-        seus_nomes += f", em nome {quem}"
     certidoes = {
         "apresentantes_texto": apresentantes,
         "apresenta": "apresentam" if plural_apres else "apresenta",

@@ -646,6 +646,12 @@ class DadosContrato:
     #: blocks. NEVER inferred here or anywhere else from a date — this is
     #: exactly the stored column, nothing derived.
     processo_legado: bool = False
+    #: Migration 203. `atendimentos.antigos_dispensados_em IS NOT NULL` — an
+    #: admin dispensed the previous owners' certidões for this DEAL (owner
+    #: decision 2026-10-05). Readiness then names the dispensation as an
+    #: `aviso` instead of a `falta`, and the antigos do not enter the
+    #: instrument. Exactly the stored stamp, nothing derived.
+    antigos_dispensados: bool = False
     #: Migration 157. `atendimento_contratos.modalidade_assinatura` —
     #: 'digital' (e-signature; the instrument carries the DA ASSINATURA
     #: DIGITAL clause) or 'fisica' (printed, signed by hand: no digital

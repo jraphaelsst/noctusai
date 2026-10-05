@@ -508,6 +508,9 @@ _DESTINO_POR_ONDE: dict[str, tuple[str, str, Optional[str]]] = {
     # never routed through a person's `parte_id` (a `falta` here is per
     # EMPRESA, E4-deduped, not per owner).
     "empresas": ("card_empresas", "/clientes", "empresas"),
+    # [Owner 2026-10-05] The previous owners live in the card's CERTIDÕES tab
+    # (a group of the partes matrix), never in the parties list.
+    "antigos_proprietarios": ("card_certidoes", "/clientes", "certidoes"),
     "matricula": ("matriculas", "/matriculas", None),
     "imovel": ("imovel", "/imoveis", None),
     "negociacao": ("card_negociacao", "/clientes", "negociacao"),
@@ -572,6 +575,11 @@ class Destinos:
 #:   explicit ad-corpus sim/não.
 #: - the imóvel page's documents card (`ImovelDocumentosCard`), where the
 #:   matrícula the foro comarca is read from is uploaded.
+#: The "Antigos proprietários" SUBTAB of the Certidões tab (its header carries
+#: the required notice, dispense/undispense and manual add/remove). The id is
+#: `certidoes-subtab-<grupo>` — the subtab key IS the certidões-partes
+#: payload's `grupo`, so the UI selects the subtab straight from the alvo.
+ALVO_ANTIGOS_PROPRIETARIOS = "certidoes-subtab-antigo_proprietario"
 ALVO_ITENS_INTEGRANTES = "termos-itens-integrantes-resposta"
 ALVO_AD_CORPUS = "termos-ad-corpus-resposta"
 ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos"
@@ -996,7 +1004,10 @@ class EmpresaExigida:
 
 
 def _empresas_de_certificandos(
-    d: DadosContrato, sw: dict[str, bool], politica: Politica = POLITICA_PADRAO
+    d: DadosContrato,
+    sw: dict[str, bool],
+    politica: Politica = POLITICA_PADRAO,
+    assinatura: Optional[date] = None,
 ) -> list[tuple[Empresa, Pessoa]]:
     """[E1/E3/E6] Every `d.empresas` row a certificando pessoa holds a
     participação in — signing vendedores + their cônjuges (E3: a married
@@ -1006,12 +1017,15 @@ def _empresas_de_certificandos(
     (from `empresa.owners`) the readiness report attributes it to — one
     pair per `Empresa` (E4; `d.empresas` already carries one row per
     DISTINCT company, `owners` holding every participant)."""
-    certificandos = signatarios_certificandos(d, sw, politica) + anuentes_certificandos(d, politica)
+    certificandos = signatarios_certificandos(d, sw, politica)
+    # [Owner 2026-10-05] An anuente (signs, owns nothing) is never certified
+    # — nor are their companies, even when they are the registered cônjuge of
+    # a certificando (E3 reaches the spouse through `conjuge_cliente_id`).
     ids = {p.cliente_id for p in certificandos}
     # A spouse is a certificando (E3); a companion is not (P5 F8).
     dispensados = {
         p.cliente_id for p in d.vendedores + d.compradores if companheiro_dispensado(d, p, politica)
-    }
+    } | {a.cliente_id for a in anuentes(d.vendedores)}
     ids |= {
         p.conjuge_cliente_id for p in certificandos
         if p.conjuge_cliente_id and p.conjuge_cliente_id not in dispensados
@@ -1021,6 +1035,20 @@ def _empresas_de_certificandos(
         dono = next((o for o in e.owners if o.cliente_id in ids), None)
         if dono is not None:
             pares.append((e, dono))
+    # [Owner 2026-10-05] The companies of the PREVIOUS owners are certified
+    # with the SAME rule as the sellers' (ATIVA/INAPTA any stake; baixada < 5
+    # years; older baixadas omitted) — whenever the antigos enter the
+    # contract. `_empresas_de_certificandos` is the one place that rule is
+    # applied; an antigo is simply one more certificando here.
+    if assinatura is not None and antigos_no_contrato(d, assinatura, politica):
+        ids_antigos = {p.cliente_id for p in antigos_proprietarios(d)}
+        ja = {e.id for e, _ in pares}
+        for e in d.empresas:
+            if e.id in ja:
+                continue
+            dono = next((o for o in e.owners if o.cliente_id in ids_antigos), None)
+            if dono is not None:
+                pares.append((e, dono))
     return pares
 
 
@@ -1124,7 +1152,11 @@ def motivo_publico(codigo: str, situacao_cadastral: Optional[str]) -> tuple[bool
 
 
 def empresas_exigidas(
-    d: DadosContrato, sw: dict[str, bool], referencia: date, politica: Politica
+    d: DadosContrato,
+    sw: dict[str, bool],
+    referencia: date,
+    politica: Politica,
+    assinatura: Optional[date] = None,
 ) -> list[EmpresaExigida]:
     """(empresa, title suffix, attributed owner) of each REQUIRED company —
     E1 classification against `referencia` (TODAY, never the assinatura).
@@ -1133,7 +1165,7 @@ def empresas_exigidas(
     `_empresas_certidoes`, which walks EVERY certificando-owned company,
     not just this filtered set)."""
     saida: list[EmpresaExigida] = []
-    for e, dono in _empresas_de_certificandos(d, sw, politica):
+    for e, dono in _empresas_de_certificandos(d, sw, politica, assinatura):
         motivo = classificar_empresa(e, referencia, politica)
         if motivo == PJ_EXIGIDO:
             saida.append(EmpresaExigida(empresa=e, sufixo=None, owner=dono))
@@ -1206,19 +1238,6 @@ def companheiro_dispensado(d: DadosContrato, p: Pessoa, politica: Politica = POL
     )
 
 
-def anuentes_certificandos(d: DadosContrato, politica: Politica = POLITICA_PADRAO) -> list[Pessoa]:
-    """[E3 + migration 193] An anuente who is a signing vendedor's spouse is
-    treated as a vendedor FOR CERTIDÕES (owner rule: "the cônjuge of a
-    married vendedor IS a vendedor") — the full CPF set plus the estado-civil
-    certidão. A companion is not (`companheiro_dispensado`, P5 F8), unless
-    the policy says so. An anuente who is not a spouse/companion never is
-    (and is refused anyway: `ANUENTE_SEM_REDACAO`)."""
-    return [
-        a for a in anuentes(d.vendedores)
-        if conjuge_do_anuente(d, a) is not None and not companheiro_dispensado(d, a, politica)
-    ]
-
-
 def signatarios_certificandos(
     d: DadosContrato, sw: dict[str, bool], politica: Politica = POLITICA_PADRAO
 ) -> list[Pessoa]:
@@ -1274,7 +1293,11 @@ def antigos_no_contrato(d: DadosContrato, assinatura: date, politica: Politica) 
     and says so (`ANTIGO_PROPRIETARIO_PROCESSO_LEGADO`: "não entram no
     contrato"). The ONE predicate gate and template share, so a legacy deal
     never prints antigos the gate never checked (name, gênero, certidões)."""
-    return bool(exige_antigo_proprietario(d, assinatura, politica)) and not d.processo_legado
+    return (
+        bool(exige_antigo_proprietario(d, assinatura, politica))
+        and not d.processo_legado
+        and not d.antigos_dispensados
+    )
 
 
 def pessoas_certificadas(
@@ -1283,7 +1306,7 @@ def pessoas_certificadas(
     """Whose certidões the contract presents, in group order: the signing
     vendedores, the signing compradores in a permuta, then the previous
     owner(s) when they enter the contract (`antigos_no_contrato`)."""
-    pessoas = signatarios_certificandos(d, sw, politica) + anuentes_certificandos(d, politica)
+    pessoas = signatarios_certificandos(d, sw, politica)
     if antigos_no_contrato(d, assinatura, politica):
         pessoas += antigos_proprietarios(d)
     return pessoas
@@ -2578,7 +2601,14 @@ def _certidoes(
             "destino": av.destinos.para("certidoes", parte_id=parte_id),
         })
 
-    def conferir(parte_id: Optional[str], certs: list[Certidao], tipo_documento: str, nome_grupo: str) -> None:
+    def conferir(
+        parte_id: Optional[str], certs: list[Certidao], tipo_documento: str, nome_grupo: str,
+        *, antigo: bool = False,
+    ) -> None:
+        # A previous owner's missing certidão is fixed in the Certidões tab's
+        # antigos group (owner 2026-10-05), not on the generic screen.
+        onde = "antigos_proprietarios" if antigo else "certidoes"
+        alvo = ALVO_ANTIGOS_PROPRIETARIOS if antigo else None
         # A result whose consulta kind (CPF/CNPJ) is unknown cannot be placed
         # in either group — named, never silently read as one of them.
         for c in certs:
@@ -2587,8 +2617,9 @@ def _certidoes(
                     f"certidao.{c.tipo}.consulta_tipo_documento",
                     f"Tipo de consulta (CPF ou CNPJ) da certidão {_rotulo_certidao_seguro(c.tipo)} "
                     f"— {nome_grupo}",
-                    "certidoes",
+                    onde,
                     parte_id,
+                    alvo=alvo,
                 )
         idx = indice_certidoes(certs, tipo_documento)
         for tipo in tipos_exigidos(tipo_documento):
@@ -2603,7 +2634,7 @@ def _certidoes(
                 # this block used to grant (df54184ab, live in prod since
                 # d1dc3f834) is revoked by owner directive (roadmap
                 # `sw-drive-extraction-2026-09.md` §R1, 2026-09-24).
-                av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", "certidoes", parte_id)
+                av.falta(f"certidao.{tipo}", f"{rotulo} — {nome_grupo}", onde, parte_id, alvo=alvo)
                 continue
             if c.resultado == "nao_emitida":
                 continue
@@ -2616,9 +2647,9 @@ def _certidoes(
                 )
                 continue
             if not c.numero:
-                av.falta(f"certidao.{tipo}.numero", f"Número da {rotulo} — {nome_grupo}", "certidoes", parte_id)
+                av.falta(f"certidao.{tipo}.numero", f"Número da {rotulo} — {nome_grupo}", onde, parte_id, alvo=alvo)
             if not c.emitida_em:
-                av.falta(f"certidao.{tipo}.emitida_em", f"Data de emissão da {rotulo} — {nome_grupo}", "certidoes", parte_id)
+                av.falta(f"certidao.{tipo}.emitida_em", f"Data de emissão da {rotulo} — {nome_grupo}", onde, parte_id, alvo=alvo)
                 continue
             excecao_pcen = certidao_pcen.excecao_aplica(
                 resultado=c.resultado, segunda_via=c.segunda_via, validade_ate=c.validade_ate
@@ -2648,11 +2679,11 @@ def _certidoes(
             if c.resultado in frases.RESULTADOS_COM_APONTAMENTO:
                 com_apontamento.append(f"{rotulo} ({nome_grupo})")
 
-    def conferir_pessoa(p: Pessoa) -> None:
+    def conferir_pessoa(p: Pessoa, *, antigo: bool = False) -> None:
         # Migration 116 reaches EVERY party's certidões, the titular included,
         # so an empty list is "none issued yet" and each tipo is named below —
         # it is no longer an unreachable-data refusal.
-        conferir(p.parte_id, p.certidoes, "cpf", _nome(p))
+        conferir(p.parte_id, p.certidoes, "cpf", _nome(p), antigo=antigo)
 
     def conferir_empresas() -> None:
         """[E1] Every empresa a certificando holds a participação in — the
@@ -2660,7 +2691,7 @@ def _certidoes(
         `faltando`, never a silent skip (E1, H4); required companies get
         the same 11-item CNPJ certidão check as a person (E5)."""
         partes_pj = empresas_impressas_como_parte(d, assinatura, politica)
-        for e, dono in _empresas_de_certificandos(d, sw, politica):
+        for e, dono in _empresas_de_certificandos(d, sw, politica, assinatura):
             if e.id in partes_pj:
                 continue  # the company IS a party: its own group below (`conferir_pj`)
             nome_pj = e.razao_social or e.cnpj
@@ -2679,7 +2710,10 @@ def _certidoes(
                     f"A situação cadastral da empresa {nome_pj} não é reconhecida.",
                 )
             elif motivo in (PJ_EXIGIDO, PJ_EXIGIDO_BAIXADA):
-                conferir(dono.parte_id, e.certidoes, "cnpj", nome_pj)
+                conferir(
+                    dono.parte_id, e.certidoes, "cnpj", nome_pj,
+                    antigo=dono.papel == PAPEL_ANTIGO_PROPRIETARIO,
+                )
 
     def conferir_pj() -> None:
         """[Migration 193] A PJ party presents its OWN 11 CNPJ certidões."""
@@ -2711,7 +2745,7 @@ def _certidoes(
             return
         verificados = set(d.clientes_com_crednet)
         vistos: set[str] = set()
-        for p in signatarios_certificados + anuentes_certificandos(d, politica):
+        for p in signatarios_certificados:
             if p.cliente_id in verificados or p.cliente_id in vistos:
                 continue
             vistos.add(p.cliente_id)
@@ -2730,7 +2764,7 @@ def _certidoes(
     conferir_crednet()
     conferir_pj()
     conferir_conjuges_ausentes()
-    for p in signatarios_certificados + anuentes_certificandos(d, politica):
+    for p in signatarios_certificados:
         conferir_pessoa(p)
         # [Q11] the estado-civil certidão is less than `politica.certidao_estado_civil_max_dias` (30) days old.
         emitida = p.certidao_estado_civil_emitida_em
@@ -2785,6 +2819,16 @@ def _certidoes(
                 "plataforma: os antigos proprietários não entram no contrato "
                 "(processo anterior à plataforma).",
             )
+        elif exige and d.antigos_dispensados:
+            # [Owner 2026-10-05] An operator dispensed the previous owners for
+            # THIS deal (migration 203): visible, never a silent skip.
+            av.avisa(
+                "ANTIGO_PROPRIETARIO_DISPENSADO_NO_NEGOCIO",
+                "Antigos proprietários não exigidos neste negócio (dispensa registrada por um "
+                "administrador): a última transferência foi registrada há menos de "
+                f"{politica.antigo_proprietario_janela_anos} anos, mas as certidões deles não entram "
+                "no contrato.",
+            )
         elif exige:
             if not antigos and not antigos_pj:
                 nomes = ", ".join(d.imovel.ultima_transferencia_transmitentes)
@@ -2793,32 +2837,33 @@ def _certidoes(
                     "partes.antigo_proprietario",
                     "Antigo(s) proprietário(s) do imóvel no card (pessoa ou empresa, papel 'Antigo "
                     "proprietário') — a última transferência de "
-                    f"propriedade foi registrada há menos de {politica.antigo_proprietario_janela_anos} anos{quem}",
-                    "partes",
-                    ancora="vendedor",
+                    f"propriedade foi registrada há menos de {politica.antigo_proprietario_janela_anos} anos{quem}"
+                    " (ou dispense-os neste negócio)",
+                    "antigos_proprietarios",
+                    alvo=ALVO_ANTIGOS_PROPRIETARIOS,
                 )
             for a in antigos:
                 if not a.nome:
-                    av.falta("qualificacao.nome_oficial", f"Nome oficial — {_nome(a)} (antigo proprietário)", "partes", a.parte_id, ancora="vendedor")
+                    av.falta("qualificacao.nome_oficial", f"Nome oficial — {_nome(a)} (antigo proprietário)", "antigos_proprietarios", a.parte_id, alvo=ALVO_ANTIGOS_PROPRIETARIOS)
                 if normalizar_genero(a.genero) is None:
-                    av.falta("qualificacao.genero", f"Gênero — {_nome(a)} (antigo proprietário)", "partes", a.parte_id, ancora="vendedor")
-                conferir_pessoa(a)
+                    av.falta("qualificacao.genero", f"Gênero — {_nome(a)} (antigo proprietário)", "antigos_proprietarios", a.parte_id, alvo=ALVO_ANTIGOS_PROPRIETARIOS)
+                conferir_pessoa(a, antigo=True)
             for pj in antigos_pj:
                 nome_pj = pj.razao_social or frases.documento(pj.cnpj)[1] or "empresa"
                 if not (pj.razao_social or "").strip():
                     av.falta(
                         "partes.pj.razao_social",
                         f"Razão social — {nome_pj} (antiga proprietária)",
-                        "partes", pj.parte_id, ancora="vendedor",
+                        "antigos_proprietarios", pj.parte_id, alvo=ALVO_ANTIGOS_PROPRIETARIOS,
                     )
                 if not (pj.cnpj or "").strip():
                     av.falta(
                         "partes.pj.cnpj", f"CNPJ — {nome_pj} (antiga proprietária)",
-                        "partes", pj.parte_id, ancora="vendedor",
+                        "antigos_proprietarios", pj.parte_id, alvo=ALVO_ANTIGOS_PROPRIETARIOS,
                     )
                 elif not cnpj_valido(pj.cnpj):
                     av.bloqueia("CNPJ_INVALIDO", f"O CNPJ de {nome_pj} não confere (dígitos verificadores).")
-                conferir(pj.parte_id, pj.certidoes, "cnpj", nome_pj)
+                conferir(pj.parte_id, pj.certidoes, "cnpj", nome_pj, antigo=True)
             if antigos_pj:
                 av.avisa(
                     "PJ_ANTIGO_PROPRIETARIO_A_CONFIRMAR",
@@ -3140,6 +3185,7 @@ def avaliar(
 
 
 __all__ = [
+    "ALVO_ANTIGOS_PROPRIETARIOS",
     "ALVO_AD_CORPUS",
     "ALVO_PERMUTA_POSSE",
     "ALVO_POSSE",
@@ -3159,7 +3205,6 @@ __all__ = [
     "PJ_REDACAO_A_CONFIRMAR",
     "anos_antes",
     "antigos_no_contrato",
-    "anuentes_certificandos",
     "companheiro_dispensado",
     "conjuge_do_anuente",
     "pj_certificandas",

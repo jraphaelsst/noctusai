@@ -217,6 +217,7 @@ def listar(
     *,
     atendimento_id: Optional[UUID] = None,
     lado: Optional[str] = None,
+    incluir_antigos: bool = True,
 ) -> dict:
     """Every additional party on this card's atendimento, in display order.
 
@@ -256,8 +257,15 @@ def listar(
     # consumers (carregador, FE) assume a non-null `cliente_id`, so PJ rows
     # are filtered out HERE and surface only through
     # `partes_service.listar_partes` (`GET .../partes`).
+    # `incluir_antigos=False` (the HTTP listing): previous owners never sign
+    # and are not qualified — they live in the Certidões tab (owner
+    # 2026-10-05). The contract loader keeps the default.
     rows = sorted(
-        [r for r in (res.data or []) if r.get("cliente_id")],
+        [
+            r for r in (res.data or [])
+            if r.get("cliente_id")
+            and (incluir_antigos or r.get("papel") != PAPEL_ANTIGO_PROPRIETARIO)
+        ],
         key=lambda r: (r.get("ordem") or 0, str(r.get("created_at") or "")),
     )
     clientes = _clientes_por_id(client, org_id, [str(r["cliente_id"]) for r in rows])
@@ -287,6 +295,7 @@ def adicionar(
     cnpj: Optional[str] = None,
     razao_social: Optional[str] = None,
     cpf: Optional[str] = None,
+    origem: Optional[str] = None,
 ) -> dict:
     """Attach another party (PF or PJ) to this card's atendimento.
 
@@ -435,6 +444,9 @@ def adicionar(
     }
     if e_pj:
         row["empresa_id"] = novo_empresa_id
+    if origem is not None:
+        # Migration 203 — provenance of a previous-owner party row.
+        row["origem"] = origem
     _t(client, TABLE).insert(row).execute()
     if cpf and parte_cliente_id is not None:
         # After the insert: a refused double-click must not leave a conflict.

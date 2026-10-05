@@ -67,6 +67,9 @@ from app.modules.card_hub.contrato_gerador.router import (
 from app.modules.card_hub.certidoes_partes_router import (
     router as certidoes_partes_router,
 )
+from app.modules.card_hub.antigos_proprietarios_router import (
+    router as antigos_proprietarios_router,
+)
 from app.modules.card_hub.partes_router import router as partes_router
 from app.modules.card_hub.contrato_testemunhas_router import (
     router as contrato_testemunhas_router,
@@ -144,6 +147,7 @@ router.include_router(contrato_testemunhas_router)
 # segment — no collision with `/{cliente_id}` or `/tags`.
 router.include_router(partes_router)
 router.include_router(certidoes_partes_router)
+router.include_router(antigos_proprietarios_router)
 
 #: Shared with the included routers — see `card_hub/auth.py`.
 _auth_parts = auth_parts
@@ -955,7 +959,8 @@ async def list_compradores_route(
     """
     _user, org_id = _auth_parts(auth)
     return compradores_svc.listar(
-        client, org_id, cliente_id, atendimento_id=atendimento_id, lado=lado
+        client, org_id, cliente_id, atendimento_id=atendimento_id, lado=lado,
+        incluir_antigos=False,
     )
 
 

@@ -41,6 +41,7 @@ from uuid import UUID
 
 from noctusai_lib.integrations.documents.formatting import ranges_from_json
 
+from app.modules.card_hub import antigos_proprietarios_service as antigos_svc
 from app.modules.card_hub import compradores_service as compradores_svc
 from app.modules.card_hub import contratos_service as contratos_svc
 from app.modules.card_hub import documento_checklist_service as checklist_svc
@@ -325,6 +326,12 @@ def _pessoa(
         pacto=_pacto(row),
         representa_parte_id=representa_parte_id,
     )
+
+
+def _antigos_dispensados(client: Any, org_id: UUID, atendimento_id: UUID) -> bool:
+    """Migration 203 — has an admin dispensed the previous owners for THIS
+    deal? The stamp itself is the flag (`antigos_dispensados_em`)."""
+    return antigos_svc.esta_dispensado(client, org_id, str(atendimento_id))
 
 
 def _partes_juridicas(client: Any, org_id: UUID, atendimento_id: UUID) -> list[ParteJuridica]:
@@ -710,16 +717,23 @@ def carregar(
     # [E1/E3/E6] Certificandos: signing vendedores + their cônjuges, plus
     # signing compradores + cônjuges only in a permuta (a comprador giving
     # an imóvel gets exactly the vendedor treatment).
-    # [Migration 193] An anuente who is a seller's spouse is a certificando
-    # (E3) — `certificando_ids` already reaches them through the seller's
-    # `conjuge_cliente_id`; listing them keeps the rule visible.
-    certificandos = signatarios(vendedores) + anuentes(vendedores)
+    # [Owner 2026-10-05] An ANUENTE (signs, owns nothing) is never certified,
+    # nor are their companies — the signed corpus never does — so they are
+    # removed below even though the seller's `conjuge_cliente_id` reaches
+    # them. The PREVIOUS owners (`antigo_proprietario`) ARE certificandos:
+    # their companies follow the sellers' rule (`derivacao.
+    # _empresas_de_certificandos`).
+    certificandos = signatarios(vendedores)
     certificando_ids = {p.cliente_id for p in certificandos}
     certificando_ids |= {p.conjuge_cliente_id for p in certificandos if p.conjuge_cliente_id}
     if permutas:
         comp_certificandos = signatarios(compradores)
         certificando_ids |= {p.cliente_id for p in comp_certificandos}
         certificando_ids |= {p.conjuge_cliente_id for p in comp_certificandos if p.conjuge_cliente_id}
+    certificando_ids |= {
+        p.cliente_id for p in vendedores if p.papel == derivacao.PAPEL_ANTIGO_PROPRIETARIO
+    }
+    certificando_ids -= {p.cliente_id for p in anuentes(vendedores)}
     pessoas_por_id = {p.cliente_id: p for p in vendedores + compradores}
     empresas = _empresas(client, org_id, certificando_ids, pessoas_por_id)
     clientes_com_crednet = _clientes_com_crednet(client, org_id, certificando_ids)
@@ -801,6 +815,8 @@ def carregar(
         origem=contrato.get("origem") or "upload",
         # Migration 151.
         processo_legado=bool(contrato.get("processo_legado")),
+        # Migration 203.
+        antigos_dispensados=_antigos_dispensados(client, org_id, atendimento_id),
         # Migration 157.
         modalidade_assinatura=contrato.get("modalidade_assinatura") or "digital",
     )

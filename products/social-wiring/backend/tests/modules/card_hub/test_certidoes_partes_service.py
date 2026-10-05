@@ -207,7 +207,7 @@ class TestMontar:
         }
         parte = out["partes"][0]
         assert set(parte) == {
-            "chave", "kind", "tipo_pessoa", "rotulo", "lado", "papel", "titular", "nome",
+            "chave", "kind", "tipo_pessoa", "rotulo", "lado", "grupo", "papel", "titular", "nome",
             "documento", "cliente_id", "empresa_id", "parte_id", "totais", "celulas",
         }
         assert set(parte["totais"]) == {"nao_constam", "constam", "pendente", "vencidas"}
@@ -283,7 +283,7 @@ class TestMontar:
         linhas = svc.montar_linhas.__globals__["MATRIZ_LINHAS"]
         assert linhas  # the fixed 13
         pf = {"tipo_pessoa": "PF", "rotulo": "COMP 1", "lado": "comprador", "papel": "",
-              "titular": True, "nome": "A", "documento": CPF, "cliente_id": "c",
+              "titular": True, "nome": "A", "documento": CPF, "cliente_id": "c", "grupo": "comprador",
               "empresa_id": None, "parte_id": None}
         pj = {**pf, "tipo_pessoa": "PJ", "cliente_id": None, "empresa_id": "e", "documento": CNPJ}
         linhas_fmt = [svc._linha(l) for l in linhas]

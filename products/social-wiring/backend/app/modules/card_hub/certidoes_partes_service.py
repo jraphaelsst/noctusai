@@ -38,6 +38,7 @@ from uuid import UUID
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError
 
+from app.modules.card_hub import compradores_service as comp_svc
 from app.modules.card_hub import partes_service
 from app.modules.card_hub.certidoes_matriz_service import (
     _linha_customizada,
@@ -157,6 +158,12 @@ def _documento(value: Optional[str]) -> Optional[str]:
     return digits or None
 
 
+GRUPO_COMPRADOR = "comprador"
+GRUPO_VENDEDOR = "vendedor"
+GRUPO_ANTIGO = "antigo_proprietario"
+PAPEL_ANTIGO_PROPRIETARIO = comp_svc.PAPEL_ANTIGO_PROPRIETARIO
+
+
 def _empresas_derivadas(
     client: Any, org_id: UUID, cliente_id: UUID, partes: list[dict]
 ) -> list[dict]:
@@ -172,14 +179,25 @@ def _empresas_derivadas(
         emp = item["empresa"]
         if str(emp["id"]) in ja_parte:
             continue
+        # A company reached ONLY through previous owners belongs to the
+        # antigos group (owner 2026-10-05); any other derived company is a
+        # seller's.
+        certificandos = [o for o in item.get("owners") or [] if o.get("certificando")]
+        so_antigos = bool(certificandos) and all(
+            o.get("papel") == PAPEL_ANTIGO_PROPRIETARIO for o in certificandos
+        )
         out.append({
             "parte_id": None, "titular": False, "lado": None, "papel": "",
             "tipo_pessoa": "PJ", "cliente_id": None, "empresa_id": str(emp["id"]),
             "nome": emp.get("razao_social") or emp.get("nome_fantasia") or "",
             "documento": _documento(emp.get("cnpj")),
+            "grupo": GRUPO_ANTIGO if so_antigos else GRUPO_VENDEDOR,
         })
-    for n, item in enumerate(out, start=1):
-        item["rotulo"] = f"EMP {n}"
+    contadores = {GRUPO_VENDEDOR: 0, GRUPO_ANTIGO: 0}
+    for item in out:
+        contadores[item["grupo"]] += 1
+        prefixo = "EMP" if item["grupo"] == GRUPO_VENDEDOR else "ANT EMP"
+        item["rotulo"] = f"{prefixo} {contadores[item['grupo']]}"
     return out
 
 
@@ -390,6 +408,9 @@ def montar_parte(
         "tipo_pessoa": parte["tipo_pessoa"],
         "rotulo": parte["rotulo"],
         "lado": parte["lado"],
+        # `comprador` | `vendedor` | `antigo_proprietario` — the UI splits its
+        # subtabs on this, never on a papel string.
+        "grupo": parte["grupo"],
         "papel": parte["papel"],
         "titular": parte["titular"],
         "nome": parte["nome"],
@@ -418,7 +439,22 @@ def _todas_as_partes(
     _alvo, partes = partes_service.listar_partes(
         client, org_id, cliente_id, atendimento_id=UUID(str(atendimento_id))
     )
-    return partes + _empresas_derivadas(client, org_id, cliente_id, partes)
+    antigos = partes_service.listar_antigos(
+        client, org_id, cliente_id, atendimento_id=UUID(str(atendimento_id))
+    )
+    for p in partes:
+        p["grupo"] = p["lado"]
+    for p in antigos:
+        p["grupo"] = GRUPO_ANTIGO
+    derivadas = _empresas_derivadas(client, org_id, cliente_id, partes + antigos)
+    # Buyers, sellers, the sellers' companies; THEN the previous owners and
+    # their companies — each group its own subtab in the UI.
+    return (
+        partes
+        + [e for e in derivadas if e["grupo"] == GRUPO_VENDEDOR]
+        + antigos
+        + [e for e in derivadas if e["grupo"] == GRUPO_ANTIGO]
+    )
 
 
 def _titular_do(partes: list[dict]) -> str:

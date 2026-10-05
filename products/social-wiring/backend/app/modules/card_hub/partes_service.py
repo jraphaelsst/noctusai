@@ -40,6 +40,7 @@ from app.services import table_reads
 from app.services.clientes_service import clientes_por_cpf
 
 PARTES_TABLE = comp_svc.TABLE
+PAPEL_ANTIGO_PROPRIETARIO = comp_svc.PAPEL_ANTIGO_PROPRIETARIO
 EMPRESAS_TABLE = "empresas"
 ATENDIMENTOS_TABLE = comp_svc.ATENDIMENTOS_TABLE
 CLIENTES_TABLE = comp_svc.CLIENTES_TABLE
@@ -156,9 +157,15 @@ def _numerar(itens: list[dict]) -> list[dict]:
 
 
 def _montar_itens(
-    client: Any, org_id: UUID, atendimento: dict, partes: list[dict]
+    client: Any, org_id: UUID, atendimento: dict, partes: list[dict], *, antigos: bool = False
 ) -> list[dict]:
-    titular_id = atendimento.get("cliente_id")
+    # The previous owners are NEVER in the parties list (they sign nothing and
+    # are not qualified — owner 2026-10-05); `antigos=True` builds THEIR list
+    # instead (Certidões tab), labelled ANT n, with no titular.
+    partes = [
+        p for p in partes if (p.get("papel") == PAPEL_ANTIGO_PROPRIETARIO) == antigos
+    ]
+    titular_id = None if antigos else atendimento.get("cliente_id")
     cliente_ids = [str(p["cliente_id"]) for p in partes if p.get("cliente_id")]
     if titular_id:
         cliente_ids.append(str(titular_id))
@@ -211,6 +218,13 @@ def _montar_itens(
         )
     # Comprador lado first, then vendedor (the titular is already first).
     itens.sort(key=lambda it: 0 if it["lado"] == "comprador" else 1)
+    if antigos:
+        for n, it in enumerate(itens, start=1):
+            it["rotulo"] = f"ANT {n}"
+            it["origem"] = next(
+                (p.get("origem") for p in partes if str(p["id"]) == it["parte_id"]), None
+            )
+        return itens
     return _numerar(itens)
 
 
@@ -254,12 +268,32 @@ def listar_partes(
     return alvo, _montar_itens(client, org_id, atendimento, partes)
 
 
+def listar_antigos(
+    client: Any, org_id: UUID, cliente_id: UUID, *, atendimento_id: Optional[UUID] = None
+) -> list[dict]:
+    """The previous-owner parties (people AND companies) of the deal as
+    `ParteItem`s labelled `ANT n` (+ `origem`: matricula | manual) — the
+    Certidões tab's antigos group. Never part of `listar_partes`."""
+    ensure_cliente(client, org_id, cliente_id)
+    alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id)
+    if alvo is None:
+        return []
+    atendimento = _atendimento_row(client, org_id, alvo)
+    if atendimento is None:
+        return []
+    partes = _partes_do_atendimento(client, org_id, alvo)
+    return _montar_itens(client, org_id, atendimento, partes, antigos=True)
+
+
 def item_da_parte(
     client: Any, org_id: UUID, cliente_id: UUID, atendimento_id: str, parte_id: str
 ) -> dict:
     """The `ParteItem` of ONE just-written party row (the 201 body of
     `POST .../compradores`)."""
     _alvo, itens = listar_partes(
+        client, org_id, cliente_id, atendimento_id=UUID(str(atendimento_id))
+    )
+    itens = itens + listar_antigos(
         client, org_id, cliente_id, atendimento_id=UUID(str(atendimento_id))
     )
     for it in itens:
@@ -563,6 +597,7 @@ def lookup_documento(
 __all__ = [
     "certidoes_mais_recentes",
     "item_da_parte",
+    "listar_antigos",
     "listar_partes",
     "lookup_documento",
     "partes_pj",

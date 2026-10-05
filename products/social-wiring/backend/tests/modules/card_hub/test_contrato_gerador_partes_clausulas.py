@@ -120,7 +120,7 @@ PACTO = PactoAntenupcial(data=date(2001, 3, 10), tabelionato="2º Tabelião de N
 
 
 class TestAnuente:
-    def test_spouse_anuente_is_qualified_signs_and_presents_certidoes(self):
+    def test_spouse_anuente_is_qualified_and_signs_but_presents_no_certidoes(self):
         d = _anuente()
         texto = _texto(1, d)
         assert (
@@ -128,17 +128,21 @@ class TestAnuente:
             'já qualificado anteriormente, denominada neste ato simplesmente "ANUENTE";'
         ) in texto
         assert "CICRANA ANUENTE, brasileira, analista" in texto
-        assert "Em nome de CICRANA ANUENTE" in texto
-        assert "em seu nome, em nome da Anuente, abaixo relacionadas" in texto
+        # [Owner 2026-10-05] the signed corpus never certifies an anuente.
+        assert "Em nome de CICRANA ANUENTE" not in texto
+        assert "em nome da Anuente" not in texto
         paragrafos = _render(1, d).paragrafos
         assert "ANUENTE" in paragrafos  # its own signature heading
         # the seller side stays singular: the anuente is not a VENDEDOR
         assert '"VENDEDOR"' in texto and "VENDEDORES" not in texto
 
-    def test_spouse_anuente_owes_the_vendedor_certidoes(self):
+    def test_spouse_anuente_owes_no_certidoes(self):
         d = _anuente(certidoes=[])
         av = _avaliar(1, d)
-        assert any(f["campo"].startswith("certidao.") and f["parte_id"] == "parte-an1" for f in av.faltando)
+        assert not any(f["parte_id"] == "parte-an1" and f["campo"].startswith(("certidao.", "empresa."))
+                       for f in av.faltando)
+        assert not any(f["campo"] == "qualificacao.certidao_estado_civil_emissao"
+                       and f["parte_id"] == "parte-an1" for f in av.faltando)
 
     def test_companion_anuente_uses_the_uniao_estavel_wording(self):
         texto = _texto(1, _anuente("uniao_estavel", None))
