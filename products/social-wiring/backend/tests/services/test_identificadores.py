@@ -215,3 +215,24 @@ class TestRefinamento:
         assert idf.cartorio_refinamento(
             "RI de Cotia - CNS: 11991-7", "RI de Cotia - CNS: 12000-1"
         ) is None
+
+
+# ─── extraction writes refuse wrong-kind RG (anomalia) ──────────────────────
+
+
+def test_rg_forma_de_cpf_recusado_na_extracao_mas_aceito_digitado():
+    g = idf.para_gravar("rg", "111.444.777-34", extracao=True)
+    assert g.recusado and g.recusado_por_anomalia and g.valor is None
+    assert g.motivo == "rg_forma_de_cpf"
+    assert idf.para_gravar("rg", "111.444.777-34").valor == "111.444.777-34"
+
+
+def test_rg_truncado_recusado_na_extracao():
+    g = idf.para_gravar("rg", "1234567", extracao=True)
+    assert g.recusado and g.anomalia == "truncado" and g.valor is None
+    assert idf.para_gravar("rg", "1234567").valor == "1234567"
+
+
+def test_rg_cin_igual_ao_proprio_cpf_continua_valido_na_extracao():
+    g = idf.para_gravar("rg", "111.444.777-35", cpf_proprio="11144477735", extracao=True)
+    assert g.aceito and g.motivo == "cin_igual_ao_cpf"

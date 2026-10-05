@@ -126,3 +126,25 @@ def test_sql_twin_parity_block_in_sync_with_case_table() -> None:
     m = re.search(r"-- BEGIN-CASES\n(.*?)-- END-CASES", sql, re.S)
     assert m, "markers missing"
     assert m.group(1) == gerar_bloco_sql(CASES)
+
+
+# ─── rg_anomalia — wrong-kind RG on an automatic write ──────────────────────
+
+
+@pytest.mark.parametrize(
+    "valor,uf,esperado",
+    [
+        ("11144477735", None, "forma_de_cpf"),  # valid CPF digits
+        ("111.444.777-34", None, "forma_de_cpf"),  # CPF mask, bad DV (misread CPF)
+        ("1234567", None, "truncado"),  # 7 digits, SP body needs 8
+        ("1.234.567", "SP", "truncado"),
+        ("123456", None, "truncado"),
+        ("1234567", "MG", None),  # other state: shape not evidenced
+        ("12345678", None, None),  # SP body, DV completed by ler()
+        ("12.345.678-9", None, None),
+        ("MG-12.345.678", None, None),
+        ("", None, None),
+    ],
+)
+def test_rg_anomalia(valor, uf, esperado) -> None:
+    assert idf.rg_anomalia(valor, uf=uf) == esperado

@@ -697,6 +697,42 @@ class TestEnderecoTitularDeOutroMesmoEndereco:
         assert _conflitos(scoped) == []
 
 
+class TestEnderecoNumeroDeTipoErrado:
+    """Wrong-kind número (a CPF + a page footer lifted into the field) is
+    refused at the write point and FLAGGED — never stored, never silent."""
+
+    def test_cpf_e_rodape_no_numero_nao_sao_gravados_e_sao_sinalizados(self, client, scoped):
+        cid = str(uuid4())
+        _cenario(scoped, cliente_row(cid, nome="Ana", nome_oficial="ANA SOUZA"), [], [])
+        avisos: list[str] = []
+        aplicado, _ = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco",
+            {"cep": "01310-100", "logradouro": "Avenida Paulista",
+             "numero": "100 111.444.777-35 Página 1/2",
+             "complemento": "Apto 4 Página 1/2", "bairro": "Bela Vista",
+             "cidade": "Sao Paulo", "uf": "SP"},
+            avisos=avisos,
+        )
+        row = _cliente(scoped, cid)
+        assert aplicado is True
+        assert row["endereco_numero"] is None
+        assert row["endereco_complemento"] == "Apto 4"
+        assert svc.AVISO_NUMERO_INVALIDO in avisos
+
+    def test_rodape_sozinho_e_removido_e_o_numero_e_gravado(self, client, scoped):
+        cid = str(uuid4())
+        _cenario(scoped, cliente_row(cid, nome="Ana", nome_oficial="ANA SOUZA"), [], [])
+        avisos: list[str] = []
+        svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco",
+            {"cep": "01310-100", "logradouro": "Avenida Paulista", "numero": "640 Página 1/2",
+             "bairro": "Bela Vista", "cidade": "Sao Paulo", "uf": "SP"},
+            avisos=avisos,
+        )
+        assert _cliente(scoped, cid)["endereco_numero"] == "640"
+        assert avisos == []
+
+
 class TestSameDocumentReReadReplaces:
     """🔴 Regression (live deal, 2026-09-25): re-extracting a document
     whose earlier reading is STILL machine-pending must REFRESH the

@@ -107,7 +107,12 @@ from noctusai_lib.integrations.documents import (
     strip_accents_upper,
 )
 from noctusai_lib.integrations.cep import CepLookupAdapter
-from noctusai_lib.integrations.documents.address import EnderecoLido, separar_complemento_do_bairro
+from noctusai_lib.integrations.documents.address import (
+    EnderecoLido,
+    limpar_residuo_de_pagina,
+    sanear_numero,
+    separar_complemento_do_bairro,
+)
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
@@ -454,6 +459,10 @@ ORIGENS_ENDERECO_DECLARADO = frozenset({"ficha_cadastral"})
 #: the card, applied anyway because the address group was EMPTY (owner rule
 #: H1) — the human gate sees WHY the source deserves a second look.
 AVISO_TITULAR_NAO_CONFERE = "comprovante_titular_nao_confere"
+#: The address-number reading was a CPF/CNPJ (plus page-footer residue, live
+#: 2026-10-05) — the WRONG KIND of value for the field. The group is applied
+#: WITHOUT a número and the document is flagged for a human.
+AVISO_NUMERO_INVALIDO = "endereco_numero_invalido"
 
 #: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
 #: see `types.IdentityFields.data_emissao`'s own comment. It is the
@@ -1351,12 +1360,14 @@ def aplicar_campos_ao_cliente(
                 tipo_id, valor,
                 uf=uf_rg if tipo_id == "rg" else None,
                 cpf_proprio=cpf_proprio,
+                extracao=True,
             )
-            if gravacao.rejeitado_por_tipo:
+            if gravacao.recusado:
                 logger.warning(
-                    "%s NÃO gravado: é um %s válido, não um %s "
-                    "(cliente %s, origem %s)",
-                    campo.item_key, gravacao.tipo_detectado, tipo_id,
+                    "%s NÃO gravado: %s (cliente %s, origem %s)",
+                    campo.item_key,
+                    (f"é um {gravacao.tipo_detectado} válido, não um {tipo_id}"
+                     if gravacao.rejeitado_por_tipo else gravacao.motivo),
                     cliente_id, origem,
                 )
                 if avisos_tipo_trocado is not None:
@@ -2066,7 +2077,19 @@ def aplicar_endereco_ao_cliente(
     bairro, complemento = separar_complemento_do_bairro(
         partes.get("bairro"), partes.get("complemento")
     )
-    partes = {**partes, "bairro": bairro, "complemento": complemento}
+    # 🔴 Wrong-kind guard at the WRITE point (any reader — vision, ficha, text
+    # parser — lands here): a número that is a CPF/CNPJ is refused, the page
+    # footer is stripped from número/complemento. Flagged, never silent.
+    numero, motivo_numero = sanear_numero(partes.get("numero"))
+    complemento = limpar_residuo_de_pagina(complemento)
+    if motivo_numero:
+        logger.warning(
+            "endereco do cliente %s: número lido NÃO gravado (%s, documento %s)",
+            cliente_id, motivo_numero, documento_id,
+        )
+        if avisos is not None:
+            avisos.append(AVISO_NUMERO_INVALIDO)
+    partes = {**partes, "numero": numero, "bairro": bairro, "complemento": complemento}
     partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
     # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
     # `13010-110`; one that does not fit stays as read.
@@ -4048,8 +4071,8 @@ async def extrair_identidade(
                 "identificador_de_outro_tipo",
                 "O número lido em "
                 + ", ".join(sorted(avisos_tipo_trocado)).upper()
-                + " é válido como outro tipo de documento (ex.: um CPF no campo do RG) — "
-                "não foi gravado; confira o documento.",
+                + " não é um valor válido para o campo (ex.: um CPF no campo do RG, "
+                "ou um RG truncado) — não foi gravado; confira o documento.",
             )
 
         # A CPF read now may be the key a matrícula qualificação was waiting
@@ -4121,6 +4144,13 @@ async def extrair_identidade(
                         "O titular impresso no comprovante não confere com esta "
                         "pessoa nem com nenhuma outra do card — o endereço NÃO foi "
                         "aplicado; fica como sugestão aguardando confirmação.",
+                    )
+                if AVISO_NUMERO_INVALIDO in avisos_endereco:
+                    _sinalizar(
+                        AVISO_NUMERO_INVALIDO,
+                        "O número do endereço lido no documento não é um número "
+                        "de imóvel (CPF/CNPJ ou texto de rodapé) — não foi gravado; "
+                        "confira o documento e digite o número.",
                     )
                 aplicados[CAMPO_ENDERECO] = aplicado_end
                 if conflito_end is not None:

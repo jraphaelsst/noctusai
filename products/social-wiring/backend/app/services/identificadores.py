@@ -101,10 +101,23 @@ class Gravacao:
     canonico: bool
     motivo: str
     tipo_detectado: Optional[str] = None
+    #: `ident.rg_anomalia` code when an AUTOMATIC write was refused for a
+    #: value of the wrong kind that no other type's check digit proves
+    #: (`forma_de_cpf`, `truncado`).
+    anomalia: Optional[str] = None
 
     @property
     def rejeitado_por_tipo(self) -> bool:
         return self.tipo_detectado is not None and not self.aceito
+
+    @property
+    def recusado_por_anomalia(self) -> bool:
+        return self.anomalia is not None and not self.aceito
+
+    @property
+    def recusado(self) -> bool:
+        """Refused outright — by another type's identifier OR by an anomaly."""
+        return self.rejeitado_por_tipo or self.recusado_por_anomalia
 
 
 def _texto(valor: Any) -> str:
@@ -119,6 +132,7 @@ def para_gravar(
     municipio: Optional[str] = None,
     ibge: Optional[str] = None,
     cpf_proprio: Any = None,
+    extracao: bool = False,
 ) -> Gravacao:
     """Decide what to store for `valor` read as identifier `tipo`.
 
@@ -127,6 +141,11 @@ def para_gravar(
     reading equal to its holder's own CPF is a legitimate RG, stored in the
     CPF's canonical form — the one case where a valid CPF belongs in the RG
     field.
+
+    `extracao=True` marks a MACHINE reading (OCR / vision / text parser): there
+    an RG that is CPF-shaped or truncated (`ident.rg_anomalia`) is refused —
+    to be flagged for a human, never stored as read. A human-typed value
+    (`extracao=False`) is authoritative and keeps the lenient "as read" path.
     """
     texto = _texto(valor)
     if not texto:
@@ -149,6 +168,10 @@ def para_gravar(
             None, False, False,
             f"{leitura.tipo_detectado}_no_campo_{tipo}", leitura.tipo_detectado,
         )
+    if tipo == "rg" and extracao:
+        anomalia = ident.rg_anomalia(texto, uf=uf)
+        if anomalia:
+            return Gravacao(None, False, False, f"rg_{anomalia}", None, anomalia)
     return Gravacao(texto, True, False, leitura.motivo)
 
 

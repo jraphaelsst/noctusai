@@ -441,6 +441,40 @@ def _detectar(s: str) -> list[str]:
     return achados
 
 
+#: Why an RG-claiming value is refused on an AUTOMATIC (extraction) write even
+#: though no other type's check digit proves it is something else.
+RG_ANOMALIA_FORMA_DE_CPF = "forma_de_cpf"
+RG_ANOMALIA_TRUNCADO = "truncado"
+
+
+def rg_anomalia(valor: object, *, uf: Optional[str] = None) -> Optional[str]:
+    """`forma_de_cpf` / `truncado` when `valor` read as an RG is the WRONG KIND
+    of value, else None. Complements `ler(...).tipo_detectado`, which only
+    catches a value whose OTHER type's check digit verifies:
+
+    - `forma_de_cpf`: eleven digits (or the `000.000.000-00` mask) that fail
+      the CPF check digit — a misread CPF — or any CPF-shaped run in the RG
+      field. A VALID CPF equal to the holder's own is the CIN convention and
+      is decided by the caller (`cpf_proprio`), not here.
+    - `truncado`: a bare 6-7 digit run (a 7-digit RG is one digit short of
+      the SP body, a 6-digit one two) where the SP mask needs eight digits — only judged when the
+      órgão's UF is SP or unknown, since other states' RG shapes are not
+      evidenced (`_RG_UFS_CONHECIDAS`).
+    Pure, never raises. Never rewrites the value.
+    """
+    s = _texto(valor)
+    if not s:
+        return None
+    a = _SEP.sub("", _deaccent_upper(s))
+    if re.fullmatch(r"[0-9]{11}", a) and not re.search(r"[A-Za-z]", s):
+        return RG_ANOMALIA_FORMA_DE_CPF
+    if uf and uf.upper() not in _RG_UFS_CONHECIDAS:
+        return None
+    if re.fullmatch(r"[0-9]{6,7}", a):
+        return RG_ANOMALIA_TRUNCADO
+    return None
+
+
 def detectar_tipo(valor: object) -> list[str]:
     """Types this value is a VALID instance of (check-digit-backed, or an
     exact punctuated CEP / SP-RG shape). `297.556.088-50` -> `['cpf']`."""
@@ -567,6 +601,9 @@ __all__ = [
     "ler",
     "mascara_cnpj",
     "mascara_cpf",
+    "RG_ANOMALIA_FORMA_DE_CPF",
+    "RG_ANOMALIA_TRUNCADO",
+    "rg_anomalia",
     "rg_sp_dv",
     "tipos",
 ]

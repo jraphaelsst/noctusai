@@ -703,3 +703,30 @@ class TestBairroGluedOrBehindAnEmptySlot:
         assert r.logradouro == "RUA A"
         assert r.numero == "12"
         assert r.bairro is None
+
+
+# ─── wrong-kind número / page-footer residue ────────────────────────────────
+
+
+def test_sanear_numero_recusa_cpf_com_rodape() -> None:
+    from noctusai_lib.integrations.documents.address import sanear_numero
+
+    assert sanear_numero("123 111.444.777-35 Página 1/2") == (None, "documento_no_numero")
+    assert sanear_numero("11144477735") == (None, "documento_no_numero")
+    assert sanear_numero("12.345.678/0001-95") == (None, "documento_no_numero")
+
+
+def test_sanear_numero_tira_rodape_e_preserva_numeros_legitimos() -> None:
+    from noctusai_lib.integrations.documents.address import sanear_numero
+
+    assert sanear_numero("640 Página 1/2") == ("640", None)
+    assert sanear_numero("123A") == ("123A", None)
+    assert sanear_numero("S/N") == ("S/N", None)
+    assert sanear_numero("10/12") == ("10/12", None)
+    assert sanear_numero(None) == (None, None)
+
+
+def test_rotulado_numero_nao_leva_rodape_para_o_complemento() -> None:
+    from noctusai_lib.integrations.documents.address import _split_numero_complemento
+
+    assert _split_numero_complemento("640 Página 1/2") == ("640", None)

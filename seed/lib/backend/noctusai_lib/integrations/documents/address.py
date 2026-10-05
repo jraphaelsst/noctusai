@@ -535,6 +535,47 @@ class _Texto:
 _NUMERO_LIDER_RE = re.compile(r"^(\d+[A-Z]?\b|S\s*/\s*N[O°º]?\b|SN\b)\s*(.*)$")
 
 
+#: A page footer a vision/OCR read lifts into the line above it:
+#: "Página 1/2", "Pág. 1 de 2", "PAGINA 1 / 2". (A bare "1/2" is NOT stripped —
+#: it can be a real fractional house number.)
+_RODAPE_PAGINA_RE = re.compile(
+    r"[\s,;\-–|]*\b(?:P[AÁ]G(?:INA|\.)?\s*\d+\s*(?:/|DE)\s*\d+)",
+    re.IGNORECASE,
+)
+#: A CPF (`000.000.000-00`, bare 11 digits) or CNPJ (`00.000.000/0000-00`, bare
+#: 14) inside an address part — a document number, never a house number.
+_DOC_NO_NUMERO_RE = re.compile(
+    r"(?<!\d)(?:\d{3}\.?\d{3}\.?\d{3}-?\d{2}|\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2})(?!\d)"
+)
+
+
+def limpar_residuo_de_pagina(valor: Optional[str]) -> Optional[str]:
+    """`valor` without a trailing page-footer residue ("... Página 1/2"),
+    whitespace-trimmed; None when nothing is left. Reader-layer hygiene: the
+    footer is layout, never part of the address."""
+    if valor is None:
+        return None
+    limpo = _RODAPE_PAGINA_RE.sub("", str(valor)).strip(" ,;-–|")
+    return limpo or None
+
+
+def sanear_numero(valor: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """`(numero, motivo_recusa)` for an address-number reading.
+
+    The page footer is stripped. A value that still carries a CPF/CNPJ shape
+    or a digit run too long to be a house number (9+ digits in one run) is
+    the WRONG KIND of value for the field: `(None, "documento_no_numero")` —
+    the caller routes it to a human, it is never stored and never salvaged
+    by guessing which leading token was the real número. Anything else is
+    passed through as read (`S/N`, `123A`, `km 12` are all legitimate)."""
+    limpo = limpar_residuo_de_pagina(valor)
+    if limpo is None:
+        return None, None
+    if _DOC_NO_NUMERO_RE.search(limpo) or re.search(r"\d{9,}", limpo):
+        return None, "documento_no_numero"
+    return limpo, None
+
+
 def _split_numero_complemento(valor: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     """F4 (live prod test, 2026-09-30): a `Número:`-LABELLED field can carry
     the whole house-number-plus-complement run ("123 apto 45 bloco B") when
@@ -548,6 +589,7 @@ def _split_numero_complemento(valor: Optional[str]) -> tuple[Optional[str], Opti
     (so a value this parser has never seen the shape of is passed through
     exactly as `_rotulado` always has, rather than silently dropped).
     """
+    valor = limpar_residuo_de_pagina(valor)
     if not valor:
         return None, None
     m = _NUMERO_LIDER_RE.match(valor.strip())
@@ -1149,9 +1191,11 @@ __all__ = [
     "UFS",
     "colapsar_tipo_logradouro_duplicado",
     "find_endereco",
+    "limpar_residuo_de_pagina",
     "normalizar_logradouro",
     "normalizar_tipo_logradouro",
     "normalizar_uf",
+    "sanear_numero",
     "separar_complemento_do_bairro",
 ]
 
