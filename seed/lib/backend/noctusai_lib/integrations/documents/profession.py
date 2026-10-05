@@ -76,6 +76,12 @@ _NAO_VALOR = re.compile(
 #: avoid.
 _DE_OUTRA_PESSOA = re.compile(r"^(?:D[OA]S?\s+(?:PAI|MAE|GENITOR|GENITORA|PAIS|CONJUGE))\b")
 
+#: A "profissão" that is really FILIATION text: a certidão prints
+#: "... filho de MARIA APARECIDA e ..." right after the label box, and the
+#: value regex happily takes "de maria aparecida e". No profissão starts with
+#: "de " and none contains a filiação marker.
+_FILIACAO = re.compile(r"^DE\s|\bFILH[OA]S?\s+DE\b|\bFILIACAO\b|\s+E$|\bNETO\s+DE\b")
+
 #: Minimum letters for a value — two-letter noise ("DE") is not a profissão.
 _MIN_LETRAS = 3
 
@@ -109,7 +115,7 @@ def find_profissoes(text: str) -> list[tuple[str, str, int]]:
         if corte is not None:
             bruto = bruto[: corte.start()]
         bruto = bruto.rstrip(" .-/")
-        if not bruto or _NAO_VALOR.match(bruto):
+        if not bruto or _NAO_VALOR.match(bruto) or _FILIACAO.search(bruto):
             continue
         if sum(c.isalpha() for c in bruto) < _MIN_LETRAS:
             continue

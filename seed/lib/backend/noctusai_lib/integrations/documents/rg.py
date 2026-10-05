@@ -304,6 +304,46 @@ def _e_um_cpf(bruto: str) -> bool:
     return len(apenas_digitos) == 11 and _cpf_is_valid(apenas_digitos)
 
 
+def _data_valida(ano: int, mes: int, dia: int) -> bool:
+    if not (1900 <= ano <= 2100 and 1 <= mes <= 12 and 1 <= dia <= 31):
+        return False
+    return not (mes in (4, 6, 9, 11) and dia > 30) and not (mes == 2 and dia > 29)
+
+
+def parece_data(valor: Optional[str]) -> bool:
+    """A bare digit run that is a DATE plus up to two trailing digits.
+
+    `1995092808` is 1995-09-28 + "08" — a date-shaped value a reader lifted
+    from a certidão's registry line, never an RG. Checks `yyyymmdd` and
+    `ddmmyyyy` over the first eight digits of an UNPUNCTUATED 8-10 digit run
+    (a dotted/dashed value is the RG's own shape and is never refused here).
+    """
+    bruto = (valor or "").strip()
+    if not re.fullmatch(r"\d{8,10}", bruto):
+        return False
+    d = bruto[:8]
+    return _data_valida(int(d[:4]), int(d[4:6]), int(d[6:8])) or _data_valida(
+        int(d[4:]), int(d[2:4]), int(d[:2])
+    )
+
+
+_RNE_RE = re.compile(r"^[A-Z](?:\d{6,7}-?[\dX]|-?\d{3}\.?\d{3}-?[\dX])$")
+_RG_SHAPE_RE = re.compile(r"^\d{1,3}(?:\.\d{3})+-?[\dX]?$|^\d{5,10}-?[\dX]$|^\d{5,11}$")
+
+
+def rg_shape_valido(valor: Optional[str]) -> bool:
+    """Is `valor` shaped like an RG (`52.179.965-X`, `52179965`) or an RNE
+    (`V123456-7`, `X-123.456-X`) — and NOT a date-shaped digit run?
+
+    Shape only: never a claim the number exists. Case-insensitive on the
+    check character / RNE prefix.
+    """
+    bruto = re.sub(r"\s*-\s*", "-", (valor or "").strip()).upper()
+    if not bruto or parece_data(bruto):
+        return False
+    return bool(_RNE_RE.match(bruto) or _RG_SHAPE_RE.match(bruto))
+
+
 def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the holder's RG number.
 
@@ -341,6 +381,8 @@ def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
         # is `13.032.360-3`, not `13.032.360 - 3`. The dotted thousands
         # stay untouched (that punctuation choice IS the document's own).
         bruto = re.sub(r"\s*-\s*", "-", m.group(1))
+        if parece_data(bruto):
+            continue
 
         achado = _label_before(norm, m.start())
         if achado.rejeitado:
@@ -663,4 +705,6 @@ __all__ = [
     "mesmo_rg",
     "normalize",
     "only_alnum",
+    "parece_data",
+    "rg_shape_valido",
 ]

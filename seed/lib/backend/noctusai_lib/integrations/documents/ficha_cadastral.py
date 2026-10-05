@@ -82,7 +82,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Optional
 
-from noctusai_lib.integrations.documents.address import EnderecoLido, find_endereco, normalizar_uf
+from noctusai_lib.integrations.documents.address import (
+    EnderecoLido,
+    find_endereco,
+    normalizar_uf,
+    separar_complemento_do_bairro,
+)
 from noctusai_lib.integrations.documents.birthdate import MAX_AGE, MIN_AGE
 from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as cpf_is_valid, only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
@@ -558,12 +563,15 @@ def _endereco_de_campos(campos: dict[str, str]) -> Optional[EnderecoLido]:
         cep_digits = re.sub(r"\D", "", cep or "")
         cep_fmt = f"{cep_digits[:5]}-{cep_digits[5:]}" if len(cep_digits) == 8 else cep
         logradouro = _limpar_texto(campos.get("endereco_logradouro", ""))
-        bairro = _limpar_texto(campos.get("endereco_bairro", ""))
+        bairro, complemento = separar_complemento_do_bairro(
+            _limpar_texto(campos.get("endereco_bairro", "")),
+            _limpar_texto(campos.get("endereco_complemento", "")),
+        )
         candidato = EnderecoLido(
             cep=cep_fmt,
             logradouro=logradouro,
             numero=_limpar_texto(campos.get("endereco_numero", "")),
-            complemento=_limpar_texto(campos.get("endereco_complemento", "")),
+            complemento=complemento,
             bairro=bairro,
             cidade=_limpar_texto(campos.get("endereco_cidade", "")),
             # F2 (live prod test, 2026-09-30): this ComboBox/Text field

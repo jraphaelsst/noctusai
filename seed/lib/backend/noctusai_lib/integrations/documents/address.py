@@ -203,6 +203,139 @@ _COMPLEMENTO_COM_BAIRRO_RE = re.compile(
     r"(?!" + _COMPLEMENTO_TOKEN + r"\b)[A-Z]{4,})\s*$"
 )
 
+#: Complemento tokens that never open a bairro name. Used by
+#: `separar_complemento_do_bairro` to move a complemento that bled into the
+#: bairro field ("TP A AP 157", "(TIPO A) PAV 2 BL 1234") back where it belongs.
+_BAIRRO_COMPLEMENTO_TOKENS = frozenset(
+    {
+        "AP", "APT", "APTO", "APARTAMENTO", "BL", "BLOCO", "TORRE", "CASA", "CS",
+        "PAV", "PAVIMENTO", "TIPO", "LOTE", "LT", "QD", "QUADRA", "CJ", "CONJ",
+        "SALA", "SL", "ANDAR", "BOX",
+    }
+)
+_BAIRRO_NUMERO_TOKEN_RE = re.compile(r"^[A-Z]?\d+[A-Z]?$|^[A-Z]$")
+
+
+def _tokens_de_complemento(valor: str) -> list[str]:
+    return [re.sub(r"[^A-Z0-9]", "", w) for w in strip_accents_upper(valor).split()]
+
+
+def separar_complemento_do_bairro(
+    bairro: Optional[str], complemento: Optional[str] = None
+) -> tuple[Optional[str], Optional[str]]:
+    """Move complemento tokens that bled into `bairro` out into `complemento`.
+
+    A bairro holding "TP A AP 157" or "(TIPO A) PAV 2 BL 1234" is a
+    complemento (tipo/apartamento/bloco), never a neighbourhood. Rule: if the
+    bairro contains a complemento token (AP, BL, PAV, TIPO, LOTE, QD, ...) the
+    run starting at the FIRST such token (or at the leading "(TIPO ..." /
+    "TP ..." marker) is complemento; whatever precedes it that is a real word
+    run stays bairro. When nothing real remains the bairro becomes None. An
+    existing complemento is kept and the moved run appended. A bairro with no
+    complemento token — including one that merely CONTAINS such a word as a
+    legitimate name ("Vila Casa Verde" has CASA mid-name after a word run, but
+    only a token followed by an identifier counts) — is returned untouched.
+    """
+    if not bairro:
+        return bairro, complemento
+    palavras = bairro.split()
+    norm = _tokens_de_complemento(bairro)
+    corte: Optional[int] = None
+    for i, tok in enumerate(norm):
+        if tok in _BAIRRO_COMPLEMENTO_TOKENS and (
+            i + 1 < len(norm) and _BAIRRO_NUMERO_TOKEN_RE.match(norm[i + 1] or "-")
+        ):
+            corte = i
+            break
+        if tok == "TP" and i + 1 < len(norm) and _BAIRRO_NUMERO_TOKEN_RE.match(norm[i + 1] or "-"):
+            corte = i
+            break
+    if corte is None:
+        return bairro, complemento
+    # "(TIPO A) PAV..." — a parenthesised lead belongs to the moved run.
+    mantem = palavras[:corte]
+    movido = " ".join(palavras[corte:])
+    novo_bairro = " ".join(mantem).strip(" -,") or None
+    if novo_bairro and not re.search(r"[A-Za-zÀ-ÿ]{3,}", novo_bairro):
+        novo_bairro = None
+    novo_comp = f"{complemento} {movido}".strip() if complemento else movido
+    return novo_bairro, novo_comp
+
+
+#: Connectors kept lower-case inside a normalised street name.
+_CONECTORES_LOGRADOURO = frozenset({"DE", "DA", "DO", "DAS", "DOS", "E"})
+
+#: Abbreviations expanded INSIDE a street name (after the leading type):
+#: titles and saint/professor forms bills and fichas print abbreviated.
+_ABREV_NO_NOME: dict[str, str] = {
+    "PRF": "Professor", "PROF": "Professor", "PROFA": "Professora", "DR": "Doutor",
+    "DRA": "Doutora", "ENG": "Engenheiro", "CEL": "Coronel", "GAL": "General",
+    "CAP": "Capitão", "STO": "Santo", "STA": "Santa", "SAO": "São", "PE": "Padre",
+    "PRES": "Presidente", "MAL": "Marechal", "DEP": "Deputado", "VER": "Vereador",
+}
+_NOME_PROPRIO_COM_ACENTO = {"CANDIDO": "Cândido", "SAO": "São"}
+
+
+def colapsar_tipo_logradouro_duplicado(logradouro: Optional[str]) -> Optional[str]:
+    """Collapse a doubled street type: "Estrada EST DO EMBU" -> "Estrada DO EMBU".
+
+    A CEP-derived type ("Estrada") glued in front of the form's own abbreviated
+    type ("EST") yields the same type twice. Only collapses when the SECOND
+    token is an abbreviation / spelling of the SAME type as the first.
+    """
+    if not logradouro:
+        return logradouro
+    palavras = logradouro.split()
+    if len(palavras) < 3:
+        return logradouro
+    primeiro = _tipo_canonico(palavras[0])
+    segundo = _tipo_canonico(palavras[1])
+    if primeiro and primeiro == segundo:
+        return " ".join([palavras[0]] + palavras[2:])
+    return logradouro
+
+
+def _tipo_canonico(token: str) -> Optional[str]:
+    t = strip_accents_upper(token).strip(".")
+    if t in _TIPO_LOGRADOURO_EXTENSO:
+        return strip_accents_upper(_TIPO_LOGRADOURO_EXTENSO[t])
+    if t in {strip_accents_upper(v) for v in _TIPO_LOGRADOURO_EXTENSO.values()}:
+        return t
+    if t in {"RUA", "ESTRADA", "AVENIDA", "ALAMEDA", "TRAVESSA", "RODOVIA"}:
+        return t
+    return None
+
+
+def normalizar_logradouro(logradouro: Optional[str]) -> Optional[str]:
+    """Comparable, display-ready street name for resolver use.
+
+    Collapses a doubled type, expands the leading type abbreviation
+    (`normalizar_tipo_logradouro`) and the in-name abbreviations (PRF/PROF ->
+    Professor, DR -> Doutor, ...), and lower-cases connectors ("DO", "DA" ->
+    "do", "da"). Pure; never invents a word it does not have an entry for.
+    "Estrada EST DO EMBU" -> "Estrada do Embu"; "Est Prof Cândido Motta Filho"
+    -> "Estrada Professor Cândido Motta Filho".
+    """
+    if not logradouro or not logradouro.strip():
+        return logradouro
+    s = " ".join(logradouro.split())
+    s = normalizar_tipo_logradouro(s) or s
+    s = colapsar_tipo_logradouro_duplicado(s) or s
+    palavras = s.split()
+    saida: list[str] = []
+    for i, w in enumerate(palavras):
+        chave = strip_accents_upper(w).strip(".")
+        if i == 0:
+            saida.append(w.capitalize() if w.isupper() else w)
+        elif chave in _ABREV_NO_NOME and chave not in {"SAO", "PE", "VER"}:
+            saida.append(_ABREV_NO_NOME[chave])
+        elif chave in _CONECTORES_LOGRADOURO:
+            saida.append(w.lower())
+        else:
+            saida.append(w)
+    return " ".join(saida)
+
+
 _CEP_HIFEN_RE = re.compile(r"(?<![\d.])(\d{2})\.?(\d{3})\s?-\s?(\d{3})(?![\d-])")
 _CEP_ROTULO_RE = re.compile(r"\bCEP\b\s*[:.\-]?\s*(\d{2})\.?(\d{3})\s?-?\s?(\d{3})(?!\d)")
 
@@ -336,6 +469,19 @@ class EnderecoLido:
 
     def partes(self) -> dict[str, Optional[str]]:
         return {p: getattr(self, p) for p in self.PARTES}
+
+    @property
+    def titular_e_pessoa(self) -> Optional[bool]:
+        """Is `titular` a natural person? `None` when there is no titular.
+
+        A utility bill's printed holder block can be the ISSUER (an energy /
+        water / telecom company) — legitimate as "who issued the bill", but
+        never the resident. `False` lets apply code treat it as a titular
+        mismatch instead of comparing a company against a client's name.
+        """
+        if not self.titular:
+            return None
+        return _e_nome_de_pessoa(self.titular)
 
     @property
     def presente(self) -> bool:
@@ -989,8 +1135,23 @@ def find_endereco(text: str) -> EnderecoLido:
         titular_fraco = _titular_por_heuristicas_fracas(t)
         if titular_fraco:
             lido = replace(lido, titular=titular_fraco)
-    return replace(lido, logradouro=normalizar_tipo_logradouro(lido.logradouro))
+    bairro, complemento = separar_complemento_do_bairro(lido.bairro, lido.complemento)
+    return replace(
+        lido,
+        logradouro=normalizar_tipo_logradouro(lido.logradouro),
+        bairro=bairro,
+        complemento=complemento,
+    )
 
 
-__all__ = ["EnderecoLido", "UFS", "find_endereco", "normalizar_tipo_logradouro", "normalizar_uf"]
+__all__ = [
+    "EnderecoLido",
+    "UFS",
+    "colapsar_tipo_logradouro_duplicado",
+    "find_endereco",
+    "normalizar_logradouro",
+    "normalizar_tipo_logradouro",
+    "normalizar_uf",
+    "separar_complemento_do_bairro",
+]
 

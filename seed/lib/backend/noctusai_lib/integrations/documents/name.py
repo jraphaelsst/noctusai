@@ -213,6 +213,30 @@ _INSTITUTIONAL_TOKENS = frozenset(
     }
 )
 
+#: Company-form and trade tokens: a string carrying one is an employer / legal
+#: entity ("DINATECNICA IND E COM LTDA"), never a person. `SA` is deliberately
+#: absent — "Sá" is a real surname ("JOAO DE SA"); the "S/A" form fails
+#: `_NAME_CHARS` on its slash anyway.
+_COMPANY_TOKENS = frozenset(
+    {"LTDA", "ME", "MEI", "EIRELI", "EPP", "IND", "COM", "CIA", "COMERCIO",
+     "INDUSTRIA", "SERVICOS", "EMPRESA", "HOLDING", "ASSOCIACAO", "FUNDACAO"}
+)
+
+#: Job-title words (a certidão's `PROFISSÃO` box leaking into a name slot:
+#: "ENCARREGADO PERECIVEL"). Closed list of words that are not Brazilian
+#: surnames; a false reject leaves the field empty, a false accept writes a
+#: job title as a person's name.
+_JOB_TITLE_TOKENS = frozenset(
+    {"ENCARREGADO", "ENCARREGADA", "GERENTE", "ANALISTA", "AUXILIAR", "ASSISTENTE",
+     "OPERADOR", "OPERADORA", "VENDEDOR", "VENDEDORA", "MOTORISTA", "ENGENHEIRO",
+     "ENGENHEIRA", "ADVOGADO", "ADVOGADA", "MEDICO", "MEDICA", "PROFESSOR",
+     "PROFESSORA", "AUTONOMO", "AUTONOMA", "COMERCIANTE", "EMPRESARIO", "EMPRESARIA",
+     "APOSENTADO", "APOSENTADA", "ESTUDANTE", "DIRETOR", "DIRETORA", "SUPERVISOR",
+     "SUPERVISORA", "COORDENADOR", "COORDENADORA", "TECNICO", "TECNICA", "FUNCIONARIO",
+     "FUNCIONARIA", "SERVIDOR", "SERVIDORA", "BANCARIO", "BANCARIA", "ARQUITETO",
+     "ARQUITETA", "CONTADOR", "CONTADORA", "PERECIVEL", "DOMESTICA", "DONA"}
+)
+
 #: Characters a Brazilian personal name may contain once accents are
 #: stripped. Digits are absent on purpose — a "name" with a digit in it is
 #: a misread label or a document number.
@@ -296,6 +320,8 @@ def looks_like_a_name(candidate: str) -> bool:
     if not (MIN_WORDS <= len(words) <= MAX_WORDS):
         return False
     if any(w in _INSTITUTIONAL_TOKENS for w in words):
+        return False
+    if any(w in _COMPANY_TOKENS or w in _JOB_TITLE_TOKENS for w in words):
         return False
 
     substantive = [w for w in words if w not in _PARTICLES]
