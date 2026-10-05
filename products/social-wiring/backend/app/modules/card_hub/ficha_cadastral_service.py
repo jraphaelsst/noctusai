@@ -343,6 +343,7 @@ async def aplicar_leitura(
                 client, org_id, destino, "ficha_cadastral", _lidos_pessoa(pessoa),
                 campos=CAMPOS_FICHA, documento_id=documento_id,
                 fonte_tabela=DOCUMENTOS_TABLE, fonte_id=documento_id,
+                ligar_pessoa=True,
             )
             conflitos.extend(novos_conflitos)
 

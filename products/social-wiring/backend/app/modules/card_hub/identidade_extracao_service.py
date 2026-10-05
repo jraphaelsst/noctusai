@@ -836,6 +836,33 @@ def _conflito_pendente_existente(
     )
 
 
+def _mesmo_valor_conflito(chave: str, a: Any, b: Any) -> bool:
+    """`_mesmo_valor` for two values a conflict row stores — the `endereco`
+    group is a JSON string (extra `titular` key ignored), everything else
+    goes through the per-field comparison. Empty on both sides is NOT equal
+    (nothing to dedupe against)."""
+    if chave == CAMPO_ENDERECO:
+        try:
+            da = json.loads(a) if isinstance(a, str) else a
+            db = json.loads(b) if isinstance(b, str) else b
+        except ValueError:
+            return str(a) == str(b)
+        if not isinstance(da, dict) or not isinstance(db, dict):
+            return str(a) == str(b)
+        return _mesmo_endereco(
+            {f"endereco_{p}": da.get(p) for p in ENDERECO_PARTES},
+            {**{p: db.get(p) for p in ENDERECO_PARTES},
+             "bairro_origem": db.get("bairro_origem")},
+        ) and _mesmo_endereco(
+            {f"endereco_{p}": db.get(p) for p in ENDERECO_PARTES},
+            {**{p: da.get(p) for p in ENDERECO_PARTES},
+             "bairro_origem": da.get("bairro_origem")},
+        )
+    if _vazio(a) and _vazio(b):
+        return str(a) == str(b)
+    return _mesmo_valor(chave, a, b)
+
+
 def _registrar_conflito(
     client: Any,
     org_id: UUID,
@@ -879,6 +906,8 @@ def _registrar_conflito(
         confianca_proposta=confianca_proposta,
         fonte_tabela=fonte_tabela,
         fonte_id=fonte_id,
+        igual=lambda a, b: _mesmo_valor_conflito(chave, a, b),
+        suprimir_ja_mostrado=True,
     )
 
 
@@ -973,6 +1002,80 @@ def _canonico_do_presente(
     return None
 
 
+def _palavra_quase_igual(a: str, b: str) -> bool:
+    """Equal, or one substitution/insertion/deletion apart (words of 4+
+    letters only — a 1-letter slip in "JOAO"/"JOAN", never "ANA"/"ANE")."""
+    if a == b:
+        return True
+    if min(len(a), len(b)) < 4 or abs(len(a) - len(b)) > 1:
+        return False
+    if len(a) == len(b):
+        return sum(x != y for x, y in zip(a, b)) == 1
+    curta, longa = (a, b) if len(a) < len(b) else (b, a)
+    return any(longa[:i] + longa[i + 1:] == curta for i in range(len(longa)))
+
+
+def _nome_da_mesma_pessoa(a: Optional[str], b: Optional[str]) -> bool:
+    """Same person's name, tolerant of what a read does to it: accents/case,
+    one name contained in the other (`nomes_compativeis`), or one 1-letter
+    slip in ONE word of two otherwise identical names. Two different people
+    never pass: a shared surname alone matches nothing."""
+    if not a or not b:
+        return False
+    if nomes_compativeis(a, b):
+        return True
+    pa, pb = strip_accents_upper(a).split(), strip_accents_upper(b).split()
+    if len(pa) != len(pb) or len(pa) < 2:
+        return False
+    diferentes = [(x, y) for x, y in zip(pa, pb) if x != y]
+    return len(diferentes) == 1 and _palavra_quase_igual(*diferentes[0])
+
+
+#: Item keys a document of ANOTHER person must not write onto this card even
+#: though they are not in `CAMPOS_POR_PESSOA` — everything but the
+#: couple-level facts a two-person document legitimately states for both.
+_CAMPOS_CASAL = frozenset({"estado_civil", "regime_bens", "data_casamento"})
+
+
+def _leitura_e_da_pessoa(
+    atual: dict, lidos: dict, nome_anterior: Optional[str]
+) -> Optional[bool]:
+    """Does this reading describe the person whose row is `atual`?
+
+    `True` / `False` on evidence; `None` when nothing can be checked (no name
+    read, a low-confidence name, a card with no name yet) — the caller then
+    behaves exactly as before. Evidence order: same name (1-letter slips
+    tolerated) -> same valid CPF -> the name the document says the party
+    LEFT BEHIND is this card's name. Anything else is another person
+    (owner-requested study, 2026-10-05: 16% of divergence e-mails were a
+    spouse's / a Serasa subject's / a foreign CNH's fields on the wrong card).
+    """
+    nome_lido, conf_nome, _r, _p = lidos.get("nome_oficial") or (None, "nenhuma", None, False)
+    if _vazio(nome_lido) or conf_nome in ("baixa", "nenhuma", None):
+        return None
+    nomes_card = [
+        n for n in (atual.get("nome_oficial"), atual.get("nome_completo"), atual.get("nome"))
+        # A one-word card name ("Fulana") is a label, not a full name —
+        # nothing to bind against (and `nomes_compativeis` needs 2+ words).
+        if n and not _nome_vazio_ou_placeholder(n) and len(str(n).split()) >= 2
+    ]
+    if not nomes_card:
+        return None
+    if any(_nome_da_mesma_pessoa(str(nome_lido), n) for n in nomes_card):
+        return True
+    cpf_lido = (lidos.get("cpf") or (None,))[0]
+    cpf_card = atual.get("cpf")
+    if (
+        cpf_lido and cpf_card
+        and cpf_valido(str(cpf_lido)) and cpf_valido(str(cpf_card))
+        and only_digits(str(cpf_lido)) == only_digits(str(cpf_card))
+    ):
+        return True
+    if nome_anterior and any(_nome_da_mesma_pessoa(nome_anterior, n) for n in nomes_card):
+        return True
+    return False
+
+
 def aplicar_campos_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -989,6 +1092,7 @@ def aplicar_campos_ao_cliente(
     avisos_outra_pessoa: Optional[list[str]] = None,
     avisos_cpf_invalido: Optional[list[str]] = None,
     avisos_tipo_trocado: Optional[list[str]] = None,
+    ligar_pessoa: bool = False,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -1087,6 +1191,17 @@ def aplicar_campos_ao_cliente(
     is the SAME identifier as the incoming one is upgraded in place to the
     canonical form (provenance untouched).
 
+    🔴 `ligar_pessoa=True` (opt-in, for sources that read a FLAT document whose
+    person is not pre-anchored by an identifier — `extrair_identidade`,
+    `ficha_cadastral`): per-person fields apply only when the reading's name
+    is this card's person (1-letter slips tolerated; same valid CPF or the
+    certidão's `nome_anterior` also bind); otherwise they are routed to the
+    named party of the same deal, or dropped with a logged reason
+    (`avisos_outra_pessoa`) — never applied, never a conflict on the wrong
+    person. CPF-anchored sources (Crednet, certidão feeds, matrícula) keep
+    the default `False`: their person is known by construction and a name
+    disagreement there is a real divergence.
+
     `documento_id=None` means this source has no `cliente_documentos` row to
     point at — the column is written as an explicit NULL.
 
@@ -1094,7 +1209,7 @@ def aplicar_campos_ao_cliente(
     holds every NEWLY opened conflict (this function never does async I/O;
     `notificar_conflitos` is the caller's next step).
     """
-    colunas: list[str] = ["id"]
+    colunas: list[str] = ["id", "nome", "nome_completo", "nome_oficial", "cpf", "conjuge_cliente_id"]
     for campo in campos:
         colunas += [
             campo.item_key, campo.origem, campo.documento_id, campo.confirmado_em,
@@ -1116,6 +1231,54 @@ def aplicar_campos_ao_cliente(
     aplicados: dict[str, bool] = {}
     conflitos: list[dict] = []
     now = _now()
+
+    # 🔴 PERSON BINDING (owner-requested divergence study, 2026-10-05) — a
+    # reading is applied to THIS card only when it describes THIS person.
+    # A two-person / foreign document (certidão de casamento, Serasa, a
+    # relative's CNH, a ficha with two people) carries another person's
+    # facts in the same flat reading; applying them here either filled the
+    # wrong record or opened a conflict on the wrong person. Unbound facts
+    # are routed to the party of the deal the document names, else dropped
+    # with a logged reason — never applied, never a conflict.
+    if ligar_pessoa and _leitura_e_da_pessoa(
+        atual, lidos, (nomes_anteriores or {}).get("nome_oficial")
+    ) is False:
+        nome_lido = lidos["nome_oficial"][0]
+        duas_pessoas = origem in divergencia_resolucao.DOCUMENTOS_DUAS_PESSOAS
+        de_outra = {
+            c.item_key for c in campos
+            if c.item_key in divergencia_resolucao.CAMPOS_POR_PESSOA
+            or (not duas_pessoas and c.item_key not in _CAMPOS_CASAL)
+        }
+        achado = _pessoa_do_card_por_nome(client, org_id, cliente_id, str(nome_lido))
+        if achado is not None and achado != str(cliente_id):
+            logger.info(
+                "leitura de %s nomeia outra pessoa do card — %d campo(s) roteados "
+                "para %s em vez de %s", origem, len(de_outra), achado, cliente_id,
+            )
+            _, abertos = aplicar_campos_ao_cliente(
+                client, org_id, UUID(achado), origem,
+                {k: v for k, v in lidos.items() if k in de_outra},
+                campos=campos, documento_id=documento_id, fonte_tabela=fonte_tabela,
+                fonte_id=fonte_id, confirmado_por=confirmado_por,
+                nomes_anteriores=nomes_anteriores,
+                avisos_cpf_invalido=avisos_cpf_invalido,
+                avisos_tipo_trocado=avisos_tipo_trocado,
+                ligar_pessoa=False,
+            )
+            conflitos.extend(abertos)
+        else:
+            logger.info(
+                "leitura de %s descartada para o cliente %s: o nome lido não é o "
+                "desta pessoa e nenhuma outra pessoa do card o confere "
+                "(campos: %s)", origem, cliente_id, sorted(de_outra),
+            )
+            if avisos_outra_pessoa is not None:
+                avisos_outra_pessoa.extend(sorted(de_outra & {k for k, v in lidos.items() if v[3]}))
+        lidos = {
+            k: ((None, "nenhuma", None, False) if k in de_outra else v)
+            for k, v in lidos.items()
+        }
 
     for campo in campos:
         valor, confianca, _rotulo, pode = lidos.get(
@@ -1267,6 +1430,22 @@ def aplicar_campos_ao_cliente(
                         campo.item_key, decidido_por=None,
                     )
                 else:
+                    # A human already said NO to exactly this reading on
+                    # this field (study 2026-10-05: the same spouse RG was
+                    # e-mailed 10x) — never re-open nor re-notify it, and
+                    # never auto-resolve it back in either.
+                    if campo_conflitos.ja_rejeitado_pelo_usuario(
+                        client, campo_conflitos.CLIENTE, org_id, cliente_id,
+                        campo.item_key, valor,
+                        igual=lambda proposto, _k=campo.item_key, _v=valor: _mesmo_valor(
+                            _k, proposto, _v
+                        ),
+                    ):
+                        logger.info(
+                            "%s do cliente %s: leitura já rejeitada por um humano — "
+                            "ignorada (sem novo conflito)", campo.item_key, cliente_id,
+                        )
+                        continue
                     # Owner directive, 2026-09-29 — resolve without a human
                     # FIRST, using the measured evidence table (validators ->
                     # corroboration -> source-precision tier); only what
@@ -1419,6 +1598,32 @@ def _endereco_json(partes: dict[str, Any], **extra: Any) -> str:
     return json.dumps(corpo, ensure_ascii=False)
 
 
+#: Address parts a reading may fill when the record lacks them.
+_PARTES_PREENCHIVEIS = frozenset({"complemento", "bairro", "cidade", "uf"})
+
+#: Complemento/número tokens that spell the same thing (CS = CASA, AP/APTO).
+_SINONIMOS_COMPLEMENTO = {
+    "CS": "CASA", "CA": "CASA", "AP": "APTO", "APT": "APTO", "APTO": "APTO",
+    "APARTAMENTO": "APTO", "BL": "BLOCO", "BLC": "BLOCO", "CJ": "CONJ",
+    "CONJUNTO": "CONJ", "SL": "SALA", "LJ": "LOJA",
+}
+
+
+def _norm_numero(valor: str) -> str:
+    """`0123` == `123`; `S/N` == `SN`; punctuation and case ignored."""
+    chave = only_alnum(strip_accents_upper(valor))
+    return chave.lstrip("0") or chave
+
+
+def _norm_complemento(valor: str) -> str:
+    """`CS 02` == `CASA 2`, `AP 12` == `APTO 12` — token-wise synonyms,
+    leading zeros dropped from numeric tokens."""
+    tokens = re.findall(r"[A-Z]+|\d+", strip_accents_upper(valor))
+    return " ".join(
+        _SINONIMOS_COMPLEMENTO.get(t, t.lstrip("0") or t) for t in tokens
+    )
+
+
 def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
     """Same address iff every part the reading HAS agrees with the record.
     A part the reading lacks (no complemento on the bill) is not a
@@ -1443,6 +1648,12 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
             # treating the whole group as a different address.
             continue
         if _vazio(velho):
+            # A part the RECORD lacks is a gap the reading fills, not a
+            # second address — for the descriptive parts only. A record
+            # missing its logradouro/número/CEP is a different (or too
+            # incomplete) address and still counts as differing.
+            if parte in _PARTES_PREENCHIVEIS:
+                continue
             return False
         if parte == "cep":
             if only_digits(str(velho)) != only_digits(str(novo)):
@@ -1451,6 +1662,12 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
             if divergencia_resolucao.normalizar_logradouro(
                 str(velho)
             ) != divergencia_resolucao.normalizar_logradouro(str(novo)):
+                return False
+        elif parte == "numero":
+            if _norm_numero(str(velho)) != _norm_numero(str(novo)):
+                return False
+        elif parte == "complemento":
+            if _norm_complemento(str(velho)) != _norm_complemento(str(novo)):
                 return False
         elif not _mesmo_nome(str(velho), str(novo)):
             return False
@@ -1725,19 +1942,16 @@ def aplicar_endereco_ao_cliente(
 ) -> tuple[bool, Optional[dict]]:
     """Apply one comprovante's address to the cliente as ONE group (D1).
 
-    - Group EMPTY -> all seven parts written, `endereco_*` provenance,
-      machine-pending — WHOEVER the bill names (owner rule H1, 2026-10-03:
-      "the first document fills empty fields"; P5 audit F1/B5: a bill in a
-      relative's name, or a joint "A E B" holder line, used to open a
-      conflict against an EMPTY group, so the address never landed and a
-      human had to accept it by hand). When the printed holder matches
-      nobody, `AVISO_TITULAR_NAO_CONFERE` is appended to `avisos` so the
-      caller flags the SOURCE document — the value stays machine-pending
-      for the contract's validation gate either way.
-    - Group SET and the comprovante prints a holder whose name does NOT
-      match this cliente -> conflict (unless it states the address already
-      on file), never a silent replace. The proposed value records whose
-      name the bill carries.
+    - **Printed holder is NOT this cliente** (another person, a company, a
+      utility — owner-requested divergence study, 2026-10-05, supersedes the
+      2026-10-03 "first document fills" rule for this case) -> NOTHING is
+      written and NO conflict opens, whether the group is empty or set;
+      `AVISO_TITULAR_NAO_CONFERE` is appended to `avisos` and the reading
+      stays on the document row as an unconfirmed suggestion. A holder who is
+      the linked spouse / a co-party is routed to THAT person by the caller
+      (`_pessoa_do_card_por_nome`) before this is reached.
+    - Group EMPTY and the holder is this cliente (or none was read) -> all
+      seven parts written, `endereco_*` provenance, machine-pending.
     - Only the LOGRADOURO is required to apply (a bill whose CEP was not
       read still carries the address; the contract gate's completeness
       check is where a missing part is shown).
@@ -1760,13 +1974,6 @@ def aplicar_endereco_ao_cliente(
     """
     if _vazio(partes.get("logradouro")):
         return False, None
-    partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
-    # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
-    # `13010-110`; one that does not fit stays as read.
-    partes = {
-        **partes,
-        "cep": None if _vazio(partes.get("cep")) else idf.canonico_ou_bruto("cep", partes.get("cep")),
-    }
     rows = (
         _t(client, CLIENTES_TABLE)
         .select(",".join([
@@ -1782,6 +1989,30 @@ def aplicar_endereco_ao_cliente(
     if not rows:
         return False, None
     atual = rows[0]
+    # 🔴 TITULAR BINDING (owner-requested divergence study, 2026-10-05; 13 of
+    # 155 e-mails + the stored-value corruption behind several more): a bill
+    # whose printed holder is NOT this person (another person, a company, a
+    # utility) is no evidence about THIS person's address. It neither fills
+    # an empty group nor contests a filled one — the reading stays on the
+    # document row as an unconfirmed suggestion (`sugestoes_pendentes`) and
+    # the document is flagged. Checked BEFORE the CEP enrichment so a
+    # misread CEP of a foreign bill can never rewrite city/state either.
+    if titular_documento and not _nomes_bate(atual, titular_documento):
+        if avisos is not None:
+            avisos.append(AVISO_TITULAR_NAO_CONFERE)
+        logger.info(
+            "endereco do cliente %s NÃO aplicado (documento %s): o titular "
+            "impresso não é esta pessoa — mantido como sugestão",
+            cliente_id, documento_id,
+        )
+        return False, None
+    partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
+    # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
+    # `13010-110`; one that does not fit stays as read.
+    partes = {
+        **partes,
+        "cep": None if _vazio(partes.get("cep")) else idf.canonico_ou_bruto("cep", partes.get("cep")),
+    }
     anterior = {p: atual.get(f"endereco_{p}") for p in ENDERECO_PARTES}
     tem_endereco = any(not _vazio(v) for v in anterior.values())
 
@@ -1818,26 +2049,6 @@ def aplicar_endereco_ao_cliente(
     grupo_limpo_por_humano = atual.get("endereco_origem") == "manual" and all(
         v is None or (isinstance(v, str) and not v.strip()) for v in anterior.values()
     )
-
-    if titular_documento and not _nomes_bate(atual, titular_documento):
-        if not tem_endereco:
-            # Owner rule H1 — an EMPTY group is filled by the first
-            # document, whoever the bill names; the mismatch is flagged on
-            # the document, never turned into a conflict against nothing.
-            if grupo_limpo_por_humano:
-                return False, None
-            if avisos is not None:
-                avisos.append(AVISO_TITULAR_NAO_CONFERE)
-            escrever(_now())
-            return True, None
-        # A bill in someone else's name that states the address ALREADY
-        # on file asks nothing — there is no second value to choose
-        # between (prod, 2026-09-29: two conflicts were a re-read of the
-        # very document on file, same address, differing only in whose
-        # name the bill carries).
-        if _mesmo_endereco(atual, partes):
-            return False, None
-        return False, conflito()
 
     if tem_endereco:
         if _preencher_so_bairro(client, cliente_id, atual, partes, origem, documento_id):
@@ -3009,6 +3220,63 @@ def backfill_resolver_conflitos_pendentes(
     }
 
 
+def reaplicar_enderecos_de_titular_conferido(
+    client: Any, org_id: UUID, pessoas: list[str]
+) -> int:
+    """A comprovante whose printed holder matched nobody was NOT applied
+    (`aplicar_endereco_ao_cliente`, titular binding) — it stayed on its
+    document, flagged `AVISO_TITULAR_NAO_CONFERE`. When a person on the card
+    LATER gets the very name that bill prints (their own identity document
+    arrives), the bill is now evidence about them: fill THEIR empty address
+    group from it and drop the flag. Only ever fills an EMPTY group — a set
+    one is never contested from here. Returns how many were applied."""
+    if not pessoas:
+        return 0
+    docs = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .in_("cliente_id", pessoas)
+        .execute()
+    ).data or []
+    aplicados = 0
+    for doc in docs:
+        aviso = doc.get("extracao_aviso") or ""
+        titular = doc.get("extracao_endereco_titular")
+        if (
+            doc.get("deleted_at")
+            or AVISO_TITULAR_NAO_CONFERE not in aviso.split("+")
+            or not titular
+            or _vazio(doc.get("extracao_endereco_logradouro"))
+        ):
+            continue
+        achado = _pessoa_do_card_por_nome(client, org_id, UUID(str(doc["cliente_id"])), titular)
+        if achado is None:
+            continue
+        row = (
+            _t(client, CLIENTES_TABLE)
+            .select(",".join(ENDERECO_COLUNAS))
+            .eq("org_id", str(org_id))
+            .eq("id", achado)
+            .limit(1)
+            .execute()
+        ).data or []
+        if not row or any(not _vazio(row[0].get(c)) for c in ENDERECO_COLUNAS):
+            continue
+        partes = {p: doc.get(f"extracao_endereco_{p}") for p in ENDERECO_PARTES}
+        aplicado, _conflito = aplicar_endereco_ao_cliente(
+            client, org_id, UUID(achado), doc.get("tipo_documento") or "comprovante_endereco",
+            partes, titular_documento=titular,
+            confianca=doc.get("extracao_endereco_confianca"),
+            documento_id=UUID(str(doc["id"])),
+        )
+        if aplicado:
+            aplicados += 1
+            restante = "+".join(c for c in aviso.split("+") if c != AVISO_TITULAR_NAO_CONFERE)
+            _marcar(client, UUID(str(doc["id"])), extracao_aviso=restante or None)
+    return aplicados
+
+
 def revalidar_negociacao(client: Any, org_id: UUID, cliente_id: UUID) -> None:
     """R1 — re-resolution on new evidence (owner directive, 2026-09-30):
     "the system must work by itself and humans are to intervene only when
@@ -3037,6 +3305,10 @@ def revalidar_negociacao(client: Any, org_id: UUID, cliente_id: UUID) -> None:
     conjuge_id = _conjuge_vinculado(client, org_id, cliente_id)
     if conjuge_id:
         pessoas.add(str(conjuge_id))
+    try:
+        reaplicar_enderecos_de_titular_conferido(client, org_id, sorted(pessoas))
+    except Exception:  # noqa: BLE001 — must not block the rest of the sweep
+        logger.exception("revalidar_negociacao: reaplicar_enderecos_de_titular_conferido falhou")
     for pid in sorted(pessoas):
         try:
             propagar_endereco_domicilio(client, org_id, UUID(pid))
@@ -3660,6 +3932,7 @@ async def extrair_identidade(
             avisos_outra_pessoa=avisos_outra_pessoa,
             avisos_cpf_invalido=avisos_cpf_invalido,
             avisos_tipo_trocado=avisos_tipo_trocado,
+            ligar_pessoa=True,
         )
         conflitos += abertos
 
@@ -3772,9 +4045,9 @@ async def extrair_identidade(
                 if AVISO_TITULAR_NAO_CONFERE in avisos_endereco:
                     _sinalizar(
                         AVISO_TITULAR_NAO_CONFERE,
-                        "O titular impresso no comprovante não confere com nenhuma "
-                        "pessoa do card — o endereço preencheu o campo vazio e "
-                        "aguarda confirmação.",
+                        "O titular impresso no comprovante não confere com esta "
+                        "pessoa nem com nenhuma outra do card — o endereço NÃO foi "
+                        "aplicado; fica como sugestão aguardando confirmação.",
                     )
                 aplicados[CAMPO_ENDERECO] = aplicado_end
                 if conflito_end is not None:

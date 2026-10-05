@@ -853,43 +853,41 @@ class TestEndereco:
         assert doc["extracao_endereco_cep"] == "01454-011"
 
     @pytest.mark.asyncio
-    async def test_a_comprovante_in_a_relatives_name_fills_an_empty_group_flagged(
+    async def test_a_comprovante_in_a_relatives_name_is_not_applied_but_kept_as_suggestion(
         self, client, scoped
     ):
-        """🔴 P5 audit F1/B5 (owner rule H1, 2026-10-03): a bill in a
-        relative's name used to open a conflict against the EMPTY group
-        (`valor_anterior=None`) — the address never landed and a human had
-        to accept it by hand. The first document fills the empty group,
-        machine-pending; the mismatching holder is flagged on the document."""
+        """🔴 Divergence study 2026-10-05 (supersedes H1 for a NON-matching
+        holder): a bill in another person's name is no evidence about this
+        person — nothing written, no conflict, the document flagged and the
+        reading offered as an unconfirmed suggestion."""
         cid, did, storage = await _setup(
             scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"}
         )
         notifier = FakeNotificationService()
         out = await _extrair(scoped, storage, cid, did, _comprovante(), notifier)
         row = _cliente(scoped, cid)
-        assert out["aplicado_ao_cliente"]["endereco"] is True
-        assert (row["endereco_cep"], row["endereco_logradouro"]) == ("01454-011", "R PROF ARTUR RAMOS")
-        assert row["endereco_origem"] == "comprovante_endereco"
-        assert row["endereco_documento_id"] == did
-        assert row.get("endereco_confirmado_em") is None
+        assert out["aplicado_ao_cliente"]["endereco"] is False
+        assert row.get("endereco_cep") is None and row.get("endereco_logradouro") is None
         assert _conflitos(scoped) == []
         assert notifier.conflitos == []
         assert _documento(scoped, did)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
+        sug = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
+        assert sug["endereco"]["valor"]["cep"] == "01454-011"
 
     @pytest.mark.asyncio
-    async def test_a_relatives_bill_against_a_different_address_is_still_a_conflict(
+    async def test_a_relatives_bill_against_a_set_address_contests_nothing(
         self, client, scoped
     ):
-        """The H1 change is about EMPTY only — a set group never yields to a
-        bill in someone else's name."""
+        """A set group never yields to — and is never contested by — a bill
+        in someone else's name: no conflict, no e-mail."""
         cid, did, storage = await _setup(scoped, tipo="comprovante_endereco", cliente={
             "nome": "Carlos Eduardo Lima", "endereco_cep": "04000-000",
             "endereco_logradouro": "RUA B", "endereco_origem": "manual",
         })
         await _extrair(scoped, storage, cid, did, _comprovante())
         assert _cliente(scoped, cid)["endereco_cep"] == "04000-000"
-        (c,) = _conflitos(scoped)
-        assert json.loads(c["valor_proposto"])["titular"] == "ANA PAULA SOUZA"
+        assert _conflitos(scoped) == []
+        assert _documento(scoped, did)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
 
     @pytest.mark.asyncio
     async def test_a_different_address_on_file_is_a_conflict(self, client, scoped):
@@ -931,7 +929,7 @@ class TestEndereco:
     @pytest.mark.asyncio
     async def test_accepting_the_conflict_writes_the_group_with_provenance(self, client, scoped):
         cid, did, storage = await _setup(scoped, tipo="comprovante_endereco", cliente={
-            "nome": "Carlos Eduardo Lima", "endereco_cep": "04000-000",
+            "nome": "Ana Paula Souza", "endereco_cep": "04000-000",
             "endereco_logradouro": "RUA B", "endereco_origem": "manual",
         })
         await _extrair(scoped, storage, cid, did, _comprovante())
@@ -1342,17 +1340,17 @@ class TestEnderecoAttribution:
         assert out["aplicado_ao_cliente"]["endereco"] is True
 
     @pytest.mark.asyncio
-    async def test_a_titular_matching_nobody_on_the_card_fills_an_empty_group_flagged(
+    async def test_a_titular_matching_nobody_on_the_card_is_not_applied_flagged(
         self, client, scoped
     ):
-        """No card link at all between Carlos and Ana. Owner rule H1
-        (2026-10-03) supersedes the pre-P5 review conflict for an EMPTY
-        group: filled machine-pending, the document flagged."""
+        """No card link at all between Carlos and Ana. The bill is no
+        evidence about Carlos: nothing written, no conflict, document flagged
+        (divergence study 2026-10-05)."""
         cid, did, storage = await _setup(
             scoped, tipo="comprovante_endereco", cliente={"nome": "Carlos Eduardo Lima"}
         )
         await _extrair(scoped, storage, cid, did, _comprovante())
-        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        assert _cliente(scoped, cid).get("endereco_cep") is None
         assert _conflitos(scoped) == []
         assert _documento(scoped, did)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
 
@@ -2280,7 +2278,7 @@ class TestR1RevalidacaoAposNovaEvidencia:
             titular="CARLOS PEREIRA", confianca="baixa", rotulo="ENDERECO",
         )
         await _extrair(scoped, storage, cid, did_bill, _comprovante(sem_nome_ainda))
-        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        assert _cliente(scoped, cid).get("endereco_cep") is None
         assert _conflitos(scoped) == []
         assert _documento(scoped, did_bill)["extracao_aviso"] == svc.AVISO_TITULAR_NAO_CONFERE
 
@@ -2331,8 +2329,9 @@ class TestR1RevalidacaoAposNovaEvidencia:
             titular="DANIELA FERREIRA LIMA", confianca="baixa", rotulo="ENDERECO",
         )
         await _extrair(scoped, storage, cid, did_bill, _comprovante(titular_co_parte))
-        # H1: the uploaded-to card's EMPTY group is filled at once.
-        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        # The bill names a co-party: not applied to the uploaded-to card
+        # (it is routed to the co-party only once their name is known).
+        assert _cliente(scoped, cid).get("endereco_cep") is None
         assert _conflitos(scoped) == []
 
         # The co-party's own CNH arrives later.
@@ -2350,11 +2349,13 @@ class TestR1RevalidacaoAposNovaEvidencia:
             nome="DANIELA FERREIRA LIMA", nome_confianca=A, source=TextSource.TEXT_LAYER,
         ))
 
-        row = _cliente(scoped, cid)
+        # The bill is now applied to the person it names: the co-party.
+        row = _cliente(scoped, outra)
         assert (row["endereco_cep"], row["endereco_logradouro"]) == (
             "01454-011", "R PROF ARTUR RAMOS",
         )
-        assert [c for c in _conflitos(scoped) if c["cliente_id"] == cid] == []
+        assert _cliente(scoped, cid).get("endereco_cep") is None
+        assert _conflitos(scoped) == []
 
 
 # ─── R3: household address propagation (owner directive, 2026-09-30) ───────

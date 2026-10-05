@@ -256,6 +256,36 @@ def ja_rejeitado_pelo_usuario(
     return any(r.get("decidido_por") and comparar(r.get("valor_proposto")) for r in rows)
 
 
+def _ja_mostrado(
+    client: Any,
+    table: ConflictTable,
+    org_id: Any,
+    owner: Any,
+    campo: str,
+    valor_proposto: Any,
+    comparar: Callable[[Any, Any], bool],
+) -> bool:
+    """Was a proposal EQUAL to `valor_proposto` already announced to a human
+    (`notificado_em` set) on (owner, campo) and since closed by the system
+    (superseded, `rejeitado`, no human decider)? A human-decided row is
+    `ja_rejeitado_pelo_usuario`'s business; an unannounced row was never
+    shown, so it does not suppress anything."""
+    rows = (
+        _t(client, table.table)
+        .select("valor_proposto,status,decidido_por,notificado_em")
+        .eq("org_id", str(org_id))
+        .eq(table.owner_col, str(owner))
+        .eq("campo", campo)
+        .eq("status", "rejeitado")
+        .execute()
+    ).data or []
+    return any(
+        r.get("notificado_em") and not r.get("decidido_por")
+        and comparar(r.get("valor_proposto"), valor_proposto)
+        for r in rows
+    )
+
+
 def registrar_conflito(
     client: Any,
     table: ConflictTable,
@@ -271,6 +301,8 @@ def registrar_conflito(
     fonte_tabela: Optional[str] = None,
     fonte_id: Optional[Any] = None,
     documento_id_proposto: Optional[Any] = None,
+    igual: Optional[Callable[[Any, Any], bool]] = None,
+    suprimir_ja_mostrado: bool = False,
 ) -> Optional[dict]:
     """Open a conflict, skip when one ALREADY PENDING proposes the exact
     same `valor_proposto` (a true duplicate — nothing new to tell a human),
@@ -285,10 +317,19 @@ def registrar_conflito(
     rather than refused, so a generic caller (a future field shared across
     surfaces) does not need to branch on which table it is writing.
     """
+    comparar = igual or (lambda a, b: str(a) == str(b))
     existente = conflito_pendente_existente(client, table, org_id, owner, campo)
+    if existente is not None and comparar(existente.get("valor_proposto"), valor_proposto):
+        return None
+    if suprimir_ja_mostrado and _ja_mostrado(
+        client, table, org_id, owner, campo, valor_proposto, comparar
+    ):
+        # Ping-pong (a ficha and a comprovante alternating on one field):
+        # this exact proposal was already put in front of a human and later
+        # superseded — re-opening it would e-mail the same question again
+        # on every flip. The pending row (if any) is left untouched.
+        return None
     if existente is not None:
-        if str(existente.get("valor_proposto")) == str(valor_proposto):
-            return None
         _t(client, table.table).update(
             {"status": "rejeitado", "decidido_por": None, "decidido_em": _now()}
         ).eq("id", existente["id"]).execute()
