@@ -6,7 +6,7 @@ CLÁUSULA PRIMEIRA – DO OBJETO DO CONTRATO
 O VENDEDOR, pela escritura pública lavrada aos 10 de janeiro de 2020 no 1º Tabelionato de Notas de Cidade Exemplo, tornou-se legítimo proprietário do imóvel descrito a seguir:
 IMÓVEL: MATRÍCULA Nº 12.345 - IMÓVEL: O apartamento nº 11 do Edifício Exemplo, situado na Rua Fictícia, nº 100, Bairro Modelo, com área privativa de 80,00m2. R.1/12.345 - Prot. 1.000 - Por escritura pública, o imóvel foi transmitido a FULANO DE TAL. Imóvel devidamente cadastrado pela Prefeitura Municipal de Cidade Exemplo sob nº 000.000.0000-0 e caracterizado na Matrícula Nº 12.345 do 1º Cartório de Registro de Imóveis de Cidade Exemplo.
 CLÁUSULA SEGUNDA – DO PREÇO E CONDIÇÕES DE PAGAMENTO
-O VENDEDOR compromete-se a vender para a COMPRADORA e, esta a comprar-lhe o referido imóvel, descrito na Cláusula Primeira, pelo preço certo, firme e irreajustável de R$ 550.000,00 (quinhentos e cinquenta mil reais), que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
+O VENDEDOR compromete-se a vender para a COMPRADORA e, esta a comprar-lhe o referido imóvel descrito na Cláusula Primeira, pelo preço certo, firme e irreajustável de R$ 550.000,00 (quinhentos e cinquenta mil reais), que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
 Parcela 01: Sinal e princípio de pagamento: R$ 50.000,00 (cinquenta mil reais), no ato da assinatura do presente instrumento, por meio de PIX a ser realizada em favor do VENDEDOR: FULANO DE TAL, CPF: 123.456.789-09, Banco Exemplo, Agência 0001, Conta 12345-6 ou Chave PIX: fulano@exemplo.test, operando-se automaticamente a quitação em favor da Compradora com o efetivo crédito na conta corrente ora indicada pelo Vendedor.
 Parcela 02: R$ 250.000,00 (duzentos e cinquenta mil reais), por meio de recursos de financiamento imobiliário e/ou moeda corrente nacional, na liberação do financiamento.
 Parcela 03: R$ 50.000,00 (cinquenta mil reais), com vencimento em 10/01/2027, por meio de PIX na mesma conta corrente anteriormente informada, acrescidos de 1% de juros a.m., calculados pro rata die.
@@ -61,12 +61,13 @@ O VENDEDOR e a COMPRADORA apresentam neste momento as certidões em seus nomes, 
 3.1 – Visualização da Certidão da Matrícula do imóvel nº 12.345, emitida em 02/09/2026.
 Parágrafo Primeiro: Caso as certidões acima mencionadas, apresentem fatos positivos para o VENDEDOR ou para a COMPRADORA, deverão ser apresentados os devidos esclarecimentos, provando que tais apontamentos não colocam em risco a presente transação, no prazo máximo de 10 dias a contar da presente assinatura.
 Parágrafo Segundo: As "Partes" se comprometem ainda a apresentar as certidões e documentos abaixo relacionados, e as eventualmente "PENDENTES" no prazo máximo de 10 dias a contar da assinatura do presente, sendo certo que as contas de consumo, IPTU e condomínio deverão ser quitadas por ambas as partes dos dois imóveis referenciados neste contrato, até a entrega de cada chave à respectiva parte, de acordo com a cláusula sexta que trata da posse sobre os imóveis:
-a-) Certidão negativa de débitos condominiais, cada qual responsável por seu imóvel;
-b-) Comprovante de estado civil atualizado, emitido há no máximo 90 dias;
+a-) Certidão negativa de despesas condominiais, cada qual responsável por seu imóvel;
+b-) Comprovante de estado civil, com data de emissão inferior a 90 dias;
 c-) Cópia de RG, CPF e comprovante de residência atual;
-d-) Comprovantes de quitação e nada consta das contas de consumo (água, luz e gás);
-e-) Certidão Negativa de Débitos Municipais (IPTU);
-f-) Termo de quitação do financiamento e matrícula com o registro da baixa da alienação fiduciária.
+d-) Cópia das últimas contas de consumo do imóvel - água, luz, gás. As que estiverem incluídas no condomínio, não são necessárias a apresentação;
+e-) Extrato de nada consta das contas de consumo. As que estiverem incluídas no condomínio, não são necessárias a apresentação;
+f-) Certidão Negativa de Débitos Municipais (IPTU);
+g-) Termo de quitação do financiamento e matrícula com o registro da baixa da alienação fiduciária.
 CLÁUSULA QUINTA – DO ÔNUS SOBRE OS IMÓVEIS
 O VENDEDOR e a COMPRADORA declaram expressamente, sob as penas da lei, inclusive responsabilidade civil e criminal, que não existem ações reais ou pessoais reipersecutórias que recaiam sobre os imóveis objeto desta transação, respondendo, ambos, pela evicção de direito, na forma da legislação vigente.
 O VENDEDOR declara ainda existir saldo de financiamento do imóvel, junto a Banco Credor Exemplo S.A., conforme descrito na Av.02 da Matrícula do imóvel, que deverá ser quitado pela COMPRADORA.

@@ -516,7 +516,7 @@ def montar_contexto(
         pendencias.append(frases.pendencia_matricula_baixa(im.situacao_onus or ""))
     elif "matricula" not in apresentadas:
         pendencias.append(frases.PENDENCIA_MATRICULA)
-    pendencias.append(frases.PENDENCIA_CONTAS_CONSUMO)
+    pendencias.extend(frases.PENDENCIAS_CONTAS_CONSUMO)
     if "cnd_iptu" not in apresentadas:
         pendencias.append(frases.PENDENCIA_IPTU)
     if sw["tem_saldo_devedor"]:
@@ -744,6 +744,7 @@ def montar_contexto(
         "par": par,
         "brl": _brl_negrito,
         "dias": dias_por_extenso,
+        "dias_simples": frases.dias_simples,
         "pct_extenso": percentual_por_extenso,
         "V": V,
         "C": C,

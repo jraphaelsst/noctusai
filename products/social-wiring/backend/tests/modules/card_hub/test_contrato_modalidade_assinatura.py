@@ -66,19 +66,24 @@ LINHA = "______________________________"
 #: one registry phrase (objeto + permuta parcela) is the ONLY difference.
 #: Variants 1..6 of `contrato_gerador_fixtures`: sha256(word/document.xml),
 #: sha256(PDF text via PyMuPDF).
+#: [2026-10-05] Re-pinned ALL six: corpus-majority wording — no comma in "o referido
+#: imóvel descrito na Cláusula …" (74/0 signed) and the pendências list/deadline
+#: (condominial "despesas … relativas ao imóvel", estado civil "com data de emissão
+#: inferior a N dias", the two consumo items, plain-digit prazo). Paragraph diff
+#: against the previous render shows only those phrases.
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("7f7c8c5842611e29c3b457c90e25e2bb52e914948b14e23a426359d7107135df",
-        "9e74463289a12a81e1cfaa9b1a9275add903e1e89f6c43a1d9001f093f138d98"),
-    2: ("8867f946cfd7d67b3925b3d81f1b773398766d673cae69efd8c69b22d80bcfa6",
-        "621624bff53219aebaa95804a37bad7994d0b3978c418cf02d8ae2227c755f35"),
-    3: ("cb70c18de3c9aa04801a6a5bc3bcdbccd73f4e9be9c3ca49a60542e20c856bbc",
-        "286c84d3a54247afac18ea685643f274985c8120162d54c7d40e8b8289a0412f"),
-    4: ("02b1b2d71d84361b775ea3276083be35a20228af03e244b2027c602f8d1cf7ce",
-        "d540f78d0404b760a63d66d66ba0adb25c2f738a374beddaf05e82bfddd95532"),
-    5: ("f9ba58fb56da6d3a29272a154e343dd86178d35b0b93e46174cc02ec4480752d",
-        "52435354f17b9893fac5770a8dd599951891ea00f211031b119e57e710538e0b"),
-    6: ("ae375f8df6d90d0b61ac06a8a5e4059d0f5431738747bc2a39bc5697e9ebec19",
-        "b6ed4a4dd68748a34d6aa64476336dcde015297e9abee30733501c160d542dec"),
+    1: ("ab552963924befb4f563dec0194a8be0d3f236714140741d67f491625b0cfcb8",
+        "c5f2855d1174b152b47652f212f84339265d36f080180aaa30c49a2a3f4399ae"),
+    2: ("4184f8c115acbfdd7a94b7dc643da8a59b45459e1596cc41c1a0230243a1d795",
+        "8f5edfdf2411e4b3033d705de75a0dc2fc0e9592783031db54817dbad4df346c"),
+    3: ("77316a8b558cbcfc7fa0134904eaa4e231c3cd911f272b56b29534d0911e6a95",
+        "b1e5d710ddb4baa757ca8426a1c6780b5c31788f8a479eb87e2107d8e85911f1"),
+    4: ("3255016985f04a5ade375e96982845c42438604bffbafff4d0438d54f1c399fe",
+        "e13b8becd7fa87be76b6050115345e745bf3d7f3bdcfc5f91eecd84abb5f0a45"),
+    5: ("75c6153d048cc72d7cecf968cf04764de9df8696c39fac31a68ded6ead87fbda",
+        "65d28cac02529749dd27afa5311db080616661cc9c11c1e62aa67edfbf276c0c"),
+    6: ("702b12856dfb0e621fa5d8d4dcc845428d288276d022d690f5aa5f0a49c9c1d0",
+        "f990cb2d9ac0eebcf9fbb5581ba453ad6ca9bea6538ad59c78db4d5b659f09d9"),
 }
 
 

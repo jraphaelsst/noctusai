@@ -873,16 +873,31 @@ def item_certidao_imovel(c: CertidaoImovel, *, numero_matricula: Optional[str]) 
 
 # ─── pendências (spec §2.5) ───────────────────────────────────────────────
 
-PENDENCIA_CONDOMINIO = "Certidão negativa de débitos condominiais"
-PENDENCIA_CONDOMINIO_PERMUTA = "Certidão negativa de débitos condominiais, cada qual responsável por seu imóvel"
+PENDENCIA_CONDOMINIO = "Certidão negativa de despesas condominiais relativas ao imóvel"
+PENDENCIA_CONDOMINIO_PERMUTA = "Certidão negativa de despesas condominiais, cada qual responsável por seu imóvel"
 PENDENCIA_DOCUMENTOS = "Cópia de RG, CPF e comprovante de residência atual"
-PENDENCIA_MATRICULA = "Certidão de matrícula atualizada do imóvel"
-PENDENCIA_CONTAS_CONSUMO = "Comprovantes de quitação e nada consta das contas de consumo (água, luz e gás)"
+PENDENCIA_MATRICULA = "Matrícula Atualizada do Imóvel"
+#: Signed corpus (2026-10-05): two items, in this order — the copy of the last
+#: bills (65 contracts) and the nada-consta extract (47) — each closing with the
+#: condomínio carve-out.
+_SEM_CONDOMINIO = "As que estiverem incluídas no condomínio, não são necessárias a apresentação"
+PENDENCIAS_CONTAS_CONSUMO: tuple[str, ...] = (
+    f"Cópia das últimas contas de consumo do imóvel - água, luz, gás. {_SEM_CONDOMINIO}",
+    f"Extrato de nada consta das contas de consumo. {_SEM_CONDOMINIO}",
+)
 PENDENCIA_IPTU = "Certidão Negativa de Débitos Municipais (IPTU)"
 
 
 def pendencia_estado_civil(max_dias: int) -> str:
-    return f"Comprovante de estado civil atualizado, emitido há no máximo {max_dias} dias"
+    # 78 signed contracts: "Comprovante de estado civil, com data de emissão
+    # inferior a N dias" (N is the office policy, `certidao_estado_civil_max_dias`).
+    return f"Comprovante de estado civil, com data de emissão inferior a {max_dias} dias"
+
+
+def dias_simples(n: int) -> str:
+    """`10` -> "10 dias corridos" — the pendências deadline as the office writes
+    it (74 signed contracts; 8 add the extenso)."""
+    return f"{n} dia corrido" if n == 1 else f"{n} dias corridos"
 
 
 def pendencia_baixa_onus(situacao_onus: str) -> str:

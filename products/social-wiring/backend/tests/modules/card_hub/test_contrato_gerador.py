@@ -1105,14 +1105,30 @@ class TestQ11PendenciasEEstadoCivil:
         assert _campos(av) == [("qualificacao.certidao_estado_civil_emissao", "parte-v1")]
 
     def test_the_pendencia_text_says_90_days(self):
-        assert "Comprovante de estado civil atualizado, emitido há no máximo 90 dias" in _texto(1)
+        # Office wording (78 signed contracts); N is the policy's 90.
+        assert "Comprovante de estado civil, com data de emissão inferior a 90 dias" in _texto(1)
+
+    def test_pendencias_use_the_signed_corpus_wording(self):
+        texto = _texto(1)
+        assert "Certidão negativa de despesas condominiais relativas ao imóvel" in texto
+        assert "Cópia das últimas contas de consumo do imóvel - água, luz, gás. As que estiverem" in texto
+        assert "Extrato de nada consta das contas de consumo. As que estiverem" in texto
+        assert "Comprovantes de quitação e nada consta" not in texto
+        assert "débitos condominiais;" not in texto
+        # deadline in plain digits (74 signed contracts vs 8 with the extenso)
+        assert "no prazo de 10 dias corridos, a contar da assinatura do presente instrumento:" in texto
+
+    def test_objeto_sentence_has_no_comma_before_descrito(self):
+        texto = _texto(1)
+        assert "o referido imóvel descrito na Cláusula Primeira" in texto
+        assert "o referido imóvel, descrito" not in texto
 
     @pytest.mark.parametrize("contrato, escritorio, esperado", [(None, None, 10), (None, 12, 12), (15, 12, 15)])
     def test_prazo_default_office_default_and_contract_override(self, contrato, escritorio, esperado):
         d = fx.variante(1)
         d = replace(d, prazo_pendencias_dias=contrato,
                     imobiliaria=replace(d.imobiliaria, prazo_pendencias_padrao_dias=escritorio))
-        assert f"no prazo de {dias_por_extenso(esperado)}, a contar da assinatura" in _texto(1, d)
+        assert f"no prazo de {esperado} dias corridos, a contar da assinatura" in _texto(1, d)
 
 
 class TestProcessoLegado:

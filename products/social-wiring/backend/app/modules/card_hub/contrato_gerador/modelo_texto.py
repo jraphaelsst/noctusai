@@ -96,7 +96,7 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p endif %}
 
 <u>CLÁUSULA {{ cl.preco.ORD }}</u> – DO PREÇO E CONDIÇÕES DE PAGAMENTO
-{{ V.ART }} **{{ V.NOME }}** {{ V.pl('compromete-se','comprometem-se') }} a vender para {{ C.art }} **{{ C.NOME }}** e, {{ C.estes }} a comprar-{{ C.pl('lhe','lhes') }} o referido imóvel{% if ad_corpus %} na situação ad corpus (no estado em que se encontra){% endif %}, descrito na {{ cl.objeto.ref }}, pelo preço certo, firme e irreajustável de {{ brl(preco) }}, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
+{{ V.ART }} **{{ V.NOME }}** {{ V.pl('compromete-se','comprometem-se') }} a vender para {{ C.art }} **{{ C.NOME }}** e, {{ C.estes }} a comprar-{{ C.pl('lhe','lhes') }} o referido imóvel{% if ad_corpus %} na situação ad corpus (no estado em que se encontra),{% endif %} descrito na {{ cl.objeto.ref }}, pelo preço certo, firme e irreajustável de {{ brl(preco) }}, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
 {%p for p in parcelas %}
 **Parcela {{ p.num }}:**{{ p.texto }}
 {%p for s in p.subitens %}
@@ -152,7 +152,7 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 **{{ par('certidoes') }}** Caso as certidões acima mencionadas, apresentem fatos positivos para {{ V.art }} **{{ V.NOME }}** ou para {{ C.art }} **{{ C.NOME }}**, deverão ser apresentados os devidos esclarecimentos, provando que tais apontamentos não colocam em risco a presente transação, no prazo máximo de {{ prazo_esclarecimentos }} dias a contar da presente assinatura.
 **{{ par('certidoes') }}** As "Partes" se comprometem ainda a apresentar as certidões e documentos abaixo relacionados, e as eventualmente "PENDENTES" no prazo máximo de {{ prazo_pendencias }} dias a contar da assinatura do presente, sendo certo que as contas de consumo, IPTU e condomínio deverão ser quitadas por ambas as partes dos dois imóveis referenciados neste contrato, até a entrega de cada chave à respectiva parte, de acordo com a {{ cl.posse.ref|lower }} que trata da posse sobre os imóveis:
 {%p else %}
-**{{ par('certidoes') }}** {{ V.ART }} **{{ V.NOME }}** {{ V.pl('se compromete','se comprometem') }} ainda a apresentar as certidões eventualmente PENDENTES, assim como as abaixo relacionadas e devidos esclarecimentos para qualquer apontamento verificado nas certidões, no prazo de {{ dias(prazo_pendencias) }}, a contar da assinatura do presente instrumento:
+**{{ par('certidoes') }}** {{ V.ART }} **{{ V.NOME }}** {{ V.pl('se compromete','se comprometem') }} ainda a apresentar as certidões eventualmente PENDENTES, assim como as abaixo relacionadas e devidos esclarecimentos para qualquer apontamento verificado nas certidões, no prazo de {{ dias_simples(prazo_pendencias) }}, a contar da assinatura do presente instrumento:
 {%p endif %}
 {%p for d in certidoes.pendencias %}
 **{{ d.letra }}-)** {{ d.texto }}{{ '.' if loop.last else ';' }}

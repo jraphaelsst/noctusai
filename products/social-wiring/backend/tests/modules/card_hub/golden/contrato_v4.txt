@@ -7,7 +7,7 @@ O VENDEDOR, pela escritura pública lavrada aos 10 de janeiro de 2020 no 1º Tab
 IMÓVEL: MATRÍCULA Nº 12.345 - IMÓVEL: O apartamento nº 11 do Edifício Exemplo, situado na Rua Fictícia, nº 100, Bairro Modelo, com área privativa de 80,00m2. R.1/12.345 - Prot. 1.000 - Por escritura pública, o imóvel foi transmitido a FULANO DE TAL. Imóvel devidamente cadastrado pela Prefeitura Municipal de Cidade Exemplo sob nº 000.000.0000-0 e caracterizado na Matrícula Nº 12.345 do 1º Cartório de Registro de Imóveis de Cidade Exemplo.
 Parágrafo Único: As partes estabelecem de comum acordo, que fará parte integrante da presente transação os itens relacionados a seguir: armários planejados da cozinha e dos dormitórios.
 CLÁUSULA SEGUNDA – DO PREÇO E CONDIÇÕES DE PAGAMENTO
-O VENDEDOR compromete-se a vender para a COMPRADORA e, esta a comprar-lhe o referido imóvel, descrito na Cláusula Primeira, pelo preço certo, firme e irreajustável de R$ 500.000,00 (quinhentos mil reais), que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
+O VENDEDOR compromete-se a vender para a COMPRADORA e, esta a comprar-lhe o referido imóvel descrito na Cláusula Primeira, pelo preço certo, firme e irreajustável de R$ 500.000,00 (quinhentos mil reais), que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
 Parcela 01: Sinal e princípio de pagamento: R$ 100.000,00 (cem mil reais), no ato da assinatura do presente instrumento, por meio de PIX a ser realizada em favor do VENDEDOR: FULANO DE TAL, CPF: 123.456.789-09, Banco Exemplo, Agência 0001, Conta 12345-6 ou Chave PIX: fulano@exemplo.test, operando-se automaticamente a quitação em favor da Compradora com o efetivo crédito na conta corrente ora indicada pelo Vendedor.
 Parcela 02: R$ 400.000,00 (quatrocentos mil reais), destinada à quitação do saldo devedor do financiamento que onera o imóvel, mediante boleto emitido pelo credor, na data da escritura, por meio de boleto na mesma conta corrente anteriormente informada.
 CLÁUSULA TERCEIRA – DAS CERTIDÕES E DOCUMENTOS
@@ -27,13 +27,14 @@ O VENDEDOR apresenta neste momento as certidões em seu nome, abaixo relacionada
 1.12 – Certidão Negativa de Débitos Tributários da Dívida Ativa do Estado de São Paulo – nº SIM-0012 - emitida em 01/09/2026.
 2 – Em Relação ao Imóvel – Rua Fictícia, nº 100
 2.1 – Visualização da Certidão da Matrícula do imóvel nº 12.345, emitida em 02/09/2026.
-Parágrafo Único: O VENDEDOR se compromete ainda a apresentar as certidões eventualmente PENDENTES, assim como as abaixo relacionadas e devidos esclarecimentos para qualquer apontamento verificado nas certidões, no prazo de 10 (dez) dias corridos, a contar da assinatura do presente instrumento:
-a-) Certidão negativa de débitos condominiais;
-b-) Comprovante de estado civil atualizado, emitido há no máximo 90 dias;
+Parágrafo Único: O VENDEDOR se compromete ainda a apresentar as certidões eventualmente PENDENTES, assim como as abaixo relacionadas e devidos esclarecimentos para qualquer apontamento verificado nas certidões, no prazo de 10 dias corridos, a contar da assinatura do presente instrumento:
+a-) Certidão negativa de despesas condominiais relativas ao imóvel;
+b-) Comprovante de estado civil, com data de emissão inferior a 90 dias;
 c-) Cópia de RG, CPF e comprovante de residência atual;
-d-) Comprovantes de quitação e nada consta das contas de consumo (água, luz e gás);
-e-) Certidão Negativa de Débitos Municipais (IPTU);
-f-) Termo de quitação do financiamento e matrícula com o registro da baixa da alienação fiduciária.
+d-) Cópia das últimas contas de consumo do imóvel - água, luz, gás. As que estiverem incluídas no condomínio, não são necessárias a apresentação;
+e-) Extrato de nada consta das contas de consumo. As que estiverem incluídas no condomínio, não são necessárias a apresentação;
+f-) Certidão Negativa de Débitos Municipais (IPTU);
+g-) Termo de quitação do financiamento e matrícula com o registro da baixa da alienação fiduciária.
 CLÁUSULA QUARTA – DO ÔNUS SOBRE O IMÓVEL
 O VENDEDOR declara expressamente sob responsabilidade civil e criminal, que não existem ações reais ou pessoais reipersecutórias que envolvam o imóvel objeto desta transação, respondendo pela evicção de direito.
 O VENDEDOR declara ainda existir saldo de financiamento do imóvel, junto a Banco Credor Exemplo S.A., conforme descrito na Av.02 da Matrícula do imóvel, o qual deverá ser quitado conforme determinado na Parcela 02 da Cláusula Segunda.
