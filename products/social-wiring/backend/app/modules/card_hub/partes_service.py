@@ -126,6 +126,8 @@ def _item(
             else _digitos((cliente or {}).get("cpf"))
         ),
         "observacao": (parte or {}).get("observacao"),
+        "grupo": PAPEL_ANTIGO_PROPRIETARIO if papel == PAPEL_ANTIGO_PROPRIETARIO else lado,
+        "origem": (parte or {}).get("origem") if papel == PAPEL_ANTIGO_PROPRIETARIO else None,
         # Migration 193 — the deal-scoped contract qualification lives on the
         # party row, so the list must carry it for the FE form to prefill
         # (a write-only field shows blank and invites a clearing re-save).
@@ -221,9 +223,6 @@ def _montar_itens(
     if antigos:
         for n, it in enumerate(itens, start=1):
             it["rotulo"] = f"ANT {n}"
-            it["origem"] = next(
-                (p.get("origem") for p in partes if str(p["id"]) == it["parte_id"]), None
-            )
         return itens
     return _numerar(itens)
 

@@ -98,7 +98,19 @@ An anuente spouse (signs, owns nothing) is **never** certified nor are their com
 (no `certidao.*`, no `empresa.*`, no estado-civil certidão falta for an anuente). The rows are not in the certidões matrix as
 requiring anything — nothing to render beyond what already exists.
 
-## 8. Not in this contract (frontend decisions / follow-ups)
+## 8. Server-side trigger (no UI action needed)
 
-- Auto-sync is **UI-triggered** (§3) — no server-side hook on matrícula confirmation yet.
+The same sync (§3) runs automatically for **every open deal whose imóvel is `codigo`** whenever the matrícula's reading changes:
+- an extraction completes (AI upload, manual paste, link-later, backfill) — hooked at `autopiloto_service.aplicar_autopiloto`, the one choke point all of those already call, right after the autopilot confirms the título pointers;
+- an operator confirms/changes the título/ônus source acts (`PUT /api/matriculas/extracoes/{id}/fontes`).
+
+New consultas are attributed to the extraction's uploader (or the acting operator) and processed in the background. It is idempotent, per-deal isolated, and never raises into the extraction; failures are logged at ERROR (and returned under `antigos` in the autopilot result). The Certidões-tab-open call (§3) stays as a **backstop** — the UI should keep calling it. A manual last-transfer date names nobody and does not trigger anything.
+
+## 9. Typed fields
+
+`ParteItem` (`/partes`, and the party inside §4) now declares `grupo` (`comprador|vendedor|antigo_proprietario`) and `origem` (`matricula|manual|null`).
+The antigos routes declare response models (`AntigosEstadoOut`, `SincronizarOut`, `EmissaoOut`) — see OpenAPI.
+
+## 10. Not in this contract
+
 - Emission for the previous owners' *companies* is not auto-started (their CNPJs surface only after a Crednet read); use the row's emission button.

@@ -23,6 +23,7 @@ is missing, so calling it on every Certidões-tab open is safe.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Any, Callable, Optional
@@ -395,6 +396,95 @@ def sincronizar(
     return {**vazio, "criados": criados, "ja_no_card": ja, "emissoes": emissoes}
 
 
+# ─── server-side trigger (matrícula pipeline → every card of the imóvel) ──
+
+#: Strong refs to the detached certidões runs — an un-referenced asyncio task
+#: can be garbage-collected mid-flight.
+_TAREFAS: set = set()
+
+
+def _agendar_processamento(consulta_ids: list[str], client: Any) -> list[str]:
+    """Schedule `processar_consulta` for each new consulta — the same call
+    the router hands to `BackgroundTasks`. Needs a running loop (every
+    matrícula-pipeline caller is async); without one the consultas stay
+    `pendente` and are returned as `nao_agendadas` so the caller logs it —
+    never silently dropped."""
+    from app.modules.certidoes.deps import get_certidoes_service, get_storage_backend
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return list(consulta_ids)
+    certidoes = get_certidoes_service()
+    storage = get_storage_backend()
+    for cid in consulta_ids:
+        tarefa = loop.create_task(certidoes.processar_consulta(cid, client, storage))
+        _TAREFAS.add(tarefa)
+        tarefa.add_done_callback(_TAREFAS.discard)
+    return []
+
+
+def sincronizar_por_imovel(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    *,
+    user_id: Optional[UUID],
+    ler_antigos: Optional[LerAntigos] = None,
+    agendar: Optional[Callable[[list[str], Any], list[str]]] = None,
+    check_credentials: Optional[Callable[[str], list[str]]] = None,
+) -> dict:
+    """Hook for the matrícula/título pipeline: a matrícula's reading changed
+    (extraction completed, título pointers confirmed), so every OPEN deal
+    whose imóvel is `codigo` gets `sincronizar` — creating the previous-owner
+    group and starting their certidões at once (owner 2026-10-05).
+
+    Idempotent (`sincronizar` creates only what is missing). A failure on one
+    deal is logged at ERROR and reported under `erros` — it never aborts the
+    other deals and never raises into the extraction that already landed.
+    `user_id` is the human the new consultas are attributed to
+    (`certidao_consultas.created_by` is NOT NULL): the extraction's uploader
+    or the acting operator; without one nothing is created and the skip is
+    reported."""
+    from app.modules.certidoes import service as certidoes_service
+
+    out: dict[str, Any] = {"codigo": codigo, "cards": [], "erros": [], "nao_agendadas": []}
+    if user_id is None:
+        out["ignorado"] = "sem_usuario"
+        logger.error("antigos: imóvel %s sem usuário para atribuir as consultas — não sincronizado", codigo)
+        return out
+    negociacoes = (
+        _t(client, "atendimento_negociacao").select("atendimento_id")
+        .eq("org_id", str(org_id)).eq("imovel_codigo", codigo).execute()
+    ).data or []
+    ids = sorted({str(n["atendimento_id"]) for n in negociacoes})
+    atendimentos = table_reads.in_batched_rows(
+        client, ATENDIMENTOS, org_id, "id", ids, select="id,cliente_id,substituida_por,arquivado"
+    ) if ids else []
+    for at in atendimentos:
+        if at.get("substituida_por") or at.get("arquivado") or not at.get("cliente_id"):
+            continue
+        try:
+            res = sincronizar(
+                client, org_id, UUID(str(at["cliente_id"])), atendimento_id=UUID(str(at["id"])),
+                user_id=user_id,
+                check_credentials=check_credentials or certidoes_service.check_required_credentials,
+                ler_antigos=ler_antigos,
+            )
+        except Exception as exc:  # noqa: BLE001 - per-deal isolation; logged at ERROR + reported
+            logger.error("antigos: sincronização do atendimento %s (imóvel %s) falhou: %s", at["id"], codigo, exc, exc_info=True)
+            out["erros"].append({"atendimento_id": str(at["id"]), "erro": str(exc)})
+            continue
+        out["cards"].append({"atendimento_id": str(at["id"]), "criados": len(res["criados"]), "ignorado": res["ignorado"]})
+        consultas = [e["consulta_id"] for e in res["emissoes"] if e.get("consulta_id")]
+        if consultas:
+            nao = (agendar or _agendar_processamento)(consultas, client)
+            if nao:
+                logger.error("antigos: %d consulta(s) criadas mas NÃO agendadas (sem event loop): %s", len(nao), nao)
+                out["nao_agendadas"] += nao
+    return out
+
+
 # ─── add / remove by hand (the matrícula does not name them) ──────────────
 
 
@@ -449,5 +539,5 @@ def remover(client: Any, org_id: UUID, cliente_id: UUID, parte_id: UUID) -> None
 
 __all__ = [
     "adicionar_manual", "dispensar", "esta_dispensado", "estado", "mascarar_documento",
-    "reativar", "remover", "sincronizar",
+    "reativar", "remover", "sincronizar", "sincronizar_por_imovel",
 ]

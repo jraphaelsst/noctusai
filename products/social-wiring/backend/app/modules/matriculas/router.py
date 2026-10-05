@@ -776,15 +776,21 @@ async def definir_fontes_route(
     # `model_fields_set`: `null` is a real value (clear the pointer), so
     # absence is the only thing that can mean "leave alone".
     valores = {k: getattr(body, k) for k in body.model_fields_set}
-    return success_response(
-        estrutura_svc.definir_fontes(
-            client,
-            UUID(org_id),
-            extracao_id,
-            valores=valores,
-            usuario_id=getattr(user, "id", None),
-        )
+    saida = estrutura_svc.definir_fontes(
+        client,
+        UUID(org_id),
+        extracao_id,
+        valores=valores,
+        usuario_id=getattr(user, "id", None),
     )
+    # [Owner 2026-10-05] A confirmed título pointer changes WHO the previous
+    # owners are — sync every deal on this imóvel (idempotent; logged).
+    codigo = estrutura_svc.exigir_extracao(client, UUID(org_id), extracao_id).get("codigo")
+    if codigo:
+        autopiloto_svc.sincronizar_antigos_do_imovel(
+            client, org_id, codigo, user_id=getattr(user, "id", None)
+        )
+    return success_response(saida)
 
 
 @router.get("/contratos/{contrato_id}/atos")

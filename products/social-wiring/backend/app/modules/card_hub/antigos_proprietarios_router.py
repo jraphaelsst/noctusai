@@ -13,14 +13,14 @@ antigo_proprietario`); there is no parallel list endpoint.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import is_org_admin
 from noctusai_lib.integrations.storage import StorageBackend
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from app.dependencies import get_core_client, get_current_user_org
 from app.modules.card_hub import antigos_proprietarios_service as svc
@@ -50,6 +50,46 @@ class AntigoCreateBody(StrictHttpModel):
     atendimento_id: Optional[UUID] = None
 
 
+class TransmitenteOut(BaseModel):
+    nome: Optional[str] = None
+    documento_mascarado: Optional[str] = None
+    tipo_pessoa: Literal["PF", "PJ"]
+    ja_no_card: bool
+
+
+class DispensaOut(BaseModel):
+    em: str
+    por: Optional[dict[str, Any]] = None
+    motivo: Optional[str] = None
+
+
+class AntigosEstadoOut(BaseModel):
+    atendimento_id: str
+    exigido: Optional[bool] = None
+    motivo: str
+    janela_anos: int
+    ultima_transferencia: Optional[dict[str, Any]] = None
+    origem_dados: Optional[str] = None
+    transmitentes: list[TransmitenteOut]
+    dispensado: Optional[DispensaOut] = None
+    sincronizacao_pendente: int
+
+
+class EmissaoOut(BaseModel):
+    parte_id: str
+    status: Literal["solicitada", "nao_iniciada"]
+    codigo: Optional[str] = None
+    consulta_id: Optional[str] = None
+
+
+class SincronizarOut(BaseModel):
+    atendimento_id: str
+    criados: list[dict[str, Any]]
+    ja_no_card: list[dict[str, Any]]
+    emissoes: list[EmissaoOut]
+    ignorado: Optional[str] = None
+
+
 class SincronizarBody(StrictHttpModel):
     atendimento_id: Optional[UUID] = None
 
@@ -68,7 +108,7 @@ def _agendar(background_tasks: BackgroundTasks, certidoes: CertidoesService, cli
             background_tasks.add_task(certidoes.processar_consulta, e["consulta_id"], client, storage)
 
 
-@router.get("/{cliente_id}/certidoes/antigos-proprietarios")
+@router.get("/{cliente_id}/certidoes/antigos-proprietarios", response_model=AntigosEstadoOut)
 async def get_antigos_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,
@@ -81,7 +121,7 @@ async def get_antigos_route(
     )
 
 
-@router.post("/{cliente_id}/certidoes/antigos-proprietarios/sincronizar")
+@router.post("/{cliente_id}/certidoes/antigos-proprietarios/sincronizar", response_model=SincronizarOut)
 async def sincronizar_antigos_route(
     cliente_id: UUID,
     body: SincronizarBody,
@@ -120,7 +160,7 @@ async def adicionar_antigo_route(
     return out
 
 
-@router.put("/{cliente_id}/certidoes/antigos-proprietarios/dispensa")
+@router.put("/{cliente_id}/certidoes/antigos-proprietarios/dispensa", response_model=AntigosEstadoOut)
 async def dispensar_antigos_route(
     cliente_id: UUID,
     body: DispensaBody,
@@ -137,7 +177,7 @@ async def dispensar_antigos_route(
     )
 
 
-@router.delete("/{cliente_id}/certidoes/antigos-proprietarios/dispensa")
+@router.delete("/{cliente_id}/certidoes/antigos-proprietarios/dispensa", response_model=AntigosEstadoOut)
 async def reativar_antigos_route(
     cliente_id: UUID,
     atendimento_id: Optional[UUID] = None,

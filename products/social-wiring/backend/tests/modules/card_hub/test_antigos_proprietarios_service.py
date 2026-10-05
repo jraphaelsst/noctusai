@@ -184,3 +184,72 @@ class TestEstado:
         assert out["exigido"] is True and out["motivo"] == "transferencia_menos_de_5_anos"
         assert out["transmitentes"][0]["documento_mascarado"] == "***.982.247-**"
         assert out["sincronizacao_pendente"] == 1 and out["dispensado"] is None
+
+
+class TestGatilhoDoPipelineDeMatricula:
+    """Owner 2026-10-05: emission starts the moment the matrícula is on the
+    card — the pipeline hook syncs every open deal of the imóvel."""
+
+    def _agendador(self):
+        chamadas: list[list[str]] = []
+
+        def agendar(ids, _client):
+            chamadas.append(list(ids))
+            return []
+
+        return agendar, chamadas
+
+    def test_syncs_every_open_deal_of_the_imovel_and_schedules_the_emission(self, scoped):
+        cid, aid = _card(scoped)
+        agendar, chamadas = self._agendador()
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "AP0001", user_id=USER,
+            ler_antigos=_info(("Antigo Dono Exemplo", CPF_A)), agendar=agendar,
+            check_credentials=_creds_ok,
+        )
+        assert out["erros"] == [] and out["cards"][0]["criados"] == 1
+        assert len(chamadas) == 1 and len(chamadas[0]) == 1
+        # idempotent: a second pipeline pass creates and schedules nothing
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "AP0001", user_id=USER,
+            ler_antigos=_info(("Antigo Dono Exemplo", CPF_A)), agendar=agendar,
+            check_credentials=_creds_ok,
+        )
+        assert out["cards"][0]["criados"] == 0 and len(chamadas) == 1
+
+    def test_other_imoveis_are_untouched(self, scoped):
+        _card(scoped)
+        agendar, chamadas = self._agendador()
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "OUTRO", user_id=USER,
+            ler_antigos=_info(("Antigo Dono Exemplo", CPF_A)), agendar=agendar,
+            check_credentials=_creds_ok,
+        )
+        assert out["cards"] == [] and chamadas == []
+
+    def test_a_failing_deal_is_reported_not_raised(self, scoped):
+        _card(scoped)
+
+        def quebrado(*_a, **_k):
+            raise RuntimeError("leitura indisponivel")
+
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "AP0001", user_id=USER, ler_antigos=quebrado,
+        )
+        assert out["erros"] and "leitura indisponivel" in out["erros"][0]["erro"]
+
+    def test_without_a_user_nothing_is_created_and_it_is_said(self, scoped):
+        cid, _aid = _card(scoped)
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "AP0001", user_id=None, ler_antigos=_info(("Antigo", CPF_A)),
+        )
+        assert out["ignorado"] == "sem_usuario"
+        assert partes_service.listar_antigos(scoped, ORG_ID, cid) == []
+
+    def test_without_an_event_loop_the_consultas_are_returned_not_dropped(self, scoped):
+        _card(scoped)
+        out = svc.sincronizar_por_imovel(
+            scoped, ORG_ID, "AP0001", user_id=USER, ler_antigos=_info(("Antigo Dono Exemplo", CPF_A)),
+            agendar=svc._agendar_processamento, check_credentials=_creds_ok,
+        )
+        assert len(out["nao_agendadas"]) == 1

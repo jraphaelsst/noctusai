@@ -397,7 +397,7 @@ def _selecionar_atos_padrao(
 # ─── orchestration ──────────────────────────────────────────────────────
 
 
-def aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
+def _aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     """Run right after `preenchimento_service.preencher_sincrono`/
     `preencher_imovel` land their machine-pending fill for `extracao_id`.
     Confirms every field it can vouch for unambiguously (see module
@@ -487,7 +487,43 @@ def aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     return {"status": "ok", "codigo": codigo, "campos": campos, "atos_contrato": atos_contrato}
 
 
+def sincronizar_antigos_do_imovel(
+    client: Any, org_id: Any, codigo: str, *, user_id: Any
+) -> Optional[dict]:
+    """[Owner 2026-10-05] The matrícula's reading changed: sync the previous
+    owners of every open deal on this imóvel (group + certidões emission).
+    Lazy import — `card_hub` imports `matriculas`. NEVER raises (the reading
+    already landed), NEVER silent: failure is logged at ERROR and returned."""
+    try:
+        from app.modules.card_hub import antigos_proprietarios_service as antigos_svc
+
+        return antigos_svc.sincronizar_por_imovel(
+            client, UUID(str(org_id)), codigo,
+            user_id=UUID(str(user_id)) if user_id else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - logged at ERROR and surfaced
+        logger.error("matricula: sync de antigos do imóvel %s falhou: %s", codigo, exc, exc_info=True)
+        return {"codigo": codigo, "erro": str(exc)}
+
+
+def aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
+    """`_aplicar_autopiloto`, then the previous-owners sync — the ONE choke
+    point every extraction-completion path already calls (upload, manual
+    paste, link-later, backfill). The sync runs on the confirmed pointers the
+    autopilot just stamped, so a matrícula that reads cleanly starts its
+    previous owners' certidões with no human click."""
+    resultado = _aplicar_autopiloto(client, org_id, extracao_id)
+    codigo = resultado.get("codigo")
+    if resultado.get("status") == "ok" and codigo:
+        extracao = _extracao(client, org_id, extracao_id) or {}
+        resultado["antigos"] = sincronizar_antigos_do_imovel(
+            client, org_id, codigo, user_id=extracao.get("user_id")
+        )
+    return resultado
+
+
 __all__ = [
+    "sincronizar_antigos_do_imovel",
     "CONFIRMADO_AUTOMATICO",
     "INAPLICAVEL",
     "JA_CONFIRMADO_HUMANO",

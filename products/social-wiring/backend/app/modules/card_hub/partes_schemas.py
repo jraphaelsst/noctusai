@@ -78,6 +78,12 @@ class ParteItem(BaseModel):
     pj_sede: Optional[dict[str, Optional[str]]] = None
     cliente: Optional[dict[str, Any]] = None
     empresa: Optional[EmpresaResumo] = None
+    #: The Certidões-tab subtab this party belongs to. `/partes` rows are
+    #: `comprador`|`vendedor` (= `lado`); previous owners (`antigo_proprietario`,
+    #: never in `/partes`) appear only through `GET …/certidoes/partes`.
+    grupo: Optional[Literal["comprador", "vendedor", "antigo_proprietario"]] = None
+    #: Provenance of a previous-owner party (migration 203); `None` otherwise.
+    origem: Optional[Literal["matricula", "manual"]] = None
 
 
 class PartesResponse(BaseModel):
