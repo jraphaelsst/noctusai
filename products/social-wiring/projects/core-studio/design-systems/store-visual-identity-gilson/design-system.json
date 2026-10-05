@@ -1,0 +1,71 @@
+{
+  "v": 3,
+  "layout": "files",
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-10-02T13:43:47Z"
+  },
+  "title": "Store Visual Identity",
+  "namespace": "StoreVisualIdentity",
+  "libraries": [],
+  "sections": {},
+  "groups": [
+    "References"
+  ],
+  "assetGroups": {
+    "References": {
+      "name": "References",
+      "tile": "l",
+      "order": [
+        "01-dinheiro-aluguel.jpeg",
+        "02-mudar-imovel.jpeg",
+        "03-habitos-capa.jpeg",
+        "04-habitos-tijolos.jpeg",
+        "05-juros-ampulheta.jpeg"
+      ],
+      "files": {
+        "01-dinheiro-aluguel.jpeg": {
+          "name": "01-dinheiro-aluguel.jpeg",
+          "blob": "56d53bd630c7f2965c363b759b356253",
+          "size": 446296,
+          "type": "image/jpeg"
+        },
+        "02-mudar-imovel.jpeg": {
+          "name": "02-mudar-imovel.jpeg",
+          "blob": "c94d394e3bfe059c9e7654f57effd199",
+          "size": 244213,
+          "type": "image/jpeg"
+        },
+        "03-habitos-capa.jpeg": {
+          "name": "03-habitos-capa.jpeg",
+          "blob": "e19c1f78f4225c8365a9d2d161f8a4e6",
+          "size": 215524,
+          "type": "image/jpeg"
+        },
+        "04-habitos-tijolos.jpeg": {
+          "name": "04-habitos-tijolos.jpeg",
+          "blob": "162fbffb4f9cc0e58bb62b00bf1310d7",
+          "size": 242610,
+          "type": "image/jpeg"
+        },
+        "05-juros-ampulheta.jpeg": {
+          "name": "05-juros-ampulheta.jpeg",
+          "blob": "38960c8e2a5dc66e86738b28edc7f947",
+          "size": 272067,
+          "type": "image/jpeg"
+        }
+      }
+    }
+  },
+  "blobs": {},
+  "docs": {
+    "readme": "project/README.md",
+    "sections": []
+  },
+  "lastChange": {
+    "by": "Claude",
+    "at": "2026-10-02T13:43:47Z",
+    "via": "Claude Code",
+    "note": "First version, extracted from the 5 reference posts in projects/store"
+  }
+}

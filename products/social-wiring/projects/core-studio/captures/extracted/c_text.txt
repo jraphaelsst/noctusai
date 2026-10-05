@@ -1,0 +1,107 @@
+
+                                        Dashboard
+                                        Criar Headlines e Roteiros
+                                    Pesquisa
+                                    Minha Pesquisa
+                                    Extrair Pesquisa
+                                        Segundo Cérebro
+                                        Biblioteca
+                                    Configurações
+                                    Minha conta
+                                    Minha Biblioteca
+                                    Treinamentos
+Headlines
+                                            Gerar Headlines
+                                            Headlines Favoritas
+                                            Headlines sugeridas
+                                    Roteiros
+                GT
+Gilson
+My Workspace
+Espaços de trabalho
+                                My Workspace
+Ver tutorial novamente
+                Fazer logout
+Adicionar Workspace
+Nome
+Cancelar
+Criar
+Headlines na Box
+Remover selecionados
+                            Salvar Headlines
+Notificações
+                            Marcar todas como lidas
+                Cérebros Personalizados
+Segundo cérebro
+                                Criar Cérebro
+            Aprenda a usar o Cérebro Personalizado para turbinar suas postagens! 
+Assistir agora.
+Como usar o Cérebro Personalizado
+Vazio
+História de Criação
+                                            Acessar Cérebro
+Vazio
+Histórias de Vida do Especialista
+                                            Acessar Cérebro
+Vazio
+Método do Especialista
+                                            Acessar Cérebro
+Pronto
+Núcleo de Influência
+                                            Acessar Cérebro
+Pronto
+Call de diagnóstico
+                                            Acessar Cérebro
+Pronto
+Formulário
+                                            Acessar Cérebro
+Pronto
+Narrativa
+                                            Acessar Cérebro
+Criar Cérebro Personalizado
+Tipo de Cérebro:
+Personalizado
+Crença
+Nome do Cérebro:
+                        Cancelar
+                        Criar Cérebro
+Editar Cérebro Personalizado
+Nome do Cérebro:
+                            Cancelar
+                            Atualizar Cérebro
+            Copyright ©
+            2026
+            Inteligência Core.
+            Todos os direitos reservados.
+            Feito com
+            por VC
+New report
+Name
+Report type
+Simple
+Provide only basic data needed for the
+                                        report
+Advanced
+Insert charts and additional advanced analyses
+                                        to be inserted in the report
+Report url
+                                    https://tabler.io/reports/
+Visibility
+Private
+Public
+Hidden
+Client name
+Reporting period
+Additional information
+                    Cancel
+                    Create new report
+                        Bem-vindo ao Core Studio!
+Antes de começar, assista aos treinamentos.
+                        Para ter 
+bons resultados
+ com a plataforma, é essencial que você assista aos vídeos de treinamento antes de começar a usar.
+                        Eles cobrem desde a configuração inicial até como gerar roteiros e conteúdos de forma eficiente. 
+Usuários que assistem têm resultados significativamente melhores
+ — não pule essa etapa.
+                            Assistir aos treinamentos agora
+                            Pular por agora

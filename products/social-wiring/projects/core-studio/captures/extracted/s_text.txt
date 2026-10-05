@@ -1,0 +1,526 @@
+
+                                        Dashboard
+                                        Criar Headlines e Roteiros
+                                    Pesquisa
+                                    Minha Pesquisa
+                                    Extrair Pesquisa
+                                        Segundo Cérebro
+                                        Biblioteca
+                                    Configurações
+                                    Minha conta
+                                    Minha Biblioteca
+                                    Treinamentos
+Headlines
+                                            Gerar Headlines
+                                            Headlines Favoritas
+                                            Headlines sugeridas
+                                    Roteiros
+                GT
+Gilson
+My Workspace
+Espaços de trabalho
+                                My Workspace
+Ver tutorial novamente
+                Fazer logout
+Adicionar Workspace
+Nome
+Cancelar
+Criar
+Headlines na Box
+Remover selecionados
+                            Salvar Headlines
+Notificações
+                            Marcar todas como lidas
+                    Extrair Pesquisa de Perfil Viral
+Carregando...
+Carregando perfis aprovados...
+Nichos
+Beleza & Estética
+Casa & Decoração
+Comunicação & Liderança
+Construção Civil
+Criação de Filhos
+Cripto
+Culinária
+Desenvolvimento Pessoal
+Direito
+Educação
+Emagrecimento
+Emagrecimento e Dieta
+Empreendedorismo/Business
+Espiritualidade
+Finanças
+Imigração
+Imobiliário
+Marketing Digital
+Moda & Estilo
+Pets & Animais
+Relacionamentos
+Saúde e Bem-Estar
+Saúde Mental
+Tech & IA
+Trends do Momento
+Tributação Fiscal
+Turismo & Viagem
+Vendas
+Profissões
+Acupunturista
+Advogado Administrativo
+Advogado Ambiental
+Advogado Civil
+Advogado Constitucional
+Advogado de Consumidor
+Advogado de Família
+Advogado Digital
+Advogado Empresarial
+Advogado Imobiliário
+Advogado Internacional
+Advogado Penal
+Advogado Previdenciário
+Advogado Trabalhista
+Advogado Tributário
+Agente de Turismo
+Arquiteto(a)
+Auditor Fiscal
+Autor(a)
+Breathwork
+Cabeleireiro(a)
+Chef de Cozinha
+Cirurgião Plástico
+Coach
+Confeiteiro
+Consultor de Imagem
+Contador(a)
+Copywriter
+Corretor de Imóveis
+Corretor de seguro de vida
+Dentista
+Designer de Interiores
+Designer de joias
+Designer de Sobrancelhas
+Designer Gráfico
+Economista
+Empreendedor(a)
+Enfermagem
+Engenheiro
+Esteticista
+Estrategista de Marca
+Farmacêutico(a)
+Fisioterapeuta
+Fisioterapeuta Pélvico
+Fonoaudiólogo
+Fotógrafo
+Gestor de Tráfego/Media Buyer
+Gestor(a)
+Higienista Ocupacional
+Influenciador(a)
+Investidor(a)
+Joalheira
+Jornalista
+Juiz
+Líder Religioso
+Maquiador(a)
+Marketeiro(a)
+Medicina Regenerativa
+Médico Cardiologista
+Médico Cirurgião
+Médico Dermatologista
+Médico Endocrinologista
+Médico geral
+Médico Geriatra
+Médico Ginecologista
+Médico Integrativo
+Médico Neurologista
+Médico Nutrólogo
+Médico Obstetra
+Médico Oftalmologista
+Médico Ortopedista
+Medico Otorrinolaringologia
+Médico Pediatra
+Médico Psiquiatra
+Medico Radiologia
+Médico ultrassonografista
+Médico Urologista
+Médico Veterinário
+Mentor(a)
+Moda
+Musculação
+Neurocientista
+Nutricionista
+Paisagista
+Pastor(a)
+Personal Trainer
+Professor de Yoga
+Professor(a)
+Programador(a)
+Psicanalista
+Psicólogo Infantil
+Psicólogo(a)
+Psicoterapeuta
+Quiropraxista
+Social Media
+Sommelier
+Teólogo(a)
+Terapeuta
+Terapeuta Holístico
+Terapeuta Somatico
+Vendedor(a)
+Visagista
+                                Limpar Filtros
+Nenhum perfil aprovado encontrado.
+Fechar
+                    Pesquisa do perfil 
+Carregando...
+Carregando pesquisa...
+Nenhuma extração encontrada para este perfil.
+Selecionar todos
+                            Adicionar à minha pesquisa
+0
+Fechar
+Inserir itens na pesquisa
+✕
+Itens
+Classificando itens com IA...
+Isso pode levar alguns instantes
+                    Cada linha vira um item separado.
+                    Pressione 
+Enter
+ para nova linha
+                    e 
+Ctrl+Enter
+ para salvar.
+0 itens
+                        Prompt ativo — itens serão processados pela IA
+Cancelar
+                        Salvar itens
+Inserir mais
+Fechar
+                    Ações — 
+0
+ selecionado(s)
+                    Aprovar selecionados
+                    Excluir selecionados
+Zerar toda a pesquisa
+Remove todos os itens, incluindo os não carregados
+Você realmente deseja excluir os itens selecionados?
+                                Cancelar
+                                Excluir
+Você realmente deseja esvaziar todos os itens? Esta ação não pode ser desfeita.
+                                Cancelar
+                                Esvaziar
+ Você realmente deseja excluir os assuntos virais selecionados?
+                                Cancelar
+                                Excluir
+ Você realmente deseja esvaziar todos os assuntos virais? Esta ação não pode ser desfeita.
+                                Cancelar
+                                Esvaziar
+Tópicos Virais
+Carregando...
+Fechar
+Você realmente deseja aprovar esse topico?
+ Cancelar 
+                                Aprovar
+Você realmente deseja reprovar este topico?
+ Cancelar 
+                                Reprovar
+Você realmente deseja aprovar esse topico?
+ Cancelar 
+                                Aprovar
+Você realmente deseja reprovar este topico?
+ Cancelar 
+                                Reprovar
+Você realmente deseja remover este tópico viral? Esta ação não pode ser desfeita.
+ Cancelar 
+                                Remover
+                    Adicionar conteúdo para a variável
+Valor a adicionar
+                            Adicionar
+                        Adicione um ou mais conteúdos e depois clique em "Atualizar Agora" para salvar.
+Fechar
+                    Extrair Assuntos Virais
+Carregando...
+Carregando perfis com assuntos virais...
+Nichos
+Beleza & Estética
+Casa & Decoração
+Comunicação & Liderança
+Construção Civil
+Criação de Filhos
+Cripto
+Culinária
+Desenvolvimento Pessoal
+Direito
+Educação
+Emagrecimento
+Emagrecimento e Dieta
+Empreendedorismo/Business
+Espiritualidade
+Finanças
+Imigração
+Imobiliário
+Marketing Digital
+Moda & Estilo
+Pets & Animais
+Relacionamentos
+Saúde e Bem-Estar
+Saúde Mental
+Tech & IA
+Trends do Momento
+Tributação Fiscal
+Turismo & Viagem
+Vendas
+Profissões
+Acupunturista
+Advogado Administrativo
+Advogado Ambiental
+Advogado Civil
+Advogado Constitucional
+Advogado de Consumidor
+Advogado de Família
+Advogado Digital
+Advogado Empresarial
+Advogado Imobiliário
+Advogado Internacional
+Advogado Penal
+Advogado Previdenciário
+Advogado Trabalhista
+Advogado Tributário
+Agente de Turismo
+Arquiteto(a)
+Auditor Fiscal
+Autor(a)
+Breathwork
+Cabeleireiro(a)
+Chef de Cozinha
+Cirurgião Plástico
+Coach
+Confeiteiro
+Consultor de Imagem
+Contador(a)
+Copywriter
+Corretor de Imóveis
+Corretor de seguro de vida
+Dentista
+Designer de Interiores
+Designer de joias
+Designer de Sobrancelhas
+Designer Gráfico
+Economista
+Empreendedor(a)
+Enfermagem
+Engenheiro
+Esteticista
+Estrategista de Marca
+Farmacêutico(a)
+Fisioterapeuta
+Fisioterapeuta Pélvico
+Fonoaudiólogo
+Fotógrafo
+Gestor de Tráfego/Media Buyer
+Gestor(a)
+Higienista Ocupacional
+Influenciador(a)
+Investidor(a)
+Joalheira
+Jornalista
+Juiz
+Líder Religioso
+Maquiador(a)
+Marketeiro(a)
+Medicina Regenerativa
+Médico Cardiologista
+Médico Cirurgião
+Médico Dermatologista
+Médico Endocrinologista
+Médico geral
+Médico Geriatra
+Médico Ginecologista
+Médico Integrativo
+Médico Neurologista
+Médico Nutrólogo
+Médico Obstetra
+Médico Oftalmologista
+Médico Ortopedista
+Medico Otorrinolaringologia
+Médico Pediatra
+Médico Psiquiatra
+Medico Radiologia
+Médico ultrassonografista
+Médico Urologista
+Médico Veterinário
+Mentor(a)
+Moda
+Musculação
+Neurocientista
+Nutricionista
+Paisagista
+Pastor(a)
+Personal Trainer
+Professor de Yoga
+Professor(a)
+Programador(a)
+Psicanalista
+Psicólogo Infantil
+Psicólogo(a)
+Psicoterapeuta
+Quiropraxista
+Social Media
+Sommelier
+Teólogo(a)
+Terapeuta
+Terapeuta Holístico
+Terapeuta Somatico
+Vendedor(a)
+Visagista
+                                Limpar Filtros
+Nenhum perfil com assuntos virais encontrado.
+Fechar
+                Minha Pesquisa
+                Gerencie suas variáveis de pesquisa para criar headlines inteligentes.
+                Adicionar itens a pesquisa
+Itens pendentes de salvar
+                                Você possui 
+0
+ item(ns) novo(s) aguardando para
+                                serem salvos.
+                                Clique no botão 
+"Salvar Alterações"
+ no topo da página para salvar
+                                as alterações.
+Carregando...
+Carregando variáveis...
+Por favor, aguarde enquanto buscamos seus dados.
+                                                Mais Recentes
+                                                Mais Views
+                                                Aprovados
+                                                Pendentes
+Todas as variáveis
+Desejos do meu público
+Dores do meu público 
+Características demográficas do meu público
+Qualidades do meu público
+Defeitos do meu público
+Itens conhecidos pelo meu público
+Instituições conhecidas pelo meu público
+Pessoas e personagens conhecidos pelo meu público
+Inimigos do meu público 
+Filmes, séries ou músicas conhecidas pelo meu público
+Eventos conhecidos pelo meu público 
+Locais conhecidos pelo meu público
+Momentos de vida do meu público
+Objeções do meu público 
+Medos do meu público
+Crenças do meu público 
+Desejos e conquistas que eu realizei 
+Produtos conhecidos pelo meu público
+Situações dolorosas que eu enfrentei 
+Meus hábitos e hobbies 
+Minha formação profissional 
+Quem eu sou (idade, estado civil, nacionalidade, etc)
+Minhas qualidades
+Meus defeitos
+Técnicas, serviços e procedimentos que eu efetuo 
+Técnicas, serviços e procedimentos que eu não recomendo
+Hábitos que eu recomendo para o meu público
+Hábitos que eu não recomendo para o meu público 
+Crenças e ideias que eu defendo
+Verbos Poderosos
+Adjetivos Poderosos
+Momento do dia
+GPT
+                                                Agrupar
+0
+ selecionado(s)
+Selecionar todos
+                                            Ações
+Nenhum item encontrado.
+Extrair assuntos virais
+                                                Use esta opção para extrair assuntos virais de um perfil e adicionar
+                                                aos seus assuntos virais.
+                                                Extrair Assuntos Virais
+Assuntos Virais
+                            Aprovado
+                            Pendente
+10
+                                    Selecionar todos
+                                    Excluir selecionados (
+0
+)
+                                    Esvaziar
+                                Adicionar
+                                    Ver mais
+                                    Selecionar todos
+                                    Aprovar selecionados (
+0
+)
+                                    Excluir selecionados (
+0
+)
+                                    Esvaziar
+                                                                empreendedorismo
+                                                                    2.5M Views
+                                                                Pendente
+                                                                trabalhar menos (desejo)
+                                                                    1.6M Views
+                                                                Pendente
+                                                                Elon Musk
+                                                                    1.4M Views
+                                                                Pendente
+                                                                finanças das famílias
+                                                                    1.1M Views
+                                                                Pendente
+                                                                profissões que não precisam de faculdade
+                                                                    1M Views
+                                                                Pendente
+                                                                vendas de produtos na internet
+                                                                    928.2K Views
+                                                                Pendente
+                                                                produtos digitais
+                                                                    852.7K Views
+                                                                Pendente
+                                                                capital de risco
+                                                                    577.6K Views
+                                                                Pendente
+                                                                objeção de venda
+                                                                    334.5K Views
+                                                                Pendente
+                                                                juros compostos
+                                                                    321.2K Views
+                                                                Pendente
+                        Atualizar
+            Copyright ©
+            2026
+            Inteligência Core.
+            Todos os direitos reservados.
+            Feito com
+            por VC
+New report
+Name
+Report type
+Simple
+Provide only basic data needed for the
+                                        report
+Advanced
+Insert charts and additional advanced analyses
+                                        to be inserted in the report
+Report url
+                                    https://tabler.io/reports/
+Visibility
+Private
+Public
+Hidden
+Client name
+Reporting period
+Additional information
+                    Cancel
+                    Create new report
+                        Bem-vindo ao Core Studio!
+Antes de começar, assista aos treinamentos.
+                        Para ter 
+bons resultados
+ com a plataforma, é essencial que você assista aos vídeos de treinamento antes de começar a usar.
+                        Eles cobrem desde a configuração inicial até como gerar roteiros e conteúdos de forma eficiente. 
+Usuários que assistem têm resultados significativamente melhores
+ — não pule essa etapa.
+                            Assistir aos treinamentos agora
+                            Pular por agora

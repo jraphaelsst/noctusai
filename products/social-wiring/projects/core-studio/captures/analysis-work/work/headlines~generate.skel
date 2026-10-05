@@ -1,0 +1,387 @@
+<html>
+  <head>
+    <meta>
+    <meta name="viewport">
+    <meta>
+    <meta name="csrf-token">
+    <meta name="app-env">
+    <title>
+      "Minhas Headlines"
+    <base href="/">
+    <meta name="workspace-id">
+    <meta name="user-id">
+    <meta name="first-access">
+    <link href="./back/dist/css/tabler.min.css">
+    <link href="./back/dist/css/tabler-flags.min.css">
+    <link href="./back/dist/css/tabler-payments.min.css">
+    <link href="./back/dist/css/tabler-vendors.min.css">
+    <link href="./back/dist/css/demo.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.css">
+    <link href="./back/css/main.css?v=">
+    <link href="https://corestudio.ai/back/css/layoutV2.css?v=">
+    <link href="https://corestudio.ai/back/dist/img/favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-daterangepicker/daterangepicker.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap">
+    <link href="https://corestudio.ai/build/assets/app-tn0RQdqM.css">
+    <link href="https://corestudio.ai/build/assets/app-DLOM2UdR.js">
+    <link href="https://corestudio.ai/build/assets/app-tn0RQdqM.css" data-navigate-track="reload">
+    <script https://corestudio.ai/build/assets/app-DLOM2UdR.js>
+    <link href="https://corestudio.ai/back/dist/css/datatables.min.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
+    <script inline>
+  <body>
+    <script ./back/dist/js/demo-theme.min.js>
+    <script inline>
+    <div class="mainContainerV2">
+      <div class="containerAsideV2 card">
+        <aside class="contentAsideV2" data-bs-theme="dark">
+          <div class="headerAsideV2 d-flex">
+            <button class="navbar-toggler" id="toggleSidebarButtonV2" type="button">
+            <a href>
+            <hr class="m-0 p-0">
+          <div class="containerBodyAsideV2">
+            <div class="bodyAsideV2" id="sidebar-menu">
+              <ul class="navbar-nav">
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0" href="https://corestudio.ai/dashboard/user">
+                    <section>
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Dashboard"
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0" href="https://corestudio.ai/dashboard/user/chat">
+                    <section>
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Criar Headlines e Roteiros"
+                <li class="nav-item navDropdownV2 ">
+                  <section>
+                    <div>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block">
+                      <p class="nav-link-title">
+                        "Pesquisa"
+                  <div class="asideDropdownItemV2 ">
+                    <div class="dropdownMenuColumnsV2">
+                      <a class href="https://corestudio.ai/dashboard/user/searches">
+                        "Minha Pesquisa"
+                      <a class href="https://corestudio.ai/dashboard/user/searches/extract-profile">
+                        "Extrair Pesquisa"
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0 w-100" href="https://corestudio.ai/dashboard/user/cores">
+                    <section class="w-100">
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Segundo Cérebro"
+                <li class="nav-item navLinkV2 " title="Exclusivo para o Plano Premium">
+                  <a class="nav-link m-0 p-0 w-100" href="https://corestudio.ai/dashboard/user/library">
+                    <section class="w-100">
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Biblioteca"
+                <li class="nav-item navDropdownV2 active">
+                  <section>
+                    <div>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block">
+                      <p class="nav-link-title m-0">
+                        "Configurações"
+                  <div class="asideDropdownItemV2 d-block">
+                    <div class="dropdownMenuColumnsV2">
+                      <a class href="https://corestudio.ai/dashboard/user/profile">
+                        "Minha conta"
+                      <a class href="https://corestudio.ai/dashboard/user/my-library">
+                        "Minha Biblioteca"
+                      <a class href="https://corestudio.ai/dashboard/user/trainings">
+                        "Treinamentos"
+                      <div class="subMenuV2 open">
+                        <div class="subMenuTriggerV2">
+                          <span>
+                            "Headlines"
+                        <div class="subMenuItemsV2">
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/generate">
+                            "Gerar Headlines"
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/favorites">
+                            "Headlines Favoritas"
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/suggested">
+                            "Headlines sugeridas"
+                      <a class href="https://corestudio.ai/dashboard/user/roadmaps">
+                        "Roteiros"
+            <header class=" d-print-none h-auto">
+              <section class="sectionProfileV2 m-0">
+                <div class="d-flex" style="height: 45px">
+                  <div class="avatarV2">
+                    "GT"
+                  <div class="boxtextV2">
+                    <p class="m-0" style="font-size: 1rem">
+                      "Gilson"
+                    <span style="color: #FFFFFF80;">
+                      "My Workspace"
+                <div class="dropdownMenuProfileV2 modalAnimation">
+                  <div class="dropdownMenuProfileHeaderV2">
+                    <h3 class="m-0">
+                      "Espaços de trabalho"
+                  <form action="https://corestudio.ai/dashboard/user/workspace/switch" method="post">
+                    <input type="hidden" name="_token" value="HWvJLPiqDMlGcMojApMxvY6o0HwI3pvpTwhyUCdC">
+                    <ul class="dropdownMenuProfileBodyV2">
+                      <li>
+                        <button type="submit" name="workspace_id" value="1619" style="width: 100%; background: none; border: none" class="active">
+                          "My Workspace"
+                  <a href="javascript:;" class="dropdownMenuProfileTutorialV2" data-bs-toggle="modal" data-bs-target="#modal-first-access-tutorial" title="Assistir ao tutorial de boas-vindas">
+                    <span>
+                      "Ver tutorial novamente"
+                  <a class="dropdownMenuProfileFooterV2">
+                    "Fazer logout"
+                <form id="logout-form" action="https://corestudio.ai/logout" method="POST" style="display: none;">
+                  <input type="hidden" name="_token" value="HWvJLPiqDMlGcMojApMxvY6o0HwI3pvpTwhyUCdC">
+          <div class="modal fade custom-slide" id="modal-create-workspace">
+            <div class="modal-dialog modal-dialog-centered d-flex justify-content-center" style="min-width: fit-content !important;">
+              <div class="modal-content card" style="width: min(650px, 100vw)">
+                <header class="d-flex justify-content-between align-items-center flex-row" style="padding: 20px; border-bottom: 1px solid #E1C8FF26; height: fit-content !important">
+                  <h2 class="m-0">
+                    "Adicionar Workspace"
+                <form id="customers-workspace-create" method="post" style="padding: 20px;">
+                  <input type="hidden" name="customer_id" value="1667">
+                  <h3 class="mb-2">
+                    "Nome"
+                  <input type="text" class="form-control" value="My Workspace 2" name="name" placeholder="Ex.. My Workspace 2">
+                <footer class="d-flex justify-content-end align-items-center" style="padding: 20px; border-top: 1px solid #E1C8FF26; gap: 20px">
+                  <button data-bs-dismiss="modal" type="button">
+                    "Cancelar"
+                  <button form="customers-workspace-create" id="create_workspace" type="submit">
+                    "Criar"
+          <script inline>
+      <a data-bs-toggle="offcanvas" href="#offcanvasEnd" role="button" class="card card-link card-link-pop j_headline_icon_box" style="display:none">
+        <div class="card-body">
+          <div class="col-auto">
+            <span class="badge bg-blue badge-notification badge-blink" style="left: -15px;width: 1rem;height: 1rem;">
+            <span class="bg-red-lt avatar">
+      <div class="offcanvas offcanvas-end j_headline_content_box" id="offcanvasEnd" aria-labelledby="offcanvasEndLabel">
+        <div class="offcanvas-header">
+          <h2 class="offcanvas-title" id="offcanvasEndLabel">
+            "Headlines na Box"
+          <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close">
+        <div class="offcanvas-body">
+          <form id="box-headlines-save" method="post">
+            <div class="mb-2">
+              <a href="javascript:;" class="j_box_remove_headlines" style="display: flex;flex-direction: row-reverse;">
+                "Remover selecionados"
+            <div class="j_box-headlines-list">
+            <div class="card-footer mt-3 text-end">
+              <div class="d-flex">
+                <button id="box_save_headlines" class="btn btn-primary ms-auto" type="button" data-bs-toggle="modal" data-bs-target="#modal-box-headlines-save">
+                  "Salvar Headlines"
+      <div class="mainContentV2">
+        <div class="top-header-v2" x-data="notificationsDropdown()" @click.away="open = false">
+          <div class="top-header-v2-inner">
+            <div class="notification-bell-wrapper" style="position: relative;">
+              <button class="notification-bell-btn" @click="toggle()" type="button">
+                <span class="notification-badge" x-show="unreadCount > 0" x-text="unreadCount > 9 ? '9+' : unreadCount" x-cloak>
+              <div class="notification-dropdown" x-show="open" x-cloak x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-[-8px]" x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-[-8px]">
+                <div class="notification-dropdown-header">
+                  <span class="notification-dropdown-title">
+                    "Notificações"
+                  <div class="notification-header-actions">
+                    <button class="notification-mark-all" @click="markAllRead()" x-show="unreadCount > 0" type="button">
+                      "Marcar todas como lidas"
+                    <button class="notification-toggle-read" @click="toggleShowRead()" x-show="readCount > 0" type="button">
+                      <span x-text="showRead ? 'Ocultar lidas' : 'Ver já lidas'">
+                <div class="notification-dropdown-body">
+                  <template x-if="notifications.length === 0">
+                    <div class="notification-empty">
+                      <p>
+                        "Nenhuma notificação por aqui"
+                  <template x-for="n in notifications" :key="n.id">
+                    <a :href="n.link || '#'" class="notification-item" :class="{ 'unread': n.status === 0 }" @click="markRead(n)">
+                      <div class="notification-item-icon" :class="'type-' + n.type">
+                        <template x-if="n.icon">
+                          <span x-text="n.icon">
+                        <template x-if="!n.icon">
+                      <div class="notification-item-content">
+                        <div class="notification-item-title" x-text="n.title">
+                        <div class="notification-item-body" x-text="n.body" x-show="n.body">
+                        <div class="notification-item-time" x-text="timeAgo(n.created_at)">
+                      <div class="notification-item-dot" x-show="n.status === 0">
+        <script inline>
+        <div class="page-wrapper">
+          <div class="page-body d-flex flex-column align-items-center" style="min-height: 85vh">
+            <div style="margin-top: 70px" class="text-center mb-2">
+              <h2 class="m-2" style="font-size: 1.9rem">
+                "Gerar headlines"
+              <p style="color: #FFFFFF80; font-size: 1.2rem">
+                "Selecione o assunto que deseja gerar suas headlines"
+            <section class="d-flex containerCardHeadlineTypeV2" style="gap: 20px">
+              <article class="card overflow-hidden cardHeadlineTypeV2" style="height: 468px; max-width: 380px; width: calc(100% / 3);">
+                <div class="h-50 d-flex justify-content-center align-items-center" style="background-color: #000808; overflow: hidden; position: relative; border: 1px solid #E1C8FF">
+                  <span class="span_light" style="background: #008E9B;">
+                  <img src="https://corestudio.ai/back/static/assets/Firefly.png" class="imageCards" style="height: 150px;">
+                <div class="h-50 d-flex flex-column justify-content-between" style="padding: 25px">
+                  <div>
+                    <h3 class="mb-2" style="font-size: 1.3rem">
+                      "Sobre mim"
+                    <p style="font-size: 1.2rem; color: #FFFFFF80; margin: 0;">
+                      "Headlines com base nas suas convicções, hábitos e histórias de vida."
+                  <a href="https://corestudio.ai/dashboard/user/headlines?who=me">
+                    "Gerar Headlines"
+              <article class="card overflow-hidden cardHeadlineTypeV2" style="height: 468px; max-width: 380px; width: calc(100% / 3)">
+                <div class="h-50 d-flex justify-content-center align-items-center" style="background-color: #000716; overflow: hidden; position: relative; border: 1px solid #E1C8FF">
+                  <span class="span_light" style="background: #335FC6;">
+                  <img src="https://corestudio.ai/back/static/assets/Productimage.png" class="imageCards" style="height: 130px;">
+                <div class="h-50 d-flex flex-column justify-content-between" style="padding: 25px">
+                  <div>
+                    <h3 class="mb-2" style="font-size: 1.3rem">
+                      "Sobre meu público"
+                    <p style="font-size: 1.2rem; color: #FFFFFF80; margin: 0;">
+                      "Headlines com base em dores, desejos, crenças e demais características do seu público alvo."
+                  <a href="https://corestudio.ai/dashboard/user/headlines?who=public">
+                    "Gerar Headlines"
+              <article class="card overflow-hidden cardHeadlineTypeV2" style="height: 468px; max-width: 380px; width: calc(100% / 3)">
+                <div class="h-50 d-flex justify-content-center align-items-center" style="background-color: #0C0012; overflow: hidden; position: relative; border: 1px solid #E1C8FF">
+                  <span class="span_light" style="background: #9F26E0;">
+                  <img src="https://corestudio.ai/back/static/assets/fire.png" class="imageCards" style="height: 140px;">
+                <div class="h-50 d-flex flex-column justify-content-between" style="padding: 25px;">
+                  <div>
+                    <h3 class="mb-2" style="font-size: 1.3rem">
+                      "Assuntos do Virais"
+                    <p style="font-size: 1.2rem; color: #FFFFFF80; margin: 0;">
+                      "Headlines com assuntos em alta que conectam com o seu público-alvo."
+                  <a href="https://corestudio.ai/dashboard/user/headlines?who=viral">
+                    "Gerar Headlines"
+        <footer class="footerV2">
+          <div class="d-flex justify-content-between align-items-center p-2 w-100" style="font-size:12px">
+            <p class="m-0">
+              "Copyright © 2026 Inteligência Core. Todos os direitos reservados."
+            <span class="link-secondary">
+              "Feito com"
+              "por VC"
+        <div class="modal modal-blur fade" id="modal-report" role="dialog">
+          <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">
+                  "New report"
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close">
+              <div class="modal-body">
+                <div class="mb-3">
+                  <label class="form-label">
+                    "Name"
+                  <input type="text" class="form-control" name="example-text-input" placeholder="Your report name">
+                <label class="form-label">
+                  "Report type"
+                <div class="form-selectgroup-boxes row mb-3">
+                  <div class="col-lg-6">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="report-type" value="1" class="form-selectgroup-input" checked>
+                      <span class="form-selectgroup-label d-flex align-items-center p-3">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Simple"
+                          <span class="d-block text-secondary">
+                            "Provide only basic data needed for the report"
+                  <div class="col-lg-6">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="report-type" value="1" class="form-selectgroup-input">
+                      <span class="form-selectgroup-label d-flex align-items-center p-3">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Advanced"
+                          <span class="d-block text-secondary">
+                            "Insert charts and additional advanced analyses to be inserted in the report"
+                <div class="row">
+                  <div class="col-lg-8">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Report url"
+                      <div class="input-group input-group-flat">
+                        <span class="input-group-text">
+                          "https://tabler.io/reports/"
+                        <input type="text" class="form-control ps-0" value="report-01">
+                  <div class="col-lg-4">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Visibility"
+                      <select class="form-select">
+                        <option value="1" selected>
+                          "Private"
+                        <option value="2">
+                          "Public"
+                        <option value="3">
+                          "Hidden"
+              <div class="modal-body">
+                <div class="row">
+                  <div class="col-lg-6">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Client name"
+                      <input type="text" class="form-control">
+                  <div class="col-lg-6">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Reporting period"
+                      <input type="date" class="form-control">
+                  <div class="col-lg-12">
+                    <div>
+                      <label class="form-label">
+                        "Additional information"
+                      <textarea class="form-control">
+              <div class="modal-footer">
+                <a href="#" class="btn btn-link link-secondary" data-bs-dismiss="modal">
+                  "Cancel"
+                <a href="#" class="btn btn-primary ms-auto" data-bs-dismiss="modal">
+                  "Create new report"
+    <script ./back/dist/libs/apexcharts/dist/apexcharts.min.js>
+    <script ./back/dist/libs/jsvectormap/dist/js/jsvectormap.min.js>
+    <script ./back/dist/libs/jsvectormap/dist/maps/world.js>
+    <script ./back/dist/libs/jsvectormap/dist/maps/world-merc.js>
+    <script ./back/dist/libs/tom-select/dist/js/tom-select.base.min.js>
+    <script https://code.jquery.com/jquery-3.6.0.min.js>
+    <script https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.js>
+    <script inline>
+    <script ./back/dist/js/tabler.min.js>
+    <script inline>
+    <script https://cdn.jsdelivr.net/npm/marked/marked.min.js>
+    <script inline>
+    <script inline>
+    <script inline>
+    <div class="modal fade" id="modal-first-access-tutorial" aria-labelledby="modalFirstAccessLabel" data-bs-backdrop="static">
+      <div class="modal-dialog modal-dialog-centered" style="max-width: 520px;">
+        <div class="modal-content" style="background: #0D0C12; border: 1px solid rgba(225, 200, 255, 0.15); border-radius: 20px; ove">
+          <div style="height: 4px; background: linear-gradient(90deg, #9945FF, #6e2fe0);">
+          <div class="modal-body p-4 p-md-5">
+            <div class="text-center mb-4">
+              <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 6">
+            <h2 class="text-white text-center mb-3" style="font-size: 1.4rem; font-weight: 700; line-height: 1.3;">
+              "Bem-vindo ao Core Studio!"
+              <br>
+              <span style="color: #9945FF;">
+                "Antes de começar, assista aos treinamentos."
+            <p class="text-center mb-2" style="color: rgba(255,255,255,0.75); font-size: 0.95rem; line-height: 1.7;">
+              "Para ter"
+              <strong class="text-white">
+                "bons resultados"
+              "com a plataforma, é essencial que você assista aos vídeos de treinamento antes de começar a usar."
+            <p class="text-center mb-4" style="color: rgba(255,255,255,0.55); font-size: 0.88rem; line-height: 1.6;">
+              "Eles cobrem desde a configuração inicial até como gerar roteiros e conteúdos de forma eficiente."
+              <strong style="color: rgba(255,255,255,0.75);">
+                "Usuários que assistem têm resultados significativamente melhores"
+              "— não pule essa etapa."
+            <div class="d-flex flex-column gap-2">
+              <a id="btn-first-access-trainings" href="https://corestudio.ai/dashboard/user/trainings" class="btn w-100" style="background: #9945FF; color: #fff; border: none; border-radius: 50px; padding: 12px 24px; f">
+                "Assistir aos treinamentos agora"
+              <button type="button" id="btn-first-access-skip" data-bs-dismiss="modal" class="btn w-100" style="background: transparent; color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,">
+                "Pular por agora"
+    <script inline>
+    <script inline>
+    <script ./back/dist/js/demo.min.js>
+    <script https://js.pusher.com/8.2.0/pusher.min.js>
+    <script https://cdn.jsdelivr.net/npm/laravel-echo@1.15.3/dist/echo.iife.js>
+    <script inline>
+    <script https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js>
+    <script https://cdn.jsdelivr.net/npm/bootstrap-daterangepicker/daterangepicker.min.js>
+    <script text/javascript>

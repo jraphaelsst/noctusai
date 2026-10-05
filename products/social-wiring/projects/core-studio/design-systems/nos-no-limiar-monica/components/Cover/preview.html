@@ -1,0 +1,26 @@
+<!-- @dsCard height=320 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&family=Inter:wght@400&display=swap">
+<style>
+  html,body{margin:0}
+  .cv{position:relative;width:960px;height:320px;background:var(--offWhite);overflow:hidden}
+  .cv svg{position:absolute;inset:0}
+  .wine{fill:var(--wine)} .sand{fill:var(--sand)} .rose{fill:var(--rose)} .char{fill:var(--charcoal)} .tan{fill:var(--tan)}
+  .name{position:absolute;left:48px;bottom:64px;max-width:440px;margin:0;font-family:var(--font-display);font-weight:500;font-size:120px;line-height:.95;color:var(--ink)}
+  .tag{position:absolute;left:48px;bottom:34px;max-width:440px;margin:0;font-family:var(--font-ui);font-size:14px;color:var(--ash)}
+</style>
+<div class="cv">
+  <svg width="960" height="320" viewBox="0 0 960 320" aria-hidden="true">
+    <!-- blocks: wine slab 192x272 (radius-panel 24), sand slab 160x200 (radius-card 16), rose disc d=128, charcoal pill 160x48 (radius-pill = 24), tan tile 96x96 (radius-tile 12)
+         arrangement: one tall wine slab with satellites, a staggered stack right of x=480, bleeding off the top edge like a phone sheet
+         pattern row: soft, friendly, large radii (pill buttons, 16/24 cards) -> pills and a disc cut from the radius scale, a few, not a field
+         steps/radii: space-24 gaps, space-48 pill height, radius-tile 12, radius-card 16, radius-panel 24, radius-pill as half the short side -->
+    <rect class="wine" x="528" y="-24" width="192" height="272" rx="24"/>
+    <rect class="sand" x="744" y="72" width="160" height="200" rx="16"/>
+    <circle class="rose" cx="824" cy="40" r="64"/>
+    <rect class="char" x="528" y="272" width="160" height="48" rx="24"/>
+    <rect class="tan" x="712" y="248" width="96" height="96" rx="12"/>
+    <rect class="rose" x="904" y="200" width="96" height="48" rx="24"/>
+  </svg>
+  <p class="name">Nós no<br>Limiar</p>
+  <p class="tag">Paper, ink and one wine. Serif speaks, sans operates.</p>
+</div>

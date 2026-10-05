@@ -1,0 +1,2840 @@
+<html class="theme-dark" data-bs-theme="dark">
+  <head>
+    <script chrome-extension://lgblnfidahcdcjddiepkckcfdhpknnjh/content/popups-script.js>
+    <meta>
+    <meta name="viewport">
+    <meta>
+    <meta name="csrf-token">
+    <meta name="app-env">
+    <title>
+      "Dashboard - Inteligência Core"
+    <base href="/">
+    <meta name="workspace-id">
+    <meta name="user-id">
+    <meta name="first-access">
+    <link href="./back/dist/css/tabler.min.css">
+    <link href="./back/dist/css/tabler-flags.min.css">
+    <link href="./back/dist/css/tabler-payments.min.css">
+    <link href="./back/dist/css/tabler-vendors.min.css">
+    <link href="./back/dist/css/demo.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.css">
+    <link href="./back/css/main.css?v=">
+    <link href="https://corestudio.ai/back/css/layoutV2.css?v=">
+    <link href="https://corestudio.ai/back/dist/img/favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-daterangepicker/daterangepicker.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap">
+    <link href="https://corestudio.ai/build/assets/app-tn0RQdqM.css">
+    <link href="https://corestudio.ai/build/assets/app-DLOM2UdR.js">
+    <link href="https://corestudio.ai/build/assets/app-tn0RQdqM.css" data-navigate-track="reload">
+    <script https://corestudio.ai/build/assets/app-DLOM2UdR.js>
+    <script inline>
+    <script https://client.crisp.chat/l.js>
+    <link href="https://client.relay.crisp.chat">
+    <link href="https://client.crisp.chat/static">
+    <script https://client.crisp.chat/static/javascripts/client_default_3afc012.js>
+    <link href="https://client.crisp.chat/static/stylesheets/client_default_3afc012.css" type="text/css">
+    <meta id="dcngeagmmhegagicpcmpinaoklddcgon">
+    <link type="text/css" href="//fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+    <link type="text/css" href="//fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <body data-bs-theme="dark">
+    <script ./back/dist/js/demo-theme.min.js>
+    <script inline>
+    <div class="mainContainerV2">
+      <div class="containerAsideV2 card">
+        <aside class="contentAsideV2" data-bs-theme="dark">
+          <div class="headerAsideV2 d-flex">
+            <button class="navbar-toggler" id="toggleSidebarButtonV2" type="button">
+            <a href>
+            <hr class="m-0 p-0">
+          <div class="containerBodyAsideV2" style="display: flex;">
+            <div class="bodyAsideV2" id="sidebar-menu">
+              <ul class="navbar-nav">
+                <li class="nav-item navLinkV2 active">
+                  <a class="nav-link m-0 p-0" href="https://corestudio.ai/dashboard/user">
+                    <section>
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Dashboard"
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0" href="https://corestudio.ai/dashboard/user/chat">
+                    <section>
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Criar Headlines e Roteiros"
+                <li class="nav-item navDropdownV2 ">
+                  <section>
+                    <div>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block">
+                      <p class="nav-link-title">
+                        "Pesquisa"
+                  <div class="asideDropdownItemV2 ">
+                    <div class="dropdownMenuColumnsV2">
+                      <a class href="https://corestudio.ai/dashboard/user/searches">
+                        "Minha Pesquisa"
+                      <a class href="https://corestudio.ai/dashboard/user/searches/extract-profile">
+                        "Extrair Pesquisa"
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0 w-100" href="https://corestudio.ai/dashboard/user/cores">
+                    <section class="w-100">
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Segundo Cérebro"
+                <li class="nav-item navLinkV2 " title="Exclusivo para o Plano Premium">
+                  <a class="nav-link m-0 p-0 w-100" href="https://corestudio.ai/dashboard/user/library">
+                    <section class="w-100">
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Biblioteca"
+                <li class="nav-item navDropdownV2 ">
+                  <section>
+                    <div>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block">
+                      <p class="nav-link-title m-0">
+                        "Configurações"
+                  <div class="asideDropdownItemV2 ">
+                    <div class="dropdownMenuColumnsV2">
+                      <a class href="https://corestudio.ai/dashboard/user/profile">
+                        "Minha conta"
+                      <a class href="https://corestudio.ai/dashboard/user/my-library">
+                        "Minha Biblioteca"
+                      <a class href="https://corestudio.ai/dashboard/user/trainings">
+                        "Treinamentos"
+                      <div class="subMenuV2 ">
+                        <div class="subMenuTriggerV2">
+                          <span>
+                            "Headlines"
+                        <div class="subMenuItemsV2">
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/generate">
+                            "Gerar Headlines"
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/favorites">
+                            "Headlines Favoritas"
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/suggested">
+                            "Headlines sugeridas"
+                      <a class href="https://corestudio.ai/dashboard/user/roadmaps">
+                        "Roteiros"
+            <header class=" d-print-none h-auto">
+              <section class="sectionProfileV2 m-0">
+                <div class="d-flex" style="height: 45px">
+                  <div class="avatarV2">
+                    "GT"
+                  <div class="boxtextV2">
+                    <p class="m-0" style="font-size: 1rem">
+                      "Gilson"
+                    <span style="color: #FFFFFF80;">
+                      "My Workspace"
+                <div class="dropdownMenuProfileV2 modalAnimation">
+                  <div class="dropdownMenuProfileHeaderV2">
+                    <h3 class="m-0">
+                      "Espaços de trabalho"
+                  <form action="https://corestudio.ai/dashboard/user/workspace/switch" method="post">
+                    <input type="hidden" name="_token" value="HWvJLPiqDMlGcMojApMxvY6o0HwI3pvpTwhyUCdC">
+                    <ul class="dropdownMenuProfileBodyV2">
+                      <li>
+                        <button type="submit" name="workspace_id" value="1619" style="width: 100%; background: none; border: none" class="active">
+                          "My Workspace"
+                  <a href="javascript:;" class="dropdownMenuProfileTutorialV2" data-bs-toggle="modal" data-bs-target="#modal-first-access-tutorial" title="Assistir ao tutorial de boas-vindas">
+                    <span>
+                      "Ver tutorial novamente"
+                  <a class="dropdownMenuProfileFooterV2">
+                    "Fazer logout"
+                <form id="logout-form" action="https://corestudio.ai/logout" method="POST" style="display: none;">
+                  <input type="hidden" name="_token" value="HWvJLPiqDMlGcMojApMxvY6o0HwI3pvpTwhyUCdC">
+          <div class="modal fade custom-slide" id="modal-create-workspace">
+            <div class="modal-dialog modal-dialog-centered d-flex justify-content-center" style="min-width: fit-content !important;">
+              <div class="modal-content card" style="width: min(650px, 100vw)">
+                <header class="d-flex justify-content-between align-items-center flex-row" style="padding: 20px; border-bottom: 1px solid #E1C8FF26; height: fit-content !important">
+                  <h2 class="m-0">
+                    "Adicionar Workspace"
+                <form id="customers-workspace-create" method="post" style="padding: 20px;">
+                  <input type="hidden" name="customer_id" value="1667">
+                  <h3 class="mb-2">
+                    "Nome"
+                  <input type="text" class="form-control" value="My Workspace 2" name="name" placeholder="Ex.. My Workspace 2">
+                <footer class="d-flex justify-content-end align-items-center" style="padding: 20px; border-top: 1px solid #E1C8FF26; gap: 20px">
+                  <button data-bs-dismiss="modal" type="button">
+                    "Cancelar"
+                  <button form="customers-workspace-create" id="create_workspace" type="submit">
+                    "Criar"
+          <script inline>
+      <a data-bs-toggle="offcanvas" href="#offcanvasEnd" role="button" class="card card-link card-link-pop j_headline_icon_box" style="display:none">
+        <div class="card-body">
+          <div class="col-auto">
+            <span class="badge bg-blue badge-notification badge-blink" style="left: -15px;width: 1rem;height: 1rem;">
+            <span class="bg-red-lt avatar">
+      <div class="offcanvas offcanvas-end j_headline_content_box" id="offcanvasEnd" aria-labelledby="offcanvasEndLabel">
+        <div class="offcanvas-header">
+          <h2 class="offcanvas-title" id="offcanvasEndLabel">
+            "Headlines na Box"
+          <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close">
+        <div class="offcanvas-body">
+          <form id="box-headlines-save" method="post">
+            <div class="mb-2">
+              <a href="javascript:;" class="j_box_remove_headlines" style="display: flex;flex-direction: row-reverse;">
+                "Remover selecionados"
+            <div class="j_box-headlines-list">
+            <div class="card-footer mt-3 text-end">
+              <div class="d-flex">
+                <button id="box_save_headlines" class="btn btn-primary ms-auto" type="button" data-bs-toggle="modal" data-bs-target="#modal-box-headlines-save">
+                  "Salvar Headlines"
+      <div class="mainContentV2">
+        <div class="top-header-v2" x-data="notificationsDropdown()" @click.away="open = false">
+          <div class="top-header-v2-inner">
+            <div class="notification-bell-wrapper" style="position: relative;">
+              <button class="notification-bell-btn" @click="toggle()" type="button">
+                <span class="notification-badge" x-show="unreadCount > 0" x-text="unreadCount > 9 ? '9+' : unreadCount" style="display: none;">
+                  "0"
+              <div class="notification-dropdown" x-show="open" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-[-8px]" x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-[-8px]" style="display: none;">
+                <div class="notification-dropdown-header">
+                  <span class="notification-dropdown-title">
+                    "Notificações"
+                  <div class="notification-header-actions">
+                    <button class="notification-mark-all" @click="markAllRead()" x-show="unreadCount > 0" type="button" style="display: none;">
+                      "Marcar todas como lidas"
+                    <button class="notification-toggle-read" @click="toggleShowRead()" x-show="readCount > 0" type="button" style="display: none;">
+                      <span x-text="showRead ? 'Ocultar lidas' : 'Ver já lidas'">
+                        "Ver já lidas"
+                <div class="notification-dropdown-body">
+                  <template x-if="notifications.length === 0">
+                    <div class="notification-empty">
+                      <p>
+                        "Nenhuma notificação por aqui"
+                  <div class="notification-empty">
+                    <p>
+                      "Nenhuma notificação por aqui"
+                  <template x-for="n in notifications" :key="n.id">
+                    <a :href="n.link || '#'" class="notification-item" :class="{ 'unread': n.status === 0 }" @click="markRead(n)">
+                      <div class="notification-item-icon" :class="'type-' + n.type">
+                        <template x-if="n.icon">
+                          <span x-text="n.icon">
+                        <template x-if="!n.icon">
+                      <div class="notification-item-content">
+                        <div class="notification-item-title" x-text="n.title">
+                        <div class="notification-item-body" x-text="n.body" x-show="n.body">
+                        <div class="notification-item-time" x-text="timeAgo(n.created_at)">
+                      <div class="notification-item-dot" x-show="n.status === 0">
+        <script inline>
+        <div class="headerContainerMainV2">
+          <h2 class="m-0">
+            <span style="color: #5229CF; margin-right: 10px">
+              "Olá,"
+            "Gilson!"
+        <div class="page-body m-0 bodyContainerMainV2">
+          <div class="containerCardheaderDashboardV2">
+            <div class="card cardheaderDashboardV2" style="padding: 24px;">
+              <span>
+              <div class="containerTextV2">
+                <p class="m-0">
+                  "Headlines geradas"
+                <h3 class=" m-0">
+                  "0"
+            <div class="card cardheaderDashboardV2" style="padding: 24px;">
+              <span>
+              <div class="containerTextV2">
+                <p class="m-0">
+                  "Roteiros gerados"
+                <h3 class=" m-0">
+                  "2"
+            <div class="card cardheaderDashboardV2" style="padding: 24px;">
+              <span>
+              <div class="containerTextV2">
+                <p class="m-0">
+                  "Diagnóstico"
+                <h3 class=" m-0">
+                  "0"
+                  <span style="all:unset" class="d-md-none d-xl-inline">
+                    "a preencher"
+          <div class="containerBodyDashboardV2">
+            <div class="card historyDashbordV2" style="padding-bottom: 24px;">
+              <header class="headerHistoryV2" style="padding: 24px;">
+                <div>
+                  <h3 class="m-0">
+                    "Histórico"
+                  <p class="m-0">
+                    "Linha do tempo do seu uso."
+                <section class="filterSelect">
+                  <select class="form-select" style="height: 45px" id="filterSelectV2">
+                    <option value>
+                      "Filtrar"
+                    <option value="dateAsc">
+                      "Data crescente"
+                    <option value="dateDesc">
+                      "Data decrescente"
+                    <option value="type">
+                      "Tipo"
+              <div>
+                <div class="itemHistoryV2">
+                  <div class="d-flex align-items-center">
+                    <span style="background-color: #3B5CFF; box-shadow: 0px 0px 22px 0px #C392FF66 inset;">
+                    <div class="d-flex flex-column gap-1">
+                      <h4 class="m-0">
+                        "atualizou o perfil."
+                      <p class="m-0">
+                        "Gilson"
+                  <p class="m-0">
+                    "28/07/2026 - 17:47"
+                <div class="itemHistoryV2">
+                  <div class="d-flex align-items-center">
+                    <span style="background-color: #3B5CFF; box-shadow: 0px 0px 22px 0px #C392FF66 inset;">
+                    <div class="d-flex flex-column gap-1">
+                      <h4 class="m-0">
+                        "atualizou o perfil."
+                      <p class="m-0">
+                        "Gilson"
+                  <p class="m-0">
+                    "16/06/2026 - 15:35"
+            <div class="card topHeadlinesDashboardV2" style="padding: 0;">
+              <div class>
+                <div class="d-flex flex-column align-items-start" style="padding: 24px;">
+                  <h3 class="m-0">
+                    "Headlines Sugeridas"
+                  <a style="color: #E1C8FF;" href="https://corestudio.ai/dashboard/user/headlines/suggested">
+                    "ver todos as headlines"
+                <div style="height: 540px; overflow-y: auto; border-top: 1px solid #E1C8FF26; padding: 0 20px;
+       ">
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Como seus pais falavam sobre comprar imóvel se tornou sua voz interior sobre dinheiro. Como sua família tratava o patrimônio lhe ensinou o que fazer com o seu: arriscar, travar ou ficar em silêncio. Você pode mudar isso tomando decisões que protejam sua família por gerações.">
+                        "Como seus pais falavam sobre comprar imóvel s..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "3.1M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end" style>
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201775">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201775">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/Dc5Gvoszu0K/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Como seu pai tratava a casa própria se tornou sua visão sobre patrimônio. Como sua mãe lidava com aluguel lhe mostrou como a segurança deveria ser, mesmo que não fosse estabilidade. Você não aprendeu apenas a morar, você aprendeu a valorizar ou temer decisões que impactam gerações.">
+                        "Como seu pai tratava a casa própria se tornou..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "3.1M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201774">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201774">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/Dc5Gvoszu0K/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Olha isso aqui ó, investidores voltando a vender imóvel abaixo do valor com a desculpa de que agora é liquidez, é estratégia. Isso não é liquidez, isso não é inteligente, isso não é estratégia, isso é desespero e desespero precisa ser tratado.">
+                        "Olha isso aqui ó, investidores voltando a ven..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "372.9K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201503">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201503">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNOkFSARQYw/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Minha família tá sem segurança financeira, será que foi porque não investi em imóvel na hora certa?">
+                        "Minha família tá sem segurança financeira, se..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "760.5K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201502">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201502">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNREJgnxIFN/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Olha isso aqui ó, famílias voltando a comprar imóvel na planta com a desculpa de que agora é investimento, é oportunidade. Isso não é investimento, isso não é segurança, isso não é oportunidade, isso é impulso e impulso precisa ser corrigido.">
+                        "Olha isso aqui ó, famílias voltando a comprar..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "372.9K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201501">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201501">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNOkFSARQYw/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Eu estou satisfeito com meu patrimônio construído, e quem mais se incomoda com minhas escolhas imobiliárias são os outros, nunca eu.">
+                        "Eu estou satisfeito com meu patrimônio constr..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "4.6M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201500">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201500">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNvoNIC4tXb/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Meu patrimônio não cresce nunca, será que foi porque comprei o imóvel errado?">
+                        "Meu patrimônio não cresce nunca, será que foi..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "760.5K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201499">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201499">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNREJgnxIFN/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Lo-ca-li-za-ção-ção-ção, va-lo-ri-za-va-lo-ri-za, pa-tri-mô-nio-mô-nio-mô-nio, se-gu-ran-ça-ran-ça, de-ci-são-de-ci-são-de-ci-são">
+                        "Lo-ca-li-za-ção-ção-ção, va-lo-ri-za-va-lo-ri..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "1.3M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201498">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201498">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNd9m_oxE6h/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Eu sou feliz com as decisões imobiliárias que tomei, e as pessoas se incomodam muito mais com meu patrimônio do que eu.">
+                        "Eu sou feliz com as decisões imobiliárias que..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "4.6M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201497">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201497">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNvoNIC4tXb/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Você sabe qual é a maior frustração de quem quer investir em imóveis? É perceber o quanto seu patrimônio poderia ter crescido e não ter agido quando teve a chance.">
+                        "Você sabe qual é a maior frustração de quem q..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "586.4K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201496">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201496">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNLgwPGxq68/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Com-pra-com-pra-com-pra-imóvel, ven-de-ven-de-ven-de, pa-tri-mô-nio-mô-nio-mô-nio, fa-mí-lia-fa-mí-lia, in-ves-te-in-ves-te-in-ves-te">
+                        "Com-pra-com-pra-com-pra-imóvel, ven-de-ven-de..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "1.3M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201495">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201495">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNd9m_oxE6h/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Nunca foi tão arriscado investir em imóveis sem uma estratégia de patrimônio.">
+                        "Nunca foi tão arriscado investir em imóveis s..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "1.4M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201494">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201494">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNT9a6_xs_4/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Você sabe qual é o maior peso que uma família pode carregar? É saber que poderia ter construído um patrimônio sólido e não ter tomado a decisão certa na hora certa.">
+                        "Você sabe qual é o maior peso que uma família..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "586.4K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201493">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201493">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNLgwPGxq68/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="E pra você, qual dos dois bairros representa melhor a valorização imobiliária? Diz aqui pra mim.">
+                        "E pra você, qual dos dois bairros representa ..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "3.9M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201492">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201492">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNIv3n4x44f/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Nunca foi tão difícil comprar o imóvel certo para proteger sua família.">
+                        "Nunca foi tão difícil comprar o imóvel certo ..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "1.4M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201491">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201491">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNT9a6_xs_4/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="O recado vai pra você, pai de família. Adiar a compra do imóvel esperando o momento perfeito não é prudência. É medo disfarçado de planejamento.">
+                        "O recado vai pra você, pai de família. Adiar ..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "526.7K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201490">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201490">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNF57-bRCMo/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="E pra você, qual das duas decisões representa melhor a Caixa Econômica? Diz aqui pra mim.">
+                        "E pra você, qual das duas decisões representa..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "3.9M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201489">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201489">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNIv3n4x44f/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Chegou a hora de te contar a verdade que ninguém fala sobre o mercado imobiliário.">
+                        "Chegou a hora de te contar a verdade que ning..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "1M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201488">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201488">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNEs-LFxLNp/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="O recado vai pra você, investidor. Comprar imóvel na planta achando que está construindo patrimônio não é visão de longo prazo. É impulso disfarçado de estratégia.">
+                        "O recado vai pra você, investidor. Comprar im..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "526.7K views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201487">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201487">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNF57-bRCMo/">
+                          "Abrir link"
+                  <div class="d-flex align-items-center justify-content-between w-100 headline-item" style="border-bottom: 1px solid #E1C8FF26; padding: 10px 15px;">
+                    <div style="width: 100%; padding: 0 10px">
+                      <h4 class="mb-0 text-primary text-white" style="color: #fff !important;" title="Chegou a hora de te contar a verdade sobre comprar imóvel para construir patrimônio.">
+                        "Chegou a hora de te contar a verdade sobre co..."
+                      <span style="color: #FFFFFF80; font-size: 0.8rem">
+                        "1M views"
+                    <div class="dropdown">
+                      <button type="button" class="d-flex align-items-center" style="background: #9945FF33; border: 1.25px solid #9945FF; color: #E1C8FF;
+                     " data-bs-toggle="dropdown">
+                        "Ações"
+                      <div class="dropdown-menu dropdown-menu-end">
+                        <a class="dropdown-item" href="dashboard/user/headlines/suggested" data-headline-id="201486">
+                          "Criar roteiro"
+                        <a class="dropdown-item" href="javascript:;" data-action="edit-headline" data-headline-id="201486">
+                          "Editar"
+                        <a class="dropdown-item" href="javascript:;" data-action="open-link" data-link="https://www.instagram.com/p/DNEs-LFxLNp/">
+                          "Abrir link"
+        <div class="modal modal-blur fade" id="modal-make-headlines" role="dialog">
+          <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+            <div class="modal-content card" id="modal-make-headlines-alternative">
+              <div class="modal-header">
+                <h5 class="modal-title">
+                  "Gerar Headlines"
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close">
+              <div class="modal-body pb-0">
+                <div class="mb-3">
+                  <label class="form-label">
+                    "Falar sobre:"
+                  <div class="form-selectgroup-boxes row mb-3">
+                    <div class="col-lg-4">
+                      <label class="form-selectgroup-item">
+                        <input type="radio" name="who" value="public" class="form-selectgroup-input" checked>
+                        <span class="form-selectgroup-label d-flex align-items-center p-3" style="height: 75px !important;">
+                          <span class="me-3">
+                            <span class="form-selectgroup-check">
+                          <span class="form-selectgroup-label-content">
+                            <span class="form-selectgroup-title strong mb-1">
+                              "Meu público"
+                    <div class="col-lg-4">
+                      <label class="form-selectgroup-item">
+                        <input type="radio" name="who" value="me" class="form-selectgroup-input">
+                        <span class="form-selectgroup-label d-flex align-items-center p-3" style="height: 75px !important;">
+                          <span class="me-3">
+                            <span class="form-selectgroup-check">
+                          <span class="form-selectgroup-label-content">
+                            <span class="form-selectgroup-title strong mb-1">
+                              "Sobre mim"
+                    <div class="col-lg-4">
+                      <label class="form-selectgroup-item" id="viral-topics-label">
+                        <input type="radio" name="who" value="viral" class="form-selectgroup-input">
+                        <span class="form-selectgroup-label d-flex align-items-center p-3" style="height: 75px !important;">
+                          <span class="me-3">
+                            <span class="form-selectgroup-check">
+                          <span class="form-selectgroup-label-content">
+                            <span class="form-selectgroup-title strong mb-1">
+                              "Assuntos Virais"
+                            <small class="d-block text-truncat" style="color: rgba(255, 255, 255, 0.7)">
+                              "Digite um assunto personalizado"
+              <form id="make-headlines-viral" method="post" class="px-4" style="display: none;">
+                <input type="hidden" class="user_id_input" name="user_id" value="1667">
+                <div id="viral" class="thinkForMe w-100" style="display: block;">
+                  <div class="mb-3 divViralTopics" style="display: none;">
+                    <label class="form-label">
+                      "Assuntos Virais:"
+                  <div class="mb-3 divCustomSubject" style="display: block;">
+                    <div class="alert alert-info d-flex align-items-center mb-3" role="alert">
+                      <div>
+                        <strong>
+                          "Informação:"
+                        "Nenhum assunto viral disponível no momento. Digite abaixo um assunto personalizado para suas headlines."
+                    <label class="form-label">
+                      "Sobre o que você deseja falar:"
+                    <textarea name="custom_subject" class="form-control" style="height: 100px !important" placeholder="Digite o assunto que você quer abordar...">
+                  <div class="mb-3 exi_assuntos hidden">
+                    <label class="form-label">
+                      "Use perfis como referência:"
+                    <select type="text" class="form-select" name="assuntos[]" id="make-headlines-select-assuntos-user">
+                      <option value>
+                        "Selecione o assunto personalizado"
+                      <option value="all">
+                        "Quero escolher outro assunto"
+                  <div class="col-lg-12 mb-3">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="who-choose" value="choose" class="form-selectgroup-input">
+                      <span class="form-selectgroup-label d-flex align-items-center p-3" style="height: 75px !important;">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Escolher assunto"
+                <section id="options-viral">
+                  <div class="modal-body p-0 j_content_make_headlines j_advanced_options" style="border-top: none !important">
+                    <div id="j_make_headlines_advanced_options" style="display: none" class="my-3">
+                      <div class="alert alert-info d-flex align-items-center mb-3" role="alert">
+                        <div>
+                          <strong>
+                            "Atenção!"
+                          "Você pode selecionar"
+                          <strong>
+                            "APENAS"
+                          "Perfil de Referência"
+                          <strong>
+                            "OU"
+                          "Formato do Vídeo, não ambos."
+                      <div class="mb-3">
+                        <label class="form-label">
+                          "Escolha o tipo de referência:"
+                        <div class="form-selectgroup-boxes row mb-3">
+                          <div class="col-lg-6">
+                            <label class="form-selectgroup-item">
+                              <input type="radio" name="reference-type" value="profile" class="form-selectgroup-input reference-type-radio">
+                              <span class="form-selectgroup-label d-flex align-items-center p-3" style="height: 75px !important;">
+                                <span class="me-3">
+                                  <span class="form-selectgroup-check">
+                                <span class="form-selectgroup-label-content">
+                                  <span class="form-selectgroup-title strong mb-1">
+                                    "Perfil de Referência"
+                          <div class="col-lg-6">
+                            <label class="form-selectgroup-item">
+                              <input type="radio" name="reference-type" value="format" class="form-selectgroup-input reference-type-radio">
+                              <span class="form-selectgroup-label d-flex align-items-center p-3" style="height: 75px !important;">
+                                <span class="me-3">
+                                  <span class="form-selectgroup-check">
+                                <span class="form-selectgroup-label-content">
+                                  <span class="form-selectgroup-title strong mb-1">
+                                    "Formato do Vídeo"
+                      <div class="row g-3">
+                        <div class="col-md-6" id="profile-reference-section" style="display: none;">
+                          <div class="j_content_make_headlines" style="border-top: none !important">
+                            <label class="form-label">
+                              "Perfil de Referência (máximo 2):"
+                            <select class="form-select tomselected ts-hidden-accessible" name="profile_ids[]" id="make-headlines-profiles" multiple="multiple">
+                              <option value>
+                                "Carregando perfis..."
+                            <div class="ts-wrapper form-select multi has-options">
+                              <div class="ts-control">
+                                <input role="combobox" id="make-headlines-profiles-ts-control" placeholder="Carregando perfis..." type="select-multiple">
+                        <div class="col-md-6" id="format-video-section" style="display: none;">
+                          <div class="mb-3">
+                            <label class="form-label">
+                              "Formato do Vídeo:"
+                            <select class="form-select tomselected ts-hidden-accessible" name="format_video_ids[]" id="make-headlines-format-videos" multiple="multiple">
+                              <option value>
+                                "Selecione os formatos"
+                              <option value="1">
+                                "Lista de Valor Prático"
+                              <option value="2">
+                                "Lista de Pontos de Identificação"
+                              <option value="3">
+                                "Lista de Crenças"
+                              <option value="4">
+                                "Mistério"
+                              <option value="5">
+                                "Comparação"
+                              <option value="6">
+                                "Tutorial"
+                              <option value="7">
+                                "Análise do Mundo e Novas Tendências"
+                              <option value="8">
+                                "Histórias Pessoais"
+                              <option value="9">
+                                "Histórias de Terceiros"
+                              <option value="10">
+                                "Fatos Curiosos"
+                              <option value="11">
+                                "Metáforas e Analogias"
+                              <option value="12">
+                                "Assunto do Momento"
+                              <option value="13">
+                                "Defesa de Crença Forte"
+                              <option value="14">
+                                "Palavras de Motivação"
+                              <option value="15">
+                                "Websérie"
+                            <div class="ts-wrapper form-select multi">
+                              <div class="ts-control">
+                                <input role="combobox" id="make-headlines-format-videos-ts-control" placeholder="Selecione os formatos" type="select-multiple">
+                <div id="headline-progress-section" class="modal-body" style="display: none;">
+                  <div class="text-center">
+                    <div class="mb-4">
+                      <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+                        <span class="visually-hidden">
+                          "Processando..."
+                    <h5 class="mb-3">
+                      "Processando suas Headlines"
+                    <div class="mb-4">
+                      <div class="progress" style="height: 8px;">
+                        <div id="progress-bar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%">
+                      <small class="text-muted mt-2 d-block" id="progress-text">
+                        "Iniciando processamento..."
+                    <div class="alert alert-warning mb-3">
+                      <strong>
+                        "Aguarde:"
+                      "Este processo poderá levar de 1 a 2 minutos. Por favor, mantenha esta janela aberta."
+                    <div class="alert alert-info">
+                      <div id="progress-message" class="mb-2">
+                        <strong>
+                          "Separando referências..."
+                        <br>
+                        <small>
+                          "Organizando dados para criar headlines personalizadas"
+                <div class="modal-footer bg-transparent px-0">
+                  <a href="javascript:;" id="set_headlines_categories" class="btn-advanced-options" style="all: unset; color: rgba(225, 200, 255, 1) !important; cursor: pointer">
+                    "Opções Avançadas"
+                  <div class="ms-auto d-flex gap-2 m-0">
+                    <button type="submit" id="make_headlines_button" href="javascript:;" class="btn btn-primary">
+                      "Gerar Headlines"
+              <form id="make-headlines-me" method="post" class="px-4" style="display: block;">
+                <input type="hidden" class="user_id_input" name="user_id" value="1667">
+                <div id="me_public" class="thinkForMe w-100" style="display: block;">
+                  <div class="mb-3 divVariables_id">
+                    <label class="form-label">
+                      "Selecionar Assuntos:"
+                    <select type="text" class="form-select tomselected ts-hidden-accessible" style="overflow-y:scroll; min-height: 50px; max-height: 100px;" name="variables_id[]" id="make-headlines-select-variables-user" multiple="multiple">
+                      <option value>
+                        "Selecione o assunto que deseja gerar"
+                      <option value="all">
+                        "Todos"
+                      <option value="18|DESEJOS-TANGIVEIS-DO-AVATAR">
+                        "Desejos do meu público"
+                      <option value="17|DORES-TANGIVEIS-DO-AVATAR">
+                        "Dores do meu público"
+                      <option value="16|CARACTERISTICAS-DEMOGRAFICAS-DO-AVATAR">
+                        "Características demográficas do meu público"
+                      <option value="25|CARACTERISTICAS-POSITIVAS-DO-AVATAR">
+                        "Qualidades do meu público"
+                      <option value="26|CARACTERISTICAS-NEGATIVAS-DO-AVATAR">
+                        "Defeitos do meu público"
+                      <option value="15|ITENS-CONHECIDOS-PELO-AVATAR">
+                        "Itens conhecidos pelo meu público"
+                      <option value="14|INSTITUICOES-CONHECIDAS-PELO-AVATAR">
+                        "Instituições conhecidas pelo meu público"
+                      <option value="13|PESSOAS-PERSONAGENS-CONHECIDOS-PELO-AVATAR">
+                        "Pessoas e personagens conhecidos pelo meu público"
+                      <option value="32|INIMIGOS-DO-AVATAR">
+                        "Inimigos do meu público"
+                      <option value="11|FILMES-SERIES-E-MUSICAS-CONHECIDAS-PELO-AVATAR">
+                        "Filmes, séries ou músicas conhecidas pelo meu público"
+                      <option value="19|EVENTOS-CONHECIDOS-PELO-AVATAR">
+                        "Eventos conhecidos pelo meu público"
+                      <option value="20|LOCAIS-CONHECIDO-PELO-AVATAR">
+                        "Locais conhecidos pelo meu público"
+                      <option value="21|MOMENTO-DE-VIDA-DO-AVATAR">
+                        "Momentos de vida do meu público"
+                      <option value="10|OBJECOES-DO-AVATAR">
+                        "Objeções do meu público"
+                      <option value="9|MEDOS-DO-AVATAR">
+                        "Medos do meu público"
+                      <option value="8|CRENCAS-DO-AVATAR">
+                        "Crenças do meu público"
+                      <option value="34|PRODUTOS-CONHECIDOS-PELO-AVATAR">
+                        "Produtos conhecidos pelo meu público"
+                    <div class="ts-wrapper form-select multi" style>
+                      <div class="ts-control">
+                        <input role="combobox" id="make-headlines-select-variables-user-ts-control" placeholder="Selecione o assunto que deseja gerar" type="select-multiple">
+                  <div class="mb-3 exi_assuntos hidden">
+                    <label class="form-label">
+                      "Selecione o Assunto:"
+                    <select type="text" class="form-select" name="assuntos[]" id="make-headlines-select-assuntos-user">
+                      <option value>
+                        "Selecione o assunto personalizado"
+                      <option value="all">
+                        "Quero escolher outro assunto"
+                  <div class="text_area_values_assuntos hidden" style="margin-bottom: 10px">
+                  <div class="j_make_headlines_make_software">
+                    <div class="j_all_values">
+                      <div class="j_variables_values">
+                <section id="options-me_public">
+                  <div class="modal-body p-0 j_content_make_headlines j_advanced_options" style="border-top: none !important">
+                    <div id="j_make_headlines_advanced_options_me_public" style="display: none" class="my-3">
+                      <div class="mb-3">
+                        <label class="form-label">
+                          "Núcleo Especifico:"
+                        <select type="text" class="form-select" name="specific_core_id">
+                          <option value>
+                            "Selecione os itens"
+                          <option value="8">
+                            "História de Criação"
+                          <option value="9">
+                            "Histórias de Vida do Especialista"
+                          <option value="14">
+                            "Método do Especialista"
+                          <option value="3081">
+                            "Núcleo de Influência"
+                          <option value="3741">
+                            "Call de diagnóstico"
+                          <option value="4191">
+                            "Formulário"
+                          <option value="4192">
+                            "Narrativa"
+                      <div class="mb-3">
+                        <label class="form-label">
+                          "Estrutura de Roteiro:"
+                        <select type="text" class="form-select tomselected ts-hidden-accessible" name="structures_category_items[]" id="make-headlines-select-3" multiple="multiple">
+                          <option value>
+                            "Selecione os itens"
+                          <option value="9">
+                            "Lista com Argumentação Poderosa"
+                        <div class="ts-wrapper form-select multi">
+                          <div class="ts-control">
+                            <input role="combobox" id="make-headlines-select-3-ts-control" placeholder="Selecione os itens" type="select-multiple">
+                      <script inline>
+                      <div class="mb-3">
+                        <label class="form-label">
+                          "Gatilho da Atenção:"
+                        <select type="text" class="form-select tomselected ts-hidden-accessible" name="structures_category_items[]" id="make-headlines-select-4" multiple="multiple">
+                          <option value>
+                            "Selecione os itens"
+                          <option value="2">
+                            "Recompensa"
+                          <option value="3">
+                            "Mistério"
+                          <option value="4">
+                            "Popularidade / Autoridade"
+                          <option value="5">
+                            "Reconhecimento"
+                          <option value="6">
+                            "Crença"
+                          <option value="7">
+                            "Disrupção"
+                        <div class="ts-wrapper form-select multi">
+                          <div class="ts-control">
+                            <input role="combobox" id="make-headlines-select-4-ts-control" placeholder="Selecione os itens" type="select-multiple">
+                      <script inline>
+                      <label>
+                        "Criatividade objetiva:"
+                        <span class="form-help" data-bs-toggle="popover" data-bs-placement="top" data-bs-trigger="hover" data-bs-content="
+                                        <div>
+                                            <p>Defina o nível de criatividade</p>
+                                            <ul>
+                                                <li><strong>Essencial:</strong> (Só formatos pré-selecionados e validados)</li>
+                                                <li><strong>Equilibrado:</strong> (50% formato…" data-bs-html="true">
+                          "?"
+                      <div class="advanceOptionsdSection3v2 mt-4">
+                        <div class="d-flex flex-column align-items-center">
+                          <span class="d-flex w-100 mt-2 mb-3 justify-content-between">
+                            <p class="m-0 text-secondary readlineTone" id="essential">
+                              "Essencial"
+                              <span class="d-none">
+                                "Essencial"
+                            <p class="m-0 text-secondary readlineTone active" id="balanced">
+                              "Equilibrado"
+                              <span class="d-none">
+                                "Equilibrado"
+                            <p class="m-0 text-secondary readlineTone" id="explorer">
+                              "Explorador"
+                              <span class="d-none">
+                                "Explorador"
+                          <input type="range" name="thermometer" id="customRange" min="0" max="100" value="50">
+                <div class="modal-footer bg-transparent px-0">
+                  <a href="javascript:;" id="set_headlines_categories-2" class="btn-advanced-options" style="all: unset; color: rgba(225, 200, 255, 1) !important; cursor: pointer">
+                    "Opções Avançadas"
+                  <div class="ms-auto d-flex gap-2">
+                    <button type="submit" id="make_headlines_button" href="javascript:;" class="btn btn-primary">
+                      "Gerar Headlines"
+              <form id="make-headlines-subject-moment" method="post" class="d-none">
+                <div class="modal-header">
+                  <h5 class="modal-title">
+                    "Gerar Headlines"
+                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close">
+                <div class="modal-body pb-0">
+                  <div class="j_content_make_headlines_select_subject_moment">
+                  <div class="j_content_make_headlines_select_subject_moment_tom" style="display: none">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Tom de Comunicação:"
+                      <label class="form-selectgroup-item flex-fill">
+                        <input type="radio" name="structures_category_items[]" value="10" class="form-selectgroup-input" checked>
+                        <div class="form-selectgroup-label d-flex align-items-center p-3">
+                          <div class="me-3">
+                            <span class="form-selectgroup-check">
+                          <div>
+                            <strong>
+                              "Chocante e Disruptiva"
+                      <label class="form-selectgroup-item flex-fill">
+                        <input type="radio" name="structures_category_items[]" value="11" class="form-selectgroup-input">
+                        <div class="form-selectgroup-label d-flex align-items-center p-3">
+                          <div class="me-3">
+                            <span class="form-selectgroup-check">
+                          <div>
+                            <strong>
+                              "Futuro e Possibilidades"
+                      <label class="form-selectgroup-item flex-fill">
+                        <input type="radio" name="structures_category_items[]" value="12" class="form-selectgroup-input">
+                        <div class="form-selectgroup-label d-flex align-items-center p-3">
+                          <div class="me-3">
+                            <span class="form-selectgroup-check">
+                          <div>
+                            <strong>
+                              "Curiosidade e Mistério"
+                      <label class="form-selectgroup-item flex-fill">
+                        <input type="radio" name="structures_category_items[]" value="13" class="form-selectgroup-input">
+                        <div class="form-selectgroup-label d-flex align-items-center p-3">
+                          <div class="me-3">
+                            <span class="form-selectgroup-check">
+                          <div>
+                            <strong>
+                              "Cultura e Sociedade"
+                      <label class="form-selectgroup-item flex-fill">
+                        <input type="radio" name="structures_category_items[]" value="14" class="form-selectgroup-input">
+                        <div class="form-selectgroup-label d-flex align-items-center p-3">
+                          <div class="me-3">
+                            <span class="form-selectgroup-check">
+                          <div>
+                            <strong>
+                              "Crítica e Denúncia"
+                      <label class="form-selectgroup-item flex-fill">
+                        <input type="radio" name="structures_category_items[]" value="15" class="form-selectgroup-input">
+                        <div class="form-selectgroup-label d-flex align-items-center p-3">
+                          <div class="me-3">
+                            <span class="form-selectgroup-check">
+                          <div>
+                            <strong>
+                              "Reflexão e Profundidade"
+                <div class="modal-footer bg-transparent px-0">
+                  <div class="ms-auto d-flex gap-2">
+                    <button type="button" id="make_headlines_button_subject_moment_back" href="javascript:;" class="btn btn-outline-secondary">
+                      "Voltar"
+                    <button type="button" id="make_headlines_button_subject_moment_next" href="javascript:;" class="btn btn-primary">
+                      "Selecionar Assunto"
+                    <button type="submit" id="make_headlines_button_subject_moment_make" href="javascript:;" class="btn btn-primary" style="display: none">
+                      "Gerar Headlines"
+        <script inline>
+        <div class="modal fade" id="advancedRoadmapModal" aria-labelledby="advancedRoadmapModalLabel">
+          <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content roadmap-modal-premium">
+              <div class="modal-header roadmap-modal-header">
+                <div class="d-flex align-items-center gap-3">
+                  <div class="roadmap-modal-icon">
+                  <div>
+                    <h5 class="modal-title mb-0 fw-semibold" id="advancedRoadmapModalLabel">
+                      "Roteiro Avançado"
+                    <p class="text-muted small mb-0 mt-0 lh-1">
+                      "Crie um roteiro avançado em 3 passos"
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar">
+              <div class="modal-body roadmap-modal-body">
+                <div id="advancedRoadmapCreatingState" style="display: none;">
+                  <div class="text-center py-4">
+                    <div class="spinner-border text-purple mb-3" role="status">
+                      <span class="visually-hidden">
+                        "Processando..."
+                    <h6 class="text-muted">
+                      "Criando roteiro avançado com IA..."
+                    <p class="text-muted small">
+                      "Este processo passa por 2 etapas de análise e pode levar até 2 minutos"
+                    <div class="progress mt-3" style="height: 8px;">
+                      <div class="progress-bar progress-bar-striped progress-bar-animated bg-purple" role="progressbar" style="width: 0%" id="advancedProgressBar">
+                    <div class="mt-3">
+                      <small class="text-muted">
+                        <span id="advancedProgressStatus">
+                          "Iniciando processamento..."
+                      <div id="advancedArticleSearchStatus" class="text-muted small mt-2" style="display: none;">
+                <div id="advancedRoadmapLoadingLinksState" style="display: none;">
+                  <div class="text-center py-5">
+                    <div class="spinner-border text-purple mb-4" role="status" style="width: 3rem; height: 3rem;">
+                      <span class="visually-hidden">
+                        "Buscando..."
+                    <h5 class="mb-3 fw-bold">
+                      "🔍 Buscando informações na internet"
+                    <p class="text-muted mb-4" id="loadingLinksMessage">
+                      "Entendendo a busca necessária para seu roteiro..."
+                    <div class="progress mt-3 mx-auto" style="height: 10px; max-width: 400px;">
+                      <div class="progress-bar progress-bar-striped progress-bar-animated bg-purple" role="progressbar" style="width: 0%" id="loadingLinksProgressBar">
+                <div id="advancedRoadmapSelectLinksState" style="display: none;">
+                  <div class="mb-4">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                      <div>
+                        <h5 class="mb-1 fw-bold">
+                          "📋 Selecione os links relevantes"
+                        <p class="text-muted small mb-0">
+                          "O sistema encontrou informações relevantes. Selecione até"
+                          <strong id="maxLinksCount">
+                            "2"
+                          "links por categoria para incluir no roteiro."
+                      <div class="text-end">
+                        <span class="badge bg-purple" id="selectedLinksCount">
+                          "0 selecionados"
+                    <div id="linksContainer" class="mb-4">
+                    <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                      <button type="button" class="btn btn-outline-secondary" id="backToFormFromLinksBtn">
+                        "Voltar"
+                      <button type="button" class="btn btn-purple" id="continueWithSelectedLinksBtn" disabled>
+                        "Continuar com links selecionados"
+                <div id="advancedRoadmapFormState" class="roadmap-form-premium">
+                  <input type="hidden" id="advancedRoadmapHeadlineId" name="headline_id">
+                  <input type="hidden" id="advancedRoadmapAI" name="ai_provider" value="claude">
+                  <input type="hidden" id="advancedRoadmapChatResourceId" name="chat_resource_id" value>
+                  <input type="hidden" id="advancedRoadmapIdForUpdate" value>
+                  <input type="hidden" id="advancedRoadmapChatResourceType" value="user_roadmaps">
+                  <input type="hidden" id="saveToTable" name="save_to" value="user_roadmaps">
+                  <input type="hidden" id="roadmapSourceType" name="roadmap_source_type" value>
+                  <input type="hidden" id="roadmapUsePubmed" name="roadmap_use_pubmed" value="0">
+                  <input type="hidden" id="roadmapIsReprocess" name="is_reprocess" value="0">
+                  <div id="step1Container" class="roadmap-form-section">
+                    <label class="roadmap-form-label">
+                      "Headline"
+                    <p class="roadmap-form-hint">
+                      "Base do roteiro. Se veio de sugerida ou favorita, já está preenchida."
+                    <textarea class="form-control roadmap-input" id="advancedRoadmapHeadline" placeholder="Ex: 3 alimentos que aumentam testosterona">
+                  <div id="step2Container" class="roadmap-form-section">
+                    <label class="roadmap-form-label">
+                      "Instruções"
+                    <p class="roadmap-form-hint">
+                      "Tom, público-alvo, o que pode ou não falar. Quanto mais detalhes, melhor."
+                    <textarea class="form-control roadmap-input" id="advancedRoadmapObservations" name="observations" placeholder="Ex: Não falar de suplementos; tom leve; público 25–40 anos; evitar jargões médicos…">
+                  <div id="step3Container" class="roadmap-form-section">
+                    <label class="roadmap-form-label">
+                      "Fonte das informações"
+                    <p class="roadmap-form-hint mb-4">
+                      "Escolha a origem das informações para o roteiro."
+                    <div class="row g-3 mb-0">
+                      <div class="col-md-4">
+                        <div class="roadmap-source-card roadmap-source-none cursor-pointer" id="sourceOptionNone" data-source="none">
+                          <div class="roadmap-source-card-inner">
+                            <div class="roadmap-source-icon-wrap roadmap-source-icon-none">
+                            <h6 class="roadmap-source-title">
+                              "Deixe a IA pensar"
+                            <p class="roadmap-source-desc">
+                              "Sem fontes externas. Só headline e instruções."
+                      <div class="col-md-4">
+                        <div class="roadmap-source-card roadmap-source-links cursor-pointer" id="sourceOptionLinks" data-source="links">
+                          <div class="roadmap-source-card-inner">
+                            <div class="roadmap-source-icon-wrap roadmap-source-icon-links">
+                            <h6 class="roadmap-source-title">
+                              "Link específico"
+                            <p class="roadmap-source-desc">
+                              "URLs de artigos ou páginas como base."
+                      <div class="col-md-4">
+                        <div class="roadmap-source-card roadmap-source-serper cursor-pointer" id="sourceOptionSerper" data-source="serper">
+                          <div class="roadmap-source-card-inner">
+                            <div class="roadmap-source-icon-wrap roadmap-source-icon-serper">
+                            <h6 class="roadmap-source-title">
+                              "Pesquisar na web"
+                            <p class="roadmap-source-desc">
+                              "Busca na internet e usa os resultados."
+                    <div id="roadmapSourceFieldsBelow" class="roadmap-source-below mt-4" style="display: none;">
+                      <div id="sourceLinksPanel" class="roadmap-source-panel" style="display: none;">
+                        <label class="roadmap-form-label">
+                          "URLs para usar como base"
+                        <p class="roadmap-form-hint mb-3">
+                          "Adicione um ou mais links. Depois clique em"
+                          <strong>
+                            "Criar Roteiro"
+                          "."
+                        <div id="sourceLinksContainer" class="roadmap-source-fields-inner mb-2">
+                          <div class="input-group input-group-sm mb-2">
+                            <input type="url" class="form-control form-control-sm roadmap-input roadmap-link-input" placeholder="https://…" data-index="0">
+                            <button type="button" class="btn btn-outline-danger btn-sm btn-remove-link" data-index="0" style="display: none;" title="Remover">
+                              "×"
+                        <button type="button" class="btn btn-sm btn-outline-primary roadmap-btn-add-link" id="btnAddMoreLinks">
+                          <span class="roadmap-btn-add-link-icon">
+                            "+"
+                          "Adicionar novo link"
+                      <div id="sourceSerperPanel" class="roadmap-source-panel roadmap-serper-section" style="display: none;">
+                        <p class="roadmap-serper-notice text-muted small mb-3">
+                          "Por padrão as buscas são feitas em"
+                          <strong>
+                            "inglês"
+                          "para melhores resultados, mesmo que você digite em português."
+                        <div class="roadmap-serper-search-bar mb-3">
+                          <div class="input-group roadmap-serper-input-wrap">
+                            <span class="input-group-text roadmap-serper-icon">
+                            <input type="text" class="form-control form-control-lg roadmap-input" id="serperQueryInput" placeholder="Pesquisar na web…">
+                            <button type="button" class="btn btn-primary roadmap-btn-serper-search" id="btnSerperSearch">
+                              "Pesquisar"
+                        <div class="d-flex flex-wrap align-items-center gap-3 mb-3">
+                          <label class="form-check mb-0 roadmap-form-check-pubmed">
+                            <input type="checkbox" class="form-check-input" id="serperUsePubmed" name="use_pubmed" value="1">
+                            <span class="form-check-label">
+                              "[PubMed] Incluir artigos científicos"
+                          <label class="form-check mb-0 roadmap-form-check-portuguese">
+                            <input type="checkbox" class="form-check-input" id="serperSearchInPortuguese" name="serper_search_in_portuguese" value="1">
+                            <span class="form-check-label">
+                              "Quero buscar em português"
+                        <div id="serperSelectedWrap" class="roadmap-serper-selected-wrap mb-3" style="display: none;">
+                          <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="roadmap-form-label mb-0">
+                              "Selecionados"
+                            <span class="badge bg-primary text-white" id="serperSelectedCount">
+                              "0"
+                          <div id="serperSelectedContainer" class="roadmap-serper-selected-list">
+                        <div id="serperResultsWrap" class="roadmap-serper-results-wrap" style="display: none;">
+                          <div class="d-flex justify-content-between align-items-center mb-2">
+                            <span class="roadmap-form-label mb-0">
+                              "Resultados"
+                            <button type="button" class="btn btn-sm btn-outline-primary" id="btnTranslateSerperResults" title="Traduzir resultados para português">
+                              "Traduzir resultados"
+                          <div id="serperResultsContainer" class="roadmap-serper-results">
+                        <div id="serperLoadingState" class="roadmap-serper-loading text-center py-5" style="display: none;">
+                          <div class="spinner-border text-primary mb-2" role="status">
+                          <p class="text-muted small mb-0">
+                            "Buscando na web…"
+                        <div id="serperEmptyState" class="roadmap-serper-empty text-center py-2 text-muted small" style="display: none;">
+                          "Digite algo acima e clique em"
+                          <strong>
+                            "Pesquisar"
+                          "para buscar na web."
+                  <div class="row g-3 mt-4">
+                    <div class="col-md-4">
+                      <div id="stepDurationContainer" class="roadmap-form-section roadmap-duration-inline">
+                        <label class="roadmap-form-label">
+                          "Duração do vídeo"
+                        <p class="roadmap-form-hint mb-2">
+                          "Defina um tempo-alvo."
+                        <select class="form-select form-select-sm roadmap-input roadmap-duration-select" id="roadmapDurationMinutes" name="duration_minutes">
+                          <option value="auto" selected>
+                            "Auto (recomendado)"
+                          <option value="1">
+                            "~1 min"
+                          <option value="2">
+                            "~2 min"
+                          <option value="3">
+                            "~3 min"
+                    <div class="col-md-8">
+                      <div id="roadmapCoreOptionalSection" class="roadmap-form-section">
+                        <label class="roadmap-form-label">
+                          "Segundo Cérebro (opcional)"
+                        <p class="roadmap-form-hint mb-2">
+                          "Adicione um cérebro personalizado ao contexto."
+                        <input type="hidden" id="roadmapCoreId" name="core_id" value>
+                        <select class="form-select roadmap-input" id="selectCoreForRoadmap" style="max-width: 100%;">
+                          <option value>
+                            "— Nenhum —"
+                          <option value="8">
+                            "História de Criação"
+                          <option value="9">
+                            "Histórias de Vida do Especialista"
+                          <option value="14">
+                            "Método do Especialista"
+                          <option value="3081">
+                            "Núcleo de Influência"
+                          <option value="3741">
+                            "Call de diagnóstico"
+                          <option value="4191">
+                            "Formulário"
+                          <option value="4192">
+                            "Narrativa"
+                  <div id="roadmapVideoModelSection" class="roadmap-form-section roadmap-video-model-section mt-4">
+                    <label class="roadmap-form-label">
+                      "Vídeo da biblioteca (opcional)"
+                    <p class="roadmap-form-hint mb-3">
+                      "Use um vídeo viral como referência de formato e estrutura. Ao escolher, o vídeo selecionado aparecerá aqui com opção de remover."
+                    <input type="hidden" id="selectedViralVideoId" name="viral_video_id" value>
+                    <button type="button" class="btn btn-sm btn-outline-primary roadmap-btn-open-library" id="btnOpenLibrary">
+                      "Abrir biblioteca e escolher vídeo"
+                    <div id="selectedVideoBadge" class="roadmap-selected-video-badge mt-3" style="display: none !important;" role="status">
+                      <div class="d-flex align-items-center justify-content-between gap-3 p-3 rounded roadmap-video-badge-in">
+                        <div class="d-flex align-items-center min-w-0">
+                          <div class="roadmap-video-badge-icon me-2 flex-shrink-0">
+                          <div class="min-w-0">
+                            <span class="roadmap-form-label d-block mb-0" style="font-size: 0.7rem;">
+                              "Vídeo selecionado"
+                            <span id="selectedVideoTitle" class="d-block text-truncate fw-medium" style="font-size: 0.9rem;">
+                            <small class="text-muted d-block" id="selectedVideoStats" style="font-size: 0.75rem;">
+                        <button type="button" class="btn btn-sm btn-outline-danger flex-shrink-0" data-action="clear-selected-video" title="Remover seleção">
+                          <span class="d-none d-sm-inline me-1">
+                            "Remover"
+                <div id="advancedRoadmapGeneratingQuestionsState" style="display: none;">
+                  <div class="text-center py-5">
+                    <div class="spinner-border text-purple mb-3" role="status">
+                    <h3>
+                      "Gerando perguntas estratégicas..."
+                    <p class="text-secondary">
+                      "Aguarde enquanto criamos perguntas personalizadas para seu roteiro."
+                <div id="advancedRoadmapQuestionsState" style="display: none;">
+                  <div class="mb-3">
+                    <label class="form-label">
+                      "Headline Base"
+                    <textarea class="form-control" id="advancedRoadmapHeadlineQuestions" disabled>
+                  <div class="alert alert-purple">
+                    "Responda as perguntas abaixo para personalizar seu roteiro"
+                  <div id="questionsContainer">
+                <div id="advancedRoadmapLibraryState" style="display: none;">
+                  <div class="mb-3">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <div>
+                        <h5 class="mb-1">
+                          "Escolha um Vídeo Viral de Referência"
+                        <p class="text-muted small mb-0">
+                          "Selecione um vídeo para usar como base estrutural do seu roteiro"
+                      <button type="button" class="btn btn-sm btn-outline-secondary">
+                        "Voltar"
+                  <div class="card mb-3" id="libraryFiltersCard">
+                    <div class="card-body py-2">
+                      <div class="d-flex align-items-center justify-content-between">
+                        <button type="button" class="btn btn-sm btn-ghost-secondary" id="toggleLibraryFilters">
+                          <span id="filterButtonText">
+                            "Mostrar Filtros"
+                          <span class="badge bg-purple ms-1" id="activeFiltersCount" style="display: none;">
+                            "0"
+                        <button type="button" class="btn btn-sm btn-ghost-danger" id="clearLibraryFilters" style="display: none;">
+                          "Limpar Filtros"
+                      <div id="libraryFiltersPanel" style="display: none; margin-top: 15px;">
+                        <div class="row g-2">
+                          <div class="col-md-6">
+                            <label class="form-label small mb-1">
+                              "🔍 Buscar por texto"
+                            <input type="text" class="form-control form-control-sm" id="filterSearch" placeholder="Digite palavras-chave...">
+                          <div class="col-md-6">
+                            <label class="form-label small mb-1">
+                              "📋 Formato"
+                            <select class="form-select form-select-sm" id="filterFormat">
+                              <option value>
+                                "Todos os formatos"
+                              <option value="7">
+                                "Análise do Mundo e Novas Tendências"
+                              <option value="12">
+                                "Assunto do Momento"
+                              <option value="5">
+                                "Comparação"
+                              <option value="13">
+                                "Defesa de Crença Forte"
+                              <option value="10">
+                                "Fatos Curiosos"
+                              <option value="9">
+                                "Histórias de Terceiros"
+                              <option value="8">
+                                "Histórias Pessoais"
+                              <option value="3">
+                                "Lista de Crenças"
+                              <option value="2">
+                                "Lista de Pontos de Identificação"
+                              <option value="1">
+                                "Lista de Valor Prático"
+                              <option value="11">
+                                "Metáforas e Analogias"
+                              <option value="4">
+                                "Mistério"
+                              <option value="14">
+                                "Palavras de Motivação"
+                              <option value="6">
+                                "Tutorial"
+                              <option value="15">
+                                "Websérie"
+                          <div class="col-md-6">
+                            <label class="form-label small mb-1">
+                              "👤 Perfil"
+                            <select class="form-select form-select-sm" id="filterProfile" name="profile">
+                              <option value>
+                                "Todos os perfis"
+                              <option value="___gabrielafarias">
+                                "___gabrielafarias"
+                              <option value="_60_sixty">
+                                "_60_sixty"
+                              <option value="_dylanshannon">
+                                "_dylanshannon"
+                              <option value="_joaopauloleite">
+                                "_joaopauloleite"
+                              <option value="_loperini">
+                                "_loperini"
+                              <option value="_pedro.limaa">
+                                "_pedro.limaa"
+                              <option value="_quemleenriquece">
+                                "_quemleenriquece"
+                              <option value="1manuela4">
+                                "1manuela4"
+                              <option value="abdallabmb">
+                                "abdallabmb"
+                              <option value="abrazalzheimer">
+                                "abrazalzheimer"
+                              <option value="Adamhoad_coaching">
+                                "Adamhoad_coaching"
+                              <option value="adlocalmarketing">
+                                "adlocalmarketing"
+                              <option value="adrianahpacheco">
+                                "adrianahpacheco"
+                              <option value="adrien.ninet">
+                                "adrien.ninet"
+                              <option value="advogandoparaimoveis">
+                                "advogandoparaimoveis"
+                              <option value="Afonsomolina">
+                                "Afonsomolina"
+                              <option value="aiasz">
+                                "aiasz"
+                              <option value="ailajpimenta">
+                                "ailajpimenta"
+                              <option value="alefmarqs">
+                                "alefmarqs"
+                              <option value="alessandra.delgado.design">
+                                "alessandra.delgado.design"
+                              <option value="alessandra.paulas">
+                                "alessandra.paulas"
+                              <option value="alessandrafeltre">
+                                "alessandrafeltre"
+                              <option value="alessandravalentepsi">
+                                "alessandravalentepsi"
+                              <option value="alexandraalmeidarocha">
+                                "alexandraalmeidarocha"
+                              <option value="alexandre.kalache">
+                                "alexandre.kalache"
+                              <option value="alexandrecury_">
+                                "alexandrecury_"
+                              <option value="alinebocardo">
+                                "alinebocardo"
+                              <option value="alinneduarte_">
+                                "alinneduarte_"
+                              <option value="ally_yost">
+                                "ally_yost"
+                              <option value="anacarlagrossi">
+                                "anacarlagrossi"
+                              <option value="andreavermont">
+                                "andreavermont"
+                              <option value="andredorigo">
+                                "andredorigo"
+                              <option value="andregauderer">
+                                "andregauderer"
+                              <option value="anjosnafe">
+                                "anjosnafe"
+                              <option value="anjumace">
+                                "anjumace"
+                              <option value="askvinh">
+                                "askvinh"
+                              <option value="aurelioalfieri">
+                                "aurelioalfieri"
+                              <option value="automiami">
+                                "automiami"
+                              <option value="awakeningwithbrian">
+                                "awakeningwithbrian"
+                              <option value="beatrizbrigatto">
+                                "beatrizbrigatto"
+                              <option value="boletimcoppolla">
+                                "boletimcoppolla"
+                              <option value="Boutiqueconstrutoraoficial">
+                                "Boutiqueconstrutoraoficial"
+                              <option value="brasziw">
+                                "brasziw"
+                              <option value="brigidacsantana">
+                                "brigidacsantana"
+                              <option value="brookzlab">
+                                "brookzlab"
+                              <option value="brunocezar">
+                                "brunocezar"
+                              <option value="brunowatanabeee">
+                                "brunowatanabeee"
+                              <option value="cacamontans">
+                                "cacamontans"
+                              <option value="cafecomcardio">
+                                "cafecomcardio"
+                              <option value="cafecomcatole">
+                                "cafecomcatole"
+                              <option value="caionsignoretti">
+                                "caionsignoretti"
+                              <option value="camargo_alfaiataria">
+                                "camargo_alfaiataria"
+                              <option value="camilavieira">
+                                "camilavieira"
+                              <option value="camilla">
+                                "camilla"
+                              <option value="carlosbezerra">
+                                "carlosbezerra"
+                              <option value="carlosbezerrajr">
+                                "carlosbezerrajr"
+                              <option value="carolcardosomoya">
+                                "carolcardosomoya"
+                              <option value="caroltaon">
+                                "caroltaon"
+                              <option value="cauethomaz">
+                                "cauethomaz"
+                              <option value="centraldevoos">
+                                "centraldevoos"
+                              <option value="charliehills">
+                                "charliehills"
+                              <option value="christhianorobles">
+                                "christhianorobles"
+                              <option value="cintia.chiari">
+                                "cintia.chiari"
+                              <option value="cintiaschwab">
+                                "cintiaschwab"
+                              <option value="clearmatrix.ai">
+                                "clearmatrix.ai"
+                              <option value="cleubermendes">
+                                "cleubermendes"
+                              <option value="clinicahelenacosta">
+                                "clinicahelenacosta"
+                              <option value="Clinicavolpe">
+                                "Clinicavolpe"
+                              <option value="comecou">
+                                "comecou"
+                              <option value="Coralsantoro">
+                                "Coralsantoro"
+                              <option value="coreai_oficial">
+                                "coreai_oficial"
+                              <option value="cristianeboneli">
+                                "cristianeboneli"
+                              <option value="cristollentino">
+                                "cristollentino"
+                              <option value="cukaboa">
+                                "cukaboa"
+                              <option value="damatoandre">
+                                "damatoandre"
+                              <option value="Danachanel">
+                                "Danachanel"
+                              <option value="dani.bagagemvisual">
+                                "dani.bagagemvisual"
+                              <option value="danielaandradearquitetura">
+                                "danielaandradearquitetura"
+                              <option value="danielbotelhoplastica">
+                                "danielbotelhoplastica"
+                              <option value="daniellafreixo">
+                                "daniellafreixo"
+                              <option value="danifraguito">
+                                "danifraguito"
+                              <option value="Danisabino.1">
+                                "Danisabino.1"
+                              <option value="dayansiebra">
+                                "dayansiebra"
+                              <option value="delegadaliavalenchi">
+                                "delegadaliavalenchi"
+                              <option value="despatologiza">
+                                "despatologiza"
+                              <option value="deucilene">
+                                "deucilene"
+                              <option value="devfullcycle">
+                                "devfullcycle"
+                              <option value="dicasnareal.oficial">
+                                "dicasnareal.oficial"
+                              <option value="diegocalegaridias">
+                                "diegocalegaridias"
+                              <option value="diegonmenin">
+                                "diegonmenin"
+                              <option value="dilsonperesjr">
+                                "dilsonperesjr"
+                              <option value="Doc_amen">
+                                "Doc_amen"
+                              <option value="Doctor.sethi">
+                                "Doctor.sethi"
+                              <option value="donosderestaurantes">
+                                "donosderestaurantes"
+                              <option value="doutorestilodevida">
+                                "doutorestilodevida"
+                              <option value="dr.andrevinicius">
+                                "dr.andrevinicius"
+                              <option value="dr.bbzinho">
+                                "dr.bbzinho"
+                              <option value="Dr.fernando_lemos">
+                                "Dr.fernando_lemos"
+                              <option value="dr.guilhermepagnoncelli">
+                                "dr.guilhermepagnoncelli"
+                              <option value="dr.gustavoborchardt">
+                                "dr.gustavoborchardt"
+                              <option value="dr.inacioventura">
+                                "dr.inacioventura"
+                              <option value="dr.ivanramos">
+                                "dr.ivanramos"
+                              <option value="dr.leandro.pellegrini">
+                                "dr.leandro.pellegrini"
+                              <option value="dr.leandrovelasco">
+                                "dr.leandrovelasco"
+                              <option value="dr.leonardoresteves">
+                                "dr.leonardoresteves"
+                              <option value="dr.marcelo.santos">
+                                "dr.marcelo.santos"
+                              <option value="dr.marciom">
+                                "dr.marciom"
+                              <option value="dr.marciopereira.es">
+                                "dr.marciopereira.es"
+                              <option value="dr.marlonbatista">
+                                "dr.marlonbatista"
+                              <option value="dr.samirhussein">
+                                "dr.samirhussein"
+                              <option value="dr.samuelgoncalves">
+                                "dr.samuelgoncalves"
+                              <option value="dr.thiagoaraujo">
+                                "dr.thiagoaraujo"
+                              <option value="dr.tiagodutra">
+                                "dr.tiagodutra"
+                              <option value="dra.allynefernandes">
+                                "dra.allynefernandes"
+                              <option value="dra.amandacalheiros">
+                                "dra.amandacalheiros"
+                              <option value="dra.anaclaudiatavares.ped">
+                                "dra.anaclaudiatavares.ped"
+                              <option value="dra.brunaborghese">
+                                "dra.brunaborghese"
+                              <option value="dra.cintiamedeiros">
+                                "dra.cintiamedeiros"
+                              <option value="dra.isrraelamassena">
+                                "dra.isrraelamassena"
+                              <option value="dra.lilianalimongi">
+                                "dra.lilianalimongi"
+                              <option value="dra.luanadiasrezende">
+                                "dra.luanadiasrezende"
+                              <option value="dra.nathidalpra">
+                                "dra.nathidalpra"
+                              <option value="dra.robertamiele">
+                                "dra.robertamiele"
+                              <option value="dra.walkiriamonteiro">
+                                "dra.walkiriamonteiro"
+                              <option value="draalinecardio">
+                                "draalinecardio"
+                              <option value="draalinecvieira">
+                                "draalinecvieira"
+                              <option value="draalinneduarte">
+                                "draalinneduarte"
+                              <option value="dracaroline.silveira">
+                                "dracaroline.silveira"
+                              <option value="dracarolmachadosf">
+                                "dracarolmachadosf"
+                              <option value="draceciliafigueira">
+                                "draceciliafigueira"
+                              <option value="draclaudiapiffero">
+                                "draclaudiapiffero"
+                              <option value="dradaniellesalaorni">
+                                "dradaniellesalaorni"
+                              <option value="dradeboracampozan">
+                                "dradeboracampozan"
+                              <option value="drafabianapelegrinelli">
+                                "drafabianapelegrinelli"
+                              <option value="dragiselenutro">
+                                "dragiselenutro"
+                              <option value="draheliabeatriz">
+                                "draheliabeatriz"
+                              <option value="drajulianadaia">
+                                "drajulianadaia"
+                              <option value="drajulianni.pneumo">
+                                "drajulianni.pneumo"
+                              <option value="dralexandravicentini">
+                                "dralexandravicentini"
+                              <option value="dralexandreduarte">
+                                "dralexandreduarte"
+                              <option value="dralexdornelles">
+                                "dralexdornelles"
+                              <option value="dralianeyumi">
+                                "dralianeyumi"
+                              <option value="dramariaangelicamartins">
+                                "dramariaangelicamartins"
+                              <option value="dramarielacometki">
+                                "dramarielacometki"
+                              <option value="dramarihalla">
+                                "dramarihalla"
+                              <option value="dramichelelaralopes">
+                                "dramichelelaralopes"
+                              <option value="dramilenacoelho">
+                                "dramilenacoelho"
+                              <option value="dramirkaram">
+                                "dramirkaram"
+                              <option value="drarochellemarquetto">
+                                "drarochellemarquetto"
+                              <option value="drarthurleandro">
+                                "drarthurleandro"
+                              <option value="drasumikageriatra">
+                                "drasumikageriatra"
+                              <option value="dratalitamelo">
+                                "dratalitamelo"
+                              <option value="dratamirismariano">
+                                "dratamirismariano"
+                              <option value="dratatianaevaristo">
+                                "dratatianaevaristo"
+                              <option value="dratatianeviegas">
+                                "dratatianeviegas"
+                              <option value="dratelmagiordani">
+                                "dratelmagiordani"
+                              <option value="drdanieltales">
+                                "drdanieltales"
+                              <option value="drdannielsaid">
+                                "drdannielsaid"
+                              <option value="drdenisbirmanneuro">
+                                "drdenisbirmanneuro"
+                              <option value="dreduardorebello">
+                                "dreduardorebello"
+                              <option value="drericberg">
+                                "drericberg"
+                              <option value="drewcanole">
+                                "drewcanole"
+                              <option value="drfelipebatistela">
+                                "drfelipebatistela"
+                              <option value="drfelipeheringer">
+                                "drfelipeheringer"
+                              <option value="drfernandomaluf">
+                                "drfernandomaluf"
+                              <option value="drgarymotykie">
+                                "drgarymotykie"
+                              <option value="drimartini">
+                                "drimartini"
+                              <option value="drjoedispenza">
+                                "drjoedispenza"
+                              <option value="drjoneyfabio">
+                                "drjoneyfabio"
+                              <option value="drjorge.rodrigues">
+                                "drjorge.rodrigues"
+                              <option value="drjuanlambert">
+                                "drjuanlambert"
+                              <option value="drjulie">
+                                "drjulie"
+                              <option value="drlucasjuni">
+                                "drlucasjuni"
+                              <option value="drlucianoquinellato">
+                                "drlucianoquinellato"
+                              <option value="drluisnovaes">
+                                "drluisnovaes"
+                              <option value="Drmarcelosgoulart">
+                                "Drmarcelosgoulart"
+                              <option value="drmarcioniemeyer">
+                                "drmarcioniemeyer"
+                              <option value="Drmarkhyman">
+                                "Drmarkhyman"
+                              <option value="Drmaryclaire">
+                                "Drmaryclaire"
+                              <option value="drpedroneuro">
+                                "drpedroneuro"
+                              <option value="drrafaelbraganca">
+                                "drrafaelbraganca"
+                              <option value="Drstacysims">
+                                "Drstacysims"
+                              <option value="drstefanosimoes">
+                                "drstefanosimoes"
+                              <option value="drtiagorassi">
+                                "drtiagorassi"
+                              <option value="Drvictorsorrentino">
+                                "Drvictorsorrentino"
+                              <option value="drviniciuskuhn">
+                                "drviniciuskuhn"
+                              <option value="drviniciusuyemura">
+                                "drviniciusuyemura"
+                              <option value="eduardofeldberb">
+                                "eduardofeldberb"
+                              <option value="eduardofeldberg">
+                                "eduardofeldberg"
+                              <option value="elegancianaotempreco">
+                                "elegancianaotempreco"
+                              <option value="eliana.martins.oficial">
+                                "eliana.martins.oficial"
+                              <option value="eliane.martins.oficial">
+                                "eliane.martins.oficial"
+                              <option value="elias.maman">
+                                "elias.maman"
+                              <option value="eliza.breda">
+                                "eliza.breda"
+                              <option value="emanuelle_sales">
+                                "emanuelle_sales"
+                              <option value="emonthebrain">
+                                "emonthebrain"
+                              <option value="enfermary2025">
+                                "enfermary2025"
+                              <option value="escobaradvogados">
+                                "escobaradvogados"
+                              <option value="estudiolfarq">
+                                "estudiolfarq"
+                              <option value="eufabiomariani">
+                                "eufabiomariani"
+                              <option value="euhenriquetury">
+                                "euhenriquetury"
+                              <option value="eusoucesarlopes">
+                                "eusoucesarlopes"
+                              <option value="eusoufelipeamorim">
+                                "eusoufelipeamorim"
+                              <option value="eusouroberth">
+                                "eusouroberth"
+                              <option value="evandro_guedes">
+                                "evandro_guedes"
+                              <option value="Evertonmirandamacedo">
+                                "Evertonmirandamacedo"
+                              <option value="expert.lucrativo">
+                                "expert.lucrativo"
+                              <option value="fabibertotti">
+                                "fabibertotti"
+                              <option value="fabiogurgel">
+                                "fabiogurgel"
+                              <option value="farmacia.artesa">
+                                "farmacia.artesa"
+                              <option value="farzanfilms">
+                                "farzanfilms"
+                              <option value="fazendadassuculentas">
+                                "fazendadassuculentas"
+                              <option value="febraz_br">
+                                "febraz_br"
+                              <option value="felipebeleza">
+                                "felipebeleza"
+                              <option value="Felipegularte_">
+                                "Felipegularte_"
+                              <option value="felipelucaslima">
+                                "felipelucaslima"
+                              <option value="felipevassao">
+                                "felipevassao"
+                              <option value="fernandobatalhaoficial">
+                                "fernandobatalhaoficial"
+                              <option value="fernandoentratice">
+                                "fernandoentratice"
+                              <option value="fernandomiranda777">
+                                "fernandomiranda777"
+                              <option value="Flaviacyfer">
+                                "Flaviacyfer"
+                              <option value="franciscocaldas">
+                                "franciscocaldas"
+                              <option value="gabi_picciotto">
+                                "gabi_picciotto"
+                              <option value="gabisifuentes">
+                                "gabisifuentes"
+                              <option value="gabisufuente">
+                                "gabisufuente"
+                              <option value="galonpersonal">
+                                "galonpersonal"
+                              <option value="gemeos.investem">
+                                "gemeos.investem"
+                              <option value="georgenhauagge">
+                                "georgenhauagge"
+                              <option value="geracaodevalor">
+                                "geracaodevalor"
+                              <option value="geronimotheml">
+                                "geronimotheml"
+                              <option value="Gersananutri">
+                                "Gersananutri"
+                              <option value="gesieudo">
+                                "gesieudo"
+                              <option value="gilberto.cury">
+                                "gilberto.cury"
+                              <option value="gilbertonjr">
+                                "gilbertonjr"
+                              <option value="giovannamel">
+                                "giovannamel"
+                              <option value="gipirespersonal">
+                                "gipirespersonal"
+                              <option value="giulianaodonto">
+                                "giulianaodonto"
+                              <option value="gizelakelmann.geriatra">
+                                "gizelakelmann.geriatra"
+                              <option value="gmidichannel">
+                                "gmidichannel"
+                              <option value="gnascimento">
+                                "gnascimento"
+                              <option value="grabolonhez">
+                                "grabolonhez"
+                              <option value="graciekore">
+                                "graciekore"
+                              <option value="gralhajeferson">
+                                "gralhajeferson"
+                              <option value="guildshore">
+                                "guildshore"
+                              <option value="gustavo.omena">
+                                "gustavo.omena"
+                              <option value="gustavocerbasi">
+                                "gustavocerbasi"
+                              <option value="gutogalamba">
+                                "gutogalamba"
+                              <option value="hanahfranklin">
+                                "hanahfranklin"
+                              <option value="hector.psi">
+                                "hector.psi"
+                              <option value="helena.vascular">
+                                "helena.vascular"
+                              <option value="helenbragancaa">
+                                "helenbragancaa"
+                              <option value="heliabeatriz">
+                                "heliabeatriz"
+                              <option value="helio.couto">
+                                "helio.couto"
+                              <option value="henriques_autodefesa">
+                                "henriques_autodefesa"
+                              <option value="herinquemerloto">
+                                "herinquemerloto"
+                              <option value="hubermanlab">
+                                "hubermanlab"
+                              <option value="imanetarib.md">
+                                "imanetarib.md"
+                              <option value="INEUROBR">
+                                "INEUROBR"
+                              <option value="iracydacostaoficial">
+                                "iracydacostaoficial"
+                              <option value="isadoraperfumista">
+                                "isadoraperfumista"
+                              <option value="islam.sousa">
+                                "islam.sousa"
+                              <option value="ivecamanducci">
+                                "ivecamanducci"
+                              <option value="izabela.anholett">
+                                "izabela.anholett"
+                              <option value="Jacobpetry">
+                                "Jacobpetry"
+                              <option value="jacobsimonsays">
+                                "jacobsimonsays"
+                              <option value="janainaendocrino">
+                                "janainaendocrino"
+                              <option value="jb_copeland">
+                                "jb_copeland"
+                              <option value="jeannielein">
+                                "jeannielein"
+                              <option value="jeffnippard">
+                                "jeffnippard"
+                              <option value="jeldebelon">
+                                "jeldebelon"
+                              <option value="joaoguilhermeamatti">
+                                "joaoguilhermeamatti"
+                              <option value="joaommenna">
+                                "joaommenna"
+                              <option value="Jocemarbrandao.eng">
+                                "Jocemarbrandao.eng"
+                              <option value="jogodecorpo.yoiti">
+                                "jogodecorpo.yoiti"
+                              <option value="jordanpeterson">
+                                "jordanpeterson"
+                              <option value="josebento">
+                                "josebento"
+                              <option value="josirobaina">
+                                "josirobaina"
+                              <option value="journalofthesoul">
+                                "journalofthesoul"
+                              <option value="juampigardonio">
+                                "juampigardonio"
+                              <option value="julianarachid.oficial">
+                                "julianarachid.oficial"
+                              <option value="juliandemedeiros">
+                                "juliandemedeiros"
+                              <option value="jupaganoarquitetura">
+                                "jupaganoarquitetura"
+                              <option value="ka.lippi">
+                                "ka.lippi"
+                              <option value="kaminskao">
+                                "kaminskao"
+                              <option value="karolloren_">
+                                "karolloren_"
+                              <option value="katiaharanaka">
+                                "katiaharanaka"
+                              <option value="ketherink">
+                                "ketherink"
+                              <option value="kittycarmmel">
+                                "kittycarmmel"
+                              <option value="kryslainepsi">
+                                "kryslainepsi"
+                              <option value="kyragracie">
+                                "kyragracie"
+                              <option value="ladeturquia">
+                                "ladeturquia"
+                              <option value="lamartineposella">
+                                "lamartineposella"
+                              <option value="lar.cabral">
+                                "lar.cabral"
+                              <option value="laruee.fr">
+                                "laruee.fr"
+                              <option value="lauradubugras">
+                                "lauradubugras"
+                              <option value="leandro.varos">
+                                "leandro.varos"
+                              <option value="lelinhagentil">
+                                "lelinhagentil"
+                              <option value="leomarcondesoficial">
+                                "leomarcondesoficial"
+                              <option value="leonardoleaoof">
+                                "leonardoleaoof"
+                              <option value="leonardoleoof">
+                                "leonardoleoof"
+                              <option value="leosimaoestoico">
+                                "leosimaoestoico"
+                              <option value="LEVEAVIDALEVE.SAYRA">
+                                "LEVEAVIDALEVE.SAYRA"
+                              <option value="lhmmo">
+                                "lhmmo"
+                              <option value="lhmmoraes">
+                                "lhmmoraes"
+                              <option value="lhmoraes">
+                                "lhmoraes"
+                              <option value="Lidalbosconutri">
+                                "Lidalbosconutri"
+                              <option value="lindsey.hipnoterapia">
+                                "lindsey.hipnoterapia"
+                              <option value="lisa.damour">
+                                "lisa.damour"
+                              <option value="lisandrodosreis.smr">
+                                "lisandrodosreis.smr"
+                              <option value="lizie.capello">
+                                "lizie.capello"
+                              <option value="longidade">
+                                "longidade"
+                              <option value="lucas.neurofood">
+                                "lucas.neurofood"
+                              <option value="lucasmantovani.11">
+                                "lucasmantovani.11"
+                              <option value="lucasmontano">
+                                "lucasmontano"
+                              <option value="lucastorres">
+                                "lucastorres"
+                              <option value="luciana_diani">
+                                "luciana_diani"
+                              <option value="lucianamartorano">
+                                "lucianamartorano"
+                              <option value="lucianarossetto_">
+                                "lucianarossetto_"
+                              <option value="lucymountain">
+                                "lucymountain"
+                              <option value="luitha">
+                                "luitha"
+                              <option value="luizandradec">
+                                "luizandradec"
+                              <option value="luziane.cuidandodeidosos">
+                                "luziane.cuidandodeidosos"
+                              <option value="majormarra">
+                                "majormarra"
+                              <option value="maluscaffi">
+                                "maluscaffi"
+                              <option value="mandi.tomaz">
+                                "mandi.tomaz"
+                              <option value="manodeyvin">
+                                "manodeyvin"
+                              <option value="marceladermatologista">
+                                "marceladermatologista"
+                              <option value="marcelaluzzio">
+                                "marcelaluzzio"
+                              <option value="marcellylopesb">
+                                "marcellylopesb"
+                              <option value="marcelodtelles">
+                                "marcelodtelles"
+                              <option value="marcelogermanoeag">
+                                "marcelogermanoeag"
+                              <option value="marceloscience">
+                                "marceloscience"
+                              <option value="marcialuz.oficial">
+                                "marcialuz.oficial"
+                              <option value="marciopereira_neuro">
+                                "marciopereira_neuro"
+                              <option value="marcoaureliobaldan">
+                                "marcoaureliobaldan"
+                              <option value="marcoaureliosoares_">
+                                "marcoaureliosoares_"
+                              <option value="mare">
+                                "mare"
+                              <option value="mariaachetaunay">
+                                "mariaachetaunay"
+                              <option value="mariamaia_psi">
+                                "mariamaia_psi"
+                              <option value="marianastachiu">
+                                "marianastachiu"
+                              <option value="marikrugerb">
+                                "marikrugerb"
+                              <option value="marimerlim">
+                                "marimerlim"
+                              <option value="marinaguaragna">
+                                "marinaguaragna"
+                              <option value="mariservantes">
+                                "mariservantes"
+                              <option value="markmanson">
+                                "markmanson"
+                              <option value="marra.br">
+                                "marra.br"
+                              <option value="marthaleonardis">
+                                "marthaleonardis"
+                              <option value="matheus.mattes">
+                                "matheus.mattes"
+                              <option value="matheusbeirao">
+                                "matheusbeirao"
+                              <option value="matthiasjbarker">
+                                "matthiasjbarker"
+                              <option value="mauradealbanesi">
+                                "mauradealbanesi"
+                              <option value="mauriciomtor">
+                                "mauriciomtor"
+                              <option value="mavgpt">
+                                "mavgpt"
+                              <option value="maynazupelliferreira">
+                                "maynazupelliferreira"
+                              <option value="Meagnunez">
+                                "Meagnunez"
+                              <option value="melrobbins">
+                                "melrobbins"
+                              <option value="mepoupenaweb">
+                                "mepoupenaweb"
+                              <option value="mikelinitakino">
+                                "mikelinitakino"
+                              <option value="mirellabravofisio">
+                                "mirellabravofisio"
+                              <option value="mirellanerypsi">
+                                "mirellanerypsi"
+                              <option value="miriamcassiaadvogada">
+                                "miriamcassiaadvogada"
+                              <option value="mjferreiraa">
+                                "mjferreiraa"
+                              <option value="Moacir_rosa1">
+                                "Moacir_rosa1"
+                              <option value="monicarayolbrand">
+                                "monicarayolbrand"
+                              <option value="monielecunha">
+                                "monielecunha"
+                              <option value="monyseturquia">
+                                "monyseturquia"
+                              <option value="moreyourrhythm">
+                                "moreyourrhythm"
+                              <option value="mourasiqueiraconsultoria">
+                                "mourasiqueiraconsultoria"
+                              <option value="mrmarcoslacerda">
+                                "mrmarcoslacerda"
+                              <option value="Nandaplautz">
+                                "Nandaplautz"
+                              <option value="nannyfaggiano">
+                                "nannyfaggiano"
+                              <option value="natachadalcolmo.ped">
+                                "natachadalcolmo.ped"
+                              <option value="nataliedawson">
+                                "nataliedawson"
+                              <option value="nathaliaarcuri">
+                                "nathaliaarcuri"
+                              <option value="naturallis_oficial">
+                                "naturallis_oficial"
+                              <option value="nayradelduca">
+                                "nayradelduca"
+                              <option value="Newtonfeitosaeng">
+                                "Newtonfeitosaeng"
+                              <option value="nicolefreya_">
+                                "nicolefreya_"
+                              <option value="nossafamiliaacaminho">
+                                "nossafamiliaacaminho"
+                              <option value="nurturedfirst">
+                                "nurturedfirst"
+                              <option value="nutri_jsvital">
+                                "nutri_jsvital"
+                              <option value="nutrialexandradagostin">
+                                "nutrialexandradagostin"
+                              <option value="nutribetisa">
+                                "nutribetisa"
+                              <option value="nutrijoaomuzzy">
+                                "nutrijoaomuzzy"
+                              <option value="Nutrilucasstein">
+                                "Nutrilucasstein"
+                              <option value="oandersonribeiro01">
+                                "oandersonribeiro01"
+                              <option value="obrunocarbone">
+                                "obrunocarbone"
+                              <option value="ocaiobarroso">
+                                "ocaiobarroso"
+                              <option value="odanilogato">
+                                "odanilogato"
+                              <option value="oeduardojaques">
+                                "oeduardojaques"
+                              <option value="ogeriatra">
+                                "ogeriatra"
+                              <option value="ojeancarlo.s">
+                                "ojeancarlo.s"
+                              <option value="ojoao.carvalho">
+                                "ojoao.carvalho"
+                              <option value="omatheuscidsouto">
+                                "omatheuscidsouto"
+                              <option value="omedicodoshomens">
+                                "omedicodoshomens"
+                              <option value="opablotinoco">
+                                "opablotinoco"
+                              <option value="opadredoconsorcio">
+                                "opadredoconsorcio"
+                              <option value="oquesaberantesdeir">
+                                "oquesaberantesdeir"
+                              <option value="oraulsena">
+                                "oraulsena"
+                              <option value="P.de.pai">
+                                "P.de.pai"
+                              <option value="Papaifinanceiro">
+                                "Papaifinanceiro"
+                              <option value="pastoralaude">
+                                "pastoralaude"
+                              <option value="pastorantoniojunior">
+                                "pastorantoniojunior"
+                              <option value="patriciasena.souza">
+                                "patriciasena.souza"
+                              <option value="patrickmendonca_">
+                                "patrickmendonca_"
+                              <option value="paulacampozandoria">
+                                "paulacampozandoria"
+                              <option value="paulaorellpsico">
+                                "paulaorellpsico"
+                              <option value="paulolenz.fisio.personal">
+                                "paulolenz.fisio.personal"
+                              <option value="paulovcoach">
+                                "paulovcoach"
+                              <option value="Paulsaladinomd">
+                                "Paulsaladinomd"
+                              <option value="pedalandosemidade">
+                                "pedalandosemidade"
+                              <option value="pediatriadescomplicada">
+                                "pediatriadescomplicada"
+                              <option value="pediatriaintegralbr">
+                                "pediatriaintegralbr"
+                              <option value="pedro.calabrez">
+                                "pedro.calabrez"
+                              <option value="personal_rafaelrosa">
+                                "personal_rafaelrosa"
+                              <option value="pianoquetoca">
+                                "pianoquetoca"
+                              <option value="planarqcampos">
+                                "planarqcampos"
+                              <option value="pollycherem">
+                                "pollycherem"
+                              <option value="portaldoenvelhecimento">
+                                "portaldoenvelhecimento"
+                              <option value="ppmelo">
+                                "ppmelo"
+                              <option value="pra.monalesse">
+                                "pra.monalesse"
+                              <option value="prfernandobranco">
+                                "prfernandobranco"
+                              <option value="priarauj01">
+                                "priarauj01"
+                              <option value="Princedonnell">
+                                "Princedonnell"
+                              <option value="prvitorsantos_">
+                                "prvitorsantos_"
+                              <option value="psi_clariceraposo">
+                                "psi_clariceraposo"
+                              <option value="psicologo.lindomarcunha">
+                                "psicologo.lindomarcunha"
+                              <option value="psifernandosegredo">
+                                "psifernandosegredo"
+                              <option value="psilissabattini">
+                                "psilissabattini"
+                              <option value="psiquiatrialucas">
+                                "psiquiatrialucas"
+                              <option value="quinlanwalther">
+                                "quinlanwalther"
+                              <option value="rafa.grandi">
+                                "rafa.grandi"
+                              <option value="rafaeladermato">
+                                "rafaeladermato"
+                              <option value="rafaelgratta">
+                                "rafaelgratta"
+                              <option value="rafaellanads">
+                                "rafaellanads"
+                              <option value="raiannebadiani">
+                                "raiannebadiani"
+                              <option value="raphaeldmattos">
+                                "raphaeldmattos"
+                              <option value="raquelcastanharo">
+                                "raquelcastanharo"
+                              <option value="raquelquartiero">
+                                "raquelquartiero"
+                              <option value="raquelsucena">
+                                "raquelsucena"
+                              <option value="raulruffo">
+                                "raulruffo"
+                              <option value="realisamays">
+                                "realisamays"
+                              <option value="rebecadourado.go">
+                                "rebecadourado.go"
+                              <option value="reginacoelins">
+                                "reginacoelins"
+                              <option value="Renanbotelhodr">
+                                "Renanbotelhodr"
+                              <option value="renatamein">
+                                "renatamein"
+                              <option value="renatameins">
+                                "renatameins"
+                              <option value="renatosilveirareis">
+                                "renatosilveirareis"
+                              <option value="rinovack">
+                                "rinovack"
+                              <option value="rob.correa">
+                                "rob.correa"
+                              <option value="robertospighel">
+                                "robertospighel"
+                              <option value="rodrigaooficial">
+                                "rodrigaooficial"
+                              <option value="rodrigo.gcosta">
+                                "rodrigo.gcosta"
+                              <option value="rodrigojanesbraga">
+                                "rodrigojanesbraga"
+                              <option value="rodrigosilvaarqueologia">
+                                "rodrigosilvaarqueologia"
+                              <option value="rogeriocarvalhooficial">
+                                "rogeriocarvalhooficial"
+                              <option value="rony">
+                                "rony"
+                              <option value="roseli_gnunes">
+                                "roseli_gnunes"
+                              <option value="roselyarchela">
+                                "roselyarchela"
+                              <option value="rossanabaldan">
+                                "rossanabaldan"
+                              <option value="rotta.curadoria">
+                                "rotta.curadoria"
+                              <option value="royal.defense">
+                                "royal.defense"
+                              <option value="rubens.cascapera.jr">
+                                "rubens.cascapera.jr"
+                              <option value="salviano.michele">
+                                "salviano.michele"
+                              <option value="sambentley">
+                                "sambentley"
+                              <option value="sbggoficial">
+                                "sbggoficial"
+                              <option value="scudeler.lucas">
+                                "scudeler.lucas"
+                              <option value="segundoalmeidaoficial">
+                                "segundoalmeidaoficial"
+                              <option value="sergiobertoluci">
+                                "sergiobertoluci"
+                              <option value="sheylli">
+                                "sheylli"
+                              <option value="simone_neurohipnosis">
+                                "simone_neurohipnosis"
+                              <option value="sofiastefanonsantos">
+                                "sofiastefanonsantos"
+                              <option value="somoscopiloto">
+                                "somoscopiloto"
+                              <option value="somsemfiltro_">
+                                "somsemfiltro_"
+                              <option value="Steakandbuttergal">
+                                "Steakandbuttergal"
+                              <option value="suavitatisterapias">
+                                "suavitatisterapias"
+                              <option value="talita.rosa.educar">
+                                "talita.rosa.educar"
+                              <option value="talitalira.familia">
+                                "talitalira.familia"
+                              <option value="tamsenfadal">
+                                "tamsenfadal"
+                              <option value="tatianagebrael">
+                                "tatianagebrael"
+                              <option value="tay.ldantas">
+                                "tay.ldantas"
+                              <option value="taymilamiranda">
+                                "taymilamiranda"
+                              <option value="teatearquitetura">
+                                "teatearquitetura"
+                              <option value="telma.abrahao">
+                                "telma.abrahao"
+                              <option value="telmodiniz">
+                                "telmodiniz"
+                              <option value="thaismartan">
+                                "thaismartan"
+                              <option value="thatgoodnewsgirl">
+                                "thatgoodnewsgirl"
+                              <option value="thaysfreire.ia">
+                                "thaysfreire.ia"
+                              <option value="the.holistic.psychologist">
+                                "the.holistic.psychologist"
+                              <option value="thebeautypotentialbook">
+                                "thebeautypotentialbook"
+                              <option value="therestisscience">
+                                "therestisscience"
+                              <option value="Thevarunmayya">
+                                "Thevarunmayya"
+                              <option value="thiago.nigro">
+                                "thiago.nigro"
+                              <option value="thiagoemorlando">
+                                "thiagoemorlando"
+                              <option value="tiagojanke81">
+                                "tiagojanke81"
+                              <option value="tonyrobbins">
+                                "tonyrobbins"
+                              <option value="trakin.ai">
+                                "trakin.ai"
+                              <option value="useamplifit">
+                                "useamplifit"
+                              <option value="vaibhavsisinty">
+                                "vaibhavsisinty"
+                              <option value="vaicomcarol">
+                                "vaicomcarol"
+                              <option value="valuebyraph">
+                                "valuebyraph"
+                              <option value="verdeshopfarmacia">
+                                "verdeshopfarmacia"
+                              <option value="veridiana_cavalheri">
+                                "veridiana_cavalheri"
+                              <option value="victorbenecke">
+                                "victorbenecke"
+                              <option value="vincentlacerda">
+                                "vincentlacerda"
+                              <option value="viniciuschristiamarquiteto">
+                                "viniciuschristiamarquiteto"
+                              <option value="Viniciussantos.eng">
+                                "Viniciussantos.eng"
+                              <option value="wellingtonwk_oficia">
+                                "wellingtonwk_oficia"
+                              <option value="wellingtonwk_oficial">
+                                "wellingtonwk_oficial"
+                              <option value="Wellnessesteps">
+                                "Wellnessesteps"
+                              <option value="wendicaetano">
+                                "wendicaetano"
+                              <option value="wesleygimenez_kravmagacaveira">
+                                "wesleygimenez_kravmagacaveira"
+                              <option value="yuricbdicas">
+                                "yuricbdicas"
+                              <option value="zoltium">
+                                "zoltium"
+                          <div class="col-md-4">
+                            <label class="form-label small mb-1">
+                              "👁️ Views mínimas"
+                            <select class="form-select form-select-sm" id="filterViews">
+                              <option value>
+                                "Qualquer"
+                              <option value="100000">
+                                "100k+"
+                              <option value="500000">
+                                "500k+"
+                              <option value="1000000">
+                                "1M+"
+                              <option value="5000000">
+                                "5M+"
+                          <div class="col-md-4">
+                            <label class="form-label small mb-1">
+                              "❤️ Likes mínimas"
+                            <select class="form-select form-select-sm" id="filterLikes">
+                              <option value>
+                                "Qualquer"
+                              <option value="10000">
+                                "10k+"
+                              <option value="50000">
+                                "50k+"
+                              <option value="100000">
+                                "100k+"
+                              <option value="500000">
+                                "500k+"
+                          <div class="col-md-4">
+                            <label class="form-label small mb-1">
+                              "🎯 Nicho"
+                            <select class="form-select form-select-sm" id="filterNiche">
+                              <option value>
+                                "Todos os nichos"
+                              <option value="7">
+                                "Beleza & Estética"
+                              <option value="25">
+                                "Casa & Decoração"
+                              <option value="21">
+                                "Comunicação & Liderança"
+                              <option value="33">
+                                "Construção Civil"
+                              <option value="22">
+                                "Criação de Filhos"
+                              <option value="18">
+                                "Cripto"
+                              <option value="27">
+                                "Culinária"
+                              <option value="9">
+                                "Desenvolvimento Pessoal"
+                              <option value="20">
+                                "Direito"
+                              <option value="4">
+                                "Educação"
+                              <option value="28">
+                                "Emagrecimento"
+                              <option value="13">
+                                "Emagrecimento e Dieta"
+                              <option value="5">
+                                "Empreendedorismo/Business"
+                              <option value="6">
+                                "Espiritualidade"
+                              <option value="3">
+                                "Finanças"
+                              <option value="29">
+                                "Imigração"
+                              <option value="26">
+                                "Imobiliário"
+                              <option value="19">
+                                "Marketing Digital"
+                              <option value="8">
+                                "Moda & Estilo"
+                              <option value="31">
+                                "Pets & Animais"
+                              <option value="2">
+                                "Relacionamentos"
+                              <option value="1">
+                                "Saúde e Bem-Estar"
+                              <option value="14">
+                                "Saúde Mental"
+                              <option value="17">
+                                "Tech & IA"
+                              <option value="24">
+                                "Trends do Momento"
+                              <option value="32">
+                                "Tributação Fiscal"
+                              <option value="30">
+                                "Turismo & Viagem"
+                              <option value="23">
+                                "Vendas"
+                          <div class="col-12 text-end">
+                            <button type="button" class="btn btn-sm btn-primary">
+                              "Aplicar Filtros"
+                  <div id="libraryLoadingState" class="text-center py-5">
+                    <div class="spinner-border text-primary mb-3" role="status">
+                    <p class="text-muted">
+                      "Carregando vídeos virais..."
+                  <div id="libraryVideosGrid" style="display: none;">
+                    <div class="mb-2">
+                      <small class="text-muted">
+                        <strong id="libraryResultsCount">
+                          "0"
+                        "vídeos encontrados"
+                    <div class="row g-3" id="viralVideosContainer">
+                <div id="advancedRoadmapCreatedState" style="display: none;">
+                  <div class="alert alert-success mb-3">
+                    "Roteiro criado com sucesso!"
+                  <div class="mb-3">
+                    <label class="form-label">
+                      "Headline Base"
+                    <textarea class="form-control p-2" id="advancedRoadmapHeadlineResult" disabled>
+                  <ul class="nav nav-tabs mb-3" id="resultTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                      <button class="nav-link active" id="roadmap-tab" data-bs-toggle="tab" data-bs-target="#roadmap-content" type="button" role="tab">
+                        "Roteiro"
+                    <li class="nav-item" role="presentation" id="sources-tab-li" style="display: none;">
+                      <button class="nav-link" id="sources-tab" data-bs-toggle="tab" data-bs-target="#sources-content" type="button" role="tab">
+                        "Fontes da Pesquisa"
+                  <div class="tab-content" id="resultTabContent">
+                    <div class="tab-pane fade show active" id="roadmap-content" role="tabpanel" aria-labelledby="roadmap-tab">
+                      <div class="mb-3">
+                        <label class="form-label">
+                          "Roteiro Gerado"
+                        <textarea class="form-control" id="advancedRoadmapResult">
+                      <div class="d-flex gap-2 flex-wrap justify-content-between w-100">
+                        <button type="button" class="btn btn-outline-primary">
+                          "Copiar Roteiro"
+                        <button type="button" class="btn btn-outline-success" id="btnUpdateRoadmap">
+                          "Atualizar Roteiro"
+                    <div class="tab-pane fade" id="sources-content" role="tabpanel" aria-labelledby="sources-tab">
+                      <div class="card">
+                        <div class="card-header d-flex align-items-center justify-content-between">
+                          <h3 class="card-title mb-0">
+                            "Notícias e Fontes Utilizadas"
+                          <button type="button" class="btn btn-sm btn-outline-primary" title="Copiar fontes para clipboard">
+                            "Copiar Fontes"
+                        <div class="card-body">
+                          <div id="advancedSearchSourcesContent" class="markdown" style="max-height: 400px; overflow-y: auto;">
+              <div class="modal-footer roadmap-modal-footer" id="advancedRoadmapModalFooter">
+                <button type="button" class="btn btn-ghost roadmap-btn-close" data-bs-dismiss="modal">
+                  "Fechar"
+                <button type="button" class="btn btn-primary roadmap-btn-create" id="btnCreateRoadmap" style="display: none;">
+                  <span class="roadmap-btn-create-icon">
+                  "Criar Roteiro"
+        <div class="modal fade custom-slide" id="editHeadlineModal">
+          <div class="modal-dialog modal-dialog-centered d-flex justify-content-center" style="min-width: fit-content !important;">
+            <div class="modal-content card" style="width: min(650px, 100vw)">
+              <header class="d-flex justify-content-between align-items-center" style="padding: 25px; border-bottom: 1px solid #E1C8FF26">
+                <h2 class="m-0">
+                  "Editar headline"
+              <form id="editHeadlineForm" style="padding: 25px;">
+                <input type="hidden" id="editHeadlineId" name="headline_id">
+                <section>
+                  <h3 class="mb-2">
+                    "Headline"
+                  <textarea class="form-control" id="editHeadlineInput" style="padding: 15px; height: 300px !important" placeholder="Digite a headline aqui...">
+              <footer class="d-flex justify-content-end align-items-center" style="padding: 25px; border-top: 1px solid #E1C8FF26; gap: 20px">
+                <button data-bs-dismiss="modal" type="button">
+                  "Cancelar"
+                <button type="button" class="btn btn-primary">
+                  "Salvar"
+        <div class="modal fade custom-slide" id="createRoadmapModal">
+          <div class="modal-dialog modal-dialog-centered d-flex justify-content-center" style="min-width: fit-content !important;">
+            <div class="modal-content card" style="width: min(650px, 100vw)">
+              <header class="d-flex justify-content-between align-items-center" style="padding: 25px; border-bottom: 1px solid #E1C8FF26">
+                <h2 class="m-0" id="createRoadmapModalLabel">
+                  "Criar Roteiro"
+              <div style="padding: 25px">
+                <div id="creatingRoadmapState">
+                  <div class="text-center py-4">
+                    <div class="spinner-border mb-3" style="color: #9945FF; width: 35px; height: 35px" role="status">
+                      <span class="visually-hidden">
+                        "Carregando..."
+                    <h6 style="color: #E1C8FF; font-size: 1rem" class="mb-2">
+                      "Criando seu roteiro..."
+                    <p style="color: #E1C8FF;" class="mb-0">
+                      "Isso pode levar alguns segundos"
+                <div id="createRoadmapFormState">
+                  <form id="createRoadmapForm">
+                    <div class="mb-3">
+                      <h3 for="roadmapHeadline" class="mb-2">
+                        "Headline Base"
+                      <textarea class="form-control" id="roadmapHeadline" style="padding: 15px; height: 70px !important" disabled>
+                    <div class="mb-3">
+                      <h3 class="mb-2">
+                        "Qual ideia você você quer defender nesse roteiro?"
+                      <textarea class="form-control" id="roadmapContent" style="padding: 15px; height: 300px !important" placeholder="Digite o observações adicionais aqui...">
+                    <input type="hidden" id="roadmapHeadlineId" name="headline_id">
+                <div id="roadmapCreatedState" style="display: none;">
+                  <div class="mb-3">
+                    <label for="roadmapHeadline" class="form-label">
+                      "Headline Base"
+                    <textarea class="form-control" id="roadmapHeadlineResult" style="padding: 15px; height: 70px !important" disabled>
+                  <div class="mb-3">
+                    <label for="roadmapResult" class="form-label">
+                      "Roteiro Gerado"
+                    <textarea class="form-control" id="roadmapResult" style="padding: 15px; height: 300px !important" placeholder="Seu roteiro aparecerá aqui...">
+                  <div class="d-flex gap-2 container-buttons-new-roadmap">
+                    <button type="button">
+                      "Copiar Roteiro"
+              <footer class="d-flex justify-content-end align-items-center" style="padding: 25px; border-top: 1px solid #E1C8FF26; gap: 20px">
+                <button data-bs-dismiss="modal" type="button">
+                  "Cancelar"
+                <button type="button" id="createRoadmapBtn">
+                  "Criar Roteiro"
+        <div class="modal fade" id="viewRoadmapModal" aria-labelledby="viewRoadmapModalLabel">
+          <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title" id="viewRoadmapModalLabel">
+                  "Visualizar Roteiro"
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close">
+              <div class="modal-body">
+                <div class="mb-3">
+                  <label for="viewRoadmapHeadline" class="form-label">
+                    "Headline Base"
+                  <textarea class="form-control" id="viewRoadmapHeadline" disabled>
+                <div class="mb-3">
+                  <label for="viewRoadmapContent" class="form-label">
+                    "Roteiro"
+                  <textarea class="form-control" id="viewRoadmapContent">
+                <div class="d-flex gap-2">
+                  <button type="button" class="btn btn-outline-primary">
+                    "Copiar Roteiro"
+              <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">
+                  "Fechar"
+        <div class="modal fade custom-slide" id="viewHeadlineFlowModal">
+          <div class="modal-dialog modal-dialog-centered d-flex justify-content-center" style="min-width: fit-content !important;">
+            <div class="modal-content card" style="width: min(650px, 100vw)">
+              <header class="d-flex justify-content-between align-items-center" style="padding: 20px; border-bottom: 1px solid #E1C8FF26">
+                <h2 class="m-0">
+                  "Editar headline"
+              <section style="padding: 20px;">
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <h3 class="mb-2">
+                        "Payload Primeira Criação:"
+                      <textarea class="form-control" style="height: 200px !important" id="headline_payload_old_1">
+                    <div class="mb-3">
+                      <h3 class="mb-2">
+                        "Callback Primeira Criação:"
+                      <textarea class="form-control" style="height: 200px !important" id="headline_callback_old_1">
+                  <div class="col-md-6">
+                    <div class="mb-3">
+                      <h3 class="mb-2">
+                        "Payload Revisão:"
+                      <textarea class="form-control" style="height: 200px !important" id="headline_payload">
+                    <div class="mb-3">
+                      <h3 class="mb-2">
+                        "Callback Revisão:"
+                      <textarea class="form-control" style="height: 200px !important" id="headline_callback">
+              <footer class="d-flex justify-content-end align-items-center" style="padding: 25px; border-top: 1px solid #E1C8FF26; gap: 20px">
+                <button data-bs-dismiss="modal" type="button">
+                  "Cancelar"
+        <script inline>
+        <script inline>
+        <div role="toolbar" class="ql-toolbar ql-snow">
+          <span class="ql-formats">
+            <button type="button" class="ql-bold" aria-label="bold">
+            <button type="button" class="ql-italic" aria-label="italic">
+            <button type="button" class="ql-underline" aria-label="underline">
+          <span class="ql-formats">
+            <button type="button" class="ql-list" value="ordered" aria-label="list: ordered">
+            <button type="button" class="ql-list" value="bullet" aria-label="list: bullet">
+          <span class="ql-formats">
+            <button type="button" class="ql-clean" aria-label="clean">
+        <div id="quill-editor" style="display: none;" class="ql-container ql-snow">
+          <div class="ql-editor ql-blank" data-placeholder="Digite seu texto aqui...">
+            <p>
+              <br>
+          <div class="ql-tooltip ql-hidden">
+            <a class="ql-preview" href="about:blank">
+            <input type="text" data-formula="e=mc^2" data-link="https://quilljs.com" data-video="Embed URL">
+            <a class="ql-action">
+            <a class="ql-remove">
+        <footer class="footerV2">
+          <div class="d-flex justify-content-between align-items-center p-2 w-100" style="font-size:12px">
+            <p class="m-0">
+              "Copyright © 2026 Inteligência Core. Todos os direitos reservados."
+            <span class="link-secondary">
+              "Feito com"
+              "por VC"
+        <div class="modal modal-blur fade" id="modal-report" role="dialog">
+          <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">
+                  "New report"
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close">
+              <div class="modal-body">
+                <div class="mb-3">
+                  <label class="form-label">
+                    "Name"
+                  <input type="text" class="form-control" name="example-text-input" placeholder="Your report name">
+                <label class="form-label">
+                  "Report type"
+                <div class="form-selectgroup-boxes row mb-3">
+                  <div class="col-lg-6">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="report-type" value="1" class="form-selectgroup-input" checked>
+                      <span class="form-selectgroup-label d-flex align-items-center p-3">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Simple"
+                          <span class="d-block text-secondary">
+                            "Provide only basic data needed for the report"
+                  <div class="col-lg-6">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="report-type" value="1" class="form-selectgroup-input">
+                      <span class="form-selectgroup-label d-flex align-items-center p-3">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Advanced"
+                          <span class="d-block text-secondary">
+                            "Insert charts and additional advanced analyses to be inserted in the report"
+                <div class="row">
+                  <div class="col-lg-8">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Report url"
+                      <div class="input-group input-group-flat">
+                        <span class="input-group-text">
+                          "https://tabler.io/reports/"
+                        <input type="text" class="form-control ps-0" value="report-01">
+                  <div class="col-lg-4">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Visibility"
+                      <select class="form-select">
+                        <option value="1" selected>
+                          "Private"
+                        <option value="2">
+                          "Public"
+                        <option value="3">
+                          "Hidden"
+              <div class="modal-body">
+                <div class="row">
+                  <div class="col-lg-6">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Client name"
+                      <input type="text" class="form-control">
+                  <div class="col-lg-6">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Reporting period"
+                      <input type="date" class="form-control">
+                  <div class="col-lg-12">
+                    <div>
+                      <label class="form-label">
+                        "Additional information"
+                      <textarea class="form-control">
+              <div class="modal-footer">
+                <a href="#" class="btn btn-link link-secondary" data-bs-dismiss="modal">
+                  "Cancel"
+                <a href="#" class="btn btn-primary ms-auto" data-bs-dismiss="modal">
+                  "Create new report"
+    <script ./back/dist/libs/apexcharts/dist/apexcharts.min.js>
+    <script ./back/dist/libs/jsvectormap/dist/js/jsvectormap.min.js>
+    <script ./back/dist/libs/jsvectormap/dist/maps/world.js>
+    <script ./back/dist/libs/jsvectormap/dist/maps/world-merc.js>
+    <script ./back/dist/libs/tom-select/dist/js/tom-select.base.min.js>
+    <script https://code.jquery.com/jquery-3.6.0.min.js>
+    <script https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.js>
+    <script inline>
+    <script ./back/dist/js/tabler.min.js>
+    <script inline>
+    <script https://corestudio.ai/back/js/components/advanced-roadmap-library.js?v=1791226188>
+    <script https://corestudio.ai/back/js/components/advanced-roadmap-modal.js?v=1791226188>
+    <script https://corestudio.ai/back/dist/js/datatables.min.js>
+    <script https://corestudio.ai/back/dist/libs/nouislider/dist/nouislider.min.js>
+    <script https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js>
+    <script https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js>
+    <script https://corestudio.ai/back/js/user/headlines.js?v=7.1791226188>
+    <script https://corestudio.ai/back/js/dashboard.js?v=7.1791226188>
+    <script https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js>
+    <script https://corestudio.ai/back/js/user/roadmaps.js?v=1791226188>
+    <script inline>
+    <script inline>
+    <script inline>
+    <script inline>
+    <script https://cdn.jsdelivr.net/npm/marked/marked.min.js>
+    <script inline>
+    <script inline>
+    <script inline>
+    <div class="modal fade" id="modal-first-access-tutorial" aria-labelledby="modalFirstAccessLabel" data-bs-backdrop="static">
+      <div class="modal-dialog modal-dialog-centered" style="max-width: 520px;">
+        <div class="modal-content" style="background: #0D0C12; border: 1px solid rgba(225, 200, 255, 0.15); border-radius: 20px; ove">
+          <div style="height: 4px; background: linear-gradient(90deg, #9945FF, #6e2fe0);">
+          <div class="modal-body p-4 p-md-5">
+            <div class="text-center mb-4">
+              <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 6">
+            <h2 class="text-white text-center mb-3" style="font-size: 1.4rem; font-weight: 700; line-height: 1.3;">
+              "Bem-vindo ao Core Studio!"
+              <br>
+              <span style="color: #9945FF;">
+                "Antes de começar, assista aos treinamentos."
+            <p class="text-center mb-2" style="color: rgba(255,255,255,0.75); font-size: 0.95rem; line-height: 1.7;">
+              "Para ter"
+              <strong class="text-white">
+                "bons resultados"
+              "com a plataforma, é essencial que você assista aos vídeos de treinamento antes de começar a usar."
+            <p class="text-center mb-4" style="color: rgba(255,255,255,0.55); font-size: 0.88rem; line-height: 1.6;">
+              "Eles cobrem desde a configuração inicial até como gerar roteiros e conteúdos de forma eficiente."
+              <strong style="color: rgba(255,255,255,0.75);">
+                "Usuários que assistem têm resultados significativamente melhores"
+              "— não pule essa etapa."
+            <div class="d-flex flex-column gap-2">
+              <a id="btn-first-access-trainings" href="https://corestudio.ai/dashboard/user/trainings" class="btn w-100" style="background: #9945FF; color: #fff; border: none; border-radius: 50px; padding: 12px 24px; f">
+                "Assistir aos treinamentos agora"
+              <button type="button" id="btn-first-access-skip" data-bs-dismiss="modal" class="btn w-100" style="background: transparent; color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,">
+                "Pular por agora"
+    <script inline>
+    <script inline>
+    <script ./back/dist/js/demo.min.js>
+    <script https://js.pusher.com/8.2.0/pusher.min.js>
+    <script https://cdn.jsdelivr.net/npm/laravel-echo@1.15.3/dist/echo.iife.js>
+    <script inline>
+    <script https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js>
+    <script https://cdn.jsdelivr.net/npm/bootstrap-daterangepicker/daterangepicker.min.js>
+    <script text/javascript>
+    <div class="ts-dropdown multi" style="display: none;">
+      <div role="listbox" class="ts-dropdown-content" id="make-headlines-select-3-ts-dropdown">
+    <div class="ts-dropdown multi" style="display: none;">
+      <div role="listbox" class="ts-dropdown-content" id="make-headlines-select-4-ts-dropdown">
+    <div class="ts-dropdown multi" style="display: none;">
+      <div role="listbox" class="ts-dropdown-content" id="make-headlines-select-variables-user-ts-dropdown">
+    <div class="ts-dropdown multi" style="display: none;">
+      <div role="listbox" class="ts-dropdown-content" id="make-headlines-profiles-ts-dropdown">
+    <div class="ts-dropdown multi" style="display: none;">
+      <div role="listbox" class="ts-dropdown-content" id="make-headlines-format-videos-ts-dropdown">
+    <div id="rluxo19q09" style="display: block;">
+    <div class="crisp-client" style="--crisp-color-theme-100: 226, 238, 255; --crisp-color-theme-200: 102, 120, 138; --crisp-co">
+      <div class="cc-11i2a">
+      <div class="cc-165wh" id="crisp-chatbox" data-hidden="false" data-force-show="false" data-color-mode="light" data-availability="online" data-presentation="default" data-lock-maximized="false" data-disable-full-view="false" data-website-logo="false" data-last-operator-face="false" data-ongoing-operator-face="false" data-availability-tooltip="false" data-hide-vacation="false" data-blocked="false" data-mobile-view="false" data-full-view="false" data-small-view="false" data-large-view="true" data-has-local-messages="false" data-was-availability-online="true" data-is-activity-ongoing="false" data-hide-on-away="false" data-hide-on-mobile="false" data-position-reverse="false">
+        <div class="cc-lk42u cc-2ob4j cc-1sof5 cc-y7mhy">
+          <div class="cc-13wro" data-maximized="false" data-is-failure="false" role="button" aria-label="Bate-papo aberto" data-pane-animate-entrance="false" data-pop="minimized:open">
+            <span class="cc-11p4p">
+            <span class="cc-1gfkz" data-is-ongoing="false">
+              <span class="cc-2gk6o" data-id="chat_closed">
+                <span class="cc-1er0q cc-nch8a" data-partial-pending="false">
+      <div class="cc-165wh cc-1frb5">
+      <div class="cc-165wh cc-84c2j">
+    <div id="claude-agent-glow-border" style="position: fixed; inset: 0px; pointer-events: none; z-index: 2147483646; opacity: 1; transi">
+      <div id="claude-agent-glow-border-inner" style="position: absolute; inset: 0px; will-change: opacity; box-shadow: rgba(217, 119, 87, 0.7) ">
+    <div id="claude-phantom-cursor" style="position: fixed; top: 0px; left: 0px; pointer-events: none; z-index: 2147483646; transform">

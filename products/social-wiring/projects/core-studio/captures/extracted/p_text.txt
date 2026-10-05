@@ -1,0 +1,216 @@
+
+                                        Dashboard
+                                        Criar Headlines e Roteiros
+                                    Pesquisa
+                                    Minha Pesquisa
+                                    Extrair Pesquisa
+                                        Segundo Cérebro
+                                        Biblioteca
+                                    Configurações
+                                    Minha conta
+                                    Minha Biblioteca
+                                    Treinamentos
+Headlines
+                                            Gerar Headlines
+                                            Headlines Favoritas
+                                            Headlines sugeridas
+                                    Roteiros
+                GT
+Gilson
+My Workspace
+Espaços de trabalho
+                                My Workspace
+Ver tutorial novamente
+                Fazer logout
+Adicionar Workspace
+Nome
+Cancelar
+Criar
+Headlines na Box
+Remover selecionados
+                            Salvar Headlines
+Notificações
+                            Marcar todas como lidas
+                        Pesquisa do perfil 
+Carregando...
+Carregando pesquisa...
+Nenhuma extração encontrada para este perfil.
+Selecionar todos
+                                Adicionar à minha pesquisa
+0
+Fechar
+Extrair Pesquisa de Perfil Viral
+                    Selecione perfis aprovados para extrair e adicionar às suas variáveis de pesquisa.
+                Minha Pesquisa
+Nichos
+Beleza & Estética
+Casa & Decoração
+Comunicação & Liderança
+Construção Civil
+Criação de Filhos
+Cripto
+Culinária
+Desenvolvimento Pessoal
+Direito
+Educação
+Emagrecimento
+Emagrecimento e Dieta
+Empreendedorismo/Business
+Espiritualidade
+Finanças
+Imigração
+Imobiliário
+Marketing Digital
+Moda & Estilo
+Pets & Animais
+Relacionamentos
+Saúde e Bem-Estar
+Saúde Mental
+Tech & IA
+Trends do Momento
+Tributação Fiscal
+Turismo & Viagem
+Vendas
+Profissões
+Acupunturista
+Advogado Administrativo
+Advogado Ambiental
+Advogado Civil
+Advogado Constitucional
+Advogado de Consumidor
+Advogado de Família
+Advogado Digital
+Advogado Empresarial
+Advogado Imobiliário
+Advogado Internacional
+Advogado Penal
+Advogado Previdenciário
+Advogado Trabalhista
+Advogado Tributário
+Agente de Turismo
+Arquiteto(a)
+Auditor Fiscal
+Autor(a)
+Breathwork
+Cabeleireiro(a)
+Chef de Cozinha
+Cirurgião Plástico
+Coach
+Confeiteiro
+Consultor de Imagem
+Contador(a)
+Copywriter
+Corretor de Imóveis
+Corretor de seguro de vida
+Dentista
+Designer de Interiores
+Designer de joias
+Designer de Sobrancelhas
+Designer Gráfico
+Economista
+Empreendedor(a)
+Enfermagem
+Engenheiro
+Esteticista
+Estrategista de Marca
+Farmacêutico(a)
+Fisioterapeuta
+Fisioterapeuta Pélvico
+Fonoaudiólogo
+Fotógrafo
+Gestor de Tráfego/Media Buyer
+Gestor(a)
+Higienista Ocupacional
+Influenciador(a)
+Investidor(a)
+Joalheira
+Jornalista
+Juiz
+Líder Religioso
+Maquiador(a)
+Marketeiro(a)
+Medicina Regenerativa
+Médico Cardiologista
+Médico Cirurgião
+Médico Dermatologista
+Médico Endocrinologista
+Médico geral
+Médico Geriatra
+Médico Ginecologista
+Médico Integrativo
+Médico Neurologista
+Médico Nutrólogo
+Médico Obstetra
+Médico Oftalmologista
+Médico Ortopedista
+Medico Otorrinolaringologia
+Médico Pediatra
+Médico Psiquiatra
+Medico Radiologia
+Médico ultrassonografista
+Médico Urologista
+Médico Veterinário
+Mentor(a)
+Moda
+Musculação
+Neurocientista
+Nutricionista
+Paisagista
+Pastor(a)
+Personal Trainer
+Professor de Yoga
+Professor(a)
+Programador(a)
+Psicanalista
+Psicólogo Infantil
+Psicólogo(a)
+Psicoterapeuta
+Quiropraxista
+Social Media
+Sommelier
+Teólogo(a)
+Terapeuta
+Terapeuta Holístico
+Terapeuta Somatico
+Vendedor(a)
+Visagista
+                    Limpar Filtros
+Carregando...
+Carregando perfis aprovados...
+Nenhum perfil aprovado encontrado.
+            Copyright ©
+            2026
+            Inteligência Core.
+            Todos os direitos reservados.
+            Feito com
+            por VC
+New report
+Name
+Report type
+Simple
+Provide only basic data needed for the
+                                        report
+Advanced
+Insert charts and additional advanced analyses
+                                        to be inserted in the report
+Report url
+                                    https://tabler.io/reports/
+Visibility
+Private
+Public
+Hidden
+Client name
+Reporting period
+Additional information
+                    Cancel
+                    Create new report
+                        Bem-vindo ao Core Studio!
+Antes de começar, assista aos treinamentos.
+                        Para ter 
+bons resultados
+ com a plataforma, é essencial que você assista aos vídeos de treinamento antes de começar a usar.
+                        Eles cobrem desde a configuração inicial até como gerar roteiros e conteúdos de forma eficiente. 
+Usuários que assistem têm resultados significativamente melhores
+ — não pule essa etapa.
+                            Assistir aos treinamentos agora
+                            Pular por agora

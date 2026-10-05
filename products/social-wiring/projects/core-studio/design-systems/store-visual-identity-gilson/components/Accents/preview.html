@@ -1,0 +1,32 @@
+<!-- @dsCard group="Collage" height=300 subtitle="Foil disc, torn slab, hairlines" -->
+<style>
+  .stage{position:relative;height:280px;background:var(--surface);overflow:hidden}
+  .grain{position:absolute;inset:0;opacity:var(--grain);mix-blend-mode:multiply;pointer-events:none}
+  svg.art{position:absolute;inset:0;width:100%;height:100%}
+  .disc{fill:var(--gold)}
+  .slab{fill:var(--slab)}
+  .lip{fill:var(--paper-shade)}
+  .line{fill:none;stroke:var(--accent-line);stroke-width:var(--hairline)}
+  .rule{fill:var(--accent-line)}
+  .lbl{font:600 11px/1 Montserrat,Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;fill:var(--headline)}
+  .lbl.on{fill:var(--paper)}
+</style>
+<div class="stage">
+  <svg class="art" viewBox="0 0 900 280" preserveAspectRatio="xMidYMid slice" aria-label="Accent elements">
+    <defs>
+      <filter id="foil"><feTurbulence type="fractalNoise" baseFrequency=".9" numOctaves="2" result="n"/><feColorMatrix in="n" type="saturate" values="0"/><feComponentTransfer><feFuncA type="table" tableValues="0 .35"/></feComponentTransfer><feComposite in2="SourceGraphic" operator="in"/><feBlend in2="SourceGraphic" mode="multiply"/></filter>
+    </defs>
+    <circle class="disc" cx="150" cy="135" r="95" filter="url(#foil)"/>
+    <text class="lbl" x="95" y="260">foil disc</text>
+    <path class="lip" d="M330 0 L372 0 L366 30 L376 62 L362 96 L374 130 L360 168 L372 204 L358 240 L368 280 L330 280 Z"/>
+    <path class="slab" d="M338 0 L470 0 L470 280 L360 280 L352 244 L364 206 L350 168 L362 130 L348 94 L362 60 L350 28 Z"/>
+    <text class="lbl on" x="375" y="260">torn slab</text>
+    <ellipse class="line" cx="640" cy="120" rx="120" ry="34" transform="rotate(-12 640 120)"/>
+    <path class="line" d="M530 60 L575 120 L605 85 L655 170 L685 140 L735 225"/>
+    <path class="line" d="M735 225 l-4 -22 M735 225 l-20 -8"/>
+    <rect class="rule" x="790" y="130" width="60" height="5"/>
+    <text class="lbl" x="560" y="260">hairlines</text>
+    <text class="lbl" x="795" y="260">rule</text>
+  </svg>
+  <svg class="grain" width="100%" height="100%" aria-hidden="true"><filter id="g"><feTurbulence type="fractalNoise" baseFrequency=".85" numOctaves="3"/><feColorMatrix type="saturate" values="0"/></filter><rect width="100%" height="100%" filter="url(#g)"/></svg>
+</div>

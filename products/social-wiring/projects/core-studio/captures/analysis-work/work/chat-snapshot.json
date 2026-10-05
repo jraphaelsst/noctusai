@@ -1,0 +1,311 @@
+{
+ "data": {
+  "question": "",
+  "lastCleanMessageId": null,
+  "messages": [
+   [
+    [
+     {
+      "id": "01a0f3dc-70e3-7349-bffa-8a06ccd625e1",
+      "role": "user",
+      "content": "O QUARTO CHEIO DE MENINOS*Teve uma época em que parecia que a casa nunca ficava vazia.Tinha menino entrando sem bater.  Tênis largado perto da porta.  Violão tocando no quarto.  Gargalhada vindo do corredor.E um cheiro de chulé que, sinceramente, ninguém sente falta.  Ou sente. Depois sente até disso.A geladeira vivia sendo aberta.  Sempre cabia mais um no jantar.  Tinha cachorro-quente de última hora, bolo de chocolate, colchão no chão e aquela pergunta:“Quantos vão dormir aqui hoje?”Na época, às vezes parecia demais.Barulho demais.  Gente demais.  Coisa demais para arrumar.A casa parecia pequena para tanta vida acontecendo dentro dela.Até que os anos passam.Os amigos deixam de chegar.O violão já não toca no quarto.A geladeira continua cheia por muito mais tempo.E aquela casa que parecia pequena demais começa a parecer grande.Os filhos cresceram.  Os amigos deles também.Cada um começou a construir a própria rotina, os próprios encontros, a própria casa.E talvez uma das coisas mais curiosas dessa fase seja descobrir que a gente também sente saudade daquilo que, um dia, cansou.Porque não era só o quarto cheio de meninos.Era uma fase inteira da nossa vida acontecendo ali dentro.Hoje, quando a casa fica silenciosa, talvez a pergunta não seja como trazer aquele tempo de volta.Talvez seja descobrir que tipo de vida pode começar a ocupar essa casa agora.Porque eles cresceram.E nós também.\n\n\n\nMe dá headline pra esse roteiro",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3dc-8c04-7146-b7cd-55c23ba89e19",
+      "role": "assistant",
+      "content": "Aqui está a headline para esse roteiro:\n\n1. **A casa que parecia pequena demais um dia começa a parecer grande demais, e ninguém te prepara pra isso** ([estrutura #124688](https://corestudio.ai/dashboard/user/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A casa que parecia pequena demais um dia começa a parecer grande demais, e ninguém te prepara pra isso}}",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3dc-bb14-701d-a010-0ea467746e21",
+      "role": "user",
+      "content": "me dá mais 10 opções de headline",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3dd-14c1-72b9-97e2-aac612ce5172",
+      "role": "assistant",
+      "content": "Aqui estão 10 headlines para o roteiro:\n\n1. **A casa não ficou silenciosa porque os filhos cresceram. Ficou porque você também foi crescendo sem perceber** ([estrutura #124688](https://corestudio.ai/dashboard/user/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A casa não ficou silenciosa porque os filhos cresceram. Ficou porque você também foi crescendo sem perceber}}\n2. **Se você é pai ou mãe e já sentiu saudade de uma fase que te cansou, presta atenção nisso** ([estrutura #132215](https://corestudio.ai/dashboard/user/library?viral_id=132215)) {{action:roteiro|id=132215|headline=Se você é pai ou mãe e já sentiu saudade de uma fase que te cansou, presta atenção nisso}}\n3. **Pouca gente sabe, mas existe um sentimento que só aparece quando a casa fica grande demais pra duas pessoas** ([estrutura #124680](https://corestudio.ai/dashboard/user/library?viral_id=124680)) {{action:roteiro|id=124680|headline=Pouca gente sabe, mas existe um sentimento que só aparece quando a casa fica grande demais pra duas pessoas}}\n4. **A saudade não é do barulho. É de uma versão da vida que você nem sabia que amava enquanto vivia** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A saudade não é do barulho. É de uma versão da vida que você nem sabia que amava enquanto vivia}}\n5. **80% dos casais que ficaram com a casa vazia não sabem o que fazer com o espaço que sobrou** ([estrutura #129271](https://corestudio.ai/dashboard/user/library?viral_id=129271)) {{action:roteiro|id=129271|headline=80% dos casais que ficaram com a casa vazia não sabem o que fazer com o espaço que sobrou}}\n6. **Tinha um violão tocando no quarto e a gente quase não ouviu** ([estrutura #127967](https://corestudio.ai/dashboard/user/library?viral_id=127967)) {{action:roteiro|id=127967|headline=Tinha um violão tocando no quarto e a gente quase não ouviu}}\n7. **Disseram que essa fase passaria rápido. Ninguém esperava a saudade que viria depois** ([estrutura #132209](https://corestudio.ai/dashboard/user/library?viral_id=132209)) {{action:roteiro|id=132209|headline=Disseram que essa fase passaria rápido. Ninguém esperava a saudade que viria depois}}\n8. **Tem memória que você viveu em 3 segundos e que vai carregar por 30 anos, e o pior, não deu valor na época** ([estrutura #132210](https://corestudio.ai/dashboard/user/library?viral_id=132210)) {{action:roteiro|id=132210|headline=Tem memória que você viveu em 3 segundos e que vai carregar por 30 anos, e o pior, não deu valor na época}}\n9. **A casa que parecia pequena não era pequena. Era cheia. E cheio é uma das coisas mais raras que existem** ([estrutura #132207](https://corestudio.ai/dashboard/user/library?viral_id=132207)) {{action:roteiro|id=132207|headline=A casa que parecia pequena não era pequena. Era cheia. E cheio é uma das coisas mais raras que existem}}\n10. **O que você procura agora pode já estar esperando dentro da casa que você já tem** ([estrutura #132214](https://corestudio.ai/dashboard/user/library?viral_id=132214)) {{action:roteiro|id=132214|headline=O que você procura agora pode já estar esperando dentro da casa que você já tem}}",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3de-033f-726a-8bd9-d830255f79dd",
+      "role": "user",
+      "content": "não, horrível. quero algo disruptivo, interessante, cativante, que faça a mãe querer ler. pega termos virais universais e frases de efeito, bora, tu faz mto melhor q isso",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3de-61f8-71ab-b76c-183370bdc363",
+      "role": "assistant",
+      "content": "Agora sim. Aqui estão 10 headlines com força real:\n\n1. **A casa não ficou grande. Ela ficou vazia. E tem uma diferença que a maioria das mães só entende quando já não tem volta** ([estrutura #124688](https://corestudio.ai/dashboard/user/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A casa não ficou grande. Ela ficou vazia. E tem uma diferença que a maioria das mães só entende quando já não tem volta}}\n\n2. **Nem tudo que cansa é ruim. Às vezes é só amor com nome errado** ([estrutura #132207](https://corestudio.ai/dashboard/user/library?viral_id=132207)) {{action:roteiro|id=132207|headline=Nem tudo que cansa é ruim. Às vezes é só amor com nome errado}}\n\n3. **Disseram que essa fase ia passar rápido. Ninguém avisou sobre o silêncio que viria depois** ([estrutura #132209](https://corestudio.ai/dashboard/user/library?viral_id=132209)) {{action:roteiro|id=132209|headline=Disseram que essa fase ia passar rápido. Ninguém avisou sobre o silêncio que viria depois}}\n\n4. **Se a sua casa acalmou e você não sabe o que fazer com isso, presta atenção nisso** ([estrutura #132215](https://corestudio.ai/dashboard/user/library?viral_id=132215)) {{action:roteiro|id=132215|headline=Se a sua casa acalmou e você não sabe o que fazer com isso, presta atenção nisso}}\n\n5. **Tem fase que você viveu em anos e que vai carregar no peito por décadas, e o pior, reclamou de cada dia dela** ([estrutura #132210](https://corestudio.ai/dashboard/user/library?viral_id=132210)) {{action:roteiro|id=132210|headline=Tem fase que você viveu em anos e que vai carregar no peito por décadas, e o pior, reclamou de cada dia dela}}\n\n6. **Uma geladeira aberta à meia-noite disse mais do que qualquer discurso de mãe perfeita** ([estrutura #127967](https://corestudio.ai/dashboard/user/library?viral_id=127967)) {{action:roteiro|id=127967|headline=Uma geladeira aberta à meia-noite disse mais do que qualquer discurso de mãe perfeita}}\n\n7. **A casa que você queria que ficasse quieta agora pede silêncio demais. E ninguém te prepara pra isso** ([estrutura #132205](https://corestudio.ai/dashboard/user/library?viral_id=132205)) {{action:roteiro|id=132205|headline=A casa que você queria que ficasse quieta agora pede silêncio demais. E ninguém te prepara pra isso}}\n\n8. **A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade, é eu não dei valor** ([estrutura #132137](https://corestudio.ai/dashboard/user/library?viral_id=132137)) {{action:roteiro|id=132137|headline=A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade, é eu não dei valor}}\n\n9. **Essa fase que cansava, barulhava e enchia a casa era, na verdade, a mais rica da sua vida. E você vai entender isso aqui** ([estrutura #132214](https://corestudio.ai/dashboard/user/library?viral_id=132214)) {{action:roteiro|id=132214|headline=Essa fase que cansava, barulhava e enchia a casa era, na verdade, a mais rica da sua vida. E você vai entender isso aqui}}\n\n10. **Tinha um tênis na porta e chulé pelo corredor. Hoje a mãe sente falta até disso** ([estrutura #127965](https://corestudio.ai/dashboard/user/library?viral_id=127965)) {{action:roteiro|id=127965|headline=Tinha um tênis na porta e chulé pelo corredor. Hoje a mãe sente falta até disso}}",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3df-ae31-738a-9d6a-6b2072d1deb7",
+      "role": "user",
+      "content": "algo tipo \"a mãe de filho adulto não deu valor...\" nessa vibe vai",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3e0-14a8-706d-84a5-f94294f5cfc7",
+      "role": "assistant",
+      "content": "Aqui estão 10 headlines nessa vibe:\n\n1. **A mãe de filho adulto não deu valor ao tênis largado na porta. Agora sente falta até do chulé** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho adulto não deu valor ao tênis largado na porta. Agora sente falta até do chulé}}\n\n2. **A mãe de filho crescido não deu valor ao barulho. Hoje ela trocaria qualquer silêncio por uma gargalhada no corredor** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho crescido não deu valor ao barulho. Hoje ela trocaria qualquer silêncio por uma gargalhada no corredor}}\n\n3. **A mãe de filho adulto não deu valor à geladeira aberta à meia-noite. Agora ela fecha a geladeira cheia e chora** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho adulto não deu valor à geladeira aberta à meia-noite. Agora ela fecha a geladeira cheia e chora}}\n\n4. **A mãe de filho adulto não deu valor ao quarto bagunçado. Hoje o quarto arrumado é a coisa mais triste da casa** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho adulto não deu valor ao quarto bagunçado. Hoje o quarto arrumado é a coisa mais triste da casa}}\n\n5. **A mãe de filho crescido não deu valor ao \"mais um vai dormir aqui\". Hoje ela conta os lugares vazios na mesa** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho crescido não deu valor ao \"mais um vai dormir aqui\". Hoje ela conta os lugares vazios na mesa}}\n\n6. **A mãe de filho adulto reclamou do barulho. Pediu silêncio. Conseguiu. E nunca se arrependeu tanto de uma coisa na vida** ([estrutura #124680](https://corestudio.ai/dashboard/user/library?viral_id=124680)) {{action:roteiro|id=124680|headline=A mãe de filho adulto reclamou do barulho. Pediu silêncio. Conseguiu. E nunca se arrependeu tanto de uma coisa na vida}}\n\n7. **A mãe de filho crescido não deu valor ao violão tocando no quarto. Hoje ela nem consegue entrar nesse quarto** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho crescido não deu valor ao violão tocando no quarto. Hoje ela nem consegue entrar nesse quarto}}\n\n8. **A mãe de filho adulto não deu valor ao colchão no chão. Hoje ela deixou o colchão lá. Não consegue guardar** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho adulto não deu valor ao colchão no chão. Hoje ela deixou o colchão lá. Não consegue guardar}}\n\n9. **A mãe de filho crescido não deu valor ao \"quantos vão dormir hoje\". Hoje ela sabe a resposta e dói** ([estrutura #124666](https://corestudio.ai/dashboard/user/library?viral_id=124666)) {{action:roteiro|id=124666|headline=A mãe de filho crescido não deu valor ao \"quantos vão dormir hoje\". Hoje ela sabe a resposta e dói}}\n\n10. **A mãe de filho adulto não deu valor à casa cheia. Só entendeu o que tinha quando a casa ficou grande demais pra duas pessoas** ([estrutura #124680](https://corestudio.ai/dashboard/user/library?viral_id=124680)) {{action:roteiro|id=124680|headline=A mãe de filho adulto não deu valor à casa cheia. Só entendeu o que tinha quando a casa ficou grande demais pra duas pessoas}}",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0fe93-64d5-71cb-a5aa-2abfe456c5f5",
+      "role": "user",
+      "content": "Criar um filho lembra ensinar alguém a andar de bicicleta.No começo, a mãe segura o banco com as duas mãos.Corre ao lado, avisa quando tem buraco, pede para olhar para frente, segura antes da queda. Durante um tempo, a criança acredita que consegue pedalar porque existe alguém sustentando por trás.Depois vem aquela fase em que a mãe continua correndo ao lado, mas já percebe que quase não está segurando.O filho começa a encontrar equilíbrio sozinho.Ainda olha para trás para conferir se ela está ali. Ainda chama. Ainda pede ajuda quando perde o controle.Até chegar o dia em que a mãe solta.Às vezes o filho nem percebe imediatamente.Continua pedalando, vira a esquina, aprende a frear, cai algumas vezes e descobre que consegue levantar sem alguém segurando o guidão.Para quem passou anos correndo ao lado, esse momento pode ser difícil.As mãos ficam livres antes que o coração se acostume.E a maternidade muda bastante quando já não existe alguém precisando ser sustentado o tempo inteiro.O filho começa a escolher por onde vai, quanto tempo fica fora, com quem anda e quais riscos aceita correr.A mãe continua conhecendo alguns perigos. Pode avisar sobre uma rua movimentada, lembrar de uma queda antiga, oferecer ajuda quando ele pede.Só que agora ele sabe pedalar.E talvez o melhor cenário para um pai e uma mãe seja justamente chegar a esse ponto.O filho já sabe seguir sozinho. Não precisa mais dos pais para decidir o caminho, resolver cada problema ou se manter de pé.Quando realmente precisar, sabe onde encontrá-los.E quando procura sem precisar de nada, existe ali uma coisa ainda mais bonita.Ele veio porque quis.Chega uma fase da maternidade em que o filho já não procura os pais por necessidade.Procura por amor.",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0fe93-bca0-72bf-aea7-f3a6924a1b7c",
+      "role": "assistant",
+      "content": "Aqui estão 10 headlines nessa vibe, agora com muito mais força e precisão:\n\n1. **A mãe de filho adulto passou anos pedindo silêncio. Hoje ela daria tudo para ouvir um barulho** ([estrutura #124672](https://corestudio.ai/dashboard/user/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A mãe de filho adulto passou anos pedindo silêncio. Hoje ela daria tudo para ouvir um barulho}}\n\n2. **Disseram que criar filho era difícil. Ninguém avisou que a parte mais difícil era quando parava** ([estrutura #132209](https://corestudio.ai/dashboard/user/library?viral_id=132209)) {{action:roteiro|id=132209|headline=Disseram que criar filho era difícil. Ninguém avisou que a parte mais difícil era quando parava}}\n\n3. **Tem fase que você viveu reclamando por anos e que vai carregar no peito com saudade por décadas, e o pior, você nem percebeu quando foi embora** ([estrutura #132210](https://corestudio.ai/dashboard/user/library?viral_id=132210)) {{action:roteiro|id=132210|headline=Tem fase que você viveu reclamando por anos e que vai carregar no peito com saudade por décadas, e o pior, você nem percebeu quando foi embora}}\n\n4. **A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade. É eu pedi pra ele fazer silêncio** ([estrutura #132137](https://corestudio.ai/dashboard/user/library?viral_id=132137)) {{action:roteiro|id=132137|headline=A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade. É eu pedi pra ele fazer silêncio}}\n\n5. **Nem tudo que cansava era fardo. Às vezes era só amor com nome errado** ([estrutura #132207](https://corestudio.ai/dashboard/user/library?viral_id=132207)) {{action:roteiro|id=132207|headline=Nem tudo que cansava era fardo. Às vezes era só amor com nome errado}}\n\n6. **Se a sua casa acalmou e você não sabe mais o que fazer com o silêncio, presta atenção nisso** ([estrutura #132215](https://corestudio.ai/dashboard/user/library?viral_id=132215)) {{action:roteiro|id=132215|headline=Se a sua casa acalmou e você não sabe mais o que fazer com o silêncio, presta atenção nisso}}\n\n7. **A maternidade não termina quando o filho sai. Termina quando ele volta só porque quis** ([estrutura #124688](https://corestudio.ai/dashboard/user/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A maternidade não termina quando o filho sai. Termina quando ele volta só porque quis}}\n\n8. **Tinha um colchão no chão da sala e a mãe quase não viu o quanto aquilo era a vida inteira acontecendo** ([estrutura #127967](https://corestudio.ai/dashboard/user/library?viral_id=127967)) {{action:roteiro|id=127967|headline=Tinha um colchão no chão da sala e a mãe quase não viu o quanto aquilo era a vida inteira acontecendo}}\n\n9. **Não é o quarto vazio que dói. E quando você entender o porquê, vai querer ligar agora pra sua mãe** ([estrutura #132205](https://corestudio.ai/dashboard/user/library?viral_id=132205)) {{action:roteiro|id=132205|headline=Não é o quarto vazio que dói. E quando você entender o porquê, vai querer ligar agora pra sua mãe}}\n\n10. **O que você procura depois que os filhos crescem já está dentro da sua própria casa. Só não veio no formato que você esperava** ([estrutura #132214](https://corestudio.ai/dashboard/user/library?viral_id=132214)) {{action:roteiro|id=132214|headline=O que você procura depois que os filhos crescem já está dentro da sua própria casa. Só não veio no formato que você esperava}}",
+      "isRoteiro": false
+     },
+     {
+      "s": "arr"
+     }
+    ]
+   ],
+   {
+    "s": "arr"
+   }
+  ],
+  "messagesLimit": 100,
+  "hasMoreMessages": false,
+  "thinking": false,
+  "conversationId": "01a0f3dc-70db-73d8-9cfe-7b69cba44a42",
+  "selectedAgentId": 1,
+  "activeRunId": null,
+  "conversations": [
+   [
+    [
+     {
+      "id": "01a10d2a-2e28-7197-a8c2-6b572a00d246",
+      "title": "vou te mandar um roteiro que quero que vc analise a estrutura pq ele viralizou muito e eu quero que ",
+      "updated_at": "2026-10-05 15:39:21"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a10846-e19f-7132-a001-4dfc8edac5c8",
+      "title": "hoje é o primeiro turno das eleições 2026. podemos fazer um roteiro sobre isso de alguma forma pro g",
+      "updated_at": "2026-10-04 20:47:43"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a10860-5315-7255-8c8b-cd0e52f54e7a",
+      "title": "para a mônica tangerino, em psicanalise (não falar sobre imoveis)\nLeve em consideração:\n\"Sentir alív",
+      "updated_at": "2026-10-04 16:25:22"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a10827-48c2-712a-82d2-3efa8a8e962f",
+      "title": "eu tenho alguns vários vídeos que foram mto bem no instagram. posso te mandar o roteiro pra vc fazer",
+      "updated_at": "2026-10-04 15:53:08"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a10813-e9c4-70d0-addf-4e6c4726c822",
+      "title": "O governo bateu o martelo. Agora você pode colocar a casa no seu nomemesmo sem ter os papéis dela. E",
+      "updated_at": "2026-10-04 15:01:59"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a107ed-cf54-73ec-a4a3-a8a962148456",
+      "title": "PRIMEIRA SUGESTÃO DE REEL - SOBRE CLAUSULA CONTRATUAL                                               ",
+      "updated_at": "2026-10-04 14:43:08"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a107cb-4ae7-737d-899b-a1e61e3bbb24",
+      "title": "Quando for comprar seu primeiro imóvel, não pergunte o preço primeiro.Pergunte isso. Porque o preço ",
+      "updated_at": "2026-10-04 14:17:24"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a1077f-0476-739d-8185-2cd869642066",
+      "title": "ROTEIROS GILSON - MODELADOS",
+      "updated_at": "2026-10-04 13:38:03"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a10795-336f-73af-9a3a-abddbdae2e82",
+      "title": "ROTEIROS MONICA",
+      "updated_at": "2026-10-04 12:54:18"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a10416-00d9-7092-ae75-a0d1206fdfd8",
+      "title": "ROTEIROS MONICA 2",
+      "updated_at": "2026-10-04 12:41:24"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f3dc-70db-73d8-9cfe-7b69cba44a42",
+      "title": "O QUARTO CHEIO DE MENINOS*Teve uma época em que parecia que a casa nunca ficava vazia.Tinha menino e",
+      "updated_at": "2026-10-02 18:44:50"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0f2e5-3401-722c-a037-d3a510c2d8c5",
+      "title": "Bora escrever um roteiro pro Gilson sobre o poder do hábito? Quero um reels de no max 90s, com o tem",
+      "updated_at": "2026-09-30 16:07:12"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0df72-a658-71f7-97a0-5df36fca740e",
+      "title": "faça uma headline deste roteiro usando  @[@veridiana_cavalheri - Todos os vídeos] @[@elias.maman - T",
+      "updated_at": "2026-09-30 16:03:28"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0df70-80a4-73fe-a63b-2f011b05e151",
+      "title": "Só dentro desse chat, não use o seu conhecimento base sobre o Gilson",
+      "updated_at": "2026-09-26 17:39:28"
+     },
+     {
+      "s": "arr"
+     }
+    ],
+    [
+     {
+      "id": "01a0db45-c2ab-738e-aae8-45d5ff0ba679",
+      "title": "Crie uma headline sobre a importância da localização na escolha de um imóvel.",
+      "updated_at": "2026-09-25 22:13:05"
+     },
+     {
+      "s": "arr"
+     }
+    ]
+   ],
+   {
+    "s": "arr"
+   }
+  ],
+  "attachedReferences": [
+   [],
+   {
+    "s": "arr"
+   }
+  ],
+  "conversationsLimit": 15,
+  "hasMoreConversations": true,
+  "traceMessageId": null,
+  "streamUrl": "https://corestudio.ai/dashboard/user/chat/stream",
+  "contextCharCount": 17165,
+  "isMobile": false
+ },
+ "memo": {
+  "id": "diwaBhLKRk6OlFEK4vTZ",
+  "name": "document-chat",
+  "path": "dashboard/user/chat",
+  "method": "GET",
+  "release": "a-a-a",
+  "children": [],
+  "scripts": [],
+  "assets": [],
+  "errors": [],
+  "locale": "pt_BR"
+ },
+ "checksum": "80c3f8af444c024ae58b928d5b7070545bee334e1725991d76d43e6b1a09d714"
+}

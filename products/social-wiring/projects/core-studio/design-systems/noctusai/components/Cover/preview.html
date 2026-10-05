@@ -1,0 +1,27 @@
+<!-- @dsCard height=288 -->
+<style>
+  html,body{margin:0}
+  .cv{position:relative;width:960px;height:288px;background:var(--bg);overflow:hidden}
+  .cv svg{position:absolute;inset:0}
+  .inv{fill:var(--bg-inverse)} .acc{fill:var(--accent)} .act{fill:var(--action)} .n7{fill:var(--night-7)} .n9{fill:var(--night-9)}
+  [data-theme="dark"] .inv{fill:var(--night-8)}
+  .dot{fill:var(--night-3)}
+  .name{position:absolute;left:48px;bottom:64px;max-width:440px;margin:0;font:600 88px/.95 var(--font-sans);letter-spacing:-.03em;color:var(--fg)}
+  .tag{position:absolute;left:48px;bottom:34px;max-width:440px;margin:0;font:400 14px var(--font-sans);color:var(--fg-muted)}
+</style>
+<div class="cv">
+  <svg width="960" height="288" viewBox="0 0 960 288" aria-hidden="true">
+    <!-- blocks: bg-inverse night panel 432x288 (radius-lg 12), accent 160x64, action 96x64, night-9 160x96 (radius-md 8)
+         arrangement: one tall always-dark slab (the hero band) right of x=496, satellites cut into it like modules
+         pattern row: a literal motif, the constellation direction -> a few night-3 star dots in a loose cluster inside the dark slab
+         steps/radii: gutter 16 and gap-lg 24 offsets, radius-md 8, radius-lg 12; dots r=3 -->
+    <rect class="inv" x="512" y="0" width="448" height="288" rx="12"/>
+    <rect class="n9" x="552" y="40" width="160" height="96" rx="8"/>
+    <rect class="acc" x="736" y="40" width="160" height="64" rx="8"/>
+    <rect class="act" x="736" y="184" width="96" height="64" rx="8"/>
+    <rect class="n7" x="552" y="160" width="160" height="88" rx="8"/>
+    <circle class="dot" cx="860" cy="140" r="3"/><circle class="dot" cx="905" cy="128" r="3"/><circle class="dot" cx="882" cy="168" r="3"/><circle class="dot" cx="924" cy="200" r="3"/><circle class="dot" cx="852" cy="236" r="3"/>
+  </svg>
+  <p class="name">NoctusAI</p>
+  <p class="tag">Intelligence that works while you sleep. Bootstrap identity, pre-rebrand.</p>
+</div>

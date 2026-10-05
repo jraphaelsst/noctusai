@@ -1,0 +1,1529 @@
+<html>
+  <head>
+    <meta>
+    <meta name="viewport">
+    <meta>
+    <meta name="csrf-token">
+    <meta name="app-env">
+    <title>
+      "Chat"
+    <base href="/">
+    <meta name="workspace-id">
+    <meta name="user-id">
+    <meta name="first-access">
+    <link href="./back/dist/css/tabler.min.css">
+    <link href="./back/dist/css/tabler-flags.min.css">
+    <link href="./back/dist/css/tabler-payments.min.css">
+    <link href="./back/dist/css/tabler-vendors.min.css">
+    <link href="./back/dist/css/demo.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.css">
+    <link href="./back/css/main.css?v=">
+    <link href="https://corestudio.ai/back/css/layoutV2.css?v=">
+    <link href="https://corestudio.ai/back/dist/img/favicon.png">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-daterangepicker/daterangepicker.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap">
+    <link href="https://corestudio.ai/build/assets/app-tn0RQdqM.css">
+    <link href="https://corestudio.ai/build/assets/app-DLOM2UdR.js">
+    <link href="https://corestudio.ai/build/assets/app-tn0RQdqM.css" data-navigate-track="reload">
+    <script https://corestudio.ai/build/assets/app-DLOM2UdR.js>
+    <link href="https://corestudio.ai/build/assets/chat-DNt3Eku0.css">
+    <link href="https://corestudio.ai/build/assets/chat-DNt3Eku0.css" data-navigate-track="reload">
+    <script inline>
+  <body>
+    <script ./back/dist/js/demo-theme.min.js>
+    <script inline>
+    <div class="mainContainerV2">
+      <div class="containerAsideV2 card">
+        <aside class="contentAsideV2" data-bs-theme="dark">
+          <div class="headerAsideV2 d-flex">
+            <button class="navbar-toggler" id="toggleSidebarButtonV2" type="button">
+            <a href>
+            <hr class="m-0 p-0">
+          <div class="containerBodyAsideV2">
+            <div class="bodyAsideV2" id="sidebar-menu">
+              <ul class="navbar-nav">
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0" href="https://corestudio.ai/dashboard/user">
+                    <section>
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Dashboard"
+                <li class="nav-item navLinkV2 active">
+                  <a class="nav-link m-0 p-0" href="https://corestudio.ai/dashboard/user/chat">
+                    <section>
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Criar Headlines e Roteiros"
+                <li class="nav-item navDropdownV2 ">
+                  <section>
+                    <div>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block">
+                      <p class="nav-link-title">
+                        "Pesquisa"
+                  <div class="asideDropdownItemV2 ">
+                    <div class="dropdownMenuColumnsV2">
+                      <a class href="https://corestudio.ai/dashboard/user/searches">
+                        "Minha Pesquisa"
+                      <a class href="https://corestudio.ai/dashboard/user/searches/extract-profile">
+                        "Extrair Pesquisa"
+                <li class="nav-item navLinkV2 ">
+                  <a class="nav-link m-0 p-0 w-100" href="https://corestudio.ai/dashboard/user/cores">
+                    <section class="w-100">
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Segundo Cérebro"
+                <li class="nav-item navLinkV2 " title="Exclusivo para o Plano Premium">
+                  <a class="nav-link m-0 p-0 w-100" href="https://corestudio.ai/dashboard/user/library">
+                    <section class="w-100">
+                      <div>
+                        <span class="nav-link-icon d-md-none d-lg-inline-block">
+                        <p class="nav-link-title m-0">
+                          "Biblioteca"
+                <li class="nav-item navDropdownV2 ">
+                  <section>
+                    <div>
+                      <span class="nav-link-icon d-md-none d-lg-inline-block">
+                      <p class="nav-link-title m-0">
+                        "Configurações"
+                  <div class="asideDropdownItemV2 ">
+                    <div class="dropdownMenuColumnsV2">
+                      <a class href="https://corestudio.ai/dashboard/user/profile">
+                        "Minha conta"
+                      <a class href="https://corestudio.ai/dashboard/user/my-library">
+                        "Minha Biblioteca"
+                      <a class href="https://corestudio.ai/dashboard/user/trainings">
+                        "Treinamentos"
+                      <div class="subMenuV2 ">
+                        <div class="subMenuTriggerV2">
+                          <span>
+                            "Headlines"
+                        <div class="subMenuItemsV2">
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/generate">
+                            "Gerar Headlines"
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/favorites">
+                            "Headlines Favoritas"
+                          <a class href="https://corestudio.ai/dashboard/user/headlines/suggested">
+                            "Headlines sugeridas"
+                      <a class href="https://corestudio.ai/dashboard/user/roadmaps">
+                        "Roteiros"
+            <header class=" d-print-none h-auto">
+              <section class="sectionProfileV2 m-0">
+                <div class="d-flex" style="height: 45px">
+                  <div class="avatarV2">
+                    "GT"
+                  <div class="boxtextV2">
+                    <p class="m-0" style="font-size: 1rem">
+                      "Gilson"
+                    <span style="color: #FFFFFF80;">
+                      "My Workspace"
+                <div class="dropdownMenuProfileV2 modalAnimation">
+                  <div class="dropdownMenuProfileHeaderV2">
+                    <h3 class="m-0">
+                      "Espaços de trabalho"
+                  <form action="https://corestudio.ai/dashboard/user/workspace/switch" method="post">
+                    <input type="hidden" name="_token" value="HWvJLPiqDMlGcMojApMxvY6o0HwI3pvpTwhyUCdC">
+                    <ul class="dropdownMenuProfileBodyV2">
+                      <li>
+                        <button type="submit" name="workspace_id" value="1619" style="width: 100%; background: none; border: none" class="active">
+                          "My Workspace"
+                  <a href="javascript:;" class="dropdownMenuProfileTutorialV2" data-bs-toggle="modal" data-bs-target="#modal-first-access-tutorial" title="Assistir ao tutorial de boas-vindas">
+                    <span>
+                      "Ver tutorial novamente"
+                  <a class="dropdownMenuProfileFooterV2">
+                    "Fazer logout"
+                <form id="logout-form" action="https://corestudio.ai/logout" method="POST" style="display: none;">
+                  <input type="hidden" name="_token" value="HWvJLPiqDMlGcMojApMxvY6o0HwI3pvpTwhyUCdC">
+          <div class="modal fade custom-slide" id="modal-create-workspace">
+            <div class="modal-dialog modal-dialog-centered d-flex justify-content-center" style="min-width: fit-content !important;">
+              <div class="modal-content card" style="width: min(650px, 100vw)">
+                <header class="d-flex justify-content-between align-items-center flex-row" style="padding: 20px; border-bottom: 1px solid #E1C8FF26; height: fit-content !important">
+                  <h2 class="m-0">
+                    "Adicionar Workspace"
+                <form id="customers-workspace-create" method="post" style="padding: 20px;">
+                  <input type="hidden" name="customer_id" value="1667">
+                  <h3 class="mb-2">
+                    "Nome"
+                  <input type="text" class="form-control" value="My Workspace 2" name="name" placeholder="Ex.. My Workspace 2">
+                <footer class="d-flex justify-content-end align-items-center" style="padding: 20px; border-top: 1px solid #E1C8FF26; gap: 20px">
+                  <button data-bs-dismiss="modal" type="button">
+                    "Cancelar"
+                  <button form="customers-workspace-create" id="create_workspace" type="submit">
+                    "Criar"
+          <script inline>
+      <a data-bs-toggle="offcanvas" href="#offcanvasEnd" role="button" class="card card-link card-link-pop j_headline_icon_box" style="display:none">
+        <div class="card-body">
+          <div class="col-auto">
+            <span class="badge bg-blue badge-notification badge-blink" style="left: -15px;width: 1rem;height: 1rem;">
+            <span class="bg-red-lt avatar">
+      <div class="offcanvas offcanvas-end j_headline_content_box" id="offcanvasEnd" aria-labelledby="offcanvasEndLabel">
+        <div class="offcanvas-header">
+          <h2 class="offcanvas-title" id="offcanvasEndLabel">
+            "Headlines na Box"
+          <button type="button" class="btn-close text-reset" data-bs-dismiss="offcanvas" aria-label="Close">
+        <div class="offcanvas-body">
+          <form id="box-headlines-save" method="post">
+            <div class="mb-2">
+              <a href="javascript:;" class="j_box_remove_headlines" style="display: flex;flex-direction: row-reverse;">
+                "Remover selecionados"
+            <div class="j_box-headlines-list">
+            <div class="card-footer mt-3 text-end">
+              <div class="d-flex">
+                <button id="box_save_headlines" class="btn btn-primary ms-auto" type="button" data-bs-toggle="modal" data-bs-target="#modal-box-headlines-save">
+                  "Salvar Headlines"
+      <div class="mainContentV2">
+        <div class="top-header-v2" x-data="notificationsDropdown()" @click.away="open = false">
+          <div class="top-header-v2-inner">
+            <div class="notification-bell-wrapper" style="position: relative;">
+              <button class="notification-bell-btn" @click="toggle()" type="button">
+                <span class="notification-badge" x-show="unreadCount > 0" x-text="unreadCount > 9 ? '9+' : unreadCount" x-cloak>
+              <div class="notification-dropdown" x-show="open" x-cloak x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 translate-y-[-8px]" x-transition:enter-end="opacity-100 translate-y-0" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100 translate-y-0" x-transition:leave-end="opacity-0 translate-y-[-8px]">
+                <div class="notification-dropdown-header">
+                  <span class="notification-dropdown-title">
+                    "Notificações"
+                  <div class="notification-header-actions">
+                    <button class="notification-mark-all" @click="markAllRead()" x-show="unreadCount > 0" type="button">
+                      "Marcar todas como lidas"
+                    <button class="notification-toggle-read" @click="toggleShowRead()" x-show="readCount > 0" type="button">
+                      <span x-text="showRead ? 'Ocultar lidas' : 'Ver já lidas'">
+                <div class="notification-dropdown-body">
+                  <template x-if="notifications.length === 0">
+                    <div class="notification-empty">
+                      <p>
+                        "Nenhuma notificação por aqui"
+                  <template x-for="n in notifications" :key="n.id">
+                    <a :href="n.link || '#'" class="notification-item" :class="{ 'unread': n.status === 0 }" @click="markRead(n)">
+                      <div class="notification-item-icon" :class="'type-' + n.type">
+                        <template x-if="n.icon">
+                          <span x-text="n.icon">
+                        <template x-if="!n.icon">
+                      <div class="notification-item-content">
+                        <div class="notification-item-title" x-text="n.title">
+                        <div class="notification-item-body" x-text="n.body" x-show="n.body">
+                        <div class="notification-item-time" x-text="timeAgo(n.created_at)">
+                      <div class="notification-item-dot" x-show="n.status === 0">
+        <script inline>
+        <div class="page-body py-0">
+          <div class="container-fluid px-0">
+            <div wire:snapshot="{"data":{"question":"","lastCleanMessageId":null,"messages":[[[{"id":"01a0f3dc-70e3-7349-bffa-8a06ccd625e1","role":"user","content":"O QUARTO CHEIO DE MENINOS*Teve uma \u00e9poca em que parecia que a casa nunca ficava vazia.Tinha menino entrando sem bater.  T\u00eanis largado perto da porta.  Viol\u00e3o tocando no quarto.  Gargalhada vindo do corredor.E um cheiro de chul\u00e9 que, sinceramente, …" wire:effects="{"dispatches":[{"name":"conversations-updated","params":{"conversations":[{"id":"01a10d2a-2e28-7197-a8c2-6b572a00d246","title":"vou te mandar um roteiro que quero que vc analise a estrutura pq ele viralizou muito e eu quero que ","updated_at":"2026-10-05 15:39:21"},{"id":"01a10846-e19f-7132-a001-4dfc8edac5c8","title":"hoje \u00e9 o primeiro turno das elei\u00e7\u00f5es 2026. podemos fazer um rotei…" wire:id="diwaBhLKRk6OlFEK4vTZ" class="dc-wrapper" x-data="ragChat(
+        1667,
+        'production',
+        'https://corestudio.ai/dashboard/user/chat/stream',
+        'https://corestudio.ai/dashboard/user/chat/documents',
+        'https://corestudio.ai/dashboard/user/twin/api/credits',
+        'https://corestudio.ai/dashboard/user/twin/api/recharges',
+        'https://corestudio.ai/dashboard/user/twin/faturamento'
+    )" x-on:show-trace.window="openTrace($event.detail.trace)" x-on:update-url.window="traceVisible = false; traceData = {}" x-on:copy-clean-script-result.window="onCopyCleanScriptResult($event.detail)">
+              <script application/json>
+              <button class="dc-sidebar-toggle d-lg-none" @click="sidebarOpen = !sidebarOpen" :class="{ 'active': sidebarOpen }">
+              <aside class="dc-sidebar" :class="{ 'open': sidebarOpen }">
+                <div class="dc-sidebar-header">
+                  <h3 class="dc-sidebar-title">
+                    "Conversas"
+                <button class="dc-new-chat-btn" :disabled="creatingChat || streaming" @click="
+                if (activeAbortController) { activeAbortController.abort(); activeAbortController = null; }
+                streaming = false;
+                stopTyping();
+                creatingChat = true;
+                localMessages = [];
+                localConversationId = null;
+                $wire.startNewConversation();
+                setTimeout(() => creatingChat = false, 400);
+  …">
+                  <span x-show="!creatingChat" class="dc-new-chat-icon">
+                    "+"
+                  <span x-show="creatingChat" class="spinner-border" style="display:none;width:.7rem;height:.7rem;border-width:1.5px;flex-shrink:0" role="status">
+                  <span x-text="creatingChat ? 'Criando...' : 'Novo chat'">
+                <div class="dc-sidebar-list">
+                  <template x-for="conversation in sidebarConversations" :key="conversation.id">
+                    <div class="dc-conversation-item-wrapper" :class="{ 'active': $wire.conversationId === conversation.id }" x-data="{ editing: false, saving: false, editTitle: conversation.title }">
+                      <template x-if="!editing">
+                        <button class="dc-conversation-item" @click="if (activeAbortController) { activeAbortController.abort(); activeAbortController = null; } streaming = false; stopTyping(); $wire.selectConversation(conversation.id); sidebarOpen = false; localMessages = []; localConversationId = null; switchingChat = true;" :disabled="$wire.thinking">
+                          <span class="dc-conversation-title" x-text="conversation.title">
+                      <template x-if="editing">
+                        <div style="flex:1;min-width:0;display:flex;align-items:center;">
+                          <input x-show="!saving" class="dc-conversation-edit-input" type="text" x-model="editTitle" @keydown.enter.prevent="saving = true; $wire.renameConversation(conversation.id, editTitle).then(() => { editing = false; saving = false; })" @keydown.escape="editing = false" @click.outside="if(!saving) editing = false" x-init="$nextTick(() => $el.focus())" maxlength="100">
+                          <span x-show="saving" style="display:flex;align-items:center;gap:6px;padding:6px 10px;color:#8b949e;font-size:.78rem;">
+                            <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem;border-width:1.5px;color:#58a6ff;" role="status">
+                            "Salvando..."
+                      <div class="dc-conversation-actions">
+                        <button class="dc-conversation-edit" @click.stop="editing = !editing; $nextTick(() => { const inp = $el.closest('.dc-conversation-item-wrapper').querySelector('.dc-conversation-edit-input'); if(inp) inp.focus(); })" title="Renomear conversa">
+                        <button type="button" class="dc-conversation-delete" @click.stop="deleteConfirm = { open: true, id: conversation.id, title: conversation.title, busy: false }" :disabled="$wire.thinking" title="Apagar conversa">
+                  <template x-if="$wire.hasMoreConversations" x-key="has-more">
+                    <button class="dc-load-more" @click="$wire.loadMoreConversations()">
+                      "Ver mais conversas"
+                  <template x-if="!sidebarConversations || sidebarConversations.length === 0">
+                    <div class="dc-sidebar-empty">
+                      "Nenhuma conversa para este agente."
+                <div class="dc-sidebar-footer">
+                  <a href="https://corestudio.ai/dashboard/user/cores" class="dc-sidebar-link">
+                    "Segundo cérebro"
+                  <div x-data="{
+                memOpen: false,
+                memLoading: false,
+                memItems: [],
+                async memShow() {
+                    this.memOpen = true;
+                    this.memLoading = true;
+                    this.memItems = await $wire.loadMemories();
+                    this.memLoading = false;
+                },
+                memNew: '',
+                memSaving:…">
+                    <button type="button" class="dc-sidebar-link dc-sidebar-link-btn" @click="memShow()">
+                      "Memória"
+                    <template x-teleport="body">
+                      <div x-show="memOpen" x-transition.opacity.duration.150ms class="dc-confirm-overlay" @click="memOpen = false" @keydown.escape.window="memOpen = false" style="display:none">
+                        <div class="dc-confirm-modal dc-memory-modal" @click.stop x-transition.duration.180ms>
+                          <h3 class="dc-confirm-title">
+                            "Memória"
+                          <p class="dc-confirm-text">
+                            "O que a IA sabe sobre você em todos os chats de Roteiro e Headline. Adicione aqui ou escreva no chat"
+                            <strong>
+                              ""guarda na memória que eu não uso emojis""
+                            "."
+                          <form class="dc-memory-add" @submit.prevent="memAdd()">
+                            <textarea x-model="memNew" maxlength="500" placeholder="Ex.: Meu público são donos de clínica de estética." @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); memAdd(); }">
+                            <button type="submit" class="dc-memory-add-btn" :disabled="memSaving || !memNew.trim()">
+                              <span x-text="memSaving ? 'Guardando…' : 'Guardar'">
+                          <div x-show="memError" x-text="memError" class="dc-memory-error" style="display:none">
+                          <div class="dc-memory-list">
+                            <div x-show="memLoading" class="dc-memory-empty">
+                              "Carregando…"
+                            <div x-show="!memLoading && memItems.length === 0" class="dc-memory-empty">
+                              "Nada salvo ainda."
+                            <template x-for="item in memItems" :key="item.id">
+                              <div class="dc-memory-item">
+                                <div class="dc-memory-text">
+                                  <span x-text="item.content">
+                                  <small x-text="item.created_at">
+                                <button type="button" class="dc-memory-del" title="Apagar" @click="memDelete(item.id)">
+                          <div class="dc-confirm-actions">
+                            <button type="button" class="dc-confirm-btn dc-confirm-cancel" @click="memOpen = false">
+                              "Fechar"
+              <div class="dc-overlay d-lg-none" :class="{ 'active': sidebarOpen }" @click="sidebarOpen = false">
+              <main class="dc-main">
+                <div class="dc-header">
+                  <div class="dc-header-left">
+                    <span class="dc-header-title">
+                      "Chat com Documentos"
+                  <div class="dc-header-right">
+                    <button class="dc-docs-toggle" @click="docsPanel = !docsPanel" :class="{ 'active': docsPanel }">
+                      <span class="dc-docs-count" x-show="$wire.attachedDocuments.length > 0" x-text="$wire.attachedDocuments.length">
+                <div class="dc-messages-wrapper">
+                  <div class="dc-switching-overlay" x-show="switchingChat" x-transition.opacity>
+                    <span class="spinner-border" style="width:1.5rem;height:1.5rem;border-width:2px;color:#58a6ff;" role="status">
+                  <div class="dc-messages" id="chat-messages" x-ref="chatMessages" x-effect="
+                if ($wire.conversationId) {
+                    $nextTick(() => {
+                        const el = $refs.chatMessages;
+                        if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+                    });
+                }
+            " x-init="$nextTick(() => { const el = $el; setTimeout(() => el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }), 100); })" @scroll="
+                const el = $refs.chatMessages;
+                atBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 80;
+            ">
+                    <div class="dc-msg dc-msg-user">
+                      <div class="dc-msg-bubble dc-msg-bubble-user">
+                        "O QUARTO CHEIO DE MENINOS*Teve uma época em que parecia que a casa nunca ficava vazia.Tinha menino entrando sem bater. Tênis largado perto da porta. Violão tocando no quarto. Gargalhada vindo do corredor.E um cheiro de chulé que, sinceramente, ninguém sente falta. Ou sente. Depois sente até disso.A geladeira vivia sendo aberta. Sempre cabia mais um no jantar. Tinha cachorro-quente de última hora, "
+                    <div class="dc-msg dc-msg-assistant">
+                      <div class="dc-avatar">
+                      <div class="dc-msg-content" x-data="{ copiedFull: false }">
+                        <div class="dc-msg-bubble dc-msg-bubble-assistant markdown-body">
+                          <p>
+                            "Aqui está a headline para esse roteiro:"
+                          <ol>
+                            <li>
+                              <strong>
+                                "A casa que parecia pequena demais um dia começa a parecer grande demais, e ninguém te prepara pra isso"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=124688">
+                                "estrutura #124688"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124688","headline":"A casa que parecia pequena demais um dia começa a parecer grande demais, e ninguém te prepara pra isso"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124688","headline":"A casa que parecia pequena demais um dia começa a parecer grande demais, e ninguém te prepara pra isso"}" title="Criar roteiro com headline editável">
+                        <div class="dc-msg-actions">
+                          <div class="dc-msg-btns">
+                            <button type="button" class="dc-copy-full-btn" :class="{ 'dc-copy-success': copiedFull }" @click="navigator.clipboard.writeText('Aqui est\u00e1 a headline para esse roteiro:\n\n1. **A casa que parecia pequena demais um dia come\u00e7a a parecer grande demais, e ningu\u00e9m te prepara pra isso** ([estrutura #124688](https:\/\/corestudio.ai\/dashboard\/user\/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A casa que parecia pequena demais um dia come\u00e7a a parecer grande demais…">
+                              <span x-text="copiedFull ? 'Copiado!' : 'Completo'">
+                    <div class="dc-msg dc-msg-user">
+                      <div class="dc-msg-bubble dc-msg-bubble-user">
+                        "me dá mais 10 opções de headline"
+                    <div class="dc-msg dc-msg-assistant">
+                      <div class="dc-avatar">
+                      <div class="dc-msg-content" x-data="{ copiedFull: false }">
+                        <div class="dc-msg-bubble dc-msg-bubble-assistant markdown-body">
+                          <p>
+                            "Aqui estão 10 headlines para o roteiro:"
+                          <ol>
+                            <li>
+                              <strong>
+                                "A casa não ficou silenciosa porque os filhos cresceram. Ficou porque você também foi crescendo sem perceber"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=124688">
+                                "estrutura #124688"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124688","headline":"A casa não ficou silenciosa porque os filhos cresceram. Ficou porque você também foi crescendo sem perceber"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124688","headline":"A casa não ficou silenciosa porque os filhos cresceram. Ficou porque você também foi crescendo sem perceber"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "Se você é pai ou mãe e já sentiu saudade de uma fase que te cansou, presta atenção nisso"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=132215">
+                                "estrutura #132215"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132215","headline":"Se você é pai ou mãe e já sentiu saudade de uma fase que te cansou, presta atenção nisso"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132215","headline":"Se você é pai ou mãe e já sentiu saudade de uma fase que te cansou, presta atenção nisso"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "Pouca gente sabe, mas existe um sentimento que só aparece quando a casa fica grande demais pra duas pessoas"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=124680">
+                                "estrutura #124680"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124680","headline":"Pouca gente sabe, mas existe um sentimento que só aparece quando a casa fica grande demais pra duas pessoas"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124680","headline":"Pouca gente sabe, mas existe um sentimento que só aparece quando a casa fica grande demais pra duas pessoas"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "A saudade não é do barulho. É de uma versão da vida que você nem sabia que amava enquanto vivia"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                "estrutura #124672"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A saudade não é do barulho. É de uma versão da vida que você nem sabia que amava enquanto vivia"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A saudade não é do barulho. É de uma versão da vida que você nem sabia que amava enquanto vivia"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "80% dos casais que ficaram com a casa vazia não sabem o que fazer com o espaço que sobrou"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=129271">
+                                "estrutura #129271"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"129271","headline":"80% dos casais que ficaram com a casa vazia não sabem o que fazer com o espaço que sobrou"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"129271","headline":"80% dos casais que ficaram com a casa vazia não sabem o que fazer com o espaço que sobrou"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "Tinha um violão tocando no quarto e a gente quase não ouviu"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=127967">
+                                "estrutura #127967"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"127967","headline":"Tinha um violão tocando no quarto e a gente quase não ouviu"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"127967","headline":"Tinha um violão tocando no quarto e a gente quase não ouviu"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "Disseram que essa fase passaria rápido. Ninguém esperava a saudade que viria depois"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=132209">
+                                "estrutura #132209"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132209","headline":"Disseram que essa fase passaria rápido. Ninguém esperava a saudade que viria depois"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132209","headline":"Disseram que essa fase passaria rápido. Ninguém esperava a saudade que viria depois"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "Tem memória que você viveu em 3 segundos e que vai carregar por 30 anos, e o pior, não deu valor na época"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=132210">
+                                "estrutura #132210"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132210","headline":"Tem memória que você viveu em 3 segundos e que vai carregar por 30 anos, e o pior, não deu valor na época"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132210","headline":"Tem memória que você viveu em 3 segundos e que vai carregar por 30 anos, e o pior, não deu valor na época"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "A casa que parecia pequena não era pequena. Era cheia. E cheio é uma das coisas mais raras que existem"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=132207">
+                                "estrutura #132207"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132207","headline":"A casa que parecia pequena não era pequena. Era cheia. E cheio é uma das coisas mais raras que existem"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132207","headline":"A casa que parecia pequena não era pequena. Era cheia. E cheio é uma das coisas mais raras que existem"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <strong>
+                                "O que você procura agora pode já estar esperando dentro da casa que você já tem"
+                              "("
+                              <a href="https://corestudio.ai/dashboard/user/library?viral_id=132214">
+                                "estrutura #132214"
+                              ")"
+                              <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132214","headline":"O que você procura agora pode já estar esperando dentro da casa que você já tem"}" title="Criar roteiro a partir desta headline">
+                              <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132214","headline":"O que você procura agora pode já estar esperando dentro da casa que você já tem"}" title="Criar roteiro com headline editável">
+                        <div class="dc-msg-actions">
+                          <div class="dc-msg-btns">
+                            <button type="button" class="dc-copy-full-btn" :class="{ 'dc-copy-success': copiedFull }" @click="navigator.clipboard.writeText('Aqui est\u00e3o 10 headlines para o roteiro:\n\n1. **A casa n\u00e3o ficou silenciosa porque os filhos cresceram. Ficou porque voc\u00ea tamb\u00e9m foi crescendo sem perceber** ([estrutura #124688](https:\/\/corestudio.ai\/dashboard\/user\/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A casa n\u00e3o ficou silenciosa porque os filhos cresceram. Ficou…">
+                              <span x-text="copiedFull ? 'Copiado!' : 'Completo'">
+                    <div class="dc-msg dc-msg-user">
+                      <div class="dc-msg-bubble dc-msg-bubble-user">
+                        "não, horrível. quero algo disruptivo, interessante, cativante, que faça a mãe querer ler. pega termos virais universais e frases de efeito, bora, tu faz mto melhor q isso"
+                    <div class="dc-msg dc-msg-assistant">
+                      <div class="dc-avatar">
+                      <div class="dc-msg-content" x-data="{ copiedFull: false }">
+                        <div class="dc-msg-bubble dc-msg-bubble-assistant markdown-body">
+                          <p>
+                            "Agora sim. Aqui estão 10 headlines com força real:"
+                          <ol>
+                            <li>
+                              <p>
+                                <strong>
+                                  "A casa não ficou grande. Ela ficou vazia. E tem uma diferença que a maioria das mães só entende quando já não tem volta"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124688">
+                                  "estrutura #124688"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124688","headline":"A casa não ficou grande. Ela ficou vazia. E tem uma diferença que a maioria das mães só entende quando já não tem volta"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124688","headline":"A casa não ficou grande. Ela ficou vazia. E tem uma diferença que a maioria das mães só entende quando já não tem volta"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Nem tudo que cansa é ruim. Às vezes é só amor com nome errado"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132207">
+                                  "estrutura #132207"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132207","headline":"Nem tudo que cansa é ruim. Às vezes é só amor com nome errado"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132207","headline":"Nem tudo que cansa é ruim. Às vezes é só amor com nome errado"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Disseram que essa fase ia passar rápido. Ninguém avisou sobre o silêncio que viria depois"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132209">
+                                  "estrutura #132209"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132209","headline":"Disseram que essa fase ia passar rápido. Ninguém avisou sobre o silêncio que viria depois"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132209","headline":"Disseram que essa fase ia passar rápido. Ninguém avisou sobre o silêncio que viria depois"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Se a sua casa acalmou e você não sabe o que fazer com isso, presta atenção nisso"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132215">
+                                  "estrutura #132215"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132215","headline":"Se a sua casa acalmou e você não sabe o que fazer com isso, presta atenção nisso"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132215","headline":"Se a sua casa acalmou e você não sabe o que fazer com isso, presta atenção nisso"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Tem fase que você viveu em anos e que vai carregar no peito por décadas, e o pior, reclamou de cada dia dela"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132210">
+                                  "estrutura #132210"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132210","headline":"Tem fase que você viveu em anos e que vai carregar no peito por décadas, e o pior, reclamou de cada dia dela"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132210","headline":"Tem fase que você viveu em anos e que vai carregar no peito por décadas, e o pior, reclamou de cada dia dela"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Uma geladeira aberta à meia-noite disse mais do que qualquer discurso de mãe perfeita"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=127967">
+                                  "estrutura #127967"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"127967","headline":"Uma geladeira aberta à meia-noite disse mais do que qualquer discurso de mãe perfeita"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"127967","headline":"Uma geladeira aberta à meia-noite disse mais do que qualquer discurso de mãe perfeita"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A casa que você queria que ficasse quieta agora pede silêncio demais. E ninguém te prepara pra isso"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132205">
+                                  "estrutura #132205"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132205","headline":"A casa que você queria que ficasse quieta agora pede silêncio demais. E ninguém te prepara pra isso"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132205","headline":"A casa que você queria que ficasse quieta agora pede silêncio demais. E ninguém te prepara pra isso"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade, é eu não dei valor"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132137">
+                                  "estrutura #132137"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132137","headline":"A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade, é eu não dei valor"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132137","headline":"A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade, é eu não dei valor"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Essa fase que cansava, barulhava e enchia a casa era, na verdade, a mais rica da sua vida. E você vai entender isso aqui"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132214">
+                                  "estrutura #132214"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132214","headline":"Essa fase que cansava, barulhava e enchia a casa era, na verdade, a mais rica da sua vida. E você vai entender isso aqui"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132214","headline":"Essa fase que cansava, barulhava e enchia a casa era, na verdade, a mais rica da sua vida. E você vai entender isso aqui"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Tinha um tênis na porta e chulé pelo corredor. Hoje a mãe sente falta até disso"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=127965">
+                                  "estrutura #127965"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"127965","headline":"Tinha um tênis na porta e chulé pelo corredor. Hoje a mãe sente falta até disso"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"127965","headline":"Tinha um tênis na porta e chulé pelo corredor. Hoje a mãe sente falta até disso"}" title="Criar roteiro com headline editável">
+                        <div class="dc-msg-actions">
+                          <div class="dc-msg-btns">
+                            <button type="button" class="dc-copy-full-btn" :class="{ 'dc-copy-success': copiedFull }" @click="navigator.clipboard.writeText('Agora sim. Aqui est\u00e3o 10 headlines com for\u00e7a real:\n\n1. **A casa n\u00e3o ficou grande. Ela ficou vazia. E tem uma diferen\u00e7a que a maioria das m\u00e3es s\u00f3 entende quando j\u00e1 n\u00e3o tem volta** ([estrutura #124688](https:\/\/corestudio.ai\/dashboard\/user\/library?viral_id=124688)) {{action:roteiro|id=124688|headline=A casa n\u00e3o ficou g…">
+                              <span x-text="copiedFull ? 'Copiado!' : 'Completo'">
+                    <div class="dc-msg dc-msg-user">
+                      <div class="dc-msg-bubble dc-msg-bubble-user">
+                        "algo tipo "a mãe de filho adulto não deu valor..." nessa vibe vai"
+                    <div class="dc-msg dc-msg-assistant">
+                      <div class="dc-avatar">
+                      <div class="dc-msg-content" x-data="{ copiedFull: false }">
+                        <div class="dc-msg-bubble dc-msg-bubble-assistant markdown-body">
+                          <p>
+                            "Aqui estão 10 headlines nessa vibe:"
+                          <ol>
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto não deu valor ao tênis largado na porta. Agora sente falta até do chulé"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor ao tênis largado na porta. Agora sente falta até do chulé"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor ao tênis largado na porta. Agora sente falta até do chulé"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho crescido não deu valor ao barulho. Hoje ela trocaria qualquer silêncio por uma gargalhada no corredor"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho crescido não deu valor ao barulho. Hoje ela trocaria qualquer silêncio por uma gargalhada no corredor"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho crescido não deu valor ao barulho. Hoje ela trocaria qualquer silêncio por uma gargalhada no corredor"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto não deu valor à geladeira aberta à meia-noite. Agora ela fecha a geladeira cheia e chora"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor à geladeira aberta à meia-noite. Agora ela fecha a geladeira cheia e chora"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor à geladeira aberta à meia-noite. Agora ela fecha a geladeira cheia e chora"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto não deu valor ao quarto bagunçado. Hoje o quarto arrumado é a coisa mais triste da casa"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor ao quarto bagunçado. Hoje o quarto arrumado é a coisa mais triste da casa"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor ao quarto bagunçado. Hoje o quarto arrumado é a coisa mais triste da casa"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho crescido não deu valor ao "mais um vai dormir aqui". Hoje ela conta os lugares vazios na mesa"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho crescido não deu valor ao &quot;mais um vai dormir aqui&quot;. Hoje ela conta os lugares vazios na mesa"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho crescido não deu valor ao &quot;mais um vai dormir aqui&quot;. Hoje ela conta os lugares vazios na mesa"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto reclamou do barulho. Pediu silêncio. Conseguiu. E nunca se arrependeu tanto de uma coisa na vida"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124680">
+                                  "estrutura #124680"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124680","headline":"A mãe de filho adulto reclamou do barulho. Pediu silêncio. Conseguiu. E nunca se arrependeu tanto de uma coisa na vida"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124680","headline":"A mãe de filho adulto reclamou do barulho. Pediu silêncio. Conseguiu. E nunca se arrependeu tanto de uma coisa na vida"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho crescido não deu valor ao violão tocando no quarto. Hoje ela nem consegue entrar nesse quarto"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho crescido não deu valor ao violão tocando no quarto. Hoje ela nem consegue entrar nesse quarto"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho crescido não deu valor ao violão tocando no quarto. Hoje ela nem consegue entrar nesse quarto"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto não deu valor ao colchão no chão. Hoje ela deixou o colchão lá. Não consegue guardar"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor ao colchão no chão. Hoje ela deixou o colchão lá. Não consegue guardar"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho adulto não deu valor ao colchão no chão. Hoje ela deixou o colchão lá. Não consegue guardar"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho crescido não deu valor ao "quantos vão dormir hoje". Hoje ela sabe a resposta e dói"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124666">
+                                  "estrutura #124666"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124666","headline":"A mãe de filho crescido não deu valor ao &quot;quantos vão dormir hoje&quot;. Hoje ela sabe a resposta e dói"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124666","headline":"A mãe de filho crescido não deu valor ao &quot;quantos vão dormir hoje&quot;. Hoje ela sabe a resposta e dói"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto não deu valor à casa cheia. Só entendeu o que tinha quando a casa ficou grande demais pra duas pessoas"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124680">
+                                  "estrutura #124680"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124680","headline":"A mãe de filho adulto não deu valor à casa cheia. Só entendeu o que tinha quando a casa ficou grande demais pra duas pessoas"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124680","headline":"A mãe de filho adulto não deu valor à casa cheia. Só entendeu o que tinha quando a casa ficou grande demais pra duas pessoas"}" title="Criar roteiro com headline editável">
+                        <div class="dc-msg-actions">
+                          <div class="dc-msg-btns">
+                            <button type="button" class="dc-copy-full-btn" :class="{ 'dc-copy-success': copiedFull }" @click="navigator.clipboard.writeText('Aqui est\u00e3o 10 headlines nessa vibe:\n\n1. **A m\u00e3e de filho adulto n\u00e3o deu valor ao t\u00eanis largado na porta. Agora sente falta at\u00e9 do chul\u00e9** ([estrutura #124672](https:\/\/corestudio.ai\/dashboard\/user\/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A m\u00e3e de filho adulto n\u00e3o deu valor ao t\u00eanis largado na por…">
+                              <span x-text="copiedFull ? 'Copiado!' : 'Completo'">
+                    <div class="dc-msg dc-msg-user">
+                      <div class="dc-msg-bubble dc-msg-bubble-user">
+                        "Criar um filho lembra ensinar alguém a andar de bicicleta.No começo, a mãe segura o banco com as duas mãos.Corre ao lado, avisa quando tem buraco, pede para olhar para frente, segura antes da queda. Durante um tempo, a criança acredita que consegue pedalar porque existe alguém sustentando por trás.Depois vem aquela fase em que a mãe continua correndo ao lado, mas já percebe que quase não está segu"
+                    <div class="dc-msg dc-msg-assistant">
+                      <div class="dc-avatar">
+                      <div class="dc-msg-content" x-data="{ copiedFull: false }">
+                        <div class="dc-msg-bubble dc-msg-bubble-assistant markdown-body">
+                          <p>
+                            "Aqui estão 10 headlines nessa vibe, agora com muito mais força e precisão:"
+                          <ol>
+                            <li>
+                              <p>
+                                <strong>
+                                  "A mãe de filho adulto passou anos pedindo silêncio. Hoje ela daria tudo para ouvir um barulho"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124672">
+                                  "estrutura #124672"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124672","headline":"A mãe de filho adulto passou anos pedindo silêncio. Hoje ela daria tudo para ouvir um barulho"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124672","headline":"A mãe de filho adulto passou anos pedindo silêncio. Hoje ela daria tudo para ouvir um barulho"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Disseram que criar filho era difícil. Ninguém avisou que a parte mais difícil era quando parava"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132209">
+                                  "estrutura #132209"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132209","headline":"Disseram que criar filho era difícil. Ninguém avisou que a parte mais difícil era quando parava"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132209","headline":"Disseram que criar filho era difícil. Ninguém avisou que a parte mais difícil era quando parava"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Tem fase que você viveu reclamando por anos e que vai carregar no peito com saudade por décadas, e o pior, você nem percebeu quando foi embora"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132210">
+                                  "estrutura #132210"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132210","headline":"Tem fase que você viveu reclamando por anos e que vai carregar no peito com saudade por décadas, e o pior, você nem percebeu quando foi embora"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132210","headline":"Tem fase que você viveu reclamando por anos e que vai carregar no peito com saudade por décadas, e o pior, você nem percebeu quando foi embora"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade. É eu pedi pra ele fazer silêncio"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132137">
+                                  "estrutura #132137"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132137","headline":"A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade. É eu pedi pra ele fazer silêncio"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132137","headline":"A frase mais dolorosa de uma mãe de filho crescido não é eu tenho saudade. É eu pedi pra ele fazer silêncio"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Nem tudo que cansava era fardo. Às vezes era só amor com nome errado"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132207">
+                                  "estrutura #132207"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132207","headline":"Nem tudo que cansava era fardo. Às vezes era só amor com nome errado"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132207","headline":"Nem tudo que cansava era fardo. Às vezes era só amor com nome errado"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Se a sua casa acalmou e você não sabe mais o que fazer com o silêncio, presta atenção nisso"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132215">
+                                  "estrutura #132215"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132215","headline":"Se a sua casa acalmou e você não sabe mais o que fazer com o silêncio, presta atenção nisso"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132215","headline":"Se a sua casa acalmou e você não sabe mais o que fazer com o silêncio, presta atenção nisso"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "A maternidade não termina quando o filho sai. Termina quando ele volta só porque quis"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=124688">
+                                  "estrutura #124688"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"124688","headline":"A maternidade não termina quando o filho sai. Termina quando ele volta só porque quis"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"124688","headline":"A maternidade não termina quando o filho sai. Termina quando ele volta só porque quis"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Tinha um colchão no chão da sala e a mãe quase não viu o quanto aquilo era a vida inteira acontecendo"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=127967">
+                                  "estrutura #127967"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"127967","headline":"Tinha um colchão no chão da sala e a mãe quase não viu o quanto aquilo era a vida inteira acontecendo"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"127967","headline":"Tinha um colchão no chão da sala e a mãe quase não viu o quanto aquilo era a vida inteira acontecendo"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "Não é o quarto vazio que dói. E quando você entender o porquê, vai querer ligar agora pra sua mãe"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132205">
+                                  "estrutura #132205"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132205","headline":"Não é o quarto vazio que dói. E quando você entender o porquê, vai querer ligar agora pra sua mãe"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132205","headline":"Não é o quarto vazio que dói. E quando você entender o porquê, vai querer ligar agora pra sua mãe"}" title="Criar roteiro com headline editável">
+                            <li>
+                              <p>
+                                <strong>
+                                  "O que você procura depois que os filhos crescem já está dentro da sua própria casa. Só não veio no formato que você esperava"
+                                "("
+                                <a href="https://corestudio.ai/dashboard/user/library?viral_id=132214">
+                                  "estrutura #132214"
+                                ")"
+                                <button class="dc-action-btn" data-action="roteiro" data-params="{"id":"132214","headline":"O que você procura depois que os filhos crescem já está dentro da sua própria casa. Só não veio no formato que você esperava"}" title="Criar roteiro a partir desta headline">
+                                <button class="dc-action-btn dc-action-btn-edit" data-action="roteiro_edit" data-params="{"id":"132214","headline":"O que você procura depois que os filhos crescem já está dentro da sua própria casa. Só não veio no formato que você esperava"}" title="Criar roteiro com headline editável">
+                        <div class="dc-msg-actions">
+                          <div class="dc-msg-btns">
+                            <button type="button" class="dc-copy-full-btn" :class="{ 'dc-copy-success': copiedFull }" @click="navigator.clipboard.writeText('Aqui est\u00e3o 10 headlines nessa vibe, agora com muito mais for\u00e7a e precis\u00e3o:\n\n1. **A m\u00e3e de filho adulto passou anos pedindo sil\u00eancio. Hoje ela daria tudo para ouvir um barulho** ([estrutura #124672](https:\/\/corestudio.ai\/dashboard\/user\/library?viral_id=124672)) {{action:roteiro|id=124672|headline=A m\u00e3e de filho adulto passou anos p…">
+                              <span x-text="copiedFull ? 'Copiado!' : 'Completo'">
+                    <div wire:ignore class="dc-messages-local" style="display:flex;flex-direction:column;gap:14px">
+                      <template x-for="(msg, i) in localMessages" :key="'local-' + i">
+                        <div class="dc-msg" :class="msg.role === 'user' ? 'dc-msg-user' : 'dc-msg-assistant'">
+                          <div class="dc-avatar" x-show="msg.role === 'assistant'">
+                          <div class="dc-msg-bubble dc-msg-bubble-user" x-show="msg.role === 'user'" x-html="formatUserMessage(msg.content)">
+                          <div class="dc-msg-content" x-show="msg.role === 'assistant'" x-data="{ copiedFull: false }">
+                            <div class="dc-msg-bubble dc-msg-bubble-assistant markdown-body" x-html="msg.html">
+                            <div class="dc-msg-actions" x-show="msg.id">
+                              <div class="dc-msg-btns">
+                                <button x-show="msg.isRoteiro" type="button" class="dc-copy-script-btn" @click="cleanScriptText = ''; cleanScriptCopied = false; cleanScriptLoading = true; cleanScriptVisible = true; $wire.copyScriptFast(msg.id)">
+                                  <span>
+                                    "Roteiro"
+                                <button type="button" class="dc-copy-full-btn" :class="{ 'dc-copy-success': copiedFull }" @click="navigator.clipboard.writeText(msg.content).then(() => { copiedFull = true; setTimeout(() => copiedFull = false, 2000) })">
+                                  <span x-text="copiedFull ? 'Copiado!' : 'Completo'">
+                      <div class="dc-msg dc-msg-assistant dc-msg-streaming" x-show="streaming" x-cloak>
+                        <div class="dc-avatar">
+                        <div class="dc-msg-content">
+                          <div x-show="steps.length > 0" x-transition class="dc-steps-panel">
+                            <button @click="stepsOpen = !stepsOpen" class="dc-steps-toggle">
+                              <span class="d-flex align-items-center gap-2">
+                                <span class="spinner-border spinner-border-sm" style="width:.65rem;height:.65rem;border-width:1.5px;color:#58a6ff;">
+                                <span x-text="'Processando · ' + steps.length + ' etapas'">
+                            <div x-show="stepsOpen" x-transition class="dc-steps-body">
+                              <template x-for="(step, i) in steps" :key="i">
+                                <div class="dc-step-item">
+                                  <div class="dc-step-icon">
+                                    <span x-show="step.status === 'start'" class="spinner-border spinner-border-sm" style="width:.6rem;height:.6rem;border-width:1.5px;color:#d29922;">
+                                  <div class="dc-step-info">
+                                    <span class="fw-semibold" style="color:#c9d1d9;" x-text="step.label">
+                                    <span x-show="step.kind === 'review' && step.data?.reviewer_description" style="color:#6e7681;" x-text="' — ' + step.data?.reviewer_description">
+                                    <span x-show="step.data?.query" style="color:#6e7681;" x-text="': ' + step.data?.query">
+                                    <template x-if="step.status === 'done' && (step.data?.count !== undefined || step.data?.approved !== undefined) && step.kind !== 'review'">
+                                      <span class="dc-badge-result" x-text="(step.data.approved !== undefined ? step.data.approved + ' aprovados' : step.data.count + ' resultados')">
+                                    <template x-if="(step.status === 'rejected' || step.status === 'warn') && step.data?.feedback">
+                                      <div style="color:#d29922; font-size:.7rem; margin-top:3px; line-height:1.45;" x-text="step.data.feedback">
+                                    <template x-if="step.kind === 'review_retry' && step.data?.reason">
+                                      <div style="color:#8b949e; font-size:.7rem; margin-top:3px; line-height:1.45;" x-text="step.data.reason">
+                                    <template x-if="step.status === 'done' && step.data?.sources?.length">
+                                      <div class="mt-1 d-flex flex-wrap gap-1">
+                                        <template x-for="src in step.data.sources" :key="src">
+                                          <span class="dc-badge-source" x-text="src">
+                                    <template x-if="step.status === 'done' && step.data?.items?.length">
+                                      <details class="mt-1" style="font-size:.75rem;">
+                                        <summary style="cursor:pointer; color:#58a6ff; user-select:none;">
+                                          "Ver"
+                                          <span x-text="step.data.items.length">
+                                          "itens selecionados"
+                                        <div class="mt-1 d-flex flex-column gap-1" style="max-height:200px; overflow-y:auto;">
+                                          <template x-for="(item, j) in step.data.items" :key="j">
+                                            <div class="dc-step-detail-item">
+                                              <div class="d-flex align-items-center gap-1 flex-wrap">
+                                                <span x-show="item.gatilho" class="dc-badge-trigger" x-text="item.gatilho">
+                                                <span x-show="item.heading" style="color:#8b949e; font-size:.65rem;" x-text="item.heading">
+                                                <span class="dc-badge-source" x-text="item.source">
+                                              <div style="color:#c9d1d9; font-size:.7rem; margin-top:2px; line-height:1.4;" x-text="item.preview">
+                          <div class="dc-msg-bubble dc-msg-bubble-assistant dc-streaming-text markdown-body" x-show="typingHtml" x-html="typingHtml">
+                          <div class="dc-msg-bubble dc-msg-bubble-assistant dc-typing-bubble dc-streaming-text" x-show="!typingHtml">
+                            <span x-text="typingText || '...'">
+                  <button class="dc-scroll-bottom" x-show="!atBottom" x-transition.opacity.duration.200ms @click="
+                const el = $refs.chatMessages;
+                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+            " title="Ir para o final">
+                <div wire:key="context-warning-banner" x-show="$store.contextWarning && !streaming" x-transition.opacity.duration.300ms class="dc-context-warning">
+                  <span>
+                    "Conversa longa — mensagens antigas podem não influenciar as próximas respostas."
+                <div class="dc-input-area">
+                  <div class="dc-input-wrapper" style="position:relative;">
+                    <select class="dc-input-agent-select" wire:model.live="selectedAgentId">
+                      <option value="1">
+                        "HEADLINE"
+                      <option value="2">
+                        "ROTEIRO"
+                    <div class="dc-input" x-ref="chatInput" wire:ignore data-placeholder="Criar... (@ para mencionar)" :contenteditable="!(streaming || !$wire.get('selectedAgentId')) ? 'true' : 'false'" x-on:input="handleInput($event); resizeInput($el)" x-on:keydown.enter.prevent="if($event.shiftKey) { document.execCommand('insertLineBreak'); } else { askViaSSE(); }" x-on:keydown.backspace="handleTagDelete($event, 'backspace')" x-on:keydown.delete="handleTagDelete($event, 'delete')" x-on:paste.prevent="const text = $event.clipboardData.getData('text/plain'); document.execCommand('insertText', false, text);">
+                  <div x-show="isListening" x-transition.opacity class="dc-voice-wave" x-ref="voiceWave">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                    <div class="dc-voice-wave-bar">
+                  <button x-show="speechSupported" class="dc-mic-btn" :class="{ 'listening': isListening }" @click="toggleSpeech()" :disabled="streaming || !$wire.get('selectedAgentId')" :title="isListening ? 'Parar ditado' : 'Ditar mensagem (pt-BR)'" type="button">
+                  <button class="dc-send-btn" @click="askViaSSE()" :disabled="streaming || !$wire.get('selectedAgentId')">
+                    <span x-show="streaming" class="spinner-border spinner-border-sm" role="status">
+                  <div class="dc-streaming-bar" x-show="streaming" x-transition.opacity>
+                <template x-teleport="body">
+                  <div x-show="mentionOpen" x-transition.opacity class="dc-mention-overlay" @click="mentionOpen = false">
+                    <div class="dc-mention-modal" @click.stop>
+                      <div class="dc-mention-modal-header">
+                        <span>
+                          "Selecionar referência"
+                        <button @click="mentionOpen = false" style="background:none;border:none;color:#8b949e;cursor:pointer;padding:4px;">
+                      <div class="dc-mention-tabs">
+                        <button class="dc-mention-tab" :class="{ 'active': mentionActiveTab === 'references' }" @click="switchMentionTab('references')" type="button">
+                          "Referências"
+                        <button class="dc-mention-tab" :class="{ 'active': mentionActiveTab === 'documents' }" @click="switchMentionTab('documents')" type="button">
+                          "Documentos"
+                        <button class="dc-mention-tab" :class="{ 'active': mentionActiveTab === 'research' }" @click="switchMentionTab('research')" type="button">
+                          "Minha Pesquisa"
+                        <button x-show="isRoteiroAgent()" class="dc-mention-tab" :class="{ 'active': mentionActiveTab === 'cerebro' }" @click="switchMentionTab('cerebro')" type="button">
+                          "Meu Cérebro"
+                      <div class="dc-mention-modal-search">
+                        <input type="text" x-ref="mentionSearchInput" :placeholder="mentionActiveTab === 'documents' ? 'Buscar nos seus documentos...' : (mentionActiveTab === 'research' ? 'Buscar na minha pesquisa...' : (mentionActiveTab === 'cerebro' ? 'Buscar no meu cérebro...' : 'Buscar vídeos e perfis...'))" @input.debounce.200ms="fetchMentions($event.target.value)" @keydown.escape="mentionOpen = false" @keydown.arrow-down.prevent="mentionIndex = Math.min(mentionIndex + 1, filteredResults().length - 1)" @keydown.arrow-up.prevent="mentionIndex = Math.max(mentionIndex - 1, 0)" @keydown.enter.prevent="const list = filteredResults(); if(list.length && list[mentionIndex]?.ready !== false) toggleMentionSelection(list[mentionIndex])">
+                      <div x-show="mentionActiveTab === 'research'" class="dc-mention-group-filters" style="justify-content:space-between">
+                        <div style="display:flex;gap:4px;align-items:center">
+                          <button type="button" class="dc-mention-group-chip dc-chip-audience" :class="{ 'active': researchGroupFilter === 'Meu Público', 'loading': researchGroupFilter === 'Meu Público' && mentionInitialLoading }" @click="switchResearchGroup('Meu Público')" :disabled="mentionInitialLoading">
+                            <span class="dc-chip-spinner" x-show="researchGroupFilter === 'Meu Público' && mentionInitialLoading">
+                            "Meu Público"
+                          <button type="button" class="dc-mention-group-chip dc-chip-about" :class="{ 'active': researchGroupFilter === 'Sobre mim', 'loading': researchGroupFilter === 'Sobre mim' && mentionInitialLoading }" @click="switchResearchGroup('Sobre mim')" :disabled="mentionInitialLoading">
+                            <span class="dc-chip-spinner" x-show="researchGroupFilter === 'Sobre mim' && mentionInitialLoading">
+                            "Sobre mim"
+                          <template x-if="researchVariables.length > 0">
+                            <div style="display:flex;align-items:center;position:relative">
+                              <div style="width:1px;height:14px;background:#ffffff18;margin-right:6px">
+                              <select class="dc-research-var-select" :class="{ 'has-value': researchVariableFilter !== null }" @change="switchResearchVariable($event.target.value ? parseInt($event.target.value) : null)" :disabled="mentionInitialLoading">
+                                <option value>
+                                  "Todas as categorias"
+                                <template x-for="v in researchVariables" :key="v.id">
+                                  <option :value="v.id" :selected="researchVariableFilter === v.id" x-text="v.label">
+                        <div style="display:flex;gap:4px">
+                          <button type="button" class="dc-mention-group-chip" :class="{ 'active': researchSortFilter === 'recent' }" @click="switchResearchSort('recent')" :disabled="mentionInitialLoading">
+                            "Recentes"
+                          <button type="button" class="dc-mention-group-chip" :class="{ 'active': researchSortFilter === 'plays' }" @click="switchResearchSort('plays')" :disabled="mentionInitialLoading">
+                            "Views"
+                      <div x-show="mentionActiveTab === 'documents'" class="dc-mention-dropzone" :class="{ 'dragover': isDraggingDoc, 'uploading': docUploading }" @dragover.prevent="isDraggingDoc = true" @dragleave.prevent="isDraggingDoc = false" @drop.prevent="isDraggingDoc = false; handleDocDrop($event)">
+                        <input type="file" x-ref="docFileInput" accept=".pdf,.docx,.txt,.md,.csv" style="display:none" @change="handleDocFileInput($event)">
+                        <div class="dc-mention-dropzone-content">
+                          <div class="dc-mention-dropzone-text">
+                            <span x-show="!docUploading">
+                              <strong>
+                                "Arraste"
+                              "um arquivo ou"
+                            <span x-show="docUploading">
+                              <span class="spinner-border spinner-border-sm" role="status">
+                              "Enviando…"
+                          <button type="button" class="dc-mention-upload-btn" :disabled="docUploading" @click="$refs.docFileInput.click()">
+                            "Fazer upload"
+                        <div class="dc-mention-dropzone-hint">
+                          "PDF, DOCX, TXT, MD ou CSV · até 20MB"
+                        <div x-show="docUploadError" class="dc-mention-dropzone-error" x-text="docUploadError">
+                      <div class="dc-mention-modal-results" @scroll="if($event.target.scrollTop + $event.target.clientHeight >= $event.target.scrollHeight - 30) loadMoreMentions()">
+                        <template x-if="mentionInitialLoading">
+                          <div class="dc-mention-skeleton-list">
+                            <template x-for="i in 6" :key="'skel-'+i">
+                              <div class="dc-mention-skeleton-item">
+                                <div class="dc-skeleton dc-skeleton-icon">
+                                <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+                                  <div class="dc-skeleton dc-skeleton-title" :style="'width:' + (50 + Math.random()*40) + '%'">
+                                  <div class="dc-skeleton dc-skeleton-meta" style="width:25%">
+                        <template x-if="!mentionInitialLoading">
+                          <div>
+                            <template x-for="(item, i) in filteredResults()" :key="(item.source || 'config') + '-' + item.id">
+                              <div>
+                                <button class="dc-mention-item" :class="{ 'active': i === mentionIndex, 'disabled': item.ready === false, 'selected': isMentionSelected(item) }" :disabled="item.ready === false" @click="item.ready !== false && toggleMentionSelection(item)" @mouseenter="mentionIndex = i">
+                                  <span class="dc-mention-check-wrap">
+                                    <span class="dc-mention-check" :class="{ 'checked': isMentionSelected(item) }">
+                                  <span class="dc-mention-title" x-text="item.title">
+                                  <span class="dc-mention-type" x-text="({
+                                                        profile: 'Perfil',
+                                                        video: 'Vídeo',
+                                                        document: 'Documento',
+                                                        about_me: 'Sobre mim',
+                                                        audience: 'Meu Público',
+           …">
+                                  <span class="dc-mention-meta" x-text="item.meta">
+                                  <span x-show="item.plays > 0" class="dc-mention-plays" x-text="item.plays >= 1000000 ? (item.plays / 1000000).toFixed(1).replace(/\.0$/, '') + 'M views' : item.plays >= 1000 ? (item.plays / 1000).toFixed(1).replace(/\.0$/, '') + 'K views' : item.plays + ' views'">
+                                  <span x-show="item.status === 'processing' || item.status === 'pending'" class="spinner-border spinner-border-sm" role="status" style="width:12px;height:12px;margin-left:auto;">
+                            <div x-show="mentionLoading" style="display:flex;justify-content:center;padding:12px;opacity:.6;">
+                              <span class="spinner-border spinner-border-sm" role="status">
+                              <span style="margin-left:6px;font-size:.75rem;">
+                                "Carregando mais..."
+                            <div x-show="!mentionLoading && mentionResults.length === 0" style="padding:24px;text-align:center;color:#484f58;font-size:.85rem;">
+                              <span x-show="mentionActiveTab === 'documents'">
+                                "Nenhum documento ainda. Faça upload acima."
+                              <div x-show="mentionActiveTab === 'research'" style="display:flex;flex-direction:column;align-items:center;gap:10px">
+                                <span>
+                                  "Nenhum item encontrado."
+                                <a href="/dashboard/user/searches" style="display:inline-flex;align-items:center;gap:6px;padding:6px 14px;border-radius:7px;backgrou">
+                                  "Adicionar pesquisa"
+                              <span x-show="mentionActiveTab === 'references'">
+                                "Nenhum resultado encontrado"
+                      <div class="dc-mention-confirm-bar" x-show="mentionSelected.length > 0" x-transition.opacity.duration.150ms>
+                        <span class="dc-mention-confirm-count" x-text="mentionSelected.length + (mentionSelected.length === 1 ? ' selecionado' : ' selecionados')">
+                        <div style="display:flex;gap:8px;align-items:center;">
+                          <button type="button" class="dc-mention-clear-btn" @click="mentionSelected = []">
+                            "Limpar"
+                          <button type="button" class="dc-mention-confirm-btn" @click="confirmMentionSelection()">
+                            "Confirmar"
+              <template x-teleport="body">
+                <div x-show="deleteConfirm.open" x-transition.opacity.duration.150ms class="dc-confirm-overlay" @click="if (!deleteConfirm.busy) deleteConfirm.open = false" @keydown.escape.window="if (deleteConfirm.open && !deleteConfirm.busy) deleteConfirm.open = false">
+                  <div class="dc-confirm-modal" @click.stop x-transition.duration.180ms>
+                    <div class="dc-confirm-icon">
+                    <h3 class="dc-confirm-title">
+                      "Remover conversa"
+                    <p class="dc-confirm-text">
+                      "Tem certeza que deseja remover"
+                      <strong x-text="deleteConfirm.title || 'esta conversa'">
+                      "? Esta ação não pode ser desfeita — todas as mensagens, referências e traces serão removidos."
+                    <div class="dc-confirm-actions">
+                      <button type="button" class="dc-confirm-btn dc-confirm-cancel" :disabled="deleteConfirm.busy" @click="deleteConfirm.open = false">
+                        "Cancelar"
+                      <button type="button" class="dc-confirm-btn dc-confirm-delete" :disabled="deleteConfirm.busy" @click="
+                            deleteConfirm.busy = true;
+                            $wire.deleteConversation(deleteConfirm.id).then(() => {
+                                deleteConfirm = { open: false, id: null, title: '', busy: false };
+                            });
+                        ">
+                        <span x-show="!deleteConfirm.busy">
+                          "Apagar"
+                        <span x-show="deleteConfirm.busy" style="display:inline-flex;align-items:center;gap:6px;">
+                          <span class="spinner-border spinner-border-sm" style="width:.7rem;height:.7rem;border-width:1.5px;" role="status">
+                          "Apagando…"
+              <aside class="dc-docs-panel" :class="{ 'open': docsPanel }">
+                <div class="dc-docs-panel-header">
+                  <h4 class="dc-docs-panel-title">
+                    "Referências anexadas"
+                  <button class="dc-trace-close" @click="docsPanel = false">
+                <div class="dc-docs-panel-body">
+                  <template x-if="$wire.attachedReferences.length === 0">
+                    <div class="dc-docs-panel-empty">
+                      <p>
+                        "Nenhuma referência anexada"
+                      <small>
+                        "Use"
+                        <code>
+                          "@"
+                        "no chat para mencionar vídeos da biblioteca"
+                  <template x-for="ref in $wire.attachedReferences" :key="ref.id">
+                    <div class="dc-docs-panel-item">
+                      <div class="dc-docs-panel-item-info">
+                        <div>
+                          <div class="dc-docs-panel-item-title" x-text="ref.title">
+                          <div class="dc-docs-panel-item-meta" x-text="ref.meta">
+                      <button class="dc-docs-panel-item-remove" @click="removeTagFromInput(ref.id, ref.source || 'config'); $wire.detachReference(ref.id, ref.source || 'config')" title="Remover referência">
+              <template x-if="traceVisible">
+                <div>
+                  <div class="dc-overlay active" @click="closeTrace()">
+                  <div class="dc-trace-drawer">
+                    <div class="dc-trace-header">
+                      <span class="fw-semibold" style="color:#e6edf3; font-size:.95rem;">
+                        "Trace da IA"
+                      <button class="dc-trace-close" @click="closeTrace()">
+                    <div class="dc-trace-body">
+                      <template x-if="!traceData || !traceData.model">
+                        <div style="color:#8b949e; font-size:.85rem; padding:24px 0; text-align:center;">
+                          "Nenhum dado de trace disponível para esta mensagem."
+                      <div class="d-flex flex-wrap gap-2 mb-3" x-show="traceData && traceData.model">
+                        <span class="badge" style="background:#1f3a6e; color:#60a5fa; border:1px solid #2d4f8e; font-weight:400;" x-text="traceData.model || '-'">
+                        <span x-show="traceData.duration_ms" class="badge" style="background:#1a3524; color:#3fb950; border:1px solid #245830; font-weight:400;" x-text="formatTraceDuration(traceData.duration_ms)">
+                        <span x-show="traceData.usage" class="badge" style="background:#3d1f00; color:#d29922; border:1px solid #5c3a0a; font-weight:400;" x-text="formatTraceTokens()">
+                      <template x-if="traceData.system_prompt">
+                        <details class="dc-trace-section">
+                          <summary class="dc-trace-summary">
+                            <span class="d-flex align-items-center gap-2">
+                              "System Prompt"
+                              <span class="dc-badge-muted ms-auto" x-text="(traceData.system_prompt||'').length + ' chars'">
+                          <pre class="dc-trace-pre" x-text="traceData.system_prompt">
+                      <template x-if="traceData.user_prompt">
+                        <details class="dc-trace-section">
+                          <summary class="dc-trace-summary">
+                            <span class="d-flex align-items-center gap-2">
+                              "User Prompt"
+                          <pre class="dc-trace-pre" x-text="traceData.user_prompt">
+                      <template x-if="traceData.conversation_history && traceData.conversation_history.length > 0">
+                        <details class="dc-trace-section">
+                          <summary class="dc-trace-summary">
+                            <span class="d-flex align-items-center gap-2">
+                              "Contexto da Conversa"
+                              <span class="dc-badge-muted ms-auto" x-text="traceData.conversation_history.length + ' msgs'">
+                          <div class="dc-trace-content" style="max-height:400px; overflow-y:auto;">
+                            <template x-for="(msg, i) in traceData.conversation_history" :key="i">
+                              <div class="mb-2 pb-2" :style="i < traceData.conversation_history.length - 1 ? 'border-bottom:1px solid #21262d' : ''">
+                                <div class="mb-1">
+                                  <span class="badge" :style="msg.role === 'user' ? 'background:#1f3a6e; color:#60a5fa' : msg.role === 'assistant' ? 'background:#1a3524; color:#3fb950' : 'background:#3d1f00; color:#d29922'" style="font-weight:400; font-size:.7rem;" x-text="msg.role">
+                                <pre x-show="msg.content" style="color:#c9d1d9; font-size:.7rem; white-space:pre-wrap; word-break:break-word; margin:0;" x-text="msg.content">
+                                <template x-if="msg.tool_calls">
+                                  <div class="mt-1">
+                                    <template x-for="tc in msg.tool_calls" :key="tc.name">
+                                      <div style="font-size:.7rem; color:#8b949e;">
+                                        <span style="color:#d2a8ff;" x-text="tc.name">
+                                        "("
+                                        <span style="color:#6e7681;" x-text="JSON.stringify(tc.arguments)">
+                                        ")"
+                                <template x-if="msg.results">
+                                  <div class="mt-1">
+                                    <template x-for="r in msg.results" :key="r.name">
+                                      <div style="font-size:.7rem; color:#8b949e;">
+                                        <span style="color:#d29922;" x-text="r.name">
+                                        ":"
+                                        <span style="color:#6e7681;" x-text="r.result">
+                      <template x-if="traceData.rag_steps && traceData.rag_steps.length > 0">
+                        <div>
+                          <div class="d-flex align-items-center gap-2 mb-2 mt-3" style="color:#8b949e; font-size:.85rem;">
+                            <span>
+                              "Pipeline de etapas"
+                            <span class="dc-badge-muted" x-text="traceData.rag_steps.filter(s => s.status === 'done').length + ' etapas'">
+                          <div class="dc-trace-content">
+                            <template x-for="(step, i) in traceData.rag_steps.filter(s => s.status === 'done')" :key="'tl-'+i">
+                              <details class="dc-step-expandable">
+                                <summary class="dc-step-item" style="cursor:pointer; list-style:none;">
+                                  <div class="dc-step-icon">
+                                  <div class="dc-step-info" style="flex:1;">
+                                    <span class="fw-semibold" style="color:#c9d1d9;" x-text="ragStepLabel(step.tool)">
+                                    <span x-show="step.data?.query" style="color:#6e7681;" x-text="' : ' + step.data?.query">
+                                    <template x-if="step.data?.count !== undefined || step.data?.approved !== undefined">
+                                      <span class="dc-badge-result" x-text="(step.data.approved !== undefined ? step.data.approved + ' aprovados' : step.data.count + ' resultados')">
+                                    <span x-show="step.data && Object.keys(step.data).length > 0" class="dc-step-chevron">
+                                <div class="dc-step-expand-body" x-show="step.data && Object.keys(step.data).length > 0">
+                                  <div style="font-size:.65rem; color:#484f58; font-family:monospace; margin-bottom:4px;" x-text="'Tool: ' + toolClassName(step.tool)">
+                                  <template x-if="step.data?.analise">
+                                    <div class="dc-step-detail-item mt-1" x-text="step.data.analise">
+                                  <template x-if="step.data?.items?.length">
+                                    <details class="mt-1" style="font-size:.75rem;">
+                                      <summary style="cursor:pointer; color:#58a6ff; user-select:none;">
+                                        "Ver"
+                                        <span x-text="step.data.items.length">
+                                        <span x-text="step.tool === 'gerar_headlines.generate' || step.tool === 'gerar_headlines' ? 'headlines' : 'itens'">
+                                      <div class="mt-1 d-flex flex-column gap-1" style="max-height:250px; overflow-y:auto;">
+                                        <template x-for="(item, j) in step.data.items" :key="'it-'+j">
+                                          <div class="dc-step-detail-item">
+                                            <div class="d-flex align-items-center gap-1 flex-wrap">
+                                              <span x-show="item.gatilho" class="dc-badge-trigger" x-text="item.gatilho">
+                                              <span x-show="item.heading" style="color:#8b949e; font-size:.65rem;" x-text="item.heading">
+                                              <span class="dc-badge-source" x-text="item.source">
+                                            <div style="color:#c9d1d9; font-size:.7rem; margin-top:2px; line-height:1.4;" x-text="item.preview">
+                                  <template x-if="step.data?.sources?.length">
+                                    <div class="mt-1 d-flex flex-wrap gap-1">
+                                      <template x-for="src in step.data.sources" :key="src">
+                                        <span class="dc-badge-source" x-text="src">
+                                  <template x-if="step.data?.resumo">
+                                    <div class="mt-2">
+                                      <div class="d-flex gap-2 mb-1 flex-wrap">
+                                        <span class="badge" style="background:#1a3524; color:#3fb950; border:1px solid #245830; font-weight:400; font-size:.6" x-text="step.data.resumo.templates_validados + ' templates'">
+                                        <span class="badge" style="background:#1f3a6e; color:#60a5fa; border:1px solid #2d4f8e; font-weight:400; font-size:.6" x-text="step.data.resumo.variaveis_validadas + ' variaveis'">
+                                        <span class="badge" style="background:#3d1f00; color:#d29922; border:1px solid #5c3a0a; font-weight:400; font-size:.6" x-text="step.data.resumo.gatilhos_validados + ' gatilhos'">
+                                      <template x-if="step.data.resumo.templates?.length">
+                                        <details class="mb-1">
+                                          <summary style="cursor:pointer; color:#3fb950; font-size:.7rem; user-select:none;">
+                                            "Templates usados ("
+                                            <span x-text="step.data.resumo.templates.length">
+                                            ")"
+                                          <div class="d-flex flex-column gap-1 mt-1" style="max-height:150px; overflow-y:auto;">
+                                            <template x-for="(t, ti) in step.data.resumo.templates" :key="'rt-'+ti">
+                                              <div class="dc-step-detail-item">
+                                                <span class="dc-badge-source" x-text="t.source">
+                                                <div style="color:#c9d1d9; font-size:.65rem; margin-top:2px;" x-text="t.preview">
+                                      <template x-if="step.data.resumo.variaveis?.length">
+                                        <details class="mb-1">
+                                          <summary style="cursor:pointer; color:#60a5fa; font-size:.7rem; user-select:none;">
+                                            "Variaveis usadas ("
+                                            <span x-text="step.data.resumo.variaveis.length">
+                                            ")"
+                                          <div class="d-flex flex-column gap-1 mt-1" style="max-height:150px; overflow-y:auto;">
+                                            <template x-for="(v, vi) in step.data.resumo.variaveis" :key="'rv-'+vi">
+                                              <div class="dc-step-detail-item">
+                                                <span class="dc-badge-source" x-text="v.source">
+                                                <div style="color:#c9d1d9; font-size:.65rem; margin-top:2px;" x-text="v.preview">
+                                      <template x-if="step.data.resumo.gatilhos?.length">
+                                        <details class="mb-1">
+                                          <summary style="cursor:pointer; color:#d29922; font-size:.7rem; user-select:none;">
+                                            "Gatilhos usados ("
+                                            <span x-text="step.data.resumo.gatilhos.length">
+                                            ")"
+                                          <div class="d-flex flex-column gap-1 mt-1" style="max-height:150px; overflow-y:auto;">
+                                            <template x-for="(g, gi) in step.data.resumo.gatilhos" :key="'rg-'+gi">
+                                              <div class="dc-step-detail-item">
+                                                <span x-show="g.gatilho" class="dc-badge-trigger" x-text="g.gatilho">
+                                                <span class="dc-badge-source" x-text="g.source">
+                                                <div style="color:#c9d1d9; font-size:.65rem; margin-top:2px;" x-text="g.preview">
+                                  <template x-if="step.data && !step.data.items && !step.data.resumo && !step.data.analise">
+                                    <div class="dc-json-tree mt-1" style="max-height:300px; overflow-y:auto;" x-html="renderJsonTree(step.data, 0, true)">
+                      <template x-if="traceData.review_executions && traceData.review_executions.length > 0">
+                        <div>
+                          <div class="d-flex align-items-center gap-2 mb-2 mt-3" style="color:#8b949e; font-size:.85rem;">
+                            <span>
+                              "Revisões"
+                            <span class="dc-badge-muted" x-text="traceData.review_executions.length + ' tentativa(s)'">
+                            <span x-show="traceData.review_executions.every(r => r.approved)" style="color:#3fb950; font-size:.7rem; margin-left:auto;">
+                              "✓ aprovado"
+                            <span x-show="!traceData.review_executions.every(r => r.approved) && traceData.review_executions[traceData.review_executions.length-1]?.approved" style="color:#d29922; font-size:.7rem; margin-left:auto;">
+                              "↻ aprovado após retry"
+                          <div class="dc-trace-content">
+                            <template x-for="(exec, i) in traceData.review_executions" :key="'rev-'+i">
+                              <details class="dc-step-expandable">
+                                <summary class="dc-step-item" style="cursor:pointer; list-style:none;">
+                                  <div class="dc-step-icon">
+                                  <div class="dc-step-info" style="flex:1;">
+                                    <span class="fw-semibold" style="color:#c9d1d9;" x-text="exec.name">
+                                    <span style="color:#6e7681; font-size:.72rem;" x-text="' · tentativa ' + exec.attempt">
+                                    <span x-show="exec.metadata?.count !== undefined" class="dc-badge-result" x-text="exec.metadata.count + ' chars'">
+                                    <span x-show="exec.duration_ms" style="color:#484f58; font-size:.65rem;" x-text="exec.duration_ms + 'ms'">
+                                    <span class="dc-step-chevron">
+                                <div class="dc-step-expand-body">
+                                  <div style="font-size:.65rem; color:#484f58; font-family:monospace; margin-bottom:6px;" x-text="'Tipo: ' + exec.type">
+                                  <template x-if="exec.description">
+                                    <div style="font-size:.7rem; color:#8b949e; margin-bottom:6px;" x-text="exec.description">
+                                  <template x-if="!exec.approved && exec.feedback">
+                                    <div class="dc-step-detail-item" style="border-left:2px solid #d29922; padding-left:8px; color:#d29922;">
+                                      <strong>
+                                        "Feedback ao orquestrador:"
+                                      <div style="margin-top:3px; color:#c9d1d9; font-size:.75rem; white-space:pre-wrap;" x-text="exec.feedback">
+                                  <template x-if="exec.metadata && Object.keys(exec.metadata).length > 0">
+                                    <div class="dc-json-tree mt-2" x-html="renderJsonTree(exec.metadata, 0, true)">
+                      <template x-if="traceData.rounds && traceData.rounds.length > 0">
+                        <div>
+                          <div class="dc-rounds-summary">
+                            <div class="dc-rounds-summary-row">
+                              <div class="dc-rounds-stat">
+                                <span class="dc-rounds-stat-num" x-text="traceData.rounds.length">
+                                <span class="dc-rounds-stat-label">
+                                  "rounds"
+                              <div class="dc-rounds-stat">
+                                <span class="dc-rounds-stat-num" x-text="traceData.rounds.reduce((s,r) => s + (r.tool_calls?.length||0), 0)">
+                                <span class="dc-rounds-stat-label">
+                                  "tools"
+                              <div class="dc-rounds-stat" x-show="traceData.rounds.some(r => r.tool_calls?.some(t => t.is_error))">
+                                <span class="dc-rounds-stat-num" style="color:#f85149;" x-text="traceData.rounds.reduce((s,r) => s + (r.tool_calls?.filter(t => t.is_error)?.length||0), 0)">
+                                <span class="dc-rounds-stat-label" style="color:#f85149;">
+                                  "erros"
+                              <div class="dc-rounds-stat">
+                                <span class="dc-rounds-stat-num" style="color:#3fb950;" x-text="formatTraceDuration(traceData.duration_ms)">
+                                <span class="dc-rounds-stat-label">
+                                  "total"
+                              <div class="dc-rounds-stat" x-show="traceData.rounds.some(r => r.parallel)">
+                                <span class="dc-rounds-stat-num" style="color:#a371f7;">
+                                  "⚔"
+                                <span class="dc-rounds-stat-label">
+                                  "paralelo"
+                          <div class="dc-timeline">
+                            <template x-for="(round, ri) in traceData.rounds" :key="'r-'+ri">
+                              <div>
+                                <template x-if="round.thinking_ms && round.thinking_ms > 500">
+                                  <div class="dc-thinking-pill">
+                                    <span x-text="'LLM pensando ' + formatTraceDuration(round.thinking_ms)">
+                                <div class="dc-timeline-round">
+                                  <div class="dc-timeline-node">
+                                    <div class="dc-timeline-dot" :class="{
+                                                'dot-tools': round.has_tool_calls && !round.tool_calls?.some(t => t.is_error),
+                                                'dot-error': round.has_tool_calls && round.tool_calls?.some(t => t.is_error),
+                                                'dot-final': !round.has_tool_calls
+                                            }">
+                                    <div class="dc-timeline-line" x-show="ri < traceData.rounds.length - 1">
+                                  <div class="dc-timeline-content">
+                                    <details class="dc-trace-section" :open="traceData.rounds.length <= 5">
+                                      <summary class="dc-trace-summary">
+                                        <span class="d-flex align-items-center gap-2 flex-wrap" style="width:100%;">
+                                          <span class="fw-semibold" x-text="'Round ' + round.round">
+                                          <template x-if="round.model">
+                                            <span class="badge" style="background:#1f3a6e; color:#60a5fa; border:1px solid #2d4f8e; font-weight:400; font-size:.6" x-text="round.model">
+                                          <template x-if="round.has_tool_calls">
+                                            <span class="badge" :style="round.parallel
+                                                                ? 'background:#2d1b69; color:#a371f7; border:1px solid #3d2b7a'
+                                                                : 'background:#1f3a6e; color:#60a5fa; border:1px solid #2d4f8e'" style="font-weight:400; font-size:.65rem;" x-text="round.tool_calls.length + (round.parallel ? ' tools em paralelo' : ' tool' + (round.tool_calls.length > 1 ? 's' : ''))">
+                                          <template x-if="!round.has_tool_calls">
+                                            <span class="badge" style="background:#1a3524; color:#3fb950; border:1px solid #245830; font-weight:400; font-size:.6">
+                                              "resposta final"
+                                          <template x-if="round.tool_calls?.some(t => t.is_error)">
+                                            <span class="badge" style="background:#490202; color:#f85149; border:1px solid #6e1b1b; font-weight:400; font-size:.6" x-text="round.tool_calls.filter(t => t.is_error).length + ' erro' + (round.tool_calls.filter(t => t.is_error).length > 1 ? 's' : '')">
+                                          <template x-if="round.usage">
+                                            <span class="badge ms-auto" style="background:#3d1f00; color:#d29922; border:1px solid #5c3a0a; font-weight:400; font-size:.6" x-text="'in: ' + (round.usage.prompt_tokens||0).toLocaleString() + ' · out: ' + (round.usage.completion_tokens||0).toLocaleString()">
+                                      <div style="margin-top:6px;">
+                                        <template x-if="round.tool_calls && round.tool_calls.length > 0">
+                                          <div class="d-flex flex-column gap-1">
+                                            <template x-for="(tool, ti) in round.tool_calls" :key="'rt-'+ri+'-'+ti">
+                                              <details class="dc-trace-section" style="margin-left:0;" :class="tool.is_error ? 'dc-tool-error' : ''" x-on:toggle="if($el.open && tool.has_detail && !tool._loaded) { loadToolDetail($el, ri, ti) }">
+                                                <summary class="dc-trace-summary" style="padding:5px 8px;">
+                                                  <span class="d-flex align-items-center gap-2" style="width:100%;">
+                                                    <template x-if="tool.is_error">
+                                                    <template x-if="!tool.is_error">
+                                                    <span class="fw-semibold" :style="tool.is_error ? 'color:#f85149' : ''" x-text="toolNameLabel(tool.name)">
+                                                    <template x-if="tool.sub_steps_count">
+                                                      <span class="badge" style="background:#161b22; color:#8b949e; border:1px solid #21262d; font-weight:400; font-size:.5" x-text="tool.sub_steps_count + ' steps'">
+                                                    <span class="badge ms-auto" :style="tool.is_error
+                                                                                ? 'background:#490202; color:#f85149; border:1px solid #6e1b1b; font-weight:400; font-size:.6rem;'
+                                                                                : 'background:#1a3524; color:#3fb950; border:1px solid #245830; font-weight:400; font-size:.6rem;'" x-text="formatTraceDuration(tool.duration_ms)">
+                                                <div class="dc-trace-content dc-tool-detail" style="min-height:40px;">
+                                                  <div class="dc-tool-loading" style="color:#8b949e; font-size:.72rem; padding:8px;">
+                                                    "Carregando detalhes..."
+                                        <template x-if="!round.has_tool_calls && round.assistant_content">
+                                          <div>
+                                            <div style="color:#c9d1d9; font-size:.75rem; background:#0d1117; border:1px solid #1a3524; border-radi" x-text="round.assistant_content?.substring(0, 500) + (round.assistant_content?.length > 500 ? '...' : '')">
+                      <template x-if="(!traceData.rounds || traceData.rounds.length === 0) && traceData.tool_traces && traceData.tool_traces.length > 0">
+                        <div>
+                          <div class="d-flex align-items-center gap-2 mb-2 mt-3" style="color:#8b949e; font-size:.85rem;">
+                            <span>
+                              "Tool Calls"
+                            <span class="dc-badge-muted" x-text="traceData.tool_traces.length">
+                          <template x-for="(tool, i) in traceData.tool_traces" :key="i">
+                            <details class="dc-trace-section">
+                              <summary class="dc-trace-summary">
+                                <span class="d-flex align-items-center gap-2">
+                                  <span class="fw-semibold" x-text="tool.name">
+                                  <span class="badge ms-auto" style="background:#1a3524; color:#3fb950; border:1px solid #245830; font-weight:400; font-size:.7" x-text="formatTraceDuration(tool.duration_ms)">
+                              <div class="dc-trace-content">
+                                <div class="mb-2">
+                                  <div style="color:#8b949e; font-size:.75rem; margin-bottom:4px;">
+                                    "Arguments"
+                                  <div class="dc-json-tree" x-html="renderJsonTree(tool.arguments, 0, true)">
+                                <div x-show="tool.result_preview">
+                                  <div style="color:#8b949e; font-size:.75rem; margin-bottom:4px;">
+                                    "Result"
+                                  <div class="dc-json-tree" style="max-height:500px; overflow-y:auto;" x-html="renderJsonTree(tryParseJson(tool.result_preview), 0, true)">
+              <template x-if="cleanScriptVisible">
+                <div>
+                  <div class="dc-overlay active" @click="!cleanScriptLoading && closeCleanScript()">
+                  <div class="dc-clean-script-modal">
+                    <div class="dc-trace-header">
+                      <span class="fw-semibold" style="color:#e6edf3; font-size:.95rem;">
+                        "Roteiro limpo"
+                      <button class="dc-trace-close" @click="closeCleanScript()" :disabled="cleanScriptLoading">
+                    <div class="dc-clean-script-loading" x-show="cleanScriptLoading">
+                      <div class="dc-csl-wand">
+                      <p class="dc-csl-label">
+                        "Limpando roteiro com IA"
+                        <span class="dc-csl-dots">
+                          <span>
+                            "."
+                          <span>
+                            "."
+                          <span>
+                            "."
+                      <p class="dc-csl-sub">
+                        "Removendo formatação, metadados e estrutura markdown"
+                    <template x-if="!cleanScriptLoading">
+                      <div style="display:contents">
+                        <textarea class="dc-clean-script-textarea" x-effect="if (!cleanScriptLoading && cleanScriptText) { $el.value = cleanScriptText }" @input="cleanScriptText = $el.value">
+                        <div class="dc-clean-script-footer">
+                          <button class="dc-clean-script-force-btn" @click="cleanScriptText = ''; cleanScriptCopied = false; cleanScriptLoading = true; $wire.forceCleanScript()" title="Use se o roteiro acima saiu errado ou incompleto">
+                            "Saiu errado? Limpar com IA"
+                          <button class="dc-clean-script-copy-btn" :class="{ 'dc-clean-script-copied': cleanScriptCopied }" @click="copyCleanScriptText()">
+                            <span x-text="cleanScriptCopied ? 'Copiado!' : 'Copiar'">
+              <template x-if="cloneConfirmVisible">
+                <div>
+                  <div class="dc-overlay active" @click="!cloneConfirmLoading && closeCloneConfirm()">
+                  <div class="dc-clone-picker-modal" :class="{ 'is-wide': cloneConfirmStep === 'script' && !rechargeVisible }">
+                    <div class="dc-trace-header">
+                      <span class="fw-semibold" style="color:#e6edf3; font-size:.95rem;" x-text="rechargeVisible ? 'Gerar vídeo com o Twin?' : (cloneConfirmStep === 'script' ? 'Revise o roteiro' : 'Gerar vídeo com o Twin?')">
+                      <button class="dc-trace-close" @click="closeCloneConfirm()" :disabled="cloneConfirmLoading">
+                    <div class="dc-clone-confirm-body" x-show="!rechargeVisible && cloneConfirmStep === 'script'">
+                      <template x-if="cloneConfirmScriptLoading">
+                        <div class="dc-clone-script-loading">
+                          <span class="spinner-border spinner-border-sm" role="status">
+                          <p>
+                            "Preparando o roteiro com IA..."
+                      <template x-if="!cloneConfirmScriptLoading">
+                        <div class="dc-clone-script-editor">
+                          <p>
+                            "Esse é o texto que o Twin vai falar. Ajuste o que quiser antes de continuar."
+                          <textarea class="form-control dc-clone-script-textarea" x-model="cloneConfirmScript" x-init="$nextTick(() => autosizeCloneScript($el))" @input="autosizeCloneScript($el)" placeholder="Texto que o Twin vai narrar...">
+                          <div class="dc-clone-script-count" x-text="cloneConfirmScript.trim().length + ' caracteres'">
+                    <div class="dc-clone-confirm-body" x-show="!rechargeVisible && cloneConfirmStep === 'avatar'" x-cloak>
+                      <img class="dc-clone-picker-thumb dc-clone-confirm-thumb" :src="selectedCloneProfile()?.thumbnail_url || ''" x-on:error="$el.style.visibility='hidden'">
+                      <p>
+                        "O roteiro revisado vai virar um vídeo com o Twin abaixo. Pode trocar antes de gerar."
+                      <select class="form-select dc-clone-confirm-select" x-model.number="cloneConfirmSelectedId" :disabled="cloneConfirmLoading">
+                        <template x-for="profile in cloneConfirmProfiles" :key="profile.id">
+                          <option :value="profile.id" x-text="profile.name">
+                    <div class="dc-clone-confirm-body" x-show="rechargeVisible" x-cloak>
+                      <p x-show="rechargeLoading && !rechargePackages.length">
+                        "Carregando pacotes de crédito..."
+                      <template x-if="!rechargeLoading && !rechargeHasCard">
+                        <div style="text-align:center;">
+                          <p>
+                            "Você ainda não tem um cartão cadastrado."
+                          <button type="button" class="dc-clean-script-copy-btn" @click="goToFaturamento()">
+                            "Ir para Faturamento"
+                      <template x-if="!rechargeLoading && rechargeHasCard && rechargePackages.length">
+                        <div>
+                          <p>
+                            "Saldo insuficiente pra gerar esse vídeo. Escolha um pacote e recarregue agora:"
+                          <div class="dc-recharge-packages">
+                            <template x-for="pkg in rechargePackages" :key="pkg.id">
+                              <div class="dc-recharge-package" :class="{ 'is-selected': rechargeSelectedId === pkg.id }" @click="selectRechargePackage(pkg.id)">
+                                <div class="credits-amount" x-text="pkg.credits">
+                                <div class="credits-label">
+                                  "créditos"
+                                <div class="price" x-text="'R$ ' + (pkg.price_cents / 100).toFixed(2).replace('.', ',')">
+                    <div class="dc-clean-script-footer" x-show="!rechargeVisible">
+                      <button type="button" class="dc-clean-script-force-btn" @click="cloneConfirmStep === 'avatar' ? backToCloneScriptStep() : closeCloneConfirm()" :disabled="cloneConfirmLoading" x-text="cloneConfirmStep === 'avatar' ? 'Voltar' : 'Cancelar'">
+                      <button type="button" class="dc-clean-script-copy-btn" x-show="cloneConfirmStep === 'script'" @click="goToCloneAvatarStep()" :disabled="cloneConfirmScriptLoading || !cloneConfirmScript.trim()">
+                        "Continuar"
+                      <button type="button" class="dc-clean-script-copy-btn" x-show="cloneConfirmStep === 'avatar'" x-cloak @click="confirmRecordClone()" :disabled="cloneConfirmLoading">
+                        <span x-text="cloneConfirmLoading ? 'Gerando...' : 'Gerar vídeo'">
+                    <div class="dc-clean-script-footer" x-show="rechargeVisible" x-cloak>
+                      <button type="button" class="dc-clean-script-force-btn" @click="closeCloneConfirm()" :disabled="rechargeLoading">
+                        "Cancelar"
+                      <button type="button" class="dc-clean-script-copy-btn" x-show="rechargeHasCard" @click="confirmRecharge()" :disabled="rechargeLoading || !rechargeSelectedId">
+                        <span x-text="rechargeLoading ? 'Recarregando...' : 'Recarregar agora'">
+              <script https://cdn.jsdelivr.net/npm/marked/marked.min.js>
+              <script inline>
+              <script https://cdn.jsdelivr.net/npm/marked/marked.min.js>
+        <footer class="footerV2">
+          <div class="d-flex justify-content-between align-items-center p-2 w-100" style="font-size:12px">
+            <p class="m-0">
+              "Copyright © 2026 Inteligência Core. Todos os direitos reservados."
+            <span class="link-secondary">
+              "Feito com"
+              "por VC"
+        <div class="modal modal-blur fade" id="modal-report" role="dialog">
+          <div class="modal-dialog modal-lg" role="document">
+            <div class="modal-content">
+              <div class="modal-header">
+                <h5 class="modal-title">
+                  "New report"
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close">
+              <div class="modal-body">
+                <div class="mb-3">
+                  <label class="form-label">
+                    "Name"
+                  <input type="text" class="form-control" name="example-text-input" placeholder="Your report name">
+                <label class="form-label">
+                  "Report type"
+                <div class="form-selectgroup-boxes row mb-3">
+                  <div class="col-lg-6">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="report-type" value="1" class="form-selectgroup-input" checked>
+                      <span class="form-selectgroup-label d-flex align-items-center p-3">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Simple"
+                          <span class="d-block text-secondary">
+                            "Provide only basic data needed for the report"
+                  <div class="col-lg-6">
+                    <label class="form-selectgroup-item">
+                      <input type="radio" name="report-type" value="1" class="form-selectgroup-input">
+                      <span class="form-selectgroup-label d-flex align-items-center p-3">
+                        <span class="me-3">
+                          <span class="form-selectgroup-check">
+                        <span class="form-selectgroup-label-content">
+                          <span class="form-selectgroup-title strong mb-1">
+                            "Advanced"
+                          <span class="d-block text-secondary">
+                            "Insert charts and additional advanced analyses to be inserted in the report"
+                <div class="row">
+                  <div class="col-lg-8">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Report url"
+                      <div class="input-group input-group-flat">
+                        <span class="input-group-text">
+                          "https://tabler.io/reports/"
+                        <input type="text" class="form-control ps-0" value="report-01">
+                  <div class="col-lg-4">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Visibility"
+                      <select class="form-select">
+                        <option value="1" selected>
+                          "Private"
+                        <option value="2">
+                          "Public"
+                        <option value="3">
+                          "Hidden"
+              <div class="modal-body">
+                <div class="row">
+                  <div class="col-lg-6">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Client name"
+                      <input type="text" class="form-control">
+                  <div class="col-lg-6">
+                    <div class="mb-3">
+                      <label class="form-label">
+                        "Reporting period"
+                      <input type="date" class="form-control">
+                  <div class="col-lg-12">
+                    <div>
+                      <label class="form-label">
+                        "Additional information"
+                      <textarea class="form-control">
+              <div class="modal-footer">
+                <a href="#" class="btn btn-link link-secondary" data-bs-dismiss="modal">
+                  "Cancel"
+                <a href="#" class="btn btn-primary ms-auto" data-bs-dismiss="modal">
+                  "Create new report"
+    <script ./back/dist/libs/apexcharts/dist/apexcharts.min.js>
+    <script ./back/dist/libs/jsvectormap/dist/js/jsvectormap.min.js>
+    <script ./back/dist/libs/jsvectormap/dist/maps/world.js>
+    <script ./back/dist/libs/jsvectormap/dist/maps/world-merc.js>
+    <script ./back/dist/libs/tom-select/dist/js/tom-select.base.min.js>
+    <script https://code.jquery.com/jquery-3.6.0.min.js>
+    <script https://cdn.jsdelivr.net/npm/toastr@2.1.4/build/toastr.min.js>
+    <script inline>
+    <script ./back/dist/js/tabler.min.js>
+    <script inline>
+    <script https://cdn.jsdelivr.net/npm/marked/marked.min.js>
+    <script inline>
+    <script inline>
+    <script inline>
+    <div class="modal fade" id="modal-first-access-tutorial" aria-labelledby="modalFirstAccessLabel" data-bs-backdrop="static">
+      <div class="modal-dialog modal-dialog-centered" style="max-width: 520px;">
+        <div class="modal-content" style="background: #0D0C12; border: 1px solid rgba(225, 200, 255, 0.15); border-radius: 20px; ove">
+          <div style="height: 4px; background: linear-gradient(90deg, #9945FF, #6e2fe0);">
+          <div class="modal-body p-4 p-md-5">
+            <div class="text-center mb-4">
+              <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 6">
+            <h2 class="text-white text-center mb-3" style="font-size: 1.4rem; font-weight: 700; line-height: 1.3;">
+              "Bem-vindo ao Core Studio!"
+              <br>
+              <span style="color: #9945FF;">
+                "Antes de começar, assista aos treinamentos."
+            <p class="text-center mb-2" style="color: rgba(255,255,255,0.75); font-size: 0.95rem; line-height: 1.7;">
+              "Para ter"
+              <strong class="text-white">
+                "bons resultados"
+              "com a plataforma, é essencial que você assista aos vídeos de treinamento antes de começar a usar."
+            <p class="text-center mb-4" style="color: rgba(255,255,255,0.55); font-size: 0.88rem; line-height: 1.6;">
+              "Eles cobrem desde a configuração inicial até como gerar roteiros e conteúdos de forma eficiente."
+              <strong style="color: rgba(255,255,255,0.75);">
+                "Usuários que assistem têm resultados significativamente melhores"
+              "— não pule essa etapa."
+            <div class="d-flex flex-column gap-2">
+              <a id="btn-first-access-trainings" href="https://corestudio.ai/dashboard/user/trainings" class="btn w-100" style="background: #9945FF; color: #fff; border: none; border-radius: 50px; padding: 12px 24px; f">
+                "Assistir aos treinamentos agora"
+              <button type="button" id="btn-first-access-skip" data-bs-dismiss="modal" class="btn w-100" style="background: transparent; color: rgba(255,255,255,0.4); border: 1px solid rgba(255,255,255,">
+                "Pular por agora"
+    <script inline>
+    <script inline>
+    <script ./back/dist/js/demo.min.js>
+    <script https://js.pusher.com/8.2.0/pusher.min.js>
+    <script https://cdn.jsdelivr.net/npm/laravel-echo@1.15.3/dist/echo.iife.js>
+    <script inline>
+    <script https://cdn.jsdelivr.net/npm/moment@2.29.1/moment.min.js>
+    <script https://cdn.jsdelivr.net/npm/bootstrap-daterangepicker/daterangepicker.min.js>
+    <script text/javascript>

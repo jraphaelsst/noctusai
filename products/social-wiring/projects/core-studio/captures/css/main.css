@@ -1,0 +1,433 @@
+[x-cloak] {
+    display: none !important;
+}
+
+.ts-dropdown {
+    z-index: 9999 !important; /* O valor 1051 é maior do que o z-index padrão de um modal do Bootstrap, que é 1050 */
+}
+/* Animação da borda */
+.border-container::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: 2px solid rgba(255, 255, 255, 0.8); /* Cor da borda animada */
+    border-radius: 10px; /* Ajuste conforme necessário */
+    box-sizing: border-box;
+    pointer-events: none; /* Não interfere nas interações da tabela */
+    animation: border-animation 2s linear infinite;
+    z-index: 10;
+}
+
+/* Animação da borda */
+@keyframes border-animation {
+    0% {
+        clip-path: polygon(0% 0%, 0% 0%, 0% 100%, 0% 100%);
+    }
+    25% {
+        clip-path: polygon(0% 0%, 100% 0%, 100% 0%, 0% 100%);
+    }
+    50% {
+        clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 100% 100%);
+    }
+    75% {
+        clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);
+    }
+    100% {
+        clip-path: polygon(0% 0%, 0% 0%, 0% 100%, 0% 100%);
+    }
+}
+
+/* Estilo base para a navbar */
+.general-navbar {
+    padding: 20px;
+}
+
+/* Links padrão */
+.general-navbar .nav-item {
+    color: #cfcfcf;
+    padding: 5px 10px;
+    border-radius: 8px;
+    display: flex;
+    transition: all 0.3s ease;
+}
+
+/* .nav-item:hover {
+    background-color: #151f2c;
+    color: #fff;
+} */
+
+[data-bs-theme="dark"] .nav-item:hover {
+    background-color: #151f2c;
+    color: #fff;
+}
+
+.nav-item:hover {
+    background-color: #F6F8Fb;
+    color: #000;
+}
+
+
+/* Link ativo */
+.general-navbar .nav-item.active {
+    background-color: #151f2c;
+    color: #fff;
+}
+
+.tuto-link {
+    text-decoration: underline;
+}
+
+.j_headline_icon_box {
+    z-index: 999;
+    position: fixed;
+    right: -60px;
+    top: 140px;
+    transition: all 0.3s ease; /* Aplicando a transição a todas as propriedades */
+}
+
+.j_headline_icon_box:hover {
+    right: 0px;
+}
+
+.workspace-selector .dropdown-toggle::after {
+    margin-left: auto;
+}
+
+.workspace-selector .dropdown-menu {
+    min-width: 100%;
+    margin-top: 0.5rem;
+    background: #1d1e2f;
+    border: 1px solid rgba(255,255,255,0.1);
+}
+
+.workspace-item:hover {
+    /* background: rgba(255,255,255,0.15) !important; */
+    cursor: pointer;
+}
+
+.workspace-selector .dropdown-item {
+    color: #fff;
+    padding: 0.5rem;
+}
+
+/* .workspace-selector .dropdown-item:hover {
+    background: rgba(255,255,255,0.1);
+} */
+
+.workspace-selector {
+    position: relative;
+}
+
+.workspace-selector .btn {
+    background: #151f2c;
+    border: 1px solid rgba(86, 88, 105, 0.3);
+    width: 100%;
+    text-align: left;
+    /* padding: 12px 16px; */
+    border-radius: 12px;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.workspace-selector .btn:hover {
+    background: rgba(52, 53, 65, 0.9);
+    border-color: rgba(86, 88, 105, 0.5);
+}
+
+.workspace-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0px;
+    right: 0px;
+    background: #151f2c;
+    border: 1px solid rgba(86, 88, 105, 0.3);
+    border-radius: 12px;
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    padding: 8px 0;
+    z-index: 9999;
+}
+
+.organization-header {
+    padding: 8px 16px;
+}
+
+.organization-header span {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.organization-header small {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+    display: block;
+    margin-top: 2px;
+}
+
+.workspace-section {
+    padding: 0px 8px;
+}
+
+.workspace-section .text-muted {
+    color: rgba(255, 255, 255, 0.5) !important;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.workspace-item {
+    display: flex;
+    align-items: center;
+    padding: 8px 0px;
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+    cursor: pointer;
+    gap: 12px;
+}
+
+/* .workspace-item:hover {
+    background: rgba(52, 53, 65, 0.9);
+} */
+
+.workspace-item .avatar {
+    background: rgba(255, 255, 255, 0.1);
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 12px;
+}
+
+.menu-item {
+    display: block;
+    padding: 8px 16px;
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: none;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+/* .menu-item:hover {
+    background: rgba(52, 53, 65, 0.9);
+    color: rgba(255, 255, 255, 0.95);
+} */
+
+.dropdown-divider {
+    border-color: rgba(86, 88, 105, 0.3);
+    margin: 8px 0;
+}
+
+.info-icon {
+    opacity: 0.5;
+    margin-left: auto;
+}
+
+/* Ajustes para o botão principal */
+.workspace-selector .btn .avatar {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    padding: 6px;
+}
+
+.workspace-selector .btn small {
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 13px;
+}
+
+.workspace-selector .btn span:not(.avatar) {
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 14px;
+}
+
+/* Ajuste das cores e estilos do menu lateral */
+.workspace-dropdown a {
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 14px;
+    padding: 8px 16px;
+    display: block;
+    text-decoration: none;
+}
+
+/* .workspace-dropdown a:hover {
+    background: rgba(52, 53, 65, 0.9);
+    color: rgba(255, 255, 255, 0.95);
+} */
+
+.z-index-10 {
+    z-index: 1000;
+}
+
+.mb-20 {
+    margin-bottom: 5rem;
+}
+
+/* Chat Messages */
+.chat-message {
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    max-width: 80%;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+}
+
+/* Tema Light */
+/* [data-bs-theme=light] .chat-message {
+    background: #fff;
+}
+
+[data-bs-theme=light] .chat-message.user {
+    background: #206bc4;
+    color: white;
+}
+
+[data-bs-theme=light] .chat-message.assistant {
+    background: #f0f2f4;
+    color: #1e293b;
+} */
+
+/* Tema Dark */
+/* [data-bs-theme=dark] .chat-message {
+    background: #1e293b;
+}
+
+[data-bs-theme=dark] .chat-message.user {
+    background: #206bc4;
+    color: #fff;
+}
+
+[data-bs-theme=dark] .chat-message.assistant {
+    background: #2c3e50;
+    color: #e2e8f0;
+} */
+
+/* Chat Container */
+.chat-container {
+    border-radius: 12px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+}
+
+/* [data-bs-theme=light] .chat-container {
+    background: #fff;
+} */
+
+[data-bs-theme=dark] .chat-container {
+    background: #1e293b;
+}
+
+/* Chat Header */
+.chat-header {
+    border-radius: 12px 12px 0 0;
+    padding: 16px;
+}
+
+[data-bs-theme=light] .chat-header {
+    background: #f8fafc;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+[data-bs-theme=dark] .chat-header {
+    background: #2c3e50;
+    border-bottom: 1px solid #3d4852;
+}
+
+/* Chat Messages Area */
+.chat-messages {
+    padding: 16px;
+    height: calc(100% - 140px);
+    overflow-y: auto;
+}
+
+/* [data-bs-theme=light] .chat-messages {
+    background: #fff;
+} */
+
+[data-bs-theme=dark] .chat-messages {
+    background: #1e293b;
+}
+
+/* Chat Input Area */
+.chat-input {
+    padding: 16px;
+    border-radius: 0 0 12px 12px;
+}
+
+[data-bs-theme=light] .chat-input {
+    background: #f8fafc;
+    border-top: 1px solid #e5e7eb;
+}
+
+[data-bs-theme=dark] .chat-input {
+    background: #2c3e50;
+    border-top: 1px solid #3d4852;
+}
+
+/* Input styles */
+[data-bs-theme=light] .chat-input input {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    color: #1e293b;
+}
+
+[data-bs-theme=dark] .chat-input input {
+    background: #1e293b;
+    border: 1px solid #3d4852;
+    color: #e2e8f0;
+}
+
+[data-bs-theme=light] .chat-input input::placeholder {
+    color: #94a3b8;
+}
+
+[data-bs-theme=dark] .chat-input input::placeholder {
+    color: #64748b;
+}
+
+/* Time stamps */
+[data-bs-theme=light] .message-time {
+    color: #64748b;
+}
+
+[data-bs-theme=dark] .message-time {
+    color: #94a3b8;
+}
+
+/* Status indicator */
+[data-bs-theme=light] .status-indicator {
+    color: #64748b;
+}
+
+[data-bs-theme=dark] .status-indicator {
+    color: #94a3b8;
+}
+
+/* Avatar */
+.avatar-letters {
+    background: #206bc4 !important;
+    color: white !important;
+}
+
+/* Scrollbar customization */
+[data-bs-theme=dark] .chat-messages::-webkit-scrollbar {
+    width: 8px;
+}
+
+[data-bs-theme=dark] .chat-messages::-webkit-scrollbar-track {
+    background: #2c3e50;
+}
+
+[data-bs-theme=dark] .chat-messages::-webkit-scrollbar-thumb {
+    background: #3d4852;
+    border-radius: 4px;
+}
+
+[data-bs-theme=dark] .chat-messages::-webkit-scrollbar-thumb:hover {
+    background: #4a5568;
+}
+

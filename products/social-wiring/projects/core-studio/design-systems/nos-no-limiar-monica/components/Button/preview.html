@@ -1,0 +1,17 @@
+<!-- @dsCard group="Actions" height=170 subtitle="Primary, secondary, link, text arrow" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Lora:wght@400;500&family=Inter:wght@400;500;600&display=swap">
+<style>
+  .b{background:var(--paper);padding:22px;display:grid;gap:14px}
+  .row{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:10px;border:0;border-radius:var(--radius-pill);font:600 20px/24px var(--font-display);cursor:pointer}
+  .primary{min-height:var(--button-h);padding:0 28px;background:var(--wine);color:var(--offWhite);width:100%;max-width:360px}
+  .primary:active{background:var(--wineDeep)}
+  .secondary{min-height:44px;padding:0 var(--space-20);background:var(--offWhite);color:var(--ink);font-size:18px}
+  .btn:focus-visible,.link:focus-visible{outline:3px solid var(--wine);outline-offset:3px}
+  .link{font:500 15px var(--font-ui);color:var(--ink);text-decoration:underline;text-underline-offset:3px}
+  .ta{font:500 15px var(--font-ui);color:var(--stone)}
+</style>
+<div class="b">
+  <div class="row"><button class="btn primary">Começar agora <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button></div>
+  <div class="row"><button class="btn secondary">Ler agora →</button><a class="link" href="#">Já tenho uma conta</a><span class="ta">Ver todos →</span></div>
+</div>

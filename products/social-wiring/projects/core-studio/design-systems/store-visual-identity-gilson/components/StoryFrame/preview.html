@@ -1,0 +1,43 @@
+<!-- @dsCard group="Templates" height=560 subtitle="9:16, shown at 1/4 scale in both grounds" -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;700&family=Playfair+Display:wght@800;900&display=swap">
+<style>
+  .wrap{display:flex;gap:24px;flex-wrap:wrap;padding:16px;background:var(--surface)}
+  .frame{position:relative;width:270px;height:480px;max-width:100%;overflow:hidden;background:var(--paper);flex:0 0 auto}
+  .frame.night{background:var(--midnight)}
+  .frame svg{position:absolute;inset:0;width:100%;height:100%}
+  .disc{fill:var(--gold)} .navy{fill:var(--navy)} .cream{fill:var(--paper)} .lip{fill:var(--paper-shade)}
+  .photo{fill:var(--concrete)} .line{fill:none;stroke:var(--accent-line);stroke-width:1.2}
+  .txt{position:absolute;left:24px;top:50px;right:60px}
+  .h{font-family:var(--font-display);color:var(--ink-navy);font-weight:900;font-size:37px;line-height:.86;letter-spacing:-.045em;margin:0}
+  .night .h{font-weight:800;font-size:25px;line-height:.95;letter-spacing:-.01em;text-transform:uppercase;color:var(--paper)}
+  .k{color:var(--gold)}
+  .d{font-family:var(--font-sans);font-weight:500;font-size:12px;line-height:1.18;color:var(--ink-navy);margin:6px 0 0}
+  .night .d{color:var(--paper);text-transform:uppercase;letter-spacing:.03em;font-size:11px}
+  .rule{width:30px;height:2px;background:var(--gold);margin-top:16px}
+  .tag{position:absolute;font:600 8px/1 Montserrat,Arial,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--paper)}
+</style>
+<div class="wrap">
+  <div class="frame">
+    <svg viewBox="0 0 270 480" aria-hidden="true">
+      <path class="navy" d="M232 0 H270 V480 H240 L236 430 L244 380 L234 330 L242 270 L232 210 L240 150 L230 90 L238 40 Z"/>
+      <circle class="disc" cx="175" cy="250" r="66"/>
+      <ellipse class="line" cx="150" cy="300" rx="90" ry="22" transform="rotate(-10 150 300)"/>
+      <path class="photo" d="M95 345 V285 L135 250 L175 285 V345 Z"/>
+      <path class="lip" d="M0 392 L270 360 V366 L0 398 Z"/>
+      <path class="navy" d="M0 396 L270 364 V480 H0 Z"/>
+    </svg>
+    <div class="txt"><p class="h">Esperar os juros <span class="k">baixarem</span></p><p class="d">pode fazer você pagar muito mais caro pelo imóvel.</p><div class="rule"></div></div>
+    <span class="tag" style="left:104px;top:318px">hero</span>
+    <span class="tag" style="left:12px;top:450px">IG safe zone</span>
+  </div>
+  <div class="frame night">
+    <svg viewBox="0 0 270 480" aria-hidden="true">
+      <path class="cream" d="M196 0 H270 V170 L262 150 L250 120 L238 96 L224 60 L210 30 Z"/>
+      <circle class="disc" cx="200" cy="245" r="62"/>
+      <path class="photo" d="M70 300 V245 L112 210 L154 245 V300 Z"/>
+      <path class="cream" d="M0 290 Q40 270 80 292 T160 290 T270 286 V480 H0 Z" opacity=".22"/>
+      <path class="line" d="M0 330 Q60 300 120 330 T270 322"/>
+    </svg>
+    <div class="txt"><p class="h">O que acontece <span class="k">com o dinheiro</span></p><p class="d">de alguém que paga aluguel por 10 anos é assustador.</p><div class="rule"></div></div>
+  </div>
+</div>

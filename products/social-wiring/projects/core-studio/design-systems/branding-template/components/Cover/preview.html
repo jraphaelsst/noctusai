@@ -1,0 +1,25 @@
+<!-- @dsCard height=288 -->
+<style>
+  html,body{margin:0}
+  .cv{position:relative;width:960px;height:288px;background:var(--surface);overflow:hidden}
+  .cv svg{position:absolute;inset:0}
+  .b{fill:var(--brand)} .s{fill:var(--secondary)} .g{fill:var(--ground-alt)} .d{fill:var(--ground-dark)}
+  .l{fill:none;stroke:var(--accent-line);stroke-width:2}
+  .name{position:absolute;left:48px;bottom:60px;max-width:440px;margin:0;font-family:var(--font-display);font-weight:700;font-size:72px;line-height:.95;color:var(--headline)}
+  .tag{position:absolute;left:48px;bottom:30px;max-width:440px;margin:0;font-family:var(--font-ui);font-size:14px;color:var(--deck)}
+</style>
+<div class="cv">
+  <svg width="960" height="288" viewBox="0 0 960 288" aria-hidden="true">
+    <!-- blocks: brand slab 192x288, secondary 160x160, ground-alt 240x96, ground-dark 96x96 (radius-base 0)
+         arrangement: a flush modular grid right of x=480, the four role slots every branding fills
+         pattern row: precise, modular template -> three hairline rules at accent-line, marking the slots
+         steps/radii: canvas multiples of space-unit 4 (96, 160, 192), radius-base 0 -->
+    <rect class="b" x="528" y="0" width="192" height="288"/>
+    <rect class="s" x="736" y="0" width="160" height="160"/>
+    <rect class="g" x="736" y="176" width="224" height="112"/>
+    <rect class="d" x="912" y="0" width="48" height="160"/>
+    <path class="l" d="M496 64 H960 M496 176 H720 M720 232 H960"/>
+  </svg>
+  <p class="name">Branding Template</p>
+  <p class="tag">The model every client branding is built from.</p>
+</div>

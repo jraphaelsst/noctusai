@@ -1,0 +1,15 @@
+<!-- @dsCard group="Post" height=520 subtitle="9:16 and 4:5 zones at 1/4 scale" -->
+<style>
+  .w{display:flex;gap:24px;flex-wrap:wrap;padding:16px;background:var(--surface)}
+  .f{position:relative;width:270px;flex:0 0 auto;background:var(--ground);outline:1px solid var(--ground-alt);overflow:hidden}
+  .s{height:480px} .p{height:338px}
+  .z{position:absolute;left:0;right:0;display:grid;place-items:center;font:600 10px/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase}
+  .t{top:0;height:40%;background:var(--ground-alt);color:var(--ink-raw)}
+  .sc{top:40%;bottom:13%;color:var(--muted-raw)}
+  .sf{bottom:0;height:13%;background:var(--slab);color:var(--ground)}
+  .p .sc{bottom:0}
+</style>
+<div class="w">
+  <div class="f s"><div class="z t">Type zone 40%</div><div class="z sc">Scene</div><div class="z sf">Safe zone 250px</div></div>
+  <div class="f p"><div class="z t">Type zone</div><div class="z sc">Scene</div></div>
+</div>

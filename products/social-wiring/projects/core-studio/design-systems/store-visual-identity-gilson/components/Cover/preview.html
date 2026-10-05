@@ -1,0 +1,31 @@
+<!-- @dsCard height=300 -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500&family=Playfair+Display:wght@900&display=swap">
+<style>
+  html,body{margin:0}
+  .cv{position:relative;width:960px;height:300px;background:var(--surface);overflow:hidden}
+  .cv svg{position:absolute;inset:0}
+  .slab{fill:var(--slab)} .night{fill:var(--navy)} .lip{fill:var(--paper-shade)}
+  .disc{fill:var(--gold)} .glow{fill:var(--gold-bright)}
+  .line{fill:none;stroke:var(--accent-line);stroke-width:var(--hairline)}
+  .rule{fill:var(--accent-line)}
+  .name{position:absolute;left:48px;bottom:72px;max-width:440px;margin:0;font-family:var(--font-display);font-weight:900;font-size:64px;line-height:.95;letter-spacing:-.03em;color:var(--headline)}
+  .tag{position:absolute;left:48px;bottom:40px;max-width:440px;margin:0;font-family:var(--font-sans);font-weight:500;font-size:14px;color:var(--deck);opacity:.75}
+</style>
+<div class="cv">
+  <svg width="960" height="300" viewBox="0 0 960 300" aria-hidden="true">
+    <!-- blocks: navy slab (torn strip 150w, full height) + midnight floor (480x96) + gold disc (disc-d scaled, r=110) + gold-bright half-round (r=40) + paper-shade fibre lip
+         arrangement: one tall torn slab with satellites, everything right of x=480, floor bleeding off the bottom-right like the posts
+         pattern row: literal motif (foil sun behind a horizon) + a FEW hairlines (one orbit, one zig-zag) at hairline weight; editorial collage, borders-not-shadows
+         steps/radii: radius-none on slabs, radius-disc on discs, hairline 2px, rule-w 120 x rule-h 8 -->
+    <path class="lip" d="M808 0 H822 L816 40 L826 86 L812 130 L824 176 L810 222 L820 262 L812 300 H800 Z"/>
+    <path class="slab" d="M816 0 H960 V300 H818 L826 262 L816 222 L830 176 L818 130 L832 86 L822 40 Z"/>
+    <circle class="disc" cx="660" cy="150" r="110"/>
+    <circle class="glow" cx="884" cy="96" r="40"/>
+    <path class="night" d="M480 238 L960 214 V300 H480 Z"/>
+    <ellipse class="line" cx="660" cy="170" rx="160" ry="34" transform="rotate(-10 660 170)"/>
+    <path class="line" d="M520 60 L556 112 L584 82 L626 152"/>
+    <rect class="rule" x="520" y="252" width="120" height="8"/>
+  </svg>
+  <p class="name">Store Visual Identity</p>
+  <p class="tag">Cream paper, navy ink, gold foil. Editorial collage for real estate.</p>
+</div>
