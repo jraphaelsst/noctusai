@@ -1,6 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { api, setToken } from '../lib/api';
+import { MfaChallengeDialog } from '@noctusai/lib/components';
+import { api, createLoginMfaTransport, setToken, storeMfaTokens } from '../lib/api';
+import type { MfaVerifyResult } from '@noctusai/lib';
 import { useAuth } from '../lib/auth-context';
 
 
@@ -22,8 +24,15 @@ export function Login() {
   const [empresa, setEmpresa] = useState('');
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [oauthLoading, setOauthLoading] = useState(false);
+  // Login challenge (platform-admin-mfa M5): set when the password step answered
+  // `mfa_required` — holds the pending aal1 token, which is NOT stored yet.
+  const [mfaPending, setMfaPending] = useState<string | null>(null);
   const navigate = useNavigate();
   const { refresh } = useAuth();
+  const mfaTransport = useMemo(
+    () => (mfaPending ? createLoginMfaTransport(mfaPending) : null),
+    [mfaPending],
+  );
 
   useEffect(() => {
     // Fetch available OAuth providers
@@ -43,6 +52,11 @@ export function Login() {
         // After signup, auto-login
       }
       const res = await api.post('/api/auth/login', { email, password });
+      if (res.mfa_required) {
+        // Second factor first: the session is aal1 until /api/auth/mfa/verify succeeds.
+        setMfaPending(res.access_token);
+        return;
+      }
       setToken(res.access_token);
       if (res.refresh_token) {
         const { setRefreshToken } = await import('../lib/api');
@@ -62,6 +76,13 @@ export function Login() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleMfaVerified(result: MfaVerifyResult) {
+    storeMfaTokens(result);
+    setMfaPending(null);
+    await refresh();
+    navigate('/');
   }
 
   function handleOAuth(provider: OAuthProvider) {
@@ -207,6 +228,16 @@ export function Login() {
           </div>
         )}
       </div>
+
+      {mfaTransport && (
+        <MfaChallengeDialog
+          open
+          enrolled
+          api={mfaTransport}
+          onVerified={handleMfaVerified}
+          onCancel={() => { setMfaPending(null); setPassword(''); }}
+        />
+      )}
     </div>
   );
 }

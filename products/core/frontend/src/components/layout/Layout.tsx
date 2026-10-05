@@ -19,6 +19,7 @@ import {
   Globe,
   BookOpen,
   UserPlus,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
@@ -48,6 +49,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { name: 'Logout Behavior', href: '/admin/logout-behavior', icon: LogOut },
       { name: 'Templates', href: '/admin/templates', icon: PackageOpen },
       { name: 'Configuracoes', href: '/admin/settings', icon: Settings },
+      { name: 'Segurança', href: '/security', icon: ShieldCheck },
     ],
   },
   {

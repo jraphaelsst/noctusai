@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 export function AccountSettings() {
   const { user } = useAuth();
@@ -106,6 +106,16 @@ export function AccountSettings() {
           {saving ? 'Salvando...' : 'Salvar Alterações'}
         </button>
       </form>
+
+      <section className="mt-8 border-t border-border pt-6">
+        <h2 className="text-base font-semibold text-foreground">Segurança</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Verificação em duas etapas com aplicativo autenticador.
+        </p>
+        <Link to="/security" className="mt-2 inline-block text-sm text-primary hover:underline">
+          Gerenciar verificação em duas etapas &rarr;
+        </Link>
+      </section>
     </div>
   );
 }

@@ -1,8 +1,8 @@
 # platform-admin-mfa — Project Document
 
 - **Created:** 2026-10-04
-- **Last updated:** 2026-10-04
-- **Status:** Design locked (architect review 2026-10-04) → Phase 1 ready · 🅿️ two owner decisions open (§7)
+- **Last updated:** 2026-10-05
+- **Status:** M1–M5 built (R0–R3 rollout is the owner's) · §7 decisions closed 2026-10-05
 - **Owner / stakeholders:** João (owner) · first consumer: Nós no Limiar editorial admin (spec §11 "MFA obrigatório para administradores")
 - **Related docs:** `projects/seed-editorial-workflow/PROJECT.md` (sibling, same go-ahead) · `projects/platform-auth-modernization/PROJECT.md` (sessions/tokens — shipped, no MFA) · `KB § PATTERNS/compliance/auth-boundary-false-green.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `KB § PATTERNS/devops/prod-deploy-safety-gates.md`
 - **Project slug:** `platform-admin-mfa` (cross-product: seed auth + core UI ⇒ `projects/`)
@@ -124,18 +124,36 @@ the off-switch — it takes effect within **≤30 s** (the gate caches the resol
 
 ### Phase 3 — M4 + M5 (FE organs; core login + Segurança page) 🅿️ §7 Q1
 - [x] M4 organs + interceptor (`MfaEnrollPanel`, `MfaChallengeDialog`, `MfaChallengeHost`, api.ts `403 mfa_required` retry).
-- [ ] M5 core login challenge; enroll page.
+- [x] M5 core login challenge + Segurança page + core trusted-auth/admin gate (branch `feat/admin-mfa-m5`).
 **Improvements (M4):** (1) Interceptor lives in `createApiClient`: the 403 is peeked via `response.clone()` (flat `{code}`, nested `{error}`, or FastAPI `{detail}` body), one challenge via the React-free broker `src/mfaChallenge.ts` (concurrent 403s share one promise; no host mounted ⇒ fail fast with the original 403, never hang), retry once with a fresh `getAuthToken()`. The dialog talks through a NON-intercepting twin client so a 403 inside it cannot re-open it. (2) Zero per-product code: `<MfaChallengeHost/>` is mounted inside both seed AuthProviders. Bearer SPAs add ONE optional `onMfaVerified(result)` option to `createApiClient` to store the tokens from `/verify` (e.g. Supabase `setSession`) — awaited before the retry; cookie-session products need nothing. (3) Organs use plain state over the injected client (no react-query): the host sits in AuthProvider, which can be above `QueryClientProvider`. (4) Cancelling an enrolment deletes the unverified factor so it does not eat the 2-factor limit. (5) Contract assumed: `/status` factors carry `status`; `DELETE /factors/{id}` of an unverified factor needs no aal2.
+
+**Core login contract (M5, written before the FE half).** `POST /api/auth/login` keeps every existing field and
+adds two ADDITIVE ones (old clients ignore them):
+`{"access_token","refresh_token","user":{"id","email"},"mfa_required": bool,"mfa_factors":[{"id": str,"friendly_name": str|null}]}`.
+`mfa_required=true` iff the user has >=1 VERIFIED TOTP factor (else `false`, `mfa_factors: []`, behaviour exactly
+as before). When true, the returned tokens are the **aal1** session: they exist only so the SPA can call
+`POST /api/auth/mfa/verify` with `Authorization: Bearer <aal1 access_token>` (M3 router, unchanged) and swap to the
+aal2 tokens it returns; the SPA must NOT persist the aal1 tokens or enter the app before verify succeeds. The
+login rate limit (10/min) and the verify limiter (5/min per user+IP) both apply. Wrong code => M3's 400
+`mfa_invalid_code`. `off` policy: the login challenge is unconditional on factors (enrolling is opting in to
+protection; §5 point 6 "core `/login` returns `mfa_required` when the user has factors"), so `off` only means the
+admin GATE does not demand aal2. A factor-list failure at login is fail-open (WARNING log, `mfa_required=false`)
+because the admin gate (policy `warn`/`enforce`) is the enforcement point and re-challenges through the 403
+interceptor; unconverted/OAuth/magic-link entry paths are therefore still covered by the gate, not by login.
+
+**Improvements (M5):** (1) Login: `app/services/login_mfa.py` reads the verified factors through the seed `MfaClient` parked on `app.state.mfa_gate` (None under pytest / no Supabase => no challenge; tests assign a Fake via `MfaGateConfig`); response gained `mfa_required` + `mfa_factors` (contract above). The login challenge is unconditional on policy (an enrolled user is challenged even under `off`) and fail-open on a lookup error (logged) because the gate re-challenges. (2) The challenge reuses `MfaChallengeDialog` + the M3 `/verify` over `createLoginMfaTransport(aal1 token)` (a non-redirecting api client); the aal1 token is held in component state only, never stored. (3) Core aal: `get_session_aal` (read_aal bound to the validated user) feeds `AuthContext.aal`; `require_platform_admin_dep`, `require_org_admin_dep` (owner/admin tier only; `manager` is never challenged) AND core's legacy `get_current_admin` (74 call sites, platform admin) now compose `require_admin_assurance` — the last one is the broad win: most core admin routes use it, not the trusted deps. Still hand-rolled and ungated: `get_website_editor` (admin/marketing), `get_current_user_with_permissions` paths, `org_role` checks in team/organizations/credentials routers (keeper `check_admin_gate_hand_rolled` lists them). (4) Core had no `MfaChallengeHost` (custom AuthProvider): it is mounted in core's `AuthProvider`, and `api.ts` gained `onMfaVerified: storeMfaTokens`, so `403 mfa_required` step-up works on every core admin page with no page code. (5) Segurança = `/security` (`pages/Security.tsx`, only `MfaEnrollPanel`), linked from Configurações da Conta and the admin sidebar group. (6) Out of scope / follow-up: core's OAuth/magic-link entry (`/api/auth/oauth/callback`, SSO bridge) never goes through the login challenge — covered only by the gate; `060_mfa_policy.sql` is already applied in prod (migrate_product dry-run: pending=[]).
 
 ### Phase 4 — Rollout R0–R3
 - [ ] R0 enrolment · R1 warn week · R2 agents enforce · R3 fleet.
 **Improvements:** NOC-FILL-IMPROVEMENTS
 
-## 7. Open questions (Decision Board)
+## 7. Decisions (Decision Board) — both CLOSED by the owner, João, 2026-10-05
 
-1. `plat-mfa-stepup` — step-up once per product session (native; **recommended**) vs core-written assurance
-   ledger carried to products (fewer prompts, custom trust code).
-2. `plat-mfa-who` — platform admins + org owners/admins (**recommended**) vs platform admins only vs + managers.
+1. `plat-mfa-stepup` = **per-product**: native Supabase step-up once per product session (aal2 is a property of
+   the product's own session). NO core-written assurance ledger, no cross-product trust code.
+2. `plat-mfa-who` = **platform admins + organisation owners/admins** = the existing `ADMIN_TIER_ROLES`
+   {`admin`, `owner`, `platform_admin`} (`noctusai_lib/api/auth/mfa/gate.py`; that is exactly the set the four
+   seed factories and core's gate use). No new roles; `manager` and below are never challenged.
 
 ## 8. Dependencies & blockers
 
@@ -164,3 +182,4 @@ Phases in order; each slice dispatched via `noctus.dev.task_branch` off `origin/
 - 2026-10-04 — M2 review fixes: policy read runs in `asyncio.to_thread` (no event-loop stall), gate cache 5 s → 30 s (off-switch ≤30 s), read-failure log WARNING once per distinct error then DEBUG, `060_mfa_policy.sql` + guard probes (the migration half of M3; not applied).
 - 2026-10-04 — M3 router half landed on `feat/admin-mfa-m3`: `mfa_router.py` (status/enroll/verify/delete-factor/admin-reset), auto-mounted, 32 strict tests; contract written verbatim into §5. Contract delta: none.
 - 2026-10-04 — M4 landed on `feat/admin-mfa-m4`: `components/mfa/` (MfaEnrollPanel, MfaChallengeDialog, MfaChallengeHost, organ.yaml x2), `src/mfaChallenge.ts` broker, api.ts `403 mfa_required` interceptor (`onMfaVerified` option), host mounted in both AuthProviders. Vitest: 19 new, full seed lib 981 green.
+- 2026-10-05 — Owner closed §7: `plat-mfa-stepup`=per-product, `plat-mfa-who`=platform admins + org owners/admins (= `ADMIN_TIER_ROLES`). M5 landed on `feat/admin-mfa-m5`: core login `mfa_required`/`mfa_factors` + challenge step, `trusted_auth` + `get_current_admin` aal-gated, `MfaChallengeHost` in core, `/security` page. Core suite 1024 + 19 new green; vitest 127; `predeploy_check core` ready.

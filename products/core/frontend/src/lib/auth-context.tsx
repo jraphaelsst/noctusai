@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, clearToken, setToken, isAuthenticated, getRefreshToken, setRefreshToken } from './api';
+import { MfaChallengeHost } from '@noctusai/lib/components';
 import { useActivityRefresh } from '@noctusai/lib/design-system/useActivityRefresh';
 
 interface User {
@@ -135,6 +136,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   return (
     <AuthContext.Provider value={{ ...state, logout, refresh: fetchProfile }}>
       {children}
+      {/* Step-up dialog for `403 mfa_required` from the api client (platform-admin-mfa). */}
+      <MfaChallengeHost />
     </AuthContext.Provider>
   );
 }

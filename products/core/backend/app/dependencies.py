@@ -20,8 +20,10 @@ import re
 from datetime import datetime as dt, timezone
 from typing import Optional, Tuple, List
 
-from fastapi import Header, HTTPException
+from fastapi import Header, HTTPException, Request, Response
 
+from noctusai_lib.api.auth.mfa.aal import read_aal
+from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
 from noctusai_seed import create_database_module, create_dependencies
 
 logger = logging.getLogger(__name__)
@@ -55,7 +57,11 @@ def _parse_timestamp(value: str) -> dt:
 
 # ── Core-specific auth extensions ──────────────────────────────────────
 
-async def get_current_admin(authorization: Optional[str] = Header(None)) -> Tuple:
+async def get_current_admin(
+    authorization: Optional[str] = Header(None),
+    request: Request = None,
+    response: Response = None,
+) -> Tuple:
     """Extract user and verify they have platform admin role.
 
     Core-specific: checks `noctus_users.role == 'admin'` — the platform-level
@@ -68,6 +74,12 @@ async def get_current_admin(authorization: Optional[str] = Header(None)) -> Tupl
     profile = db.table("noctus_users").select("role").eq("id", user.id).single().execute()
     if not profile.data or profile.data.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Acesso restrito a administradores")
+    # Assurance gate (platform-admin-mfa M5): policy `off` = no-op; warn/enforce
+    # read the aal of the token `get_current_user` just validated.
+    await require_admin_assurance(
+        request, response, caller_kind="user", aal=read_aal(token, validated_user=user),
+        user_id=user.id, role="admin",
+    )
     return user, token
 
 

@@ -24,6 +24,7 @@ const CheckoutSuccess = lazy(() => import('./pages/CheckoutSuccess').then(m => (
 const CheckoutCancel = lazy(() => import('./pages/CheckoutCancel').then(m => ({ default: m.CheckoutCancel })));
 const TeamManagement = lazy(() => import('./pages/TeamManagement').then(m => ({ default: m.TeamManagement })));
 const AccountSettings = lazy(() => import('./pages/AccountSettings').then(m => ({ default: m.AccountSettings })));
+const Security = lazy(() => import('./pages/Security').then(m => ({ default: m.Security })));
 const OrgSettings = lazy(() => import('./pages/OrgSettings').then(m => ({ default: m.OrgSettings })));
 const APIKeys = lazy(() => import('./pages/APIKeys').then(m => ({ default: m.APIKeys })));
 const Onboarding = lazy(() => import('./pages/Onboarding').then(m => ({ default: m.Onboarding })));
@@ -65,6 +66,7 @@ const App = createProductApp({
     { path: '/checkout/cancel', component: CheckoutCancel },
     { path: '/team', component: TeamManagement },
     { path: '/settings', component: AccountSettings },
+    { path: '/security', component: Security },
     { path: '/org-settings', component: OrgSettings },
     { path: '/api-keys', component: APIKeys },
     { path: '/settings/api-keys', component: APIKeys },

@@ -7,6 +7,7 @@ import {
   refreshWithBackoff,
   type RefreshAttempt,
 } from '@noctusai/lib/api';
+import type { MfaVerifyResult } from '@noctusai/lib';
 
 // core's API is SAME-ORIGIN (single-container house model serves FE + API on
 // one host). Default to window.location.origin so core is deploy-host-agnostic
@@ -90,14 +91,38 @@ function handleDeadSession(): void {
   window.setTimeout(() => { _handlingDeadSession = false; }, 3000);
 }
 
+/**
+ * Step-up (`403 mfa_required` -> `MfaChallengeDialog` -> `/api/auth/mfa/verify`)
+ * returns aal2 tokens for a Bearer SPA; swap them in BEFORE the api client
+ * retries the blocked request (platform-admin-mfa M4 `onMfaVerified` seam).
+ */
+export function storeMfaTokens(result: MfaVerifyResult): void {
+  if (result.access_token) setToken(result.access_token);
+  if (result.refresh_token) setRefreshToken(result.refresh_token);
+}
+
 const client = createApiClient({
   getBaseUrl: () => API_URL,
   getAuthToken: async () => getToken(),
   onTokenExpired: refreshAccessToken,
   onUnauthenticated: handleDeadSession,
+  onMfaVerified: storeMfaTokens,
 });
 
 export const api = client;
+
+/**
+ * Transport for the LOGIN challenge: sends the pending aal1 token (which is NOT
+ * stored yet) as Bearer to the seed `/api/auth/mfa/*` router. No refresh /
+ * dead-session handlers and no step-up interceptor hooks: a 401 or 403 here is
+ * a plain error for the dialog to show, never a redirect.
+ */
+export function createLoginMfaTransport(pendingAccessToken: string) {
+  return createApiClient({
+    getBaseUrl: () => API_URL,
+    getAuthToken: async () => pendingAccessToken,
+  });
+}
 
 export function setToken(token: string) {
   localStorage.setItem('noctus_token', token);

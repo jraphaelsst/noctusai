@@ -17,6 +17,7 @@ from app.config import settings
 from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
+from app.services import login_mfa
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
 from noctusai_lib.config.product_urls import resolve_product_url
@@ -204,6 +205,11 @@ async def login(request: Request, body: LoginRequest):
         except Exception as exc:
             logger.warning("auth: enforce_session_cap RPC failed for user_id=%s (%s); login proceeds", response.user.id, exc)
 
+        # MFA discovery (platform-admin-mfa M5). With verified factors the
+        # tokens below are the aal1 session: the SPA must challenge via
+        # POST /api/auth/mfa/verify before treating the user as signed in.
+        mfa_factors = await login_mfa.verified_factors(request, response.session.access_token)
+
         return {
             "access_token": response.session.access_token,
             "refresh_token": response.session.refresh_token,
@@ -211,6 +217,8 @@ async def login(request: Request, body: LoginRequest):
                 "id": response.user.id,
                 "email": response.user.email,
             },
+            "mfa_required": bool(mfa_factors),
+            "mfa_factors": mfa_factors,
         }
     except Exception as e:
         raise HTTPException(status_code=401, detail="Email ou senha incorretos")
