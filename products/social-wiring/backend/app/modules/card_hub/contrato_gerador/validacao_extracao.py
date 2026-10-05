@@ -870,7 +870,9 @@ def _corroboracao_cliente(
         return {}
     rows = table_reads.in_batched_rows(
         client, "cliente_campo_conflitos", org_id, "cliente_id", cliente_ids,
-        select="cliente_id,campo,valor_proposto,origem_proposto",
+        # `id` is the pager's dedupe key (`order_col` default) — omitting it
+        # makes iter_paged_rows raise on ANY card that has conflict rows.
+        select="id,cliente_id,campo,valor_proposto,origem_proposto",
     )
     por_chave: dict[tuple[str, str], list[tuple[Any, Optional[str]]]] = {}
     for r in rows:

@@ -202,7 +202,10 @@ CAMPOS_TEXTO_MARCAVEIS = frozenset(
 
 #: Required DATE fields the context builder formats unconditionally — filled
 #: with the date sentinel `comparador.DATA_LACUNA` when empty.
-CAMPOS_DATA_MARCAVEIS = frozenset({"emitida_em"})
+CAMPOS_DATA_MARCAVEIS = frozenset({"emitida_em", "data_casamento"})
+
+#: Agreement stand-in for a printed person whose gender is missing (marker mode only).
+GENERO_LACUNA = "m"
 
 
 def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
@@ -228,6 +231,8 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
     from datetime import date
     from decimal import Decimal
 
+    from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
+
     contagem = 0
     valor_lacuna = Decimal(comparador.VALOR_LACUNA)
     data_lacuna = date.fromisoformat(comparador.DATA_LACUNA)
@@ -241,6 +246,17 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
                 tipo = f.type if isinstance(f.type, str) else getattr(f.type, "__name__", str(f.type))
                 if f.name in CAMPOS_TEXTO_MARCAVEIS and valor in (None, "") and "str" in tipo:
                     mudancas[f.name] = comparador.MARCADOR_LACUNA
+                    contagem += 1
+                    continue
+                if f.name == "genero" and normalizar_genero(valor) is None:
+                    # A printed person's gender is a CODE field (agreement
+                    # tokens), so it cannot carry the text marker; the
+                    # generator refuses to guess it in production
+                    # (`genero_exigido`). Marker mode needs SOME agreement to
+                    # render at all, so it takes the grammatical default —
+                    # counted as a marker, and the gap stays reported by the
+                    # readiness gate (`qualificacao.genero`), never hidden.
+                    mudancas[f.name] = GENERO_LACUNA
                     contagem += 1
                     continue
                 if f.name.endswith("_dias") and valor is None and "int" in tipo:

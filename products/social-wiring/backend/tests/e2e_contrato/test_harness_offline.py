@@ -5,6 +5,8 @@ exercised by `noctus.dev.contract_score` against the live org, never here."""
 from __future__ import annotations
 
 import sys
+
+import pytest
 from dataclasses import replace
 from pathlib import Path
 
@@ -96,3 +98,40 @@ def test_clausulas_desligadas_vem_das_tabelas_do_gerador():
     assert "DA INTERMEDIAÇÃO" in harness.clausulas_desligadas(sw)
     sw1 = derivacao.derivar_switches(fx.variante(1), fx.politica_variante(1), fx.REFERENCIA)
     assert "DA INTERMEDIAÇÃO" not in harness.clausulas_desligadas(sw1)
+
+
+def test_genero_ausente_nao_derruba_o_render_de_marcadores():
+    """A printed person without gender is a readiness gap (`qualificacao.genero`);
+    marker mode must still render (production `genero_exigido` keeps refusing)."""
+    from app.modules.card_hub.contrato_gerador.concordancia import genero_exigido
+
+    d = fx.variante(1)
+    sem = replace(
+        d,
+        vendedores=[replace(d.vendedores[0], genero=None), *d.vendedores[1:]],
+        compradores=[replace(d.compradores[0], genero=""), *d.compradores[1:]],
+        assinatura_data=fx.ASSINATURA,
+    )
+    with pytest.raises(ValueError):
+        genero_exigido(sem.vendedores[0].genero)  # production gate unchanged
+    marcado, n = harness.dados_com_marcadores(sem)
+    assert n >= 2
+    assert marcado.vendedores[0].genero == harness.GENERO_LACUNA
+    assert sem.vendedores[0].genero is None  # input untouched
+    renderizado = harness.renderizar_em_memoria(sem, com_marcadores=True)
+    assert renderizado.paragrafos
+
+
+def test_casamento_sem_data_renderiza_com_data_de_lacuna():
+    """`lei_6515_frase` compares the marriage date unconditionally (gated);
+    a card missing it must still render in marker mode (deal 858)."""
+    d = fx.variante(1)
+    casados = [
+        replace(p, estado_civil="casado", regime_bens=p.regime_bens or "comunhao_parcial", data_casamento=None)
+        for p in d.vendedores
+    ]
+    sem = replace(d, vendedores=casados, assinatura_data=fx.ASSINATURA)
+    marcado, n = harness.dados_com_marcadores(sem)
+    assert all(p.data_casamento is not None for p in marcado.vendedores)
+    assert n >= 1
+    assert harness.renderizar_em_memoria(sem, com_marcadores=True).paragrafos

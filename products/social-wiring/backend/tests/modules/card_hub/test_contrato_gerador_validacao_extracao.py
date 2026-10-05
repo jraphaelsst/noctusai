@@ -992,3 +992,57 @@ class TestNegociacaoFinanciamentoD2:
         }])
         assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
         assert _gerar(client, ids).status_code == 201
+
+
+class _ProjetaSelect:
+    """Query-builder stub that, like PostgREST, returns ONLY the selected
+    columns (the shared mock returns every column, which hid a select that
+    omitted the pager's dedupe key `id`)."""
+
+    def __init__(self, rows):
+        self._rows, self._cols = rows, None
+
+    def select(self, cols):
+        self._cols = [c.strip() for c in cols.split(",")] if cols != "*" else None
+        return self
+
+    def eq(self, *a):
+        return self
+
+    def in_(self, *a):
+        return self
+
+    def order(self, *a):
+        return self
+
+    def range(self, start, end):
+        self._start, self._end = start, end
+        return self
+
+    def execute(self):
+        rows = self._rows[self._start : self._end + 1]
+        if self._cols:
+            rows = [{c: r.get(c) for c in self._cols if c in r} for r in rows]
+        return type("R", (), {"data": rows})()
+
+
+class _ClienteProjetaSelect:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def table(self, name):
+        return _ProjetaSelect(self._rows)
+
+
+def test_corroboracao_cliente_seleciona_o_id_que_o_paginador_exige():
+    """Regression: the select omitted `id`, so `iter_paged_rows` raised
+    ValueError for ANY card with conflict rows (deals 858/859/861)."""
+    cid = str(uuid4())
+    linhas = [{
+        "id": str(uuid4()), "cliente_id": cid, "campo": "cpf",
+        "valor_proposto": "000.000.000-00", "origem_proposto": "rg",
+    }]
+    out = vx._corroboracao_cliente(
+        _ClienteProjetaSelect(linhas), UUID(ORG_ID), [cid], {cid: {"cpf": "000.000.000-00"}}
+    )
+    assert (cid, "cpf") in out
