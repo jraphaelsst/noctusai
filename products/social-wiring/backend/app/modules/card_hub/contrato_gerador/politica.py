@@ -196,6 +196,8 @@ class Politica:
 
     # [Q14] Answered: keep each signatory's e-mail beside the name (D4sign);
     # witnesses print their CPF (not RG) — the gate requires the CPF.
+    # Re-confirmed 2026-10-05 although every signed contract prints RG: "with
+    # the CIN changes, soon the RG number will no longer exist, only CPFs".
 
     # [Q15] Answered: contract 01's split and 08's card price were DATA
     # errors — no code default. The gate keeps blocking any Σ parcelas ≠
