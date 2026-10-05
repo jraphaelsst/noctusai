@@ -33,8 +33,8 @@ export function FinanciamentoContainer({ clienteId }: { clienteId: string }) {
   return (
     <FinanciamentoPanel
       financiamento={query.data}
-      // `isPending || isFetching`, never `isLoading` — see NegociacaoContainer.
-      loading={query.isPending || query.isFetching}
+      // First load only (`isPending && !data`) — see NegociacaoContainer.
+      loading={query.isPending && !query.data}
       saving={mutation.isPending}
       uploading={docs.upload.isPending}
       error={

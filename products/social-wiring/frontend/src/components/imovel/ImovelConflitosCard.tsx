@@ -37,6 +37,7 @@ import {
   type ImovelConflito,
   type ImovelDocumento,
 } from "@/hooks/useImovelDados";
+import { useRotulosDeAtos } from "@/hooks/useMatriculaEstrutura";
 import { rotuloTipo } from "@/lib/documentoTipos";
 
 /** `imovel_campo_conflitos.campo` -> the label `ImovelCartorioCard` uses for
@@ -57,23 +58,59 @@ export function rotuloCampoImovel(campo: string): string {
   return CAMPO_ROTULOS_IMOVEL[campo] ?? campo;
 }
 
+/** Every extraction an act pointer in these conflicts lives in — the keys
+ *  `useRotulosDeAtos` needs to turn `ato_id`s into "R-5". Both the OLD and the
+ *  PROPOSED value are read: they may point into different extractions. */
+export function extracaoIdsDosConflitos(
+  conflitos: ReadonlyArray<Pick<ImovelConflito, "campo" | "valor_anterior" | "valor_proposto">>,
+): string[] {
+  const ids: string[] = [];
+  for (const c of conflitos) {
+    const chave =
+      c.campo === "titulo_aquisitivo"
+        ? "titulo_aquisitivo_extracao_id"
+        : c.campo === "onus_fonte"
+          ? "onus_fonte_extracao_id"
+          : null;
+    if (!chave) continue;
+    for (const v of [c.valor_anterior, c.valor_proposto]) {
+      const id = v && typeof v === "object" ? (v as Record<string, unknown>)[chave] : null;
+      if (typeof id === "string" && id) ids.push(id);
+    }
+  }
+  return ids;
+}
+
 /** A scalar field is its string; the two pointer GROUPS are named by the
- *  act(s) they point at — the identity the backend compares them by
- *  (`_identidade`), never the raw offsets. Anything else falls back to JSON:
- *  never blank, never `[object Object]`. */
-export function formatarValorImovel(campo: string, valor: unknown): string {
+ *  act(s) they point at — as the matrícula writes them ("R-5", "AV-2"),
+ *  resolved through `rotulos` (`ato_id -> rotulo`) — never the raw offsets
+ *  nor the `ato_id`. Anything else falls back to JSON: never blank, never
+ *  `[object Object]`. */
+export function formatarValorImovel(
+  campo: string,
+  valor: unknown,
+  rotulos?: ReadonlyMap<string, string>,
+): string {
   if (valor == null || valor === "") return "—";
   if (typeof valor === "string" || typeof valor === "number") return String(valor);
   if (typeof valor === "object") {
     const v = valor as Record<string, unknown>;
+    // Unresolvable (extraction still loading / purged / no acts): a plain
+    // phrase — never the raw `ato_id` UUID, which means nothing to a human.
+    const rotuloDe = (id: unknown): string | null => rotulos?.get(String(id)) ?? null;
     if (campo === "titulo_aquisitivo" && v.titulo_aquisitivo_ato_id != null) {
-      return `Ato ${String(v.titulo_aquisitivo_ato_id)}`;
+      const r = rotuloDe(v.titulo_aquisitivo_ato_id);
+      return r ? `Ato ${r}` : "Ato da matrícula";
     }
     if (campo === "onus_fonte" && Array.isArray(v.onus_fonte_atos)) {
-      const atos = (v.onus_fonte_atos as Array<Record<string, unknown>>)
-        .map((a) => (a && a.ato_id != null ? String(a.ato_id) : null))
-        .filter((a): a is string => a !== null);
-      return atos.length ? `Atos ${atos.join(", ")}` : "—";
+      const ids = (v.onus_fonte_atos as Array<Record<string, unknown>>)
+        .filter((a) => a && a.ato_id != null)
+        .map((a) => rotuloDe(a.ato_id));
+      const conhecidos = ids.filter((r): r is string => r !== null);
+      const semRotulo = ids.length - conhecidos.length;
+      if (!ids.length) return "—";
+      if (!conhecidos.length) return `${semRotulo} ato(s) da matrícula`;
+      return `Atos ${conhecidos.join(", ")}${semRotulo ? ` e mais ${semRotulo}` : ""}`;
     }
   }
   return JSON.stringify(valor);
@@ -118,6 +155,8 @@ export function ImovelConflitosCard({ codigo }: { codigo: string }) {
   const documentos = useImovelDocumentos(codigo);
   const { getUrl } = useImovelDocumentoMutations(codigo);
   const decidir = useDecidirImovelConflito();
+  // Act pointers read "R-5", not a UUID — see `formatarValorImovel`.
+  const rotulosDeAtos = useRotulosDeAtos(extracaoIdsDosConflitos(conflitos.data ?? []));
 
   if (conflitos.isError && !conflitos.data) {
     return (
@@ -151,7 +190,7 @@ export function ImovelConflitosCard({ codigo }: { codigo: string }) {
         isAdmin={isAdmin}
         titulo="Pendências de confirmação dos dados do imóvel"
         rotuloCampo={rotuloCampoImovel}
-        formatarValor={formatarValorImovel}
+        formatarValor={(campo, valor) => formatarValorImovel(campo, valor, rotulosDeAtos)}
         itemTestId={(id) => `imovel-conflito-${id}`}
         testId="imovel-conflitos"
         decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}
@@ -206,6 +245,7 @@ export function ImovelConflitosPendentesOrgCard({
   conflitos: ImovelConflito[];
 }) {
   const decidir = useDecidirImovelConflito();
+  const rotulosDeAtos = useRotulosDeAtos(extracaoIdsDosConflitos(conflitos));
   return (
     <ConflitosPendentesCard<ImovelConflito>
       conflitos={conflitos}
@@ -213,7 +253,7 @@ export function ImovelConflitosPendentesOrgCard({
       isAdmin
       titulo="Pendências de confirmação de imóveis"
       rotuloCampo={rotuloCampoImovel}
-      formatarValor={formatarValorImovel}
+      formatarValor={(campo, valor) => formatarValorImovel(campo, valor, rotulosDeAtos)}
       itemTestId={(id) => `imovel-conflito-${id}`}
       testId="pendencias-imoveis"
       decidingId={decidir.isPending ? decidir.variables?.conflitoId ?? null : null}

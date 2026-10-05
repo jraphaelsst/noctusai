@@ -433,6 +433,84 @@ describe("GeradorContratoSection", () => {
     expect(screen.queryByTestId("gerador-contrato-faltando-sugestoes-cpf-p1")).toBeNull();
   });
 
+  it("🔴 the FGTS-not-marked blocker has a Resolver that lands on the Financiamento FGTS switch", async () => {
+    const onIrPara = vi.fn();
+    const { screen, fireEvent } = await render({
+      onIrPara,
+      status: status({
+        pronto: false,
+        bloqueios: [
+          {
+            codigo: "FGTS_NAO_MARCADO_NO_FINANCIAMENTO",
+            mensagem: "As parcelas usam FGTS, mas o financiamento não marca uso de FGTS.",
+          },
+        ],
+      }),
+    });
+    fireEvent.click(screen.getByTestId("gerador-contrato-bloqueio-ir-FGTS_NAO_MARCADO_NO_FINANCIAMENTO"));
+    expect(onIrPara).toHaveBeenCalledWith(
+      expect.objectContaining({ ancora: "financiamento", alvo: "fgts-financiamento" }),
+    );
+  });
+
+  it("a blocker no card control answers stays a plain red line, no Resolver", async () => {
+    const { screen } = await render({
+      onIrPara: vi.fn(),
+      status: status({
+        pronto: false,
+        bloqueios: [{ codigo: "CPF_INVALIDO", mensagem: "CPF inválido." }],
+      }),
+    });
+    expect(screen.getByText("CPF inválido.")).toBeTruthy();
+    expect(screen.queryByTestId("gerador-contrato-bloqueio-ir-CPF_INVALIDO")).toBeNull();
+  });
+
+  it("🔴 a faltando with no backend `alvo` lands on the control that answers its campo", async () => {
+    const onIrPara = vi.fn();
+    const { screen, fireEvent } = await render({
+      onIrPara,
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "negociacao.valor_negociado",
+            rotulo: "Valor negociado",
+            onde: "negociacao",
+            parte_id: null,
+            destino: destino({ tela: "card_negociacao", rota: "/clientes", ancora: "negociacao" }),
+          },
+        ],
+      }),
+    });
+    fireEvent.click(screen.getByTestId("gerador-contrato-faltando-ir-negociacao.valor_negociado-"));
+    expect(onIrPara).toHaveBeenCalledWith(
+      expect.objectContaining({ ancora: "negociacao", alvo: "valor-negociado" }),
+    );
+  });
+
+  it("🔴 matricula.atos is re-pointed from the /matriculas list to the contract's act selection", async () => {
+    const onIrPara = vi.fn();
+    const { screen, fireEvent } = await render({
+      onIrPara,
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "matricula.atos",
+            rotulo: "Atos da matrícula selecionados para o contrato",
+            onde: "matricula",
+            parte_id: null,
+            destino: destino({ tela: "matriculas", rota: "/matriculas", ids: { imovel_codigo: "AP1" } }),
+          },
+        ],
+      }),
+    });
+    fireEvent.click(screen.getByTestId("gerador-contrato-faltando-ir-matricula.atos-"));
+    expect(onIrPara).toHaveBeenCalledWith(
+      expect.objectContaining({ ancora: "contratos", alvo: "contrato-matricula-atos" }),
+    );
+  });
+
   it("🔴 `bloqueios` render as errors, distinct from `avisos` as warnings", async () => {
     const { screen } = await render({
       status: status({

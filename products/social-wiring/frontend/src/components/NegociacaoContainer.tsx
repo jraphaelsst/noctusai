@@ -21,10 +21,12 @@ export function NegociacaoContainer({ clienteId }: { clienteId: string }) {
     <>
       <NegociacaoPanel
         negociacao={query.data}
-        // 🔴 `isPending || isFetching`, never `isLoading`: TanStack v5's
-        // `isLoading` is false during a background refetch, so an empty branch
-        // would render "nothing here" over data that exists.
-        loading={query.isPending || query.isFetching}
+        // 🔴 First load only — `isPending && !data`, never `isLoading` (false
+        // mid-refetch) and never a bare `|| isFetching`: every save refetches
+        // this query, and that disabled the very form the operator was
+        // typing in (lying-loading-state, KB § PATTERNS/frontend/
+        // lying-loading-state.md).
+        loading={query.isPending && !query.data}
         saving={mutation.isPending}
         error={mutation.error?.message ?? null}
         onSave={(patch) => mutation.mutate(patch)}

@@ -41,6 +41,7 @@ import type { CienciaPcenResult } from "@/types/certidoesPartes";
 import { PcenCiencia } from "./certidoes/PcenCiencia";
 import { ItensRevisaoLista } from "./ItensRevisaoLista";
 import { CARD_SUBPAGES, type CardSubpageKey } from "./cardSubpages";
+import { destinoDoBloqueio, destinoEfetivo } from "./destinoDoContrato";
 
 /** pt-BR group headers for `faltando[].onde` — the readiness list is grouped
  *  by WHERE to go fill the field, not just what field it is. */
@@ -276,7 +277,9 @@ function FaltandoLinha({
   onIrPara?: (destino: GeracaoDestino) => void;
   prefixo: string;
 }) {
-  const destino = item.destino;
+  // The backend's destino, narrowed to the CONTROL that answers this campo
+  // (`destinoDoContrato.ts`) — "Resolver" lands on the field, not the page.
+  const destino = item.destino ? destinoEfetivo(item.destino, item.campo) : undefined;
 
   if (!destino) {
     // No `destino` on the payload — same rendering as before this slice.
@@ -392,6 +395,67 @@ export const AVISOS_DESTACADOS: Record<string, string> = {
 };
 
 /**
+ * One `bloqueio`, actionable when its fix lives on the card: a blocker names
+ * a problem, and a red line with no way to the control that clears it leaves
+ * the operator hunting. The destino is the backend's when it sends one,
+ * else `destinoDoBloqueio` (the card-scoped code families). No destino ⇒ the
+ * plain red line, exactly as before.
+ */
+function BloqueioLinha({
+  bloqueio,
+  onIrPara,
+  prefixo,
+}: {
+  bloqueio: GeracaoBloqueio & { destino?: GeracaoDestino | null };
+  onIrPara?: (destino: GeracaoDestino) => void;
+  prefixo: string;
+}) {
+  const destino = bloqueio.destino ?? destinoDoBloqueio(bloqueio.codigo);
+  const resolved = destino ? resolverDestinoRico(destino, onIrPara) : null;
+  const rotulo = resolved?.subpageLabel ? ` (aba ${resolved.subpageLabel})` : "";
+  return (
+    <li className="text-xs text-destructive">
+      <div className="flex items-center justify-between gap-2">
+        <span>
+          {bloqueio.mensagem}
+          {destino && resolved?.kind === "card" && rotulo && (
+            <span className="text-destructive/70">{rotulo}</span>
+          )}
+        </span>
+        {destino && resolved?.kind === "card" && resolved.podeIrDireto && (
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className="h-auto shrink-0 gap-1 p-0 text-xs font-normal text-destructive"
+            data-testid={`${prefixo}-bloqueio-ir-${bloqueio.codigo}`}
+            onClick={() => onIrPara?.(destino)}
+          >
+            Resolver
+            <ArrowRight className="h-3 w-3" />
+          </Button>
+        )}
+        {destino && resolved?.kind === "routable" && (
+          <Button
+            asChild
+            type="button"
+            variant="link"
+            size="sm"
+            className="h-auto shrink-0 gap-1 p-0 text-xs font-normal text-destructive"
+            data-testid={`${prefixo}-bloqueio-link-${bloqueio.codigo}`}
+          >
+            <Link to={resolved.href ?? rotaDoDestino(destino)}>
+              Resolver
+              <ArrowRight className="h-3 w-3" />
+            </Link>
+          </Button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/**
  * The readiness lists — `bloqueios` (red), `avisos` (amber) and `faltando`
  * grouped by WHERE to go fill it, each line actionable off its `destino`.
  * Shared by the contract generator (below) and the aditivo generator
@@ -423,9 +487,7 @@ export function ProntidaoListas({
       {bloqueios.length > 0 && (
         <ul className="space-y-1" data-testid={`${prefixo}-bloqueios`}>
           {bloqueios.map((b) => (
-            <li key={b.codigo} className="text-xs text-destructive">
-              {b.mensagem}
-            </li>
+            <BloqueioLinha key={b.codigo} bloqueio={b} onIrPara={onIrPara} prefixo={prefixo} />
           ))}
         </ul>
       )}

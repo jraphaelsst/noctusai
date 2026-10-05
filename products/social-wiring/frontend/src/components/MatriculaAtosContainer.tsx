@@ -82,16 +82,33 @@ export function MatriculaAtosContainer({
   const vincularMutation = useVincularExtracaoImovel();
   const estruturadaQuery = useNegociacaoEstruturada(clienteId ?? null);
 
-  // Default the browsed extraction to the contract's PERSISTED one, once it
-  // is known — but only ever set it once: an operator who deliberately picks
-  // a different matrícula to re-base the quote on must not be bounced back
-  // by a background refetch of the same persisted value.
+  // The imóvel's CURRENT matrícula reading: the newest CONCLUDED extraction
+  // filed under it. A re-read / newer upload supersedes an older one, and the
+  // human must be choosing acts on the reading the contract will be checked
+  // against — not on whichever one happened to be saved first. `codigo` unset
+  // (no imóvel context) ⇒ no "current" can be named, so none is offered.
+  const extracaoAtualId = useMemo(() => {
+    if (!codigo) return null;
+    const concluidas = (extracoesQuery.data ?? []).filter((e) => e.status === "concluida");
+    if (concluidas.length === 0) return null;
+    return [...concluidas].sort((a, b) => b.created_at.localeCompare(a.created_at))[0].id;
+  }, [codigo, extracoesQuery.data]);
+
+  // Default the browsed extraction — but only ever set it once: an operator
+  // who deliberately picks a different matrícula to re-base the quote on must
+  // not be bounced back by a background refetch.
+  //   1. the contract's PERSISTED extraction (shows what is saved), else
+  //   2. the imóvel's CURRENT extraction (a fresh contract has nothing saved —
+  //      without this the human faced an empty picker and no hint where to go).
   useEffect(() => {
-    if (extracaoSelecionadaId === null && selecaoQuery.data?.extracao_id) {
+    if (extracaoSelecionadaId !== null) return;
+    if (selecaoQuery.data?.extracao_id) {
       setExtracaoSelecionadaId(selecaoQuery.data.extracao_id);
+    } else if (selecaoQuery.isSuccess && extracaoAtualId) {
+      setExtracaoSelecionadaId(extracaoAtualId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selecaoQuery.data?.extracao_id]);
+  }, [selecaoQuery.data?.extracao_id, selecaoQuery.isSuccess, extracaoAtualId]);
 
   // Re-seed the OBJECT draft from the persisted selection when it belongs to
   // the extraction being browsed. Keyed on the ids themselves, not object
@@ -215,6 +232,7 @@ export function MatriculaAtosContainer({
         onBuscaExtracaoChange={setBuscaExtracao}
         extracaoSelecionadaId={extracaoSelecionadaId}
         onSelecionarExtracao={setExtracaoSelecionadaId}
+        extracaoAtualId={extracaoAtualId}
         atos={atosQuery.data?.atos ?? []}
         atosLoading={atosLoading}
         atosError={atosError}

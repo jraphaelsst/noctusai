@@ -62,6 +62,14 @@ vi.mock("@/hooks/useImovelDados", async (importOriginal) => {
   };
 });
 
+// `useRotulosDeAtos` (the conflicts card's act rótulos) is a real
+// `useQueries()` — inert here for the same no-provider reason; its behaviour is
+// covered by `useRotulosDeAtos.test.tsx`.
+vi.mock("@/hooks/useMatriculaEstrutura", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useMatriculaEstrutura")>();
+  return { ...actual, useRotulosDeAtos: () => new Map<string, string>() };
+});
+
 const mockUseTeamMembers = vi.fn();
 // The relationship cards fetch on their own (tested in their own files); stub
 // them so this page's tests stay about the page.

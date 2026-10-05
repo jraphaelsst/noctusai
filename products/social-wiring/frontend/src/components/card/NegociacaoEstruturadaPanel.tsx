@@ -538,7 +538,7 @@ function ParcelasSection({
   }
 
   return (
-    <Card data-testid="negest-parcelas">
+    <Card data-testid="negest-parcelas" id="negest-parcelas" tabIndex={-1}>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
         <CardTitle className="text-base">Parcelas</CardTitle>
         <div className="flex flex-wrap items-center gap-2">

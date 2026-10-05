@@ -134,7 +134,14 @@ export default function FinanciamentoPanel({
   const [proposta, setProposta] = useState<string | null>(null);
 
   const f = financiamento;
-  const situacao = f?.situacao ?? "pendente";
+  // 🔴 No row yet (`existe: false`) is NOT "pendente": the server answers
+  // `pendente` as a default for a deal that never recorded a situação, and the
+  // contract generator names that as its own gap (`financiamento` /
+  // `financiamento.situacao`). Highlighting "Pendente" here would show the
+  // operator an answer nobody gave — and hide the field the readiness list is
+  // asking them to fill.
+  const situacao: SituacaoFinanciamento | null =
+    f?.existe && f.situacao ? f.situacao : null;
 
   // 🔴 The deal's own agent is APPENDED when it is not among the active ones,
   // never dropped. `agentes` holds only active banks (that is what the
@@ -196,10 +203,16 @@ export default function FinanciamentoPanel({
           <CardTitle className="text-base">Situação do financiamento</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
+          <div
+            className="flex flex-wrap gap-2"
+            id="financiamento-situacao"
+            tabIndex={-1}
+            role="group"
+            aria-label="Situação do financiamento"
+          >
             {SITUACOES.map((s) => {
               const Icon = SITUACAO_ICON[s];
-              const ativa = s === situacao;
+              const ativa = situacao !== null && s === situacao;
               return (
                 <Button
                   key={s}
@@ -218,7 +231,13 @@ export default function FinanciamentoPanel({
             })}
           </div>
 
-          {f?.situacao_em && situacao !== "pendente" && (
+          {situacao === null && f && (
+            <p className="text-xs text-amber-700" data-testid="financiamento-situacao-nao-informada">
+              Situação ainda não informada — escolha uma das opções acima.
+            </p>
+          )}
+
+          {f?.situacao_em && situacao !== null && situacao !== "pendente" && (
             <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               {SITUACAO_LABEL[situacao]} em{" "}
               {new Date(f.situacao_em).toLocaleString("pt-BR")}

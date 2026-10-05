@@ -16,7 +16,7 @@
  * Three distinct resources (`atos`, `fontes`, contract `atos`), each with its
  * own query key family, would have made one file three unrelated sections.
  */
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api } from '@noctusai/seed/infra';
 
@@ -324,6 +324,34 @@ export function useMatriculaAtos(extracaoId?: string | null) {
       return result.data as MatriculaAtosResponse;
     },
     enabled: !!extracaoId,
+  });
+}
+
+/**
+ * `ato_id -> rotulo` ("R-5", "AV-2") for every act of the given extractions,
+ * read through the SAME cache entry `useMatriculaAtos` owns (one request per
+ * extraction, shared). For surfaces that hold only an `ato_id` — an imóvel
+ * conflict's old/proposed pointer — and must show the act a human recognises,
+ * never the raw UUID. An act of an extraction not (yet) loaded is simply
+ * absent from the map; the caller decides the fallback wording.
+ */
+export function useRotulosDeAtos(extracaoIds: readonly string[]): ReadonlyMap<string, string> {
+  const unicos = [...new Set(extracaoIds.filter(Boolean))].sort();
+  return useQueries({
+    queries: unicos.map((id) => ({
+      queryKey: ATOS_KEY(id),
+      queryFn: async () => {
+        const result = await api.get(`/api/matriculas/extracoes/${id}/atos`);
+        return result.data as MatriculaAtosResponse;
+      },
+    })),
+    combine: (results) => {
+      const mapa = new Map<string, string>();
+      for (const r of results) {
+        for (const ato of r.data?.atos ?? []) mapa.set(ato.id, ato.rotulo);
+      }
+      return mapa;
+    },
   });
 }
 

@@ -213,7 +213,7 @@ describe("FinanciamentoPanel", () => {
   });
 
   it("records the three situações and reports the current one", async () => {
-    const { screen, fireEvent, onSave } = await render({ situacao: "aprovado" });
+    const { screen, fireEvent, onSave } = await render({ existe: true, situacao: "aprovado" });
     expect(
       screen.getByTestId("financiamento-situacao-aprovado").getAttribute("aria-pressed"),
     ).toBe("true");
@@ -222,7 +222,7 @@ describe("FinanciamentoPanel", () => {
   });
 
   it("🔴 pendente is presented as its own state, not as a refusal", async () => {
-    const { screen } = await render({ situacao: "pendente" });
+    const { screen } = await render({ existe: true, situacao: "pendente" });
     expect(
       screen.getByTestId("financiamento-situacao-pendente").getAttribute("aria-pressed"),
     ).toBe("true");
@@ -231,9 +231,21 @@ describe("FinanciamentoPanel", () => {
     ).toBe("false");
   });
 
+  it("🔴 a deal with no financiamento row shows NO situação as chosen (the server's `pendente` is a default, not an answer)", async () => {
+    const { screen, fireEvent, onSave } = await render({ existe: false, situacao: "pendente" });
+    for (const s of ["pendente", "aprovado", "recusado"]) {
+      expect(screen.getByTestId(`financiamento-situacao-${s}`).getAttribute("aria-pressed")).toBe("false");
+    }
+    expect(screen.getByTestId("financiamento-situacao-nao-informada")).toBeTruthy();
+    // …and picking one is what creates the record the generator asks for.
+    fireEvent.click(screen.getByTestId("financiamento-situacao-pendente"));
+    expect(onSave).toHaveBeenCalledWith({ situacao: "pendente" });
+  });
+
   describe("H6 — situação provenance", () => {
     it("badges a situação the extraction auto-set from a signed contract", async () => {
       const { screen } = await render({
+        existe: true,
         situacao: "aprovado",
         situacao_em: "2026-09-20T00:00:00+00:00",
         situacao_origem: "extraido",

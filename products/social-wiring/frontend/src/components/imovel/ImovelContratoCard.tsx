@@ -240,7 +240,7 @@ export default function ImovelContratoCard({
       </CardHeader>
       <CardContent className="space-y-5">
         {/* ─── Título aquisitivo ────────────────────────────────────────── */}
-        <section className="space-y-2" data-testid="imovel-titulo-aquisitivo">
+        <section className="space-y-2" id="imovel-titulo-aquisitivo" tabIndex={-1} data-testid="imovel-titulo-aquisitivo">
           <Label className="text-sm font-semibold">Título aquisitivo</Label>
 
           {tituloShowSkeleton ? (
@@ -330,7 +330,7 @@ export default function ImovelContratoCard({
             🔴 NO suggestion here, unlike título/ônus above — this value is
             NEVER a recomputed guess (see `imovel_dados.endereco_registro_
             texto`'s column comment). Only a confirm/clear textarea. */}
-        <section className="space-y-2 border-t pt-4" data-testid="imovel-endereco-registro">
+        <section className="space-y-2 border-t pt-4" id="imovel-endereco-registro" tabIndex={-1} data-testid="imovel-endereco-registro">
           <Label className="text-sm font-semibold">Endereço do registro</Label>
           <p className="text-xs text-muted-foreground">
             O endereço confirmado a partir da matrícula — nunca o endereço público
@@ -397,7 +397,7 @@ export default function ImovelContratoCard({
         </section>
 
         {/* ─── Ônus: credor ─────────────────────────────────────────────── */}
-        <section className="space-y-2 border-t pt-4" data-testid="imovel-onus-credor">
+        <section className="space-y-2 border-t pt-4" id="imovel-onus-credor" tabIndex={-1} data-testid="imovel-onus-credor">
           <Label className="text-sm font-semibold">Credor do ônus</Label>
 
           {onusShowSkeleton ? (

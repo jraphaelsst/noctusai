@@ -103,6 +103,10 @@ export interface MatriculaAtosSelectorProps {
   /** The contract's PERSISTED selection, or `undefined` while loading. */
   selecao: ContratoAtoSelecionado[] | undefined;
   selecaoExtracaoId: string | null;
+  /** The imóvel's CURRENT matrícula reading (newest concluded extraction), when
+   *  one can be named. Marks it in the picker, and — when the saved selection
+   *  quotes an OLDER reading — offers the one-click switch. */
+  extracaoAtualId?: string | null;
   selecaoLoading: boolean;
   selecaoError: boolean;
   selecionadoPor: MatriculaActor | null;
@@ -162,6 +166,7 @@ export default function MatriculaAtosSelector({
   atosError,
   selecao,
   selecaoExtracaoId,
+  extracaoAtualId = null,
   selecaoLoading,
   selecaoError,
   selecionadoPor,
@@ -246,7 +251,12 @@ export default function MatriculaAtosSelector({
   const preview = previewTexto(draftAtoIds, atosPorId);
 
   return (
-    <div className="space-y-3 rounded-md border p-3" data-testid={`matricula-atos-${contratoId}`}>
+    <div
+      className="space-y-3 rounded-md border p-3"
+      id="contrato-matricula-atos"
+      tabIndex={-1}
+      data-testid={`matricula-atos-${contratoId}`}
+    >
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold">Descrição do imóvel (matrícula)</h4>
         {selecionadoPor && (
@@ -261,6 +271,28 @@ export default function MatriculaAtosSelector({
         <p className="text-xs text-destructive" data-testid="matricula-atos-selecao-erro">
           Não foi possível carregar a seleção atual.
         </p>
+      )}
+
+      {selecaoExtracaoId && extracaoAtualId && selecaoExtracaoId !== extracaoAtualId && (
+        <div
+          className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900"
+          data-testid="matricula-atos-leitura-desatualizada"
+        >
+          <span>
+            Os atos salvos neste contrato vêm de uma leitura anterior da matrícula. Há uma leitura
+            mais recente deste imóvel.
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={extracaoSelecionadaId === extracaoAtualId}
+            onClick={() => onSelecionarExtracao(extracaoAtualId)}
+            data-testid="matricula-atos-usar-leitura-atual"
+          >
+            Escolher os atos na leitura mais recente
+          </Button>
+        </div>
       )}
 
       {/* ─── Extraction picker ────────────────────────────────────────── */}
@@ -306,6 +338,11 @@ export default function MatriculaAtosSelector({
                       <span className="text-[10px] text-muted-foreground">
                         {ext.status === "erro" ? "erro na extração" : "processando"}
                       </span>
+                    )}
+                    {extracaoAtualId === ext.id && (
+                      <Badge variant="outline" className="text-[10px]" data-testid={`matricula-atos-atual-${ext.id}`}>
+                        mais recente
+                      </Badge>
                     )}
                     {extracaoSelecionadaId === ext.id && (
                       <Badge variant="secondary" className="text-[10px]">

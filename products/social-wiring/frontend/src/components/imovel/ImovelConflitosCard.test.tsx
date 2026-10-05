@@ -48,9 +48,15 @@ vi.mock("@/hooks/useImovelDados", () => ({
   useDecidirImovelConflito: () => ({ mutate: mockMutate, isPending: false, variables: undefined }),
 }));
 
+vi.mock("@/hooks/useMatriculaEstrutura", () => ({
+  // `ato_id -> rotulo`; the real hook's cache sharing is covered in
+  // `hooks/useRotulosDeAtos.test.tsx`.
+  useRotulosDeAtos: () => new Map([["ato-uuid-5", "R-5"], ["ato-uuid-av2", "AV-2"]]),
+}));
+
 vi.mock("sonner", () => ({ toast: { error: mockToastError, success: vi.fn() } }));
 
-import { ImovelConflitosCard, formatarValorImovel } from "./ImovelConflitosCard";
+import { ImovelConflitosCard, extracaoIdsDosConflitos, formatarValorImovel } from "./ImovelConflitosCard";
 
 const PENDENTE = {
   id: "c1",
@@ -157,14 +163,48 @@ describe("ImovelConflitosCard", () => {
 });
 
 describe("formatarValorImovel", () => {
-  it("names a pointer group by its act, never [object Object]", () => {
+  const rotulos = new Map([["ato-uuid-5", "R-5"], ["ato-uuid-av2", "AV-2"]]);
+
+  it("names a pointer group by the act's rótulo (R-5), never the ato_id UUID", () => {
     expect(
-      formatarValorImovel("titulo_aquisitivo", { titulo_aquisitivo_ato_id: "R.5", titulo_aquisitivo_char_inicio: 1 }),
-    ).toBe("Ato R.5");
+      formatarValorImovel(
+        "titulo_aquisitivo",
+        { titulo_aquisitivo_ato_id: "ato-uuid-5", titulo_aquisitivo_char_inicio: 1 },
+        rotulos,
+      ),
+    ).toBe("Ato R-5");
     expect(
-      formatarValorImovel("onus_fonte", { onus_fonte_atos: [{ ato_id: "R.1" }, { ato_id: "AV.2" }] }),
-    ).toBe("Atos R.1, AV.2");
+      formatarValorImovel(
+        "onus_fonte",
+        { onus_fonte_atos: [{ ato_id: "ato-uuid-5" }, { ato_id: "ato-uuid-av2" }] },
+        rotulos,
+      ),
+    ).toBe("Atos R-5, AV-2");
+  });
+
+  it("an act it cannot resolve reads as a plain phrase, not a UUID", () => {
+    const texto = formatarValorImovel("titulo_aquisitivo", { titulo_aquisitivo_ato_id: "ato-uuid-9" });
+    expect(texto).toBe("Ato da matrícula");
+    expect(texto).not.toContain("uuid");
+  });
+
+  it("falls back to JSON for unknown groups and a dash for empty", () => {
     expect(formatarValorImovel("x", { a: 1 })).toBe('{"a":1}');
     expect(formatarValorImovel("x", null)).toBe("—");
+  });
+});
+
+describe("extracaoIdsDosConflitos", () => {
+  it("collects the extraction of BOTH the old and the proposed pointer", () => {
+    const ids = extracaoIdsDosConflitos([
+      {
+        campo: "titulo_aquisitivo",
+        valor_anterior: { titulo_aquisitivo_extracao_id: "ext-old", titulo_aquisitivo_ato_id: "a" },
+        valor_proposto: { titulo_aquisitivo_extracao_id: "ext-new", titulo_aquisitivo_ato_id: "b" },
+      },
+      { campo: "onus_fonte", valor_anterior: null, valor_proposto: { onus_fonte_extracao_id: "ext-new" } },
+      { campo: "numero_matricula", valor_anterior: "1", valor_proposto: "2" },
+    ]);
+    expect(ids).toEqual(["ext-old", "ext-new", "ext-new"]);
   });
 });

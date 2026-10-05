@@ -110,6 +110,46 @@ describe("MatriculaAtosSelector — extraction picker", () => {
   });
 });
 
+describe("MatriculaAtosSelector — current reading", () => {
+  const velha = extracao({ id: "extracao-velha", created_at: "2026-01-01T00:00:00Z" });
+  const nova = extracao({ id: "extracao-nova", created_at: "2026-03-01T00:00:00Z" });
+
+  it("🔴 warns when the saved acts quote an OLDER reading, and switches in one click", async () => {
+    const onSelecionarExtracao = vi.fn();
+    const { screen, fireEvent } = await render({
+      extracoes: [nova, velha],
+      extracaoAtualId: "extracao-nova",
+      selecaoExtracaoId: "extracao-velha",
+      extracaoSelecionadaId: "extracao-velha",
+      onSelecionarExtracao,
+    });
+    expect(screen.getByTestId("matricula-atos-leitura-desatualizada")).toBeTruthy();
+    expect(screen.getByTestId("matricula-atos-atual-extracao-nova")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("matricula-atos-usar-leitura-atual"));
+    expect(onSelecionarExtracao).toHaveBeenCalledWith("extracao-nova");
+  });
+
+  it("no warning when the saved acts are already on the current reading", async () => {
+    const { screen } = await render({
+      extracoes: [nova, velha],
+      extracaoAtualId: "extracao-nova",
+      selecaoExtracaoId: "extracao-nova",
+      extracaoSelecionadaId: "extracao-nova",
+    });
+    expect(screen.queryByTestId("matricula-atos-leitura-desatualizada")).toBeNull();
+  });
+
+  it("no warning on a fresh contract with nothing saved yet", async () => {
+    const { screen } = await render({ extracoes: [nova], extracaoAtualId: "extracao-nova" });
+    expect(screen.queryByTestId("matricula-atos-leitura-desatualizada")).toBeNull();
+  });
+
+  it("exposes the scroll target the readiness list lands on", async () => {
+    const { container } = await render();
+    expect(container.querySelector("#contrato-matricula-atos")).not.toBeNull();
+  });
+});
+
 describe("MatriculaAtosSelector — literal text, byte for byte", () => {
   it("🔴 renders double spaces and a typo unchanged in the expanded act body", async () => {
     const umAto = ato({
