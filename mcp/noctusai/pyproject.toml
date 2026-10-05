@@ -37,6 +37,8 @@ dependencies = [
     "PyYAML>=6.0",
     # dep_preflight.py — Requirement/specifier matching at server startup.
     "packaging>=23.0",
+    # mcp/telegram connector (MTProto user client) — a RANGE, not a pin.
+    "telethon>=1.36,<2",
 ]
 
 [project.optional-dependencies]

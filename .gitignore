@@ -196,3 +196,9 @@ products/agents/projects/IsaIA/
 
 # agent-packages A5 retry marker (written by the sync hooks)
 .agents-sync-pending
+
+# Telegram connector: a Telethon session file IS a full account login; exports hold chat contents.
+mcp/telegram/.session/
+mcp/telegram/.exports/
+*.session
+*.session-journal

@@ -9,6 +9,7 @@ mcp>=1.0.0,<2.0.0
 pydantic>=2.0.0
 python-dotenv>=1.0.0
 openai>=1.0.0  # keeper headless/evaluate review path (tools/ai_brain.py)
+telethon>=1.36,<2  # mcp/telegram connector (MTProto user client); RANGE, not a pin
 pytest>=8.0.0  # MCP toolkit test suite
 pytest-asyncio>=0.23.0
 fakeredis>=2.35.0  # tests/test_llm_cache_redis.py — in-memory Redis stand-in
