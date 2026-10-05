@@ -40,15 +40,21 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Interessados", href: "/interessados", icon: UserPlus, route: "interessados" },
+      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+    ],
+  },
+  {
+    key: "conhecimento",
+    label: "Conhecimento",
+    icon: BookOpen,
+    items: [
       { name: "Base de conhecimento", href: "/kb", icon: BookOpen, route: "kb" },
       { name: "Decisões", href: "/decisoes", icon: Scale, route: "decisoes" },
       { name: "Perguntas abertas", href: "/perguntas", icon: HelpCircle, route: "perguntas" },
       { name: "Roadmap e tarefas", href: "/roadmap", icon: ListTodo, route: "roadmap" },
-      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
-      { name: "Interessados", href: "/interessados", icon: UserPlus, route: "interessados" },
     ],
   },
 ];
@@ -58,15 +64,21 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Interessados", href: "/interessados", icon: UserPlus },
+      { name: "Equipe", href: "/equipe", icon: Users },
+    ],
+  },
+  {
+    key: "conhecimento",
+    label: "Conhecimento",
+    icon: BookOpen,
+    items: [
       { name: "Base de conhecimento", href: "/kb", icon: BookOpen },
       { name: "Decisões", href: "/decisoes", icon: Scale },
       { name: "Perguntas abertas", href: "/perguntas", icon: HelpCircle },
       { name: "Roadmap e tarefas", href: "/roadmap", icon: ListTodo },
-      { name: "Equipe", href: "/equipe", icon: Users },
-      { name: "Interessados", href: "/interessados", icon: UserPlus },
     ],
   },
 ];

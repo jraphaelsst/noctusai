@@ -5,11 +5,11 @@
  * call). Structure comes from createProductApp + createProductLayout.
  * This file only defines pages and nav — zero boilerplate.
  *
- * Nav:
- *   Principal      · Dashboard / Criação de mídia / Contatos / Leads / YouTube / Meta / WhatsApp
- *   Edição de Fotos · Lotes / Novo Lote / Configurações (W10a — admin pages are a later slice)
- *   Conexões       · Marcas / Monitor
- *   Configuração   · Configurações / Equipe
+ * Nav (nested groups, regrouped 2026-10-05 per core-studio/MENUS.md; items/routes unchanged):
+ *   Principal · Imóveis · Leads · Clientes
+ *   Edição de Fotos (Operação / Configuração) · Criação de mídia
+ *   Marketing (Email / Mailchimp) · Emissões
+ *   Conexões (Marcas, Monitor, YouTube, Meta, WhatsApp, n8n) · Configuração
  *
  * The former "Integrações" nav item is folded into "Conexões" — both the
  * /conexoes and /integrations routes point to the same Conexoes page.
@@ -144,33 +144,25 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Contatos", href: "/contatos", icon: UserRound, route: "contatos" },
-      { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
-      { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
-      { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
       { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock, route: "agendamentos" },
-      { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
+    ],
+  },
+  {
+    key: "imoveis",
+    label: "Imóveis",
+    icon: Building2,
+    items: [
       { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
-      // Sits beside Imóveis because a permuta IS an imóvel wearing a second
-      // hat — 77 of the 82 legacy matches paired two catalog listings with
-      // each other. Nav-gated by its own `status_pagina` row (migration 101).
       { name: "Permutas", href: "/permutas", icon: ArrowLeftRight, route: "permutas" },
     ],
   },
   {
-    // Leads is a GROUP, not a single item: the base surface and the two boards
-    // that consume it belong together, and a lead flows Leads → Funil →
-    // Processos. Each item is nav-gated by its own `status_pagina` row
-    // (migration 034 seeds `funil` + `processos_venda`), so an unlisted route
-    // stays hidden rather than 404-ing.
     key: "leads",
     label: "Leads",
     icon: Target,
-    defaultOpen: true,
     items: [
       { name: "Leads", href: "/leads", icon: Target, route: "leads" },
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
@@ -179,141 +171,117 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     ],
   },
   {
-    // lead-card-hub Phase 1 (PROJECT.md) — clientes is the new PERSON layer,
-    // additive alongside the leads-based group above (Phase 1 does not
-    // retire `leads`; Phases 2-5 attach the rest of the card-hub here).
-    // Each item is nav-gated by its own status_pagina row, owned by the
-    // backend slice landing the 048 migration — not seeded yet as of this
-    // slice, so both items stay hidden until that row exists.
     key: "clientes",
     label: "Clientes",
     icon: UserCheck,
-    defaultOpen: true,
     items: [
       { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
       { name: "Revisão de Duplicados", href: "/clientes/revisao", icon: GitMerge, route: "clientes_revisao" },
     ],
   },
   {
-    // The product's OWN mailing engine (Resend-backed, tables in
-    // social_wiring). Distinct from the Mailchimp-proxy group below — two
-    // different products in one app, named apart so neither is mistaken for
-    // the other. Shipped 2026-09-01; the module had 62 routes and no UI.
-    key: "email-noc",
-    label: "Email Marketing",
-    icon: Mail,
-    defaultOpen: false,
-    items: [
-      { name: "Painel", href: "/email", icon: BarChart3, route: "email_painel" },
-      { name: "Campanhas", href: "/email/campanhas", icon: Send, route: "email_campanhas_noc" },
-      { name: "Contatos", href: "/email/contatos", icon: UserRound, route: "email_contatos_noc" },
-      { name: "Listas", href: "/email/listas", icon: List, route: "email_listas_noc" },
-      { name: "Templates", href: "/email/templates", icon: FileText, route: "email_templates_noc" },
-      { name: "Automações", href: "/email/automacoes", icon: Workflow, route: "email_automacoes_noc" },
-      { name: "Domínios", href: "/email/dominios", icon: Globe, route: "email_dominios_noc" },
-    ],
-  },
-  {
-    // Mailchimp-backed (a CONNECTED account proxied through /api/mailchimp/*).
-    // Renamed from "Email Marketing" when the own-engine group above shipped:
-    // every page here already says "sua conta Mailchimp" in its own subtitle,
-    // so the label now matches the screen. No route or page changed.
-    key: "email",
-    label: "Mailchimp",
-    icon: Mail,
-    defaultOpen: false,
-    items: [
-      { name: "Membros", href: "/email-marketing/membros", icon: Users, route: "email_membros" },
-      { name: "Listas", href: "/email-marketing/listas", icon: List, route: "email_listas" },
-      { name: "Templates", href: "/email-marketing/templates", icon: FileText, route: "email_templates" },
-      { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send, route: "email_campanhas" },
-      { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2, route: "email_config" },
-    ],
-  },
-  {
-    // The two workflows retired out of the ERP. Grouped by what the operator
-    // is DOING — emitting or reading an official document — rather than by
-    // whose record it is: a certidão is due-diligence on a person, a matrícula
-    // on a property, and splitting them across Clientes and Imóveis would hide
-    // that they are one desk's work.
-    //
-    // Each item is nav-gated by its own `status_pagina` row (migrations 091 and
-    // 092 seed both as 'producao'). An unlisted route stays hidden rather than
-    // 404-ing — and a row seeded 'desenvolvimento' is returned to nobody but
-    // dev/owner/admin, which is why neither is.
-    key: "emissoes",
-    label: "Emissões",
-    icon: Stamp,
-    defaultOpen: true,
-    items: [
-      { name: "Certidões", href: "/certidoes", icon: ShieldCheck, route: "certidoes" },
-      { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText, route: "matriculas" },
-      // Migration 100 seeds `agentes_financeiros` as 'producao', same as the
-      // two above. It sits in Emissões because it is the same desk's work:
-      // the registry behind the financing a certidão or a matrícula supports.
-      { name: "Agentes Financeiros", href: "/agentes-financeiros", icon: Landmark, route: "agentes_financeiros" },
-    ],
-  },
-  {
-    // Edição de Fotos — W10a (plan §4/§7): Lotes/Novo Lote/Configurações;
-    // W6 added the platform-scope admin pages Referências + Guias, W7 added
-    // Regras, the notify slice added Curadores, W9 added Painel (their
-    // pages lock themselves for anyone without `pode_gerir_pool` /
-    // `pode_ativar_guia` / `pode_aprovar_regras` / `dashboard ===
-    // "platform"` (curator grants) / a non-null `capacidades.dashboard`
-    // (painel)). LoteRevisao (`/edicao-fotos/lotes/:loteId/revisao`) is a
-    // detail route reached from a Lotes card, not a standalone nav item —
-    // same shape as `/imoveis/:codigo` next to the `imoveis` nav entry.
-    // W8 added Modelos + Processamento (platform admin — they lock
-    // themselves without `pode_administrar_plataforma`). Route
-    // slugs below match migration 128's `nome_pagina` values EXACTLY (its
-    // own explicit instruction) — kebab-case, unlike this file's usual
-    // snake_case.
     key: "edicao-fotos",
     label: "Edição de Fotos",
     icon: ImagePlus,
-    defaultOpen: false,
     items: [
-      { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus, route: "edicao-fotos" },
-      { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus, route: "edicao-fotos-novo-lote" },
+    ],
+    groups: [
       {
-        name: "Configurações",
-        href: "/edicao-fotos/configuracoes",
-        icon: Settings2,
-        route: "edicao-fotos-configuracoes",
-      },
-      { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
-      { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
-      { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
-      { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog, route: "edicao-fotos-curadores" },
-      { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
-      // W8 — platform-admin pages (they lock themselves without
-      // `pode_administrar_plataforma`). `edicao-fotos-modelos` is migration
-      // 128's row; `edicao-fotos-processamento` is migration 130's.
-      { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu, route: "edicao-fotos-modelos" },
-      {
-        name: "Processamento",
-        href: "/edicao-fotos/processamento",
+        key: "edicao-fotos-operacao",
+        label: "Operação",
         icon: Activity,
-        route: "edicao-fotos-processamento",
+        items: [
+          { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus, route: "edicao-fotos" },
+          { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus, route: "edicao-fotos-novo-lote" },
+          { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3, route: "edicao-fotos-painel" },
+          { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity, route: "edicao-fotos-processamento" },
+        ],
       },
+      {
+        key: "edicao-fotos-config",
+        label: "Configuração",
+        icon: Settings2,
+        items: [
+          { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2, route: "edicao-fotos-configuracoes" },
+          { name: "Referências", href: "/edicao-fotos/referencias", icon: Images, route: "edicao-fotos-referencias" },
+          { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen, route: "edicao-fotos-guias" },
+          { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText, route: "edicao-fotos-regras" },
+          { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog, route: "edicao-fotos-curadores" },
+          { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu, route: "edicao-fotos-modelos" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "media-creation",
+    label: "Criação de mídia",
+    icon: Wand2,
+    items: [
+      { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
+    ],
+  },
+  {
+    key: "marketing",
+    label: "Marketing",
+    icon: Share2,
+    items: [
+    ],
+    groups: [
+      {
+        key: "email-noc",
+        label: "Email",
+        icon: Mail,
+        items: [
+          { name: "Painel", href: "/email", icon: BarChart3, route: "email_painel" },
+          { name: "Campanhas", href: "/email/campanhas", icon: Send, route: "email_campanhas_noc" },
+          { name: "Contatos", href: "/email/contatos", icon: UserRound, route: "email_contatos_noc" },
+          { name: "Listas", href: "/email/listas", icon: List, route: "email_listas_noc" },
+          { name: "Templates", href: "/email/templates", icon: FileText, route: "email_templates_noc" },
+          { name: "Automações", href: "/email/automacoes", icon: Workflow, route: "email_automacoes_noc" },
+          { name: "Domínios", href: "/email/dominios", icon: Globe, route: "email_dominios_noc" },
+        ],
+      },
+      {
+        key: "email",
+        label: "Mailchimp",
+        icon: Mail,
+        items: [
+          { name: "Membros", href: "/email-marketing/membros", icon: Users, route: "email_membros" },
+          { name: "Listas", href: "/email-marketing/listas", icon: List, route: "email_listas" },
+          { name: "Templates", href: "/email-marketing/templates", icon: FileText, route: "email_templates" },
+          { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send, route: "email_campanhas" },
+          { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2, route: "email_config" },
+        ],
+      },
+    ],
+  },
+  {
+    key: "emissoes",
+    label: "Emissões",
+    icon: Stamp,
+    items: [
+      { name: "Certidões", href: "/certidoes", icon: ShieldCheck, route: "certidoes" },
+      { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText, route: "matriculas" },
+      { name: "Agentes Financeiros", href: "/agentes-financeiros", icon: Landmark, route: "agentes_financeiros" },
     ],
   },
   {
     key: "conexoes",
     label: "Conexões",
     icon: Smartphone,
-    defaultOpen: true,
     items: [
       { name: "Marcas", href: "/marcas", icon: Building2, route: "marcas" },
       { name: "Monitor", href: "/monitor", icon: Activity, route: "monitor" },
+      { name: "YouTube", href: "/youtube", icon: Youtube, route: "youtube" },
+      { name: "Meta", href: "/meta", icon: Instagram, route: "meta" },
+      { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone, route: "whatsapp_chat" },
+      { name: "n8n", href: "/n8n", icon: Workflow, route: "n8n" },
     ],
   },
   {
     key: "config",
     label: "Configuração",
     icon: Settings2,
-    defaultOpen: false,
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
       { name: "Testemunhas", href: "/testemunhas", icon: UserRound, route: "testemunhas" },
@@ -328,16 +296,17 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Contatos", href: "/contatos", icon: UserRound },
-      { name: "YouTube", href: "/youtube", icon: Youtube },
-      { name: "Meta", href: "/meta", icon: Instagram },
-      { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
       { name: "Agendamentos", href: "/agendamentos", icon: CalendarClock },
-      { name: "n8n", href: "/n8n", icon: Workflow },
+    ],
+  },
+  {
+    key: "imoveis",
+    label: "Imóveis",
+    icon: Building2,
+    items: [
       { name: "Imóveis", href: "/imoveis", icon: Building2 },
       { name: "Permutas", href: "/permutas", icon: ArrowLeftRight },
     ],
@@ -346,7 +315,6 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "leads",
     label: "Leads",
     icon: Target,
-    defaultOpen: true,
     items: [
       { name: "Leads", href: "/leads", icon: Target },
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare },
@@ -358,55 +326,91 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "clientes",
     label: "Clientes",
     icon: UserCheck,
-    defaultOpen: true,
     items: [
       { name: "Clientes", href: "/clientes", icon: UserCheck },
       { name: "Revisão de Duplicados", href: "/clientes/revisao", icon: GitMerge },
     ],
   },
   {
-    key: "email-noc",
-    label: "Email Marketing",
-    icon: Mail,
-    defaultOpen: false,
+    key: "edicao-fotos",
+    label: "Edição de Fotos",
+    icon: ImagePlus,
     items: [
-      { name: "Painel", href: "/email", icon: BarChart3 },
-      { name: "Campanhas", href: "/email/campanhas", icon: Send },
-      { name: "Contatos", href: "/email/contatos", icon: UserRound },
-      { name: "Listas", href: "/email/listas", icon: List },
-      { name: "Templates", href: "/email/templates", icon: FileText },
-      { name: "Automações", href: "/email/automacoes", icon: Workflow },
-      { name: "Domínios", href: "/email/dominios", icon: Globe },
+    ],
+    groups: [
+      {
+        key: "edicao-fotos-operacao",
+        label: "Operação",
+        icon: Activity,
+        items: [
+          { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus },
+          { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus },
+          { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3 },
+          { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity },
+        ],
+      },
+      {
+        key: "edicao-fotos-config",
+        label: "Configuração",
+        icon: Settings2,
+        items: [
+          { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2 },
+          { name: "Referências", href: "/edicao-fotos/referencias", icon: Images },
+          { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen },
+          { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText },
+          { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog },
+          { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu },
+        ],
+      },
     ],
   },
   {
-    key: "email",
-    label: "Mailchimp",
-    icon: Mail,
-    defaultOpen: false,
+    key: "media-creation",
+    label: "Criação de mídia",
+    icon: Wand2,
     items: [
-      { name: "Membros", href: "/email-marketing/membros", icon: Users },
-      { name: "Listas", href: "/email-marketing/listas", icon: List },
-      { name: "Templates", href: "/email-marketing/templates", icon: FileText },
-      { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send },
-      { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2 },
+      { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
     ],
   },
   {
-    // The two workflows retired out of the ERP. Grouped by what the operator
-    // is DOING — emitting or reading an official document — rather than by
-    // whose record it is: a certidão is due-diligence on a person, a matrícula
-    // on a property, and splitting them across Clientes and Imóveis would hide
-    // that they are one desk's work.
-    //
-    // Each item is nav-gated by its own `status_pagina` row (migrations 091 and
-    // 092 seed both as 'producao'). An unlisted route stays hidden rather than
-    // 404-ing — and a row seeded 'desenvolvimento' is returned to nobody but
-    // dev/owner/admin, which is why neither is.
+    key: "marketing",
+    label: "Marketing",
+    icon: Share2,
+    items: [
+    ],
+    groups: [
+      {
+        key: "email-noc",
+        label: "Email",
+        icon: Mail,
+        items: [
+          { name: "Painel", href: "/email", icon: BarChart3 },
+          { name: "Campanhas", href: "/email/campanhas", icon: Send },
+          { name: "Contatos", href: "/email/contatos", icon: UserRound },
+          { name: "Listas", href: "/email/listas", icon: List },
+          { name: "Templates", href: "/email/templates", icon: FileText },
+          { name: "Automações", href: "/email/automacoes", icon: Workflow },
+          { name: "Domínios", href: "/email/dominios", icon: Globe },
+        ],
+      },
+      {
+        key: "email",
+        label: "Mailchimp",
+        icon: Mail,
+        items: [
+          { name: "Membros", href: "/email-marketing/membros", icon: Users },
+          { name: "Listas", href: "/email-marketing/listas", icon: List },
+          { name: "Templates", href: "/email-marketing/templates", icon: FileText },
+          { name: "Campanhas", href: "/email-marketing/campanhas", icon: Send },
+          { name: "Configuração", href: "/email-marketing/configuracao", icon: Settings2 },
+        ],
+      },
+    ],
+  },
+  {
     key: "emissoes",
     label: "Emissões",
     icon: Stamp,
-    defaultOpen: true,
     items: [
       { name: "Certidões", href: "/certidoes", icon: ShieldCheck },
       { name: "Extrator de Matrículas", href: "/matriculas", icon: ScrollText },
@@ -414,38 +418,22 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
-    key: "edicao-fotos",
-    label: "Edição de Fotos",
-    icon: ImagePlus,
-    defaultOpen: false,
-    items: [
-      { name: "Lotes", href: "/edicao-fotos", icon: ImagePlus },
-      { name: "Novo Lote", href: "/edicao-fotos/novo", icon: Plus },
-      { name: "Configurações", href: "/edicao-fotos/configuracoes", icon: Settings2 },
-      { name: "Referências", href: "/edicao-fotos/referencias", icon: Images },
-      { name: "Guias de Estilo", href: "/edicao-fotos/guias", icon: BookOpen },
-      { name: "Regras", href: "/edicao-fotos/regras", icon: ScrollText },
-      { name: "Curadores", href: "/edicao-fotos/curadores", icon: UserCog },
-      { name: "Painel", href: "/edicao-fotos/painel", icon: BarChart3 },
-      { name: "Modelos", href: "/edicao-fotos/modelos", icon: Cpu },
-      { name: "Processamento", href: "/edicao-fotos/processamento", icon: Activity },
-    ],
-  },
-  {
     key: "conexoes",
     label: "Conexões",
     icon: Smartphone,
-    defaultOpen: true,
     items: [
       { name: "Marcas", href: "/marcas", icon: Building2 },
       { name: "Monitor", href: "/monitor", icon: Activity },
+      { name: "YouTube", href: "/youtube", icon: Youtube },
+      { name: "Meta", href: "/meta", icon: Instagram },
+      { name: "WhatsApp", href: "/whatsapp-chat", icon: Smartphone },
+      { name: "n8n", href: "/n8n", icon: Workflow },
     ],
   },
   {
     key: "config",
     label: "Configuração",
     icon: Settings2,
-    defaultOpen: false,
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
       { name: "Testemunhas", href: "/testemunhas", icon: UserRound },

@@ -60,21 +60,37 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "CRM Comercial", href: "/crm", icon: KanbanSquare, route: "crm" },
       { name: "Agenda", href: "/agenda", icon: Calendar, route: "agenda" },
+    ],
+  },
+  {
+    key: "comercial",
+    label: "Comercial",
+    icon: KanbanSquare,
+    items: [
+      { name: "CRM Comercial", href: "/crm", icon: KanbanSquare, route: "crm" },
+      { name: "Clientes", href: "/clientes", icon: Users, route: "clientes" },
+    ],
+  },
+  {
+    key: "operacao",
+    label: "Operação",
+    icon: Clapperboard,
+    items: [
       { name: "Produção", href: "/producao", icon: Clapperboard, route: "producao" },
       { name: "Imóveis", href: "/imoveis", icon: Building2, route: "imoveis" },
       { name: "Serviços", href: "/servicos", icon: ListChecks, route: "servicos" },
-      { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Equipamentos", href: "/equipamentos", icon: Camera, route: "equipamentos" },
-      { name: "Clientes", href: "/clientes", icon: Users, route: "clientes" },
-      // `route` casa com `p_studio.status_pagina.nome_pagina` — a linha que a
-      // migration 008 insere. Sem ela a página existiria na rota e não
-      // apareceria no menu, que é exatamente o "route-exists ≠ wired" que
-      // este produto já pagou uma vez.
+    ],
+  },
+  {
+    key: "gestao",
+    label: "Gestão",
+    icon: Wallet,
+    items: [
+      { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
       { name: "Integrações", href: "/integracoes", icon: Plug, route: "integracoes" },
     ],
   },
@@ -85,17 +101,37 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "CRM Comercial", href: "/crm", icon: KanbanSquare },
       { name: "Agenda", href: "/agenda", icon: Calendar },
+    ],
+  },
+  {
+    key: "comercial",
+    label: "Comercial",
+    icon: KanbanSquare,
+    items: [
+      { name: "CRM Comercial", href: "/crm", icon: KanbanSquare },
+      { name: "Clientes", href: "/clientes", icon: Users },
+    ],
+  },
+  {
+    key: "operacao",
+    label: "Operação",
+    icon: Clapperboard,
+    items: [
       { name: "Produção", href: "/producao", icon: Clapperboard },
       { name: "Imóveis", href: "/imoveis", icon: Building2 },
       { name: "Serviços", href: "/servicos", icon: ListChecks },
-      { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Equipamentos", href: "/equipamentos", icon: Camera },
-      { name: "Clientes", href: "/clientes", icon: Users },
+    ],
+  },
+  {
+    key: "gestao",
+    label: "Gestão",
+    icon: Wallet,
+    items: [
+      { name: "Financeiro", href: "/financeiro", icon: Wallet },
       { name: "Integrações", href: "/integracoes", icon: Plug },
     ],
   },

@@ -39,13 +39,19 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Julia", href: "/julia", icon: MessageCircle, route: "julia" },
       { name: "Agentes", href: "/agentes", icon: Bot, route: "agentes" },
       { name: "Agent Studio", href: "/studio", icon: Boxes, route: "studio" },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2, route: "aprovacoes" },
+    ],
+  },
+  {
+    key: "configuracao",
+    label: "Configuração",
+    icon: SlidersHorizontal,
+    items: [
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal, route: "configuracoes-agente" },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound, route: "credenciais" },
@@ -58,13 +64,19 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Julia", href: "/julia", icon: MessageCircle },
       { name: "Agentes", href: "/agentes", icon: Bot },
       { name: "Agent Studio", href: "/studio", icon: Boxes },
       { name: "Aprovações", href: "/aprovacoes", icon: CheckCircle2 },
+    ],
+  },
+  {
+    key: "configuracao",
+    label: "Configuração",
+    icon: SlidersHorizontal,
+    items: [
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound },
