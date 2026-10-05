@@ -42,7 +42,7 @@ import {
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
-  usePageStatus, filterNavByPageStatus, env,
+  usePageStatus, filterNavByPageStatus, stripNavRoutes, env,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
 import { HelpChatBubble } from "@noctusai/lib/components";
@@ -182,6 +182,11 @@ export interface LayoutSessionAuth {
    * `useQuery` once it has a backend endpoint, or to a plain value.
    */
   useStatusPaginas?: () => { data?: StatusPagina[] };
+}
+
+/** Stable per-product namespace for the Sidebar's persisted open-group state. */
+function sidebarStorageSlug(brandTitle: string): string {
+  return brandTitle.toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 export interface ProductLayoutConfig {
@@ -377,9 +382,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
       : navGroupsWithRoutes;
 
     const allNavFallback = enrichment.extraNavGroups?.length
-      ? [...navGroupsFallback, ...enrichment.extraNavGroups.map(g => ({
-          ...g, items: g.items.map(({ route, ...item }) => item),
-        })) as NavGroup[]]
+      ? [...navGroupsFallback, ...stripNavRoutes(enrichment.extraNavGroups) as NavGroup[]]
       : navGroupsFallback;
     const navGroups = (statusPaginas?.length
       ? filterNavByPageStatus(allNavGroups, statusPaginas, effectiveRole)
@@ -452,6 +455,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             brandTitle={brandTitle}
             brandSubtitle={brandSubtitleOverride || ssoCtx.org.name || "NoctusAI"}
             navGroups={navGroups}
+            storageKey={sidebarStorageSlug(brandTitle)}
             standaloneItems={standaloneItems.length > 0 ? standaloneItems : undefined}
             footerContent={ssoCtx.isSSO ? BackToCore : undefined}
             // 🔴 Fixed 2026-09-28: `onNavigate` was never wired, so picking a

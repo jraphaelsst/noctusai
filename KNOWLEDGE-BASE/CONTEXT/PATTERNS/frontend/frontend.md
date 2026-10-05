@@ -65,6 +65,10 @@ Two things keep the user oriented despite starting closed:
 
 Don't hand-roll a `useState(true)` / `open` prop on a new nav-group-shaped component — consume `Sidebar`'s `NavGroup[]` via `navGroups` (products consume canonical organs). See `Sidebar.tsx`'s module docblock ("Collapsed-by-construction nav groups") for the full rationale, and its colocated `AppShell.test.tsx` for the behavioral tests (starts closed / active-route auto-open / toggle / persistence / localStorage-unavailable degrade).
 
+### Nested groups and current-page marks (2026-10-05)
+
+`NavGroup` may carry `groups: NavGroup[]` next to `items`, up to **4 levels** (L1 group > L2 group > L3 group > L4 leaf); flat configs are unchanged. Open state is an **accordion per level** (one open child per parent; clicking the open header closes it), and navigation auto-opens every group on the path to the current page. Only the **most specific matching href** is the current leaf (`aria-current="page"`, so `/admin` no longer lights up with `/admin/vendas`); the L1 group on the path gets an active style and intermediate groups an emphasized label. `filterNavByPageStatus` recurses through every level and drops groups left empty at any level. Open state persists per product (`noctus.sidebar.openGroups.<storageKey>`; `createProductLayout` passes a slug of `brandTitle`). Tests: `Sidebar.nesting.test.tsx`, `page-status.nested.test.ts`.
+
 ## Token refresh
 
 Two complementary mechanisms:

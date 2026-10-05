@@ -70,10 +70,36 @@
  * Removing the field outright is the correct long-term move (nothing should
  * read a field it doesn't honour); flagged as a scoped follow-up rather than
  * done here as a fan-out edit across every product's `NAV_GROUPS`.
+
+ *
+ * ## Nested groups, accordion, most-specific current page (2026-10-05)
+ *
+ * DECISION (owner-approved 2026-10-05): a `NavGroup` may hold `items` AND
+ * `groups` (sub-groups), recursively, up to 4 LEVELS in total
+ * (L1 group > L2 group > L3 group > L4 leaf). A flat group config (only
+ * `items`) renders exactly as before. Items render before sub-groups.
+ *
+ * Open state is an ACCORDION PER LEVEL: among the sibling groups of one parent
+ * only one is open; opening one closes its siblings; clicking the open
+ * group's header closes it. State is `{ [parentKey | ""]: openChildKey | null }`.
+ *
+ * Navigation auto-opens EVERY group on the path to the current page (and so
+ * closes their siblings). The effect is keyed on the path, so a manual close
+ * is respected until the user navigates to a page in a different group.
+ *
+ * Current page: ONLY the most specific matching href is the current leaf
+ * (longest href that equals the pathname or is a path-prefix of it), so a
+ * parent route such as `/admin` no longer highlights with `/admin/vendas`.
+ * The leaf carries `aria-current="page"`. The L1 group on the path gets an
+ * active style, intermediate groups on the path get an emphasized label.
+ *
+ * Persisted open state lives under a PER-PRODUCT key
+ * (`noctus.sidebar.openGroups.<storageKey>`); pass `storageKey` (the
+ * framework passes a slug of the brand title).
  */
-import { NavLink, useLocation } from "react-router-dom";
+import { Link, NavLink, useLocation } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as CollapsiblePrimitive from "@radix-ui/react-collapsible";
 
 import { cn } from "../../utils";
@@ -98,42 +124,104 @@ export interface NavGroup {
    */
   defaultOpen?: boolean;
   items: NavItem[];
+  /**
+   * Nested sub-groups (2026-10-05). A group may hold `items` and `groups`;
+   * total depth is limited to 4 levels (L1 group > L2 group > L3 group >
+   * L4 leaf). Group keys must be unique across the whole tree. A group holding only
+   * sub-groups passes `items: []`.
+   */
+  groups?: NavGroup[];
 }
 
-/** localStorage key for persisted per-group expand/collapse choices. */
-const OPEN_GROUPS_STORAGE_KEY = "noctus.sidebar.openGroups";
+/** Max number of GROUP levels (the 4th level is the leaf item). */
+export const SIDEBAR_MAX_GROUP_DEPTH = 3;
+
+/** Prefix of the localStorage key for persisted open-group state. */
+const OPEN_GROUPS_STORAGE_PREFIX = "noctus.sidebar.openGroups";
+
+/** Per-product storage key. */
+export function sidebarStorageKey(storageKey?: string): string {
+  return `${OPEN_GROUPS_STORAGE_PREFIX}.${storageKey || "default"}`;
+}
+
+/** Accordion state: parent group key ("" = root) -> key of its open child, or null (closed). */
+type OpenState = Record<string, string | null>;
 
 /** Best-effort read — a disabled/private localStorage yields "nothing persisted". */
-function readPersistedOpenGroups(): Record<string, boolean> {
+function readPersistedOpenGroups(storageKey: string): OpenState {
   try {
-    const raw = window.localStorage.getItem(OPEN_GROUPS_STORAGE_KEY);
+    const raw = window.localStorage.getItem(storageKey);
     if (!raw) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
+    if (!parsed || typeof parsed !== "object") return {};
+    const out: OpenState = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === "string" || v === null) out[k] = v as string | null;
+    }
+    return out;
   } catch {
     return {};
   }
 }
 
 /** Best-effort write — never throws (private mode / storage disabled / quota). */
-function writePersistedOpenGroups(state: Record<string, boolean>): void {
+function writePersistedOpenGroups(storageKey: string, state: OpenState): void {
   try {
-    window.localStorage.setItem(OPEN_GROUPS_STORAGE_KEY, JSON.stringify(state));
+    window.localStorage.setItem(storageKey, JSON.stringify(state));
   } catch {
     // localStorage unavailable — render/toggle correctly, just don't persist.
   }
 }
 
-/** Is `href` the currently active route? Mirrors `NavLink`'s own `end`-less matching. */
-function isItemActive(href: string, pathname: string): boolean {
+/** Does `href` match `pathname` (equal or path-prefix)? */
+function hrefMatches(href: string, pathname: string): boolean {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
 }
 
-/** Which group (if any) contains the currently active route — auto-expand target. */
-function findActiveGroupKey(navGroups: NavGroup[], pathname: string): string | null {
-  const group = navGroups.find((g) => g.items.some((item) => isItemActive(item.href, pathname)));
-  return group ? group.key : null;
+/** Does the group (recursively) hold at least one item? Empty groups are not rendered. */
+function groupHasContent(group: NavGroup): boolean {
+  return group.items.length > 0 || (group.groups ?? []).some(groupHasContent);
+}
+
+interface CurrentPage {
+  /** The single most specific matching item (null when nothing matches). */
+  item: NavItem | null;
+  /** Group keys from L1 down to the group holding `item` (empty for standalone/no match). */
+  path: string[];
+}
+
+/** Most specific match across every group level and the standalone items. */
+function findCurrentPage(
+  navGroups: NavGroup[],
+  standaloneItems: NavItem[],
+  pathname: string,
+): CurrentPage {
+  let best: CurrentPage = { item: null, path: [] };
+  const consider = (item: NavItem, path: string[]) => {
+    if (!hrefMatches(item.href, pathname)) return;
+    if (!best.item || item.href.length > best.item.href.length) best = { item, path };
+  };
+  const walk = (groups: NavGroup[], path: string[]) => {
+    for (const g of groups) {
+      if (!groupHasContent(g)) continue;
+      const here = [...path, g.key];
+      g.items.forEach((item) => consider(item, here));
+      walk(g.groups ?? [], here);
+    }
+  };
+  walk(navGroups, []);
+  standaloneItems.forEach((item) => consider(item, []));
+  return best;
+}
+
+/** Open every group along `path` (closing their siblings). */
+function openPath(state: OpenState, path: string[]): OpenState {
+  const next = { ...state };
+  path.forEach((key, i) => {
+    next[i === 0 ? "" : path[i - 1]] = key;
+  });
+  return next;
 }
 
 export interface SidebarProps {
@@ -150,6 +238,11 @@ export interface SidebarProps {
   standaloneItems?: NavItem[];
   footerContent?: React.ReactNode;
   onNavigate?: () => void;
+  /**
+   * Namespace for the persisted open-group state (use the product slug), so
+   * products never share open/closed choices. Omitted ⇒ a shared "default" key.
+   */
+  storageKey?: string;
 }
 
 /**
@@ -170,61 +263,61 @@ export function Sidebar({
   standaloneItems = [],
   footerContent,
   onNavigate,
+  storageKey,
 }: SidebarProps) {
   // `collapsed` is only meaningful at md+ — see the module docblock. Below md
   // the same DOM is the off-canvas drawer and every `md:` class is inert.
   const { collapsed } = useSidebarRail();
 
-  // Which group holds the current route — the one exception to "starts
-  // closed" (see the module docblock's "Collapsed-by-construction" section).
+  // The current page = the single most specific matching href (see the
+  // module docblock). Its group path drives auto-open + the active marks.
   const { pathname } = useLocation();
-  const activeGroupKey = findActiveGroupKey(navGroups, pathname);
+  const current = useMemo(
+    () => findCurrentPage(navGroups, standaloneItems, pathname),
+    [navGroups, standaloneItems, pathname],
+  );
+  const pathKey = current.path.join("/");
+  const storage = sidebarStorageKey(storageKey);
 
-  // Lazy init: every group starts closed UNLESS a prior visit persisted a
-  // choice for it, or it holds the active route on this very first render.
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
-    const persisted = readPersistedOpenGroups();
-    if (activeGroupKey && persisted[activeGroupKey] === undefined) {
-      return { ...persisted, [activeGroupKey]: true };
-    }
-    return persisted;
-  });
+  // Lazy init: persisted choices, overlaid with the path to the current page.
+  const [openState, setOpenState] = useState<OpenState>(() =>
+    openPath(readPersistedOpenGroups(storage), current.path),
+  );
 
-  // Navigating into a different group's route auto-opens that group without
-  // touching any other group's state — a manual close of the CURRENT active
-  // group is respected (this effect only re-fires when `activeGroupKey`
-  // itself changes, i.e. on navigation, not on every render).
+  // Navigating opens every group on the path (closing their siblings). Keyed
+  // on the path, so a manual close is respected until the user navigates to
+  // a page in a different group.
   useEffect(() => {
-    if (!activeGroupKey) return;
-    setOpenGroups((prev) => (prev[activeGroupKey] ? prev : { ...prev, [activeGroupKey]: true }));
-  }, [activeGroupKey]);
+    if (current.path.length === 0) return;
+    setOpenState((prev) => openPath(prev, current.path));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on pathKey
+  }, [pathKey]);
 
-  // Persist every change (manual toggle or the auto-open above) so choices
-  // survive a reload. Best-effort — see `writePersistedOpenGroups`.
+  // Persist every change (manual toggle or auto-open). Best-effort.
   useEffect(() => {
-    writePersistedOpenGroups(openGroups);
-  }, [openGroups]);
+    writePersistedOpenGroups(storage, openState);
+  }, [storage, openState]);
 
-  const toggleGroup = (key: string) => {
-    setOpenGroups((prev) => ({ ...prev, [key]: !prev[key] }));
+  // Accordion: opening a group closes its siblings; the open one closes itself.
+  const toggleGroup = (parentKey: string, key: string) => {
+    setOpenState((prev) => ({ ...prev, [parentKey]: prev[parentKey] === key ? null : key }));
   };
 
   const renderNavLink = (item: NavItem) => (
-    <NavLink
-      key={item.name}
+    <Link
+      key={`${item.href}:${item.name}`}
       to={item.href}
       onClick={onNavigate}
       aria-label={item.name}
+      aria-current={current.item === item ? "page" : undefined}
       title={collapsed ? item.name : undefined}
-      className={({ isActive }) =>
-        cn(
-          "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
-          collapsed && "md:justify-center md:gap-0 md:px-0",
-          isActive
-            ? "bg-primary text-primary-foreground"
-            : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
-        )
-      }
+      className={cn(
+        "flex items-center gap-3 px-3 py-1.5 rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        collapsed && "md:justify-center md:gap-0 md:px-0",
+        current.item === item
+          ? "bg-primary text-primary-foreground"
+          : "text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent"
+      )}
     >
       <item.icon className="h-4 w-4 shrink-0" />
       <span className={cn("flex-1 truncate", COLLAPSIBLE_TEXT, collapsed && COLLAPSED_TEXT)}>
@@ -241,8 +334,69 @@ export function Sidebar({
           {item.badge}
         </span>
       )}
-    </NavLink>
+    </Link>
   );
+
+  // Recursive group renderer. `depth` 0 = L1. Radix Collapsible keeps the
+  // header a <button> with aria-expanded.
+  const renderGroup = (group: NavGroup, depth: number, parentKey: string): React.ReactNode => {
+    if (!groupHasContent(group)) return null;
+    if (depth > SIDEBAR_MAX_GROUP_DEPTH - 1) {
+      console.error(
+        `Sidebar: group "${group.key}" is nested deeper than ${SIDEBAR_MAX_GROUP_DEPTH} group levels (max 4 levels incl. the leaf).`,
+      );
+    }
+    const isOpen = openState[parentKey] === group.key;
+    const onPath = current.path[depth] === group.key;
+    return (
+      <CollapsiblePrimitive.Root
+        key={group.key}
+        open={isOpen}
+        onOpenChange={() => toggleGroup(parentKey, group.key)}
+      >
+        <CollapsiblePrimitive.Trigger
+          aria-label={group.label}
+          data-active={onPath ? "true" : undefined}
+          title={collapsed ? group.label : undefined}
+          className={cn(
+            "flex items-center justify-between w-full px-3 py-2 text-xs font-semibold tracking-wider transition-colors rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            depth === 0 ? "uppercase" : "normal-case tracking-normal",
+            collapsed && "md:justify-center md:px-0",
+            onPath && depth === 0
+              ? "bg-sidebar-accent text-sidebar-foreground"
+              : onPath
+                ? "text-sidebar-foreground hover:bg-sidebar-accent/50"
+                : "text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/50"
+          )}
+        >
+          <div className={cn("flex items-center gap-2 min-w-0", collapsed && "md:gap-0")}>
+            <group.icon className="h-3.5 w-3.5 shrink-0" />
+            <span className={cn("truncate", COLLAPSIBLE_TEXT, collapsed && COLLAPSED_TEXT)}>
+              {group.label}
+            </span>
+          </div>
+          <ChevronRight
+            className={cn(
+              "h-3.5 w-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
+              isOpen && "rotate-90",
+              collapsed && "md:max-w-0 md:opacity-0 md:overflow-hidden"
+            )}
+          />
+        </CollapsiblePrimitive.Trigger>
+        {/* Collapsed: drop the indent rail so item icons stay in the
+            single centred column the rail reads as. */}
+        <CollapsiblePrimitive.Content
+          className={cn(
+            "space-y-0.5 mt-0.5 ml-2 border-l border-sidebar-border pl-2",
+            collapsed && "md:ml-0 md:border-l-0 md:pl-0"
+          )}
+        >
+          {group.items.map(renderNavLink)}
+          {(group.groups ?? []).map((sub) => renderGroup(sub, depth + 1, group.key))}
+        </CollapsiblePrimitive.Content>
+      </CollapsiblePrimitive.Root>
+    );
+  };
 
   // Brand text block — collapses to zero width so the 32px brand icon centres
   // in the rail. Shared by both brand variants below.
@@ -291,56 +445,7 @@ export function Sidebar({
 
         {/* Navigation */}
         <nav className="space-y-1">
-          {navGroups.map((group) => {
-            if (group.items.length === 0) return null;
-
-            // `defaultOpen` is deliberately NOT consulted here — see the
-            // "Collapsed-by-construction" module docblock section.
-            const isOpen = openGroups[group.key] ?? false;
-
-            return (
-              <CollapsiblePrimitive.Root
-                key={group.key}
-                open={isOpen}
-                onOpenChange={() => toggleGroup(group.key)}
-              >
-                <CollapsiblePrimitive.Trigger
-                  aria-label={group.label}
-                  title={collapsed ? group.label : undefined}
-                  className={cn(
-                    "flex items-center justify-between w-full px-3 py-2 text-xs font-semibold uppercase tracking-wider text-sidebar-foreground/50 hover:text-sidebar-foreground transition-colors rounded-md hover:bg-sidebar-accent/50",
-                    collapsed && "md:justify-center md:px-0"
-                  )}
-                >
-                  <div className={cn("flex items-center gap-2 min-w-0", collapsed && "md:gap-0")}>
-                    <group.icon className="h-3.5 w-3.5 shrink-0" />
-                    <span
-                      className={cn("truncate", COLLAPSIBLE_TEXT, collapsed && COLLAPSED_TEXT)}
-                    >
-                      {group.label}
-                    </span>
-                  </div>
-                  <ChevronRight
-                    className={cn(
-                      "h-3.5 w-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none",
-                      isOpen && "rotate-90",
-                      collapsed && "md:max-w-0 md:opacity-0 md:overflow-hidden"
-                    )}
-                  />
-                </CollapsiblePrimitive.Trigger>
-                {/* Collapsed: drop the indent rail so item icons stay in the
-                    single centred column the rail reads as. */}
-                <CollapsiblePrimitive.Content
-                  className={cn(
-                    "space-y-0.5 mt-0.5 ml-2 border-l border-sidebar-border pl-2",
-                    collapsed && "md:ml-0 md:border-l-0 md:pl-0"
-                  )}
-                >
-                  {group.items.map(renderNavLink)}
-                </CollapsiblePrimitive.Content>
-              </CollapsiblePrimitive.Root>
-            );
-          })}
+          {navGroups.map((group) => renderGroup(group, 0, ""))}
 
           {/* Standalone items */}
           {standaloneItems.length > 0 && (

@@ -37,6 +37,8 @@ export interface NavGroupWithRoute {
   icon?: any;
   defaultOpen?: boolean;
   items: NavItemWithRoute[];
+  /** Nested sub-groups (up to 4 levels incl. the leaf), filtered recursively. */
+  groups?: NavGroupWithRoute[];
 }
 
 /**
@@ -85,31 +87,72 @@ export function isPageVisible(
 /**
  * Filter nav groups by page status visibility.
  *
- * Removes items whose routes are not visible, and removes empty groups.
+ * Removes items whose routes are not visible, recurses through every nested
+ * level of `groups`, and removes groups left empty at ANY level (no visible
+ * items and no surviving sub-groups).
  * Adds "DEV" badge to desenvolvimento pages for dev/owner users.
  */
 export function filterNavByPageStatus<
-  G extends { key: string; label: string; icon?: any; defaultOpen?: boolean; items: T[] },
+  G extends {
+    key: string;
+    label: string;
+    icon?: any;
+    defaultOpen?: boolean;
+    items: T[];
+    groups?: G[];
+  },
   T extends { name: string; href: string; icon?: any; route: string; badge?: string },
 >(
   groups: G[],
   statusPaginas: StatusPagina[],
   orgRole: string | null | undefined,
-): Array<Omit<G, 'items'> & { items: Array<Omit<T, 'route'> & { badge?: string }> }> {
+): Array<FilteredNavGroup<G, T>> {
   const devUser = isDevOrOwner(orgRole);
 
+  const filterGroup = (group: G): FilteredNavGroup<G, T> | null => {
+    const items = group.items
+      .filter((item) => isPageVisible(item.route, statusPaginas, orgRole))
+      .map((item) => {
+        const page = statusPaginas.find((p) => p.nome_pagina === item.route);
+        const badge = devUser && page?.status === 'desenvolvimento' ? 'DEV' : item.badge;
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        const { route: _route, ...rest } = item;
+        return { ...rest, badge };
+      });
+    const result: any = { ...group, items };
+    if (group.groups) {
+      result.groups = group.groups
+        .map(filterGroup)
+        .filter((g): g is FilteredNavGroup<G, T> => g !== null);
+    }
+    const hasSub = (result.groups ?? []).length > 0;
+    return items.length > 0 || hasSub ? result : null;
+  };
+
   return groups
-    .map((group) => ({
-      ...group,
-      items: group.items
-        .filter((item) => isPageVisible(item.route, statusPaginas, orgRole))
-        .map((item) => {
-          const page = statusPaginas.find((p) => p.nome_pagina === item.route);
-          const badge = devUser && page?.status === 'desenvolvimento' ? 'DEV' : item.badge;
-          // eslint-disable-next-line @typescript-eslint/no-unused-vars
-          const { route: _route, ...rest } = item;
-          return { ...rest, badge };
-        }),
-    }))
-    .filter((group) => group.items.length > 0);
+    .map(filterGroup)
+    .filter((g): g is FilteredNavGroup<G, T> => g !== null);
+}
+
+type FilteredNavGroup<G, T extends { route: string }> = Omit<G, 'items' | 'groups'> & {
+  items: Array<Omit<T, 'route'> & { badge?: string }>;
+  groups?: Array<FilteredNavGroup<G, T>>;
+};
+
+/**
+ * Drop the `route` key from every item of a (nested) nav group tree — the
+ * ungated fallback shape `Sidebar` consumes.
+ */
+export function stripNavRoutes<G extends { items: Array<{ route?: string }>; groups?: G[] }>(
+  groups: G[],
+): any[] {
+  return groups.map((g) => {
+    const out: any = {
+      ...g,
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      items: g.items.map(({ route: _r, ...rest }) => rest),
+    };
+    if (g.groups) out.groups = stripNavRoutes(g.groups);
+    return out;
+  });
 }

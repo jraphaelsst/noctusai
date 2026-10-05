@@ -44,7 +44,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
@@ -55,7 +54,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "crm",
     label: "CRM",
     icon: UserCheck,
-    defaultOpen: true,
     items: [
       { name: "Clientes", href: "/clientes", icon: UserCheck, route: "clientes" },
       { name: "Funil", href: "/funil", icon: Kanban, route: "funil" },
@@ -65,7 +63,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "operacoes",
     label: "Operações",
     icon: ClipboardList,
-    defaultOpen: true,
     items: [
       { name: "Tarefas", href: "/tarefas", icon: ClipboardList, route: "tarefas" },
       { name: "Agenda", href: "/agenda", icon: CalendarDays, route: "agenda" },
@@ -73,39 +70,14 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     ],
   },
   {
-    key: "relatorios",
-    label: "Relatórios",
-    icon: FileBarChart2,
-    defaultOpen: true,
-    items: [
-      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
-    ],
-  },
-  {
-    key: "trafego",
-    label: "Tráfego",
-    icon: Target,
-    defaultOpen: true,
-    items: [
-      { name: "Tráfego", href: "/trafego", icon: Target, route: "trafego" },
-    ],
-  },
-  {
-    key: "automacao",
-    label: "Automação",
-    icon: Zap,
-    defaultOpen: true,
-    items: [
-      { name: "Automacao", href: "/automacao", icon: Zap, route: "automacao" },
-    ],
-  },
-  {
-    key: "conteudo",
-    label: "Conteúdo",
+    key: "marketing",
+    label: "Marketing",
     icon: Megaphone,
-    defaultOpen: true,
     items: [
       { name: "Conteúdo", href: "/conteudo", icon: Megaphone, route: "conteudo" },
+      { name: "Tráfego", href: "/trafego", icon: Target, route: "trafego" },
+      { name: "Automacao", href: "/automacao", icon: Zap, route: "automacao" },
+      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2, route: "relatorios" },
     ],
   },
 ];
@@ -115,7 +87,6 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Equipe", href: "/equipe", icon: Users },
@@ -126,7 +97,6 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "crm",
     label: "CRM",
     icon: UserCheck,
-    defaultOpen: true,
     items: [
       { name: "Clientes", href: "/clientes", icon: UserCheck },
       { name: "Funil", href: "/funil", icon: Kanban },
@@ -136,7 +106,6 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "operacoes",
     label: "Operações",
     icon: ClipboardList,
-    defaultOpen: true,
     items: [
       { name: "Tarefas", href: "/tarefas", icon: ClipboardList },
       { name: "Agenda", href: "/agenda", icon: CalendarDays },
@@ -144,39 +113,14 @@ const NAV_FALLBACK: NavGroup[] = [
     ],
   },
   {
-    key: "relatorios",
-    label: "Relatórios",
-    icon: FileBarChart2,
-    defaultOpen: true,
-    items: [
-      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2 },
-    ],
-  },
-  {
-    key: "trafego",
-    label: "Tráfego",
-    icon: Target,
-    defaultOpen: true,
-    items: [
-      { name: "Tráfego", href: "/trafego", icon: Target },
-    ],
-  },
-  {
-    key: "automacao",
-    label: "Automação",
-    icon: Zap,
-    defaultOpen: true,
-    items: [
-      { name: "Automacao", href: "/automacao", icon: Zap },
-    ],
-  },
-  {
-    key: "conteudo",
-    label: "Conteúdo",
+    key: "marketing",
+    label: "Marketing",
     icon: Megaphone,
-    defaultOpen: true,
     items: [
       { name: "Conteúdo", href: "/conteudo", icon: Megaphone },
+      { name: "Tráfego", href: "/trafego", icon: Target },
+      { name: "Automacao", href: "/automacao", icon: Zap },
+      { name: "Relatórios", href: "/relatorios", icon: FileBarChart2 },
     ],
   },
 ];

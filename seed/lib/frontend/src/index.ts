@@ -39,7 +39,7 @@ export { ORG_ROLES, ADMIN_ROLES, MANAGE_TEAM_ROLES, DEV_ROLES, PRODUCT_ADMIN_ROL
 export type { OrgRole } from './roles';
 
 // Page Status
-export { usePageStatus, isPageVisible, filterNavByPageStatus } from './page-status';
+export { usePageStatus, isPageVisible, filterNavByPageStatus, stripNavRoutes } from './page-status';
 export type { StatusPagina, NavItemWithRoute, NavGroupWithRoute } from './page-status';
 
 // Stores

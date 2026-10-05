@@ -2,7 +2,7 @@ name: Sidebar
 path: seed/lib/frontend/src/design-system/components/Sidebar.tsx
 phase: pilot-seed
 registered_at: "2026-05-29"
-organ_version: "1.2"
+organ_version: "1.3"
 validation_status: emerging
 
 known_facts:
@@ -17,6 +17,7 @@ known_facts:
   - "Root gained overflow-y-auto: AppShell now pins the aside to the viewport (fixed inset-y-0) at every breakpoint, so a long nav must scroll INSIDE the rail instead of being clipped away."
   - "Covered by the colocated AppShell.test.tsx (collapsed a11y name + title, max-width-not-display collapse, destinations visible in the collapsed rail, unchanged standalone rendering)."
   - "2026-09-21 COLLAPSED-BY-CONSTRUCTION: every NavGroup now starts CLOSED. `defaultOpen` is deprecated + IGNORED at render time (kept in the type only so the ~15 products still setting it, mostly `true`, keep type-checking — vite build doesn't type-check products so this was never a build-breaking risk). Initial open state = persisted localStorage choice (best-effort, try/catch) if present, else `false`, UNLESS the group holds the currently active route (computed via `findActiveGroupKey`/`isItemActive` off `useLocation().pathname`), in which case it auto-opens. Navigating into a different group's active route re-triggers the auto-open via a `useEffect` keyed on `activeGroupKey`, without touching any other group or fighting a manual close of the SAME active group mid-visit. Every change (manual toggle or auto-open) persists to `localStorage` under `noctus.sidebar.openGroups`."
+  - "2026-10-05 NESTED GROUPS (owner-approved): NavGroup gained optional `groups?: NavGroup[]`; a group holds items AND sub-groups, up to 4 levels (L1 group > L2 > L3 group > L4 leaf; items render before sub-groups; a sub-groups-only group passes `items: []`; keys unique across the tree; deeper nesting console.errors). Flat configs unchanged. Open state is an ACCORDION PER LEVEL stored as {parentKey|'' : openChildKey|null}; header click closes the open group. Navigation auto-opens the whole path (effect keyed on the path, so a manual close is respected until the user moves to another group). Current page = the single MOST SPECIFIC matching href (fixes the /admin vs /admin/vendas prefix double-highlight); leaf is a react-router <Link> with aria-current=page. L1 group on the path gets bg-sidebar-accent, intermediates an emphasized label (data-active on the trigger). Persisted state key is now PER PRODUCT: noctus.sidebar.openGroups.<storageKey> (new optional `storageKey` prop; createProductLayout passes a slug of brandTitle, core passes 'core'); old global key is abandoned. filterNavByPageStatus recurses through `groups`, drops groups empty at any level; stripNavRoutes (lib) builds the ungated fallback shape. Tests: Sidebar.nesting.test.tsx + page-status.nested.test.ts."
 
 errors_encountered: []
 

@@ -84,7 +84,6 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
       { name: "Membros", href: "/membros", icon: UserRound, route: "membros" },
@@ -92,10 +91,24 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList, route: "inscricoes" },
       { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign, route: "financeiro" },
       { name: "Grupoterapia", href: "/grupoterapia", icon: CalendarHeart, route: "grupoterapia" },
+    ],
+  },
+  {
+    key: "whatsapp",
+    label: "WhatsApp",
+    icon: MessageCircle,
+    items: [
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle, route: "whatsapp" },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat, route: "whatsapp-sincronizacao" },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone, route: "whatsapp-transmissoes" },
       { name: "Moderação", href: "/whatsapp/moderacao", icon: ShieldAlert, route: "whatsapp-moderacao" },
+    ],
+  },
+  {
+    key: "configuracao",
+    label: "Configuração",
+    icon: Settings2,
+    items: [
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Configurações", href: "/configuracoes", icon: Settings2, route: "configuracoes" },
     ],
@@ -107,7 +120,6 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
       { name: "Membros", href: "/membros", icon: UserRound },
@@ -115,10 +127,24 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Inscrições", href: "/inscricoes", icon: ClipboardList },
       { name: "Financeiro", href: "/financeiro", icon: CircleDollarSign },
       { name: "Grupoterapia", href: "/grupoterapia", icon: CalendarHeart },
+    ],
+  },
+  {
+    key: "whatsapp",
+    label: "WhatsApp",
+    icon: MessageCircle,
+    items: [
       { name: "WhatsApp", href: "/whatsapp", icon: MessageCircle },
       { name: "Sincronização", href: "/whatsapp/sincronizacao", icon: Repeat },
       { name: "Transmissões", href: "/whatsapp/transmissoes", icon: Megaphone },
       { name: "Moderação", href: "/whatsapp/moderacao", icon: ShieldAlert },
+    ],
+  },
+  {
+    key: "configuracao",
+    label: "Configuração",
+    icon: Settings2,
+    items: [
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Configurações", href: "/configuracoes", icon: Settings2 },
     ],

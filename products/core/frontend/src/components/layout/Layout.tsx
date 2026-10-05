@@ -119,6 +119,7 @@ export function Layout({ children }: { children?: React.ReactNode }) {
           brandTitle="NoctusAI"
           brandSubtitle="Admin"
           brandHref="/"
+          storageKey="core"
           navGroups={navGroups}
         />
       }

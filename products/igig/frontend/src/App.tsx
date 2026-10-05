@@ -47,21 +47,48 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
+      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+    ],
+  },
+  {
+    key: "comercial",
+    label: "Comercial",
+    icon: Briefcase,
+    items: [
       { name: "Comercial", href: "/comercial", icon: Briefcase, route: "comercial" },
       { name: "Clientes", href: "/clientes", icon: Building2, route: "clientes" },
       { name: "Orçamentos", href: "/orcamentos", icon: FileText, route: "orcamentos" },
       { name: "Produtos e Serviços", href: "/produtos-servicos", icon: Package, route: "produtos_servicos" },
+    ],
+  },
+  {
+    key: "operacao",
+    label: "Operação",
+    icon: KanbanSquare,
+    items: [
       { name: "Esteira", href: "/esteira", icon: KanbanSquare, route: "esteira" },
       { name: "Calendário", href: "/calendario", icon: CalendarDays, route: "calendario" },
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3, route: "distribuicao" },
+    ],
+  },
+  {
+    key: "financeiro",
+    label: "Financeiro",
+    icon: Wallet,
+    items: [
       { name: "Financeiro", href: "/financeiro", icon: Wallet, route: "financeiro" },
+      { name: "Custos", href: "/custos", icon: Boxes, route: "custos" },
+    ],
+  },
+  {
+    key: "integracoes",
+    label: "Integrações",
+    icon: Plug,
+    items: [
       { name: "Integrações", href: "/integracoes", icon: Plug, route: "integracoes" },
       { name: "Automações", href: "/automacoes", icon: Workflow, route: "automacoes" },
-      { name: "Custos", href: "/custos", icon: Boxes, route: "custos" },
-      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
     ],
   },
 ];
@@ -71,21 +98,48 @@ const NAV_FALLBACK: NavGroup[] = [
     key: "principal",
     label: "Principal",
     icon: Home,
-    defaultOpen: true,
     items: [
       { name: "Dashboard", href: "/", icon: LayoutDashboard },
+      { name: "Equipe", href: "/equipe", icon: Users },
+    ],
+  },
+  {
+    key: "comercial",
+    label: "Comercial",
+    icon: Briefcase,
+    items: [
       { name: "Comercial", href: "/comercial", icon: Briefcase },
       { name: "Clientes", href: "/clientes", icon: Building2 },
       { name: "Orçamentos", href: "/orcamentos", icon: FileText },
       { name: "Produtos e Serviços", href: "/produtos-servicos", icon: Package },
+    ],
+  },
+  {
+    key: "operacao",
+    label: "Operação",
+    icon: KanbanSquare,
+    items: [
       { name: "Esteira", href: "/esteira", icon: KanbanSquare },
       { name: "Calendário", href: "/calendario", icon: CalendarDays },
       { name: "Distribuição", href: "/distribuicao", icon: BarChart3 },
+    ],
+  },
+  {
+    key: "financeiro",
+    label: "Financeiro",
+    icon: Wallet,
+    items: [
       { name: "Financeiro", href: "/financeiro", icon: Wallet },
+      { name: "Custos", href: "/custos", icon: Boxes },
+    ],
+  },
+  {
+    key: "integracoes",
+    label: "Integrações",
+    icon: Plug,
+    items: [
       { name: "Integrações", href: "/integracoes", icon: Plug },
       { name: "Automações", href: "/automacoes", icon: Workflow },
-      { name: "Custos", href: "/custos", icon: Boxes },
-      { name: "Equipe", href: "/equipe", icon: Users },
     ],
   },
 ];
