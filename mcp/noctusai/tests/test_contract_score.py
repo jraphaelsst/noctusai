@@ -136,6 +136,24 @@ def test_retorno_filtra_qualquer_valor_vazado(private):
     assert out["verdict"] == "fail"
 
 
+def test_contadores_de_lacuna_e_nao_fato_passam_o_filtro(private):
+    """The honest-comparison counters (gaps / aligned / unavailable / re-issued)
+    are numbers — they ride the whitelist so the owner sees them next to the
+    divergence count; a value-shaped extra next to them still does not."""
+    _plantar_deal(private, "101", texto="Texto.")
+    resumo = {
+        "veredito": "incompleto", "numeros_divergentes": 3, "datas_divergentes": 1,
+        "numeros_alinhados": 4, "datas_alinhadas": 1, "dados_indisponiveis": 5, "assinatura_excluidos": 6,
+        "certidoes_lacuna": 7, "certidoes_extras": 2, "certidoes_reemitidas": 8, "valor_vazado": CPF_FAKE,
+    }
+    out = cs.contract_score(cards_path=_cards(private, ["101"]), worktree_path=WORKTREE, runner=_Runner({"101": resumo}))
+    deal = out["deals"]["101"]
+    for chave in ("numeros_alinhados", "datas_alinhadas", "dados_indisponiveis", "assinatura_excluidos",
+                  "certidoes_lacuna", "certidoes_extras", "certidoes_reemitidas"):
+        assert deal[chave] == resumo[chave]
+    assert CPF_FAKE not in json.dumps(out)
+
+
 def test_numeros_filtra_e_sem_deals(private):
     out = cs.contract_score(cards=[{"numero": "9", "cliente_id": "x"}], numeros=["8"], worktree_path=WORKTREE, runner=_Runner({}))
     assert out == {"status": "no_deals", "deals": {}, "deals_skipped": []}

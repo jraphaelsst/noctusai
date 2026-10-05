@@ -72,6 +72,9 @@ _CHAVES_NUMERICAS = (
     "secoes_ref", "secoes_gerado", "secoes_alinhadas", "clausulas_faltando", "clausulas_extras", "clausulas_desligadas",
     "clausulas_explicadas_allowlist", "numeros_divergentes", "datas_divergentes", "lacunas",
     "numeros_em_lacuna", "allowlist_aplicadas", "allowlist_pendentes", "campos_marcados", "lint_achados",
+    # honest-comparison counters (2026-10-05): gaps and non-facts, reported apart from divergences
+    "numeros_alinhados", "datas_alinhadas", "dados_indisponiveis", "assinatura_excluidos",
+    "certidoes_lacuna", "certidoes_extras", "certidoes_reemitidas",
 )
 _CHAVES_CODIGO = ("veredito", "veredito_texto", "render_modo", "render_erro", "erro")
 _GAPS_CHAVES = (

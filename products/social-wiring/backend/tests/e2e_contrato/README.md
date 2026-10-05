@@ -87,6 +87,31 @@ false — e.g. intermediação with no corretagem data; `numeracao.
 CLAUSULA_CONDICIONAL`) is reported as `clausulas_desligadas`, a DATA gap
 (verdict `incompleto`), never as a missing-clause failure.
 
+## Honest comparison — what is NOT a divergence (2026-10-05 audit)
+
+The divergence-email study found ~56 % of extraction "divergences" were
+formatting-only or noise. The scorer is held to the same bar: a number/date
+counts as a DIVERGENCE only when the generated text states a different FACT.
+Everything else is normalised away or counted apart (`Scorecard.resumo()`):
+
+| Class | Handling |
+|---|---|
+| FORMAT (`R$ 5.000,00`/`5000`, CPF/CNPJ/CEP punctuation, `14/09/2026` vs extenso, `Parcela 01` vs `1`, `170,00m2` vs `170,000 m²`, RG with/without check digit, `59 884 041`, registry-number separators) | normalised in `extrair_numeros` before comparing (RG via the seed `identificador` registry) |
+| EXTRACTION/LAYOUT ARTIFACT (e-mail digits, list enumerators, `itens 1.7, 1.9` cross-references, `__31__` fill-in blanks, PDF-glued certidão items) | stripped / split before tokenising |
+| ALIGNMENT (a repeated mention, or the value stated in another clause) | distinct values per section; a specific value present elsewhere on the other side = `numeros_alinhados`/`datas_alinhadas` (a bare small number gets no such benefit) |
+| GAP (marker/sentinel) | typed: `CPF [[LACUNA]]` absorbs a missing CPF only — never an RG the render printed wrong (`numeros_em_lacuna`) |
+| GAP (certidão the card does not carry) | `certidoes_lacuna` — out of numbers, wording and the certidões ratio; verdict `incompleto` |
+| DATA-UNAVAILABLE (favorecido bank account) | `dados_indisponiveis` — expected gap; bank data the render prints wrong still diverges |
+| Render-time (signing-date line, identifier kinds only one block prints) | `assinatura_excluidos` |
+| Newer certidão (same kind/person, other identifier AND emission date) | `certidoes_reemitidas` — counted, not failed |
+| Certidão the render lists and the signed text does not | `certidoes_extras` — lowers the `certidoes` ratio (printed-and-listed kinds) |
+
+Kept strict (still divergences): a different value, a different date, a
+different installment→amount pair (`parcela:N=valor` tokens), a different RG,
+a different identifier on the same certidão emission date, an area written
+with a pt-BR thousands dot where the signed text has a decimal comma.
+Certidões are paired by person then kind, never by position.
+
 ## What "provenance" means here
 
 `gaps` cross-references each `faltando` item against

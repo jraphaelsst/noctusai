@@ -140,7 +140,10 @@ def test_scorecard_cpf_inexplicado_reprova():
 
 
 def test_scorecard_data_inexplicada_reprova():
-    gerado = _troca(_REF, "14 de setembro de 2026", "15 de setembro de 2026")
+    """A certidão's emission date is a fact: one day off → fail (one missing,
+    one extra). (The signing-date line is NOT such a fact — see
+    `test_data_de_assinatura_nao_e_divergencia`.)"""
+    gerado = _troca(_REF, "SIM-0006 - emitida em 01/09/2026", "SIM-0006 - emitida em 02/09/2026")
     card = comparador.pontuar(_REF, gerado)
     assert card.veredito == "reprovado"
     assert card.datas_divergentes == 2
@@ -241,11 +244,44 @@ def test_scorecard_lacuna_nao_mascara_outro_erro():
     assert comparador.pontuar(_REF, gerado).veredito == "reprovado"
 
 
-def test_scorecard_certidao_faltando_reprova():
+def test_scorecard_certidao_que_o_cartao_nao_tem_e_lacuna():
+    """The generator prints the certidões the CARD carries. A signed-text
+    certidão with no counterpart is a data gap (`incompleto`) — counted apart,
+    never a divergence and never a drag on the certidões ratio or on wording."""
     gerado = [p for p in _REF if not p.startswith("1.2 ")]
     card = comparador.pontuar(_REF, gerado)
-    assert card.categorias["certidoes"] == pytest.approx(0.5)
+    assert card.certidoes_lacuna == 1
+    assert card.categorias["certidoes"] == 1.0
+    assert card.numeros_divergentes == 0 and card.datas_divergentes == 0
+    assert card.veredito == "incompleto", card.motivos()
+    assert card.resumo()["certidoes_lacuna"] == 1
+
+
+def test_scorecard_certidao_inventada_reprova():
+    """A certidão KIND the signed text does not list is a fact the generated
+    contract states on its own: the ratio of printed-and-listed kinds drops."""
+    gerado = list(_REF)
+    gerado.insert(10, "1.3 – Certidão Negativa de Débitos Municipais – nº SIM-0009 - emitida em 01/09/2026;")
+    card = comparador.pontuar(_REF, gerado)
+    assert card.categorias["certidoes"] == pytest.approx(2 / 3)
     assert "certidoes_abaixo_do_limiar" in card.motivos()
+    assert card.certidoes_extras == 1
+
+
+def test_scorecard_identificador_de_certidao_diferente_reprova():
+    gerado = _troca(_REF, "SIM-0002", "SIM-0003")
+    card = comparador.pontuar(_REF, gerado)
+    assert card.veredito == "reprovado"
+    assert card.numeros_divergentes == 2
+
+
+def test_scorecard_itens_de_certidao_colados_pelo_pdf():
+    """A PDF text layer glues two list items into one paragraph: still two items."""
+    ref = list(_REF)
+    ref[8:10] = [ref[8] + " " + ref[9]]
+    card = comparador.pontuar(ref, list(_REF))
+    assert card.numeros_divergentes == 0 and card.datas_divergentes == 0, card.detalhe()["secoes"]
+    assert card.veredito == "aprovado", card.motivos()
 
 
 def test_scorecard_resumo_sem_valores():
@@ -339,3 +375,219 @@ def test_clausula_desligada_nao_cobre_outra_clausula():
     card = comparador.pontuar(_REF, gerado, clausulas_desligadas=["DA INTERMEDIAÇÃO"])
     assert card.clausulas_faltando == ["clausula:do preco"]
     assert card.veredito == "reprovado"
+
+
+# ─── honest comparison (2026-10-05 audit) ───────────────────────────────
+#
+# The divergence-email lesson (~56 % of "divergences" were formatting /
+# alignment / low-confidence noise) applied to the scorer. Each test pairs a
+# FALSE class (must no longer count) with the TRUE twin (must still count).
+# Every value is invented.
+
+
+def _doc(*corpo: str) -> list[str]:
+    """A minimal instrument: preamble + one clause (+ the caller's lines)."""
+    return ["INSTRUMENTO DE TESTE", "De um lado, FULANO DE TAL, brasileiro.", "CLÁUSULA PRIMEIRA – DO OBJETO", *corpo]
+
+
+def _sem_divergencia(ref: list[str], gerado: list[str]) -> comparador.Scorecard:
+    card = comparador.pontuar(ref, gerado)
+    assert card.numeros_divergentes == 0 and card.datas_divergentes == 0, card.detalhe()["secoes"]
+    return card
+
+
+@pytest.mark.parametrize(
+    "ref,gerado",
+    [
+        # identifiers: punctuation is format
+        ("CPF 111.444.777-35.", "CPF 11144477735."),
+        ("CEP: 01310-100.", "CEP: 01310- 100."),
+        ("CNPJ 11.222.333/0001-81.", "CNPJ 11222333000181."),
+        # money / areas / decimals
+        ("área de 170,00m2 e 7,07 m.", "área de 170,000 m² e 7,07m."),
+        ("fração ideal 0,745556%.", "fração ideal 0,7455560%."),
+        ("pagará R$ 470.000,00 (470.000,00 mil reais).", "pagará R$ 470.000,00 (quatrocentos e setenta mil reais)."),
+        # dates: numeric vs extenso
+        ("emitida em 01/09/2026.", "emitida em 1º de setembro de 2026."),
+        # leading zeros, ordinals, thousand dots, spaced groups
+        ("Parcela 01 e contrato nº 0430.", "Parcela 1 e contrato nº 430."),
+        ("matrícula 86.743 e 2º ofício.", "matrícula 86743 e 2 ofício."),
+        ("raiz 59.884.041.", "raiz 59 884 041."),
+        ("inscrição 23253.41.85.0055.0000.", "inscrição 23253-41-85-0055-0000."),
+        ("protocolo 449220 / 2026.", "protocolo 449220/2026."),
+        # fill-in blanks of the template
+        ("lote número 31, quadra 26.", "lote número __31____, quadra __26__."),
+    ],
+)
+def test_formato_nao_e_divergencia(ref, gerado):
+    _sem_divergencia(_doc(ref), _doc(gerado))
+
+
+@pytest.mark.parametrize(
+    "ref,gerado",
+    [
+        ("CPF 111.444.777-35.", "CPF 111.444.777-36."),
+        ("área de 170,00m2.", "área de 17,00m2."),
+        ("área de 11,500m2.", "área de 11.500m2."),  # pt-BR reads the dot as thousands: another figure
+        ("fração ideal 0,745556%.", "fração ideal 0,7455506%."),
+        ("lote número 31.", "lote número 32."),
+        ("emitida em 01/09/2026.", "emitida em 02/09/2026."),
+        ("CEP: 01310-100.", "CEP: 08310-100."),
+    ],
+)
+def test_valor_diferente_continua_divergindo(ref, gerado):
+    card = comparador.pontuar(_doc(ref), _doc(gerado))
+    assert card.numeros_divergentes + card.datas_divergentes >= 2, ref
+
+
+def test_rg_sem_digito_verificador_e_o_mesmo_rg():
+    """The signed text omits the RG check digit; the SP check digit is
+    deterministic (seed identifier registry), so it is the SAME identifier. A
+    different number is still a divergence."""
+    ref = _doc("portador do RG 12.345.678-SSP-SP.")
+    _sem_divergencia(ref, _doc("portador do RG 12.345.678-2-SSP-SP."))
+    errado = comparador.pontuar(ref, _doc("portador do RG 12.345.679-SSP-SP."))
+    assert errado.numeros_divergentes == 2
+
+
+def test_email_enumerador_e_referencia_de_item_nao_sao_numeros():
+    ref = _doc("e-mail fulano.2@exemplo.test.", "1.10 – Item de lista.", "Esclarecimentos sobre os itens 1.7, 1.9 e 2.10.")
+    gerado = _doc("e-mail teste-p3-876@exemplo.test.", "1.9 – Item de lista.")
+    _sem_divergencia(ref, gerado)
+
+
+def test_mencao_em_outra_clausula_e_alinhamento():
+    """The same (specific) value, stated in another clause, is alignment — counted,
+    not a wrong fact. A bare small number moved around is NOT given that benefit."""
+    ref = ["INSTRUMENTO DE TESTE", "CLÁUSULA PRIMEIRA – DO OBJETO", "Imóvel de matrícula 86.743.", "CLÁUSULA SEGUNDA – DO PREÇO", "Preço de R$ 500.000,00."]
+    gerado = ["INSTRUMENTO DE TESTE", "CLÁUSULA PRIMEIRA – DO OBJETO", "Imóvel.", "CLÁUSULA SEGUNDA – DO PREÇO", "Preço de R$ 500.000,00 (matrícula 86.743)."]
+    card = comparador.pontuar(ref, gerado)
+    assert card.numeros_divergentes == 0
+    assert card.numeros_alinhados == 2
+
+    pequeno_ref = ["INSTRUMENTO DE TESTE", "CLÁUSULA PRIMEIRA – DO OBJETO", "Apartamento 81.", "CLÁUSULA SEGUNDA – DO PREÇO", "Preço certo, vaga 81."]
+    pequeno_gen = ["INSTRUMENTO DE TESTE", "CLÁUSULA PRIMEIRA – DO OBJETO", "Apartamento.", "CLÁUSULA SEGUNDA – DO PREÇO", "Preço certo, vaga 81."]
+    assert comparador.pontuar(pequeno_ref, pequeno_gen).numeros_divergentes == 1
+
+
+def test_valor_repetido_so_na_referencia_nao_e_divergencia_mas_o_valor_trocado_e():
+    """A value the signed text repeats in extra paragraphs is one fact (distinct
+    values per section, not occurrence counts)."""
+    ref = _doc("Pagará R$ 760.000,00.", "Parágrafo Primeiro: no mínimo R$ 760.000,00.", "Parágrafo Segundo: R$ 760.000,00 em 60 dias.")
+    gerado = _doc("Pagará R$ 760.000,00.", "Parágrafo Primeiro: no mínimo R$ 760.000,00.", "Parágrafo Segundo: em 60 dias.")
+    _sem_divergencia(ref, gerado)
+    assert comparador.pontuar(ref, _troca(gerado, "R$ 760.000,00.", "R$ 761.000,00.")).numeros_divergentes > 0
+
+
+def test_parcela_com_outro_valor_diverge_mesmo_com_os_mesmos_valores():
+    """Two amounts swapped between installments pass a bare set-of-values
+    comparison — the installment→amount pair is a fact of its own."""
+    ref = _doc("Parcela 01: R$ 50.000,00 no ato.", "Parcela 02: R$ 400.000,00 na assinatura.")
+    gerado = _doc("Parcela 01: R$ 400.000,00 na assinatura.", "Parcela 02: R$ 50.000,00 no ato.")
+    card = comparador.pontuar(ref, gerado)
+    assert card.numeros_divergentes == 4  # two pairs missing, two extra
+    _sem_divergencia(ref, list(ref))
+
+
+def test_lacuna_tipada_nao_esconde_rg_errado():
+    """A `[[LACUNA]]` after `CPF` stands for a CPF — it must not absorb the
+    divergence of an RG the render printed WRONG."""
+    ref = _doc("RG 12.345.678-2 e CPF 111.444.777-35.")
+    gerado = _doc(f"RG 87.654.321-0 e CPF {comparador.MARCADOR_LACUNA}.")
+    card = comparador.pontuar(ref, gerado)
+    assert card.resumo()["numeros_em_lacuna"] == 1  # the CPF
+    assert card.numeros_divergentes == 2  # the wrong RG: one missing + one extra
+    assert card.veredito == "reprovado"
+
+
+def test_dados_bancarios_do_favorecido_sao_lacuna_esperada():
+    """The owner cannot supply the favorecido's bank account: the signed
+    sentence's CPF/banco/agência/conta are an expected gap (`incompleto`) — not
+    a divergence and not a wording failure. Bank details the render DOES print
+    but wrong still diverge."""
+    banco = "em favor do VENDEDOR: Fulano de Tal, CPF: 111.444.777-35, Banco 341, Agência 3767, Conta Corrente 24564-4, operando-se a quitação."
+    ref = _doc("Parcela 01: R$ 100.000,00 por TED " + banco)
+    gerado = _doc("Parcela 01: R$ 100.000,00 por TED operando-se a quitação.")
+    card = comparador.pontuar(ref, gerado)
+    assert card.numeros_divergentes == 0, card.detalhe()["secoes"]
+    assert card.dados_indisponiveis >= 4
+    assert card.veredito == "incompleto", card.motivos()
+    assert card.categorias["redacao"] > 0.95
+    errado = _troca(ref, "Agência 3767", "Agência 9999")
+    com_banco_errado = comparador.pontuar(errado, _doc("Parcela 01: R$ 100.000,00 por TED " + banco))
+    assert com_banco_errado.numeros_divergentes == 2 and com_banco_errado.dados_indisponiveis == 0
+
+
+def test_bloco_de_assinatura_data_de_render_e_tipos_de_identificador():
+    """The signing-date line carries the RENDER date, and the signed block
+    lists witness RGs where the render lists CPFs: neither is a wrong fact."""
+    ref = _doc("Corpo.", "Cidade Exemplo, 14 de setembro de 2026.", "TESTEMUNHAS", "BELTRANA DE TAL RG 12.345.678-2")
+    gerado = _doc("Corpo.", "Cidade Exemplo, 05 de outubro de 2026.", "TESTEMUNHAS:", "BELTRANA DE TAL CPF 111.444.777-35")
+    card = _sem_divergencia(ref, gerado)
+    assert card.assinatura_excluidos >= 3
+    # …but an identifier kind BOTH blocks print is compared strictly
+    ref2 = _doc("Corpo.", "Cidade Exemplo, 14 de setembro de 2026.", "BELTRANA DE TAL CPF 111.444.777-35")
+    gen2 = _doc("Corpo.", "Cidade Exemplo, 05 de outubro de 2026.", "BELTRANA DE TAL CPF 111.444.777-36")
+    assert comparador.pontuar(ref2, gen2).numeros_divergentes == 2
+
+
+def test_data_de_assinatura_nao_e_divergencia():
+    gerado = _troca(_REF, "14 de setembro de 2026", "15 de setembro de 2026")
+    card = comparador.pontuar(_REF, gerado)
+    assert card.datas_divergentes == 0
+    assert card.assinatura_excluidos == 2
+    assert card.veredito == "aprovado", card.motivos()
+
+
+def _cert(pessoa: str, *itens: str) -> list[str]:
+    return [f"CLÁUSULA TERCEIRA – DAS CERTIDÕES", f"1 - Em nome de {pessoa}", *itens]
+
+
+def test_certidao_reemitida_e_esperada_nao_falha():
+    """Same kind, same person, another identifier AND another emission date:
+    the card holds a NEWER certidão than the signed text listed."""
+    ref = _doc("Texto.") + _cert("BELTRANA DE TAL", "1.1 – Certidão Negativa Federal – nº AAA-0001 - emitida em 01/09/2026;")
+    gerado = _doc("Texto.") + _cert("BELTRANA DE TAL", "1.1 – Certidão Negativa Federal – nº AAA-0002 - emitida em 20/09/2026;")
+    card = _sem_divergencia(ref, gerado)
+    assert card.resumo()["certidoes_reemitidas"] == 1
+    # the same emission date with another identifier is a wrong fact
+    mesmo_dia = _doc("Texto.") + _cert("BELTRANA DE TAL", "1.1 – Certidão Negativa Federal – nº AAA-0002 - emitida em 01/09/2026;")
+    assert comparador.pontuar(ref, mesmo_dia).numeros_divergentes == 2
+
+
+def test_certidoes_pareadas_por_pessoa_e_nao_por_posicao():
+    """Persons listed in another order still pair person-to-person; a person
+    the card has no certidão for is a GAP, a person only the render lists is an
+    extra (lowers the ratio) — neither inflates number divergences."""
+    a = "1.1 – Certidão Negativa Federal – nº AAA-0001 - emitida em 01/09/2026;"
+    b = "2.1 – Certidão Negativa Federal – nº BBB-0002 - emitida em 01/09/2026;"
+    ref = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a, "2 - Em nome de CICRANO DE TAL", b]
+    gerado = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de CICRANO DE TAL", b.replace("2.1", "1.1"), "2 - Em nome de BELTRANA DE TAL", a.replace("1.1", "2.1")]
+    card = _sem_divergencia(ref, gerado)
+    assert card.categorias["certidoes"] == 1.0 and card.certidoes_lacuna == 0
+    so_um = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a]
+    card_gap = comparador.pontuar(ref, so_um)
+    assert card_gap.certidoes_lacuna == 1 and card_gap.numeros_divergentes == 0 and card_gap.veredito == "incompleto"
+    extra = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a, "2 - Em nome de FULANO ESTRANHO", b]
+    card_extra = comparador.pontuar(_doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a], extra)
+    assert card_extra.certidoes_extras == 1 and card_extra.numeros_divergentes == 0
+    assert card_extra.categorias["certidoes"] == pytest.approx(0.5)
+
+
+def test_redacao_nao_e_arrastada_por_certidao_sem_contraparte():
+    """Reference certidões the card does not carry are out of the wording score
+    (they used to read as 'missing words' and sink the clause)."""
+    muitas = [f"1.{i} – Certidão Negativa Tipo{chr(96 + i)} – nº ZZ-{i:04d} - emitida em 01/09/2026;" for i in range(1, 9)]
+    ref = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", *muitas]
+    gerado = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", muitas[0]]
+    card = comparador.pontuar(ref, gerado)
+    secao = next(s for s in card.detalhe()["secoes"] if "certid" in s["chave"])
+    assert secao["redacao"] > 0.95 and card.certidoes_lacuna == 7
+    assert card.categorias["certidoes"] == 1.0
+
+
+def test_email_nao_conta_como_palavra():
+    """A test card carries stand-in e-mail addresses: wording must not read them."""
+    ref = _doc("com endereço eletrônico: fulano.real@exemplo.test, residente em Cidade.")
+    gerado = _doc("com endereço eletrônico: teste-p3-1@exemplo.test, residente em Cidade.")
+    assert comparador.pontuar(ref, gerado).categorias["redacao"] == 1.0

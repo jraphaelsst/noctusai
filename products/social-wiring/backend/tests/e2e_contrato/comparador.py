@@ -45,9 +45,10 @@ import difflib
 import json
 import re
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Optional
 
@@ -180,9 +181,11 @@ def comparar(ref_paragrafos: list[str], gerado_paragrafos: list[str]) -> Resulta
 #   sections are aligned by title;
 # - every aligned section is scored on WORDING (word-level similarity, digits
 #   masked — numbers are judged separately and exactly);
-# - NUMBERS (CPF/CNPJ/CEP/R$/matrícula/protocol/any digit run) and DATES are
-#   compared as multisets per section — EXACT: one unexplained number that is
-#   present on one side and not the other fails the deal;
+# - NUMBERS (CPF/CNPJ/CEP/R$/RG/matrícula/protocol/any digit run) and DATES are
+#   compared as DISTINCT NORMALISED VALUES per section — EXACT on the fact (one
+#   value present on one side and not the other, anywhere in the document,
+#   fails the deal) but blind to format, layout and repetition: see
+#   `pontuar`'s "HONEST COMPARISON" note for what is NOT a divergence;
 # - categories: estrutura (clauses present, by title) · qualificacao
 #   (preamble wording) · matricula (the `IMÓVEL:` quote) · certidoes (the
 #   certidão item labels) · redacao (every aligned section) · numeros · datas;
@@ -241,9 +244,39 @@ _DATA_NUM_RE = re.compile(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b")
 _DATA_EXT_RE = re.compile(r"\b(\d{1,2})º?\s+de\s+([A-Za-zçÇ]+)\s+de\s+(\d{4})\b", re.I)
 _VALOR_RE = re.compile(r"R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})", re.I)
 _CNPJ_RE = re.compile(r"\b\d{2}\.?\d{3}\.?\d{3}/?\d{4}-?\d{2}\b")
-_CPF_RE = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b|\b\d{11}\b")
+#: Lookarounds keep the bare-11-digit alternative from biting the first eleven
+#: digits of a longer run — a certidão number printed `26071227382-22` is NOT a CPF.
+_CPF_RE = re.compile(r"\b\d{3}\.?\d{3}\.?\d{3}-\d{2}\b|(?<![\d.\-/])\d{11}(?![\d.\-/]\d)")
 _CEP_RE = re.compile(r"\b\d{2}\.?\d{3}-\d{3}\b")
-_GENERICO_RE = re.compile(r"\d[\w.,/\-]*\d|\d")
+#: An RG as printed in a qualification (`RG 12.345.678-9-SSP-SP`, check digit
+#: optional, issuing body after). Compared by its canonical form — the seed's
+#: identifier registry completes the SP check digit — so a signed text that
+#: omits the DV is the SAME identifier, while a different number is not.
+_RG_RE = re.compile(
+    r"\brg\s*(?:n[ºo°.]{0,2}\s*)?[:.]?\s*(\d[\d.]*\d(?:\s*-\s*[\dx]{1,2}(?![a-z\d]))?)(?![\d.])",
+    re.I,
+)
+#: Alphanumeric control code (`B522.9C56.7777.FDCE`) — may START with a letter.
+_CODIGO_RE = re.compile(r"\b(?:[0-9A-Z]{4}\.){3}[0-9A-Z]{4}\b", re.I)
+#: Anything else with a digit: letters/dots/slashes/hyphens allowed inside
+#: (`2026/000004604087`, `485E.1210.621C.0236`), the last char alphanumeric.
+_GENERICO_RE = re.compile(r"\d[\w.,/\-]*\w|\d")
+#: `Parcela 02: … R$ 400.000,00` — WHICH installment carries WHICH amount is a
+#: fact of its own (two amounts swapped between installments pass a bare
+#: set-of-values comparison), so the pair is a token too.
+_PARCELA_RE = re.compile(r"(?m)^[ \t]*parcela[ \t]+0*(\d+)[ \t]*:[^\n]*?R\$[ \t]*(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})", re.I)
+_EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
+#: A list enumerator at the start of a line (`1.10 –`, `3 -`, `2)`): layout, not a fact.
+_ENUMERADOR_RE = re.compile(r"(?m)^[ \t]*\d+(?:\.\d+)*[ \t]*(?:[–\-—][ \t]+|\)[ \t]*)(?=[^\d\s])")
+#: `R$ 470.000,00 (470.000,00 mil reais)` — a parenthesis that restates the
+#: number right before it (a typo'd extenso) is the same fact, not a second one.
+_PAREN_REPETE_RE = re.compile(r"(\d[\d.,]*\d)\s*\(\s*\1(?!\d)[^)]*\)")
+_ITEM_NUMERADO_RE = re.compile(r"^\d+\.\d+\s*[–\-—]?\s*(.+)$")
+#: kinds whose value is an IDENTIFIER of a person (compared in the signature
+#: block only when BOTH texts print that kind — see `pontuar`).
+_TIPOS_IDENTIFICADOR = ("cpf:", "rg:", "cnpj:")
+_BANCARIO_GATE_RE = re.compile(r"ag[eê]ncia|conta corrente|chave pix")
+_BANCARIO_SEGMENTO_RE = re.compile(r"(?:em favor d[oa]s?\s+[^:.;]{0,60}:|\bbanco\b).*?(?=operando-se|\.\s|\.$|$)")
 
 
 def _dobrar(texto: str) -> str:
@@ -451,15 +484,73 @@ def _data_iso(d: str, m: str, a: str) -> Optional[str]:
         return None
 
 
+def _rg_canonico(bruto: str) -> str:
+    """Canonical digits of an RG — the seed's identifier registry completes the
+    SP check digit, so `12.345.678` and `12.345.678-9` are one identifier.
+    Falls back to the raw alphanumerics when the registry does not know it."""
+    alnum = re.sub(r"[^0-9Xx]", "", bruto).upper()
+    try:
+        from noctusai_lib.primitives import identificador
+
+        canonico = identificador.canonico("rg", alnum)
+    except Exception:  # noqa: BLE001 — comparison form only; the raw digits still compare exactly
+        canonico = None
+    return re.sub(r"[^0-9X]", "", canonico or alnum)
+
+
+def _canon_generico(token: str) -> Optional[str]:
+    """One canonical form for a digit-bearing token: `170,00`/`170,000`/
+    `170,0` → the same decimal; `86.743` → `86743`; leading zeros of every
+    digit run dropped (`04`, `0430`, `000055` ≡ `4`, `430`, `55`); a 4+-group
+    registry number reads the same whatever its separators (`23253.41.85.0055.0000`
+    ≡ `23253-41-85-0055-0000`). `None` for an outline reference (`1.10`,
+    `2.9` — a position in the document's own numbering, not a fact)."""
+    token = token.rstrip(".,;-/")
+    if re.fullmatch(r"\d{1,2}\.\d{1,2}", token):
+        return None
+    if re.search(r"[A-Za-z]", token):  # alphanumeric control code: compared verbatim
+        return "cod:" + token.upper()
+    if re.fullmatch(r"\d{1,3}(?:\.\d{3})*,\d+|\d+,\d+", token):
+        try:
+            valor = Decimal(token.replace(".", "").replace(",", ".")).normalize()
+            return "dec:" + format(valor, "f")
+        except InvalidOperation:
+            pass
+    token = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", token)
+    if "/" not in token and len(re.split(r"[.\-]", token)) >= 4:
+        token = ".".join(re.split(r"[.\-]", token))
+    return "num:" + re.sub(r"\d+", lambda m: m.group(0).lstrip("0") or "0", token)
+
+
+def _preparar_para_numeros(texto: str) -> str:
+    """Layout/format noise that is never a fact, removed BEFORE tokenising:
+    e-mail addresses (their digits are not numbers), list enumerators,
+    whitespace broken inside a number (`06706- 165`, `449220 / 2026`), ordinal
+    indicators and area units glued to a digit, and a parenthesis that merely
+    repeats the number before it."""
+    texto = _EMAIL_RE.sub(" ", texto)
+    texto = _ENUMERADOR_RE.sub("", texto)
+    texto = re.sub(r"(?<=\d)[ \t]*/[ \t]*(?=\d)", "/", texto)
+    texto = re.sub(r"(?<=\d)-[ \t]+(?=\d)", "-", texto)
+    texto = re.sub(r"(?<=\d)[ \t]+-(?=\d)", "-", texto)
+    texto = re.sub(r"(?<=\d)[ \t]*[ªº°]", "", texto)
+    texto = re.sub(r"(?<=\d)[ao](?![a-z0-9])", "", texto)  # the same ordinal after case/accent folding (`2º` → `2o`)
+    texto = re.sub(r"\b(\d{1,3})((?: \d{3}){2,})\b", lambda m: m.group(1) + m.group(2).replace(" ", ""), texto)  # `59 884 041`
+    texto = re.sub(r"_+", " ", texto)  # fill-in blanks (`__31__`) are layout, never part of a number
+    texto = re.sub(r"(?<=\d)[ \t]*m[²2]?(?![\w²])", "", texto, flags=re.I)  # `7,07m`, `126,0m2`, `85 m²`
+    return _PAREN_REPETE_RE.sub(r"\1", texto)
+
+
 def extrair_numeros(texto: str) -> tuple[Counter, Counter]:
     """`(datas, numeros)` — multisets of NORMALISED tokens. Dates (numeric or
     "14 de setembro de 2026") become ISO; R$ values a canonical decimal;
-    CPF/CNPJ/CEP digits only; any other digit run its literal form minus
-    trailing punctuation. Each token is prefixed with its kind so a value
-    that moved between kinds still differs."""
+    CPF/CNPJ/CEP digits only; RG its canonical form; any other digit run its
+    canonical literal (decimals unified, zero-padding and thousand dots
+    dropped). Each token is prefixed with its kind so a value that moved
+    between kinds still differs."""
     datas: Counter = Counter()
     numeros: Counter = Counter()
-    resto = texto
+    resto = _preparar_para_numeros(texto)
 
     def _tira(regex: re.Pattern, fn) -> None:
         nonlocal resto
@@ -483,16 +574,19 @@ def extrair_numeros(texto: str) -> tuple[Counter, Counter]:
         if iso:
             datas["data:" + iso] += 1
         else:
-            numeros["num:" + m.group(1)] += 1
-            numeros["num:" + m.group(3)] += 1
+            numeros.update(t for t in (_canon_generico(m.group(1)), _canon_generico(m.group(3))) if t)
 
+    for m in _PARCELA_RE.finditer(resto):
+        numeros["parcela:" + m.group(1) + "=" + m.group(2).replace(".", "").replace(",", ".")] += 1
     _tira(_DATA_NUM_RE, _data_num)
     _tira(_DATA_EXT_RE, _data_ext)
     _tira(_VALOR_RE, lambda m: numeros.update(["valor:" + m.group(1).replace(".", "").replace(",", ".")]))
+    _tira(_RG_RE, lambda m: numeros.update(["rg:" + _rg_canonico(m.group(1))]))
+    _tira(_CODIGO_RE, lambda m: numeros.update(["cod:" + m.group(0).upper()]))
     _tira(_CNPJ_RE, lambda m: numeros.update(["cnpj:" + re.sub(r"\D", "", m.group(0))]))
     _tira(_CPF_RE, lambda m: numeros.update(["cpf:" + re.sub(r"\D", "", m.group(0))]))
     _tira(_CEP_RE, lambda m: numeros.update(["cep:" + re.sub(r"\D", "", m.group(0))]))
-    _tira(_GENERICO_RE, lambda m: numeros.update(["num:" + m.group(0).rstrip(".,;-/")]))
+    _tira(_GENERICO_RE, lambda m: numeros.update(t for t in [_canon_generico(m.group(0))] if t))
     return datas, numeros
 
 
@@ -501,27 +595,31 @@ def _palavras(texto: str) -> list[str]:
     to `#` (numbers are judged exactly elsewhere), the gap marker kept as a
     single recognisable token."""
     texto = _LACUNA_RE.sub(f" {_TOKEN_LACUNA} ", texto)
+    texto = _EMAIL_RE.sub(" ", texto)  # an address is data (test cards carry stand-ins), not wording
     texto = re.sub(r"\d[\d.,/\-]*", "#", _dobrar(texto))
     return re.findall(r"[a-z_#]+", texto)
 
 
-def _similaridade_palavras(ref: str, gen: str) -> tuple[float, int]:
-    """`(ratio, palavras_em_lacuna)` — SequenceMatcher ratio over word lists,
+def _contar_palavras(ref: str, gen: str) -> tuple[int, int, int]:
+    """`(iguais, total, palavras_em_lacuna)` — SequenceMatcher over word lists,
     EXCLUDING every non-equal block whose generated side contains the gap
-    marker (what the marker stands in for is a gap, not a wording diff)."""
+    marker (what the marker stands in for is a gap, not a wording diff).
+    `total` is already net of the excluded words."""
     a, b = _palavras(ref), _palavras(gen)
-    if not a and not b:
-        return 1.0, 0
     sm = difflib.SequenceMatcher(None, a, b, autojunk=False)
     iguais = 0
-    total = len(a) + len(b)
     em_lacuna = 0
     for tag, i1, i2, j1, j2 in sm.get_opcodes():
         if tag == "equal":
             iguais += i2 - i1
         elif _TOKEN_LACUNA in b[j1:j2]:
             em_lacuna += (i2 - i1) + (j2 - j1)
-    total -= em_lacuna
+    return iguais, len(a) + len(b) - em_lacuna, em_lacuna
+
+
+def _similaridade_palavras(ref: str, gen: str) -> tuple[float, int]:
+    """`(ratio, palavras_em_lacuna)` — the Dice ratio of `_contar_palavras`."""
+    iguais, total, em_lacuna = _contar_palavras(ref, gen)
     if total <= 0:
         return 1.0, em_lacuna
     return (2.0 * iguais) / total, em_lacuna
@@ -550,6 +648,25 @@ class ResultadoSecao:
     datas_extras: list[str] = field(default_factory=list)
     lacunas: int = 0  #: marker occurrences in the generated section
     numeros_em_lacuna: int = 0
+    #: Tokens that differ in THIS section but whose value is present on the other
+    #: side elsewhere in the document (a mention moved/repeated, not a wrong fact).
+    numeros_alinhados: int = 0
+    datas_alinhadas: int = 0
+    #: Reference tokens the owner cannot supply in this test (favorecido bank
+    #: details) and the generated text therefore lacks — an expected gap.
+    dados_indisponiveis: int = 0
+    #: Signature-block identifiers / signing date left out of the comparison
+    #: (the generated block prints other identifier kinds / the render date).
+    assinatura_excluidos: int = 0
+    #: Reference certidão items the generated text has no counterpart for (the
+    #: card carries no such certidão — it can only print what it has).
+    certidoes_lacuna: int = 0
+    #: Generated certidão items the signed text does not list (the other half of
+    #: the certidões check — what the generator INVENTED rather than lacked).
+    certidoes_extras: int = 0
+    #: Paired items whose identifier AND emission date both differ — a newer
+    #: certidão than the one the signed text lists (expected, never a failure).
+    certidoes_reemitidas: int = 0
 
 
 @dataclass
@@ -569,6 +686,11 @@ class Scorecard:
     categorias: dict[str, Optional[float]] = field(default_factory=dict)
     allowlist_aplicadas: dict[str, int] = field(default_factory=dict)
     allowlist_pendentes: list[str] = field(default_factory=list)  #: present but not owner-approved
+    #: certidão items: printed by the generator · of those, with a reference
+    #: counterpart of the same label · printed by the reference.
+    certidoes_itens_gerado: int = 0
+    certidoes_itens_pareados: int = 0
+    certidoes_itens_ref: int = 0
 
     # ── derived ─────────────────────────────────────────────────────────
 
@@ -583,6 +705,40 @@ class Scorecard:
     @property
     def lacunas(self) -> int:
         return sum(r.lacunas for r in self.resultados)
+
+    @property
+    def numeros_alinhados(self) -> int:
+        return sum(r.numeros_alinhados for r in self.resultados)
+
+    @property
+    def datas_alinhadas(self) -> int:
+        return sum(r.datas_alinhadas for r in self.resultados)
+
+    @property
+    def dados_indisponiveis(self) -> int:
+        return sum(r.dados_indisponiveis for r in self.resultados)
+
+    @property
+    def assinatura_excluidos(self) -> int:
+        return sum(r.assinatura_excluidos for r in self.resultados)
+
+    @property
+    def certidoes_lacuna(self) -> int:
+        return sum(r.certidoes_lacuna for r in self.resultados)
+
+    @property
+    def certidoes_extras(self) -> int:
+        return sum(r.certidoes_extras for r in self.resultados)
+
+    @property
+    def certidoes_reemitidas(self) -> int:
+        return sum(r.certidoes_reemitidas for r in self.resultados)
+
+    @property
+    def lacunas_de_dado(self) -> int:
+        """Every kind of GAP (a card that is not complete yet) — none of it is
+        a divergence, all of it keeps the verdict from reading `aprovado`."""
+        return self.lacunas + self.dados_indisponiveis + self.certidoes_lacuna + len(self.clausulas_desligadas)
 
     def motivos(self) -> list[str]:
         """Every failed bar, as `code` or `code:count` — no values."""
@@ -618,7 +774,7 @@ class Scorecard:
         failure, but gaps — the card is not complete yet)."""
         if self.motivos():
             return "reprovado"
-        if self.lacunas or self.clausulas_desligadas:
+        if self.lacunas_de_dado:
             return "incompleto"
         return "aprovado"
 
@@ -643,6 +799,13 @@ class Scorecard:
             "datas_divergentes": self.datas_divergentes,
             "lacunas": self.lacunas,
             "numeros_em_lacuna": sum(r.numeros_em_lacuna for r in self.resultados),
+            "numeros_alinhados": self.numeros_alinhados,
+            "datas_alinhadas": self.datas_alinhadas,
+            "dados_indisponiveis": self.dados_indisponiveis,
+            "assinatura_excluidos": self.assinatura_excluidos,
+            "certidoes_lacuna": self.certidoes_lacuna,
+            "certidoes_extras": self.certidoes_extras,
+            "certidoes_reemitidas": self.certidoes_reemitidas,
             "allowlist_aplicadas": sum(self.allowlist_aplicadas.values()),
             "allowlist_pendentes": len(self.allowlist_pendentes),
         }
@@ -682,20 +845,213 @@ def _diferenca_multiset(a: Counter, b: Counter) -> tuple[list[str], list[str]]:
     return sorted((a - b).elements()), sorted((b - a).elements())
 
 
-def _item_certidao(p: str) -> Optional[str]:
-    m = _ITEM_CERTIDAO_RE.match(p)
+def _rotulo_certidao(texto: str) -> Optional[str]:
+    """The certidão KIND of one list item (`1.2 – Certidão Negativa … – nº …`):
+    its label with identifiers/dates removed. An ordinal (`1ª`/`2ª Instância`)
+    is part of the kind and survives."""
+    m = _ITEM_NUMERADO_RE.match(texto)
     if not m:
         return None
-    texto = _dobrar(m.group(1))
-    texto = re.split(r"\s[–\-—]\s*(?:n[ºo°]|protocolo)|\bn[ºo°]\s|,?\s*emitid|,?\s*expedid", texto)[0]
-    texto = re.sub(r"\d[\d.,/\-]*", "#", texto)
-    return re.sub(r"[^a-z#]+", " ", texto).strip() or None
+    bruto = re.sub(r"(\d)\s*[ªº°]", lambda o: "ord" + chr(ord("a") + int(o.group(1))), m.group(1))
+    bruto = _dobrar(bruto)
+    bruto = re.split(r"\s[–\-—]\s*(?:n[ºo°]|protocolo)|\bn[ºo°]\s|,?\s*emitid|,?\s*expedid", bruto)[0]
+    bruto = re.sub(r"\d[\d.,/\-]*", "#", bruto)
+    return re.sub(r"[^a-z#]+", " ", bruto).strip() or None
 
 
-def _sobreposicao(a: Counter, b: Counter) -> Optional[float]:
-    if not a and not b:
+_PESSOA_RE = re.compile(r"^\d+\s*[–\-—]\s*em nome de\s+(.+)$|^\d+\s*[–\-—]\s*(em rela[cç][aã]o ao im[oó]vel)", re.I)
+
+
+def _chave_pessoa(texto: str) -> Optional[str]:
+    """The person a certidão group is `Em nome de …` — letters of the first
+    three words only (a trailing CPF/`Baixada` note differs between texts)."""
+    m = _PESSOA_RE.match(_dobrar(texto))
+    if not m:
         return None
-    return sum((a & b).values()) / max(1, sum((a | b).values()))
+    if m.group(2):
+        return "imovel"
+    return " ".join(re.findall(r"[a-z]+", m.group(1))[:3])
+
+
+def _separar_itens(paragrafos: list[str]) -> tuple[list[tuple[int, str, str]], list[int]]:
+    """`([(índice, rótulo, pessoa)], [índices dos demais])` — certidão list
+    items (`n.m – …`, with the person heading they sit under) vs every other
+    paragraph of the section."""
+    itens: list[tuple[int, str, str]] = []
+    resto: list[int] = []
+    pessoa = ""
+    for i, p in enumerate(paragrafos):
+        chave = _chave_pessoa(p)
+        if chave is not None:
+            pessoa = chave
+        rotulo = _rotulo_certidao(p)
+        if rotulo:
+            itens.append((i, rotulo, pessoa))
+        else:
+            resto.append(i)
+    return itens, resto
+
+
+def _tokens_de(texto_dobrado: str) -> tuple[set, set]:
+    """DISTINCT `(numeros, datas)` of a folded text, gap sentinels removed."""
+    datas, numeros = extrair_numeros(_LACUNA_RE.sub(" ", texto_dobrado))
+    return set(numeros), set(datas)
+
+
+def _parear_itens(
+    ref_itens: list[tuple[int, str, str]],
+    ref_textos: list[str],
+    gen_itens: list[tuple[int, str, str]],
+    gen_textos: list[str],
+) -> tuple[list[tuple[int, int]], list[int], list[int]]:
+    """Pair reference and generated certidão items by KIND within the SAME
+    PERSON (a generated person name within ratio 0.75 of a reference one is
+    that person): identical identifier/date sets first, then in order. What is
+    left over pairs only on identical identifier/date sets (the same certidão
+    filed under another heading); the rest has no counterpart. A generated
+    label within 0.85 of a reference label counts as that kind. Returns
+    `(pares, ref_sem_par, gen_sem_par)` as paragraph indices."""
+    rotulos_ref = list(dict.fromkeys(r for _, r, _ in ref_itens))
+    pessoas_ref = list(dict.fromkeys(pe for _, _, pe in ref_itens))
+
+    def _mais_proximo(valor: str, candidatos: list[str], minimo: float) -> str:
+        if valor in candidatos:
+            return valor
+        melhor = max(candidatos, key=lambda x: difflib.SequenceMatcher(None, valor, x).ratio(), default=None)
+        if melhor and difflib.SequenceMatcher(None, valor, melhor).ratio() >= minimo:
+            return melhor
+        return valor
+
+    grupos_ref: dict[tuple[str, str], list[int]] = defaultdict(list)
+    grupos_gen: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for i, r, pe in ref_itens:
+        grupos_ref[(pe, r)].append(i)
+    for i, r, pe in gen_itens:
+        grupos_gen[(_mais_proximo(pe, pessoas_ref, 0.75), _mais_proximo(r, rotulos_ref, 0.85))].append(i)
+
+    pares: list[tuple[int, int]] = []
+
+    def _identicos(R: list[int], G: list[int]) -> None:
+        for i in list(R):
+            for j in list(G):
+                if _tokens_de(ref_textos[i]) == _tokens_de(gen_textos[j]):
+                    pares.append((i, j))
+                    R.remove(i)
+                    G.remove(j)
+                    break
+
+    sobras_ref: dict[str, list[int]] = defaultdict(list)
+    sobras_gen: dict[str, list[int]] = defaultdict(list)
+    for chave in list(grupos_ref) + [k for k in grupos_gen if k not in grupos_ref]:
+        R, G = list(grupos_ref.get(chave, [])), list(grupos_gen.get(chave, []))
+        _identicos(R, G)
+        while R and G:
+            pares.append((R.pop(0), G.pop(0)))
+        sobras_ref[chave[1]].extend(R)
+        sobras_gen[chave[1]].extend(G)
+    ref_livres: list[int] = []
+    gen_livres: list[int] = []
+    for rotulo in list(sobras_ref) + [k for k in sobras_gen if k not in sobras_ref]:
+        R, G = sobras_ref.get(rotulo, []), sobras_gen.get(rotulo, [])
+        _identicos(R, G)
+        ref_livres.extend(R)
+        gen_livres.extend(G)
+    return pares, ref_livres, gen_livres
+
+
+def _segmentos_bancarios(texto_dobrado: str) -> list[str]:
+    """The `em favor do VENDEDOR: <name>, CPF …, Banco …, Agência …, Conta …`
+    segments of a folded text — the favorecido's bank details."""
+    segmentos: list[str] = []
+    for linha in texto_dobrado.split("\n"):
+        if _BANCARIO_GATE_RE.search(linha):
+            segmentos.extend(m.group(0) for m in _BANCARIO_SEGMENTO_RE.finditer(linha))
+    return segmentos
+
+
+def _sem_segmentos(texto_dobrado: str, segmentos: list[str]) -> str:
+    for seg in segmentos:
+        texto_dobrado = texto_dobrado.replace(seg, " ")
+    return texto_dobrado
+
+
+def _tira_tipos(tokens: list[str], prefixos: tuple[str, ...]) -> tuple[list[str], int]:
+    mantidos = [t for t in tokens if not t.startswith(prefixos)]
+    return mantidos, len(tokens) - len(mantidos)
+
+
+def _retira_um(lista: list[str], prefixos: tuple[str, ...] = ()) -> bool:
+    """Remove ONE token (preferring `prefixos`) — a gap stands in for it."""
+    for i in range(len(lista) - 1, -1, -1):
+        if not prefixos or lista[i].startswith(prefixos):
+            lista.pop(i)
+            return True
+    return False
+
+
+_PREFIXOS_GENERICOS = ("num:", "dec:", "cod:")
+
+
+def _marcadores_tipados(texto: str) -> list[tuple[str, tuple[str, ...]]]:
+    """`[(marcador, prefixos de token que ele pode substituir)]`. A sentinel
+    names its kind (`R$ 0,01` → a value, `1900` → a date, `999` → a number);
+    the generic `[[LACUNA]]` takes it from the words right before it
+    (`CPF/MF [[LACUNA]]` → a CPF, `RG` → an RG, `CEP:` → a CEP, `emitida em` →
+    a date) and otherwise stands for a plain number — never for an identifier
+    the generated text printed (a WRONG printed RG is not a gap)."""
+    saida: list[tuple[str, tuple[str, ...]]] = []
+    for m in _LACUNA_RE.finditer(texto):
+        marcador = m.group(0).lower()
+        if "r$" in marcador:
+            saida.append((marcador, ("valor:",)))
+        elif "1900" in marcador:
+            saida.append((marcador, ("data:",)))
+        elif "999" in marcador:
+            saida.append((marcador, ("num:",)))
+        else:
+            antes = _dobrar(texto[max(0, m.start() - 24) : m.start()])
+            if re.search(r"\bcpf", antes):
+                saida.append((marcador, ("cpf:",)))
+            elif re.search(r"\brg\b", antes):
+                saida.append((marcador, ("rg:",)))
+            elif re.search(r"\bcep", antes):
+                saida.append((marcador, ("cep:",)))
+            elif re.search(r"\bcnpj", antes):
+                saida.append((marcador, ("cnpj:",)))
+            elif re.search(r"emitid|\bdata\b|\bem\s*$|datad", antes):
+                saida.append((marcador, ("data:",)))
+            else:
+                saida.append((marcador, _PREFIXOS_GENERICOS))
+    return saida
+
+
+def _absorver_lacunas(n_falt: list[str], d_falt: list[str], marcadores: list[tuple[str, tuple[str, ...]]]) -> int:
+    """Attribute each gap marker to ONE missing reference token of the kind it
+    stands for. A marker with no missing token of its kind absorbs nothing (it
+    stood for words). Returns how many were absorbed."""
+    absorvidos = 0
+    for _, prefixos in marcadores:
+        lista = d_falt if prefixos == ("data:",) else n_falt
+        absorvidos += 1 if _retira_um(lista, prefixos) else 0
+    return absorvidos
+
+
+def _realinhavel(token: str) -> bool:
+    """A token is specific enough to say "the same value is stated elsewhere":
+    anything but a bare small number (`1`, `02`, `10`)."""
+    if token.startswith("num:"):
+        return len(re.sub(r"\D", "", token)) >= 3
+    return True
+
+
+def _desmembrar_itens(paragrafos: list[str]) -> list[str]:
+    """A PDF text layer sometimes glues two list items into one paragraph
+    (`…11/08/2026; 1.10 - Pesquisa …`, or a person heading followed by its
+    first item): cut them back apart."""
+    saida: list[str] = []
+    for p in paragrafos:
+        saida.extend(x for x in re.split(r"\s+(?=\d+\.\d+\s*[–\-—]\s+[A-ZÀ-Ý])", p) if x.strip())
+    return saida
 
 
 def pontuar(
@@ -712,12 +1068,24 @@ def pontuar(
     generator's switches turned OFF for this card (`harness.
     clausulas_desligadas`). A reference clause absent from the render whose
     title matches one of them is a DATA gap (`Scorecard.clausulas_desligadas`
-    → `incompleto`), not a missing clause."""
+    → `incompleto`), not a missing clause.
+
+    HONEST COMPARISON (2026-10-05 audit — the divergence-email lesson: ~56 %
+    of "divergences" were formatting/alignment noise). A token counts as a
+    DIVERGENCE only when the generated text states a different FACT. Not a
+    divergence, each reported apart: format (normalised away before
+    comparing), a mention present elsewhere in the document (`alinhado`), a
+    gap marker/sentinel (`lacuna`), bank details the owner cannot supply
+    (`dados_indisponiveis`), a certidão the card does not carry
+    (`certidoes_lacuna`), and the signature block's render-time date /
+    identifier kinds only one side prints (`assinatura_excluidos`)."""
     limiares = limiares or Limiares()
     allowlist = allowlist or []
     aprovadas = [e for e in allowlist if e.aprovado_pelo_dono]
-    ref_s = secoes(paragrafos_de_lista(ref_paragrafos))
-    gen_s = secoes(paragrafos_de_lista(gerado_paragrafos))
+    ref_paragrafos = _desmembrar_itens(paragrafos_de_lista(ref_paragrafos))
+    gerado_paragrafos = _desmembrar_itens(paragrafos_de_lista(gerado_paragrafos))
+    ref_s = secoes(ref_paragrafos)
+    gen_s = secoes(gerado_paragrafos)
     card = Scorecard(limiares=limiares, secoes_ref=len(ref_s), secoes_gerado=len(gen_s))
     card.allowlist_pendentes = sorted(e.id for e in allowlist if not e.aprovado_pelo_dono)
     aplicadas: Counter = Counter()
@@ -757,40 +1125,141 @@ def pontuar(
         else:
             card.clausulas_extras.append(s.chave)
 
+    def _dobrado_com_allowlist(texto: str, r_chave: str, lado: str, contar: bool) -> str:
+        dobrado = _dobrar(texto)
+        for e in aprovadas:
+            if e.categoria not in ("redacao", "numero") or not e.aplica_a_secao(r_chave):
+                continue
+            dobrado, n = _aplicar_allowlist(dobrado, e.padrao_ref if lado == "ref" else e.padrao_gerado)
+            if contar and n:
+                aplicadas[e.id] += n
+        return dobrado
+
+    # Document-level pools: a token the OTHER side states anywhere is not a wrong
+    # fact for the section it moved out of (a mention moved or repeated — an
+    # alignment effect, counted apart as `alinhado`).
+    n_ref_doc, d_ref_doc = _tokens_de(_dobrar("\n".join(ref_paragrafos)))
+    n_gen_doc, d_gen_doc = _tokens_de(_dobrar("\n".join(gerado_paragrafos)))
+
+    def _realinhar(lista: list[str], pool: set) -> tuple[list[str], int]:
+        mantidos = [t for t in lista if not (t in pool and _realinhavel(t))]
+        return mantidos, len(lista) - len(mantidos)
+
     notas: dict[str, float] = {}
     pesos: dict[str, int] = {}
     for r, g in pares:
-        ref_txt = " \n ".join(r.paragrafos)
-        gen_txt = " \n ".join(g.paragrafos)
-        ref_f, gen_f = _dobrar(ref_txt), _dobrar(gen_txt)
-        for e in aprovadas:
-            if e.categoria not in ("redacao", "numero") or not e.aplica_a_secao(r.chave):
+        ref_par, gen_par = list(r.paragrafos), list(g.paragrafos)
+        # ── certidão list items: paired by kind; their identifiers/dates are
+        #    judged per PAIR, never against the whole section's pool ─────────
+        ref_ign: set[int] = set()  # reference paragraphs excluded from wording AND numbers
+        itens_num_ref: list[int] = []
+        itens_num_gen: list[int] = []
+        pares_itens: list[tuple[int, int]] = []
+        gen_livres: list[int] = []
+        ref_livres: list[int] = []
+        if "certid" in r.chave:
+            ref_it, _ = _separar_itens(ref_par)
+            gen_it, _ = _separar_itens(gen_par)
+            ref_tx = [_dobrar(p) for p in ref_par]
+            gen_tx = [_dobrar(p) for p in gen_par]
+            pares_itens, ref_livres, gen_livres = _parear_itens(ref_it, ref_tx, gen_it, gen_tx)
+            itens_num_ref = [i for i, _, _ in ref_it]
+            itens_num_gen = [i for i, _, _ in gen_it]
+            card.certidoes_itens_ref += len(ref_it)
+            card.certidoes_itens_gerado += len(gen_it)
+            card.certidoes_itens_pareados += len(pares_itens)
+            ref_ign = set(ref_livres)  # the card carries no such certidão: a gap, not wording
+        ref_resto = [p for i, p in enumerate(ref_par) if i not in ref_ign and i not in set(itens_num_ref)]
+        gen_resto = [p for i, p in enumerate(gen_par) if i not in set(itens_num_gen)]
+        ref_txt = "\n".join(ref_resto)
+        gen_txt = "\n".join(gen_resto)
+        gen_txt_total = "\n".join(gen_par)
+        ref_f = _dobrado_com_allowlist(ref_txt, r.chave, "ref", True)
+        gen_f = _dobrado_com_allowlist(gen_txt, r.chave, "gen", True)
+
+        # ── favorecido bank details the owner cannot supply ─────────────────
+        dados_indisp = 0
+        bancarios_ref = _segmentos_bancarios(ref_f)
+        if bancarios_ref and not _segmentos_bancarios(gen_f):
+            ref_f = _sem_segmentos(ref_f, bancarios_ref)
+            n_b, d_b = _tokens_de(" ".join(bancarios_ref))
+            dados_indisp = len(n_b) + len(d_b)
+
+        # ── wording: the section body, then each paired certidão item against
+        #    ITS counterpart (a certidão list is a set — comparing it by
+        #    position would score the card's person order, not its wording).
+        #    A reference item with no counterpart is a gap, never wording; a
+        #    generated item the signed text does not list scores 0 ─────────────
+        grupos = [(ref_f, gen_f)]
+        for i, j in pares_itens:
+            grupos.append((_dobrado_com_allowlist(ref_par[i], r.chave, "ref", True), _dobrado_com_allowlist(gen_par[j], r.chave, "gen", True)))
+        for j in gen_livres:
+            grupos.append(("", _dobrado_com_allowlist(gen_par[j], r.chave, "gen", True)))
+        iguais_t = total_t = 0
+        for rf, gf in grupos:
+            ig, tot, _ = _contar_palavras(rf, gf)
+            iguais_t += ig
+            total_t += tot
+        ratio = 1.0 if total_t <= 0 else (2.0 * iguais_t) / total_t
+        lacunas = len(_LACUNA_RE.findall(gen_txt_total))
+        marcadores = _marcadores_tipados(gen_txt_total)
+
+        # ── numbers/dates: DISTINCT values of the non-item paragraphs ───────
+        assinatura_excl = 0
+        if r.chave == "encerramento" and ref_par and gen_par:
+            # the signing-date line carries the RENDER date on the generated side
+            datas_ref = _tokens_de(_dobrar(ref_par[0]))[1]
+            datas_gen = _tokens_de(_dobrar(gen_par[0]))[1]
+            assinatura_excl += len(datas_ref | datas_gen)
+            ref_corpo = [p for i, p in enumerate(ref_par) if i not in ref_ign and i != 0]
+            gen_corpo = [p for i, p in enumerate(gen_par) if i != 0]
+        else:
+            ref_corpo = [p for i, p in enumerate(ref_par) if i not in ref_ign and i not in set(itens_num_ref)]
+            gen_corpo = [p for i, p in enumerate(gen_par) if i not in set(itens_num_gen)]
+        ref_num_f = _dobrado_com_allowlist("\n".join(ref_corpo), r.chave, "ref", False)
+        gen_num_f = _dobrado_com_allowlist("\n".join(gen_corpo), r.chave, "gen", False)
+        if bancarios_ref and dados_indisp:
+            ref_num_f = _sem_segmentos(ref_num_f, bancarios_ref)
+        n_ref, d_ref = _tokens_de(ref_num_f)
+        n_gen, d_gen = _tokens_de(gen_num_f)
+        if r.chave == "encerramento":
+            # identifier kinds are compared only when BOTH blocks print them
+            # (the signed block lists witness RGs, the render lists CPFs)
+            for pref in _TIPOS_IDENTIFICADOR:
+                tem_ref = any(t.startswith(pref) for t in n_ref)
+                tem_gen = any(t.startswith(pref) for t in n_gen)
+                if tem_ref != tem_gen:
+                    assinatura_excl += sum(1 for t in n_ref | n_gen if t.startswith(pref))
+                    n_ref = {t for t in n_ref if not t.startswith(pref)}
+                    n_gen = {t for t in n_gen if not t.startswith(pref)}
+        n_falt, n_extra = sorted(n_ref - n_gen), sorted(n_gen - n_ref)
+        d_falt, d_extra = sorted(d_ref - d_gen), sorted(d_gen - d_ref)
+        n_falt, a1 = _realinhar(n_falt, n_gen_doc)
+        n_extra, a2 = _realinhar(n_extra, n_ref_doc)
+        d_falt, a3 = _realinhar(d_falt, d_gen_doc)
+        d_extra, a4 = _realinhar(d_extra, d_ref_doc)
+
+        # ── certidão pairs (positional by construction: never realigned): same kind, a different identifier/date is a FACT ─
+        reemitidas = 0
+        for i, j in pares_itens:
+            ni, di = _tokens_de(_dobrar(ref_par[i]))
+            nj, dj = _tokens_de(_dobrar(gen_par[j]))
+            if di and dj and di != dj and ni != nj:
+                # same kind, same person, another identifier AND another emission
+                # date: the card holds a NEWER certidão than the one the signed
+                # text listed — the render is right to print it. Counted, not failed.
+                reemitidas += 1
                 continue
-            ref_f, n1 = _aplicar_allowlist(ref_f, e.padrao_ref)
-            gen_f, n2 = _aplicar_allowlist(gen_f, e.padrao_gerado)
-            if n1 or n2:
-                aplicadas[e.id] += n1 + n2
-        # `_dobrar` is idempotent, so the folded+allowlisted forms feed both
-        # the wording and the number comparison.
-        ratio, _ = _similaridade_palavras(ref_f, gen_f)
-        lacunas = len(_LACUNA_RE.findall(gen_txt))
-        d_ref, n_ref = extrair_numeros(ref_f)
-        d_gen, n_gen = extrair_numeros(_LACUNA_RE.sub(" ", gen_f))
-        n_falt, n_extra = _diferenca_multiset(n_ref, n_gen)
-        d_falt, d_extra = _diferenca_multiset(d_ref, d_gen)
-        # A gap stands in for a value: as many missing reference tokens as
-        # there are markers in this section are attributed to the gaps
-        # (numbers first, then dates) instead of counting as diffs.
-        em_lacuna = 0
-        orcamento = lacunas
-        while orcamento and n_falt:
-            n_falt.pop()
-            orcamento -= 1
-            em_lacuna += 1
-        while orcamento and d_falt:
-            d_falt.pop()
-            orcamento -= 1
-            em_lacuna += 1
+            n_falt += sorted(ni - nj)
+            n_extra += sorted(nj - ni)
+            d_falt += sorted(di - dj)
+            d_extra += sorted(dj - di)
+        # A generated certidão the signed text does not list (nor under that
+        # person) is a fact of its own: it lowers the certidões ratio and is
+        # counted (`certidoes_extras`) — not inflated into one number/date
+        # divergence per identifier it prints.
+
+        em_lacuna = _absorver_lacunas(n_falt, d_falt, marcadores)
         card.resultados.append(
             ResultadoSecao(
                 chave=r.chave,
@@ -801,9 +1270,16 @@ def pontuar(
                 datas_extras=d_extra,
                 lacunas=lacunas,
                 numeros_em_lacuna=em_lacuna,
+                numeros_alinhados=a1 + a2,
+                datas_alinhadas=a3 + a4,
+                dados_indisponiveis=dados_indisp,
+                assinatura_excluidos=assinatura_excl,
+                certidoes_lacuna=len(ref_livres),
+                certidoes_extras=len(gen_livres),
+                certidoes_reemitidas=reemitidas,
             )
         )
-        peso = max(1, len(_palavras(ref_f)))
+        peso = max(1, sum(len(_palavras(rf)) for rf, _ in grupos))
         notas[r.chave] = ratio
         pesos[r.chave] = peso
 
@@ -833,17 +1309,12 @@ def pontuar(
     else:
         card.categorias["matricula"] = _similaridade_palavras(m_ref, m_gen)[0]
 
-    def _certidoes(ss: list[Secao]) -> Counter:
-        itens: Counter = Counter()
-        for s in ss:
-            if "certid" in s.chave:
-                for p in s.paragrafos:
-                    rotulo = _item_certidao(p)
-                    if rotulo:
-                        itens[rotulo] += 1
-        return itens
-
-    card.categorias["certidoes"] = _sobreposicao(_certidoes(ref_s), _certidoes(gen_s))
+    # certidões: of what the generator PRINTED, the share whose kind the signed
+    # text lists too. A reference certidão the card does not carry is a GAP
+    # (counted above), never a drag on this ratio; nothing printed → not scored.
+    card.categorias["certidoes"] = (
+        card.certidoes_itens_pareados / card.certidoes_itens_gerado if card.certidoes_itens_gerado else None
+    )
     card.allowlist_aplicadas = dict(aplicadas)
     return card
 
