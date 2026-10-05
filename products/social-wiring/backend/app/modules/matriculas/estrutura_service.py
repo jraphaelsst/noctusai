@@ -988,6 +988,12 @@ _CANCELAMENTO = re.compile(
 )
 
 
+#: Release wording that only counts alongside a cited act — see `sugerir`.
+_LIBERACAO = re.compile(
+    r"\b(LIBERACAO|LIBERAD[OA]S?|DESONERACAO|DESONERAD[OA]|QUITACAO|QUITAD[OA])\b"
+)
+
+
 def _contem(norm: str, termo: str) -> bool:
     return re.search(rf"\b{re.escape(termo)}", norm) is not None
 
@@ -1046,8 +1052,26 @@ def sugerir(
         r["id"]: normalize(_fatia(texto, int(r["char_inicio"]), int(r["char_fim"])))
         for r in ordenados
     }
+    # 🔴 [situacao-onus-release-wording, 2026-10-05] An act that RELEASES an
+    # encumbrance in words `_CANCELAMENTO` does not list ("LIBERACAO da
+    # alienacao fiduciaria registrada sob o R-3", "quitada", "desoneracao")
+    # was read as a fresh encumbrance itself, so the hipoteca/AF it released
+    # stayed "active" and was proposed over the confirmed value. The release
+    # wording alone is too common to trust (a compra e venda "da quitacao"),
+    # so it counts ONLY together with an encumbrance term AND an explicit
+    # citation of another act by number — the same safe link the cancellation heuristic already uses.
     cancelamentos = {
-        r["id"] for r in ordenados if _CANCELAMENTO.search(normalizados[r["id"]])
+        r["id"]
+        for r in ordenados
+        if _CANCELAMENTO.search(normalizados[r["id"]])
+        or (
+            _LIBERACAO.search(normalizados[r["id"]])
+            and any(_contem(normalizados[r["id"]], termo) for termo, _ in _ONUS)
+            and _citados(
+                _fatia(texto, int(r["char_inicio"]), int(r["char_fim"])),
+                (detalhes or {}).get(str(r["id"])),
+            )
+        )
     }
     citados_por_cancelamento = {
         r["id"]: _citados(

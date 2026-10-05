@@ -214,6 +214,9 @@ REJEITADO_TIPO = "rejeitado_tipo"
 #: on-file value) or the on-file value was KEPT. Either way a
 #: `resolvido_automatico` audit row names the rule and its evidence.
 RESOLVIDO_APLICADO = "resolvido_aplicado"
+#: An act-pointer field (título / ônus) rebound to the SAME act set on a newer
+#: extraction — `_reapontar_atos`. Pointer moved, provenance kept, no email.
+REAPONTADO = "reapontado"
 RESOLVIDO_MANTIDO = "resolvido_mantido"
 
 
@@ -224,7 +227,7 @@ class Resultado:
 
     @property
     def preenchido(self) -> bool:
-        return self.status in (PREENCHIDO, SUBSTITUIDO, RELEITURA, RESOLVIDO_APLICADO)
+        return self.status in (PREENCHIDO, SUBSTITUIDO, RELEITURA, RESOLVIDO_APLICADO, REAPONTADO)
 
 
 def _now() -> str:
@@ -321,6 +324,125 @@ def iguais(campo: CampoImovel, atual: Any, proposto: Any) -> bool:
         # fragment are set aside — an older reader glued those on.
         return True
     return _norm_texto(atual) == _norm_texto(proposto)
+
+
+# ─── act pointers: a STABLE act key, not a per-extraction UUID ────────────
+#
+# Every new matrícula extraction mints new `matricula_atos` UUIDs, so an
+# `ato_id` is the identity of a ROW, never of the ACT. The act's own identity
+# is its (kind, numero) — R-4, AV-3 — or, when the segmenter found no number,
+# the character range it occupies on the same matrícula. 12.9% of all
+# divergence emails (2026-10-05 study) were this rebinding noise.
+
+CAMPOS_ATOS = ("titulo_aquisitivo", "onus_fonte")
+
+#: Two unnumbered acts are "the same act" when their char ranges overlap by
+#: at least this share of the shorter one — a re-extraction shifts offsets by
+#: a few dozen characters, never by half an act.
+_SOBREPOSICAO_MINIMA = 0.5
+
+
+def _refs_do_valor(campo: CampoImovel, valor: Any) -> list[dict]:
+    """The act pointers inside a group value: `{ato_id, char_inicio, char_fim}`."""
+    if not isinstance(valor, dict):
+        return []
+    if campo.chave == "titulo_aquisitivo":
+        ato = valor.get("titulo_aquisitivo_ato_id")
+        if ato is None:
+            return []
+        return [{
+            "ato_id": str(ato),
+            "char_inicio": valor.get("titulo_aquisitivo_char_inicio"),
+            "char_fim": valor.get("titulo_aquisitivo_char_fim"),
+        }]
+    return [r for r in (valor.get("onus_fonte_atos") or []) if isinstance(r, dict)]
+
+
+def _atos_resolvidos(
+    client: Any, org_id: UUID, campo: CampoImovel, valor: Any
+) -> Optional[list[dict]]:
+    """Each pointed act as `{ato_id, kind, numero, ini, fim}`, read from
+    `matricula_atos`. `None` when ANY act cannot be resolved (row gone) —
+    unknown is never equal."""
+    refs = _refs_do_valor(campo, valor)
+    if not refs:
+        return None
+    ids = sorted({str(r["ato_id"]) for r in refs if r.get("ato_id") is not None})
+    rows = (
+        _t(client, "matricula_atos")
+        .select("id,kind,numero,char_inicio,char_fim")
+        .eq("org_id", str(org_id))
+        .in_("id", ids)
+        .limit(max(len(ids), 1))
+        .execute()
+    ).data or []
+    por_id = {str(r["id"]): r for r in rows}
+    saida: list[dict] = []
+    for ref in refs:
+        row = por_id.get(str(ref.get("ato_id")))
+        if row is None:
+            return None
+        ini = ref.get("char_inicio") if ref.get("char_inicio") is not None else row.get("char_inicio")
+        fim = ref.get("char_fim") if ref.get("char_fim") is not None else row.get("char_fim")
+        saida.append({
+            "ato_id": str(row["id"]),
+            "kind": row.get("kind"),
+            "numero": row.get("numero"),
+            "ini": ini,
+            "fim": fim,
+        })
+    return saida
+
+
+def _mesmo_ato(a: dict, b: dict) -> bool:
+    if a.get("numero") is not None and b.get("numero") is not None:
+        return (str(a.get("kind")), int(a["numero"])) == (str(b.get("kind")), int(b["numero"]))
+    if a.get("numero") is not None or b.get("numero") is not None:
+        return False
+    try:
+        ai, af, bi, bf = int(a["ini"]), int(a["fim"]), int(b["ini"]), int(b["fim"])
+    except (KeyError, TypeError, ValueError):
+        return False
+    menor = min(af - ai, bf - bi)
+    if menor <= 0:
+        return False
+    return (min(af, bf) - max(ai, bi)) / menor >= _SOBREPOSICAO_MINIMA
+
+
+def mesmo_conjunto_de_atos(
+    client: Any, org_id: UUID, campo: CampoImovel, atual: Any, proposto: Any
+) -> bool:
+    """Do two act-pointer values name the SAME SET of acts (by stable key)?"""
+    if campo.chave not in CAMPOS_ATOS:
+        return False
+    a = _atos_resolvidos(client, org_id, campo, atual)
+    b = _atos_resolvidos(client, org_id, campo, proposto)
+    if not a or not b or len(a) != len(b):
+        return False
+    livres = list(b)
+    for ato in a:
+        achado = next((x for x in livres if _mesmo_ato(ato, x)), None)
+        if achado is None:
+            return False
+        livres.remove(achado)
+    return True
+
+
+def rotulo_do_ato(ato: dict) -> str:
+    """`R-4` / `AV-3`; without a number, the char range."""
+    kind = str(ato.get("kind") or "ato")
+    if ato.get("numero") is not None:
+        return f"{kind}-{ato['numero']}"
+    return f"{kind} (trecho {ato.get('ini')}-{ato.get('fim')})"
+
+
+def rotulos_dos_atos(client: Any, org_id: UUID, campo: CampoImovel, valor: Any) -> Optional[str]:
+    """The human reading of an act-pointer value — `R-4, AV-3` — or `None`
+    when it cannot be resolved (the caller keeps the raw value)."""
+    atos = _atos_resolvidos(client, org_id, campo, valor)
+    if not atos:
+        return None
+    return ", ".join(rotulo_do_ato(a) for a in atos)
 
 
 # ─── the write ────────────────────────────────────────────────────────────
@@ -464,6 +586,18 @@ def aplicar(
     ):
         return Resultado(IGUAL)
 
+    igual_valor = lambda a, b: iguais(campo, a, b)  # noqa: E731
+    if campo.chave in CAMPOS_ATOS:
+        igual_valor = lambda a, b: (  # noqa: E731
+            iguais(campo, a, b) or mesmo_conjunto_de_atos(client, org_id, campo, a, b)
+        )
+        reapontado = _reapontar_atos(
+            client, org_id, codigo, campo, row, atual, valor,
+            origem=origem, documento_id=documento_id,
+        )
+        if reapontado is not None:
+            return reapontado
+
     if exige_corroboracao:
         # Contradicted by the value on file: the vision reading never
         # replaces it — not by the prefeitura-precedence exception, not as a
@@ -517,7 +651,7 @@ def aplicar(
     # (`NOC-REMEDIATE[imovel-rejeitado-antes-decidido-por]`, 2026-09-28).
     if campo_conflitos.ja_rejeitado_pelo_usuario(
         client, campo_conflitos.IMOVEL, org_id, codigo, chave, valor,
-        igual=lambda proposto: iguais(campo, proposto, valor),
+        igual=lambda proposto: igual_valor(proposto, valor),
     ):
         return Resultado(REJEITADO_ANTES)
 
@@ -535,7 +669,7 @@ def aplicar(
         return decidido
 
     pendentes = _conflitos(client, org_id, codigo, chave, "pendente")
-    if any(iguais(campo, p.get("valor_proposto"), valor) for p in pendentes):
+    if any(igual_valor(p.get("valor_proposto"), valor) for p in pendentes):
         return Resultado(CONFLITO_EXISTENTE)
     # A pending conflict proposing a DIFFERENT value is stale — this newer
     # reading supersedes it (`campo_conflitos.registrar_conflito` closes it as
@@ -565,6 +699,56 @@ def aplicar(
         codigo, chave, origem_anterior, origem,
     )
     return Resultado(CONFLITO, conflito=linha)
+
+
+def _reapontar_atos(
+    client: Any,
+    org_id: UUID,
+    codigo: str,
+    campo: CampoImovel,
+    row: Optional[dict],
+    atual: Any,
+    valor: Any,
+    *,
+    origem: str,
+    documento_id: Optional[Any],
+) -> Optional[Resultado]:
+    """The act-pointer rebinding rule. `None` = a genuine disagreement, the
+    ordinary conflict path continues.
+
+    1. SAME act set (stable key) on a newer extraction → move the pointer to
+       it, silently, keeping the provenance AS IS (a human confirmation
+       stays confirmed). Not a disagreement, not an email.
+    2. A still-unconfirmed machine `sugerido` value is only a suggestion — the
+       newer reading replaces it silently (a re-read), whatever its acts.
+    Everything else (a confirmed/manual value whose act SET changes) is a
+    real disagreement.
+    """
+    row = row or {}
+    if mesmo_conjunto_de_atos(client, org_id, campo, atual, valor):
+        dados_service.gravar_extraido(client, org_id, codigo, row, _patch_valor(campo, valor))
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.IMOVEL, org_id, codigo, campo.chave, decidido_por=None,
+        )
+        logger.info(
+            "imovel %s: %s — same act set on a newer extraction, pointer moved "
+            "silently (provenance kept)", codigo, campo.chave,
+        )
+        return Resultado(REAPONTADO)
+    if row.get(campo.origem) == ORIGEM_SUGERIDO and pendente(row, campo) and not row.get(
+        campo.confirmado_por
+    ):
+        patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
+        dados_service.gravar_extraido(client, org_id, codigo, row, patch)
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.IMOVEL, org_id, codigo, campo.chave, decidido_por=None,
+        )
+        logger.info(
+            "imovel %s: %s — unconfirmed suggestion replaced by the newer reading, "
+            "no conflict opened", codigo, campo.chave,
+        )
+        return Resultado(RELEITURA)
+    return None
 
 
 # ─── vision readings: corroborate or ask ───────────────────────────────────
@@ -662,6 +846,8 @@ def _iguais_no_imovel(client: Any, org_id: UUID, codigo: str) -> Any:
     def comparar(campo: CampoImovel, a: Any, b: Any) -> bool:
         if iguais(campo, a, b):
             return True
+        if campo.chave in CAMPOS_ATOS:
+            return mesmo_conjunto_de_atos(client, org_id, campo, a, b)
         if campo.chave != "prefeitura_cadastro_imobiliario" or _vazio(a) or _vazio(b):
             return False
         if "v" not in municipio:
@@ -920,6 +1106,25 @@ def resolver(
     return {**conflito, **patch}
 
 
+def _com_rotulos_de_atos(client: Any, org_id: UUID, conflito: dict) -> dict:
+    """A copy of the conflict for the MESSAGE, with act pointers shown as act
+    labels (`R-4, AV-3`) instead of extraction/act UUIDs. The stored row is
+    untouched."""
+    campo = CAMPOS.get(conflito.get("campo"))
+    if campo is None or campo.chave not in CAMPOS_ATOS:
+        return conflito
+    saida = dict(conflito)
+    for chave in ("valor_anterior", "valor_proposto"):
+        try:
+            rotulo = rotulos_dos_atos(client, org_id, campo, conflito.get(chave))
+        except Exception:  # noqa: BLE001 - labels are cosmetic; logged, raw value kept
+            logger.warning("act labels unavailable for conflict %s", conflito.get("id"), exc_info=True)
+            rotulo = None
+        if rotulo:
+            saida[chave] = f"atos: {rotulo}"
+    return saida
+
+
 async def notificar(
     client: Any,
     org_id: UUID,
@@ -948,7 +1153,7 @@ async def notificar(
 
     async def _notify_one(conflito: dict) -> None:
         await notificador.notify_imovel_field_conflict(
-            org_id=org_id, conflito=conflito, codigo=codigo
+            org_id=org_id, conflito=_com_rotulos_de_atos(client, org_id, conflito), codigo=codigo
         )
 
     await campo_conflitos.notificar_conflitos(
@@ -960,6 +1165,7 @@ __all__ = [
     "CAMPOS",
     "CAMPOS_QUINTETO_MANUAL",
     "CONFLITOS_TABLE",
+    "REAPONTADO",
     "REJEITADO_TIPO",
     "RESOLVIDO_APLICADO",
     "RESOLVIDO_MANTIDO",
@@ -971,6 +1177,7 @@ __all__ = [
     "backfill_resolver_conflitos_pendentes",
     "iguais",
     "listar",
+    "mesmo_conjunto_de_atos",
     "notificar",
     "pendente",
     "resolver",
