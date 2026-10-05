@@ -26,7 +26,7 @@ CNPJ_B = "11444777000161"
 _PARTE_ITEM_KEYS = {
     "parte_id", "titular", "rotulo", "lado", "papel", "ordem", "tipo_pessoa",
     "cliente_id", "empresa_id", "nome", "documento", "observacao", "cliente",
-    "empresa", "representa_parte_id", "pj_nire", "pj_sede",
+    "empresa", "representa_parte_id", "pj_nire", "pj_sede", "grupo", "origem",
 }
 _EMPRESA_KEYS = {"id", "razao_social", "nome_fantasia", "cnpj", "situacao_cadastral"}
 _LOOKUP_KEYS = {
