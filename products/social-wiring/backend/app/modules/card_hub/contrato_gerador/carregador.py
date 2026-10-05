@@ -764,6 +764,11 @@ def carregar(
                 (selecao.get("descricao_imovel") or {}).get("formatacao")
             ),
             comarca=comarca,
+            averbacoes=tuple(
+                (a.get("numero"), a.get("texto") or "")
+                for a in (selecao.get("atos") or [])
+                if str(a.get("kind") or "").upper() == "AV"
+            ),
         ),
         valor_negociado=_dec(estruturada.get("valor_negociado")),
         pct_comissao=_dec(negociacao.get("pct_comissao")),

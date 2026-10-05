@@ -29,7 +29,7 @@ from noctusai_lib.integrations.documents.abnt import clip_ranges, runs_from_rang
 from noctusai_lib.integrations.docx_render import DocxRenderAdapter
 
 from app.modules.card_hub.contrato_gerador.extenso import brl_por_extenso
-from app.modules.card_hub.contrato_gerador import frases
+from app.modules.card_hub.contrato_gerador import citacao_matricula, frases
 from app.modules.card_hub.contrato_gerador.concordancia import genero_exigido, lado
 from app.modules.card_hub.contrato_gerador.dados import (
     DadosContrato,
@@ -198,6 +198,11 @@ def _descricao_matricula_rica(d: DadosContrato, adapter: DocxRenderAdapter) -> A
     if d.matricula.descricao_imovel_texto is not None:
         texto = d.matricula.descricao_imovel_texto.rstrip()
         ranges = clip_ranges(d.matricula.descricao_imovel_formatacao, 0, len(texto))
+        # The office's quote: description + the selected averbações, no
+        # matrícula inscrição, pt-BR areas (`citacao_matricula`). Only on
+        # this branch — the whole-selection fallback below already holds
+        # every selected act.
+        texto, ranges = citacao_matricula.citacao(texto, ranges, d.matricula.averbacoes)
     else:
         logger.warning(
             "contrato %s: matrícula %s sem bloco 'descricao_imovel' — a "
@@ -208,6 +213,7 @@ def _descricao_matricula_rica(d: DadosContrato, adapter: DocxRenderAdapter) -> A
         )
         texto = d.matricula.texto.rstrip()
         ranges = clip_ranges(d.matricula.formatacao, 0, len(texto))
+        texto, ranges = citacao_matricula.citacao(texto, ranges)
     return adapter.rich_text(runs_from_ranges(texto, ranges))
 
 

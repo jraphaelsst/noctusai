@@ -440,6 +440,10 @@ class Matricula:
     #: imóvel's registration address. `None` blocks
     #: (`derivacao._contrato`, `negociacao.foro_comarca`).
     comarca: Optional[str] = None
+    #: The operator-selected `AV` acts, in selection order, as `(numero,
+    #: texto)` — the `IMÓVEL:` quote carries them after the description
+    #: (`citacao_matricula`). `R` acts are never quoted.
+    averbacoes: tuple[tuple[Optional[str], str], ...] = ()
 
 
 @dataclass
