@@ -1679,6 +1679,22 @@ def _norm_numero(valor: str) -> str:
     return chave.lstrip("0") or chave
 
 
+def _difere_so_por_um_caractere_no_numero(
+    atual: dict[str, Any], proposto: dict[str, Any]
+) -> bool:
+    """Two reads of ONE address that agree on every part except the número,
+    and the números (normalised) are the same length and differ by exactly
+    one character (`650` vs `640`) — the signature of an OCR misread, which
+    holder rank cannot adjudicate."""
+    velho, novo = atual.get("endereco_numero"), proposto.get("numero")
+    if _vazio(velho) or _vazio(novo):
+        return False
+    a, b = _norm_numero(str(velho)), _norm_numero(str(novo))
+    if a == b or len(a) != len(b) or sum(x != y for x, y in zip(a, b)) != 1:
+        return False
+    return _mesmo_endereco(atual, {**proposto, "numero": velho})
+
+
 def _norm_complemento(valor: str) -> str:
     """`CS 02` == `CASA 2`, `AP 12` == `APTO 12` — token-wise synonyms,
     leading zeros dropped from numeric tokens."""
@@ -2167,7 +2183,20 @@ def aplicar_endereco_ao_cliente(
             and origem_atual_grupo != "manual"
             and not atual.get("endereco_confirmado_em")
         )
-        if not pode_resolver_automaticamente:
+        if _difere_so_por_um_caractere_no_numero(atual, partes):
+            # 🔴 Same address, número off by ONE character (650 vs 640): an
+            # OCR misread on one side that no holder rank can adjudicate —
+            # always a human, whoever the titular is.
+            decisao = divergencia_resolucao.Decisao(
+                vencedor=None, regra="requer_humano",
+                motivo=(
+                    "endereco: as duas leituras diferem apenas por um "
+                    "caractere no número — possível erro de leitura; "
+                    "apenas um humano decide."
+                ),
+                requer_humano=True,
+            )
+        elif not pode_resolver_automaticamente:
             decisao = divergencia_resolucao.Decisao(
                 vencedor=None, regra="requer_humano",
                 motivo=(

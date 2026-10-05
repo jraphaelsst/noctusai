@@ -1456,6 +1456,52 @@ class TestEnderecoResolucaoAutomaticaPorTitular:
             "complemento": None, "bairro": None, "cidade": None, "uf": None,
         }
 
+    def _cenario_numero(self, scoped, numero_velho: str, logradouro_velho: str = "R PROF ARTUR RAMOS"):
+        cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome="Ana Paula Souza",
+            endereco_cep="01454-011", endereco_logradouro=logradouro_velho,
+            endereco_numero=numero_velho,
+            endereco_origem="comprovante_endereco", endereco_documento_id=doc_velho,
+        )])
+        # Old holder unverified, new holder verified: the holder rule alone
+        # would make the NEW reading win.
+        scoped.set_table_data("cliente_documentos", [
+            self._doc(doc_velho, "OUTRA PESSOA"), self._doc(doc_novo, "ANA PAULA SOUZA"),
+        ])
+        scoped.set_table_data("cliente_campo_conflitos", [])
+        return cid, doc_novo
+
+    def test_one_character_numero_difference_always_goes_to_a_human(self, client, scoped):
+        cid, doc_novo = self._cenario_numero(scoped, "640")
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco",
+            {**self._partes_novas(), "numero": "650"},
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+        assert aplicado is False
+        assert conflito is not None
+        assert _cliente(scoped, cid)["endereco_numero"] == "640"
+
+    def test_identical_numero_still_auto_resolves_as_before(self, client, scoped):
+        cid, doc_novo = self._cenario_numero(scoped, "123", logradouro_velho="RUA B")
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+        assert (aplicado, conflito) == (True, None)
+
+    def test_a_different_street_with_a_one_digit_numero_still_follows_the_holder_rule(
+        self, client, scoped
+    ):
+        cid, doc_novo = self._cenario_numero(scoped, "122", logradouro_velho="RUA B")
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco", self._partes_novas(),
+            titular_documento=None, confianca="alta", documento_id=UUID(doc_novo),
+        )
+        assert (aplicado, conflito) == (True, None)
+        assert _cliente(scoped, cid)["endereco_logradouro"] == "R PROF ARTUR RAMOS"
+
     def test_a_verified_new_holder_wins_over_an_unverified_one_on_file(self, client, scoped):
         cid, doc_velho, doc_novo = str(uuid4()), str(uuid4()), str(uuid4())
         scoped.set_table_data("clientes", [cliente_row(
