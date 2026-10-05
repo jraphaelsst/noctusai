@@ -107,6 +107,7 @@ from noctusai_lib.integrations.documents import (
     strip_accents_upper,
 )
 from noctusai_lib.integrations.cep import CepLookupAdapter
+from noctusai_lib.integrations.documents.address import EnderecoLido, separar_complemento_do_bairro
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.nacionalidade import canonico as nacionalidade_canonica
@@ -1076,6 +1077,42 @@ def _leitura_e_da_pessoa(
     return False
 
 
+def _proposto_e_inferido(client: Any, org_id: UUID, campo: CampoExtraido, conflito: dict) -> bool:
+    """Is a pending conflict's proposal an INFERENCE (`ROTULO_SOLTEIRO_INFERIDO`
+    on its source document) rather than something a document attested?"""
+    if conflito.get("fonte_tabela") != DOCUMENTOS_TABLE or not conflito.get("fonte_id"):
+        return False
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select(campo.coluna_rotulo)
+        .eq("org_id", str(org_id))
+        .eq("id", str(conflito["fonte_id"]))
+        .limit(1)
+        .execute()
+    ).data or []
+    return bool(rows) and str(rows[0].get(campo.coluna_rotulo) or "").startswith("inferido")
+
+
+def _confianca_do_armazenado(
+    client: Any, org_id: UUID, campo: CampoExtraido, atual: dict
+) -> Optional[str]:
+    """The confidence the STORED value was read at: it lives on the document
+    that produced it (`<campo>_documento_id` -> that row's `coluna_confianca`),
+    not on `clientes`. `None` for a typed value / a source with no document."""
+    doc_id = atual.get(campo.documento_id)
+    if not doc_id:
+        return None
+    rows = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select(campo.coluna_confianca)
+        .eq("org_id", str(org_id))
+        .eq("id", str(doc_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    return rows[0].get(campo.coluna_confianca) if rows else None
+
+
 def aplicar_campos_ao_cliente(
     client: Any,
     org_id: UUID,
@@ -1093,6 +1130,8 @@ def aplicar_campos_ao_cliente(
     avisos_cpf_invalido: Optional[list[str]] = None,
     avisos_tipo_trocado: Optional[list[str]] = None,
     ligar_pessoa: bool = False,
+    leituras_anteriores: Optional[dict[str, Any]] = None,
+    data_negocio: Optional[date] = None,
 ) -> tuple[dict[str, bool], list[dict]]:
     """Write what may be written onto the client record — owner decision D1.
 
@@ -1467,6 +1506,20 @@ def aplicar_campos_ao_cliente(
                         uf=uf_rg,
                         cpf_proprio=cpf_proprio,
                         atual_humano=_valor_humano(atual, campo),
+                        confianca_anterior=_confianca_do_armazenado(
+                            client, org_id, campo, atual
+                        ),
+                        # What THIS document said about the field the last time
+                        # it was read: a value that moved between reads of one
+                        # document is a low-confidence reading.
+                        leituras_mesmo_documento=[
+                            v for v in [(leituras_anteriores or {}).get(campo.item_key)]
+                            if not _vazio(v)
+                        ],
+                        proposto_inferido=bool(
+                            _rotulo and str(_rotulo).startswith("inferido")
+                        ),
+                        data_negocio=data_negocio or date.today(),
                     )
                     if decisao.requer_humano:
                         novo = _registrar_conflito(
@@ -1630,9 +1683,9 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
     disagreement.
 
     🔴 Owner directive, 2026-09-29: `logradouro` is compared through
-    `divergencia_resolucao.normalizar_logradouro` FIRST — "AV Paulista" and
-    "Avenida Paulista" collapse to the same canonical string before
-    `_mesmo_nome` ever runs, so an abbreviation/format difference (measured:
+    `divergencia_resolucao.logradouros_equivalentes` — "AV Paulista" and
+    "Avenida Paulista", or "Estrada X" and "Rua X", are the same street
+    before `_mesmo_nome` ever runs, so an abbreviation/format difference (measured:
     4/9 logradouro precision against the P2 answer keys, largely AV/AVENIDA-
     shaped) no longer opens a conflict a human then has to resolve by eye.
     """
@@ -1659,9 +1712,7 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
             if only_digits(str(velho)) != only_digits(str(novo)):
                 return False
         elif parte == "logradouro":
-            if divergencia_resolucao.normalizar_logradouro(
-                str(velho)
-            ) != divergencia_resolucao.normalizar_logradouro(str(novo)):
+            if not divergencia_resolucao.logradouros_equivalentes(str(velho), str(novo)):
                 return False
         elif parte == "numero":
             if _norm_numero(str(velho)) != _norm_numero(str(novo)):
@@ -1853,8 +1904,9 @@ def _enriquecer_endereco_via_cep(
 
     logradouro_doc = partes.get("logradouro")
     if resultado.logradouro and logradouro_doc and (
-        divergencia_resolucao.normalizar_logradouro(str(logradouro_doc))
-        != divergencia_resolucao.normalizar_logradouro(resultado.logradouro)
+        not divergencia_resolucao.logradouros_equivalentes(
+            str(logradouro_doc), resultado.logradouro
+        )
     ):
         logger.info(
             "identidade_extracao: logradouro do CEP diverge do documento — "
@@ -1997,7 +2049,12 @@ def aplicar_endereco_ao_cliente(
     # document row as an unconfirmed suggestion (`sugestoes_pendentes`) and
     # the document is flagged. Checked BEFORE the CEP enrichment so a
     # misread CEP of a foreign bill can never rewrite city/state either.
-    if titular_documento and not _nomes_bate(atual, titular_documento):
+    if titular_documento and (
+        EnderecoLido(titular=titular_documento).titular_e_pessoa is False
+        or not _nomes_bate(atual, titular_documento)
+    ):
+        # `titular_e_pessoa is False`: a utility / company printed as holder
+        # is never the resident, whatever its words happen to share.
         if avisos is not None:
             avisos.append(AVISO_TITULAR_NAO_CONFERE)
         logger.info(
@@ -2006,6 +2063,10 @@ def aplicar_endereco_ao_cliente(
             cliente_id, documento_id,
         )
         return False, None
+    bairro, complemento = separar_complemento_do_bairro(
+        partes.get("bairro"), partes.get("complemento")
+    )
+    partes = {**partes, "bairro": bairro, "complemento": complemento}
     partes = _enriquecer_endereco_via_cep(partes, cep_lookup, documento_id=documento_id)
     # Canonical ON WRITE (`canonical-identifiers`): a CEP that fits is stored
     # `13010-110`; one that does not fit stays as read.
@@ -3188,6 +3249,12 @@ def backfill_resolver_conflitos_pendentes(
             atual_humano=(
                 row.get("origem_anterior") == "manual" or _valor_humano(cliente_row, campo)
             ),
+            confianca_anterior=(
+                _confianca_do_armazenado(client, org_id, campo, cliente_row)
+                if cliente_row else None
+            ),
+            proposto_inferido=_proposto_e_inferido(client, org_id, campo, row),
+            data_negocio=date.today(),
         )
         if decisao.requer_humano:
             ainda_pendentes.append(row)
@@ -3245,6 +3312,7 @@ def reaplicar_enderecos_de_titular_conferido(
         titular = doc.get("extracao_endereco_titular")
         if (
             doc.get("deleted_at")
+            or doc.get("extracao_descartada_em")
             or AVISO_TITULAR_NAO_CONFERE not in aviso.split("+")
             or not titular
             or _vazio(doc.get("extracao_endereco_logradouro"))
@@ -3860,6 +3928,10 @@ async def extrair_identidade(
         # re-opening the document (another logged access). NO terminal
         # status here (lesson G6) — that lands only after every apply step
         # below succeeds.
+        # What this SAME document said the last time it was read, captured
+        # before the new reading overwrites it — the resolver treats a value
+        # that moved between reads of one document as low confidence.
+        leituras_anteriores = {c.item_key: doc_row.get(c.coluna_valor) for c in CAMPOS}
         marcacoes: dict[str, Any] = {"extracao_fonte": fields.source.value}
         for campo in CAMPOS:
             valor, confianca, rotulo, _ = lidos[campo.item_key]
@@ -3933,6 +4005,7 @@ async def extrair_identidade(
             avisos_cpf_invalido=avisos_cpf_invalido,
             avisos_tipo_trocado=avisos_tipo_trocado,
             ligar_pessoa=True,
+            leituras_anteriores=leituras_anteriores,
         )
         conflitos += abertos
 
@@ -4007,7 +4080,7 @@ async def extrair_identidade(
             else:
                 titular = endereco.titular
                 alvo_id: UUID = cliente_id
-                if titular:
+                if titular and endereco.titular_e_pessoa is not False:
                     achado = _pessoa_do_card_por_nome(client, org_id, cliente_id, titular)
                     if achado is not None:
                         alvo_id = UUID(achado)
@@ -4874,7 +4947,37 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     # The endereço group (migration 153): offered only while the record has
     # no address at all — a differing address is a conflict, not a
     # suggestion (`aplicar_endereco_ao_cliente`).
-    if all(_vazio(cliente.get(c)) for c in ENDERECO_COLUNAS):
+    grupo_vazio = all(_vazio(cliente.get(c)) for c in ENDERECO_COLUNAS)
+    anterior_end = {p: cliente.get(f"endereco_{p}") for p in ENDERECO_PARTES}
+    if not grupo_vazio:
+        # A bill whose holder is not this person never contests a SET address
+        # on its own (`aplicar_endereco_ao_cliente`) — but the human can
+        # still decide it: offered here as a substitution, accepted via
+        # `confirmar_sugestao` / refused via `descartar_sugestao`.
+        for doc in candidatos:
+            if AVISO_TITULAR_NAO_CONFERE not in (doc.get("extracao_aviso") or "").split("+"):
+                continue
+            if _vazio(doc.get("extracao_endereco_logradouro")):
+                continue
+            proposto = {p: doc.get(f"extracao_endereco_{p}") for p in ENDERECO_PARTES}
+            if _mesmo_endereco(cliente, proposto):
+                continue
+            out[CAMPO_ENDERECO] = {
+                "valor": proposto,
+                "valor_atual": anterior_end,
+                "documento_id": doc["id"],
+                "documento_nome": doc.get("nome_original"),
+                "tipo_documento": doc.get("tipo_documento"),
+                "confianca": doc.get("extracao_endereco_confianca"),
+                "fonte": doc.get("extracao_fonte"),
+                "rotulo": doc.get("extracao_endereco_rotulo"),
+                "titular_documento": doc.get("extracao_endereco_titular"),
+                "substitui": True,
+                "aviso": AVISO_TITULAR_NAO_CONFERE,
+                "leitura_comprometida": _doc_leitura_comprometida(doc),
+            }
+            break
+    if grupo_vazio:
         for doc in candidatos:
             if _vazio(doc.get("extracao_endereco_cep")) or _vazio(
                 doc.get("extracao_endereco_logradouro")
@@ -4923,7 +5026,12 @@ def _confirmar_endereco(
     ).data or []
     if not rows:
         raise NotFoundError("clientes", str(cliente_id))
-    if any(not _vazio(rows[0].get(c)) for c in ENDERECO_COLUNAS):
+    anterior = {p: rows[0].get(f"endereco_{p}") for p in ENDERECO_PARTES}
+    tem_endereco = any(not _vazio(v) for v in anterior.values())
+    # A bill whose holder is not this person is held back as a suggestion; a
+    # human accepting it is the decision that may replace a SET address.
+    substituicao = AVISO_TITULAR_NAO_CONFERE in (doc.get("extracao_aviso") or "").split("+")
+    if tem_endereco and not substituicao:
         raise ValidationError_(
             "Este cliente já tem um endereço registrado.", field=CAMPO_ENDERECO
         )
@@ -4947,7 +5055,7 @@ def _confirmar_endereco(
         "confirmado": True,
         "item_key": CAMPO_ENDERECO,
         "valor": partes,
-        "substituiu": None,
+        "substituiu": anterior if tem_endereco else None,
         "documento_id": str(doc["id"]),
     }
 

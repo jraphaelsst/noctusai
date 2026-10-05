@@ -87,7 +87,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Awaitable, Callable, Optional, Sequence
 from uuid import uuid4
 
@@ -386,6 +386,9 @@ def resolver_e_registrar(
     cpf_proprio: Optional[Any] = None,
     atual_humano: bool = False,
     confianca_anterior: Optional[str] = None,
+    leituras_mesmo_documento: Sequence[Any] = (),
+    proposto_inferido: bool = False,
+    data_negocio: Optional[date] = None,
 ) -> Decisao:
     """THE automatic divergence resolver — owner directive, 2026-09-29:
     "resolve divergencies without the need of a human [...] using docs and
@@ -436,6 +439,9 @@ def resolver_e_registrar(
         atual_humano=atual_humano,
         confianca_proposta=confianca_proposta,
         confianca_atual=confianca_anterior,
+        leituras_mesmo_documento=leituras_mesmo_documento,
+        proposto_inferido=proposto_inferido,
+        data_negocio=data_negocio,
     )
     return registrar_decisao_automatica(
         client, table, org_id, owner, campo,

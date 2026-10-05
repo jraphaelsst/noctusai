@@ -205,3 +205,68 @@ class TestRejectionsAndDedupe:
         scoped.table(t.table).update({"notificado_em": "2026-10-02T00:00:00+00:00"}).eq("id", r1["id"]).execute()
         assert campo_conflitos.registrar_conflito(scoped, t, ORG_UUID, "C1", "campo", valor_proposto="y", **kw)
         assert campo_conflitos.registrar_conflito(scoped, t, ORG_UUID, "C1", "campo", valor_proposto="x", **kw)
+
+
+class TestEnderecoSugestaoEWiring:
+    def _cliente_com_endereco(self, scoped, nome="Ana Paula Souza"):
+        cid, did = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(
+            cid, nome=nome, endereco_cep="04000-000", endereco_logradouro="RUA B",
+            endereco_origem="comprovante_endereco",
+        )])
+        scoped.set_table_data("cliente_documentos", [{
+            "id": did, "org_id": ORG_ID, "cliente_id": cid, "tipo_documento": "comprovante_endereco",
+            "nome_original": "luz.pdf", "deleted_at": None, "extracao_status": "ok",
+            "extracao_em": "2026-10-01T00:00:00+00:00",
+            "extracao_aviso": svc.AVISO_TITULAR_NAO_CONFERE,
+            "extracao_endereco_cep": "01454-011", "extracao_endereco_logradouro": "R PROF ARTUR RAMOS",
+            "extracao_endereco_titular": "ENERGIA DISTRIBUIDORA S A",
+        }])
+        return cid, did
+
+    def test_a_mismatched_bill_against_a_set_address_is_offered_and_acceptable(self, client, scoped):
+        cid, did = self._cliente_com_endereco(scoped)
+        sug = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))["endereco"]
+        assert sug["substitui"] is True and sug["valor"]["cep"] == "01454-011"
+        assert sug["valor_atual"]["cep"] == "04000-000"
+        out = svc.confirmar_sugestao(
+            scoped, ORG_UUID, UUID(cid), UUID(did), item_key="endereco", user_id=uuid4()
+        )
+        assert out["substituiu"]["cep"] == "04000-000"
+        assert _cliente(scoped, cid)["endereco_cep"] == "01454-011"
+        assert "endereco" not in svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
+
+    def test_a_mismatched_bill_can_be_refused(self, client, scoped):
+        cid, did = self._cliente_com_endereco(scoped)
+        svc.descartar_sugestao(scoped, ORG_UUID, UUID(cid), UUID(did), item_key="endereco", user_id=uuid4())
+        assert "endereco" not in svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
+        assert _cliente(scoped, cid)["endereco_cep"] == "04000-000"
+
+    def test_a_company_holder_is_never_the_person_even_when_it_shares_words(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Energia Souza")])
+        avisos: list[str] = []
+        aplicado, conflito = svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco",
+            {"logradouro": "RUA B", "cep": "04000-000"},
+            titular_documento="ENERGIA SOUZA DISTRIBUIDORA DE ENERGIA S A", avisos=avisos,
+        )
+        assert (aplicado, conflito) == (False, None)
+        assert avisos == [svc.AVISO_TITULAR_NAO_CONFERE]
+
+    def test_complemento_bled_into_bairro_is_moved_before_writing(self, client, scoped):
+        cid = str(uuid4())
+        scoped.set_table_data("clientes", [cliente_row(cid, nome="Ana Paula Souza")])
+        svc.aplicar_endereco_ao_cliente(
+            scoped, ORG_UUID, UUID(cid), "comprovante_endereco",
+            {"logradouro": "RUA B", "cep": "04000-000", "bairro": "TP A AP 157"},
+            titular_documento="ANA PAULA SOUZA",
+        )
+        row = _cliente(scoped, cid)
+        assert row.get("endereco_bairro") is None
+        assert "157" in (row.get("endereco_complemento") or "")
+
+    def test_street_type_swap_is_the_same_street(self):
+        assert svc._mesmo_endereco(
+            {"endereco_logradouro": "ESTRADA DAS FLORES"}, {"logradouro": "RUA DAS FLORES"}
+        ) is True
