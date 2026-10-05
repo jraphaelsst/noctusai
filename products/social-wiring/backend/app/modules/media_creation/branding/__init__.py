@@ -1,32 +1,19 @@
-"""Branding system — version-controlled brand catalog → DB.
+"""Branding — the richer brand-kit model (database only).
 
-Agency model: one org manages many real-estate **agents** (brand owners,
-`mc_brand_owners`); each agent has 1+ **brandings** (`mc_brand_kits`), each
-with structured `design_tokens` the SVG render mode consumes
-(`KB § PATTERNS/svg-render-mode.md`).
+A *branding* is a ``mc_brand_kits`` row that carries a whole design system:
+structured ``tokens`` (the ``tokens.json`` shape), the brand book (markdown),
+extra markdown ``sections``, ``mc_brand_components`` (guideline markdown +
+sandboxed preview HTML) and uploaded assets (logos / post models / fonts, kept
+in a PRIVATE bucket and listed through ``mc_brand_references``).
 
-The catalog (`catalog/<owner>/brand.json` + assets) is the source of
-truth; `seed_catalog` upserts it idempotently into one org.
+There is NO repo catalog: the former ``catalog/`` directory, its loader and the
+``seed-catalog`` endpoint were deleted (owner decision 2026-10-05) — brandings
+live in the database, edited in the app or imported from a design-system folder
+(:mod:`.bundle`). Owners are BRANDS: a branding links to ``social_wiring.marcas``.
+
+Modules
+-------
+* :mod:`.tokens_schema` — validates the ``tokens`` object server-side.
+* :mod:`.html_guard`    — rejects unsafe component preview HTML on write.
+* :mod:`.bundle`        — parses a design-system folder (files) into a bundle.
 """
-
-from __future__ import annotations
-
-from app.modules.media_creation.branding.loader import (
-    CATALOG_DIR,
-    BrandingDef,
-    BrandOwnerDef,
-    ReferenceDef,
-    load_catalog,
-    load_owner,
-    seed_catalog,
-)
-
-__all__ = [
-    "CATALOG_DIR",
-    "BrandOwnerDef",
-    "BrandingDef",
-    "ReferenceDef",
-    "load_catalog",
-    "load_owner",
-    "seed_catalog",
-]

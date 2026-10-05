@@ -22,7 +22,7 @@ Add it to the app by appending it to ``MODULES``:
 
 What ``register()`` does
 ────────────────────────
-* Imports the four routers (brand_kits / references / posts / generation).
+* Imports the routers (brand_kits / branding / references / posts / generation).
 * Returns the ``ModuleRegistration`` with no extra standard-router needs
   (the routers all gate via ``Depends(get_current_user_org)``).
 

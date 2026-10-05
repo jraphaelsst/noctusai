@@ -1,14 +1,26 @@
-"""Brand-reference CRUD endpoints (nested under a brand kit)."""
+"""Brand-reference CRUD endpoints (nested under a brand kit).
+
+URL-only references are created here (``POST /brand-kits/{id}/references``);
+UPLOADED assets (logos, post models, fonts) are created through
+``POST /branding/{id}/assets``. Deleting a reference is one route for both —
+it also removes the blob of an uploaded asset.
+"""
 from __future__ import annotations
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_admin_client, get_current_user_org, get_org_id
+from app.modules.media_creation.deps import get_branding_storage
 from app.modules.media_creation.schemas.references import ReferenceCreate
+from app.modules.media_creation.services.branding_service import (
+    BrandingError,
+    BrandingService,
+)
 from app.modules.media_creation.services.reference_service import ReferenceService
 
 logger = logging.getLogger(__name__)
@@ -37,7 +49,15 @@ async def create_reference(
 
 
 @router.delete("/references/{reference_id}")
-async def delete_reference(reference_id: str, auth=Depends(get_current_user_org)):
+async def delete_reference(
+    reference_id: str,
+    auth=Depends(get_current_user_org),
+    storage: StorageBackend = Depends(get_branding_storage),
+):
     user, _, _ = auth
-    _svc(user).delete_reference(reference_id)
+    branding = BrandingService(get_admin_client(), get_org_id(user), storage)
+    try:
+        await branding.delete_asset(reference_id)
+    except BrandingError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     return {"ok": True, "message": "Referência removida"}

@@ -5,11 +5,14 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_admin_client, get_current_user_org, get_org_id
+from app.modules.media_creation.deps import get_branding_storage
 from app.modules.media_creation.schemas.brand_kits import BrandKitCreate, BrandKitUpdate
 from app.modules.media_creation.services.brand_kit_service import BrandKitService
+from app.modules.media_creation.services.branding_service import BrandingError, BrandingService
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/media-creation/brand-kits", tags=["Media Creation — Brand Kits"])
@@ -55,11 +58,16 @@ async def update_brand_kit(
 
 
 @router.delete("/{kit_id}")
-async def delete_brand_kit(kit_id: str, auth=Depends(get_current_user_org)):
+async def delete_brand_kit(
+    kit_id: str,
+    auth=Depends(get_current_user_org),
+    storage: StorageBackend = Depends(get_branding_storage),
+):
+    # One delete path for kits and brandings: it also removes the blobs of
+    # uploaded assets and protects the Branding Template.
     user, _, _ = auth
-    if not _svc(user).delete_kit(kit_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Kit em uso — exclua os posts antes de remover este kit",
-        )
+    try:
+        await BrandingService(get_admin_client(), get_org_id(user), storage).delete(kit_id)
+    except BrandingError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     return {"ok": True, "message": "Kit removido"}

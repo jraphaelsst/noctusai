@@ -75,6 +75,8 @@ def client():
 
         from app.config import settings
         from app.modules.media_creation import register
+        from app.modules.media_creation.deps import get_branding_storage
+        from noctusai_lib.integrations.storage import FakeStorageBackend
         from app.modules.media_creation.routers.generation import (
             get_generation_service,
             get_post_service,
@@ -112,9 +114,16 @@ def client():
         app.dependency_overrides[get_generation_service] = lambda: GenerationService(
             mock_sb, _org_id, image_gen_adapter=FakeImageGenAdapter()
         )
+        # Branding assets: a REAL Fake backend (not the mock client's MagicMock
+        # `.storage`, which answers anything) so put/get/delete/signed_url are
+        # actually exercised. Exposed on the client for blob assertions.
+        storage = FakeStorageBackend()
+        app.dependency_overrides[get_branding_storage] = lambda: storage
         try:
             tc = TestClient(app)
-            yield AuthClient(tc, mock_sb)
+            ac = AuthClient(tc, mock_sb)
+            ac.branding_storage = storage
+            yield ac
         finally:
             app.dependency_overrides.clear()
 

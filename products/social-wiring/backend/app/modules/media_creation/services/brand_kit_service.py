@@ -4,8 +4,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from noctusai_lib.api.crud_safety import delete_or_404
-
 logger = logging.getLogger(__name__)
 
 
@@ -56,25 +54,3 @@ class BrandKitService:
             .execute()
         )
         return result.data[0] if result.data else None
-
-    def delete_kit(self, kit_id: str) -> bool:
-        # Refuse deletion when any post references this kit (ON DELETE RESTRICT
-        # would raise; we surface a clean 400 instead).
-        used = (
-            self.db.table("mc_posts")
-            .select("id", count="exact")
-            .eq("brand_kit_id", kit_id)
-            .eq("org_id", self.org_id)
-            .limit(1)
-            .execute()
-        )
-        if used.data:
-            return False
-        delete_or_404(
-            self.db,
-            "mc_brand_kits",
-            ("id", kit_id),
-            ("org_id", self.org_id),
-            message="Kit de marca não encontrado",
-        )
-        return True

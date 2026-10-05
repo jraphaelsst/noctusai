@@ -4,7 +4,7 @@
  * Three tabs:
  *   - Biblioteca   : list of drafts / ready / published posts
  *   - Novo post    : compose → idea → 3-stage LLM generation pipeline
- *   - Kits de marca: persona + design system + references per brand
+ *   - Branding     : brandings grouped by marca (tokens, brand book, components, assets)
  *
  * The three generation stages — storyboard, image prompts, copy — each
  * call the backend's POST /api/media-creation/posts/{id}/generate/* and
@@ -44,16 +44,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
+import { BrandingTab } from "@/components/branding/BrandingTab";
 import {
-  type BrandKit,
-  type BrandReference,
   type Post,
   type PostFormat,
   type PostScore,
-  type ReferenceKind,
   useBrandKits,
-  useBrandOwners,
-  useBrandReferences,
   usePost,
   usePostGeneration,
   usePosts,
@@ -69,13 +65,6 @@ const STATUS_VARIANT: Record<Post["status"], "default" | "secondary" | "outline"
   draft: "outline",
   ready: "secondary",
   published: "default",
-};
-
-const REFERENCE_KIND_LABEL: Record<ReferenceKind, string> = {
-  model: "Post modelo",
-  prompt: "Prompt exemplo",
-  palette: "Paleta",
-  typography: "Tipografia",
 };
 
 // Método Audience slide-role labels (+ legacy roles). Fallback: the raw role.
@@ -126,7 +115,7 @@ export default function MediaCreation() {
           </TabsTrigger>
           <TabsTrigger value="brand" className="gap-2">
             <Palette className="h-4 w-4" />
-            Kits de marca
+            Branding
           </TabsTrigger>
         </TabsList>
 
@@ -147,8 +136,7 @@ export default function MediaCreation() {
         </TabsContent>
 
         <TabsContent value="brand" className="mt-4">
-          <BrandTab />
-          <BrandOwnersPanel />
+          <BrandingTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -666,7 +654,7 @@ function ComposeTab({ onCreated }: { onCreated: (id: string) => void }) {
       <CardContent className="space-y-4">
         {!kitsLoading && kits.length === 0 && (
           <p className="rounded border border-dashed p-4 text-sm text-muted-foreground">
-            Crie um kit de marca primeiro na aba "Kits de marca" — todo post
+            Crie um branding primeiro na aba "Branding" — todo post
             precisa de um kit.
           </p>
         )}
@@ -800,402 +788,5 @@ function ComposeTab({ onCreated }: { onCreated: (id: string) => void }) {
         </Button>
       </CardContent>
     </Card>
-  );
-}
-
-// ─── Brand tab ───────────────────────────────────────────────────────
-
-/**
- * Catálogo de marcas — `branding/owners` + `seed-catalog`.
- *
- * These three routes shipped with no UI at all: the curated brand catalog
- * could only be loaded by issuing the POST by hand, which meant a fresh org
- * had an empty catalog and no way to see it.
- */
-function BrandOwnersPanel() {
-  const { items, loading, error, seeding, seedCatalog } = useBrandOwners();
-
-  return (
-    <Card className="mt-6" data-testid="brand-owners-panel">
-      <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <CardTitle className="text-base">Catálogo de marcas</CardTitle>
-            <CardDescription>
-              Marcas curadas que a geração de mídia usa como referência.
-            </CardDescription>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void seedCatalog()}
-            disabled={seeding}
-            data-testid="brand-owners-seed"
-          >
-            {seeding ? "Carregando…" : "Carregar catálogo"}
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {loading ? (
-          <div className="space-y-2" data-testid="brand-owners-loading">
-            <Skeleton className="h-10 w-full" />
-            <Skeleton className="h-10 w-full" />
-          </div>
-        ) : error ? (
-          <p className="text-sm text-destructive" data-testid="brand-owners-error">
-            {error}
-          </p>
-        ) : items.length === 0 ? (
-          <p
-            className="py-6 text-center text-sm text-muted-foreground"
-            data-testid="brand-owners-empty"
-          >
-            Catálogo vazio — use "Carregar catálogo" para trazer as marcas
-            curadas do repositório.
-          </p>
-        ) : (
-          <ul className="divide-y rounded-md border" data-testid="brand-owners-rows">
-            {items.map((o) => (
-              <li
-                key={o.id}
-                className="px-3 py-2 text-sm"
-                data-testid={`brand-owner-${o.id}`}
-              >
-                <span className="font-medium">
-                  {o.nome ?? o.name ?? o.slug ?? o.id}
-                </span>
-                {o.descricao ? (
-                  <span className="ml-2 text-xs text-muted-foreground">
-                    {o.descricao}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function BrandTab() {
-  const { items, loading, create, update, remove } = useBrandKits();
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-
-  const selected = useMemo(
-    () => items.find((k) => k.id === selectedId) ?? null,
-    [items, selectedId],
-  );
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_2fr]">
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="text-base">Kits</CardTitle>
-          <Button size="sm" onClick={() => setCreating(true)}>
-            <Plus className="mr-1 h-3 w-3" />
-            Novo kit
-          </Button>
-        </CardHeader>
-        <CardContent className="space-y-1 p-2">
-          {loading && (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-4 w-4 animate-spin" />
-            </div>
-          )}
-          {items.map((k) => (
-            <button
-              key={k.id}
-              onClick={() => {
-                setSelectedId(k.id);
-                setCreating(false);
-              }}
-              className={`w-full rounded px-3 py-2 text-left text-sm transition-colors ${
-                selectedId === k.id ? "bg-primary/10" : "hover:bg-muted/50"
-              }`}
-            >
-              <div className="font-medium">{k.name}</div>
-              <div className="truncate text-xs text-muted-foreground">
-                {k.default_lang}
-              </div>
-            </button>
-          ))}
-        </CardContent>
-      </Card>
-
-      <div>
-        {creating ? (
-          <NewKitForm
-            onCancel={() => setCreating(false)}
-            onCreated={async (input) => {
-              const k = await create(input);
-              if (k) {
-                setCreating(false);
-                setSelectedId(k.id);
-              }
-            }}
-          />
-        ) : selected ? (
-          <KitEditor
-            kit={selected}
-            onSave={(patch) => update(selected.id, patch)}
-            onDelete={async () => {
-              if (await remove(selected.id)) setSelectedId(null);
-            }}
-          />
-        ) : (
-          <Card>
-            <CardContent className="flex items-center justify-center p-12 text-muted-foreground">
-              Selecione um kit ou crie um novo.
-            </CardContent>
-          </Card>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function NewKitForm({
-  onCancel,
-  onCreated,
-}: {
-  onCancel: () => void;
-  onCreated: (input: { name: string; persona?: string; design_system?: string; default_lang?: string }) => void;
-}) {
-  const [name, setName] = useState("");
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Novo kit de marca</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1">
-          <Label>Nome</Label>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Granja Premium"
-          />
-        </div>
-        <div className="flex gap-2">
-          <Button
-            disabled={!name.trim()}
-            onClick={() => onCreated({ name: name.trim() })}
-          >
-            Criar
-          </Button>
-          <Button variant="ghost" onClick={onCancel}>
-            Cancelar
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function KitEditor({
-  kit,
-  onSave,
-  onDelete,
-}: {
-  kit: BrandKit;
-  onSave: (patch: { persona?: string; design_system?: string; default_lang?: string; name?: string }) => Promise<boolean>;
-  onDelete: () => void;
-}) {
-  const [persona, setPersona] = useState(kit.persona);
-  const [design, setDesign] = useState(kit.design_system);
-  const [name, setName] = useState(kit.name);
-  const dirty = persona !== kit.persona || design !== kit.design_system || name !== kit.name;
-
-  return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-4">
-          <CardTitle className="text-base">{kit.name}</CardTitle>
-          <Button variant="ghost" size="sm" onClick={onDelete}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-1">
-          <Label>Nome</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} />
-        </div>
-        <div className="space-y-1">
-          <Label>Persona</Label>
-          <Textarea
-            rows={6}
-            value={persona}
-            onChange={(e) => setPersona(e.target.value)}
-            placeholder="Voz: editorial, calma, premium. Vocabulário: ..."
-            className="font-mono text-xs"
-          />
-          <p className="text-xs text-muted-foreground">
-            Texto livre — pode ser o conteúdo do seu PERSONA.md.
-          </p>
-        </div>
-        <div className="space-y-1">
-          <Label>Design system</Label>
-          <Textarea
-            rows={6}
-            value={design}
-            onChange={(e) => setDesign(e.target.value)}
-            placeholder="Paleta: bg #2A2620 · gold #C5A55E · texto #F5F1EA ..."
-            className="font-mono text-xs"
-          />
-          <p className="text-xs text-muted-foreground">
-            Texto livre — pode ser o conteúdo do seu DESIGN-SYSTEM.md.
-          </p>
-        </div>
-        <Button
-          disabled={!dirty}
-          onClick={() =>
-            void onSave({ name, persona, design_system: design })
-          }
-        >
-          Salvar alterações
-        </Button>
-
-        <ReferencesPanel kitId={kit.id} />
-      </CardContent>
-    </Card>
-  );
-}
-
-function ReferencesPanel({ kitId }: { kitId: string }) {
-  const { items, add, remove } = useBrandReferences(kitId);
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<{
-    kind: ReferenceKind;
-    label: string;
-    asset_url: string;
-    notes: string;
-  }>({
-    kind: "model",
-    label: "",
-    asset_url: "",
-    notes: "",
-  });
-
-  return (
-    <div className="border-t pt-4">
-      <div className="mb-2 flex items-center justify-between">
-        <h4 className="text-sm font-semibold">Referências ({items.length})</h4>
-        <Button size="sm" variant="outline" onClick={() => setOpen((v) => !v)}>
-          {open ? "Cancelar" : "Adicionar"}
-        </Button>
-      </div>
-
-      {open && (
-        <div className="mb-3 grid gap-2 rounded border bg-muted/30 p-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label className="text-xs">Tipo</Label>
-            <Select
-              value={draft.kind}
-              onValueChange={(v) => setDraft((d) => ({ ...d, kind: v as ReferenceKind }))}
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(Object.keys(REFERENCE_KIND_LABEL) as ReferenceKind[]).map((k) => (
-                  <SelectItem key={k} value={k}>
-                    {REFERENCE_KIND_LABEL[k]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs">Rótulo</Label>
-            <Input
-              value={draft.label}
-              onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
-              placeholder="post1 — cover slide"
-            />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label className="text-xs">URL do ativo</Label>
-            <Input
-              value={draft.asset_url}
-              onChange={(e) => setDraft((d) => ({ ...d, asset_url: e.target.value }))}
-              placeholder="https://..."
-            />
-          </div>
-          <div className="space-y-1 sm:col-span-2">
-            <Label className="text-xs">Notas (opcional)</Label>
-            <Input
-              value={draft.notes}
-              onChange={(e) => setDraft((d) => ({ ...d, notes: e.target.value }))}
-            />
-          </div>
-          <Button
-            size="sm"
-            disabled={!draft.label.trim()}
-            onClick={async () => {
-              const ok = await add({
-                kind: draft.kind,
-                label: draft.label.trim(),
-                asset_url: draft.asset_url.trim() || undefined,
-                notes: draft.notes.trim() || undefined,
-              });
-              if (ok) {
-                setOpen(false);
-                setDraft({ kind: "model", label: "", asset_url: "", notes: "" });
-              }
-            }}
-          >
-            Adicionar
-          </Button>
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {items.map((r: BrandReference) => (
-          <div
-            key={r.id}
-            className="flex items-start justify-between gap-2 rounded border bg-background p-2 text-xs"
-          >
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <Badge variant="outline" className="text-[10px]">
-                  {REFERENCE_KIND_LABEL[r.kind]}
-                </Badge>
-                <span className="font-medium">{r.label}</span>
-              </div>
-              {r.asset_url && (
-                <a
-                  href={r.asset_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block truncate text-primary"
-                >
-                  {r.asset_url}
-                </a>
-              )}
-              {r.notes && (
-                <p className="text-muted-foreground">{r.notes}</p>
-              )}
-            </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => void remove(r.id)}
-            >
-              <Trash2 className="h-3 w-3" />
-            </Button>
-          </div>
-        ))}
-        {items.length === 0 && (
-          <p className="text-xs text-muted-foreground">
-            Nenhuma referência ainda. Adicione modelos / paletas / tipografia /
-            prompts exemplo — o LLM vai citá-los nos artefatos gerados.
-          </p>
-        )}
-      </div>
-    </div>
   );
 }

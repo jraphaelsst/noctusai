@@ -85,35 +85,44 @@ into `<image>`) is a fast-follow.
 only each product's `001_*`, so these cols are absent there (same as core 030+);
 tests mock the DB. Apply to the real Supabase at deploy.
 
-## 3 · Branding system — the brand-data layer that feeds the render mode
+## 3 · Branding system — the brand-data layer (database only, 2026-10-05)
 
-`social-wiring/media_creation/branding/` (project `social-wiring-branding-catalog`,
-2026-05-24). **Agency model**: one org manages many real-estate **agents**
-(`mc_brand_owners`, the agent/client layer) → each agent has 1+ **brandings**
-(`mc_brand_kits` rows, each with `design_tokens` the §2 render mode consumes).
-"≥1 branding per agent" = multiple kit rows under one owner (Wilson ships
-premium + educational).
+`social-wiring/media_creation` — the "Branding" tab (formerly "Kits de marca").
+A **branding** is a `mc_brand_kits` row that carries a whole design system; it
+links to a **marca** (`social_wiring.marcas` — owners are BRANDS, not only
+people) through `marca_id`. Brandings live in the **database only**: the former
+repo catalog (`branding/catalog/`, `load_catalog`, `seed_catalog`,
+`POST /branding/seed-catalog`, the "Carregar catálogo" button) was **deleted**
+(owner decision; its one entry, "Wilson", was Gilson's and is retired).
 
-- **Source of truth = a version-controlled repo catalog**: `branding/catalog/
-  <owner>/brand.json` (owner + brandings[] + references[]) + assets
-  (`design-system.md`, reference images). `load_catalog()` parses it.
-- **`seed_catalog(db, org_id, owners)`** upserts a catalog into ONE org —
-  **idempotent** (slug-keyed: `(org_id, owner.slug)` + `(org_id, owner,
-  branding.slug)`; UUIDs generated in-loader so the path works on the real +
-  `MockSupabaseClient`). Re-running updates in place, never duplicates.
-- **Endpoints** (`routers/branding.py`): `GET /branding/owners` + `/owners/{id}`
-  (agents + their brandings) · `POST /branding/seed-catalog` (load the repo
-  catalog into the caller's org).
-- **Migration** `003_brand_owners.sql` — forward/idempotent: `mc_brand_owners`
-  (org-scoped RLS) + `mc_brand_kits.brand_owner_id` FK + `.slug` + partial-unique
-  catalog key. `DROP POLICY IF EXISTS`+`CREATE` (PG has no `CREATE POLICY IF NOT
-  EXISTS`).
-- First agent = **Wilson** (Granja Viana real-estate), design_tokens converted
-  from the media-creator `DESIGN-SYSTEM.md` (preserved in the catalog). Earlier
-  "leave Wilson as user data" was reversed — it's now the first catalog entry.
-- Triage: `mc_brand_owners` + catalog/loader = [A] accept at N=1
-  (media_creation-only); seed-convergence destination if a 2nd product needs a
-  brand-owner layer.
+- **Rich model** (migration `204_branding_model.sql`): `tokens` JSONB (the
+  design system's `tokens.json`, validated server-side by
+  `branding/tokens_schema.py`), `brand_book` (README markdown), `sections`
+  (extra markdown), `mc_brand_components` (guideline markdown + `preview_html`),
+  uploaded assets as `mc_brand_references` rows (`kind` logo|model|font) whose
+  bytes live in the PRIVATE `social-wiring-branding` bucket (org-first keys,
+  signed URLs minted per read), and `is_template` — the org's single **Branding
+  Template** row, which "create from template" copies (blobs included).
+- **`design_tokens` (migration 002) is unchanged and separate**: the FLAT
+  override this render mode reads. It is deliberately NOT derived from `tokens`
+  (a brand's fonts are not necessarily bundled faces) — §2 is untouched.
+- **Import** — `POST /api/media-creation/branding/import` takes the design-system
+  FOLDER as `files: [{path, content_base64}]` (`tokens.json`, `README.md`,
+  `sections/*.md`, `components/<Name>/{README.md,preview.html}`,
+  `assets/{Logos,References}/*`, `fonts/*`), validates everything first
+  (`branding/bundle.py`: magic-byte asset sniffing, size caps, SVG refused;
+  `branding/html_guard.py`: preview HTML with script/frames/forms/handlers/remote
+  fetches is REJECTED, not rewritten), then upserts (idempotent; re-run = repair).
+  Unimported files are reported in `ignored`, never dropped silently. The UI
+  renders previews ONLY in a sandboxed `<iframe srcdoc>` (no script permission,
+  CSP meta), never in the page DOM.
+- Data migration `205_branding_marcas_data.sql` (own file, owner-org guarded,
+  no-op elsewhere): marcas Gilson Tangerino / Nós no Limiar / NoctusAI + the
+  empty "One Design" kit attached to One Consultoria.
+- Runbook for the first import (Nós no Limiar):
+  `products/social-wiring/projects/core-studio/specs/branding-import.md`.
+- Triage: branding model = [A] accept at N=1 (media_creation-only);
+  seed-convergence destination if a 2nd product needs design-system storage.
 
 ## 4 · Provenance / triage
 - `svg_render` primitive = [F] formalize-to-seed (outbound render is reusable).

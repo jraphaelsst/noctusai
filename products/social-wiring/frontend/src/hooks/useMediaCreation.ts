@@ -1,5 +1,6 @@
 /**
- * Hooks for the media_creation module — brand kits + posts + generation.
+ * Hooks for the media_creation module — brand-kit list + posts + generation.
+ * (Branding CRUD: `useBranding.ts`.)
  *
  * The backend wraps responses in {ok, data} via success_response(). We
  * unwrap at the boundary so component code stays envelope-free.
@@ -19,33 +20,6 @@ export interface BrandKit {
   default_lang: string;
   created_at: string;
   updated_at: string;
-}
-
-export interface BrandKitInput {
-  name: string;
-  persona?: string;
-  design_system?: string;
-  default_lang?: string;
-}
-
-export type ReferenceKind = "model" | "prompt" | "palette" | "typography";
-
-export interface BrandReference {
-  id: string;
-  org_id: string;
-  brand_kit_id: string;
-  kind: ReferenceKind;
-  label: string;
-  asset_url?: string | null;
-  notes?: string | null;
-  created_at: string;
-}
-
-export interface ReferenceInput {
-  kind: ReferenceKind;
-  label: string;
-  asset_url?: string;
-  notes?: string;
 }
 
 export type PostFormat = "carousel" | "single" | "reels" | "video";
@@ -187,68 +161,10 @@ export interface RenderResult {
 // ─── Brand kits ──────────────────────────────────────────────────────
 
 /**
- * Brand owners — the curated agent/brand catalog behind media generation.
- *
- *   GET  /api/media-creation/branding/owners
- *   GET  /api/media-creation/branding/owners/{id}
- *   POST /api/media-creation/branding/seed-catalog
- *
- * All three shipped with no UI, so the catalog could only be loaded by hand.
- * `seed-catalog` is a slug-keyed upsert — safe to re-run, never duplicates.
- *
- * Same manual-fetch shape as `useBrandKits` below (this file predates the
- * product's react-query adoption); kept consistent rather than mixed.
+ * Brand kits (a.k.a. brandings) — LIST only: the Compose tab picks one. The
+ * full Branding model (tokens, brand book, components, assets, CRUD) lives in
+ * `useBranding.ts` and the Branding tab.
  */
-export interface BrandOwner {
-  id: string;
-  slug?: string;
-  nome?: string;
-  name?: string;
-  descricao?: string | null;
-  [key: string]: unknown;
-}
-
-export function useBrandOwners() {
-  const [items, setItems] = useState<BrandOwner[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [seeding, setSeeding] = useState(false);
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const r = await api.get<Envelope<BrandOwner[]>>(
-        "/api/media-creation/branding/owners",
-      );
-      setItems(r.data ?? []);
-    } catch (err: any) {
-      setError(err?.message ?? "Falha ao carregar o catálogo de marcas");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const seedCatalog = useCallback(async () => {
-    setSeeding(true);
-    try {
-      await api.post("/api/media-creation/branding/seed-catalog", {});
-      toast.success("Catálogo de marcas carregado");
-      await refresh();
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao carregar o catálogo");
-    } finally {
-      setSeeding(false);
-    }
-  }, [refresh]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  return { items, loading, error, seeding, refresh, seedCatalog };
-}
-
 export function useBrandKits() {
   const [items, setItems] = useState<BrandKit[]>([]);
   const [loading, setLoading] = useState(true);
@@ -261,100 +177,15 @@ export function useBrandKits() {
       const r = await api.get<Envelope<BrandKit[]>>("/api/media-creation/brand-kits");
       setItems(r.data ?? []);
     } catch (err: any) {
-      setError(err?.message ?? "Falha ao carregar kits de marca");
+      setError(err?.message ?? "Falha ao carregar brandings");
     } finally {
       setLoading(false);
     }
   }, []);
 
-  const create = useCallback(async (input: BrandKitInput): Promise<BrandKit | null> => {
-    try {
-      const r = await api.post<Envelope<BrandKit>>("/api/media-creation/brand-kits", input);
-      toast.success("Kit de marca criado");
-      await refresh();
-      return r.data;
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao criar kit");
-      return null;
-    }
-  }, [refresh]);
-
-  const update = useCallback(async (id: string, patch: Partial<BrandKitInput>): Promise<boolean> => {
-    try {
-      await api.patch<Envelope<BrandKit>>(`/api/media-creation/brand-kits/${id}`, patch);
-      toast.success("Kit atualizado");
-      await refresh();
-      return true;
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao atualizar kit");
-      return false;
-    }
-  }, [refresh]);
-
-  const remove = useCallback(async (id: string): Promise<boolean> => {
-    try {
-      await api.delete(`/api/media-creation/brand-kits/${id}`);
-      toast.success("Kit removido");
-      await refresh();
-      return true;
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao remover kit");
-      return false;
-    }
-  }, [refresh]);
-
   useEffect(() => { void refresh(); }, [refresh]);
 
-  return { items, loading, error, refresh, create, update, remove };
-}
-
-// ─── References (nested under a kit) ─────────────────────────────────
-
-export function useBrandReferences(brandKitId: string | null) {
-  const [items, setItems] = useState<BrandReference[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const refresh = useCallback(async () => {
-    if (!brandKitId) { setItems([]); return; }
-    setLoading(true);
-    try {
-      const r = await api.get<Envelope<BrandReference[]>>(
-        `/api/media-creation/brand-kits/${brandKitId}/references`,
-      );
-      setItems(r.data ?? []);
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao carregar referências");
-    } finally {
-      setLoading(false);
-    }
-  }, [brandKitId]);
-
-  const add = useCallback(async (input: ReferenceInput): Promise<boolean> => {
-    if (!brandKitId) return false;
-    try {
-      await api.post(`/api/media-creation/brand-kits/${brandKitId}/references`, input);
-      await refresh();
-      return true;
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao adicionar referência");
-      return false;
-    }
-  }, [brandKitId, refresh]);
-
-  const remove = useCallback(async (referenceId: string): Promise<boolean> => {
-    try {
-      await api.delete(`/api/media-creation/references/${referenceId}`);
-      await refresh();
-      return true;
-    } catch (err: any) {
-      toast.error(err?.message ?? "Falha ao remover referência");
-      return false;
-    }
-  }, [refresh]);
-
-  useEffect(() => { void refresh(); }, [refresh]);
-
-  return { items, loading, refresh, add, remove };
+  return { items, loading, error, refresh };
 }
 
 // ─── Posts (library + lifecycle) ─────────────────────────────────────

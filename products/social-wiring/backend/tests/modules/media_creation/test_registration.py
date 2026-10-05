@@ -17,9 +17,8 @@ class TestModuleRegistration:
             "/api/media-creation/posts",
         ]:
             resp = client.raw().get(path)
-            assert resp.status_code in (
-                401,
-                403,
+            assert (
+                resp.status_code == 401
             ), f"{path}: unexpected status {resp.status_code} — route may not be mounted"
 
     def test_authenticated_brand_kits_list_returns_200(self, client):

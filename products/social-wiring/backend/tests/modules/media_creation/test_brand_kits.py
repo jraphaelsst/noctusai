@@ -71,4 +71,4 @@ class TestBrandKitsRouter:
 
     def test_unauthenticated_request_rejected(self, client):
         resp = client.raw().get("/api/media-creation/brand-kits")
-        assert resp.status_code in (401, 403), resp.text
+        assert resp.status_code == 401, resp.text
