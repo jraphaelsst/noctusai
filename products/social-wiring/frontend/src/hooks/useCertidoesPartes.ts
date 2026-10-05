@@ -13,6 +13,10 @@ import { api } from "@noctusai/seed/infra";
 
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
 import type {
+  AntigoCriarInput,
+  AntigoCriarResponse,
+  AntigosEstado,
+  AntigosSincronizacao,
   CelulaEnsureResponse,
   CertidaoDivergencia,
   CienciaPcenResult,
@@ -308,3 +312,104 @@ export function useRemoverLinhaPartes(clienteId: string) {
 }
 
 export { useInvalidatePartes };
+
+// ─── Antigos proprietários ────────────────────────────────────────────────────
+
+export const antigosKey = (clienteId: string, atendimentoId?: string | null) =>
+  ["sw", "clientes", clienteId, "certidoes", "antigos-proprietarios", atendimentoId ?? null] as const;
+
+/** Mutations here change the rows (partes) AND the header (antigos): refetch both. */
+function useInvalidatePartesEAntigos(clienteId: string) {
+  const qc = useQueryClient();
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "certidoes", "partes"] }),
+      qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "certidoes", "antigos-proprietarios"] }),
+      qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId, "contratos"] }),
+    ]);
+}
+
+/** `api.delete` takes a body, not params — the optional atendimento rides the query string. */
+const atQuery = (atendimentoId?: string | null) =>
+  atendimentoId ? `?atendimento_id=${encodeURIComponent(atendimentoId)}` : "";
+
+/** `GET …/certidoes/antigos-proprietarios` — header state (§2). */
+export function useAntigosProprietarios(clienteId: string | null, atendimentoId?: string | null) {
+  return useQuery({
+    queryKey: antigosKey(clienteId ?? "__none__", atendimentoId),
+    queryFn: () =>
+      api.get<AntigosEstado>(`${clienteBase(clienteId as string)}/certidoes/antigos-proprietarios`, {
+        ...(atendimentoId ? { atendimento_id: atendimentoId } : {}),
+      }),
+    enabled: !!clienteId,
+    placeholderData: (prev) => prev,
+  });
+}
+
+/** `POST …/sincronizar` (§3) — idempotent backstop, fired when the subtab opens. */
+export function useSincronizarAntigos(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidatePartesEAntigos(clienteId);
+  return useMutation({
+    mutationFn: () =>
+      api.post<AntigosSincronizacao>(
+        `${clienteBase(clienteId)}/certidoes/antigos-proprietarios/sincronizar`,
+        { atendimento_id: atendimentoId ?? null },
+      ),
+    onSuccess: (r) => {
+      if (r.criados.length > 0) toast.success(`${r.criados.length} antigo(s) proprietário(s) adicionado(s) da matrícula.`);
+      void invalidate();
+    },
+    // Not a toast only: the subtab also renders `sincronizar.error` inline.
+    onError: (e) => toast.error("Não foi possível sincronizar com a matrícula", { description: erroMsg(e) }),
+  });
+}
+
+/** `POST …/antigos-proprietarios` (§4) — manual add. */
+export function useAdicionarAntigo(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidatePartesEAntigos(clienteId);
+  return useMutation({
+    mutationFn: (input: AntigoCriarInput) =>
+      api.post<AntigoCriarResponse>(`${clienteBase(clienteId)}/certidoes/antigos-proprietarios`, {
+        ...input,
+        atendimento_id: atendimentoId ?? null,
+      }),
+    onSuccess: () => {
+      toast.success("Antigo proprietário adicionado.");
+      void invalidate();
+    },
+    onError: (e) => toast.error("Não foi possível adicionar", { description: erroMsg(e) }),
+  });
+}
+
+/** `DELETE …/antigos-proprietarios/{parte_id}` (§4) — antigo rows only. */
+export function useRemoverAntigo(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidatePartesEAntigos(clienteId);
+  return useMutation({
+    mutationFn: (parteId: string) =>
+      api.delete<void>(
+        `${clienteBase(clienteId)}/certidoes/antigos-proprietarios/${encodeURIComponent(parteId)}${atQuery(atendimentoId)}`,
+      ),
+    onSuccess: () => {
+      toast.success("Antigo proprietário removido.");
+      void invalidate();
+    },
+    onError: (e) => toast.error("Não foi possível remover", { description: erroMsg(e) }),
+  });
+}
+
+/** `PUT|DELETE …/antigos-proprietarios/dispensa` (§5) — admin only. A 403 is
+ *  NOT toasted here: the caller renders it inline as "sem permissão". */
+export function useDispensaAntigos(clienteId: string, atendimentoId?: string | null) {
+  const invalidate = useInvalidatePartesEAntigos(clienteId);
+  const base = `${clienteBase(clienteId)}/certidoes/antigos-proprietarios/dispensa`;
+  return useMutation({
+    mutationFn: (input: { motivo: string } | null) =>
+      input
+        ? api.put<AntigosEstado>(base, { motivo: input.motivo, atendimento_id: atendimentoId ?? null })
+        : api.delete<AntigosEstado>(`${base}${atQuery(atendimentoId)}`),
+    onSuccess: (_r, input) => {
+      toast.success(input ? "Antigos proprietários dispensados neste negócio." : "Exigência reativada.");
+      void invalidate();
+    },
+  });
+}

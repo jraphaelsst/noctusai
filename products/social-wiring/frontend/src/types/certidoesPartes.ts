@@ -113,6 +113,8 @@ export interface CertidaoParteTotais {
   vencidas: number;
 }
 
+export type CertidaoGrupo = "comprador" | "vendedor" | "antigo_proprietario";
+
 export interface CertidaoParte {
   /** `c:<cliente_id>` | `e:<empresa_id>` */
   chave: string;
@@ -121,6 +123,8 @@ export interface CertidaoParte {
   /** `COMP n` | `VEND n` | `EMP n` */
   rotulo: string;
   lado: "comprador" | "vendedor" | null;
+  /** Explicit group (contract §1) — subtabs split on THIS, never on `papel`/`rotulo`. */
+  grupo: CertidaoGrupo;
   papel: string;
   titular: boolean;
   nome: string;
@@ -177,4 +181,65 @@ export interface RelerCertidoesResponse {
   sem_arquivo: number;
   em_andamento: number;
   erros: number;
+}
+
+// ─── Antigos proprietários (antigos-proprietarios-CONTRACT.md §2–§5) ──────────
+
+export type AntigosMotivo =
+  | "transferencia_menos_de_5_anos"
+  | "transferencia_5_anos_ou_mais"
+  | "sem_transferencia_registrada"
+  | "ultima_transferencia_desconhecida"
+  | "sem_imovel";
+
+export interface AntigosEstado {
+  atendimento_id: string;
+  /** `null` = unknown. */
+  exigido: boolean | null;
+  motivo: AntigosMotivo | null;
+  janela_anos: number;
+  ultima_transferencia: {
+    ato_id: string | null;
+    ato_ref: string | null;
+    natureza: string | null;
+    data_registro: string | null;
+    detalhes_origem: string | null;
+  } | null;
+  origem_dados: "titulo_confirmado" | "extracao" | "manual" | null;
+  transmitentes: {
+    nome: string;
+    documento_mascarado: string | null;
+    tipo_pessoa: "PF" | "PJ";
+    ja_no_card: boolean;
+  }[];
+  dispensado: { em: string; por: { id: string; nome: string | null }; motivo: string } | null;
+  sincronizacao_pendente: number;
+}
+
+export interface AntigosEmissao {
+  parte_id: string;
+  status: "solicitada" | "nao_iniciada";
+  codigo: "DOCUMENTO_AUSENTE" | "CREDENCIAIS_AUSENTES" | null;
+  consulta_id: string | null;
+}
+
+export interface AntigosSincronizacao {
+  atendimento_id: string;
+  criados: { parte_id: string; nome: string; tipo_pessoa: "PF" | "PJ" }[];
+  ja_no_card: { nome: string; documento_mascarado: string | null }[];
+  emissoes: AntigosEmissao[];
+  ignorado: "dispensado" | "sem_imovel" | "matricula_nao_nomeia_antigos" | "transferencia_5_anos_ou_mais" | null;
+}
+
+/** Person `{nome, cpf}` XOR company `{cnpj, razao_social?}`. */
+export interface AntigoCriarInput {
+  nome?: string;
+  cpf?: string;
+  cnpj?: string;
+  razao_social?: string;
+}
+
+export interface AntigoCriarResponse {
+  parte: CertidaoParte;
+  emissao: AntigosEmissao | null;
 }

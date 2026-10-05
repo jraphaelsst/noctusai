@@ -55,6 +55,27 @@ const ALVO_IMOVEL_POR_CAMPO: Readonly<Record<string, string>> = {
 /** The Contratos tab control that holds the contract's act selection. */
 export const ALVO_ATOS_DO_CONTRATO = "contrato-matricula-atos";
 
+/**
+ * The Certidões tab's subtabs (one per `grupo` of `GET …/certidoes/partes`).
+ * The backend names the subtab through `destino.alvo = "certidoes-subtab-<grupo>"`
+ * (antigos-proprietarios-CONTRACT §6); each subtab trigger renders that SAME
+ * string as its DOM id, so the existing `rolarAteAlvo` poll finds it and its
+ * `focus()` activates the tab (Radix "automatic" activation) — no second
+ * navigation mechanism.
+ */
+export const GRUPOS_CERTIDOES = ["comprador", "vendedor", "antigo_proprietario"] as const;
+export type GrupoCertidoes = (typeof GRUPOS_CERTIDOES)[number];
+const PREFIXO_SUBTAB_CERTIDOES = "certidoes-subtab-";
+
+export const alvoSubtabCertidoes = (grupo: GrupoCertidoes): string => `${PREFIXO_SUBTAB_CERTIDOES}${grupo}`;
+
+/** The subtab a destino alvo names, or `null` when it names none. */
+export function grupoDoAlvoCertidoes(alvo: string | null | undefined): GrupoCertidoes | null {
+  if (!alvo || !alvo.startsWith(PREFIXO_SUBTAB_CERTIDOES)) return null;
+  const grupo = alvo.slice(PREFIXO_SUBTAB_CERTIDOES.length);
+  return (GRUPOS_CERTIDOES as readonly string[]).includes(grupo) ? (grupo as GrupoCertidoes) : null;
+}
+
 export function destinoEfetivo(destino: GeracaoDestino, campo: string): GeracaoDestino {
   if (destino.alvo) return destino;
 

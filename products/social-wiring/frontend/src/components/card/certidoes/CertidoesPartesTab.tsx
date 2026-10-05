@@ -8,7 +8,7 @@
  * !!data` (indicator only) → KB § PATTERNS/frontend/lying-loading-state.md.
  */
 import { useState } from "react";
-import { FileSearch, Loader2 } from "lucide-react";
+import { FileSearch, Loader2, Trash2 } from "lucide-react";
 
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -20,16 +20,25 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CertidoesPartePanel } from "@/components/CertidoesPartePanel";
 import {
   useCertidoesPartes, useCienciaPcen, useCriarLinhaPartes, useInvalidatePartes, useReemitirResultado,
-  useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
+  useAplicarValoresLidos, useRelerCertidoesCard, useRelerResultado, useRelerResultados, useRemoverAntigo, useRemoverLinhaPartes, useRenomearLinhaPartes, useSolicitarEmissao, useUploadNaCelula,
 } from "@/hooks/useCertidoesPartes";
 import type { CertidaoParte, CertidaoParteLinha } from "@/types/certidoesPartes";
 
+import { alvoSubtabCertidoes, type GrupoCertidoes } from "../destinoDoContrato";
+import { AntigosProprietariosPainel } from "./AntigosProprietariosPainel";
 import { podeReler } from "./certidoesCelula";
 import { ParteSecao } from "./ParteSecao";
+
+const SUBTABS: ReadonlyArray<{ grupo: GrupoCertidoes; rotulo: string; vazio: string }> = [
+  { grupo: "comprador", rotulo: "Compradores", vazio: "Nenhum comprador vinculado a este atendimento ainda." },
+  { grupo: "vendedor", rotulo: "Vendedores", vazio: "Nenhum vendedor vinculado a este atendimento ainda." },
+  { grupo: "antigo_proprietario", rotulo: "Antigos proprietários", vazio: "Nenhum antigo proprietário no card." },
+];
 
 export function CertidoesPartesTab(props: {
   clienteId: string;
@@ -51,6 +60,12 @@ export function CertidoesPartesTab(props: {
   const renomear = useRenomearLinhaPartes(clienteId);
   const remover = useRemoverLinhaPartes(clienteId);
   const invalidar = useInvalidatePartes(clienteId);
+  const removerAntigo = useRemoverAntigo(clienteId, atendimentoId);
+  const [removendoAntigo, setRemovendoAntigo] = useState<CertidaoParte | null>(null);
+  // Controlled so the deep link (`destino.alvo = certidoes-subtab-<grupo>`)
+  // can activate a subtab: the trigger's DOM id IS the alvo, and
+  // `rolarAteAlvo` focuses it (Radix automatic activation).
+  const [subtab, setSubtab] = useState<GrupoCertidoes>("comprador");
 
   // 🔴 The KEY of the party whose dialog is open, never a snapshot of the
   // row: the dialog reads the LIVE row off `q.data`, so a CPF that arrives
@@ -83,7 +98,7 @@ export function CertidoesPartesTab(props: {
       </div>
     );
   }
-  if (data.partes.length === 0) {
+  if (data.partes.length === 0 && !data.atendimento_id) {
     return (
       <p className="text-sm text-muted-foreground" data-testid="certidoes-partes-empty">
         {data.atendimento_id
@@ -125,32 +140,65 @@ export function CertidoesPartesTab(props: {
         </div>
       )}
       <TooltipProvider delayDuration={200}>
-        {data.partes.map((parte) => (
-          <ParteSecao
-            key={parte.chave}
-            parte={parte}
-            linhas={data.linhas}
-            dataReferencia={data.data_referencia}
-            emissaoPendente={emissao.isPending}
-            onSolicitar={(i) => emissao.mutate(i)}
-            onReemitir={(id) => reemitir.mutate(id)}
-            onUpload={(i) => upload.mutate(i)}
-            onReler={(id) => reler.mutate(id)}
-            relendoId={relendoId}
-            onRelerParte={(ids) => {
-              setRelendoParteChave(parte.chave);
-              relerParte.mutate(ids, { onSettled: () => setRelendoParteChave(null) });
-            }}
-            relendoParte={relerParte.isPending && relendoParteChave === parte.chave}
-            onAplicarLidos={(resultadoId, divergencias) => aplicarLidos.mutate({ resultadoId, divergencias })}
-            aplicandoId={aplicandoId}
-            onDetalhes={(p) => setDetalhesChave(p.chave)}
-            onAdicionar={() => setAdicionando(true)}
-            onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}
-            onRemover={setRemovendo}
-            onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
-          />
-        ))}
+        <Tabs value={subtab} onValueChange={(v) => setSubtab(v as GrupoCertidoes)}>
+          <TabsList data-testid="certidoes-subtabs">
+            {SUBTABS.map((t) => (
+              <TabsTrigger key={t.grupo} value={t.grupo} id={alvoSubtabCertidoes(t.grupo)} data-testid={`certidoes-subtab-${t.grupo}`}>
+                {t.rotulo} ({data.partes.filter((p) => p.grupo === t.grupo).length})
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          {SUBTABS.map((t) => {
+            const doGrupo = data.partes.filter((p) => p.grupo === t.grupo);
+            const linhasDoGrupo = doGrupo.length === 0 ? (
+              <p className="text-sm text-muted-foreground" data-testid={`certidoes-subtab-vazio-${t.grupo}`}>{t.vazio}</p>
+            ) : (
+              doGrupo.map((parte) => (
+                <div key={parte.chave} className="space-y-1">
+                  {t.grupo === "antigo_proprietario" && parte.parte_id && parte.papel === "antigo_proprietario" && (
+                    <div className="flex justify-end">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs text-destructive"
+                        onClick={() => setRemovendoAntigo(parte)} data-testid={`antigo-remover-${parte.chave}`}>
+                        <Trash2 className="mr-1 h-3 w-3" />Remover antigo proprietário
+                      </Button>
+                    </div>
+                  )}
+                  <ParteSecao
+                key={parte.chave}
+                parte={parte}
+                linhas={data.linhas}
+                dataReferencia={data.data_referencia}
+                emissaoPendente={emissao.isPending}
+                onSolicitar={(i) => emissao.mutate(i)}
+                onReemitir={(id) => reemitir.mutate(id)}
+                onUpload={(i) => upload.mutate(i)}
+                onReler={(id) => reler.mutate(id)}
+                relendoId={relendoId}
+                onRelerParte={(ids) => {
+                  setRelendoParteChave(parte.chave);
+                  relerParte.mutate(ids, { onSettled: () => setRelendoParteChave(null) });
+                }}
+                relendoParte={relerParte.isPending && relendoParteChave === parte.chave}
+                onAplicarLidos={(resultadoId, divergencias) => aplicarLidos.mutate({ resultadoId, divergencias })}
+                aplicandoId={aplicandoId}
+                onDetalhes={(p) => setDetalhesChave(p.chave)}
+                onAdicionar={() => setAdicionando(true)}
+                onRenomear={(l) => { setRenomeando(l); setNomeRen(l.rotulo.replace(/^Outras: /, "")); }}
+                onRemover={setRemovendo}
+                onCienciaPcen={(resultadoId, acao) => ciencia.mutateAsync({ resultadoId, acao })}
+              />
+                </div>
+              ))
+            );
+            return (
+              <TabsContent key={t.grupo} value={t.grupo} className="space-y-3" data-testid={`certidoes-subtab-conteudo-${t.grupo}`}>
+                {t.grupo === "antigo_proprietario" ? (
+                  <AntigosProprietariosPainel clienteId={clienteId} atendimentoId={atendimentoId}>{linhasDoGrupo}</AntigosProprietariosPainel>
+                ) : linhasDoGrupo}
+              </TabsContent>
+            );
+          })}
+        </Tabs>
       </TooltipProvider>
 
       <Dialog open={!!detalhes} onOpenChange={(o) => { if (!o) { setDetalhesChave(null); void invalidar(); } }}>
@@ -200,6 +248,24 @@ export function CertidoesPartesTab(props: {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!removendoAntigo} onOpenChange={(o) => !o && setRemovendoAntigo(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remover antigo proprietário</AlertDialogTitle>
+            <AlertDialogDescription>
+              Remover "{removendoAntigo?.nome}" do card? Uma linha vinda da matrícula volta na próxima sincronização, a menos que a exigência seja dispensada.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive hover:bg-destructive/90" data-testid="antigo-remover-confirmar"
+              onClick={() => removendoAntigo?.parte_id && removerAntigo.mutate(removendoAntigo.parte_id, { onSettled: () => setRemovendoAntigo(null) })}>
+              Remover
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={!!removendo} onOpenChange={(o) => !o && setRemovendo(null)}>
         <AlertDialogContent>

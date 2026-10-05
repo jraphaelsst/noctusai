@@ -5,12 +5,23 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { CertidaoParte, CertidaoParteCelula, CertidoesPartesResponse } from "@/types/certidoesPartes";
 
-const { mockGet, mockPost, mockUpload, mockPatch, mockDelete } = vi.hoisted(() => ({
+const { mockGet, mockPost, mockUpload, mockPatch, mockDelete, mockPut, mockAntigosGet, authUser } = vi.hoisted(() => ({
   mockGet: vi.fn(), mockPost: vi.fn(), mockUpload: vi.fn(), mockPatch: vi.fn(), mockDelete: vi.fn(),
+  mockPut: vi.fn(), mockAntigosGet: vi.fn(), authUser: { current: null as unknown },
 }));
 
+// The antigos header/sync/dispensa endpoints are routed apart so the existing
+// partes assertions (`mockGet` called with the partes URL) stay exact.
+const isAntigos = (url: string) => url.includes("/certidoes/antigos-proprietarios");
 vi.mock("@noctusai/seed/infra", () => ({
-  api: { get: mockGet, post: mockPost, upload: mockUpload, patch: mockPatch, delete: mockDelete },
+  useAuthStore: () => ({ user: authUser.current }),
+  api: {
+    get: (url: string, ...a: unknown[]) => (isAntigos(url) ? mockAntigosGet(url, ...a) : mockGet(url, ...a)),
+    post: (url: string, ...a: unknown[]) =>
+      isAntigos(url) ? mockPost(url, ...a) : mockPost(url, ...a),
+    put: mockPut,
+    upload: mockUpload, patch: mockPatch, delete: mockDelete,
+  },
   supabase: { auth: { getSession: vi.fn().mockResolvedValue({ data: { session: null } }) } },
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
@@ -18,6 +29,8 @@ vi.mock("@/components/CertidoesPartePanel", () => ({
   CertidoesPartePanel: ({ nomeParte }: { nomeParte?: string }) => <div data-testid="panel-stub">{nomeParte}</div>,
 }));
 
+import { rolarAteAlvo } from "@/hooks/useRolarAteAlvo";
+import { alvoSubtabCertidoes, grupoDoAlvoCertidoes } from "../destinoDoContrato";
 import { certidaoEmAndamento, partesTemEmAndamento } from "@/hooks/useCertidoesPartes";
 import { CertidoesPartesTab } from "./CertidoesPartesTab";
 
@@ -35,7 +48,7 @@ const linhas = [
 ];
 function parte(over: Partial<CertidaoParte> = {}): CertidaoParte {
   return {
-    chave: "c:cli-1", kind: "pessoa", tipo_pessoa: "PF", rotulo: "COMP 1", lado: "comprador", papel: "comprador",
+    chave: "c:cli-1", kind: "pessoa", tipo_pessoa: "PF", rotulo: "COMP 1", lado: "comprador", grupo: "comprador", papel: "comprador",
     titular: true, nome: "Maria Silva", documento: "12345678901", cliente_id: "cli-1", empresa_id: null, parte_id: null,
     totais: { nao_constam: 1, constam: 0, pendente: 1, vencidas: 1 },
     celulas: {
@@ -54,7 +67,16 @@ function wrap({ children }: { children: ReactNode }) {
 }
 const open = (chave: string) => fireEvent.click(screen.getByTestId(`parte-secao-header-${chave}`));
 
-beforeEach(() => { mockPost.mockResolvedValue({}); mockUpload.mockResolvedValue({}); });
+const antigosEstado = (over: Record<string, unknown> = {}) => ({
+  atendimento_id: "at-1", exigido: true, motivo: "transferencia_menos_de_5_anos", janela_anos: 5,
+  ultima_transferencia: null, origem_dados: "titulo_confirmado", transmitentes: [], dispensado: null,
+  sincronizacao_pendente: 0, ...over,
+});
+beforeEach(() => {
+  mockPost.mockResolvedValue({}); mockUpload.mockResolvedValue({});
+  mockAntigosGet.mockResolvedValue(antigosEstado());
+  authUser.current = null;
+});
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 describe("CertidoesPartesTab", () => {
@@ -408,7 +430,7 @@ describe("CertidoesPartesTab", () => {
     const { unmount } = render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
     expect(screen.getByTestId("certidoes-partes-skeleton")).toBeTruthy();
     unmount();
-    mockGet.mockResolvedValue(resp([]));
+    mockGet.mockResolvedValue({ ...resp([]), atendimento_id: null });
     render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
     await screen.findByTestId("certidoes-partes-empty");
     cleanup();
@@ -426,5 +448,112 @@ describe("polling predicate", () => {
     expect(certidaoEmAndamento(cel({ status_processamento: "pendente", origem: "manual" }))).toBe(false);
     expect(certidaoEmAndamento(cel({ status_processamento: "sucesso" }))).toBe(false);
     expect(partesTemEmAndamento(resp([parte()]))).toBe(false);
+  });
+});
+
+describe("subtabs by grupo + antigos proprietários", () => {
+  const comp = () => parte();
+  const vend = () => parte({ chave: "c:cli-2", rotulo: "VEND 1", lado: "vendedor", grupo: "vendedor", papel: "vendedor", nome: "João Vendedor", cliente_id: "cli-2", parte_id: "p-2" });
+  // Label deliberately lies about the group: grouping must read `grupo`, never `rotulo`/`papel`.
+  const ant = () => parte({ chave: "c:cli-3", rotulo: "VEND 9", lado: "vendedor", grupo: "antigo_proprietario", papel: "antigo_proprietario", nome: "Zé Antigo", cliente_id: "cli-3", parte_id: "p-3" });
+  const mountAll = () => {
+    mockGet.mockResolvedValue(resp([comp(), vend(), ant()]));
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+  };
+  const trocar = (grupo: string) => {
+    const el = screen.getByTestId(`certidoes-subtab-${grupo}`);
+    fireEvent.mouseDown(el, { button: 0 });
+    fireEvent.focus(el);
+  };
+
+  it("splits rows by the explicit grupo (not label/papel)", async () => {
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    expect(screen.queryByTestId("parte-secao-c:cli-2")).toBeNull();
+    expect(screen.queryByTestId("parte-secao-c:cli-3")).toBeNull();
+    trocar("vendedor");
+    await screen.findByTestId("parte-secao-c:cli-2");
+    expect(screen.queryByTestId("parte-secao-c:cli-3")).toBeNull();
+    trocar("antigo_proprietario");
+    await screen.findByTestId("parte-secao-c:cli-3");
+    expect(screen.queryByTestId("parte-secao-c:cli-2")).toBeNull();
+  });
+
+  it("deep link: alvo certidoes-subtab-<grupo> selects the subtab through rolarAteAlvo", async () => {
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    expect(grupoDoAlvoCertidoes("certidoes-subtab-antigo_proprietario")).toBe("antigo_proprietario");
+    expect(grupoDoAlvoCertidoes("certidoes-subtab-inexistente")).toBeNull();
+    rolarAteAlvo(alvoSubtabCertidoes("antigo_proprietario"));
+    await screen.findByTestId("parte-secao-c:cli-3");
+    expect(screen.getByTestId("certidoes-subtab-antigo_proprietario").getAttribute("data-state")).toBe("active");
+  });
+
+  it("opening the antigos subtab syncs from the matrícula and shows refused emissions", async () => {
+    mockPost.mockResolvedValue({
+      atendimento_id: "at-1", criados: [{ parte_id: "p-3", nome: "Zé Antigo", tipo_pessoa: "PF" }], ja_no_card: [],
+      emissoes: [{ parte_id: "p-3", status: "nao_iniciada", codigo: "DOCUMENTO_AUSENTE", consulta_id: null }], ignorado: null,
+    });
+    mockAntigosGet.mockResolvedValue(antigosEstado({
+      transmitentes: [{ nome: "Zé Antigo", documento_mascarado: "***.982.247-**", tipo_pessoa: "PF", ja_no_card: false }],
+      sincronizacao_pendente: 1,
+    }));
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    expect(mockPost).not.toHaveBeenCalledWith(expect.stringContaining("sincronizar"), expect.anything());
+    trocar("antigo_proprietario");
+    await waitFor(() =>
+      expect(mockPost).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/antigos-proprietarios/sincronizar", { atendimento_id: "at-1" }));
+    const aviso = await screen.findByTestId("antigos-emissoes-problema");
+    expect(aviso.textContent).toContain("Zé Antigo");
+    expect(aviso.textContent).toContain("documento (CPF/CNPJ) ausente");
+    expect((await screen.findByTestId("antigos-transmitentes")).textContent).toContain("***.982.247-**");
+    expect(screen.getByTestId("antigos-pendentes").textContent).toContain("1 transmitente");
+  });
+
+  it("shows the not-required empty state and no remove for non-antigo rows", async () => {
+    mockAntigosGet.mockResolvedValue(antigosEstado({ exigido: false, motivo: "transferencia_5_anos_ou_mais" }));
+    mockGet.mockResolvedValue(resp([comp()]));
+    render(<CertidoesPartesTab clienteId="cli-1" atendimentoId="at-1" />, { wrapper: wrap });
+    await screen.findByTestId("parte-secao-c:cli-1");
+    trocar("antigo_proprietario");
+    expect((await screen.findByTestId("antigos-nao-exigido")).textContent).toContain("5 anos");
+    await screen.findByTestId("certidoes-subtab-vazio-antigo_proprietario");
+  });
+
+  it("removes an antigo row via DELETE and hides the control on non-antigo rows", async () => {
+    mockDelete.mockResolvedValue(null);
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    trocar("antigo_proprietario");
+    fireEvent.click(await screen.findByTestId("antigo-remover-c:cli-3"));
+    fireEvent.click(await screen.findByTestId("antigo-remover-confirmar"));
+    await waitFor(() => expect(mockDelete).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/antigos-proprietarios/p-3?atendimento_id=at-1"));
+  });
+
+  it("hides Dispensar from non-admins", async () => {
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    trocar("antigo_proprietario");
+    await screen.findByTestId("antigos-header");
+    expect(screen.queryByTestId("antigos-dispensar")).toBeNull();
+  });
+
+  it("admin dispense: validates motivo length and renders a 403 as permission denied", async () => {
+    authUser.current = { user_metadata: { org_role: "admin" } };
+    mockPut.mockRejectedValue(Object.assign(new Error("[403] forbidden"), { status: 403 }));
+    mountAll();
+    await screen.findByTestId("parte-secao-c:cli-1");
+    trocar("antigo_proprietario");
+    fireEvent.click(await screen.findByTestId("antigos-dispensar"));
+    const confirmar = await screen.findByTestId("antigos-dispensar-confirmar");
+    fireEvent.change(screen.getByTestId("antigos-motivo-input"), { target: { value: "ab" } });
+    expect((confirmar as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("antigos-motivo-input"), { target: { value: "Vendedor já era o proprietário" } });
+    fireEvent.click(confirmar);
+    await waitFor(() =>
+      expect(mockPut).toHaveBeenCalledWith("/api/clientes/cli-1/certidoes/antigos-proprietarios/dispensa",
+        { motivo: "Vendedor já era o proprietário", atendimento_id: "at-1" }));
+    expect((await screen.findByTestId("antigos-dispensa-403")).textContent).toContain("Sem permissão");
   });
 });
