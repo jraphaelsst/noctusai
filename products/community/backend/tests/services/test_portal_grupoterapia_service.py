@@ -4,6 +4,7 @@ side. Exercises the SECURITY invariant directly: `nenhum` never gets a
 reserves (or gets `lotada`/`indisponivel` per the RPC result).
 """
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from noctusai_lib.testing import MockSupabaseClient
 
@@ -19,8 +20,10 @@ PLANO_OUVINTE = "77777777-7777-7777-7777-777777777777"
 PLANO_PREMIUM = "88888888-8888-8888-8888-888888888888"
 
 _NOW = "2026-10-01T00:00:00+00:00"
-_FUTURE = "2026-10-05T19:00:00+00:00"
-_PAST = "2026-01-01T19:00:00+00:00"
+# Relative to the real clock: the service filters on `datetime.now()`, so a
+# fixed date silently turns "future" into "past" once the wall clock passes it.
+_FUTURE = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+_PAST = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
 
 
 def _sessao_row(**over) -> dict:

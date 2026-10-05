@@ -3,6 +3,8 @@ side. Exercises the security boundary end-to-end over HTTP: `nenhum` never
 receives a `link_sala`, `ouvir` gets one but 403s on reserve, `falar`
 reserves, `lotada`/`indisponivel` map to 409.
 """
+from datetime import datetime, timedelta, timezone
+
 from tests.conftest import ORG_UUID, TEST_USER_ID, seed_community_role
 
 SESSAO_1 = "22222222-2222-2222-2222-222222222222"
@@ -10,7 +12,8 @@ MEMBRO_1 = "44444444-4444-4444-4444-444444444444"
 PLANO_OUVINTE = "77777777-7777-7777-7777-777777777777"
 PLANO_PREMIUM = "88888888-8888-8888-8888-888888888888"
 
-_FUTURE = "2026-10-05T19:00:00+00:00"
+# Relative to the real clock (the service filters on `datetime.now()`).
+_FUTURE = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
 
 
 def _sessao_row(**over) -> dict:
