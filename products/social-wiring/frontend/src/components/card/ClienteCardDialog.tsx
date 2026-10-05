@@ -94,6 +94,7 @@ import type {
   Documento,
   DocumentoChecklistItem,
   ExtracaoSugestao,
+  SugestoesExtras,
   Membro,
   Roteiro,
   StatusVisita,
@@ -437,7 +438,7 @@ export interface ClienteCardDialogProps {
   // The LIST is canonical server-side, so there is no create/remove here.
   documentoChecklist?: DocumentoChecklistItem[];
   /** Extracted fields that are not checklist items — today `nome_oficial`. */
-  sugestoesExtras?: Record<string, ExtracaoSugestao>;
+  sugestoesExtras?: SugestoesExtras;
   nomeOficial?: string | null;
   nomeRegistro?: string | null;
   documentoChecklistLoading?: boolean;

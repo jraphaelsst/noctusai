@@ -626,6 +626,52 @@ export interface ExtracaoSugestao {
   leitura_comprometida?: boolean;
 }
 
+/** The seven parts of a postal address, as the extractor and the record hold them. */
+export interface EnderecoPartes {
+  cep: string | null;
+  logradouro: string | null;
+  numero: string | null;
+  complemento: string | null;
+  bairro: string | null;
+  cidade: string | null;
+  uf: string | null;
+}
+
+/**
+ * The `endereco` entry of `sugestoes_extras` — a GROUP of fields, so `valor`
+ * is an object, not a string.
+ *
+ * Two cases, told apart by `substitui`:
+ *   - `false` — the record has NO address; accepting fills it.
+ *   - `true` + `aviso: "comprovante_titular_nao_confere"` — the record HAS an
+ *     address and a bill whose titular is not this person proposes another.
+ *     `valor_atual` is the stored address, `titular_documento` the name
+ *     printed on the bill. Accepting REPLACES the address (the server answers
+ *     `substituiu` with the previous parts); only a human may do that.
+ */
+export interface ExtracaoSugestaoEndereco
+  extends Omit<ExtracaoSugestao, "valor" | "valor_atual" | "aviso"> {
+  valor: Partial<EnderecoPartes>;
+  valor_atual: Partial<EnderecoPartes> | null;
+  titular_documento?: string | null;
+  aviso?: "comprovante_titular_nao_confere" | null;
+}
+
+/** `sugestoes_extras` — string-valued readings, plus the object-valued `endereco`. */
+export type SugestoesExtras = Record<string, ExtracaoSugestao | ExtracaoSugestaoEndereco>;
+
+export function ehSugestaoEndereco(
+  s: ExtracaoSugestao | ExtracaoSugestaoEndereco | undefined | null,
+): s is ExtracaoSugestaoEndereco {
+  return !!s && typeof s.valor === "object" && s.valor !== null;
+}
+
+export function ehSugestaoTexto(
+  s: ExtracaoSugestao | ExtracaoSugestaoEndereco | undefined | null,
+): s is ExtracaoSugestao {
+  return !!s && typeof s.valor === "string";
+}
+
 export interface DocumentoChecklistItem {
   key: string;
   label: string;
@@ -764,7 +810,7 @@ export interface DocumentoChecklist {
    * one: whether we hold the document is already asked by the `rg` / `cpf`
    * items.
    */
-  sugestoes_extras?: Record<string, ExtracaoSugestao>;
+  sugestoes_extras?: SugestoesExtras;
   /** Full name as printed on an identity document, once one has been read. */
   nome_oficial?: string | null;
   /**

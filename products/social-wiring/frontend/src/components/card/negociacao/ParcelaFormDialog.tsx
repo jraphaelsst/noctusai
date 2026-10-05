@@ -59,6 +59,15 @@ import {
 } from "@/types/negociacaoEstruturada";
 
 import {
+  EVENTO_OPCOES,
+  comporEvento,
+  diasValidos,
+  lerEvento,
+  MAX_DIAS,
+  type EventoEstado,
+  type EventoOpcaoId,
+} from "./eventoParcela";
+import {
   conciliarDivisao,
   divisaoParaWire,
   erroValorFgts,
@@ -103,7 +112,7 @@ interface ParcelaDraft {
   tipo: ParcelaTipo;
   valorTexto: string;
   vencimento: string;
-  evento: string;
+  evento: EventoEstado;
   forma_pagamento: string;
   favorecido_id: string;
   confissao_divida: boolean;
@@ -129,7 +138,7 @@ function toParcelaDraft(p: ParcelaEditavel | null): ParcelaDraft {
     // form opens with an empty field rather than throwing on `.trim()`.
     valorTexto: p && p.valor != null ? formatarValorEditavel(p.valor) : "",
     vencimento: p?.vencimento ?? "",
-    evento: p?.evento ?? "",
+    evento: lerEvento(p?.evento),
     forma_pagamento: p?.forma_pagamento ?? "",
     favorecido_id: p?.favorecido_id ?? "",
     confissao_divida: p?.confissao_divida ?? false,
@@ -209,7 +218,7 @@ export function ParcelaFormDialog({
       tipo: draft.tipo,
       valor: lerValorDigitado(draft.valorTexto),
       vencimento: draft.vencimento || null,
-      evento: draft.evento.trim() || null,
+      evento: comporEvento(draft.evento) || null,
       forma_pagamento: draft.forma_pagamento.trim() || null,
       favorecido_id: draft.favorecido_id || null,
       confissao_divida: draft.confissao_divida,
@@ -245,8 +254,10 @@ export function ParcelaFormDialog({
     permitePagamentoDetalhado && draft.tipo === "financiamento"
       ? erroValorFgts(draft.valorFgtsTexto, draft.valorTexto)
       : null;
+  const eventoIncompleto = draft.evento.opcao !== "" && comporEvento(draft.evento) === "";
   const podeSalvar =
-    lerValorDigitado(draft.valorTexto).trim() !== "" && errosDaDivisao.length === 0 && !erroFgts;
+    lerValorDigitado(draft.valorTexto).trim() !== "" &&
+    !eventoIncompleto && errosDaDivisao.length === 0 && !erroFgts;
 
   const tiposDisponiveis: ParcelaTipo[] = permitePermuta
     ? PARCELA_TIPOS_CRIAVEIS
@@ -362,16 +373,74 @@ export function ParcelaFormDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="parc-evento">Evento</Label>
+              <Select
+                value={draft.evento.opcao || "__none__"}
+                onValueChange={(v) =>
+                  setDraft((d) => ({
+                    ...d,
+                    evento:
+                      v === "__none__"
+                        ? { opcao: "", dias: "", texto: "" }
+                        : { ...d.evento, opcao: v as EventoOpcaoId },
+                  }))
+                }
+              >
+                <SelectTrigger id="parc-evento" data-testid="parc-evento">
+                  <SelectValue placeholder="Nenhum" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Nenhum</SelectItem>
+                  {EVENTO_OPCOES.map((o) => (
+                    <SelectItem key={o.id} value={o.id}>
+                      {o.rotulo}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {draft.evento.opcao === "prazo" && (
+            <div className="space-y-1.5" data-testid="parc-evento-prazo">
+              <Label htmlFor="parc-evento-dias">Prazo máximo (dias corridos)</Label>
               <Input
-                id="parc-evento"
-                data-testid="parc-evento"
-                value={draft.evento}
-                maxLength={PARCELA_EVENTO_MAX}
-                onChange={(e) => setDraft((d) => ({ ...d, evento: e.target.value }))}
+                id="parc-evento-dias"
+                data-testid="parc-evento-dias"
+                inputMode="numeric"
+                value={draft.evento.dias}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, evento: { ...d.evento, dias: e.target.value } }))
+                }
+                placeholder="30"
+              />
+              {draft.evento.dias.trim() !== "" && diasValidos(draft.evento.dias) === null && (
+                <p className="text-xs text-destructive" data-testid="parc-evento-dias-erro">
+                  Informe um número inteiro entre 1 e {MAX_DIAS}.
+                </p>
+              )}
+            </div>
+          )}
+          {(draft.evento.opcao === "concomitante" || draft.evento.opcao === "outro") && (
+            <div className="space-y-1.5">
+              <Label htmlFor="parc-evento-texto">
+                {draft.evento.opcao === "concomitante" ? "Concomitante com" : "Evento (texto livre)"}
+              </Label>
+              <Input
+                id="parc-evento-texto"
+                data-testid="parc-evento-texto"
+                value={draft.evento.texto}
+                maxLength={PARCELA_EVENTO_MAX - (draft.evento.opcao === "concomitante" ? 17 : 0)}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, evento: { ...d.evento, texto: e.target.value } }))
+                }
                 placeholder="Ex.: na entrega das chaves"
               />
             </div>
-          </div>
+          )}
+          {draft.evento.opcao !== "" && comporEvento(draft.evento) !== "" && (
+            <p className="text-xs text-muted-foreground" data-testid="parc-evento-previa">
+              Sairá no contrato: “{comporEvento(draft.evento)}”
+            </p>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="parc-forma">Forma de pagamento</Label>
             <Input

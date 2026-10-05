@@ -618,7 +618,11 @@ export function useExtracaoSugestaoMutation(clienteId: string) {
        */
       itemKey?: string;
     }) =>
-      api.post<{ documento_id: string }>(
+      api.post<{
+        documento_id: string;
+        /** `endereco` only: the address that was replaced (`null` when it filled a blank). */
+        substituiu?: Record<string, string | null> | null;
+      }>(
         `${clienteBase(clienteId)}/documentos/${documentoId}/extracao/${acao}`,
         itemKey ? { item_key: itemKey } : {},
       ),

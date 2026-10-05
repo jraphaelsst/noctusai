@@ -417,7 +417,11 @@ describe("nova parcela — o 422 do backend é renderizado NO DIÁLOGO (não só
     fireEvent.click(getByTestId("negest-parcela-nova"));
 
     expect(getByTestId("parc-forma")).toHaveProperty("maxLength", 2000);
-    expect(getByTestId("parc-evento")).toHaveProperty("maxLength", 200);
+    // evento: the free-text fallback ("Outro") carries the cap.
+    fireEvent.click(
+      (await import("@testing-library/react")).screen.getByText("Outro (texto livre)"),
+    );
+    expect(getByTestId("parc-evento-texto")).toHaveProperty("maxLength", 200);
   });
 
   it("🔴 uma recusa do servidor (ApiError 422, envelope pt-BR) aparece NO diálogo, com a frase do servidor", async () => {
@@ -845,16 +849,16 @@ describe("diálogo de parcela — reset ao trocar de alvo", () => {
     mockUpdateParcela.mockImplementation(
       (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
     );
-    const { getByLabelText, getByTestId } = await render();
+    const { getByLabelText, getByTestId, queryByTestId } = await render();
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByLabelText("Editar parcela"));
-    expect((getByTestId("parc-evento") as HTMLInputElement).value).toBe("um evento qualquer");
+    expect((getByTestId("parc-evento-texto") as HTMLInputElement).value).toBe("um evento qualquer");
     fireEvent.click(getByTestId("negest-parcela-salvar"));
     expect(mockUpdateParcela).toHaveBeenCalledTimes(1);
 
     fireEvent.click(getByTestId("negest-parcela-nova"));
-    expect((getByTestId("parc-evento") as HTMLInputElement).value).toBe("");
+    expect(queryByTestId("parc-evento-texto")).toBeNull();
     expect((getByTestId("parc-valor") as HTMLInputElement).value).toBe("");
   });
 });

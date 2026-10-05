@@ -51,9 +51,11 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { ehSugestaoEndereco, ehSugestaoTexto } from "@/types/cardHub";
 import type {
   DocumentoChecklistItem,
   ExtracaoSugestao,
+  SugestoesExtras,
 } from "@/types/cardHub";
 import {
   estadoCivilExigeConjuge,
@@ -63,6 +65,7 @@ import {
   rotuloRegimeBens,
 } from "@/types/qualificacaoCompletude";
 
+import { SugestaoEndereco } from "./SugestaoEndereco";
 import { ChecklistItemRow } from "./ChecklistItemRow";
 import { IdentidadeChecklistRow } from "./IdentidadeChecklistRow";
 import type { DadosPessoais } from "./DadosPessoaisForm";
@@ -119,7 +122,7 @@ export interface DocumentoChecklistSectionProps {
     itemKey: string,
   ) => void;
   sugestaoSaving?: boolean;
-  sugestoesExtras?: Record<string, ExtracaoSugestao>;
+  sugestoesExtras?: SugestoesExtras;
   nomeOficial?: string | null;
   nomeRegistro?: string | null;
 
@@ -294,7 +297,7 @@ export function DocumentoChecklistSection({
       <NomeOficial
         oficial={nomeOficial}
         registro={nomeRegistro}
-        sugestao={sugestoesExtras?.nome_oficial}
+        sugestao={ehSugestaoTexto(sugestoesExtras?.nome_oficial) ? sugestoesExtras.nome_oficial : undefined}
         onResolver={onResolverSugestao}
         saving={sugestaoSaving}
         testIdPrefix={testIdPrefix}
@@ -313,7 +316,7 @@ export function DocumentoChecklistSection({
       {onResolverSugestao &&
         Object.entries(EXTRAS_QUALIFICACAO).map(([key, { label, formatar }]) => {
           const sugestao = sugestoesExtras?.[key];
-          if (!sugestao) return null;
+          if (!ehSugestaoTexto(sugestao)) return null;
           if (key === "regime_bens" && !estadoCivilExigeConjuge(valores?.estado_civil)) {
             return null;
           }
@@ -336,6 +339,17 @@ export function DocumentoChecklistSection({
             />
           );
         })}
+      {/* The endereço GROUP (object-valued): either fills an empty address or
+          — `substitui` — asks to REPLACE the stored one with a bill whose
+          titular is not this person. Never assumed to mean "group empty". */}
+      {onResolverSugestao && ehSugestaoEndereco(sugestoesExtras?.endereco) && (
+        <SugestaoEndereco
+          sugestao={sugestoesExtras.endereco}
+          onResolver={onResolverSugestao}
+          saving={sugestaoSaving}
+          testIdPrefix={testIdPrefix}
+        />
+      )}
     </div>
   );
 }

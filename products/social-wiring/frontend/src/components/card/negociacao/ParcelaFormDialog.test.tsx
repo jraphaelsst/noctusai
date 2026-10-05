@@ -204,3 +204,33 @@ describe("ParcelaFormDialog — forma de pagamento longa (owner, 2026-10-03)", (
     expect(scroll).toHaveBeenCalled();
   });
 });
+
+describe("ParcelaFormDialog — evento vocabulary", () => {
+  it("picks the office phrasing and sends it verbatim", async () => {
+    const { screen, fireEvent, onSubmit, escolher } = await render({ parcela: parcela({ evento: null }) });
+    escolher("parc-evento", "assinatura");
+    fireEvent.click(screen.getByTestId("negest-parcela-salvar"));
+    expect(onSubmit.mock.calls[0][0].evento).toBe("no ato da assinatura do presente instrumento");
+  });
+
+  it("prazo: N days renders the extenso; blocks saving until N is valid", async () => {
+    const { screen, fireEvent, onSubmit, escolher } = await render({ parcela: parcela({ evento: null }) });
+    escolher("parc-evento", "prazo");
+    expect((screen.getByTestId("negest-parcela-salvar") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByTestId("parc-evento-dias"), { target: { value: "45" } });
+    expect(screen.getByTestId("parc-evento-previa").textContent).toContain("45 (quarenta e cinco) dias corridos");
+    fireEvent.click(screen.getByTestId("negest-parcela-salvar"));
+    expect(onSubmit.mock.calls[0][0].evento).toBe(
+      "com prazo máximo de pagamento de 45 (quarenta e cinco) dias corridos, a contar da assinatura do presente instrumento",
+    );
+  });
+
+  it("free text fallback and round-trip of a stored office phrasing", async () => {
+    const a = await render({ parcela: parcela({ evento: "na entrega das chaves" }) });
+    expect((a.screen.getByTestId("parc-evento-texto") as HTMLInputElement).value).toBe("na entrega das chaves");
+    a.cleanup();
+    const b = await render({ parcela: parcela({ evento: "por ocasião da assinatura do Contrato de Financiamento Imobiliário" }) });
+    expect(b.screen.queryByTestId("parc-evento-texto")).toBeNull();
+    expect(b.screen.getByTestId("parc-evento-previa").textContent).toContain("Contrato de Financiamento Imobiliário");
+  });
+});

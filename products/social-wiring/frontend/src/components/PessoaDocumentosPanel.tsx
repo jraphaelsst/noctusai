@@ -165,7 +165,20 @@ export function PessoaDocumentosPanel({ clienteId }: PessoaDocumentosPanelProps)
           )
         }
         onResolverSugestao={(documentoId, acao, itemKey) =>
-          sugestao.mutate({ documentoId, acao, itemKey })
+          sugestao.mutate(
+            { documentoId, acao, itemKey },
+            {
+              onError: (e) =>
+                toast.error(
+                  erro(
+                    e,
+                    acao === "confirmar"
+                      ? "Não foi possível confirmar o dado extraído."
+                      : "Não foi possível descartar a sugestão.",
+                  ),
+                ),
+            },
+          )
         }
         sugestaoSaving={sugestao.isPending}
         sugestoesExtras={checklist.data?.sugestoes_extras}

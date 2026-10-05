@@ -210,7 +210,8 @@ describe("AditivosSection — create + edit", () => {
 
     fireEvent.click(tipos.querySelector('button[data-value="sinal"]') as HTMLElement);
     fireEvent.change(screen.getByTestId("parc-valor"), { target: { value: "50.000,00" } });
-    fireEvent.change(screen.getByTestId("parc-evento"), {
+    fireEvent.click(screen.getByText("Outro (texto livre)"));
+    fireEvent.change(screen.getByTestId("parc-evento-texto"), {
       target: { value: "na assinatura do presente aditivo" },
     });
     fireEvent.change(screen.getByTestId("parc-forma"), { target: { value: "PIX" } });
