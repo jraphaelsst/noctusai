@@ -605,3 +605,22 @@ def test_a_leadgen_change_on_a_NON_page_object_is_still_recorded():
     assert svc.record_unhandled(payload) == 1
     assert admin.upserted[0]["object_type"] == "user"
     assert admin.upserted[0]["field"] == "leadgen"
+
+
+def test_defer_sweep_skips_the_inline_sweep_and_flags_it_pending():
+    """🔴 The webhook path must never run the org-wide sweep inline (65 s in
+    prod, 2026-10-05). `defer_sweep=True` hands it back to the caller."""
+    ran: list = []
+    svc = _service(
+        ingest_fn=lambda *a, **k: {"lead": {"id": "x"}, "created": True},
+        sweep_fn=lambda: ran.append(True),
+    )
+
+    result = svc.process_event(_event(), defer_sweep=True)
+
+    assert result.status == STATUS_PROCESSED
+    assert result.sweep_pending is True
+    assert ran == [], "the sweep ran on the request path"
+
+    svc.sweep_person_layer()
+    assert ran == [True]

@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -79,6 +80,12 @@ class _FakeService:
         #: `fan_out` on the RESPONSE, so this only fills in once the 200 has
         #: been sent — which is exactly the ordering guarantee under test.
         self.fanned_out: list[str] = []
+        #: Threads `process_event` / `sweep_person_layer` ran on, and whether
+        #: the response had already gone out when the sweep started.
+        self.process_threads: list[threading.Thread] = []
+        self.defer_sweep_seen: list[bool] = []
+        self.sweep_threads: list[threading.Thread] = []
+        self.loop_threads: list[threading.Thread] = []
         self.unhandled: list[Any] = []
         #: leadgen_update events routed to the qualification shell.
         self.qualified: list[str] = []
@@ -90,10 +97,13 @@ class _FakeService:
     def claim(self, leadgen_id: str) -> bool:
         return self._claim
 
-    def process_event(self, event: Any) -> ProcessResult:
+    def process_event(self, event: Any, *, defer_sweep: bool = False) -> ProcessResult:
         self.processed.append(event.leadgen_id)
+        self.process_threads.append(threading.current_thread())
+        self.defer_sweep_seen.append(defer_sweep)
         return ProcessResult(
             self._status,
+            sweep_pending=bool(defer_sweep and self._status == "processed"),
             org_id=ORG_ID,
             # Only a genuinely-processed lead carries a row; a parked or
             # failed one must not look announceable.
@@ -103,8 +113,14 @@ class _FakeService:
             ),
         )
 
+    def sweep_person_layer(self) -> None:
+        self.sweep_threads.append(threading.current_thread())
+
     async def fan_out(self, result: ProcessResult) -> dict[str, bool]:
         self.fanned_out.append((result.lead_row or {}).get("id"))
+        #: `fan_out` is `async`, so it runs ON the event-loop thread — the
+        #: reference the blocking work is asserted to be OFF of.
+        self.loop_threads.append(threading.current_thread())
         return {"notified": True, "published": True}
 
     def process_qualification_event(self, event: Any) -> str:
@@ -417,3 +433,32 @@ def test_unresolved_org_still_returns_200(wired):
                                    "Content-Type": "application/json"})
     assert resp.status_code == 200
     assert resp.json()["results"][0]["status"] == "unresolved"
+
+
+def test_webhook_defers_the_sweep_and_keeps_blocking_work_off_the_event_loop(wired):
+    """🔴 Prod 2026-10-05: the receiver ran the org-wide `clientes_backfill`
+    sweep inline (65 s) inside an `async def` — every other request stalled.
+    Pinned: `process_event` is told to DEFER the sweep, ONE sweep is
+    scheduled per delivery (not per lead), and neither the durable half nor
+    the sweep runs on the event-loop thread."""
+    body = json.dumps(_delivery(entries=2, changes=2)).encode()
+    resp = wired.raw.post(WEBHOOK, content=body,
+                          headers={"X-Hub-Signature-256": _sign(body),
+                                   "Content-Type": "application/json"})
+    assert resp.status_code == 200
+    svc = wired.svc
+    assert svc.defer_sweep_seen == [True] * 4
+    assert len(svc.sweep_threads) == 1, "one lease-guarded sweep per delivery"
+    loop_threads = set(svc.loop_threads)
+    assert loop_threads, "fan_out never ran — no event-loop reference thread"
+    assert not (set(svc.process_threads) & loop_threads)
+    assert not (set(svc.sweep_threads) & loop_threads)
+
+
+def test_no_sweep_is_scheduled_when_nothing_was_processed(wired):
+    wired.set_service(_FakeService(status="unresolved"))
+    body = json.dumps(_delivery()).encode()
+    resp = wired.raw.post(WEBHOOK, content=body,
+                          headers={"X-Hub-Signature-256": _sign(body),
+                                   "Content-Type": "application/json"})
+    assert resp.status_code == 200

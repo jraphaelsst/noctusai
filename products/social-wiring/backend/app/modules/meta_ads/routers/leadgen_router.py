@@ -34,6 +34,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 from starlette.background import BackgroundTasks as StarletteBackgroundTasks
 
 from noctusai_lib.api import StrictHttpModel
@@ -251,15 +252,29 @@ async def leadgen_receive(
     # response-level `background=` has identical run-after-response semantics
     # and needs no annotation resolution.
     announce = StarletteBackgroundTasks()
+    sweep_wanted = False
     for event in events:
         is_new = svc.record_event(event)
         if not is_new or not svc.claim(event.leadgen_id):
             results.append({"leadgen_id": event.leadgen_id, "status": "duplicate"})
             continue
-        outcome = svc.process_event(event)
+        # 🔴 `process_event` is synchronous (Graph + PostgREST I/O) inside an
+        # `async def` route: called inline it stalls the event loop for every
+        # other request. Worker thread, and the org-wide person-layer sweep is
+        # deferred past the 200 (prod 2026-10-05: 65 s inline, whole instance
+        # stalled, Meta retries slow webhooks).
+        outcome = await run_in_threadpool(
+            svc.process_event, event, defer_sweep=True
+        )
         results.append({"leadgen_id": event.leadgen_id, "status": outcome.status})
         if outcome.announceable:
             announce.add_task(svc.fan_out, outcome)
+        if outcome.sweep_pending:
+            sweep_wanted = True
+    if sweep_wanted:
+        # ONE sweep per delivery however many leads it carried (lease-guarded
+        # anyway). A sync callable: Starlette runs it in the threadpool.
+        announce.add_task(svc.sweep_person_layer)
     return JSONResponse(
         {
             "status": "ok",

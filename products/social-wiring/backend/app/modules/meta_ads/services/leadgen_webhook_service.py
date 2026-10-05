@@ -106,6 +106,9 @@ class ProcessResult:
     #: the durable half. `None` = unattributed, which routes the alert to the
     #: org-wide recipient tier rather than to nobody.
     marca_id: str | None = None
+    #: True when the person-layer sweep was DEFERRED (``defer_sweep=True``) and
+    #: the caller now owes one ``sweep_person_layer()`` off the request path.
+    sweep_pending: bool = False
 
     @property
     def announceable(self) -> bool:
@@ -466,7 +469,9 @@ class LeadgenWebhookService:
             )
             return 0
 
-    def process_event(self, event: LeadgenEvent) -> ProcessResult:
+    def process_event(
+        self, event: LeadgenEvent, *, defer_sweep: bool = False
+    ) -> ProcessResult:
         """Enrich → upsert → normalize. Returns the terminal status plus the
         material :meth:`fan_out` needs.
 
@@ -475,6 +480,12 @@ class LeadgenWebhookService:
 
         NEVER raises: the caller owes Meta a 200 regardless, and every
         failure mode is recorded on the inbox row instead.
+
+        ``defer_sweep=True`` skips the org-wide person-layer sweep and flags
+        ``ProcessResult.sweep_pending`` instead: the sweep paged-reads every
+        org (measured 47-65 s in prod, 2026-10-05) and must never run on the
+        webhook's request path. The webhook route defers it to a background
+        thread; the retry job (already off-loop) keeps the inline default.
         """
         org_id = self.resolve_org(event)
         if org_id is None:
@@ -514,7 +525,10 @@ class LeadgenWebhookService:
             # inserting), so a re-drive costs one Graph call and cannot
             # duplicate. Swallowing it instead would leave the lead invisible
             # in the base with nothing recording why.
-            self._ingest(org_id=org_id, lead_row=lead_row, key_types=key_types)
+            self._ingest(
+                org_id=org_id, lead_row=lead_row, key_types=key_types,
+                defer_sweep=defer_sweep,
+            )
             marca_id = getattr(form, "marca_id", None)
         except MetaGraphError as exc:
             detail = str(exc)
@@ -538,6 +552,7 @@ class LeadgenWebhookService:
         return ProcessResult(
             STATUS_PROCESSED, org_id=org_id, lead_row=lead_row,
             marca_id=str(marca_id) if marca_id else None,
+            sweep_pending=bool(defer_sweep and lead_row),
         )
 
     # ─── the announcement half ─────────────────────────────────────────
@@ -618,7 +633,7 @@ class LeadgenWebhookService:
 
     def _ingest(
         self, *, org_id: UUID, lead_row: dict[str, Any] | None,
-        key_types: dict[str, str],
+        key_types: dict[str, str], defer_sweep: bool = False,
     ) -> None:
         """Normalize one raw lead into the canonical ``leads`` base.
 
@@ -641,9 +656,10 @@ class LeadgenWebhookService:
             lead_row,
             question_types=key_types or None,
         )
-        self._sweep_person_layer()
+        if not defer_sweep:
+            self.sweep_person_layer()
 
-    def _sweep_person_layer(self) -> None:
+    def sweep_person_layer(self) -> None:
         """Run the person-layer sweep right after a campaign lead lands.
 
         🔴 A META LEAD ARRIVES AS **TWO** CARDS AND STAYS THAT WAY UNTIL THIS
