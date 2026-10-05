@@ -240,6 +240,42 @@ PRECISAO: dict[str, dict[str, Precisao]] = {
     },
 }
 
+# 2026-10-05 — divergence-email study (137 deduped records / 155 emails,
+# private dataset; precision of a source AS THE PROPOSED SIDE =
+# right / (right + wrong), `lado_correto` per fonte x campo; 'equal'
+# (normalisation-only) and '?' (undecided) rows excluded):
+#   endereco  comprovante_endereco 14 right / 17 decided -> 0.82 (n=17)
+#             ficha_cadastral       8 right /  9 decided -> 0.89 (n=9)
+#   rg_orgao_expedidor ficha_cadastral 2/2 (n=2, thin)
+#   nome_oficial       ficha_cadastral 1/2 (n=2, thin)
+#   certidao_casamento rg 0/4 and data_nascimento 0/3 — the flat
+#             single-person columns of a two-person document name nobody
+#             (same finding as step 1b's attribution rule).
+#   cin: no identity-field rows in the dataset; by CONVENTION it mirrors the
+#   RG card cell (the CIN IS the national RG replacement), same n so it can
+#   never auto-validate on tier alone.
+# Existing signed-contract cells above are never overwritten by this study.
+_PRECISAO_ESTUDO_2026_10_05: dict[str, dict[str, Precisao]] = {
+    "endereco": {
+        "ficha_cadastral": Precisao(0.89, 9),
+        "comprovante_endereco": Precisao(0.82, 17),
+    },
+    "rg_orgao_expedidor": {"ficha_cadastral": Precisao(1.0, 2)},
+    "nome_oficial": {
+        "ficha_cadastral": Precisao(0.5, 2),
+        "cin": Precisao(1.0, 2),
+    },
+    "rg": {
+        "certidao_casamento": Precisao(0.0, 4),
+        "cin": Precisao(1.0, 2),
+    },
+    "data_nascimento": {"certidao_casamento": Precisao(0.0, 3)},
+    "cpf": {"cin": Precisao(1.0, 1)},
+}
+for _campo, _cells in _PRECISAO_ESTUDO_2026_10_05.items():
+    for _origem, _cell in _cells.items():
+        PRECISAO.setdefault(_campo, {}).setdefault(_origem, _cell)
+
 
 def precisao_de(campo: str, origem: Optional[str]) -> Optional[Precisao]:
     """The measured `(precisao, n)` for this (campo, origem), or `None` when
@@ -354,25 +390,194 @@ _LOGRADOURO_CANONICO: dict[str, str] = {
 }
 
 
-def normalizar_logradouro(valor: Optional[str]) -> str:
-    """Accent/case/space-normalised, with its FIRST token (when it is a
-    street-type abbreviation or its spelled-out form) rewritten onto one
-    canonical spelling — `"AV Paulista"` and `"Avenida Paulista"` normalise
-    to the same string, so comparing the two is no longer a conflict."""
-    if not valor:
-        return ""
+#: Title/abbreviation tokens that mean the same person-title in a street name
+#: (`PROF`/`PRF`/`PROFA` -> PROFESSOR), mapped like the street types above.
+_TITULO_CANONICO: dict[str, str] = {
+    "PROF": "PROFESSOR", "PRF": "PROFESSOR", "PROFESSOR": "PROFESSOR",
+    "PROFA": "PROFESSORA", "PRFA": "PROFESSORA", "PROFESSORA": "PROFESSORA",
+    "DR": "DOUTOR", "DOUTOR": "DOUTOR", "DRA": "DOUTORA", "DOUTORA": "DOUTORA",
+}
+
+_CONECTORES = frozenset({"DE", "DA", "DO", "DAS", "DOS", "E"})
+
+
+def _sem_acento_upper(valor: str) -> str:
     decomposed = unicodedata.normalize("NFKD", valor)
     sem_acento = "".join(c for c in decomposed if not unicodedata.combining(c))
-    colapsado = re.sub(r"\s+", " ", sem_acento.upper()).strip()
-    if not colapsado:
-        return ""
-    partes = colapsado.split(" ", 1)
-    primeiro = partes[0].rstrip(".")
-    canonico = _LOGRADOURO_CANONICO.get(primeiro)
-    if canonico is None:
-        return colapsado
-    resto = partes[1] if len(partes) > 1 else ""
-    return f"{canonico} {resto}".strip()
+    return re.sub(r"\s+", " ", sem_acento.upper()).strip()
+
+
+def _tokens_logradouro(valor: Optional[str]) -> list[str]:
+    """Upper/accent-free tokens with the leading street type (and a DOUBLED
+    one — `Estrada EST do Embu` — collapsed) and title abbreviations
+    rewritten onto canonical spellings."""
+    if not valor:
+        return []
+    texto = _sem_acento_upper(valor)
+    if not texto:
+        return []
+    tokens = [t.rstrip(".,") for t in re.split(r"[\s,]+", texto) if t.rstrip(".,")]
+    tipos = set(_LOGRADOURO_CANONICO.values())
+    tokens[0] = _LOGRADOURO_CANONICO.get(tokens[0], tokens[0])
+    # doubled street type: `Estrada EST do Embu` -> `ESTRADA ESTRADA DO EMBU`
+    # -> one type.
+    if len(tokens) > 1 and tokens[0] in tipos:
+        segundo = _LOGRADOURO_CANONICO.get(tokens[1], tokens[1])
+        if segundo == tokens[0]:
+            tokens = [tokens[0]] + tokens[2:]
+    return [_TITULO_CANONICO.get(t, t) for t in tokens]
+
+
+def normalizar_logradouro(valor: Optional[str]) -> str:
+    """Accent/case/space-normalised, with its leading street type (the
+    abbreviation or its spelled-out form, even doubled) rewritten onto one
+    canonical spelling and title abbreviations (PROF/PRF) unified —
+    `"AV Paulista"` and `"Avenida Paulista"` normalise to the same string, so
+    comparing the two is no longer a conflict. Connectors (DO/DA/DE) are kept
+    here; `chave_logradouro` drops them and the type for the loosest compare."""
+    return " ".join(_tokens_logradouro(valor))
+
+
+def chave_logradouro(valor: Optional[str]) -> str:
+    """The street NAME alone — type and connectors stripped. A CEP lookup says
+    `Estrada X`, the document says `Rua X`: same street, so the same key."""
+    tipos = set(_LOGRADOURO_CANONICO.values())
+    tokens = _tokens_logradouro(valor)
+    if tokens and tokens[0] in tipos:
+        tokens = tokens[1:]
+    return " ".join(t for t in tokens if t not in _CONECTORES)
+
+
+def logradouros_equivalentes(a: Optional[str], b: Optional[str]) -> bool:
+    """Two logradouro strings that differ only by street type, doubled type,
+    connectors, accents/case or PROF=PRF are the same street."""
+    ka, kb = chave_logradouro(a), chave_logradouro(b)
+    return bool(ka) and ka == kb
+
+
+_PARTICULAS_NOME = frozenset({"DE", "DA", "DO", "DAS", "DOS", "E"})
+
+
+def nomes_equivalentes(a: Any, b: Any) -> bool:
+    """Same person name up to accents, case, spacing and name particles."""
+    if _vazio(a) or _vazio(b):
+        return False
+
+    def chave(v: Any) -> tuple[str, ...]:
+        return tuple(
+            t for t in re.split(r"[^A-Z]+", _sem_acento_upper(str(v)))
+            if t and t not in _PARTICULAS_NOME
+        )
+
+    return bool(chave(a)) and chave(a) == chave(b)
+
+
+_RNE_RG = re.compile(r"^[A-Z]-?(\d{3})\.?(\d{3})-?[A-Z0-9]$")
+
+
+def _rne_digitos(valor: Any) -> Optional[str]:
+    m = _RNE_RG.match(_sem_acento_upper(str(valor)).replace(" ", ""))
+    return f"{m.group(1)}{m.group(2)}" if m else None
+
+
+def rg_rne_equivalente(a: Any, b: Any) -> bool:
+    """An RNE RG shaped `X-###.###-X` carries the same number as the bare
+    `######` the other source prints."""
+    if _vazio(a) or _vazio(b):
+        return False
+    da, db = _rne_digitos(a), _rne_digitos(b)
+    if da is not None and re.fullmatch(r"\d{6}", only_digits(str(b)) or "") and not re.search(r"[A-Za-z]", str(b)):
+        return da == only_digits(str(b))
+    if db is not None and re.fullmatch(r"\d{6}", only_digits(str(a)) or "") and not re.search(r"[A-Za-z]", str(a)):
+        return db == only_digits(str(a))
+    return da is not None and da == db
+
+
+# ─── Confidence + attestation + plausibility (steps C / A / P) ─────────────
+
+#: Confidence labels that must never contest a filled value.
+CONFIANCAS_BAIXAS = frozenset({"baixa", "nenhuma", "desconhecida"})
+
+
+def confianca_baixa(confianca: Any) -> bool:
+    return isinstance(confianca, str) and _sem_acento_upper(confianca).lower() in CONFIANCAS_BAIXAS
+
+
+#: `(origem, campo)` pairs where the source cannot ATTEST the field, so its
+#: reading never contests a filled value (class "source can't attest").
+FONTE_NAO_ATESTA: frozenset[tuple[str, str]] = frozenset({
+    ("cin", "estado_civil"),
+    ("cnh", "nacionalidade"),
+    # a certidão de nascimento without an averbação only INFERS "solteiro".
+    ("certidao_nascimento", "estado_civil"),
+    # matrícula's cadastro is the old-format one; the municipal source wins.
+    ("matricula", "prefeitura_cadastro_imobiliario"),
+})
+
+#: Órgãos expedidores that exist (leading token before the UF). An OCR word
+#: such as SERRA is not one.
+ORGAOS_EXPEDIDORES_CONHECIDOS = frozenset({
+    "SSP", "SJS", "SDS", "SESP", "SEJUSP", "SEDS", "SJTC", "SSPDS", "DETRAN",
+    "PC", "PCI", "PM", "PF", "DPF", "IFP", "IGP", "DGPC", "IIRGD", "IML",
+    "ITEP", "POLITEC", "SPTC", "DIC", "DGPT", "MAER", "MEX", "MB", "MD",
+    "CNIG", "DPMAF", "DELEMIG", "DICRIM", "CGPI", "SESEG", "SEJUS", "SDSP",
+    "CBM", "CBMERJ", "CREA", "OAB", "CRM", "CRC", "CRQ", "COREN", "DRT",
+})
+_UFS = frozenset(
+    "AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO".split()
+)
+
+IDADE_MINIMA_NEGOCIO = 18
+
+
+def orgao_conhecido(valor: Any) -> Optional[bool]:
+    """True/False when the leading token is/isn't a known órgão, None if empty."""
+    if _vazio(valor):
+        return None
+    tokens = [t for t in re.split(r"[^A-Z]+", _sem_acento_upper(str(valor))) if t]
+    tokens = [t for t in tokens if t not in _UFS or len(tokens) == 1]
+    if not tokens:
+        return None
+    return tokens[0] in ORGAOS_EXPEDIDORES_CONHECIDOS
+
+
+def _menor_de_idade(valor: Any, referencia: Optional[date]) -> bool:
+    try:
+        nasc = date.fromisoformat(str(valor)[:10])
+    except (ValueError, TypeError):
+        return False
+    ref = referencia or date.today()
+    anos = ref.year - nasc.year - ((ref.month, ref.day) < (nasc.month, nasc.day))
+    return anos < IDADE_MINIMA_NEGOCIO or nasc > ref
+
+
+def _razao_social_defeituosa(valor: Any, outro: Any) -> bool:
+    if _vazio(valor):
+        return False
+    texto = str(valor).strip()
+    if "\u26a0" in texto or texto.endswith(("...", "\u2026")):
+        return True
+    if _vazio(outro):
+        return False
+    a, b = _sem_acento_upper(texto), _sem_acento_upper(str(outro))
+    return len(a) < len(b) and b.startswith(a)
+
+
+def _implausivel(
+    campo: str, valor: Any, outro: Any, *, referencia: Optional[date]
+) -> Optional[str]:
+    """Why `valor` is OBJECTIVELY not a plausible value of `campo` (age under
+    18 at the deal, unknown órgão, a damaged/truncated razão social), else
+    None. Check-digit failures stay with `_validar`."""
+    if _vazio(valor):
+        return None
+    if campo == "data_nascimento" and _menor_de_idade(valor, referencia):
+        return f"idade inferior a {IDADE_MINIMA_NEGOCIO} anos na data do negócio"
+    if campo == "rg_orgao_expedidor" and orgao_conhecido(valor) is False:
+        return "órgão expedidor fora da lista de órgãos conhecidos"
+    if campo == "razao_social" and _razao_social_defeituosa(valor, outro):
+        return "razão social truncada ou com marcador de leitura (⚠)"
+    return None
 
 
 # ─── The generic resolver (resolution steps 1-3; step 4 is "ask a human") ──
@@ -388,6 +593,10 @@ class Decisao:
     regra: str
     motivo: str
     requer_humano: bool
+    #: Pre-selection for the human gate: set only when `requer_humano` and an
+    #: objective plausibility proof (`plausibilidade`) favours that side —
+    #: the UI may pre-pick it, nothing is applied.
+    sugerido: Optional[str] = None
 
     @property
     def corroborado(self) -> bool:
@@ -525,6 +734,10 @@ def resolver_divergencia(
     uf: Optional[str] = None,
     cpf_proprio: Any = None,
     atual_humano: bool = False,
+    confianca_proposta: Optional[str] = None,
+    leituras_mesmo_documento: Sequence[Any] = (),
+    proposto_inferido: bool = False,
+    data_negocio: Optional[date] = None,
 ) -> Decisao:
     """Decide `'atual'` vs `'proposto'` for one disagreeing (campo, valores)
     pair, or admit a human is needed. Pure — no I/O, no DB. `mesmo_valor` is
@@ -553,6 +766,14 @@ def resolver_divergencia(
     `atual_humano` — the on-file value was typed (`origem='manual'`) or
     confirmed (`confirmado_por` set) by a person: any verdict for the
     PROPOSED side is turned into `requer_humano` (regra `valor_humano`).
+
+    `confianca_proposta` — the proposed reading's confidence; baixa / nenhuma
+    / desconhecida never contests a filled value. `leituras_mesmo_documento`
+    — the other values the SAME document produced across reads: when they
+    differ from the proposal the reading is unstable and counts as low
+    confidence. `proposto_inferido` — the proposal is an inference, not an
+    attestation (`ROTULO_SOLTEIRO_INFERIDO`). `data_negocio` — reference date
+    for the age plausibility proof (default today).
     """
     decisao = _resolver(
         campo,
@@ -560,6 +781,9 @@ def resolver_divergencia(
         valor_proposto=valor_proposto, origem_proposto=origem_proposto,
         mesmo_valor=mesmo_valor, historico=historico, evidencia=evidencia,
         uf=uf, cpf_proprio=cpf_proprio,
+        confianca_proposta=confianca_proposta,
+        leituras_mesmo_documento=leituras_mesmo_documento,
+        proposto_inferido=proposto_inferido, data_negocio=data_negocio,
     )
     if (
         atual_humano
@@ -582,6 +806,10 @@ def _resolver(
     evidencia: Optional[EvidenciaViva],
     uf: Optional[str],
     cpf_proprio: Any,
+    confianca_proposta: Optional[str] = None,
+    leituras_mesmo_documento: Sequence[Any] = (),
+    proposto_inferido: bool = False,
+    data_negocio: Optional[date] = None,
 ) -> Decisao:
     """`resolver_divergencia`'s steps 0-4, before the human guard."""
     # 0. Equivalence — format-only differences are not a disagreement.
@@ -613,6 +841,52 @@ def _resolver(
                 f"{campo}: as duas leituras ({origem_atual} e {origem_proposto}) "
                 f"nomeiam o mesmo órgão; só {completo!r} traz a UF — mantida a "
                 f"leitura completa.",
+            )
+
+    # 0c. Normalisation-only differences (logradouro type/connectors, RNE
+    # RG shape, name particles) are equal, not a disagreement.
+    if not _vazio(valor_atual) and not _vazio(valor_proposto):
+        equivalente = False
+        if campo in ("endereco", "logradouro"):
+            equivalente = logradouros_equivalentes(str(valor_atual), str(valor_proposto))
+        elif campo == "rg":
+            equivalente = rg_rne_equivalente(valor_atual, valor_proposto)
+        elif campo == "nome_oficial":
+            equivalente = nomes_equivalentes(valor_atual, valor_proposto)
+        if equivalente:
+            return _decisao(
+                "atual", "equivalencia",
+                f"{campo}: as duas leituras ({origem_atual} e {origem_proposto}) "
+                f"diferem só por normalização (tipo/conectores/partículas/"
+                f"formato) — nada a decidir.",
+            )
+
+    if not _vazio(valor_atual):
+        # C. Confidence — a weak or unstable reading never contests a filled
+        # value; it is recorded, no human conflict.
+        instavel = any(
+            not _vazio(v) and not mesmo_valor(campo, v, valor_proposto)
+            for v in leituras_mesmo_documento
+        )
+        if confianca_baixa(confianca_proposta) or instavel:
+            motivo = (
+                "o mesmo documento deu valores diferentes entre leituras"
+                if instavel and not confianca_baixa(confianca_proposta)
+                else f"confiança {confianca_proposta or 'baixa'} na leitura proposta"
+            )
+            return _decisao(
+                "atual", "confianca_baixa",
+                f"{campo}: {motivo} ({origem_proposto}) — nunca contesta um "
+                f"valor preenchido; registrada sem conflito.",
+            )
+        # A. Attestation — a source that cannot attest this field (or only
+        # infers it) never contests a filled value.
+        if proposto_inferido or (origem_proposto, campo) in FONTE_NAO_ATESTA:
+            return _decisao(
+                "atual", "fonte_nao_atesta",
+                f"{campo}: {origem_proposto!r} não atesta este campo (valor "
+                f"inferido ou fora do que o documento comprova) — não contesta "
+                f"o valor em registro.",
             )
 
     # 1a. Type routing — a valid identifier of ANOTHER type is not this
@@ -648,6 +922,24 @@ def _resolver(
             "atual", "validador",
             f"{campo}: o valor proposto ({origem_proposto}) falha o dígito "
             f"verificador; o em registro ({origem_atual}) verifica.",
+        )
+
+    # 1c. Plausibility — objective proof one side is not a valid value.
+    pl_atual = _implausivel(campo, valor_atual, valor_proposto, referencia=data_negocio)
+    pl_proposto = _implausivel(campo, valor_proposto, valor_atual, referencia=data_negocio)
+    if pl_proposto and not pl_atual:
+        return _decisao(
+            "atual", "plausibilidade",
+            f"{campo}: o valor proposto ({origem_proposto}) é implausível — "
+            f"{pl_proposto}; o em registro não.",
+        )
+    if pl_atual and not pl_proposto:
+        return Decisao(
+            vencedor=None, regra="plausibilidade", requer_humano=True,
+            sugerido="proposto",
+            motivo=f"{campo}: o valor em registro ({origem_atual}) é "
+                   f"implausível — {pl_atual}; proposto pré-selecionado, "
+                   f"confirmação humana necessária.",
         )
 
     # 1b. Live evidence — a value no live document asserts any more has been
@@ -738,6 +1030,14 @@ __all__ = [
     "Precisao",
     "decisao_outra_pessoa",
     "normalizar_logradouro",
+    "chave_logradouro",
+    "logradouros_equivalentes",
+    "nomes_equivalentes",
+    "rg_rne_equivalente",
+    "orgao_conhecido",
+    "confianca_baixa",
+    "CONFIANCAS_BAIXAS",
+    "FONTE_NAO_ATESTA",
     "only_digits",
     "precisao_de",
     "resolver_divergencia",

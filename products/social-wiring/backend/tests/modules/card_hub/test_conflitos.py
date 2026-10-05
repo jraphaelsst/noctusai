@@ -127,15 +127,16 @@ class TestListingConflicts:
         assert c["status"] == "resolvido_automatico"
 
     def test_listing_leaves_a_still_ambiguous_conflict_pending(self, client, scoped):
-        """A same-tier disagreement (nacionalidade: cnh 100% vs matricula
-        100%) is untouched by the resolve-on-read sweep — still listed."""
+        """A same-tier disagreement (nacionalidade: certidao_casamento 100% vs
+        matricula 100% — the CNH no longer attests nacionalidade) is untouched
+        by the resolve-on-read sweep — still listed."""
         cid = _seed(
             scoped, cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"}
         )
         conflito = _conflito_row(
             cid, campo="nacionalidade",
             valor_anterior="italiano", origem_anterior="matricula",
-            valor_proposto="brasileiro", origem_proposto="cnh",
+            valor_proposto="brasileiro", origem_proposto="certidao_casamento",
         )
         scoped.set_table_data("cliente_campo_conflitos", [conflito])
 
@@ -276,7 +277,7 @@ class TestBackfillRoute:
         conflito = _conflito_row(
             cid, campo="nacionalidade",
             valor_anterior="italiano", origem_anterior="matricula",
-            valor_proposto="brasileiro", origem_proposto="cnh",
+            valor_proposto="brasileiro", origem_proposto="certidao_nascimento",
         )
         scoped.set_table_data("cliente_campo_conflitos", [conflito])
 

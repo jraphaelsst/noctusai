@@ -229,11 +229,11 @@ class TestResolucaoAutomaticaDeDivergencia:
 
     @pytest.mark.asyncio
     async def test_a_same_tier_disagreement_still_needs_a_human(self, client, scoped):
-        """cnh and matricula are BOTH measured at 100% for `nacionalidade` —
+        """certidao_nascimento and matricula (the CNH no longer attests nacionalidade) are BOTH measured at 100% for `nacionalidade` —
         no validator, no corroboration, no tier separation: still an
         ordinary `pendente` conflict, unchanged from before this directive."""
         cid, did, storage = await _setup(
-            scoped, tipo="cnh",
+            scoped, tipo="certidao_nascimento",
             cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"},
         )
         out = await _extrair(scoped, storage, cid, did, IdentityFields(
@@ -413,13 +413,13 @@ class TestBackfillResolverConflitosPendentes:
     @pytest.mark.asyncio
     async def test_a_still_ambiguous_conflict_stays_pendente(self, client, scoped):
         cid, did, storage = await _setup(
-            scoped, tipo="cnh",
+            scoped, tipo="certidao_nascimento",
             cliente={"nacionalidade": "italiano", "nacionalidade_origem": "matricula"},
         )
         scoped.table("cliente_campo_conflitos").insert({
             "id": str(uuid4()), "org_id": ORG_ID, "cliente_id": cid, "campo": "nacionalidade",
             "valor_anterior": "italiano", "origem_anterior": "matricula",
-            "valor_proposto": "brasileiro", "origem_proposto": "cnh",
+            "valor_proposto": "brasileiro", "origem_proposto": "certidao_nascimento",
             "confianca_proposta": "alta", "fonte_tabela": "cliente_documentos",
             "fonte_id": did, "status": "pendente", "notificado_em": None,
             "decidido_por": None, "decidido_em": None, "created_at": _old(3),

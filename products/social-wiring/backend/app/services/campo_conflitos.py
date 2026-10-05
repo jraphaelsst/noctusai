@@ -392,6 +392,7 @@ def resolver_e_registrar(
         uf=uf,
         cpf_proprio=cpf_proprio,
         atual_humano=atual_humano,
+        confianca_proposta=confianca_proposta,
     )
     return registrar_decisao_automatica(
         client, table, org_id, owner, campo,
