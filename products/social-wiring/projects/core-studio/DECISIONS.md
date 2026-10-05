@@ -34,11 +34,26 @@ Rule for this project: the owner is interviewed for every specification; nothing
 - Brandings and the Branding Template live in the **database only**, edited in the app (no repo catalog, no artifact link).
 - The old catalog entry "Wilson — Granja Viana" was Gilson's (mis-named; he is @gilson_tangerino). Its two looks (premium dark + gold, educational lilac + navy + yellow) are **retired**.
 
+## Decided — 2026-10-05, round 4
+
+### Branding data
+- The **Store Visual Identity is Gilson Tangerino's** (his personal/professional brand).
+- The repo brand catalog (`branding/catalog/`, its loader, the seed-catalog endpoint and the "Carregar catálogo" button) is **deleted**. Its only entry ("Wilson", really Gilson) is retired, so nothing moves to the database.
+- Brands live in `social_wiring.marcas`: today One Consultoria (empresa), João Raphael (pessoa_fisica), Mônica Tangerino (pessoa_fisica). New: **Gilson Tangerino** (pessoa_fisica), **Nós no Limiar** (empresa), **NoctusAI** (empresa).
+- The empty brand kit "One Design" is **attached to One Consultoria**, to be filled from the template later.
+- Import order: Nós no Limiar first (validate, fix, refine), then Gilson's Store Visual Identity, then NoctusAI. The Branding Template is stored in the database too.
+
+### Existing media creation
+- **Keep everything**: Biblioteca, Novo post and Kits de marca (renamed Branding). Biblioteca and Novo post overlap with CoreStudio's flow and get **merged** when the Criação de Mídia module is built. CoreStudio's extracted methodology must be **aligned with our in-home Método Audience** (`prompts/methodology.py`), since the two are complementary.
+
+### Menus
+- Regroup the active products' menus following the recommended trees in `MENUS.md`, no further approval round.
+
+### Research variables
+- Correction: the merged list has **40 distinct concepts and no overlaps**. Only the 5 exact slug matches and one spelling variant (Pessoas e personagens conhecidos) are identities. Everything previously flagged as "overlap" (e.g. Crenças do meu público vs crenças limitantes) is a different concept. See `specs/variables-usage.md` §6.
+
 ## Open — to ask before building
 
-- Which brand the Store Visual Identity attaches to: Gilson Tangerino (personal) or ONE Consultoria.
-- What happens to the existing repo catalog mechanism (`branding/catalog/` + "Carregar catálogo") now that brandings are database-only.
-- Per-product regrouped menus (proposal pending).
 - Rebuild or drop: Assuntos Virais pane, AI validation of brain answers, voice answers, the hidden "Minhas extrações" page.
 - Viral library source (our own scraped corpus or user references only).
 - Approval for checks that change the CoreStudio account (study spec §7), including one live generation (1 credit) to read the real HEADLINE/ROTEIRO prompts.

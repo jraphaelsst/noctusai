@@ -212,9 +212,11 @@ The classifier slugs that **do** map are 16, 17, 18, 9 and 10 (exact) plus 13 (s
 
 ## 6 · Merged list proposal input (facts only)
 
-Union of the 29 DB variables (`ID|SLUG`), the 4 globals, and the 13 classifier slugs = **40 distinct concepts** (29 + 4 + 7 classifier-only). The overlap flags are below.
+Union of the 29 DB variables (`ID|SLUG`), the 4 globals, and the 13 classifier slugs = **40 distinct concepts** (29 + 4 + 7 classifier-only).
 
-| # | Concept | UI id / DB slug | Classifier slug | Overlap flag |
+**Correction (2026-10-05, owner review):** an earlier version flagged "partial overlaps" by name similarity. That was wrong. Two variables are the same concept only when their definitions AND their real items agree. By that test the only identities are the 5 exact slug matches and one spelling variant (row 6). Every other row is a distinct concept.
+
+| # | Concept | UI id / DB slug | Classifier slug | Relation |
 |---|---|---|---|---|
 | 1 | Desejos (público) | 18 DESEJOS-TANGIVEIS-DO-AVATAR | DESEJOS-TANGIVEIS-DO-AVATAR | **exact match** |
 | 2 | Dores (público) | 17 DORES-TANGIVEIS-DO-AVATAR | DORES-TANGIVEIS-DO-AVATAR | **exact match** |
@@ -222,15 +224,15 @@ Union of the 29 DB variables (`ID|SLUG`), the 4 globals, and the 13 classifier s
 | 4 | Medos (público) | 9 MEDOS-DO-AVATAR | MEDOS-DO-AVATAR | **exact match** |
 | 5 | Objeções (público) | 10 OBJECOES-DO-AVATAR | OBJECOES-DO-AVATAR | **exact match** |
 | 6 | Pessoas/personagens conhecidos | 13 PESSOAS-PERSONAGENS-CONHECIDOS-PELO-AVATAR | PESSOAS-E-PERSONAGENS-CONHECIDOS-PELO-MEU-PUBLICO | **same concept, slug spelling differs** |
-| 7 | Crenças (público) | 8 CRENCAS-DO-AVATAR "Crenças do meu público" | CRENCAS-LIMITANTES-DO-AVATAR "Crenças internas negativas sobre si mesmo" | **partial overlap**: the classifier one is narrower (limiting beliefs about self) |
-| 8 | Inimigos (público) | 32 INIMIGOS-DO-AVATAR | INIMIGO-COMUM "Vilão externo que o avatar culpa" | **partial overlap**: plural "inimigos" vs single "inimigo comum" |
-| 9 | Frustrações | — | FRUSTRACOES-DO-AVATAR | classifier-only. Overlaps Dores by meaning; the prompt's tie-break separates them by tense |
-| 10 | Mecanismo único | — | MECANISMO-UNICO | classifier-only. Product/expert side despite the avatar framing; near especialista 6 and the brain "Método do Especialista" |
+| 7 | Crenças do público / crenças limitantes | 8 CRENCAS-DO-AVATAR "Crenças do meu público" | CRENCAS-LIMITANTES-DO-AVATAR "Crenças internas negativas sobre si mesmo" | **distinct**. Crenças do meu público = beliefs the audience holds about the world, money and society (owner's real items: "vida que a sociedade queria que eu vivesse", "Cada um dá o que tem", "é rico", "não é barato", "inveja"). Crenças limitantes = negative beliefs about oneself ("não sou capaz"). |
+| 8 | Inimigos do público / inimigo comum | 32 INIMIGOS-DO-AVATAR | INIMIGO-COMUM "Vilão externo que o avatar culpa" | **distinct by definition**. INIMIGO-COMUM is "vilão externo que o avatar culpa" (a copywriting device); Inimigos do meu público is its own UI variable. The owner has no Inimigos items to compare. |
+| 9 | Frustrações | — | FRUSTRACOES-DO-AVATAR | classifier-only, **distinct**: past attempts that failed, vs Dores = problems lived now (the prompt itself separates them). |
+| 10 | Mecanismo único | — | MECANISMO-UNICO | classifier-only, **distinct**: the method that differentiates the solution (product/expert side). |
 | 11 | Promessa principal | — | PROMESSA-PRINCIPAL | classifier-only (product side) |
-| 12 | Prova social | — | PROVA-SOCIAL | classifier-only (product side); near especialista 5 "conquistas" |
-| 13 | Nicho / mercado | — | NICHO-OU-MERCADO | classifier-only. Overlaps the profile field Nichos (spec §5.3) |
+| 12 | Prova social | — | PROVA-SOCIAL | classifier-only, **distinct**: third-party results, numbers, authority (product side). |
+| 13 | Nicho / mercado | — | NICHO-OU-MERCADO | classifier-only, **distinct**: a research item naming the product's area; not the account's Nichos taxonomy. |
 | 14–24 | Qualidades 25, Defeitos 26, Itens 15, Instituições 14, Filmes/séries/músicas 11, Eventos 19, Locais 20, Momentos de vida 21, Produtos 34 (público) | DB only | — | **no classifier slug**, so AI add can never route a line here (only extraction or manual) |
-| 25–36 | Especialista 5, 4, 30, 31, 28, 7, 27, 6, 12, 3, 2, 1 | DB only (`*-DO-ESPECIALISTA`) | — | **no classifier slug** for any. Note the avatar/especialista pairs: 16↔28 demographics, 25↔7 qualities, 26↔27 defects, 8↔1 beliefs |
+| 25–36 | Especialista 5, 4, 30, 31, 28, 7, 27, 6, 12, 3, 2, 1 | DB only (`*-DO-ESPECIALISTA`) | — | **no classifier slug** for any. The avatar/especialista mirrors (16↔28, 25↔7, 26↔27, 8↔1) are **distinct** concepts about different people (the audience vs the expert). |
 | 37–40 | Verbos Poderosos 22, Adjetivos Poderosos 23, Momento do dia 24, GPT 29 | id only, no slug seen | — | **global type `null`**. Not served by `variables/type`, not fetched by `variables/items` |
 
 Other naming facts:
