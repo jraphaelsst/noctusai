@@ -45,11 +45,14 @@ from tests.routers.conftest import (  # noqa: F401
 from app.stores.studio_definitions import FakeStudioDefinitionStore
 from app.stores.studio_evals import FakeEvalStore
 from app.stores.studio_knowledge import FakeStudioKnowledgeStore
+from noctusai_lib.domain.editorial import FakeEditorialStore
+from noctusai_lib.domain.permissions import FakePermissionGrantRepository
 
 
 def _build_local_app() -> FastAPI:
     from fastapi import HTTPException
 
+    from app.routers.editorial_router import router as editorial_router
     from app.routers.studio_evals_router import router as evals_router
     from app.routers.studio_knowledge_router import router as knowledge_router
     from noctusai_lib.primitives.exceptions import http_exception_handler
@@ -65,6 +68,7 @@ def _build_local_app() -> FastAPI:
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.include_router(knowledge_router)
     app.include_router(evals_router)
+    app.include_router(editorial_router)
     return app
 
 
@@ -73,7 +77,10 @@ class _Stores:
     resolve to, via ``app.dependency_overrides`` — see module docstring."""
 
     def __init__(self) -> None:
-        self.knowledge = FakeStudioKnowledgeStore()
+        # ONE editorial store behind both the knowledge store and /api/studio/editorial.
+        self.editorial = FakeEditorialStore()
+        self.permissions = FakePermissionGrantRepository()
+        self.knowledge = FakeStudioKnowledgeStore(self.editorial)
         self.evals = FakeEvalStore()
         self.defs = FakeStudioDefinitionStore()
         #: version_id -> the hash the Fake compiler returns for it "now".
@@ -104,11 +111,17 @@ def ke_client():
         app.dependency_overrides[get_eval_store_dep] = lambda: stores.evals
         app.dependency_overrides[get_current_hash_dep] = lambda: stores.current_hash
 
+        from app.routers.editorial_router import editorial_deps
+
+        editorial_deps.store, editorial_deps.permissions = stores.editorial, stores.permissions
         tc = TestClient(app)
-        with tc:
-            client = AuthClient(tc, mock_sb)
-            client.stores = stores
-            yield client
+        try:
+            with tc:
+                client = AuthClient(tc, mock_sb)
+                client.stores = stores
+                yield client
+        finally:
+            editorial_deps.store = editorial_deps.permissions = None
 
 
 def seed_studio_agent(

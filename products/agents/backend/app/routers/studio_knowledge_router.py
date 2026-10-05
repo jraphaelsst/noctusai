@@ -102,6 +102,7 @@ def _collection_out(record, total_documentos: int) -> CollectionOut:
     return CollectionOut(
         id=record.id, slug=record.slug, nome=record.nome, tag=record.tag,
         descricao=record.descricao, ordem=record.ordem, total_documentos=total_documentos,
+        requer_revisao=record.requer_revisao,
     )
 
 
@@ -109,7 +110,8 @@ def _document_list_item_out(record) -> DocumentListItemOut:
     return DocumentListItemOut(
         id=record.id, slug=record.slug, titulo=record.titulo, tipo=record.tipo,
         resumo=record.resumo, chars=len(record.conteudo), ativo=record.ativo,
-        updated_at=record.updated_at,
+        updated_at=record.updated_at, editorial_item_id=record.editorial_item_id,
+        editorial_state=record.editorial_state,
     )
 
 
@@ -118,7 +120,8 @@ def _document_out(record) -> DocumentOut:
         id=record.id, collection_id=record.collection_id, slug=record.slug, titulo=record.titulo,
         tipo=record.tipo, resumo=record.resumo, conteudo=record.conteudo,
         proveniencia=record.proveniencia, ativo=record.ativo, chars=len(record.conteudo),
-        updated_at=record.updated_at,
+        updated_at=record.updated_at, editorial_item_id=record.editorial_item_id,
+        editorial_state=record.editorial_state,
     )
 
 
@@ -176,6 +179,8 @@ async def update_collection(
                 ctx.org_id, agent.id, col_id,
                 nome=fields.get("nome", _UNSET), tag=fields.get("tag", _UNSET),
                 descricao=fields.get("descricao", _UNSET), ordem=fields.get("ordem", _UNSET),
+                requer_revisao=_UNSET if fields.get("requer_revisao") is None else fields["requer_revisao"],
+                author_id=ctx.user_id,
             )
     except NotFound as exc:
         raise _not_found("Coleção não encontrada.", "collection_not_found") from exc

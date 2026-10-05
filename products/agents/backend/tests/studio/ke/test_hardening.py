@@ -102,6 +102,15 @@ def _doc_row(**over) -> dict:
     return row
 
 
+def _col_row(collection_id, **over) -> dict:
+    row = {
+        "id": str(collection_id), "org_id": str(ORG), "agent_id": str(AGENT), "slug": "c", "nome": "C",
+        "tag": None, "descricao": "", "ordem": 0, "created_at": "t", "updated_at": "t", "requer_revisao": False,
+    }
+    row.update(over)
+    return row
+
+
 def _run_row(**over) -> dict:
     row = {
         "id": str(uuid4()), "org_id": str(ORG), "agent_id": str(AGENT), "version_id": str(uuid4()),
@@ -220,10 +229,12 @@ class TestTypedConstraintErrors:
         assert exc.value.code == "slug_taken"
 
     def test_real_document_duplicate_is_slug_taken(self):
-        client = _Client([_APIError("23505", "duplicate key value violates unique constraint")])
+        col = uuid4()
+        # collection lookup (governance flag) → the INSERT that trips the UNIQUE
+        client = _Client([[_col_row(col)], _APIError("23505", "duplicate key value violates unique constraint")])
         with pytest.raises(StudioConflict) as exc:
             SupabaseStudioKnowledgeStore(client).create_document(
-                ORG, AGENT, uuid4(), DocumentInput(slug="d", titulo="D", tipo="fonte", conteudo="x"), author_id=USER,
+                ORG, AGENT, col, DocumentInput(slug="d", titulo="D", tipo="fonte", conteudo="x"), author_id=USER,
             )
         assert exc.value.code == "slug_taken"
 
@@ -434,12 +445,12 @@ class TestImportRevisions:
     def test_real_created_writes_an_import_revision(self):
         col = uuid4()
         row = _doc_row(collection_id=str(col))
-        client = _Client([[], [row], [{}]])  # find (none) → insert doc → insert revision
+        client = _Client([[], [_col_row(col)], [row], [{}]])  # find (none) → collection → insert doc → insert revision
         _, action = SupabaseStudioKnowledgeStore(client).upsert_document_by_source_sha(
             ORG, AGENT, col, slug="d", titulo="D", tipo="fonte", resumo=None, proveniencia=None, conteudo="x",
         )
         assert action == "created"
-        table, _, calls = client.executed[2]
+        table, _, calls = client.executed[3]
         assert table == "knowledge_revisions"
         payload = next(c[1][0] for c in calls if c[0] == "insert")
         assert payload["op"] == "import"
@@ -447,12 +458,12 @@ class TestImportRevisions:
     def test_real_updated_writes_an_import_revision(self):
         col = uuid4()
         existing = _doc_row(collection_id=str(col), source_sha="old")
-        client = _Client([[existing], [existing], [existing], [{}]])  # find → get → update → revision
+        client = _Client([[existing], [_col_row(col)], [existing], [existing], [{}]])  # find → collection → get → update → revision
         _, action = SupabaseStudioKnowledgeStore(client).upsert_document_by_source_sha(
             ORG, AGENT, col, slug="d", titulo="D", tipo="fonte", resumo=None, proveniencia=None, conteudo="new",
         )
         assert action == "updated"
-        payload = next(c[1][0] for c in client.executed[3][2] if c[0] == "insert")
+        payload = next(c[1][0] for c in client.executed[4][2] if c[0] == "insert")
         assert payload["op"] == "import"
 
     def test_slug_in_other_collection_is_refused_not_moved(self):

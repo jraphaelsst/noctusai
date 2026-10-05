@@ -52,6 +52,7 @@ from app.routers.agent_packages_router import router as agent_packages_router
 from app.routers.agents_router import router as agents_router
 from app.routers.approvals_router import router as approvals_router
 from app.routers.conversations_router import router as conversations_router
+from app.routers.editorial_router import router as editorial_router
 from app.routers.persona_router import router as persona_router
 from app.public_ask.router import BODY_LIMIT_PATTERN as PUBLIC_ASK_BODY_LIMIT_PATTERN
 from app.public_ask.router import MAX_BODY_BYTES as PUBLIC_ASK_MAX_BODY_BYTES
@@ -203,6 +204,8 @@ app = create_product_app(
         studio_agents_router,
         studio_clients_router,
         studio_knowledge_router,
+        # Seed editorial workflow (project seed-editorial-workflow, E5): governed knowledge review.
+        editorial_router,
         studio_evals_router,
         studio_import_router,
         # Agent Packages (CONTRACT §I): package serving + consumer sync routes.

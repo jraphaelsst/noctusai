@@ -3661,13 +3661,18 @@ _E_FLAG_ON = f"PERFORM set_config('{_EDITORIAL_GUC}', 'on', true);"
 
 def _editorial_probe(
     *, probe_id: str, guard_name: str, steps: tuple[str, ...], guard_fragment: str, what: str,
-    rationale: str, allowed: bool = False,
+    rationale: str, allowed: bool = False, ddl: str | None = None, schema: str = _E,
+    product: str = _EDITORIAL_PRODUCT, provenance: tuple[str, ...] = _EDITORIAL_PROVENANCE,
 ) -> GuardProbe:
     """One probe against the template as built in a rolled-back scratch schema.
-    `allowed=True` is the inverse polarity (the sanctioned path must succeed)."""
+    `allowed=True` is the inverse polarity (the sanctioned path must succeed).
+    `ddl`/`schema`/`product`/`provenance` let a CONSUMER migration that renders the
+    template (agents 018) reuse the same attack harness against its own build."""
     from noctusai_lib.domain.sql_templates import editorial_tables
 
-    ddl = editorial_tables(_E)
+    if ddl is None:
+        ddl = editorial_tables(schema)
+    fn_sig = _EDITORIAL_FN_SIG.replace(_E, schema)
     assert "$tpl$" not in ddl and _PROBE_TAG not in ddl, "editorial DDL collides with a probe dollar-tag"
     fragment_lit = _sql_lit(guard_fragment)
     what_lit = _sql_lit(what)
@@ -3700,14 +3705,16 @@ DECLARE
   v_b uuid := gen_random_uuid();
   v_c uuid := gen_random_uuid();
   v_d uuid := gen_random_uuid();
+  v_agent uuid := gen_random_uuid();
+  v_col uuid := gen_random_uuid();
   v_item uuid;
 BEGIN
-  EXECUTE 'CREATE SCHEMA {_E}';
+  EXECUTE 'CREATE SCHEMA {schema}';
   EXECUTE $tpl$
 {ddl}
   $tpl$;
-  IF to_regprocedure('{_EDITORIAL_FN_SIG}') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_E}.editorial_transition was not built from the editorial_tables DDL';
+  IF to_regprocedure('{fn_sig}') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {schema}.editorial_transition was not built from the editorial_tables DDL';
   END IF;
   BEGIN
     {body}
@@ -3719,11 +3726,11 @@ END;
 """)
     return GuardProbe(
         id=probe_id,
-        product=_EDITORIAL_PRODUCT,
-        schema=_E,
+        product=product,
+        schema=schema,
         guard_name=guard_name,
         kind="write_allowed" if allowed else "write_refusal",
-        migrations=_EDITORIAL_PROVENANCE,
+        migrations=provenance,
         rationale=rationale,
         sql=sql,
     )
@@ -3912,6 +3919,205 @@ _EDITORIAL_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+
+# ---------------------------------------------------------------------------
+# Registry — agents adopts the editorial workflow (migration 018; project
+# `seed-editorial-workflow`, slice E5). Same scratch-schema technique as above,
+# but the DDL is the REAL `018_editorial_workflow.sql` (schema `agents` rewritten
+# to the scratch schema) on top of a minimal copy of 013's knowledge tables — so
+# the probes prove the migration BEFORE it is applied anywhere, and keep proving
+# it after. The headline probe is the backfill proof: governing a collection must
+# change nothing `search_knowledge` returns (the #1 risk of E5 is hiding docs).
+# ---------------------------------------------------------------------------
+
+_AGENTS_ED_SCHEMA = "noc_probe_agents_ed"
+_AE = _AGENTS_ED_SCHEMA
+_AGENTS_ED_MIGRATION = "products/agents/backend/migrations/018_editorial_workflow.sql"
+
+_AGENTS_ED_FIXTURE = """
+CREATE TABLE __S__.knowledge_collections (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL, agent_id uuid NOT NULL,
+  slug text NOT NULL, nome text NOT NULL DEFAULT 'c', tag text NULL, descricao text NOT NULL DEFAULT '',
+  ordem int NOT NULL DEFAULT 0, created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE (agent_id, slug));
+CREATE TABLE __S__.knowledge_documents (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL,
+  collection_id uuid NOT NULL REFERENCES __S__.knowledge_collections(id) ON DELETE CASCADE,
+  agent_id uuid NOT NULL, slug text NOT NULL, titulo text NOT NULL,
+  tipo text NOT NULL CHECK (tipo IN ('fonte','sintese','card','template','indice','outro')),
+  proveniencia jsonb NOT NULL DEFAULT '{}', resumo text NULL, conteudo text NOT NULL,
+  source_sha text NOT NULL, ativo boolean NOT NULL DEFAULT true,
+  busca tsvector GENERATED ALWAYS AS (
+    setweight(to_tsvector('portuguese', coalesce(titulo, '')), 'A') ||
+    setweight(to_tsvector('portuguese', coalesce(resumo, '')), 'B') ||
+    setweight(to_tsvector('portuguese', left(coalesce(conteudo, ''), 900000)), 'C')) STORED,
+  created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (agent_id, slug));
+CREATE TABLE __S__.knowledge_revisions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid NOT NULL,
+  document_id uuid NOT NULL REFERENCES __S__.knowledge_documents(id) ON DELETE CASCADE,
+  op text NOT NULL CHECK (op IN ('create','update','archive','import')), snapshot jsonb NOT NULL,
+  author_id uuid NULL, motivo text NULL, created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now());
+"""
+
+
+def _agents_ed_ddl() -> str:
+    """013-shaped knowledge tables + the real 018 file, `agents` → scratch schema."""
+    from settings import REPO_ROOT
+
+    text = (REPO_ROOT / _AGENTS_ED_MIGRATION).read_text(encoding="utf-8")
+    text = re.sub(r"\bagents\.", f"{_AE}.", text)
+    text = text.replace("search_path = agents, public", f"search_path = {_AE}, public")
+    # the dollar tags the harness reserves must not appear in the migration text
+    return _AGENTS_ED_FIXTURE.replace("__S__", _AE) + text
+
+
+_AE_FIXTURE_STEPS = (
+    f"INSERT INTO {_AE}.knowledge_collections (id, org_id, agent_id, slug) VALUES (v_col, v_org, v_agent, 'c');",
+    f"INSERT INTO {_AE}.knowledge_documents (org_id, collection_id, agent_id, slug, titulo, tipo, conteudo, "
+    "source_sha, ativo) VALUES "
+    "(v_org, v_col, v_agent, 'viva-a', 'Viva A', 'fonte', 'limiar alfa viva', 'sha-a', true), "
+    "(v_org, v_col, v_agent, 'viva-b', 'Viva B', 'card', 'limiar beta viva', 'sha-b', true), "
+    "(v_org, v_col, v_agent, 'arq', 'Arquivada', 'fonte', 'limiar arquivada', 'sha-z', false);",
+)
+_AE_GOVERN = f"PERFORM {_AE}.govern_collection(v_org, v_col, v_a);"
+_AE_DOC = f"(SELECT id FROM {_AE}.knowledge_documents WHERE slug = 'viva-a')"
+_AE_ITEM_OF_DOC = f"v_item := (SELECT editorial_item_id FROM {_AE}.knowledge_documents WHERE slug = 'viva-a');"
+
+
+def _ae_probe(**kw) -> GuardProbe:
+    steps = kw.pop("steps")
+    return _editorial_probe(
+        steps=(*_AE_FIXTURE_STEPS, *steps), ddl=_agents_ed_ddl(), schema=_AE, product="agents",
+        provenance=(_AGENTS_ED_MIGRATION,), **kw,
+    )
+
+
+def _ae_count(where: str = "TRUE") -> str:
+    return f"(SELECT count(*) FROM {_AE}.search_knowledge(v_org, v_agent, 'limiar', NULL, 20) WHERE {where})"
+
+
+def _ae_publish_steps() -> tuple[str, ...]:
+    """Governed doc `viva-a` is published v1; edit → v2 draft → full round → publish v2."""
+    new = "'{\"titulo\":\"Viva A\",\"tipo\":\"fonte\",\"resumo\":null,\"conteudo\":\"limiar alfa NOVA\",\"proveniencia\":{},\"source_sha\":\"sha-a2\"}'::jsonb"
+    return (
+        _AE_GOVERN, _AE_ITEM_OF_DOC,
+        f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'edit', v_a, ARRAY['editorial:editar'], NULL, {new}, repeat('d', 64));",
+        f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'submit', v_a, ARRAY['editorial:editar']);",
+        f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'approve_editorial', v_b, ARRAY['editorial:revisar']);",
+        f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'approve_security', v_c, ARRAY['editorial:revisar_seguranca']);",
+        f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'publish', v_d, ARRAY['editorial:publicar']);",
+    )
+
+
+_AGENTS_EDITORIAL_PROBES: tuple[GuardProbe, ...] = (
+    _ae_probe(
+        probe_id="agents_editorial.backfill_keeps_retrieval", guard_name="govern_collection", allowed=True,
+        steps=(
+            "IF " + _ae_count() + " <> 2 THEN RAISE EXCEPTION 'agents_editorial_fixture_miscount'; END IF;",
+            _AE_GOVERN,
+            "IF " + _ae_count() + " <> 2 THEN RAISE EXCEPTION 'agents_editorial_backfill_hides_documents: search_knowledge changed'; END IF;",
+            f"IF (SELECT count(*) FROM {_AE}.knowledge_documents WHERE ativo) <> 2 "
+            f"OR (SELECT count(*) FROM {_AE}.knowledge_documents WHERE editorial_item_id IS NULL) <> 0 "
+            f"OR (SELECT count(*) FROM {_AE}.editorial_items WHERE state = 'publicado' AND published_version_n = 1) <> 2 "
+            f"OR (SELECT count(*) FROM {_AE}.editorial_items WHERE state = 'arquivado') <> 1 THEN "
+            "RAISE EXCEPTION 'agents_editorial_backfill_wrong_state'; END IF;",
+            # idempotent: a second call links nothing new and still hides nothing
+            _AE_GOVERN,
+            "IF " + _ae_count() + " <> 2 THEN RAISE EXCEPTION 'agents_editorial_backfill_hides_documents: second call'; END IF;",
+        ),
+        guard_fragment="agents_editorial_", what="governing a collection that already holds live documents",
+        rationale="Backfill must make every live document the PUBLISHED v1 — retrieval returns exactly what it "
+        "returned before (the E5 #1 risk: hiding documents).",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.direct_content_edit_refused", guard_name="knowledge_guard_governed",
+        steps=(_AE_GOVERN, f"UPDATE {_AE}.knowledge_documents SET conteudo = 'adulterado' WHERE slug = 'viva-a';"),
+        guard_fragment="knowledge_governed_write_via_editorial", what="a direct UPDATE of a governed document's content",
+        rationale="Live governed content changes only through the review (publish sync), never around it.",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.direct_deactivate_refused", guard_name="knowledge_guard_governed",
+        steps=(_AE_GOVERN, f"UPDATE {_AE}.knowledge_documents SET ativo = false WHERE slug = 'viva-a';"),
+        guard_fragment="knowledge_governed_write_via_editorial", what="a direct deactivation of a governed document",
+        rationale="Archiving a governed document goes through the editorial archive transition (with a motivo).",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.unpublished_cannot_be_active", guard_name="knowledge_guard_governed",
+        steps=(
+            f"v_item := {_AE}.editorial_create_item(v_org, 'knowledge_document', v_agent::text || '/novo', v_a, "
+            "ARRAY['editorial:editar'], '{\"titulo\":\"N\",\"tipo\":\"fonte\",\"conteudo\":\"x\",\"source_sha\":\"s\"}'::jsonb, "
+            "repeat('e', 64));",
+            f"INSERT INTO {_AE}.knowledge_documents (org_id, collection_id, agent_id, slug, titulo, tipo, conteudo, "
+            "source_sha, ativo, editorial_item_id) VALUES (v_org, v_col, v_agent, 'novo', 'N', 'fonte', 'x', 's', true, v_item);",
+        ),
+        guard_fragment="knowledge_unpublished_cannot_be_active", what="activating a document whose item was never published",
+        rationale="A draft must be invisible to retrieval until its first publish.",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.one_document_per_item", guard_name="idx_agents_knowledge_documents_editorial_item",
+        steps=(
+            _AE_GOVERN,
+            f"INSERT INTO {_AE}.knowledge_documents (org_id, collection_id, agent_id, slug, titulo, tipo, conteudo, "
+            "source_sha, ativo, editorial_item_id) SELECT v_org, v_col, v_agent, 'dup', 'Dup', 'fonte', 'x', 's', false, "
+            f"editorial_item_id FROM {_AE}.knowledge_documents WHERE slug = 'viva-a';",
+        ),
+        guard_fragment="idx_agents_knowledge_documents_editorial_item",
+        what="pointing two documents at the same editorial item",
+        rationale="One item governs exactly one document row; two rows sharing an item would publish into both.",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.draft_is_invisible_published_keeps_serving", guard_name="knowledge_sync_published",
+        allowed=True,
+        steps=(
+            _AE_GOVERN, _AE_ITEM_OF_DOC,
+            f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'edit', v_a, ARRAY['editorial:editar'], NULL, "
+            "'{\"titulo\":\"Viva A\",\"tipo\":\"fonte\",\"resumo\":null,\"conteudo\":\"limiar alfa NOVA\","
+            "\"proveniencia\":{},\"source_sha\":\"sha-a2\"}'::jsonb, repeat('d', 64));",
+            f"IF (SELECT conteudo FROM {_AE}.knowledge_documents WHERE slug = 'viva-a') <> 'limiar alfa viva' "
+            "OR " + _ae_count("slug = 'viva-a'") + " <> 1 THEN "
+            "RAISE EXCEPTION 'agents_editorial_draft_leaked_or_published_stopped_serving'; END IF;",
+        ),
+        guard_fragment="agents_editorial_", what="minting a draft version of a published governed document",
+        rationale="Edit-after-publish: the published version keeps serving, the draft is invisible.",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.publish_syncs_the_row", guard_name="knowledge_sync_published", allowed=True,
+        steps=(
+            *_ae_publish_steps(),
+            f"IF (SELECT conteudo FROM {_AE}.knowledge_documents WHERE slug = 'viva-a') <> 'limiar alfa NOVA' "
+            f"OR (SELECT source_sha FROM {_AE}.knowledge_documents WHERE slug = 'viva-a') <> 'sha-a2' "
+            f"OR NOT (SELECT ativo FROM {_AE}.knowledge_documents WHERE slug = 'viva-a') "
+            f"OR (SELECT count(*) FROM {_AE}.knowledge_revisions WHERE op = 'update' AND motivo = 'editorial:publish') <> 1 THEN "
+            "RAISE EXCEPTION 'agents_editorial_publish_did_not_sync'; END IF;",
+        ),
+        guard_fragment="agents_editorial_", what="publishing a new version of a governed document",
+        rationale="Publish copies the published version onto the row in the same transaction, and writes the revision.",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.archive_deactivates_the_row", guard_name="knowledge_sync_published", allowed=True,
+        steps=(
+            _AE_GOVERN, _AE_ITEM_OF_DOC,
+            f"PERFORM {_AE}.editorial_transition(v_org, v_item, 'archive', v_d, ARRAY['editorial:publicar'], 'obsoleto');",
+            f"IF (SELECT ativo FROM {_AE}.knowledge_documents WHERE slug = 'viva-a') "
+            "OR " + _ae_count("slug = 'viva-a'") + " <> 0 THEN "
+            "RAISE EXCEPTION 'agents_editorial_archive_did_not_deactivate'; END IF;",
+        ),
+        guard_fragment="agents_editorial_", what="archiving a governed document",
+        rationale="Archive removes the document from retrieval atomically with the transition.",
+    ),
+    _ae_probe(
+        probe_id="agents_editorial.ungoverned_documents_unaffected", guard_name="knowledge_guard_governed", allowed=True,
+        steps=(
+            f"UPDATE {_AE}.knowledge_documents SET conteudo = 'limiar alfa editada' WHERE slug = 'viva-a';",
+            "IF " + _ae_count() + " <> 2 THEN RAISE EXCEPTION 'agents_editorial_ungoverned_write_blocked'; END IF;",
+        ),
+        guard_fragment="agents_editorial_", what="editing a document of a collection nobody governed",
+        rationale="Package-sync collections stay ungoverned: the guard only bites linked (governed) documents.",
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -3950,6 +4156,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_190_PROBES,
     *_SW_192_PROBES,
     *_EDITORIAL_PROBES,
+    *_AGENTS_EDITORIAL_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

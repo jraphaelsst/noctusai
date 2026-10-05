@@ -48,6 +48,7 @@ class CollectionOut(BaseModel):
     descricao: str
     ordem: int
     total_documentos: int
+    requer_revisao: bool = False
 
 
 class CollectionListOut(BaseModel):
@@ -67,6 +68,8 @@ class CollectionUpdateRequest(StrictHttpModel):
     tag: str | None = Field(default=None, max_length=_COL_TAG)
     descricao: str | None = Field(default=None, max_length=_COL_DESCRICAO)
     ordem: int | None = None
+    #: ``true`` governs the collection (backfills its documents); ``false`` is a 409 once governed.
+    requer_revisao: bool | None = None
 
 
 # ── Knowledge — documents (§D3) ─────────────────────────────────────────
@@ -81,6 +84,8 @@ class DocumentListItemOut(BaseModel):
     chars: int
     ativo: bool
     updated_at: datetime
+    editorial_item_id: UUID | None = None
+    editorial_state: str | None = None
 
 
 class DocumentListOut(BaseModel):
@@ -100,6 +105,8 @@ class DocumentOut(BaseModel):
     ativo: bool
     chars: int
     updated_at: datetime
+    editorial_item_id: UUID | None = None
+    editorial_state: str | None = None
 
 
 class DocumentCreateRequest(StrictHttpModel):

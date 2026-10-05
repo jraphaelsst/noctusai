@@ -36,6 +36,14 @@ from uuid import UUID, uuid4
 from app.stores._db_errors import StudioConflict, exec_query, exec_rpc
 from app.stores._util import utcnow, utcnow_iso
 from app.stores.errors import NotFound
+from app.stores.knowledge_editorial import (
+    CLAUDE_DRAFT_AUTHOR_ID,
+    EDITORIAL_KIND,
+    item_ref,
+    stage_draft,
+    version_content,
+)
+from noctusai_lib.domain.editorial import EditorialConflict, EditorialStore, FakeEditorialStore
 from app.studio.models import LIMITS, LIST_QUERY_MAX, SEARCH_QUERY_MAX
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 
@@ -112,6 +120,25 @@ def _validate_search_query(q: str) -> None:
         raise ValueError(f"q exceeds {SEARCH_QUERY_MAX} characters")
 
 
+def _check_governance_change(currently: bool, requested: bool, author_id: UUID | None) -> None:
+    """Shared by both stores: governing needs an actor (the backfill's author of
+    record); un-governing is refused — linked documents would silently lose their
+    review gate."""
+    if requested == currently:
+        return
+    if not requested:
+        raise StudioConflict("cannot_ungovern", "uma coleção sob revisão editorial não volta a ser livre")
+    if author_id is None:
+        raise StudioConflict("editorial_actor_required", "governar uma coleção exige um usuário autenticado")
+
+
+def _governed_write_refused() -> StudioConflict:
+    return StudioConflict(
+        "editorial_governed",
+        "documento sob revisão editorial: altere-o pelo fluxo editorial (nova versão → revisão → publicação)",
+    )
+
+
 def source_sha_of(conteudo: str) -> str:
     """The import-idempotency key (contract §B2/§F) — sha256 of the exact
     document body. Public so the (later) import endpoint can compute the
@@ -143,6 +170,9 @@ class CollectionRecord:
     ordem: int
     created_at: datetime
     updated_at: datetime
+    #: Governed collection (migration 018): writes through the store land as
+    #: editorial drafts; retrieval serves the published version only.
+    requer_revisao: bool = False
 
 
 @dataclass(frozen=True)
@@ -171,6 +201,10 @@ class DocumentRecord:
     ativo: bool
     created_at: datetime
     updated_at: datetime
+    #: Set for a governed document: the row carries the PUBLISHED content and
+    #: ``ativo`` mirrors "has a published version".
+    editorial_item_id: UUID | None = None
+    editorial_state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -260,7 +294,13 @@ class StudioKnowledgeStore(Protocol):
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *,
         nome: str | Any = _UNSET, tag: str | None | Any = _UNSET,
         descricao: str | Any = _UNSET, ordem: int | Any = _UNSET,
-    ) -> CollectionRecord: ...
+        requer_revisao: bool | Any = _UNSET, author_id: UUID | None = None,
+    ) -> CollectionRecord:
+        """``requer_revisao=True`` GOVERNS the collection and backfills every
+        existing document to a published editorial version 1 (needs
+        ``author_id``); ``False`` on a governed collection is a 409
+        ``cannot_ungovern``."""
+        ...
 
     def count_documents(self, org_id: UUID, agent_id: UUID, collection_id: UUID, *, ativo_only: bool = True) -> int: ...
 
@@ -303,6 +343,7 @@ class StudioKnowledgeStore(Protocol):
     def upsert_document_by_source_sha(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *, slug: str, titulo: str, tipo: str,
         resumo: str | None, proveniencia: dict[str, Any] | None, conteudo: str, author_id: UUID | None = None,
+        editorial: bool = True,
     ) -> tuple[DocumentRecord, str]:
         """Upsert keyed on ``slug``, change-detected on ``source_sha``
         (contract §F import semantics). Returns ``(record, "created" |
@@ -311,7 +352,14 @@ class StudioKnowledgeStore(Protocol):
         ``op="import"`` for created AND updated, never for unchanged. A slug
         that already lives in ANOTHER collection raises
         ``StudioConflict('slug_in_other_collection')`` — an import never
-        silently moves a document. An archived document keeps ``ativo``."""
+        silently moves a document. An archived document keeps ``ativo``.
+
+        GOVERNED collection (``requer_revisao``): a new document is an
+        editorial draft (``created``, row ``ativo=false``), a changed one a new
+        draft version (``updated``; the published version keeps serving).
+        ``editorial=False`` is the agent-package-sync boundary: it never creates
+        drafts and REFUSES (409 ``editorial_governed``) to touch a governed
+        collection or document rather than bypass review."""
         ...
 
     def search(
@@ -334,7 +382,8 @@ class StudioKnowledgeStore(Protocol):
 class FakeStudioKnowledgeStore:
     """In-memory :class:`StudioKnowledgeStore`."""
 
-    def __init__(self) -> None:
+    def __init__(self, editorial: EditorialStore | None = None) -> None:
+        self._editorial: EditorialStore = editorial or FakeEditorialStore()
         self._collections: dict[UUID, dict[str, Any]] = {}
         self._documents: dict[UUID, dict[str, Any]] = {}
         self._revisions: dict[UUID, list[dict[str, Any]]] = {}
@@ -366,7 +415,7 @@ class FakeStudioKnowledgeStore:
         row = {
             "id": uuid4(), "org_id": org_id, "agent_id": agent_id, "slug": data.slug,
             "nome": data.nome, "tag": data.tag, "descricao": data.descricao, "ordem": data.ordem,
-            "created_at": now, "updated_at": now,
+            "created_at": now, "updated_at": now, "requer_revisao": False,
         }
         self._collections[row["id"]] = row
         return self._collection_record(row)
@@ -374,11 +423,16 @@ class FakeStudioKnowledgeStore:
     def update_collection(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *,
         nome: Any = _UNSET, tag: Any = _UNSET, descricao: Any = _UNSET, ordem: Any = _UNSET,
+        requer_revisao: Any = _UNSET, author_id: UUID | None = None,
     ) -> CollectionRecord:
         _validate_collection_caps(nome=nome, tag=tag, descricao=descricao)
         row = self._collections.get(collection_id)
         if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
             raise NotFound(f"collection {collection_id} not found for agent {agent_id}")
+        if requer_revisao is not _UNSET:
+            _check_governance_change(row["requer_revisao"], bool(requer_revisao), author_id)
+            if requer_revisao and not row["requer_revisao"]:
+                self._govern(row, author_id)
         if nome is not _UNSET:
             row["nome"] = nome
         if tag is not _UNSET:
@@ -392,18 +446,76 @@ class FakeStudioKnowledgeStore:
 
     def count_documents(self, org_id: UUID, agent_id: UUID, collection_id: UUID, *, ativo_only: bool = True) -> int:
         return sum(
-            1 for row in self._documents.values()
-            if row["org_id"] == org_id and row["agent_id"] == agent_id
-            and row["collection_id"] == collection_id and (not ativo_only or row["ativo"])
+            1 for row in self._own_documents(org_id, agent_id)
+            if row["collection_id"] == collection_id and (not ativo_only or row["ativo"])
         )
 
     # -- documents ------------------------------------------------------
 
     def _own_documents(self, org_id: UUID, agent_id: UUID):
+        """EFFECTIVE views (a governed document shows its PUBLISHED content and
+        ``ativo`` = has-a-published-version — what migration 018's publish
+        trigger makes the real row say)."""
         return [
-            row for row in self._documents.values()
+            self._view(row) for row in self._documents.values()
             if row["org_id"] == org_id and row["agent_id"] == agent_id
         ]
+
+    def _view(self, row: dict[str, Any]) -> dict[str, Any]:
+        view = dict(row)
+        view.setdefault("editorial_item_id", None)
+        view.setdefault("editorial_state", None)
+        item_id = row.get("editorial_item_id")
+        if item_id is None:
+            return view
+        item = self._editorial.get_item(row["org_id"], item_id)
+        pub = self._editorial.get_published_version(row["org_id"], item_id)
+        view["editorial_state"] = item.state
+        view["ativo"] = pub is not None
+        if pub is not None:
+            for key in ("titulo", "tipo", "resumo", "conteudo", "proveniencia", "source_sha"):
+                view[key] = pub.content[key]
+        return view
+
+    def _govern(self, collection: dict[str, Any], author_id: UUID | None) -> None:
+        """Test double of ``agents.govern_collection``: every existing document
+        becomes published v1 (live) / archived (inactive). The Fake editorial
+        store only moves through the real machine, so the synthetic history
+        uses three throw-away actors; the SQL function writes one marked
+        ``backfill`` event instead."""
+        author, reviewer, security = (uuid4() for _ in range(3))
+        for row in list(self._documents.values()):
+            if row["collection_id"] != collection["id"] or row.get("editorial_item_id") is not None:
+                continue
+            content = version_content(
+                titulo=row["titulo"], tipo=row["tipo"], resumo=row["resumo"],
+                proveniencia=row["proveniencia"], conteudo=row["conteudo"], source_sha=row["source_sha"],
+            )
+            org_id = row["org_id"]
+            created = self._editorial.create_item(
+                org_id=org_id, kind=EDITORIAL_KIND, ref=item_ref(row["agent_id"], row["slug"]),
+                content=content, actor_id=author, grants=["editorial:editar"],
+            )
+            item_id = created.item.id
+            steps = (
+                ("submit", author, "editorial:editar"),
+                ("approve_editorial", reviewer, "editorial:revisar"),
+                ("approve_security", security, "editorial:revisar_seguranca"),
+                ("publish", reviewer, "editorial:publicar"),
+            )
+            for action, actor, grant in steps:
+                self._editorial.apply(org_id=org_id, item_id=item_id, action=action, actor_id=actor, grants=[grant])
+            if not row["ativo"]:
+                self._editorial.apply(
+                    org_id=org_id, item_id=item_id, action="archive", actor_id=reviewer,
+                    grants=["editorial:publicar"], motivo="backfill: documento arquivado antes do fluxo editorial",
+                )
+            row["editorial_item_id"] = item_id
+        collection["requer_revisao"] = True
+
+    def _governed(self, collection_id: UUID) -> bool:
+        col = self._collections.get(collection_id)
+        return bool(col and col["requer_revisao"])
 
     def list_documents(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *,
@@ -465,13 +577,24 @@ class FakeStudioKnowledgeStore:
                 # 013 UNIQUE (agent_id, slug)
                 raise StudioConflict("slug_taken", f"slug {data.slug!r} already exists for this agent")
         now = utcnow()
+        sha = source_sha_of(data.conteudo)
+        governed = self._governed(collection_id)
         row = {
             "id": uuid4(), "org_id": org_id, "collection_id": collection_id, "agent_id": agent_id,
             "slug": data.slug, "titulo": data.titulo, "tipo": data.tipo,
             "proveniencia": dict(data.proveniencia or {}), "resumo": data.resumo,
-            "conteudo": data.conteudo, "source_sha": source_sha_of(data.conteudo),
-            "ativo": True, "created_at": now, "updated_at": now,
+            "conteudo": data.conteudo, "source_sha": sha,
+            "ativo": not governed, "created_at": now, "updated_at": now, "editorial_item_id": None,
         }
+        if governed:
+            row["editorial_item_id"], _ = stage_draft(
+                self._editorial, org_id=org_id, ref=item_ref(agent_id, data.slug), item_id=None,
+                content=version_content(
+                    titulo=data.titulo, tipo=data.tipo, resumo=data.resumo,
+                    proveniencia=data.proveniencia, conteudo=data.conteudo, source_sha=sha,
+                ),
+                author_id=author_id,
+            )
         self._documents[row["id"]] = row
         self._write_revision(org_id, row, op="create", author_id=author_id, motivo=None)
         return self._document_record(row)
@@ -485,6 +608,8 @@ class FakeStudioKnowledgeStore:
         row = self._documents.get(doc_id)
         if row is None or row["org_id"] != org_id or row["agent_id"] != agent_id:
             raise NotFound(f"document {doc_id} not found for agent {agent_id}")
+        if row.get("editorial_item_id") is not None:
+            raise _governed_write_refused()
         op = "archive" if (ativo is False and row["ativo"]) else "update"
         if titulo is not _UNSET:
             row["titulo"] = titulo
@@ -513,14 +638,15 @@ class FakeStudioKnowledgeStore:
     def upsert_document_by_source_sha(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *, slug: str, titulo: str, tipo: str,
         resumo: str | None, proveniencia: dict[str, Any] | None, conteudo: str, author_id: UUID | None = None,
+        editorial: bool = True,
     ) -> tuple[DocumentRecord, str]:
         _validate_slug(slug)
         _validate_tipo(tipo)
         _validate_conteudo(conteudo)
         sha = source_sha_of(conteudo)
         existing = None
-        for row in self._own_documents(org_id, agent_id):
-            if row["slug"] == slug:
+        for row in self._documents.values():
+            if row["agent_id"] == agent_id and row["slug"] == slug:
                 existing = row
                 break
         if existing is not None and existing["collection_id"] != collection_id:
@@ -528,14 +654,40 @@ class FakeStudioKnowledgeStore:
                 "slug_in_other_collection",
                 f"document {slug!r} already lives in another collection — an import never moves it",
             )
+        governed = self._governed(collection_id)
+        linked = existing is not None and existing.get("editorial_item_id") is not None
+        if not editorial and (governed or linked):
+            raise _governed_write_refused()
+        if governed and existing is not None and not linked:
+            raise StudioConflict("editorial_unlinked", "documento fora do fluxo em coleção governada: govern a coleção de novo")
+        if linked:
+            content = version_content(
+                titulo=titulo, tipo=tipo, resumo=resumo, proveniencia=proveniencia, conteudo=conteudo, source_sha=sha,
+            )
+            _, outcome = stage_draft(
+                self._editorial, org_id=org_id, ref=item_ref(agent_id, slug), item_id=existing["editorial_item_id"],
+                content=content, author_id=author_id,
+            )
+            if outcome != "unchanged":
+                self._write_revision(org_id, existing, op="import", author_id=author_id, motivo="import")
+            return self._document_record(existing), outcome
         if existing is None:
             now = utcnow()
             row = {
                 "id": uuid4(), "org_id": org_id, "collection_id": collection_id, "agent_id": agent_id,
                 "slug": slug, "titulo": titulo, "tipo": tipo, "proveniencia": dict(proveniencia or {}),
-                "resumo": resumo, "conteudo": conteudo, "source_sha": sha, "ativo": True,
-                "created_at": now, "updated_at": now,
+                "resumo": resumo, "conteudo": conteudo, "source_sha": sha, "ativo": not governed,
+                "created_at": now, "updated_at": now, "editorial_item_id": None,
             }
+            if governed:
+                row["editorial_item_id"], _ = stage_draft(
+                    self._editorial, org_id=org_id, ref=item_ref(agent_id, slug), item_id=None,
+                    content=version_content(
+                        titulo=titulo, tipo=tipo, resumo=resumo, proveniencia=proveniencia,
+                        conteudo=conteudo, source_sha=sha,
+                    ),
+                    author_id=author_id,
+                )
             self._documents[row["id"]] = row
             self._write_revision(org_id, row, op="import", author_id=author_id, motivo="import")
             return self._document_record(row), "created"
@@ -616,9 +768,8 @@ class FakeStudioKnowledgeStore:
     def _collection_record(row: dict[str, Any]) -> CollectionRecord:
         return CollectionRecord(**row)
 
-    @staticmethod
-    def _document_record(row: dict[str, Any]) -> DocumentRecord:
-        return DocumentRecord(**row)
+    def _document_record(self, row: dict[str, Any]) -> DocumentRecord:
+        return DocumentRecord(**self._view(row))
 
     @staticmethod
     def _revision_record(row: dict[str, Any]) -> RevisionRecord:
@@ -645,8 +796,13 @@ class SupabaseStudioKnowledgeStore:
     ``KB § PATTERNS/backend/postgrest-schema-targeting.md``.
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(self, client: Any, editorial: EditorialStore | None = None) -> None:
         self._client = client
+        if editorial is None:
+            from noctusai_lib.domain.editorial import make_editorial_store
+
+            editorial = make_editorial_store(_SCHEMA, client=client)
+        self._editorial: EditorialStore = editorial
 
     def _collections(self):
         return self._client.schema(_SCHEMA).table(_COLLECTIONS_TABLE)
@@ -701,8 +857,17 @@ class SupabaseStudioKnowledgeStore:
     def update_collection(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *,
         nome: Any = _UNSET, tag: Any = _UNSET, descricao: Any = _UNSET, ordem: Any = _UNSET,
+        requer_revisao: Any = _UNSET, author_id: UUID | None = None,
     ) -> CollectionRecord:
         _validate_collection_caps(nome=nome, tag=tag, descricao=descricao)
+        if requer_revisao is not _UNSET:
+            current = self.get_collection(org_id, agent_id, collection_id)
+            _check_governance_change(current.requer_revisao, bool(requer_revisao), author_id)
+            if requer_revisao and not current.requer_revisao:
+                # ONE transaction in SQL: backfill every document to published v1, then flag.
+                exec_rpc(self._client, _SCHEMA, "govern_collection", {
+                    "p_org_id": str(org_id), "p_collection_id": str(collection_id), "p_actor_id": str(author_id),
+                })
         updates: dict[str, Any] = {"updated_at": utcnow_iso()}
         if nome is not _UNSET:
             updates["nome"] = nome
@@ -793,16 +958,31 @@ class SupabaseStudioKnowledgeStore:
 
     def _create_document(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, data: DocumentInput,
-        author_id: UUID | None, *, op: str, motivo: str | None,
+        author_id: UUID | None, *, op: str, motivo: str | None, governed: bool | None = None,
     ) -> DocumentRecord:
         _validate_slug(data.slug)
         _validate_tipo(data.tipo)
         _validate_conteudo(data.conteudo)
+        sha = source_sha_of(data.conteudo)
+        if governed is None:
+            governed = self.get_collection(org_id, agent_id, collection_id).requer_revisao
+        item_id = None
+        if governed:
+            # Item first: a failure after it leaves an orphan ITEM (healed by `_stage`),
+            # never an unlinked live-looking row.
+            item_id, _ = self._stage(
+                org_id, agent_id, data.slug, None, author_id,
+                version_content(
+                    titulo=data.titulo, tipo=data.tipo, resumo=data.resumo,
+                    proveniencia=data.proveniencia, conteudo=data.conteudo, source_sha=sha,
+                ),
+            )
         payload = {
             "org_id": str(org_id), "collection_id": str(collection_id), "agent_id": str(agent_id),
             "slug": data.slug, "titulo": data.titulo, "tipo": data.tipo,
             "proveniencia": dict(data.proveniencia or {}), "resumo": data.resumo,
-            "conteudo": data.conteudo, "source_sha": source_sha_of(data.conteudo), "ativo": True,
+            "conteudo": data.conteudo, "source_sha": sha, "ativo": not governed,
+            "editorial_item_id": str(item_id) if item_id else None,
         }
         resp = exec_query(self._documents().insert(payload), unique_code="slug_taken")
         record = self._document_record(self._first(resp, f"document {data.slug!r}"))
@@ -826,6 +1006,8 @@ class SupabaseStudioKnowledgeStore:
     ) -> DocumentRecord:
         _validate_conteudo(conteudo)
         before = self.get_document(org_id, agent_id, doc_id)
+        if before.editorial_item_id is not None:
+            raise _governed_write_refused()
         if op is None:
             op = "archive" if (ativo is False and before.ativo) else "update"
         updates: dict[str, Any] = {"updated_at": utcnow_iso()}
@@ -865,6 +1047,7 @@ class SupabaseStudioKnowledgeStore:
     def upsert_document_by_source_sha(
         self, org_id: UUID, agent_id: UUID, collection_id: UUID, *, slug: str, titulo: str, tipo: str,
         resumo: str | None, proveniencia: dict[str, Any] | None, conteudo: str, author_id: UUID | None = None,
+        editorial: bool = True,
     ) -> tuple[DocumentRecord, str]:
         _validate_slug(slug)
         _validate_tipo(tipo)
@@ -877,11 +1060,27 @@ class SupabaseStudioKnowledgeStore:
                 "slug_in_other_collection",
                 f"document {slug!r} already lives in another collection — an import never moves it",
             )
+        governed = self.get_collection(org_id, agent_id, collection_id).requer_revisao
+        linked = existing is not None and existing.editorial_item_id is not None
+        if not editorial and (governed or linked):
+            raise _governed_write_refused()
+        if governed and existing is not None and not linked:
+            raise StudioConflict("editorial_unlinked", "documento fora do fluxo em coleção governada: govern a coleção de novo")
+        if linked:
+            _, outcome = self._stage(
+                org_id, agent_id, slug, existing.editorial_item_id, author_id,
+                version_content(
+                    titulo=titulo, tipo=tipo, resumo=resumo, proveniencia=proveniencia, conteudo=conteudo, source_sha=sha,
+                ),
+            )
+            if outcome != "unchanged":
+                self._insert_revision(org_id, existing, op="import", author_id=author_id, motivo="import")
+            return self.get_document(org_id, agent_id, existing.id), outcome
         if existing is None:
             record = self._create_document(
                 org_id, agent_id, collection_id,
                 DocumentInput(slug=slug, titulo=titulo, tipo=tipo, conteudo=conteudo, resumo=resumo, proveniencia=proveniencia),
-                author_id, op="import", motivo="import",
+                author_id, op="import", motivo="import", governed=governed,
             )
             return record, "created"
         if existing.source_sha == sha:
@@ -925,6 +1124,31 @@ class SupabaseStudioKnowledgeStore:
             proveniencia=doc.proveniencia, parte=parte, total_partes=len(pages), conteudo=pages[parte - 1],
         )
 
+    def _stage(
+        self, org_id: UUID, agent_id: UUID, slug: str, item_id: UUID | None, author_id: UUID | None,
+        content: dict[str, Any],
+    ) -> tuple[UUID, str]:
+        """``stage_draft`` + the orphan-item heal: an item whose document row
+        insert failed earlier is reused (same ref, no row points at it)."""
+        ref = item_ref(agent_id, slug)
+        try:
+            return stage_draft(
+                self._editorial, org_id=org_id, ref=ref, item_id=item_id, content=content, author_id=author_id,
+            )
+        except EditorialConflict:
+            orphan = next(
+                (i for i in self._editorial.list_items(org_id, kind=EDITORIAL_KIND) if i.ref == ref), None,
+            )
+            linked = (
+                self._documents().select("id").eq("editorial_item_id", str(orphan.id)).execute().data
+                if orphan is not None else [None]
+            )
+            if orphan is None or linked:
+                raise StudioConflict("slug_taken", f"editorial item for {slug!r} already exists") from None
+            return stage_draft(
+                self._editorial, org_id=org_id, ref=ref, item_id=orphan.id, content=content, author_id=author_id,
+            )
+
     def _insert_revision(self, org_id: UUID, record: DocumentRecord, *, op: str, author_id: UUID | None, motivo: str | None) -> None:
         snapshot = {
             "id": str(record.id), "slug": record.slug, "titulo": record.titulo, "tipo": record.tipo,
@@ -953,6 +1177,7 @@ class SupabaseStudioKnowledgeStore:
             id=UUID(str(row["id"])), org_id=UUID(str(row["org_id"])), agent_id=UUID(str(row["agent_id"])),
             slug=row["slug"], nome=row["nome"], tag=row.get("tag"), descricao=row.get("descricao") or "",
             ordem=int(row.get("ordem") or 0), created_at=row["created_at"], updated_at=row["updated_at"],
+            requer_revisao=bool(row.get("requer_revisao", False)),
         )
 
     @staticmethod
@@ -963,6 +1188,8 @@ class SupabaseStudioKnowledgeStore:
             proveniencia=row.get("proveniencia") or {}, resumo=row.get("resumo"), conteudo=row["conteudo"],
             source_sha=row["source_sha"], ativo=bool(row.get("ativo", False)),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            editorial_item_id=UUID(str(row["editorial_item_id"])) if row.get("editorial_item_id") else None,
+            editorial_state=row.get("editorial_state"),
         )
 
     @staticmethod
@@ -982,4 +1209,5 @@ def get_studio_knowledge_store(settings: Any) -> StudioKnowledgeStore:
         return FakeStudioKnowledgeStore()
     from app.database import get_admin_client
 
-    return SupabaseStudioKnowledgeStore(get_admin_client())
+    client = get_admin_client()
+    return SupabaseStudioKnowledgeStore(client)

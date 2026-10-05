@@ -204,6 +204,9 @@ def sync_project_sources(
             resumo=None,
             proveniencia={"origem": f"projeto:{project_slug}", "referencia": it.path, "notas": f"tipo={it.tipo}"},
             conteudo=it.conteudo, author_id=author_id,
+            # Git is the single source for developer-owned context: never an editorial draft,
+            # and a governed collection/document is refused (409), not bypassed.
+            editorial=False,
         )
         if not record.ativo:
             # The path left the manifest earlier and is back: an import keeps

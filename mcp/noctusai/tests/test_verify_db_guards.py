@@ -582,7 +582,11 @@ class TestAgentsStudioProbes:
 
     @staticmethod
     def _probes():
-        return [p for p in DEFAULT_REGISTRY if p.product == "agents"]
+        # 012-017 studio guards only; migration 018 (editorial adoption) has its own class below.
+        return [
+            p for p in DEFAULT_REGISTRY
+            if p.product == "agents" and not p.id.startswith("agents_editorial.")
+        ]
 
     def test_every_studio_guard_has_a_probe(self):
         assert {p.guard_name for p in self._probes()} == self._GUARDS
@@ -622,6 +626,52 @@ class TestAgentsStudioProbes:
         parser = pytest.importorskip("pglast.parser")
         for p in self._probes():
             parser.parse_plpgsql_json(p.sql.replace("DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1))
+
+
+class TestAgentsEditorialProbes:
+    """Migration 018 (agents adopts the editorial workflow): every guard it declares is
+    probed, the probes run the REAL migration text in a scratch schema (nothing borrowed
+    from production), and the backfill proof is registered."""
+
+    _MIG = "products/agents/backend/migrations/018_editorial_workflow.sql"
+
+    @classmethod
+    def _probes(cls):
+        return [p for p in DEFAULT_REGISTRY if p.id.startswith("agents_editorial.")]
+
+    def test_every_detected_guard_in_018_is_registered(self):
+        from tools.noctus.dev.compliance import _detect_guard_objects
+
+        text = (Path(__file__).resolve().parents[3] / self._MIG).read_text()
+        detected = {g["guard_name"] for g in _detect_guard_objects(text)}
+        registered = {p.guard_name for p in DEFAULT_REGISTRY}
+        assert detected and detected <= registered, detected - registered
+
+    def test_the_backfill_proof_and_the_publish_paths_are_probed(self):
+        ids = {p.id for p in self._probes()}
+        assert {
+            "agents_editorial.backfill_keeps_retrieval",
+            "agents_editorial.publish_syncs_the_row",
+            "agents_editorial.archive_deactivates_the_row",
+            "agents_editorial.direct_content_edit_refused",
+            "agents_editorial.unpublished_cannot_be_active",
+            "agents_editorial.ungoverned_documents_unaffected",
+        } <= ids
+
+    def test_probes_use_the_real_migration_in_a_scratch_schema(self):
+        for p in self._probes():
+            assert p.migrations == (self._MIG,), p.id
+            assert p.schema == "noc_probe_agents_ed", p.id
+            assert "SELECT org_id" not in p.sql, p.id
+            assert "CREATE SCHEMA noc_probe_agents_ed" in p.sql, p.id
+            assert "agents.knowledge_documents" not in p.sql, p.id  # never touches the live schema
+
+    def test_probe_bodies_parse_as_plpgsql(self):
+        parser = pytest.importorskip("pglast.parser")
+        for p in self._probes():
+            parser.parse_plpgsql_json(p.sql.replace(
+                "DO $noc_probe$", "CREATE FUNCTION f() RETURNS void LANGUAGE plpgsql AS $noc_probe$", 1
+            ))
 
 
 class TestIgigCrmProbes:
