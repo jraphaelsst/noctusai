@@ -60,7 +60,8 @@ describe("MarcasSubpage", () => {
     renderSub();
     const tabs = await screen.findAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual(["Sol Pães", "Sol Café"]);
-    expect(screen.getByTestId("marca-panel-m1")).toBeInTheDocument();
+    // The panel renders a tick after the chips (its own query) — wait for it.
+    expect(await screen.findByTestId("marca-panel-m1")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("tab", { name: "Sol Café" }));
     expect(await screen.findByTestId("marca-panel-m2")).toBeInTheDocument();
   });
