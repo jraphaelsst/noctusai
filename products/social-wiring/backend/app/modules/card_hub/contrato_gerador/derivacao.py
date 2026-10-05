@@ -1852,9 +1852,24 @@ def _regra_de_tempo(av: Avaliacao, d: DadosContrato, codigo: str, mensagem: str)
     before the platform: a warning instead of a block, so the contract can
     still generate while the dispensation stays visible on the readiness
     report. A certidão emitted AFTER the signing date is a data
-    contradiction, not an age rule — it is never routed through here."""
+    contradiction, not an age rule — it goes through
+    `_certidao_apos_assinatura`, never here."""
     if d.processo_legado:
         av.avisa(codigo, f"{mensagem} (processo anterior à plataforma)")
+    else:
+        av.bloqueia(codigo, mensagem)
+
+
+def _certidao_apos_assinatura(av: Avaliacao, d: DadosContrato, codigo: str, mensagem: str) -> None:
+    """A certidão emitted AFTER the signing date — party, estado civil AND imóvel.
+
+    [Owner directive, 2026-10-05] Normally a data contradiction → a block.
+    On a `processo_legado` deal (migration 151, admin-only flag) the office
+    re-emitted the certidões after the original signing date when re-running
+    an old, already-signed deal, so it is a warning (same code + message,
+    visible on the readiness report) instead. Non-legacy deals keep the block."""
+    if d.processo_legado:
+        av.avisa(codigo, mensagem)
     else:
         av.bloqueia(codigo, mensagem)
 
@@ -1934,7 +1949,9 @@ def _certidoes_do_imovel(
         if c.emitida_em is None:  # pragma: no cover — `certidoes_imovel` filters these out
             continue
         if c.emitida_em > assinatura:
-            av.bloqueia(
+            _certidao_apos_assinatura(
+                av,
+                d,
                 "CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA",
                 f"{rotulo} do imóvel tem emissão posterior à assinatura.",
             )
@@ -2478,8 +2495,8 @@ def _certidoes(
     def tempo(codigo: str, mensagem: str) -> None:
         """The certidão TIME rules (emission age / validade) only —
         `CERTIDAO_EMITIDA_APOS_ASSINATURA` is a data error, not an age
-        rule, and is NEVER routed through here; every call site keeps
-        calling `av.bloqueia` for it directly.
+        rule, and is NOT routed through here; it has its own legacy
+        dispensation, `_certidao_apos_assinatura` (2026-10-05).
 
         [Owner directive, 2026-09-22] `d.processo_legado` (migration 151,
         set ONLY through `PUT .../processo-legado`, admin-only, never an
@@ -2564,7 +2581,10 @@ def _certidoes(
                 resultado=c.resultado, segunda_via=c.segunda_via, validade_ate=c.validade_ate
             )
             if c.emitida_em > assinatura:
-                av.bloqueia("CERTIDAO_EMITIDA_APOS_ASSINATURA", f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.")
+                _certidao_apos_assinatura(
+                    av, d, "CERTIDAO_EMITIDA_APOS_ASSINATURA",
+                    f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.",
+                )
             elif not excecao_pcen and (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
                 # [Q10] every certidão is emitted less than 30 days before signing.
                 # (The Receita PCEN 2ª via is judged by its printed validity below.)
@@ -2680,7 +2700,9 @@ def _certidoes(
                 ancora=_ancora(p),
             )
         elif emitida > assinatura:
-            av.bloqueia(
+            _certidao_apos_assinatura(
+                av,
+                d,
                 "CERTIDAO_EMITIDA_APOS_ASSINATURA",
                 f"A certidão de estado civil de {_nome(p)} tem emissão posterior à assinatura.",
             )

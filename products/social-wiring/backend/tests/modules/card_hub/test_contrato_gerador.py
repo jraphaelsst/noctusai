@@ -1115,8 +1115,8 @@ class TestQ11PendenciasEEstadoCivil:
 class TestProcessoLegado:
     """Migration 151 / owner directive 2026-09-22: `processo_legado=True`
     dispenses the certidão TIME rules — a warning instead of a block —
-    for a deal that started before the platform. Never touches
-    `CERTIDAO_EMITIDA_APOS_ASSINATURA`, a data error, not an age rule."""
+    for a deal that started before the platform. Since 2026-10-05 it also
+    downgrades `CERTIDAO_EMITIDA_APOS_ASSINATURA` (and the imóvel twin)."""
 
     def _emitidas_ha(self, dias, *, processo_legado=True):
         d = fx.variante(1)
@@ -1160,11 +1160,30 @@ class TestProcessoLegado:
         assert "CERTIDAO_ESTADO_CIVIL_ANTIGA" in _codigos(av.avisos)
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_certidao_emitida_apos_assinatura_still_blocks(self):
-        """A data error, not an age rule — the flag never dispenses it."""
+    def test_certidao_emitida_apos_assinatura_warns_on_legacy(self):
+        """Owner directive 2026-10-05: re-run legacy deals re-emitted the
+        certidões after the original signing — a warning, not a block."""
         _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(-1))  # emitted AFTER assinatura
+        assert "CERTIDAO_EMITIDA_APOS_ASSINATURA" not in _codigos(av.bloqueios)
+        assert "CERTIDAO_EMITIDA_APOS_ASSINATURA" in _codigos(av.avisos)
+
+    def test_certidao_emitida_apos_assinatura_still_blocks_when_not_legacy(self):
+        _d, _pol, _sw, av = _avaliar(1, self._emitidas_ha(-1, processo_legado=False))
         assert "CERTIDAO_EMITIDA_APOS_ASSINATURA" in _codigos(av.bloqueios)
+        assert "CERTIDAO_EMITIDA_APOS_ASSINATURA" not in _codigos(av.avisos)
         assert not av.pronto
+
+    def test_estado_civil_certidao_apos_assinatura_follows_the_flag(self):
+        d = fx.variante(1)
+        for legado in (True, False):
+            dd = replace(
+                d,
+                processo_legado=legado,
+                vendedores=[replace(d.vendedores[0], certidao_estado_civil_emitida_em=fx.dias_antes(-1))],
+            )
+            _d, _pol, _sw, av = _avaliar(1, dd)
+            assert ("CERTIDAO_EMITIDA_APOS_ASSINATURA" in _codigos(av.bloqueios)) is (not legado)
+            assert ("CERTIDAO_EMITIDA_APOS_ASSINATURA" in _codigos(av.avisos)) is legado
 
     def test_unflagged_contracts_are_unaffected(self):
         """Regression: the default (`processo_legado=False`) keeps blocking
@@ -1251,10 +1270,16 @@ class TestProcessoLegado:
         assert "CERTIDAO_IMOVEL_VENCIDA" in _codigos(av.avisos)
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_an_imovel_certidao_emitted_after_signing_still_blocks(self):
-        """A contradiction in the data, not an age rule — never relaxed."""
+    def test_an_imovel_certidao_emitted_after_signing_warns_on_legacy(self):
+        """Owner directive 2026-10-05: relaxed for legacy deals only."""
         certs = tuple(replace(c, emitida_em=fx.dias_antes(-1)) for c in fx.certidoes_do_imovel())
         _d, _pol, _sw, av = _avaliar(1, self._imovel_certidoes(certs))
+        assert "CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA" not in _codigos(av.bloqueios)
+        assert "CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA" in _codigos(av.avisos)
+
+    def test_an_imovel_certidao_emitted_after_signing_still_blocks_when_not_legacy(self):
+        certs = tuple(replace(c, emitida_em=fx.dias_antes(-1)) for c in fx.certidoes_do_imovel())
+        _d, _pol, _sw, av = _avaliar(1, self._imovel_certidoes(certs, processo_legado=False))
         assert "CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA" in _codigos(av.bloqueios)
         assert not av.pronto
 

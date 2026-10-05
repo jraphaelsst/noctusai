@@ -1624,9 +1624,11 @@ async def put_contrato_processo_legado_route(
     """Migration 151. Owner directive, 2026-09-22: an EXPLICIT, admin-only,
     logged switch per contract — never an automatic date heuristic. When
     `ativo=True`, the contract gate's certidão TIME rules (emission age /
-    validade — never `CERTIDAO_EMITIDA_APOS_ASSINATURA`, a data error, not
-    an age rule) become warnings instead of blocks for THIS deal, because
-    it started before the platform (`contrato_gerador.derivacao._certidoes`).
+    validade) AND `CERTIDAO_EMITIDA_APOS_ASSINATURA` /
+    `CERTIDAO_IMOVEL_EMITIDA_APOS_ASSINATURA` (owner directive 2026-10-05:
+    the office re-emitted certidões after the original signing) become
+    warnings instead of blocks for THIS deal, because it started before the
+    platform (`contrato_gerador.derivacao._certidoes`).
 
     🔴 Owner/admin only — same TRUSTED `noctus_users` row (never
     `user_metadata`) `decidir_conflito_route` reads for migration 138; see
