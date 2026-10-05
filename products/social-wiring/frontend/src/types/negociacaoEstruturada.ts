@@ -239,6 +239,8 @@ export function rotuloNegociacaoFaltando(chave: string): string {
 // a write always sends the complete shape. ─────────────────────────────────
 
 export type PosseMarco = "assinatura" | "parcela" | "protocolo_registro";
+/** The imóvel's posse may also fall on a fixed calendar date (migration 201). */
+export type PosseMarcoImovel = PosseMarco | "data_fixa";
 
 export type OnusQuitacao =
   | "compradores_prazo"
@@ -253,8 +255,10 @@ export type CorretagemContratantes = "vendedores" | "compradores" | "partes";
 
 export interface NegociacaoTermos {
   posse_prazo_dias: number | null;
-  posse_marco: PosseMarco | null;
+  posse_marco: PosseMarcoImovel | null;
   posse_marco_parcela_id: string | null;
+  /** ISO date; set exactly when `posse_marco` is "data_fixa". */
+  posse_data: string | null;
 
   permuta_posse_prazo_dias: number | null;
   permuta_posse_marco: PosseMarco | null;
@@ -292,6 +296,7 @@ export interface NegociacaoTermos {
 export type TermosNegocioPut = NegociacaoTermos;
 
 export const POSSE_MARCOS: PosseMarco[] = ["assinatura", "parcela", "protocolo_registro"];
+export const POSSE_MARCOS_IMOVEL: PosseMarcoImovel[] = [...POSSE_MARCOS, "data_fixa"];
 export const ONUS_QUITACOES: OnusQuitacao[] = [
   "compradores_prazo",
   "interveniente_quitante",
@@ -309,10 +314,11 @@ export const CORRETAGEM_CONTRATANTES: CorretagemContratantes[] = [
   "partes",
 ];
 
-export const POSSE_MARCO_LABELS: Record<PosseMarco, string> = {
+export const POSSE_MARCO_LABELS: Record<PosseMarcoImovel, string> = {
   assinatura: "Na assinatura",
   parcela: "No pagamento de uma parcela",
   protocolo_registro: "No protocolo do registro",
+  data_fixa: "Em data fixa",
 };
 
 export const ONUS_QUITACAO_LABELS: Record<OnusQuitacao, string> = {

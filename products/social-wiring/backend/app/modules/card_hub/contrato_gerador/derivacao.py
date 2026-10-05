@@ -575,6 +575,10 @@ class Destinos:
 ALVO_ITENS_INTEGRANTES = "termos-itens-integrantes-resposta"
 ALVO_AD_CORPUS = "termos-ad-corpus-resposta"
 ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos"
+#: The posse controls (prazo / marco / data fixa) of the Termos panel, and the
+#: permuta imóvel's own posse controls — `TermosNegocioSection`'s two sections.
+ALVO_POSSE = "termos-posse-controles"
+ALVO_PERMUTA_POSSE = "termos-permuta-posse-controles"
 
 
 def alvo_emissao_certidao_imovel(tipo: str) -> str:
@@ -2093,7 +2097,10 @@ def _negociacao(
                 f"As parcelas somam {formatar_brl(soma)}, mas o preço é {formatar_brl(d.valor_negociado)}.",
             )
 
-    _posse(av, d, d.termos.posse_marco, d.termos.posse_prazo_dias, d.termos.posse_marco_parcela_id, escopo="posse")
+    _posse(
+        av, d, d.termos.posse_marco, d.termos.posse_prazo_dias, d.termos.posse_marco_parcela_id,
+        escopo="posse", data=d.termos.posse_data,
+    )
 
     if sw["tem_confissao"]:
         if d.termos.confissao_juros_am is None:
@@ -2233,16 +2240,31 @@ def _posse(
     marco_parcela_id: Optional[str],
     *,
     escopo: str,
+    data: Optional[date] = None,
 ) -> None:
     """[§6.1 #12] One rule for both posse clauses (the imóvel's and, in a
     permuta, the exchanged imóvel's) — they are the same clause pointed at
-    different properties, so a second copy would be a second thing to drift."""
+    different properties, so a second copy would be a second thing to drift.
+
+    🔴 `prazo == 0` is ANSWERED: "concomitante" with the marco (signed
+    corpus 876 / 863) — only `None` is missing. A `data_fixa` marco (imóvel
+    only; corpus 859) needs its DATE and no prazo."""
     rotulo = "da posse" if escopo == "posse" else "da posse do imóvel da permuta"
-    if not prazo:
-        av.falta(f"negociacao.{escopo}_prazo_dias", f"Prazo de entrega {rotulo} (dias)", "negociacao")
+    marcos = frases.MARCOS_POSSE if escopo == "posse" else frases.MARCOS_POSSE_PERMUTA
+    alvo = ALVO_POSSE if escopo == "posse" else ALVO_PERMUTA_POSSE
+    if marco == "data_fixa":
+        if data is None:
+            av.falta("negociacao.posse_data", "Data fixa da entrega da posse", "negociacao", alvo=alvo)
+    elif prazo is None:
+        av.falta(
+            f"negociacao.{escopo}_prazo_dias",
+            f"Prazo de entrega {rotulo} (dias; 0 = concomitante ao marco)",
+            "negociacao",
+            alvo=alvo,
+        )
     if not marco:
-        av.falta(f"negociacao.{escopo}_marco", f"Marco inicial do prazo {rotulo}", "negociacao")
-    elif marco not in frases.MARCOS_POSSE:
+        av.falta(f"negociacao.{escopo}_marco", f"Marco inicial do prazo {rotulo}", "negociacao", alvo=alvo)
+    elif marco not in marcos:
         av.bloqueia("POSSE_MARCO_INVALIDO", f"Marco {rotulo} desconhecido: {marco}.")
     elif marco == "parcela" and numero_da_parcela(d, marco_parcela_id) is None:
         # 114's CHECK guarantees the id is SET when the marco is 'parcela'; it
@@ -3098,6 +3120,8 @@ def avaliar(
 
 __all__ = [
     "ALVO_AD_CORPUS",
+    "ALVO_PERMUTA_POSSE",
+    "ALVO_POSSE",
     "ALVO_DOCUMENTOS_DO_IMOVEL",
     "ALVO_ITENS_INTEGRANTES",
     "Avaliacao",

@@ -3618,6 +3618,45 @@ _SW_192_PROBES: tuple[GuardProbe, ...] = (
 
 
 
+_M201 = "201_termos_posse_data_fixa.sql"
+
+#: Migration 201 — the imóvel's posse on a fixed calendar date.
+_SW_201_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="atendimento_negociacao_termos.posse_marco_vocabulario",
+        guard_name="atendimento_negociacao_termos_posse_marco_check",
+        migration=_M201,
+        rationale=(
+            "posse_marco picks the posse clause wording; an unknown value has no wording "
+            "and the generator would refuse every contract of the deal."
+        ),
+        fixtures=("atendimento_org",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_negociacao_termos (atendimento_id, org_id, posse_marco)\n"
+            "    VALUES (v_atendimento, v_org, 'noc_probe_bogus');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an out-of-vocabulary posse_marco",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_negociacao_termos.posse_marco_data_pareados",
+        guard_name="atendimento_negociacao_termos_posse_marco_data",
+        migration=_M201,
+        rationale=(
+            "A fixed-date posse prints its date; a data_fixa marco without posse_data (or a "
+            "posse_data under another marco) would print a clause the operator never wrote."
+        ),
+        fixtures=("atendimento_org",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_negociacao_termos (atendimento_id, org_id, posse_marco)\n"
+            "    VALUES (v_atendimento, v_org, 'data_fixa');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a data_fixa posse_marco without posse_data",
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — seed editorial workflow (`noctusai_lib.domain.sql_templates.
 # editorial_tables`; project `seed-editorial-workflow`, slice E2).
@@ -4155,6 +4194,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_179_183_PROBES,
     *_SW_190_PROBES,
     *_SW_192_PROBES,
+    *_SW_201_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
 )

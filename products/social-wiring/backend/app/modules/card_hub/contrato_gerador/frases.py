@@ -1064,7 +1064,10 @@ def paragrafos_livres(texto: Optional[str]) -> list[str]:
 #: (`posse_marco_parcela_id`), and `posse_marco_texto` prints THAT parcela's
 #: computed number. Mapping the other way would have silently printed the
 #: wrong parcela whenever the marco was not the financiamento.
-MARCOS_POSSE: tuple[str, ...] = ("assinatura", "parcela", "protocolo_registro")
+MARCOS_POSSE_PERMUTA: tuple[str, ...] = ("assinatura", "parcela", "protocolo_registro")
+#: The imóvel's posse may also fall on a fixed calendar date (migration 201) —
+#: the permuta imóvel's may not (the DB CHECK on `permuta_posse_marco` keeps 3).
+MARCOS_POSSE: tuple[str, ...] = (*MARCOS_POSSE_PERMUTA, "data_fixa")
 
 
 def ato_rotulo(a: AtoCitado) -> str:
@@ -1114,6 +1117,48 @@ def posse_marco_texto(marco: str, *, ref_parcela: str) -> str:
     if marco == "parcela":
         return f"do recebimento da parcela {ref_parcela}"
     return "da apresentação do protocolo de entrada do registro de imóveis e pagamento da guia de ITBI"
+
+
+#: How a posse prazo is introduced — the template's three sites word it
+#: differently (the corpus' own wording, kept byte-for-byte).
+POSSE_INTRO_EM_ATE = "em até {dias} a contar {marco}"
+POSSE_INTRO_PRAZO_MAXIMO = "no prazo máximo de {dias} a contar {marco}"
+POSSE_INTRO_PRAZO_MAXIMO_VIRGULA = "no prazo máximo de {dias}, a contar {marco}"
+
+
+def posse_concomitante_texto(marco: str, *, ref_parcela: str) -> str:
+    """`posse_prazo_dias = 0` — the posse is delivered AT the marco, not N
+    days after it. Signed corpus wording: "concomitante com o recebimento da
+    Parcela 04" (876 and 6 more), "na apresentação do protocolo de entrada do
+    Registro de Imóveis e pagamento da guia do ITBI" (863)."""
+    if marco == "assinatura":
+        return "concomitante com a assinatura do presente contrato"
+    if marco == "parcela":
+        return f"concomitante com o recebimento da parcela {ref_parcela}"
+    return "na apresentação do protocolo de entrada do registro de imóveis e pagamento da guia de ITBI"
+
+
+def posse_prazo_texto(
+    prazo: Optional[int],
+    marco: str,
+    *,
+    ref_parcela: str,
+    data: Optional[date] = None,
+    intro: str = POSSE_INTRO_EM_ATE,
+) -> str:
+    """The whole posse timing phrase. `data_fixa` prints the date ("na data de
+    30 de novembro de 2026", deal 859); prazo 0 prints the concomitant wording
+    — never "0 dias"; a positive prazo prints `intro` (N days from the marco).
+    Gated by `derivacao._posse`: the date / prazo this needs is present."""
+    if marco == "data_fixa":
+        if data is None:
+            raise ValueError("posse_prazo_texto: data_fixa exige a data (o gate garante)")
+        return f"na data de {data_por_extenso(data)}"
+    if prazo is None:
+        raise ValueError("posse_prazo_texto: prazo ausente (o gate garante)")
+    if prazo == 0:
+        return posse_concomitante_texto(marco, ref_parcela=ref_parcela)
+    return intro.format(dias=dias_por_extenso(prazo), marco=posse_marco_texto(marco, ref_parcela=ref_parcela))
 
 
 def condicao_posse_frase(anteriores: Sequence[str], *, todas: bool) -> str:

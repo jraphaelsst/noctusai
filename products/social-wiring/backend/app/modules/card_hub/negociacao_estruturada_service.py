@@ -88,6 +88,9 @@ PESSOA_TIPOS: tuple[str, ...] = ("pf", "pj")
 
 #: Migration 114 vocabularies — mirrored by the DB CHECKs.
 POSSE_MARCOS: tuple[str, ...] = ("assinatura", "parcela", "protocolo_registro")
+#: Migration 201: the imóvel's posse (not the permuta's) may also fall on a
+#: FIXED calendar date (`posse_data`), paired with the marco by a DB CHECK.
+POSSE_MARCOS_IMOVEL: tuple[str, ...] = (*POSSE_MARCOS, "data_fixa")
 ONUS_QUITACOES: tuple[str, ...] = (
     "compradores_prazo", "interveniente_quitante", "parcela", "ja_quitado",
     # Migration 192 — the seller pays the lien off by bank slip.
@@ -149,6 +152,8 @@ _INTERMEDIARIO_CAMPOS_EDITAVEIS: tuple[str, ...] = (
 #: whole set — an absent key is written as null.
 TERMOS_CAMPOS: tuple[str, ...] = (
     "posse_prazo_dias", "posse_marco", "posse_marco_parcela_id",
+    # Migration 201 — marco 'data_fixa' ⇔ posse_data.
+    "posse_data",
     "permuta_posse_prazo_dias", "permuta_posse_marco",
     "permuta_posse_marco_parcela_id", "permuta_obrigacoes_entrega",
     "itens_integrantes", "itens_integrantes_ausente_confirmado", "ad_corpus",
@@ -1451,6 +1456,8 @@ def _termos_out(row: Optional[dict]) -> dict:
     out = {campo: row.get(campo) for campo in TERMOS_CAMPOS}
     protocolo = row.get("onus_baixa_protocolo_em")
     out["onus_baixa_protocolo_em"] = None if protocolo is None else str(protocolo)[:10]
+    posse_data = row.get("posse_data")
+    out["posse_data"] = None if posse_data is None else str(posse_data)[:10]
     juros = _dec(row.get("confissao_juros_am"))
     out["confissao_juros_am"] = None if juros is None else str(juros)
     for campo in ("posse_marco_parcela_id", "permuta_posse_marco_parcela_id"):
@@ -1530,6 +1537,27 @@ def atualizar_termos(
                 "data do protocolo da baixa do ônus inválida", field="onus_baixa_protocolo_em"
             ) from None
 
+    # Migration 201 — a fixed-date posse: the DATE is present exactly when the
+    # marco is 'data_fixa' (the DB CHECK is the backstop; this is the named
+    # 400). The prazo means nothing for a fixed date, so it is not stored.
+    posse_data = termos["posse_data"]
+    if posse_data is not None:
+        try:
+            termos["posse_data"] = (
+                posse_data.isoformat() if hasattr(posse_data, "isoformat")
+                else date.fromisoformat(str(posse_data)[:10]).isoformat()
+            )
+        except ValueError:
+            raise ValidationError_("data da posse inválida", field="posse_data") from None
+    if termos["posse_marco"] == "data_fixa":
+        if termos["posse_data"] is None:
+            raise ValidationError_("informe a data da entrega da posse", field="posse_data")
+        termos["posse_prazo_dias"] = None
+    elif termos["posse_data"] is not None:
+        raise ValidationError_(
+            "posse_data só se aplica quando posse_marco é 'data_fixa'", field="posse_data"
+        )
+
     if termos["ad_corpus"] is not None and not isinstance(termos["ad_corpus"], bool):
         raise ValidationError_("ad_corpus deve ser verdadeiro ou falso", field="ad_corpus")
 
@@ -1557,7 +1585,7 @@ def atualizar_termos(
     # Belt-and-suspenders with the router's `Literal` fields — mirrors
     # `contratos_service.atualizar`.
     for campo, permitidos in (
-        ("posse_marco", POSSE_MARCOS),
+        ("posse_marco", POSSE_MARCOS_IMOVEL),
         ("permuta_posse_marco", POSSE_MARCOS),
         ("onus_quitacao", ONUS_QUITACOES),
         ("corretagem_contratantes", CORRETAGEM_CONTRATANTES),
@@ -1634,7 +1662,14 @@ def _completude(
         soma = sum((_dec(p.get("valor")) or Decimal("0")) for p in parcelas)
         if soma != valor_negociado:
             faltando.append("parcelas_nao_cobrem_valor_negociado")
-    posse_por_termos = bool(termos.get("posse_marco")) and termos.get("posse_prazo_dias") is not None
+    # 0 dias is a real prazo (concomitant with the marco); a fixed date needs
+    # its date, not a prazo.
+    if termos.get("posse_marco") == "data_fixa":
+        posse_por_termos = termos.get("posse_data") is not None
+    else:
+        posse_por_termos = (
+            bool(termos.get("posse_marco")) and termos.get("posse_prazo_dias") is not None
+        )
     if not (posse_por_termos or negociacao.get("posse_data")):
         faltando.append("posse")
     if any(
@@ -1710,6 +1745,7 @@ __all__ = [
     "ONUS_QUITACOES",
     "PESSOA_TIPOS",
     "POSSE_MARCOS",
+    "POSSE_MARCOS_IMOVEL",
     "TABLE_FAVORECIDOS",
     "TABLE_INTERMEDIARIOS",
     "RPC_REORDENAR_PARCELAS",

@@ -612,6 +612,10 @@ def montar_contexto(
         condicao = frases.condicao_posse_frase(
             parcelas_antes_de(d, termos.posse_marco_parcela_id), todas=False
         )
+    elif marco == "data_fixa":
+        # Corpus 859: the fixed date is conditioned on the price being paid in
+        # full ("todas as parcelas do preço ... integralmente quitadas").
+        condicao = frases.condicao_posse_frase([], todas=True)
     elif marco != "assinatura" and sw["a_vista"]:
         condicao = frases.condicao_posse_frase([], todas=True)
     else:
@@ -619,6 +623,16 @@ def montar_contexto(
     posse = {
         "prazo": termos.posse_prazo_dias,
         "marco_texto": frases.posse_marco_texto(marco, ref_parcela=ref_marco),
+        # The whole timing phrase (prazo N / concomitante / data fixa) — the
+        # template prints it, never `dias(prazo)` raw (0 → "0 dias" was wrong).
+        # gated: derivacao._posse.
+        "prazo_frase": frases.posse_prazo_texto(
+            termos.posse_prazo_dias, marco, ref_parcela=ref_marco, data=termos.posse_data,
+        ),
+        "prazo_frase_maximo": frases.posse_prazo_texto(
+            termos.posse_prazo_dias, marco, ref_parcela=ref_marco, data=termos.posse_data,
+            intro=frases.POSSE_INTRO_PRAZO_MAXIMO_VIRGULA,
+        ),
         "condicao_frase": condicao,
         # [Q12] the office's value — same daily fine for each party in a permuta.
         "multa_diaria": d.imobiliaria.posse_multa_diaria,
@@ -659,6 +673,13 @@ def montar_contexto(
             "posse_marco_texto": frases.posse_marco_texto(
                 termos.permuta_posse_marco or "",
                 ref_parcela=numero_da_parcela(d, termos.permuta_posse_marco_parcela_id) or "",
+            ),
+            # gated: derivacao._posse(escopo="permuta_posse") — prazo present.
+            "posse_prazo_frase": frases.posse_prazo_texto(
+                termos.permuta_posse_prazo_dias,
+                termos.permuta_posse_marco or "",
+                ref_parcela=numero_da_parcela(d, termos.permuta_posse_marco_parcela_id) or "",
+                intro=frases.POSSE_INTRO_PRAZO_MAXIMO,
             ),
         }
 

@@ -61,6 +61,7 @@ function termosVazios() {
     posse_prazo_dias: null,
     posse_marco: null,
     posse_marco_parcela_id: null,
+    posse_data: null,
     permuta_posse_prazo_dias: null,
     permuta_posse_marco: null,
     permuta_posse_marco_parcela_id: null,
@@ -242,7 +243,7 @@ describe("marco = 'parcela' exige uma parcela", () => {
 });
 
 describe("PUT — o corpo inteiro é sempre enviado", () => {
-  it("🔴 salvar envia as 18 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
+  it("🔴 salvar envia as 19 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
     const { getByTestId } = await render(aggregate());
     const { fireEvent } = await import("@testing-library/react");
 
@@ -255,6 +256,7 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "posse_prazo_dias",
         "posse_marco",
         "posse_marco_parcela_id",
+        "posse_data",
         "permuta_posse_prazo_dias",
         "permuta_posse_marco",
         "permuta_posse_marco_parcela_id",
@@ -352,6 +354,78 @@ describe("itens integrantes e ad corpus — respostas explícitas", () => {
     const { container } = await render(aggregate());
     expect(container.querySelector("#termos-itens-integrantes-resposta")).not.toBeNull();
     expect(container.querySelector("#termos-ad-corpus-resposta")).not.toBeNull();
+  });
+});
+
+describe("posse concomitante (prazo 0) e em data fixa — migração 201", () => {
+  it("🔴 prazo 0 é uma resposta: é enviado como 0, nunca como null", async () => {
+    const { getByTestId } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.change(getByTestId("termos-posse-prazo"), { target: { value: "0" } });
+    expect(getByTestId("termos-posse-prazo-dica").textContent).toContain("concomitante");
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+
+    expect(mockAtualizarTermos.mock.calls[0][0].posse_prazo_dias).toBe(0);
+  });
+
+  it("o prazo 0 salvo é relido como 0 (não como campo vazio)", async () => {
+    const { getByTestId } = await render(
+      aggregate({ termos: { ...termosVazios(), posse_prazo_dias: 0, posse_marco: "assinatura" } }),
+    );
+    expect((getByTestId("termos-posse-prazo") as HTMLInputElement).value).toBe("0");
+  });
+
+  it("o marco 'Em data fixa' troca o prazo pela data e a envia sem prazo", async () => {
+    const { getByTestId, queryByTestId, getByText } = await render(
+      aggregate({ termos: { ...termosVazios(), posse_prazo_dias: 30 } }),
+    );
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByText("Em data fixa"));
+    expect(queryByTestId("termos-posse-prazo")).toBeNull();
+    fireEvent.change(getByTestId("termos-posse-data"), { target: { value: "2026-11-30" } });
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+
+    const payload = mockAtualizarTermos.mock.calls[0][0];
+    expect(payload.posse_marco).toBe("data_fixa");
+    expect(payload.posse_data).toBe("2026-11-30");
+    expect(payload.posse_prazo_dias).toBeNull();
+  });
+
+  it("🔴 data fixa sem a data bloqueia o salvar", async () => {
+    const { getByTestId, getByText } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByText("Em data fixa"));
+    expect(getByTestId("termos-posse-data-erro")).toBeTruthy();
+    expect(getByTestId("negest-termos-salvar")).toHaveProperty("disabled", true);
+  });
+
+  it("outro marco nunca envia a data de uma escolha anterior", async () => {
+    const { getByTestId, getByText } = await render(
+      aggregate({
+        termos: { ...termosVazios(), posse_marco: "data_fixa", posse_data: "2026-11-30" },
+      }),
+    );
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByText("Na assinatura"));
+    fireEvent.change(getByTestId("termos-posse-prazo"), { target: { value: "5" } });
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+
+    const payload = mockAtualizarTermos.mock.calls[0][0];
+    expect(payload.posse_marco).toBe("assinatura");
+    expect(payload.posse_data).toBeNull();
+    expect(payload.posse_prazo_dias).toBe(5);
+  });
+
+  it("as seções de posse carregam os ids que o 'Resolver' mira (imóvel e permuta)", async () => {
+    const { container } = await render(
+      aggregate({ parcelas: [parcela({ tipo: "permuta" })] }),
+    );
+    expect(container.querySelector("#termos-posse-controles")).not.toBeNull();
+    expect(container.querySelector("#termos-permuta-posse-controles")).not.toBeNull();
   });
 });
 

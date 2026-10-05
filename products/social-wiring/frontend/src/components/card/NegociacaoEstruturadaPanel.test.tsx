@@ -158,6 +158,7 @@ function termosVazios() {
     posse_prazo_dias: null,
     posse_marco: null,
     posse_marco_parcela_id: null,
+    posse_data: null,
     permuta_posse_prazo_dias: null,
     permuta_posse_marco: null,
     permuta_posse_marco_parcela_id: null,

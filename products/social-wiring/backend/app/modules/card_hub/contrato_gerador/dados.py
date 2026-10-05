@@ -547,6 +547,11 @@ class Termos:
     posse_prazo_dias: Optional[int] = None
     posse_marco: Optional[str] = None
     posse_marco_parcela_id: Optional[str] = None
+    #: [Migration 201] `posse_marco = 'data_fixa'`: the calendar date the posse
+    #: is delivered on (corpus deal 859); the prazo is then irrelevant.
+    #: 🔴 `posse_prazo_dias == 0` is a REAL prazo — "concomitante" with the
+    #: marco (corpus deals 876 / 863) — so only `None` is "not answered".
+    posse_data: Optional[date] = None
     permuta_posse_prazo_dias: Optional[int] = None
     permuta_posse_marco: Optional[str] = None
     permuta_posse_marco_parcela_id: Optional[str] = None

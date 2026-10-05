@@ -552,6 +552,7 @@ def _termos(bruto: dict) -> Termos:
         posse_prazo_dias=_int(bruto.get("posse_prazo_dias")),
         posse_marco=bruto.get("posse_marco"),
         posse_marco_parcela_id=_id(bruto.get("posse_marco_parcela_id")),
+        posse_data=_data(bruto.get("posse_data")),
         permuta_posse_prazo_dias=_int(bruto.get("permuta_posse_prazo_dias")),
         permuta_posse_marco=bruto.get("permuta_posse_marco"),
         permuta_posse_marco_parcela_id=_id(bruto.get("permuta_posse_marco_parcela_id")),

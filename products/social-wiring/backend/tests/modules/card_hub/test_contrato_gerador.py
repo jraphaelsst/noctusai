@@ -359,7 +359,10 @@ class TestGate:
         assert (itens["tela"], itens["ancora"]) == ("card_negociacao", "negociacao")
         assert itens["alvo"] == derivacao.ALVO_ITENS_INTEGRANTES
         assert por_campo["negociacao.ad_corpus"]["alvo"] == derivacao.ALVO_AD_CORPUS
-        assert por_campo["negociacao.posse_marco"]["alvo"] is None
+        # The posse controls are a control too (migration 201's form):
+        assert por_campo["negociacao.posse_marco"]["alvo"] == derivacao.ALVO_POSSE
+        assert por_campo["negociacao.posse_prazo_dias"]["alvo"] == derivacao.ALVO_POSSE
+        assert por_campo["negociacao.corretagem_contratantes"]["alvo"] is None
 
     def test_a_missing_identity_field_suggests_the_documents_that_carry_it(self):
         d = fx.variante(1)

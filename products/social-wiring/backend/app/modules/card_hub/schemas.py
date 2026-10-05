@@ -638,6 +638,8 @@ class IntermediarioPatchBody(_IntermediarioQualificacao):
 # ─── Termos do negócio (migration 114) ────────────────────────────────────
 
 PosseMarco = Literal["assinatura", "parcela", "protocolo_registro"]
+#: The imóvel's posse may also fall on a fixed calendar date (migration 201).
+PosseMarcoImovel = Literal["assinatura", "parcela", "protocolo_registro", "data_fixa"]
 
 
 class TermosNegocioPutBody(StrictHttpModel):
@@ -648,8 +650,10 @@ class TermosNegocioPutBody(StrictHttpModel):
     service's named 400s, not 422s."""
 
     posse_prazo_dias: Optional[int] = None
-    posse_marco: Optional[PosseMarco] = None
+    posse_marco: Optional[PosseMarcoImovel] = None
     posse_marco_parcela_id: Optional[UUID] = None
+    #: [Migration 201] Required exactly when `posse_marco = 'data_fixa'`.
+    posse_data: Optional[date] = None
 
     permuta_posse_prazo_dias: Optional[int] = None
     permuta_posse_marco: Optional[PosseMarco] = None

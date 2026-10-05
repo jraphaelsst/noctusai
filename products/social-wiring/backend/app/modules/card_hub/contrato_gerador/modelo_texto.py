@@ -176,19 +176,19 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 
 <u>CLÁUSULA {{ cl.posse.ORD }}</u> – DA POSSE SOBRE {{ 'OS IMÓVEIS' if tem_permuta else 'O IMÓVEL' }}
 {%p if tem_permuta %}
-{{ C.ART }} **{{ C.NOME }}**, {{ C.pl('assume','assumem') }} a obrigação de fazer a entrega da posse {{ 'dos imóveis situados' if permuta.plural else 'do imóvel situado' }} à {{ permuta.endereco_curto }} {{ V.aos }} **{{ V.NOME }}**, no prazo máximo de {{ dias(permuta.posse_prazo) }} a contar {{ permuta.posse_marco_texto }}.
+{{ C.ART }} **{{ C.NOME }}**, {{ C.pl('assume','assumem') }} a obrigação de fazer a entrega da posse {{ 'dos imóveis situados' if permuta.plural else 'do imóvel situado' }} à {{ permuta.endereco_curto }} {{ V.aos }} **{{ V.NOME }}**, {{ permuta.posse_prazo_frase }}.
 Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete','se comprometem') }} a permitir o acesso {{ 'aos imóveis' if permuta.plural else 'ao imóvel' }}, mediante prévio agendamento, a qualquer tempo, {{ V.aos }} **{{ V.NOME }}**, ao novo proprietário ou a terceiros por estes autorizados, para fins de vistoria, medição, planejamento ou quaisquer outras providências relacionadas ao imóvel.
 {%p for t in permuta_obrigacoes %}
 {{ t }}
 {%p endfor %}
-{{ V.ART }} **{{ V.NOME }}**, por sua vez, {{ V.pl('assume','assumem') }} a obrigação de entregar {{ C.aos }} **{{ C.NOME }}** a posse do imóvel situado à {{ imovel.endereco_curto }}, no prazo máximo de {{ dias(posse.prazo) }}, a contar {{ posse.marco_texto }}.
+{{ V.ART }} **{{ V.NOME }}**, por sua vez, {{ V.pl('assume','assumem') }} a obrigação de entregar {{ C.aos }} **{{ C.NOME }}** a posse do imóvel situado à {{ imovel.endereco_curto }}, {{ posse.prazo_frase_maximo }}.
 **{{ par('posse') }}** As Partes se comprometem a entregar seus imóveis, de maneira limpa e organizada, livre e desimpedida de coisas e pessoas estranhas a esta negociação.
 {%p if tem_multa_diaria_posse %}
 **{{ par('posse') }}** Fica convencionada multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ V.art }} **{{ V.NOME }}**, {{ V.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel situado à {{ imovel.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
 **{{ par('posse') }}** Fica convencionada a mesma multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ C.art }} **{{ C.NOME }}**, {{ C.pl('apresente','apresentem') }} obstáculos para acesso {{ 'aos imóveis situados' if permuta.plural else 'ao imóvel situado' }} à {{ permuta.endereco_curto }} ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
 {%p endif %}
 {%p else %}
-{{ V.ART }} **{{ V.NOME }}** {{ V.pl('outorgará','outorgarão') }} a posse do imóvel objeto deste contrato {{ C.aos }} **{{ C.NOME }}**, em até {{ dias(posse.prazo) }} a contar {{ posse.marco_texto }}{{ posse.condicao_frase }}.
+{{ V.ART }} **{{ V.NOME }}** {{ V.pl('outorgará','outorgarão') }} a posse do imóvel objeto deste contrato {{ C.aos }} **{{ C.NOME }}**, {{ posse.prazo_frase }}{{ posse.condicao_frase }}.
 {%p if tem_multa_diaria_posse %}
 **{{ par('posse') }}** Fica convencionada multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ V.art }} **{{ V.NOME }}**, {{ V.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
 {%p endif %}

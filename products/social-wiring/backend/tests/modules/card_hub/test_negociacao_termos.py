@@ -256,6 +256,40 @@ class TestTermosRoundTrip:
         r = _put_termos(client, cid, posse_marco="assinatura", posse_prazo_dias=15)
         assert "posse" not in r.json()["completude"]["faltando"]
 
+    def test_a_zero_prazo_is_an_answer_not_a_gap(self, client, scoped):
+        # "concomitante" with the marco (signed corpus deals 876 / 863).
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, posse_marco="assinatura", posse_prazo_dias=0)
+        assert r.status_code == 200, r.text
+        assert r.json()["termos"]["posse_prazo_dias"] == 0
+        assert "posse" not in r.json()["completude"]["faltando"]
+
+    def test_a_fixed_date_posse_round_trips_and_satisfies_completude(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, posse_marco="data_fixa", posse_data="2026-11-30")
+        assert r.status_code == 200, r.text
+        termos = r.json()["termos"]
+        assert termos["posse_marco"] == "data_fixa"
+        assert termos["posse_data"] == "2026-11-30"
+        assert termos["posse_prazo_dias"] is None
+        assert "posse" not in r.json()["completude"]["faltando"]
+
+    def test_a_fixed_date_marco_without_its_date_is_refused(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, posse_marco="data_fixa")
+        assert r.status_code == 400
+        assert _mensagem_400(r)
+
+    def test_a_posse_date_without_the_fixed_date_marco_is_refused(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, posse_marco="assinatura", posse_prazo_dias=5, posse_data="2026-11-30")
+        assert r.status_code == 400
+
+    def test_the_permuta_posse_cannot_be_a_fixed_date(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, permuta_posse_marco="data_fixa")
+        assert r.status_code == 422
+
     def test_a_marco_without_its_prazo_is_still_incomplete_not_refused(self, client, scoped):
         cid, _aid = _seed(scoped)
         r = _put_termos(client, cid, posse_marco="protocolo_registro")
@@ -314,7 +348,7 @@ class TestTermosValidation:
 
     def test_an_unknown_key_is_rejected_not_silently_dropped(self, client, scoped):
         cid, _aid = _seed(scoped)
-        r = _put_termos(client, cid, posse_data="2026-06-01")
+        r = _put_termos(client, cid, posse_chaves="2026-06-01")
         assert r.status_code == 422
 
     def test_a_refused_put_writes_nothing(self, client, scoped):

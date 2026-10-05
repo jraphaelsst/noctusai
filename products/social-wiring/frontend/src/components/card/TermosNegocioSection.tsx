@@ -53,6 +53,7 @@ import {
   ONUS_QUITACOES_COM_PRAZO,
   ONUS_QUITACAO_LABELS,
   POSSE_MARCOS,
+  POSSE_MARCOS_IMOVEL,
   POSSE_MARCO_LABELS,
   type CorretagemContratantes,
   type NegociacaoEstruturada,
@@ -60,6 +61,7 @@ import {
   type NegociacaoTermos,
   type OnusQuitacao,
   type PosseMarco,
+  type PosseMarcoImovel,
   type TermosNegocioPut,
 } from "@/types/negociacaoEstruturada";
 
@@ -76,8 +78,10 @@ function errorMessage(err: unknown, fallback: string): string {
 
 interface TermosDraft {
   posse_prazo_dias: string;
-  posse_marco: PosseMarco | "";
+  posse_marco: PosseMarcoImovel | "";
   posse_marco_parcela_id: string;
+  /** ISO date, only meaningful for the "data_fixa" marco. */
+  posse_data: string;
 
   permuta_posse_prazo_dias: string;
   permuta_posse_marco: PosseMarco | "";
@@ -107,6 +111,7 @@ function toDraft(t: NegociacaoTermos): TermosDraft {
     posse_prazo_dias: t.posse_prazo_dias == null ? "" : String(t.posse_prazo_dias),
     posse_marco: t.posse_marco ?? "",
     posse_marco_parcela_id: t.posse_marco_parcela_id ?? "",
+    posse_data: t.posse_data ?? "",
 
     permuta_posse_prazo_dias:
       t.permuta_posse_prazo_dias == null ? "" : String(t.permuta_posse_prazo_dias),
@@ -162,9 +167,11 @@ function lerPercentual(v: string): string | null {
 
 function toPayload(d: TermosDraft): TermosNegocioPut {
   return {
-    posse_prazo_dias: inteiroOuNulo(d.posse_prazo_dias),
+    // A fixed date has no prazo; the backend pairs marco and date (400/CHECK).
+    posse_prazo_dias: d.posse_marco === "data_fixa" ? null : inteiroOuNulo(d.posse_prazo_dias),
     posse_marco: d.posse_marco || null,
     posse_marco_parcela_id: d.posse_marco === "parcela" ? d.posse_marco_parcela_id || null : null,
+    posse_data: d.posse_marco === "data_fixa" ? d.posse_data || null : null,
 
     permuta_posse_prazo_dias: inteiroOuNulo(d.permuta_posse_prazo_dias),
     permuta_posse_marco: d.permuta_posse_marco || null,
@@ -199,6 +206,9 @@ type ItensResposta = "lista" | "nenhum";
  *  strings `contrato_gerador.derivacao.ALVO_*` emits as `destino.alvo`. */
 export const ALVO_ITENS_INTEGRANTES = "termos-itens-integrantes-resposta";
 export const ALVO_AD_CORPUS = "termos-ad-corpus-resposta";
+/** The posse controls (prazo / marco / data fixa) and the permuta imóvel's own. */
+export const ALVO_POSSE = "termos-posse-controles";
+export const ALVO_PERMUTA_POSSE = "termos-permuta-posse-controles";
 
 /**
  * An explicit, mutually-exclusive answer — a radiogroup of buttons where
@@ -303,6 +313,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
 
   const posseMarcoFaltaParcela =
     draft.posse_marco === "parcela" && !draft.posse_marco_parcela_id;
+  const posseDataFalta = draft.posse_marco === "data_fixa" && !draft.posse_data;
   const permutaMarcoFaltaParcela =
     draft.permuta_posse_marco === "parcela" && !draft.permuta_posse_marco_parcela_id;
 
@@ -312,7 +323,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
     draft.itens_resposta === "lista" && !draft.itens_integrantes.trim();
 
   const podeSalvar =
-    !posseMarcoFaltaParcela && !permutaMarcoFaltaParcela && !itensListaVazia;
+    !posseMarcoFaltaParcela && !posseDataFalta && !permutaMarcoFaltaParcela && !itensListaVazia;
 
   function submit() {
     if (!podeSalvar) return;
@@ -330,22 +341,50 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
       </CardHeader>
       <CardContent className="space-y-6">
         {/* ─── Posse ─────────────────────────────────────────────────── */}
-        <section className="space-y-3" data-testid="termos-posse">
+        <section
+          id={ALVO_POSSE}
+          tabIndex={-1}
+          className="space-y-3 outline-none"
+          data-testid="termos-posse"
+        >
           <h4 className="text-sm font-medium">Posse</h4>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="termos-posse-prazo">Prazo (dias)</Label>
-              <Input
-                id="termos-posse-prazo"
-                data-testid="termos-posse-prazo"
-                type="number"
-                min={0}
-                value={draft.posse_prazo_dias}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, posse_prazo_dias: e.target.value }))
-                }
-              />
-            </div>
+            {draft.posse_marco === "data_fixa" ? (
+              <div className="space-y-1.5">
+                <Label htmlFor="termos-posse-data">Data da entrega da posse</Label>
+                <Input
+                  id="termos-posse-data"
+                  data-testid="termos-posse-data"
+                  type="date"
+                  value={draft.posse_data}
+                  onChange={(e) => setDraft((d) => ({ ...d, posse_data: e.target.value }))}
+                />
+                {posseDataFalta && (
+                  <p className="text-xs text-destructive" data-testid="termos-posse-data-erro">
+                    Informe a data da entrega da posse.
+                  </p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="termos-posse-prazo">Prazo (dias)</Label>
+                <Input
+                  id="termos-posse-prazo"
+                  data-testid="termos-posse-prazo"
+                  type="number"
+                  min={0}
+                  value={draft.posse_prazo_dias}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, posse_prazo_dias: e.target.value }))
+                  }
+                />
+                <p className="text-xs text-muted-foreground" data-testid="termos-posse-prazo-dica">
+                  {draft.posse_prazo_dias.trim() === "0"
+                    ? "Entrega concomitante ao marco (sem dias de espera)."
+                    : "Use 0 para entrega concomitante ao marco."}
+                </p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label htmlFor="termos-posse-marco">Marco</Label>
               <Select
@@ -353,9 +392,10 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                 onValueChange={(v) =>
                   setDraft((d) => ({
                     ...d,
-                    posse_marco: v === NENHUMA_PARCELA ? "" : (v as PosseMarco),
+                    posse_marco: v === NENHUMA_PARCELA ? "" : (v as PosseMarcoImovel),
                     posse_marco_parcela_id:
                       v === "parcela" ? d.posse_marco_parcela_id : "",
+                    posse_data: v === "data_fixa" ? d.posse_data : "",
                   }))
                 }
               >
@@ -364,7 +404,7 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NENHUMA_PARCELA}>Nenhum</SelectItem>
-                  {POSSE_MARCOS.map((m) => (
+                  {POSSE_MARCOS_IMOVEL.map((m) => (
                     <SelectItem key={m} value={m}>
                       {POSSE_MARCO_LABELS[m]}
                     </SelectItem>
@@ -398,7 +438,12 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
 
         {/* ─── Permuta reversa (só quando há parcela de permuta) ────────── */}
         {temPermuta && (
-          <section className="space-y-3" data-testid="termos-permuta">
+          <section
+            id={ALVO_PERMUTA_POSSE}
+            tabIndex={-1}
+            className="space-y-3 outline-none"
+            data-testid="termos-permuta"
+          >
             <h4 className="text-sm font-medium">Permuta — entrega do imóvel</h4>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
@@ -415,6 +460,11 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                     }))
                   }
                 />
+                <p className="text-xs text-muted-foreground" data-testid="termos-permuta-prazo-dica">
+                  {draft.permuta_posse_prazo_dias.trim() === "0"
+                    ? "Entrega concomitante ao marco (sem dias de espera)."
+                    : "Use 0 para entrega concomitante ao marco."}
+                </p>
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="termos-permuta-marco">Marco</Label>

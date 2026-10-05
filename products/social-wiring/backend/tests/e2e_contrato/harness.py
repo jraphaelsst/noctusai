@@ -297,6 +297,11 @@ def dados_com_marcadores(dados: Any) -> tuple[Any, int]:
             contagem += 1
         if novas != parcelas:
             estruturais["parcelas"] = novas
+    termos = getattr(marcado, "termos", None)
+    if termos is not None and termos.posse_marco == "data_fixa" and termos.posse_data is None:
+        # A fixed-date posse (migration 201) the render cannot go without.
+        estruturais["termos"] = dataclasses.replace(termos, posse_data=data_lacuna)
+        contagem += 1
     if estruturais:
         marcado = dataclasses.replace(marcado, **estruturais)
     return marcado, contagem
