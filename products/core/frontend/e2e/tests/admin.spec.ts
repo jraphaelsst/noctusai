@@ -1,5 +1,18 @@
 import { test, expect } from '../fixtures/auth.fixture';
 import { mockAdminAPIs } from '../fixtures/api-mocks';
+import type { Page } from '@playwright/test';
+
+// The admin sidebar is nested (Administracao › Visão geral | Clientes |
+// Comercial | Plataforma) and each level is an accordion: only the group on
+// the current page's path is open. Open a sub-group before reaching a link
+// inside it (owner-approved UX, 2026-10-05, MENUS.md).
+async function openNavGroup(page: Page, label: string) {
+  const header = page.getByRole('button', { name: label, exact: true });
+  if ((await header.getAttribute('aria-expanded')) !== 'true') {
+    await header.click();
+  }
+  await expect(header).toHaveAttribute('aria-expanded', 'true');
+}
 
 test.describe('Admin Panel', () => {
   test('non-admin is redirected away from /admin', async ({ authenticatedPage: page }) => {
@@ -20,15 +33,21 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
-    // Sidebar navigation items
+    // Sidebar navigation items, group by group (accordion: one open at a time)
     await expect(page.getByRole('link', { name: 'Dashboard' })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Analytics' })).toBeVisible();
+
+    await openNavGroup(page, 'Clientes');
     await expect(page.getByRole('link', { name: /Organiza/ })).toBeVisible();
+
+    await openNavGroup(page, 'Comercial');
     await expect(page.getByRole('link', { name: 'Assinaturas' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Chaves API' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Planos' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Faturamento' })).toBeVisible();
+
+    await openNavGroup(page, 'Plataforma');
+    await expect(page.getByRole('link', { name: 'Chaves API' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Webhooks' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Analytics' })).toBeVisible();
     await expect(page.getByRole('link', { name: /Configura/ })).toBeVisible();
   });
 
@@ -46,6 +65,7 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
+    await openNavGroup(page, 'Clientes');
     await page.getByRole('link', { name: /Organiza/ }).click();
     await expect(page).toHaveURL('/admin/orgs');
   });
@@ -54,6 +74,7 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
+    await openNavGroup(page, 'Comercial');
     await page.getByRole('link', { name: 'Assinaturas' }).click();
     await expect(page).toHaveURL('/admin/subs');
   });
@@ -62,6 +83,7 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
+    await openNavGroup(page, 'Plataforma');
     await page.getByRole('link', { name: 'Chaves API' }).click();
     await expect(page).toHaveURL('/admin/api-keys');
   });
@@ -70,6 +92,7 @@ test.describe('Admin Panel', () => {
     await mockAdminAPIs(page);
     await page.goto('/admin');
 
+    await openNavGroup(page, 'Comercial');
     await page.getByRole('link', { name: 'Planos' }).click();
     await expect(page).toHaveURL('/admin/plans');
   });
