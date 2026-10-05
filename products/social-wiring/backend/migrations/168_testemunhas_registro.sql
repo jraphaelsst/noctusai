@@ -16,6 +16,9 @@
 --
 -- 🔴 OWNER DECISIONS (confirmed) — CPF replaces RG on the contract
 -- -------------------------------------------------------------------------
+-- (Re-confirmed 2026-10-05, comment-only edit: the witness ID STAYS the CPF —
+-- owner: "with the CIN changes, soon the RG number will no longer exist, only
+-- CPFs". Do not reintroduce RG as the printed witness identifier.)
 -- CPF is now REQUIRED (valid mod-11) for every NEW witness, and the
 -- contract PRINTS CPF INSTEAD OF RG (RG leaves the registration form
 -- entirely — see `TestemunhasSection.tsx`, `derivacao.py`,

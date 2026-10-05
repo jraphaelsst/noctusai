@@ -12,7 +12,7 @@ V5 financiamento + permuta + diretas/confissão + saldo devedor  (compra_venda_p
 V6 financiamento + intermediária + permuta + declaração + ad corpus (compra_venda_permuta)
 
 Every variant carries the data the office's policy answers require (spec §6.2,
-answered 2026-09-15): estado-civil certidão < 90 days, certidões < 30 days, the
+answered 2026-09-15): estado-civil certidão < 30 days (owner 2026-10-05, was 90), certidões < 30 days, the
 last compra e venda ≥ 5 years ago (no previous owner required), the office's
 posse multa diária + signing platform, witnesses with CPF.
 
@@ -206,7 +206,9 @@ def pessoa(
         email=f"{cliente_id}@exemplo.test",
         endereco=endereco(),
         certidoes=certidoes_completas(),
-        certidao_estado_civil_emitida_em=date(2026, 8, 1),
+        # 10 days before ASSINATURA: inside the 30-day policy (was 2026-08-01 = 44 days,
+        # valid only under the superseded 90-day rule).
+        certidao_estado_civil_emitida_em=date(2026, 9, 4),
     )
     base.update(extra)
     return Pessoa(**base)

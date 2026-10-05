@@ -48,6 +48,7 @@ function dados(over: Partial<ImovelDados> = {}): ImovelDados {
     empreendimento_manual: null,
     empreendimento_manual_confirmado_por: null,
     empreendimento_manual_confirmado_em: null,
+    em_condominio: null,
     updated_at: null,
     ...over,
   };
@@ -193,5 +194,35 @@ describe("ImovelCartorioCard — prefeitura_cadastro_imobiliario field label", (
     const input = screen.getByLabelText("Inscrição municipal (cadastro na prefeitura)");
     expect(input).toBeTruthy();
     expect(input.getAttribute("placeholder")).not.toMatch(/São Paulo/);
+  });
+});
+
+describe("ImovelCartorioCard — em_condominio (migration 202)", () => {
+  it("renders the control, defaulting to 'não informado'", async () => {
+    const { screen } = await render();
+    const trigger = screen.getByTestId("imovel-em-condominio");
+    expect(trigger.textContent).toContain("Não informado");
+  });
+
+  it("an unset answer is saved as null — never invented as true or false", async () => {
+    const onSave = vi.fn();
+    const { screen, fireEvent } = await render(undefined, { onSave });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: null }));
+  });
+
+  it("pre-fills and re-saves an explicit 'not in a condomínio' as false", async () => {
+    const onSave = vi.fn();
+    const { screen, fireEvent } = await render({ em_condominio: false }, { onSave });
+    expect(screen.getByTestId("imovel-em-condominio").textContent).toContain("fora de condomínio");
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: false }));
+  });
+
+  it("pre-fills and re-saves 'in a condomínio' as true", async () => {
+    const onSave = vi.fn();
+    const { screen, fireEvent } = await render({ em_condominio: true }, { onSave });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar" }));
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: true }));
   });
 });

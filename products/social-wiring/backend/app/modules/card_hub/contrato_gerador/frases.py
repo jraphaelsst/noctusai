@@ -13,7 +13,6 @@ from decimal import Decimal
 from typing import Optional, Sequence
 
 from noctusai_lib.domain.texto_ptbr import (
-    brl_por_extenso,
     data_por_extenso,
     dias_por_extenso,
     formatar_data_br,
@@ -27,6 +26,7 @@ from noctusai_lib.integrations.documents.nacionalidade import (
     feminino as _nacionalidade_feminina,
 )
 
+from app.modules.card_hub.contrato_gerador.extenso import brl_por_extenso
 from app.modules.card_hub.contrato_gerador.concordancia import (
     Concordancia,
     genero_exigido,

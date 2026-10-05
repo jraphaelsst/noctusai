@@ -426,6 +426,8 @@ def _imovel(client: Any, org_id: UUID, codigo: str, usuario_id: Optional[Any]) -
         # `_empreendimento`'s docstring for why a manually registered imóvel
         # needs this at all.
         empreendimento=_empreendimento(catalogo, dados),
+        # Migration 202 — explicit condomínio answer (None = not stated).
+        em_condominio=dados.get("em_condominio"),
         endereco=_endereco_manual(catalogo, dados),
         # Migration 093 — the CRM/Vista mirror's own m², used only by the
         # `derivacao` coherence check (never printed) — see `dados.Imovel

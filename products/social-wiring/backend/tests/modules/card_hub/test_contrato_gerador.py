@@ -40,6 +40,7 @@ from noctusai_lib.integrations.docx_render import get_docx_render_adapter
 
 from app.modules.card_hub.contrato_gerador import carregador, derivacao, documento, estilo, frases, lint
 from app.modules.card_hub.contrato_gerador.concordancia import lado
+from app.modules.card_hub.contrato_gerador.extenso import reais_por_extenso as reais_por_extenso_gerador
 from app.modules.card_hub.contrato_gerador.dados import DadosContrato
 from tests.modules.card_hub import contrato_gerador_fixtures as fx
 
@@ -142,7 +143,7 @@ class TestTextoRenderizado:
         valores = re.findall(r"R\$ ([\d.]+,\d{2}) \(([^)]*)\)", texto)
         assert len(valores) >= 8
         for digitos, extenso in valores:
-            assert reais_por_extenso(parse_brl(digitos)) == extenso
+            assert reais_por_extenso_gerador(parse_brl(digitos)) == extenso
 
     def test_matricula_literal_text_is_byte_identical_in_document_xml(self):
         r = _render(1)
@@ -1092,21 +1093,22 @@ class TestQ11PendenciasEEstadoCivil:
         d = fx.variante(1)
         return replace(d, vendedores=[replace(d.vendedores[0], certidao_estado_civil_emitida_em=emitida)])
 
-    def test_89_days_old_is_accepted(self):
-        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(fx.dias_antes(89)))
+    def test_29_days_old_is_accepted(self):
+        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(fx.dias_antes(29)))
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_90_days_old_blocks(self):
-        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(fx.dias_antes(90)))
+    def test_30_days_old_blocks(self):
+        _d, _pol, _sw, av = _avaliar(1, self._estado_civil(fx.dias_antes(30)))
         assert _codigos(av.bloqueios) == ["CERTIDAO_ESTADO_CIVIL_ANTIGA"]
 
     def test_missing_emission_date_is_missing(self):
         _d, _pol, _sw, av = _avaliar(1, self._estado_civil(None))
         assert _campos(av) == [("qualificacao.certidao_estado_civil_emissao", "parte-v1")]
 
-    def test_the_pendencia_text_says_90_days(self):
-        # Office wording (78 signed contracts); N is the policy's 90.
-        assert "Comprovante de estado civil, com data de emissão inferior a 90 dias" in _texto(1)
+    def test_the_pendencia_text_says_30_days(self):
+        # Office wording (78 signed contracts); N is the policy's 30 (owner
+        # decision 2026-10-05: 83 signed contracts say 30, not the old 90).
+        assert "Comprovante de estado civil, com data de emissão inferior a 30 dias" in _texto(1)
 
     def test_pendencias_use_the_signed_corpus_wording(self):
         texto = _texto(1)
@@ -1167,12 +1169,12 @@ class TestProcessoLegado:
         assert _codigos(av.bloqueios) == []
         assert "CERTIDAO_VENCIDA" in _codigos(av.avisos)
 
-    def test_a_90_day_old_estado_civil_certidao_warns_instead_of_blocking(self):
+    def test_a_30_day_old_estado_civil_certidao_warns_instead_of_blocking(self):
         d = fx.variante(1)
         d = replace(
             d,
             processo_legado=True,
-            vendedores=[replace(d.vendedores[0], certidao_estado_civil_emitida_em=fx.dias_antes(90))],
+            vendedores=[replace(d.vendedores[0], certidao_estado_civil_emitida_em=fx.dias_antes(30))],
         )
         _d, _pol, _sw, av = _avaliar(1, d)
         assert _codigos(av.bloqueios) == []

@@ -108,6 +108,17 @@ def numerar_clausulas(switches: Mapping[str, bool]) -> RegistroClausulas:
     return registro
 
 
+#: Clauses whose paragraph is labelled "Parágrafo Primeiro" even when it is the
+#: ONLY one rendered — a named exception to the "Único only alone" rule.
+#: Owner decision 2026-10-05, backed by the corpus (signed contracts, lone
+#: paragraph of the clause): `certidoes` -> "Primeiro" 76/78 (re-count over the
+#: 102 extracted contract texts: 80/80). Every other clause keeps "Único"
+#: (lone-paragraph counts: posse Único 64/64, objeto Único 56/56, preço Único
+#: 44/44; intermediação is Primeiro 11/14 and ônus Primeiro 3/4 — NOT adopted:
+#: below the certidões majority / too few — see the owner report).
+PARAGRAFO_PRIMEIRO_MESMO_SOZINHO: frozenset[str] = frozenset({"certidoes"})
+
+
 class ContadorParagrafos:
     """`par('<clausula>')` in the template.
 
@@ -131,7 +142,7 @@ class ContadorParagrafos:
                 f"par('{chave}') chamado {n}× na segunda passagem, mas a "
                 f"primeira contou {total} — o template não é determinístico"
             )
-        if total == 1:
+        if total == 1 and chave not in PARAGRAFO_PRIMEIRO_MESMO_SOZINHO:
             return "Parágrafo Único:"
         return f"Parágrafo {ordinal_por_extenso(n).title()}:"
 
@@ -166,6 +177,7 @@ __all__ = [
     "Clausula",
     "ContadorParagrafos",
     "ORDEM_CLAUSULAS",
+    "PARAGRAFO_PRIMEIRO_MESMO_SOZINHO",
     "RegistroClausulas",
     "TITULO_CLAUSULA",
     "juntar",

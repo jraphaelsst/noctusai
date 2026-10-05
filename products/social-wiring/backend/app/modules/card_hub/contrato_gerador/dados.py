@@ -337,6 +337,10 @@ class Imovel:
     #: 149) has no mirror row at all, so without the authored override this
     #: is silently `None` forever and the title prints the address alone.
     empreendimento: Optional[str] = None
+    #: Migration 202 — the card's explicit answer to "is this imóvel in a
+    #: condomínio?". `None` = not stated; `contexto` treats everything except
+    #: an explicit `False` as condomínio (owner decision 2026-10-05, 91/93).
+    em_condominio: Optional[bool] = None
     #: 🔴 [endereco-portaria-vs-imovel] THE PROPERTY TABLE's address (owner
     #: rule, 2026-09-23): `carregador._endereco_manual`'s per-field override
     #: (`imovel_dados.endereco_manual_*`, migrations 149/159) over the CRM/

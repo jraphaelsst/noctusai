@@ -108,8 +108,12 @@ def _ate_999(n: int, feminino: bool) -> str:
     return " e ".join(partes)
 
 
-def inteiro_por_extenso(n: int, *, feminino: bool = False) -> str:
+def inteiro_por_extenso(n: int, *, feminino: bool = False, virgulas: bool = True) -> str:
     """`1234` -> "mil, duzentos e trinta e quatro".
+
+    `virgulas=False` is the named seam for house styles that never put a comma
+    between thousand groups ("mil duzentos e trinta e quatro"); the default
+    keeps the notarial comma so every existing consumer's output is unchanged.
 
     `feminino=True` agrees the units and hundreds with a feminine noun
     ("duas parcelas", "duzentas e uma"); the scale words (milhão, bilhão) are
@@ -142,7 +146,10 @@ def inteiro_por_extenso(n: int, *, feminino: bool = False) -> str:
     saida = grupos[0][0]
     for i, (texto, valor) in enumerate(grupos[1:], start=1):
         ultimo = i == len(grupos) - 1
-        conector = " e " if ultimo and (valor < 100 or valor % 100 == 0) else ", "
+        if ultimo and (valor < 100 or valor % 100 == 0):
+            conector = " e "
+        else:
+            conector = ", " if virgulas else " "
         saida += conector + texto
     return saida
 
@@ -158,7 +165,7 @@ def _exigir_centavos(valor: Decimal) -> Decimal:
     return quantizado
 
 
-def reais_por_extenso(valor: Decimal) -> str:
+def reais_por_extenso(valor: Decimal, *, virgulas: bool = True) -> str:
     """`Decimal("1234.56")` -> "mil, duzentos e trinta e quatro reais e
     cinquenta e seis centavos". Refuses (ValueError) a float, a negative, or
     a value with sub-centavo precision — rounding it silently would print an
@@ -169,7 +176,7 @@ def reais_por_extenso(valor: Decimal) -> str:
 
     partes: list[str] = []
     if inteiro:
-        texto = inteiro_por_extenso(inteiro)
+        texto = inteiro_por_extenso(inteiro, virgulas=virgulas)
         if inteiro >= 10**6 and inteiro % 10**6 == 0:
             texto += " de"
         partes.append(f"{texto} {'real' if inteiro == 1 else 'reais'}")
@@ -195,10 +202,10 @@ def formatar_brl(valor: Decimal) -> str:
     return f"R$ {formatar_inteiro_br(inteiro)},{centavos:02d}"
 
 
-def brl_por_extenso(valor: Decimal) -> str:
+def brl_por_extenso(valor: Decimal, *, virgulas: bool = True) -> str:
     """`Decimal("1234.56")` -> "R$ 1.234,56 (mil, duzentos e trinta e quatro
     reais e cinquenta e seis centavos)" — digits and words from one value."""
-    return f"{formatar_brl(valor)} ({reais_por_extenso(valor)})"
+    return f"{formatar_brl(valor)} ({reais_por_extenso(valor, virgulas=virgulas)})"
 
 
 _BRL_RE = re.compile(r"^\s*(?:R\$\s*)?(\d{1,3}(?:\.\d{3})*|\d+),(\d{2})\s*$")

@@ -20,7 +20,6 @@ from typing import Any, Optional
 
 from noctusai_lib.domain.texto_ptbr import (
     CENTAVO,
-    brl_por_extenso,
     data_por_extenso,
     numero_com_extenso,
     dias_por_extenso,
@@ -29,6 +28,7 @@ from noctusai_lib.domain.texto_ptbr import (
 from noctusai_lib.integrations.documents.abnt import clip_ranges, runs_from_ranges
 from noctusai_lib.integrations.docx_render import DocxRenderAdapter
 
+from app.modules.card_hub.contrato_gerador.extenso import brl_por_extenso
 from app.modules.card_hub.contrato_gerador import frases
 from app.modules.card_hub.contrato_gerador.concordancia import genero_exigido, lado
 from app.modules.card_hub.contrato_gerador.dados import (
@@ -396,7 +396,18 @@ def montar_contexto(
         titulo_curto = f"{nome_empreendimento} – {endereco_curto}"
     else:
         titulo_curto = endereco_curto
-    em_condominio = EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(im.empreendimento)
+    # Two different questions, two answers:
+    #  - `tem_empreendimento_condominio` (pendência da CND de condomínio) still
+    #    needs a named empreendimento to ask for a document about, unless the
+    #    card explicitly says the imóvel is NOT in a condomínio;
+    #  - `em_condominio` (the vistoria clause's wording) is the condomínio
+    #    wording by default — 91/93 signed contracts, owner decision
+    #    2026-10-05 — and only an EXPLICIT `False` on the card switches it off.
+    nao_e_condominio = im.em_condominio is False
+    tem_empreendimento_condominio = (
+        EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO and bool(im.empreendimento) and not nao_e_condominio
+    )
+    em_condominio = not nao_e_condominio
     imovel = {
         "titulo_curto": titulo_curto,
         "cidade": e.cidade,
@@ -505,7 +516,7 @@ def montar_contexto(
     # A document already PRESENTED above is not also requested below (spec
     # §2.5: the IPTU CND is a pendência "only when not already listed").
     pendencias: list[str] = []
-    if em_condominio and "cnd_condominio" not in apresentadas:
+    if tem_empreendimento_condominio and "cnd_condominio" not in apresentadas:
         pendencias.append(frases.PENDENCIA_CONDOMINIO_PERMUTA if sw["tem_permuta"] else frases.PENDENCIA_CONDOMINIO)
     pendencias.append(frases.pendencia_estado_civil(politica.certidao_estado_civil_max_dias))
     pendencias.append(frases.PENDENCIA_DOCUMENTOS)

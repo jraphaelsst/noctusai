@@ -51,6 +51,10 @@ class ImovelDadosPatchBody(StrictHttpModel):
     #: empreendimento` to read at all. `carregador._empreendimento` prefers
     #: this over the mirror when set.
     empreendimento_manual: Optional[str] = Field(default=None, max_length=200)
+    #: Migration 202 — three-state: `None` clears to "not stated" (the
+    #: contract's vistoria clause defaults to the condomínio wording), `False`
+    #: = explicitly NOT in a condomínio, `True` = in one.
+    em_condominio: Optional[bool] = None
 
 
 class EnderecoManualPatchBody(StrictHttpModel):

@@ -40,8 +40,12 @@ ONUS_USUFRUTO = "usufruto"
 #: rather than fall through.
 ONUS_SUPORTADOS: tuple[str, ...] = ("livre", ONUS_USUFRUTO) + ONUS_COM_SALDO
 
-#: Spec §3 #16 — `imovel.em_condominio` "derivable from imoveis.empreendimento
-#: (rule to confirm)". A named rule, not an inline truthiness test.
+#: Spec §3 #16 — whether the CND-de-condomínio pendência applies is derived from
+#: `imoveis.empreendimento` (A named rule, not an inline truthiness test).
+#: Since 2026-10-05 this NO LONGER drives the vistoria clause's wording: that
+#: defaults to the condomínio wording (91/93 signed) unless the card says
+#: explicitly the imóvel is not in a condomínio (`imovel_dados.em_condominio`,
+#: migration 202).
 EM_CONDOMINIO_QUANDO_HA_EMPREENDIMENTO = True
 
 #: [Q9] Receita Federal situação cadastral of a CNPJ consulta
@@ -168,9 +172,12 @@ class Politica:
     # (`Imobiliaria.prazo_pendencias_padrao_dias`) sets one.
     prazo_pendencias_padrao_dias: int = 10
     prazo_esclarecimentos_dias: int = 10
-    # [Q11] Answered: the estado-civil certidão must be less than 90 days old
-    # at the assinatura (`Pessoa.certidao_estado_civil_emitida_em`).
-    certidao_estado_civil_max_dias: int = 90
+    # [Q11] The estado-civil certidão must be less than N days old at the
+    # assinatura (`Pessoa.certidao_estado_civil_emitida_em`). N = 30 by owner
+    # decision 2026-10-05 (83 signed contracts say 30); the earlier [Q11]
+    # answer, 90, is superseded. The ONE constant: the readiness age rule
+    # (`derivacao`) and the pendência wording (`frases`) both read it.
+    certidao_estado_civil_max_dias: int = 30
     # [P5 F8, 2026-10-03] A non-owner who signs as a seller's COMPANION
     # (união estável — or the partner of a seller whose own estado civil is
     # solteiro/divorciado/viúvo/separado, i.e. not married to them) is NOT a

@@ -13,11 +13,15 @@ from typing import Mapping, Sequence
 from noctusai_lib.domain.texto_ptbr import (
     ordinal_por_extenso,
     parse_brl,
-    reais_por_extenso,
 )
 from noctusai_lib.integrations.documents import has_raw_markup
 
-from app.modules.card_hub.contrato_gerador.numeracao import TITULO_CLAUSULA, letra
+from app.modules.card_hub.contrato_gerador.extenso import reais_por_extenso
+from app.modules.card_hub.contrato_gerador.numeracao import (
+    PARAGRAFO_PRIMEIRO_MESMO_SOZINHO,
+    TITULO_CLAUSULA,
+    letra,
+)
 
 _MAX = 60
 _ORD_FEM_UPPER = {ordinal_por_extenso(n, feminino=True).upper(): n for n in range(1, _MAX)}
@@ -55,12 +59,26 @@ def _hit(hits: list[dict], codigo: str, mensagem: str) -> None:
     hits.append({"codigo": codigo, "mensagem": mensagem})
 
 
-def _checar_paragrafos(hits: list[dict], clausula: int, rotulos: list[str]) -> None:
-    """Restart per clause, consecutive, "Único" only alone (06 and 01's ¶1→¶3)."""
+def _chave_da_clausula(titulo: str) -> str | None:
+    for chave, prefixo in TITULO_CLAUSULA.items():
+        if titulo.startswith(prefixo):
+            return chave
+    return None
+
+
+def _checar_paragrafos(
+    hits: list[dict], clausula: int, rotulos: list[str], titulo: str = ""
+) -> None:
+    """Restart per clause, consecutive, "Único" only alone (06 and 01's ¶1→¶3)
+    — except the named `PARAGRAFO_PRIMEIRO_MESMO_SOZINHO` clauses, whose lone
+    paragraph must read "Primeiro" (owner decision 2026-10-05)."""
     if not rotulos:
         return
     if len(rotulos) == 1:
-        if rotulos[0] != "Único":
+        if _chave_da_clausula(titulo) in PARAGRAFO_PRIMEIRO_MESMO_SOZINHO:
+            if rotulos[0] != "Primeiro":
+                _hit(hits, "PARAGRAFO_UNICO", f"Cláusula {clausula}: parágrafo solitário desta cláusula deveria ser 'Primeiro'.")
+        elif rotulos[0] != "Único":
             _hit(hits, "PARAGRAFO_UNICO", f"Cláusula {clausula}: parágrafo solitário deveria ser 'Único'.")
         return
     for i, rotulo in enumerate(rotulos, start=1):
@@ -142,7 +160,7 @@ def lint(
 
         cab = _RE_HEADING.match(texto)
         if cab:
-            _checar_paragrafos(hits, atual, rotulos)
+            _checar_paragrafos(hits, atual, rotulos, titulos.get(atual, ""))
             rotulos = []
             n = _ORD_FEM_UPPER.get(cab.group(1))
             if n is None:
@@ -167,7 +185,7 @@ def lint(
                 n = _ORD_FEM_LOWER.get(m.group(1).lower())
             if n is not None:
                 ocorrencias[n] = ocorrencias.get(n, 0) + 1
-    _checar_paragrafos(hits, atual, rotulos)
+    _checar_paragrafos(hits, atual, rotulos, titulos.get(atual, ""))
     fechar_letras()
 
     for n in ocorrencias:

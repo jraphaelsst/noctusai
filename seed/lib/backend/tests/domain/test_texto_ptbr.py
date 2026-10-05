@@ -68,6 +68,39 @@ class TestInteiroPorExtenso:
         with pytest.raises(ValueError):
             inteiro_por_extenso(bad)
 
+    @pytest.mark.parametrize(
+        "n, com, sem",
+        [
+            (1234, "mil, duzentos e trinta e quatro", "mil duzentos e trinta e quatro"),
+            (
+                2_960_000,
+                "dois milhões, novecentos e sessenta mil",
+                "dois milhões novecentos e sessenta mil",
+            ),
+            (
+                1_234_567,
+                "um milhão, duzentos e trinta e quatro mil, quinhentos e sessenta e sete",
+                "um milhão duzentos e trinta e quatro mil quinhentos e sessenta e sete",
+            ),
+            (1100, "mil e cem", "mil e cem"),
+            (2_000_001, "dois milhões e um", "dois milhões e um"),
+        ],
+    )
+    def test_virgulas_seam_default_keeps_comma(self, n, com, sem):
+        assert inteiro_por_extenso(n) == com
+        assert inteiro_por_extenso(n, virgulas=True) == com
+        assert inteiro_por_extenso(n, virgulas=False) == sem
+
+    def test_virgulas_seam_flows_through_reais_and_brl(self):
+        from noctusai_lib.domain.texto_ptbr import brl_por_extenso
+
+        v = Decimal("2960000.00")
+        assert reais_por_extenso(v) == "dois milhões, novecentos e sessenta mil reais"
+        assert reais_por_extenso(v, virgulas=False) == "dois milhões novecentos e sessenta mil reais"
+        assert brl_por_extenso(v, virgulas=False) == (
+            "R$ 2.960.000,00 (dois milhões novecentos e sessenta mil reais)"
+        )
+
 
 class TestReaisPorExtenso:
     @pytest.mark.parametrize(

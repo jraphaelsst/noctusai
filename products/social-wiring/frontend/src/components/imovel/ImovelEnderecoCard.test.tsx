@@ -45,6 +45,7 @@ function dados(over: Partial<ImovelDados> = {}): ImovelDados {
     empreendimento_manual: null,
     empreendimento_manual_confirmado_por: null,
     empreendimento_manual_confirmado_em: null,
+    em_condominio: null,
     updated_at: null,
     ...over,
   };

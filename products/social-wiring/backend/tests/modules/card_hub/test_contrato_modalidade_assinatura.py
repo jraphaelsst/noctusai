@@ -71,19 +71,23 @@ LINHA = "______________________________"
 #: (condominial "despesas … relativas ao imóvel", estado civil "com data de emissão
 #: inferior a N dias", the two consumo items, plain-digit prazo). Paragraph diff
 #: against the previous render shows only those phrases.
+#: [2026-10-05, owner decisions] Re-pinned ALL six again: the certidões/pendências
+#: paragraph reads "Parágrafo Primeiro" even when alone (76/78 signed) and the
+#: estado-civil pendência says "inferior a 30 dias" (policy 90 -> 30, 83 signed). The text
+#: diff vs the previous render is exactly those two phrases (golden/contrato_v*.txt).
 _DIGITAL_GOLDEN: dict[int, tuple[str, str]] = {
-    1: ("ab552963924befb4f563dec0194a8be0d3f236714140741d67f491625b0cfcb8",
-        "c5f2855d1174b152b47652f212f84339265d36f080180aaa30c49a2a3f4399ae"),
-    2: ("4184f8c115acbfdd7a94b7dc643da8a59b45459e1596cc41c1a0230243a1d795",
-        "8f5edfdf2411e4b3033d705de75a0dc2fc0e9592783031db54817dbad4df346c"),
-    3: ("77316a8b558cbcfc7fa0134904eaa4e231c3cd911f272b56b29534d0911e6a95",
-        "b1e5d710ddb4baa757ca8426a1c6780b5c31788f8a479eb87e2107d8e85911f1"),
-    4: ("3255016985f04a5ade375e96982845c42438604bffbafff4d0438d54f1c399fe",
-        "e13b8becd7fa87be76b6050115345e745bf3d7f3bdcfc5f91eecd84abb5f0a45"),
-    5: ("75c6153d048cc72d7cecf968cf04764de9df8696c39fac31a68ded6ead87fbda",
-        "65d28cac02529749dd27afa5311db080616661cc9c11c1e62aa67edfbf276c0c"),
-    6: ("702b12856dfb0e621fa5d8d4dcc845428d288276d022d690f5aa5f0a49c9c1d0",
-        "f990cb2d9ac0eebcf9fbb5581ba453ad6ca9bea6538ad59c78db4d5b659f09d9"),
+    1: ("d8df460bc127bf8eb0c7e8ce34c78fea7eeb191cb01a53a0f363c3724d79e3e5",
+        "eeac1bde5d3fc5a8c422eb35411e4e3b8a5173b110343bdbed267f6cead751a3"),
+    2: ("ac108ae4a8306f9aff99c67289ee4c6ebe3ef46c23287ee68ca8c9ac44c2afc3",
+        "deb3dcd0cdb5ea747e45ee56cebc573aed468d8ce262aebdbe528ef3a8a514fe"),
+    3: ("bbd059e9754b3fc9f40bd5679d5632d6c3bcc251e1978a20426bc31857713626",
+        "cd3a5fc78fffaf99c77638784f5376609ec09e098ded002c68f95ff39268d243"),
+    4: ("a697d2ef596fa8edee2d00516c175ce80662480726afde720f4b565ab92ea0f3",
+        "f18a28f8a751b54021688cc1382aa0919bce8b2a0d63e2adb2f25643a2350327"),
+    5: ("0ce75d6f3378ca257c77a83a07bd6a2d53ad317869c09b2669483ced3013244d",
+        "35b62e37eb162db47c6adc918f3ae272168d2408b4056647cee89ded4fedb6a6"),
+    6: ("02c66e45ec9c4f2a1160babe4cc3ce80e6eb86b70990a082d4f96f51bc937322",
+        "cdd29f9bbd386ed19facc37af1d6d232aac4737861ab64b3b431f14de42277dd"),
 }
 
 

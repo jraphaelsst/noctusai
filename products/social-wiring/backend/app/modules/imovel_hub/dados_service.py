@@ -81,6 +81,10 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     # `endereco_manual_*` (149) — a single stamp, not the 154 quintet: there
     # is no document extraction for this field to reconcile against.
     "empreendimento_manual",
+    # Migration 202 — explicit "is this imóvel in a condomínio?" answer.
+    # `None` = not stated (the contract's vistoria clause then uses the
+    # condomínio wording); `False` is the only value that switches it off.
+    "em_condominio",
 )
 
 #: What the UI offers for `situacao_onus`. Here rather than as a schema CHECK
@@ -510,6 +514,8 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         "prefeitura_cadastro_imobiliario": row.get("prefeitura_cadastro_imobiliario"),
         "captador": table_reads.actor(resolved, row.get("captador_user_id")),
         "situacao_onus": row.get("situacao_onus"),
+        # Migration 202 — three-state: None (not stated) / True / False.
+        "em_condominio": row.get("em_condominio"),
         "onus_observacoes": row.get("onus_observacoes"),
         # The date printed ON the certidão, not when it was uploaded — a
         # certidão's validity runs from its own emission, so the upload

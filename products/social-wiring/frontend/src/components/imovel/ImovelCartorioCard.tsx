@@ -46,6 +46,20 @@ import { origemLabel } from "@/hooks/useImovelDados";
 import type { Member } from "@/hooks/useTeam";
 
 /** Sentinel for "no captador". Radix `SelectItem` refuses an empty string. */
+/** Migration 202 — "is this imóvel in a condomínio?" Three states: not stated
+ *  (the contract defaults to the condomínio wording), yes, explicitly no. */
+const COND_NAO_INFORMADO = "__nao_informado__";
+const COND_SIM = "sim";
+const COND_NAO = "nao";
+
+function condToDraft(v: boolean | null | undefined): string {
+  return v === true ? COND_SIM : v === false ? COND_NAO : COND_NAO_INFORMADO;
+}
+
+function condFromDraft(v: string): boolean | null {
+  return v === COND_SIM ? true : v === COND_NAO ? false : null;
+}
+
 const SEM_CAPTADOR = "__sem_captador__";
 
 interface Props {
@@ -78,6 +92,8 @@ interface Draft {
   onus_observacoes: string;
   onus_certidao_em: string;
   empreendimento_manual: string;
+  /** Three-state, as a token (Radix Select cannot hold null): see `COND_*`. */
+  em_condominio: string;
 }
 
 /** Sentinel for "not assessed" — Radix treats `value=""` as uncontrolled, so
@@ -117,6 +133,7 @@ function toDraft(dados: ImovelDados | undefined): Draft {
     onus_observacoes: dados?.onus_observacoes ?? "",
     onus_certidao_em: dados?.onus_certidao_em ?? "",
     empreendimento_manual: dados?.empreendimento_manual ?? "",
+    em_condominio: condToDraft(dados?.em_condominio),
   };
 }
 
@@ -146,6 +163,7 @@ export default function ImovelCartorioCard({
     dados?.onus_observacoes,
     dados?.onus_certidao_em,
     dados?.empreendimento_manual,
+    dados?.em_condominio,
   ]);
 
   const set = (k: keyof Draft) => (v: string) =>
@@ -167,6 +185,7 @@ export default function ImovelCartorioCard({
       onus_observacoes: blank(draft.onus_observacoes),
       onus_certidao_em: blank(draft.onus_certidao_em),
       empreendimento_manual: blank(draft.empreendimento_manual),
+      em_condominio: condFromDraft(draft.em_condominio),
     });
   }
 
@@ -264,6 +283,32 @@ export default function ImovelCartorioCard({
           <p className="text-xs text-muted-foreground">
             Usado no título do contrato. Deixe em branco para usar o nome do CRM,
             quando houver.
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          {/* Migration 202. Read by `contrato_gerador.contexto`: the vistoria
+              clause uses the condomínio wording unless this says "Não". */}
+          <Label htmlFor="em-condominio">O imóvel fica em condomínio?</Label>
+          <Select
+            value={draft.em_condominio}
+            onValueChange={set("em_condominio")}
+            disabled={loading}
+          >
+            <SelectTrigger id="em-condominio" data-testid="imovel-em-condominio">
+              <SelectValue placeholder="Selecione" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={COND_NAO_INFORMADO}>
+                Não informado (o contrato usa o texto de condomínio)
+              </SelectItem>
+              <SelectItem value={COND_SIM}>Sim, em condomínio</SelectItem>
+              <SelectItem value={COND_NAO}>Não, fora de condomínio</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Define o texto da cláusula de vistoria prévia. Só &quot;Não&quot; remove a menção
+            às áreas de uso comum do condomínio.
           </p>
         </div>
 

@@ -230,6 +230,18 @@ class TestWriting:
         assert body["empreendimento_manual"] == "Residencial Euroville"
         assert body["empreendimento_manual_confirmado_em"] is not None
 
+    def test_em_condominio_is_three_state_and_round_trips(self, client, scoped):
+        # Migration 202 — None (not stated) / False (explicitly NOT a condomínio) / True.
+        seed(scoped)
+        url = f"/api/imoveis/{CODIGO}/dados"
+        assert client.get(url, headers=auth()).json()["em_condominio"] is None
+        body = client.patch(url, json={"em_condominio": False}, headers=auth()).json()
+        assert body["em_condominio"] is False
+        body = client.patch(url, json={"em_condominio": True}, headers=auth()).json()
+        assert body["em_condominio"] is True
+        body = client.patch(url, json={"em_condominio": None}, headers=auth()).json()
+        assert body["em_condominio"] is None
+
     def test_clearing_an_empreendimento_clears_its_confirmation_too(self, client, scoped):
         seed(
             scoped,

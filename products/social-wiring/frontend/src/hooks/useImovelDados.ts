@@ -125,6 +125,10 @@ export interface ImovelDados {
   empreendimento_manual: string | null;
   empreendimento_manual_confirmado_por: Ator | null;
   empreendimento_manual_confirmado_em: string | null;
+  // Migration 202 — explicit "is this imóvel in a condomínio?" answer.
+  // `null` = not stated (the contract's vistoria clause then defaults to the
+  // condomínio wording); `false` = explicitly NOT in a condomínio.
+  em_condominio: boolean | null;
 
   updated_at: string | null;
 }
@@ -169,6 +173,7 @@ export interface ImovelDadosPatch {
   onus_certidao_em?: string | null;
   onus_documento_id?: string | null;
   empreendimento_manual?: string | null;
+  em_condominio?: boolean | null;
 }
 
 export type ExtracaoStatus =

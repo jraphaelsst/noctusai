@@ -2711,7 +2711,7 @@ def _certidoes(
     conferir_conjuges_ausentes()
     for p in signatarios_certificados + anuentes_certificandos(d, politica):
         conferir_pessoa(p)
-        # [Q11] the estado-civil certidão is less than 90 days old.
+        # [Q11] the estado-civil certidão is less than `politica.certidao_estado_civil_max_dias` (30) days old.
         emitida = p.certidao_estado_civil_emitida_em
         if emitida is None:
             av.falta(
