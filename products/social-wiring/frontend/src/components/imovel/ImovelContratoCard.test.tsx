@@ -208,6 +208,32 @@ describe("ImovelContratoCard — título aquisitivo", () => {
     });
     expect(getByTestId("imovel-titulo-confirmado").textContent).toContain("Ana");
   });
+
+  const confirmado = {
+    texto: "frase final",
+    confirmado_por: { id: "u1", nome: "Ana" },
+    confirmado_em: "2026-03-01T10:00:00Z",
+  };
+
+  it("lists only the divergent fact (folhas) with pt-BR label", async () => {
+    const { getByTestId, queryByTestId } = await render({
+      titulo: titulo({
+        confirmado,
+        divergencias: [{ fato: "folhas", atual: "09/15", sugerido: "071/076" }],
+      }),
+    });
+    const li = getByTestId("imovel-titulo-divergencia-folhas");
+    expect(li.textContent).toContain("Folhas");
+    expect(li.textContent).toContain("09/15");
+    expect(li.textContent).toContain("071/076");
+    expect(queryByTestId("imovel-titulo-divergencia-data")).toBeNull();
+    expect(queryByTestId("imovel-titulo-divergencia-livro")).toBeNull();
+  });
+
+  it("shows no divergence block when none (or older backend)", async () => {
+    const { queryByTestId } = await render({ titulo: titulo({ confirmado }) });
+    expect(queryByTestId("imovel-titulo-divergencias")).toBeNull();
+  });
 });
 
 describe("ImovelContratoCard — endereço do registro", () => {

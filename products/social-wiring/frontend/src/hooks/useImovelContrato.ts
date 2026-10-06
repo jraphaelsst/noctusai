@@ -86,6 +86,34 @@ export interface ConfirmacaoTexto {
   confirmado_em: string | null;
 }
 
+export type TituloFato =
+  | "data"
+  | "registro"
+  | "tipo"
+  | "livro"
+  | "folhas"
+  | "tabelionato"
+  | "cidade";
+
+/** One título fact where the confirmed text and the matrícula act disagree. */
+export interface TituloDivergencia {
+  fato: TituloFato;
+  /** What the confirmed text says. */
+  atual: string | null;
+  /** What the matrícula act says. */
+  sugerido: string | null;
+}
+
+export const TITULO_FATO_LABEL: Record<TituloFato, string> = {
+  data: "Data",
+  registro: "Registro",
+  tipo: "Tipo do instrumento",
+  livro: "Livro",
+  folhas: "Folhas",
+  tabelionato: "Tabelionato",
+  cidade: "Cidade",
+};
+
 export interface TituloAquisitivoResponse {
   codigo: string;
   /** `null` until an ato is confirmed as the título source. */
@@ -94,6 +122,8 @@ export interface TituloAquisitivoResponse {
   sugestao: string | null;
   motivo_sem_sugestao: MotivoSemSugestao | null;
   confirmado: ConfirmacaoTexto | null;
+  /** Per-fact disagreements; absent on older backends. */
+  divergencias?: TituloDivergencia[];
 }
 
 export interface OnusCredorAto {

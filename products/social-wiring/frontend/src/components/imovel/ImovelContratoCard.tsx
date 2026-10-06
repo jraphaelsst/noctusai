@@ -56,6 +56,7 @@ import {
   type NaturezaUltimaTransferencia,
   type OnusCredorResponse,
   type TituloAquisitivoResponse,
+  TITULO_FATO_LABEL,
 } from "@/hooks/useImovelContrato";
 
 export interface ImovelContratoCardProps {
@@ -291,6 +292,24 @@ export default function ImovelContratoCard({
                 onChange={(e) => setTituloDraft(e.target.value)}
                 data-testid="imovel-titulo-texto"
               />
+              {titulo?.confirmado && (titulo.divergencias ?? []).length > 0 && (
+                <div
+                  className="space-y-1 rounded border border-amber-300 bg-amber-50 p-2"
+                  data-testid="imovel-titulo-divergencias"
+                >
+                  <p className="text-[11px] font-medium text-amber-800">
+                    O texto confirmado difere da matrícula nestes pontos:
+                  </p>
+                  <ul className="space-y-0.5 text-xs">
+                    {(titulo.divergencias ?? []).map((d) => (
+                      <li key={d.fato} data-testid={`imovel-titulo-divergencia-${d.fato}`}>
+                        <span className="font-medium">{TITULO_FATO_LABEL[d.fato] ?? d.fato}:</span> no texto{" "}
+                        {d.atual ?? "—"} · na matrícula {d.sugerido ?? "—"}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {titulo?.confirmado && (
                 <Confirmacao
                   nome={titulo.confirmado.confirmado_por?.nome}
