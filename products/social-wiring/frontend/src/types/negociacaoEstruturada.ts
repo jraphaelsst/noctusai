@@ -291,6 +291,45 @@ export interface NegociacaoTermos {
 
   corretagem_contratantes: CorretagemContratantes | null;
   corretagem_num_parcelas: number | null;
+
+  /** Migration 207 — per-clause special conditions, keyed by the contract
+   *  generator's own clause ids (`termos_opcoes.clausulas[].chave`). Only
+   *  clauses with text are present. Optional for a pre-207 backend (read as
+   *  none). */
+  clausulas_extras?: ClausulasExtras;
+  /** Migration 207 — per-deal override of the office's daily posse fine, a
+   *  decimal string ("150.50"); `null` = the office default
+   *  (`termos_opcoes.posse_multa_diaria_padrao`). Optional for a pre-207
+   *  backend. */
+  posse_multa_diaria?: string | null;
+}
+
+/** "acrescentar" prints the typed paragraphs after the clause's standard ones;
+ *  "substituir" replaces the clause body (heading and number are kept). */
+export type ClausulaExtraModo = "acrescentar" | "substituir";
+
+export interface ClausulaExtra {
+  /** One paragraph per non-blank line. */
+  texto: string;
+  modo: ClausulaExtraModo;
+}
+
+export type ClausulasExtras = Record<string, ClausulaExtra>;
+
+/** Read-only, server-derived: what the termos editor needs to render its
+ *  migration-207 controls. NEVER part of a PUT. */
+export interface TermosOpcoes {
+  /** The generator's clauses that accept special conditions, in contract
+   *  order (`numeracao.ORDEM_CLAUSULAS`). */
+  clausulas: {
+    chave: string;
+    rotulo: string;
+    /** The clause only exists in some contracts (confissão, intermediação…). */
+    condicional: boolean;
+  }[];
+  /** The office's daily posse fine (decimal string) — the per-deal
+   *  override's placeholder; `null` when the office has none registered. */
+  posse_multa_diaria_padrao: string | null;
 }
 
 /** PUT body — same shape as `NegociacaoTermos` minus the read-only parts
@@ -365,6 +404,8 @@ export interface NegociacaoEstruturada {
   favorecidos: NegociacaoFavorecido[];
   intermediarios: NegociacaoIntermediario[];
   termos: NegociacaoTermos;
+  /** Migration 207; optional for a pre-207 backend. */
+  termos_opcoes?: TermosOpcoes;
   completude: NegociacaoCompletude;
 }
 

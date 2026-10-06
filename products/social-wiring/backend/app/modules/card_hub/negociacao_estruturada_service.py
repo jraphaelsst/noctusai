@@ -63,6 +63,12 @@ from noctusai_lib.primitives.exceptions import (
 
 from app.modules.card_hub import negociacao_service
 from app.modules.card_hub import services as svc
+from app.modules.card_hub.contrato_gerador.dados import MODO_ACRESCENTAR, MODOS_CLAUSULA_EXTRA
+from app.modules.card_hub.contrato_gerador.numeracao import (
+    CLAUSULA_CONDICIONAL,
+    ORDEM_CLAUSULAS,
+    rotulo_clausula,
+)
 from app.services import identificadores as idf
 from app.services import table_reads
 
@@ -165,7 +171,11 @@ TERMOS_CAMPOS: tuple[str, ...] = (
     "onus_baixa_protocolo_em",
     "confissao_juros_am", "confissao_garantia",
     "corretagem_contratantes", "corretagem_num_parcelas",
+    # Migration 207 — per-clause special conditions + the per-deal posse multa.
+    "clausulas_extras", "posse_multa_diaria",
 )
+#: One clause's special-conditions text (migration 207) — a few pages at most.
+_CLAUSULA_EXTRA_TEXTO_MAX = 8000
 _TERMOS_TEXTO: tuple[str, ...] = (
     "permuta_obrigacoes_entrega", "itens_integrantes", "obrigacoes_vendedor",
     "confissao_garantia",
@@ -1464,9 +1474,62 @@ def _termos_out(row: Optional[dict]) -> dict:
     out["sinal_primeira_parcela"] = row.get("sinal_primeira_parcela") is not False
     juros = _dec(row.get("confissao_juros_am"))
     out["confissao_juros_am"] = None if juros is None else str(juros)
+    # Migration 207: NOT NULL DEFAULT '{}' — no row yet reads as no extras.
+    out["clausulas_extras"] = dict(row.get("clausulas_extras") or {})
+    multa = _dec(row.get("posse_multa_diaria"))
+    out["posse_multa_diaria"] = None if multa is None else str(multa)
     for campo in ("posse_marco_parcela_id", "permuta_posse_marco_parcela_id"):
         out[campo] = None if row.get(campo) is None else str(row[campo])
     return out
+
+
+def _clausulas_extras_validadas(bruto: Any) -> dict[str, dict[str, str]]:
+    """Migration 207 — the PUT's `clausulas_extras`, normalised for storage.
+    Absent/None is "no special conditions" (`{}`); an entry with blank text is
+    dropped (a cleared field, like every other termos text). WRONG is refused
+    with a named 400: a key that is not one of the generator's clauses
+    (`numeracao.ORDEM_CLAUSULAS`), a mode outside `MODOS_CLAUSULA_EXTRA`, text
+    over the limit. The default mode is "acrescentar"."""
+    if bruto is None:
+        return {}
+    if not isinstance(bruto, dict):
+        raise ValidationError_(
+            "clausulas_extras deve ser um objeto {cláusula: {texto, modo}}", field="clausulas_extras"
+        )
+    desconhecidas = sorted(set(bruto) - set(ORDEM_CLAUSULAS))
+    if desconhecidas:
+        raise ValidationError_(
+            f"Cláusula desconhecida em clausulas_extras: {', '.join(desconhecidas)}. "
+            f"Permitidas: {', '.join(ORDEM_CLAUSULAS)}",
+            field="clausulas_extras",
+        )
+    saida: dict[str, dict[str, str]] = {}
+    for chave in ORDEM_CLAUSULAS:
+        entrada = bruto.get(chave)
+        if entrada is None:
+            continue
+        if not isinstance(entrada, dict):
+            raise ValidationError_(
+                f"condição especial de '{rotulo_clausula(chave)}' deve ser {{texto, modo}}",
+                field="clausulas_extras",
+            )
+        texto = _texto(entrada.get("texto"))
+        modo = entrada.get("modo") or MODO_ACRESCENTAR
+        if modo not in MODOS_CLAUSULA_EXTRA:
+            raise ValidationError_(
+                f"modo inválido em '{rotulo_clausula(chave)}': {modo!r}. "
+                f"Permitidos: {', '.join(MODOS_CLAUSULA_EXTRA)}",
+                field="clausulas_extras",
+            )
+        if texto is None:
+            continue
+        if len(texto) > _CLAUSULA_EXTRA_TEXTO_MAX:
+            raise ValidationError_(
+                f"o texto de '{rotulo_clausula(chave)}' passa de {_CLAUSULA_EXTRA_TEXTO_MAX} caracteres",
+                field="clausulas_extras",
+            )
+        saida[chave] = {"texto": texto, "modo": modo}
+    return saida
 
 
 def _inteiro_ou_none(valor: Any, campo: str) -> Optional[int]:
@@ -1561,6 +1624,23 @@ def atualizar_termos(
         raise ValidationError_(
             "posse_data só se aplica quando posse_marco é 'data_fixa'", field="posse_data"
         )
+
+    # Migration 207 — whole-replace like the rest: an absent key stores the
+    # empty default (the column is NOT NULL), never an error.
+    termos["clausulas_extras"] = _clausulas_extras_validadas(termos["clausulas_extras"])
+    multa = termos["posse_multa_diaria"]
+    if multa is not None:
+        try:
+            multa = _dec(multa)
+        except InvalidOperation:
+            multa = None
+        if multa is None or multa <= 0:
+            raise ValidationError_(
+                "a multa diária da posse deve ser um valor maior que zero "
+                "(deixe em branco para usar o valor padrão da imobiliária)",
+                field="posse_multa_diaria",
+            )
+        termos["posse_multa_diaria"] = str(multa)
 
     if termos["ad_corpus"] is not None and not isinstance(termos["ad_corpus"], bool):
         raise ValidationError_("ad_corpus deve ser verdadeiro ou falso", field="ad_corpus")
@@ -1695,6 +1775,30 @@ def _completude(
     return {"completo": not faltando, "faltando": faltando}
 
 
+def _termos_opcoes(client: Any, org_id: UUID) -> dict:
+    """What the termos editor needs to RENDER its controls, read-only (never in
+    the PUT body): the clauses that accept special conditions — derived from
+    the generator's own registry, in contract order — and the office's daily
+    posse fine, the placeholder of the per-deal override (migration 207)."""
+    # Imported here, not at module top: `settings_router` pulls in the whole
+    # settings surface (same reason as `contrato_gerador.carregador._imobiliaria`).
+    from app.routers import settings_router
+
+    org = settings_router.get_dados_imobiliaria((None, None, str(org_id)), client)
+    multa = _dec(org.get("posse_multa_diaria"))
+    return {
+        "clausulas": [
+            {
+                "chave": chave,
+                "rotulo": rotulo_clausula(chave),
+                "condicional": chave in CLAUSULA_CONDICIONAL,
+            }
+            for chave in ORDEM_CLAUSULAS
+        ],
+        "posse_multa_diaria_padrao": None if multa is None else str(multa),
+    }
+
+
 def obter_estruturada(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     """Parcelas + favorecidos + intermediários + termos + the computed saldo
     and completeness block, for one atendimento."""
@@ -1749,6 +1853,7 @@ def obter_estruturada(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         "favorecidos": [_favorecido_out(r) for r in favorecidos_rows],
         "intermediarios": [_intermediario_out(r) for r in intermediarios_rows],
         "termos": termos,
+        "termos_opcoes": _termos_opcoes(client, org_id),
         "completude": _completude(negociacao, parcelas_rows, termos, links),
     }
 

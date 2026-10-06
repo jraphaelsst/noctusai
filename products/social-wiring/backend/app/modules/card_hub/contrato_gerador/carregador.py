@@ -54,6 +54,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     AtoCitado,
     Certidao,
     CertidaoImovel,
+    ClausulaExtra,
     DadosContrato,
     DivisaoFavorecido,
     Empresa,
@@ -63,6 +64,7 @@ from app.modules.card_hub.contrato_gerador.dados import (
     Imobiliaria,
     Imovel,
     Intermediario,
+    MODO_ACRESCENTAR,
     Matricula,
     PactoAntenupcial,
     Parcela,
@@ -579,7 +581,30 @@ def _termos(bruto: dict) -> Termos:
         confissao_garantia=bruto.get("confissao_garantia"),
         corretagem_contratantes=bruto.get("corretagem_contratantes"),
         corretagem_num_parcelas=_int(bruto.get("corretagem_num_parcelas")),
+        # Migration 207.
+        clausulas_extras=_clausulas_extras(bruto.get("clausulas_extras")),
+        posse_multa_diaria=_dec(bruto.get("posse_multa_diaria")),
     )
+
+
+def _clausulas_extras(bruto: Any) -> dict[str, ClausulaExtra]:
+    """`atendimento_negociacao_termos.clausulas_extras` (207) as read. Every
+    key is kept — an unknown clause key or mode is the GATE's to name
+    (`derivacao._clausulas_extras`), never silently dropped here."""
+    if not isinstance(bruto, dict):
+        return {}
+    saida: dict[str, ClausulaExtra] = {}
+    for chave, valor in bruto.items():
+        if isinstance(valor, dict):
+            saida[str(chave)] = ClausulaExtra(
+                texto=str(valor.get("texto") or ""),
+                modo=str(valor.get("modo") or MODO_ACRESCENTAR),
+            )
+        else:
+            # Not the {texto, modo} shape: surfaced (modo "invalido" is outside
+            # MODOS_CLAUSULA_EXTRA -> a bloqueio), never dropped.
+            saida[str(chave)] = ClausulaExtra(texto=str(valor), modo="invalido")
+    return saida
 
 
 def _imobiliaria(client: Any, org_id: UUID) -> Imobiliaria:

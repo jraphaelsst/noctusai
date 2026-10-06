@@ -64,6 +64,7 @@ from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
     PAPEIS_SEM_REDACAO,
     PAPEL_ANUENTE,
+    MODOS_CLAUSULA_EXTRA,
     Certidao,
     CertidaoImovel,
     DadosContrato,
@@ -77,7 +78,12 @@ from app.modules.card_hub.contrato_gerador.dados import (
     representantes,
     signatarios,
 )
-from app.modules.card_hub.contrato_gerador.numeracao import num2
+from app.modules.card_hub.contrato_gerador.numeracao import (
+    CLAUSULA_CONDICIONAL,
+    ORDEM_CLAUSULAS,
+    num2,
+    rotulo_clausula,
+)
 from app.modules.card_hub.contrato_gerador.politica import (
     MIN_TESTEMUNHAS,
     ONUS_COM_SALDO,
@@ -937,7 +943,7 @@ def derivar_switches(
         ),
         "tem_declaracao_partes": politica.tem_declaracao_partes,
         # [Q12] the office's value, in every modelo (permuta included).
-        "tem_multa_diaria_posse": d.imobiliaria.posse_multa_diaria is not None,
+        "tem_multa_diaria_posse": posse_multa_diaria(d) is not None,
         # Migration 157 — a FÍSICA contract is printed and signed by hand:
         # no DA ASSINATURA DIGITAL clause, signature lines instead.
         "tem_assinatura_digital": d.modalidade_assinatura != "fisica",
@@ -951,6 +957,31 @@ def modelo_derivado(switches: dict[str, bool]) -> str:
     if switches["a_vista"]:
         return MODELO_A_VISTA
     return MODELO_COMPRA_VENDA
+
+
+def posse_multa_diaria(d: DadosContrato) -> Optional[Decimal]:
+    """[Q12 + migration 207] The daily fine for a late posse: the deal's own
+    override (`Termos.posse_multa_diaria`) → the office value
+    (`Imobiliaria.posse_multa_diaria`) → None (a `faltando`)."""
+    if d.termos.posse_multa_diaria is not None:
+        return d.termos.posse_multa_diaria
+    return d.imobiliaria.posse_multa_diaria
+
+
+def clausulas_extras_ativas(d: DadosContrato) -> dict[str, tuple[list[str], str]]:
+    """[Migration 207] The clauses carrying special conditions that PRINT: clause
+    key -> (typed paragraphs, modo), only for a non-empty entry on a known key.
+    Iterated in the contract's own clause order, so every consumer (gate,
+    context, review items) sees the same sequence."""
+    saida: dict[str, tuple[list[str], str]] = {}
+    for chave in ORDEM_CLAUSULAS:
+        entrada = d.termos.clausulas_extras.get(chave)
+        if entrada is None:
+            continue
+        paragrafos = frases.paragrafos_livres(entrada.texto)
+        if paragrafos:
+            saida[chave] = (paragrafos, entrada.modo)
+    return saida
 
 
 def prazo_pendencias(d: DadosContrato, politica: Politica) -> int:
@@ -2947,17 +2978,79 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
             "imobiliaria",
         )
     # [Q12] the office's posse multa diária.
-    if org.posse_multa_diaria is None:
+    multa_posse = posse_multa_diaria(d)
+    if multa_posse is None:
         av.falta(
             "imobiliaria.posse_multa_diaria",
             "Multa diária por atraso na entrega da posse (valor da imobiliária)",
             "imobiliaria",
         )
-    elif org.posse_multa_diaria <= 0:
+    elif multa_posse <= 0:
         av.bloqueia("MULTA_DIARIA_POSSE_INVALIDA", "A multa diária da posse precisa ser maior que zero.")
     # [Q11] pendências prazo.
     if prazo_pendencias(d, politica) <= 0:
         av.bloqueia("PRAZO_PENDENCIAS_INVALIDO", "O prazo para apresentar as pendências precisa ser maior que zero.")
+
+
+def _clausulas_extras(d: DadosContrato, sw: dict[str, bool], av: Avaliacao) -> None:
+    """[Migration 207] Per-clause special conditions the card holds
+    (`termos.clausulas_extras`): printed VERBATIM in the clause they name and
+    ALWAYS a legal-review item — bespoke wording the office never standardised.
+    "substituir" drops the clause's standard wording, so it is the stronger
+    aviso. Refused (never silently dropped): a key that is not one of the
+    generator's clauses, a mode outside `MODOS_CLAUSULA_EXTRA`, wording typed
+    for a clause this contract does not have, formatting markup."""
+    for chave, entrada in d.termos.clausulas_extras.items():
+        paragrafos = frases.paragrafos_livres(entrada.texto)
+        if chave not in ORDEM_CLAUSULAS:
+            if paragrafos:
+                av.bloqueia(
+                    "CLAUSULA_EXTRA_DESCONHECIDA",
+                    f"Condição especial para a cláusula '{chave}', que o contrato não tem — remova-a.",
+                )
+            continue
+        if not paragrafos:
+            continue
+        titulo_clausula = rotulo_clausula(chave)
+        if entrada.modo not in MODOS_CLAUSULA_EXTRA:
+            av.bloqueia(
+                "CLAUSULA_EXTRA_MODO_INVALIDO",
+                f"Condição especial de '{titulo_clausula}': modo '{entrada.modo}' inválido "
+                f"(use {' ou '.join(MODOS_CLAUSULA_EXTRA)}).",
+            )
+            continue
+        chave_switch = CLAUSULA_CONDICIONAL.get(chave)
+        if chave_switch is not None and not sw.get(chave_switch, False):
+            av.bloqueia(
+                "CLAUSULA_EXTRA_SEM_CLAUSULA",
+                f"Há condição especial para '{titulo_clausula}', mas este contrato não tem essa "
+                "cláusula — o texto não teria onde entrar. Apague-a ou ajuste o negócio.",
+            )
+            continue
+        if any(has_raw_markup(t) for t in paragrafos):
+            av.bloqueia(
+                "TEXTO_LIVRE_COM_MARCACAO",
+                f"Condição especial de '{titulo_clausula}': o texto contém marcação de formatação "
+                "(** ou <u>) — remova-a.",
+            )
+        if entrada.modo == "substituir":
+            codigo = f"CLAUSULA_SUBSTITUIDA_{chave.upper()}"
+            titulo = f"Cláusula padrão SUBSTITUÍDA — {titulo_clausula} (texto digitado)"
+            av.avisa(
+                codigo,
+                f"{titulo_clausula}: o texto padrão desta cláusula NÃO será impresso — vale somente o "
+                "texto digitado, exatamente como digitado, e entra como item da revisão jurídica.",
+            )
+            av.revisar(codigo, titulo, "\n".join(paragrafos))
+        else:
+            codigo = f"CLAUSULA_EXTRA_{chave.upper()}"
+            titulo = f"Condição especial acrescentada — {titulo_clausula} (texto digitado)"
+            av.avisa(
+                codigo,
+                f"{titulo_clausula}: o texto digitado será acrescentado, exatamente como digitado, "
+                "após os parágrafos padrão e entra como item da revisão jurídica.",
+            )
+            av.revisar(codigo, titulo, "\n".join(paragrafos))
 
 
 def pct_intermediarios(d: DadosContrato) -> Decimal:
@@ -3114,6 +3207,7 @@ def _contrato(av: Avaliacao, d: DadosContrato, sw: dict[str, bool]) -> None:
             f"{titulo}: será impresso exatamente como digitado e entra como item da revisão jurídica.",
         )
         av.revisar(codigo, titulo, "\n".join(paragrafos))
+    _clausulas_extras(d, sw, av)
     # [Owner revision, 2026-09-23 — supersedes an earlier `foro_comarca`
     # manual-field draft] NO manual field, NO imóvel-city fallback: the
     # comarca is read off the SAME matrícula transcription the contract
@@ -3238,6 +3332,8 @@ __all__ = [
     "pct_intermediarios",
     "pessoas_certificadas",
     "signatarios_certificandos",
+    "posse_multa_diaria",
     "prazo_pendencias",
     "tipos_exigidos",
+    "clausulas_extras_ativas",
 ]

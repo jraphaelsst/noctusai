@@ -168,6 +168,8 @@ class TestTermosRoundTrip:
         assert set(body["termos"]) == set(TERMOS_CAMPOS)
         # Migration 206: the one clause with a non-null default (sinal first, ON).
         assert body["termos"].pop("sinal_primeira_parcela") is True
+        # Migration 207: the other non-null default — no special conditions.
+        assert body["termos"].pop("clausulas_extras") == {}
         assert all(v is None for v in body["termos"].values())
         assert "posse" in body["completude"]["faltando"]
 
@@ -230,6 +232,58 @@ class TestTermosRoundTrip:
         assert r.json()["termos"]["itens_integrantes_ausente_confirmado"] is False
         linha = scoped.table("atendimento_negociacao_termos").select("*").execute().data[0]
         assert linha["itens_integrantes_ausente_confirmado"] is False
+
+    def test_clausulas_extras_round_trip_normalised_and_whole_replace(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, clausulas_extras={
+            "posse": {"texto": "  Prazo prorrogável uma vez.  ", "modo": "substituir"},
+            "objeto": {"texto": "Parágrafo extra."},
+            "vistoria": {"texto": "   ", "modo": "acrescentar"},
+        })
+        assert r.status_code == 200, r.text
+        # modo defaults to acrescentar, blank text is dropped, text is stripped.
+        assert r.json()["termos"]["clausulas_extras"] == {
+            "objeto": {"texto": "Parágrafo extra.", "modo": "acrescentar"},
+            "posse": {"texto": "Prazo prorrogável uma vez.", "modo": "substituir"},
+        }
+        assert _estruturada(client, cid)["termos"]["clausulas_extras"]["posse"]["modo"] == "substituir"
+        # Whole-replace: a PUT without the key stores the empty default.
+        r = _put_termos(client, cid, ad_corpus=True)
+        assert r.json()["termos"]["clausulas_extras"] == {}
+
+    def test_clausulas_extras_refuses_wrong_with_named_400(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, clausulas_extras={"clausula_inexistente": {"texto": "x"}})
+        assert r.status_code == 400
+        assert "clausula_inexistente" in r.text
+        r = _put_termos(client, cid, clausulas_extras={"posse": {"texto": "x", "modo": "apagar"}})
+        assert r.status_code == 400
+        assert "modo inválido" in r.text
+        r = _put_termos(client, cid, clausulas_extras={"posse": {"texto": "x" * 8001}})
+        assert r.status_code == 400
+
+    def test_termos_opcoes_come_from_the_generator_clause_registry(self, client, scoped):
+        from app.modules.card_hub.contrato_gerador.numeracao import ORDEM_CLAUSULAS
+
+        cid, _aid = _seed(scoped)
+        opcoes = _estruturada(client, cid)["termos_opcoes"]
+        assert [c["chave"] for c in opcoes["clausulas"]] == list(ORDEM_CLAUSULAS)
+        assert {c["chave"] for c in opcoes["clausulas"] if c["condicional"]} == {
+            "confissao", "declaracao_partes", "assinatura_digital", "intermediacao",
+        }
+        assert opcoes["posse_multa_diaria_padrao"] is None  # no office row in this fixture
+
+    def test_posse_multa_diaria_override_round_trips_and_refuses_non_positive(self, client, scoped):
+        cid, _aid = _seed(scoped)
+        r = _put_termos(client, cid, posse_multa_diaria="150.50")
+        assert r.status_code == 200, r.text
+        assert r.json()["termos"]["posse_multa_diaria"] == "150.50"
+        for ruim in ("0", "-5", "abc"):
+            r = _put_termos(client, cid, posse_multa_diaria=ruim)
+            assert r.status_code in (400, 422), (ruim, r.text)
+        # Cleared (absent) = the office default again.
+        r = _put_termos(client, cid, ad_corpus=True)
+        assert r.json()["termos"]["posse_multa_diaria"] is None
 
     def test_sinal_primeira_parcela_defaults_on_and_off_round_trips(self, client, scoped):
         """Migration 206 — NOT NULL DEFAULT true: absent = ON; explicit False sticks."""

@@ -540,6 +540,23 @@ class Testemunha:
     email: Optional[str] = None
 
 
+#: The two ways a clause's special conditions meet its standard wording
+#: (migration 207) — the vocabulary the service validates and the card UI offers.
+MODO_ACRESCENTAR = "acrescentar"
+MODO_SUBSTITUIR = "substituir"
+MODOS_CLAUSULA_EXTRA: tuple[str, ...] = (MODO_ACRESCENTAR, MODO_SUBSTITUIR)
+
+
+@dataclass
+class ClausulaExtra:
+    """One clause's deal-specific text (migration 207). `texto`: one typed
+    paragraph per non-blank line. `modo` is kept AS STORED (never coerced) so
+    `derivacao` can refuse a value outside `MODOS_CLAUSULA_EXTRA`."""
+
+    texto: str = ""
+    modo: str = MODO_ACRESCENTAR
+
+
 @dataclass
 class Termos:
     """`atendimento_negociacao_termos` (migration 114) — the per-deal clauses
@@ -592,6 +609,13 @@ class Termos:
     #: 'vendedores' | 'compradores' | 'partes'
     corretagem_contratantes: Optional[str] = None
     corretagem_num_parcelas: Optional[int] = None
+    #: [Migration 207] clause key (`numeracao.ORDEM_CLAUSULAS`) -> the deal's
+    #: special conditions for it. Empty = every clause prints its standard
+    #: wording (the contract is byte-identical to one generated before 207).
+    clausulas_extras: dict[str, ClausulaExtra] = field(default_factory=dict)
+    #: [Migration 207] Per-deal override of `Imobiliaria.posse_multa_diaria`;
+    #: None = the office default (`derivacao.posse_multa_diaria`).
+    posse_multa_diaria: Optional[Decimal] = None
 
 
 @dataclass

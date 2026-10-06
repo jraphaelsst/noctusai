@@ -642,6 +642,16 @@ PosseMarco = Literal["assinatura", "parcela", "protocolo_registro"]
 PosseMarcoImovel = Literal["assinatura", "parcela", "protocolo_registro", "data_fixa"]
 
 
+class ClausulaExtraBody(StrictHttpModel):
+    """One clause's deal-specific text (migration 207). `modo` and the clause
+    key are validated by the service as named 400s (the vocabulary is the
+    contract generator's `numeracao.ORDEM_CLAUSULAS` / `MODOS_CLAUSULA_EXTRA`,
+    not a second list here)."""
+
+    texto: Optional[str] = Field(default=None, max_length=20000)
+    modo: Optional[str] = None
+
+
 class TermosNegocioPutBody(StrictHttpModel):
     """The deal's contract clauses, replaced as a WHOLE (PUT) — an absent key
     is stored as null. Every field nullable: clauses are drafted over several
@@ -691,6 +701,14 @@ class TermosNegocioPutBody(StrictHttpModel):
         Literal["vendedores", "compradores", "partes"]
     ] = None
     corretagem_num_parcelas: Optional[int] = None
+
+    #: [Migration 207] Per-clause special conditions, `{<clause key>: {texto,
+    #: modo}}` (modo `acrescentar` — default — or `substituir`). Absent/null =
+    #: none (whole-replace, like every key here).
+    clausulas_extras: Optional[dict[str, ClausulaExtraBody]] = None
+    #: [Migration 207] Per-deal override of the office's daily posse fine
+    #: (BRL); absent/null = the office default. Must be > 0 (named 400).
+    posse_multa_diaria: Optional[Decimal] = None
 
 
 class EmpresaManualCreateBody(StrictHttpModel):

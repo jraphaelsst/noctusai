@@ -3657,6 +3657,45 @@ _SW_201_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M207 = "207_termos_clausulas_extras.sql"
+
+#: Migration 207 — per-clause special conditions + per-deal posse multa override.
+_SW_207_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="atendimento_negociacao_termos.clausulas_extras_objeto_json",
+        guard_name="atendimento_negociacao_termos_clausulas_extras_objeto",
+        migration=_M207,
+        rationale=(
+            "clausulas_extras is a map clause-key -> {texto, modo}; a JSON array or scalar has "
+            "no clause keys and the generator would read garbage as bespoke contract text."
+        ),
+        fixtures=("atendimento_org",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_negociacao_termos (atendimento_id, org_id, clausulas_extras)\n"
+            "    VALUES (v_atendimento, v_org, '[]'::jsonb);"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a clausulas_extras that is a JSON array instead of an object",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_negociacao_termos.posse_multa_diaria_positiva",
+        guard_name="atendimento_negociacao_termos_posse_multa_diaria_positiva",
+        migration=_M207,
+        rationale=(
+            "A per-deal daily posse fine is NULL (office default) or a positive amount; "
+            "zero or negative would print a contractual penalty of nothing."
+        ),
+        fixtures=("atendimento_org",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.atendimento_negociacao_termos (atendimento_id, org_id, posse_multa_diaria)\n"
+            "    VALUES (v_atendimento, v_org, 0);"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a zero per-deal posse_multa_diaria",
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — seed editorial workflow (`noctusai_lib.domain.sql_templates.
 # editorial_tables`; project `seed-editorial-workflow`, slice E2).
@@ -4279,6 +4318,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_190_PROBES,
     *_SW_192_PROBES,
     *_SW_201_PROBES,
+    *_SW_207_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,

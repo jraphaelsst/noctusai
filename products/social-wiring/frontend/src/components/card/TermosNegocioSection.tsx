@@ -6,7 +6,7 @@
  *
  * 🔴 PUT REPLACES THE WHOLE OBJECT — every key is sent on every save.
  * `PUT .../negociacao/termos` stores an absent key as `null`; this component
- * keeps ALL seventeen fields in one draft and submits the complete shape on
+ * keeps ALL nineteen fields in one draft and submits the complete shape on
  * "Salvar termos", never a partial patch (there is no PATCH here — see
  * `useAtualizarTermos`).
  *
@@ -45,6 +45,9 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 
+import ClausulasExtrasEditor, {
+  type ClausulasExtrasDraft,
+} from "@/components/card/ClausulasExtrasEditor";
 import { useAtualizarTermos } from "@/hooks/useNegociacaoEstruturada";
 import { ordenarPorOrdem, rotuloParcela } from "@/components/card/negociacao/parcelaOrdem";
 import {
@@ -56,6 +59,7 @@ import {
   POSSE_MARCOS,
   POSSE_MARCOS_IMOVEL,
   POSSE_MARCO_LABELS,
+  type ClausulasExtras,
   type CorretagemContratantes,
   type NegociacaoEstruturada,
   type NegociacaoParcela,
@@ -107,6 +111,12 @@ interface TermosDraft {
 
   corretagem_contratantes: CorretagemContratantes | "";
   corretagem_num_parcelas: string;
+
+  /** Migration 207 — per-deal override of the office's daily posse fine, as
+   *  typed ("150,50"); "" = the office default. */
+  posse_multa_diaria: string;
+  /** Migration 207 — per-clause special conditions (only filled ones). */
+  clausulas_extras: ClausulasExtrasDraft;
 }
 
 function toDraft(t: NegociacaoTermos): TermosDraft {
@@ -142,6 +152,9 @@ function toDraft(t: NegociacaoTermos): TermosDraft {
     corretagem_contratantes: t.corretagem_contratantes ?? "",
     corretagem_num_parcelas:
       t.corretagem_num_parcelas == null ? "" : String(t.corretagem_num_parcelas),
+
+    posse_multa_diaria: t.posse_multa_diaria == null ? "" : t.posse_multa_diaria.replace(".", ","),
+    clausulas_extras: { ...(t.clausulas_extras ?? {}) },
   };
 }
 
@@ -167,6 +180,26 @@ function lerPercentual(v: string): string | null {
   const s = v.trim();
   if (s === "") return null;
   return s.replace(",", ".");
+}
+
+/** Reads a pt-BR-typed amount ("1.500,50", "150,5" or "150.5") into the plain
+ *  decimal string the backend expects; with a comma the dots are thousands
+ *  separators. `null` for blank. Never parsed to float for sending. */
+function lerValorBRL(v: string): string | null {
+  const s = v.trim();
+  if (s === "") return null;
+  return s.includes(",") ? s.replace(/\./g, "").replace(",", ".") : s;
+}
+
+/** Only the clauses that have text travel — an empty entry is "no special
+ *  conditions", which the whole-replace PUT expresses by omission. */
+function clausulasExtrasPayload(c: ClausulasExtrasDraft): ClausulasExtras {
+  const out: ClausulasExtras = {};
+  for (const [chave, e] of Object.entries(c)) {
+    const texto = e.texto.trim();
+    if (texto !== "") out[chave] = { texto, modo: e.modo };
+  }
+  return out;
 }
 
 function toPayload(d: TermosDraft): TermosNegocioPut {
@@ -200,6 +233,9 @@ function toPayload(d: TermosDraft): TermosNegocioPut {
 
     corretagem_contratantes: d.corretagem_contratantes || null,
     corretagem_num_parcelas: inteiroOuNulo(d.corretagem_num_parcelas),
+
+    posse_multa_diaria: lerValorBRL(d.posse_multa_diaria),
+    clausulas_extras: clausulasExtrasPayload(d.clausulas_extras),
   };
 }
 
@@ -327,7 +363,19 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
   const itensListaVazia =
     draft.itens_resposta === "lista" && !draft.itens_integrantes.trim();
 
+  // A per-deal multa must be a positive amount (the backend's named 400, caught
+  // here so the screen never saves a value the contract would refuse).
+  const multaTexto = lerValorBRL(draft.posse_multa_diaria);
+  const multaInvalida =
+    multaTexto !== null && !(Number.isFinite(Number(multaTexto)) && Number(multaTexto) > 0);
+  const multaPadrao = data.termos_opcoes?.posse_multa_diaria_padrao ?? null;
+  const multaPadraoRotulo =
+    multaPadrao === null
+      ? null
+      : Number(multaPadrao).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
   const podeSalvar =
+    !multaInvalida &&
     !posseMarcoFaltaParcela && !posseDataFalta && !permutaMarcoFaltaParcela && !itensListaVazia;
 
   function submit() {
@@ -417,6 +465,29 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label htmlFor="termos-posse-multa">Multa diária por atraso na entrega (R$)</Label>
+            <Input
+              id="termos-posse-multa"
+              data-testid="termos-posse-multa"
+              inputMode="decimal"
+              value={draft.posse_multa_diaria}
+              onChange={(e) => setDraft((d) => ({ ...d, posse_multa_diaria: e.target.value }))}
+              placeholder={
+                multaPadraoRotulo ? `Padrão da imobiliária: ${multaPadraoRotulo}` : "0,00"
+              }
+            />
+            <p className="text-xs text-muted-foreground" data-testid="termos-posse-multa-dica">
+              {multaPadraoRotulo
+                ? "Em branco, o contrato usa o valor padrão da imobiliária."
+                : "Em branco, o contrato usa o valor padrão da imobiliária (Configurações) — hoje não há um cadastrado."}
+            </p>
+            {multaInvalida && (
+              <p className="text-xs text-destructive" data-testid="termos-posse-multa-erro">
+                Informe um valor maior que zero, ou deixe em branco.
+              </p>
+            )}
           </div>
           {draft.posse_marco === "parcela" && (
             <div className="space-y-1.5">
@@ -773,6 +844,20 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
             </div>
           </div>
         </section>
+
+        {/* ─── Condições especiais por cláusula (migration 207) ─────────── */}
+        {data.termos_opcoes && data.termos_opcoes.clausulas.length > 0 && (
+          <ClausulasExtrasEditor
+            clausulas={data.termos_opcoes.clausulas}
+            value={draft.clausulas_extras}
+            onChange={(chave, next) =>
+              setDraft((d) => ({
+                ...d,
+                clausulas_extras: { ...d.clausulas_extras, [chave]: next },
+              }))
+            }
+          />
+        )}
 
         {!podeSalvar && (
           <p

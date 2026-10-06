@@ -72,6 +72,13 @@ TITULO_CLAUSULA: Mapping[str, str] = {
 }
 
 
+def rotulo_clausula(chave: str) -> str:
+    """The clause's heading as a label for the card UI / review items
+    ("Do preço e condições de pagamento") — read off `TITULO_CLAUSULA`, never a
+    second hand list. KeyError for a key that is not one of `ORDEM_CLAUSULAS`."""
+    return TITULO_CLAUSULA[chave].capitalize()
+
+
 class Clausula:
     def __init__(self, chave: str, n: int, registro: "RegistroClausulas") -> None:
         self.chave = chave
@@ -184,4 +191,5 @@ __all__ = [
     "letra",
     "num2",
     "numerar_clausulas",
+    "rotulo_clausula",
 ]

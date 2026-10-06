@@ -243,7 +243,7 @@ describe("marco = 'parcela' exige uma parcela", () => {
 });
 
 describe("PUT — o corpo inteiro é sempre enviado", () => {
-  it("🔴 salvar envia as 20 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
+  it("🔴 salvar envia as 22 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
     const { getByTestId } = await render(aggregate());
     const { fireEvent } = await import("@testing-library/react");
 
@@ -273,8 +273,19 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "confissao_garantia",
         "corretagem_contratantes",
         "corretagem_num_parcelas",
+        "clausulas_extras",
+        "posse_multa_diaria",
       ].sort(),
     );
+  });
+
+  it("sem condições especiais, clausulas_extras vai vazio e a multa vai nula", async () => {
+    const { getByTestId } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    const payload = mockAtualizarTermos.mock.calls[0][0];
+    expect(payload.clausulas_extras).toEqual({});
+    expect(payload.posse_multa_diaria).toBeNull();
   });
 
   it("sinal como Parcela 01: ligado por padrão, desligar salva false pelo mesmo PUT", async () => {
@@ -462,5 +473,105 @@ describe("erro do backend chega por toast", () => {
     const call = (toast.error as unknown as { mock: { calls: unknown[][] } }).mock
       .calls[0];
     expect(String(call[0])).toContain("prazo de posse não pode ser negativo");
+  });
+});
+
+const OPCOES = {
+  clausulas: [
+    { chave: "objeto", rotulo: "Do objeto do contrato", condicional: false },
+    { chave: "posse", rotulo: "Da posse sobre", condicional: false },
+    { chave: "confissao", rotulo: "Da confissão de dívida", condicional: true },
+  ],
+  posse_multa_diaria_padrao: "500.00",
+};
+
+describe("Condições especiais por cláusula (migration 207)", () => {
+  it("lista as cláusulas que o gerador devolve, e some sem termos_opcoes", async () => {
+    const { getByTestId, queryByTestId, unmount } = await render(aggregate({ termos_opcoes: OPCOES }));
+    expect(getByTestId("termos-clausulas-extras")).toBeTruthy();
+    expect(getByTestId("clausula-extra-objeto")).toBeTruthy();
+    expect(getByTestId("clausula-extra-confissao")).toBeTruthy();
+    unmount();
+    const outro = await render(aggregate());
+    expect(outro.queryByTestId("termos-clausulas-extras")).toBeNull();
+    expect(queryByTestId("clausula-extra-objeto")).toBeNull();
+  });
+
+  it("digitar + ligar 'substituir' salva pelo mesmo PUT, só as cláusulas com texto", async () => {
+    const { getByTestId } = await render(aggregate({ termos_opcoes: OPCOES }));
+    const { fireEvent } = await import("@testing-library/react");
+
+    fireEvent.click(getByTestId("clausula-extra-posse-toggle"));
+    fireEvent.change(getByTestId("clausula-extra-posse-texto"), {
+      target: { value: "  Prazo prorrogável uma vez.  " },
+    });
+    // Em branco (só espaços) não é uma entrada.
+    fireEvent.click(getByTestId("clausula-extra-objeto-toggle"));
+    fireEvent.change(getByTestId("clausula-extra-objeto-texto"), { target: { value: "   " } });
+    expect(getByTestId("clausula-extra-posse-badge").textContent).toBe("Com texto");
+
+    fireEvent.click(getByTestId("clausula-extra-posse-substituir"));
+    expect(getByTestId("clausula-extra-posse-badge").textContent).toBe("Substitui a padrão");
+
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[0][0].clausulas_extras).toEqual({
+      posse: { texto: "Prazo prorrogável uma vez.", modo: "substituir" },
+    });
+  });
+
+  it("entradas já salvas voltam preenchidas e abertas, e seguem no PUT", async () => {
+    const { getByTestId } = await render(
+      aggregate({
+        termos_opcoes: OPCOES,
+        termos: {
+          ...termosVazios(),
+          clausulas_extras: { objeto: { texto: "Parágrafo extra do objeto.", modo: "acrescentar" } },
+        },
+      }),
+    );
+    const { fireEvent } = await import("@testing-library/react");
+    expect((getByTestId("clausula-extra-objeto-texto") as HTMLTextAreaElement).value).toBe(
+      "Parágrafo extra do objeto.",
+    );
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[0][0].clausulas_extras).toEqual({
+      objeto: { texto: "Parágrafo extra do objeto.", modo: "acrescentar" },
+    });
+  });
+});
+
+describe("Multa diária da posse — override por negócio (migration 207)", () => {
+  it("mostra o padrão da imobiliária como placeholder e vai nulo em branco", async () => {
+    const { getByTestId } = await render(aggregate({ termos_opcoes: OPCOES }));
+    const input = getByTestId("termos-posse-multa") as HTMLInputElement;
+    expect(input.placeholder).toContain("500,00");
+    expect(input.value).toBe("");
+  });
+
+  it("valor digitado em pt-BR chega como decimal; vem do servidor com vírgula", async () => {
+    const { getByTestId } = await render(aggregate({ termos_opcoes: OPCOES }));
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(getByTestId("termos-posse-multa"), { target: { value: "1.250,50" } });
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[0][0].posse_multa_diaria).toBe("1250.50");
+  });
+
+  it("carrega o override salvo", async () => {
+    const { getByTestId } = await render(
+      aggregate({ termos: { ...termosVazios(), posse_multa_diaria: "150.50" } }),
+    );
+    expect((getByTestId("termos-posse-multa") as HTMLInputElement).value).toBe("150,50");
+  });
+
+  it("zero ou lixo bloqueia o salvar com a explicação", async () => {
+    const { getByTestId, queryByTestId } = await render(aggregate({ termos_opcoes: OPCOES }));
+    const { fireEvent } = await import("@testing-library/react");
+    fireEvent.change(getByTestId("termos-posse-multa"), { target: { value: "0" } });
+    expect(getByTestId("termos-posse-multa-erro")).toBeTruthy();
+    expect((getByTestId("negest-termos-salvar") as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(getByTestId("termos-posse-multa"), { target: { value: "abc" } });
+    expect(getByTestId("termos-posse-multa-erro")).toBeTruthy();
+    fireEvent.change(getByTestId("termos-posse-multa"), { target: { value: "" } });
+    expect(queryByTestId("termos-posse-multa-erro")).toBeNull();
   });
 });

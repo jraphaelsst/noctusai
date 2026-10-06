@@ -46,7 +46,11 @@ them (ÔNUS / permuta posse).
 """
 from __future__ import annotations
 
+import re
+from collections import Counter
+
 from app.modules.card_hub.contrato_gerador import politica
+from app.modules.card_hub.contrato_gerador.numeracao import ORDEM_CLAUSULAS
 
 #: The office's FIXED legal terms (`politica.py`, "Termos fixos do
 #: escritório"), spliced into the wording ONCE at import. A `⟪NOME⟫` marker
@@ -62,6 +66,46 @@ TERMOS_FIXOS: dict[str, str] = {
     "PRAZO_DEVOLUCAO_RESCISAO": politica.PRAZO_DEVOLUCAO_RESCISAO,
     "PRAZO_ATUALIZACAO_CADASTROS": politica.PRAZO_ATUALIZACAO_CADASTROS,
 }
+
+
+#: [Migration 207] Per-clause special conditions. Each clause of
+#: `numeracao.ORDEM_CLAUSULAS` brackets its STANDARD wording between two marker
+#: lines — `⟪CLAUSULA_INICIO:<chave>⟫` (right after the heading) and
+#: `⟪CLAUSULA_FIM:<chave>⟫` (after the last standard line) — and
+#: `_aplicar_clausulas_extras` expands them into docxtpl tags: the standard
+#: wording is skipped when the clause is REPLACED, and the typed paragraphs
+#: (`contexto.extras[<chave>]`, one Word paragraph each) follow it. With no
+#: special conditions both expansions render to nothing, so the contract is
+#: byte-identical to the one printed before the mechanism existed. The import
+#: fails if any clause key lacks (or duplicates) its marker pair — a clause
+#: cannot be added to `ORDEM_CLAUSULAS` without a place for its extras.
+_RE_MARCADOR_CLAUSULA = re.compile(r"^⟪CLAUSULA_(INICIO|FIM):(\w+)⟫$", re.MULTILINE)
+
+
+def _expandir_marcador(match: "re.Match[str]") -> str:
+    tipo, chave = match.group(1), match.group(2)
+    if chave not in ORDEM_CLAUSULAS:
+        raise RuntimeError(f"modelo_texto: marcador de cláusula desconhecida '{chave}'")
+    if tipo == "INICIO":
+        return f"{{%p if not substitui.{chave} %}}"
+    return (
+        "{%p endif %}\n"
+        f"{{%p for t in extras.{chave} %}}\n"
+        f"{{% if t.rotulado %}}**{{{{ par('{chave}') }}}}** {{% endif %}}{{{{ t.texto }}}}\n"
+        "{%p endfor %}"
+    )
+
+
+def _aplicar_clausulas_extras(bruto: str) -> str:
+    achados = Counter(m.groups() for m in _RE_MARCADOR_CLAUSULA.finditer(bruto))
+    for chave in ORDEM_CLAUSULAS:
+        for tipo in ("INICIO", "FIM"):
+            if achados[(tipo, chave)] != 1:
+                raise RuntimeError(
+                    f"modelo_texto: a cláusula '{chave}' precisa de exatamente um marcador "
+                    f"CLAUSULA_{tipo} (achou {achados[(tipo, chave)]})"
+                )
+    return _RE_MARCADOR_CLAUSULA.sub(_expandir_marcador, bruto)
 
 
 def _aplicar_termos_fixos(bruto: str) -> str:
@@ -83,6 +127,7 @@ E de outro lado, {{ C_qualificacao }}, {{ C.g('denominado','denominada','denomin
 Com fundamento na autonomia privada, por vontade livre dos contratantes, que se comprometem a observar os princípios de lealdade, boa-fé e transparência que norteiam o presente contrato, desde sua celebração até após a sua execução, têm entre si justo e contratado o disposto nas cláusulas seguintes do presente Contrato de Promessa de Venda e Compra de Bem Imóvel, que pactuam firmemente, a saber:
 
 <u>CLÁUSULA {{ cl.objeto.ORD }}</u> – DO OBJETO DO CONTRATO
+⟪CLAUSULA_INICIO:objeto⟫
 {{ V.ART }} **{{ V.NOME }}**, {{ titulo_aquisitivo }}, {{ V.pl('tornou-se','tornaram-se') }} {{ V.g('legítimo proprietário','legítima proprietária','legítimos proprietários') }} do imóvel descrito a seguir:
 **IMÓVEL:** {{r imovel.descricao_matricula }} Imóvel devidamente cadastrado pela Prefeitura Municipal de {{ imovel.cidade }} sob nº **{{ imovel.inscricao_municipal }}** e caracterizado na Matrícula Nº **{{ imovel.matricula_numero }}** do {{ imovel.cartorio }}.
 {%p if tem_itens_integrantes %}
@@ -94,8 +139,10 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p if tem_usufruto %}
 **{{ par('objeto') }}** {{ onus.usufruto_texto }}
 {%p endif %}
+⟪CLAUSULA_FIM:objeto⟫
 
 <u>CLÁUSULA {{ cl.preco.ORD }}</u> – DO PREÇO E CONDIÇÕES DE PAGAMENTO
+⟪CLAUSULA_INICIO:preco⟫
 {{ V.ART }} **{{ V.NOME }}** {{ V.pl('compromete-se','comprometem-se') }} a vender para {{ C.art }} **{{ C.NOME }}** e, {{ C.estes }} a comprar-{{ C.pl('lhe','lhes') }} o referido imóvel{% if ad_corpus %} na situação ad corpus (no estado em que se encontra),{% endif %} descrito na {{ cl.objeto.ref }}, pelo preço certo, firme e irreajustável de {{ brl(preco) }}, que deverá ser pago em moeda corrente nacional conforme a seguir estipulado:
 {%p for p in parcelas %}
 **Parcela {{ p.num }}:**{{ p.texto }}
@@ -109,9 +156,11 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p if tem_permuta and tem_financiamento %}
 **{{ par('preco') }}** As Partes estabelecem que a Escritura Pública de Permuta {{ permuta.escritura_ref }} acima, deverá ocorrer de maneira concomitante, a assinatura do Contrato de Financiamento bancário, previsto para quitação da parcela {{ p_ref.financiamento }}.
 {%p endif %}
+⟪CLAUSULA_FIM:preco⟫
 
 {%p if tem_confissao %}
 <u>CLÁUSULA {{ cl.confissao.ORD }}</u> – DA CONFISSÃO DE DÍVIDA, VENCIMENTO ANTECIPADO, FORÇA EXECUTIVA E GARANTIA DA OBRIGAÇÃO.
+⟪CLAUSULA_INICIO:confissao⟫
 {{ C.ART }} **{{ C.NOME }}**, de forma livre, consciente, expressa, irrevogável e irretratável, {{ C.pl('reconhece, confessa e declara','reconhecem, confessam e declaram') }} dever {{ V.aos }} **{{ V.NOME }}** o saldo remanescente do preço da compra e venda objeto deste instrumento, correspondente às parcelas previstas na {{ cl.preco.ref }}, especialmente aquelas descritas como Parcelas {{ confissao.parcelas_nums }}, totalizando o valor nominal de {{ brl(confissao.total) }}, acrescido dos juros remuneratórios convencionados de {{ pct_extenso(confissao.juros_am) }} ao mês, observados os respectivos vencimentos contratualmente estabelecidos.
 **{{ par('confissao') }}** A presente confissão de dívida é realizada nos termos dos artigos 389, 394, 395 e seguintes do Código Civil, constituindo obrigação líquida, certa e exigível, ficando expressamente reconhecido {{ C.pelos }} **{{ C.NOME }}** que o presente instrumento particular, desde que assinado pelos devedores e por duas testemunhas, possui natureza de título executivo extrajudicial, nos termos do artigo 784, inciso III, do Código de Processo Civil, podendo ser promovida a execução judicial independentemente de prévia ação de conhecimento.
 **{{ par('confissao') }}** O inadimplemento de qualquer parcela sujeitará {{ C.art }} **{{ C.NOME }}**, automaticamente e independentemente de qualquer aviso, interpelação ou notificação judicial ou extrajudicial, ao pagamento dos seguintes encargos:
@@ -132,9 +181,11 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p if confissao.garantia_texto %}
 **{{ par('confissao') }}** {{ C.ART }} **{{ C.NOME }}**, {{ C.pl('apresenta','apresentam') }} neste ato, a título de garantia para pagamento dos valores ora confessados como devedores, {{ confissao.garantia_texto }}.
 {%p endif %}
+⟪CLAUSULA_FIM:confissao⟫
 {%p endif %}
 
 <u>CLÁUSULA {{ cl.certidoes.ORD }}</u> – DAS CERTIDÕES E DOCUMENTOS
+⟪CLAUSULA_INICIO:certidoes⟫
 {{ certidoes.apresentantes_texto }} {{ certidoes.apresenta }} neste momento as certidões em {{ certidoes.seus_nomes }}, abaixo relacionadas:
 {%p for g in certidoes.grupos %}
 **{{ g.num }} - Em nome de {{ g.em_nome_de|upper }}{% if g.sufixo %} - {{ g.sufixo }}{% endif %}**
@@ -157,8 +208,10 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p for d in certidoes.pendencias %}
 **{{ d.letra }}-)** {{ d.texto }}{{ '.' if loop.last else ';' }}
 {%p endfor %}
+⟪CLAUSULA_FIM:certidoes⟫
 
 <u>CLÁUSULA {{ cl.onus.ORD }}</u> – DO ÔNUS SOBRE {{ 'OS IMÓVEIS' if tem_permuta else 'O IMÓVEL' }}
+⟪CLAUSULA_INICIO:onus⟫
 {%p if tem_permuta %}
 {{ V.ART }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}** declaram expressamente, sob as penas da lei, inclusive responsabilidade civil e criminal, que não existem ações reais ou pessoais reipersecutórias que recaiam sobre os imóveis objeto desta transação, respondendo, ambos, pela evicção de direito, na forma da legislação vigente.
 {%p else %}
@@ -173,8 +226,10 @@ Com fundamento na autonomia privada, por vontade livre dos contratantes, que se 
 {%p for t in obrigacoes_vendedor %}
 {% if loop.first %}**{{ par('onus') }}** {% endif %}{{ t }}
 {%p endfor %}
+⟪CLAUSULA_FIM:onus⟫
 
 <u>CLÁUSULA {{ cl.posse.ORD }}</u> – DA POSSE SOBRE {{ 'OS IMÓVEIS' if tem_permuta else 'O IMÓVEL' }}
+⟪CLAUSULA_INICIO:posse⟫
 {%p if tem_permuta %}
 {{ C.ART }} **{{ C.NOME }}**, {{ C.pl('assume','assumem') }} a obrigação de fazer a entrega da posse {{ 'dos imóveis situados' if permuta.plural else 'do imóvel situado' }} à {{ permuta.endereco_curto }} {{ V.aos }} **{{ V.NOME }}**, {{ permuta.posse_prazo_frase }}.
 Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete','se comprometem') }} a permitir o acesso {{ 'aos imóveis' if permuta.plural else 'ao imóvel' }}, mediante prévio agendamento, a qualquer tempo, {{ V.aos }} **{{ V.NOME }}**, ao novo proprietário ou a terceiros por estes autorizados, para fins de vistoria, medição, planejamento ou quaisquer outras providências relacionadas ao imóvel.
@@ -193,8 +248,10 @@ Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete
 **{{ par('posse') }}** Fica convencionada multa de {{ brl(posse.multa_diaria) }} por dia de atraso na hipótese de que {{ V.art }} **{{ V.NOME }}**, {{ V.pl('apresente','apresentem') }} obstáculos para acesso ao imóvel ou entrega das chaves, no prazo ora pactuado, sem prejuízo de eventual propositura de demanda de imissão na posse ou ação de perdas e danos.
 {%p endif %}
 {%p endif %}
+⟪CLAUSULA_FIM:posse⟫
 
 <u>CLÁUSULA {{ cl.tributos.ORD }}</u> - DO PAGAMENTO DOS TRIBUTOS, TAXAS E CONTRIBUIÇÕES
+⟪CLAUSULA_INICIO:tributos⟫
 {%p if tem_permuta %}
 {{ V.ART }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}**, cada qual se responsabilizará pelos pagamentos pontuais dos tributos, taxas e contribuições de melhoria, incidentes sobre seu imóvel, que se vencerem a partir da data da transmissão da posse sobre o imóvel adquirido, especialmente o IPTU, Condomínio, Luz, água e gás.
 **{{ par('tributos') }}** {{ V.ART }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}** se obrigam a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de ⟪PRAZO_ATUALIZACAO_CADASTROS⟫ após a posse e se obrigam a dar ciência {{ V.aos }} **{{ V.NOME }}** e {{ C.aos }} **{{ C.NOME }}** das transferências feitas, apresentando os devidos protocolos ou a devida titularidade trocada.
@@ -204,42 +261,58 @@ Durante o referido período, {{ C.art }} **{{ C.NOME }}** {{ C.pl('se compromete
 **{{ par('tributos') }}** {{ C.ART }} **{{ C.NOME }}** se {{ C.pl('obriga','obrigam') }} a informar a aquisição do imóvel objeto deste contrato, no cadastro da Prefeitura Municipal, cadastro de administradora de Condomínios, bem como junto às concessionárias públicas, a fim de que para o próximo exercício de contribuição os respectivos avisos de cobrança sejam lançados em seu nome no prazo máximo de ⟪PRAZO_ATUALIZACAO_CADASTROS⟫ após a posse e se {{ C.pl('obriga','obrigam') }} a dar ciência {{ V.aos }} **{{ V.NOME }}** das transferências feitas, apresentando os protocolos ou a devida titularidade trocada.
 **{{ par('tributos') }}** As despesas decorrentes deste instrumento, tais como, emolumentos de cartório, registro, ITBI, serão suportadas {{ C.pelos }} **{{ C.NOME }}**.
 {%p endif %}
+⟪CLAUSULA_FIM:tributos⟫
 
 <u>CLÁUSULA {{ cl.irretratabilidade.ORD }}</u> – DA IRRETRATABILIDADE, VINCULAÇÃO E RESCISÃO
+⟪CLAUSULA_INICIO:irretratabilidade⟫
 O presente Instrumento Particular de Promessa de Compra e Venda de Bem Imóvel, é firmado em caráter irrevogável e irretratável, não se admitindo arrependimento por nenhum dos contratantes, vinculando não só as partes, mas também seus herdeiros e/ou sucessores, que deverão fazer da presente venda sempre boa, firme e valiosa, tendo como base legal os artigos 417 a 420 do Código Civil, nos termos dos parágrafos seguintes.
 **{{ par('irretratabilidade') }}** Não obstante a irretratabilidade e irrevogabilidade do presente Instrumento, considerar-se-á rescindido o presente Instrumento, por descumprimento das obrigações assumidas {{ V.pelos }} **{{ V.NOME }}** ou {{ C.pelos }} **{{ C.NOME }}**{{ rescisao.cura_frase }}.
 **{{ par('irretratabilidade') }}** Fica ajustado entre as Partes, multa rescisória no valor de {{ brl(multa_rescisoria) }}, a ser paga pela parte que der causa à rescisão, que arcará ainda com todos os custos comprovadamente gerados durante o processo de compra e venda até a data da rescisão.
 **{{ par('irretratabilidade') }}** Caso a rescisão do Contrato seja motivada {{ V.pelos }} **{{ V.NOME }}**, {{ V.estes }} {{ V.pl('deverá','deverão') }}, além do pagamento da multa rescisória, devolver {{ C.aos }} **{{ C.NOME }}**, todas as importâncias efetivamente recebidas {{ C.g('deste','desta','destes') }}, no prazo máximo de ⟪PRAZO_DEVOLUCAO_RESCISAO⟫ após a rescisão do Contrato.
 **{{ par('irretratabilidade') }}** Caso a rescisão do Contrato seja motivada {{ C.pelos }} **{{ C.NOME }}**, caracterizada pela falta de pagamento de qualquer das parcelas, {{ C.estes }} {{ C.pl('perderá','perderão') }} o valor pago do Sinal em favor {{ V.dos }} **{{ V.NOME }}**, a título indenizatório.
+⟪CLAUSULA_FIM:irretratabilidade⟫
 
 <u>CLÁUSULA {{ cl.mora.ORD }}</u> – DA MORA E DO INADIMPLEMENTO
+⟪CLAUSULA_INICIO:mora⟫
 Na hipótese de atraso no pagamento de qualquer das parcelas do preço, {{ C.art }} **{{ C.NOME }}** {{ C.pl('arcará','arcarão') }} com multa moratória de ⟪MULTA_MORATORIA⟫ sobre o valor do débito, acrescido de juros moratórios de ⟪JUROS_MORATORIOS_AM⟫ ao mês e correção monetária pelo ⟪INDICE_CORRECAO_MONETARIA⟫.
+⟪CLAUSULA_FIM:mora⟫
 
 {%p if tem_declaracao_partes %}
 <u>CLÁUSULA {{ cl.declaracao_partes.ORD }}</u> – DECLARAÇÃO DAS PARTES
+⟪CLAUSULA_INICIO:declaracao_partes⟫
 Declaram {{ V.art }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}** expressamente e sob as penas da lei, não estarem vinculados a nenhuma das restrições previdenciárias previstas na Lei 8.212/91, bem como, não existirem feitos ajuizados, fundados em ação real ou pessoais reipersecutórias, impostos e taxas em atraso ou outro qualquer ônus que recaia sobre {{ 'os imóveis objetos' if tem_permuta else 'o imóvel objeto' }} do presente instrumento, e tudo nos termos do Decreto 93.240, de 09 de setembro de 1986, que regulamentou a Lei Federal nº 7.433 de 18 de dezembro de 1985.
+⟪CLAUSULA_FIM:declaracao_partes⟫
 {%p endif %}
 
 <u>CLÁUSULA {{ cl.vistoria.ORD }}</u> – DA VISTORIA PRÉVIA
+⟪CLAUSULA_INICIO:vistoria⟫
 {%p if tem_permuta %}
 Declaram {{ V.art }} **{{ V.NOME }}** e {{ C.art }} **{{ C.NOME }}** haverem vistoriado tanto a área interna quanto a externa dos imóveis objetos da presente negociação, bem como as áreas de uso comum do condomínio onde os mesmos estão localizados, estando cientes do estado atual de conservação de ambas as áreas ora mencionadas.
 {%p else %}
 {{ C.pl('Declara','Declaram') }} {{ C.art }} **{{ C.NOME }}** {{ C.pl('haver','haverem') }} pessoalmente vistoriado o imóvel objeto da presente negociação{% if imovel.em_condominio %}, bem como as áreas de uso comum do condomínio onde o mesmo está localizado{% endif %}, estando {{ C.g('ciente','ciente','cientes') }} do estado atual de conservação {{ 'de ambas as áreas ora mencionadas' if imovel.em_condominio else 'do imóvel' }}, pelo que {{ C.pl('manifesta','manifestam') }} seu conhecimento e aceitação.
 {%p endif %}
+⟪CLAUSULA_FIM:vistoria⟫
 
 {%p if tem_assinatura_digital %}
 <u>CLÁUSULA {{ cl.assinatura_digital.ORD }}</u> - DA ASSINATURA DIGITAL
+⟪CLAUSULA_INICIO:assinatura_digital⟫
 As Partes expressamente concordam em utilizar e reconhecem como válida qualquer forma de comprovação de anuência aos termos ora acordados em formato eletrônico através da plataforma {{ assinatura.plataforma_nome }} ({{ assinatura.plataforma_url }}). A formalização do negócio por meio digital será suficiente para a validade e integral vinculação das partes ao presente Contrato, nos termos da Medida Provisória n.º 2.200-2/2001 e demais normas aplicáveis, produzindo os mesmos efeitos legais das assinaturas manuscritas.
+⟪CLAUSULA_FIM:assinatura_digital⟫
 {%p endif %}
 
 <u>CLÁUSULA {{ cl.registro.ORD }}</u> – AUTORIZAÇÃO DE REGISTRO DESTE INSTRUMENTO
+⟪CLAUSULA_INICIO:registro⟫
 Fica o Senhor Oficial do Registro de Imóveis competente autorizado, mediante provocação de qualquer das partes contratantes, a promover o registro do presente instrumento, na forma hábil.
+⟪CLAUSULA_FIM:registro⟫
 
 <u>CLÁUSULA {{ cl.resolutiva.ORD }}</u> – CLÁUSULA RESOLUTIVA EXPRESSA
+⟪CLAUSULA_INICIO:resolutiva⟫
 A presente transação é realizada em caráter irrevogável e irretratável, exceto no caso de inadimplência das partes, quando a rescisão do presente contrato se operará de pleno direito, nos termos do art. 474 do Código Civil, com as penalidades previstas na {{ cl.irretratabilidade.ref }} deste.{% if resolutiva_notificacao_email %} Declara-se expressamente ciência acerca da eventual inadimplência se caracteriza pela omissão ao pagamento do preço nos termos e condições previstos na {{ cl.preco.ref|lower }}, cuja notificação para constituição da mora resolutiva se dará por notificação encaminhada ao endereço eletrônico informado pelas partes.{% endif %}
+⟪CLAUSULA_FIM:resolutiva⟫
 
 {%p if tem_intermediacao %}
 <u>CLÁUSULA {{ cl.intermediacao.ORD }}</u> - DA INTERMEDIAÇÃO
+⟪CLAUSULA_INICIO:intermediacao⟫
 Neste ato {{ corretagem.contratantes_texto }} {{ corretagem.contrata }} {{ corretagem.empresas_texto }}, para promover a presente intermediação:
 {%p for q in corretagem.qualificados %}
 {{ q }}
@@ -249,10 +322,13 @@ Neste ato {{ corretagem.contratantes_texto }} {{ corretagem.contrata }} {{ corre
 {{ s }}{{ '.' if loop.last else ';' }}
 {%p endfor %}
 **{{ par('intermediacao') }}** Fica ajustado que em caso de rescisão do presente Contrato, a **PARTE** que der causa a rescisão, fica com o encargo do pagamento do valor de {{ corretagem.pct_rescisao }} de corretagem.
+⟪CLAUSULA_FIM:intermediacao⟫
 {%p endif %}
 
 <u>CLÁUSULA {{ cl.foro.ORD }}</u> - DA ELEIÇÃO DO FORO
+⟪CLAUSULA_INICIO:foro⟫
 As partes elegem o foro da Comarca de {{ foro.comarca }}, para dirimir as questões decorrentes do presente instrumento, renunciando a outro, por mais privilegiado que seja.
+⟪CLAUSULA_FIM:foro⟫
 {%p if tem_assinatura_digital %}
 E, por estarem assim justos e contratados, os contraentes assinam o presente instrumento de forma digital, na presença das testemunhas abaixo identificadas.
 {%p else %}
@@ -317,7 +393,7 @@ TESTEMUNHAS:
 {%p endif %}
 """
 
-TEMPLATE = _aplicar_termos_fixos(_TEMPLATE_BRUTO)
+TEMPLATE = _aplicar_termos_fixos(_aplicar_clausulas_extras(_TEMPLATE_BRUTO))
 
 
 def linhas_do_template() -> list[str]:

@@ -32,6 +32,7 @@ from app.modules.card_hub.contrato_gerador.extenso import brl_por_extenso
 from app.modules.card_hub.contrato_gerador import citacao_matricula, frases
 from app.modules.card_hub.contrato_gerador.concordancia import genero_exigido, lado
 from app.modules.card_hub.contrato_gerador.dados import (
+    MODO_SUBSTITUIR,
     DadosContrato,
     ParteJuridica,
     Pessoa,
@@ -45,6 +46,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     antigos_no_contrato,
     antigos_proprietarios,
     antigos_proprietarios_pj,
+    clausulas_extras_ativas,
     empresas_impressas_como_parte,
     partes_pj_contratantes,
     conjuge_do_anuente,
@@ -60,6 +62,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     parcelas_antes_de,
     parcelas_ordenadas,
     pessoas_certificadas,
+    posse_multa_diaria,
     prazo_pendencias,
     resolver_endereco_posse,
     tipos_exigidos,
@@ -68,6 +71,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
 from app.modules.card_hub.contrato_gerador.estilo import negrito, nome_parte
 from app.modules.card_hub.contrato_gerador.numeracao import (
     ContadorParagrafos,
+    ORDEM_CLAUSULAS,
     juntar,
     letra,
     numerar_clausulas,
@@ -215,6 +219,34 @@ def _descricao_matricula_rica(d: DadosContrato, adapter: DocxRenderAdapter) -> A
         ranges = clip_ranges(d.matricula.formatacao, 0, len(texto))
         texto, ranges = citacao_matricula.citacao(texto, ranges)
     return adapter.rich_text(runs_from_ranges(texto, ranges))
+
+
+def _clausulas_extras_contexto(
+    d: DadosContrato, cl: dict[str, Any]
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, bool]]:
+    """[Migration 207] For EVERY clause key (`ORDEM_CLAUSULAS` — the template
+    reads each one, and a missing key would fail the render): the typed
+    paragraphs to print and whether they REPLACE the clause's standard body.
+
+    "acrescentar": every paragraph is a numbered "Parágrafo …" after the
+    standard ones. "substituir": the first paragraph is the clause's body
+    (unlabelled, like every clause's opening), the rest are numbered
+    paragraphs — the heading and the clause number are the template's, kept.
+    A clause this contract does not include (conditional, switched off) gets
+    nothing — `derivacao._clausulas_extras` already blocked the typed text."""
+    ativas = clausulas_extras_ativas(d)
+    extras: dict[str, list[dict[str, Any]]] = {chave: [] for chave in ORDEM_CLAUSULAS}
+    substitui: dict[str, bool] = {chave: False for chave in ORDEM_CLAUSULAS}
+    for chave, (paragrafos, modo) in ativas.items():
+        if chave not in cl:
+            continue
+        troca = modo == MODO_SUBSTITUIR
+        substitui[chave] = troca
+        extras[chave] = [
+            {"rotulado": not (troca and i == 0), "texto": texto}
+            for i, texto in enumerate(paragrafos)
+        ]
+    return extras, substitui
 
 
 def montar_contexto(
@@ -641,7 +673,7 @@ def montar_contexto(
         ),
         "condicao_frase": condicao,
         # [Q12] the office's value — same daily fine for each party in a permuta.
-        "multa_diaria": d.imobiliaria.posse_multa_diaria,
+        "multa_diaria": posse_multa_diaria(d),
     }
     permuta: dict[str, Any] = {}
     if sw["tem_permuta"]:
@@ -744,6 +776,8 @@ def montar_contexto(
     ]
     A_NOME = "ANUENTES" if len(anu) > 1 else "ANUENTE"  # noqa: N806 — template token
 
+    extras, substitui = _clausulas_extras_contexto(d, cl)
+
     return {
         **sw,
         "cl": cl,
@@ -770,6 +804,10 @@ def montar_contexto(
         "permuta_obrigacoes": (
             frases.paragrafos_livres(termos.permuta_obrigacoes_entrega) if sw["tem_permuta"] else []
         ),
+        # [Migration 207] Per-clause special conditions (`modelo_texto`'s
+        # `CLAUSULA_INICIO/FIM` markers read these for EVERY clause key).
+        "extras": extras,
+        "substitui": substitui,
         "imovel": imovel,
         "titulo_aquisitivo": _sem_adquirido_inicial((im.titulo_aquisitivo_texto or "").strip()),
         "itens_integrantes": (termos.itens_integrantes or "").strip(),
