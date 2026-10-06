@@ -218,6 +218,20 @@ export type {
 // Social dashboard shell organ — the shared container/header/network-toggle/
 // Radix-Tabs spine every social-account dashboard page (YouTube, Meta, ...)
 // otherwise hand-rolls. See KNOWLEDGE-BASE/CONTEXT/PATTERNS/frontend/frontend.md.
+export {
+  MediaInsightsModal,
+  formatMediaInsightValue,
+  MEDIA_INSIGHTS_EMPTY_MESSAGE,
+} from "./dashboard/MediaInsightsModal";
+export type {
+  MediaInsightsModalProps,
+  MediaInsightsMedia,
+  MediaInsightsKpi,
+  MediaInsightsMetric,
+  MediaInsightsSeries,
+  MediaInsightsSeriesPoint,
+  MediaInsightsFormat,
+} from "./dashboard/MediaInsightsModal";
 export { SocialDashboardShell } from "./dashboard/SocialDashboardShell";
 export type {
   SocialDashboardShellProps,

@@ -27,7 +27,10 @@ export function useVideoTrend(videoId: string | null, accountId?: string | null)
   const effectiveAccountId = accountId ?? storeAccountId;
 
   const [data, setData] = useState<VideoTrendPoint[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Starts true when a video is already selected so the first paint is a
+  // loading state, not a one-frame "Sem histórico" lie before the effect runs.
+  const [loading, setLoading] = useState(videoId !== null);
+  const [reloadTick, setReloadTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const buildPath = useCallback(
@@ -64,7 +67,9 @@ export function useVideoTrend(videoId: string | null, accountId?: string | null)
     return () => {
       cancelled = true;
     };
-  }, [videoId, buildPath]);
+  }, [videoId, buildPath, reloadTick]);
 
-  return { data, loading, error };
+  const refetch = useCallback(() => setReloadTick((n) => n + 1), []);
+
+  return { data, loading, error, refetch };
 }

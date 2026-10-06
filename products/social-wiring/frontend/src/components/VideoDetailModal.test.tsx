@@ -13,7 +13,7 @@
  *   · recharts mocked (no SVG rendering).
  *   · lucide icons mocked as inert spans.
  */
-import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach, beforeAll } from "vitest";
 
 afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
@@ -70,29 +70,22 @@ function React_stub_passthrough({ children }: any) {
   return <span>{children}</span>;
 }
 
-// recharts mocks
-vi.mock("recharts", () => ({
-  CartesianGrid: () => null,
-  Line: () => null,
-  LineChart: ({ children }: any) => <div data-testid="line-chart">{children}</div>,
-  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
-  Tooltip: () => null,
-  XAxis: () => null,
-  YAxis: () => null,
-}));
-
-vi.mock("lucide-react", () => ({
-  AlertTriangle: () => <span data-testid="alert-triangle-icon" />,
-  Edit2: () => <span data-testid="edit2-icon" />,
-  ExternalLink: () => null,
-  Eye: () => null,
-  Heart: () => null,
-  Loader2: () => <span data-testid="loader" />,
-  MessageCircle: () => null,
-  PlaySquare: () => null,
-  Trash2: () => <span data-testid="trash2-icon" />,
-  X: () => <span>X</span>,
-}));
+// The seed MediaInsightsModal + real recharts/lucide render for real; jsdom has
+// no layout/ResizeObserver, so give recharts a measurable container.
+beforeAll(() => {
+  class StubResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as any).ResizeObserver = StubResizeObserver;
+  Object.defineProperty(HTMLElement.prototype, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ width: 500, height: 220, top: 0, left: 0, right: 500, bottom: 220, x: 0, y: 0, toJSON() {} }),
+  });
+  Object.defineProperty(HTMLElement.prototype, "offsetWidth", { configurable: true, value: 500 });
+  Object.defineProperty(HTMLElement.prototype, "offsetHeight", { configurable: true, value: 220 });
+});
 
 // ─── TanStack react-query stub (minimal: useMutation) ────────────────────────
 
@@ -147,7 +140,7 @@ async function renderModal(props: any = {}) {
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 beforeEach(() => {
-  mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: null });
+  mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: null, refetch: vi.fn() });
 });
 
 describe("VideoDetailModal — closed state", () => {
@@ -201,24 +194,37 @@ describe("VideoDetailModal — open state", () => {
 
   it("calls onClose when close button clicked", async () => {
     const onClose = vi.fn();
-    const { getByLabelText, fireEvent } = await renderModal({ video, onClose });
-    const closeBtn = getByLabelText("Fechar");
-    fireEvent.click(closeBtn);
+    const { fireEvent } = await renderModal({ video, onClose });
+    // Radix' built-in close control (sr-only "Close")
+    const { screen } = await import("@testing-library/react");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     expect(onClose).toHaveBeenCalledOnce();
   });
 });
 
 describe("VideoDetailModal — trend chart states", () => {
+  it("shows the error with a retry wired to the hook's refetch", async () => {
+    const refetch = vi.fn();
+    mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: "boom", refetch });
+    const { fireEvent } = await renderModal({ video });
+    const { screen } = await import("@testing-library/react");
+    expect(screen.getByRole("alert").textContent).toContain("boom");
+    fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
+
   it("shows 'Sem histórico' empty state when trend returns no points", async () => {
-    mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: null });
+    mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: null, refetch: vi.fn() });
     const { getByText } = await renderModal({ video });
     expect(getByText(/Sem histórico/i)).toBeTruthy();
   });
 
-  it("shows loading spinner while trend is loading", async () => {
-    mockUseVideoTrend.mockReturnValue({ data: [], loading: true, error: null });
-    const { getByTestId } = await renderModal({ video });
-    expect(getByTestId("loader")).toBeTruthy();
+  it("shows the loading skeleton while the trend is loading with no data yet", async () => {
+    mockUseVideoTrend.mockReturnValue({ data: [], loading: true, error: null, refetch: vi.fn() });
+    await renderModal({ video });
+    const { screen } = await import("@testing-library/react");
+    expect(screen.getByRole("status", { name: "Carregando" })).toBeTruthy();
   });
 
   it("renders chart when trend data is populated", async () => {
@@ -229,13 +235,18 @@ describe("VideoDetailModal — trend chart states", () => {
       ],
       loading: false,
       error: null,
+      refetch: vi.fn(),
     });
-    const { getByTestId } = await renderModal({ video });
-    expect(getByTestId("line-chart")).toBeTruthy();
+    await renderModal({ video });
+    // default = top-2 metrics (views + likes) drawn; comments available as a chip
+    const { screen } = await import("@testing-library/react");
+    expect(screen.getByRole("button", { name: "Visualizações" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Comentários" }).getAttribute("aria-pressed")).toBe("false");
+    expect(document.querySelectorAll("path.recharts-line-curve").length).toBe(2);
   });
 
   it("passes videoId to useVideoTrend", async () => {
-    mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: null });
+    mockUseVideoTrend.mockReturnValue({ data: [], loading: false, error: null, refetch: vi.fn() });
     await renderModal({ video });
     // The trend hook should be called with the youtube_video_id
     const firstCall = mockUseVideoTrend.mock.calls[0];

@@ -1,0 +1,31 @@
+name: MediaInsightsModal
+path: seed/lib/frontend/src/design-system/dashboard/MediaInsightsModal.tsx
+phase: media-insights-modal
+registered_at: "2026-10-06"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Generalizes social-wiring's VideoDetailModal (+ inline VideoTrendChart) and AdDetalheModal into one product-agnostic post/video insights modal: header (thumbnail, title, clamped-expandable caption, type, date, permalink button), KPI StatTileRow, `extra` product slot, metric-chip selector + LineChart over a date axis."
+  - "Built on the Radix dialog (ui/radix-dialog) not the inline ui/Dialog: the inline one has no focus trap. Radix gives focus trap, Escape, aria-labelledby/-describedby."
+  - "Two-signal loading: skeleton only when loading && series===null; a refetch over existing series keeps the chart and shows 'Atualizando…'. Callers pass one `loading` (any fetch)."
+  - "Default selected series = first 2 priority-ordered metrics that have at least one non-null point; user toggles are keyed by the metrics signature so switching media resets them. At least 1 series stays selected."
+  - "Series share one Y axis (formatted by the first selected metric's format); null points are gaps, never zeros. KPI null renders an em dash."
+  - "Consumers: YouTube VideoDetailModal (social-wiring). Instagram/Meta/CoreStudio planned (ig-insights contract 2026-10-06)."
+
+errors_encountered: []
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Dual y-axes for metrics of different magnitude (views vs likes) — rejected for v1: LineChart organ is single-axis; chips let the user pick comparable metrics instead."
+
+manual_validation_log: []
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
