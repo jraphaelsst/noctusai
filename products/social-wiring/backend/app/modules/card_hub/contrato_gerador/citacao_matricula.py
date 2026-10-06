@@ -11,6 +11,9 @@ as `Conforme AV.<n>, <the act's own wording>`, THEN the template's fixed
 * The act wording is the matrícula's, copied: only its register header
   (`AV-4/12.345 - Em 5 de maio de 2010.`) and a leading ALL-CAPS title
   (`CADASTRO - `) are dropped, whitespace is flowed.
+* Only `AV` acts that change the physical description are carried
+  (`politica.AVERBACOES_CITADAS`); selected ônus/cancelamento/casamento/
+  cadastro acts feed other clauses, never this quote.
 * Only `AV` acts are carried; `R` acts (títulos, ônus) never are — the
   título aquisitivo has its own clause.
 * The matrícula's own `INSCRIÇÃO CADASTRAL: …` / `CONTRIBUINTE …` line is
@@ -31,7 +34,10 @@ decimals.
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Optional, Sequence
+
+from app.modules.card_hub.contrato_gerador.politica import AVERBACOES_CITADAS, AVERBACOES_NAO_CITADAS
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
 
@@ -92,6 +98,22 @@ def sem_inscricao_da_matricula(texto: str, ranges: Sequence[FormatRange] = ()):
     return _remover(texto, ranges, spans)
 
 
+def _dobrar(texto: str) -> str:
+    sem = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+    return re.sub(r"\s+", " ", sem.lower()).strip()
+
+
+def averbacao_deve_ser_citada(texto: str) -> bool:
+    """Does this act change the property's description (the office quotes
+    only those — `politica.AVERBACOES_CITADAS`)? A veto term in the act's
+    title/opening (first 80 chars after the header) always wins; a quoting
+    term is looked for in the first 250."""
+    corpo = _dobrar(_CABECALHO_AV.sub("", texto or "", count=1))
+    if any(t in corpo[:80] for t in AVERBACOES_NAO_CITADAS):
+        return False
+    return any(t in corpo[:250] for t in AVERBACOES_CITADAS)
+
+
 def averbacao_citada(numero: Optional[object], texto: str) -> Optional[str]:
     """`Conforme AV.<n>, <wording>.` for one selected averbação; `None` when
     nothing remains after the header (an empty act is never quoted)."""
@@ -119,7 +141,11 @@ def citacao(
     texto, ranges = sem_inscricao_da_matricula(texto.rstrip(), ranges)
     texto = texto.rstrip()
     ranges = [r for r in ranges if r.end <= len(texto)]
-    citadas = [c for c in (averbacao_citada(n, t) for n, t in averbacoes) if c]
+    citadas = [
+        c
+        for c in (averbacao_citada(n, t) for n, t in averbacoes if averbacao_deve_ser_citada(t))
+        if c
+    ]
     if citadas:
         texto = f"{texto} {' '.join(citadas)}"
     return normalizar_areas(texto), ranges

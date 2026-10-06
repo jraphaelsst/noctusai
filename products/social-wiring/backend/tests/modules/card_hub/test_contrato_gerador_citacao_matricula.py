@@ -56,6 +56,32 @@ class TestAverbacoesNaCitacao:
         )
 
 
+AV_ONUS = "AV-3/12.345 - Em 1/2/2009. CÉDULA DE CRÉDITO IMOBILIÁRIO - Pelo instrumento, o Banco Ficticio S.A. é credor; área construída de 90,00m²."
+AV_CANCELAMENTO = "AV.5/12.345 - Em 1/2/2011. CANCELAMENTO - Procedo a presente para constar o cancelamento da construção dada em garantia."
+AV_CASAMENTO = "AV.7/12.345 - Em 1/2/2013. CASAMENTO - Pelo requerimento, consta o casamento de Fulano e Beltrana."
+AV_CADASTRO = "AV.8/12.345 - Em 1/2/2014. CADASTRO - procede-se a presente para constar o cadastro municipal do imóvel."
+
+
+class TestSoAverbacoesQueMudamADescricao:
+    def test_selected_onus_party_and_cadastro_acts_are_not_quoted(self):
+        q = _quote(_dados([("3", AV_ONUS), ("5", AV_CANCELAMENTO), ("7", AV_CASAMENTO), ("8", AV_CADASTRO)]))
+        assert q == DESCRICAO
+
+    def test_only_the_description_changing_act_survives_among_selected(self):
+        q = _quote(_dados([("3", AV_ONUS), ("4", AV_HABITE), ("7", AV_CASAMENTO)]))
+        assert "Conforme AV.4," in q and "AV.3" not in q and "AV.7" not in q
+
+    def test_an_untitled_numbering_act_is_recognised_by_its_opening(self):
+        t = "AV.9/1 - Em 1/1/2015. Pelo requerimento, procedo a presente para constar que o imóvel recebeu o nº 55 da Rua Fictícia."
+        assert cm.averbacao_deve_ser_citada(t)
+
+    def test_the_policy_sets_are_declared_in_politica(self):
+        from app.modules.card_hub.contrato_gerador import politica
+
+        assert "construcao" in politica.AVERBACOES_CITADAS
+        assert "cancelamento" in politica.AVERBACOES_NAO_CITADAS
+
+
 class TestSemInscricaoDaMatricula:
     def test_the_matriculas_own_inscricao_line_is_dropped(self):
         d = _dados(descricao=DESCRICAO + "\n\nINSCRIÇÃO CADASTRAL: nº 1234-56 (área maior).")

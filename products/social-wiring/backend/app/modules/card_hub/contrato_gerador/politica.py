@@ -40,6 +40,30 @@ ONUS_USUFRUTO = "usufruto"
 #: rather than fall through.
 ONUS_SUPORTADOS: tuple[str, ...] = ("livre", ONUS_USUFRUTO) + ONUS_COM_SALDO
 
+#: The averbações the office carries into the `IMÓVEL:` quote
+#: (`citacao_matricula`): only acts that change the property's PHYSICAL
+#: description — what was built, its official number, demolition,
+#: unification/subdivision. Corpus (signed contracts + the cards' own
+#: matrículas): every quoted act is one of these; ônus, cancelamentos,
+#: casamento/estado civil/nome, razão social/incorporação, cadastro, CCI,
+#: restrições and the like are never quoted (a selected act of those kinds
+#: feeds ônus/título/partes, not the quote). Matched on the act's title (or,
+#: untitled, its opening words) after accent/case folding.
+AVERBACOES_CITADAS: tuple[str, ...] = (
+    "construcao", "edificac", "habite-se", "numeracao", "emplacamento",
+    "numero oficial", "oficializacao", "recebeu o numero", "recebeu o no ", "demolicao",
+    "unificacao", "desmembramento",
+)
+#: Titles that veto the above — an act ABOUT an ônus/party/registry matter
+#: that merely mentions a building or a number is not a description change.
+AVERBACOES_NAO_CITADAS: tuple[str, ...] = (
+    "cancelamento", "onus", "hipoteca", "alienacao fiduciaria", "cedula", "penhora",
+    "arresto", "indisponibilidade", "usufruto", "casamento", "estado civil",
+    "uniao estavel", "separacao", "divorcio", "obito", "nome civil", "razao social",
+    "incorporacao", "cisao", "substituicao", "cadastro", "restricoes", "digito",
+    "exigencias",
+)
+
 #: Spec §3 #16 — whether the CND-de-condomínio pendência applies is derived from
 #: `imoveis.empreendimento` (A named rule, not an inline truthiness test).
 #: Since 2026-10-05 this NO LONGER drives the vistoria clause's wording: that
