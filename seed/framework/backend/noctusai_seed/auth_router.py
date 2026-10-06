@@ -57,6 +57,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from noctusai_lib.api.auth import _resolve_trusted_membership
+from noctusai_lib.domain.licensing import enforce_license
 from noctusai_lib.primitives.roles import is_customer_role
 from noctusai_lib.api.auth.session import (
     ADMIN_ORG_ROLES,
@@ -439,6 +440,8 @@ def create_auth_router(
             )
         if not allow_customer and is_customer_role(membership.get("org_role")):
             raise HTTPException(status_code=403, detail="Área restrita à equipe.")
+        # Round-2 license gate on the effective org (core + unconfigured exempt).
+        enforce_license(raw_org, membership.get("org_role"), allow_customer=allow_customer)
         org_id = _coerce_org_uuid(raw_org)
 
         try:

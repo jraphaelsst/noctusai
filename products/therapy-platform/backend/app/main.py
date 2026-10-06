@@ -79,6 +79,7 @@ _MAX_BODY_PATH_OVERRIDES = {
 app = create_product_app(
     name="Therapy Platform",
     schema="therapy",
+    product_slug="therapy-platform",
     settings=settings,
     routers=[
         auth.router,

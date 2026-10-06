@@ -19,6 +19,7 @@ swallow it):
 * invalid / unverifiable JWT        → ``None`` (dep answers 401)
 * valid JWT, no ``noctus_users`` row → 403 (no org membership)
 * customer ``org_role``             → 403 unless ``allow_customer=True``
+* effective org without a license   → 403 ``org_sem_licenca``
 * DB / transport error              → 503 (fail CLOSED, never a metadata fallback)
 
 KB § PATTERNS/backend/backend.md § Auth — canonical pattern ·
@@ -36,6 +37,7 @@ from fastapi import HTTPException
 
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.session.types import AuthContext
+from noctusai_lib.domain.licensing import enforce_license
 from noctusai_lib.primitives.roles import is_customer_role
 
 logger = logging.getLogger(__name__)
@@ -112,6 +114,8 @@ def make_trusted_legacy_jwt_resolver(
             )
         if not allow_customer and is_customer_role(membership.get("org_role")):
             raise HTTPException(status_code=403, detail="Área restrita à equipe.")
+        # Round-2 license gate on the EFFECTIVE org (acting ⇒ the target org).
+        enforce_license(org_raw, membership.get("org_role"), allow_customer=allow_customer)
 
         return AuthContext(
             org_id=_to_uuid(org_raw),

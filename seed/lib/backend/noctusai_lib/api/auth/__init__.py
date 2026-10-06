@@ -68,6 +68,8 @@ import jwt
 from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.audit import AuditActor
+from noctusai_lib.api.auth.effective_org import resolve_effective_org_via
+from noctusai_lib.domain.licensing import enforce_license as _enforce_license
 
 from noctusai_lib.primitives.roles import CUSTOMER_ORG_ROLES, is_customer_role  # noqa: F401 — CUSTOMER_ORG_ROLES re-exported next to the auth deps
 from noctusai_lib.primitives.timeutil import now_utc
@@ -433,23 +435,26 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
 def _resolve_trusted_membership(
     get_admin_client_fn: Callable[[], Any], user_id
 ) -> Optional[dict]:
-    """``{"org_id", "org_role"}`` from ``public.noctus_users`` for ``user_id``,
-    or ``None`` when no row exists. Same client contract and fail-open-on-
+    """``{"org_id", "org_role", "home_org_id", "acting_session_id"}`` for
+    ``user_id`` — the EFFECTIVE org (see
+    :mod:`noctusai_lib.api.auth.effective_org`), or ``None`` when no
+    ``public.noctus_users`` row exists. Same client contract and fail-open-on-
     exception shape as :func:`_resolve_trusted_org_id` (which reads through
     this) — the row every product's RLS reads, never ``user_metadata``.
+
+    Round 2: this is a thin dict view over the ONE effective-org resolver, so a
+    superadmin with a live ``act_as_sessions`` row resolves to the target org
+    (``org_role="owner"``) on every path that reads through here.
     """
-    core = get_admin_client_fn()
-    result = (
-        core.table("noctus_users")
-        .select("org_id, org_role")
-        .eq("id", user_id)
-        .limit(1)
-        .execute()
-    )
-    if not result.data:
+    eff = resolve_effective_org_via(get_admin_client_fn, user_id)
+    if eff is None:
         return None
-    row = result.data[0]
-    return {"org_id": row.get("org_id"), "org_role": row.get("org_role")}
+    return {
+        "org_id": eff.org_id,
+        "org_role": eff.org_role,
+        "home_org_id": eff.home_org_id,
+        "acting_session_id": eff.acting_session_id,
+    }
 
 
 def _resolve_trusted_org_id(get_admin_client_fn: Callable[[], Any], user_id) -> Optional[str]:
@@ -648,6 +653,7 @@ def make_get_current_user_org(
     missing_status: int = 403,
     missing_detail: str = "Usuario sem organizacao associada",
     allow_customer: bool = False,
+    enforce_license: bool = True,
 ):
     """Factory that creates a product-specific ``get_current_user_org`` dependency.
 
@@ -709,6 +715,12 @@ def make_get_current_user_org(
         allow_customer: False (default) ⇒ a customer-role caller gets 403
             "Área restrita à equipe.". True ⇒ customers pass through with
             their org_id — only for routes built to serve customers.
+        enforce_license: True (default) ⇒ the EFFECTIVE org must hold an
+            active license for this product (403 ``org_sem_licenca``) — the
+            round-2 license gate, by construction on every authenticated
+            route. ``False`` is reserved for the seed's ``/api/me/access``
+            (which must answer ``has_access=false`` instead of 403) and is
+            policed by keeper ``check_license_gate_by_construction``.
 
     Returns:
         An async dependency callable
@@ -765,8 +777,20 @@ def make_get_current_user_org(
         # `noctusai_lib.api.audit` module docstring. `request` is `None`
         # for the direct-call (non-`Depends`) shape above — nothing to
         # stash onto, and nothing reads it there either.
-        def _stash_actor(org_id: Optional[str]) -> None:
+        def _stash_actor(org_id: Optional[str], acting_session_id: Optional[str] = None) -> None:
             if request is None:
+                return
+            if acting_session_id is not None:
+                # Act-as: the row is attributed to the SUPERADMIN, tagged with
+                # the acted-as org + session, and carries NO org_id — so the
+                # customer's own org-scoped audit read never shows it.
+                request.state.audit_actor = AuditActor(
+                    user_id=getattr(user, "id", None),
+                    org_id=None,
+                    role=None,
+                    acting_org_id=org_id,
+                    act_as_session_id=acting_session_id,
+                )
                 return
             request.state.audit_actor = AuditActor(
                 user_id=getattr(user, "id", None), org_id=org_id, role=None
@@ -832,7 +856,14 @@ def make_get_current_user_org(
                 )
             _stash_actor(None)
             return user, token, None
-        _stash_actor(org_id)
+        acting_session_id = membership.get("acting_session_id") if membership else None
+        if enforce_license:
+            # Round-2 license gate — the EFFECTIVE org must hold an active
+            # license for this product (core + an unconfigured process exempt).
+            _enforce_license(
+                org_id, membership.get("org_role"), allow_customer=allow_customer
+            )
+        _stash_actor(org_id, acting_session_id)
         return user, token, org_id
     return get_current_user_org
 

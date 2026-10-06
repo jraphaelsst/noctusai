@@ -142,6 +142,7 @@ _MAX_BODY_PATH_OVERRIDES = {
 app = create_product_app(
     name="ERP Imobiliario",
     schema="erp",
+    product_slug="erp-imobiliario",
     settings=settings,
     routers=[
         ativos.router,

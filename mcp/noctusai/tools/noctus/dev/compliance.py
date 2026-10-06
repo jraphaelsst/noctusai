@@ -11437,6 +11437,24 @@ _OIF_TS_RE = re.compile(r"export\s+const\s+CUSTOMER_ORG_ROLES\b[^=]*=\s*\[([^\]]
 _OIF_KB = "KB § PATTERNS/backend/database-rls.md"
 
 
+_OIF_BASELINE_REL = ("mcp", "noctusai", "tests", "org_identity_parity_baseline.json")
+
+
+def _oif_decl_hash(decl: dict) -> str:
+    return hashlib.sha256((decl["head"] + "\n" + decl["body"]).encode("utf-8")).hexdigest()
+
+
+def _oif_load_baseline(root: Path) -> dict[str, str]:
+    """``{"<relpath>::<fn>": sha256(head+body)}`` of ratified HISTORICAL copies.
+    Frozen — migrations are immutable, so it never grows; a missing/unreadable
+    file is an empty baseline (everything must then match the canon)."""
+    try:
+        data = json.loads(root.joinpath(*_OIF_BASELINE_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return dict(data.get("legacy", {}))
+
+
 def _oif_fn_re(names) -> "re.Pattern[str]":
     return re.compile(
         r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(?P<name>"
@@ -11568,6 +11586,7 @@ def check_org_identity_function_parity(
     else:
         files = [root / p for p in paths if p.endswith(".sql") and (root / p).is_file()]
 
+    legacy = _oif_load_baseline(root)
     for path in files:
         try:
             relative = str(path.relative_to(root))
@@ -11578,18 +11597,55 @@ def check_org_identity_function_parity(
             want = canon[decl["name"]]
             if decl["head"] == want["head"] and decl["body"] == want["body"]:
                 continue
+            if legacy.get(f"{relative}::{decl['name']}") == _oif_decl_hash(decl):
+                continue  # ratified historical copy (frozen by content hash)
             issues.append({
                 "product": product,
                 "file": f"{relative}:{decl['line']}",
                 "issue": (
                     f"public.{decl['name']}() re-declared with a NON-canonical body. Every "
                     f"chain writes the same shared function, so on a fresh apply this copy can "
-                    f"win and silently undo the customer-role exclusion fleet-wide. Paste "
+                    f"win and silently undo the customer-role exclusion / act-as branch "
+                    f"fleet-wide. Paste "
                     f"`noctusai_lib.domain.sql_templates.org_identity_function_sql("
-                    f"{decl['name']!r})` verbatim. Per `{_OIF_KB}` § Customer roles."
+                    f"{decl['name']!r})` verbatim. (A baselined historical file whose content "
+                    f"CHANGED also lands here — applied migrations are immutable.) "
+                    f"Per `{_OIF_KB}` § Customer roles."
                 ),
                 "severity": "critical",
             })
+
+    # Last-writer assertion: the highest-numbered core migration re-declaring each
+    # function is what a fresh core apply leaves behind — it MUST be canonical, so
+    # the act-as branch can never be silently clobbered by a later stale copy.
+    core_migrations = sorted(root.glob("products/core/backend/migrations/*.sql"))
+    if paths is None and core_migrations:  # no core chain (synthetic/partial tree) ⇒ nothing to pin
+        last: dict[str, tuple[int, str, dict]] = {}
+        for path in core_migrations:
+            m = re.match(r"(\d+)", path.name)
+            if not m:
+                continue
+            num = int(m.group(1))
+            for decl in org_identity_declarations(path.read_text(encoding="utf-8"), tuple(canon)):
+                if decl["name"] not in last or num >= last[decl["name"]][0]:
+                    last[decl["name"]] = (num, str(path.relative_to(root)), decl)
+        for name in ("current_org_id", "current_user_org_id"):
+            if name not in canon:
+                continue
+            got = last.get(name)
+            if got is None or got[2]["head"] != canon[name]["head"] or got[2]["body"] != canon[name]["body"]:
+                where = got[1] if got else "products/core/backend/migrations"
+                issues.append({
+                    "product": "core",
+                    "file": where,
+                    "issue": (
+                        f"the LAST core migration re-declaring public.{name}() must equal the "
+                        f"canonical body (it carries the act-as branch) — "
+                        f"{'none found' if got is None else 'it differs'}. Per `{_OIF_KB}`; "
+                        f"`KB § PATTERNS/backend/tenancy-license-and-act-as.md`."
+                    ),
+                    "severity": "critical",
+                })
     return issues
 
 
@@ -21345,6 +21401,156 @@ def check_admin_gate_hand_rolled(repo_root: Path | None = None) -> list[dict]:
                     ),
                     "severity": "warning",
                 })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# `check_license_gate_by_construction` — round 2 (2026-10-06): the license gate +
+# act-as live INSIDE the seed's trusted auth dependencies, so a product gets
+# them with zero code. This keeper pins the by-construction half: no active
+# product may (a) hand-roll its own org-resolving dependency that skips the seed
+# resolver, (b) opt out of the gate (`enforce_license=False`,
+# `license_checker=`, its own `configure_license_gate`), and NOWHERE (seed or
+# product) may a `role == 'admin'`-style branch bypass the license check — a
+# superadmin reaches a product ONLY through a live `act_as_sessions` row. It
+# also pins that the seed mechanism itself is still wired.
+# KB § PATTERNS/backend/tenancy-license-and-act-as.md
+# ---------------------------------------------------------------------------
+
+_LGC_KB = "KB § PATTERNS/backend/tenancy-license-and-act-as.md"
+_LGC_ORG_DEP_NAMES = frozenset({"get_current_user_org", "get_org_id", "get_current_org"})
+_LGC_SEED_RESOLVER_TOKENS = (
+    "make_get_current_user_org", "_resolve_trusted_membership",
+    "resolve_effective_org", "resolve_org_membership", "make_trusted_legacy_jwt_resolver",
+)
+_LGC_LICENSE_CALLS = frozenset({
+    "enforce_license", "_enforce_license", "check_org_license", "org_has_product_license",
+    "org_has_license_for_product_id", "has_license",
+})
+_LGC_ADMIN_LITERALS = frozenset({"admin", "platform_admin"})
+#: Single-tenant products whose org comes from deploy settings (not the caller's
+#: row), so they have no seed-resolved org dependency to gate through.
+#: NOC-REMEDIATE[license-gate-single-tenant]: decide whether store/p-studio route
+#: their guards through the seed resolver so the gate covers them. — 2026-10-06
+_LGC_SINGLE_TENANT = frozenset({"store", "p-studio"})
+#: Seed mechanism that must stay wired: file -> tokens that must appear.
+_LGC_SEED_WIRING = {
+    ("seed", "framework", "backend", "noctusai_seed", "app.py"): ("configure_license_gate(",),
+    ("seed", "lib", "backend", "noctusai_lib", "api", "auth", "__init__.py"): ("_enforce_license(",),
+    ("seed", "lib", "backend", "noctusai_lib", "api", "auth", "session", "legacy_bridge.py"): ("enforce_license(",),
+    ("seed", "lib", "backend", "noctusai_lib", "api", "auth", "session", "scopes.py"): ("enforce_license(",),
+    ("seed", "framework", "backend", "noctusai_seed", "dependencies.py"): ("enforce_license(",),
+    ("seed", "framework", "backend", "noctusai_seed", "auth_router.py"): ("enforce_license(",),
+}
+
+
+def _lgc_call_name(node: ast.Call) -> str:
+    f = node.func
+    return f.id if isinstance(f, ast.Name) else (f.attr if isinstance(f, ast.Attribute) else "")
+
+
+def _lgc_test_mentions_admin(test: ast.AST) -> bool:
+    return any(
+        isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value in _LGC_ADMIN_LITERALS
+        for n in ast.walk(test)
+    )
+
+
+def _lgc_scan_source(src: str, rel: str, product: str, *, is_product: bool) -> list[dict]:
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return []
+    issues: list[dict] = []
+
+    def add(node: ast.AST, msg: str) -> None:
+        issues.append({
+            "product": product, "file": f"{rel}:{getattr(node, 'lineno', 1)}",
+            "issue": f"{msg} Per `{_LGC_KB}`.", "severity": "critical",
+        })
+
+    for node in ast.walk(tree):
+        # A role=='admin'-style branch guarding a license call = an admin bypass.
+        if isinstance(node, ast.If) and _lgc_test_mentions_admin(node.test):
+            for inner in ast.walk(ast.Module(body=node.body + node.orelse, type_ignores=[])):
+                if isinstance(inner, ast.Call) and _lgc_call_name(inner) in _LGC_LICENSE_CALLS:
+                    add(node, "license check guarded by a `role == 'admin'` branch — NO admin license "
+                              "bypass exists; a superadmin gets in only via a live act_as_sessions row.")
+                    break
+        if not is_product:
+            continue
+        if isinstance(node, ast.Call):
+            name = _lgc_call_name(node)
+            if name == "configure_license_gate":
+                add(node, "product configures its own license gate — only `create_product_app` does.")
+            for kw in node.keywords:
+                if kw.arg == "enforce_license" and isinstance(kw.value, ast.Constant) and kw.value.value is False:
+                    add(node, "product opts out of the license gate (`enforce_license=False`).")
+                if kw.arg == "license_checker" and name == "create_product_app":
+                    add(node, "product overrides `license_checker` in `create_product_app` (tests use DI via app.state).")
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in _LGC_ORG_DEP_NAMES:
+            if not any(tok in src for tok in _LGC_SEED_RESOLVER_TOKENS):
+                add(node, f"`{node.name}` is a hand-rolled org dependency that never routes through the "
+                          "seed trusted resolver (`make_get_current_user_org` / effective-org) — it "
+                          "bypasses the license gate and act-as.")
+    return issues
+
+
+def check_license_gate_by_construction(
+    paths: list[Path] | None = None, repo_root: Path | None = None
+) -> list[dict]:
+    """Round-2 license gate / act-as must hold by construction (see block comment).
+
+    ``paths`` (pre-commit) narrows the PRODUCT scan; the seed-wiring pin always
+    runs (cheap). Severity ``critical``.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+
+    for parts, tokens in _LGC_SEED_WIRING.items():
+        f = root.joinpath(*parts)
+        if not f.exists():
+            continue  # a tmp-tree test fixture / partial checkout: nothing to pin
+        text = f.read_text(encoding="utf-8")
+        for tok in tokens:
+            if tok not in text:
+                issues.append({
+                    "product": "<seed>", "file": "/".join(parts),
+                    "issue": f"license-gate wiring `{tok}` is gone — authenticated routes would no "
+                             f"longer be gated by construction. Per `{_LGC_KB}`.",
+                    "severity": "critical",
+                })
+    lic = root / "seed" / "lib" / "backend" / "noctusai_lib" / "domain" / "licensing.py"
+    if lic.exists():
+        issues.extend(_lgc_scan_source(lic.read_text(encoding="utf-8"), "seed/.../domain/licensing.py", "<seed>", is_product=False))
+        try:
+            tree = ast.parse(lic.read_text(encoding="utf-8"))
+        except SyntaxError:
+            tree = None
+        if tree is not None:
+            for n in ast.walk(tree):
+                if isinstance(n, ast.Compare) and any(
+                    isinstance(c, ast.Constant) and c.value in _LGC_ADMIN_LITERALS
+                    for c in [n.left, *n.comparators]
+                ):
+                    issues.append({
+                        "product": "<seed>", "file": f"seed/.../domain/licensing.py:{n.lineno}",
+                        "issue": f"licensing.py compares against an admin role — NO admin bypass. Per `{_LGC_KB}`.",
+                        "severity": "critical",
+                    })
+
+    products_dir = root / "products"
+    if products_dir.is_dir():
+        wanted = {str(p) for p in paths} if paths is not None else None
+        for product_dir in _active_product_dirs(products_dir):
+            slug = product_dir.name
+            if slug in ("core",) or slug in _LGC_SINGLE_TENANT:
+                continue
+            for f in sorted((product_dir / "backend" / "app").rglob("*.py")):
+                rel = str(f.relative_to(root))
+                if "/tests/" in rel or (wanted is not None and rel not in wanted):
+                    continue
+                issues.extend(_lgc_scan_source(f.read_text(encoding="utf-8"), rel, slug, is_product=True))
     return issues
 
 

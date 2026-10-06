@@ -44,6 +44,7 @@ from noctusai_lib.api.auth import (
     validate_bearer_token,
 )
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
+from noctusai_lib.domain.licensing import enforce_license
 
 logger = logging.getLogger(__name__)
 
@@ -230,6 +231,8 @@ class ProductDependencies:
         :func:`noctusai_lib.api.auth.make_get_current_user_org` does:
 
         * no ``noctus_users`` row / no org → 403 (a metadata org is ignored);
+        * effective org without a license  → 403 ``org_sem_licenca`` (round 2;
+          acting superadmin ⇒ the target org);
         * DB / transport error             → 503 (fail closed, no fallback).
 
         Prefer the ``org_id`` already unpacked from ``get_current_user_org``
@@ -260,6 +263,8 @@ class ProductDependencies:
         org_id = membership.get("org_id") if membership else None
         if not org_id:
             raise HTTPException(status_code=403, detail="Usuario sem organizacao associada")
+        # Round-2 license gate on the EFFECTIVE org (acting ⇒ target org).
+        enforce_license(org_id, membership.get("org_role"), allow_customer=True)
         return org_id
 
     def get_user_client(self, token: str):

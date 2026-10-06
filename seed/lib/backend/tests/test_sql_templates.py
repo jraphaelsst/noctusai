@@ -209,9 +209,16 @@ class TestOrgIdentityFunctions:
     def test_current_org_id_excludes_customers(self):
         sql = org_identity_function_sql("current_org_id")
         assert "<> ALL (ARRAY['membro'])" in sql
-        assert "COALESCE(org_role, '')" in sql  # a NULL role is staff, not excluded
+        assert "COALESCE(u.org_role, '')" in sql  # a NULL role is staff, not excluded
         assert org_identity_function_sql("current_user_org_id").replace(
             "current_user_org_id", "current_org_id") == sql
+
+    def test_current_org_id_has_the_act_as_branch(self):
+        for name in ("current_org_id", "current_user_org_id"):
+            sql = org_identity_function_sql(name)
+            assert "u.role = 'admin' AND a.target_org_id IS NOT NULL" in sql
+            assert "public.act_as_sessions" in sql
+            assert "a.ended_at IS NULL" in sql  # only a LIVE session counts
 
     def test_customer_org_is_the_mirror(self):
         sql = org_identity_function_sql("current_customer_org_id")

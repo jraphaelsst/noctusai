@@ -41,6 +41,12 @@ from noctusai_lib.config.deploy_config import (
     baseline_required_prod_env,
     require_prod_config,
 )
+from noctusai_lib.domain.licensing import (
+    CORE_SLUG,
+    LicenseChecker,
+    configure_license_gate,
+    make_license_checker,
+)
 from noctusai_lib.integrations.llm import LLMConfig
 from noctusai_lib.integrations.llm.budget import configure_budget_module
 from noctusai_lib.integrations.llm.client import configure_llm, shutdown_llm
@@ -76,6 +82,8 @@ def create_product_app(
     max_body_path_overrides: Optional[Mapping[str, MaxBodyOverrideValue]] = None,
     audit_sink: Optional[AuditSink] = None,
     team: Optional[TeamPolicy] = None,
+    product_slug: Optional[str] = None,
+    license_checker: Optional[LicenseChecker] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -117,6 +125,15 @@ def create_product_app(
             pre-seam behaviour (every non-customer member listed, any
             ``ORG_ROLES`` invitable). Requires "team" in
             ``standard_routers`` (``ValueError`` otherwise).
+        product_slug: The product's CATALOG slug (``public.products.slug``) the
+            round-2 license gate checks ``public.licenses`` against. Default
+            ``None`` derives it: ``settings.product_slug`` when declared, else
+            the schema-derived slug. Pass it only when the catalog slug differs
+            from the schema (e.g. schema ``erp`` ↔ ``erp-imobiliario``). ``core``
+            (``schema="public"``) is exempt. A product licensed for nobody
+            still boots — the gate is evaluated per request, never at import.
+        license_checker: DI override for the ``LicenseChecker`` (default
+            ``make_license_checker`` — Real in prod, allow-all Fake under pytest).
         consent_features: Dotted module path whose import-time side effect
             populates the `noctusai_lib.domain.ai.consent` catalog (each product
             calls `register_feature(...)` from this module). The framework
@@ -255,10 +272,23 @@ def create_product_app(
         supabase_service_role_key=settings.supabase_service_role_key,
     )
 
+    # 1b. License gate (round 2) — configured ONCE here so every trusted auth
+    #     dependency enforces it with zero per-product code.
+    #     → KB § PATTERNS/backend/tenancy-license-and-act-as.md
+    _product_slug = product_slug or getattr(settings, "product_slug", None) or app_name
+
     # 3. Create database module first — the LLM usage sink (if opted in)
     #    needs a service-role client to write under RLS.
     db = create_database_module(settings, schema)
     deps = create_dependencies(db)
+    _license_checker = license_checker or make_license_checker(
+        lambda: db.get_core_client()
+    )
+    configure_license_gate(
+        _product_slug,
+        _license_checker,
+        exempt=(schema == "public" or _product_slug == CORE_SLUG),
+    )
 
     # 3a. Audit trail (owner directive 2026-09-23 — "record history of
     #     actions for everything"). `audit_trail_enabled` defaults False
@@ -458,6 +488,7 @@ def create_product_app(
     # 7. Attach db and deps to app state for product code access
     app.state.db = db
     app.state.deps = deps
+    app.state.license_checker = _license_checker
 
     # 8. Apply shared configuration (Sentry, CORS, exceptions, middleware, rate limiting)
     _effective_max_body_path_overrides = configure_app(
@@ -469,7 +500,7 @@ def create_product_app(
         # `app_name` (step 1) already uses for `configure_logging`, so
         # `AuditEntry.product_slug` matches the slug every other seed
         # log line carries.
-        product_slug=app_name,
+        product_slug=_product_slug,
         audit_sink=audit_sink,
     )
 
@@ -492,7 +523,13 @@ def create_product_app(
         deps, settings, product_name=name, version=version,
         # "mfa" (platform-admin-mfa M3) rides on EVERY product: it is the step-up
         # half of the M2 gate, so opting out would strand an enforced admin.
-        names=[*standard_routers, *(() if "mfa" in standard_routers else ("mfa",))],
+        names=[
+            *standard_routers,
+            *(() if "mfa" in standard_routers else ("mfa",)),
+            # "me" (round 2) rides on EVERY product: the seed SPA's access check
+            # + act-as banner read it, so opting out would strand both.
+            *(() if "me" in standard_routers else ("me",)),
+        ],
         team_policy=team,
     ):
         app.include_router(router)

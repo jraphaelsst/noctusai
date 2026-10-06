@@ -1525,6 +1525,49 @@ END;
 )
 
 
+_ACT_AS_ONE_LIVE_PROBE = GuardProbe(
+    id="act_as_sessions.one_live_per_superadmin.unique",
+    product="core",
+    schema="public",
+    guard_name="idx_act_as_sessions_one_live",
+    kind="write_refusal",
+    migrations=("065_act_as_sessions.sql",),
+    rationale=(
+        "At most ONE live act-as session per superadmin: the RLS helper "
+        "current_org_id() LEFT JOINs the live row, so two live rows would fan "
+        "the identity function out to two orgs. The partial unique index is "
+        "what keeps 'which org am I acting as' single-valued."
+    ),
+    sql=_do_block("""
+DECLARE
+  su uuid;
+  org uuid;
+BEGIN
+  SELECT id INTO su FROM public.noctus_users LIMIT 1;
+  SELECT id INTO org FROM public.organizations LIMIT 1;
+  IF su IS NULL OR org IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs one noctus_users row and one organizations row';
+  END IF;
+  BEGIN
+    INSERT INTO public.act_as_sessions (superadmin_id, target_org_id, entry_product_slug)
+    VALUES (su, org, 'noc-probe');
+    INSERT INTO public.act_as_sessions (superadmin_id, target_org_id, entry_product_slug)
+    VALUES (su, org, 'noc-probe');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second LIVE act-as session for the same superadmin succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%idx_act_as_sessions_one_live%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 _CERTIDAO_CONSULTA_ORIGEM_PROBE = GuardProbe(
     id="certidao_consultas.origem.closed_vocabulary",
     product="social-wiring",
@@ -4350,6 +4393,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _STORAGE_BUCKETS_PROBE,
     _SECDEF_EXECUTE_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
+    _ACT_AS_ONE_LIVE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
     _ESTRUTURA_STATUS_PROBE,

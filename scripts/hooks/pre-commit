@@ -504,6 +504,22 @@ if [[ ( -n "$STAGED_OIF_SOURCE" || -n "$STAGED_OIF_MIGRATIONS" ) ]] && have_py; 
     fi
 fi
 
+# ─── 6b-sexies-ter. License gate by construction (blocking, critical) ─────
+# Keeper `check_license_gate_by_construction` (round 2, 2026-10-06): the license
+# gate + act-as live inside the seed's trusted auth deps; no product may
+# hand-roll an org dependency, opt out, or branch on `role == 'admin'` around a
+# license check. Runs when product backend code or the seed auth/licensing
+# surface is staged.
+STAGED_LGC=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*\.py|seed/lib/backend/noctusai_lib/(domain/licensing|api/auth/.*)\.py|seed/framework/backend/noctusai_seed/(app|dependencies|auth_router|me_router)\.py)$' || true)
+if [[ -n "$STAGED_LGC" ]] && have_py; then
+    echo "[pre-commit] Checking license gate by construction..."
+    if ! "$PY" "$CLI" --check-license-gate-by-construction; then
+        echo "[pre-commit] license-gate-by-construction check FAILED. Commit aborted." >&2
+        echo "[pre-commit] KB § PATTERNS/backend/tenancy-license-and-act-as.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-septies. Schema-wide anon grant gate (blocking, critical, NO ─────
 # allowlist / suppression marker) ──────────────────────────────────────────
 # Keeper `check_schema_wide_anon_grant`. THE INCIDENT (2026-09-20): the

@@ -24,6 +24,7 @@ from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.mfa.gate import require_admin_assurance
+from noctusai_lib.domain.licensing import licensed_product_ids, org_has_license_for_product_id
 from noctusai_seed import create_database_module, create_dependencies
 
 logger = logging.getLogger(__name__)
@@ -167,66 +168,16 @@ async def get_org_id(user) -> str:
 def check_org_license(db, org_id: str, product_id: str) -> bool:
     """Check if an org has a valid, non-expired license for a product.
 
-    A license is valid when:
-    - status = 'active'
-    - fim IS NULL (permanent) OR fim > now()
+    Thin delegate to the seed licensing module (round 2) — one source of truth
+    for "valid" (status='active' AND (fim IS NULL OR fim > now())), shared with
+    every product's license gate. Raises on a lookup error (fail closed).
     """
-    result = db.table("licenses").select("id, fim").eq(
-        "org_id", org_id
-    ).eq("product_id", product_id).eq("status", "active").execute()
-
-    if not result.data:
-        return False
-
-    now = dt.now(timezone.utc)
-    for lic in result.data:
-        fim = lic.get("fim")
-        if fim is None:
-            return True
-        try:
-            if _parse_timestamp(fim) > now:
-                return True
-        except (ValueError, TypeError) as exc:
-            logger.warning(
-                "dependencies: license id=%s has unparseable fim=%r (%s); "
-                "skipping in license-validity check",
-                lic.get("id"), fim, exc,
-            )
-            continue
-
-    return False
+    return org_has_license_for_product_id(db, org_id, product_id)
 
 
 def get_licensed_product_ids(db, org_id: str) -> list:
-    """Get list of product IDs the org has valid licenses for.
-
-    Filters out expired licenses (fim is not null AND fim <= now()).
-    """
-    result = db.table("licenses").select(
-        "product_id, fim"
-    ).eq("org_id", org_id).eq("status", "active").execute()
-
-    if not result.data:
-        return []
-
-    now = dt.now(timezone.utc)
-    valid_ids = []
-    for lic in result.data:
-        fim = lic.get("fim")
-        if fim is None:
-            valid_ids.append(lic["product_id"])
-        else:
-            try:
-                if _parse_timestamp(fim) > now:
-                    valid_ids.append(lic["product_id"])
-            except (ValueError, TypeError) as exc:
-                logger.warning(
-                    "dependencies: license id=%s has unparseable fim=%r (%s); "
-                    "skipping in licensed-product-ids list",
-                    lic.get("id"), fim, exc,
-                )
-                continue
-    return valid_ids
+    """Get list of product IDs the org has valid licenses for (expired filtered)."""
+    return licensed_product_ids(db, org_id)
 
 
 # ── SSO JWT primitives (promoted to noctusai_lib.auth in Phase 4) ──────

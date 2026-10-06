@@ -42,7 +42,9 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 from fastapi import Depends, HTTPException, Request, Response
 
 from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
+from noctusai_lib.api.auth.effective_org import resolve_effective_org
 from noctusai_lib.api.auth.session.types import AuthContext
+from noctusai_lib.domain.licensing import enforce_license
 
 CallerRestriction = Literal["any", "product_only", "user_only"]
 
@@ -69,39 +71,22 @@ def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
         The role string (e.g. ``"owner"``) or ``None`` when
         ``user_id`` is ``None`` or no matching row exists.
     """
-    if user_id is None:
-        return None
-    lookup = (
-        core_client.from_("noctus_users")
-        .select("org_role")
-        .eq("id", str(user_id))
-        .limit(1)
-        .execute()
-    )
-    rows = lookup.data or []
-    if not rows:
-        return None
-    return rows[0].get("org_role")
+    eff = resolve_effective_org(core_client, user_id)
+    return eff.org_role if eff is not None else None
 
 
 def resolve_org_membership(core_client: Any, user_id: Any) -> Optional[dict]:
-    """``{"org_id", "org_role"}`` from the TRUSTED ``public.noctus_users`` row,
+    """``{"org_id", "org_role"}`` of the EFFECTIVE org (the ONE resolver,
+    :func:`noctusai_lib.api.auth.effective_org.resolve_effective_org` — a
+    superadmin acting as another org resolves to it) from the TRUSTED
+    ``public.noctus_users`` row,
     or ``None`` (no ``user_id`` / no row). Never reads ``user_metadata``.
     Raises on a DB error — callers fail closed.
     """
-    if user_id is None:
+    eff = resolve_effective_org(core_client, user_id)
+    if eff is None:
         return None
-    lookup = (
-        core_client.from_("noctus_users")
-        .select("org_id, org_role")
-        .eq("id", str(user_id))
-        .limit(1)
-        .execute()
-    )
-    rows = lookup.data or []
-    if not rows:
-        return None
-    return {"org_id": rows[0].get("org_id"), "org_role": rows[0].get("org_role")}
+    return {"org_id": eff.org_id, "org_role": eff.org_role}
 
 
 #: The canonical "admin-equivalent" org-role set — the same two values
@@ -339,6 +324,11 @@ def require_scopes(
                     "code": "org_mismatch",
                 },
             )
+        if membership is not None:
+            # Round-2 license gate: the EFFECTIVE org (membership above) must
+            # hold an active license for this product. Cookie-session callers
+            # never pass the legacy bridge, so the gate is repeated here.
+            enforce_license(membership.get("org_id"), role, allow_customer=True)
         if role not in user_roles:
             raise HTTPException(
                 status_code=403,

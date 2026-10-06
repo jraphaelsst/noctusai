@@ -33,6 +33,11 @@ class AuditActor:
     user_id: Optional[str] = None
     org_id: Optional[str] = None
     role: Optional[str] = None
+    #: Act-as (round 2): set ONLY while a superadmin acts as another org. The
+    #: row is then attributed to the superadmin (``user_id``) with ``org_id``
+    #: left None and the acted-as org here, so only the superadmin can read it.
+    acting_org_id: Optional[str] = None
+    act_as_session_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -120,6 +120,64 @@ def test_declaration_parser_reports_line_numbers():
     assert [d["line"] for d in decls] == [3]
 
 
+def _with_baseline(root: Path, entries: dict[str, str]) -> None:
+    import json
+
+    f = root / "mcp" / "noctusai" / "tests" / "org_identity_parity_baseline.json"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"legacy": entries}), encoding="utf-8")
+
+
+def _hash_of(sql: str, name: str = "current_org_id") -> str:
+    from tools.noctus.dev.compliance import _oif_decl_hash
+
+    return _oif_decl_hash(org_identity_declarations(sql, (name,))[0])
+
+
+class TestFrozenBaselineAndLastWriter:
+    REL = "products/demo/backend/migrations/001_demo.sql"
+
+    def test_baselined_historical_copy_is_tolerated(self, tmp_path: Path):
+        root = _tree(tmp_path, migration=_STALE)
+        _with_baseline(root, {f"{self.REL}::current_org_id": _hash_of(_STALE)})
+        assert check_org_identity_function_parity(root) == []
+
+    def test_changed_baselined_file_is_flagged(self, tmp_path: Path):
+        root = _tree(tmp_path, migration=_STALE + "\n")
+        edited = _STALE.replace("SELECT org_id", "SELECT org_id, 1")
+        (root / self.REL).write_text(edited, encoding="utf-8")
+        _with_baseline(root, {f"{self.REL}::current_org_id": _hash_of(_STALE)})
+        assert len(check_org_identity_function_parity(root)) == 1
+
+    def test_new_stale_file_not_in_baseline_is_flagged(self, tmp_path: Path):
+        root = _tree(tmp_path, migration=_STALE)
+        _with_baseline(root, {})
+        assert len(check_org_identity_function_parity(root)) == 1
+
+    def _core(self, root: Path, name: str, sql: str) -> None:
+        d = root / "products" / "core" / "backend" / "migrations"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(sql, encoding="utf-8")
+
+    def test_last_core_redeclaration_must_be_canonical(self, tmp_path: Path):
+        root = _tree(tmp_path)
+        self._core(root, "001_core.sql", _render("current_org_id") + "\n" + _render("current_user_org_id"))
+        self._core(root, "070_later.sql", _STALE)
+        _with_baseline(root, {"products/core/backend/migrations/070_later.sql::current_org_id": _hash_of(_STALE)})
+        issues = check_org_identity_function_parity(root)
+        assert any("LAST core migration" in i["issue"] for i in issues)
+
+    def test_last_core_canonical_passes(self, tmp_path: Path):
+        root = _tree(tmp_path)
+        both = _render("current_org_id") + "\n" + _render("current_user_org_id")
+        self._core(root, "001_core.sql", _STALE)
+        self._core(root, "065_act.sql", both)
+        _with_baseline(root, {"products/core/backend/migrations/001_core.sql::current_org_id": _hash_of(_STALE)})
+        assert check_org_identity_function_parity(root) == []
+
+
 def test_live_tree_is_clean():
-    """The real tree: every re-declaration in every chain matches the canon."""
+    """The real tree: every NEW/changed re-declaration matches the canon (historical
+    copies are frozen in org_identity_parity_baseline.json) and the last core
+    re-declaration (065) carries the act-as branch."""
     assert check_org_identity_function_parity() == []

@@ -11,6 +11,7 @@ Bundled routers live here:
   - "scheduler"    → `/api/scheduler/jobs[/{job_id}]` (read-only APScheduler view)
   - "status_paginas" → `/api/status-paginas` (list + change page-visibility status; admin/dev-gated)
   - "mfa"          → `/api/auth/mfa/*` (TOTP step-up; auto-mounted on every product)
+  - "me"           → `/api/me/access|context` (license/act-as identity reads; auto-mounted on every product)
 
 Products declare which ones they want via the `standard_routers=[...]` kwarg
 on `create_product_app()`. `build_standard_routers()` resolves that list
@@ -648,6 +649,12 @@ def _build_mfa_router(deps, settings, product_name: str, version: str) -> APIRou
     return create_mfa_router(deps, settings)
 
 
+def _build_me_router(deps, settings, product_name: str, version: str) -> APIRouter:
+    # Auto-mounted by create_product_app (round 2: license gate + act-as).
+    from noctusai_seed.me_router import create_me_router
+    return create_me_router(deps)
+
+
 # Maintenance contract for _STANDARD_ROUTERS:
 # Adding a new standard router requires all three of:
 #   (a) adding an entry to this registry,
@@ -667,6 +674,7 @@ _STANDARD_ROUTERS = {
     "status_paginas": _build_status_paginas_router,
     "auth":           _build_auth_router,
     "mfa":            _build_mfa_router,
+    "me":             _build_me_router,
 }
 
 #: Modules whose standard-router endpoints authenticate INSIDE the framework (a manual check over
@@ -680,6 +688,7 @@ HANDLER_AUTHENTICATED_ROUTER_MODULES: frozenset[str] = frozenset({
     "noctusai_seed.routers",
     "noctusai_seed.status_pagina_router",
     "noctusai_seed.mfa_router",
+    "noctusai_seed.me_router",
 })
 
 

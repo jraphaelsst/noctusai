@@ -174,7 +174,7 @@ def _to_row(entry: AuditEntry) -> dict[str, Any]:
     — see the module docstring's "Target table" section."""
     actor: AuditActor = entry.actor
     resource_type, resource_id = _derive_resource(entry.route_template, entry.path_params)
-    return {
+    row = {
         # Original columns (001/002) — `action`/`resource_type` are
         # NOT NULL; `resource_type` falls back to `product_slug` when
         # the route has no path parameter at all (still a meaningful
@@ -204,6 +204,12 @@ def _to_row(entry: AuditEntry) -> dict[str, Any]:
         # UA/IP to begin with (`client_hint` is the coarse, non-PII
         # substitute — see migration 053's LGPD note).
     }
+    if actor.act_as_session_id:
+        # Act-as tagging (core 065) — only written while acting, so a deploy
+        # of this code ahead of the migration still inserts normal rows.
+        row["acting_org_id"] = actor.acting_org_id
+        row["act_as_session_id"] = actor.act_as_session_id
+    return row
 
 
 class RealAuditSink:

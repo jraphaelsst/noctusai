@@ -26,6 +26,7 @@ from app.routers import admin_cache as admin_cache_router
 from app.routers import admin_llm_usage as admin_llm_usage_router
 from app.routers import admin_llm_spend as admin_llm_spend_router
 from app.routers import usage
+from app.routers import act_as as act_as_router
 from app.routers import users
 from app.routers import templates
 from app.routers import me_consents as me_consents_router
@@ -77,6 +78,7 @@ app = create_product_app(
         templates.router,
         me_consents_router.router,
         fleet_control_router.router,
+        act_as_router.router,
         billing_admin_router.router,
         website_public_router.router,
         website_admin_router.router,
