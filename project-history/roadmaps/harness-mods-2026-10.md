@@ -17,14 +17,30 @@ The owner asked how mods could improve "our interface and methodologies and gate
 | `2eb05d1d5` | The mod `.claude/mods/noc-harness` (inert: `enabledPlugins=false`), the repo marketplace, the KB pattern plus every referencing layer, and the CLAUDE.md §1 Gate↔methodology line; `cli.py` venv self-heal now probes `noctusai_lib` |
 | `d9e6a55bc` | **ACTIVATION, alone, in `.claude/settings.json` only:** `enabledPlugins["noc-harness@noctusai"]=true` + the `Agent\|Task` PreToolUse executor-dispatch guard |
 
+## Shipped — batch 2, 2026-10-06 (`1a10cd492`, `dcfeaeee6..791f59258`)
+| Commit | What |
+|---|---|
+| `1a10cd492` | Fix for the CI red on `f52e8917e`: `[carve:hook]` manifest rows plus accept-with-rationale 9f for `_guard_failclosed.py` and `claude-guard-executor-dispatch.py` |
+| `dcfeaeee6` | `noctus.dev.harness_panel` (vectors · baselines · codify · gates) and `harness_route`; `harness_event` now reports the real publish outcome |
+| `adf2845e2` | CI `harness-mod-tests` job (`claude plugin validate`/`test` + `--check-harness-mod`, CLI pinned 2.1.291); closes `NOC-REMEDIATE[harness-mod-ci]` |
+| `791f59258` | Mod 0.2.0: live panels, invalid-harness alerts, `agent.offer` for executors, semantic routing (off by default) |
+
+## Held — owner decision
+- **Write redirect** (primary-checkout Edit/Write rewritten into the session's worktree): the harness permission classifier refused the dispatch as self-modification of a safety guard. The two guard false-positive fixes that rode in the same brief are held with it: `cd $VAR` expansion, and the post-hook suggesting `rm` after an index-only restore.
+- **`main` bless:** the `dev` range carries a peer rider whose `predeploy_check social-wiring` is BLOCKED (`schema_drift`: `ig_media`, `ig_media_snapshots` and `ig_profile_snapshots` are missing in the live DB). Options:
+  - Wait for the peer to apply that migration, then bless normally.
+  - Or `release mode=cut` our commits. That needs the owner's typed ship-consent phrase and adds a backmerge merge commit on `dev`.
+
 ## Rollback (in order of blast radius)
 1. **One UX feature:** the plugin's `/config` row, or `pluginConfigs` in `settings.local.json`.
 2. **The whole mod, one session:** `NOC_HARNESS_OFF=1`.
 3. **The mod and the executor-dispatch guard, fleet-wide:** `git revert d9e6a55bc`. It touches one file, is conflict-free and linear (no merge commit), and leaves the fail-closed guards in place.
-4. **Everything from tonight:** `git revert 625f07a5f^..d9e6a55bc`, newest first.
+4. **Batch 2:** `git revert dcfeaeee6^..791f59258`. Mod 0.2.0, panels, CI job; leaves batch 1 in place.
+5. **Everything from tonight:** revert batch 2, then `git revert 625f07a5f^..d9e6a55bc`, plus `1a10cd492` (doc rows only).
 
 ## Open (named destinations)
-- [ ] **CI for mod tests:** `NOC-REMEDIATE[harness-mod-ci]` in `_GATED_PREFIXES`. Add a job running `claude plugin test .claude/mods/noc-harness` plus `--check-harness-mod`, then drop the PENDING entry.
+- [x] **CI for mod tests:** shipped in `adf2845e2`.
+- [ ] **Lesson:** never push to `dev` while waiting on a CI verdict (a push cancels the running run). Run the FULL toolkit suite before pushing: the narrow local selection missed `test_compliance_hygiene` and `dev` went red once. Locally, a full run takes about 21 min and is unreliable while peers mutate shared git state; CI is the verdict.
 - [ ] **Findings logged as s1** (auto-improvement, `source=noc-harness-mod`, session 3e354d14):
   - The primary-write PostToolUse guard reads an index-only restore as new dirt and advises `rm` of the owner's files.
   - The noc-graph freshness keeper takes about 40 s because it walks `.claude/worktrees/`.
