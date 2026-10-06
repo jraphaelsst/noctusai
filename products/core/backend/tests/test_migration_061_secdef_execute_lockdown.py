@@ -79,3 +79,10 @@ def test_secdef_probe_registered() -> None:
     assert probe.kind == "state_assertion"
     assert "has_function_privilege('anon'" in probe.sql
     assert "'igig'" in probe.sql
+
+
+def test_064_revokes_identity_helpers_the_probe_does_not_allow() -> None:
+    sql = (PRODUCTS / "core" / "backend" / "migrations" / "064_secdef_identity_helpers_revoke.sql").read_text(encoding="utf-8")
+    for fn in ("public.current_user_id()", "public.is_customer()"):
+        assert f"REVOKE EXECUTE ON FUNCTION {fn} FROM PUBLIC, anon, authenticated;" in sql
+        assert f"GRANT EXECUTE ON FUNCTION {fn} TO service_role;" in sql
