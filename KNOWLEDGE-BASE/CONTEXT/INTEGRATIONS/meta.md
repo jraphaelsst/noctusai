@@ -283,6 +283,9 @@ pattern, `CONTEXT/PATTERNS/backend/backend.md`).
 
 ---
 
+> **Ads Manager UI ↔ data map (browser-agent path):** hierarchy, internal names, URL grammar, metric
+> traps and the SQLite snapshot store for per-property reports → `KB § CONTEXT/PRODUCTS/social-wiring/META-ADS-MANAGER-MAP.md`.
+
 ## 5. Gaps / out-of-scope (with destinations)
 
 | Item | Status | Destination |
