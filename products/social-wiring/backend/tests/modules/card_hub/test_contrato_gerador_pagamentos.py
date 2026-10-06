@@ -74,7 +74,7 @@ class TestSinalEmPartes:
     def test_multa_rescisoria_is_the_sum_of_the_sinais(self):
         texto = "\n".join(_paragrafos(fp.sinal_em_partes(), 1))
         assert "multa rescisória no valor de R$ 55.000,00 (cinquenta e cinco mil reais)" in texto
-        assert "perderá o valor pago na Parcela 01 (Sinal)" in texto
+        assert "perderá o valor pago do Sinal" in texto
 
     def test_marcos_count_the_printed_parcelas(self):
         texto = "\n".join(_paragrafos(fp.sinal_em_partes(), 1))
