@@ -18,7 +18,7 @@ Labels below are verbatim from each product's `NAV_GROUPS`; `›` marks nesting.
 - **Edição de Fotos**
   - **Operação**: Lotes · Novo Lote · Painel · Processamento
   - **Configuração**: Configurações · Referências · Guias de Estilo · Regras · Curadores · Modelos
-- **Criação de mídia**: Criação de mídia (`/media-creation`). The CoreStudio tree is added here when the Criação de Mídia module is built (see `DECISIONS.md`); it sits directly below Edição de Fotos.
+- **Criação de mídia**: Criação de mídia (`/media-creation`). The CoreStudio tree is added here when the Criação de Mídia module is built (see `DECISIONS.md`); it sits directly below Edição de Fotos. The 2026-10-06 re-crawl confirmed CoreStudio's sidebar is unchanged (`core-studio/specs/page-map-v2.md` §0.4). Its newly mapped routes are not menu items: Minha conta's **Meu Perfil · Instagram · Integrações** are in-page tabs (they stay in-page under the rule above), and `Gerar Headlines` lands on a 3-card page that opens `/headlines?who=me|public|viral`.
 - **Marketing**
   - **Email**: Painel · Campanhas · Contatos · Listas · Templates · Automações · Domínios
   - **Mailchimp**: Membros · Listas · Templates · Campanhas · Configuração
