@@ -63,11 +63,22 @@ around a license call; it also pins the seed wiring. Strict `== 401` / `== 403` 
   assertion requires the LAST (highest-numbered) core migration re-declaring each helper
   to equal the canon (today core 065), so the act-as branch can't be silently clobbered.
   The helpers carry `-- secdef-execute-ok: rls-helper` (policies call them; EXECUTE stays).
-- **Single-tenant allowlist.** `store` (active, org from deploy settings via
-  `STORE_ORG_ID`) has no caller-org dependency to gate through, so the keeper skips it
-  under `NOC-REMEDIATE[license-gate-single-tenant]`; its `/api/me/access` still answers.
-  `p-studio` is inactive (asleep) — no gate checks it.
-- `/api/me/access` uses `enforce_license=False` on purpose — it answers
+- **The base auth dep is gated too.** `make_get_current_user` and
+  `ProductDependencies.get_current_user` (auth with no org lookup) resolve the caller's
+  effective org and enforce the license, so an auth-only route is gated by construction
+  (no org / no `noctus_users` row ⇒ nothing to license, passes; lookup error ⇒ 503;
+  core and the pytest allow-all Fake do zero extra queries). `make_get_current_user_org`
+  unwraps `.ungated` so the license is checked once. The ONLY exemptions are the named
+  `make_get_current_user_ungated` / `ProductDependencies.get_current_user_ungated`; the
+  keeper fails any use outside `_LGC_UNGATED_ALLOWLIST` (file + rationale; today only the
+  seed `me_router`).
+- **store** is gated like every product: `require_store_admin` → the gated
+  `get_current_user`, so the CALLER's effective org must hold the `store` license, while
+  data/key scoping stays on `STORE_ORG_ID` (the shop owner's data, not the caller's
+  tenancy). Shop buyers are anonymous (no login): every `/api/*` buyer route in
+  `public_router` / `webhooks_router` declares no auth dep, so they are public routes and
+  untouched. No keeper allowlist exists for store.
+- `/api/me/access` uses the ungated dep on purpose — it answers
   `has_access=false` instead of 403; no other opt-out exists.
 
 Composes with: `no-metadata-authz.md`, `database-rls.md`, `audit-trail.md`.

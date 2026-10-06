@@ -44,7 +44,7 @@ from noctusai_lib.api.auth import (
     validate_bearer_token,
 )
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
-from noctusai_lib.domain.licensing import enforce_license
+from noctusai_lib.domain.licensing import enforce_license, enforce_license_for_user
 
 logger = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class ProductDependencies:
             lambda: self._db.get_core_client()
         )
 
-    async def get_current_user(
+    async def get_current_user_ungated(
         self,
         authorization: Optional[str] = Header(None),
         # 🔴 `Request = None`, NEVER `Optional[Request] = None` — FastAPI's
@@ -151,7 +151,10 @@ class ProductDependencies:
         # during this module's own test run.
         request: Request = None,
     ):
-        """Extract and validate JWT from Authorization header. Returns (user, token).
+        """RAW (license-UNGATED) JWT validation. Returns (user, token). Prefer
+        :meth:`get_current_user`; this is the explicit seed exemption.
+
+        Extract and validate JWT from Authorization header.
 
         `request` is optional and keeps `authorization` as the FIRST
         parameter deliberately: every bundled seed router
@@ -185,6 +188,20 @@ class ProductDependencies:
         # stash onto in that shape, and nothing reads it there either.
         if request is not None:
             request.state.audit_actor = AuditActor(user_id=getattr(user, "id", None))
+        return user, token
+
+    async def get_current_user(
+        self,
+        authorization: Optional[str] = Header(None),
+        request: Request = None,  # bare `Request` — see get_current_user_ungated
+    ):
+        """:meth:`get_current_user_ungated` + the round-2 LICENSE GATE: the caller's
+        effective org must hold an active license for this product
+        (``403 org_sem_licenca``) — by construction, on every authenticated route,
+        with zero per-product code. The raw, explicitly-named exemption is
+        :meth:`get_current_user_ungated` (keeper-allowlisted)."""
+        user, token = await self.get_current_user_ungated(authorization, request)
+        enforce_license_for_user(getattr(user, "id", None))
         return user, token
 
     def get_user_role(self, user) -> str:

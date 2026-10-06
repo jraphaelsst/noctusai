@@ -55,6 +55,23 @@ class TestLicenseGateByConstruction:
         src = "def f(role):\n    if role == 'admin':\n        return 1\n"
         assert _lgc_scan_source(src, "seed/x.py", "<seed>", is_product=False) == []
 
+    def test_product_using_ungated_dep_flagged(self, tmp_path):
+        _product(tmp_path, "acme", "from x import make_get_current_user_ungated\n"
+                                    "get_current_user = make_get_current_user_ungated(lambda: None)\n")
+        issues = check_license_gate_by_construction(repo_root=tmp_path)
+        assert any("UNGATED" in i["issue"] for i in issues)
+
+    def test_store_is_no_longer_exempt(self, tmp_path):
+        _product(tmp_path, "store", "async def get_current_user_org(user):\n    return 1\n")
+        assert len(check_license_gate_by_construction(repo_root=tmp_path)) == 1
+
+    def test_seed_file_outside_allowlist_using_ungated_flagged(self, tmp_path):
+        f = tmp_path / "seed" / "framework" / "backend" / "noctusai_seed" / "x_router.py"
+        f.parent.mkdir(parents=True)
+        f.write_text("def f(deps):\n    return deps.get_current_user_ungated\n", encoding="utf-8")
+        issues = check_license_gate_by_construction(repo_root=tmp_path)
+        assert any("UNGATED" in i["issue"] for i in issues)
+
     def test_missing_seed_wiring_flagged(self, tmp_path):
         f = tmp_path / "seed" / "framework" / "backend" / "noctusai_seed" / "app.py"
         f.parent.mkdir(parents=True)

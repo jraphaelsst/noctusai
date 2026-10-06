@@ -288,6 +288,7 @@ def create_product_app(
         _product_slug,
         _license_checker,
         exempt=(schema == "public" or _product_slug == CORE_SLUG),
+        get_core_client=lambda: db.get_core_client(),
     )
 
     # 3a. Audit trail (owner directive 2026-09-23 — "record history of

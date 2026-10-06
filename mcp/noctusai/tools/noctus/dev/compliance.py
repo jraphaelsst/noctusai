@@ -21405,6 +21405,9 @@ def check_admin_gate_hand_rolled(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# (Residuals closed 2026-10-06: the BASE auth deps — `make_get_current_user`,
+# `ProductDependencies.get_current_user` — are gated too; the only exemptions are
+# the named `*_ungated` deps, allowlisted with rationale; store has no allowlist.)
 # `check_license_gate_by_construction` — round 2 (2026-10-06): the license gate +
 # act-as live INSIDE the seed's trusted auth dependencies, so a product gets
 # them with zero code. This keeper pins the by-construction half: no active
@@ -21428,11 +21431,20 @@ _LGC_LICENSE_CALLS = frozenset({
     "org_has_license_for_product_id", "has_license",
 })
 _LGC_ADMIN_LITERALS = frozenset({"admin", "platform_admin"})
-#: Single-tenant products whose org comes from deploy settings (not the caller's
-#: row), so they have no seed-resolved org dependency to gate through.
-#: NOC-REMEDIATE[license-gate-single-tenant]: decide whether store/p-studio route
-#: their guards through the seed resolver so the gate covers them. — 2026-10-06
-_LGC_SINGLE_TENANT = frozenset({"store", "p-studio"})
+#: The explicit, greppable license-gate exemptions. A gated product (and the seed
+#: itself) may use one ONLY from a file declared here WITH a rationale.
+_LGC_UNGATED_NAMES = frozenset({"get_current_user_ungated", "make_get_current_user_ungated"})
+_LGC_UNGATED_ALLOWLIST: dict[str, str] = {
+    "seed/framework/backend/noctusai_seed/me_router.py": (
+        "/api/me/access must answer has_access=false instead of 403; /api/me/context "
+        "gates itself through make_get_current_user_org on the effective org"
+    ),
+}
+#: Files that DEFINE the ungated variants (not uses).
+_LGC_UNGATED_DEFINERS = frozenset({
+    "seed/lib/backend/noctusai_lib/api/auth/__init__.py",
+    "seed/framework/backend/noctusai_seed/dependencies.py",
+})
 #: Seed mechanism that must stay wired: file -> tokens that must appear.
 _LGC_SEED_WIRING = {
     ("seed", "framework", "backend", "noctusai_seed", "app.py"): ("configure_license_gate(",),
@@ -21477,6 +21489,14 @@ def _lgc_scan_source(src: str, rel: str, product: str, *, is_product: bool) -> l
                     add(node, "license check guarded by a `role == 'admin'` branch — NO admin license "
                               "bypass exists; a superadmin gets in only via a live act_as_sessions row.")
                     break
+        if rel not in _LGC_UNGATED_DEFINERS and rel not in _LGC_UNGATED_ALLOWLIST:
+            used = (
+                (isinstance(node, ast.Name) and node.id in _LGC_UNGATED_NAMES)
+                or (isinstance(node, ast.Attribute) and node.attr in _LGC_UNGATED_NAMES)
+            )
+            if used and not rel.startswith("seed/lib/backend/tests") and "/tests/" not in rel:
+                add(node, "uses an explicitly license-UNGATED auth dependency outside the declared "
+                          "allowlist (`_LGC_UNGATED_ALLOWLIST` — add the file WITH a rationale, or use the gated dep).")
         if not is_product:
             continue
         if isinstance(node, ast.Call):
@@ -21539,12 +21559,24 @@ def check_license_gate_by_construction(
                         "severity": "critical",
                     })
 
+    for seed_root in ("seed/framework/backend/noctusai_seed", "seed/lib/backend/noctusai_lib"):
+        base = root / seed_root
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.py")):
+            rel = str(f.relative_to(root))
+            text = f.read_text(encoding="utf-8")
+            if not any(n in text for n in _LGC_UNGATED_NAMES):
+                continue
+            issues.extend(i for i in _lgc_scan_source(text, rel, "<seed>", is_product=False)
+                          if "UNGATED" in i["issue"])
+
     products_dir = root / "products"
     if products_dir.is_dir():
         wanted = {str(p) for p in paths} if paths is not None else None
         for product_dir in _active_product_dirs(products_dir):
             slug = product_dir.name
-            if slug in ("core",) or slug in _LGC_SINGLE_TENANT:
+            if slug == "core":
                 continue
             for f in sorted((product_dir / "backend" / "app").rglob("*.py")):
                 rel = str(f.relative_to(root))

@@ -70,6 +70,7 @@ from fastapi import Header, HTTPException, Request, Response
 from noctusai_lib.api.audit import AuditActor
 from noctusai_lib.api.auth.effective_org import resolve_effective_org_via
 from noctusai_lib.domain.licensing import enforce_license as _enforce_license
+from noctusai_lib.domain.licensing import enforce_license_for_user as _enforce_license_for_user
 
 from noctusai_lib.primitives.roles import CUSTOMER_ORG_ROLES, is_customer_role  # noqa: F401 — CUSTOMER_ORG_ROLES re-exported next to the auth deps
 from noctusai_lib.primitives.timeutil import now_utc
@@ -266,9 +267,31 @@ async def _get_current_user(
     return validate_bearer_token(admin, token), token
 
 
+def make_get_current_user_ungated(get_supabase_client_fn):
+    """Raw JWT validator — authenticated but NOT license-gated.
+
+    The explicit, greppable exemption: use it only where an authenticated caller
+    must be served regardless of license (the seed's ``/api/me/access``, invitation
+    acceptance). Keeper ``check_license_gate_by_construction`` fails a gated
+    product that uses it outside a declared allowlist with rationale.
+    """
+    async def _product_get_current_user_ungated(authorization: Optional[str] = Header(None)):
+        return await _get_current_user(
+            authorization,
+            _get_supabase_client=get_supabase_client_fn,
+        )
+    return _product_get_current_user_ungated
+
+
 def make_get_current_user(get_supabase_client_fn):
     """
-    Factory that creates a product-specific get_current_user dependency.
+    Factory that creates a product-specific get_current_user dependency —
+    LICENSE-GATED BY CONSTRUCTION (round 2): after the JWT validates, the
+    caller's effective org must hold an active license for the product
+    (``403 org_sem_licenca``), so a route that only authenticates (no org
+    lookup) is still gated. ``core`` / an unconfigured process enforce nothing.
+    The raw validator is exposed as ``.ungated`` (what
+    :func:`make_get_current_user_org` unwraps, to avoid checking twice).
 
     Usage in each product's dependencies.py:
 
@@ -277,11 +300,14 @@ def make_get_current_user(get_supabase_client_fn):
 
         get_current_user = make_get_current_user(get_supabase_client)
     """
+    ungated = make_get_current_user_ungated(get_supabase_client_fn)
+
     async def _product_get_current_user(authorization: Optional[str] = Header(None)):
-        return await _get_current_user(
-            authorization,
-            _get_supabase_client=get_supabase_client_fn,
-        )
+        user, token = await ungated(authorization)
+        _enforce_license_for_user(getattr(user, "id", None))
+        return user, token
+
+    _product_get_current_user.ungated = ungated
     return _product_get_current_user
 
 
@@ -749,6 +775,10 @@ def make_get_current_user_org(
             user, token, org_id = auth
             ...
     """
+    # The org factory enforces the license itself (on the resolved effective org),
+    # so unwrap a gated base dep to its raw validator — never check twice.
+    get_current_user_fn = getattr(get_current_user_fn, "ungated", get_current_user_fn)
+
     async def get_current_user_org(
         authorization: Optional[str] = Header(None),
         # See `noctusai_seed.dependencies.ProductDependencies

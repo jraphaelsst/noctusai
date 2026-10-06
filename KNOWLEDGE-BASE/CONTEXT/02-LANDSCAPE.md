@@ -55,8 +55,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Academia De Reciclagem | 10 | 0 | 26 | 9 | 22 | 175 |
 | Agents | 14 | 1 | 39 | 27 | 78 | 1,077 |
 | Community | 23 | 29 | 49 | 30 | 56 | 643 |
-| Store | 4 | 5 | 12 | 1 | 12 | 114 |
-| **Total** | **292** | **318** | **634** | **403** | **1066** | **15,301** |
+| Store | 4 | 5 | 12 | 1 | 13 | 117 |
+| **Total** | **292** | **318** | **634** | **403** | **1067** | **15,304** |
 <!-- kb-counts:end:inventory -->
 
 ## Database

@@ -288,6 +288,18 @@ class LicenseGate:
     product_slug: str
     checker: LicenseChecker
     exempt: bool = False
+    #: ``() -> public-schema service-role client`` — lets the BASE auth dependency
+    #: (``make_get_current_user`` / ``ProductDependencies.get_current_user``)
+    #: resolve the caller's effective org without any per-product wiring.
+    get_core_client: Optional[Callable[[], Any]] = None
+
+    @property
+    def enforcing(self) -> bool:
+        """``False`` for core and for the permissive pytest Fake (allow-all) — the
+        base dep then skips the effective-org lookup entirely (zero extra queries)."""
+        if self.exempt:
+            return False
+        return not (isinstance(self.checker, FakeLicenseChecker) and self.checker.allow_all)
 
 
 _gate: Optional[LicenseGate] = None
@@ -298,6 +310,7 @@ def configure_license_gate(
     checker: Optional[LicenseChecker] = None,
     *,
     exempt: bool = False,
+    get_core_client: Optional[Callable[[], Any]] = None,
 ) -> None:
     """Install (or, with ``product_slug=None``, remove) the process gate.
 
@@ -310,6 +323,7 @@ def configure_license_gate(
         product_slug=product_slug,
         checker=checker,
         exempt=exempt or product_slug == CORE_SLUG,
+        get_core_client=get_core_client,
     )
 
 
@@ -339,7 +353,33 @@ def enforce_license(org_id: Any, org_role: Optional[str], *, allow_customer: boo
         )
 
 
+def enforce_license_for_user(user_id: Any) -> None:
+    """License gate for the BASE authenticated dependency (auth without an org
+    lookup): resolve the caller's EFFECTIVE org (act-as aware) and enforce.
+
+    No gate / core / permissive Fake ⇒ no-op with NO queries. A caller with no
+    ``noctus_users`` row or no org reaches no tenant data (every org-scoped dep
+    already 403s them), so there is nothing to license — passes through.
+    A lookup error fails closed (503). Customers are checked with
+    ``allow_customer=True`` (license AND ``products.aceita_clientes``).
+    """
+    gate = _gate
+    if gate is None or not gate.enforcing or gate.get_core_client is None or user_id is None:
+        return
+    from noctusai_lib.api.auth.effective_org import resolve_effective_org
+
+    try:
+        eff = resolve_effective_org(gate.get_core_client(), user_id)
+    except Exception:
+        logger.error("license_gate_org_lookup_error user_id=%s — failing closed", user_id, exc_info=True)
+        raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
+    if eff is None or not eff.org_id:
+        return
+    enforce_license(eff.org_id, eff.org_role, allow_customer=True)
+
+
 __all__ = [
+    "enforce_license_for_user",
     "CORE_SLUG",
     "FakeLicenseChecker",
     "LicenseChecker",

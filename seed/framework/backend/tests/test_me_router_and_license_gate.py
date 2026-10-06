@@ -38,7 +38,11 @@ def _make(users, sessions=(), checker=None, slug="igig"):
             raise HTTPException(status_code=401, detail="Token inválido")
         return SimpleNamespace(id=uid, user_metadata={}), authorization[7:]
 
-    deps = SimpleNamespace(get_core_client=lambda: core, get_current_user=get_current_user)
+    deps = SimpleNamespace(
+        get_core_client=lambda: core,
+        get_current_user=get_current_user,
+        get_current_user_ungated=get_current_user,
+    )
     configure_license_gate(slug, checker or FakeLicenseChecker(allow_all=False, licensed={(HOME, slug)}))
     app = FastAPI()
     app.add_exception_handler(HTTPException, http_exception_handler)
@@ -142,3 +146,40 @@ class TestGateOnAuthenticatedRoutes:
     def test_core_exempt(self):
         c = _make([USER_ROW], checker=FakeLicenseChecker(allow_all=False), slug="core")
         assert c.get("/api/things", headers=H_USER).status_code == 200
+
+
+class TestProductDependenciesBaseDep:
+    """`ProductDependencies.get_current_user` is gated by construction;
+    `get_current_user_ungated` is the explicit exemption."""
+
+    def _deps(self, users, checker):
+        from noctusai_seed.dependencies import ProductDependencies
+
+        core = MockSupabaseClient()
+        core.set_table_data("noctus_users", users)
+        core.set_table_data("act_as_sessions", [])
+        db = SimpleNamespace(
+            get_core_client=lambda: core,
+            get_client=lambda: SimpleNamespace(
+                auth=SimpleNamespace(get_user=lambda t: SimpleNamespace(user=SimpleNamespace(id=USER, user_metadata={})))
+            ),
+        )
+        configure_license_gate("igig", checker, get_core_client=lambda: core)
+        return ProductDependencies(db)
+
+    @pytest.mark.asyncio
+    async def test_gated_denies_unlicensed(self):
+        deps = self._deps([USER_ROW], FakeLicenseChecker(allow_all=False))
+        with pytest.raises(HTTPException) as exc:
+            await deps.get_current_user("Bearer t")
+        assert exc.value.status_code == 403 and exc.value.detail["code"] == "org_sem_licenca"
+
+    @pytest.mark.asyncio
+    async def test_gated_allows_licensed(self):
+        deps = self._deps([USER_ROW], FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")}))
+        assert (await deps.get_current_user("Bearer t"))[1] == "t"
+
+    @pytest.mark.asyncio
+    async def test_ungated_passes_regardless(self):
+        deps = self._deps([USER_ROW], FakeLicenseChecker(allow_all=False))
+        assert (await deps.get_current_user_ungated("Bearer t"))[1] == "t"

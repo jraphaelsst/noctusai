@@ -279,3 +279,103 @@ class TestRealLicenseCheck:
         assert isinstance(
             licensing.make_license_checker(lambda: None, force_real=True), licensing.RealLicenseChecker
         )
+
+
+# ---------------------------------------------------------------------------
+# Base authenticated dependency — gated by construction (no org lookup route)
+# ---------------------------------------------------------------------------
+
+from noctusai_lib.api.auth import make_get_current_user, make_get_current_user_ungated  # noqa: E402
+
+
+class _AuthClient:
+    def __init__(self, uid):
+        self.auth = SimpleNamespace(get_user=lambda token: SimpleNamespace(user=SimpleNamespace(id=uid, user_metadata={})))
+
+
+class CountingCore(MockSupabaseClient):
+    lookups = 0
+
+    def table(self, name):
+        CountingCore.lookups += 1
+        return super().table(name)
+
+
+def _gated_dep(core, checker, *, uid=USER, slug="igig"):
+    configure_license_gate(slug, checker, get_core_client=lambda: core)
+    return make_get_current_user(lambda: _AuthClient(uid))
+
+
+class TestBaseDepGatedByConstruction:
+    @pytest.mark.asyncio
+    async def test_auth_only_route_is_403_for_unlicensed_org(self):
+        dep = _gated_dep(_core(users=[USER_ROW]), FakeLicenseChecker(allow_all=False))
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer t")
+        assert exc.value.status_code == 403 and exc.value.detail["code"] == "org_sem_licenca"
+
+    @pytest.mark.asyncio
+    async def test_licensed_org_passes(self):
+        dep = _gated_dep(_core(users=[USER_ROW]), FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")}))
+        user, token = await dep(authorization="Bearer t")
+        assert token == "t" and user.id == USER
+
+    @pytest.mark.asyncio
+    async def test_act_as_checks_the_target_org(self):
+        core = _core(users=[ADMIN_ROW], sessions=[_live()])
+        dep = _gated_dep(core, FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}), uid=ADMIN)
+        assert (await dep(authorization="Bearer t"))[1] == "t"
+        dep = _gated_dep(core, FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")}), uid=ADMIN)
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer t")
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_ungated_variant_is_explicitly_exempt(self):
+        configure_license_gate("igig", FakeLicenseChecker(allow_all=False),
+                               get_core_client=lambda: _core(users=[USER_ROW]))
+        dep = make_get_current_user_ungated(lambda: _AuthClient(USER))
+        assert (await dep(authorization="Bearer t"))[1] == "t"
+
+    @pytest.mark.asyncio
+    async def test_no_token_is_401_before_any_gate(self):
+        dep = _gated_dep(_core(users=[USER_ROW]), FakeLicenseChecker(allow_all=False))
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization=None)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_orgless_user_has_nothing_to_license_and_passes(self):
+        dep = _gated_dep(_core(users=[]), FakeLicenseChecker(allow_all=False))
+        assert (await dep(authorization="Bearer t"))[1] == "t"
+
+    @pytest.mark.asyncio
+    async def test_outage_fails_closed_503(self):
+        class Boom:
+            def table(self, n):
+                raise RuntimeError("db down")
+
+        configure_license_gate("igig", FakeLicenseChecker(allow_all=False), get_core_client=lambda: Boom())
+        dep = make_get_current_user(lambda: _AuthClient(USER))
+        with pytest.raises(HTTPException) as exc:
+            await dep(authorization="Bearer t")
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_core_and_permissive_fake_do_zero_lookups(self):
+        CountingCore.lookups = 0
+        core = CountingCore()
+        for checker, slug in ((FakeLicenseChecker(allow_all=False), "core"), (FakeLicenseChecker(), "igig")):
+            dep = _gated_dep(core, checker, slug=slug)
+            await dep(authorization="Bearer t")
+        assert CountingCore.lookups == 0
+
+    @pytest.mark.asyncio
+    async def test_org_factory_unwraps_so_the_license_is_checked_once(self):
+        checker = FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")})
+        core = _core(users=[{**USER_ROW, "id": USER}])
+        gated = _gated_dep(core, checker)
+        assert gated.ungated is not gated
+        dep = make_get_current_user_org(gated, lambda u: None, get_admin_client_fn=lambda: core)
+        await dep(authorization="Bearer t")
+        assert checker.calls == [(HOME, "igig")]

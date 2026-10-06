@@ -70,14 +70,14 @@ def create_me_router(deps) -> APIRouter:
 
     # Same resolver, full enforcement — /context is license-gated like any route.
     get_current_user_org = make_get_current_user_org(
-        deps.get_current_user,
+        deps.get_current_user_ungated,
         lambda u: None,  # retired positional slot — never consulted
         get_admin_client_fn=lambda: deps.get_core_client(),
         allow_customer=True,
     )
 
     @router.get("/access")
-    async def me_access(auth=Depends(deps.get_current_user)) -> dict:
+    async def me_access(auth=Depends(deps.get_current_user_ungated)) -> dict:
         user, _token = auth
         core = deps.get_core_client()
         try:
