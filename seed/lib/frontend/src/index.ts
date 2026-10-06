@@ -25,6 +25,8 @@ export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneD
 export { createApiClient, extractErrorMessage, ApiError, TransientAuthError, isTransientHttpStatus, refreshWithBackoff } from './api';
 export { mfaChallenge } from './mfaChallenge';
 export type { MfaTransport, MfaVerifyResult, MfaChallengeRequest } from './mfaChallenge';
+export { checkProductAccess, redirectToSemAcesso, isOrgSemLicencaBody, ORG_SEM_LICENCA_CODE, SEM_ACESSO_PATH } from './access';
+export type { MeAccess, MeContext, ActingInfo } from './access';
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth

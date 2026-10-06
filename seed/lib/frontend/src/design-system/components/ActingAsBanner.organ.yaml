@@ -1,0 +1,24 @@
+name: ActingAsBanner
+path: seed/lib/frontend/src/design-system/components/ActingAsBanner.tsx
+phase: pilot-seed
+registered_at: "2026-10-06"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Persistent top bar 'Você está acessando como {org}' + Sair, shown only while GET /api/me/context.acting is non-null (platform superadmin acting as a customer org). Renders nothing otherwise."
+  - "Sair = DELETE {core}/api/admin/act-as/current via coreApi (Supabase bearer), then hard navigation to core /admin/organizacoes. Mounted by the seed layout factory — zero per-product code."
+  - "Visibility is driven off query `data`, never isLoading (lying-loading-state rule)."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Per-product banner rejected: act-as is a platform concept; the seed shell mounts it once."
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

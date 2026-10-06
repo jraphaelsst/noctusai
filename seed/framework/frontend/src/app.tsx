@@ -14,6 +14,7 @@ import { ErrorBoundary, createAuthProvider, SSOCallback, env } from "@noctusai/l
 import { createQueryClient } from "@noctusai/lib/query-client";
 import { PageSkeleton } from "@noctusai/lib/design-system";
 import { ConsentSettingsPage } from "./pages/ConsentSettingsPage";
+import { SemAcessoPage } from "./pages/SemAcessoPage";
 import { ConsentHubPage } from "./pages/consent/ConsentHubPage";
 import { PrivacyPolicyPage } from "./pages/consent/PrivacyPolicyPage";
 import { TermsOfUsePage } from "./pages/consent/TermsOfUsePage";
@@ -365,6 +366,24 @@ export function createProductApp(config: ProductAppConfig) {
               }
             />
           )}
+          {/* Seed-mounted license-gate landing: every product gets it with zero
+              per-product code. Public on purpose — the user is blocked BECAUSE
+              their org has no license, so it cannot sit behind the auth guard. */}
+          <Route
+            path="/sem-acesso"
+            element={
+              <SemAcessoPage
+                coreUrl={env.CORE_URL}
+                onSignOut={async () => {
+                  try {
+                    await supabase?.auth.signOut();
+                  } finally {
+                    window.location.assign("/login");
+                  }
+                }}
+              />
+            }
+          />
           {AcceptInvite && <Route path="/accept-invite/:token" element={<AcceptInvite />} />}
           {ForgotPassword && <Route path="/forgot-password" element={<ForgotPassword />} />}
           {publicRoutes.map(({ path, component: Component }) => (

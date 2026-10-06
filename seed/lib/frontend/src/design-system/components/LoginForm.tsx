@@ -23,6 +23,8 @@ import type { LucideIcon } from "lucide-react";
 import { Loader2 } from "lucide-react";
 
 import { loginWithSession, type SessionAuthData } from "../../auth";
+import { checkProductAccess, redirectToSemAcesso } from "../../access";
+import { env } from "../../env";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -55,6 +57,16 @@ export interface LoginFormProps {
    * before navigating away.
    */
   onSessionSuccess?: (data: SessionAuthData) => void;
+  /**
+   * License gate: after the session is established the form asks the product
+   * `GET /api/me/access`; `has_access=false` triggers `onNoAccess` instead of
+   * `onSuccess`. Default true; set false only for a backend without the route.
+   */
+  checkAccess?: boolean;
+  /** Base URL of the product backend for the access check (default `env.BACKEND_API_URL`). */
+  accessBaseUrl?: string;
+  /** Called when the org holds no license (default: navigate to `/sem-acesso`). */
+  onNoAccess?: () => void;
   /** Show "Forgot password?" link (default false) */
   showForgotPassword?: boolean;
   /** Path for forgot password link (default "/forgot-password") */
@@ -81,6 +93,9 @@ export function LoginForm({
   useSessionAuth = false,
   onSuccess,
   onSessionSuccess,
+  checkAccess = true,
+  accessBaseUrl,
+  onNoAccess,
   showForgotPassword = false,
   forgotPasswordPath = "/forgot-password",
   showRegisterLink = false,
@@ -112,6 +127,17 @@ export function LoginForm({
     return valid;
   }
 
+  /** True when the user may proceed; false after routing to the no-access page. */
+  async function accessGranted(token: string | null): Promise<boolean> {
+    if (!checkAccess) return true;
+    const ok = await checkProductAccess({
+      baseUrl: accessBaseUrl ?? env.BACKEND_API_URL,
+      token,
+    });
+    if (!ok) (onNoAccess ?? redirectToSemAcesso)();
+    return ok;
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!validate()) return;
@@ -123,6 +149,7 @@ export function LoginForm({
         // automatically; FE never sees the token.
         const data = await loginWithSession({ email, password });
         onSessionSuccess?.(data);
+        if (!(await accessGranted(null))) return;
         toast.success("Login realizado com sucesso!");
         onSuccess();
         return;
@@ -135,12 +162,15 @@ export function LoginForm({
         return;
       }
 
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data: signIn, error } = await supabase.auth.signInWithPassword({ email, password });
 
       if (error) {
         toast.error("Erro ao entrar", { description: error.message });
         return;
       }
+
+      const token: string | null = signIn?.session?.access_token ?? null;
+      if (!(await accessGranted(token))) return;
 
       toast.success("Login realizado com sucesso!");
       onSuccess();

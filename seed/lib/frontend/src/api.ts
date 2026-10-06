@@ -6,6 +6,8 @@
  * is written once.
  */
 
+import { isOrgSemLicencaBody, redirectToSemAcesso } from './access';
+
 // ---------------------------------------------------------------------------
 // X-Noctus-Client — the caller-kind signal `AuditMiddleware`
 // (`noctusai_lib.api.audit`) reads on the way in. `"web"` for a normal
@@ -235,6 +237,12 @@ export interface CreateApiClientOptions {
    * retry so the retry carries the aal2 token.
    */
   onMfaVerified?: (result: MfaVerifyResult) => Promise<void> | void;
+  /**
+   * Called when any call answers `403 {code:"org_sem_licenca"}` (the org holds
+   * no active license for this product). Defaults to a hard navigation to
+   * `/sem-acesso`, which every product mounts via the seed shell.
+   */
+  onOrgSemLicenca?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +336,7 @@ export async function refreshWithBackoff(
 // ---------------------------------------------------------------------------
 
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
-  const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated, onMfaVerified } = options;
+  const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated, onMfaVerified, onOrgSemLicenca } = options;
 
   async function buildHeaders(token?: string | null): Promise<Record<string, string>> {
     const headers: Record<string, string> = {
@@ -441,11 +449,20 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     return { enrolled: typeof enrolled === 'boolean' ? enrolled : null };
   }
 
+  // License gate: any 403 `org_sem_licenca` → /sem-acesso (the response still
+  // propagates so the caller's promise rejects normally).
+  async function checkLicenseRefusal(response: Response): Promise<void> {
+    if (response.status !== 403) return;
+    const data = await response.clone().json().catch(() => null);
+    if (isOrgSemLicencaBody(data)) (onOrgSemLicenca ?? redirectToSemAcesso)();
+  }
+
   // The MFA interceptor wraps the auth-retrying fetch. `raw` (no interceptor)
   // is what the dialog itself talks through — a 403 there must never reopen it.
   let rawClient: ApiClient;
   async function fetchWithMfa(url: string, init: RequestInit): Promise<Response> {
     const response = await fetchWithAuthRetry(url, init);
+    await checkLicenseRefusal(response);
     const required = await readMfaRequired(response);
     if (!required) return response;
     const verified = await mfaChallenge.request({

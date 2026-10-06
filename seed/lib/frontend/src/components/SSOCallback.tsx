@@ -12,6 +12,8 @@
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { checkProductAccess, SEM_ACESSO_PATH } from '../access';
+import { env } from '../env';
 // Use a loose type so products with custom schema generics can pass their client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -33,6 +35,11 @@ export interface SSOCallbackProps {
   redirectPath?: string;
   /** This product's slug — sent so core can bind the token to its audience. */
   productSlug?: string;
+  /**
+   * Product backend base URL for the license-gate check
+   * (`GET /api/me/access`, default `env.BACKEND_API_URL`).
+   */
+  apiUrl?: string;
 }
 
 type SSOState =
@@ -60,6 +67,7 @@ export function SSOCallback({
   ssoEndpoint = '/api/sso/session',
   redirectPath = '/',
   productSlug,
+  apiUrl,
 }: SSOCallbackProps) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -141,6 +149,23 @@ export function SSOCallback({
     [clearTimer],
   );
 
+  /**
+   * License gate (Round 2): once a session exists, ask the product whether the
+   * user's org holds its license — no license ⇒ `/sem-acesso`, not the app.
+   * A missing token skips the check (the server re-enforces on every call).
+   */
+  const finish = useCallback(async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token: string | null = session?.access_token ?? null;
+    const ok = token
+      ? await checkProductAccess({ baseUrl: apiUrl ?? env.BACKEND_API_URL, token })
+      : true;
+    if (cancelledRef.current) return;
+    navigate(ok ? redirectPath : SEM_ACESSO_PATH, { replace: true });
+  }, [supabase, apiUrl, navigate, redirectPath]);
+
   const handleSSO = useCallback(
     async (token: string) => {
       if (cancelledRef.current) return;
@@ -153,7 +178,7 @@ export function SSOCallback({
 
         if (cancelledRef.current) return;
         if (session && isSessionValid(session.expires_at)) {
-          navigate(redirectPath, { replace: true });
+          await finish();
           return;
         }
 
@@ -165,7 +190,7 @@ export function SSOCallback({
           } = await supabase.auth.refreshSession();
           if (cancelledRef.current) return;
           if (refreshed && !error && isSessionValid(refreshed.expires_at)) {
-            navigate(redirectPath, { replace: true });
+            await finish();
             return;
           }
         }
@@ -173,7 +198,7 @@ export function SSOCallback({
         if (cancelledRef.current) return;
         const success = await callBackend(token);
         if (cancelledRef.current) return;
-        if (success) navigate(redirectPath, { replace: true });
+        if (success) await finish();
       } catch (err: any) {
         if (!cancelledRef.current) {
           setState({
@@ -183,7 +208,7 @@ export function SSOCallback({
         }
       }
     },
-    [navigate, callBackend, supabase, redirectPath],
+    [finish, callBackend, supabase],
   );
 
   useEffect(() => {
