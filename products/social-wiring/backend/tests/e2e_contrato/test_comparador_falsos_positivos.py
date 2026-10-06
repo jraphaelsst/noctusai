@@ -150,3 +150,46 @@ class TestPosseSemPrazoComDataFixa:
     def test_a_printed_wrong_date_still_fails(self):
         gerado = _troca(_BASE, "em 15 de outubro de 2026", "em 20 de outubro de 2026")
         assert comparador.pontuar(_BASE, gerado).veredito == "reprovado"
+
+
+class TestRomanosEmNomesDeVia:
+    """Deal 867 (2026-10-06): the matrícula transcribes `Rua I`, the signed
+    contract prints `Rua 1` — one fact. Scope: a Roman numeral right after a
+    street-type word ONLY. `Anexo I` / `Bloco I` / `Torre I` stay strict (a
+    bloco/anexo number is the unit's identity and is compared as written)."""
+
+    def test_extraction_reads_both_spellings_as_one_token(self):
+        for romano, arabico in (("Rua I", "Rua 1"), ("Alameda III", "Alameda 3"),
+                                ("Av. IV", "Av. 4"), ("Travessa IX", "Travessa 9"),
+                                ("quadra XII", "quadra 12")):
+            assert comparador.extrair_numeros(romano) == comparador.extrair_numeros(arabico), romano
+
+    def test_a_different_number_is_still_a_different_token(self):
+        assert comparador.extrair_numeros("Rua 2") != comparador.extrair_numeros("Rua 1")
+        assert comparador.extrair_numeros("Rua II") != comparador.extrair_numeros("Rua 1")
+
+    def test_not_after_a_street_word_nothing_changes(self):
+        for texto in ("Anexo I", "Bloco I", "Torre II", "Eu, I, declaro"):
+            assert comparador.romanos_de_via_para_arabicos(texto) == texto
+        # a street NAME that merely starts with those letters is untouched
+        assert comparador.romanos_de_via_para_arabicos("Rua Itapeva") == "Rua Itapeva"
+        assert comparador.romanos_de_via_para_arabicos("Rua das Flores") == "Rua das Flores"
+
+    def test_rua_i_vs_rua_1_in_the_objeto_clause_is_not_a_missing_number(self):
+        imovel = (
+            "IMÓVEL: casa nº 54, situada na Rua {via}, nº 20, com área privativa de 80,50m2, "
+            "caracterizado na Matrícula Nº 12.345 do 1º Cartório de Registro de Imóveis de Cidade Exemplo."
+        )
+        ref = _com_objeto(_BASE, imovel.format(via="1"))
+        gerado = _com_objeto(_BASE, imovel.format(via="I"))
+        assert comparador.pontuar(ref, gerado).veredito != "reprovado"
+        assert comparador.pontuar(gerado, ref).veredito != "reprovado"
+
+    def test_rua_2_vs_rua_1_is_still_material(self):
+        imovel = (
+            "IMÓVEL: casa nº 54, situada na Rua {via}, nº 20, com área privativa de 80,50m2, "
+            "caracterizado na Matrícula Nº 12.345 do 1º Cartório de Registro de Imóveis de Cidade Exemplo."
+        )
+        ref = _com_objeto(_BASE, imovel.format(via="1"))
+        assert comparador.pontuar(ref, _com_objeto(_BASE, imovel.format(via="2"))).veredito == "reprovado"
+        assert comparador.pontuar(ref, _com_objeto(_BASE, imovel.format(via="II"))).veredito == "reprovado"

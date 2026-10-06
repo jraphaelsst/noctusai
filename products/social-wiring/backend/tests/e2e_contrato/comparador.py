@@ -279,6 +279,39 @@ _BANCARIO_GATE_RE = re.compile(r"ag[eê]ncia|conta corrente|chave pix")
 _BANCARIO_SEGMENTO_RE = re.compile(r"(?:em favor d[oa]s?\s+[^:.;]{0,60}:|\bbanco\b).*?(?=operando-se|\.\s|\.$|$)")
 
 
+#: A street-type word followed by a ROMAN numeral (`Rua I`, `Alameda III`, `quadra IV`):
+#: the matrícula transcribes a numbered street in Roman, the signed contract in Arabic
+#: (`Rua 1`) — one fact, two spellings (deal 867, 2026-10-06). ONLY after these words:
+#: `Anexo I`, `Bloco I`, `Torre II`, `Fase I`, a bare pronoun-like `I` stay untouched
+#: (a bloco/anexo number is the unit's identity and is compared as written). Roman
+#: numerals I..XXXIX; case-insensitive because the comparison runs on folded text.
+_ROMANO = r"(?:xxx|xx|x)?(?:ix|iv|v?i{0,3})"
+_VIA_ROMANO_RE = re.compile(
+    r"\b((?:rua|avenida|av\.?|alameda|travessa|estrada|pra[cç]a|via|viela|quadra|lote))(\s+)(" + _ROMANO + r")(?![\w])",
+    re.I,
+)
+_ROMANOS = {"i": 1, "v": 5, "x": 10}
+
+
+def _romano_para_int(r: str) -> int:
+    total = 0
+    r = r.lower()
+    for i, c in enumerate(r):
+        v = _ROMANOS[c]
+        total += -v if i + 1 < len(r) and _ROMANOS[r[i + 1]] > v else v
+    return total
+
+
+def romanos_de_via_para_arabicos(texto: str) -> str:
+    """`Rua I` → `Rua 1`, `Alameda III` → `Alameda 3` (see `_VIA_ROMANO_RE`)."""
+    def _troca(m: re.Match) -> str:
+        if not m.group(3):  # the optional-everything pattern can match empty
+            return m.group(0)
+        return f"{m.group(1)}{m.group(2)}{_romano_para_int(m.group(3))}"
+
+    return _VIA_ROMANO_RE.sub(_troca, texto)
+
+
 def _dobrar(texto: str) -> str:
     """Lowercase + accent-free — a comparison form, never a stored value."""
     decomposto = unicodedata.normalize("NFKD", texto)
@@ -613,6 +646,7 @@ def _preparar_para_numeros(texto: str) -> str:
     whitespace broken inside a number (`06706- 165`, `449220 / 2026`), ordinal
     indicators and area units glued to a digit, and a parenthesis that merely
     repeats the number before it."""
+    texto = romanos_de_via_para_arabicos(texto)
     texto = _EMAIL_RE.sub(" ", texto)
     texto = _ENUMERADOR_RE.sub("", texto)
     texto = re.sub(r"(?<=\d)[ \t]*/[ \t]*(?=\d)", "/", texto)
@@ -1298,6 +1332,7 @@ def _separar_observacao(texto: str, chave: str) -> tuple[str, str]:
     observation text."""
     obs: list[str] = []
     linhas: list[str] = []
+    texto = romanos_de_via_para_arabicos(texto)
     texto = re.sub(r"(?<=\d)[ \t]*/[ \t]*(?=\d)", "/", texto)  # `449220 / 2026` reads as one number, like `_preparar_para_numeros`
     for linha in texto.split("\n"):
         if "objeto" in chave and _IMOVEL_F_RE.match(linha):
