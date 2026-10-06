@@ -7074,8 +7074,7 @@ _GATED_PREFIXES: dict[str, str] = {
     "dev_team/tests/": "tooling-tests",
     "scripts/codemods/": "tooling-tests",
     "templates/product-seed/backend/tests/": "tooling-tests",
-    # NOC-REMEDIATE[harness-mod-ci]: mod *.test.ts (`claude plugin test`) have no CI job yet — 2026-10-06
-    ".claude/mods/": "harness-mod-tests (PENDING CI step; see check_harness_mod_integrity)",
+    ".claude/mods/": "harness-mod-tests",
 }
 
 #: `mcp/<connector>/tests/` is covered by `tooling-tests`, which derives the

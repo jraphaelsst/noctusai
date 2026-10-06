@@ -73,7 +73,7 @@ The work landed as one contiguous linear range on `dev`, with the activation iso
 - **Edit in place:** edit under `.claude/mods/<name>/` in a worktree, then `/reload-plugins`. The marketplace is a directory, so relative-path plugins load from the folder itself.
 - **Fast iteration in one session:** the `plugin-authoring` skill hot-reloads from the session's dev-mods folder. Copy the result back into the worktree; the repo copy is canonical.
 - **Gates before commit:** `claude plugin validate .claude/mods/<name>`, `claude plugin test .claude/mods/<name>`, `cli.py --check-harness-mod`.
-- `NOC-REMEDIATE[harness-mod-ci]`: no CI job runs `claude plugin test` yet. Until one does, the pre-commit keeper and the local test run are the gate. The `_GATED_PREFIXES` entry says PENDING.
+- **CI:** the `harness-mod-tests` job in `.github/workflows/test.yml` runs `claude plugin validate .claude/mods/noc-harness`, `claude plugin validate .`, `claude plugin test .claude/mods/noc-harness` and `cli.py --check-harness-mod` (keyless — no `ANTHROPIC_API_KEY`; CLI version pinned via `HARNESS_CLAUDE_CODE_VERSION`). Scoped by the `changes` job's `harness_changed` output (`.claude/mods/**`, `.claude-plugin/**`, `.claude/settings.json`; every full run). Closed the former `NOC-REMEDIATE[harness-mod-ci]`.
 
 ## Anti-patterns
 

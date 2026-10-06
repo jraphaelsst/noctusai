@@ -87,6 +87,9 @@ jobs:
       # job's own outputs to a reader outside the run, so this can never be
       # machine-queried after the fact either — its value is in the run log.
       diff_base_verified: ${{ steps.classify.outputs.diff_base_verified }}
+      # `harness-mod-tests` scope: true on every full run, else only when the
+      # diff touches the Claude Code mod surface (see classify step).
+      harness_changed: ${{ steps.classify.outputs.harness_changed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -131,6 +134,7 @@ jobs:
              [ "${GITHUB_REF#refs/heads/release/}" != "${GITHUB_REF}" ]; then
             echo "run_heavy=true" >> "$GITHUB_OUTPUT"
             echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+            echo "harness_changed=true" >> "$GITHUB_OUTPUT"
             echo "changed_products=," >> "$GITHUB_OUTPUT"
             echo "scope: workflow_dispatch or a release-branch ref → full suite, never scoped down"
             exit 0
@@ -181,6 +185,7 @@ jobs:
               echo "diff_base_verified=false" >> "$GITHUB_OUTPUT"
               echo "run_heavy=true" >> "$GITHUB_OUTPUT"
               echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+              echo "harness_changed=true" >> "$GITHUB_OUTPUT"
               echo "changed_products=," >> "$GITHUB_OUTPUT"
               echo "::warning::no heavy-green ancestor run found on ${GITHUB_REF_NAME} — failing toward coverage (full suite) instead of diffing against the unverified event.before (${BASE})"
               exit 0
@@ -189,6 +194,7 @@ jobs:
           if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "run_heavy=true" >> "$GITHUB_OUTPUT"
             echo "shared_changed=true" >> "$GITHUB_OUTPUT"
+            echo "harness_changed=true" >> "$GITHUB_OUTPUT"
             echo "changed_products=," >> "$GITHUB_OUTPUT"
             echo "scope: no usable diff base ($BASE — new branch or unreachable commit) → full suite"
             exit 0
@@ -203,11 +209,21 @@ jobs:
           if [ -z "$NON_LEDGER" ]; then
             echo "run_heavy=false" >> "$GITHUB_OUTPUT"
             echo "shared_changed=false" >> "$GITHUB_OUTPUT"
+            echo "harness_changed=false" >> "$GITHUB_OUTPUT"
             echo "changed_products=," >> "$GITHUB_OUTPUT"
             echo "scope: project-history/*.ndjson-only diff → every heavy job skipped"
             exit 0
           fi
           echo "run_heavy=true" >> "$GITHUB_OUTPUT"
+
+          # (a2) Claude Code mod surface (`harness-mod-tests`). Computed BEFORE
+          # the shared-root early exit below so a `.github/` change that also
+          # touches a mod is never missed.
+          if echo "$CHANGED" | grep -qE '^(\.claude/mods/|\.claude-plugin/|\.claude/settings\.json$)'; then
+            echo "harness_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "harness_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
           # (b) A shared-root change invalidates every product — same family
           # of paths build-and-push.yml treats as "rebuild the active set".
@@ -1113,6 +1129,58 @@ jobs:
           # D4Sign credential NAMES (not values) failed the scan despite the
           # allowlist being present and correct.
           GITLEAKS_CONFIG: .gitleaks.toml
+
+  harness-mod-tests:
+    # Claude Code mod suite (`.claude/mods/*`): the mod `*.test.ts` files are NOT
+    # vitest/pytest — they run under `claude plugin test`, so no other job ever
+    # executed them (closed NOC-REMEDIATE[harness-mod-ci], 2026-10-06). Mods are a
+    # UX layer over the Python gates, never a gate (KB § PATTERNS/common/harness-mods.md).
+    # KEYLESS: `claude plugin validate|test` make no model call and need no
+    # ANTHROPIC_API_KEY (verified locally with the key + a clean HOME), so this
+    # runs on fork PRs too. Each step's own exit code is the verdict — no pipes.
+    # CLI pinned (HARNESS_CLAUDE_CODE_VERSION) so a CLI release cannot redden an
+    # unchanged mod; bump it deliberately.
+    name: Harness Mod Tests (claude plugin)
+    needs: changes
+    if: needs.changes.outputs.run_heavy == 'true' && needs.changes.outputs.harness_changed == 'true'
+    runs-on: ubuntu-latest
+    env:
+      HARNESS_CLAUDE_CODE_VERSION: "2.1.291"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install the Claude Code CLI
+        run: |
+          npm install -g "@anthropic-ai/claude-code@${HARNESS_CLAUDE_CODE_VERSION}"
+          claude --version
+
+      - name: Install keeper dependencies (MCP toolkit set)
+        # `cli.py --check-harness-mod` imports noctusai_lib via mcp/noctusai/settings.py;
+        # installed from `mcp/noctusai` (CWD-relative `-e ../../seed/lib/backend`).
+        run: (cd mcp/noctusai && pip install -r requirements.txt)
+
+      - name: claude plugin validate (mod)
+        run: env -u ANTHROPIC_API_KEY claude plugin validate .claude/mods/noc-harness
+
+      - name: claude plugin validate (root marketplace)
+        run: env -u ANTHROPIC_API_KEY claude plugin validate .
+
+      - name: claude plugin test (mod *.test.ts)
+        run: env -u ANTHROPIC_API_KEY claude plugin test .claude/mods/noc-harness
+
+      - name: Keeper check_harness_mod_integrity
+        run: python mcp/noctusai/cli.py --check-harness-mod
 
   tooling-tests:
     # The TOOLING half of the repo — everything with a real suite that is
