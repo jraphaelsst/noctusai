@@ -1424,6 +1424,56 @@ _STORAGE_BUCKETS_PROBE = GuardProbe(
 
 
 # ---------------------------------------------------------------------------
+# Registry — zero caller-executable SECURITY DEFINER functions outside the
+# RLS-helper set, in every ACTIVE product schema (2026-10-06 hotfix; migrations
+# core 061, social-wiring 209, community 016, academia 014, store 010,
+# agents 019, igig 037). PostgREST exposes each function as /rpc/<name>; a
+# SECURITY DEFINER function reachable by anon/authenticated is a privilege
+# escalation (public.enforce_session_cap deleted ANY user's auth.sessions).
+# Allowed to stay executable: a function an RLS policy / column default
+# depends on (derived LIVE from pg_depend, same rule the migrations apply).
+# Inactive schemas (erp, therapy, ...) are deliberately NOT checked — asleep.
+# ---------------------------------------------------------------------------
+
+_SECDEF_ACTIVE_SCHEMAS = (
+    "public", "core", "social_wiring", "community",
+    "academia_de_reciclagem", "store", "agents", "igig",
+)
+
+_SECDEF_EXECUTE_PROBE = GuardProbe(
+    id="secdef.execute.no_caller_executable_outside_rls_helpers",
+    product="<platform>",
+    schema="public",
+    guard_name="secdef_execute_lockdown",
+    kind="state_assertion",
+    migrations=(),
+    rationale=(
+        "A SECURITY DEFINER function executable by anon/authenticated is "
+        "directly callable as a PostgREST RPC, bypassing RLS and every app "
+        "check. Only functions an RLS policy or column default depends on "
+        "may stay caller-executable (they run inside the caller's query)."
+    ),
+    sql=_state_assertion_probe(
+        select_count_sql=(
+            "SELECT count(*) INTO v_count FROM pg_proc p "
+            "JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = ANY (ARRAY["
+            + ",".join("'" + sc + "'" for sc in _SECDEF_ACTIVE_SCHEMAS)
+            + "]) AND p.prosecdef AND p.prokind = 'f' "
+            "AND (has_function_privilege('anon', p.oid, 'EXECUTE') "
+            "OR has_function_privilege('authenticated', p.oid, 'EXECUTE')) "
+            "AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') "
+            "AND NOT EXISTS (SELECT 1 FROM pg_depend d "
+            "WHERE d.refclassid = 'pg_proc'::regclass AND d.refobjid = p.oid "
+            "AND d.classid IN ('pg_policy'::regclass, 'pg_attrdef'::regclass));"
+        ),
+        clean_message="no non-RLS-helper SECURITY DEFINER function is anon/authenticated-executable in active schemas",
+        violation_message_prefix="SECURITY DEFINER function(s) callable by anon/authenticated outside the RLS-helper set:",
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — academia_de_reciclagem.interessados unique lower(email)
 # (migration 011).
 # ---------------------------------------------------------------------------
@@ -4296,6 +4346,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ULTIMA_TRANSFERENCIA_MANUAL_EXCLUSIVA_PROBE,
     _EMPREENDIMENTO_MANUAL_PROBE,
     _STORAGE_BUCKETS_PROBE,
+    _SECDEF_EXECUTE_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
