@@ -300,6 +300,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-disk-usage", action="store_true", help="Disk-pressure monitor 70/80/90 bands (absorbed scripts/disk-usage-monitor.sh). MCP: noctus.dev.check_disk_usage.")
     parser.add_argument("--check-framework-deps", action="store_true", help="Audit product frontend package.json framework-dep parity (absorbed scripts/check-framework-deps.py). MCP: noctus.dev.check_framework_deps.")
     parser.add_argument("--cleanup-stale-worktrees", action="store_true", help="Remove worktrees merged to origin/main (absorbed scripts/cleanup-stale-worktrees.sh). Dry-run unless --force. MCP: noctus.dev.cleanup_stale_worktrees.")
+    parser.add_argument("--harness-status", action="store_true", help="Print ONE JSON object (schema noc.harness_status/v1) for the noc-harness Claude Code mod: session tree/branch/dirty, dev drift, reminders; --hs-full adds caches/auto-improvement/pointers/worktrees/dispatcher. Never fetches; exit 0 even when sections fail (see `errors`). MCP: noctus.dev.harness_status.")
+    parser.add_argument("--hs-full", action="store_true", help="With --harness-status: full mode (slower, ~60s cadence).")
+    parser.add_argument("--hs-cwd", metavar="PATH", default=None, help="With --harness-status: the session cwd to evaluate (default: cwd).")
+    parser.add_argument("--harness-event", action="store_true", help="Read ONE JSON event object on stdin ({kind,target,summary,detail?,session_id?,source}) and record it as an s1 auto-improvement entry. Exit 1 on error. MCP: noctus.dev.harness_event.")
     parser.add_argument("--tmp-cleanup", action="store_true", help="Sweep retired engineer-dispatch patch artifacts from /tmp (patch-id-on-dev OR aged-out OR malformed). DRY-RUN unless --force. MCP: noctus.dev.tmp_cleanup.")
     parser.add_argument("--tmp-cleanup-max-age-days", type=int, default=14, help="With --tmp-cleanup: age threshold beyond which unmatched patches are retired (default 14).")
     parser.add_argument("--cache-pull", action="store_true", help="Pull remote prod pgvector cache → local SQLite (inverse of cache_deploy_mirror). Bootstrap a fresh-clone / new-machine without paying ~30 min OpenAI re-embed. Pair --cache-pull-only to scope. MCP: noctus.dev.cache_pull. KB § PATTERNS/common/cache-portable-architecture.md.")
@@ -454,6 +458,24 @@ def build_parser() -> argparse.ArgumentParser:
 def main():
     parser = build_parser()
     args = parser.parse_args()
+    # Harness mod fast path: runs on every Claude turn (<400 ms budget), so it
+    # returns BEFORE the env bootstrap + banner + worktree rebind below. It needs
+    # none of them (refs-only git + local caches; --hs-cwd carries the tree).
+    if args.harness_status:
+        from tools.noctus.dev.harness_status import harness_status
+        print(json.dumps(harness_status(full=args.hs_full, cwd=args.hs_cwd), default=str))
+        sys.exit(0)
+
+    if args.harness_event:
+        from tools.noctus.dev.harness_status import harness_event
+        try:
+            _payload = json.loads(sys.stdin.read())
+        except json.JSONDecodeError as _exc:
+            _r = {"status": "error", "error": f"stdin is not valid JSON: {_exc}"}
+        else:
+            _r = harness_event(_payload)
+        print(json.dumps(_r, default=str))
+        sys.exit(0 if _r.get("status") == "logged" else 1)
 
     # If the caller passed an explicit worktree path, override the module-level
     # `settings.REPO_ROOT` / `settings.PRODUCTS_DIR` BEFORE any `tools.*` module

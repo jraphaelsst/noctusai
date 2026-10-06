@@ -91,6 +91,7 @@ def _resolve_effective_root(
 
 def detect_stale_caches(
     repo_root: Path | None = None, worktree_path: str | None = None,
+    skip: frozenset[str] | set[str] | None = None,
 ) -> list[str]:
     """Return the subset of caches whose source has drifted since last refresh.
 
@@ -124,6 +125,8 @@ def detect_stale_caches(
     except Exception:  # noqa: BLE001
         return list(_ALL_CACHES)  # defensive: if compliance won't import, refresh everything
     for cache_name in _ALL_CACHES:
+        if skip and cache_name in skip:
+            continue  # caller opted out (e.g. a per-minute poller skipping the ~40s noc-graph keeper)
         keeper_name = keeper_map[cache_name]
         keeper_fn = getattr(_c, keeper_name, None)
         if keeper_fn is None:
