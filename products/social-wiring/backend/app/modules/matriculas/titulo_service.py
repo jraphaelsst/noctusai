@@ -151,10 +151,32 @@ def _confirmacao(linha: dict, coluna: str, chave: str) -> Optional[dict]:
 
 
 _DATA_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
-_REF_RE = re.compile(r"\b(?:r|av)\s*-?\s*(\d+)\b")
+_REF_RE = re.compile(r"\b(r|av)\s*[-.]?\s*(\d+)\b", re.I)
 _TIPOS_INSTRUMENTO = (
     "particular", "publica", "escritura", "formal de partilha", "arrematacao",
     "adjudicacao", "carta de", "contrato", "sentenca", "mandado", "permuta",
+)
+_LIVRO_RE = re.compile(
+    r"\blivro\s*(?:n[o.º°]{0,2}\s*)?([0-9][\w./-]*?)(?=[\s,;]|\.(?:\s|$)|$)", re.I
+)
+_FOLHAS_RE = re.compile(
+    r"\b(?:fls?|folhas?)\b\.?\s*(?:n[o.º°]{0,2}\s*)?(\d+(?:\s*(?:/|-|a|e)\s*\d+)?)", re.I
+)
+_TABELIONATO_RE = re.compile(
+    r"(?:\d+\s*[º°oª]?\s*)?tabeli(?:ão|ao|onato)(?:\s+de\s+notas)?", re.I
+)
+_NOME_PROPRIO = r"[A-ZÀ-Ý][\wÀ-ÿ'-]*"
+_CIDADE_RE = re.compile(
+    r"(?:tabeli(?:ão|ao|onato)(?:\s+de\s+notas)?\s+de|,\s*em)\s+"
+    rf"({_NOME_PROPRIO}(?:\s+(?:d[aeo]s?\s+)?{_NOME_PROPRIO})*)",
+    re.I,
+)
+
+#: The individually-checked facts of a título phrase, in display order. The FE
+#: contract (`divergencias[].fato`) — each is judged ON ITS OWN (owner
+#: 2026-10-06: "one check doesn't fail others when others are ok").
+FATOS_TITULO: tuple[str, ...] = (
+    "data", "registro", "tipo", "livro", "folhas", "tabelionato", "cidade",
 )
 
 
@@ -162,34 +184,119 @@ def _sem_acento(texto: str) -> str:
     return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
 
 
-def fatos_do_titulo(texto: Optional[str]) -> frozenset[str]:
-    """The material facts a título phrase carries: its dates (dd/mm/yyyy),
-    its instrument kind and its registro refs (R-11, AV-3). Two phrasings
-    are comparable by set inclusion — a phrase that lacks a fact the other
-    has is LESS INFORMATIVE (the contract's título sentence loses a date)."""
+def _num_canonico(valor: str) -> str:
+    """`071/076` == `71/76`: leading zeros are not a different folha."""
+    return re.sub(r"\d+", lambda m: str(int(m.group())), valor)
+
+
+#: A fact's readings: canonical key -> display text as written.
+_Leituras = dict[str, str]
+
+
+def _leituras_do_titulo(texto: Optional[str]) -> dict[str, _Leituras]:
+    """Per-fact readings of a título phrase: `{fato: {chave: exibicao}}`. A
+    fact absent from the text is simply not a key of the result."""
     if not texto:
-        return frozenset()
+        return {}
     norm = _sem_acento(texto)
-    fatos = {f"data:{m}" for m in _DATA_RE.findall(norm)}
-    fatos |= {f"ref:{m}" for m in _REF_RE.findall(norm)}
-    fatos |= {f"tipo:{t}" for t in _TIPOS_INSTRUMENTO if t in norm}
-    return frozenset(fatos)
+    out: dict[str, _Leituras] = {}
+
+    def _add(fato: str, chave: str, exibicao: str) -> None:
+        out.setdefault(fato, {}).setdefault(chave, exibicao)
+
+    for m in _DATA_RE.finditer(texto):
+        d, mes, a = m.group().split("/")
+        _add("data", f"{int(d)}/{int(mes)}/{a}", m.group())
+    for m in _REF_RE.finditer(texto):
+        _add("registro", f"{m.group(1).lower()}-{int(m.group(2))}", f"{m.group(1).upper()}-{m.group(2)}")
+    for t in _TIPOS_INSTRUMENTO:
+        if t in norm:
+            _add("tipo", t, t)
+    m = _LIVRO_RE.search(texto)
+    if m:
+        bruto = m.group(1).rstrip(".,;")
+        _add("livro", _num_canonico(bruto.lower()), bruto)
+    m = _FOLHAS_RE.search(texto)
+    if m:
+        _add("folhas", _num_canonico(re.sub(r"\s+", "", m.group(1))), m.group(1).strip())
+    m = _TABELIONATO_RE.search(texto)
+    if m:
+        chave = _sem_acento(m.group()).replace("tabeliao", "tabelionato")
+        chave = re.sub(r"(\d+)\s*[o]?\s*tabelionato", r"\1 tabelionato", chave)
+        _add("tabelionato", re.sub(r"\s+", " ", chave).strip(), m.group().strip())
+    m = _CIDADE_RE.search(texto)
+    if m:
+        _add("cidade", _sem_acento(m.group(1)), m.group(1).strip())
+    return out
+
+
+def fatos_do_titulo(texto: Optional[str]) -> dict[str, tuple[str, ...]]:
+    """The material facts a título phrase carries, ONE ENTRY PER FACT
+    (`data`, `registro`, `tipo`, `livro`, `folhas`, `tabelionato`, `cidade`):
+    `{fato: (valores como escritos...)}`. A fact the phrase does not state is
+    absent. Facts are independent — comparing two phrasings is done fact by
+    fact (`divergencias_do_titulo`), never as one bundled set."""
+    return {f: tuple(v.values()) for f, v in _leituras_do_titulo(texto).items()}
+
+
+def _comparar_fatos(texto: Optional[str], sugestao: Optional[str]) -> list[dict]:
+    """One entry per fact whose readings differ between `texto` (what is
+    stored) and `sugestao`: `{fato, atual, sugerido, so_no_atual}`.
+    `so_no_atual` marks a value the stored text carries that the suggestion
+    does not and that is NOT merely a different reading of the same slot —
+    the fact (or an extra element of it) would be LOST by realigning."""
+    atual, sug = _leituras_do_titulo(texto), _leituras_do_titulo(sugestao)
+    out: list[dict] = []
+    for fato in FATOS_TITULO:
+        a, s = atual.get(fato, {}), sug.get(fato, {})
+        if set(a) == set(s):
+            continue
+        so_atual = bool(a) and (not s or len(a) > len(s))
+        out.append(
+            {
+                "fato": fato,
+                "atual": ", ".join(a.values()) or None,
+                "sugerido": ", ".join(s.values()) or None,
+                "so_no_atual": so_atual,
+            }
+        )
+    return out
+
+
+def divergencias_do_titulo(texto: Optional[str], sugestao: Optional[str]) -> list[dict]:
+    """`[{fato, atual, sugerido}]` — one entry per título fact whose value
+    differs between the stored `texto` and the `sugestao` (different values,
+    or present on one side only). Each fact is its own entry: a wrong
+    `folhas` never flags `livro`, `data` or `registro`. Empty when either side
+    is missing (nothing to compare)."""
+    if not texto or not sugestao:
+        return []
+    return [
+        {k: d[k] for k in ("fato", "atual", "sugerido")} for d in _comparar_fatos(texto, sugestao)
+    ]
+
+
+def fatos_so_no_texto(texto: Optional[str], sugestao: Optional[str]) -> list[str]:
+    """Facts the stored `texto` states that realigning to `sugestao` would
+    LOSE (absent from the suggestion, or extra elements beyond it)."""
+    if not texto or not sugestao:
+        return []
+    return [d["fato"] for d in _comparar_fatos(texto, sugestao) if d["so_no_atual"]]
 
 
 def menos_informativo(texto: Optional[str], sugestao: Optional[str]) -> bool:
-    """True when `texto` lacks at least one fact `sugestao` carries."""
-    return bool(fatos_do_titulo(sugestao) - fatos_do_titulo(texto))
+    """True when `texto` lacks or misstates at least one fact `sugestao`
+    carries (any divergent fact where the suggestion has a value)."""
+    return any(d["sugerido"] is not None for d in divergencias_do_titulo(texto, sugestao))
 
 
-def _divergencia_automatica(linha: dict, sugestao: Optional[str]) -> bool:
-    """An AUTO ("ia", no human behind it) confirmation that no longer says
-    what the current suggestion says — the card must show it to a human."""
-    if not sugestao or linha.get("titulo_aquisitivo_texto_origem") != "ia":
+def _divergencia_automatica(linha: dict, divergencias: list[dict]) -> bool:
+    """An AUTO ("ia", no human behind it) confirmation with at least one
+    divergent fact — the card must show it to a human. Manual/human-confirmed
+    texts are never reported as needing realignment."""
+    if not divergencias or linha.get("titulo_aquisitivo_texto_origem") != "ia":
         return False
-    if linha.get("titulo_aquisitivo_texto_confirmado_por"):
-        return False
-    atual = linha.get("titulo_aquisitivo_texto")
-    return bool(atual) and _sem_acento(atual).strip(" .") != _sem_acento(sugestao).strip(" .")
+    return not linha.get("titulo_aquisitivo_texto_confirmado_por")
 
 
 def _patch_confirmacao(coluna: str, valor: Optional[str], usuario_id: Optional[Any]) -> dict:
@@ -301,6 +408,7 @@ def obter_titulo(
             if sugestao is None:
                 motivo = MOTIVO_SEM_INSTRUMENTO
 
+    divergencias = divergencias_do_titulo(linha.get("titulo_aquisitivo_texto"), sugestao)
     return {
         "codigo": codigo,
         "ato": ato_saida,
@@ -309,7 +417,9 @@ def obter_titulo(
         "confirmado": _confirmacao(linha, "titulo_aquisitivo_texto", "texto"),
         # An automatic confirmation that diverges from the current suggestion
         # (owner 2026-10-06): shown, never silently kept.
-        "divergente_da_sugestao": _divergencia_automatica(linha, sugestao),
+        "divergente_da_sugestao": _divergencia_automatica(linha, divergencias),
+        # Per-fact divergences (any origin) — each fact judged on its own.
+        "divergencias": divergencias,
     }
 
 
@@ -714,6 +824,10 @@ __all__ = [
     "confirmar_onus_credor",
     "confirmar_titulo",
     "confirmar_ultima_transferencia_manual",
+    "divergencias_do_titulo",
+    "fatos_do_titulo",
+    "fatos_so_no_texto",
+    "menos_informativo",
     "obter_onus_credor",
     "obter_titulo",
 ]

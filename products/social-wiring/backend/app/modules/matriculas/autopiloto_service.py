@@ -248,8 +248,11 @@ def _alinhar_titulo_texto(
     - machine-pending: confirmed only when the stored text IS the current
       suggestion; a stale one stays pending.
     - already auto-confirmed and diverging from the suggestion: follows the
-      suggestion when that loses no fact; otherwise stays and is FLAGGED
-      (`DIVERGENTE_DA_SUGESTAO`, logged at WARNING).
+      suggestion when no fact would be LOST — decided PER FACT (data,
+      registro, tipo, livro, folhas, tabelionato, cidade): a conflict where
+      the suggestion has a value is overwritten by it (newest reading of the
+      confirmed act); a fact only the old text states keeps it and is FLAGGED
+      (`DIVERGENTE_DA_SUGESTAO`, logged at WARNING naming WHICH facts).
     """
     chave = "titulo_aquisitivo_texto"
     campo = campos_svc.CAMPOS[chave]
@@ -265,10 +268,12 @@ def _alinhar_titulo_texto(
         and bool(linha.get(campo.confirmado_em))
     )
     if auto_confirmado and frase and not igual:
-        if titulo_svc.menos_informativo(frase, atual):
+        perdidos = titulo_svc.fatos_so_no_texto(atual, frase)
+        if perdidos:
             logger.warning(
                 "matricula autopiloto: imovel %s titulo auto-confirmado diverge da "
-                "sugestao e tem fatos que ela nao tem — mantido, para revisao humana", codigo,
+                "sugestao e tem fatos que ela nao tem (%s) — mantido, para revisao humana",
+                codigo, ", ".join(perdidos),
             )
             return DIVERGENTE_DA_SUGESTAO
         dados_service.gravar_extraido(
