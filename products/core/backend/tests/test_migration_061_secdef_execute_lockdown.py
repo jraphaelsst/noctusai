@@ -16,11 +16,16 @@ MIGRATIONS = {
     "store": ("010_secdef_execute_lockdown.sql", ("store",)),
     "agents": ("019_secdef_execute_lockdown.sql", ("agents",)),
     "igig": ("037_secdef_execute_lockdown.sql", ("igig",)),
+    # Inactive-product schemas (owner-authorized 2026-10-06; grants only).
+    "erp-imobiliario": ("049_secdef_execute_lockdown.sql", ("erp", "imobi_scheduling", "media_scheduling")),
+    "therapy-platform": ("017_secdef_execute_lockdown.sql", ("therapy",)),
+    "orbity": ("018_secdef_execute_lockdown.sql", ("orbity",)),
+    "core-pilates": ("063_secdef_execute_lockdown_pilates.sql", ("pilates",)),
 }
 
 
 def _sql(product: str) -> str:
-    return (PRODUCTS / product / "backend" / "migrations" / MIGRATIONS[product][0]).read_text(encoding="utf-8")
+    return (PRODUCTS / product.removesuffix("-pilates") / "backend" / "migrations" / MIGRATIONS[product][0]).read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("product", sorted(MIGRATIONS))
