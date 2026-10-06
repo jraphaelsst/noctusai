@@ -189,4 +189,20 @@ describe("Sidebar nesting", () => {
     expect(window.localStorage.getItem(sidebarStorageKey("igig"))).toBeNull();
     expect(sidebarStorageKey("orbity")).toBe("noctus.sidebar.openGroups.orbity");
   });
+
+  it("group content carries the height/opacity animation classes and a reduced-motion opt-out", () => {
+    renderSidebar("/nowhere");
+    fireEvent.click(trigger("Administracao"));
+    const content = screen.getByRole("link", { name: "Admin Home" }).closest("[data-state]") as HTMLElement;
+    expect(content.getAttribute("data-state")).toBe("open");
+    for (const c of [
+      "data-[state=open]:animate-collapsible-down",
+      "data-[state=closed]:animate-collapsible-up",
+      "motion-reduce:animate-none",
+    ]) {
+      expect(content.className).toContain(c);
+    }
+    // overflow is only set inside the keyframes, never statically
+    expect(content.className).not.toMatch(/overflow-hidden/);
+  });
 });

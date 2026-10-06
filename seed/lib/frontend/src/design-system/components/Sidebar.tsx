@@ -388,6 +388,10 @@ export function Sidebar({
         <CollapsiblePrimitive.Content
           className={cn(
             "space-y-0.5 mt-0.5 ml-2 border-l border-sidebar-border pl-2",
+            // Height+opacity slide (keyframes in tailwind.config.base). Radix
+            // skips the animation on first mount, so page-load auto-open is
+            // instant; reduced-motion drops it (Presence then unmounts at once).
+            "data-[state=open]:animate-collapsible-down data-[state=closed]:animate-collapsible-up motion-reduce:animate-none",
             collapsed && "md:ml-0 md:border-l-0 md:pl-0"
           )}
         >

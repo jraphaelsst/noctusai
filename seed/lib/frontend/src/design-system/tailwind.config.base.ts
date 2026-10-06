@@ -110,8 +110,21 @@ const config: Config = {
           from: { height: "var(--radix-accordion-content-height)" },
           to: { height: "0" },
         },
+        // Radix Collapsible (nested Sidebar groups). overflow is hidden only
+        // inside the keyframes, so it clips during the animation and never at
+        // rest (focus rings stay visible).
+        "collapsible-down": {
+          from: { height: "0", opacity: "0", overflow: "hidden" },
+          to: { height: "var(--radix-collapsible-content-height)", opacity: "1", overflow: "hidden" },
+        },
+        "collapsible-up": {
+          from: { height: "var(--radix-collapsible-content-height)", opacity: "1", overflow: "hidden" },
+          to: { height: "0", opacity: "0", overflow: "hidden" },
+        },
       },
       animation: {
+        "collapsible-down": "collapsible-down 0.2s ease-out",
+        "collapsible-up": "collapsible-up 0.2s ease-out",
         "accordion-down": "accordion-down 0.2s ease-out",
         "accordion-up": "accordion-up 0.2s ease-out",
       },
