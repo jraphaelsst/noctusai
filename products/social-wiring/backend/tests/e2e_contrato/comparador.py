@@ -1379,6 +1379,60 @@ def _ausentes(ref: set[str], gen: set[str], minimo: float) -> tuple[list[str], l
     return falt, extra
 
 
+#: The título-aquisitivo sentence: `A VENDEDORA, por Escritura … lavrada em
+#: 04/04/2024 no 1º Tabelião de Notas de X, Livro 569, fls. 071/076, registrada
+#: sob o R-12, tornou-se legítima proprietária`. Located (folded text) as the
+#: stretch of a paragraph from `por <instrumento>` up to `tornou-se`.
+_TITULO_FRASE_RE = re.compile(
+    r"\bpor\s+(?:instrumento|escritura|formal|carta|contrato|sentenca|mandado|adjudicacao|arrematacao|permuta|termo|ato)"
+    r"[^\n]*?(?=,?\s*tornou-se)"
+)
+_TITULO_LIVRO_RE = re.compile(r"\blivro\s*(?:n[o.]{0,2}\s*)?(\d[\w./-]*?)(?=[\s,;]|\.(?:\s|$)|$)")
+_TITULO_FOLHAS_RE = re.compile(r"\b(?:fls?|folhas?)\b\.?\s*(?:n[o.]{0,2}\s*)?(\d+(?:\s*(?:/|-|a|e)\s*\d+)?)")
+_TITULO_REGISTRO_RE = re.compile(r"\b(r|av)\s*[-.]?\s*(\d+)\b")
+_TITULO_TABELIONATO_RE = re.compile(r"(?:(\d+)\s*o?\s*)?tabeli(?:ao|onato)")
+
+
+def _canon_digitos(valor: str) -> str:
+    """`071/076` == `71/76` — leading zeros are not a different folha."""
+    return re.sub(r"\d+", lambda m: str(int(m.group())), re.sub(r"\s+", "", valor))
+
+
+def _fatos_frase_titulo(doc: str) -> Optional[dict[str, set[str]]]:
+    """Each fact of the título sentence of a FOLDED document, as its own set of
+    canonical values (`None` when the document has no such sentence). Facts are
+    extracted independently so one wrong fact never hides or fails another."""
+    m = _TITULO_FRASE_RE.search(doc)
+    if not m:
+        return None
+    frase = m.group()
+    out: dict[str, set[str]] = {}
+    out["data"] = {_canon_digitos(d) for d in re.findall(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", frase)}
+    out["registro"] = {f"{a}-{int(n)}" for a, n in _TITULO_REGISTRO_RE.findall(frase)}
+    out["livro"] = {_canon_digitos(x.rstrip(".,;")) for x in _TITULO_LIVRO_RE.findall(frase)}
+    out["folhas"] = {_canon_digitos(x) for x in _TITULO_FOLHAS_RE.findall(frase)}
+    out["tabelionato"] = {f"{n or ''} tabelionato".strip() for n in _TITULO_TABELIONATO_RE.findall(frase)}
+    return {k: v for k, v in out.items() if v}
+
+
+def _verificacoes_titulo(ref_doc: str, gen_doc: str) -> dict[str, int]:
+    """INDIVIDUAL material checks of the título sentence (owner 2026-10-06 —
+    "one check doesn't fail others when others are ok"): `mat_titulo_<fato>`
+    for livro, folhas, data, registro and tabelionato, each 0/1 on its own.
+    A fact counts only when BOTH sides state it and the values differ; a fact
+    the render lacks (or leaves as a gap marker) is a typed gap handled by the
+    gap counters, and one only the generator states is not a reference
+    divergence."""
+    out = {f"mat_titulo_{f}": 0 for f in ("livro", "folhas", "data", "registro", "tabelionato")}
+    ref, gen = _fatos_frase_titulo(ref_doc), _fatos_frase_titulo(gen_doc)
+    if ref is None or gen is None:
+        return out
+    for fato, valores in ref.items():
+        if fato in gen and gen[fato] != valores:
+            out[f"mat_titulo_{fato}"] = 1
+    return out
+
+
 def _verificacoes_documento(
     ref_s: list[Secao], gen_s: list[Secao], ref_doc: str, gen_doc: str, ref_orig_pre: str, gen_orig_pre: str
 ) -> dict[str, int]:
@@ -1416,6 +1470,9 @@ def _verificacoes_documento(
     lg = {x.strip() for x in _LOGRADOURO_RE.findall(gen_pre)}
     falt_l, extra_l = _ausentes(lr, lg, 0.8)
     out["mat_logradouro"] = _substituicoes(falt_l, extra_l, marc_pre)
+
+    # título-aquisitivo sentence — one check PER FACT
+    out.update(_verificacoes_titulo(ref_doc, gen_doc))
     return out
 
 

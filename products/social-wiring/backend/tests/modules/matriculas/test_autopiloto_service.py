@@ -428,6 +428,72 @@ class TestAutoTituloNeverWeakerThanItsSuggestion:
         assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.DIVERGENTE_DA_SUGESTAO
         assert _dados(scoped)["titulo_aquisitivo_texto"] == rico
 
+    def test_a_single_conflicting_fact_realigns_to_the_suggestion(self, scoped):
+        """Deal 869: the stored text carries the right data/livro/registro but
+        a stale `folhas`. The suggestion has a value for it, so it wins."""
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        sugestao = _dados(scoped)["titulo_aquisitivo_texto"]
+        velho = sugestao.replace("fls. 20", "fls. 09/15")
+        assert velho != sugestao
+        self._confirmado_ia_fraco(scoped, eid, velho)
+
+        resultado = autopiloto.aplicar_autopiloto(scoped, ORG, eid)
+
+        assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.CONFIRMADO_AUTOMATICO
+        assert _dados(scoped)["titulo_aquisitivo_texto"] == sugestao
+
+    def test_a_fact_only_the_old_text_has_is_kept_and_flagged_naming_it(self, scoped, caplog):
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        sugestao = _dados(scoped)["titulo_aquisitivo_texto"]
+        # Folhas conflict (suggestion wins) AND a registro AV-9 only the old text states.
+        velho = sugestao.replace("fls. 20", "fls. 09/15") + ", AV-9"
+        self._confirmado_ia_fraco(scoped, eid, velho)
+
+        with caplog.at_level("WARNING"):
+            resultado = autopiloto.aplicar_autopiloto(scoped, ORG, eid)
+
+        assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.DIVERGENTE_DA_SUGESTAO
+        assert _dados(scoped)["titulo_aquisitivo_texto"] == velho
+        assert any("registro" in r.getMessage() for r in caplog.records)
+        # the conflicting-only fact is not blamed
+        assert not any("folhas" in r.getMessage() for r in caplog.records if "diverge" in r.getMessage())
+
+    def test_obter_titulo_reports_only_the_divergent_fact(self, scoped):
+        from app.modules.matriculas import titulo_service
+
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        sugestao = _dados(scoped)["titulo_aquisitivo_texto"]
+        self._confirmado_ia_fraco(scoped, eid, sugestao.replace("fls. 20", "fls. 09/15"))
+
+        saida = titulo_service.obter_titulo(scoped, ORG, CODIGO)
+
+        assert saida["divergencias"] == [{"fato": "folhas", "atual": "09/15", "sugerido": "20"}]
+        assert saida["divergente_da_sugestao"] is True
+
+    def test_obter_titulo_reports_divergencias_for_manual_but_never_flags_realignment(self, scoped):
+        from app.modules.matriculas import titulo_service
+
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        sugestao = _dados(scoped)["titulo_aquisitivo_texto"]
+        self._confirmado_ia_fraco(
+            scoped, eid, sugestao.replace("fls. 20", "fls. 09/15"), origem="manual", por=str(uuid4())
+        )
+
+        saida = titulo_service.obter_titulo(scoped, ORG, CODIGO)
+
+        assert [d["fato"] for d in saida["divergencias"]] == ["folhas"]
+        assert saida["divergente_da_sugestao"] is False
+
+    def test_obter_titulo_has_no_divergencias_when_the_text_matches(self, scoped):
+        from app.modules.matriculas import titulo_service
+
+        _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+
+        saida = titulo_service.obter_titulo(scoped, ORG, CODIGO)
+
+        assert saida["divergencias"] == []
+        assert saida["divergente_da_sugestao"] is False
+
     def test_a_pending_text_that_differs_from_the_suggestion_is_not_confirmed(self, scoped):
         eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
         linha = _dados(scoped)
@@ -455,3 +521,69 @@ class TestFatosDoTitulo:
         assert t.menos_informativo("por instrumento particular, registrado sob o R-11", sug)
         assert not t.menos_informativo(sug, "por instrumento particular, registrado sob o R-11")
         assert not t.menos_informativo(sug, sug)
+
+    # Deal 869 — invented-but-shaped like the real phrases.
+    ATUAL_869 = (
+        "por Escritura Pública de Venda e Compra lavrada em 04/04/2024 no 1º Tabelião de "
+        "Notas de Cotia, Livro 569, fls. 09/15, registrada sob o R-12"
+    )
+    SUGESTAO_869 = (
+        "por Escritura Pública de Venda e Compra lavrada em 04/04/2024 no 1º Tabelião de "
+        "Notas de Cotia, Livro 569, fls. 071/076, registrada sob o R-12"
+    )
+
+    def test_each_fact_is_extracted_on_its_own(self):
+        from app.modules.matriculas import titulo_service as t
+
+        fatos = t.fatos_do_titulo(self.ATUAL_869)
+
+        assert fatos["data"] == ("04/04/2024",)
+        assert fatos["registro"] == ("R-12",)
+        assert fatos["livro"] == ("569",)
+        assert fatos["folhas"] == ("09/15",)
+        assert fatos["cidade"] == ("Cotia",)
+        assert "tabelionato" in fatos and "tipo" in fatos
+
+    def test_only_folhas_diverges_in_the_869_case(self):
+        from app.modules.matriculas import titulo_service as t
+
+        assert t.divergencias_do_titulo(self.ATUAL_869, self.SUGESTAO_869) == [
+            {"fato": "folhas", "atual": "09/15", "sugerido": "071/076"}
+        ]
+
+    def test_each_fact_diverges_independently(self):
+        from app.modules.matriculas import titulo_service as t
+
+        base = self.SUGESTAO_869
+        casos = {
+            "data": base.replace("04/04/2024", "05/04/2024"),
+            "livro": base.replace("Livro 569", "Livro 570"),
+            "registro": base.replace("R-12", "R-13"),
+            "tabelionato": base.replace("1º Tabelião", "2º Tabelião"),
+            "cidade": base.replace("de Cotia", "de Itapevi"),
+        }
+        for fato, texto in casos.items():
+            divs = t.divergencias_do_titulo(texto, base)
+            assert [d["fato"] for d in divs] == [fato], fato
+
+    def test_leading_zeros_in_folhas_are_not_a_divergence(self):
+        from app.modules.matriculas import titulo_service as t
+
+        assert t.divergencias_do_titulo(
+            self.SUGESTAO_869, self.SUGESTAO_869.replace("071/076", "71/76")
+        ) == []
+
+    def test_a_fact_present_on_one_side_only_is_reported_with_null(self):
+        from app.modules.matriculas import titulo_service as t
+
+        sem_livro = self.SUGESTAO_869.replace(", Livro 569", "")
+        assert t.divergencias_do_titulo(sem_livro, self.SUGESTAO_869) == [
+            {"fato": "livro", "atual": None, "sugerido": "569"}
+        ]
+        assert t.fatos_so_no_texto(self.SUGESTAO_869, sem_livro) == ["livro"]
+
+    def test_nothing_to_compare_yields_no_divergencias(self):
+        from app.modules.matriculas import titulo_service as t
+
+        assert t.divergencias_do_titulo(None, self.SUGESTAO_869) == []
+        assert t.divergencias_do_titulo(self.ATUAL_869, None) == []

@@ -277,3 +277,59 @@ def test_limiares_json_versionado_carrega_e_e_leniente():
     assert lim.max_numeros_divergentes == 0 and lim.max_datas_divergentes == 0  # material stays strict
     assert lim.falhar_em_clausula_extra is False
     assert lim.secao_min <= 0.5 and lim.redacao_min <= 0.75  # wording is an observation floor
+
+
+# ─── título aquisitivo: one INDEPENDENT check per fact ──────────────────────
+
+_TITULO = (
+    "A VENDEDORA, por Escritura Pública de Venda e Compra lavrada em 04/04/2024 no 1º Tabelião "
+    "de Notas de Cotia, Livro 569, fls. 071/076, registrada sob o R-12, tornou-se legítima proprietária."
+)
+
+
+def _com_titulo(frase: str) -> list[str]:
+    base = list(_BASE)
+    base.insert(1, frase)
+    return base
+
+
+class TestTituloAquisitivoFactChecks:
+    def test_identical_titulo_sentences_report_nothing(self):
+        card = comparador.pontuar(_com_titulo(_TITULO), _com_titulo(_TITULO))
+        assert not [m for m in card.motivos() if m.startswith("mat_titulo")]
+
+    def test_a_folhas_only_mismatch_is_exactly_one_material_item(self):
+        gerado = _com_titulo(_TITULO.replace("fls. 071/076", "fls. 09/15"))
+        card = comparador.pontuar(_com_titulo(_TITULO), gerado)
+
+        assert card.materiais_documento == {"mat_titulo_folhas": 1}
+        assert "mat_titulo_folhas:1" in card.motivos()
+        assert card.veredito == "reprovado"
+
+    def test_every_fact_fails_on_its_own_and_never_the_others(self):
+        casos = {
+            "mat_titulo_livro": _TITULO.replace("Livro 569", "Livro 570"),
+            "mat_titulo_data": _TITULO.replace("04/04/2024", "05/04/2024"),
+            "mat_titulo_registro": _TITULO.replace("R-12", "R-13"),
+            "mat_titulo_tabelionato": _TITULO.replace("1º Tabelião", "2º Tabelião"),
+        }
+        for codigo, frase in casos.items():
+            card = comparador.pontuar(_com_titulo(_TITULO), _com_titulo(frase))
+            assert [k for k in card.materiais_documento if k.startswith("mat_titulo")] == [codigo], codigo
+
+    def test_leading_zeros_in_folhas_are_not_a_divergence(self):
+        gerado = _com_titulo(_TITULO.replace("071/076", "71/76"))
+        card = comparador.pontuar(_com_titulo(_TITULO), gerado)
+        assert not [k for k in card.materiais_documento if k.startswith("mat_titulo")]
+
+    def test_a_fact_missing_from_the_render_is_not_a_wrong_fact(self):
+        gerado = _com_titulo(_TITULO.replace(", Livro 569", ""))
+        card = comparador.pontuar(_com_titulo(_TITULO), gerado)
+        assert "mat_titulo_livro" not in card.materiais_documento
+
+    def test_legal_citations_outside_the_titulo_sentence_are_untouched(self):
+        # `Livro`/`fls.` outside the título sentence never trigger a titulo check.
+        ref = _com_titulo(_TITULO) + ["Conforme Livro 2, fls. 10, do Registro Auxiliar."]
+        gen = _com_titulo(_TITULO) + ["Conforme Livro 3, fls. 11, do Registro Auxiliar."]
+        card = comparador.pontuar(ref, gen)
+        assert not [k for k in card.materiais_documento if k.startswith("mat_titulo")]
