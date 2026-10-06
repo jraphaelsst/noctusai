@@ -52,6 +52,25 @@ export type Refusal = { at: string; tool: string; guard: string; reason: string 
 
 export type WrapUp = { commits: number; at: string }
 
+export type PanelRow = { label: string; value: string; tone: 'ok' | 'warn' | 'bad' | 'info' }
+
+/** `noc.harness_panel/v1` — what `cli.py --harness-panel <name>` prints. */
+export type Panel = {
+  schema: string
+  panel: string
+  generated_at: string
+  title: string
+  sections: { heading: string; rows: PanelRow[] }[]
+  errors: { section: string; error: string }[]
+}
+
+/** `noc.harness_route/v1` — what `cli.py --harness-route` prints. */
+export type Route = {
+  schema: string
+  topics: { file: string; title: string; score: number; via: string }[]
+  errors: { section: string; error: string }[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'noc-harness': {
@@ -61,6 +80,7 @@ declare module 'claude-code' {
       refusals: Refusal[]
       wrapup: WrapUp | null
       bandHidden: boolean
+      panels: Record<string, Panel | string>
     }
   }
 }

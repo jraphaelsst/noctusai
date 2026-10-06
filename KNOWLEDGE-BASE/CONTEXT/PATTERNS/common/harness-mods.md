@@ -32,7 +32,16 @@ Each feature has its own `userConfig` switch. None of them decides a gate.
 | Compaction capture: the summarizer is told what it must keep, and learnings in flight are recorded | `session.compact` | `harness_event kind=compaction_capture` |
 | Wrap-up nudge: after a turn that committed without `noc-wrap-up`, the band offers it | `tool.call` + `turn.complete` | — |
 
+| Live panels: `/noc-vectors`, `/noc-baselines`, `/noc-codify`, `/noc-gates` (wired guards, a health probe of each, recent refusals) | `ui.render` `Pane` per panel | `noctus.dev.harness_panel` (generic `noc.harness_panel/v1` sections; the mod draws them as-is) |
+| Invalid-harness alerts: a Bash red whose output matches a harness-failure signature is shown and recorded as INCONCLUSIVE | `tool.call` (reads the PostToolUse context) | `claude-guard-harness-signature.py` → `harness_event kind=harness_invalid` |
+| Executor offer: EXECUTOR agent types are offered to the model only once a live worktree exists | `agent.offer` | The agent's own `EXECUTOR` marker plus the full snapshot. UX only: the Python executor-dispatch guard enforces, and an unknown snapshot means the agent is offered |
+| Semantic routing fallback, off by default (each call costs an embedding; it is off while OpenAI credits are exhausted) | `prompt.submit` | `noctus.dev.harness_route` (memory_search → MEMORY-<topic>.md) |
+
 Other commands: `/noc-band` (show the band again) and `/noc-refresh`.
+
+**Agent types are not re-registered in code.** `$.agent.register` could pin an engineer's tools and model in the mod. Those are already pinned in `.claude/agents/<name>.md` frontmatter, the canonical definition. A second definition would be a fork that drifts. The mod reads the agents' `EXECUTOR` marker instead.
+
+**Write redirect (held, owner decision pending).** Rewriting a primary-checkout Edit/Write into the session's worktree, instead of denying it, would change the primary-write guard itself. The harness's permission classifier refused that change as self-modification of a safety guard. It waits for the owner.
 
 The guards the mod *observes* are canonical Python, shipped in the same change:
 - They **fail closed**: a crash, an 8 s internal deadline or a bad payload produces a deny (`scripts/hooks/_guard_failclosed.py`).

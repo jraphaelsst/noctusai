@@ -1,6 +1,6 @@
 {
   "name": "noc-harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "NoctusAI harness UX: status line, reminders band, orchestration pane, friction ledger, memory routing, compaction capture, wrap-up nudge. A UX + reliability layer over the canonical Python gates — never a gate itself.",
   "author": {
     "name": "NoctusAI"
@@ -48,6 +48,30 @@
       "title": "Wrap-up nudge",
       "description": "After a turn that committed, offer the noc-wrap-up check.",
       "default": true
+    },
+    "code_panels": {
+      "type": "boolean",
+      "title": "Live panels",
+      "description": "/noc-vectors, /noc-baselines, /noc-codify, /noc-gates: live panes backed by cli.py --harness-panel.",
+      "default": true
+    },
+    "executor_offer": {
+      "type": "boolean",
+      "title": "Executor offer",
+      "description": "Offer EXECUTOR agent types to the model only once a worktree exists (the Python dispatch rule still enforces).",
+      "default": true
+    },
+    "harness_invalid_alerts": {
+      "type": "boolean",
+      "title": "Invalid-harness alerts",
+      "description": "Toast + record a Bash red whose output matches a harness-failure signature as INCONCLUSIVE.",
+      "default": true
+    },
+    "semantic_routing": {
+      "type": "boolean",
+      "title": "Semantic memory routing",
+      "description": "When the MEMORY.md table matches nothing, ask memory_search (costs an embedding call; off while OpenAI credits are exhausted).",
+      "default": false
     },
     "full_refresh_seconds": {
       "type": "number",

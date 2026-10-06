@@ -94,3 +94,21 @@ export const COMPACTION_KEEP =
   'NoctusAI harness: keep verbatim, with their targets — every drift-found / scoped-improvement line, ' +
   'every NOC-REMEDIATE marker added, every gate that refused and why, every decision the user made, ' +
   'every commit SHA and branch/worktree in flight, and every open TODO with its named destination.'
+
+const SIGNATURE = /HARNESS SIGNATURE MATCHED: `([^`]+)`/
+
+/** The harness-failure signature claude-guard-harness-signature.py flagged, if any. */
+export function harnessSignature(context: string): string | null {
+  return SIGNATURE.exec(context)?.[1] ?? null
+}
+
+/** An agent type the agents' own frontmatter marks EXECUTOR (derived, never listed). */
+export function isExecutorOffer(description: string): boolean {
+  return /\bEXECUTOR\b/.test(description)
+}
+
+/** A tool call that starts a task branch (MCP tool or the CLI flag). */
+export function isTaskBranchStart(tool: string, input: string): boolean {
+  if (/task_branch/.test(tool)) return /"action"\s*:\s*"start"/.test(input)
+  return tool === 'Bash' && /--task-branch\s+start\b/.test(input)
+}

@@ -1,7 +1,17 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { HarnessStatus } from '../types'
-import { isGitCommit, matchTopics, memoryDir, parseTopics, refusingGuard, statusLine } from './derive'
+import {
+  harnessSignature,
+  isExecutorOffer,
+  isGitCommit,
+  isTaskBranchStart,
+  matchTopics,
+  memoryDir,
+  parseTopics,
+  refusingGuard,
+  statusLine,
+} from './derive'
 
 const snap = (over: Partial<HarnessStatus> = {}): HarnessStatus => ({
   schema: 'noc.harness_status/v1',
@@ -79,4 +89,20 @@ test('memory folder follows the Claude Code project slug', async () => {
   expect(memoryDir('/Users/u', '/Users/u/Documents/NoctusAI/noctusai')).toBe(
     '/Users/u/.claude/projects/-Users-u-Documents-NoctusAI-noctusai/memory',
   )
+})
+
+test('harness signature is read off the PostToolUse advisory', async () => {
+  expect(harnessSignature('x\nHARNESS SIGNATURE MATCHED: `venv-less-worktree` (exit 1)')).toBe('venv-less-worktree')
+  expect(harnessSignature('tests failed: 3')).toBe(null)
+})
+
+test('executor agents are recognised by their own EXECUTOR marker', async () => {
+  expect(isExecutorOffer('Senior backend engineer — EXECUTOR. Dispatch for server-side slices')).toBe(true)
+  expect(isExecutorOffer('Senior solution architect — ADVISOR (read-only).')).toBe(false)
+})
+
+test('task-branch starts are seen through the MCP tool and the CLI', async () => {
+  expect(isTaskBranchStart('mcp__noctusai__noctus_dev_task_branch', '{"action":"start","slug":"x"}')).toBe(true)
+  expect(isTaskBranchStart('mcp__noctusai__noctus_dev_task_branch', '{"action":"cleanup"}')).toBe(false)
+  expect(isTaskBranchStart('Bash', 'python3 mcp/noctusai/cli.py --task-branch start --task-branch-slug x')).toBe(true)
 })

@@ -5,9 +5,12 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { HarnessStatus, Refusal } from '../types'
+import type { HarnessStatus, Panel, Refusal, Route } from '../types'
 import {
   COMPACTION_KEEP,
+  harnessSignature,
+  isExecutorOffer,
+  isTaskBranchStart,
   isGitCommit,
   matchTopics,
   memoryDir,
@@ -23,6 +26,15 @@ const degraded = atom({ plugin: 'noc-harness', key: 'degraded' } as const, null)
 const refusals = atom({ plugin: 'noc-harness', key: 'refusals' } as const, [])
 const wrapup = atom({ plugin: 'noc-harness', key: 'wrapup' } as const, null)
 const bandHidden = atom({ plugin: 'noc-harness', key: 'bandHidden' } as const, false)
+const panels = atom({ plugin: 'noc-harness', key: 'panels' } as const, {})
+
+// The live panels: each is `cli.py --harness-panel <name>`, drawn as-is.
+const PANELS: Record<string, string> = {
+  'noc-vectors': 'vectors',
+  'noc-baselines': 'baselines',
+  'noc-codify': 'codify',
+  'noc-gates': 'gates',
+}
 
 // The ONE bridge to the platform: `cli.py --harness-*`, fronting the
 // noctus.dev.harness_status / harness_event tools. The mod renders what they
@@ -97,6 +109,38 @@ async function harnessEvent($: EngineInterface, event: HarnessEvent): Promise<Ou
   }
 }
 
+async function harnessPanel($: EngineInterface, name: string): Promise<Outcome<Panel>> {
+  const root = await primaryRoot($)
+  try {
+    const ran = await $.process.run(
+      ['python3', `${root}/mcp/noctusai/cli.py`, '--harness-panel', name],
+      { cwd: root, timeoutMs: 60000 },
+    )
+    if (ran.exitCode !== 0) return { ok: false, error: failure(`harness-panel ${name}`, ran.exitCode, ran.stderr, ran.stdout) }
+    const parsed = JSON.parse(ran.stdout) as Panel
+    if (parsed.schema !== 'noc.harness_panel/v1') return { ok: false, error: `harness-panel answered schema ${String(parsed.schema)}` }
+    return { ok: true, value: parsed }
+  } catch (err) {
+    return { ok: false, error: `harness-panel ${name}: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
+async function harnessRoute($: EngineInterface, prompt: string): Promise<Outcome<Route>> {
+  const root = await primaryRoot($)
+  try {
+    const ran = await $.process.run(
+      ['python3', `${root}/mcp/noctusai/cli.py`, '--harness-route'],
+      { cwd: root, stdin: JSON.stringify({ prompt }), timeoutMs: 15000 },
+    )
+    if (ran.exitCode !== 0) return { ok: false, error: failure('harness-route', ran.exitCode, ran.stderr, ran.stdout) }
+    const parsed = JSON.parse(ran.stdout) as Route
+    if (parsed.schema !== 'noc.harness_route/v1') return { ok: false, error: `harness-route answered schema ${String(parsed.schema)}` }
+    return { ok: true, value: parsed }
+  } catch (err) {
+    return { ok: false, error: `harness-route: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
 const PANE = 'noc-orchestration'
 const HAIKU = 'claude-haiku-4-5-20251001'
 
@@ -156,6 +200,11 @@ async function record($: EngineInterface, event: HarnessEvent): Promise<void> {
   if (!done.ok) await noteDegraded($, done.error)
 }
 
+async function loadPanel($: EngineInterface, name: string): Promise<void> {
+  const got = await harnessPanel($, name)
+  await update($, panels, all => ({ ...all, [name]: got.ok ? got.value : got.error }))
+}
+
 export const register: Register = (on, given) => {
   options = given
   isOff = false
@@ -178,6 +227,12 @@ export const register: Register = (on, given) => {
       await $.command.register({ name: 'noc-band', description: 'Show the NoctusAI reminders band again' })
     }
     await $.command.register({ name: 'noc-refresh', description: 'Refresh the NoctusAI harness snapshot now' })
+    if (enabled('code_panels')) {
+      await $.command.register({ name: 'noc-vectors', description: 'Live pane: vector platform — caches, freshness, cost (what /vector-status shows)' })
+      await $.command.register({ name: 'noc-baselines', description: 'Live pane: kb + code recurrence baselines vs the last ratification' })
+      await $.command.register({ name: 'noc-codify', description: 'Live pane: codification radar — s1/s2 ready for promotion' })
+      await $.command.register({ name: 'noc-gates', description: 'Live pane: wired guards, a health probe of each, recent refusals' })
+    }
     void refreshFast($)
     void refreshFull($)
     $.clock.every(refreshMs, () => void refreshFull($))
@@ -216,6 +271,20 @@ export const register: Register = (on, given) => {
     }
     if (e.agentId === undefined && String(e.tool) === 'Skill' && JSON.stringify(e).includes('noc-wrap-up')) {
       wrapUpRan = true
+    }
+    if (e.agentId === undefined && isTaskBranchStart(String(e.tool), JSON.stringify(e))) void refreshFull($)
+    const notes = 'context' in ran && ran.context ? ran.context.join('\n') : ''
+    const signature = harnessSignature(notes)
+    if (signature !== null && enabled('harness_invalid_alerts')) {
+      const invalid: Refusal = {
+        at: new Date(await $.clock.now()).toISOString(),
+        tool: String(e.tool),
+        guard: `harness:${signature}`,
+        reason: 'INCONCLUSIVE — this red judges the setup, not the code',
+      }
+      await update($, refusals, list => [...list, invalid].slice(-50))
+      $.ui.toast(`INCONCLUSIVE — harness signature ${signature}: this red judges the setup, not the code`)
+      void record($, { kind: 'harness_invalid', target: `harness:${signature}`, summary: `${String(e.tool)} red matched harness signature ${signature}`, session_id: await $.session.id() })
     }
     const text = ran.deny ?? (ran.isError === true ? ran.text ?? '' : '')
     const guard = text ? refusingGuard(text) : null
@@ -264,7 +333,16 @@ export const register: Register = (on, given) => {
         await noteDegraded($, `memory routing: ${err instanceof Error ? err.message : String(err)}`)
       }
     }
-    const hits = matchTopics(e.text, topics).filter(t => !routed.has(t.file))
+    let hits: { title: string; file: string }[] = matchTopics(e.text, topics).filter(t => !routed.has(t.file))
+    if (hits.length === 0 && enabled('semantic_routing') && e.text.length >= 40) {
+      const routedBy = await harnessRoute($, e.text)
+      if (routedBy.ok) {
+        hits = routedBy.value.topics.slice(0, 2).filter(t => !routed.has(t.file))
+        if (routedBy.value.errors.length > 0) await noteDegraded($, `semantic routing: ${routedBy.value.errors[0]?.error ?? ''}`)
+      } else {
+        await noteDegraded($, routedBy.error)
+      }
+    }
     if (hits.length === 0) return next(e)
     hits.forEach(t => routed.add(t.file))
     const pointer =
@@ -308,6 +386,53 @@ export const register: Register = (on, given) => {
     const instructions = e.instructions ? `${e.instructions}\n\n${COMPACTION_KEEP}` : COMPACTION_KEEP
     return next({ ...e, instructions })
   }).catch(($, e, next) => (next.called ? next(e) : next(e)))
+
+  for (const [command, name] of Object.entries(PANELS)) {
+    on('command.run', { command }, async $ => {
+      await $.ui.open({ id: `noc-panel-${name}`, title: `NoctusAI · ${name}`, focus: true })
+      void loadPanel($, name)
+      return { text: `${name} pane opened.` }
+    })
+    on('ui.render', { component: 'Pane', requestId: `noc-panel-${name}` }, async ($, e) => {
+      const { Box, Button, Text } = $.ui.resolve(e)
+      const got = (await read($, panels))[name]
+      const refresh = <Button key="refresh" label="Refresh" hotkey="r" onPress={() => void loadPanel($, name)} />
+      if (got === undefined) return <Box flexDirection="column"><Text dimColor>Loading {name}…</Text>{refresh}</Box>
+      if (typeof got === 'string') return <Box flexDirection="column"><Text color="red">Unavailable: {got}</Text>{refresh}</Box>
+      const TONE = { ok: 'green', warn: 'yellow', bad: 'red', info: undefined } as const
+      return (
+        <Box flexDirection="column">
+          <Text dimColor>{got.title} · {got.generated_at.slice(11, 19)}</Text>
+          {got.sections.map(section => (
+            <Box key={`s-${section.heading}`} flexDirection="column">
+              <Text bold>{section.heading}</Text>
+              {section.rows.map(row => (
+                <Text key={`r-${section.heading}-${row.label}`} color={TONE[row.tone]} wrap="truncate-end">
+                  {row.label}: {row.value}
+                </Text>
+              ))}
+            </Box>
+          ))}
+          {got.errors.map(x => (
+            <Text key={`e-${x.section}`} color="red" wrap="truncate-end">⚠ {x.section}: {x.error}</Text>
+          ))}
+          {refresh}
+        </Box>
+      )
+    })
+  }
+
+  // Offer EXECUTOR agent types once a worktree exists to work in. UX only:
+  // the Python executor-dispatch rule is what enforces; unknown ⇒ offered.
+  on('agent.offer', async ($, e, next) => {
+    const offered = await next(e)
+    if (isOff || !enabled('executor_offer') || !offered.isOffered || !isExecutorOffer(e.description)) return offered
+    const snap = await read($, full)
+    if (snap === null || snap.worktrees === null) return offered
+    const live = new Set((snap.branch_pointers ?? []).filter(p => p.status === 'on_going').map(p => p.worktree))
+    const hasRoom = snap.worktrees.some(w => live.has(w.path) || [...live].some(l => l !== '' && w.path.endsWith(l)))
+    return hasRoom ? offered : { isOffered: false }
+  })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     if (isOff || !enabled('reminders_band') || e.props.hasSurvey || (await read($, bandHidden))) return next(e)
@@ -398,7 +523,7 @@ export const register: Register = (on, given) => {
             [{t.stage}] {t.target} — {t.summary}
           </Text>
         ))}
-        <Text bold>Refusals this session ({recent.length})</Text>
+        <Text bold>Refusals & invalid harness this session ({recent.length})</Text>
         {recent.slice(-6).map(r => (
           <Text key={`rf-${r.at}`} color="red" wrap="truncate-end">
             {r.at.slice(11, 19)} {r.guard} · {r.tool} · {r.reason}
