@@ -11,6 +11,7 @@ import {
   harnessSignature,
   isExecutorOffer,
   isTaskBranchStart,
+  taskBranchSlug,
   isGitCommit,
   matchTopics,
   memoryDir,
@@ -28,6 +29,7 @@ const refusals = atom({ plugin: 'noc-harness', key: 'refusals' } as const, [])
 const wrapup = atom({ plugin: 'noc-harness', key: 'wrapup' } as const, null)
 const bandHidden = atom({ plugin: 'noc-harness', key: 'bandHidden' } as const, false)
 const bandExpanded = atom({ plugin: 'noc-harness', key: 'bandExpanded' } as const, false)
+const claimed = atom({ plugin: 'noc-harness', key: 'claimed' } as const, null)
 const panels = atom({ plugin: 'noc-harness', key: 'panels' } as const, {})
 
 // The live panels: each is `cli.py --harness-panel <name>`, drawn as-is.
@@ -127,6 +129,25 @@ async function harnessPanel($: EngineInterface, name: string): Promise<Outcome<P
   }
 }
 
+async function harnessClaim($: EngineInterface, worktree: string | null): Promise<Outcome<string>> {
+  const root = await primaryRoot($)
+  const sessionId = await $.session.id()
+  const stdin = JSON.stringify(worktree === null ? { session_id: sessionId, release: true } : { session_id: sessionId, worktree })
+  try {
+    const ran = await $.process.run(
+      ['python3', `${root}/mcp/noctusai/cli.py`, '--harness-claim-worktree'],
+      { cwd: root, stdin, timeoutMs: 15000 },
+    )
+    const answer = JSON.parse(ran.stdout || '{}') as { status?: string; error?: string; worktree?: string }
+    if (ran.exitCode !== 0 || answer.status === 'error') {
+      return { ok: false, error: `harness-claim-worktree: ${answer.error ?? failure('exit', ran.exitCode, ran.stderr, ran.stdout)}` }
+    }
+    return { ok: true, value: answer.status ?? 'ok' }
+  } catch (err) {
+    return { ok: false, error: `harness-claim-worktree: ${err instanceof Error ? err.message : String(err)}` }
+  }
+}
+
 async function harnessRoute($: EngineInterface, prompt: string): Promise<Outcome<Route>> {
   const root = await primaryRoot($)
   try {
@@ -171,7 +192,8 @@ async function paintStatus($: EngineInterface): Promise<void> {
   const why = await read($, degraded)
   const snap = await read($, fast)
   if (snap === null) return $.ui.status(why ? `noc · degraded — ${why}` : 'noc · …')
-  const line = statusLine(snap, await read($, full))
+  const claim = await read($, claimed)
+  const line = statusLine(snap, await read($, full)) + (claim ? ` · ↪ ${claim}` : '')
   $.ui.status(why ? `${line} · degraded — ${why}` : line)
 }
 
@@ -202,6 +224,21 @@ async function record($: EngineInterface, event: HarnessEvent): Promise<void> {
   if (!done.ok) await noteDegraded($, done.error)
 }
 
+async function claimWorktree($: EngineInterface, slug: string | null): Promise<string> {
+  const root = await primaryRoot($)
+  const worktree = slug === null ? null : `${root}/.claude/worktrees/${slug}`
+  const done = await harnessClaim($, worktree)
+  if (!done.ok) {
+    await noteDegraded($, done.error)
+    return done.error
+  }
+  await update($, claimed, () => slug)
+  await paintStatus($)
+  return slug === null
+    ? 'Released the worktree claim: primary-checkout writes are refused again.'
+    : `Claimed ${worktree}: this session's Edit/Write into the primary checkout now redirect there (visibly).`
+}
+
 async function loadPanel($: EngineInterface, name: string): Promise<void> {
   const got = await harnessPanel($, name)
   await update($, panels, all => ({ ...all, [name]: got.ok ? got.value : got.error }))
@@ -229,6 +266,7 @@ export const register: Register = (on, given) => {
       await $.command.register({ name: 'noc-band', description: 'Show the NoctusAI reminders band again' })
     }
     await $.command.register({ name: 'noc-refresh', description: 'Refresh the NoctusAI harness snapshot now' })
+    await $.command.register({ name: 'noc-claim', description: 'Claim a worktree (<slug>) for the primary-write redirect, or `release`', argumentHint: '<slug> | release' })
     if (enabled('wrapup_nudge')) {
       await $.command.register({ name: 'noc-wrapup', description: 'Run the noc-wrap-up check on what this session committed (clears the band nudge)' })
     }
@@ -253,6 +291,12 @@ export const register: Register = (on, given) => {
   on('command.run', { command: 'noc-band' }, async $ => {
     await update($, bandHidden, () => false)
     return { text: 'Reminders band shown.' }
+  })
+
+  on('command.run', { command: 'noc-claim' }, async ($, e) => {
+    const arg = e.args.trim()
+    if (arg === '') return { text: 'Usage: /noc-claim <worktree-slug> | release' }
+    return { text: await claimWorktree($, arg === 'release' ? null : arg) }
   })
 
   on('command.run', { command: 'noc-wrapup' }, async $ => {
@@ -283,7 +327,13 @@ export const register: Register = (on, given) => {
     if (e.agentId === undefined && String(e.tool) === 'Skill' && JSON.stringify(e).includes('noc-wrap-up')) {
       wrapUpRan = true
     }
-    if (e.agentId === undefined && isTaskBranchStart(String(e.tool), JSON.stringify(e))) void refreshFull($)
+    if (e.agentId === undefined && isTaskBranchStart(String(e.tool), JSON.stringify(e))) {
+      void refreshFull($)
+      const slug = taskBranchSlug(JSON.stringify(e))
+      if (slug !== null && ran.isError !== true && ran.deny === undefined) {
+        $.ui.toast(await claimWorktree($, slug))
+      }
+    }
     const notes = 'context' in ran && ran.context ? ran.context.join('\n') : ''
     const signature = harnessSignature(notes)
     if (signature !== null && enabled('harness_invalid_alerts')) {

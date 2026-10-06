@@ -43,7 +43,7 @@ Other commands: `/noc-band` (show the band again), `/noc-refresh`, and `/noc-wra
 
 **Agent types are not re-registered in code.** `$.agent.register` could pin an engineer's tools and model in the mod. Those are already pinned in `.claude/agents/<name>.md` frontmatter, the canonical definition. A second definition would be a fork that drifts. The mod reads the agents' `EXECUTOR` marker instead.
 
-**Write redirect (held, owner decision pending).** Rewriting a primary-checkout Edit/Write into the session's worktree, instead of denying it, would change the primary-write guard itself. The harness's permission classifier refused that change as self-modification of a safety guard. It waits for the owner.
+**Write redirect (0.3.0, owner-approved 2026-10-06).** The redirect itself is canonical Python: the primary-write guard rewrites a refused Edit/Write into the session's CLAIMED worktree and says so (`[noc-guard:primary-write] REDIRECTED …`). The mod only CLAIMS, through `cli.py --harness-claim-worktree`: automatically when its session runs `task_branch start`, or by hand with `/noc-claim <slug> | release`. The status line shows the claim as `↪ <slug>`. → `KB § PATTERNS/common/self-branching-mode.md` §11 "Redirect into a claimed worktree".
 
 The guards the mod *observes* are canonical Python, shipped in the same change:
 - They **fail closed**: a crash, an 8 s internal deadline or a bad payload produces a deny (`scripts/hooks/_guard_failclosed.py`).

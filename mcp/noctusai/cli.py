@@ -309,6 +309,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hs-full", action="store_true", help="With --harness-status: full mode (slower, ~60s cadence).")
     parser.add_argument("--hs-cwd", metavar="PATH", default=None, help="With --harness-status: the session cwd to evaluate (default: cwd).")
     parser.add_argument("--harness-panel", metavar="NAME", default=None, help="Print ONE JSON object (schema noc.harness_panel/v1) for a noc-harness mod panel: vectors|baselines|codify|gates. Unknown name -> exit 1. MCP: noctus.dev.harness_panel.")
+    parser.add_argument("--harness-claim-worktree", action="store_true", help="Read {\"session_id\", \"worktree\"} (claim) or {\"session_id\", \"release\": true} on stdin; the primary-write guard REDIRECTS that session's primary-checkout Edit/Write into the claimed worktree. Exit 1 on error. MCP: noctus.dev.harness_claim_worktree.")
     parser.add_argument("--harness-route", action="store_true", help="Read {\"prompt\": str} on stdin; print noc.harness_route/v1 (relevant MEMORY-<topic>.md files via semantic memory search). Exit 0 even on provider errors (see `errors`). MCP: noctus.dev.harness_route.")
     parser.add_argument("--harness-event", action="store_true", help="Read ONE JSON event object on stdin ({kind,target,summary,detail?,session_id?,source}) and record it as an s1 auto-improvement entry. Exit 1 on error. MCP: noctus.dev.harness_event.")
     parser.add_argument("--tmp-cleanup", action="store_true", help="Sweep retired engineer-dispatch patch artifacts from /tmp (patch-id-on-dev OR aged-out OR malformed). DRY-RUN unless --force. MCP: noctus.dev.tmp_cleanup.")
@@ -480,6 +481,16 @@ def main():
         sys.stdout.flush()
         # os._exit: a budget-abandoned daemon thread must not hold the process open.
         os._exit(0 if _r.get("status") == "ok" else 1)
+
+    if args.harness_claim_worktree:
+        from tools.noctus.dev.harness_status import harness_claim_worktree
+        try:
+            _payload = json.loads(sys.stdin.read())
+        except json.JSONDecodeError:
+            _payload = None
+        _r = harness_claim_worktree(_payload)
+        print(json.dumps(_r, default=str))
+        sys.exit(1 if _r.get("status") == "error" else 0)
 
     if args.harness_route:
         from tools.noctus.dev.harness_status import harness_route

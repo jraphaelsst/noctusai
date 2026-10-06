@@ -117,3 +117,9 @@ export function isTaskBranchStart(tool: string, input: string): boolean {
 export function stripBell(title: string): string {
   return title.replace(/^\s*🔔\s*/u, '')
 }
+
+/** The slug a task-branch start names, from the MCP input or the CLI flag. */
+export function taskBranchSlug(input: string): string | null {
+  const found = /"slug"\s*:\s*"([a-z0-9][a-z0-9-]*)"/.exec(input) ?? /--task-branch-slug\s+([a-z0-9][a-z0-9-]*)/.exec(input)
+  return found?.[1] ?? null
+}

@@ -81,6 +81,7 @@ declare module 'claude-code' {
       wrapup: WrapUp | null
       bandHidden: boolean
       bandExpanded: boolean
+      claimed: string | null
       panels: Record<string, Panel | string>
     }
   }

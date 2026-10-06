@@ -2141,6 +2141,15 @@ def task_branch(
               "salvage_skipped": salvage_skipped,
               "message": f"removed {wt_path} + deleted {branch} (merged — {remote}/"
                          f"{dev_branch} is the recovery pointer). Back on {dev_branch} baseline."}
+    # A session that claimed this worktree for the primary-write REDIRECT loses
+    # the claim with the worktree (a stale claim would never redirect anyway —
+    # `claim_problem` rejects it — but it must not outlive what it names).
+    try:
+        from tools.noctus.dev.primary_write_guard import release_claims_for
+        primary = _resolve_primary_root(primary_root)
+        result["released_claims"] = release_claims_for(str(primary), _absolute_wt_path(wt_path, primary))
+    except Exception as e:  # best-effort — never fail a completed teardown, but say so
+        result["released_claims_error"] = f"{type(e).__name__}: {e}"
     # Merged (checked above) + worktree removed ⇒ the lifecycle is over.
     result["pointer"] = _pointer_transition(
         pointer_fn, branch=branch, status="shipped",

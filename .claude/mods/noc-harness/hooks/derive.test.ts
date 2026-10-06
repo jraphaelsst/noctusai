@@ -12,6 +12,7 @@ import {
   refusingGuard,
   statusLine,
   stripBell,
+  taskBranchSlug,
 } from './derive'
 
 const snap = (over: Partial<HarnessStatus> = {}): HarnessStatus => ({
@@ -111,4 +112,10 @@ test('task-branch starts are seen through the MCP tool and the CLI', async () =>
 test('the band draws one bell, not the title bell as well', async () => {
   expect(stripBell('🔔 Contract wording for PJ parties')).toBe('Contract wording for PJ parties')
   expect(stripBell('No bell here')).toBe('No bell here')
+})
+
+test('the task-branch slug is read from the MCP input and the CLI flag', async () => {
+  expect(taskBranchSlug('{"action":"start","slug":"guard-redirect"}')).toBe('guard-redirect')
+  expect(taskBranchSlug('python3 cli.py --task-branch start --task-branch-slug harness-mods --x')).toBe('harness-mods')
+  expect(taskBranchSlug('{"action":"start"}')).toBe(null)
 })

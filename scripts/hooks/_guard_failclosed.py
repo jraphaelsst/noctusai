@@ -58,8 +58,10 @@ def run_guard(
 ) -> int:
     """Read the hook payload, call `judge(payload)`, emit a deny on a verdict OR on any failure.
 
-    `judge` returns None to allow, or a dict with `reason` to deny. Always returns 0:
-    a deny is a JSON decision on stdout, never a non-zero exit (which would fail open).
+    `judge` returns None to allow, a dict with `reason` to deny, or a dict with
+    `decision: "allow"` + `updated_input` (+ `context`) to allow a REWRITTEN call
+    (the primary-write redirect). Always returns 0: a deny is a JSON decision on
+    stdout, never a non-zero exit (which would fail open).
     """
     stdin = stdin if stdin is not None else sys.stdin
     out = stdout if stdout is not None else sys.stdout
@@ -110,4 +112,20 @@ def run_guard(
 
     if verdict is None:
         return 0
+    if verdict.get("decision") == "allow":
+        if not isinstance(verdict.get("updated_input"), dict):
+            return _emit("allow verdict without an updated_input object — guard failed closed; fix the guard.")
+        json.dump(allow_rewritten_json(verdict["updated_input"], str(verdict.get("context") or "")), out)
+        return 0
     return _emit(str(verdict["reason"]))
+
+
+def allow_rewritten_json(updated_input: dict[str, Any], context: str) -> dict[str, Any]:
+    output: dict[str, Any] = {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "allow",
+        "updatedInput": updated_input,
+    }
+    if context:
+        output["additionalContext"] = context
+    return {"hookSpecificOutput": output}

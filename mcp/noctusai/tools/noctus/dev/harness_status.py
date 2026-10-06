@@ -573,7 +573,38 @@ def harness_route(payload: Any, *, memory_dir: Path | None = None,
     return out
 
 
+def harness_claim_worktree(payload: Any, *, repo_root: str | Path | None = None) -> dict:
+    """Claim (or release) the worktree a Claude session's primary-checkout writes redirect into.
+
+    `{"session_id", "worktree"}` claims; `{"session_id", "release": true}` releases.
+    The store + its validation live in `primary_write_guard` (stdlib-only, read by the
+    PreToolUse guard itself) — this only fronts it, so there is ONE definition.
+    """
+    from tools.noctus.dev import primary_write_guard as pwg
+
+    if not isinstance(payload, dict) or not isinstance(payload.get("session_id"), str):
+        return {"status": "error", "error": "session_id is required (string)"}
+    root = str(repo_root) if repo_root else str(_primary_root(Path.cwd()))
+    if payload.get("release") is True:
+        return pwg.write_claim(root, payload["session_id"], None)
+    worktree = payload.get("worktree")
+    if not isinstance(worktree, str) or not worktree.strip():
+        return {"status": "error", "error": "worktree is required (absolute path), or release: true"}
+    return pwg.write_claim(root, payload["session_id"], worktree)
+
+
 def register(server) -> None:
+    @server.tool(
+        name="noctus.dev.harness_claim_worktree",
+        description=(
+            "Claim (worktree=<abs path>) or release (release=True) the worktree this Claude "
+            "session's primary-checkout Edit/Write calls are REDIRECTED into by the primary-write "
+            "guard. Validates: a registered worktree of this repo, on a non-shared branch."
+        ),
+    )
+    def _claim(session_id: str, worktree: str | None = None, release: bool = False) -> dict:
+        return harness_claim_worktree({"session_id": session_id, "worktree": worktree, "release": release})
+
     @server.tool(
         name="noctus.dev.harness_status",
         description=(

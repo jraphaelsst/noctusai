@@ -521,6 +521,26 @@ becomes the thing someone deletes. So the decision lives in a **stdlib-only**
 module the hook loads **by path** (not as a package), and the whole hook runs in
 ~60 ms.
 
+### Redirect into a claimed worktree (owner-approved 2026-10-06)
+
+A refused **Edit / Write / MultiEdit / NotebookEdit** is rewritten into the session's worktree instead of being refused, when that session has **claimed** one. The guard then answers `allow` with `updatedInput` (the same input, path rebased from `<primary>/<rel>` to `<worktree>/<rel>`) and `additionalContext` beginning `[noc-guard:primary-write] REDIRECTED <from> → <to>`. The model is told, never silently moved.
+
+- **Claim store:** `.claude/cache/session-worktrees.json`, keyed by the hook payload's `session_id`.
+  - Written by `noctus.dev.harness_claim_worktree` / `cli.py --harness-claim-worktree` (`primary_write_guard.write_claim`, the one definition).
+  - The noc-harness mod claims automatically when its session runs `task_branch start`; `/noc-claim <slug> | release` does it by hand.
+  - `task_branch cleanup` releases every claim on the worktree it removes.
+- **Never redirected:**
+  - Bash. A shell command's targets are parsed, not known.
+  - A worktree that is unregistered or missing, or on `dev`, `main` or `prod`. `claim_problem` rejects it both when the claim is written and on every redirect.
+  - Another session's claim.
+  - A malformed claim file. It reads as no claims, so the refusal stands.
+- **Why it was held first:** it changes the guard that refuses the agent's own writes. The harness permission classifier blocked it as self-modification until the owner switched out of auto mode and approved each edit. That is the right posture for any change that loosens a guard.
+
+### Two false positives fixed at the root (2026-10-06)
+
+- **`W=<abs>; cd $W; …`** was refused as a write to the primary: `_effective_cwd` could not expand `$W`, so it kept the session cwd. `expand_literal_assignments` now substitutes variables the SAME command assigned a literal, only after the assignment, as the shell would. `W=$(pwd)` and other non-literals stay unresolved, consistent with "measure, don't predict".
+- **The post-hook advised `rm` on the owner's files.** `git restore --staged -- .` turned nine pre-existing untracked files from `A ` to `??`; the line-set diff read each status change as new dirt. `diff_new_primary_dirt` now compares PATHS: a path dirty before the call, in any state, is never reported. A missing baseline reports nothing, which is what `measure_posttool_dirt` already promised.
+
 ### Escape hatch
 
 `NOCTUS_ALLOW_PRIMARY_WRITE=1`, mirroring `NOCTUS_ALLOW_PRIMARY_COMMIT=1`. An

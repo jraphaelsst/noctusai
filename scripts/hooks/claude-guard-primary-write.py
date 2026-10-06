@@ -79,6 +79,10 @@ def _judge(payload: dict) -> dict | None:
     if verdict is None:
         ctx = guard.discover_context(cwd)
         verdict = guard.decide(tool_name, tool_input, cwd, ctx=ctx)
+        if verdict is not None and ctx is not None:
+            # A refused Edit/Write whose session claimed a worktree is rewritten
+            # into it instead (visible: the allow carries the REDIRECTED note).
+            verdict = guard.redirect_for(tool_name, tool_input, payload.get("session_id"), ctx, verdict) or verdict
     if verdict is None and tool_name == "Bash" and ctx is not None and ctx.guarded:
         # The measurement net's baseline — see the module docstring. Best-effort
         # by construction; nothing here can turn an ALLOW into a refusal.

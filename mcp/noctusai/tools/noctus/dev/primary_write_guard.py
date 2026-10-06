@@ -663,6 +663,53 @@ def _effective_cwd(command: str, cwd: str) -> str:
     return current
 
 
+#: `NAME=value` at the start of a shell segment (optionally `export`ed) whose
+#: value is a LITERAL — no `$`, backtick or command substitution inside.
+_LITERAL_ASSIGN_RE = re.compile(
+    r"(?:^|(?<=[;&|\n]))\s*(?:export\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)="
+    r"(?:'(?P<sq>[^']*)'|\"(?P<dq>[^\"$`\\]*)\"|(?P<bare>[^\s;&|$`'\"\\()]+))"
+    r"(?=\s|;|&|\||$)"
+)
+
+
+def expand_literal_assignments(command: str) -> str:
+    """Substitute `$NAME` / `${NAME}` for variables the SAME command assigned a literal.
+
+    🔴 WHY (2026-10-06): `W=/abs/worktree; cd $W; git …` was refused as a write
+    to the PRIMARY — `_effective_cwd` cannot know where `cd $W` lands, so it kept
+    the session cwd (the primary) and judged a worktree-only command against it.
+    The value was right there in the command. Only a literal value is expanded
+    (`W=$(pwd)` / `W="$X/y"` stay unresolvable — guessing them is the refusing-
+    direction guess `decide()`'s MEASURE-DON'T-PREDICT note forbids), and only
+    occurrences AFTER the assignment, the way the shell itself would see them.
+    """
+    if "=" not in command or "$" not in command:
+        return command
+    out: list[str] = []
+    known: dict[str, str] = {}
+    pos = 0
+    for m in _LITERAL_ASSIGN_RE.finditer(command):
+        out.append(_substitute_known(command[pos:m.start()], known))
+        out.append(command[m.start():m.end()])
+        known[m.group("name")] = next(
+            v for v in (m.group("sq"), m.group("dq"), m.group("bare")) if v is not None
+        )
+        pos = m.end()
+    out.append(_substitute_known(command[pos:], known))
+    return "".join(out)
+
+
+def _substitute_known(text: str, known: dict[str, str]) -> str:
+    if not known:
+        return text
+
+    def _sub(m: re.Match[str]) -> str:
+        name = m.group(1) or m.group(2)
+        return known.get(name, m.group(0))
+
+    return re.sub(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)", _sub, text)
+
+
 def _segments(command: str) -> list[str]:
     return [seg for seg in re.split(r"&&|\|\||[;|\n]", command) if seg.strip()]
 
@@ -1237,7 +1284,7 @@ def decide(
         raw = (tool_input or {}).get(_FILE_PATH_TOOLS[tool_name]) or ""
         targets = [_resolve(raw, cwd)] if raw else []
     elif tool_name == "Bash":
-        command = (tool_input or {}).get("command") or ""
+        command = expand_literal_assignments((tool_input or {}).get("command") or "")
         targets, uncertain = bash_write_targets(command, cwd)
         # 🔴 MEASURE, DON'T PREDICT (2026-09-23). This used to fall back to
         # `targets = [_effective_cwd(command, cwd)]` whenever the parse was
@@ -1301,6 +1348,135 @@ def decide(
                f"append-only ledgers. Preserve any ledger rows first "
                f"(`git diff origin/{ctx.branch}...HEAD > <path outside the repo>`)."
                if _primary_diverged(ctx) else "")
+        ),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# The write REDIRECT (owner-approved 2026-10-06) — a refused Edit/Write whose
+# session has CLAIMED a worktree is rewritten into that worktree instead of
+# refused. Visible, never silent: the allow carries `[noc-guard:primary-write]
+# REDIRECTED <from> → <to>` as additionalContext. Bash is never redirected (a
+# shell command's targets are parsed, not known). No claim ⇒ the refusal stands.
+# KB § PATTERNS/common/self-branching-mode.md §11 · KB § PATTERNS/common/harness-mods.md
+# ═══════════════════════════════════════════════════════════════════════════
+
+#: `{"<session_id>": {"worktree": abs, "branch": str, "claimed_at": iso}}` —
+#: written by `noctus.dev.harness_claim_worktree` (`write_claim` below), read here.
+CLAIMS_REL = os.path.join(".claude", "cache", "session-worktrees.json")
+
+
+def read_claims(primary_root: str) -> dict[str, dict[str, Any]]:
+    """Every session's claim; an absent or unreadable file is NO claims, never a crash."""
+    import json
+
+    try:
+        with open(os.path.join(primary_root, CLAIMS_REL), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
+
+
+def claim_problem(worktree: str, ctx: GuardContext) -> str | None:
+    """Why `worktree` cannot receive redirected writes, or None when it can.
+
+    It must be one of THIS repo's registered linked worktrees, exist on disk, and
+    sit on a non-shared branch — redirecting into a worktree checked out on `dev`
+    would recreate the exact slip this guard exists to stop.
+    """
+    wt = os.path.normpath(worktree)
+    if wt not in ctx.worktrees:
+        return f"{wt} is not a registered worktree of {ctx.primary_root}"
+    if not os.path.isdir(wt):
+        return f"{wt} does not exist"
+    branch = _run_git(["-C", wt, "symbolic-ref", "--short", "HEAD"], None)
+    if not branch:
+        return f"{wt} has no branch checked out (detached or unreadable)"
+    if branch in SHARED_BRANCHES:
+        return f"{wt} is on the shared branch '{branch}'"
+    return None
+
+
+def write_claim(primary_root: str, session_id: str, worktree: str | None) -> dict[str, Any]:
+    """Claim `worktree` for `session_id` (None releases). Atomic (tmp + rename)."""
+    import json
+    from datetime import datetime, timezone
+
+    if not session_id:
+        return {"status": "error", "error": "session_id is required"}
+    ctx = discover_context(primary_root)
+    if ctx is None:
+        return {"status": "error", "error": f"cannot read the git layout at {primary_root}"}
+    claims = read_claims(ctx.primary_root)
+    if worktree is None:
+        released = claims.pop(session_id, None)
+        result: dict[str, Any] = {"status": "released" if released else "not_claimed", "session_id": session_id}
+    else:
+        problem = claim_problem(worktree, ctx)
+        if problem:
+            return {"status": "error", "error": problem}
+        wt = os.path.normpath(worktree)
+        claims[session_id] = {
+            "worktree": wt,
+            "branch": _run_git(["-C", wt, "symbolic-ref", "--short", "HEAD"], None),
+            "claimed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        result = {"status": "claimed", "session_id": session_id, **claims[session_id]}
+    path = os.path.join(ctx.primary_root, CLAIMS_REL)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = f"{path}.{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(claims, fh, indent=2, sort_keys=True)
+    os.replace(tmp, path)
+    return result
+
+
+def release_claims_for(primary_root: str, worktree: str) -> list[str]:
+    """Drop every claim pointing at `worktree` (called when it is torn down). Returns the sessions released."""
+    wt = os.path.normpath(worktree)
+    gone = [sid for sid, c in read_claims(primary_root).items() if os.path.normpath(str(c.get("worktree", ""))) == wt]
+    for sid in gone:
+        write_claim(primary_root, sid, None)
+    return gone
+
+
+def redirect_for(
+    tool_name: str,
+    tool_input: dict[str, Any] | None,
+    session_id: str | None,
+    ctx: GuardContext,
+    verdict: dict[str, Any],
+) -> dict[str, Any] | None:
+    """The redirect that replaces `verdict` (a `decide()` refusal), or None to keep refusing.
+
+    Returns `{"decision": "allow", "updated_input": {...}, "context": str}`.
+    """
+    if tool_name not in _FILE_PATH_TOOLS or not session_id:
+        return None
+    claim = read_claims(ctx.primary_root).get(session_id)
+    if not claim:
+        return None
+    worktree = os.path.normpath(str(claim.get("worktree", "")))
+    if claim_problem(worktree, ctx) is not None:
+        return None  # a stale claim never redirects; the refusal stands
+    key = _FILE_PATH_TOOLS[tool_name]
+    targets = verdict.get("targets") or []
+    if len(targets) != 1:
+        return None
+    source = targets[0]
+    rel = os.path.relpath(source, ctx.primary_root)
+    dest = os.path.join(worktree, rel)
+    updated = {**(tool_input or {}), key: dest}
+    return {
+        "decision": "allow",
+        "updated_input": updated,
+        "context": (
+            f"[noc-guard:primary-write] REDIRECTED {source} → {dest}. "
+            f"This session claimed the worktree {worktree} (branch "
+            f"'{claim.get('branch', '?')}'), so the write into the PRIMARY checkout on "
+            f"'{ctx.branch}' was rewritten there instead of refused. Address every "
+            f"further read and edit to the worktree path, not the primary one."
         ),
     }
 
@@ -1394,21 +1570,26 @@ def _is_ledger_ndjson(path: str) -> bool:
 
 
 def diff_new_primary_dirt(before: str | None, after: str | None) -> list[str]:
-    """Paths dirty in `after` but not in `before`, minus the ledger exemption.
+    """Paths dirty in `after` that were NOT dirty in `before`, minus the ledger exemption.
 
-    Line-set difference, not per-path status comparison: a path that changed
-    STATUS between snapshots (e.g. `??` becomes `A `) is a different line and
-    correctly still reads as "new", because a still-open question either way
-    it changes shape.
+    🔴 PATH-set difference, not line-set (2026-10-06). The line-set version read
+    a STATUS change of an already-present path as new dirt: `git restore --staged
+    -- .` turned nine of the owner's pre-existing untracked files from `A ` back
+    to `??`, and this net reported all nine as new and advised `rm <file>` —
+    advice that, followed, deletes the owner's data. A path the primary already
+    carried before the call (in any index state) is not something this call
+    landed there, so it is never reported, whatever its status became.
     """
-    if not after:
+    if not after or before is None:
+        # No baseline ⇒ nothing to attribute to this call (the contract
+        # `measure_posttool_dirt` states): report nothing rather than
+        # everything — "everything" is the same rm-the-owner's-files hazard.
         return []
-    before_lines = {ln for ln in (before or "").splitlines() if ln}
-    after_lines = {ln for ln in after.splitlines() if ln}
+    before_paths = {_porcelain_path(ln) for ln in before.splitlines() if ln}
     out: list[str] = []
-    for line in sorted(after_lines - before_lines):
+    for line in sorted({ln for ln in after.splitlines() if ln}):
         path = _porcelain_path(line)
-        if not path or _is_ledger_ndjson(path):
+        if not path or path in before_paths or _is_ledger_ndjson(path):
             continue
         out.append(path)
     return out
