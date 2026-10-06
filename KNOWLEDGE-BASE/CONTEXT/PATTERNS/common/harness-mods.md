@@ -66,7 +66,7 @@ The mods API is early access and changes between releases. When a `cli.py` call 
 | Whole mod, fleet | `enabledPlugins["noc-harness@noctusai"]: false` (the activation commit reverted) | Not loaded anywhere. Still keeper-clean, because `false` is a decision, not drift. |
 | Everything from 2026-10-06 | `git revert` the recorded range (below) | The fail-closed guards revert too. Reverts are linear, so this is compatible with integrate-by-rebase. |
 
-The work landed as one contiguous linear range on `dev`, with the activation isolated in its **last** commit. The range is recorded in the `noc-harness` row of `project-history/` once integrated. Reverting only the activation commit turns the mod and the executor-dispatch guard off fleet-wide and touches one file, `.claude/settings.json`.
+The work landed as one contiguous linear range on `dev`, with the activation isolated in its **last** commit. The range and the exact revert commands are in `project-history/roadmaps/harness-mods-2026-10.md`. Reverting only the activation commit turns the mod and the executor-dispatch guard off fleet-wide and touches one file, `.claude/settings.json`.
 
 ## Developing a mod
 
