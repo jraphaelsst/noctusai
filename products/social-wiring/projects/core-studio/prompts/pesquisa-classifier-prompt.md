@@ -1,4 +1,7 @@
 # GET /dashboard/user/searches/add-item-prompt  (OBSERVED, verbatim)
+
+> **Status: DRAFT — extracted from CoreStudio, not validated; do not use as final.**
+> Verbatim capture of CoreStudio's prompt, kept as reference input. Our own classifier prompt is still to be designed and validated by the owner.
 Response keys: success, prompt_system, is_active=true, include_variables=true
 Used by: Minha Pesquisa > "Inserir itens na pesquisa" modal (status line "Prompt ativo — itens serão processados pela IA"; processing state "Classificando itens com IA... / Isso pode levar alguns instantes").
 

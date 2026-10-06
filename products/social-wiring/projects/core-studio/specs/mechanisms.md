@@ -6,6 +6,16 @@ How CoreStudio works behind each screen, reconstructed 2026-10-06 from the fresh
 
 The goal here is the *intelligence*, not the shell: what each mechanism stores, how state moves, what triggers it, where an LLM is called and with which inputs, and what we still cannot see.
 
+**Update 2026-10-06 (read-only XHRs, `captures/xhr-2026-10-06/`).** Sections 1, 3, 4, 5, 7, 8 and 14 now say what those responses **confirm** or **refute**. Look for the "2026-10-06 XHR" notes. Main changes:
+- The real headline payload is now known: Núcleo line + a per-viral **blueprint** with `{{DB-SLUG}}` slots. See §5.7 and `prompts/headline-engenharia-reversa-DRAFT.md`.
+- Suggested headlines have **no second pass**.
+- The headline "NÚCLEO DE INFLUENCIA" is the profile **bio text**, not the Núcleo de Influência brain.
+- Research items are literal extractor phrases of virals.
+- Instagram import keeps **videos only**.
+- A cross-tenant read exists in CoreStudio (§15).
+
+Extracted prompts are **drafts**, not validated (owner instruction 2026-10-06).
+
 ---
 
 ## 0 · Platform architecture
@@ -82,6 +92,14 @@ empty-all ─► everything deleted, pending included
 3. **Per-profile extraction job** (user, hidden modals): `POST searches/extract-profile {type: myPublic|topic_virais, eng_reversa_search_id}` → job with `step`, `progress`, `saved_count`, `skipped_items` ("já existentes" dedup) → pending items or pending topics. **C**
 4. **Automatic suggestion** (system): Meu Perfil warns "O sistema precisa da bio preenchida juntamente com os nichos e profissões para poder **sugerir itens da pesquisa** para você." So bio + niches + professions drive server-side suggestion of pending items. **C** that it exists; **I** that it works by matching approved profiles on niche/profession and copying their extracted phrases as pending (the pending items carry `eng_reversa_result_id` + `plays` of real virals, and the training lesson 2 is "Como aprovar itens da Pesquisa (automático e manual)"). Schedule (on profile save vs cron) **U**.
 
+**2026-10-06 XHR — how research items relate to virals (C unless noted).**
+- An item is a **copy of one extractor pair** of one viral. `searches/variables/items?type=avatar` returns 263 owner items: 108 approved, 155 pending, 0 manual. 257 of them point at 227 distinct virals; 6 have a null `eng_reversa_result_id`.
+- Where the source viral's extraction was fetched (`profile-viral-search`), the item's `content` equals the extractor's `value` for the same `(eng_reversa_result_id, variable_id)`, character for character. The extraction then shows `already_added=true` (9 such matches).
+- `plays` on the item = the source viral's views.
+- 238 of the 263 items were created on **2026-06-16** in one batch, eight days after the workspace was created (2026-06-08). This fits the automatic suggestion at onboarding. **I**
+- The other 254 items come from profiles outside the six fetched extractions, i.e. from the wider approved-profile pool (485 profiles). **I**
+- The owner has 0 especialista items (`type=especialista`: 12 variables, all empty). **C**
+
 ### 1.5 How items feed generation
 
 | Consumer | Mechanism | Tag |
@@ -92,7 +110,14 @@ empty-all ─► everything deleted, pending included
 | Biblioteca wizard | only `ASSUNTOS_VIRAIS` (approved viral topics) | C |
 | Roteiros | no research variable is read by any roteiro form | C |
 
-**Open:** how a structure stores its variable slots (`{{SLUG}}` placeholders? a tag list?) — no structure text has been captured. **U**
+~~**Open:** how a structure stores its variable slots — no structure text has been captured. **U**~~
+
+**2026-10-06 XHR — answered for suggested headlines:**
+- A structure is stored as a **blueprint document per viral** (`eng_reversa_headline_text`, §5.7). Its slots are literal `{{DB-SLUG}}` placeholders using the **DB slugs** (`ID|SLUG` vocabulary). They are **not** the classifier slugs: the blueprint writes `PESSOAS-PERSONAGENS-CONHECIDOS-PELO-AVATAR`, never the classifier's `PESSOAS-E-PERSONAGENS-…-MEU-PUBLICO`. **C**
+- One extra slot, `{{GPT}}`, means "verbs/actions the model adapts". No DB slug for it is known. Global id 29 is *labelled* "GPT", but its definition was never seen, so the two are **not** merged. **U**
+- How `has_structures` per variable is computed is still **U**. Plausibly: some blueprint contains that slug. **I**
+- Whether form batches (`headlines/store`) read the same blueprints is **U**: only suggested-headline rows were readable.
+- Slot ↔ variable table, mapped by definition: `prompts/headline-engenharia-reversa-DRAFT.md` §3.
 
 ---
 
@@ -150,6 +175,33 @@ VAZIO ──answer (groups of 3 unlock progressively)──► draft (save-draft
 
 **I:** the Núcleo de Influência brain is a default input of roteiro generation even when no brain is picked (step 2 names it explicitly). **U:** whether brains are injected whole into the prompt or retrieved by chunks from the Postgres store; context-size rules.
 
+### 3.4 2026-10-06 XHR — brain status contract and where "Núcleo de Influência" comes from
+
+**`GET cores/brain-status/{coreId}`** (C, 7 cores):
+
+| Core | Badge | Response |
+| --- | --- | --- |
+| 3081 Núcleo de Influência | Pronto | `brain_status: synced`, `validation_status: completed`, 15 `responses` (questions 1583–1597, all `completed`, `rejection_reason: null`) |
+| 8, 9, 14 (Sistema) | **Vazio** | `brain_status: synced`, `validation_status: pending`, `responses: []` |
+| 3741, 4191, 4192 (Personalizado) | Pronto | same as above: `synced`, `pending`, `[]` |
+
+- So `brain_status` is the sync state of the store, **not** the Vazio/Pronto badge: an empty brain is also `synced`. **C**
+- `validation_status` is `pending` for every brain that never went through the questionnaire. **C**
+- The badge must come from `content` being empty or not. **I**
+
+**The headline "NÚCLEO DE INFLUENCIA" is not the Núcleo de Influência brain.** Two objects share the name:
+
+| Object | What it is | Tag |
+| --- | --- | --- |
+| The `###NÚCLEO DE INFLUENCIA:` line in the headline payload | For the owner, word for word the **Meu Perfil `bio`** ("Eu sou … / Falo sobre … / Ajudo … / Porque …"). The same text is also the `### BIO` section of the custom brain **Narrativa** (4192) | C (text equality) |
+| Brain 3081 "Núcleo de Influência" | the questionnaire synthesis ("### Perfil Profissional de Gilson Tangerino …", four sections) | C |
+
+- The bio is the more likely source. Meu Perfil says the bio is required for suggestions, and another tenant's line is a 4,256-char free text. **I**
+- So **no brain answer reaches the suggested-headline payload**. **C** for the stored payload; **U** for the hidden system prompt.
+- The earlier inference "the HEADLINE agent uses the Núcleo de Influência (brain) for identity" (from chat transcripts) still stands for the **chat agent** (tool `nucleo_influencia`), but it does **not** carry over to the suggested-headline job. **Refuted** for that job.
+
+**Custom brains** (`cores/edit/{3741,4191,4192}`): free markdown content (12,226 / 5,472 / 2,759 chars), no questionnaire. 4192 is sectioned `### MOVIMENTO IDENTIFICADO`, `### BIO`, `### APRESENTAÇÃO MAGNÉTICA`, `### NARRATIVA`. **C**
+
 ---
 
 ## 4 · "Extrair" — three different mechanisms with similar names
@@ -159,6 +211,13 @@ VAZIO ──answer (groups of 3 unlock progressively)──► draft (save-draft
 | **Extrair Pesquisa** | `/searches/extract-profile` | an approved viral profile | nothing at click time: shows the **precomputed** phrase-per-variable extraction of that profile's virals (`headline` = the video's opening sentence; `value` = the phrase; per variable slug) | ticked phrases → user research items | C |
 | **Extrair Assuntos Virais** / per-profile research job | modals on `/searches` | `{type: myPublic|topic_virais, eng_reversa_search_id}` | runs (or re-runs) extraction for one profile into the user's pending items / pending topics, deduplicating existing ones | pending items or topics + counts | C |
 | **Minhas extrações** (Nova Extração) | `/cores/extract` (hidden) | name + target brains (`nucleos[]`) + a YouTube/Dropbox URL or a pasted transcript | transcription (`cores/transcrible`), then an LLM "Pesquisa Gerada" | a text applied to brains, or to variables via "Selecione o Tipo de Variável" | C (form) / I (apply semantics) |
+
+**2026-10-06 XHR — the extractor confirmed (`profile-viral-search/{id}`, 6 profiles).**
+- Response: `{success, profile, data:[{variable_id, variable_name (DB slug), label, items:[{result_id, plays, thumbnail, post_link, headline, value, already_added}]}]}`. **C**
+- `headline` is the viral's spoken hook (median 19 words). `value` is a **literal substring of that hook** in **641 of 643** items. The extractor tags spans of the hook; it does not paraphrase. **C**
+- Only DB slugs appear: 18 of the 29, including the especialista slugs 1, 2, 3, 6, 12. No classifier-only slug appears, and no `GPT`. **C**
+- Per profile: 15–108 virals and 19–175 items. The most frequent variables are 13 Pessoas/personagens (133), 17 Dores (86), 18 Desejos (81) and 14 Instituições (76). **C**
+- The same extractor output is what the blueprint step marks as "conteúdos literais fornecidos pelo extrator" (§5.7). **I** (strong: same slugs, same literal spans)
 
 The platform-side pipeline that feeds the first two (**I** except where marked): curated profile (`eng_reversa_search`, status pending/approved, tagged with niches/professions **C**) → scrape posts → thumbnails to S3 **C** → transcribe (`transcription_text` **C**) → extract the hook headline **C** → classify formats (15-format multi-label rubric **C**) → extract research phrases per variable **C** (result shape) → extract headline **structures** (`is_structure` flag per profile **C**) → (optional) viral topics **C**. "eng_reversa" = *engenharia reversa*. The "Minhas extrações" table shows `recordsTotal 192` to a user with 0 rows, i.e. the total counts every user's rows (**I**, a leak not to copy).
 
@@ -192,6 +251,13 @@ Client polls `GET headlines/status/{id}` every **20 s**, then reloads with `?hea
 
 `#viewHeadlineFlowModal` shows four stored blobs per suggested headline: **Payload Primeira Criação**, **Callback Primeira Criação**, **Payload Revisão**, **Callback Revisão** (`payload_headline_old_1`, `callback_headline_old_1`, `payload_headline`, `headline` from `GET headlines/suggested/view/{id}`). So each batch is: build prompt payload → LLM create → build revision payload (containing the first answer) → LLM revise → store. The payloads are the actual prompt requests — **the cheapest way to read CoreStudio's real headline prompts** without spending a credit (see `xhr-to-fetch.md`).
 
+**2026-10-06 XHR — corrected.**
+- The four blobs come from **`GET roadmaps/reversa/show/{id}`** (its `data` object). `headlines/suggested/view/{id}` returns only a roteiro status. **C**
+- For suggested headlines there is **no revision pass**: `payload_headline` is `null` and `callback_headline` equals `callback_headline_old_1` in 6/6 samples (manual and automatic). **C**. "Two-pass" is **refuted** for this job.
+- Whether form batches (`in_gpt2`) run a real second pass is still **U**.
+- `payload_headline_old_1` is the **user message only**. It has no task or format instructions, yet the output is always `{"headline_1","headline_2"}`. So a hidden system prompt exists and is not readable read-only. **C** (absence) / **I** (system prompt)
+- One call → two rows (`number_headline` 1 and 2). **C**
+
 ### 5.4 What a headline carries
 
 `{{ ID: <structure_id> }} <headline>` is the edit format; favorites store `structure_id`, `headline`, `headline_id` (batch), `roadmap`, `eng_reversa_result_id`; suggested rows add `Mode`, `Result` (source viral views), `Likes`, `Comments`. **C**. The **structure id is a viral id** (`/library?viral_id=…`). **C**
@@ -214,6 +280,29 @@ How each value changes the prompt: **U** (visible only in the payloads).
 - Heart = `POST headlines/like {structure_id, headline, headline_id}` / `unlike`. **C**
 - **Headlines na Box** = a cart (offcanvas on every page) saved to a *customer + week* (`box-headlines/customer/{id}/save`, `headline_week_id`) — an agency planning feature. **C** code; whether this plan can reach the save step **U**.
 - Suggested headlines on the Dashboard are ordered by source-viral views and link to the source Instagram post. **C**
+- **Correction 2026-10-06:** the owner's 20 dashboard suggestions are ids **201486–201503, 201774, 201775**, not "201755–201775". The 2026-10-05 map interpolated a range. 201755/201760/201765/201770 belong to other customers (§15). **C**
+
+### 5.7 How a viral becomes a blueprint, and a blueprint a headline (2026-10-06 XHR)
+
+```
+viral (eng_reversa_result)
+  → transcription_text + hook "headline"                                   C
+  → extractor: (DB slug, literal span of the hook) pairs                   C  (profile-viral-search)
+       └─► copied into users' research items (pending/approved)            C  (same content, same result id)
+  → blueprint step (LLM): hook with spans replaced by {{DB-SLUG}},         C output / I input
+     per-viral slot definitions, 3 modeled headlines in other niches,
+     self-check (automatic variant)
+     stored as eng_reversa_headline_text, run id eng_reversa_flow_result_id  C (field) / I (run)
+  → headline job (LLM): "###NÚCLEO DE INFLUENCIA: <bio>\n\n<blueprint>"   C
+     [+ "\n\n<assunto>" in manual mode]                                    C
+     + hidden system prompt                                                I
+  → {"headline_1","headline_2"} → two suggested rows                       C
+```
+
+- The same column `eng_reversa_flow_result_id` also links a viral to its **format classification** (`library/result` → `engReversaFormatVideoRelation`). The ids grow with the viral id (virals 7145–7153 → about 26.9k; 105038 → 703,411; 157591 → 1,012,840). So it looks like **one analysis run per viral** produces format + blueprint. **C** (shared column, monotonic) / **I** (one run)
+- **Research items are not in the payload.** Generated words come from the bio. The blueprint's own rule "use apenas conteúdos literais fornecidos pelo extrator" is overridden in generation. **C** (payload, outputs) / **I** (instruction)
+- **Daily suggestions use old virals**: tenants' automatic rows came from virals 7145–7153. The selection rule is still **U**. **C** ids
+- Full template, diff table and worked examples: `prompts/headline-engenharia-reversa-DRAFT.md` (**DRAFT**).
 
 ---
 
@@ -238,6 +327,12 @@ Roteiro statuses: `created` Criando → `in_gpt` Processando → `completed` Com
 ### 6.3 Inputs not used
 
 No roteiro form reads research variables. Apresentação magnética and CTAs (Meu Perfil) are injected "Dentro da Tag Apresentação Magnética / CTAs" in roteiro generation (popover text, **C**). Captured roteiro `params` (41428): `headline_text, ai_provider, mode, save_to, observations, roadmap_source_type, roadmap_use_pubmed, is_reprocess, duration_minutes`; `payload` empty for that row. **C**
+
+**2026-10-06 XHR (41429).**
+- `params` adds `viral_video_id`, `serper_search_in_portuguese`, `serper_query` (an English PubMed query) and `source_links[]`. `payload` is empty again, so **no roteiro prompt is readable**. **C**
+- 41428 and 41429 share the headline and the draft. 41429 copies the **rhetorical device of the reference viral** ("Isso aqui é você…"). 41428 invents statistics. **C**
+- 41429 ignores its off-topic PubMed source. **C**
+- Contract and gaps: `prompts/roteiro-DRAFT.md` (**DRAFT**).
 
 ---
 
@@ -273,6 +368,22 @@ Server-side filters; auto niche/profession filter from Meu Perfil unless `view_a
 
 How a viral's skeleton is stored (text with slots vs on-the-fly LLM abstraction) **U**; how `has_structures` per variable is computed **U**; what `is_core` changes in retrieval **U**; why 5 cited IDs are absent from the allow-listed profile pages (unapproved virals? another profile?) **U**.
 
+### 7.5 2026-10-06 XHR — what the library data confirms or refutes
+
+| Point | Finding | Tag |
+| --- | --- | --- |
+| Skeleton storage | Text with `{{DB-SLUG}}` slots, stored per viral (the blueprint, §5.7). Seen through suggested headlines; `library/result/{id}` itself does **not** return it | C |
+| `library/result/{id}` shape | `{id, pode_usar_core, is_core, eng_reversa_search_id, thumbnail, plays, likes, comments, post_date, transcription_text, post_link_public, relations[{niche_id, profession_id, niche, profession}], engReversaFormatVideoRelation[{format_video_id, eng_reversa_flow_result_id, format_video{name, definition, signals, alias}}], profile, social}`. **No hook-headline field, no blueprint, no variables.** `is_core` is null and `pode_usar_core` false in all 14 found | C |
+| The 5 unexplained structure ids | 124684 → "Viral não encontrado" (also absent from `/library?viral_result_id=124684`; not in the approved library). 124700 → `dr.marcelo.santos` (search 1424). 147089 → `veridiana_cavalheri` under search **1439**. 147091 and 148727 → `veridiana_cavalheri` under search **1442**. 147089 and 147091 are **the same video** (same hook and views) stored twice under two profile records of one handle. So the chat pool includes profile records other than the ones the library pages showed | C |
+| Duplicate profile records | One handle can have several `eng_reversa_search` rows (veridiana: 1439, 1442, 1640), and the same post can come back as a new viral id. Only 1439 is in `headlines/profiles` (`is_structure=1`) and in `approved-profiles`. 1442 and 1640 are in neither list, yet `profile-viral-search/1640` answers with 87 virals. So which record the lists show and which records feed extraction/structures differ | C |
+| `is_structure` | `headlines/profiles` = 514 profiles, **161** with `is_structure=1`. The two most-cited chat structure sources, psifernandosegredo (1702) and elias.maman (1735), have **`is_structure=0`**. So the flag does **not** decide which virals the chat HEADLINE agent can use as structures. It still disables profiles in the form's "Perfil de Referência" (code). The earlier claim "profiles with is_structure=0 cannot be picked" stays true for the form only; its meaning remains **U** | C / U |
+| Approved profiles | `approved-profiles` = 485, and `approved-profiles-viral-topics` = the **same 485** (same ids, same fields: profile, social, search id, ≤ 3 thumbnails, niche_ids, profession_ids). 29 of the 514 headline profiles are not approved | C |
+| Corpus size | `/library?view_all=1` = **1,689 pages** × 24 ≈ 40.5k virals. The 281 pages measured before were the owner's niche-filtered view | C |
+| Core filter | `/library?view_all=1&core=1` returns the same first page and page count as without it: the filter is ignored for this (non-staff) user | C |
+| `library/videos` picker | `{id, eng_reversa_search_id, profile, title (= Instagram caption), thumbnail_url, plays, likes, comments, shares (0), video_url (Instagram CDN), format_name, post_date, transcription_text}`, `count` and `total_available` capped at 100. `title` is the **caption**, not an extracted headline. `description` is absent or empty | C |
+| `library/profiles` | `{id, profile, social, total_plays, total_likes, total_comments, video_count, thumbnail_url}`; elias.maman = 105 videos | C |
+| Viral topic ↔ video | `viral-data/{topicId}` returns **one** video per topic here (`{id, title (caption), description null, plays, likes, comments, created_at, url, thumbnail, post_date}`) | C |
+
 ---
 
 ## 8 · Instagram integration (Minha conta › Instagram / Integrações)
@@ -290,12 +401,37 @@ How a viral's skeleton is stored (text with slots vs on-the-fly LLM abstraction)
 
 - **KPIs** (`profileInsights`): `followers_count, new_followers, views, accounts_engaged{,_day,_week,_month}, reach{,_day,_week,_month}, comments, likes, media_count, updatedAt`. Tiles: Seguidores, Novos Seguidores, Visualizações, Engajamento (= accounts engaged), Comentários.
 - **Charts:** Engajamento (%) and Alcance (K) for `30 dias / 7 dias / Hoje` (three points, not a time series). In the snapshot the three periods are identical, so either only one sync has run or the periods are not computed separately. **I**
-- **Posts** (`instagramPosts`, 9 per page, 168 stored of 1,592 on the account): `post_id` (local, sequential), `media_id` (null), `media_url` (Instagram CDN, expiring), `thumbnail_url` (S3 copy), `media_type`, `caption`, `permalink`, `timestamp`, `engagement`, `reach`, `impressions` (always 0 — a metric Instagram retired), `saved`, `likes`, `comments`, `shares`, `views`. Only a recent window of posts is imported. **C** counts / **I** window rule.
+- **Posts** (`instagramPosts`, 9 per page, 168 stored of 1,592 on the account): `post_id` (local, sequential), `media_id` (null), `media_url` (Instagram CDN, expiring), `thumbnail_url` (S3 copy), `media_type`, `caption`, `permalink`, `timestamp`, `engagement`, `reach`, `impressions` (always 0 — a metric Instagram retired), `saved`, `likes`, `comments`, `shares`, `views`. ~~Only a recent window of posts is imported.~~ Refuted 2026-10-06: only **videos** are imported, back to 2024-04-03 (see below). **C** counts.
 - **Dormant:** `?period=` select and a "select up to 60 posts" modal (`posts/all` returns posts with `selected`; `posts/set` stores the choice). Purpose **U** — plausibly choosing the user's own posts as AI references or for the dashboard "Diagnóstico" card (both **I**).
+
+**2026-10-06 XHR — refined.**
+
+*Stored posts* (`/profile/instagram?page=N`, inline `instagramPosts`):
+- 168 posts, 9 per page, 19 pages. **C**
+- **Every stored post is `media_type: VIDEO`** (15 of 15 on pages 2 and 19). **C**
+- The oldest stored post (page 19) is from **2024-04-03**, so it is **not** a recent window. **Refuted.** **C**
+- The import keeps **videos (reels) only**: 168 of the account's 1,592 media. Whether it is all videos or the last N videos is **U**. **I**
+- `post_id` is local and sequential (23760…); `media_id` is null; thumbnails are S3 copies named after the Instagram media id. **C**
+
+*`GET profile/instagram/posts/all`* (the 60-post modal's source):
+- Returns a **bare array of 100** live Instagram Graph media objects, newest first. **C**
+- Fields: `id` (Instagram media id), `caption`, `media_type`, `media_product_type`, `media_url`, `thumbnail_url`, `permalink`, `timestamp`, `is_shared_to_feed`, plus CoreStudio's `selected` (0/1). **C**
+- Window **2025-12-03 → 2026-10-06**. Mix: 67 REELS (VIDEO), 30 CAROUSEL_ALBUM, 3 IMAGE. **C**
+- No metrics. These are not the stored rows: the ids are Instagram ids. **C**
+- 100 is the Graph API page size (one page, no paging seen). **I**
+
+*The `selected` flag*:
+- **66** posts are `selected=1`. They are exactly the 66 REELS with `is_shared_to_feed=true`. The single reel with `is_shared_to_feed=false` and all 33 FEED posts are `0`. **C**
+- So `selected` is **set by the server by rule** (reels shown in the feed), not by the user. 66 is also more than the modal's own 60 limit. **I** (rule) / **C** (counts)
+- With selection = reels, the "select up to 60" modal most plausibly picks **which of the user's own videos** to analyse (e.g. as references or for the "Diagnóstico" card). **I**. Purpose still **U**.
 
 ### 8.3 Use in generation
 
 No surface reads Instagram data into headline/roteiro generation in the captured code. **C** (absence) / **U** server-side.
+
+**2026-10-06 XHR:**
+- The stored suggested-headline payloads (6) and roteiro params (2) contain **no Instagram data**. **C**
+- The hidden system prompts remain **U**.
 
 ---
 
@@ -334,7 +470,8 @@ Static: 1 module, 5 Bunny Stream lessons; the first-access modal pushes users he
 | eng_reversa_searches / eng_reversa_results / niches / professions / format_videos / pivots | §7.1 | profile 1–N viral; M:N taxonomies |
 | library_references / library_requests | §7.1 | user ↔ profile/video |
 | headlines (batches) / headline items | inputs, `status`, two-pass payloads, `structure_count` | batch 1–N items |
-| eng_reversa_headlines (suggested) | `headline, mode, eng_reversa_result_id, structure, roadmap, search_text`, two-pass payloads | viral 1–N suggested |
+| eng_reversa_headlines (suggested) | `user_id, workspace_id, eng_reversa_result_id, eng_reversa_flow_result_id, niche_id, eng_reversa_headline_text (blueprint), headline, number_headline, payload_headline_old_1, callback_headline_old_1, payload_headline, callback_headline, roadmap_payload, roadmap_response, roadmap, roadmap_id, status, mode, link_viral, approved, admin_id, search_id, search_text, use_article, use_article_niche` (2026-10-06 XHR, C) | viral 1–N suggested; one LLM call → 2 rows |
+| eng_reversa_flow_results (blueprint / analysis run) | id only; referenced by suggested headlines and format relations | viral 1–1 run (I) |
 | favorite_headlines | `headline, headline_id, structure_id, roadmap, eng_reversa_result_id` | — |
 | user_roadmaps | `name, headline, observations, brain_id/core_id, viral_id, params{…}, roadmap_gpt, roadmap_advanced, search_id, search_text, status, roadmap_liked, reason_unliked` | from favorite/suggested/headline |
 | chat_conversations / chat_messages / chat_runs / rag_documents / user_memories / chat_agents | §11 | — |
@@ -364,11 +501,31 @@ Decision on how to merge stays with the owner (DECISIONS.md: "aligned with our i
 
 ## 14 · Open questions (for the owner, or for the next read-only fetch)
 
-1. **Headline prompts:** can we read `GET headlines/suggested/view/{id}` for 2–3 of the 20 dashboard suggestions (ids 201755–201775)? It returns the stored *payloads* of both passes — likely the real prompts — without spending credits. (`xhr-to-fetch.md` #1)
-2. **Structure storage:** is a structure a stored template with variable slots, or does the agent abstract the skeleton on the fly from the transcript? Only `library/result/{id}` + headline payloads can tell.
+1. ~~**Headline prompts:** read `headlines/suggested/view/{id}`.~~ **Done 2026-10-06** via `roadmaps/reversa/show/{id}` (§5.3, §5.7).
+   - Still open: the **hidden system prompt** of the headline job, and the prompt of the **blueprint step**.
+   - Do we rebuild those from the observed contract (`prompts/headline-engenharia-reversa-DRAFT.md`), or design ours from the Método Audience?
+2. ~~**Structure storage.**~~ **Answered:** a stored per-viral blueprint with `{{DB-SLUG}}` slots (§5.7). Still open: do form batches and the chat agent read the same blueprints?
 3. **Auto-suggested research items:** when do they run (on profile save, nightly) and from which profiles?
 4. **Brains in roteiros:** is Núcleo de Influência always used ("2. Extraindo Núcleo") even when no brain is picked?
 5. **Instagram data:** what is the dormant "select up to 60 posts" for, and does any generation read the user's own posts or metrics? What is the Dashboard "Diagnóstico — a preencher" card?
 6. **Plan gating:** what do the hidden **Avatar** and **Estudio de Edicao** sections contain, and which features are Premium-only besides Biblioteca?
 7. **Rebuild scope (carried from DECISIONS.md):** keep the legacy paths (Box, Minhas extrações, legacy headline modal, legacy roteiro A/C) or only the current ones (form page, Roteiro Avançado, chat)?
 8. **Allow-list as structure pool:** do we reproduce "Minha Biblioteca = the agent's structure pool" deliberately (it explains why the account's headlines reuse ~50 structures)?
+9. **Núcleo input (new):** CoreStudio feeds the headline job the **bio** under the label "Núcleo de Influência", not the brain of that name. Which should our build use: the bio, the brain, or both?
+10. **Research items in generation (new):** in CoreStudio they are suggested from virals but **not used** by the suggested-headline job. Do we want our generator to fill slots from the user's approved items (the original intent of the blueprint rule "conteúdos literais do extrator")?
+11. **`{{GPT}}` slot (new):** keep a "model-free" slot in our blueprints, or force every slot to a research variable?
+12. **Cross-tenant data (new, §15):** the captures hold four records of two other CoreStudio customers. Delete them locally? Report the leak to CoreStudio?
+
+---
+
+## 15 · Cross-tenant read in CoreStudio (found 2026-10-06)
+
+- `GET /roadmaps/reversa/show/{id}` and `GET /headlines/suggested/get/{id}` returned suggested-headline rows of **other customers** to the owner's session. **C**
+  - 201755 → user 603 / workspace 601.
+  - 201760, 201765, 201770 → user 1639 / workspace 1591.
+  - The ids were guessed by interpolating the dashboard range.
+- What leaked: the full payload, including those users' **bio / persona text**, real names and their generated headlines. **C**
+- `headlines/suggested/view/{id}` (`b1`) answered for 201760 too, with status only. **C**
+- So these endpoints check authentication, not ownership (an IDOR). **C** (behaviour)
+- **Do not copy this into our build:** every read by id must be scoped to the caller's workspace.
+- Handling of the captured data: the four `c14_*` and `c13_*` files for those ids and `b1_suggested_view_201760.json` are **kept out of git**. The prompt draft names those users only as "tenant B/C" and does not quote their persona text. Deleting the local copies and reporting the issue to CoreStudio are owner decisions (§14 Q12).

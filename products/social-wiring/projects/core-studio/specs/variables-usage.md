@@ -18,7 +18,8 @@ Personal data is left out on purpose. Creator handles are written as `@<perfil>`
 3. **The chat can inject research items.** The `@` mention modal has a **"Minha Pesquisa"** tab with the chips `Meu Público` / `Sobre mim` and a variable filter. It uses Livewire `searchMyResearch` and `getResearchVariables` (`js/app-DLOM2UdR.js`, `pages/chat.html`) [OBS].
    - **None of the 29 saved conversations uses it.** All 28 `@` mentions in user messages are profile references (`@<perfil> - Todos os vídeos`).
    - So the transcripts give **no evidence** of a research item (desire, pain, known person and so on) being injected into a generated headline.
-4. **No headline template text with `{{SLUG}}` placeholders exists in any saved file.**
+4. **Superseded 2026-10-06.** Headline templates with `{{SLUG}}` placeholders do exist: they are the per-viral **blueprints** in suggested-headline payloads. Their slots are DB slugs plus `{{GPT}}` (see `prompts/headline-engenharia-reversa-DRAFT.md` §3 and `mechanisms.md` §5.7). The points below describe the 2026-10-05 files only.
+   **No headline template text with `{{SLUG}}` placeholders exists in any saved file (2026-10-05).**
    - The only `{{SLUG}}`s anywhere are in the classifier prompt.
    - The HEADLINE agent cites structures by numeric ID: `(estrutura #NNNNNN)` appears 190 times, covering 52 distinct IDs.
    - The agent paraphrases these structures with generic `X/Y` or `[característica do avatar]` slots (§3).
