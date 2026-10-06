@@ -56,7 +56,7 @@ get_current_user = select_get_current_user(settings, _prod_get_current_user)
 # incident this mirrors on the ERP side).
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    lambda u: None,  # retired positional slot — never consulted (trusted DB only)
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )

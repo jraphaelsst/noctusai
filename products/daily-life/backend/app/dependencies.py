@@ -43,7 +43,7 @@ get_current_user = make_get_current_user(lambda: _db.get_client())
 # docstring in noctusai_lib.api.auth has the full rationale).
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    lambda u: None,  # retired positional slot — never consulted (trusted DB only)
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )

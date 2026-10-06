@@ -882,6 +882,20 @@ if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6g2. No-metadata-authz gate (blocking, only when backend Python changed) ─
+# Keeper `check_no_metadata_authz` + `KB § PATTERNS/backend/no-metadata-authz.md`.
+# `user_metadata.org_id|role|org_role` is USER-WRITABLE (`auth.updateUser`);
+# reading it to scope a query or gate an action is a cross-tenant hole
+# (2026-10-06 hotfix). Trusted source: `public.noctus_users`. BLOCKING, high.
+if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
+    echo "[pre-commit] backend .py staged — checking for user_metadata-based authorization..."
+    if ! "$PY" "$CLI" --check-no-metadata-authz --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] NO-METADATA-AUTHZ check FAILED. Commit aborted." >&2
+        echo "[pre-commit] user_metadata is user-writable — resolve org/role from public.noctus_users. See KB § PATTERNS/backend/no-metadata-authz.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6h. PostgREST unbounded-query gate (advisory, only when backend Python ──
 # changed) ──────────────────────────────────────────────────────────────
 # Keeper `check_postgrest_unbounded_query` + `KB § PATTERNS/backend/

@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_admin_client, get_current_user_org, get_org_id
+from app.dependencies import get_admin_client, get_current_user_org
 from app.modules.media_creation.services.generation_service import (
     GenerationError,
     GenerationService,
@@ -51,8 +51,8 @@ router = APIRouter(
 )
 
 
-def _publish_svc(user) -> PublishService:
-    return PublishService(get_admin_client(), get_org_id(user))
+def _publish_svc(org_id) -> PublishService:
+    return PublishService(get_admin_client(), org_id)
 
 
 def get_post_service(auth=Depends(get_current_user_org)) -> PostService:
@@ -62,15 +62,15 @@ def get_post_service(auth=Depends(get_current_user_org)) -> PostService:
     inject a service backed by the mock Supabase client, instead of
     monkeypatching our own symbols (KB § PATTERNS/di-test-seam.md Class-A).
     """
-    user, _, _ = auth
-    return PostService(get_admin_client(), get_org_id(user))
+    user, _, org_id = auth
+    return PostService(get_admin_client(), org_id)
 
 def get_publish_service(auth=Depends(get_current_user_org)) -> PublishService:
     """Publish-service DI seam. Overridable via ``app.dependency_overrides``
     in tests so a gated/Fake ``MetaAdapter`` is injected through DI rather
     than monkeypatching the class — per KB § PATTERNS/di-test-seam.md."""
-    user, _, _ = auth
-    return PublishService(get_admin_client(), get_org_id(user))
+    user, _, org_id = auth
+    return PublishService(get_admin_client(), org_id)
 
 
 def get_generation_service(auth=Depends(get_current_user_org)) -> GenerationService:
@@ -83,8 +83,8 @@ def get_generation_service(auth=Depends(get_current_user_org)) -> GenerationServ
     KB § PATTERNS/di-test-seam.md Class-A — a production DI seam, not a
     self-monkeypatch.
     """
-    user, _, _ = auth
-    return GenerationService(get_admin_client(), get_org_id(user))
+    user, _, org_id = auth
+    return GenerationService(get_admin_client(), org_id)
 
 
 def _require_post(post_svc, post_id: str) -> dict:
@@ -201,7 +201,7 @@ async def publish_post(
     only surfaces 422 + ``meta_scope_pending_app_review`` when the App
     Review gate is still pending.
     """
-    user, _, _ = auth
+    user, _, org_id = auth
     post = _require_post(post_svc, post_id)
     try:
         data = svc.publish_post(

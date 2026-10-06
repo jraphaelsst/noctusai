@@ -64,6 +64,7 @@ from __future__ import annotations
 import json as _json
 import logging
 from typing import Any, Iterable, Mapping, Optional
+from uuid import NAMESPACE_OID, UUID, uuid5
 from unittest.mock import MagicMock
 from unittest.mock import Base as _MockBase  # noqa: F401
 
@@ -1790,13 +1791,22 @@ class MockSupabaseClient:
         # Only the ORG is projected. Roles are NOT lifted from metadata: a
         # test proving "a metadata role claim grants nothing" must keep
         # proving it — elevated roles come from an explicit row.
-        return [{
+        rows = [{
             "id": user.id,
             "email": user.email,
             "org_id": meta["org_id"],
             "org_role": "member",
             "role": "user",
         }]
+        # A fixture user id that is not a UUID is coerced to a deterministic
+        # one by the legacy-JWT bridge (`AuthContext.user_id`), and every
+        # trusted lookup downstream keys on that coerced id — project the row
+        # under it too (the SAME user; production ids are always UUIDs).
+        try:
+            UUID(str(user.id))
+        except (ValueError, TypeError):
+            rows.append({**rows[0], "id": str(uuid5(NAMESPACE_OID, str(user.id)))})
+        return rows
 
     def _builder_for(self, name: str, data=None) -> MockRequestBuilder:
         # If the caller passes "schema.table", split it; otherwise use bound schema.

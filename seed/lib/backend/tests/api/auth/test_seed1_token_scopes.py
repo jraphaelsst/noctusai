@@ -146,7 +146,7 @@ class TestRequireScopesMatrix:
             raw_token="session-id",
             api_token_id=None,
         )
-        core_client = _FakeCoreClient([{"id": str(_USER), "org_role": "viewer"}])
+        core_client = _FakeCoreClient([{"id": str(_USER), "org_id": str(_ORG), "org_role": "viewer"}])
         dep = require_scopes(
             user_roles=frozenset({"owner", "admin"}),
             get_auth_context=lambda: _ctx_dep(ctx),

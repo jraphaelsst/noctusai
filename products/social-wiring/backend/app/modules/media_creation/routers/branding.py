@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_admin_client, get_current_user_org, get_org_id
+from app.dependencies import get_admin_client, get_current_user_org
 from app.modules.media_creation.deps import get_branding_storage
 from app.modules.media_creation.schemas.branding import (
     AssetUpload,
@@ -48,8 +48,8 @@ router = APIRouter(
 )
 
 
-def _svc(user, storage: StorageBackend) -> BrandingService:
-    return BrandingService(get_admin_client(), get_org_id(user), storage)
+def _svc(org_id, storage: StorageBackend) -> BrandingService:
+    return BrandingService(get_admin_client(), org_id, storage)
 
 
 def _http(exc: BrandingError) -> HTTPException:
@@ -68,8 +68,8 @@ def _http(exc: BrandingError) -> HTTPException:
 async def list_brandings(
     auth=Depends(get_current_user_org), storage: StorageBackend = Depends(get_branding_storage)
 ):
-    user, _, _ = auth
-    return success_response(_svc(user, storage).overview())
+    user, _, org_id = auth
+    return success_response(_svc(org_id, storage).overview())
 
 
 @router.post("", status_code=201)
@@ -78,9 +78,9 @@ async def create_branding(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
-        return success_response(await _svc(user, storage).create(body.model_dump(), str(user.id)))
+        return success_response(await _svc(org_id, storage).create(body.model_dump(), str(user.id)))
     except BrandingError as exc:
         raise _http(exc) from exc
 
@@ -92,10 +92,10 @@ async def import_design_system(
     storage: StorageBackend = Depends(get_branding_storage),
 ):
     """Create or update a branding from a design-system folder's files."""
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
         files = [(f.path, decode_b64(f.content_base64, where=f.path)) for f in body.files]
-        result = await _svc(user, storage).import_bundle(
+        result = await _svc(org_id, storage).import_bundle(
             files=files,
             marca_id=body.marca_id,
             is_template=body.is_template,
@@ -117,9 +117,9 @@ async def get_branding(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
-        return success_response(await _svc(user, storage).detail(kit_id))
+        return success_response(await _svc(org_id, storage).detail(kit_id))
     except BrandingError as exc:
         raise _http(exc) from exc
 
@@ -131,10 +131,10 @@ async def update_branding(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
         return success_response(
-            await _svc(user, storage).update(kit_id, body.model_dump(exclude_unset=True))
+            await _svc(org_id, storage).update(kit_id, body.model_dump(exclude_unset=True))
         )
     except BrandingError as exc:
         raise _http(exc) from exc
@@ -146,9 +146,9 @@ async def delete_component(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
-        _svc(user, storage).delete_component(component_id)
+        _svc(org_id, storage).delete_component(component_id)
     except BrandingError as exc:
         raise _http(exc) from exc
     return {"ok": True, "message": "Componente removido"}
@@ -160,9 +160,9 @@ async def delete_branding(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
-        result = await _svc(user, storage).delete(kit_id)
+        result = await _svc(org_id, storage).delete(kit_id)
     except BrandingError as exc:
         raise _http(exc) from exc
     return {"ok": True, "message": "Branding removido", **result}
@@ -175,9 +175,9 @@ async def upsert_component(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
-        return success_response(_svc(user, storage).upsert_component(kit_id, body.model_dump()))
+        return success_response(_svc(org_id, storage).upsert_component(kit_id, body.model_dump()))
     except BrandingError as exc:
         raise _http(exc) from exc
 
@@ -189,10 +189,10 @@ async def upload_asset(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
+    user, _, org_id = auth
     try:
         data = decode_b64(body.content_base64, where=body.label)
-        row = await _svc(user, storage).add_asset(kit_id, body.kind, body.label, data, body.notes)
+        row = await _svc(org_id, storage).add_asset(kit_id, body.kind, body.label, data, body.notes)
     except BrandingError as exc:
         raise _http(exc) from exc
     return success_response(row)

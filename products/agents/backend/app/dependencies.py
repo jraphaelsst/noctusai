@@ -29,7 +29,6 @@ from noctusai_seed import (
     select_get_current_user,
 )
 from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
-from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
@@ -42,6 +41,7 @@ from noctusai_lib.api.auth.session import (
     FakeApiTokenResolver,
     SupabaseApiTokenResolver,
     make_get_auth_context,
+    make_trusted_legacy_jwt_resolver,
     require_scopes,
 )
 from app.config import settings
@@ -60,7 +60,7 @@ _prod_get_current_user = make_get_current_user(lambda: _db.get_client())
 get_current_user = select_get_current_user(settings, _prod_get_current_user)
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    lambda u: None,  # retired positional slot — never consulted (trusted DB only)
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )
@@ -130,42 +130,10 @@ def _get_api_token_resolver():
     return _api_token_resolver
 
 
-async def _legacy_jwt_resolver(token: str) -> AuthContext | None:
-    """Bridge a raw Supabase JWT to an ``AuthContext`` (``caller_kind="user"``).
-
-    Mirrors social-wiring's bridge exactly — see that module's docstring.
-    """
-    try:
-        result = await get_current_user(authorization=f"Bearer {token}")
-    except Exception:
-        return None
-    if result is None:
-        return None
-    user = result[0] if isinstance(result, tuple) else result
-    if user is None:
-        return None
-    raw_org = (getattr(user, "user_metadata", None) or {}).get("org_id")
-    if not raw_org:
-        return None
-    try:
-        org_id = coerce_org_uuid(raw_org)
-    except Exception:
-        return None
-    try:
-        user_id = UUID(str(user.id))
-    except (ValueError, TypeError):
-        user_id = _uuid.uuid5(_uuid.NAMESPACE_OID, str(user.id))
-    return AuthContext(
-        org_id=org_id,
-        caller_kind="user",
-        user_id=user_id,
-        scopes=[],
-        raw_token=token,
-        api_token_id=None,
-        # platform-admin-mfa M2: the bearer was just accepted by `get_current_user`
-        # for `user`, so its `aal` claim is readable (bound to that user's `sub`).
-        aal=read_aal(token, validated_user=user),
-    )
+_legacy_jwt_resolver = make_trusted_legacy_jwt_resolver(
+    lambda authorization: get_current_user(authorization=authorization),
+    lambda: _db.get_core_client(),
+)
 
 
 class _LazyApiTokenResolver:

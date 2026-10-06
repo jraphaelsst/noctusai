@@ -10375,6 +10375,183 @@ def check_postgrest_schema_qualified_table(repo_root: Path | None = None) -> lis
 
 
 # ---------------------------------------------------------------------------
+# `check_no_metadata_authz` — `user_metadata` / `raw_user_meta_data` is
+# USER-WRITABLE (`supabase.auth.updateUser({data})`), so any org / role value
+# read from it is attacker-controlled. `public.noctus_users` (org_id, org_role)
+# is the ONLY trusted source. With a real second tenant, every backend read of
+# `user_metadata.org_id|role|org_role` that scopes a query or gates an action is
+# a live cross-org hole (2026-10-06 hotfix: social-wiring email_marketing /
+# media_creation paired `get_org_id(user)` with the service-role client; three
+# `_legacy_jwt_resolver` bridges built `AuthContext.org_id` from metadata).
+#
+# AST-based: flags `<…metadata…>.get("<key>")` and `<…metadata…>["<key>"]` for
+# key in org_id / role / org_role / noctus_role / erp_role / org, in seed/** and
+# every ACTIVE product's backend/** (tests excluded — fixtures legitimately set
+# metadata). Display-only / non-authz reads go in `_NO_METADATA_AUTHZ_ALLOWLIST`
+# below, keyed by (relpath, enclosing function), each WITH a rationale; or a
+# same-line / preceding-3-line `metadata-authz-ok: <why>` comment.
+# KB § PATTERNS/backend/no-metadata-authz.md.
+# ---------------------------------------------------------------------------
+
+_NO_METADATA_AUTHZ_SEVERITY = "high"
+_NO_METADATA_AUTHZ_KEYS: frozenset[str] = frozenset({
+    "org_id", "role", "org_role", "noctus_role", "erp_role", "org",
+})
+_NO_METADATA_AUTHZ_RATIONALE_RE = re.compile(r"metadata-authz-ok\s*:\s*\S", re.IGNORECASE)
+_NO_METADATA_AUTHZ_EXCLUDED_PARTS: set[str] = {
+    "node_modules", ".git", ".venv", "venv", "__pycache__", "dist", "build",
+    ".backup", "archive", "tests", "test",
+}
+# (relpath, enclosing function name) -> why this read is NOT an authorization source.
+_NO_METADATA_AUTHZ_ALLOWLIST: dict[tuple[str, str], str] = {
+    ("seed/lib/backend/noctusai_lib/api/auth/__init__.py", "resolve_sso_role"):
+        "Deprecated standalone primitive; documented as NOT an authorization "
+        "source (see its docstring). Fleet callers only re-export it; "
+        "authorization is make_resolve_platform_role (trusted noctus_users).",
+    ("seed/lib/backend/noctusai_lib/api/auth/__init__.py", "get_sso_context"):
+        "Reads the SSO-synced metadata shape for display/UX context only; "
+        "never feeds a scoping or authorization decision.",
+    ("seed/lib/backend/noctusai_lib/api/auth/session/legacy_bridge.py", "_resolver"):
+        "Log-only: warns when metadata names an org the trusted row does not "
+        "have; the value is never used.",
+    ("seed/lib/backend/noctusai_lib/api/auth/__init__.py", "get_current_user_org"):
+        "Log-only: warns when metadata names an org but no noctus_users row "
+        "exists; the value is never used.",
+    ("products/core/backend/app/routers/billing.py", "_dispatch_webhook"):
+        "Stripe checkout-session metadata set server-side by core at session "
+        "creation (signature-verified webhook) — not user_metadata.",
+    ("products/core/backend/app/services/billing_service.py", "handle_checkout_completed"):
+        "Stripe checkout-session metadata set server-side by core — not user_metadata.",
+}
+
+
+def _no_metadata_authz_receiver_is_metadata(node: ast.AST) -> bool:
+    try:
+        src = ast.unparse(node).lower()
+    except Exception as exc:  # pragma: no cover — unparse is total
+        logger.debug("compliance: cannot unparse receiver (%s)", exc)
+        return False
+    return "metadata" in src or "meta_data" in src
+
+
+def _no_metadata_authz_scan_roots(root: Path) -> list[Path]:
+    roots: list[Path] = []
+    seed = root / "seed"
+    if seed.is_dir():
+        roots.append(seed)
+    products = root / "products"
+    if products.is_dir():
+        for product_dir in _active_product_dirs(products):
+            backend = product_dir / "backend"
+            if backend.is_dir():
+                roots.append(backend)
+    return roots
+
+
+def check_no_metadata_authz(repo_root: Path | None = None) -> list[dict]:
+    """Flag backend reads of ``user_metadata`` org / role keys.
+
+    ``user_metadata`` is user-writable — it can never scope a query or gate an
+    action. Trusted source: ``public.noctus_users`` via
+    ``make_get_current_user_org`` / ``make_trusted_legacy_jwt_resolver`` /
+    ``resolve_org_membership``. Display-only reads: allowlist entry (with
+    rationale) or ``metadata-authz-ok: <why>`` comment. Per
+    ``KB § PATTERNS/backend/no-metadata-authz.md``.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return issues
+
+    for scan_root in _no_metadata_authz_scan_roots(root):
+        for path in sorted(scan_root.rglob("*.py")):
+            if any(p in _NO_METADATA_AUTHZ_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            if "meta" not in content:
+                continue
+            try:
+                relative = str(path.relative_to(root))
+            except ValueError:
+                logger.debug("compliance: file outside repo root: %s", path)
+                continue
+            try:
+                tree = ast.parse(content)
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", path, exc)
+                continue
+            lines = content.splitlines()
+
+            parents: dict[int, ast.AST] = {}
+            for parent in ast.walk(tree):
+                for child in ast.iter_child_nodes(parent):
+                    parents[id(child)] = parent
+
+            def _enclosing(node: ast.AST) -> str:
+                cur = parents.get(id(node))
+                while cur is not None:
+                    if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                        return cur.name
+                    cur = parents.get(id(cur))
+                return "<module>"
+
+            def _hatched(line_no: int) -> bool:
+                start = max(0, line_no - 1 - 3)
+                return any(
+                    _NO_METADATA_AUTHZ_RATIONALE_RE.search(ln)
+                    for ln in lines[start:line_no]
+                )
+
+            for node in ast.walk(tree):
+                key = None
+                receiver = None
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "get"
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)
+                ):
+                    key, receiver = node.args[0].value, node.func.value
+                elif (
+                    isinstance(node, ast.Subscript)
+                    and isinstance(node.ctx, ast.Load)
+                    and isinstance(node.slice, ast.Constant)
+                    and isinstance(node.slice.value, str)
+                ):
+                    key, receiver = node.slice.value, node.value
+                if key not in _NO_METADATA_AUTHZ_KEYS or receiver is None:
+                    continue
+                if not _no_metadata_authz_receiver_is_metadata(receiver):
+                    continue
+                fn = _enclosing(node)
+                if (relative, fn) in _NO_METADATA_AUTHZ_ALLOWLIST or _hatched(node.lineno):
+                    continue
+                issues.append({
+                    "file": relative,
+                    "issue": (
+                        f"`{relative}:{node.lineno}` (in `{fn}`) reads "
+                        f"`user_metadata[{key!r}]`. user_metadata is USER-WRITABLE "
+                        f"(`auth.updateUser({{data}})`) — an org/role from it is "
+                        f"attacker-controlled and must never scope a query or gate "
+                        f"an action. Use the trusted `public.noctus_users` row "
+                        f"(`make_get_current_user_org`, `make_trusted_legacy_jwt_"
+                        f"resolver`, `resolve_org_membership`). Display-only read: "
+                        f"add `metadata-authz-ok: <why>` or an allowlist entry. "
+                        f"Per `KB § PATTERNS/backend/no-metadata-authz.md`."
+                    ),
+                    "severity": _NO_METADATA_AUTHZ_SEVERITY,
+                })
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_postgrest_unbounded_query` — PostgREST silently caps ANY select at
 # `db-max-rows` (Supabase default 1 000) — no error, no warning,
 # `response.data` just comes back short. SEVEN instances of this shipped to

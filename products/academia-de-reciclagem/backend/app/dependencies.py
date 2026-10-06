@@ -35,7 +35,6 @@ from noctusai_seed import (
     create_dependencies,
     select_get_current_user,
 )
-from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
@@ -47,6 +46,7 @@ from noctusai_lib.api.auth.session import (
     SupabaseApiTokenResolver,
     make_api_token_audit_writer,
     make_get_auth_context,
+    make_trusted_legacy_jwt_resolver,
     require_scopes,
 )
 from noctusai_lib.security.app_config import (
@@ -92,7 +92,7 @@ get_current_user = select_get_current_user(settings, _prod_get_current_user)
 # incident this mirrors on the ERP side).
 get_current_user_org = make_get_current_user_org(
     get_current_user,
-    lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+    lambda u: None,  # retired positional slot — never consulted (trusted DB only)
     get_admin_client_fn=lambda: _db.get_core_client(),
     required=True,
 )
@@ -175,53 +175,10 @@ def _get_api_token_resolver() -> SupabaseApiTokenResolver:
     return _api_token_resolver
 
 
-async def _legacy_jwt_resolver(token: str) -> AuthContext | None:
-    """Bridge a raw Supabase JWT to an ``AuthContext`` (``caller_kind="user"``).
-
-    The dep's contract is that this is called ONLY when the bearer is
-    NOT ``pk_*`` (i.e. a JWT-shaped legacy token). Synthesizes an
-    ``Authorization: Bearer <token>`` header, runs it through the
-    existing JWT-verifying ``get_current_user`` machinery, then projects
-    the resulting user into an ``AuthContext``. Returns ``None`` on any
-    failure so the dep returns 401 — never raises out.
-    """
-    try:
-        result = await get_current_user(authorization=f"Bearer {token}")
-    except Exception:
-        # The legacy verifier raises HTTPException(401) on bad JWTs;
-        # the bridge must return None so the dep can produce its own
-        # 401 (consistent shape with the new auth scheme).
-        return None
-    if result is None:
-        return None
-    # ``make_get_current_user`` returns ``(user, token)``.
-    user = result[0] if isinstance(result, tuple) else result
-    if user is None:
-        return None
-    raw_org = (getattr(user, "user_metadata", None) or {}).get("org_id")
-    if not raw_org:
-        return None
-    try:
-        org_id = coerce_org_uuid(raw_org)
-    except Exception:
-        logger.warning("legacy_jwt_org_coerce_failed raw=%r", raw_org)
-        return None
-    try:
-        user_id = UUID(str(user.id))
-    except (ValueError, TypeError):
-        # Local-dev/test fixtures may use opaque ids; derive a stable UUID.
-        user_id = _uuid.uuid5(_uuid.NAMESPACE_OID, str(user.id))
-    return AuthContext(
-        org_id=org_id,
-        caller_kind="user",
-        user_id=user_id,
-        scopes=[],
-        raw_token=token,  # JWT — preserves the bearer for legacy callers
-        api_token_id=None,
-        # platform-admin-mfa M2: the bearer was just accepted by `get_current_user`
-        # for `user`, so its `aal` claim is readable (bound to that user's `sub`).
-        aal=read_aal(token, validated_user=user),
-    )
+_legacy_jwt_resolver = make_trusted_legacy_jwt_resolver(
+    lambda authorization: get_current_user(authorization=authorization),
+    lambda: _db.get_core_client(),
+)
 
 
 class _LazyApiTokenResolver:

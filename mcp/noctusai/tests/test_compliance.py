@@ -21,6 +21,7 @@ from tools.noctus.dev.compliance import (
     check_detector_has_regression_test,
     check_migration_applied_ledger_drift,
     check_migration_number_collision,
+    check_no_metadata_authz,
     check_postgrest_schema_qualified_table,
     check_postgrest_unbounded_query,
     check_primary_checkout_commit,
@@ -3207,6 +3208,69 @@ class TestCheckPostgrestSchemaQualifiedTable:
         assert issues == [], (
             "Schema-qualified PostgREST table name(s) present — each is a "
             f"guaranteed runtime 500: {[i['file'] for i in issues]}"
+        )
+
+
+class TestCheckNoMetadataAuthz:
+    """`user_metadata` org_id/role is USER-WRITABLE; backend authorization or
+    scoping must never read it (2026-10-06 cross-org hotfix)."""
+
+    def _mk(self, body: str, *, where: str = "seed/framework/backend/x.py") -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="no_metadata_authz_test_"))
+        target = tmp / where
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body)
+        return tmp
+
+    def test_get_org_id_from_user_metadata_flags(self):
+        repo = self._mk('def f(user):\n    return (user.user_metadata or {}).get("org_id")\n')
+        issues = check_no_metadata_authz(repo)
+        assert len(issues) == 1, issues
+        assert issues[0]["severity"] == "high"
+
+    def test_subscript_role_flags(self):
+        repo = self._mk('def f(user):\n    return user.user_metadata["role"]\n')
+        assert len(check_no_metadata_authz(repo)) == 1
+
+    def test_org_role_via_metadata_variable_flags(self):
+        repo = self._mk('def f(user):\n    metadata = user.user_metadata or {}\n    return metadata.get("org_role")\n')
+        assert len(check_no_metadata_authz(repo)) == 1
+
+    def test_display_only_key_not_flagged(self):
+        repo = self._mk('def f(user):\n    return (user.user_metadata or {}).get("org_name")\n')
+        assert check_no_metadata_authz(repo) == []
+
+    def test_rationale_comment_escapes(self):
+        repo = self._mk(
+            'def f(user):\n    # metadata-authz-ok: display label only\n'
+            '    return (user.user_metadata or {}).get("org_id")\n'
+        )
+        assert check_no_metadata_authz(repo) == []
+
+    def test_bare_rationale_without_reason_does_not_escape(self):
+        repo = self._mk(
+            'def f(user):\n    # metadata-authz-ok:\n'
+            '    return (user.user_metadata or {}).get("org_id")\n'
+        )
+        assert len(check_no_metadata_authz(repo)) == 1
+
+    def test_tests_are_excluded(self):
+        repo = self._mk(
+            'def f(user):\n    return user.user_metadata.get("org_id")\n',
+            where="seed/framework/backend/tests/test_x.py",
+        )
+        assert check_no_metadata_authz(repo) == []
+
+    def test_unrelated_dict_get_not_flagged(self):
+        repo = self._mk('def f(cfg):\n    return cfg.get("org_id")\n')
+        assert check_no_metadata_authz(repo) == []
+
+    def test_real_repo_is_clean(self):
+        from tools.noctus.dev.compliance import REPO_ROOT as _ROOT
+        issues = check_no_metadata_authz(_ROOT)
+        assert issues == [], (
+            "Backend authorization/scoping reads user_metadata org/role (user-writable): "
+            f"{[i['file'] for i in issues]}"
         )
 
 

@@ -84,6 +84,26 @@ def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
     return rows[0].get("org_role")
 
 
+def resolve_org_membership(core_client: Any, user_id: Any) -> Optional[dict]:
+    """``{"org_id", "org_role"}`` from the TRUSTED ``public.noctus_users`` row,
+    or ``None`` (no ``user_id`` / no row). Never reads ``user_metadata``.
+    Raises on a DB error — callers fail closed.
+    """
+    if user_id is None:
+        return None
+    lookup = (
+        core_client.from_("noctus_users")
+        .select("org_id, org_role")
+        .eq("id", str(user_id))
+        .limit(1)
+        .execute()
+    )
+    rows = lookup.data or []
+    if not rows:
+        return None
+    return {"org_id": rows[0].get("org_id"), "org_role": rows[0].get("org_role")}
+
+
 #: The canonical "admin-equivalent" org-role set — the same two values
 #: ``noctusai_seed.auth_router._require_org_admin`` and every product-level
 #: org-admin gate compare against.
@@ -302,11 +322,23 @@ def require_scopes(
             return ctx
 
         # caller_kind == "user"
-        role = (
-            resolve_org_role(get_core_client(), ctx.user_id)
+        membership = (
+            resolve_org_membership(get_core_client(), ctx.user_id)
             if get_core_client is not None
             else None
         )
+        role = membership.get("org_role") if membership else None
+        if membership is not None and str(membership.get("org_id")) != str(ctx.org_id):
+            # SEC hotfix 2026-10-06: a user context whose org is not the
+            # trusted `noctus_users.org_id` (a forged/stale bridge or session)
+            # is refused — the role above belongs to the TRUSTED org only.
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "detail": "Organization mismatch",
+                    "code": "org_mismatch",
+                },
+            )
         if role not in user_roles:
             raise HTTPException(
                 status_code=403,
@@ -336,5 +368,6 @@ __all__ = [
     "require_org_admin_role",
     "require_org_admin_role_assured",
     "require_scopes",
+    "resolve_org_membership",
     "resolve_org_role",
 ]

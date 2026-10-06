@@ -56,7 +56,10 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
+from noctusai_lib.api.auth import _resolve_trusted_membership
+from noctusai_lib.primitives.roles import is_customer_role
 from noctusai_lib.api.auth.session import (
+    ADMIN_ORG_ROLES,
     ApiTokenResolver,
     AuthContext,
     FakeApiTokenResolver,
@@ -64,11 +67,11 @@ from noctusai_lib.api.auth.session import (
     SessionRevoker,
     SessionStore,
     build_api_token_row,
-    is_org_admin,
     make_get_auth_context,
     make_session_revoker,
     make_session_store,
     mint_token_secret,
+    resolve_org_membership,
 )
 
 _API_TOKEN_MAX_EXPIRY_DAYS = 90
@@ -287,11 +290,23 @@ def _require_org_admin(core_client: Any, ctx: AuthContext) -> None:
     PGRST205 (see ``feedback_product_client_schema_scoping_public_tables``
     memory entry).
     """
-    # SEED-1, now via ``is_org_admin`` (the N=3 shared predicate formalized
-    # 2026-09-2x — ``require_scopes``'s user-role branch, social-wiring's
-    # ``settings_router``/``clientes_router`` gates, and this one all share
-    # ONE trusted-DB implementation now instead of each re-deriving it).
-    if not is_org_admin(core_client, ctx.user_id):
+    # Trusted-DB read via ``resolve_org_membership`` (same source as
+    # ``is_org_admin`` / ``require_scopes``).
+    # SEC hotfix 2026-10-06: also pin the context org to the TRUSTED org —
+    # a minted token / revoke is scoped by ``ctx.org_id``, which must never be
+    # an org the caller is not actually an admin of.
+    try:
+        membership = resolve_org_membership(core_client, ctx.user_id)
+    except Exception:
+        logger.error("org_admin_lookup_error user_id=%s", ctx.user_id, exc_info=True)
+        raise HTTPException(
+            status_code=503, detail="Falha ao resolver organizacao do usuario"
+        )
+    if (
+        membership is None
+        or membership.get("org_role") not in ADMIN_ORG_ROLES
+        or str(membership.get("org_id")) != str(ctx.org_id)
+    ):
         raise HTTPException(
             status_code=403,
             detail="API-token management restricted to owner/admin roles",
@@ -304,6 +319,7 @@ def create_auth_router(
     *,
     api_token_resolver: Optional[ApiTokenResolver] = None,
     legacy_jwt_resolver: Optional[LegacyJwtResolver] = None,
+    allow_customer: bool = False,
 ) -> APIRouter:
     """Build the combined ``/api/auth`` + ``/api/settings/api-tokens`` router.
 
@@ -338,6 +354,9 @@ def create_auth_router(
             (e.g. its ``app.dependencies._legacy_jwt_resolver``) to keep
             legacy-JWT callers of ``/me``/``/logout``/the api-token
             endpoints working across the migration window.
+
+        allow_customer: ``False`` (default) — ``/login`` refuses a customer
+            ``org_role`` (403), like ``make_get_current_user_org``.
 
     Returns:
         One ``APIRouter`` combining both prefixes — register it under the
@@ -403,13 +422,23 @@ def create_auth_router(
         if user is None or session is None:
             raise HTTPException(status_code=401, detail="Invalid email or password")
 
-        metadata = getattr(user, "user_metadata", None) or {}
-        raw_org = metadata.get("org_id")
+        # SEC hotfix 2026-10-06: the org comes from the TRUSTED
+        # `public.noctus_users` row — `user_metadata.org_id` is user-writable.
+        try:
+            membership = _resolve_trusted_membership(deps.get_core_client, user.id)
+        except Exception:
+            logger.error("login_trusted_org_lookup_error user_id=%s", user.id, exc_info=True)
+            raise HTTPException(
+                status_code=503, detail="Falha ao resolver organizacao do usuario"
+            )
+        raw_org = membership.get("org_id") if membership else None
         if not raw_org:
             raise HTTPException(
                 status_code=403,
                 detail="User has no organisation — contact your administrator",
             )
+        if not allow_customer and is_customer_role(membership.get("org_role")):
+            raise HTTPException(status_code=403, detail="Área restrita à equipe.")
         org_id = _coerce_org_uuid(raw_org)
 
         try:
@@ -436,7 +465,8 @@ def create_auth_router(
             path="/",
         )
 
-        org_name = metadata.get("org_name")
+        # display-only (never authorization): the org label shown after login
+        org_name = (getattr(user, "user_metadata", None) or {}).get("org_name")  # display-only
         return LoginResponse(
             user=LoginUserDTO(id=str(user.id), email=getattr(user, "email", None)),
             org=LoginOrgDTO(id=str(org_id), name=org_name),

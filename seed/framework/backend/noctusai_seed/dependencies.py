@@ -38,7 +38,11 @@ import warnings
 from typing import Optional
 from fastapi import Header, HTTPException, Request
 from noctusai_lib.api.audit import AuditActor
-from noctusai_lib.api.auth import make_resolve_platform_role, validate_bearer_token
+from noctusai_lib.api.auth import (
+    _resolve_trusted_membership,
+    make_resolve_platform_role,
+    validate_bearer_token,
+)
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 
 logger = logging.getLogger(__name__)
@@ -216,28 +220,44 @@ class ProductDependencies:
         org_role = resolve_org_role(self._db.get_core_client(), getattr(user, "id", None))
         return org_role or "user"
 
-    @staticmethod
-    def get_org_id(user) -> str:
-        """Extract org_id from user metadata. Raises 403 if missing.
+    def get_org_id(self, user) -> str:
+        """The caller's org from the TRUSTED ``public.noctus_users`` row.
 
-        🔴 UNTRUSTED. ``user_metadata`` is user-writable (``auth.updateUser
-        ({data})``), so this value is whatever the caller says it is. It MUST
-        NOT scope a service-role (RLS-bypassing) query or an authorization
-        decision — use :func:`noctusai_lib.api.auth.make_get_current_user_org`
-        (trusted ``public.noctus_users`` first). Kept only for product call
-        sites that pass it as the no-row FALLBACK into that factory, or read
-        through a user-token client where RLS re-derives the org anyway. The
-        seed's own routers no longer call it (SEC-1, 2026-09-28).
+        SEC hotfix (2026-10-06): this used to read ``user.user_metadata
+        ["org_id"]`` — user-writable via ``auth.updateUser({data})``, so any
+        user could name another tenant's org and (paired with a service-role
+        client) read/write its data. It now resolves like
+        :func:`noctusai_lib.api.auth.make_get_current_user_org` does:
+
+        * no ``noctus_users`` row / no org → 403 (a metadata org is ignored);
+        * DB / transport error             → 503 (fail closed, no fallback).
+
+        Prefer the ``org_id`` already unpacked from ``get_current_user_org``
+        — this does one extra DB round-trip per call and exists only for
+        imperative call sites that hold nothing but ``user``. Bound method:
+        call it on the instance (``deps.get_org_id(user)``).
 
         .. deprecated::
             Do NOT wire via ``Depends(get_org_id)``: the positional
-            ``user`` arg becomes a required query parameter. Migrate to
-            :func:`noctusai_lib.api.auth.make_get_current_user_org`. The
-            imperative call ``deps.get_org_id(user)`` is fine. See
-            ``KB § PATTERNS/backend.md § Auth — canonical pattern``.
+            ``user`` arg becomes a required query parameter. Use
+            :func:`noctusai_lib.api.auth.make_get_current_user_org`. See
+            ``KB § PATTERNS/backend/no-metadata-authz.md``.
         """
         _warn_if_fastapi_caller("ProductDependencies.get_org_id")
-        org_id = (user.user_metadata or {}).get("org_id")
+        try:
+            membership = _resolve_trusted_membership(
+                lambda: self._db.get_core_client(), getattr(user, "id", None)
+            )
+        except Exception:
+            logger.error(
+                "trusted_org_lookup_error user_id=%s — failing closed",
+                getattr(user, "id", "<unknown>"),
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=503, detail="Falha ao resolver organizacao do usuario"
+            )
+        org_id = membership.get("org_id") if membership else None
         if not org_id:
             raise HTTPException(status_code=403, detail="Usuario sem organizacao associada")
         return org_id

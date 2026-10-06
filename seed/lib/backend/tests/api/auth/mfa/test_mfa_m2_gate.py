@@ -53,9 +53,9 @@ def _jwt(**claims) -> str:
 def _app(mode: Optional[str], *, sink=None, client=None):
     padmin, oadmin, member = uuid4(), uuid4(), uuid4()
     core = _Core([
-        {"id": str(padmin), "role": "admin", "org_role": "member"},
-        {"id": str(oadmin), "role": "user", "org_role": "admin"},
-        {"id": str(member), "role": "user", "org_role": "member"},
+        {"id": str(padmin), "role": "admin", "org_role": "member", "org_id": str(ORG)},
+        {"id": str(oadmin), "role": "user", "org_role": "admin", "org_id": str(ORG)},
+        {"id": str(member), "role": "user", "org_role": "member", "org_id": str(ORG)},
     ])
     store = FakeSessionStore()
     gac = make_get_auth_context(session_store=store, api_token_resolver=FakeApiTokenResolver())

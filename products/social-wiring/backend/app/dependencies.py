@@ -46,6 +46,7 @@ from noctusai_lib.api.auth.session import (
     SupabaseApiTokenResolver,
     make_api_token_audit_writer,
     make_get_auth_context,
+    make_trusted_legacy_jwt_resolver,
 )
 from noctusai_seed import make_get_settings
 from noctusai_seed.auth_router import get_session_store as _seed_get_session_store
@@ -101,14 +102,12 @@ else:
     # PGRST205 (see `seed-trusted-org-resolution`, 2026-07-14 — the
     # make_get_current_user_org docstring in noctusai_lib.api.auth has
     # the full rationale + the prod incident this mirrors on the ERP
-    # side). NOTE: `_legacy_jwt_resolver` below (the AuthContext / cookie
-    # / pk_* bridge) still resolves org_id straight from
-    # `user.user_metadata` — a SEPARATE, still-spoofable path this slice
-    # deliberately did not touch (org_id-only scope; the bridge is a
-    # platform-auth-modernization concern). Flagged as `drift-found:`.
+    # side). `_legacy_jwt_resolver` below (the AuthContext / cookie
+    # / pk_* bridge) is the seed `make_trusted_legacy_jwt_resolver` — also
+    # trusted-DB only (SEC hotfix 2026-10-06).
     get_current_user_org = make_get_current_user_org(
         get_current_user,
-        lambda u: (u.user_metadata or {}).get("org_id"),  # fallback only — trusted DB wins
+        lambda u: None,  # retired positional slot — never consulted (trusted DB only)
         get_admin_client_fn=lambda: _db.get_core_client(),
         required=True,
     )
@@ -341,55 +340,10 @@ class LazyApiTokenAuditWriter:
         return await _get_audit_writer().record(**kwargs)
 
 
-async def _legacy_jwt_resolver(token: str) -> AuthContext | None:
-    """Bridge a raw Supabase JWT to an ``AuthContext`` (``caller_kind="user"``).
-
-    The dep's contract is that this is called ONLY when the bearer is
-    NOT ``pk_*`` (i.e. a JWT-shaped legacy token). We synthesize an
-    ``Authorization: Bearer <token>`` header, run it through the
-    existing JWT-verifying ``get_current_user`` machinery, then project
-    the resulting user into an ``AuthContext``. Returns ``None`` on any
-    failure so the dep returns 401 — never raises out.
-    """
-    try:
-        result = await get_current_user(authorization=f"Bearer {token}")
-    except Exception:
-        # The legacy verifier raises HTTPException(401) on bad JWTs;
-        # the bridge must return None so the dep can produce its own
-        # 401 (consistent shape with the new auth scheme).
-        return None
-    if result is None:
-        return None
-    # The seed's ``make_get_current_user`` returns ``(user, token)``;
-    # the sqlite local-dev shape above returns just ``user``. Tolerate
-    # both — we only need the user object.
-    if isinstance(result, tuple):
-        user = result[0]
-    else:
-        user = result
-    if user is None:
-        return None
-    raw_org = (getattr(user, "user_metadata", None) or {}).get("org_id")
-    if not raw_org:
-        return None
-    try:
-        org_id = coerce_org_uuid(raw_org)
-    except Exception:
-        _logger.warning("legacy_jwt_org_coerce_failed raw=%r", raw_org)
-        return None
-    try:
-        user_id = UUID(str(user.id))
-    except (ValueError, TypeError):
-        # Local-dev fixtures may use opaque ids; derive a stable UUID.
-        user_id = _uuid.uuid5(_uuid.NAMESPACE_OID, str(user.id))
-    return AuthContext(
-        org_id=org_id,
-        caller_kind="user",
-        user_id=user_id,
-        scopes=[],
-        raw_token=token,  # JWT — preserves the bearer for legacy callers
-        api_token_id=None,
-    )
+_legacy_jwt_resolver = make_trusted_legacy_jwt_resolver(
+    lambda authorization: get_current_user(authorization=authorization),
+    lambda: _db.get_core_client(),
+)
 
 
 # get_current_user is defined above for the bearer path. The bridge

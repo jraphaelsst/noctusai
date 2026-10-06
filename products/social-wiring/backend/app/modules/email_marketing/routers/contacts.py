@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from app.dependencies import get_current_user_org, get_org_id, get_admin_client
+from app.dependencies import get_current_user_org, get_admin_client
 from app.modules.email_marketing.schemas.contacts import ContactCreate, ContactUpdate, ContactImport
 
 from app.modules.email_marketing.services.contact_service import ContactService
@@ -13,8 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/email-marketing/contacts', tags=["Contacts"])
 
 
-def _get_service(user) -> ContactService:
-    org_id = get_org_id(user)
+def _get_service(org_id) -> ContactService:
     return ContactService(get_admin_client(), org_id)
 
 
@@ -26,7 +25,7 @@ async def list_contacts(
     search: Optional[str] = Query(None),
 ):
     user, _, org_id = auth
-    svc = _get_service(user)
+    svc = _get_service(org_id)
     data, total = svc.list_contacts(page, page_size, status=status, search=search)
     return paginated_response(data, total, page, page_size)
 
@@ -34,7 +33,7 @@ async def list_contacts(
 @router.post("")
 async def create_contact(body: ContactCreate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    svc = _get_service(user)
+    svc = _get_service(org_id)
     result = svc.create_contact(body.model_dump())
     if not result:
         raise HTTPException(status_code=400, detail="Erro ao criar contato")
@@ -44,7 +43,7 @@ async def create_contact(body: ContactCreate, auth = Depends(get_current_user_or
 @router.get("/{contact_id}")
 async def get_contact(contact_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    svc = _get_service(user)
+    svc = _get_service(org_id)
     result = svc.get_contact(contact_id)
     if not result:
         raise HTTPException(status_code=404, detail="Contato nao encontrado")
@@ -54,7 +53,7 @@ async def get_contact(contact_id: str, auth = Depends(get_current_user_org)):
 @router.patch("/{contact_id}")
 async def update_contact(contact_id: str, body: ContactUpdate, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    svc = _get_service(user)
+    svc = _get_service(org_id)
     data = body.model_dump(exclude_unset=True)
     result = svc.update_contact(contact_id, data)
     if not result:
@@ -65,7 +64,7 @@ async def update_contact(contact_id: str, body: ContactUpdate, auth = Depends(ge
 @router.delete("/{contact_id}")
 async def delete_contact(contact_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    svc = _get_service(user)
+    svc = _get_service(org_id)
     svc.delete_contact(contact_id)
     return {"ok": True, "message": "Contato removido"}
 
@@ -73,7 +72,7 @@ async def delete_contact(contact_id: str, auth = Depends(get_current_user_org)):
 @router.post("/import")
 async def import_contacts(body: ContactImport, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    svc = _get_service(user)
+    svc = _get_service(org_id)
     contacts_data = [c.model_dump() for c in body.contacts]
     result = svc.import_contacts(contacts_data)
     return success_response(result)

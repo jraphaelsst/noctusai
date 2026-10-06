@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from noctusai_lib.domain.ai import AIOutput, consent_required, persist_output
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_current_user_org, get_org_id, get_user_client
+from app.dependencies import get_current_user_org, get_user_client
 from app.rate_limit import limiter
 from app.modules.email_marketing.services import ai_service
 from app.modules.email_marketing.services import segmentation_service
@@ -52,7 +52,7 @@ async def generate_subjects_endpoint(
     """M1 — generate 3–5 subject-line variants with tone labels."""
     user, _, org_id = auth
     variants = await ai_service.generate_subjects(
-        body.campaign_summary, org_id=get_org_id(user)
+        body.campaign_summary, org_id=org_id
     )
     return success_response({"variants": variants})
 
@@ -66,7 +66,7 @@ async def template_draft_endpoint(
 ):
     """M2 — draft an HTML email body from a prompt."""
     user, _, org_id = auth
-    html = await ai_service.draft_template(body.prompt, org_id=get_org_id(user))
+    html = await ai_service.draft_template(body.prompt, org_id=org_id)
     return success_response({"html": html})
 
 
@@ -79,7 +79,7 @@ async def reengagement_endpoint(
 ):
     """M5 — 3 re-engagement email variants (leve/direto/valor)."""
     user, _, org_id = auth
-    variants = await ai_service.reengagement_variants(body.context, org_id=get_org_id(user))
+    variants = await ai_service.reengagement_variants(body.context, org_id=org_id)
     return success_response({"variants": variants})
 
 
@@ -93,7 +93,7 @@ async def deliverability_endpoint(
     """M6 — review HTML for spam/deliverability issues. Returns `{findings: [...]}`."""
     user, _, org_id = auth
     result = await ai_service.review_deliverability(
-        body.html, subject=body.subject, org_id=get_org_id(user)
+        body.html, subject=body.subject, org_id=org_id
     )
     return success_response(result)
 
@@ -108,7 +108,7 @@ async def translate_endpoint(
     """M7 — translate PT HTML email to EN/ES/FR preserving template structure."""
     user, _, org_id = auth
     translated = await ai_service.translate_template(
-        body.html, body.target_lang, org_id=get_org_id(user)
+        body.html, body.target_lang, org_id=org_id
     )
     return success_response({"html": translated})
 
@@ -136,7 +136,6 @@ async def segment_contacts_endpoint(
     persisted rows so the caller can update the UI immediately.
     """
     user, token, org_id = auth
-    org_id = get_org_id(user)
     db = get_user_client(token)
 
     # 1. Fetch contacts (RLS-scoped via the user-token-bound client).
@@ -234,7 +233,6 @@ async def campaign_debrief_preview_endpoint(
     """M4 — build the post-send debrief for a campaign. Returns body +
     structured summary (no email send). Used by the campaign detail page."""
     user, token, org_id = auth
-    org_id = get_org_id(user)
     db = get_user_client(token)
 
     from app.modules.email_marketing.services import campaign_debrief_service
@@ -263,7 +261,6 @@ async def campaign_debrief_send_endpoint(
     """M4 — build + email the post-send debrief. Cron / send-completion
     hook calls this with the campaign creator as recipient."""
     user, token, org_id = auth
-    org_id = get_org_id(user)
     db = get_user_client(token)
 
     from app.modules.email_marketing.services import campaign_debrief_service

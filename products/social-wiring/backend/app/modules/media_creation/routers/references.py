@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_admin_client, get_current_user_org, get_org_id
+from app.dependencies import get_admin_client, get_current_user_org
 from app.modules.media_creation.deps import get_branding_storage
 from app.modules.media_creation.schemas.references import ReferenceCreate
 from app.modules.media_creation.services.branding_service import (
@@ -27,22 +27,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/media-creation", tags=["Media Creation — References"])
 
 
-def _svc(user) -> ReferenceService:
-    return ReferenceService(get_admin_client(), get_org_id(user))
+def _svc(org_id) -> ReferenceService:
+    return ReferenceService(get_admin_client(), org_id)
 
 
 @router.get("/brand-kits/{kit_id}/references")
 async def list_references(kit_id: str, auth=Depends(get_current_user_org)):
-    user, _, _ = auth
-    return success_response(_svc(user).list_references(kit_id))
+    user, _, org_id = auth
+    return success_response(_svc(org_id).list_references(kit_id))
 
 
 @router.post("/brand-kits/{kit_id}/references", status_code=201)
 async def create_reference(
     kit_id: str, body: ReferenceCreate, auth=Depends(get_current_user_org)
 ):
-    user, _, _ = auth
-    result = _svc(user).create_reference(kit_id, body.model_dump())
+    user, _, org_id = auth
+    result = _svc(org_id).create_reference(kit_id, body.model_dump())
     if not result:
         raise HTTPException(status_code=404, detail="Kit de marca não encontrado")
     return success_response(result)
@@ -54,8 +54,8 @@ async def delete_reference(
     auth=Depends(get_current_user_org),
     storage: StorageBackend = Depends(get_branding_storage),
 ):
-    user, _, _ = auth
-    branding = BrandingService(get_admin_client(), get_org_id(user), storage)
+    user, _, org_id = auth
+    branding = BrandingService(get_admin_client(), org_id, storage)
     try:
         await branding.delete_asset(reference_id)
     except BrandingError as exc:

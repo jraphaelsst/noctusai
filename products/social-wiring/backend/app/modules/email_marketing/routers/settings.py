@@ -3,7 +3,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Depends
-from app.dependencies import get_current_user_org, get_org_id, get_admin_client
+from app.dependencies import get_current_user_org, get_admin_client
 from noctusai_lib.primitives.responses import success_response
 from noctusai_lib.api import StrictHttpModel
 
@@ -23,7 +23,6 @@ class SenderConfig(StrictHttpModel):
 @router.get("/domains")
 async def list_domains(auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    org_id = get_org_id(user)
     db = get_admin_client()
     result = db.table("sender_domains").select("*").eq("org_id", org_id).execute()
     return success_response(result.data or [])
@@ -33,7 +32,6 @@ async def list_domains(auth = Depends(get_current_user_org)):
 async def add_domain(body: DomainAdd, auth = Depends(get_current_user_org)):
     """Add a sender domain. TODO: integrate with Resend Domains API for DNS verification."""
     user, _, org_id = auth
-    org_id = get_org_id(user)
     db = get_admin_client()
     result = db.table("sender_domains").insert({
         "org_id": org_id,
@@ -49,7 +47,6 @@ async def add_domain(body: DomainAdd, auth = Depends(get_current_user_org)):
 async def verify_domain(domain_id: str, auth = Depends(get_current_user_org)):
     """Check domain verification status. TODO: query Resend Domains API."""
     user, _, org_id = auth
-    org_id = get_org_id(user)
     db = get_admin_client()
     result = db.table("sender_domains").select("*").eq("id", domain_id).eq("org_id", org_id).execute()
     if not result.data:
@@ -60,7 +57,6 @@ async def verify_domain(domain_id: str, auth = Depends(get_current_user_org)):
 @router.delete("/domains/{domain_id}")
 async def remove_domain(domain_id: str, auth = Depends(get_current_user_org)):
     user, _, org_id = auth
-    org_id = get_org_id(user)
     db = get_admin_client()
     db.table("sender_domains").delete().eq("id", domain_id).eq("org_id", org_id).execute()
     return {"ok": True, "message": "Dominio removido"}

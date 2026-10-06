@@ -47,6 +47,9 @@ from noctusai_lib.api.auth.session.dep import (
     LegacyJwtResolver,
     make_get_auth_context,
 )
+from noctusai_lib.api.auth.session.legacy_bridge import (
+    make_trusted_legacy_jwt_resolver,
+)
 from noctusai_lib.api.auth.session.factory import (
     make_session_store,
 )
@@ -57,6 +60,7 @@ from noctusai_lib.api.auth.session.scopes import (
     make_require_org_admin,
     require_org_admin_role,
     require_scopes,
+    resolve_org_membership,
     resolve_org_role,
 )
 from noctusai_lib.api.auth.session.redis_store import (
@@ -103,6 +107,8 @@ from noctusai_lib.api.auth.session.types import (
 )
 
 __all__ = [
+    "resolve_org_membership",
+    "make_trusted_legacy_jwt_resolver",
     "ADMIN_ORG_ROLES",
     "ApiTokenAuditMiddleware",
     "ApiTokenInfo",
