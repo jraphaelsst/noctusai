@@ -117,13 +117,16 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
+from noctusai_lib.integrations.documents import Instrumento, frase_titulo_aquisitivo
+
 from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import dados_service
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.modules.matriculas import preenchimento_service
-from app.services import table_reads
+from app.modules.matriculas import titulo_service as titulo_svc
+from app.services import campo_conflitos, table_reads
 from app.services.documento_store import now_iso
 
 logger = logging.getLogger(__name__)
@@ -150,6 +153,9 @@ CONFIRMADO_AUTOMATICO = "confirmado_automatico"
 SUGESTAO_PENDENTE = "sugestao_pendente"
 JA_CONFIRMADO_HUMANO = "ja_confirmado_humano"
 SEM_VALOR = "sem_valor"
+#: An auto ("ia") título text that is MORE informative than the suggestion
+#: (or otherwise not safely replaceable) — left alone, flagged for a human.
+DIVERGENTE_DA_SUGESTAO = "divergente_da_sugestao"
 INAPLICAVEL = "inaplicavel"
 
 
@@ -208,6 +214,91 @@ def _confirmar_quinteto(
         codigo, chave, motivo,
     )
     return CONFIRMADO_AUTOMATICO
+
+
+def _frase_titulo_atual(linha: dict, eid: str, atos: list[dict], detalhes: dict) -> Optional[str]:
+    """The suggestion the card shows RIGHT NOW: the título phrase over the
+    pointed act's current details (same derivation as
+    `preenchimento_service.preencher_sincrono` and `titulo_service.obter_titulo`)."""
+    if str(linha.get("titulo_aquisitivo_extracao_id") or "") != eid:
+        return None
+    ato = next(
+        (a for a in atos if str(a["id"]) == str(linha.get("titulo_aquisitivo_ato_id"))), None
+    )
+    det = detalhes.get(str(ato["id"])) if ato else None
+    if not (ato and det and ato.get("numero") is not None):
+        return None
+    return frase_titulo_aquisitivo(
+        Instrumento.from_json(det.get("instrumento")),
+        kind=ato["kind"],
+        numero=int(ato["numero"]),
+    )
+
+
+def _alinhar_titulo_texto(
+    client: Any, org_id: UUID, codigo: str, eid: str, atos: list[dict], detalhes: dict,
+    *, inequivoco: bool, motivo: str,
+) -> str:
+    """The título wording, never weaker than its own suggestion (owner
+    2026-10-06: an "ia" confirmation kept "por instrumento particular,
+    registrado sob o R-11" while the suggestion had gained "datado de
+    15/10/2010" — the contract lost a material date).
+
+    - manual / human-confirmed: untouched (`JA_CONFIRMADO_HUMANO`).
+    - machine-pending: confirmed only when the stored text IS the current
+      suggestion; a stale one stays pending.
+    - already auto-confirmed and diverging from the suggestion: follows the
+      suggestion when that loses no fact; otherwise stays and is FLAGGED
+      (`DIVERGENTE_DA_SUGESTAO`, logged at WARNING).
+    """
+    chave = "titulo_aquisitivo_texto"
+    campo = campos_svc.CAMPOS[chave]
+    linha = dados_service.linha(client, org_id, codigo) or {}
+    atual = linha.get(chave)
+    if not atual:
+        return SEM_VALOR
+    frase = _frase_titulo_atual(linha, eid, atos, detalhes)
+    igual = bool(frase) and campos_svc.iguais(campo, atual, frase)
+    auto_confirmado = (
+        linha.get(campo.origem) == ORIGEM_AUTOPILOTO
+        and not linha.get(campo.confirmado_por)
+        and bool(linha.get(campo.confirmado_em))
+    )
+    if auto_confirmado and frase and not igual:
+        if titulo_svc.menos_informativo(frase, atual):
+            logger.warning(
+                "matricula autopiloto: imovel %s titulo auto-confirmado diverge da "
+                "sugestao e tem fatos que ela nao tem — mantido, para revisao humana", codigo,
+            )
+            return DIVERGENTE_DA_SUGESTAO
+        dados_service.gravar_extraido(
+            client, org_id, codigo, linha,
+            {
+                chave: frase,
+                campo.origem: ORIGEM_AUTOPILOTO,
+                campo.confirmado_por: None,
+                campo.confirmado_em: now_iso(),
+            },
+        )
+        # The re-read that produced `frase` opened a conflict against the old
+        # auto value; the follow settles it.
+        campo_conflitos.fechar_conflitos_pendentes(
+            client, campo_conflitos.IMOVEL, org_id, codigo, chave, decidido_por=None,
+        )
+        logger.info(
+            "matricula autopiloto: imovel %s titulo auto-confirmado acompanhou a sugestao "
+            "(ganhou fatos)", codigo,
+        )
+        return CONFIRMADO_AUTOMATICO
+    if campos_svc.pendente(linha, campo) and not igual:
+        logger.info(
+            "matricula autopiloto: imovel %s titulo pendente difere da sugestao atual — "
+            "segue como sugestao", codigo,
+        )
+        return SUGESTAO_PENDENTE
+    return _confirmar_quinteto(
+        client, org_id, codigo, chave, inequivoco=inequivoco, motivo=motivo
+    )
 
 
 # ─── título aquisitivo / ônus fonte pointer groups ─────────────────────────
@@ -468,7 +559,17 @@ def _aplicar_autopiloto(client: Any, org_id: UUID, extracao_id: Any) -> dict:
     # stale `linha` for the next field would risk reading a value the
     # pointer confirm's own re-read already superseded.
     linha = dados_service.linha(client, org_id, codigo) or {}
-    _tentar("titulo_aquisitivo_texto", inequivoco=titulo_ok, motivo=motivo_titulo)
+    try:
+        campos["titulo_aquisitivo_texto"] = _alinhar_titulo_texto(
+            client, org_id, codigo, eid, atos, detalhes,
+            inequivoco=titulo_ok, motivo=motivo_titulo,
+        )
+    except Exception as exc:  # noqa: BLE001 - per-field isolation; logged loudly
+        logger.error(
+            "matricula autopiloto: imovel %s campo titulo_aquisitivo_texto falhou — %s",
+            codigo, exc, exc_info=True,
+        )
+        campos["titulo_aquisitivo_texto"] = "erro"
 
     # 3. Ônus — the act pointer(s), the situação, and the credor — all
     #    share the SAME "no cancellations ambiguity" bar.

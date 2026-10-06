@@ -372,3 +372,86 @@ class TestContractActsDefaultSelection:
 
         assert segundo["atos_contrato"]["contratos_existentes"] == [contrato["id"]]
         assert segundo["atos_contrato"]["contratos_criados"] == []
+
+
+class TestAutoTituloNeverWeakerThanItsSuggestion:
+    """Owner 2026-10-06: an "ia" confirmation kept a text WITHOUT the
+    instrument date its own suggestion had gained — the contract lost a
+    material date. Invented data throughout."""
+
+    def _confirmado_ia_fraco(self, scoped, eid: str, texto: str, *, origem: str = "ia",
+                             por: str | None = None) -> None:
+        linha = _dados(scoped)
+        dados_service.gravar_extraido(
+            scoped, ORG, CODIGO, linha,
+            {
+                "titulo_aquisitivo_texto": texto,
+                "titulo_aquisitivo_texto_origem": origem,
+                "titulo_aquisitivo_texto_confirmado_por": por,
+                "titulo_aquisitivo_texto_confirmado_em": "2026-01-01T00:00:00+00:00",
+            },
+        )
+
+    def test_an_auto_confirmed_text_that_dropped_a_fact_follows_the_suggestion(self, scoped):
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        sugestao = _dados(scoped)["titulo_aquisitivo_texto"]
+        assert "05/03/2001" in sugestao
+        self._confirmado_ia_fraco(scoped, eid, "por Escritura Pública, registrado sob o R-1")
+
+        resultado = autopiloto.aplicar_autopiloto(scoped, ORG, eid)
+
+        assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.CONFIRMADO_AUTOMATICO
+        row = _dados(scoped)
+        assert row["titulo_aquisitivo_texto"] == sugestao
+        assert row["titulo_aquisitivo_texto_origem"] == "ia"
+        assert row["titulo_aquisitivo_texto_confirmado_por"] is None
+
+    def test_a_manual_text_is_never_overwritten(self, scoped):
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        humano = str(uuid4())
+        self._confirmado_ia_fraco(
+            scoped, eid, "por Escritura, texto do operador", origem="manual", por=humano
+        )
+
+        resultado = autopiloto.aplicar_autopiloto(scoped, ORG, eid)
+
+        assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.JA_CONFIRMADO_HUMANO
+        assert _dados(scoped)["titulo_aquisitivo_texto"] == "por Escritura, texto do operador"
+
+    def test_an_auto_text_with_facts_the_suggestion_lacks_is_flagged_not_replaced(self, scoped):
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        rico = "por Escritura Pública datada de 01/01/1999, registrado sob o R-1, AV-9"
+        self._confirmado_ia_fraco(scoped, eid, rico)
+
+        resultado = autopiloto.aplicar_autopiloto(scoped, ORG, eid)
+
+        assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.DIVERGENTE_DA_SUGESTAO
+        assert _dados(scoped)["titulo_aquisitivo_texto"] == rico
+
+    def test_a_pending_text_that_differs_from_the_suggestion_is_not_confirmed(self, scoped):
+        eid, _ = _rodar(scoped, _texto(ATO_R1_COM_INSTRUMENTO))
+        linha = _dados(scoped)
+        dados_service.gravar_extraido(
+            scoped, ORG, CODIGO, linha,
+            {
+                "titulo_aquisitivo_texto": "por Escritura Pública, registrado sob o R-1",
+                "titulo_aquisitivo_texto_origem": "matricula",
+                "titulo_aquisitivo_texto_confirmado_por": None,
+                "titulo_aquisitivo_texto_confirmado_em": None,
+            },
+        )
+
+        resultado = autopiloto.aplicar_autopiloto(scoped, ORG, eid)
+
+        assert resultado["campos"]["titulo_aquisitivo_texto"] == autopiloto.SUGESTAO_PENDENTE
+        assert _dados(scoped)["titulo_aquisitivo_texto_confirmado_em"] is None
+
+
+class TestFatosDoTitulo:
+    def test_less_informative_detects_a_dropped_date_and_ignores_wording(self):
+        from app.modules.matriculas import titulo_service as t
+
+        sug = "por instrumento particular datado de 15/10/2010, registrado sob o R-11"
+        assert t.menos_informativo("por instrumento particular, registrado sob o R-11", sug)
+        assert not t.menos_informativo(sug, "por instrumento particular, registrado sob o R-11")
+        assert not t.menos_informativo(sug, sug)

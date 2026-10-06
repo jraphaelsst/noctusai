@@ -65,6 +65,8 @@ substitute for it either.
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import date
 from typing import Any, Optional
 from uuid import UUID
@@ -146,6 +148,48 @@ def _confirmacao(linha: dict, coluna: str, chave: str) -> Optional[dict]:
         # the acts and not yet confirmed (the D2 gate lists it as pending).
         "origem": linha.get(f"{coluna}_origem"),
     }
+
+
+_DATA_RE = re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b")
+_REF_RE = re.compile(r"\b(?:r|av)\s*-?\s*(\d+)\b")
+_TIPOS_INSTRUMENTO = (
+    "particular", "publica", "escritura", "formal de partilha", "arrematacao",
+    "adjudicacao", "carta de", "contrato", "sentenca", "mandado", "permuta",
+)
+
+
+def _sem_acento(texto: str) -> str:
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+
+
+def fatos_do_titulo(texto: Optional[str]) -> frozenset[str]:
+    """The material facts a título phrase carries: its dates (dd/mm/yyyy),
+    its instrument kind and its registro refs (R-11, AV-3). Two phrasings
+    are comparable by set inclusion — a phrase that lacks a fact the other
+    has is LESS INFORMATIVE (the contract's título sentence loses a date)."""
+    if not texto:
+        return frozenset()
+    norm = _sem_acento(texto)
+    fatos = {f"data:{m}" for m in _DATA_RE.findall(norm)}
+    fatos |= {f"ref:{m}" for m in _REF_RE.findall(norm)}
+    fatos |= {f"tipo:{t}" for t in _TIPOS_INSTRUMENTO if t in norm}
+    return frozenset(fatos)
+
+
+def menos_informativo(texto: Optional[str], sugestao: Optional[str]) -> bool:
+    """True when `texto` lacks at least one fact `sugestao` carries."""
+    return bool(fatos_do_titulo(sugestao) - fatos_do_titulo(texto))
+
+
+def _divergencia_automatica(linha: dict, sugestao: Optional[str]) -> bool:
+    """An AUTO ("ia", no human behind it) confirmation that no longer says
+    what the current suggestion says — the card must show it to a human."""
+    if not sugestao or linha.get("titulo_aquisitivo_texto_origem") != "ia":
+        return False
+    if linha.get("titulo_aquisitivo_texto_confirmado_por"):
+        return False
+    atual = linha.get("titulo_aquisitivo_texto")
+    return bool(atual) and _sem_acento(atual).strip(" .") != _sem_acento(sugestao).strip(" .")
 
 
 def _patch_confirmacao(coluna: str, valor: Optional[str], usuario_id: Optional[Any]) -> dict:
@@ -263,6 +307,9 @@ def obter_titulo(
         "sugestao": sugestao,
         "motivo_sem_sugestao": motivo,
         "confirmado": _confirmacao(linha, "titulo_aquisitivo_texto", "texto"),
+        # An automatic confirmation that diverges from the current suggestion
+        # (owner 2026-10-06): shown, never silently kept.
+        "divergente_da_sugestao": _divergencia_automatica(linha, sugestao),
     }
 
 
