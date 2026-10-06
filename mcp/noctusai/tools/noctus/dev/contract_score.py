@@ -75,7 +75,20 @@ _CHAVES_NUMERICAS = (
     # honest-comparison counters (2026-10-05): gaps and non-facts, reported apart from divergences
     "numeros_alinhados", "datas_alinhadas", "dados_indisponiveis", "assinatura_excluidos",
     "certidoes_lacuna", "certidoes_extras", "certidoes_reemitidas",
+    # two-layer verdict (2026-10-06): MATERIAL failures vs OBSERVATIONS
+    "clausulas_faltando_opcionais", "secoes_material_sem_correspondencia", "obs_numeros", "obs_datas",
+    "certidoes_partes_lacuna",
 )
+#: dict-of-counts fields (key → int): material checks beyond tokens, and the
+#: material number divergences by token KIND (cpf/rg/valor/…). Keys are codes.
+_CHAVES_CONTAGENS = ("materiais_documento", "numeros_materiais_por_tipo")
+#: …and the keys of those dicts are a CLOSED vocabulary (a name-shaped key
+#: passes the generic code filter, so it is refused here).
+_TIPOS_TOKEN = frozenset({"cpf", "cnpj", "rg", "cep", "valor", "parcela", "dec", "num", "cod", "data"})
+_CHAVE_CONTAGEM_OK = {
+    "materiais_documento": lambda c: c.startswith("mat_") and c == c.lower(),
+    "numeros_materiais_por_tipo": lambda c: c in _TIPOS_TOKEN,
+}
 _CHAVES_CODIGO = ("veredito", "veredito_texto", "render_modo", "render_erro", "erro")
 _GAPS_CHAVES = (
     "pronto", "pode_gerar", "revisao_final_unica", "faltando", "bloqueios", "confirmacoes_pendentes",
@@ -107,6 +120,16 @@ def _so_veredito(resumo: dict[str, Any]) -> dict[str, Any]:
     motivos = [c for c in (_codigo(m) for m in resumo.get("motivos") or []) if c]
     if motivos or "motivos" in resumo:
         out["motivos"] = motivos
+    observacoes = [c for c in (_codigo(m) for m in resumo.get("observacoes") or []) if c]
+    if observacoes or "observacoes" in resumo:
+        out["observacoes"] = observacoes
+    for k in _CHAVES_CONTAGENS:
+        d = resumo.get(k)
+        if isinstance(d, dict):
+            out[k] = {
+                c: v for c, v in ((_codigo(kk), vv) for kk, vv in d.items())
+                if c and isinstance(v, int) and not isinstance(v, bool) and _CHAVE_CONTAGEM_OK[k](c)
+            }
     cats = resumo.get("categorias")
     if isinstance(cats, dict):
         out["categorias"] = {
@@ -272,7 +295,9 @@ def contract_score(
         v = r.get("veredito", "desconhecido")
         contagem[v] = contagem.get(v, 0) + 1
     total = resultado.get("total") or {}
-    aprovados = contagem.get("aprovado", 0)
+    # `aprovado` and `aprovado_com_observacoes` are both ACCEPTED: the material
+    # terms match (wording/structure differences are observations only).
+    aprovados = contagem.get("aprovado", 0) + contagem.get("aprovado_com_observacoes", 0)
     return {
         "status": "ok",
         "verdict": "pass" if por_deal and aprovados == len(por_deal) else "fail",
@@ -312,7 +337,9 @@ def register(server) -> None:
             "(per-section categories, EXACT numbers/dates, owner-approved "
             "allowlist.json, limiares.json thresholds), writes a masked 0600 "
             "scorecard to ~/.noctusai/private/scores/<ts>.json and RETURNS ONLY "
-            "verdict-level numbers (aprovado/reprovado/incompleto per deal, "
+            "verdict-level numbers (aprovado/aprovado_com_observacoes/reprovado/"
+            "incompleto per deal — only MATERIAL terms fail a deal; wording and "
+            "structure are observations — "
             "counts, ratios, reason codes) — never a value. `numeros` filters "
             "deals; `limiares` overrides thresholds. Pass worktree_path from "
             "inside a git worktree."

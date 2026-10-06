@@ -139,14 +139,14 @@ def test_scorecard_cpf_inexplicado_reprova():
     assert preambulo["numeros_faltando_por_tipo"] == {"cpf": 1}
 
 
-def test_scorecard_data_inexplicada_reprova():
-    """A certidão's emission date is a fact: one day off → fail (one missing,
-    one extra). (The signing-date line is NOT such a fact — see
-    `test_data_de_assinatura_nao_e_divergencia`.)"""
+def test_scorecard_data_de_certidao_diferente_e_observacao():
+    """A certidão's emission date is not a MATERIAL term of the deal (a newer
+    emission is expected): reported, never failed. (The signing-date line is
+    not a fact either — see `test_data_de_assinatura_nao_e_divergencia`.)"""
     gerado = _troca(_REF, "SIM-0006 - emitida em 01/09/2026", "SIM-0006 - emitida em 02/09/2026")
     card = comparador.pontuar(_REF, gerado)
-    assert card.veredito == "reprovado"
-    assert card.datas_divergentes == 2
+    assert card.veredito == "aprovado_com_observacoes", card.motivos()
+    assert card.datas_divergentes == 0 and card.obs_datas >= 1
 
 
 def test_scorecard_clausula_faltando_reprova():
@@ -165,24 +165,25 @@ def test_scorecard_renumeracao_nao_e_clausula_faltando():
     assert comparador.pontuar(_REF, gerado).veredito == "aprovado"
 
 
-def test_scorecard_clausula_extra_reprova_por_padrao():
+def test_scorecard_clausula_extra_e_observacao_por_padrao():
     gerado = _REF[:10] + ["CLÁUSULA QUINTA – DA PROTEÇÃO DE DADOS", "As partes tratarão dados pessoais conforme a lei."] + _REF[10:]
     card = comparador.pontuar(_REF, gerado)
     assert card.clausulas_extras == ["clausula:da protecao de dados"]
-    assert card.veredito == "reprovado"
-    tolerante = comparador.Limiares(falhar_em_clausula_extra=False)
-    assert comparador.pontuar(_REF, gerado, limiares=tolerante).veredito == "aprovado"
+    assert card.veredito == "aprovado_com_observacoes", card.motivos()
+    assert "clausulas_extras:1" in card.observacoes()
+    estrito = comparador.Limiares(falhar_em_clausula_extra=True)
+    assert comparador.pontuar(_REF, gerado, limiares=estrito).veredito == "reprovado"
 
 
 def test_scorecard_redacao_allowlistada_aprovada():
-    """A deliberate template wording change in the foro clause: fails
-    without the allowlist entry, passes with an owner-approved one, still
-    fails with the same entry NOT approved."""
+    """A deliberate template wording change in the foro clause: an observation
+    without the allowlist entry, clean `aprovado` with an owner-approved one, still
+    an observation with the same entry NOT approved."""
     gerado = _troca(_REF, "para dirimir as questões deste instrumento", "com renúncia a qualquer outro, por mais privilegiado que seja, para dirimir as questões oriundas deste instrumento")
     estrito = comparador.Limiares(secao_min=0.95)
     sem = comparador.pontuar(_REF, gerado, limiares=estrito)
-    assert sem.veredito == "reprovado"
-    assert sem.motivos() == ["secoes_abaixo_do_limiar:1"]
+    assert sem.veredito == "aprovado_com_observacoes"  # wording never fails a deal
+    assert sem.motivos() == [] and "secoes_redacao_baixa:1" in sem.observacoes()
 
     entrada = {
         "id": "foro-renuncia",
@@ -200,7 +201,7 @@ def test_scorecard_redacao_allowlistada_aprovada():
     pendente = comparador.pontuar(
         _REF, gerado, allowlist=comparador.validar_allowlist([{**entrada, "aprovado_pelo_dono": False}]), limiares=estrito
     )
-    assert pendente.veredito == "reprovado"
+    assert pendente.veredito == "aprovado_com_observacoes"
     assert pendente.resumo()["allowlist_pendentes"] == 1
 
 
@@ -257,22 +258,24 @@ def test_scorecard_certidao_que_o_cartao_nao_tem_e_lacuna():
     assert card.resumo()["certidoes_lacuna"] == 1
 
 
-def test_scorecard_certidao_inventada_reprova():
+def test_scorecard_certidao_inventada_e_observacao():
     """A certidão KIND the signed text does not list is a fact the generated
-    contract states on its own: the ratio of printed-and-listed kinds drops."""
+    contract states on its own: the ratio of printed-and-listed kinds drops
+    (an observation — an extra certidão contradicts nothing)."""
     gerado = list(_REF)
     gerado.insert(10, "1.3 – Certidão Negativa de Débitos Municipais – nº SIM-0009 - emitida em 01/09/2026;")
     card = comparador.pontuar(_REF, gerado)
     assert card.categorias["certidoes"] == pytest.approx(2 / 3)
-    assert "certidoes_abaixo_do_limiar" in card.motivos()
+    assert "certidoes_abaixo_do_limiar" in card.observacoes()
+    assert card.motivos() == []
     assert card.certidoes_extras == 1
 
 
-def test_scorecard_identificador_de_certidao_diferente_reprova():
+def test_scorecard_identificador_de_certidao_diferente_e_observacao():
     gerado = _troca(_REF, "SIM-0002", "SIM-0003")
     card = comparador.pontuar(_REF, gerado)
-    assert card.veredito == "reprovado"
-    assert card.numeros_divergentes == 2
+    assert card.veredito == "aprovado_com_observacoes"
+    assert card.numeros_divergentes == 0 and card.obs_numeros == 2
 
 
 def test_scorecard_itens_de_certidao_colados_pelo_pdf():
@@ -552,7 +555,7 @@ def test_certidao_reemitida_e_esperada_nao_falha():
     assert card.resumo()["certidoes_reemitidas"] == 1
     # the same emission date with another identifier is a wrong fact
     mesmo_dia = _doc("Texto.") + _cert("BELTRANA DE TAL", "1.1 – Certidão Negativa Federal – nº AAA-0002 - emitida em 01/09/2026;")
-    assert comparador.pontuar(ref, mesmo_dia).numeros_divergentes == 2
+    assert comparador.pontuar(ref, mesmo_dia).obs_numeros == 2  # reported, not a material failure
 
 
 def test_certidoes_pareadas_por_pessoa_e_nao_por_posicao():
@@ -567,7 +570,12 @@ def test_certidoes_pareadas_por_pessoa_e_nao_por_posicao():
     assert card.categorias["certidoes"] == 1.0 and card.certidoes_lacuna == 0
     so_um = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a]
     card_gap = comparador.pontuar(ref, so_um)
-    assert card_gap.certidoes_lacuna == 1 and card_gap.numeros_divergentes == 0 and card_gap.veredito == "incompleto"
+    assert card_gap.certidoes_lacuna == 1 and card_gap.numeros_divergentes == 0
+    # …but a party the signed text lists certidões for and the render omits ENTIRELY is
+    # a material failure — unless the card declared its certidão data missing (a gap)
+    assert card_gap.motivos() == ["mat_certidoes_parte_ausente:1"] and card_gap.veredito == "reprovado"
+    declarado = comparador.pontuar(ref, so_um, certidoes_ausentes_sao_lacuna=True)
+    assert declarado.motivos() == [] and declarado.veredito == "incompleto"
     extra = _doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a, "2 - Em nome de FULANO ESTRANHO", b]
     card_extra = comparador.pontuar(_doc("Texto.") + ["CLÁUSULA TERCEIRA – DAS CERTIDÕES", "1 - Em nome de BELTRANA DE TAL", a], extra)
     assert card_extra.certidoes_extras == 1 and card_extra.numeros_divergentes == 0

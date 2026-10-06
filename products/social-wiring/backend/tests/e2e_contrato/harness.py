@@ -594,9 +594,12 @@ def pontuar_deal(
         allowlist=allowlist,
         limiares=limiares,
         clausulas_desligadas=clausulas_desligadas(switches_producao(dados)),
+        # the card DECLARED its certidão data missing: a party left without
+        # certidões is a gap (`incompleto`), not a material failure
+        certidoes_ausentes_sao_lacuna=any(str(f.get("campo", "")).startswith("certidao.") for f in prontidao.faltando),
     )
     veredito = card.veredito
-    if veredito == "aprovado" and not prontidao.pode_gerar:
+    if veredito in ("aprovado", "aprovado_com_observacoes") and not prontidao.pode_gerar:
         # Text matches, but production would still refuse this card — the
         # verdict must never read "aprovado" for a contract that cannot be
         # generated (e.g. a refusing extraction conflict, an unacknowledged
@@ -674,7 +677,7 @@ def executar_lote(entrada: Path, saida: Path) -> dict:
     total = {
         "deals": len(resumos),
         "por_veredito": contagem,
-        "aprovados": contagem.get("aprovado", 0),
+        "aprovados": contagem.get("aprovado", 0) + contagem.get("aprovado_com_observacoes", 0),
         "limiares": asdict(limiares),
         "allowlist_entradas": len(allowlist),
         "allowlist_aprovadas": sum(1 for e in allowlist if e.aprovado_pelo_dono),

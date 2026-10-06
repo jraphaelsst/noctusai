@@ -12,7 +12,7 @@ without ever writing anything. Context:
 | `harness.py` | The harness + CLI. Loads a card (`carregador.carregar`), evaluates readiness (`derivacao.avaliar`) + the validation gate (`validacao_extracao.situacao`), renders in memory (`documento.renderizar`) WITHOUT persisting a version, traces every gap back to "document missing" / "extraction pending validation" / "manual field empty" / "outside the provenance ledger's scope" via `proveniencia.linhagem`, and (given a reference file) diffs the render against it. |
 | `comparador.py` | Generic paragraph-aligned diff (`difflib.SequenceMatcher` on a normalised key) + heuristic categorisation: `clausula_faltando` / `clausula_extra` / `valor_errado` / `formatacao` / `clausula_faltando_e_extra`. Knows nothing about any specific contract. |
 | `allowlist.json` | Versioned, owner-approved deliberate template-vs-reference wording differences — PATTERNS only (regex on accent-free lowercase text), never a real value; `comparador.validar_allowlist` refuses digit runs/e-mails. Only `aprovado_pelo_dono: true` entries explain a difference. |
-| `limiares.json` | The scorecard's pass bars (`comparador.Limiares`). Numbers and dates are zero-tolerance. |
+| `limiares.json` | The scorecard's bars (`comparador.Limiares`): material numbers/dates are zero-tolerance (the hard fail); the wording/structure bars are observation floors. |
 | `test_comparador_offline.py` / `test_harness_offline.py` | Collected by the default `pytest` run — invented strings + synthetic fixtures only, no database, no real data. |
 
 `harness.py` is a CLI script, not a `test_*.py` module: it is never collected
@@ -57,18 +57,52 @@ document scan).
 
 `comparador.pontuar(ref, gerado)` cuts both texts into sections (preamble ·
 one per clause, keyed by TITLE so a renumbering is not a missing clause ·
-closing block), aligns them, and scores per category: `estrutura`,
-`qualificacao`, `matricula` (the `IMÓVEL:` quote), `certidoes` (item labels),
-`redacao` (word similarity, digits masked), plus EXACT multiset checks of
-`numeros` (CPF/CNPJ/CEP/R$/any digit run) and `datas`. Verdict:
-`aprovado` · `reprovado` (any unexplained missing/extra clause, number or
-date diff, or a category under its bar) · `incompleto` (no failure, but the
-render carries `[[LACUNA]]` gap markers — a not-`pronto` card, rendered with
-its empty printable fields marked by `harness.dados_com_marcadores`; what a
-marker stands in for counts as a GAP, never as a wording/number diff).
+closing block), aligns them — a reordered clause, a renamed heading and a
+clause folded into another still pair (by title anywhere, then by body, then by
+containment) — and judges the deal in TWO LAYERS (owner directive 2026-10-06:
+contracts need not be byte-alike; they must be similar enough to be acceptable
+on that deal's terms).
+
+**1 · MATERIAL terms — the only hard fail.** Any true divergence in: parties
+and identifiers (CPF/CNPJ/RG/CEP always; a wrong identifier shows as a
+missing+extra pair — an identifier the render merely ADDS is an observation),
+party names, estado civil, party street · property (matrícula number, cartório,
+areas/fractions, cadastral number) · price, installment amounts AND order
+(`parcela:<n>=<valor>`), posse/prazos/financing (a generic number or date the
+reference states and the render lacks, in ANY section; one the render adds,
+inside the object/price/posse/ônus sections) · a party the reference lists
+certidões for and the render omits entirely (`mat_certidoes_parte_ausente`;
+a gap instead when the card declared its certidão data missing) · a missing
+MATERIAL clause (object, price/payment, posse, ônus, the signing block) · a
+material clause sharing (almost) no wording with its reference
+(`secao_material_min`). Gap/lacuna handling is unchanged: a gap is
+`incompleto`, never a pass.
+
+**2 · WORDING and STRUCTURE — informative.** Clause order, merged/split/renamed
+clauses, optional or standard extra clauses (MP 2.200-2, "declarações da
+vendedora"), optional clauses missing, wording similarity under its floor
+(`redacao_min`/`secao_min`/`qualificacao_min`/`matricula_min`/`certidoes_min`/
+`estrutura_min`), statutory/clause citations, registry-act numbers and the
+`IMÓVEL:` act tail (`Conforme AV.n …`, areas excepted), title-instrument
+numbers (contrato/livro/fls/protocolo), certidão identifiers/dates. Reported in
+`observacoes`; they never fail.
+
+Verdict: `reprovado` (a material term diverges) · `incompleto` (no material
+failure, but the render carries `[[LACUNA]]` gap markers / data gaps) ·
+`aprovado_com_observacoes` (material terms match, wording/structure differ) ·
+`aprovado` (nothing to report). `aprovado` and `aprovado_com_observacoes` are
+both ACCEPTED (`Scorecard.aceito`, exit code 0).
+
+Floors in `limiares.json` were calibrated against the 10 scored deals
+(149 sections: wording ratio min 0.20 · p10 0.72 · p25 0.85 · median 0.91; the
+material sections alone: p10 0.61 · median 0.89; per deal `redacao` 0.62-0.91,
+`qualificacao` 0.85-0.99, `matricula` 0.71-0.98, `certidoes` 0.52-1.0,
+`estrutura` 0.93-1.0): `secao_min` 0.50 flags the 7 sections that really
+diverge in wording, `redacao_min` 0.70 flags only the one outlier deal;
+`secao_material_min` 0.10 is "a different clause altogether".
 
 ```bash
-<repo-venv-python> comparador.py --ref ref.txt --gerado gen.txt   # exit 0 aprovado / 1 reprovado / 2 incompleto
+<repo-venv-python> comparador.py --ref ref.txt --gerado gen.txt   # exit 0 aprovado|aprovado_com_observacoes / 1 reprovado / 2 incompleto
 ```
 
 Against real signed contracts (private disk only) use the MCP tool

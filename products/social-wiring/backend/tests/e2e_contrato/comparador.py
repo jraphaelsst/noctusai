@@ -220,7 +220,7 @@ _LACUNA_RE = re.compile(
     re.escape(MARCADOR_LACUNA)
     + r"|R\$\s*0,01(?:\s*\(um centavo\))?"
     + r"|\b0?1/0?1/1900\b|\b1º?\s+de\s+janeiro\s+de\s+1900\b"
-    + r"|\b999\b(?:\s*\(novecentos e noventa e nove\))?",
+    + r"|(?<![\d.,/\-])999(?!\d|[.,]\d)(?:\s*\(novecentos e noventa e nove\))?",  # not the `999` inside `9.999,00`
     re.I,
 )
 
@@ -294,18 +294,33 @@ def _chave_titulo(titulo: str) -> str:
 
 @dataclass(frozen=True)
 class Limiares:
-    """Configurable pass bars. Numbers/dates default to ZERO tolerance —
-    any unexplained difference fails (owner requirement)."""
+    """Pass bars, in TWO LAYERS (owner directive 2026-10-06: contracts need
+    not be alike byte for byte — they must be similar enough to be acceptable
+    on that deal's terms).
 
-    redacao_min: float = 0.90  #: mean wording similarity over aligned sections
-    secao_min: float = 0.60  #: every single aligned section must reach this
-    qualificacao_min: float = 0.85  #: preamble (party qualification) wording
-    matricula_min: float = 0.95  #: the `IMÓVEL:` matrícula quote
-    certidoes_min: float = 1.0  #: certidão item labels (multiset overlap)
-    estrutura_min: float = 1.0  #: share of reference clauses present (by title)
-    max_numeros_divergentes: int = 0
-    max_datas_divergentes: int = 0
-    falhar_em_clausula_extra: bool = True
+    MATERIAL layer (the only hard fail): any divergence in a material FACT
+    (`max_numeros_divergentes` / `max_datas_divergentes`, zero tolerance),
+    a missing material clause, a material clause that shares (almost) no
+    wording with its reference (`secao_material_min`).
+
+    OBSERVATION layer (never fails, reported): wording similarity below
+    `redacao_min` / `secao_min` / `qualificacao_min` / `matricula_min` /
+    `certidoes_min` / `estrutura_min`, clauses missing/extra that are not
+    material, and non-material numbers. A deal with only observations reads
+    `aprovado_com_observacoes`."""
+
+    # ── material layer ──
+    max_numeros_divergentes: int = 0  #: MATERIAL numbers (CPF/CNPJ/RG/CEP/R$/areas/prazos/…)
+    max_datas_divergentes: int = 0  #: MATERIAL dates
+    secao_material_min: float = 0.10  #: a MATERIAL clause below this shares no wording with its reference: a different clause
+    # ── observation layer (informative) ──
+    redacao_min: float = 0.70  #: mean wording similarity over aligned sections
+    secao_min: float = 0.50  #: a single aligned section below this is reported
+    qualificacao_min: float = 0.80  #: preamble (party qualification) wording
+    matricula_min: float = 0.60  #: the `IMÓVEL:` matrícula quote wording
+    certidoes_min: float = 0.80  #: certidão item labels (share of printed kinds the signed text lists)
+    estrutura_min: float = 0.85  #: share of reference clauses present (by title)
+    falhar_em_clausula_extra: bool = False  #: strict mode: an extra clause is a failure (default: an observation)
 
     @classmethod
     def de_dict(cls, dados: dict[str, Any]) -> "Limiares":
@@ -425,6 +440,9 @@ def carregar_allowlist(caminho: Optional[Path] = None) -> list[EntradaAllowlist]
 class Secao:
     chave: str  #: "preambulo" | "clausula:<título dobrado>" | "encerramento"
     paragrafos: list[str]
+    #: A synthetic counterpart built from SEVERAL generated clauses: a reference
+    #: clause whose content the render folded into other clauses (merged/split).
+    fundida: bool = False
 
 
 def secoes(paragrafos: list[str]) -> list[Secao]:
@@ -470,7 +488,68 @@ def _alinhar_secoes(ref: list[Secao], gen: list[Secao]) -> tuple[list[tuple[Seca
             else:
                 faltando.append(r)
         extras.extend(livres)
-    return pares, faltando, extras
+    return _reparear_por_conteudo(pares, faltando, extras)
+
+
+def _corpo(sec: Secao) -> list[str]:
+    return sec.paragrafos[1:] or sec.paragrafos
+
+
+def _contencao(a: list[str], b: list[str]) -> float:
+    """Share of the smaller word list found, in order, in the larger one."""
+    wa, wb = _palavras(" ".join(a)), _palavras(" ".join(b))
+    if not wa or not wb:
+        return 0.0
+    sm = difflib.SequenceMatcher(None, wa, wb, autojunk=False)
+    return sum(blk.size for blk in sm.get_matching_blocks()) / min(len(wa), len(wb))
+
+
+def _reparear_por_conteudo(
+    pares: list[tuple[Secao, Secao]], faltando: list[Secao], extras: list[Secao]
+) -> tuple[list[tuple[Secao, Secao]], list[Secao], list[Secao]]:
+    """Order and heading wording are not structure the contract depends on
+    (owner directive 2026-10-06). A reference clause the title alignment left
+    unpaired is matched, in this order, to (1) a generated clause with the same
+    or a near title wherever it sits (REORDERED), (2) the generated clause
+    whose body reads like it (RENAMED heading), (3) the pool of unpaired
+    generated clauses that contains its content (MERGED/split). Only what none
+    of these finds stays missing."""
+    faltando, extras = list(faltando), list(extras)
+    por_conteudo: list[Secao] = []
+    restantes: list[Secao] = []
+    for r in faltando:
+        melhor, nota = None, 0.0
+        for g in extras:
+            n = difflib.SequenceMatcher(None, r.chave, g.chave).ratio()
+            if n > nota:
+                melhor, nota = g, n
+        if melhor is not None and nota >= 0.8:
+            pares.append((r, melhor))
+            extras.remove(melhor)
+            continue
+        restantes.append(r)
+    faltando = []
+    for r in restantes:
+        melhor, nota = None, 0.0
+        for g in extras:
+            n = _similaridade_palavras(" ".join(_corpo(r)), " ".join(_corpo(g)))[0]
+            if n > nota:
+                melhor, nota = g, n
+        if melhor is not None and nota >= 0.45:
+            pares.append((r, melhor))
+            extras.remove(melhor)
+            por_conteudo.append(melhor)
+        else:
+            faltando.append(r)
+    ainda: list[Secao] = []
+    pool = extras + por_conteudo  # a clause matched by content may ALSO be the one that folded another in
+    for r in faltando:
+        corpo = _corpo(r)
+        if pool and len(_palavras(" ".join(corpo))) >= 6 and _contencao(corpo, [p for g in pool for p in _corpo(g)]) >= 0.7:
+            pares.append((r, Secao(pool[0].chave, [p for g in pool for p in g.paragrafos], fundida=True)))
+        else:
+            ainda.append(r)
+    return pares, ainda, extras
 
 
 # ─── tokens ─────────────────────────────────────────────────────────────
@@ -516,6 +595,8 @@ def _canon_generico(token: str) -> Optional[str]:
             return "dec:" + format(valor, "f")
         except InvalidOperation:
             pass
+    if re.fullmatch(r"\d+\.(?:\d{1,2}|\d{4,})", token):  # dot-decimal (`153.9356`): the same number as `153,9356`
+        return "dec:" + format(Decimal(token).normalize(), "f")
     token = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", token)
     if "/" not in token and len(re.split(r"[.\-]", token)) >= 4:
         token = ".".join(re.split(r"[.\-]", token))
@@ -667,6 +748,13 @@ class ResultadoSecao:
     #: Paired items whose identifier AND emission date both differ — a newer
     #: certidão than the one the signed text lists (expected, never a failure).
     certidoes_reemitidas: int = 0
+    #: Non-material number/date differences in this section (statutory
+    #: citations, registry-act quotes, standard-clause numerals, certidão
+    #: identifiers/dates): informative only — never a failure.
+    obs_numeros: int = 0
+    obs_datas: int = 0
+    #: Whether the section carries a MATERIAL term (see `_SECOES_MATERIAIS_RE`).
+    material: bool = False
 
 
 @dataclass
@@ -675,7 +763,10 @@ class Scorecard:
     secoes_ref: int
     secoes_gerado: int
     resultados: list[ResultadoSecao] = field(default_factory=list)
-    clausulas_faltando: list[str] = field(default_factory=list)  #: unexplained, title keys
+    clausulas_faltando: list[str] = field(default_factory=list)  #: unexplained MATERIAL clauses missing, title keys
+    #: Unexplained reference clauses that are not material (optional/standard/
+    #: deal-specific wording): an observation, never a failure.
+    clausulas_faltando_opcionais: list[str] = field(default_factory=list)
     clausulas_extras: list[str] = field(default_factory=list)
     clausulas_faltando_explicadas: list[str] = field(default_factory=list)
     #: Reference clauses the generator SWITCHED OFF for this card (a data gap:
@@ -691,6 +782,13 @@ class Scorecard:
     certidoes_itens_gerado: int = 0
     certidoes_itens_pareados: int = 0
     certidoes_itens_ref: int = 0
+    #: Document-level MATERIAL checks beyond tokens (code → count): matrícula
+    #: number, cartório, party names, estado civil, party street, certidões of a
+    #: party the reference lists and the render omits entirely.
+    materiais_documento: dict[str, int] = field(default_factory=dict)
+    #: Parties with certidões in the reference and none in the render, when the
+    #: card DECLARED the certidão data missing (a gap) — not a failure.
+    certidoes_partes_lacuna: int = 0
 
     # ── derived ─────────────────────────────────────────────────────────
 
@@ -738,20 +836,47 @@ class Scorecard:
     def lacunas_de_dado(self) -> int:
         """Every kind of GAP (a card that is not complete yet) — none of it is
         a divergence, all of it keeps the verdict from reading `aprovado`."""
-        return self.lacunas + self.dados_indisponiveis + self.certidoes_lacuna + len(self.clausulas_desligadas)
+        return self.lacunas + self.dados_indisponiveis + self.certidoes_lacuna + self.certidoes_partes_lacuna + len(self.clausulas_desligadas)
+
+    @property
+    def secoes_material_ilegiveis(self) -> list[ResultadoSecao]:
+        return [r for r in self.resultados if r.material and r.redacao + 1e-9 < self.limiares.secao_material_min]
+
+    @property
+    def obs_numeros(self) -> int:
+        return sum(r.obs_numeros for r in self.resultados)
+
+    @property
+    def obs_datas(self) -> int:
+        return sum(r.obs_datas for r in self.resultados)
 
     def motivos(self) -> list[str]:
-        """Every failed bar, as `code` or `code:count` — no values."""
+        """Every failed MATERIAL term, as `code` or `code:count` — no values.
+        Wording and structure never appear here (see `observacoes`)."""
         lim = self.limiares
         m: list[str] = []
         if self.clausulas_faltando:
-            m.append(f"clausula_faltando:{len(self.clausulas_faltando)}")
+            m.append(f"clausula_material_faltando:{len(self.clausulas_faltando)}")
         if self.clausulas_extras and lim.falhar_em_clausula_extra:
             m.append(f"clausula_extra:{len(self.clausulas_extras)}")
         if self.numeros_divergentes > lim.max_numeros_divergentes:
             m.append(f"numeros_divergentes:{self.numeros_divergentes}")
         if self.datas_divergentes > lim.max_datas_divergentes:
             m.append(f"datas_divergentes:{self.datas_divergentes}")
+        for codigo, n in sorted(self.materiais_documento.items()):
+            if n > 0:
+                m.append(f"{codigo}:{n}")
+        ilegiveis = self.secoes_material_ilegiveis
+        if ilegiveis:
+            m.append(f"secao_material_sem_correspondencia:{len(ilegiveis)}")
+        return m
+
+    def observacoes(self) -> list[str]:
+        """Everything that differs but is NOT a material term: wording and
+        structure below their floors, optional/extra clauses, non-material
+        numbers. Informative; never fails a deal."""
+        lim = self.limiares
+        o: list[str] = []
         barras = {
             "redacao": lim.redacao_min,
             "qualificacao": lim.qualificacao_min,
@@ -762,38 +887,67 @@ class Scorecard:
         for cat, minimo in barras.items():
             nota = self.categorias.get(cat)
             if nota is not None and nota + 1e-9 < minimo:
-                m.append(f"{cat}_abaixo_do_limiar")
-        abaixo = [r for r in self.resultados if r.redacao + 1e-9 < lim.secao_min]
-        if abaixo:
-            m.append(f"secoes_abaixo_do_limiar:{len(abaixo)}")
-        return m
+                o.append(f"{cat}_abaixo_do_limiar")
+        baixas = [r for r in self.resultados if r.redacao + 1e-9 < lim.secao_min]
+        if baixas:
+            o.append(f"secoes_redacao_baixa:{len(baixas)}")
+        if self.clausulas_faltando_opcionais:
+            o.append(f"clausulas_opcionais_faltando:{len(self.clausulas_faltando_opcionais)}")
+        if self.clausulas_extras and not lim.falhar_em_clausula_extra:
+            o.append(f"clausulas_extras:{len(self.clausulas_extras)}")
+        if self.obs_numeros:
+            o.append(f"numeros_nao_materiais:{self.obs_numeros}")
+        if self.obs_datas:
+            o.append(f"datas_nao_materiais:{self.obs_datas}")
+        if self.certidoes_extras:
+            o.append(f"certidoes_extras:{self.certidoes_extras}")
+        return o
 
     @property
     def veredito(self) -> str:
-        """`aprovado` · `reprovado` (a measured failure) · `incompleto` (no
-        failure, but gaps — the card is not complete yet)."""
+        """`reprovado` (a MATERIAL term diverges) · `incompleto` (no material
+        failure, but gaps — the card is not complete yet) ·
+        `aprovado_com_observacoes` (material terms match; wording/structure
+        differ) · `aprovado` (nothing to report)."""
         if self.motivos():
             return "reprovado"
         if self.lacunas_de_dado:
             return "incompleto"
+        if self.observacoes():
+            return "aprovado_com_observacoes"
         return "aprovado"
 
     @property
+    def aceito(self) -> bool:
+        """The deal's material terms match and nothing is missing."""
+        return self.veredito in ("aprovado", "aprovado_com_observacoes")
+
+    @property
     def aprovado(self) -> bool:
-        return self.veredito == "aprovado"
+        return self.aceito
 
     def resumo(self) -> dict[str, Any]:
         """VERDICT-LEVEL ONLY — counts, ratios, codes. Safe to print/return."""
         return {
             "veredito": self.veredito,
             "motivos": self.motivos(),
+            "observacoes": self.observacoes(),
             "categorias": {k: (round(v, 4) if v is not None else None) for k, v in self.categorias.items()},
             "secoes_ref": self.secoes_ref,
             "secoes_gerado": self.secoes_gerado,
             "secoes_alinhadas": len(self.resultados),
             "clausulas_faltando": len(self.clausulas_faltando),
+            "clausulas_faltando_opcionais": len(self.clausulas_faltando_opcionais),
             "clausulas_extras": len(self.clausulas_extras),
             "clausulas_desligadas": len(self.clausulas_desligadas),
+            "secoes_material_sem_correspondencia": len(self.secoes_material_ilegiveis),
+            "obs_numeros": self.obs_numeros,
+            "obs_datas": self.obs_datas,
+            "certidoes_partes_lacuna": self.certidoes_partes_lacuna,
+            "materiais_documento": dict(self.materiais_documento),
+            "numeros_materiais_por_tipo": dict(
+                Counter(t.split(":", 1)[0] for r in self.resultados for t in r.numeros_faltando + r.numeros_extras)
+            ),
             "clausulas_explicadas_allowlist": len(self.clausulas_faltando_explicadas) + len(self.clausulas_extras_explicadas),
             "numeros_divergentes": self.numeros_divergentes,
             "datas_divergentes": self.datas_divergentes,
@@ -1054,6 +1208,149 @@ def _desmembrar_itens(paragrafos: list[str]) -> list[str]:
     return saida
 
 
+# ─── material vs observation ────────────────────────────────────────────
+
+#: Sections that carry a MATERIAL term (parties, property, price/payment,
+#: posse/prazos, financing, ônus, the signing block). Everything else
+#: (irretratabilidade, e-signature, foro, vistoria, mora, …) is standard
+#: wording whose numerals are observations when the render adds them.
+_SECOES_MATERIAIS_RE = re.compile(r"^(?:preambulo|encerramento|clausula:.*(?:objeto|preco|pagamento|posse|onus|financi))")
+#: Clauses whose ABSENCE is a material failure (object, price/payment, posse,
+#: ônus, the signature/parties block). Any other missing clause is optional.
+#: Sections whose TERMS a render can add to: a generic number/date the render
+#: states there and the reference does not is material. (In the preamble and
+#: the signing block an added numeral is address/format data — a WRONG one
+#: always shows as the reference's own value going missing.)
+_SECOES_TERMOS_RE = re.compile(r"^clausula:.*(?:objeto|preco|pagamento|posse|onus|financi)")
+_CLAUSULAS_MATERIAIS_RE = re.compile(r"^(?:encerramento|clausula:.*(?:objeto|preco|pagamento|posse|onus))")
+#: Token kinds that are ALWAYS facts, in any section, on either side.
+_TOKENS_ESTRITOS = ("cpf:", "rg:", "cnpj:", "cep:", "valor:", "parcela:", "dec:")
+#: A statutory/clause citation (`art. 1.245`, `§ 2º`, `Lei 6.015/73`, `MP 2.200-2`,
+#: `Cláusula 5`): a pointer to a norm, not a fact of the deal.
+_CITACAO_LEGAL_RE = re.compile(
+    # norm / clause / registry-act / title-instrument pointers
+    r"(?:\blei|\bdecreto|medida provisoria|\bmp|\bart(?:igos?|s)?\b\.?|§+|\binciso|\binc\.|codigo civil|\bcpc|\bclausula"
+    r"|\bcontrato|\blivro|\bfls?\b\.?|\bfolhas?|\bprotocolo|\bprenotad[oa])"
+    r"\s*(?:n[o.]{0,2}\s*)?\d[\d.,/\-]*(?:\s*(?:,|e)\s*\d+)*"
+    r"|\b(?:av|r)(?:\.|-)\s?\d+"  # `R-12`, `AV.10`: a registry act of the matrícula
+    r"|\bparcelas?\s+\d+(?:\s*(?:e|,)\s*\d+)*(?!\d)(?!\s*:)"  # `parcelas 02 e 03` in prose (the `Parcela 02:` list items are tokens of their own)
+    # `1 (um), 2 (dois) e 3 (três) do Parágrafo …`: an enumeration of provisions
+    r"|\d+\s*\([a-z ]+\)(?=(?:[,\s]|\be\b)*(?:\d+\s*\([a-z ]+\)(?:[,\s]|\be\b)*)*d[oa]s?\s+(?:paragrafo|clausula|artigo|inciso|item))"
+)
+_IMOVEL_F_RE = re.compile(r"^imovel\s*:")
+#: Where the `IMÓVEL:` quote turns into registry-act quotes (`Conforme AV.10 …`):
+#: act numbers, protocols, dates and costs after this point describe the
+#: register's history — informative; areas stay material.
+_CAUDA_ATOS_RE = re.compile(r"\b(?:conforme(?:\s+verifica-se)?(?:\s+n[ao])?\s+av\b|av\.?\s?\d|r-\s?\d)")
+_MAT_NUM_RE = re.compile(r"matricula\s*(?:n[o.]{0,2}\s*)?[:\-]?\s*(\d[\d.]*)")
+_CARTORIO_RE = re.compile(
+    r"registro de imoveis d[aeo]s?\s+([a-z][a-z ]{2,40}?)(?=[,.;:)\d\-]|\s+(?:sob|em|desta|deste|ou|e)\b|$)"
+)
+_NOME_RE = re.compile(r"\b((?:[A-ZÀ-Ý]{2,}(?:\s+(?:[A-ZÀ-Ý]{2,}|D[AEO]S?|E)\b)+))(?=,)")
+_NAO_NOME_RE = re.compile(r"^(?:RUA|AVENIDA|AV|ESTRADA|ALAMEDA|TRAVESSA|RODOVIA|PRACA|LOTE|QUADRA|CASA|APTO|BLOCO)\b")
+_ESTADO_CIVIL_RE = re.compile(r"\b(solteir|casad|divorciad|viuv|separad|uniao estavel)")
+_LOGRADOURO_RE = re.compile(
+    r"\b(?:rua|avenida|av|alameda|travessa|estrada|rodovia|praca)\.?\s+([a-z0-9][a-z0-9 ]{2,40}?)(?=\s*,|\s+n[o.]|\s+-|\s*\d|$)"
+)
+_MARCADOR_NOME_RE = re.compile(r"\[\[lacuna\]\](?=,\s*(?:[a-z]*eir[oa]\b|\[\[))", re.I)
+
+
+def _token_material(tok: str, chave: str, secao_termos: bool, lado: str) -> bool:
+    """Is a differing token a MATERIAL fact? Identifiers, money, areas, CEPs and
+    installments always are. A generic number/date is material when the
+    reference states it and the render lacks it (a term of the deal went
+    missing) — and, when the RENDER adds it, only inside a material section
+    (elsewhere it is standard-clause numbering). Certidão identifiers/dates
+    are observations (a newer emission is expected)."""
+    if tok.startswith(_TOKENS_ESTRITOS):
+        return True
+    if "certid" in chave:
+        return False
+    return lado == "falt" or secao_termos
+
+
+def _separar_observacao(texto: str, chave: str) -> tuple[str, str]:
+    """`(texto_material, texto_observacao)` of a FOLDED section text: statutory
+    citations and the registry-act tail of the `IMÓVEL:` quote move to the
+    observation text."""
+    obs: list[str] = []
+    linhas: list[str] = []
+    texto = re.sub(r"(?<=\d)[ \t]*/[ \t]*(?=\d)", "/", texto)  # `449220 / 2026` reads as one number, like `_preparar_para_numeros`
+    for linha in texto.split("\n"):
+        if "objeto" in chave and _IMOVEL_F_RE.match(linha):
+            m = _CAUDA_ATOS_RE.search(linha)
+            if m:
+                obs.append(linha[m.start():])
+                linha = linha[: m.start()]
+        linhas.append(linha)
+
+    def _tira(m: re.Match) -> str:
+        obs.append(m.group(0))
+        return " "
+
+    return _CITACAO_LEGAL_RE.sub(_tira, "\n".join(linhas)), "\n".join(obs)
+
+
+def _substituicoes(faltando: list[str], extras: list[str], lacunas: int) -> int:
+    """Material count of a set-comparison: every missing item that has a
+    DIFFERENT item printed in its place, plus every missing item with nothing
+    in its place that no declared gap marker accounts for."""
+    troca = min(len(faltando), len(extras))
+    sem_par = len(faltando) - troca
+    return troca + max(0, sem_par - lacunas)
+
+
+def _ratio(a: str, b: str) -> float:
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _ausentes(ref: set[str], gen: set[str], minimo: float) -> tuple[list[str], list[str]]:
+    """`(ref sem correspondente, gen sem correspondente)` by fuzzy ratio."""
+    falt = [r for r in sorted(ref) if not any(_ratio(r, g) >= minimo for g in gen)]
+    extra = [g for g in sorted(gen) if not any(_ratio(r, g) >= minimo for r in ref)]
+    return falt, extra
+
+
+def _verificacoes_documento(
+    ref_s: list[Secao], gen_s: list[Secao], ref_doc: str, gen_doc: str, ref_orig_pre: str, gen_orig_pre: str
+) -> dict[str, int]:
+    """Material facts beyond number tokens. Each is a count (0 = ok)."""
+    out: dict[str, int] = {}
+    ref_pre, gen_pre = _dobrar(ref_orig_pre), _dobrar(gen_orig_pre)
+    marc_pre = len(_LACUNA_RE.findall(gen_orig_pre))
+
+    # matrícula number
+    mr = {re.sub(r"\D", "", m).lstrip("0") for m in _MAT_NUM_RE.findall(ref_doc)} - {""}
+    mg = {re.sub(r"\D", "", m).lstrip("0") for m in _MAT_NUM_RE.findall(gen_doc)} - {""}
+    falt = mr - mg
+    out["mat_matricula_numero"] = len(falt) if falt and (mg or not marc_pre and not _LACUNA_RE.search(gen_doc)) else 0
+
+    # cartório (registry office city)
+    cr = {c.strip() for c in _CARTORIO_RE.findall(ref_doc)}
+    cg = {c.strip() for c in _CARTORIO_RE.findall(gen_doc)}
+    falt_c, _ = _ausentes(cr, cg, 0.8)
+    out["mat_cartorio"] = len(falt_c) if falt_c and (cg or not _LACUNA_RE.search(gen_doc)) else 0
+
+    # party names (qualification)
+    nr = {_chave_titulo(n) for n in _NOME_RE.findall(ref_orig_pre) if not _NAO_NOME_RE.match(_dobrar(n).upper())}
+    ng = {_chave_titulo(n) for n in _NOME_RE.findall(gen_orig_pre) if not _NAO_NOME_RE.match(_dobrar(n).upper())}
+    falt_n, _ = _ausentes(nr, ng, 0.85)
+    out["mat_parte_nome"] = max(0, len(falt_n) - len(_MARCADOR_NOME_RE.findall(gen_orig_pre)))
+
+    # estado civil
+    ec_r, ec_g = Counter(_ESTADO_CIVIL_RE.findall(ref_pre)), Counter(_ESTADO_CIVIL_RE.findall(gen_pre))
+    out["mat_estado_civil"] = _substituicoes(
+        sorted((ec_r - ec_g).elements()), sorted((ec_g - ec_r).elements()), marc_pre
+    )
+
+    # party street
+    lr = {x.strip() for x in _LOGRADOURO_RE.findall(ref_pre)}
+    lg = {x.strip() for x in _LOGRADOURO_RE.findall(gen_pre)}
+    falt_l, extra_l = _ausentes(lr, lg, 0.8)
+    out["mat_logradouro"] = _substituicoes(falt_l, extra_l, marc_pre)
+    return out
+
+
 def pontuar(
     ref_paragrafos: list[str],
     gerado_paragrafos: list[str],
@@ -1061,6 +1358,7 @@ def pontuar(
     allowlist: Optional[list[EntradaAllowlist]] = None,
     limiares: Optional[Limiares] = None,
     clausulas_desligadas: Optional[list[str]] = None,
+    certidoes_ausentes_sao_lacuna: bool = False,
 ) -> Scorecard:
     """The measured verdict for one deal. Pure: no IO, no mutation.
 
@@ -1069,6 +1367,13 @@ def pontuar(
     clausulas_desligadas`). A reference clause absent from the render whose
     title matches one of them is a DATA gap (`Scorecard.clausulas_desligadas`
     → `incompleto`), not a missing clause.
+
+    TWO LAYERS (2026-10-06): only MATERIAL terms fail a deal (see `Limiares`
+    and `_SECOES_MATERIAIS_RE` / `_token_material`); wording, structure and
+    non-material numerals are `observacoes` → `aprovado_com_observacoes`.
+    `certidoes_ausentes_sao_lacuna`: the card DECLARED its certidão data
+    missing, so a party the reference lists certidões for and the render omits
+    entirely is a gap (`incompleto`), not a failure.
 
     HONEST COMPARISON (2026-10-05 audit — the divergence-email lesson: ~56 %
     of "divergences" were formatting/alignment noise). A token counts as a
@@ -1112,8 +1417,10 @@ def pontuar(
         if hit:
             card.clausulas_faltando_explicadas.append(s.chave)
             aplicadas[hit.id] += 1
-        else:
+        elif _CLAUSULAS_MATERIAIS_RE.match(s.chave):
             card.clausulas_faltando.append(s.chave)
+        else:
+            card.clausulas_faltando_opcionais.append(s.chave)
     for s in extras:
         hit = next(
             (e for e in aprovadas if e.categoria == "clausula_extra" and re.search(e.padrao_gerado or "", s.chave)),
@@ -1165,6 +1472,21 @@ def pontuar(
             pares_itens, ref_livres, gen_livres = _parear_itens(ref_it, ref_tx, gen_it, gen_tx)
             itens_num_ref = [i for i, _, _ in ref_it]
             itens_num_gen = [i for i, _, _ in gen_it]
+            ref_pessoas = {pe for _, _, pe in ref_it if pe}
+            gen_pessoas = {pe for _, _, pe in gen_it if pe}
+            sem_parte = [
+                pr for pr in sorted(ref_pessoas)
+                if not any(pr == g or _ratio(pr, g) >= 0.75 for g in gen_pessoas)
+            ]
+            # a person heading whose NAME is a gap marker stands in for a missing party
+            marcados = sum(1 for p in gen_par if _chave_pessoa(p) == "lacuna")
+            sem_parte = sem_parte[: max(0, len(sem_parte) - marcados)]
+            if certidoes_ausentes_sao_lacuna:
+                card.certidoes_partes_lacuna += len(sem_parte)
+            elif sem_parte:
+                card.materiais_documento["mat_certidoes_parte_ausente"] = (
+                    card.materiais_documento.get("mat_certidoes_parte_ausente", 0) + len(sem_parte)
+                )
             card.certidoes_itens_ref += len(ref_it)
             card.certidoes_itens_gerado += len(gen_it)
             card.certidoes_itens_pareados += len(pares_itens)
@@ -1201,6 +1523,8 @@ def pontuar(
             iguais_t += ig
             total_t += tot
         ratio = 1.0 if total_t <= 0 else (2.0 * iguais_t) / total_t
+        if g.fundida:  # the content lives inside other clauses: judge it by containment
+            ratio = _contencao(ref_resto, gen_resto) if ref_resto else 1.0
         lacunas = len(_LACUNA_RE.findall(gen_txt_total))
         marcadores = _marcadores_tipados(gen_txt_total)
 
@@ -1220,8 +1544,18 @@ def pontuar(
         gen_num_f = _dobrado_com_allowlist("\n".join(gen_corpo), r.chave, "gen", False)
         if bancarios_ref and dados_indisp:
             ref_num_f = _sem_segmentos(ref_num_f, bancarios_ref)
+        # statutory citations + the registry-act tail leave the material text
+        ref_num_f, ref_obs = _separar_observacao(ref_num_f, r.chave)
+        gen_num_f, gen_obs = _separar_observacao(gen_num_f, r.chave)
         n_ref, d_ref = _tokens_de(ref_num_f)
         n_gen, d_gen = _tokens_de(gen_num_f)
+        n_ref_o, d_ref_o = _tokens_de(ref_obs)
+        n_gen_o, d_gen_o = _tokens_de(gen_obs)
+        # areas/fractions stay material even inside a quoted act
+        n_ref |= {t for t in n_ref_o if t.startswith("dec:")}
+        n_gen |= {t for t in n_gen_o if t.startswith("dec:")}
+        obs_n = len({t for t in n_ref_o if not t.startswith("dec:")} ^ {t for t in n_gen_o if not t.startswith("dec:")})
+        obs_d = len(d_ref_o ^ d_gen_o)
         if r.chave == "encerramento":
             # identifier kinds are compared only when BOTH blocks print them
             # (the signed block lists witness RGs, the render lists CPFs)
@@ -1259,7 +1593,32 @@ def pontuar(
         # counted (`certidoes_extras`) — not inflated into one number/date
         # divergence per identifier it prints.
 
+        if g.fundida:  # what the pooled clauses add belongs to the OTHER reference clauses
+            n_extra, d_extra = [], []
         em_lacuna = _absorver_lacunas(n_falt, d_falt, marcadores)
+        # ── material vs observation ────────────────────────────────────────
+        mat_sec = bool(_SECOES_MATERIAIS_RE.match(r.chave))
+
+        def _divide(tokens: list[str], lado: str) -> tuple[list[str], int]:
+            mat = [t for t in tokens if _token_material(t, r.chave, bool(_SECOES_TERMOS_RE.match(r.chave)), lado)]
+            return mat, len(tokens) - len(mat)
+
+        n_falt, o1 = _divide(n_falt, "falt")
+        n_extra, o2 = _divide(n_extra, "extra")
+        # An identifier the render ADDS beyond those the reference states (no
+        # missing identifier of the same kind in the section) is extra data,
+        # not a wrong fact: a WRONG identifier always shows as a missing+extra pair.
+        for pref in _TIPOS_IDENTIFICADOR + ("cep:",):
+            do_tipo = [t for t in n_extra if t.startswith(pref)]
+            sobra = len(do_tipo) - sum(1 for t in n_falt if t.startswith(pref))
+            if sobra > 0:
+                for t in do_tipo[-sobra:]:
+                    n_extra.remove(t)
+                o2 += sobra
+        d_falt, o3 = _divide(d_falt, "falt")
+        d_extra, o4 = _divide(d_extra, "extra")
+        obs_n += o1 + o2
+        obs_d += o3 + o4
         card.resultados.append(
             ResultadoSecao(
                 chave=r.chave,
@@ -1277,6 +1636,9 @@ def pontuar(
                 certidoes_lacuna=len(ref_livres),
                 certidoes_extras=len(gen_livres),
                 certidoes_reemitidas=reemitidas,
+                obs_numeros=obs_n,
+                obs_datas=obs_d,
+                material=mat_sec,
             )
         )
         peso = max(1, sum(len(_palavras(rf)) for rf, _ in grupos))
@@ -1291,7 +1653,7 @@ def pontuar(
     ref_clausulas = [s for s in ref_s if s.chave.startswith("clausula:")]
     # A switched-off clause is a data gap: out of the structure denominator.
     avaliaveis = len(ref_clausulas) - len(card.clausulas_desligadas)
-    presentes = avaliaveis - len(card.clausulas_faltando)
+    presentes = avaliaveis - len(card.clausulas_faltando) - len(card.clausulas_faltando_opcionais)
     card.categorias["estrutura"] = presentes / avaliaveis if avaliaveis > 0 else None
 
     def _matricula(ss: list[Secao]) -> Optional[str]:
@@ -1316,6 +1678,15 @@ def pontuar(
         card.certidoes_itens_pareados / card.certidoes_itens_gerado if card.certidoes_itens_gerado else None
     )
     card.allowlist_aplicadas = dict(aplicadas)
+    ref_doc = _dobrar("\n".join(ref_paragrafos))
+    gen_doc = _dobrar("\n".join(gerado_paragrafos))
+    pre_ref = next((s.paragrafos for s in ref_s if s.chave == "preambulo"), [])
+    pre_gen = next((s.paragrafos for s in gen_s if s.chave == "preambulo"), [])
+    for codigo, n in _verificacoes_documento(
+        ref_s, gen_s, ref_doc, gen_doc, "\n".join(pre_ref), "\n".join(pre_gen)
+    ).items():
+        if n:
+            card.materiais_documento[codigo] = card.materiais_documento.get(codigo, 0) + n
     return card
 
 
@@ -1324,8 +1695,8 @@ def pontuar(
 
 def main(argv: Optional[list[str]] = None) -> int:
     """`comparador.py --ref REF --gerado GEN [--allowlist F] [--limiares F]`
-    — prints the VERDICT-LEVEL scorecard; exit 0 only when `aprovado`
-    (1 = reprovado, 2 = incompleto)."""
+    — prints the VERDICT-LEVEL scorecard; exit 0 when `aprovado` or `aprovado_com_observacoes`
+    (1 = reprovado, 2 = incompleto; `aprovado_com_observacoes` exits 0)."""
     import argparse
 
     p = argparse.ArgumentParser(description=main.__doc__)
@@ -1341,7 +1712,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         limiares=Limiares.de_arquivo(args.limiares),
     )
     print(json.dumps(card.resumo(), indent=2, ensure_ascii=False))
-    return {"aprovado": 0, "reprovado": 1, "incompleto": 2}[card.veredito]
+    return {"aprovado": 0, "aprovado_com_observacoes": 0, "reprovado": 1, "incompleto": 2}[card.veredito]
 
 
 __all__ = [

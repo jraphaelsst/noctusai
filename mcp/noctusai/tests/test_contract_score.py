@@ -175,3 +175,46 @@ def test_limiares_e_allowlist_repassados(private):
     assert pedido["limiares"] == {"redacao_min": 0.8}
     assert pedido["allowlist"] == "/tmp/allow.json"
     assert pedido["org_id"] == cs.SW_ORG_ID
+
+
+def test_veredito_de_duas_camadas_e_contadores_passam_o_filtro(private):
+    """`aprovado_com_observacoes` is an ACCEPTED verdict (material terms match);
+    the layer counters (material kinds, observations) ride the whitelist as
+    codes/numbers only — a value-shaped key next to them does not."""
+    _plantar_deal(private, "101", texto="Texto.")
+    _plantar_deal(private, "102", texto="Texto.")
+    ok = {
+        "veredito": "aprovado_com_observacoes", "motivos": [],
+        "observacoes": ["secoes_redacao_baixa:2", "numeros_nao_materiais:3", f"cpf {CPF_FAKE}"],
+        "obs_numeros": 3, "obs_datas": 1, "clausulas_faltando_opcionais": 1,
+        "secoes_material_sem_correspondencia": 0, "certidoes_partes_lacuna": 0,
+    }
+    ruim = {
+        "veredito": "reprovado", "motivos": ["numeros_divergentes:2", "mat_matricula_numero:1"],
+        "materiais_documento": {"mat_matricula_numero": 1, CPF_FAKE: 1},
+        "numeros_materiais_por_tipo": {"valor": 2, "FULANO": 1},
+    }
+    out = cs.contract_score(cards_path=_cards(private, ["101", "102"]), worktree_path=WORKTREE, runner=_Runner({"101": ok, "102": ruim}))
+    assert out["por_veredito"] == {"aprovado_com_observacoes": 1, "reprovado": 1}
+    assert out["aprovados"] == 1 and out["verdict"] == "fail"
+    d1, d2 = out["deals"]["101"], out["deals"]["102"]
+    assert d1["observacoes"] == ["secoes_redacao_baixa:2", "numeros_nao_materiais:3"]
+    assert (d1["obs_numeros"], d1["obs_datas"], d1["clausulas_faltando_opcionais"]) == (3, 1, 1)
+    assert d2["materiais_documento"] == {"mat_matricula_numero": 1}
+    assert d2["numeros_materiais_por_tipo"] == {"valor": 2}
+    texto = json.dumps(out)
+    assert CPF_FAKE not in texto and "FULANO" not in texto
+
+
+def test_so_aprovados_e_com_observacoes_dao_pass(private):
+    _plantar_deal(private, "101", texto="Texto.")
+    out = cs.contract_score(
+        cards_path=_cards(private, ["101"]), worktree_path=WORKTREE,
+        runner=_Runner({"101": {"veredito": "aprovado_com_observacoes", "motivos": []}}),
+    )
+    assert out["verdict"] == "pass" and out["taxa_aprovacao"] == 1.0
+    incompleto = cs.contract_score(
+        cards_path=_cards(private, ["101"]), worktree_path=WORKTREE,
+        runner=_Runner({"101": {"veredito": "incompleto", "motivos": []}}),
+    )
+    assert incompleto["verdict"] == "fail"
