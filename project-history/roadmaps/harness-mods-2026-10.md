@@ -25,18 +25,22 @@ The owner asked how mods could improve "our interface and methodologies and gate
 | `adf2845e2` | CI `harness-mod-tests` job (`claude plugin validate`/`test` + `--check-harness-mod`, CLI pinned 2.1.291); closes `NOC-REMEDIATE[harness-mod-ci]` |
 | `791f59258` | Mod 0.2.0: live panels, invalid-harness alerts, `agent.offer` for executors, semantic routing (off by default) |
 
-## Held — owner decision
-- **Write redirect** (primary-checkout Edit/Write rewritten into the session's worktree): the harness permission classifier refused the dispatch as self-modification of a safety guard. The two guard false-positive fixes that rode in the same brief are held with it: `cd $VAR` expansion, and the post-hook suggesting `rm` after an index-only restore.
-- **`main` bless:** the `dev` range carries a peer rider whose `predeploy_check social-wiring` is BLOCKED (`schema_drift`: `ig_media`, `ig_media_snapshots` and `ig_profile_snapshots` are missing in the live DB). Options:
-  - Wait for the peer to apply that migration, then bless normally.
-  - Or `release mode=cut` our commits. That needs the owner's typed ship-consent phrase and adds a backmerge merge commit on `dev`.
+## Shipped — batch 3, 2026-10-06
+| Commit | What |
+|---|---|
+| `afa7284cf` | Mod 0.2.1: one-line collapsible reminders, single bell, wrap-up nudge dismissed by the next prompt, `/noc-wrapup` (band Buttons need ctrl+x tab focus in the terminal) |
+| `67d880ff5` | **Write redirect** (owner-approved out of auto mode, each edit approved): a claimed session's primary Edit/Write is rewritten into its worktree, visibly. Plus the two guard false-positive fixes: `cd $VAR` literal expansion, and the post-hook diff by path (it no longer advises `rm` of pre-existing files). Mod 0.3.0: auto-claim on `task_branch start`, `/noc-claim`. Live-verified in session 3e354d14. |
+
+## Prod
+- `b10e4f007` blessed and promoted 2026-10-06. The VPS was fast-forwarded from `18e0d037`. social-wiring was redeployed (peer rider); `deploy_verify` verified 8/8, `vps_health` 15/15, `spa_smoke` passed. `prod-backup` = `1a10cd492`.
 
 ## Rollback (in order of blast radius)
 1. **One UX feature:** the plugin's `/config` row, or `pluginConfigs` in `settings.local.json`.
 2. **The whole mod, one session:** `NOC_HARNESS_OFF=1`.
 3. **The mod and the executor-dispatch guard, fleet-wide:** `git revert d9e6a55bc`. It touches one file, is conflict-free and linear (no merge commit), and leaves the fail-closed guards in place.
 4. **Batch 2:** `git revert dcfeaeee6^..791f59258`. Mod 0.2.0, panels, CI job; leaves batch 1 in place.
-5. **Everything from tonight:** revert batch 2, then `git revert 625f07a5f^..d9e6a55bc`, plus `1a10cd492` (doc rows only).
+5. **Batch 3:** `git revert 67d880ff5` (redirect + guard fixes + mod 0.3.0), then `afa7284cf` (band 0.2.1). Without a claim the guard refuses exactly as before; so `/noc-claim release`, or deleting `.claude/cache/session-worktrees.json`, turns the redirect off with no revert at all.
+6. **Everything from tonight:** revert batch 2, then `git revert 625f07a5f^..d9e6a55bc`, plus `1a10cd492` (doc rows only).
 
 ## Open (named destinations)
 - [x] **CI for mod tests:** shipped in `adf2845e2`.
