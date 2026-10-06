@@ -40,6 +40,17 @@ def test_burst_is_immediate_then_paced():
     assert waited == pytest.approx(0.5, abs=1e-6)
 
 
+@pytest.mark.timeout(5)
+def test_many_paced_acquires_on_virtual_clock_terminate():
+    """Regression (2026-10-06): float refill left the bucket at 0.99999…
+    tokens; the 1e-16 s follow-up sleep was absorbed by the clock's float and
+    `acquire` spun forever on the VirtualClock (Meta pace 3/s, burst 5)."""
+    clk = VirtualClock(start=1.0)
+    b = TokenBucket(BucketConfig(rate_per_sec=3.0, burst=5.0), clock=clk)
+    total = sum(b.acquire() for _ in range(200))
+    assert total == pytest.approx(195 / 3.0, rel=1e-6)
+
+
 def test_refill_over_time_allows_more():
     clk = VirtualClock()
     b = TokenBucket(BucketConfig(rate_per_sec=10.0, burst=1.0), clock=clk)

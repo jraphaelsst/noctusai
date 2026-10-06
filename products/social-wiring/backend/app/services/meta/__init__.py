@@ -43,6 +43,7 @@ from noctusai_lib.integrations.meta import (
 from noctusai_lib.integrations.meta import get_meta_adapter as _seed_get_meta_adapter
 from noctusai_lib.integrations.meta.instagram_login_adapter import (
     InstagramLoginOAuthAdapter,
+    get_instagram_login_adapter,
 )
 from noctusai_lib.integrations.meta.oauth_adapter import MetaOAuthAdapter
 
@@ -69,6 +70,7 @@ __all__ = [
     "InstagramLoginOAuthAdapter",
     "get_dm_adapter_for_account",
     "get_instagram_login_adapter_for_account",
+    "get_ig_insights_adapter_for_account",
     "get_meta_adapter",
     "get_meta_adapter_for_account",
 ]
@@ -279,9 +281,56 @@ def get_instagram_login_adapter_for_account(
         )
 
     graph_version = getattr(default_settings, "meta_graph_api_version", None) or None
-    if graph_version:
-        return InstagramLoginOAuthAdapter(str(token), version=graph_version)
-    return InstagramLoginOAuthAdapter(str(token))
+    # Canonical seed factory (Real for a token; never a silent Fake — the
+    # empty-token case already raised above).
+    return get_instagram_login_adapter(str(token), version=graph_version)
+
+
+def get_ig_insights_adapter_for_account(
+    account_id: "UUID | str",
+    org_id: "UUID | str",
+    *,
+    svc=None,
+) -> MetaAdapter:
+    """Resolve ONE account to an adapter serving the Instagram-INSIGHTS subset
+    of the ``MetaAdapter`` contract, whichever login model connected it.
+
+    ``provider="meta"`` → the Facebook-Login ``MetaOAuthAdapter`` (unchanged);
+    ``provider="instagram"`` → :class:`InstagramLoginInsightsBridge` over the
+    Instagram-Login adapter. Only the IG insights methods are bridged
+    (``list_instagram_accounts`` / ``list_instagram_media`` /
+    ``get_instagram_media_insights`` / ``get_instagram_account_insights``) —
+    Page / content / comments / ads calls raise ``NotImplementedError`` on the
+    bridge (those surfaces still require a Facebook-Login connection). Same
+    fail-loud lookup contract as :func:`get_dm_adapter_for_account`.
+    """
+    from app.services.integration_account_service import (
+        build_integration_account_service,
+    )
+    from app.services.meta.ig_login_bridge import InstagramLoginInsightsBridge
+
+    account_uuid = account_id if isinstance(account_id, UUID) else UUID(str(account_id))
+    org_uuid = org_id if isinstance(org_id, UUID) else UUID(str(org_id))
+    if svc is None:
+        svc = build_integration_account_service(
+            get_admin_client(), encryption_key=default_settings.encryption_key
+        )
+    account = svc.get_account(account_uuid, org_uuid)
+    if account is None:
+        raise IntegrationAccountNotFound(
+            f"integration account {account_uuid} not found for org {org_uuid}"
+        )
+    if account.provider == META_PROVIDER:
+        return get_meta_adapter_for_account(account_uuid, org_uuid, svc=svc)
+    if account.provider == INSTAGRAM_LOGIN_PROVIDER:
+        return InstagramLoginInsightsBridge(
+            get_instagram_login_adapter_for_account(account_uuid, org_uuid, svc=svc)
+        )
+    raise ValueError(
+        f"integration account {account_uuid} is provider={account.provider!r}, "
+        f"which carries no Instagram insights (expected {META_PROVIDER!r} or "
+        f"{INSTAGRAM_LOGIN_PROVIDER!r})"
+    )
 
 
 def get_dm_adapter_for_account(

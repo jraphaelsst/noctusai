@@ -83,7 +83,7 @@ from app.services.integration_account_service import (
     build_integration_account_service,
 )
 from app.services.marcas_service import build_marca_service
-from app.services.integration_providers import PROVIDERS
+from app.services.integration_providers import IG_BUSINESS_LOGIN_SCOPES, PROVIDERS
 from app.services.legacy_adoption import adopt_legacy_account
 from app.services.meta import META_PROVIDER, MetaGraphError, MetaOAuthAdapter
 
@@ -1369,12 +1369,9 @@ def meta_oauth_callback(
 INSTAGRAM_PROVIDER = "instagram"
 
 # Pinned scope set per Meta's documented Instagram Business Login contract —
-# the minimum surface for reading + replying to IG Direct as this product's
-# agency-model client connection.
-IG_IA_OAUTH_SCOPES: tuple[str, ...] = (
-    "instagram_business_basic",
-    "instagram_business_manage_messages",
-)
+# IG Direct (read + reply), insights (profile/account/media metrics) and
+# content publishing. Single source: `integration_providers.IG_BUSINESS_LOGIN_SCOPES`.
+IG_IA_OAUTH_SCOPES: tuple[str, ...] = IG_BUSINESS_LOGIN_SCOPES
 
 
 # ─── Instagram OAuth DI seams ─────────────────────────────────────────────────
@@ -1615,14 +1612,28 @@ def instagram_oauth_callback(
         "user_id": user_id,
     }
     account_label = user_name or f"Instagram account ({org_id})"
+    # What Instagram actually GRANTED (the code exchange echoes it as
+    # `permissions`) — the user can untick scopes on the consent screen, so the
+    # insights sync gates on this, not on what we asked for.
+    granted_scopes = (
+        [p.strip() for p in str(short.permissions).split(",") if p.strip()]
+        if getattr(short, "permissions", None)
+        else None
+    )
     metadata = {
         "user_id": user_id,
         "channel_id": user_id,
         "channel_title": user_name,
         "scopes": list(IG_IA_OAUTH_SCOPES),
+        "granted_scopes": granted_scopes,
         "model": "instagram_login",
     }
-    metadata = {k: v for k, v in metadata.items() if v is not None}
+    # `granted_scopes` survives as an explicit None: a reconnect whose exchange
+    # carried no `permissions` must CLEAR a stale grant list (metadata merges),
+    # so the scope gate falls back to the freshly requested `scopes`.
+    metadata = {
+        k: v for k, v in metadata.items() if v is not None or k == "granted_scopes"
+    }
 
     from datetime import datetime as _dt
     from datetime import timezone as _tz

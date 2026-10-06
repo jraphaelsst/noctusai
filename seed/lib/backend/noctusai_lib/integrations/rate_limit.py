@@ -70,6 +70,14 @@ class BucketConfig:
 # backfill that motivated this): pace to a few requests/second with a
 # small burst. Providers not listed fall back to _DEFAULT.
 _DEFAULT = BucketConfig(rate_per_sec=5.0, burst=10.0)
+
+# Refill is float arithmetic, so after "exactly enough" elapsed time a bucket
+# can sit at 0.9999999999 tokens. The follow-up sleep (deficit/rate ~ 1e-16 s)
+# is then absorbed by the clock's float (t + 1e-16 == t): on the VirtualClock
+# that never advances — an infinite loop (it hung the Instagram-insights
+# per-metric retry tests, 2026-10-06); on the real clock a pointless spin.
+# Treat a deficit below this as "available".
+_TOKEN_EPSILON = 1e-9
 _DEFAULTS: dict[str, BucketConfig] = {
     "meta": BucketConfig(rate_per_sec=3.0, burst=5.0, max_retries=6),
     "google": BucketConfig(rate_per_sec=8.0, burst=16.0),
@@ -206,8 +214,9 @@ class TokenBucket:
         while True:
             with self._lock:
                 self._refill_locked()
-                if self._tokens >= tokens:
-                    self._tokens -= tokens
+                # Epsilon — see `_TOKEN_EPSILON`.
+                if self._tokens + _TOKEN_EPSILON >= tokens:
+                    self._tokens = max(0.0, self._tokens - tokens)
                     return waited
                 deficit = tokens - self._tokens
                 sleep_for = deficit / self._rate if self._rate > 0 else 0.05
@@ -292,8 +301,9 @@ class _AsyncBucketState:
         while True:
             async with self._lock:
                 self._refill_locked()
-                if self._tokens >= tokens:
-                    self._tokens -= tokens
+                # Epsilon — see `_TOKEN_EPSILON`.
+                if self._tokens + _TOKEN_EPSILON >= tokens:
+                    self._tokens = max(0.0, self._tokens - tokens)
                     return waited
                 deficit = tokens - self._tokens
                 sleep_for = deficit / self._rate if self._rate > 0 else 0.05

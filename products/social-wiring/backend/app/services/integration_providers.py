@@ -31,6 +31,22 @@ __all__ = ["PROVIDERS", "SUPPORTED_PROVIDER_IDS"]
 #     each: {name, label, type ("text"|"password"), placeholder}
 #   scopes        list[str] — OAuth scopes (only for oauth_supported=True)
 #   tutorial_url  str | None — external setup guide
+# Instagram Business Login scope set — the ONE source for both the consent
+# URL (`integration_accounts_router.IG_IA_OAUTH_SCOPES`) and this catalog row.
+# Owner decision 2026-10-06: Instagram authenticates via Instagram Business
+# Login, so insights + publishing ride this flow too. Meta permission names
+# (Instagram API with Instagram Login):
+# https://developers.facebook.com/docs/instagram-platform/overview/
+# Accounts connected before this set grew must RECONNECT to grant the new
+# scopes; serving them to users without a role on the app needs Advanced
+# Access (App Review + Business Verification).
+IG_BUSINESS_LOGIN_SCOPES: tuple[str, ...] = (
+    "instagram_business_basic",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_insights",
+    "instagram_business_content_publish",
+)
+
 PROVIDERS: list[dict[str, Any]] = [
     {
         # Grupo OLX covers ZAP, VivaReal, OLX and — once the advertiser
@@ -185,10 +201,7 @@ PROVIDERS: list[dict[str, Any]] = [
                 "placeholder": "IGAA...",
             },
         ],
-        "scopes": [
-            "instagram_business_basic",
-            "instagram_business_manage_messages",
-        ],
+        "scopes": list(IG_BUSINESS_LOGIN_SCOPES),
         "tutorial_url": (
             "https://developers.facebook.com/docs/instagram-platform/instagram-api-with-instagram-login"
         ),

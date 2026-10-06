@@ -111,10 +111,24 @@ from noctusai_lib.integrations.meta.credentials import (
     OAuthMetaCredentials,
 )
 from noctusai_lib.integrations.meta.fake_adapter import FakeMetaAdapter
+from noctusai_lib.integrations.meta.instagram_insights import (
+    IG_MEDIA_METRICS_BY_PRODUCT_TYPE,
+    IG_USER_TOTAL_VALUE_METRICS,
+    IgMediaItem,
+    IgMediaPage,
+    IgMetricsResult,
+    IgProfile,
+    IgUserInsights,
+    effective_product_type,
+    media_metrics_for,
+)
 from noctusai_lib.integrations.meta.instagram_login_adapter import (
     FakeInstagramLoginAdapter,
+    InstagramLoginAdapter,
+    InstagramLoginInsightsAdapter,
     InstagramLoginMessagingAdapter,
     InstagramLoginOAuthAdapter,
+    get_instagram_login_adapter,
 )
 from noctusai_lib.integrations.meta.leadgen_webhook import (
     LeadgenEvent,
@@ -257,8 +271,20 @@ __all__ = [
     "IgLongToken",
     "IgShortToken",
     "InstagramAccount",
+    "InstagramLoginAdapter",
+    "InstagramLoginInsightsAdapter",
     "InstagramLoginMessagingAdapter",
     "InstagramLoginOAuthAdapter",
+    "get_instagram_login_adapter",
+    "IG_MEDIA_METRICS_BY_PRODUCT_TYPE",
+    "IG_USER_TOTAL_VALUE_METRICS",
+    "IgMediaItem",
+    "IgMediaPage",
+    "IgMetricsResult",
+    "IgProfile",
+    "IgUserInsights",
+    "effective_product_type",
+    "media_metrics_for",
     "InstagramComment",
     "InstagramMedia",
     "Lead",

@@ -259,6 +259,7 @@ from app.modules.permutas import register as _permutas
 from app.modules.certidoes import register as _certidoes
 from app.modules.matriculas import register as _matriculas
 from app.modules.youtube import register as _youtube
+from app.modules.instagram import register as _instagram
 from app.modules.edicao_fotos import register as _edicao_fotos
 from app.modules.empresas import register as _empresas
 
@@ -336,6 +337,11 @@ MODULES = [
     # card's listing/manual-link routes) are spliced into `_card_hub`'s
     # router instead — see `card_hub/empresas_service.py`.
     _empresas,
+    # Instagram insights (Instagram Business Login). `/api/instagram/accounts/...`
+    # is a unique literal prefix with no 1-segment dynamic path at its root, so
+    # its position is free. Registers the `instagram_daily_snapshot` job from
+    # `register()` (must precede `start_scheduler()` in app/lifespan.py).
+    _instagram,
 ]
 
 # ─── Assembly (module-agnostic — do not special-case modules here) ───

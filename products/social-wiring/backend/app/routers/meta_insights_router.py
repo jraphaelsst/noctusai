@@ -1,7 +1,10 @@
 """Instagram + Facebook insights — account-scoped (Wave 3).
 
-Every endpoint resolves its Meta adapter via the account-scoped DI seam
-``Depends(get_account_adapter)`` (``account_id`` query, required — the
+Every endpoint resolves its Meta adapter via an account-scoped DI seam —
+the ``/api/meta/instagram/*`` endpoints via ``Depends(get_ig_insights_adapter)``
+(accepts ``provider="meta"`` AND ``provider="instagram"`` rows, the latter
+through ``InstagramLoginInsightsBridge``), ``/api/meta/facebook/insights`` via
+``Depends(get_account_adapter)`` (Facebook-Login only) (``account_id`` query, required — the
 per-client ``integration_accounts`` row, Wave 2's
 ``get_meta_adapter_for_account``), never the org-level
 ``get_meta_adapter`` Store-A adapter the (since retired) org-level
@@ -44,6 +47,7 @@ from pydantic import BaseModel
 from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
 from app.routers._meta_common import (
     get_account_adapter,
+    get_ig_insights_adapter,
     handle_meta_graph_error,
     resolve_primary_ig_user_id,
 )
@@ -142,7 +146,7 @@ def ig_account_to_out(account: Any) -> IGAccountOut:
 def get_ig_account_insights(
     period: str = Query(default="day"),
     days: int = Query(default=30, ge=0, le=365),
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    adapter: MetaAdapter = Depends(get_ig_insights_adapter),
 ) -> Any:
     """Account-level insight metrics for the last ``days`` days.
 
@@ -177,7 +181,7 @@ def get_ig_account_insights(
 def list_ig_media(
     limit: int = Query(default=25, ge=1, le=100),
     with_insights: bool = Query(default=True),
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    adapter: MetaAdapter = Depends(get_ig_insights_adapter),
 ) -> Any:
     """Recent Instagram media for this account. When ``with_insights``,
     each item's per-media insight metrics are fetched individually — a
@@ -227,7 +231,7 @@ def list_ig_media(
 @router.get("/api/meta/instagram/snapshots", response_model=IGSnapshotsResponse)
 def list_ig_snapshots(
     days: int = Query(default=90, ge=1, le=3650),
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    adapter: MetaAdapter = Depends(get_ig_insights_adapter),
     auth: tuple = Depends(get_current_user_org),
 ) -> Any:
     """Metric-snapshot history for this account, ascending by
@@ -271,7 +275,7 @@ def list_ig_snapshots(
 # ─── POST /instagram/snapshot ────────────────────────────────────────────
 @router.post("/api/meta/instagram/snapshot", response_model=IGSnapshotOut)
 def create_ig_snapshot(
-    adapter: MetaAdapter = Depends(get_account_adapter),
+    adapter: MetaAdapter = Depends(get_ig_insights_adapter),
     auth: tuple = Depends(get_current_user_org),
 ) -> Any:
     """Capture this account's current numbers now and persist a row.

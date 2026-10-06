@@ -223,9 +223,11 @@ def _clear_dependency_overrides():
 
 def _override_adapter(adapter: FakeMetaAdapter) -> FakeMetaAdapter:
     from app.main import app
-    from app.routers._meta_common import get_account_adapter
+    from app.routers._meta_common import get_account_adapter, get_ig_insights_adapter
 
     app.dependency_overrides[get_account_adapter] = lambda: adapter
+    # The /instagram/* endpoints resolve through the provider-aware sibling.
+    app.dependency_overrides[get_ig_insights_adapter] = lambda: adapter
     return adapter
 
 

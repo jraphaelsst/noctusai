@@ -184,7 +184,7 @@ class TestSnapshotEndpointsAuthBoundary:
         from noctusai_lib.integrations.meta import FakeMetaAdapter, InstagramAccount
 
         from app.main import app
-        from app.routers._meta_common import get_account_adapter
+        from app.routers._meta_common import get_ig_insights_adapter
 
         adapter = FakeMetaAdapter()
         adapter.seed(
@@ -192,7 +192,9 @@ class TestSnapshotEndpointsAuthBoundary:
                 InstagramAccount(id="ig-user-1", username="boundary_test")
             ]
         )
-        app.dependency_overrides[get_account_adapter] = lambda: adapter
+        # /api/meta/instagram/* resolve through the provider-aware seam
+        # (accepts provider="meta" and provider="instagram" rows).
+        app.dependency_overrides[get_ig_insights_adapter] = lambda: adapter
 
     def test_no_session_returns_strict_401(self, client):
         self._override_adapter()

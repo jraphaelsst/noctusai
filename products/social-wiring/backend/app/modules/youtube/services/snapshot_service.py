@@ -31,6 +31,7 @@ from app.services.integration_account_service import (
     IntegrationAccountService,
     build_integration_account_service,
 )
+from app.services.snapshot_runs import claim_snapshot_run, mark_snapshot_run
 
 logger = logging.getLogger(__name__)
 
@@ -340,55 +341,17 @@ class SnapshotService:
     def _claim_run(
         self, *, account_id: UUID, snapshot_date: date, force: bool
     ) -> bool:
-        """Try to claim the snapshot_runs row. Returns True = proceed, False = skip.
-
-        Uses upsert ON CONFLICT to atomically insert-or-check. If an existing
-        'done' row is found and force=False, returns False (caller skips).
-        """
-        # Check for existing done row first.
-        resp = (
-            self._admin
-            .schema(_SCHEMA)
-            .table("snapshot_runs")
-            .select("status")
-            .eq("account_id", str(account_id))
-            .eq("snapshot_date", snapshot_date.isoformat())
-            .limit(1)
-            .execute()
+        """Claim the day's ``snapshot_runs`` row (shared guard — see
+        ``app.services.snapshot_runs``). True = proceed, False = skip."""
+        return claim_snapshot_run(
+            self._admin, account_id=account_id, snapshot_date=snapshot_date, force=force
         )
-        rows = resp.data or []
-        if rows and rows[0].get("status") == "done" and not force:
-            return False
-
-        # Upsert 'running' (inserts fresh or resets an existing 'error' row).
-        (
-            self._admin
-            .schema(_SCHEMA)
-            .table("snapshot_runs")
-            .upsert(
-                {
-                    "account_id": str(account_id),
-                    "snapshot_date": snapshot_date.isoformat(),
-                    "status": "running",
-                    "started_at": datetime.now(timezone.utc).isoformat(),
-                },
-                on_conflict="account_id,snapshot_date",
-            )
-            .execute()
-        )
-        return True
 
     def _mark_run(
         self, *, account_id: UUID, snapshot_date: date, status: str
     ) -> None:
-        (
-            self._admin
-            .schema(_SCHEMA)
-            .table("snapshot_runs")
-            .update({"status": status})
-            .eq("account_id", str(account_id))
-            .eq("snapshot_date", snapshot_date.isoformat())
-            .execute()
+        mark_snapshot_run(
+            self._admin, account_id=account_id, snapshot_date=snapshot_date, status=status
         )
 
     # ─── Backfill helpers ────────────────────────────────────────────────

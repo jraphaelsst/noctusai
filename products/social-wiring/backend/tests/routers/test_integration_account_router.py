@@ -1442,6 +1442,9 @@ class TestInstagramOAuthStart:
         for scope in (
             "instagram_business_basic",
             "instagram_business_manage_messages",
+            # Owner decision 2026-10-06: insights + publishing ride IG Business Login.
+            "instagram_business_manage_insights",
+            "instagram_business_content_publish",
         ):
             assert scope in body["auth_url"], scope
         assert _ORG_A in body["state"]
@@ -1572,6 +1575,8 @@ class TestInstagramOAuthCallback:
         assert acct.metadata.get("channel_id") == "IGUSER1"
         assert acct.account_label == "test_ig_user"
         assert acct.metadata.get("model") == "instagram_login"
+        # The scopes Instagram actually granted (exchange `permissions`).
+        assert acct.metadata.get("granted_scopes") == ["p1", "p2"]
 
     def test_callback_reconnect_same_channel_is_idempotent(self, client, ia_service):
         from app.main import app

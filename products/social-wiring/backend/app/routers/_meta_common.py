@@ -61,6 +61,7 @@ from app.services.meta import (
     MetaAdapter,
     MetaGraphError,
     MetaOAuthAdapter,
+    get_ig_insights_adapter_for_account,
     get_meta_adapter_for_account,
 )
 
@@ -68,6 +69,7 @@ __all__ = [
     "build_store",
     "adapter_label",
     "get_account_adapter",
+    "get_ig_insights_adapter",
     "resolve_primary_ig_account",
     "resolve_primary_ig_user_id",
     "resolve_primary_ig_page_id",
@@ -136,6 +138,39 @@ def get_account_adapter(
             detail=str(exc),
         ) from exc
     except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+
+
+def get_ig_insights_adapter(
+    account_id: str = Query(..., description="integration_accounts row id (meta or instagram)"),
+    auth: tuple = Depends(get_current_user_org),
+) -> MetaAdapter:
+    """FastAPI dependency for the Instagram-INSIGHTS endpoints of
+    ``meta_insights_router`` — the sibling of :func:`get_account_adapter`
+    that ALSO accepts ``provider="instagram"`` (Instagram Business Login)
+    rows, served through ``InstagramLoginInsightsBridge`` (owner decision
+    2026-10-06: Instagram authenticates via Instagram Business Login).
+    ``get_account_adapter`` stays Facebook-Login-only for the Page-bound
+    routers (context / content / comments / Facebook insights).
+
+    Same auth boundary + failure mapping as its sibling: org from the
+    session; malformed id → 400; absent for this org / unsupported
+    provider → 404. Tests override this dependency directly."""
+    _, _token, raw_org = auth
+    resolved_org = coerce_org_uuid(raw_org)
+    try:
+        account_uuid = UUID(account_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="invalid account_id",
+        ) from exc
+    try:
+        return get_ig_insights_adapter_for_account(account_uuid, resolved_org)
+    except (IntegrationAccountNotFound, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=str(exc),
