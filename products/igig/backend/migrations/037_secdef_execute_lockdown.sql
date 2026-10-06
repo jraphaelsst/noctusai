@@ -20,7 +20,7 @@ DO $secdef$
 DECLARE
   r record;
   -- Extra always-keep helpers (also kept automatically when a policy uses them).
-  v_keep text[] := ARRAY[];
+  v_keep text[] := ARRAY[]::text[];
 BEGIN
   FOR r IN
     SELECT n.nspname, p.proname, p.oid,

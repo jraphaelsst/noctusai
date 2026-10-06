@@ -34,6 +34,14 @@ def test_revokes_secdef_from_callers_and_grants_service_role(product: str) -> No
 
 
 @pytest.mark.parametrize("product", sorted(MIGRATIONS))
+def test_no_untyped_empty_array_literal(product: str) -> None:
+    # Postgres cannot type a bare `ARRAY[]` (42P18) — it failed 4 of these
+    # migrations against prod on 2026-10-06 while every structural test passed.
+    import re
+    assert not re.search(r"ARRAY\[\](?!::)", _sql(product))
+
+
+@pytest.mark.parametrize("product", sorted(MIGRATIONS))
 def test_rls_helpers_kept_by_derivation(product: str) -> None:
     sql = _sql(product)
     assert "'pg_policy'::regclass" in sql and "'pg_attrdef'::regclass" in sql
