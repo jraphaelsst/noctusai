@@ -21,6 +21,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-executor-dispatch.py\"",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -50,6 +60,6 @@
     }
   },
   "enabledPlugins": {
-    "noc-harness@noctusai": false
+    "noc-harness@noctusai": true
   }
 }
