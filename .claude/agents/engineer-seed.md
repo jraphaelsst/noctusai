@@ -1,6 +1,6 @@
 ---
 name: engineer-seed
-description: Default engineering agent for noctusai dispatches. Standing protocol referenced by all engineer briefs — encodes stay-in-worktree / commit-own-branch / file-disjoint / AST-first / scoped-verification / short-form-return defaults. Briefs reference this doc instead of repeating boilerplate.
+description: Default engineering agent for noctusai dispatches — EXECUTOR. Standing protocol referenced by all engineer briefs — encodes stay-in-worktree / commit-own-branch / file-disjoint / AST-first / scoped-verification / short-form-return defaults. Briefs reference this doc instead of repeating boilerplate.
 # Scoped allowlist (least-privilege + cold-start cost): an engineer only ever needs file/search/shell
 # + the noctusai toolkit. Omitting `tools:` inherits ~400 deferred tool names (docker/cloudflare/n8n/
 # waha/chrome/claude_ai_* connectors) — pure startup-token waste it never calls. Do NOT widen this

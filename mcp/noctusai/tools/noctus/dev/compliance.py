@@ -18993,43 +18993,14 @@ def check_files_outlined(
 # findings because the fix (9d6bf79c) already tightened those assertions.
 
 
-# Codes that, when disjoined with 401 in an auth-boundary assertion, form a
-# false-green escape hatch — each can fire on an UNauthenticated request
-# without the auth dependency running, so the test passes even if auth was
-# removed:
-#   404 — route absent (e.g. standard_routers omitted the router)
-#   422 — request-body validation fires before/independent of the auth dep
-# 403 is deliberately EXCLUDED: it is a second legitimate auth outcome
-# (authenticated-but-forbidden), not a wiring/validation mask.
-_AUTH_FALSE_GREEN_MASKABLE = frozenset({404, 422})
-
-
-def _is_false_green_compare(node: ast.Compare) -> int | None:
-    """Return the offending maskable code if `node` is a `<expr> in <collection>`
-    disjunction that pairs 401 with a false-green mask (404 or 422); else None.
-
-    The returned code lets the caller name the specific escape hatch in the
-    finding message instead of hard-coding '404'.
-    """
-    if len(node.ops) != 1 or not isinstance(node.ops[0], ast.In):
-        return None
-    comparator = node.comparators[0]
-    # Accepted collection forms: Tuple, Set, List of constants.
-    if not isinstance(comparator, (ast.Tuple, ast.Set, ast.List)):
-        return None
-    constants = set()
-    for elt in comparator.elts:
-        if isinstance(elt, ast.Constant) and isinstance(elt.value, int):
-            constants.add(elt.value)
-    if 401 not in constants:
-        return None
-    masks = constants & _AUTH_FALSE_GREEN_MASKABLE
-    # Prefer 404 in the message when both appear (clearest exemplar).
-    if 404 in masks:
-        return 404
-    if 422 in masks:
-        return 422
-    return None
+# The predicate (maskable codes + `_is_false_green_compare`) lives in a
+# stdlib-only leaf shared with the PreToolUse write-time guard
+# (`test_seam_guard`) — one definition, two enforcement points.
+from tools.noctus.dev.auth_false_green_predicate import (  # noqa: E402
+    _AUTH_FALSE_GREEN_MASKABLE,
+    _is_false_green_compare,
+    iter_false_green_compares,
+)
 
 
 def check_auth_boundary_false_green(
@@ -19105,12 +19076,7 @@ def check_auth_boundary_false_green(
                     "severity": "warning",
                 })
                 continue
-            for node in ast.walk(tree):
-                if not isinstance(node, ast.Compare):
-                    continue
-                mask = _is_false_green_compare(node)
-                if mask is None:
-                    continue
+            for node, mask in iter_false_green_compares(tree):
                 # Build a compact snippet for the finding message.
                 try:
                     snippet = ast.unparse(node)

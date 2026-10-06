@@ -9,17 +9,19 @@ It is a SECOND hook entry rather than a branch inside the existing guard so
 that branch-isolation and test-seam enforcement stay independently readable
 and independently testable — a failure in one must not disable the other.
 
-Fails OPEN, deliberately: every Edit/Write/Bash call in the repo passes
-through here, so a guard that raises must not become a guard that blocks all
-work. The commit-time `check_no_self_monkeypatch` keeper remains the backstop
-for anything that leaks past.
+Fails CLOSED (crash / 8 s deadline / bad stdin => deny with the
+`[noc-guard:test-seams]` marker) via the shared `_guard_failclosed.run_guard`:
+Claude Code lets a crashed hook's tool call run, so failing open silently
+stops guarding. Also denies the auth-boundary false-green shape at write time.
 """
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard_failclosed import run_guard  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GUARD = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "test_seam_guard.py"
@@ -36,37 +38,17 @@ def _load_guard():
     return module
 
 
+def _judge(payload: dict) -> dict | None:
+    guard = _load_guard()
+    return guard.decide(
+        payload.get("tool_name", ""),
+        payload.get("tool_input") or {},
+        payload.get("cwd"),
+    )
+
+
 def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
-
-    try:
-        guard = _load_guard()
-        verdict = guard.decide(
-            payload.get("tool_name", ""),
-            payload.get("tool_input") or {},
-            payload.get("cwd"),
-        )
-    except Exception as exc:  # fail open — see the module docstring
-        print(
-            f"claude-guard-test-seams: guard unavailable ({exc}) — not blocking",
-            file=sys.stderr,
-        )
-        return 0
-
-    if verdict is None:
-        return 0
-
-    json.dump({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": verdict["reason"],
-        }
-    }, sys.stdout)
-    return 0
+    return run_guard("test-seams", _judge)
 
 
 if __name__ == "__main__":

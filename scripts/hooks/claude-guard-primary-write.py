@@ -30,18 +30,20 @@ Two deliberate properties:
   toolkit; this hook runs before EVERY Bash/Edit/Write call, so its import cost
   is paid hundreds of times per session. By-path import of a stdlib-only module
   keeps that in the low milliseconds.
-* **It fails OPEN, loudly.** If the guard cannot be loaded or throws, the tool
-  call proceeds and the reason goes to stderr. A gate that hard-fails every tool
-  call when its own probe breaks is a gate that gets uninstalled by lunchtime;
-  `check_primary_checkout_commit` is still downstream of it.
+* **It fails CLOSED.** If the guard cannot be loaded, throws, or exceeds its
+  internal 8 s deadline, the call is DENIED (`[noc-guard:primary-write] ...`) —
+  Claude Code treats a crashed/timed-out hook as non-blocking, so failing open
+  silently stops guarding. Shared runner: `_guard_failclosed.run_guard`.
 """
 from __future__ import annotations
 
 import importlib.util
-import json
 import os
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard_failclosed import run_guard  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GUARD = REPO_ROOT / "mcp" / "noctusai" / "tools" / "noctus" / "dev" / "primary_write_guard.py"
@@ -59,51 +61,33 @@ def _load_guard():
     return module
 
 
-def main() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
-
+def _judge(payload: dict) -> dict | None:
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
-    try:
-        guard = _load_guard()
-        # Hooks-bypass and hook-integrity are checked FIRST: both are
-        # universal, branch- and location-independent concerns (see each
-        # function's own docstring), so a command that is also a
-        # primary-checkout write gets the more specific reason.
-        cwd = payload.get("cwd") or os.getcwd()
-        verdict = guard.decide_git_bypass(tool_name, tool_input)
-        if verdict is None:
-            verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
-        if verdict is None:
-            verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)
-        ctx = None
-        if verdict is None:
-            ctx = guard.discover_context(cwd)
-            verdict = guard.decide(tool_name, tool_input, cwd, ctx=ctx)
-        if verdict is None and tool_name == "Bash" and ctx is not None and ctx.guarded:
-            # The measurement net's baseline — see the module docstring's
-            # "Also the measurement net's OTHER half" note. Best-effort by
-            # construction (`capture_pretool_baseline` never raises); nothing
-            # here can turn an ALLOW back into a refusal.
-            guard.capture_pretool_baseline(ctx)
-    except Exception as exc:  # fail open — see the module docstring
-        print(f"claude-guard-primary-write: guard unavailable ({exc}) — not blocking", file=sys.stderr)
-        return 0
-
+    guard = _load_guard()
+    # Hooks-bypass and hook-integrity are checked FIRST: both are universal,
+    # branch- and location-independent concerns (see each function's own
+    # docstring), so a command that is also a primary-checkout write gets the
+    # more specific reason.
+    cwd = payload.get("cwd") or os.getcwd()
+    verdict = guard.decide_git_bypass(tool_name, tool_input)
     if verdict is None:
-        return 0
+        verdict = guard.decide_hook_integrity(tool_name, tool_input, cwd)
+    if verdict is None:
+        verdict = guard.decide_wired_worktree_npm(tool_name, tool_input, cwd)
+    ctx = None
+    if verdict is None:
+        ctx = guard.discover_context(cwd)
+        verdict = guard.decide(tool_name, tool_input, cwd, ctx=ctx)
+    if verdict is None and tool_name == "Bash" and ctx is not None and ctx.guarded:
+        # The measurement net's baseline — see the module docstring. Best-effort
+        # by construction; nothing here can turn an ALLOW into a refusal.
+        guard.capture_pretool_baseline(ctx)
+    return verdict
 
-    json.dump({
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": verdict["reason"],
-        }
-    }, sys.stdout)
-    return 0
+
+def main() -> int:
+    return run_guard("primary-write", _judge)
 
 
 if __name__ == "__main__":

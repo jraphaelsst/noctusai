@@ -69,8 +69,13 @@ DELIBERATE LIMITS (stated, not hidden)
 * The Bash leg handles ONE heredoc per opening line (`cmd > target <<TAG`).
   Two heredocs stacked on the same line are not resolved; the commit-time
   keeper is the backstop.
-* Fails OPEN on any internal error. A guard that crashes must never become a
-  guard that blocks all work — the keeper still catches what leaks through.
+* Fails CLOSED at the SCRIPT level: `scripts/hooks/claude-guard-test-seams.py`
+  runs this through `_guard_failclosed.run_guard`, so a crash / 8 s deadline /
+  bad stdin DENIES (`[noc-guard:test-seams]`) — Claude Code lets a crashed hook's
+  call run, so failing open silently stops guarding.
+* ALSO denies the auth-boundary false-green shape (`status_code in (401, 404|422)`)
+  in a test file at write time — same diff-scoped judgement, predicate shared
+  with `check_auth_boundary_false_green` via `auth_false_green_predicate`.
 * Honours the same `# self-patch-ok: <reason>` inline escape the keeper
   honours, so a genuinely legitimate patch is written once and accepted at
   both ends. `NOCTUS_ALLOW_SELF_PATCH=1` disables the write-time half
@@ -123,6 +128,11 @@ def _load_compliance():
     so this import cannot fail that way.
     """
     return _load_module("self_patch_predicate.py", "noc_self_patch_predicate")
+
+
+def _load_auth_false_green():
+    """Stdlib-only leaf shared with the `check_auth_boundary_false_green` keeper."""
+    return _load_module("auth_false_green_predicate.py", "noc_auth_false_green_predicate")
 
 
 def _load_primary_write_guard():
@@ -288,6 +298,51 @@ def find_self_patches(
     return found
 
 
+def find_auth_false_greens(
+    content: str,
+    path: str,
+    only_lines: set[str] | None = None,
+) -> list[str]:
+    """`<snippet> (line N)` for each `in (401, 404|422)` comparison in `content`,
+    via the KEEPER's predicate. Same diff-scoping contract as `find_self_patches`
+    (`only_lines=None` judges everything; unparseable content => [])."""
+    try:
+        tree = ast.parse(content, filename=path)
+    except SyntaxError:
+        return []
+    pred = _load_auth_false_green()
+    lines = content.splitlines()
+    found: list[str] = []
+    for node, _mask in pred.iter_false_green_compares(tree):
+        line_no = getattr(node, "lineno", 0) or 0
+        end_line_no = getattr(node, "end_lineno", line_no) or line_no
+        if only_lines is not None:
+            span = lines[max(line_no - 1, 0):max(end_line_no, line_no)]
+            if not any(text in only_lines for text in span):
+                continue
+        found.append(f"{ast.unparse(node)} (line {line_no})")
+    return found
+
+
+def _false_green_refusal(path: str, hits: list[str]) -> dict[str, Any]:
+    listed = "\n".join(f"    - {h}" for h in hits[:8])
+    return {
+        "reason": (
+            "REFUSED — auth-boundary false-green (CLAUDE.md §1: assert strict "
+            "`== 401`, never `in (401, 404|422)`). The `404`/`422` branch passes "
+            "when the route is absent or body validation fires first, so the "
+            "test stays green even if auth was removed.\n\n"
+            f"In {path}:\n{listed}\n\n"
+            "Fix: assert `== 401` against a path the product actually serves, "
+            "sending a VALID body so the auth dependency is what fires. "
+            "KB § PATTERNS/compliance/auth-boundary-false-green.md. "
+            "`check_auth_boundary_false_green` is the commit-time backstop."
+        ),
+        "targets": hits,
+        "path": path,
+    }
+
+
 def _bash_test_file_writes(command: str, pwg: Any) -> list[tuple[str, str]]:
     """(target_path, heredoc_body) for every heredoc in `command` that writes
     at a path `is_test_file()` recognises — the bypass that reaches a test
@@ -332,6 +387,9 @@ def _decide_bash(command: str) -> dict[str, Any] | None:
         targets = find_self_patches(body, target_path)
         if targets:
             return _refusal(target_path, targets)
+        hits = find_auth_false_greens(body, target_path)
+        if hits:
+            return _false_green_refusal(target_path, hits)
     return None
 
 
@@ -407,7 +465,9 @@ def decide(
 
     only_lines = _added_lines(old_content, new_content) if old_content is not None else None
     targets = find_self_patches(new_content, path, only_lines=only_lines)
-    if not targets:
-        return None
-
-    return _refusal(path, targets)
+    if targets:
+        return _refusal(path, targets)
+    hits = find_auth_false_greens(new_content, path, only_lines=only_lines)
+    if hits:
+        return _false_green_refusal(path, hits)
+    return None

@@ -94,6 +94,17 @@ Replace the disjunction with a strict `== 401`:
 
 CLI: `python mcp/noctusai/cli.py --check-auth-boundary-false-green`
 
+### Write-time half (2026-10-06)
+
+The predicate lives in the stdlib-only leaf `auth_false_green_predicate.py`
+(`_is_false_green_compare`, `iter_false_green_compares`), re-imported by the
+keeper above AND by the PreToolUse guard `test_seam_guard.decide`
+(`claude-guard-test-seams.py`): an Edit/Write/MultiEdit — or a Bash heredoc into
+a test path — that ADDS an `in (401, 404|422)` comparison to a test file is
+denied (`[noc-guard:test-seams]`) before it lands. Diff-scoped like the
+self-patch leg: a pre-existing occurrence never blocks an unrelated edit. One
+predicate, two enforcement points — never a second regex copy.
+
 ### Current fleet state (2026-05-29)
 
 - `dev-team` — **clean** (fixed in `9d6bf79c`).

@@ -535,6 +535,33 @@ work be done in the wrong place; a gate placed at the *act* prevents it. When a
 gate fires but the same class of incident keeps costing rework, the gate is at
 the wrong point in the pipeline, not too weak.
 
+**The PreToolUse guards fail CLOSED (2026-10-06).** Claude Code treats a command
+hook that crashes (non-zero exit other than 2) or exceeds its `timeout` as a
+non-blocking error and lets the tool call run, so "fail open, loudly" meant a
+crashed guard silently stopped guarding (the silent-error shape). Every
+PreToolUse guard script (`claude-guard-primary-write.py`,
+`claude-guard-test-seams.py`) now runs through the ONE shared runner
+`scripts/hooks/_guard_failclosed.py::run_guard`: unexpected exception, the
+internal 8 s deadline (below the 10 s settings timeout; `SIGALRM`, a
+`BaseException` so a guard's own `except Exception` cannot swallow it), or
+empty/malformed stdin all emit a `deny` and exit 0. Every deny reason starts
+with the machine-readable marker `[noc-guard:<name>]` (`primary-write`,
+`test-seams`) so a UI can attribute it. `NOCTUS_ALLOW_PRIMARY_WRITE` /
+`NOCTUS_ALLOW_SELF_PATCH` live inside the judges and are unchanged. A new
+PreToolUse guard script MUST use `run_guard`; tests in
+`mcp/noctusai/tests/test_guard_failclosed.py`.
+
+**Dispatch-time gate for executors.** `claude-guard-executor-dispatch.py`
+(matcher `Agent|Task`; logic `executor_dispatch_guard.py`) denies dispatching an
+EXECUTOR subagent unless `isolation == "worktree"` or the brief names an
+EXISTING `.claude/worktrees/<slug>` directory (absolute or repo-relative); deny
+reason `[noc-guard:executor-dispatch] ...` points at
+`noctus.dev.task_branch action=start`. The EXECUTOR set is derived from the
+`description` frontmatter of `.claude/agents/*.md` (the word `EXECUTOR`) — a new
+executor agent must carry it; never a hand-listed constant. Activation is a
+`.claude/settings.json` PreToolUse entry: `{"matcher": "Agent|Task", "hooks":
+[{"type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/hooks/claude-guard-executor-dispatch.py\"", "timeout": 10}]}`.
+
 ---
 
 ## §12 · The primary/origin divergence loop (2026-08-31) — six encounters, one unlifted fix
