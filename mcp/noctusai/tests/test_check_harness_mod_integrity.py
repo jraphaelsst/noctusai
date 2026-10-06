@@ -58,8 +58,12 @@ class TestCheckHarnessModIntegrity:
     def test_version_mismatch(self, tmp_path):
         assert "version" in _msgs(_tree(tmp_path, version="2.0.0"))
 
-    def test_not_enabled(self, tmp_path):
-        assert "enabledPlugins" in _msgs(_tree(tmp_path, enabled=False))
+    def test_undecided_enable_state_flagged(self, tmp_path):
+        assert "enabledPlugins" in _msgs(_tree(tmp_path, enabled=None))
+
+    def test_explicitly_disabled_is_a_decision(self, tmp_path):
+        # `false` is the rollback switch, not drift.
+        assert check_harness_mod_integrity(repo_root=_tree(tmp_path, enabled=False)) == []
 
     def test_mod_folder_not_listed(self, tmp_path):
         assert "not listed" in _msgs(_tree(tmp_path, extra_mod=True))
@@ -84,9 +88,16 @@ class TestCheckHarnessModIntegrity:
         assert "cli.py --harness" in _msgs(_tree(tmp_path, ts="await $.process.run(argv);"))
 
     def test_event_flag_allowed(self, tmp_path):
-        ts = 'await $.process.run([py, cliPath, "x"]); '
         ts = 'await $.process.run(["python3", "cli.py", "--harness-event", "{}"]);'
         assert check_harness_mod_integrity(repo_root=_tree(tmp_path, ts=ts)) == []
+
+    def test_root_interpolated_cli_path_allowed(self, tmp_path):
+        ts = 'await $.process.run(["python3", `${root}/mcp/noctusai/cli.py`, "--harness-status"], { cwd: root });'
+        assert check_harness_mod_integrity(repo_root=_tree(tmp_path, ts=ts)) == []
+
+    def test_interpolated_script_name_flagged(self, tmp_path):
+        ts = 'await $.process.run(["python3", `${root}/${script}`, "--harness-status"]);'
+        assert "cli.py --harness" in _msgs(_tree(tmp_path, ts=ts))
 
     def test_deny_outside_catch_flagged(self, tmp_path):
         ts = GOOD_TS + '\nexport const bad = () => ({ deny: "no" });'

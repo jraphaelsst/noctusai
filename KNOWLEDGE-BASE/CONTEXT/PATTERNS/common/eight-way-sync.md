@@ -26,6 +26,7 @@ These are **referenced** by the methodology surfaces but aren't themselves first
 - `scripts/hooks/pre-commit` — executable gate. Implements but doesn't define methodology.
 - `mcp/noctusai/tools/noctus/dev/compliance.py` — keeper code. The EXECUTABLE form of the rules. The pre-commit hook calls into it; the rules' canonical statement is in CLAUDE.md §1 + KB.
 - `mcp/noctusai/cli.py` — CLI flags. Surface for the keeper executions, not the rules themselves.
+- `.claude/settings.json` hooks + `.claude/mods/*` (Claude Code mods) — harness fabric. Mods RENDER the methodology (status line, band, pane) over `cli.py --harness-*`; they never define or enforce it. Gated by `check_harness_mod_integrity`. → `KB § PATTERNS/common/harness-mods.md`
 
 These are gated by their own contracts (pre-commit hook itself runs each cli flag → any mismatch fails LOUD). They don't need to be members of the 8-way sync because they don't carry methodology PROSE that can independently drift.
 

@@ -202,3 +202,8 @@ mcp/telegram/.session/
 mcp/telegram/.exports/
 *.session
 *.session-journal
+
+# Claude Code lays build-specific type declarations (and a tsconfig) beside a
+# loaded mod at every load — derived, never committed. KB § PATTERNS/common/harness-mods.md
+.claude/mods/*/.claude-plugin/types/
+.claude/mods/*/tsconfig.json

@@ -1,0 +1,12 @@
+{
+  "name": "noctusai",
+  "owner": { "name": "NoctusAI" },
+  "plugins": [
+    {
+      "name": "noc-harness",
+      "source": "./.claude/mods/noc-harness",
+      "description": "NoctusAI harness UX over the canonical Python gates (KB § PATTERNS/common/harness-mods.md).",
+      "version": "0.1.0"
+    }
+  ]
+}

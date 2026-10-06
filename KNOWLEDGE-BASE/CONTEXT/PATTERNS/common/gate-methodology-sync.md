@@ -66,3 +66,5 @@ When a rule/standard is worth enforcing:
 6. Prove the loop: gate fires on the pre-fix state → mechanism+backfill → gate passes.
 
 Composes with [[drift-fix-on-contact]] · [[methodology-execution-discipline]] · `KB § PATTERNS/common/bypass-rationalization-anti-patterns.md` · `KB § PATTERNS/common/eight-way-sync.md` · `KB § PATTERNS/architect/branch-tree-tracking.md`.
+
+**Visibility layer (2026-10-06).** A gate's refusals are made visible — toast, pane, friction ledger — by the harness mod, which observes the `[noc-guard:<name>]` marker and never decides. A gate must never move INTO a mod: a mod can be toggled off per user. → `KB § PATTERNS/common/harness-mods.md`

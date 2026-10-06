@@ -40,5 +40,16 @@
         ]
       }
     ]
+  },
+  "extraKnownMarketplaces": {
+    "noctusai": {
+      "source": {
+        "source": "directory",
+        "path": "./"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "noc-harness@noctusai": false
   }
 }

@@ -1,0 +1,61 @@
+{
+  "name": "noc-harness",
+  "version": "0.1.0",
+  "description": "NoctusAI harness UX: status line, reminders band, orchestration pane, friction ledger, memory routing, compaction capture, wrap-up nudge. A UX + reliability layer over the canonical Python gates — never a gate itself.",
+  "author": {
+    "name": "NoctusAI"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "status_line": {
+      "type": "boolean",
+      "title": "Status line",
+      "description": "Branch/tree, dev divergence, caches and open s1/s2 under the prompt.",
+      "default": true
+    },
+    "reminders_band": {
+      "type": "boolean",
+      "title": "Reminders band",
+      "description": "Owner reminders + wrap-up nudge above the prompt.",
+      "default": true
+    },
+    "orchestration_pane": {
+      "type": "boolean",
+      "title": "Orchestration pane",
+      "description": "/noc-pane: worktrees, branch pointers, dispatcher pending.",
+      "default": true
+    },
+    "friction_ledger": {
+      "type": "boolean",
+      "title": "Friction ledger",
+      "description": "Toast + record refused tool calls as auto-improvement s1 events.",
+      "default": true
+    },
+    "memory_routing": {
+      "type": "boolean",
+      "title": "Memory topic routing",
+      "description": "Attach a pointer to the matching MEMORY-<topic>.md on each prompt.",
+      "default": true
+    },
+    "compaction_capture": {
+      "type": "boolean",
+      "title": "Compaction capture",
+      "description": "Keep learnings through /compact and record them as s1 events.",
+      "default": true
+    },
+    "wrapup_nudge": {
+      "type": "boolean",
+      "title": "Wrap-up nudge",
+      "description": "After a turn that committed, offer the noc-wrap-up check.",
+      "default": true
+    },
+    "full_refresh_seconds": {
+      "type": "number",
+      "title": "Full refresh (s)",
+      "description": "How often the pane/status full snapshot refreshes.",
+      "default": 60,
+      "min": 15,
+      "max": 3600
+    }
+  }
+}

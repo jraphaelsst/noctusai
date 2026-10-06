@@ -46,7 +46,11 @@ def _reexec_under_venv() -> None:
     if os.environ.get("_NOCTUS_CLI_REEXEC") == "1":
         return  # already re-execed once — don't loop; let the real error show
     try:
-        import pydantic  # noqa: F401 — canonical "real env is active" probe
+        # Probe BOTH deps the docstring names: a host python can carry pydantic
+        # but never `noctusai_lib` (homebrew python3 does — the noc-harness mod
+        # hit it 2026-10-06), and a pydantic-only probe then skips the re-exec.
+        import pydantic  # noqa: F401
+        import noctusai_lib  # noqa: F401
         return
     except ImportError:
         pass

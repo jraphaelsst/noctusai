@@ -6068,6 +6068,10 @@ def _harness_spawn_is_canonical(arglist: str) -> bool:
     elems = _harness_split_top(inner)
     for idx, tok in enumerate(elems[:-1]):
         script = _harness_literal(tok)
+        if script is None and len(tok) >= 2 and tok[0] == tok[-1] == "`":
+            # `${root}/mcp/noctusai/cli.py`: only the root is interpolated —
+            # the script path after the last substitution is still literal.
+            script = tok[1:-1].rsplit("}", 1)[-1]
         flag = _harness_literal(elems[idx + 1])
         if (
             script is not None and flag is not None
@@ -6139,9 +6143,12 @@ def check_harness_mod_integrity(repo_root: Path | None = None) -> list[dict]:
                 if pj.get("version") != entry.get("version"):
                     _issue(str(pj_path.relative_to(root)),
                            f"plugin.json version `{pj.get('version')}` != marketplace version `{entry.get('version')}` for `{name}`.")
-            if not enabled.get(f"{name}@{mkt}"):
+            # `false` is a decision (the rollback switch: KB § PATTERNS/common/
+            # harness-mods.md §Rollback); only an absent/non-bool entry is drift.
+            if not isinstance(enabled.get(f"{name}@{mkt}"), bool):
                 _issue(".claude/settings.json",
-                       f"`enabledPlugins[\"{name}@{mkt}\"]` is not true — the mod is published but never loaded.")
+                       f"`enabledPlugins[\"{name}@{mkt}\"]` is not declared true/false — the mod is published but "
+                       f"its on/off state is undecided.")
         for d in mod_dirs:
             if d.resolve() not in listed_sources:
                 _issue(".claude-plugin/marketplace.json",
