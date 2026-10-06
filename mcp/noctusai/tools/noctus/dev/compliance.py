@@ -5938,6 +5938,265 @@ def check_override_is_range(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+# ---------------------------------------------------------------------------
+# `check_harness_mod_integrity` — a Claude Code "mod" (`.claude/mods/<name>/`,
+# a function-hook plugin) is a UX + reliability layer OVER the canonical
+# Python gates, never a gate itself (architect ruling, 2026-10). Four legs:
+#   (a) consistency — marketplace.json ↔ plugin.json ↔ settings.json, and every
+#       mods/* folder is listed (derived from disk, never hand-listed);
+#   (b) no re-implementation — a mod's only `$.process.run/spawn` may be
+#       `cli.py --harness-*`, and it never emits a `deny:` decision except in a
+#       `.catch(` handler (its OWN hook failing closed);
+#   (c) ≥1 `*.test.ts` per mod; (d) userConfig kill-switches cover UX only —
+#       no key/title naming a guard/gate/keeper/hook.
+# Zero mods + no marketplace = vacuously clean.
+# ---------------------------------------------------------------------------
+_HARNESS_GATE_WORDS_RE = re.compile(r"guard|gate|keeper|hook", re.IGNORECASE)
+_HARNESS_SPAWN_RE = re.compile(r"\$\.process\.(?:run|spawn)\s*\(")
+_HARNESS_DENY_RE = re.compile(r"\bdeny\s*:")
+
+
+def _harness_blank_comments(text: str) -> str:
+    """Replace `//` and `/* */` comments with spaces (offsets preserved).
+    String-literal aware so `"http://x"` survives."""
+    out: list[str] = []
+    i, n = 0, len(text)
+    quote = ""
+    while i < n:
+        c = text[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+            i += 1
+        elif c in "\"'`":
+            quote = c
+            out.append(c)
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("".join(ch if ch == "\n" else " " for ch in text[i:j]))
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def _harness_balanced(text: str, open_idx: int) -> int:
+    """Index just past the bracket matching `text[open_idx]` (string-aware);
+    `len(text)` when unbalanced."""
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    stack: list[str] = []
+    quote = ""
+    i, n = open_idx, len(text)
+    while i < n:
+        c = text[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif c in pairs:
+            stack.append(pairs[c])
+        elif stack and c == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i + 1
+        i += 1
+    return n
+
+
+def _harness_split_top(body: str) -> list[str]:
+    """Split on top-level commas (string/bracket aware)."""
+    parts: list[str] = []
+    depth, quote, start, i = 0, "", 0, 0
+    while i < len(body):
+        c = body[i]
+        if quote:
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = ""
+        elif c in "\"'`":
+            quote = c
+        elif c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif c == "," and depth == 0:
+            parts.append(body[start:i].strip())
+            start = i + 1
+        i += 1
+    tail = body[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+def _harness_literal(tok: str) -> str | None:
+    """The string value of a plain quoted literal, else None."""
+    if len(tok) >= 2 and tok[0] == tok[-1] and tok[0] in "\"'" :
+        return tok[1:-1]
+    if len(tok) >= 2 and tok[0] == tok[-1] == "`" and "${" not in tok:
+        return tok[1:-1]
+    return None
+
+
+def _harness_spawn_is_canonical(arglist: str) -> bool:
+    """First arg must be a literal array holding `"…cli.py"` immediately
+    followed by a `"--harness-…"` literal (the python executable may be any
+    expression)."""
+    args = _harness_split_top(arglist)
+    if not args or not args[0].startswith("["):
+        return False
+    inner = args[0][1:-1] if args[0].endswith("]") else args[0][1:]
+    elems = _harness_split_top(inner)
+    for idx, tok in enumerate(elems[:-1]):
+        script = _harness_literal(tok)
+        flag = _harness_literal(elems[idx + 1])
+        if (
+            script is not None and flag is not None
+            and script.rsplit("/", 1)[-1] == "cli.py"
+            and flag.startswith("--harness-")
+        ):
+            return True
+    return False
+
+
+def check_harness_mod_integrity(repo_root: Path | None = None) -> list[dict]:
+    """A Claude Code mod is a UX layer over the Python gates, never a gate.
+
+    See the block comment above for the four legs (consistency, no
+    re-implementation, tests exist, kill-switches cover UX only).
+    """
+    import json as _json
+
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+
+    def _issue(file: str, msg: str) -> None:
+        issues.append({"product": "<harness>", "file": file, "issue": msg, "severity": "high"})
+
+    mods_dir = root / ".claude" / "mods"
+    mod_dirs = sorted(p for p in mods_dir.iterdir() if p.is_dir()) if mods_dir.is_dir() else []
+    market_path = root / ".claude-plugin" / "marketplace.json"
+    if not mod_dirs and not market_path.is_file():
+        return issues  # vacuous
+
+    def _load(path: Path) -> dict | None:
+        try:
+            data = _json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            _issue(str(path.relative_to(root)), f"`{path.relative_to(root)}` is missing or not valid JSON ({exc}).")
+            return None
+        return data if isinstance(data, dict) else None
+
+    # ── (a) consistency ────────────────────────────────────────────────
+    settings = _load(root / ".claude" / "settings.json") if (root / ".claude" / "settings.json").is_file() else {}
+    settings = settings or {}
+    market = _load(market_path) if market_path.is_file() else None
+    listed_sources: set[Path] = set()
+    if market is None:
+        if mod_dirs and not market_path.is_file():
+            _issue(".claude-plugin/marketplace.json",
+                   "`.claude/mods/` holds mod(s) but `.claude-plugin/marketplace.json` does not exist — "
+                   "the mods are not installable.")
+    else:
+        mkt = market.get("name", "")
+        known = (settings.get("extraKnownMarketplaces") or {})
+        enabled = (settings.get("enabledPlugins") or {})
+        if mkt not in known:
+            _issue(".claude/settings.json",
+                   f"`extraKnownMarketplaces` has no `{mkt}` entry — Claude Code cannot resolve the marketplace.")
+        for entry in market.get("plugins") or []:
+            name = entry.get("name", "")
+            src = (root / str(entry.get("source", ""))).resolve()
+            listed_sources.add(src)
+            pj_path = src / ".claude-plugin" / "plugin.json"
+            if not pj_path.is_file():
+                _issue(".claude-plugin/marketplace.json",
+                       f"plugin `{name}` source `{entry.get('source')}` has no `.claude-plugin/plugin.json`.")
+            else:
+                pj = _load(pj_path) or {}
+                if pj.get("name") != name:
+                    _issue(str(pj_path.relative_to(root)),
+                           f"plugin.json name `{pj.get('name')}` != marketplace entry `{name}`.")
+                if pj.get("version") != entry.get("version"):
+                    _issue(str(pj_path.relative_to(root)),
+                           f"plugin.json version `{pj.get('version')}` != marketplace version `{entry.get('version')}` for `{name}`.")
+            if not enabled.get(f"{name}@{mkt}"):
+                _issue(".claude/settings.json",
+                       f"`enabledPlugins[\"{name}@{mkt}\"]` is not true — the mod is published but never loaded.")
+        for d in mod_dirs:
+            if d.resolve() not in listed_sources:
+                _issue(".claude-plugin/marketplace.json",
+                       f"`.claude/mods/{d.name}/` is not listed in marketplace.json (derived from disk, not hand-listed).")
+
+    for d in mod_dirs:
+        rel = f".claude/mods/{d.name}"
+        files = [p for p in d.rglob("*") if p.is_file() and "node_modules" not in p.parts]
+
+        # ── (c) tests exist ────────────────────────────────────────────
+        if not any(p.name.endswith(".test.ts") for p in files):
+            _issue(rel, f"`{rel}/` has no `*.test.ts` — a mod without tests is unproven UX over a gate.")
+
+        # ── (d) userConfig covers UX only ──────────────────────────────
+        pj_path = d / ".claude-plugin" / "plugin.json"
+        if pj_path.is_file():
+            try:
+                pj = _json.loads(pj_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pj = {}
+            uc = pj.get("userConfig") if isinstance(pj, dict) else None
+            for key, val in (uc.items() if isinstance(uc, dict) else []):
+                title = val.get("title", "") if isinstance(val, dict) else ""
+                if _HARNESS_GATE_WORDS_RE.search(key) or _HARNESS_GATE_WORDS_RE.search(str(title)):
+                    _issue(f"{rel}/.claude-plugin/plugin.json",
+                           f"userConfig `{key}` ({title!r}) names a gate/guard/keeper/hook — "
+                           f"kill switches may only cover UX, never a gate.")
+
+        # ── (b) no re-implementation ───────────────────────────────────
+        for p in sorted(files):
+            if p.suffix not in (".ts", ".tsx") or p.name.endswith(".test.ts"):
+                continue
+            prel = str(p.relative_to(root))
+            text = _harness_blank_comments(p.read_text(encoding="utf-8", errors="replace"))
+            for m in _HARNESS_SPAWN_RE.finditer(text):
+                end = _harness_balanced(text, m.end() - 1)
+                if not _harness_spawn_is_canonical(text[m.end():end - 1]):
+                    line = text.count("\n", 0, m.start()) + 1
+                    _issue(prel,
+                           f"`{prel}:{line}` spawns something other than `cli.py --harness-*`. A mod may only "
+                           f"call the canonical Python gates' harness surface, never re-implement or shell out.")
+            catch_spans = []
+            for m in re.finditer(r"\.catch\s*\(", text):
+                catch_spans.append((m.start(), _harness_balanced(text, m.end() - 1)))
+            for m in _HARNESS_DENY_RE.finditer(text):
+                if any(a <= m.start() < b for a, b in catch_spans):
+                    continue
+                line = text.count("\n", 0, m.start()) + 1
+                _issue(prel,
+                       f"`{prel}:{line}` emits a `deny:` decision outside a `.catch(` handler — a mod never "
+                       f"decides a gate (only its own hook may fail closed).")
+
+    return issues
+
+
 def check_product_lockfile_dep_sync(repo_root: Path | None = None) -> list[dict]:
     """A clean `npm ci` uses ONLY package-lock.json — never re-resolves from
     package.json. When a product's package.json declares a required dep
@@ -6808,6 +7067,8 @@ _GATED_PREFIXES: dict[str, str] = {
     "dev_team/tests/": "tooling-tests",
     "scripts/codemods/": "tooling-tests",
     "templates/product-seed/backend/tests/": "tooling-tests",
+    # NOC-REMEDIATE[harness-mod-ci]: mod *.test.ts (`claude plugin test`) have no CI job yet — 2026-10-06
+    ".claude/mods/": "harness-mod-tests (PENDING CI step; see check_harness_mod_integrity)",
 }
 
 #: `mcp/<connector>/tests/` is covered by `tooling-tests`, which derives the
@@ -14637,6 +14898,8 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    # Claude Code mod (.claude/mods) = UX layer over the Python gates, never a gate.
+    all_issues.extend(check_harness_mod_integrity())
     # symbol-first-stage-4-codification — Stage-3⇒4 codification of the
     # doc-symbology / symbol-first authoring methodology (warn-only).
     all_issues.extend(check_doc_symbology_drift())

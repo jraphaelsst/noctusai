@@ -714,6 +714,22 @@ if [[ -n "$STAGED_NPM_MANIFEST" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-bis-2. Harness-mod integrity gate (blocking, only when a Claude ──
+# Code mod / marketplace / settings.json is staged) ──────────────────────
+# Keeper `check_harness_mod_integrity`. A mod (`.claude/mods/*`) is a UX layer
+# over the canonical Python gates, never a gate: marketplace<->plugin.json<->
+# settings consistency, spawns only `cli.py --harness-*`, tests exist, and
+# kill-switch userConfig never names a gate.
+STAGED_HARNESS_MOD=$(git diff --cached --name-only 2>/dev/null | grep -E '^(\.claude/mods/|\.claude-plugin/|\.claude/settings\.json$)' || true)
+if [[ -n "$STAGED_HARNESS_MOD" ]] && have_py; then
+    echo "[pre-commit] harness mod / marketplace / settings staged — checking mod integrity..."
+    if ! "$PY" "$CLI" --check-harness-mod --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] HARNESS-MOD integrity check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Mods may only spawn cli.py --harness-*, never decide a gate; keep marketplace.json, plugin.json and .claude/settings.json in sync and ship a *.test.ts. Run: python mcp/noctusai/cli.py --check-harness-mod" >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-ter. Dependabot per-product coverage gate (blocking, only when ────
 # dependabot.yml OR a product frontend package.json changed) ─────────────
 # Keeper `check_dependabot_product_coverage` + `KB § PATTERNS/devops/product-

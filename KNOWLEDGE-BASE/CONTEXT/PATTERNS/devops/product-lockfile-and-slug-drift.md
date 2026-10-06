@@ -584,6 +584,16 @@ A root in a directory nobody listed is invisible to them by construction.
 the tracked set and subtracts the areas a workflow runs; whatever is left is a
 finding. That form cannot miss a new root, because it never enumerates roots.
 
+### Claude Code mods (`.claude/mods/`) — `check_harness_mod_integrity`
+
+Mod `*.test.ts` files (run by `claude plugin test`, not vitest) sit under the
+declared prefix `.claude/mods/` in `_GATED_PREFIXES`, marked **PENDING CI step**
+(`NOC-REMEDIATE[harness-mod-ci]`) — the open-world gate would otherwise flag them
+the moment a mod lands. `check_harness_mod_integrity` (`--check-harness-mod`,
+pre-commit leg 6e-bis-2) keeps a mod a UX layer over the Python gates: marketplace
+↔ plugin.json ↔ settings consistency, spawns only `cli.py --harness-*`, no `deny:`
+outside `.catch(`, ≥1 test, kill-switch `userConfig` never names a gate.
+
 ### 🔴 What it found in its first five seconds
 
 Two areas that three rounds of deliberate manual auditing had missed — and one
