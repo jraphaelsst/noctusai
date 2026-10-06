@@ -656,3 +656,9 @@ Trigger `on_license_change` fires when `public.product_licenses` changes. Auto-p
 See also:
 - `../../CONTEXT/backend/04-DATABASE.md` — per-schema table inventory
 - `backend.md` — repository pattern, N+1 discipline
+
+## SECURITY DEFINER EXECUTE lockdown (2026-10-06)
+
+PostgREST exposes every function in an exposed schema as `/rpc/<name>`, and Postgres grants `EXECUTE` to PUBLIC by default (Supabase adds anon/authenticated). A SECURITY DEFINER function is therefore a privilege escalation unless caller grants are revoked (`public.enforce_session_cap(uuid,int)` deleted ANY user's `auth.sessions`).
+
+Rule: a SECURITY DEFINER function stays caller-executable ONLY when an RLS policy or column DEFAULT depends on it (`current_org_id()`, `is_platform_admin()`, `community.eh_equipe()`, `social_wiring.fotos_lote_visivel(uuid)`, ...) — derived LIVE from `pg_depend`, never a hand list. Everything else (trigger fns, provisioning, backend RPCs) is `REVOKE ... FROM PUBLIC, anon, authenticated` + `GRANT ... TO service_role`; backend RPCs on SECURITY DEFINER functions MUST use the admin/service client. New product migrations: `ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC, anon, authenticated` (prior art: academia 007; hotfix migrations core 061, social-wiring 209, community 016, academia 014, store 010, agents 019, igig 037). Gate: `verify_db_guards` probe `secdef.execute.no_caller_executable_outside_rls_helpers` (runs in `predeploy_check`).
