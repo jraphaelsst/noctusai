@@ -164,7 +164,11 @@ jobs:
           fi
           CHANGED="$(git diff --name-only "$BEFORE" "${{ github.sha }}")"
           echo "changed files:"; echo "$CHANGED" | sed 's/^/  /'
-          if echo "$CHANGED" | grep -qE '^(seed/|scripts/infra/build-(and-push|base-images)\.sh$)'; then
+          # here-string, NEVER `echo "$CHANGED" | grep -q` under `set -o pipefail`: grep -q exits on
+          # the first match, echo of a large diff takes SIGPIPE, pipefail makes the pipeline
+          # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
+          # on the very commits that changed the mod; same latent false-negative here).
+          if grep -qE '^(seed/|scripts/infra/build-(and-push|base-images)\.sh$)' <<< "$CHANGED"; then
             echo "mode=active" >> "$GITHUB_OUTPUT"; echo "products=$ACTIVE" >> "$GITHUB_OUTPUT"
             echo "scope: seed/ or build-script changed → ACTIVE SET '$ACTIVE' (inactive products deliberately skipped)"; exit 0
           fi

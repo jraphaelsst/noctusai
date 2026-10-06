@@ -219,7 +219,11 @@ jobs:
           # (a2) Claude Code mod surface (`harness-mod-tests`). Computed BEFORE
           # the shared-root early exit below so a `.github/` change that also
           # touches a mod is never missed.
-          if echo "$CHANGED" | grep -qE '^(\.claude/mods/|\.claude-plugin/|\.claude/settings\.json$)'; then
+          # here-string, NEVER `echo "$CHANGED" | grep -q` under `set -o pipefail`: grep -q exits on
+          # the first match, echo of a large diff takes SIGPIPE, pipefail makes the pipeline
+          # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
+          # on the very commits that changed the mod; same latent false-negative here).
+          if grep -qE '^(\.claude/mods/|\.claude-plugin/|\.claude/settings\.json$)' <<< "$CHANGED"; then
             echo "harness_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "harness_changed=false" >> "$GITHUB_OUTPUT"
@@ -231,7 +235,11 @@ jobs:
           # product (editing the file, or the commit that regenerates it) must
           # re-test it immediately, not wait for a diff that happens to touch
           # its own `products/<slug>/` tree.
-          if echo "$CHANGED" | grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$|deploy/fleet/active-scope\.txt$)'; then
+          # here-string, NEVER `echo "$CHANGED" | grep -q` under `set -o pipefail`: grep -q exits on
+          # the first match, echo of a large diff takes SIGPIPE, pipefail makes the pipeline
+          # non-zero and the `if` reads a MATCH as no-match (2026-10-06: harness-mod-tests skipped
+          # on the very commits that changed the mod; same latent false-negative here).
+          if grep -qE '^(seed/|requirements.*\.txt$|\.github/|scripts/ci/|package(-lock)?\.json$|deploy/fleet/active-scope\.txt$)' <<< "$CHANGED"; then
             echo "shared_changed=true" >> "$GITHUB_OUTPUT"
             echo "changed_products=," >> "$GITHUB_OUTPUT"
             echo "scope: shared root changed → every product matrix entry runs"
