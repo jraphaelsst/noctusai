@@ -104,3 +104,45 @@ class TestAreasPtBr:
 
     def test_the_quote_applies_it(self):
         assert "126,700m2" in _quote(_dados(descricao="encerrando a área de 126.700m2."))
+
+
+AV_COM_MOBILIARIO = (
+    "Av.12, em 3 de janeiro de 2019. -\n\nCONSTRUÇÃO -\n\nPelo requerimento firmado em 1 de dezembro de 2018, "
+    "procedo a presente para constar que foi construída uma residência com área to-\ntal de 120,00 metros\n"
+    "quadrados, conforme Habite-se nº 5/2018. Foi apresentada a certidão negativa, sendo atribuído o valor de R$ 1,00. -\n"
+    "- segue ficha 2 -\n\nCNM 000000.0.0000000-00\n\nLIVRO N.º 2 - REGISTRO GERAL\n\n"
+    "SERVENTIA DO REGISTRO DE IMÓVEIS\nde Cidadeficticia\n\nmatrícula\n\n-12.345-\n\ndata\n\n-03-\n\n"
+    "Cidadeficticia, de _____________ de _____________\n\nEU, ____ (Fulano Ficticio) escrevente\nautorizado, digitei.\n"
+    "D.R$10,00\n\nMOD. 10\n"
+)
+AV_PAGINA_NO_MEIO = (
+    "AV. 4 - em 9 de janeiro de 2017 (CONSTRUÇÃO)\n(prenotado em 8 de janeiro de 2017 – protocolo nº 1.234)\n\n"
+    "Nos termos do requerimento, procede-se a averbação para constar que o imóvel recebeu o número 7 da\n\n"
+    "continua na ficha 2\n\nLIVRO Nº 2\nREGISTRO GERAL\n\nmatrícula\n\n999\n\ndata\n\n09\n\n"
+    "Cidadeficticia, 9 de janeiro de 2017\n\nRua das Flores. Foi apresentada certidão negativa.\n\n"
+    "Beltrano de Tal – Escrevente\n"
+)
+
+
+class TestSoOCorpoDoAto:
+    def test_footer_signatures_selo_and_closing_sentences_are_cut(self):
+        q = cm.averbacao_citada("12", AV_COM_MOBILIARIO)
+        assert q == (
+            "Conforme AV.12, Pelo requerimento firmado em 1 de dezembro de 2018, procedo a presente "
+            "para constar que foi construída uma residência com área total de 120,00 metros quadrados, "
+            "conforme Habite-se nº 5/2018."
+        )
+
+    def test_the_header_is_not_duplicated(self):
+        q = cm.averbacao_citada("12", AV_COM_MOBILIARIO)
+        assert q.count("Av.") + q.count("AV.") == 1
+
+    def test_page_furniture_inside_the_act_is_removed_and_the_sentence_rejoined(self):
+        q = cm.averbacao_citada("4", AV_PAGINA_NO_MEIO)
+        assert q == (
+            "Conforme AV.4, Nos termos do requerimento, procede-se a averbação para constar que "
+            "o imóvel recebeu o número 7 da Rua das Flores."
+        )
+
+    def test_dehyphenation_needs_lowercase_on_both_sides(self):
+        assert cm.corpo_do_ato("AV.1 - Em 1/1/2010. Cotia-\nSP e to-\ntal e 2- 3 e a - b.") == "Cotia- SP e total e 2- 3 e a - b."

@@ -41,12 +41,31 @@ from app.modules.card_hub.contrato_gerador.politica import AVERBACOES_CITADAS, A
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
 
-#: `AV-4/12.345 - Em 5 de maio de 2010. ` / `AV.4 - ` / `AV 4/1 - Em 1/1/2010. `
+_DATA_DO_ATO = r"(?:\d{1,2}\s+de\s+\w+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})"
+#: The register header, in every shape seen: `AV-4/12.345 - Em 5 de maio de
+#: 2010.` · `Av.99, em 9 de janeiro de 2020. -` · `AV. 9 – em 9 de março de
+#: 2020 (NUMERAÇÃO)` + `(prenotado em … protocolo nº …)`.
 _CABECALHO_AV = re.compile(
-    r"^\s*AV[\s.\-]*\d+(?:\s*/\s*\d[\d.]*)?\s*[-–—]\s*(?:Em\s[^.\n]*\.\s*)?", re.IGNORECASE
+    r"^\s*AV[\s.\-]*\d+(?:\s*/\s*\d[\d.]*)?\s*[-–—,]?\s*"
+    rf"(?:em\s+{_DATA_DO_ATO}\s*\.?\s*[-–—]?\s*)?(?:\([^)\n]*\)\s*)*",
+    re.IGNORECASE,
 )
-#: A leading ALL-CAPS nature title (`CADASTRO - Pelo …`).
-_TITULO_CAIXA_ALTA = re.compile(r"^[A-ZÀ-Ú][A-ZÀ-Ú ]{2,}\s*[-–—:]\s+(?=\S)")
+#: A leading ALL-CAPS nature title (`CADASTRO - `, `CONSTRUÇÃO / LOGRADOURO\n`).
+_TITULO_CAIXA_ALTA = re.compile(r"^[A-ZÀ-Ú][A-ZÀ-Ú /]{2,}?\s*(?:[-–—:]\s*|\n\s*)(?=\S)")
+#: Registry page furniture / signature lines: never part of the act's body.
+_LINHA_MOBILIARIO = re.compile(
+    r"^\W*(?:(?:continua|segue)\b.*\b(?:ficha|verso)|CN[MJS]\b|LIVRO\s+N|REGISTRO\s+GERAL|SERVENTIA\b"
+    r"|REGISTRO\s+DE\s+IM[ÓO]VEIS|E\s+CIVIL\s+DE\s+PESSOAS|(?:matr[ií]cula|data|ficha|folha)\W*$"
+    r"|MOD\.?\s*\d|selo\b|escrevente\b|oficial\W*$|substitut|tabeli|EU,|digitei|D\.?\s?R\$|emolumentos|prot\.)"
+    r"|^[\W\d.]*$"
+    r"|[-–—]\s*(?:escrevente|oficial|substituto)\W*$"
+    r"|^[^\d\n,]{2,40},\s*(?:\d{1,2}\s+)?de\s+\S+(?:\s+de\s+\S+)?\W*$",
+    re.IGNORECASE,
+)
+#: The closing administrative sentences (CND presented, attributed value) —
+#: the office stops the quote before them.
+_FECHO_ADMINISTRATIVO = re.compile(r"\s*\b(?:Foi|Fora)\s+apresentad", re.IGNORECASE)
+_HIFEN_DE_QUEBRA = re.compile(r"(?<=[a-zà-ú])-\s+(?=[a-zà-ú])")
 _NUMERO_NO_CABECALHO = re.compile(r"^\s*AV[\s.\-]*(\d+)", re.IGNORECASE)
 
 #: The matrícula's own cadastral-number line, up to the end of its sentence.
@@ -114,6 +133,23 @@ def averbacao_deve_ser_citada(texto: str) -> bool:
     return any(t in corpo[:250] for t in AVERBACOES_CITADAS)
 
 
+def corpo_do_ato(texto: str) -> str:
+    """The act's BODY only: header (once) and nature title dropped, registry
+    page furniture / signature lines dropped, the closing "Foi apresentada
+    …" administrative sentences cut, whitespace flowed, line-break
+    hyphenation (`to- tal`, lowercase both sides only) rejoined."""
+    corpo = texto
+    for _ in range(2):  # a duplicated header is dropped, not printed twice
+        corpo = _CABECALHO_AV.sub("", corpo, count=1)
+    corpo = _TITULO_CAIXA_ALTA.sub("", corpo, count=1)
+    linhas = [ln for ln in corpo.split("\n") if not _LINHA_MOBILIARIO.search(ln.strip() or "x")]
+    corpo = re.sub(r"\s+", " ", " ".join(linhas)).strip()
+    achado = _FECHO_ADMINISTRATIVO.search(corpo)
+    if achado:
+        corpo = corpo[: achado.start()].rstrip()
+    return _HIFEN_DE_QUEBRA.sub("", corpo)
+
+
 def averbacao_citada(numero: Optional[object], texto: str) -> Optional[str]:
     """`Conforme AV.<n>, <wording>.` for one selected averbação; `None` when
     nothing remains after the header (an empty act is never quoted)."""
@@ -121,9 +157,7 @@ def averbacao_citada(numero: Optional[object], texto: str) -> Optional[str]:
     if n is None:
         achado = _NUMERO_NO_CABECALHO.match(texto or "")
         n = achado.group(1) if achado else None
-    corpo = _CABECALHO_AV.sub("", texto or "", count=1)
-    corpo = _TITULO_CAIXA_ALTA.sub("", corpo, count=1)
-    corpo = re.sub(r"\s+", " ", corpo).strip()
+    corpo = corpo_do_ato(texto or "")
     if not corpo:
         return None
     if corpo[-1] not in ".;!?":
