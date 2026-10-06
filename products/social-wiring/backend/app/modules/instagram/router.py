@@ -133,6 +133,8 @@ class SyncOut(BaseModel):
     profile_snapshot_written: bool
     media_failed: int
     media_skipped: int
+    media_outside_window: int
+    insights_window_days: int
     errors: list[str]
 
 
@@ -336,6 +338,8 @@ def sync_account(
         profile_snapshot_written=outcome.profile_snapshot_written,
         media_failed=outcome.media_failed,
         media_skipped=outcome.media_skipped,
+        media_outside_window=outcome.media_outside_window,
+        insights_window_days=outcome.insights_window_days,
         errors=outcome.errors,
     )
 

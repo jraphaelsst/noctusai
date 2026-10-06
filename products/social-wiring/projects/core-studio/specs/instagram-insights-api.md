@@ -122,8 +122,11 @@ This runs today's catalog and snapshot capture immediately. It is the same code 
 { "status": "done|partial|skipped", "snapshot_date": "2026-10-06",
   "media_synced": 230, "stories_synced": 2, "snapshots_written": 229,
   "profile_snapshot_written": true, "media_failed": 1, "media_skipped": 0,
+  "media_outside_window": 140, "insights_window_days": 90,
   "errors": ["M123: [10] Not enough viewers"] }
 ```
+
+Insights window (owner decision 2026-10-06): the whole media catalog is refreshed daily (`like_count`/`comments_count`), but per-post insights and `ig_media_snapshots` rows are written only for posts published within the last `insights_window_days` (90, constant `INSIGHTS_WINDOW_DAYS`) BRT days of `snapshot_date` (age 90 in, 91 out). Older posts are counted in `media_outside_window`, make no insight call, and keep their last `latest_metrics`/`latest_snapshot_date`; their existing history stays readable via the history endpoint. `snapshots_written` therefore counts in-window posts only.
 
 Statuses:
 
@@ -186,7 +189,7 @@ When Graph doesn't return `media_product_type`, the product type is inferred: `V
 3. **Extra fields:**
    - Profile: `account_id`, `marca_id`, `ig_user_id`, `insights_scope_granted`
    - MediaItem: `latest_snapshot_date`
-   - Sync: `snapshot_date`, `stories_synced`, `profile_snapshot_written`, `media_failed`, `media_skipped`, `errors`
+   - Sync: `snapshot_date`, `stories_synced`, `profile_snapshot_written`, `media_failed`, `media_skipped`, `media_outside_window`, `insights_window_days`, `errors`
 4. **`?days=` on history** (default 90) and **`?force=` on sync**.
 5. **`status` values** for sync are `done | partial | skipped`, plus the 409 and 200 structured responses above.
 6. **MediaItem `like_count`/`comments_count` are nullable** (Meta omits like counts when the owner hides them).

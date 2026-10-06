@@ -1,7 +1,11 @@
 """Daily Instagram catalog + snapshot sync — one Instagram-Login account.
 
-Owner decision (2026-10-06): track EVERY post EVERY day with every metric
-Meta serves for its media type. One run per (account, BRT day), guarded by
+Owner decision (2026-10-06): the FULL media catalog is synced daily
+(like_count / comments_count from the list call), but per-post insights +
+``ig_media_snapshots`` rows are fetched ONLY for posts published within the
+last ``INSIGHTS_WINDOW_DAYS`` (90) days (BRT, relative to the snapshot date).
+Older posts keep their last ``latest_metrics`` / ``latest_snapshot_date`` and
+cost no Graph insight call. One run per (account, BRT day), guarded by
 the shared ``snapshot_runs`` claim row:
 
 1. claim the day (skip if done, or if another worker started < 2h ago);
@@ -9,8 +13,8 @@ the shared ``snapshot_runs`` claim row:
    PREVIOUS BRT day → one ``ig_profile_snapshots`` row (+ channel_info on the
    connection row);
 3. walk ALL of ``/me/media`` (paged) — upsert the catalog page, then fetch
-   each media's insights (metric set per product type) and upsert today's
-   ``ig_media_snapshots`` rows + the catalog's ``latest_metrics``;
+   each IN-WINDOW media's insights (metric set per product type) and upsert
+   today's ``ig_media_snapshots`` rows + the catalog's ``latest_metrics``;
 4. live Stories (``/me/stories``, 24h) the same way — after 24h Meta stops
    serving story insights, so each story gets snapshots only while live;
 5. mark the run ``done`` (``note`` lists per-item failures) or ``error``.
@@ -56,6 +60,10 @@ TZ_BR = ZoneInfo("America/Sao_Paulo")
 REQUIRED_SCOPE = "instagram_business_manage_insights"
 STALE_RUNNING_AFTER = timedelta(hours=2)
 MEDIA_PAGE_SIZE = 50
+# Owner decision 2026-10-06: per-post insights only for posts published within
+# this many days (BRT calendar days, relative to the snapshot date; a post
+# exactly this many days old is still in the window).
+INSIGHTS_WINDOW_DAYS = 90
 # Stories are only insight-readable while live (24h).
 STORY_LIFETIME = timedelta(hours=24)
 _MAX_ERRORS_REPORTED = 20
@@ -79,6 +87,8 @@ class IgSyncOutcome:
     profile_snapshot_written: bool = False
     media_failed: int = 0
     media_skipped: int = 0        # Graph item without a timestamp (logged)
+    media_outside_window: int = 0  # cataloged, but too old for insights calls
+    insights_window_days: int = INSIGHTS_WINDOW_DAYS
     errors: list[str] = field(default_factory=list)
 
     def note(self) -> Optional[str]:
@@ -118,6 +128,14 @@ def previous_day_window(snapshot_date: date) -> tuple[datetime, datetime]:
     return until - timedelta(days=1), until
 
 
+def in_insights_window(
+    published_at: datetime, snapshot_date: date, window_days: int = INSIGHTS_WINDOW_DAYS
+) -> bool:
+    """True when the post's BRT publish date is within ``window_days`` days
+    of ``snapshot_date`` (inclusive: age == window_days is still in)."""
+    return (snapshot_date - published_at.astimezone(TZ_BR).date()).days <= window_days
+
+
 class IgSyncService:
     """Per-call worker. ``adapter_builder(account_id, org_id)`` returns an
     Instagram-Login adapter bound to that account (DI seam — production uses
@@ -130,7 +148,9 @@ class IgSyncService:
         repo: IgInsightsRepository,
         adapter_builder: AdapterBuilder,
         now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        insights_window_days: int = INSIGHTS_WINDOW_DAYS,
     ) -> None:
+        self._window_days = insights_window_days
         self._repo = repo
         self._build_adapter = adapter_builder
         self._now = now
@@ -145,7 +165,11 @@ class IgSyncService:
     ) -> IgSyncOutcome:
         if snapshot_date is None:
             snapshot_date = self._now().astimezone(TZ_BR).date()
-        outcome = IgSyncOutcome(account_id=account_id, snapshot_date=snapshot_date)
+        outcome = IgSyncOutcome(
+            account_id=account_id,
+            snapshot_date=snapshot_date,
+            insights_window_days=self._window_days,
+        )
         admin = self._repo.client
 
         if not claim_snapshot_run(
@@ -184,10 +208,10 @@ class IgSyncService:
             status="done", note=outcome.note(),
         )
         logger.info(
-            "instagram sync: account=%s date=%s %s media=%d stories=%d snapshots=%d failed=%d skipped=%d",
+            "instagram sync: account=%s date=%s %s media=%d stories=%d snapshots=%d failed=%d skipped=%d outside_window=%d",
             account_id, snapshot_date, outcome.status, outcome.media_synced,
             outcome.stories_synced, outcome.snapshots_written, outcome.media_failed,
-            outcome.media_skipped,
+            outcome.media_skipped, outcome.media_outside_window,
         )
         return outcome
 
@@ -309,6 +333,10 @@ class IgSyncService:
                     "synced_at": utc_iso(now),
                 }
             )
+            if not in_insights_window(item.timestamp, snapshot_date, self._window_days):
+                # Catalog row refreshed above; insights + latest_metrics untouched.
+                outcome.media_outside_window += 1
+                continue
             try:
                 res = adapter.get_media_insights(
                     item.id, item.media_product_type, media_type=item.media_type
@@ -362,8 +390,10 @@ __all__ = [
     "IgSyncError",
     "IgSyncOutcome",
     "IgSyncService",
+    "INSIGHTS_WINDOW_DAYS",
     "REQUIRED_SCOPE",
     "granted_scopes",
+    "in_insights_window",
     "missing_insights_scope",
     "previous_day_window",
 ]

@@ -19,6 +19,7 @@ from app.modules.instagram.repository import IgInsightsRepository
 from app.modules.instagram.sync_service import (
     IgSyncError,
     IgSyncService,
+    INSIGHTS_WINDOW_DAYS,
     granted_scopes,
     missing_insights_scope,
     previous_day_window,
@@ -252,3 +253,51 @@ class TestScopes:
 
     def test_granted_scopes_parses_csv(self):
         assert granted_scopes({"metadata": {"granted_scopes": "a, b"}}) == {"a", "b"}
+
+
+class TestInsightsWindow:
+    """Owner decision 2026-10-06: insights only for posts <= 90 BRT days old."""
+
+    @staticmethod
+    def _aged(days: int, i: int) -> IgMediaItem:
+        return _media(i, ts=NOW - timedelta(days=days))
+
+    def _run(self, ages):
+        media = [self._aged(d, i + 10) for i, d in enumerate(ages)]
+        ins = {m.id: {"views": 7, "reach": 5} for m in media}
+        adapter = _adapter(media=media, media_insights=ins)
+        calls = []
+        orig = adapter.get_media_insights
+
+        def spy(mid, *a, **k):
+            calls.append(mid)
+            return orig(mid, *a, **k)
+
+        adapter.get_media_insights = spy
+        svc, sb = _svc(adapter)
+        return svc.run_for_account(org_id=ORG, account_id=ACC), sb, calls, media
+
+    def test_boundary_89_90_in_91_out(self):
+        out, sb, calls, media = self._run([89, 90, 91])
+        assert INSIGHTS_WINDOW_DAYS == 90
+        assert calls == [media[0].id, media[1].id]
+        assert out.media_synced == 3 and out.snapshots_written == 2
+        assert out.media_outside_window == 1 and out.insights_window_days == 90
+        assert {r["ig_media_id"] for r in sb.tables["ig_media_snapshots"]} == {media[0].id, media[1].id}
+
+    def test_old_post_cataloged_refreshed_and_keeps_latest_metrics(self):
+        old = self._aged(200, 50)
+        adapter = _adapter(media=[old], media_insights={old.id: {"views": 9}})
+        sb = FakeSupabase()
+        sb.tables["ig_media"] = [{
+            "account_id": str(ACC), "ig_media_id": old.id, "like_count": 0,
+            "latest_metrics": {"views": 1}, "latest_snapshot_date": "2026-07-01",
+        }]
+        svc, _ = _svc(adapter, sb)
+        out = svc.run_for_account(org_id=ORG, account_id=ACC)
+        row = next(r for r in sb.tables["ig_media"] if r["ig_media_id"] == old.id)
+        assert row["like_count"] == old.like_count  # catalog refreshed
+        assert row["latest_metrics"] == {"views": 1}
+        assert row["latest_snapshot_date"] == "2026-07-01"
+        assert out.snapshots_written == 0 and out.media_outside_window == 1
+        assert out.status == "done"
