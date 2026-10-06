@@ -332,7 +332,7 @@ class TestRequireScopes:
             api_token_id=None,
         )
         core_client = _FakeCoreClient(
-            [{"id": str(_USER), "org_role": "viewer"}]
+            [{"id": str(_USER), "org_id": str(_ORG), "org_role": "viewer"}]
         )
         dep = require_scopes(
             user_roles=frozenset({"owner", "admin"}),
@@ -356,7 +356,7 @@ class TestRequireScopes:
             api_token_id=None,
         )
         core_client = _FakeCoreClient(
-            [{"id": str(_USER), "org_role": "owner"}]
+            [{"id": str(_USER), "org_id": str(_ORG), "org_role": "owner"}]
         )
         dep = require_scopes(
             user_roles=frozenset({"owner", "admin"}),
@@ -367,6 +367,33 @@ class TestRequireScopes:
         result = _run(dep(ctx=ctx))
 
         assert result is ctx
+
+    def test_user_caller_whose_ctx_org_is_not_the_trusted_org_is_403_org_mismatch(self):
+        # ctx.org_id can come from user-writable metadata on legacy paths;
+        # only the noctus_users row decides the org (no-metadata-authz).
+        other_org = UUID("00000000-0000-4000-8000-0000000000ff")
+        ctx = AuthContext(
+            org_id=other_org,
+            caller_kind="user",
+            user_id=_USER,
+            scopes=[],
+            raw_token="session-id",
+            api_token_id=None,
+        )
+        core_client = _FakeCoreClient(
+            [{"id": str(_USER), "org_id": str(_ORG), "org_role": "owner"}]
+        )
+        dep = require_scopes(
+            user_roles=frozenset({"owner", "admin"}),
+            get_auth_context=lambda: _ctx_dep(ctx),
+            get_core_client=lambda: core_client,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run(dep(ctx=ctx))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail["code"] == "org_mismatch"
 
     def test_product_only_restriction_rejects_user_caller(self):
         ctx = AuthContext(
