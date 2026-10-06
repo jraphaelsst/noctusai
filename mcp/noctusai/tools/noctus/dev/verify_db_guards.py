@@ -4157,6 +4157,90 @@ _AGENTS_EDITORIAL_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring branding model (migration 204)
+# ---------------------------------------------------------------------------
+#
+# Three partial unique indexes. Self-provisioning: mc_brand_kits has no FK on
+# org_id (a fresh gen_random_uuid() org is enough) and mc_brand_references
+# only references the probe's own kit, so no fixture row is needed. Every
+# insert sits in the sub-block that always ends in RAISE — nothing persists.
+
+_BRANDING_MIGRATIONS = ("204_branding_model.sql",)
+
+
+def _branding_unique_probe(*, probe_id: str, guard_name: str, steps: str, what: str, rationale: str) -> GuardProbe:
+    what_lit = _sql_lit(what)
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=_BRANDING_MIGRATIONS,
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_kit uuid;
+BEGIN
+  IF to_regclass('{_SW_SCHEMA}.mc_brand_kits') IS NULL
+     OR to_regclass('{_SW_SCHEMA}.mc_brand_references') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: branding tables do not exist (migration 204 not applied)';
+  END IF;
+  BEGIN
+{steps}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what_lit} succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_BRANDING_PROBES: tuple[GuardProbe, ...] = (
+    _branding_unique_probe(
+        probe_id="branding.one_template_per_org",
+        guard_name="mc_brand_kits_one_template_per_org",
+        steps=(
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_kits (org_id, name, is_template) VALUES (v_org, 'NOC probe A', true);\n"
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_kits (org_id, name, is_template) VALUES (v_org, 'NOC probe B', true);"
+        ),
+        what="a second Branding Template in the same org",
+        rationale="One Branding Template per org: the clone-from-template flow reads 'the' template.",
+    ),
+    _branding_unique_probe(
+        probe_id="branding.unowned_slug_unique",
+        guard_name="mc_brand_kits_unowned_slug_uniq",
+        steps=(
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_kits (org_id, name, slug) VALUES (v_org, 'NOC probe A', 'noc-probe');\n"
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_kits (org_id, name, slug) VALUES (v_org, 'NOC probe B', 'noc-probe');"
+        ),
+        what="two marca-less brandings with the same (org, slug)",
+        rationale="NULL marca_id rows are distinct in the 007 index, so a slug-keyed import would duplicate them.",
+    ),
+    _branding_unique_probe(
+        probe_id="branding.reference_asset_unique",
+        guard_name="mc_brand_references_asset_uniq",
+        steps=(
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_kits (org_id, name) VALUES (v_org, 'NOC probe') RETURNING id INTO v_kit;\n"
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_references (org_id, brand_kit_id, kind, label, storage_path) "
+            "VALUES (v_org, v_kit, 'logo', 'noc-probe', 'noc/probe/a');\n"
+            f"    INSERT INTO {_SW_SCHEMA}.mc_brand_references (org_id, brand_kit_id, kind, label, storage_path) "
+            "VALUES (v_org, v_kit, 'logo', 'noc-probe', 'noc/probe/b');"
+        ),
+        what="a second uploaded asset with the same (branding, kind, label)",
+        rationale="Re-importing a design system must replace, never duplicate, an uploaded asset.",
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -4197,6 +4281,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_201_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
+    *_BRANDING_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

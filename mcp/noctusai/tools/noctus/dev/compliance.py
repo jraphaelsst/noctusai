@@ -11932,31 +11932,6 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
-    # Migration 204 (social-wiring Branding model) is FILE-ONLY — unapplied
-    # until the owner consents (owner-gated; see projects/core-studio/specs/
-    # branding-import.md). `verify_db_guards` probes LIVE production, which
-    # has none of these indexes yet. Replace these three entries with real
-    # `GuardProbe`s in `verify_db_guards.DEFAULT_REGISTRY` in the SAME change
-    # that applies migration 204.
-    (
-        "products/social-wiring/backend/migrations/204_branding_model.sql",
-        "mc_brand_kits_one_template_per_org",
-        "Migration 204 unapplied — the partial unique index (one Branding "
-        "Template per org) has no live index to probe against yet.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/204_branding_model.sql",
-        "mc_brand_kits_unowned_slug_uniq",
-        "Migration 204 unapplied — the partial unique index (one marca-less "
-        "branding per (org, slug)) has no live index to probe against yet.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/204_branding_model.sql",
-        "mc_brand_references_asset_uniq",
-        "Migration 204 unapplied — the partial unique index (one uploaded "
-        "asset per (branding, kind, label)) has no live index to probe "
-        "against yet.",
-    ),
     # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
     # contract's own §A explicitly forbids applying it in this slice
     # ("It is not applied by the slice"; `migrations/APPLIED.md` still

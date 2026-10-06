@@ -423,6 +423,29 @@ class TestSelfProvisioning:
             assert "no existing social_wiring.matricula_extracoes row to borrow an org_id from" in probe.sql
 
 
+class TestBrandingProbes:
+    """Migration 204's three partial unique indexes have real probes."""
+
+    _GUARDS = {
+        "mc_brand_kits_one_template_per_org",
+        "mc_brand_kits_unowned_slug_uniq",
+        "mc_brand_references_asset_uniq",
+    }
+
+    def test_each_index_has_a_probe_that_inserts_a_duplicate(self):
+        probes = {p.guard_name: p for p in DEFAULT_REGISTRY if p.product == "social-wiring" and p.guard_name in self._GUARDS}
+        assert set(probes) == self._GUARDS
+        for probe in probes.values():
+            assert probe.kind == "write_refusal"
+            assert probe.sql.count("INSERT INTO social_wiring.mc_brand_") >= 2
+            assert "NOC_PROBE:refused" in probe.sql
+
+    def test_not_left_in_the_unprobeable_allowlist(self):
+        from tools.noctus.dev.compliance import _GUARD_PROBE_ALLOWLIST
+
+        assert not [e for e in _GUARD_PROBE_ALLOWLIST if e[1] in self._GUARDS]
+
+
 class TestRegistrySanity:
     def test_registry_is_non_empty(self):
         assert len(DEFAULT_REGISTRY) >= 10
