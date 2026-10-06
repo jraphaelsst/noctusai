@@ -761,6 +761,14 @@ state change, not a removal.
 - **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 - **Revisit trigger:** identical to 9a's (a) — a hook runner able to invoke MCP directly flips this to formalize.
 
+### 9f Fail-closed guard wrapper + executor-dispatch guard retain shell (`[carve:hook]`, 2026-10-06)
+
+- **Subject:** `scripts/hooks/_guard_failclosed.py` (the shared `run_guard` wrapper every PreToolUse adapter imports) and `scripts/hooks/claude-guard-executor-dispatch.py` (PreToolUse `Agent|Task`).
+- **Decision `[A]`:** both stay scripts, same `[carve:hook]` bucket and structural reason as 9a–9d — the harness invokes guard adapters as processes on the pre-tool path, where the MCP server is not reachable. The executor-dispatch decision lives in `tools/noctus/dev/executor_dispatch_guard.py`; `_guard_failclosed.py` holds no rule, only the fail-closed protocol (exception / deadline / bad payload ⇒ deny) shared by the adapters.
+- **Why:** Claude Code treats a crashed or timed-out command hook as a non-blocking error — the guard silently stops guarding. The wrapper converts that fail-open into a visible `[noc-guard:<name>]` deny. → `KB § PATTERNS/common/harness-mods.md`
+- **Scope:** the two files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a).
+
 ### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
 
 - **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).
