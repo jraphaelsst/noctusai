@@ -212,6 +212,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-no-self-monkeypatch", action="store_true", help="Keeper: tests that patch OUR OWN code instead of exercising it (CLAUDE.md §1). Same predicate the PreToolUse `test_seam_guard` denies writes with — one definition, two enforcement points. Exists as a TARGETED flag because the only other way to run it was the ~15-minute compliance suite, and a feedback loop that slow is how 56 findings accumulated unnoticed. Escape hatch: `# self-patch-ok: <reason>` on the patching line. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--check-postgrest-schema-qualified-table", action="store_true", help="Keeper: a Supabase/PostgREST client is ALREADY schema-bound, so `.table(name)`/`.from_(name)` resolves RELATIVE to that schema and never parses a dot as a separator. `db.table(f\"{deps._db.schema}.invitations\")` therefore asks for `<schema>.<schema>.<table>` → 500 \"Could not find the table ... in the schema cache\" on EVERY call, phrased so it reads as a missing migration. Invisible to unit tests: MockSupabaseClient keys tables by whatever string it is handed, so a qualified fixture agrees with a qualified caller (fixture-vs-real false-green). Live incident 2026-08-06 — seed team router, all 9 products mounting it, green in CI ~3 months. Scans seed/** + products/*/backend/** *.py for the interpolated + literal shapes. Severity high. Escape hatch: `postgrest-qualified-ok` comment. KB § PATTERNS/backend/postgrest-schema-targeting.md.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
+    parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
+    parser.add_argument("--check-migration-untyped-empty-array", action="store_true", help="Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.")
     parser.add_argument("--check-postgrest-unbounded-query", action="store_true", help="Keeper: PostgREST silently caps ANY select at `db-max-rows` (Supabase default 1 000) — no error, no warning, `response.data` just comes back short. SEVEN instances shipped to production in one session (2026-08-13/14): portal-roi reported 1 000 leads instead of 13 255, a backfill silently repointed 1 000 of 1 365 negociações, a review queue dropped 177 of 1 177 rows. A second shape: `.in_(col, values)` rides in the URL query string, so an unbatched ~1 000-item collection is a bare 400 (\"JSON could not be generated\") with no hint about length. Flags a `.select(...).execute()` chain with no `.range()`/`.single()`/`.maybe_single()`/in-cap-`.limit()`/PK-`.eq(\"id\",...)` on it (severity `info` — risk is a function of a row count this keeper cannot see), and an `.in_()` fed a collection with no provable bound and no `_batched`-style loop (severity `warning` — structurally risky regardless of table cardinality, and the shape that actually took `/clientes/revisao` down). Deliberately heuristic (no table-cardinality knowledge) — non-blocking at either tier, observe-first (promote the `.in_()`-shape to blocking once a fleet sweep shows its false-positive rate is low). Escape hatch: `postgrest-unbounded-ok: <why>` comment (must state a reason, not just cite the keeper). KB § PATTERNS/backend/postgrest-row-cap.md.")
     parser.add_argument("--check-org-identity-function-parity", action="store_true", help="Keeper (SEC-2 customer-role isolation, 2026-09-28): every re-declaration of the shared public.current_org_id()/current_user_org_id()/current_org_role()/is_customer()/current_customer_org_id() in any migration must equal the canonical rendering of noctusai_lib.domain.sql_templates.org_identity_function_sql() (derived from CUSTOMER_ORG_ROLES), and roles.ts CUSTOMER_ORG_ROLES must equal roles.py. One stale copy in any chain silently re-opens every org-scoped RLS policy fleet-wide to end customers on a fresh apply. `--paths` scopes to staged migrations (pre-commit); omitted = full audit. Severity critical. KB § PATTERNS/backend/database-rls.md.")
     parser.add_argument("--check-status-pagina-role-parity", action="store_true", help="Keeper: the `dev_veem_desenvolvimento` RLS role array in every *_status_pagina_dev_visibility.sql must match the seed frontend `DEV_ROLES` const. Two halves of one gate in two languages across N+1 files, no shared source — divergence is split-brain (RLS returns a row the FE hides, or the reverse) and BOTH modes look like \"the page is just missing\". KB § PATTERNS/frontend/status-pagina-dev-visibility.md.")
@@ -1688,6 +1690,28 @@ def main():
             print(f"  {GREEN}✓ no-metadata-authz: clean (no backend authorization reads user_metadata org/role).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} user_metadata org/role read(s) in backend authz/scoping paths — each is a cross-tenant hole:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_secdef_migration_revokes_execute:
+        from tools.noctus.dev.compliance import check_secdef_migration_revokes_execute
+        issues = check_secdef_migration_revokes_execute()
+        if not issues:
+            print(f"  {GREEN}✓ secdef-migration-revokes-execute: clean (every new SECURITY DEFINER function revokes caller EXECUTE).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} SECURITY DEFINER function(s) callable by anon/authenticated:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_migration_untyped_empty_array:
+        from tools.noctus.dev.compliance import check_migration_untyped_empty_array
+        issues = check_migration_untyped_empty_array()
+        if not issues:
+            print(f"  {GREEN}✓ migration-untyped-empty-array: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} untyped empty ARRAY[] literal(s) (42P18 on apply):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} — {i['issue']}")
         sys.exit(1)

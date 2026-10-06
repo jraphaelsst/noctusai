@@ -39,7 +39,7 @@ reads (`org_name`) are fine.
 Keeper `check_no_metadata_authz` (`--check-no-metadata-authz`, pre-commit 6g2,
 blocking): AST scan of `seed/**` + active products' `backend/**` (tests excluded)
 for `<…metadata…>.get("org_id"|"role"|"org_role"|"noctus_role"|"erp_role"|"org")`
-or `[...]`. Escape: `metadata-authz-ok: <why>` comment, or an entry in
+or `[...]`. Also composed into `check_all_products` (CI regression-baseline gate). Escape: `metadata-authz-ok: <why>` comment, or an entry in
 `_NO_METADATA_AUTHZ_ALLOWLIST` (path + function + rationale).
 
 ## Known follow-ups (asleep products, not scanned)

@@ -896,6 +896,27 @@ if [[ -n "$STAGED_BACKEND_PY" ]] && have_py; then
     fi
 fi
 
+# ─── 6g3. Migration-SQL security gates (blocking, only when a migration .sql ─
+# is staged) ─ keepers `check_secdef_migration_revokes_execute` +
+# `check_migration_untyped_empty_array` + `KB § PATTERNS/backend/
+# migration-sql-security-gates.md`. A SECURITY DEFINER function without a
+# same-file REVOKE EXECUTE is anon-callable via /rpc/ (RLS bypassed); an untyped
+# `ARRAY[]` fails on prod apply (42P18). BLOCKING, high; legacy files baselined.
+STAGED_SECURITY_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+|seed/.*|templates/product-seed)/.*migrations/.*\.sql$' || true)
+if [[ -n "$STAGED_SECURITY_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] migration .sql staged — checking SECURITY DEFINER EXECUTE revoke + typed empty arrays..."
+    if ! "$PY" "$CLI" --check-secdef-migration-revokes-execute --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] SECDEF-MIGRATION-REVOKES-EXECUTE check FAILED. Commit aborted." >&2
+        echo "[pre-commit] REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, authenticated in the same migration. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2
+        exit 1
+    fi
+    if ! "$PY" "$CLI" --check-migration-untyped-empty-array --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] MIGRATION-UNTYPED-EMPTY-ARRAY check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Cast the literal: ARRAY[]::text[]. See KB § PATTERNS/backend/migration-sql-security-gates.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6h. PostgREST unbounded-query gate (advisory, only when backend Python ──
 # changed) ──────────────────────────────────────────────────────────────
 # Keeper `check_postgrest_unbounded_query` + `KB § PATTERNS/backend/

@@ -10552,6 +10552,181 @@ def check_no_metadata_authz(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Migration-SQL security keepers (2026-10-06 security sweep).
+#
+# `check_secdef_migration_revokes_execute` — STATIC twin of the runtime
+# `verify_db_guards` probe `secdef.execute.no_caller_executable_outside_rls_helpers`.
+# Postgres grants EXECUTE on every new function to PUBLIC by default, so a
+# `SECURITY DEFINER` function (runs with the OWNER's rights, bypasses RLS) is
+# callable by `anon`/`authenticated` through PostgREST `/rpc/` unless the SAME
+# migration revokes it. The runtime probe only catches this after prod apply;
+# this keeper catches it at commit time. A migration that creates a SECURITY
+# DEFINER function must, in the same file, `REVOKE EXECUTE|ALL ... FROM PUBLIC,
+# anon, authenticated` naming the function (or run a dynamic REVOKE loop).
+# Escape hatch: a `secdef-execute-ok: <why>` comment within the 3 lines above the
+# CREATE (RLS helpers that policies call — must equal the probe's rule: the
+# function is referenced by a pg_policy), or an entry in the legacy baseline
+# `mcp/noctusai/tests/secdef_migration_baseline.json` (historical files only;
+# migrations are immutable, so the baseline never needs to grow).
+#
+# `check_migration_untyped_empty_array` — `ARRAY[]` without a `::type` cast fails
+# at apply time with 42P18 (could not determine data type of empty array); it
+# passed review and failed on prod. Every migration file must be clean.
+# KB § PATTERNS/backend/migration-sql-security-gates.md.
+# ---------------------------------------------------------------------------
+
+_MIGRATION_SQL_EXCLUDED_PARTS: set[str] = {
+    "node_modules", ".git", ".venv", "venv", "archive", ".backup", "fixtures",
+}
+_SECDEF_BASELINE_PATH = Path(__file__).resolve().parents[3] / "tests" / "secdef_migration_baseline.json"
+_SQL_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_SQL_LINE_COMMENT_RE = re.compile(r"--[^\n]*")
+_SECDEF_CREATE_FN_RE = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([\w.\"]+)\s*\(", re.IGNORECASE
+)
+_SECDEF_MARKER_RE = re.compile(r"SECURITY\s+DEFINER", re.IGNORECASE)
+_SECDEF_REVOKE_RE = re.compile(
+    r"REVOKE\s+(?:EXECUTE|ALL)\b[^;]*?\bFROM\b[^;]*?\b(?:PUBLIC|anon|authenticated)\b[^;]*;",
+    re.IGNORECASE | re.DOTALL,
+)
+_SECDEF_OK_RE = re.compile(r"secdef-execute-ok\s*:\s*\S", re.IGNORECASE)
+_UNTYPED_EMPTY_ARRAY_RE = re.compile(r"\bARRAY\s*\[\s*\]\s*(?!::)", re.IGNORECASE)
+
+
+def _migration_sql_files(root: Path) -> list[Path]:
+    """Every migration-ish `.sql` under products/, seed/, templates/ (ALL
+    products — an asleep product's migrations still run against the shared DB,
+    so this is deliberately NOT active-only)."""
+    out: list[Path] = []
+    for top in ("products", "seed", "templates"):
+        base = root / top
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.sql")):
+            if any(p in _MIGRATION_SQL_EXCLUDED_PARTS for p in path.parts):
+                continue
+            if "migrations" not in path.parts:
+                continue
+            out.append(path)
+    return out
+
+
+def _sql_strip_comments(text: str) -> str:
+    """Blank comments but keep offsets/newlines (so line numbers stay true)."""
+    def _blank(m: re.Match) -> str:
+        return re.sub(r"[^\n]", " ", m.group(0))
+    return _SQL_LINE_COMMENT_RE.sub(_blank, _SQL_BLOCK_COMMENT_RE.sub(_blank, text))
+
+
+def _secdef_load_baseline() -> set[str]:
+    try:
+        data = json.loads(_SECDEF_BASELINE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("compliance: secdef baseline unreadable (%s) — treating as empty", exc)
+        return set()
+    return set(data.get("legacy", []))
+
+
+def secdef_migration_violations(root: Path) -> list[tuple[str, int, str]]:
+    """(relpath, line, function) for every SECURITY DEFINER create lacking a
+    same-file REVOKE and an `secdef-execute-ok` escape — baseline NOT applied."""
+    found: list[tuple[str, int, str]] = []
+    for path in _migration_sql_files(root):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        if not _SECDEF_MARKER_RE.search(raw):
+            continue
+        raw_lines = raw.splitlines()
+        text = _sql_strip_comments(raw)
+        creates = list(_SECDEF_CREATE_FN_RE.finditer(text))
+        revokes = [m.group(0) for m in _SECDEF_REVOKE_RE.finditer(text)]
+        dynamic_revoke = any(("%" in r or "||" in r) for r in revokes)
+        rel = str(path.relative_to(root))
+        for i, m in enumerate(creates):
+            end = creates[i + 1].start() if i + 1 < len(creates) else len(text)
+            if not _SECDEF_MARKER_RE.search(text[m.start():end]):
+                continue
+            name = m.group(1).replace('"', "").split(".")[-1].lower()
+            line_no = text.count("\n", 0, m.start()) + 1
+            if any(re.search(rf"\b{re.escape(name)}\b", r, re.IGNORECASE) for r in revokes):
+                continue
+            if dynamic_revoke:
+                continue
+            window = raw_lines[max(0, line_no - 1 - 3):line_no]
+            if any(_SECDEF_OK_RE.search(ln) for ln in window):
+                continue
+            found.append((rel, line_no, name))
+    return found
+
+
+def check_secdef_migration_revokes_execute(repo_root: Path | None = None) -> list[dict]:
+    """Flag NEW migrations creating a SECURITY DEFINER function without a
+    same-file ``REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated``.
+
+    Legacy (pre-keeper) files are baselined in ``secdef_migration_baseline.json``.
+    Per ``KB § PATTERNS/backend/migration-sql-security-gates.md``.
+    """
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return []
+    legacy = _secdef_load_baseline()
+    issues: list[dict] = []
+    for rel, line_no, name in secdef_migration_violations(root):
+        if f"{rel}::{name}" in legacy:
+            continue
+        issues.append({
+            "file": rel,
+            "issue": (
+                f"`{rel}:{line_no}` creates SECURITY DEFINER function `{name}` with no "
+                f"same-file `REVOKE EXECUTE ON FUNCTION ... FROM PUBLIC, anon, "
+                f"authenticated`. Postgres grants EXECUTE to PUBLIC by default, so "
+                f"anon/authenticated can call it via PostgREST /rpc/ with the OWNER's "
+                f"rights (RLS bypassed). Add the REVOKE (then GRANT to service_role if "
+                f"needed). An RLS helper that policies call: add "
+                f"`-- secdef-execute-ok: rls-helper <why>` above the CREATE — it must "
+                f"equal the runtime probe's rule (referenced by a pg_policy). Per "
+                f"`KB § PATTERNS/backend/migration-sql-security-gates.md`."
+            ),
+            "severity": "high",
+        })
+    return issues
+
+
+def check_migration_untyped_empty_array(repo_root: Path | None = None) -> list[dict]:
+    """Flag ``ARRAY[]`` with no ``::type`` cast in migration SQL (42P18 on apply).
+
+    Per ``KB § PATTERNS/backend/migration-sql-security-gates.md``.
+    """
+    root = repo_root or REPO_ROOT
+    if not root.exists():
+        return []
+    issues: list[dict] = []
+    for path in _migration_sql_files(root):
+        try:
+            text = _sql_strip_comments(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("compliance: cannot read %s (%s)", path, exc)
+            continue
+        for m in _UNTYPED_EMPTY_ARRAY_RE.finditer(text):
+            rel = str(path.relative_to(root))
+            line_no = text.count("\n", 0, m.start()) + 1
+            issues.append({
+                "file": rel,
+                "issue": (
+                    f"`{rel}:{line_no}` uses an untyped empty array `ARRAY[]` — Postgres "
+                    f"cannot infer its type and the migration fails at apply with 42P18. "
+                    f"Cast it: `ARRAY[]::text[]` (or the right element type). Per "
+                    f"`KB § PATTERNS/backend/migration-sql-security-gates.md`."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_postgrest_unbounded_query` — PostgREST silently caps ANY select at
 # `db-max-rows` (Supabase default 1 000) — no error, no warning,
 # `response.data` just comes back short. SEVEN instances of this shipped to
@@ -15054,6 +15229,11 @@ def check_all_products() -> tuple[int, list]:
     # social-wiring-absorption W5.7a / W5.9a Stage-4 codification.
     all_issues.extend(check_seed_export_membership())
     all_issues.extend(check_hardcoded_product_slug_set())
+    # 2026-10-06 security sweep — runs the SAME detectors in CI (the
+    # regression-baseline gate) that pre-commit runs locally.
+    all_issues.extend(check_no_metadata_authz())
+    all_issues.extend(check_secdef_migration_revokes_execute())
+    all_issues.extend(check_migration_untyped_empty_array())
     # social-wiring-absorption W5.9-rest — numeric-axis twin of the
     # slug-set keeper (frozen fleet-size literals stale on consolidation).
     all_issues.extend(check_hardcoded_fleet_size_literal())

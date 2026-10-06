@@ -1,8 +1,8 @@
 """CI-gating coverage for SEED-1 (project-history/roadmaps/
 julia-agents-academia-2026-09.md, contract §B.0).
 
-``seed/lib/backend/tests/`` is NOT run by CI (open drift, 2026-09-09) —
-this file is the CI-gating leg for the seed-lib changes SEED-1 makes:
+``seed/lib/backend/tests/`` has run in CI since 2026-09-09 (the
+``seed-backend-tests`` job) — this file is an additional leg for the seed-lib changes SEED-1 makes:
 
   - ``AuthContext`` gains 4 new defaulted fields; the OLD constructor
     call shape (only the original 6 fields) must keep working.

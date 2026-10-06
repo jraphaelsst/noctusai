@@ -21,6 +21,7 @@ This is the same instinct as **fix-on-contact** ([[drift-fix-on-contact]]) and *
 - **Branch-tree session** (2026-06-02) — gate: the same keeper flags any null/empty `session` across ALL rows; mechanism: `branch_pointer.append/update` auto-fill `session` from `CLAUDE_CODE_SESSION_ID` (→ newest-transcript fallback → refuse). A pointer can no longer be written session-null.
 - **Detector-has-regression-test** — gate `check_detector_has_regression_test` flags any keeper lacking a test; mechanism: the authoring procedure ships the `Test<Detector>` class with the detector (and `scaffold_keeper` emits the test stub).
 - **Cache freshness** — gate `check_*_cache_freshness`; mechanism: structural caches self-heal on contact (`settle_structural_caches`) + refresh pre-commit, so the gate is a backstop, not the refresh path. ([[cache-auto-freshness]])
+- **SECURITY DEFINER EXECUTE** (2026-10-06) — gates `check_secdef_migration_revokes_execute` (static, commit) + `verify_db_guards` secdef probe (runtime, predeploy); mechanism: the migration itself carries the REVOKE (lockdown DO-block derives its keep-list from `pg_policy`, never a hand list). (`KB § PATTERNS/backend/migration-sql-security-gates.md`)
 - **Seed Fake+Real+factory** — gate flags a half-shipped seed IO module; mechanism: the seed-adapter scaffold ships all three so a consumer can't fork. (`KB § PATTERNS/backend/seed-fake-real-adapter.md`)
 
 ## Anti-patterns (forbidden)
