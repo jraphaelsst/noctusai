@@ -32,7 +32,7 @@ def test_ordem_is_respected_whatever_the_read_order():
     linhas = _linhas(ps)
     assert "Sinal" in linhas["01"] and "R$ 50.000,00" in linhas["01"]
     assert "R$ 400.000,00" in linhas["03"]
-    assert "perderá o valor pago na Parcela 01 (Sinal)" in "\n".join(ps)
+    assert "perderá o valor pago do Sinal" in "\n".join(ps)
 
 
 def test_sinal_stored_last_still_prints_as_parcela_01_with_its_own_amount():
@@ -45,7 +45,7 @@ def test_sinal_stored_last_still_prints_as_parcela_01_with_its_own_amount():
     linhas = _linhas(ps)
     assert "Sinal" in linhas["01"] and "R$ 50.000,00" in linhas["01"]
     assert "R$ 400.000,00" in linhas["03"]  # financiamento keeps its relative order
-    assert "perderá o valor pago na Parcela 01 (Sinal)" in "\n".join(ps)
+    assert "perderá o valor pago do Sinal" in "\n".join(ps)
     assert [p.tipo for p in derivacao.parcelas_ordenadas(replace(d, parcelas=guardadas))] == [
         "sinal", "intermediaria", "financiamento",
     ]
@@ -66,3 +66,39 @@ def test_operator_order_among_the_other_parcelas_is_kept():
         replace(d, parcelas=[replace(fin, ordem=0), replace(sinal, ordem=1), replace(inter, ordem=2)])
     )
     assert [p.tipo for p in ordenadas] == ["sinal", "financiamento", "intermediaria"]
+
+
+# ─── migration 206: "sinal always Parcela 01" is the default, adjustable ──────
+
+
+def _com_sinal_ultimo(d, flag: bool):
+    sinal, inter, fin = d.parcelas
+    guardadas = [replace(inter, ordem=0), replace(fin, ordem=1), replace(sinal, ordem=2)]
+    return replace(d, parcelas=guardadas, termos=replace(d.termos, sinal_primeira_parcela=flag))
+
+
+def test_sinal_primeira_parcela_defaults_on_and_hoists():
+    d = fx.variante(1)
+    assert d.termos.sinal_primeira_parcela is True
+    ordenadas = derivacao.parcelas_ordenadas(_com_sinal_ultimo(d, True))
+    assert [p.tipo for p in ordenadas] == ["sinal", "intermediaria", "financiamento"]
+
+
+def test_sinal_primeira_parcela_off_follows_the_operator_order_exactly():
+    d = _com_sinal_ultimo(fx.variante(1), False)
+    ordenadas = derivacao.parcelas_ordenadas(d)
+    assert [p.tipo for p in ordenadas] == ["intermediaria", "financiamento", "sinal"]
+    # The printed numbers follow: the sinal is Parcela 03 and its amount stays attached.
+    assert derivacao.numeros_impressos(d)[ordenadas[2].id] == "03"
+
+
+def test_sinais_nao_consecutivos_gate_is_intact_with_the_flag_off():
+    d = fp.sinal_em_partes()
+    s1, s2, inter, fin = d.parcelas
+    separados = [replace(s1, ordem=0), replace(inter, ordem=1), replace(s2, ordem=2), replace(fin, ordem=3)]
+    for flag in (True, False):
+        dd = replace(d, parcelas=separados, termos=replace(d.termos, sinal_primeira_parcela=flag))
+        pol = fx.politica_variante(1)
+        sw = derivacao.derivar_switches(dd, pol, fx.REFERENCIA)
+        av = derivacao.avaliar(dd, sw, pol, fx.ASSINATURA, fx.REFERENCIA)
+        assert any("SINAIS_NAO_CONSECUTIVOS" in str(b) for b in av.bloqueios), flag

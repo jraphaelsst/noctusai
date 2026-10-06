@@ -157,6 +157,8 @@ TERMOS_CAMPOS: tuple[str, ...] = (
     "permuta_posse_prazo_dias", "permuta_posse_marco",
     "permuta_posse_marco_parcela_id", "permuta_obrigacoes_entrega",
     "itens_integrantes", "itens_integrantes_ausente_confirmado", "ad_corpus",
+    # Migration 206 — NOT NULL DEFAULT true; absent/null reads as true.
+    "sinal_primeira_parcela",
     "obrigacoes_vendedor",
     "onus_quitacao", "onus_prazo_dias",
     # Migration 193 — 'ja_quitado': the baixa request's filing date.
@@ -1458,6 +1460,8 @@ def _termos_out(row: Optional[dict]) -> dict:
     out["onus_baixa_protocolo_em"] = None if protocolo is None else str(protocolo)[:10]
     posse_data = row.get("posse_data")
     out["posse_data"] = None if posse_data is None else str(posse_data)[:10]
+    # Migration 206: no row yet / a null = the default, ON.
+    out["sinal_primeira_parcela"] = row.get("sinal_primeira_parcela") is not False
     juros = _dec(row.get("confissao_juros_am"))
     out["confissao_juros_am"] = None if juros is None else str(juros)
     for campo in ("posse_marco_parcela_id", "permuta_posse_marco_parcela_id"):
@@ -1560,6 +1564,17 @@ def atualizar_termos(
 
     if termos["ad_corpus"] is not None and not isinstance(termos["ad_corpus"], bool):
         raise ValidationError_("ad_corpus deve ser verdadeiro ou falso", field="ad_corpus")
+
+    # Migration 206 — `NOT NULL DEFAULT TRUE`: an absent key (a PUT stores it
+    # as null) means the default, never "off"; only an explicit False turns it off.
+    sinal_primeira = termos["sinal_primeira_parcela"]
+    if sinal_primeira is None:
+        termos["sinal_primeira_parcela"] = True
+    elif not isinstance(sinal_primeira, bool):
+        raise ValidationError_(
+            "sinal_primeira_parcela deve ser verdadeiro ou falso",
+            field="sinal_primeira_parcela",
+        )
 
     # 🔴 Migration 163 made this column `NOT NULL DEFAULT FALSE`, but a PUT
     # stores an ABSENT key as null — so every save from a client that does

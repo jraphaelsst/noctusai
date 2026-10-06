@@ -243,7 +243,7 @@ describe("marco = 'parcela' exige uma parcela", () => {
 });
 
 describe("PUT — o corpo inteiro é sempre enviado", () => {
-  it("🔴 salvar envia as 19 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
+  it("🔴 salvar envia as 20 chaves de TERMOS_CAMPOS, mesmo em branco", async () => {
     const { getByTestId } = await render(aggregate());
     const { fireEvent } = await import("@testing-library/react");
 
@@ -264,6 +264,7 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "itens_integrantes",
         "itens_integrantes_ausente_confirmado",
         "ad_corpus",
+        "sinal_primeira_parcela",
         "obrigacoes_vendedor",
         "onus_quitacao",
         "onus_prazo_dias",
@@ -274,6 +275,20 @@ describe("PUT — o corpo inteiro é sempre enviado", () => {
         "corretagem_num_parcelas",
       ].sort(),
     );
+  });
+
+  it("sinal como Parcela 01: ligado por padrão, desligar salva false pelo mesmo PUT", async () => {
+    const { getByTestId, getByLabelText } = await render(aggregate());
+    const { fireEvent } = await import("@testing-library/react");
+
+    const box = getByLabelText("Sinal sempre como Parcela 01");
+    expect(box.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[0][0].sinal_primeira_parcela).toBe(true);
+
+    fireEvent.click(box);
+    fireEvent.click(getByTestId("negest-termos-salvar"));
+    expect(mockAtualizarTermos.mock.calls[1][0].sinal_primeira_parcela).toBe(false);
   });
 
   it("campos preenchidos chegam com os valores digitados", async () => {

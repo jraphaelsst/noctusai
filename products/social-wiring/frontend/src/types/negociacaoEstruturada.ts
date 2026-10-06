@@ -272,6 +272,10 @@ export interface NegociacaoTermos {
   itens_integrantes_ausente_confirmado: boolean;
   /** `null` = unanswered (blocks generation); `false` is a real "não". */
   ad_corpus: boolean | null;
+  /** Migration 206 — `true` (default): the sinal prints as Parcela 01 even
+   *  when ordered later. `false`: the contract follows the parcela order
+   *  exactly. Optional for a pre-206 backend (read as `true`). */
+  sinal_primeira_parcela?: boolean;
   obrigacoes_vendedor: string | null;
 
   onus_quitacao: OnusQuitacao | null;

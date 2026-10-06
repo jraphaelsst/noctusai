@@ -737,8 +737,13 @@ def parcelas_ordenadas(d: DadosContrato) -> list[Parcela]:
     every amount shifted; when the first sinal is not first, its consecutive
     run (a sinal paid in tranches, kept together) is hoisted to the front.
     Non-consecutive sinais stay where `ordem` put them so the
-    `SINAIS_NAO_CONSECUTIVOS` gate still sees them."""
+    `SINAIS_NAO_CONSECUTIVOS` gate still sees them.
+
+    The hoist is the DEFAULT, adjustable per deal (`termos.sinal_primeira_parcela`,
+    migration 206): turned OFF, the persisted `ordem` is followed exactly."""
     por_ordem = sorted(d.parcelas, key=lambda p: p.ordem)  # stable: ties keep read order
+    if not d.termos.sinal_primeira_parcela:
+        return por_ordem
     primeiro = next((i for i, p in enumerate(por_ordem) if p.tipo == "sinal"), None)
     if not primeiro:  # no sinal, or already first
         return por_ordem

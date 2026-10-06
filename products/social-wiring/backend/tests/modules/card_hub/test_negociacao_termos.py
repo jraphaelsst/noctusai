@@ -166,6 +166,8 @@ class TestTermosRoundTrip:
         cid, _aid = _seed(scoped)
         body = _estruturada(client, cid)
         assert set(body["termos"]) == set(TERMOS_CAMPOS)
+        # Migration 206: the one clause with a non-null default (sinal first, ON).
+        assert body["termos"].pop("sinal_primeira_parcela") is True
         assert all(v is None for v in body["termos"].values())
         assert "posse" in body["completude"]["faltando"]
 
@@ -228,6 +230,19 @@ class TestTermosRoundTrip:
         assert r.json()["termos"]["itens_integrantes_ausente_confirmado"] is False
         linha = scoped.table("atendimento_negociacao_termos").select("*").execute().data[0]
         assert linha["itens_integrantes_ausente_confirmado"] is False
+
+    def test_sinal_primeira_parcela_defaults_on_and_off_round_trips(self, client, scoped):
+        """Migration 206 — NOT NULL DEFAULT true: absent = ON; explicit False sticks."""
+        cid, _aid = _seed(scoped)
+        assert _estruturada(client, cid)["termos"]["sinal_primeira_parcela"] is True
+        r = _put_termos(client, cid, obrigacoes_vendedor="x")
+        assert r.json()["termos"]["sinal_primeira_parcela"] is True
+        linha = scoped.table("atendimento_negociacao_termos").select("*").execute().data[0]
+        assert linha["sinal_primeira_parcela"] is True
+        r = _put_termos(client, cid, sinal_primeira_parcela=False)
+        assert r.status_code == 200, r.text
+        assert r.json()["termos"]["sinal_primeira_parcela"] is False
+        assert _estruturada(client, cid)["termos"]["sinal_primeira_parcela"] is False
 
     def test_confirming_no_itens_integrantes_round_trips(self, client, scoped):
         cid, _aid = _seed(scoped)

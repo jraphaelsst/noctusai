@@ -42,6 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 
 import { useAtualizarTermos } from "@/hooks/useNegociacaoEstruturada";
@@ -93,6 +94,8 @@ interface TermosDraft {
   itens_integrantes: string;
   /** "" = not answered yet. */
   ad_corpus: "sim" | "nao" | "";
+  /** Migration 206 — default ON. */
+  sinal_primeira_parcela: boolean;
   obrigacoes_vendedor: string;
 
   onus_quitacao: OnusQuitacao | "";
@@ -126,6 +129,7 @@ function toDraft(t: NegociacaoTermos): TermosDraft {
         : "",
     itens_integrantes: t.itens_integrantes ?? "",
     ad_corpus: t.ad_corpus == null ? "" : t.ad_corpus ? "sim" : "nao",
+    sinal_primeira_parcela: t.sinal_primeira_parcela !== false,
     obrigacoes_vendedor: t.obrigacoes_vendedor ?? "",
 
     onus_quitacao: t.onus_quitacao ?? "",
@@ -184,6 +188,7 @@ function toPayload(d: TermosDraft): TermosNegocioPut {
     itens_integrantes: d.itens_resposta === "lista" ? textoOuNulo(d.itens_integrantes) : null,
     itens_integrantes_ausente_confirmado: d.itens_resposta === "nenhum",
     ad_corpus: d.ad_corpus === "" ? null : d.ad_corpus === "sim",
+    sinal_primeira_parcela: d.sinal_primeira_parcela,
     obrigacoes_vendedor: textoOuNulo(d.obrigacoes_vendedor),
 
     onus_quitacao: d.onus_quitacao || null,
@@ -580,6 +585,25 @@ export default function TermosNegocioSection({ clienteId, data }: Props) {
             valor={draft.ad_corpus}
             onChange={(v) => setDraft((d) => ({ ...d, ad_corpus: v }))}
           />
+          <div className="flex items-start gap-2" data-testid="termos-sinal-primeira">
+            <Checkbox
+              id="termos-sinal-primeira-parcela"
+              checked={draft.sinal_primeira_parcela}
+              onCheckedChange={(v) =>
+                setDraft((d) => ({ ...d, sinal_primeira_parcela: v === true }))
+              }
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="termos-sinal-primeira-parcela">
+                Sinal sempre como Parcela 01
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                Ligado, o contrato imprime o sinal como primeira parcela, mesmo
+                que a ordem das parcelas seja outra. Desligado, segue a ordem
+                das parcelas exatamente.
+              </p>
+            </div>
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="termos-obrigacoes-vendedor">
               Obrigações do vendedor

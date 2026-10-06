@@ -575,6 +575,9 @@ class Termos:
     #: (`derivacao._contrato`, `negociacao.itens_integrantes`).
     itens_integrantes_ausente_confirmado: bool = False
     ad_corpus: Optional[bool] = None
+    #: [Migration 206] Default ON: the first sinal run prints as Parcela 01
+    #: (`derivacao.parcelas_ordenadas`). OFF = the persisted `ordem` verbatim.
+    sinal_primeira_parcela: bool = True
     #: [Migration 193] Printed VERBATIM as a paragraph of the ÔNUS clause
     #: (corpus deal 859's position) and recorded as a legal-review item.
     obrigacoes_vendedor: Optional[str] = None

@@ -666,6 +666,10 @@ class TermosNegocioPutBody(StrictHttpModel):
     #: blocking generation (see that migration's header).
     itens_integrantes_ausente_confirmado: Optional[bool] = None
     ad_corpus: Optional[bool] = None
+    #: [Migration 206] The sinal is printed as Parcela 01 even when the
+    #: operator ordered it later (default). `False` = follow the persisted
+    #: `ordem` exactly. Absent/null = the default (`True`), never "off".
+    sinal_primeira_parcela: Optional[bool] = None
     obrigacoes_vendedor: Optional[str] = Field(default=None, max_length=4000)
 
     onus_quitacao: Optional[

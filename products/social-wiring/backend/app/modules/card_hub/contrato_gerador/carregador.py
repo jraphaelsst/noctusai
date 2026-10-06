@@ -569,6 +569,7 @@ def _termos(bruto: dict) -> Termos:
         itens_integrantes=bruto.get("itens_integrantes"),
         itens_integrantes_ausente_confirmado=bool(bruto.get("itens_integrantes_ausente_confirmado")),
         ad_corpus=bruto.get("ad_corpus"),
+        sinal_primeira_parcela=bruto.get("sinal_primeira_parcela") is not False,
         obrigacoes_vendedor=bruto.get("obrigacoes_vendedor"),
         onus_quitacao=bruto.get("onus_quitacao"),
         onus_prazo_dias=_int(bruto.get("onus_prazo_dias")),
