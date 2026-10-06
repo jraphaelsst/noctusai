@@ -104,7 +104,10 @@ class TestSSOTokenFlow:
             {"id": "org-1", "nome": "Test Corp", "logo_url": None},
         ])
         ms.set_table_responses("subscriptions", [[]])
-        ms.set_table_responses("products", [[]])
+        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario"}])
+        ms.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         resp = client.post("/api/sso/session", json={"token": sso_token})
         assert resp.status_code == 200
@@ -134,7 +137,10 @@ class TestSSOTokenFlow:
             {"id": "org-1", "nome": "Admin Corp", "logo_url": None},
         ])
         ms.set_table_responses("subscriptions", [[]])
-        ms.set_table_responses("products", [[]])
+        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario"}])
+        ms.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         resp = client.post("/api/sso/session", json={"token": sso_token})
         assert resp.status_code == 200
@@ -161,7 +167,10 @@ class TestSSOTokenFlow:
             {"id": "org-1", "nome": "Owner Corp", "logo_url": None},
         ])
         ms.set_table_responses("subscriptions", [[]])
-        ms.set_table_responses("products", [[]])
+        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario"}])
+        ms.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
+        }])
 
         resp = client.post("/api/sso/session", json={"token": sso_token})
         assert resp.status_code == 200
@@ -275,7 +284,7 @@ class TestInvitationAccept:
         invite_record = {
             "id": "inv-2",
             "org_id": "org-accept",
-            "email": "accept@example.com",
+            "email": "test@example.com",
             "role": "member",
             "status": "pending",
             "token": "accept-token-123",

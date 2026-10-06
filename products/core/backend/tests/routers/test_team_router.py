@@ -334,6 +334,31 @@ class TestAcceptInvite:
         data = resp.json()
         assert data["message"] == "Convite aceito com sucesso"
 
+    def _invite(self, mock_sb, email):
+        mock_sb.set_table_data("invitations", {
+            "id": "inv-1", "org_id": "org-1", "email": email, "role": "owner",
+            "status": "pending", "expires_at": "2099-01-01T00:00:00Z", "token": "tok",
+        })
+        mock_sb.set_table_data("noctus_users", None)
+
+    def test_accept_invite_email_mismatch_is_403(self, client):
+        self._invite(client.mock_supabase, "someone-else@example.com")
+        resp = client.post("/api/team/accept-invite", json={"token": "tok"})
+        assert resp.status_code == 403
+        assert "outro email" in resp.json().get("detail", resp.text)
+
+    def test_accept_invite_email_match_is_case_and_space_insensitive(self, client):
+        self._invite(client.mock_supabase, "  TEST@Example.COM ")
+        resp = client.post("/api/team/accept-invite", json={"token": "tok"})
+        assert resp.status_code == 200
+
+    def test_accept_invite_unauthenticated_is_401_and_not_burned(self, unauth_client):
+        mock_sb = unauth_client.mock_supabase
+        self._invite(mock_sb, "test@example.com")
+        resp = unauth_client.post("/api/team/accept-invite", json={"token": "tok", "nome": "X"})
+        assert resp.status_code == 401
+        assert not mock_sb.table("invitations").updated_payloads
+
     def test_accept_invite_invalid_token(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("invitations", None)

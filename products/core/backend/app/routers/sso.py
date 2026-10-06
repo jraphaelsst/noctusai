@@ -380,6 +380,33 @@ def _generate_session(email: str) -> dict:
             )
 
 
+def _claim_sso_jti(db, jti: str, user_id: str | None, product: str | None) -> None:
+    """Record the jti as redeemed; refuse (401) when it already was.
+
+    Fail-closed: any insert error other than a duplicate-key is a 500, never
+    an implicit pass.
+    """
+    try:
+        db.table("sso_token_redemptions").insert({
+            "jti": jti, "user_id": user_id, "product": product or "",
+        }).execute()
+    except Exception as exc:  # noqa: BLE001
+        msg = str(exc).lower()
+        if "23505" in msg or "duplicate" in msg or "already exists" in msg:
+            logger.warning("sso: replay refused for jti=%s", jti)
+            raise HTTPException(status_code=401, detail="Token SSO já utilizado")
+        logger.error("sso: could not record redemption jti=%s: %s", jti, exc)
+        raise HTTPException(status_code=500, detail="Erro ao validar token SSO")
+
+
+def _release_sso_jti(db, jti: str) -> None:
+    """Undo a claim when no session was issued (so a retry is not burned)."""
+    try:
+        db.table("sso_token_redemptions").delete().eq("jti", jti).execute()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sso: could not release jti=%s: %s", jti, exc)
+
+
 @router.post("/session", response_model=SSOSessionResponse)
 @limiter.limit("20/minute")
 async def sso_session(request: Request, body: SSOSessionRequest):
@@ -405,6 +432,27 @@ async def sso_session(request: Request, body: SSOSessionRequest):
     noctus_role = payload.get("role", "user")
     org_role = payload.get("org_role", "member")
     org_id = payload.get("org_id")
+    token_product = payload.get("product")
+
+    # Audience binding: a token minted for product A cannot be redeemed as B.
+    if body.product_slug is not None and body.product_slug != token_product:
+        raise HTTPException(status_code=401, detail="Token SSO não é válido para este produto")
+
+    db = get_admin_client()
+
+    # Re-check the license at redemption — a revoked license cannot redeem.
+    product_row = (
+        db.table("products").select("id").eq("slug", token_product).limit(1).execute()
+    )
+    if not product_row.data:
+        raise HTTPException(status_code=403, detail="Produto não encontrado")
+    from app.dependencies import check_org_license
+    if not check_org_license(db, org_id, product_row.data[0]["id"]):
+        raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
+
+    # Single use: claim the jti BEFORE issuing anything.
+    jti = payload["jti"]
+    _claim_sso_jti(db, jti, user_id, token_product)
 
     logger.info(
         "SSO session para email=%s, org=%s, role=%s, org_role=%s",
@@ -426,7 +474,6 @@ async def sso_session(request: Request, body: SSOSessionRequest):
                 metadata_update["org_id"] = org_id
 
             # Enrich with org, subscription, and license context
-            db = get_admin_client()
             product_slug = payload.get("product")
             _enrich_sso_metadata(db, metadata_update, org_id, product_slug)
 
@@ -438,7 +485,13 @@ async def sso_session(request: Request, body: SSOSessionRequest):
 
     try:
         session = _generate_session(email)
+    except HTTPException:
+        _release_sso_jti(db, jti)
+        raise
     except _RateLimitError:
+        # Nothing was issued — release the claim so the client's Retry-After
+        # retry (same token) is not burned.
+        _release_sso_jti(db, jti)
         logger.warning("sso: rate-limit hit for email=%s during session generation; returning 429", email)
         return JSONResponse(
             status_code=429,

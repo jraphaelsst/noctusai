@@ -20,6 +20,9 @@ class SSOValidateRequest(StrictHttpModel):
 
 class SSOSessionRequest(StrictHttpModel):
     token: str
+    # The product redeeming the token (SSOCallback sends its slug). When
+    # present it MUST equal the token's minted `product` claim.
+    product_slug: str | None = None
 
 
 class SSOSessionResponse(StrictHttpModel):

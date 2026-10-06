@@ -73,6 +73,29 @@ class TestSSOTokenFactories:
         assert payload["iss"] == SSO_ISSUER
         assert payload["aud"] == SSO_AUDIENCE
 
+    def test_each_token_carries_a_unique_jti(self):
+        s = _Settings()
+        mint = create_sso_token_factory(s)
+        verify = verify_sso_token_factory(s)
+        kw = dict(user_id="u1", org_id="o1", product_slug="p", email="a@b.c")
+        a, b = verify(mint(**kw)), verify(mint(**kw))
+        assert a["jti"] and b["jti"] and a["jti"] != b["jti"]
+
+    def test_token_without_jti_is_rejected(self):
+        import time
+        import jwt as _jwt
+        from fastapi import HTTPException
+        s = _Settings()
+        now = int(time.time())
+        token = _jwt.encode(
+            {"sub": "u", "type": "sso", "iss": SSO_ISSUER, "aud": SSO_AUDIENCE,
+             "iat": now, "exp": now + 300},
+            s.jwt_secret, algorithm=s.jwt_algorithm,
+        )
+        with pytest.raises(HTTPException) as ei:
+            verify_sso_token_factory(s)(token)
+        assert ei.value.status_code == 401
+
     def test_roles_are_carried_into_payload(self):
         s = _Settings()
         mint = create_sso_token_factory(s)
@@ -122,7 +145,7 @@ class TestSSOTokenFactories:
         payload = {
             "sub": "u",
             "type": "session",
-            "iss": SSO_ISSUER,
+            "iss": SSO_ISSUER, "jti": "j-1",
             "aud": SSO_AUDIENCE,
             "exp": now + datetime.timedelta(minutes=5),
             "iat": now,
@@ -162,7 +185,7 @@ def _base_valid_payload(minutes_from_now: float = 5.0) -> dict:
     return {
         "sub": "u1",
         "type": "sso",
-        "iss": SSO_ISSUER,
+        "iss": SSO_ISSUER, "jti": "j-1",
         "aud": SSO_AUDIENCE,
         "exp": now + datetime.timedelta(minutes=minutes_from_now),
         "iat": now,

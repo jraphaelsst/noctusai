@@ -61,6 +61,7 @@ import datetime
 import logging
 import threading
 import time
+import uuid
 from typing import Any, Callable, Dict, Optional, Tuple
 
 import jwt
@@ -957,6 +958,8 @@ def create_sso_token_factory(settings) -> Callable[..., str]:
             "role": role,
             "org_role": org_role,
             "type": "sso",
+            # Unique id: lets the redeeming side enforce single use.
+            "jti": str(uuid.uuid4()),
             "iss": SSO_ISSUER,
             "aud": SSO_AUDIENCE,
             "exp": now_utc() + datetime.timedelta(
@@ -992,7 +995,7 @@ def verify_sso_token_factory(settings) -> Callable[[str], dict]:
                 issuer=SSO_ISSUER,
                 audience=SSO_AUDIENCE,
                 leeway=10,  # seconds of clock-skew tolerance for exp/iat/nbf
-                options={"require": ["exp", "iat", "iss", "aud", "type"]},
+                options={"require": ["exp", "iat", "iss", "aud", "type", "jti"]},
             )
             if payload.get("type") != "sso":
                 raise HTTPException(status_code=401, detail="Token não é SSO")

@@ -31,6 +31,8 @@ export interface SSOCallbackProps {
   ssoEndpoint?: string;
   /** Where to navigate after successful auth (default: /). */
   redirectPath?: string;
+  /** This product's slug — sent so core can bind the token to its audience. */
+  productSlug?: string;
 }
 
 type SSOState =
@@ -57,6 +59,7 @@ export function SSOCallback({
   coreUrl = 'http://localhost:5173',
   ssoEndpoint = '/api/sso/session',
   redirectPath = '/',
+  productSlug,
 }: SSOCallbackProps) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -66,6 +69,9 @@ export function SSOCallback({
   });
   const cancelledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Tokens are single-use: a remount (StrictMode double-effect) must reuse the
+  // in-flight redemption, never fire a second one that core would refuse.
+  const inflightRef = useRef<Map<string, Promise<boolean>>>(new Map());
 
   const clearTimer = useCallback(() => {
     if (timerRef.current != null) {
@@ -74,14 +80,14 @@ export function SSOCallback({
     }
   }, []);
 
-  const callBackend = useCallback(
+  const redeem = useCallback(
     async (token: string): Promise<boolean> => {
       setState({ status: 'loading', message: 'Autenticando via NoctusAI...' });
 
       const response = await fetch(`${coreApiUrl}${ssoEndpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ token }),
+        body: JSON.stringify(productSlug ? { token, product_slug: productSlug } : { token }),
       });
 
       if (response.status === 429) {
@@ -100,7 +106,20 @@ export function SSOCallback({
       if (error) throw new Error(error.message);
       return true;
     },
-    [coreApiUrl, ssoEndpoint, supabase],
+    [coreApiUrl, ssoEndpoint, supabase, productSlug],
+  );
+
+  const callBackend = useCallback(
+    (token: string): Promise<boolean> => {
+      const existing = inflightRef.current.get(token);
+      if (existing) return existing;
+      const p = redeem(token).finally(() => {
+        inflightRef.current.delete(token);
+      });
+      inflightRef.current.set(token, p);
+      return p;
+    },
+    [redeem],
   );
 
   const startCountdown = useCallback(
@@ -172,6 +191,15 @@ export function SSOCallback({
     if (!token) {
       setState({ status: 'error', message: 'Token SSO nao encontrado na URL.' });
       return;
+    }
+
+    // The token is a bearer credential: strip it from the address bar (and
+    // history) immediately so it cannot leak via history/referrer/screenshots.
+    // The in-memory copy below is all the flow needs.
+    if (typeof window !== 'undefined') {
+      const clean = new URL(window.location.href);
+      clean.searchParams.delete('token');
+      window.history.replaceState(window.history.state, '', clean.pathname + clean.search + clean.hash);
     }
 
     cancelledRef.current = false;

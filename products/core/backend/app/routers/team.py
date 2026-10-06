@@ -400,79 +400,74 @@ async def aceitar_convite(
 ):
     """Accept an invitation by token.
 
-    If the user is already authenticated, they are added to the org.
-    If the request includes a `nome` field, a new user profile is created
-    (useful for users who signed up via Supabase Auth but don't have
-    a noctus_users profile yet).
+    Requires authentication AND that the caller's email matches the invited
+    address (case-insensitive) — 401 without auth, 403 on mismatch. If the
+    request includes a `nome` field and the caller has no noctus_users
+    profile yet, one is created.
     """
     db = get_admin_client()
 
     # Validate the invitation (checks pending + not expired)
     invite_data = validate_invitation(db, "invitations", body.token)
 
-    # If user is authenticated, use their identity
-    authenticated_user = None
-    if authorization and authorization.startswith("Bearer "):
-        try:
-            authenticated_user, _ = await get_current_user(authorization)
-        except HTTPException as exc:
-            # Not authenticated — will proceed without user context.
-            logger.debug("team: invitation accept proceeding without auth (%s)", exc.detail if hasattr(exc, 'detail') else exc)
+    # Acceptance REQUIRES an authenticated caller whose email IS the invited
+    # address — otherwise anyone holding the link joins the org (or burns it).
+    if not (authorization and authorization.startswith("Bearer ")):
+        raise HTTPException(
+            status_code=401,
+            detail="Faça login com o email convidado para aceitar o convite",
+        )
+    authenticated_user, _ = await get_current_user(authorization)
 
-    if authenticated_user:
-        user_id = authenticated_user.id
-        user_email = authenticated_user.email
-
-        # Verify the email matches (or allow override for flexibility)
-        # We allow accepting even if email differs — the invite was for a role
-
-        # Check if user already has a profile
-        existing = (
-            db.table("noctus_users")
-            .select("id, org_id")
-            .eq("id", user_id)
-            .single()
-            .execute()
+    caller_email = (getattr(authenticated_user, "email", None) or "").strip().lower()
+    invited_email = (invite_data.get("email") or "").strip().lower()
+    if not caller_email or caller_email != invited_email:
+        raise HTTPException(
+            status_code=403,
+            detail="Este convite foi enviado para outro email",
         )
 
-        if existing.data and existing.data.get("org_id"):
-            # User already belongs to an org — check if it's the same one
-            if existing.data["org_id"] == invite_data["org_id"]:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Você já pertence a esta organização",
-                )
-            else:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Você já pertence a outra organização. Entre em contato com o suporte.",
-                )
+    user_id = authenticated_user.id
+    user_email = authenticated_user.email
 
-        if existing.data:
-            # Update existing profile to join the org
-            db.table("noctus_users").update({
-                "org_id": invite_data["org_id"],
-                "org_role": invite_data["role"],
-            }).eq("id", user_id).execute()
-        else:
-            # Create a new noctus_users profile
-            db.table("noctus_users").insert({
-                "id": user_id,
-                "email": user_email or invite_data["email"],
-                "nome": body.nome or user_email or invite_data["email"],
-                "org_id": invite_data["org_id"],
-                "org_role": invite_data["role"],
-                "role": "user",
-            }).execute()
-    else:
-        # User is not authenticated — we create a placeholder profile
-        # that will be completed when the user signs up / logs in.
-        # For now, mark the invitation as accepted.
-        if not body.nome:
+    # Check if user already has a profile
+    existing = (
+        db.table("noctus_users")
+        .select("id, org_id")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
+
+    if existing.data and existing.data.get("org_id"):
+        # User already belongs to an org — check if it's the same one
+        if existing.data["org_id"] == invite_data["org_id"]:
             raise HTTPException(
-                status_code=400,
-                detail="Faça login ou forneça seu nome para aceitar o convite",
+                status_code=409,
+                detail="Você já pertence a esta organização",
             )
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail="Você já pertence a outra organização. Entre em contato com o suporte.",
+            )
+
+    if existing.data:
+        # Update existing profile to join the org
+        db.table("noctus_users").update({
+            "org_id": invite_data["org_id"],
+            "org_role": invite_data["role"],
+        }).eq("id", user_id).execute()
+    else:
+        # Create a new noctus_users profile
+        db.table("noctus_users").insert({
+            "id": user_id,
+            "email": user_email or invite_data["email"],
+            "nome": body.nome or user_email or invite_data["email"],
+            "org_id": invite_data["org_id"],
+            "org_role": invite_data["role"],
+            "role": "user",
+        }).execute()
 
     mark_accepted(db, "invitations", invite_data["id"])
 

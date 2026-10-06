@@ -7,6 +7,7 @@ GET   /api/sso/launch/{slug}   — Redirect to product with SSO token
 POST  /api/sso/session         — Exchange SSO token for Supabase session
 """
 import time
+import uuid
 
 import jwt
 import pytest
@@ -207,7 +208,7 @@ class TestLaunchProduct:
 
 def _make_sso_token(
     email="user@test.com", org_id="org-123", expired=False, token_type="sso",
-    role="user", org_role="member", product="therapy-platform",
+    role="user", org_role="member", product="therapy-platform", jti=None,
 ):
     """Create a valid SSO JWT token for testing.
 
@@ -226,6 +227,7 @@ def _make_sso_token(
         "org_role": org_role,
         "product": product,
         "type": token_type,
+        "jti": jti or str(uuid.uuid4()),
         "iss": SSO_ISSUER,
         "aud": SSO_AUDIENCE,
         "iat": now,
@@ -265,6 +267,11 @@ def sso_session_client(client):
     mock_sb = client.mock_supabase
     mock_sb.auth.admin.generate_link.return_value = _mock_generate_link()
     mock_sb.auth.verify_otp.return_value = _mock_verify_otp()
+    # /session re-checks the license at redemption.
+    mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+    mock_sb.set_table_data("licenses", [{
+        "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
+    }])
 
     from app.routers.sso import _session_cache
     _session_cache.clear()
@@ -375,7 +382,7 @@ class TestSSOSessionTokenValidation:
         # Otherwise-valid SSO token (passes verify_sso_token) but missing email,
         # so the router reaches its 400 "sem email" branch rather than 401.
         payload = {
-            "sub": "uid", "type": "sso", "iss": SSO_ISSUER, "aud": SSO_AUDIENCE,
+            "sub": "uid", "type": "sso", "jti": "j-1", "iss": SSO_ISSUER, "aud": SSO_AUDIENCE,
             "iat": int(time.time()), "exp": int(time.time()) + 300,
         }
         token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
@@ -446,6 +453,10 @@ class TestSSOSessionSupabaseAdminNull:
         """When supabase_admin is None, return 500."""
         from app.routers.sso import _session_cache
         _session_cache.clear()
+        client.mock_supabase.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+        client.mock_supabase.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
+        }])
 
         with patch("app.routers.sso.supabase_admin", None):
             token = _make_sso_token()
@@ -566,14 +577,12 @@ class TestSSOSessionMetadataSync:
         assert resp.status_code == 200
 
         # Verify update_user_by_id was called with the right metadata
-        mock_admin.auth.admin.update_user_by_id.assert_called_once_with(
-            "user-uid-123",
-            {"user_metadata": {
-                "noctus_role": "admin",
-                "org_role": "owner",
-                "org_id": "org-123",
-            }},
-        )
+        mock_admin.auth.admin.update_user_by_id.assert_called_once()
+        uid, update = mock_admin.auth.admin.update_user_by_id.call_args[0]
+        assert uid == "user-uid-123"
+        assert update["user_metadata"].items() >= {
+            "noctus_role": "admin", "org_role": "owner", "org_id": "org-123",
+        }.items()
 
     def test_syncs_member_role(self, sso_session_client):
         """Regular users get their org_role synced too."""
@@ -583,14 +592,12 @@ class TestSSOSessionMetadataSync:
         resp = client.post("/api/sso/session", json={"token": token})
         assert resp.status_code == 200
 
-        mock_admin.auth.admin.update_user_by_id.assert_called_once_with(
-            "user-uid-123",
-            {"user_metadata": {
-                "noctus_role": "user",
-                "org_role": "member",
-                "org_id": "org-123",
-            }},
-        )
+        mock_admin.auth.admin.update_user_by_id.assert_called_once()
+        uid, update = mock_admin.auth.admin.update_user_by_id.call_args[0]
+        assert uid == "user-uid-123"
+        assert update["user_metadata"].items() >= {
+            "noctus_role": "user", "org_role": "member", "org_id": "org-123",
+        }.items()
 
     def test_metadata_sync_failure_does_not_block_session(self, sso_session_client):
         """If metadata update fails, session should still be created."""
@@ -776,3 +783,75 @@ class TestSwitcherCustomerRole:
     def test_staff_sees_every_licensed_product(self, client):
         access = self._me(client, "member")
         assert access == {"social-wiring": True, "community": True}
+
+
+class TestSSOSessionSingleUseAndBinding:
+    """Security hotfix 2026-10: single-use jti, audience binding, license recheck."""
+
+    def _prime(self, mock_sb, licensed=True):
+        mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
+        }] if licensed else [])
+
+    def test_replayed_token_is_refused_with_401(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        self._prime(mock_sb)
+        token = _make_sso_token()
+        first = client.post("/api/sso/session", json={"token": token})
+        assert first.status_code == 200
+
+        # The DB's PK refuses the second insert of the same jti.
+        class _DupDb:
+            def table(self, name):
+                builder = mock_sb.table(name)
+                if name == "sso_token_redemptions":
+                    builder.insert = MagicMock(side_effect=Exception(
+                        "duplicate key value violates unique constraint (23505)"))
+                return builder
+
+        with patch("app.routers.sso.get_admin_client", return_value=_DupDb()):
+            second = client.post("/api/sso/session", json={"token": token})
+        assert second.status_code == 401
+
+    def test_redemption_row_recorded(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        self._prime(mock_sb)
+        jti = str(uuid.uuid4())
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token(jti=jti)})
+        assert resp.status_code == 200
+        inserted = mock_sb.table("sso_token_redemptions").inserted_payloads
+        assert any(p.get("jti") == jti and p.get("product") == "therapy-platform" for p in inserted)
+
+    def test_token_without_jti_is_refused(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        self._prime(mock_sb)
+        now = int(time.time())
+        secret = (getattr(settings, "sso_jwt_secret", "") or "").strip() or settings.jwt_secret
+        token = jwt.encode({
+            "sub": "u", "email": "a@b.c", "org_id": "org-123", "product": "therapy-platform",
+            "type": "sso", "iss": SSO_ISSUER, "aud": SSO_AUDIENCE, "iat": now, "exp": now + 300,
+        }, secret, algorithm=settings.jwt_algorithm)
+        assert client.post("/api/sso/session", json={"token": token}).status_code == 401
+
+    def test_product_mismatch_is_refused(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        self._prime(mock_sb)
+        resp = client.post("/api/sso/session", json={
+            "token": _make_sso_token(), "product_slug": "other-product",
+        })
+        assert resp.status_code == 401
+
+    def test_matching_product_accepted(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        self._prime(mock_sb)
+        resp = client.post("/api/sso/session", json={
+            "token": _make_sso_token(), "product_slug": "therapy-platform",
+        })
+        assert resp.status_code == 200
+
+    def test_revoked_license_cannot_redeem(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        self._prime(mock_sb, licensed=False)
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
+        assert resp.status_code == 403
