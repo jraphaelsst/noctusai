@@ -1,21 +1,14 @@
 /**
  * IgConteudo — Instagram "Conteúdo" subtab: publish form (media / carousel /
- * reel / story, discriminated by `kind`) + a media grid of recent posts.
+ * reel / story, discriminated by `kind`). The media grid moved to the
+ * "Publicações" subtab (insights modal); this tab keeps publishing only.
  *
  * Publish states: idle → publishing (loading) → success (toast-less inline
  * confirmation + form reset) → error (inline) → App Review gate
  * (`AppReviewNotice`, never a fake success).
  */
 import { useState } from "react";
-import {
-  CircleAlert,
-  CircleCheck,
-  Film,
-  Image as ImageIcon,
-  Images,
-  Loader2,
-  Send,
-} from "lucide-react";
+import { CircleAlert, CircleCheck, Loader2, Send } from "lucide-react";
 
 import {
   Card,
@@ -28,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -40,7 +32,6 @@ import {
 import {
   isAppReviewGate,
   useActiveMetaAccountId,
-  useIgMedia,
   useIgPublish,
   type IGPublishKind,
 } from "@/hooks/useMeta";
@@ -168,97 +159,6 @@ function PublishForm({ accountId }: { accountId: string }) {
   );
 }
 
-/** Faint media-type placeholder for tiles Meta returns without a thumbnail
- *  URL (expired asset, some reels/stories). Beats bare "Sem miniatura" text. */
-function MediaTypeFallback({ mediaType }: { mediaType?: string | null }) {
-  const t = (mediaType ?? "").toUpperCase();
-  const { Icon, label } =
-    t === "VIDEO"
-      ? { Icon: Film, label: "Vídeo" }
-      : t === "CAROUSEL_ALBUM"
-        ? { Icon: Images, label: "Carrossel" }
-        : { Icon: ImageIcon, label: "Sem miniatura" };
-  return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-1.5 text-muted-foreground/60">
-      <Icon className="h-7 w-7" strokeWidth={1.5} />
-      <span className="text-xs">{label}</span>
-    </div>
-  );
-}
-
-function MediaGrid({ accountId }: { accountId: string }) {
-  // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
-  // and would unmount this media grid on every background refresh.
-  // → KB § PATTERNS/frontend/lying-loading-state.md
-  const { data, isPending, isError } = useIgMedia(accountId, 24);
-  const media = data?.media ?? [];
-
-  if (isPending) {
-    return (
-      <div data-testid="ig-content-grid-loading">
-        <p className="mb-3 flex items-center gap-2 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Carregando mídias recentes…
-        </p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <Skeleton key={i} className="aspect-square rounded-md" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div
-        className="rounded-md border border-dashed p-6 text-center text-sm text-destructive"
-        data-testid="ig-content-grid-error"
-      >
-        Erro ao carregar mídias.
-      </div>
-    );
-  }
-
-  if (media.length === 0) {
-    return (
-      <div
-        className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground"
-        data-testid="ig-content-grid-empty"
-      >
-        Nenhuma mídia publicada ainda.
-      </div>
-    );
-  }
-
-  return (
-    <div
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
-      data-testid="ig-content-grid"
-    >
-      {media.map((item) => (
-        <a
-          key={item.id}
-          href={item.permalink ?? undefined}
-          target="_blank"
-          rel="noreferrer"
-          className="group relative block aspect-square overflow-hidden rounded-md border bg-muted"
-        >
-          {item.thumbnail_url ? (
-            <img
-              src={item.thumbnail_url}
-              alt={item.caption ?? "Post do Instagram"}
-              className="h-full w-full object-cover transition-opacity group-hover:opacity-80"
-            />
-          ) : (
-            <MediaTypeFallback mediaType={item.media_type} />
-          )}
-        </a>
-      ))}
-    </div>
-  );
-}
-
 export default function IgConteudo() {
   const accountId = useActiveMetaAccountId();
 
@@ -278,14 +178,9 @@ export default function IgConteudo() {
   return (
     <div className="space-y-6">
       <PublishForm accountId={accountId} />
-      <Card>
-        <CardHeader>
-          <CardTitle>Mídias recentes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <MediaGrid accountId={accountId} />
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground" data-testid="ig-content-posts-hint">
+        As publicações e suas métricas estão na aba “Publicações”.
+      </p>
     </div>
   );
 }

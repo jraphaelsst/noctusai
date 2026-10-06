@@ -29,6 +29,7 @@ import {
   Megaphone,
   MessageCircle,
   MessagesSquare,
+  Send,
   Table2,
   UserPlus,
 } from "lucide-react";
@@ -41,7 +42,8 @@ import { ConnectedAccountSwitcher } from "@/components/ConnectedAccountSwitcher"
 
 type Network = "instagram" | "facebook" | "ads";
 
-const IgVisaoGeral = lazy(() => import("@/pages/meta/IgVisaoGeral"));
+const IgVisaoGeral = lazy(() => import("@/pages/meta/IgOverview"));
+const IgPublicacoes = lazy(() => import("@/pages/meta/IgPublicacoes"));
 const IgConteudo = lazy(() => import("@/pages/meta/IgConteudo"));
 const IgComentarios = lazy(() => import("@/pages/meta/IgComentarios"));
 const IgDMs = lazy(() => import("@/pages/meta/IgDMs"));
@@ -72,7 +74,8 @@ function lazyPanel(Panel: LazyExoticComponent<() => JSX.Element>) {
 
 const IG_SUBTABS: SocialDashboardSubtab[] = [
   { key: "overview", label: "Visão geral", icon: BarChart3, render: lazyPanel(IgVisaoGeral) },
-  { key: "content", label: "Conteúdo", icon: Grid3x3, render: lazyPanel(IgConteudo) },
+  { key: "posts", label: "Publicações", icon: Grid3x3, render: lazyPanel(IgPublicacoes) },
+  { key: "content", label: "Publicar", icon: Send, render: lazyPanel(IgConteudo) },
   { key: "comments", label: "Comentários", icon: MessageCircle, render: lazyPanel(IgComentarios) },
   { key: "dms", label: "DMs", icon: MessagesSquare, render: lazyPanel(IgDMs) },
 ];
@@ -109,7 +112,15 @@ export default function MetaDashboard() {
       title="Meta"
       subtitle="Instagram, Facebook e Anúncios: visão geral, conteúdo, comentários, mensagens e campanhas, num só lugar."
       accountSwitcher={
-        network === "ads" ? undefined : (
+        network === "ads" ? undefined : network === "instagram" ? (
+          // Insights/Publicações read the Instagram Business Login account;
+          // Publicar/Comentários/DMs still use the Meta (Facebook Login)
+          // connection, so both selectors stay (each hides when empty).
+          <div className="flex flex-wrap items-center gap-2">
+            <ConnectedAccountSwitcher provider="instagram" providerLabel="Instagram" />
+            <ConnectedAccountSwitcher provider="meta" providerLabel="Meta" />
+          </div>
+        ) : (
           <ConnectedAccountSwitcher provider="meta" providerLabel="Meta" />
         )
       }

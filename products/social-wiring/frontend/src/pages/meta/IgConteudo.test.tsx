@@ -1,5 +1,5 @@
 /**
- * IgConteudo.test.tsx — Instagram "Conteúdo" subtab (publish form + media grid).
+ * IgConteudo.test.tsx — Instagram "Conteúdo" subtab (publish form).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -8,14 +8,12 @@ afterEach(async () => {
 });
 
 const mockUseActiveMetaAccountId = vi.fn();
-const mockUseIgMedia = vi.fn();
 const mockUseIgPublish = vi.fn();
 
 vi.mock("@/hooks/useMeta", () => ({
   isAppReviewGate: (x: unknown) =>
     !!x && typeof x === "object" && (x as any).requires_app_review === true,
   useActiveMetaAccountId: mockUseActiveMetaAccountId,
-  useIgMedia: mockUseIgMedia,
   useIgPublish: mockUseIgPublish,
 }));
 
@@ -62,7 +60,6 @@ vi.mock("lucide-react", () => ({
 
 function setDefaults() {
   mockUseActiveMetaAccountId.mockReturnValue("acc-1");
-  mockUseIgMedia.mockReturnValue({ data: { media: [] }, isPending: false, isError: false });
   mockUseIgPublish.mockReturnValue({ mutate: vi.fn(), isPending: false, isError: false, data: undefined });
 }
 
@@ -80,35 +77,6 @@ describe("IgConteudo — no account selected", () => {
     mockUseActiveMetaAccountId.mockReturnValue(null);
     const { getByTestId } = await renderPage();
     expect(getByTestId("ig-content-no-account")).toBeTruthy();
-  });
-});
-
-describe("IgConteudo — media grid states", () => {
-  it("renders a loading grid", async () => {
-    mockUseIgMedia.mockReturnValue({ data: undefined, isPending: true, isError: false });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-content-grid-loading")).toBeTruthy();
-  });
-
-  it("renders an error state", async () => {
-    mockUseIgMedia.mockReturnValue({ data: undefined, isPending: false, isError: true });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-content-grid-error")).toBeTruthy();
-  });
-
-  it("renders an empty state", async () => {
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-content-grid-empty")).toBeTruthy();
-  });
-
-  it("renders a media grid on success", async () => {
-    mockUseIgMedia.mockReturnValue({
-      data: { media: [{ id: "1", thumbnail_url: "http://x/1.jpg", caption: "oi" }] },
-      isPending: false,
-      isError: false,
-    });
-    const { getByTestId } = await renderPage();
-    expect(getByTestId("ig-content-grid")).toBeTruthy();
   });
 });
 
