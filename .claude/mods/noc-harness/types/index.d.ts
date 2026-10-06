@@ -80,6 +80,7 @@ declare module 'claude-code' {
       refusals: Refusal[]
       wrapup: WrapUp | null
       bandHidden: boolean
+      bandExpanded: boolean
       panels: Record<string, Panel | string>
     }
   }

@@ -37,7 +37,9 @@ Each feature has its own `userConfig` switch. None of them decides a gate.
 | Executor offer: EXECUTOR agent types are offered to the model only once a live worktree exists | `agent.offer` | The agent's own `EXECUTOR` marker plus the full snapshot. UX only: the Python executor-dispatch guard enforces, and an unknown snapshot means the agent is offered |
 | Semantic routing fallback, off by default (each call costs an embedding; it is off while OpenAI credits are exhausted) | `prompt.submit` | `noctus.dev.harness_route` (memory_search → MEMORY-<topic>.md) |
 
-Other commands: `/noc-band` (show the band again) and `/noc-refresh`.
+Other commands: `/noc-band` (show the band again), `/noc-refresh`, and `/noc-wrapup` (run the wrap-up check; no focus needed).
+
+**Band ergonomics (0.2.1).** The owner reminders collapse to ONE line (`🔔 N owner reminders · show`), with one bell, not the title's own as well. The wrap-up nudge belongs to the turn that earned it: the next prompt you send dismisses it. In the terminal a band Button only takes keys once the band has focus (ctrl+x tab, then Enter or its hotkey); mouse clicks need the fullscreen layout. That is why every band action also has a slash command.
 
 **Agent types are not re-registered in code.** `$.agent.register` could pin an engineer's tools and model in the mod. Those are already pinned in `.claude/agents/<name>.md` frontmatter, the canonical definition. A second definition would be a fork that drifts. The mod reads the agents' `EXECUTOR` marker instead.
 

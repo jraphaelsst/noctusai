@@ -112,3 +112,8 @@ export function isTaskBranchStart(tool: string, input: string): boolean {
   if (/task_branch/.test(tool)) return /"action"\s*:\s*"start"/.test(input)
   return tool === 'Bash' && /--task-branch\s+start\b/.test(input)
 }
+
+/** A reminder title without its own leading bell (the band draws one). */
+export function stripBell(title: string): string {
+  return title.replace(/^\s*🔔\s*/u, '')
+}

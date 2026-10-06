@@ -11,6 +11,7 @@ import {
   parseTopics,
   refusingGuard,
   statusLine,
+  stripBell,
 } from './derive'
 
 const snap = (over: Partial<HarnessStatus> = {}): HarnessStatus => ({
@@ -105,4 +106,9 @@ test('task-branch starts are seen through the MCP tool and the CLI', async () =>
   expect(isTaskBranchStart('mcp__noctusai__noctus_dev_task_branch', '{"action":"start","slug":"x"}')).toBe(true)
   expect(isTaskBranchStart('mcp__noctusai__noctus_dev_task_branch', '{"action":"cleanup"}')).toBe(false)
   expect(isTaskBranchStart('Bash', 'python3 mcp/noctusai/cli.py --task-branch start --task-branch-slug x')).toBe(true)
+})
+
+test('the band draws one bell, not the title bell as well', async () => {
+  expect(stripBell('🔔 Contract wording for PJ parties')).toBe('Contract wording for PJ parties')
+  expect(stripBell('No bell here')).toBe('No bell here')
 })

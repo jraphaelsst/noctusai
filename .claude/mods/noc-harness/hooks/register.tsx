@@ -17,6 +17,7 @@ import {
   parseTopics,
   refusingGuard,
   statusLine,
+  stripBell,
 } from './derive'
 import type { Topic } from './derive'
 
@@ -26,6 +27,7 @@ const degraded = atom({ plugin: 'noc-harness', key: 'degraded' } as const, null)
 const refusals = atom({ plugin: 'noc-harness', key: 'refusals' } as const, [])
 const wrapup = atom({ plugin: 'noc-harness', key: 'wrapup' } as const, null)
 const bandHidden = atom({ plugin: 'noc-harness', key: 'bandHidden' } as const, false)
+const bandExpanded = atom({ plugin: 'noc-harness', key: 'bandExpanded' } as const, false)
 const panels = atom({ plugin: 'noc-harness', key: 'panels' } as const, {})
 
 // The live panels: each is `cli.py --harness-panel <name>`, drawn as-is.
@@ -227,6 +229,9 @@ export const register: Register = (on, given) => {
       await $.command.register({ name: 'noc-band', description: 'Show the NoctusAI reminders band again' })
     }
     await $.command.register({ name: 'noc-refresh', description: 'Refresh the NoctusAI harness snapshot now' })
+    if (enabled('wrapup_nudge')) {
+      await $.command.register({ name: 'noc-wrapup', description: 'Run the noc-wrap-up check on what this session committed (clears the band nudge)' })
+    }
     if (enabled('code_panels')) {
       await $.command.register({ name: 'noc-vectors', description: 'Live pane: vector platform — caches, freshness, cost (what /vector-status shows)' })
       await $.command.register({ name: 'noc-baselines', description: 'Live pane: kb + code recurrence baselines vs the last ratification' })
@@ -248,6 +253,12 @@ export const register: Register = (on, given) => {
   on('command.run', { command: 'noc-band' }, async $ => {
     await update($, bandHidden, () => false)
     return { text: 'Reminders band shown.' }
+  })
+
+  on('command.run', { command: 'noc-wrapup' }, async $ => {
+    await update($, wrapup, () => null)
+    await $.prompt.submit({ text: 'wrap up — run the noc-wrap-up check on what this session just committed' })
+    return { text: 'Wrap-up check queued.' }
   })
 
   on('command.run', { command: 'noc-refresh' }, async $ => {
@@ -322,7 +333,10 @@ export const register: Register = (on, given) => {
   // Memory-topic routing: point at the MEMORY-<topic>.md the prompt touches,
   // derived from the MEMORY.md topic table — never a hand-kept keyword list.
   on('prompt.submit', async ($, e, next) => {
-    if (isOff || !enabled('memory_routing') || (e.origin.kind !== 'composer' && e.origin.kind !== 'bridge')) return next(e)
+    const isPerson = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    // A nudge belongs to the turn that earned it: moving on dismisses it.
+    if (isPerson && (await read($, wrapup)) !== null) await update($, wrapup, () => null)
+    if (isOff || !enabled('memory_routing') || !isPerson) return next(e)
     const home = (await $.env.get('HOME')) ?? ''
     const dir = memoryDir(home, await primaryRoot($))
     if (topics === null) {
@@ -442,20 +456,36 @@ export const register: Register = (on, given) => {
     const reminders = snap?.reminders ?? []
     if (reminders.length === 0 && pending === null && why === null) return next(e)
     const { Box, Button, Text } = $.ui.resolve(e)
-    const room = Math.max(1, e.props.maxRows - (pending ? 2 : 1))
+    const isOpen = await read($, bandExpanded)
+    const room = Math.max(1, e.props.maxRows - 2)
+    const count = reminders.length
     return (
       <Box flexDirection="column">
-        {reminders.slice(0, room).map(r => (
-          <Text key={r.file} color="yellow" wrap="truncate-end">
-            🔔 {r.title}
-          </Text>
-        ))}
+        {isOpen &&
+          reminders.slice(0, room).map(r => (
+            <Text key={r.file} color="yellow" wrap="truncate-end">
+              🔔 {stripBell(r.title)}
+            </Text>
+          ))}
         {why !== null && (
           <Text key="degraded" color="red" wrap="truncate-end">
             noc-harness degraded — {why}
           </Text>
         )}
         <Box key="actions" flexDirection="row">
+          {count > 0 && (
+            <Text key="count" color="yellow">
+              🔔 {count} owner reminder{count === 1 ? '' : 's'}{' '}
+            </Text>
+          )}
+          {count > 0 && (
+            <Button
+              key="toggle"
+              plain
+              label={isOpen ? 'collapse' : 'show'}
+              onPress={() => update($, bandExpanded, open => !open)}
+            />
+          )}
           {pending !== null && (
             <Button
               key="wrapup"
@@ -469,9 +499,14 @@ export const register: Register = (on, given) => {
             />
           )}
           {pending !== null && (
+            <Text key="wrapup-hint" dimColor>
+              {' '}/noc-wrapup · ctrl+x tab to focus{' '}
+            </Text>
+          )}
+          {pending !== null && (
             <Button key="skip" label="Skip" onPress={() => update($, wrapup, () => null)} />
           )}
-          <Button key="hide" label="Hide" onPress={() => update($, bandHidden, () => true)} />
+          <Button key="hide" plain label="hide" onPress={() => update($, bandHidden, () => true)} />
         </Box>
       </Box>
     )
