@@ -1432,12 +1432,14 @@ _STORAGE_BUCKETS_PROBE = GuardProbe(
 # escalation (public.enforce_session_cap deleted ANY user's auth.sessions).
 # Allowed to stay executable: a function an RLS policy / column default
 # depends on (derived LIVE from pg_depend, same rule the migrations apply).
-# Inactive schemas (erp, therapy, ...) are deliberately NOT checked — asleep.
+# Inactive schemas (erp, therapy, orbity, pilates, ...) ARE checked since 2026-10-06 (owner-authorized lockdown).
 # ---------------------------------------------------------------------------
 
 _SECDEF_ACTIVE_SCHEMAS = (
     "public", "core", "social_wiring", "community",
     "academia_de_reciclagem", "store", "agents", "igig",
+    # Inactive-product schemas locked down 2026-10-06 (owner-authorized); kept enforced.
+    "erp", "imobi_scheduling", "media_scheduling", "therapy", "orbity", "pilates",
 )
 
 _SECDEF_EXECUTE_PROBE = GuardProbe(
