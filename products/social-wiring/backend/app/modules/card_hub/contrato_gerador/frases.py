@@ -568,12 +568,22 @@ def banco_texto(fav: Favorecido) -> str:
     return texto
 
 
+def _evento_e_do_financiamento(evento: str) -> bool:
+    """Does an intermediária's typed evento just name the financing contract
+    ("na assinatura do contrato de financiamento imobiliário")? Then the
+    canonical financed-deal wording (which also names the parcela it settles)
+    prints; any OTHER evento ("em até 30 dias corridos da assinatura do
+    contrato") is the deal's own timing and must print as typed."""
+    return "financ" in evento.lower()
+
+
 def _momento_parcela(p: Parcela, *, tem_financiamento: bool, ref_financiamento: str) -> str:
     """WHEN a parcela is paid — its date, the financing contract (an
     intermediária in a financed deal), or the agreed evento."""
     if p.vencimento:
         return f"com vencimento em {formatar_data_br(p.vencimento)}"
-    if p.tipo == "intermediaria" and tem_financiamento:
+    evento = (p.evento or "").strip()
+    if p.tipo == "intermediaria" and tem_financiamento and (not evento or _evento_e_do_financiamento(evento)):
         return (
             "por ocasião da assinatura do Contrato de Financiamento Imobiliário, "
             f"previsto para quitação da Parcela {ref_financiamento}"

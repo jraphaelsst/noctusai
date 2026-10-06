@@ -140,6 +140,11 @@ Everything else is normalised away or counted apart (`Scorecard.resumo()`):
 | Newer certidão (same kind/person, other identifier AND emission date) | `certidoes_reemitidas` — counted, not failed |
 | Certidão the render lists and the signed text does not | `certidoes_extras` — lowers the `certidoes` ratio (printed-and-listed kinds) |
 
+| Registry/cadastral inscription (`23253.41.85.0055.00.000` ≡ `23253-41-85-0055-00-000`; a SECOND inscription the render adds, labelled `(área maior)`) | the separators are layout (a `.000` group is never a thousands dot); the extra one is an observation — a WRONG inscription still shows as the reference's own going missing |
+| Descriptive numerals of the `IMÓVEL:` quote (`rua 1` vs `Rua I`, room counts) | observation; the unit's own number (`casa nº 54`), areas, fractions, matrícula and cadastral numbers stay material |
+| Parcelas cited by number in prose (`parcelas 1 (um), 2 (dois), e 3 (três)`), `Reg. 03` | citations, not terms |
+| Gap markers | `RG [[LACUNA]]-[[LACUNA]]` is ONE missing RG (the issuer marker absorbs nothing); `[[LACUNA]], solteira` is a nationality gap, never a gap-NAME (a different party name still fails); the day-count sentinel (`999`) in the posse clause also stands for a fixed posse date |
+
 Kept strict (still divergences): a different value, a different date, a
 different installment→amount pair (`parcela:N=valor` tokens), a different RG,
 a different identifier on the same certidão emission date, an area written

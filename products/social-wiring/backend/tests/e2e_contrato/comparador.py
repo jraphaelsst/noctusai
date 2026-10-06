@@ -597,9 +597,13 @@ def _canon_generico(token: str) -> Optional[str]:
             pass
     if re.fullmatch(r"\d+\.(?:\d{1,2}|\d{4,})", token):  # dot-decimal (`153.9356`): the same number as `153,9356`
         return "dec:" + format(Decimal(token).normalize(), "f")
-    token = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", token)
     if "/" not in token and len(re.split(r"[.\-]", token)) >= 4:
+        # a registry number (cadastral inscription): its separators are layout and
+        # a `.000` group is a group, never a thousands dot — decided BEFORE the
+        # thousands-dot strip below, which would fuse `.00.000` into `.00000`.
         token = ".".join(re.split(r"[.\-]", token))
+    else:
+        token = re.sub(r"(?<=\d)\.(?=\d{3}(?!\d))", "", token)
     return "num:" + re.sub(r"\d+", lambda m: m.group(0).lstrip("0") or "0", token)
 
 
@@ -1167,7 +1171,9 @@ def _marcadores_tipados(texto: str) -> list[tuple[str, tuple[str, ...]]]:
             if re.search(r"\bcpf", antes):
                 saida.append((marcador, ("cpf:",)))
             elif re.search(r"\brg\b", antes):
-                saida.append((marcador, ("rg:",)))
+                # `RG [[LACUNA]]-[[LACUNA]]`: the marker after the hyphen is the
+                # ISSUER, not a second RG number — it stands for words only.
+                saida.append((marcador, () if antes.rstrip().endswith("-") else ("rg:",)))
             elif re.search(r"\bcep", antes):
                 saida.append((marcador, ("cep:",)))
             elif re.search(r"\bcnpj", antes):
@@ -1184,9 +1190,16 @@ def _absorver_lacunas(n_falt: list[str], d_falt: list[str], marcadores: list[tup
     stands for. A marker with no missing token of its kind absorbs nothing (it
     stood for words). Returns how many were absorbed."""
     absorvidos = 0
-    for _, prefixos in marcadores:
+    for marcador, prefixos in marcadores:
+        if not prefixos:  # stands for words (an RG issuer, …), never a token
+            continue
         lista = d_falt if prefixos == ("data:",) else n_falt
-        absorvidos += 1 if _retira_um(lista, prefixos) else 0
+        if _retira_um(lista, prefixos):
+            absorvidos += 1
+        elif "999" in marcador and _retira_um(d_falt, ("data:",)):
+            # the day-count sentinel is the posse TIMING field: the reference may
+            # state it as a fixed date instead of a prazo — the same gap
+            absorvidos += 1
     return absorvidos
 
 
@@ -1232,12 +1245,22 @@ _CITACAO_LEGAL_RE = re.compile(
     r"(?:\blei|\bdecreto|medida provisoria|\bmp|\bart(?:igos?|s)?\b\.?|§+|\binciso|\binc\.|codigo civil|\bcpc|\bclausula"
     r"|\bcontrato|\blivro|\bfls?\b\.?|\bfolhas?|\bprotocolo|\bprenotad[oa])"
     r"\s*(?:n[o.]{0,2}\s*)?\d[\d.,/\-]*(?:\s*(?:,|e)\s*\d+)*"
-    r"|\b(?:av|r)(?:\.|-)\s?\d+"  # `R-12`, `AV.10`: a registry act of the matrícula
-    r"|\bparcelas?\s+\d+(?:\s*(?:e|,)\s*\d+)*(?!\d)(?!\s*:)"  # `parcelas 02 e 03` in prose (the `Parcela 02:` list items are tokens of their own)
+    r"|\b(?:av|r)(?:\.|-)\s?\d+|\breg\.\s?\d+"  # `R-12`, `AV.10`, `Reg. 03`: a registry act of the matrícula
+    # `parcelas 02 e 03` / `parcelas 1 (um), 2 (dois), e 3 (três)` in prose (the `Parcela 02:` list items are tokens of their own)
+    r"|\bparcelas?\s+\d+(?:\s*\([a-z ]+\))?(?:\s*(?:,\s*e|e|,)\s*\d+(?:\s*\([a-z ]+\))?)*(?!\d)(?!\s*:)"
     # `1 (um), 2 (dois) e 3 (três) do Parágrafo …`: an enumeration of provisions
     r"|\d+\s*\([a-z ]+\)(?=(?:[,\s]|\be\b)*(?:\d+\s*\([a-z ]+\)(?:[,\s]|\be\b)*)*d[oa]s?\s+(?:paragrafo|clausula|artigo|inciso|item))"
 )
 _IMOVEL_F_RE = re.compile(r"^imovel\s*:")
+#: A bare 1-2 digit integer (no decimals/percent/area unit/separators) and the
+#: words right before it that make it part of the unit's IDENTITY.
+_NUM_DESCRITIVO_RE = re.compile(r"(?<![\w.,/\-])\d{1,2}(?![\w.,/\-%]|\s*(?:%|m\b|m2|metros))")
+_IDENT_ANTES_RE = re.compile(
+    r"(?:\bn[o.°º]{0,2}|\bbloco|\bapto?\.?|\bapartamento|\bcasa|\blote|\bquadra|\bunidade|\bandar|\bgleba"
+    r"|\bsala|\bloja|\bconjunto|\btorre)\s*[\"“”']?\s*$"
+)
+#: A canonical registry/cadastral number token (4+ dot-joined groups).
+_REGISTRO_NUM_RE = re.compile(r"^num:\d+(?:\.\d+){3,}$")
 #: Where the `IMÓVEL:` quote turns into registry-act quotes (`Conforme AV.10 …`):
 #: act numbers, protocols, dates and costs after this point describe the
 #: register's history — informative; areas stay material.
@@ -1252,7 +1275,7 @@ _ESTADO_CIVIL_RE = re.compile(r"\b(solteir|casad|divorciad|viuv|separad|uniao es
 _LOGRADOURO_RE = re.compile(
     r"\b(?:rua|avenida|av|alameda|travessa|estrada|rodovia|praca)\.?\s+([a-z0-9][a-z0-9 ]{2,40}?)(?=\s*,|\s+n[o.]|\s+-|\s*\d|$)"
 )
-_MARCADOR_NOME_RE = re.compile(r"\[\[lacuna\]\](?=,\s*(?:[a-z]*eir[oa]\b|\[\[))", re.I)
+_MARCADOR_NOME_RE = re.compile(r"\[\[lacuna\]\](?=,\s*(?:(?:brasileir|estrangeir)[oa]\b|\[\[))", re.I)
 
 
 def _token_material(tok: str, chave: str, secao_termos: bool, lado: str) -> bool:
@@ -1282,6 +1305,16 @@ def _separar_observacao(texto: str, chave: str) -> tuple[str, str]:
             if m:
                 obs.append(linha[m.start():])
                 linha = linha[: m.start()]
+            # the descriptive text (room counts, boundary street/lot names, a
+            # fixture's own number) is the registry's wording — informative; the
+            # unit's identity (`casa nº 54`, `bloco 2`), areas and fractions stay material
+            def _descritivo(mm: re.Match) -> str:
+                if _IDENT_ANTES_RE.search(linha[max(0, mm.start() - 20) : mm.start()]):
+                    return mm.group(0)
+                obs.append(mm.group(0))
+                return " "
+
+            linha = _NUM_DESCRITIVO_RE.sub(_descritivo, linha)
         linhas.append(linha)
 
     def _tira(m: re.Match) -> str:
@@ -1615,6 +1648,16 @@ def pontuar(
                 for t in do_tipo[-sobra:]:
                     n_extra.remove(t)
                 o2 += sobra
+        # Likewise a SECOND cadastral inscription the render prints beside the one
+        # both sides state (the matrícula's own, labelled `(área maior)`): extra
+        # data from the registry, not a wrong fact — a wrong inscription always
+        # shows as the reference's own going missing.
+        reg_extra = [t for t in n_extra if _REGISTRO_NUM_RE.match(t)]
+        sobra_reg = len(reg_extra) - sum(1 for t in n_falt if _REGISTRO_NUM_RE.match(t))
+        if sobra_reg > 0:
+            for t in reg_extra[-sobra_reg:]:
+                n_extra.remove(t)
+            o2 += sobra_reg
         d_falt, o3 = _divide(d_falt, "falt")
         d_extra, o4 = _divide(d_extra, "extra")
         obs_n += o1 + o2
