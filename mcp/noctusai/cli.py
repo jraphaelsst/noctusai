@@ -308,6 +308,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--harness-status", action="store_true", help="Print ONE JSON object (schema noc.harness_status/v1) for the noc-harness Claude Code mod: session tree/branch/dirty, dev drift, reminders; --hs-full adds caches/auto-improvement/pointers/worktrees/dispatcher. Never fetches; exit 0 even when sections fail (see `errors`). MCP: noctus.dev.harness_status.")
     parser.add_argument("--hs-full", action="store_true", help="With --harness-status: full mode (slower, ~60s cadence).")
     parser.add_argument("--hs-cwd", metavar="PATH", default=None, help="With --harness-status: the session cwd to evaluate (default: cwd).")
+    parser.add_argument("--harness-panel", metavar="NAME", default=None, help="Print ONE JSON object (schema noc.harness_panel/v1) for a noc-harness mod panel: vectors|baselines|codify|gates. Unknown name -> exit 1. MCP: noctus.dev.harness_panel.")
+    parser.add_argument("--harness-route", action="store_true", help="Read {\"prompt\": str} on stdin; print noc.harness_route/v1 (relevant MEMORY-<topic>.md files via semantic memory search). Exit 0 even on provider errors (see `errors`). MCP: noctus.dev.harness_route.")
     parser.add_argument("--harness-event", action="store_true", help="Read ONE JSON event object on stdin ({kind,target,summary,detail?,session_id?,source}) and record it as an s1 auto-improvement entry. Exit 1 on error. MCP: noctus.dev.harness_event.")
     parser.add_argument("--tmp-cleanup", action="store_true", help="Sweep retired engineer-dispatch patch artifacts from /tmp (patch-id-on-dev OR aged-out OR malformed). DRY-RUN unless --force. MCP: noctus.dev.tmp_cleanup.")
     parser.add_argument("--tmp-cleanup-max-age-days", type=int, default=14, help="With --tmp-cleanup: age threshold beyond which unmatched patches are retired (default 14).")
@@ -469,6 +471,23 @@ def main():
     if args.harness_status:
         from tools.noctus.dev.harness_status import harness_status
         print(json.dumps(harness_status(full=args.hs_full, cwd=args.hs_cwd), default=str))
+        sys.exit(0)
+
+    if args.harness_panel:
+        from tools.noctus.dev.harness_status import harness_panel
+        _r = harness_panel(args.harness_panel)
+        print(json.dumps(_r, default=str))
+        sys.stdout.flush()
+        # os._exit: a budget-abandoned daemon thread must not hold the process open.
+        os._exit(0 if _r.get("status") == "ok" else 1)
+
+    if args.harness_route:
+        from tools.noctus.dev.harness_status import harness_route
+        try:
+            _payload = json.loads(sys.stdin.read())
+        except json.JSONDecodeError as _exc:
+            _payload = {"prompt": None}
+        print(json.dumps(harness_route(_payload), default=str))
         sys.exit(0)
 
     if args.harness_event:

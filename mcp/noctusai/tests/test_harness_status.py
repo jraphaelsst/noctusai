@@ -173,3 +173,67 @@ class TestEvent:
         r = hs.harness_event(payload)
         assert r["status"] == "error" and r["error"]
         assert not ai_ledger.exists()
+
+
+class TestEventPublishReport:
+    def test_reports_publish_outcome_not_legacy_path(self, ai_ledger):
+        r = hs.harness_event({"kind": "note", "target": "t", "summary": "s"})
+        assert "ledger_path" not in r
+        assert r["spooled"] is (r["published_to"] is None)
+
+
+class TestPanel:
+    def test_unknown_panel_is_error(self):
+        r = hs.harness_panel("nope")
+        assert r["status"] == "error" and r["errors"] and r["schema"] == hs.PANEL_SCHEMA
+
+    def test_override_and_section_failure_goes_to_errors(self):
+        ok = hs.harness_panel("vectors", section_overrides={
+            "vectors": lambda: [{"heading": "h", "rows": [hs._row("a", 1, "ok")]}]})
+        assert ok["sections"][0]["rows"][0] == {"label": "a", "value": "1", "tone": "ok"} and ok["errors"] == []
+
+        def boom():
+            raise RuntimeError("x")
+        bad = hs.harness_panel("codify", section_overrides={"codify": boom})
+        assert bad["sections"] == [] and bad["errors"][0]["section"] == "codify"
+
+    def test_declared_guards_derived_and_probed(self, tmp_path):
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / "scripts" / "hooks").mkdir(parents=True)
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"hooks": {"PreToolUse": [
+            {"matcher": "Bash", "hooks": [
+                {"command": 'python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/ok.py"'},
+                {"command": 'python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/deny.py"'},
+                {"command": 'python3 "$CLAUDE_PROJECT_DIR/scripts/hooks/crash.py"'}]}]}}))
+        h = tmp_path / "scripts" / "hooks"
+        (h / "ok.py").write_text("import sys; sys.stdin.read()")
+        (h / "deny.py").write_text("import sys; sys.stdin.read(); print('{\"permissionDecision\": \"deny\"}')")
+        (h / "crash.py").write_text("raise SystemExit(1/0)")
+        guards = hs.declared_guards(tmp_path / ".claude" / "settings.json")
+        assert [g["name"] for g in guards] == ["ok", "deny", "crash"]
+        v = {g["name"]: hs.probe_guard(tmp_path, g["script"])["verdict"] for g in guards}
+        assert v == {"ok": "allow", "deny": "deny", "crash": "crash"}
+
+    def test_count_guard_refusals(self):
+        rows = [{"agent": "noc-harness-mod", "description": "[gate_denied] [noc-guard:primary_write_guard] x"},
+                {"agent": "noc-harness-mod", "description": "[gate_denied] y"},
+                {"agent": "other", "description": "[noc-guard:z]"}]
+        assert hs.count_guard_refusals(rows) == {"primary_write_guard": 1, "(unattributed)": 1}
+
+
+class TestRoute:
+    def test_maps_hits_to_topic_files_derived_from_pointers(self, tmp_path):
+        (tmp_path / "MEMORY-branching.md").write_text("# Memory - Branching\n\n- [a](feedback_a.md) \u00b7 [b](b.md)\n")
+        (tmp_path / "MEMORY-testing.md").write_text("# Memory - Testing\n\n- [c](c.md)\n")
+        hits = [{"path": "feedback_a.md", "score": 0.5}, {"path": "b.md", "score": 0.7},
+                {"path": "c.md", "score": 0.4}, {"path": "orphan.md", "score": 0.9}]
+        r = hs.harness_route({"prompt": "x"}, memory_dir=tmp_path, search_fn=lambda q, top_k: hits)
+        assert [(t["file"], t["score"]) for t in r["topics"]] == [("MEMORY-branching.md", 0.7), ("MEMORY-testing.md", 0.4)]
+        assert r["topics"][0]["via"] == "semantic" and r["errors"] == []
+
+    def test_empty_hits_reported_not_silent(self, tmp_path):
+        r = hs.harness_route({"prompt": "x"}, memory_dir=tmp_path, search_fn=lambda q, top_k: [])
+        assert r["topics"] == [] and r["errors"]
+
+    def test_bad_input(self):
+        assert hs.harness_route({})["errors"]
