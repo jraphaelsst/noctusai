@@ -9,7 +9,7 @@
       "name": "noc-harness",
       "source": "./.claude/mods/noc-harness",
       "description": "NoctusAI harness UX over the canonical Python gates (KB § PATTERNS/common/harness-mods.md).",
-      "version": "0.3.0"
+      "version": "0.3.1"
     }
   ]
 }

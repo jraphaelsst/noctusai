@@ -28,7 +28,7 @@ const degraded = atom({ plugin: 'noc-harness', key: 'degraded' } as const, null)
 const refusals = atom({ plugin: 'noc-harness', key: 'refusals' } as const, [])
 const wrapup = atom({ plugin: 'noc-harness', key: 'wrapup' } as const, null)
 const bandHidden = atom({ plugin: 'noc-harness', key: 'bandHidden' } as const, false)
-const bandExpanded = atom({ plugin: 'noc-harness', key: 'bandExpanded' } as const, false)
+const bandExpanded = atom({ plugin: 'noc-harness', key: 'bandExpanded' } as const, true)
 const claimed = atom({ plugin: 'noc-harness', key: 'claimed' } as const, null)
 const panels = atom({ plugin: 'noc-harness', key: 'panels' } as const, {})
 
@@ -69,7 +69,7 @@ async function harnessStatus(
     const ran = full
       ? await $.process.run(
           ['python3', `${root}/mcp/noctusai/cli.py`, '--harness-status', '--hs-full', '--hs-cwd', cwd],
-          { cwd: root, timeoutMs: 30000 },
+          { cwd: root, timeoutMs: 90000 },
         )
       : await $.process.run(
           ['python3', `${root}/mcp/noctusai/cli.py`, '--harness-status', '--hs-cwd', cwd],
@@ -536,6 +536,7 @@ export const register: Register = (on, given) => {
               onPress={() => update($, bandExpanded, open => !open)}
             />
           )}
+          {count > 0 && <Text key="gap"> · </Text>}
           {pending !== null && (
             <Button
               key="wrapup"
