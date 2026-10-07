@@ -29,7 +29,7 @@ from typing import Optional, List
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from app.database import get_admin_client
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_current_user_ungated
 from app.rate_limit import limiter
 from app.services.permissions import check_permission
 from app.schemas.team import AcceptInviteRequest, InviteCreate, TeamMemberRoleUpdate
@@ -417,7 +417,9 @@ async def aceitar_convite(
             status_code=401,
             detail="Faça login com o email convidado para aceitar o convite",
         )
-    authenticated_user, _ = await get_current_user(authorization)
+    # License-UNGATED on purpose: invitation acceptance onboards users whose org
+    # lacks the license by definition; the email binding below is the control.
+    authenticated_user, _ = await get_current_user_ungated(authorization)
 
     caller_email = (getattr(authenticated_user, "email", None) or "").strip().lower()
     invited_email = (invite_data.get("email") or "").strip().lower()

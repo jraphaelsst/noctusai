@@ -225,6 +225,7 @@ def _build_patches(
         # Team router
         ("app.routers.team.get_admin_client", mock_sb),
         ("app.routers.team.get_current_user", mock_get_user),
+        ("app.routers.team.get_current_user_ungated", mock_get_user),
         ("app.routers.team.check_permission", mock_check_perm),
         # SSO router
         ("app.routers.sso.get_admin_client", mock_sb),
@@ -322,6 +323,7 @@ def _is_direct_replacement(target_name, value):
     """
     direct_targets = (
         "get_current_user",
+        "get_current_user_ungated",
         "get_current_admin",
         "get_org_id",
         "check_permission",

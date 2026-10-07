@@ -46,6 +46,7 @@ deps = create_dependencies(_db)
 # Re-expose framework auth primitives (identical behavior to the former local
 # implementations; hits Supabase Auth via `admin.auth.get_user(token)`).
 get_current_user = deps.get_current_user
+get_current_user_ungated = deps.get_current_user_ungated
 get_user_client = deps.get_user_client
 
 

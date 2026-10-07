@@ -96,12 +96,15 @@ def make_world(fake_deps, fake_settings, product_name):
                 id=user_id, email=email or f"{user_id}@test.com", user_metadata={},
             )
             fake_deps.get_current_user = AsyncMock(return_value=(user, "tok"))
+            # /accept resolves the caller through the license-UNGATED seam.
+            fake_deps.get_current_user_ungated = fake_deps.get_current_user
             return TestClient(app)
 
         def anonymous():
             fake_deps.get_current_user = AsyncMock(
                 side_effect=HTTPException(status_code=401, detail="Token ausente")
             )
+            fake_deps.get_current_user_ungated = fake_deps.get_current_user
             return TestClient(app)
 
         return SimpleNamespace(

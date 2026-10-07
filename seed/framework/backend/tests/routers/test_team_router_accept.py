@@ -151,6 +151,8 @@ def team_app(fake_deps, fake_settings, product_name):
     # `fake_deps.get_user_role` → "owner" and `get_org_id` → "org-123" already
     # come from the conftest fixture.
     fake_deps.get_current_user = AsyncMock(return_value=(_fake_user(), "tok"))
+    # /accept uses the license-UNGATED seam (invitees' org lacks the license).
+    fake_deps.get_current_user_ungated = AsyncMock(return_value=(_fake_user(), "tok"))
 
     app = FastAPI()
     router: APIRouter = _create_team_router(fake_deps, fake_settings, product_name)
@@ -692,6 +694,40 @@ class TestAcceptActuallyCreatesTheMember:
         assert inserted[0]["id"] == "u-admin", inserted
         assert resp.json()["data"]["created_identity"] is False
 
+    def test_accept_works_for_a_caller_whose_org_lacks_the_license(
+        self, team_app, fake_deps, client, auth_header
+    ):
+        """Regression (license gate, 2026-10): the gated base dep answers 403
+        org_sem_licenca for a caller in an UNLICENSED org — exactly who an invite
+        should onboard. /accept must use the named UNGATED seam, so it succeeds
+        and the membership is created; email mismatch stays 403."""
+        from fastapi import HTTPException as _HTTPException
+
+        fake_deps.get_current_user = AsyncMock(
+            side_effect=_HTTPException(status_code=403, detail="org_sem_licenca")
+        )
+        self._seed(team_app, token="t-lic", org_id="org-1", email="invitee@test.com")
+        resp = client.post(
+            "/api/team/accept", json={"token": "t-lic"}, headers=auth_header,
+        )
+        assert resp.status_code == 200, resp.text
+        inserted = team_app.state.core_db.table("noctus_users").inserted_payloads
+        assert inserted and inserted[0]["id"] == "u-admin", inserted
+
+        self._seed(team_app, token="t-lic2", org_id="org-1", email="other@test.com")
+        resp = client.post(
+            "/api/team/accept", json={"token": "t-lic2"}, headers=auth_header,
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_accept_without_token_for_unlicensed_flow_is_anonymous_not_401(
+        self, team_app, client
+    ):
+        """No Authorization header takes the anonymous (signup) path."""
+        self._seed(team_app, token="t-anon", email="invitee@test.com")
+        resp = client.post("/api/team/accept", json={"token": "t-anon", **SIGNUP})
+        assert resp.status_code == 200, resp.text
+
     def test_authenticated_accept_ignores_a_submitted_password(
         self, team_app, client, auth_header
     ):
@@ -711,7 +747,7 @@ class TestAcceptActuallyCreatesTheMember:
         the anonymous path is the whole point of an invitation link."""
         from fastapi import HTTPException as _HTTPException
 
-        fake_deps.get_current_user = AsyncMock(
+        fake_deps.get_current_user_ungated = AsyncMock(
             side_effect=_HTTPException(status_code=401, detail="expired")
         )
         self._seed(team_app, token="t17")

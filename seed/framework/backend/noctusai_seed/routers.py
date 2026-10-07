@@ -421,10 +421,13 @@ def _create_team_router(
         org_role = inv.get("role", "member")
 
         # ── Identity ──────────────────────────────────────────────────────
+        # License-UNGATED on purpose: acceptance onboards users whose org lacks
+        # the product license by definition (keeper-allowlisted). The email
+        # binding below is the access control.
         current_user = None
         if authorization:
             try:
-                current_user, _ = await deps.get_current_user(authorization)
+                current_user, _ = await deps.get_current_user_ungated(authorization)
             except HTTPException as exc:
                 # A stale/invalid token must not block the anonymous path —
                 # fall through and treat this as a fresh acceptance.

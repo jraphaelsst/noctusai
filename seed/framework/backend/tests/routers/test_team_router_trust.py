@@ -91,6 +91,8 @@ def world(fake_deps, fake_settings, product_name):
         fake_deps.get_current_user = AsyncMock(
             return_value=(_user(user_id, metadata=metadata, email=email), "tok")
         )
+        # /accept resolves the caller through the license-UNGATED seam.
+        fake_deps.get_current_user_ungated = fake_deps.get_current_user
         return TestClient(app)
 
     return SimpleNamespace(as_user=as_user, core=core_db, product=product_db)

@@ -21435,6 +21435,15 @@ _LGC_ADMIN_LITERALS = frozenset({"admin", "platform_admin"})
 #: itself) may use one ONLY from a file declared here WITH a rationale.
 _LGC_UNGATED_NAMES = frozenset({"get_current_user_ungated", "make_get_current_user_ungated"})
 _LGC_UNGATED_ALLOWLIST: dict[str, str] = {
+    "seed/framework/backend/noctusai_seed/routers.py": (
+        "invitation acceptance onboards users whose org lacks the license by definition"
+    ),
+    "products/core/backend/app/routers/team.py": (
+        "invitation acceptance onboards users whose org lacks the license by definition"
+    ),
+    "products/core/backend/app/dependencies.py": (
+        "re-exposes the seed ungated seam for core's invitation-accept route"
+    ),
     "seed/framework/backend/noctusai_seed/me_router.py": (
         "/api/me/access must answer has_access=false instead of 403; /api/me/context "
         "gates itself through make_get_current_user_org on the effective org"
