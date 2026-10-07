@@ -1,4 +1,4 @@
-"""Round 2 — ``/api/me/access`` + ``/api/me/context`` and the license gate on a
+"""Round 2 — ``/api/me/access`` and the license gate on a
 real seed-mounted route. Fakes injected (``FakeLicenseChecker`` + a MockSupabase
 core client) — no patching of our own code. Strict status codes."""
 from __future__ import annotations
@@ -24,10 +24,9 @@ USER = "uuuuuuuu-0000-0000-0000-000000000002"
 TOKENS = {"tok-admin": ADMIN, "tok-user": USER}
 
 
-def _make(users, sessions=(), checker=None, slug="igig"):
+def _make(users, checker=None, slug="igig"):
     core = MockSupabaseClient()
     core.set_table_data("noctus_users", users)
-    core.set_table_data("act_as_sessions", list(sessions))
     core.set_table_data("organizations", [{"id": HOME, "nome": "Casa"}, {"id": TARGET, "nome": "Cliente B"}])
 
     async def get_current_user(authorization: Optional[str] = Header(None)):
@@ -73,21 +72,22 @@ H_ADMIN = {"Authorization": "Bearer tok-admin"}
 H_USER = {"Authorization": "Bearer tok-user"}
 ADMIN_ROW = {"id": ADMIN, "org_id": HOME, "org_role": "admin", "role": "admin"}
 USER_ROW = {"id": USER, "org_id": HOME, "org_role": "member", "role": "user"}
-LIVE = {"id": "s-1", "superadmin_id": ADMIN, "target_org_id": TARGET,
-        "entry_product_slug": "igig", "started_at": "2026-10-06T10:00:00+00:00", "ended_at": None}
 
 
 class TestAuthBoundary:
-    @pytest.mark.parametrize("url", ["/api/me/access", "/api/me/context"])
-    def test_unauthenticated_is_401(self, url):
-        assert _make([USER_ROW]).get(url).status_code == 401
+    def test_unauthenticated_is_401(self):
+        assert _make([USER_ROW]).get("/api/me/access").status_code == 401
+
+    def test_me_context_is_gone(self):
+        # /api/me/context only fed the removed act-as banner (2026-10-07).
+        assert _make([USER_ROW]).get("/api/me/context", headers=H_USER).status_code == 404
 
 
 class TestMeAccess:
     def test_licensed_user_has_access(self):
         body = _make([USER_ROW]).get("/api/me/access", headers=H_USER).json()
         assert body == {"has_access": True, "product_slug": "igig",
-                        "org": {"id": HOME, "nome": "Casa"}, "acting": None}
+                        "org": {"id": HOME, "nome": "Casa"}}
 
     def test_unlicensed_user_gets_200_has_access_false_not_403(self):
         c = _make([USER_ROW], checker=FakeLicenseChecker(allow_all=False))
@@ -95,33 +95,12 @@ class TestMeAccess:
         assert resp.status_code == 200
         assert resp.json()["has_access"] is False
 
-    def test_acting_superadmin_reports_target_and_session(self):
-        c = _make([ADMIN_ROW], [LIVE], FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}))
+    def test_superadmin_is_judged_on_the_home_org(self):
+        # No staff override: a license held by another org grants nothing.
+        c = _make([ADMIN_ROW], FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}))
         body = c.get("/api/me/access", headers=H_ADMIN).json()
-        assert body["has_access"] is True
-        assert body["org"] == {"id": TARGET, "nome": "Cliente B"}
-        assert body["acting"] == {"session_id": "s-1", "org_id": TARGET, "org_nome": "Cliente B",
-                                  "started_at": "2026-10-06T10:00:00+00:00"}
-
-
-class TestMeContext:
-    def test_context_shape_plain(self):
-        body = _make([USER_ROW]).get("/api/me/context", headers=H_USER).json()
-        assert body == {"org": {"id": HOME, "nome": "Casa"},
-                        "home_org": {"id": HOME, "nome": "Casa"}, "acting": None}
-
-    def test_context_is_license_gated(self):
-        c = _make([USER_ROW], checker=FakeLicenseChecker(allow_all=False))
-        resp = c.get("/api/me/context", headers=H_USER)
-        assert resp.status_code == 403
-        assert resp.json()["code"] == "org_sem_licenca"
-
-    def test_context_acting(self):
-        c = _make([ADMIN_ROW], [LIVE], FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}))
-        body = c.get("/api/me/context", headers=H_ADMIN).json()
-        assert body["org"]["id"] == TARGET
-        assert body["home_org"]["id"] == HOME
-        assert body["acting"]["session_id"] == "s-1"
+        assert body["has_access"] is False
+        assert body["org"] == {"id": HOME, "nome": "Casa"}
 
 
 class TestGateOnAuthenticatedRoutes:
@@ -136,12 +115,9 @@ class TestGateOnAuthenticatedRoutes:
         c = _make([USER_ROW], checker=FakeLicenseChecker(allow_all=False))
         assert c.get("/api/public/ping").status_code == 200
 
-    def test_switch_only_with_live_session(self):
+    def test_superadmin_always_resolves_to_home(self):
         checker = FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig"), (TARGET, "igig")})
-        assert _make([ADMIN_ROW], [], checker).get("/api/things", headers=H_ADMIN).json()["org_id"] == HOME
-        ended = {**LIVE, "ended_at": "2026-10-06T11:00:00+00:00"}
-        assert _make([ADMIN_ROW], [ended], checker).get("/api/things", headers=H_ADMIN).json()["org_id"] == HOME
-        assert _make([ADMIN_ROW], [LIVE], checker).get("/api/things", headers=H_ADMIN).json()["org_id"] == TARGET
+        assert _make([ADMIN_ROW], checker).get("/api/things", headers=H_ADMIN).json()["org_id"] == HOME
 
     def test_core_exempt(self):
         c = _make([USER_ROW], checker=FakeLicenseChecker(allow_all=False), slug="core")
@@ -157,7 +133,6 @@ class TestProductDependenciesBaseDep:
 
         core = MockSupabaseClient()
         core.set_table_data("noctus_users", users)
-        core.set_table_data("act_as_sessions", [])
         db = SimpleNamespace(
             get_core_client=lambda: core,
             get_client=lambda: SimpleNamespace(

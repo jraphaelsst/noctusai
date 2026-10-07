@@ -20,8 +20,6 @@ export type { HeaderProps, HeaderUser } from "./components/Header";
 export { useTheme } from "./useTheme";
 export { useActivityRefresh } from "./useActivityRefresh";
 export { InactivityWarning } from "./InactivityWarning";
-export { ActingAsBanner, ActingAsBannerView, ME_CONTEXT_QUERY_KEY, coreOrganizacoesUrl } from "./components/ActingAsBanner";
-export type { ActingAsBannerViewProps } from "./components/ActingAsBanner";
 
 export { PageSkeleton } from "./components/PageSkeleton";
 

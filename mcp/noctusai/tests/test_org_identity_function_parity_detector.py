@@ -171,7 +171,7 @@ class TestFrozenBaselineAndLastWriter:
         root = _tree(tmp_path)
         both = _render("current_org_id") + "\n" + _render("current_user_org_id")
         self._core(root, "001_core.sql", _STALE)
-        self._core(root, "065_act.sql", both)
+        self._core(root, "067_canon.sql", both)
         _with_baseline(root, {"products/core/backend/migrations/001_core.sql::current_org_id": _hash_of(_STALE)})
         assert check_org_identity_function_parity(root) == []
 
@@ -179,5 +179,5 @@ class TestFrozenBaselineAndLastWriter:
 def test_live_tree_is_clean():
     """The real tree: every NEW/changed re-declaration matches the canon (historical
     copies are frozen in org_identity_parity_baseline.json) and the last core
-    re-declaration (065) carries the act-as branch."""
+    re-declaration (067, after act-as-org was removed) is canonical."""
     assert check_org_identity_function_parity() == []

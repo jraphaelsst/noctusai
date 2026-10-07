@@ -22,11 +22,14 @@ Shape (CLAUDE.md §1 — Fake + Real + factory):
   :func:`enforce_license` at request time. A process that never configured a
   gate (a bare seed-lib unit test) enforces nothing.
 
-There is deliberately NO ``role == 'admin'`` license bypass anywhere: the only
-way a superadmin reaches a product he has no home license for is a live
-``act_as_sessions`` row, whose target org then has to hold the license.
+There is deliberately NO ``role == 'admin'`` (or org-id) license bypass
+anywhere: ``public.licenses`` is the single source of truth. The NoctusAI
+platform org (``organizations.is_platform``) reaches every product because core
+migration 068 grants it an active license for every product by construction
+(trigger on ``products`` insert) and refuses revoking one — not because of any
+Python-side special case.
 
-KB § PATTERNS/backend/tenancy-license-and-act-as.md
+KB § PATTERNS/backend/tenancy-license-gate.md
 """
 
 from __future__ import annotations
@@ -355,7 +358,7 @@ def enforce_license(org_id: Any, org_role: Optional[str], *, allow_customer: boo
 
 def enforce_license_for_user(user_id: Any) -> None:
     """License gate for the BASE authenticated dependency (auth without an org
-    lookup): resolve the caller's EFFECTIVE org (act-as aware) and enforce.
+    lookup): resolve the caller's EFFECTIVE org and enforce.
 
     No gate / core / permissive Fake ⇒ no-op with NO queries. A caller with no
     ``noctus_users`` row or no org reaches no tenant data (every org-scoped dep

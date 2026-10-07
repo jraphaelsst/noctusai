@@ -11605,7 +11605,7 @@ def check_org_identity_function_parity(
                 "issue": (
                     f"public.{decl['name']}() re-declared with a NON-canonical body. Every "
                     f"chain writes the same shared function, so on a fresh apply this copy can "
-                    f"win and silently undo the customer-role exclusion / act-as branch "
+                    f"win and silently undo the customer-role exclusion "
                     f"fleet-wide. Paste "
                     f"`noctusai_lib.domain.sql_templates.org_identity_function_sql("
                     f"{decl['name']!r})` verbatim. (A baselined historical file whose content "
@@ -11617,7 +11617,7 @@ def check_org_identity_function_parity(
 
     # Last-writer assertion: the highest-numbered core migration re-declaring each
     # function is what a fresh core apply leaves behind — it MUST be canonical, so
-    # the act-as branch can never be silently clobbered by a later stale copy.
+    # a later stale copy (e.g. 065's superseded act-as branch) can never win.
     core_migrations = sorted(root.glob("products/core/backend/migrations/*.sql"))
     if paths is None and core_migrations:  # no core chain (synthetic/partial tree) ⇒ nothing to pin
         last: dict[str, tuple[int, str, dict]] = {}
@@ -11640,9 +11640,8 @@ def check_org_identity_function_parity(
                     "file": where,
                     "issue": (
                         f"the LAST core migration re-declaring public.{name}() must equal the "
-                        f"canonical body (it carries the act-as branch) — "
-                        f"{'none found' if got is None else 'it differs'}. Per `{_OIF_KB}`; "
-                        f"`KB § PATTERNS/backend/tenancy-license-and-act-as.md`."
+                        f"canonical body (a fresh core apply leaves it behind) — "
+                        f"{'none found' if got is None else 'it differs'}. Per `{_OIF_KB}`."
                     ),
                     "severity": "critical",
                 })
@@ -21408,19 +21407,20 @@ def check_admin_gate_hand_rolled(repo_root: Path | None = None) -> list[dict]:
 # (Residuals closed 2026-10-06: the BASE auth deps — `make_get_current_user`,
 # `ProductDependencies.get_current_user` — are gated too; the only exemptions are
 # the named `*_ungated` deps, allowlisted with rationale; store has no allowlist.)
-# `check_license_gate_by_construction` — round 2 (2026-10-06): the license gate +
-# act-as live INSIDE the seed's trusted auth dependencies, so a product gets
-# them with zero code. This keeper pins the by-construction half: no active
+# `check_license_gate_by_construction` — round 2 (2026-10-06): the license gate
+# lives INSIDE the seed's trusted auth dependencies, so a product gets it with
+# zero code. This keeper pins the by-construction half: no active
 # product may (a) hand-roll its own org-resolving dependency that skips the seed
 # resolver, (b) opt out of the gate (`enforce_license=False`,
 # `license_checker=`, its own `configure_license_gate`), and NOWHERE (seed or
-# product) may a `role == 'admin'`-style branch bypass the license check — a
-# superadmin reaches a product ONLY through a live `act_as_sessions` row. It
-# also pins that the seed mechanism itself is still wired.
-# KB § PATTERNS/backend/tenancy-license-and-act-as.md
+# product) may a `role == 'admin'`-style branch bypass the license check —
+# `public.licenses` is the single source of truth (the NoctusAI platform org
+# reaches every product because core 068 grants it every license, never via a
+# role/org-id special case). It also pins that the seed mechanism is still wired.
+# KB § PATTERNS/backend/tenancy-license-gate.md
 # ---------------------------------------------------------------------------
 
-_LGC_KB = "KB § PATTERNS/backend/tenancy-license-and-act-as.md"
+_LGC_KB = "KB § PATTERNS/backend/tenancy-license-gate.md"
 _LGC_ORG_DEP_NAMES = frozenset({"get_current_user_org", "get_org_id", "get_current_org"})
 _LGC_SEED_RESOLVER_TOKENS = (
     "make_get_current_user_org", "_resolve_trusted_membership",
@@ -21445,8 +21445,8 @@ _LGC_UNGATED_ALLOWLIST: dict[str, str] = {
         "re-exposes the seed ungated seam for core's invitation-accept route"
     ),
     "seed/framework/backend/noctusai_seed/me_router.py": (
-        "/api/me/access must answer has_access=false instead of 403; /api/me/context "
-        "gates itself through make_get_current_user_org on the effective org"
+        "/api/me/access must answer has_access=false instead of 403 (the SPA's "
+        "pre-flight that routes an unlicensed org to /sem-acesso)"
     ),
 }
 #: Files that DEFINE the ungated variants (not uses).
@@ -21496,7 +21496,8 @@ def _lgc_scan_source(src: str, rel: str, product: str, *, is_product: bool) -> l
             for inner in ast.walk(ast.Module(body=node.body + node.orelse, type_ignores=[])):
                 if isinstance(inner, ast.Call) and _lgc_call_name(inner) in _LGC_LICENSE_CALLS:
                     add(node, "license check guarded by a `role == 'admin'` branch — NO admin license "
-                              "bypass exists; a superadmin gets in only via a live act_as_sessions row.")
+                              "bypass exists; public.licenses is the single source of truth (the platform org holds "
+                              "every license by construction — core 068).")
                     break
         if rel not in _LGC_UNGATED_DEFINERS and rel not in _LGC_UNGATED_ALLOWLIST:
             used = (
@@ -21521,14 +21522,14 @@ def _lgc_scan_source(src: str, rel: str, product: str, *, is_product: bool) -> l
             if not any(tok in src for tok in _LGC_SEED_RESOLVER_TOKENS):
                 add(node, f"`{node.name}` is a hand-rolled org dependency that never routes through the "
                           "seed trusted resolver (`make_get_current_user_org` / effective-org) — it "
-                          "bypasses the license gate and act-as.")
+                          "bypasses the license gate.")
     return issues
 
 
 def check_license_gate_by_construction(
     paths: list[Path] | None = None, repo_root: Path | None = None
 ) -> list[dict]:
-    """Round-2 license gate / act-as must hold by construction (see block comment).
+    """Round-2 license gate must hold by construction (see block comment).
 
     ``paths`` (pre-commit) narrows the PRODUCT scan; the seed-wiring pin always
     runs (cheap). Severity ``critical``.

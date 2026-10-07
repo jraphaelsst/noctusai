@@ -1,5 +1,5 @@
 /**
- * License-gate client helpers (Round 2 — license gate + act-as-org).
+ * License-gate client helpers (Round 2 — license gate).
  *
  * The SERVER is the gate (every authenticated route answers
  * `403 {code:"org_sem_licenca"}` for an org without an active license). These
@@ -13,26 +13,11 @@ export const ORG_SEM_LICENCA_CODE = 'org_sem_licenca';
 /** Seed-mounted route every product serves (zero per-product code). */
 export const SEM_ACESSO_PATH = '/sem-acesso';
 
-export interface ActingInfo {
-  session_id: string;
-  org_id: string;
-  org_nome: string;
-  started_at: string;
-}
-
 /** `GET /api/me/access` */
 export interface MeAccess {
   has_access: boolean;
   product_slug: string;
-  org: { id: string; nome: string };
-  acting: ActingInfo | null;
-}
-
-/** `GET /api/me/context` */
-export interface MeContext {
-  org: { id: string; nome: string };
-  home_org: { id: string; nome: string };
-  acting: ActingInfo | null;
+  org: { id: string; nome: string } | null;
 }
 
 /** True when a parsed 403 body (flat, `{error:{}}` or `{detail:{}}`) is the license refusal. */

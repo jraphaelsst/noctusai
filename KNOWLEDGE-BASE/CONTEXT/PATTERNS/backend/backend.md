@@ -22,17 +22,17 @@ per product via the factory `make_get_current_user_org` in
 body; only `authorization: Header(None)` is FastAPI-visible in the dep
 signature, so the chain Just Works.
 
-### Effective org, license gate, act-as (round 2)
+### Effective org + license gate (round 2)
 
 `make_get_current_user_org` (and `ProductDependencies.get_org_id`, the trusted
 legacy bridge, `require_scopes`, seed login) resolve the org through the ONE
-effective-org resolver: a superadmin (`noctus_users.role='admin'`) with a live
-`act_as_sessions` row acts as the target org (`org_role='owner'`); everyone else
-keeps the home org. The same deps then enforce the product license
-(`403 org_sem_licenca`) — zero per-product code; `core` exempt; pass
+effective-org resolver — always the caller's home org from `noctus_users` (no staff
+override; act-as-org was removed 2026-10-07). The same deps then enforce the product
+license (`403 org_sem_licenca`) — zero per-product code; `core` exempt; pass
 `product_slug=` to `create_product_app` only when the catalog slug differs from the
-schema. `/api/me/access` and `/api/me/context` are seed-mounted. No `role=='admin'`
-license bypass exists. → `KB § PATTERNS/backend/tenancy-license-and-act-as.md`
+schema. `/api/me/access` is seed-mounted. No `role=='admin'` license bypass exists:
+the platform org reaches every product because core 068 keeps it licensed for every
+product. → `KB § PATTERNS/backend/tenancy-license-gate.md`
 
 ### Wire it once in `app/dependencies.py`
 

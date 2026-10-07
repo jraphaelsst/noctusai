@@ -274,7 +274,7 @@ def create_product_app(
 
     # 1b. License gate (round 2) — configured ONCE here so every trusted auth
     #     dependency enforces it with zero per-product code.
-    #     → KB § PATTERNS/backend/tenancy-license-and-act-as.md
+    #     → KB § PATTERNS/backend/tenancy-license-gate.md
     _product_slug = product_slug or getattr(settings, "product_slug", None) or app_name
 
     # 3. Create database module first — the LLM usage sink (if opted in)
@@ -528,7 +528,7 @@ def create_product_app(
             *standard_routers,
             *(() if "mfa" in standard_routers else ("mfa",)),
             # "me" (round 2) rides on EVERY product: the seed SPA's access check
-            # + act-as banner read it, so opting out would strand both.
+            # reads it, so opting out would strand it.
             *(() if "me" in standard_routers else ("me",)),
         ],
         team_policy=team,

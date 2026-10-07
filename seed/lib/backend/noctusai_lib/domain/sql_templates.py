@@ -274,24 +274,10 @@ def org_identity_function_sql(name: str, customer_roles: Iterable[str] | None = 
     parity keeper compares whitespace-normalized text against this.
     """
     roles = customer_roles_sql_array(customer_roles)
-    # Act-as (round 2, 2026-10-06): a SUPERADMIN (`noctus_users.role = 'admin'`)
-    # with a LIVE `public.act_as_sessions` row resolves to the session's
-    # target org; every other caller keeps the home-org rule (customers
-    # excluded). The partial unique index `(superadmin_id) WHERE ended_at IS
-    # NULL` guarantees at most one live row, so the LEFT JOIN never fans out.
-    # `act_as_sessions` is service-role-only (RLS on, no policy) — this
-    # SECURITY DEFINER body is the ONLY way the authenticated role can see it.
     staff_org = (
-        "  SELECT CASE\n"
-        "           WHEN u.role = 'admin' AND a.target_org_id IS NOT NULL\n"
-        "             THEN a.target_org_id\n"
-        f"           WHEN COALESCE(u.org_role, '') <> ALL ({roles})\n"
-        "             THEN u.org_id\n"
-        "         END\n"
-        "    FROM public.noctus_users u\n"
-        "    LEFT JOIN public.act_as_sessions a\n"
-        "      ON a.superadmin_id = u.id AND a.ended_at IS NULL\n"
-        "   WHERE u.id = (SELECT auth.uid());"
+        "  SELECT org_id FROM public.noctus_users\n"
+        "   WHERE id = (SELECT auth.uid())\n"
+        f"     AND COALESCE(org_role, '') <> ALL ({roles});"
     )
     if name in ("current_org_id", "current_user_org_id"):
         return _org_fn(name, "uuid", staff_org)

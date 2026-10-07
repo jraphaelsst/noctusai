@@ -31,7 +31,6 @@ const Onboarding = lazy(() => import('./pages/Onboarding').then(m => ({ default:
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite').then(m => ({ default: m.AcceptInvite })));
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard').then(m => ({ default: m.AdminDashboard })));
 const AdminOrganizations = lazy(() => import('./pages/admin/AdminOrganizations').then(m => ({ default: m.AdminOrganizations })));
-const AdminOrganizacoes = lazy(() => import('./pages/admin/AdminOrganizacoes').then(m => ({ default: m.AdminOrganizacoes })));
 const AdminSubscriptions = lazy(() => import('./pages/admin/AdminSubscriptions').then(m => ({ default: m.AdminSubscriptions })));
 const AdminApiKeys = lazy(() => import('./pages/admin/AdminApiKeys').then(m => ({ default: m.AdminApiKeys })));
 const AdminPlans = lazy(() => import('./pages/admin/AdminPlans').then(m => ({ default: m.AdminPlans })));
@@ -75,7 +74,6 @@ const App = createProductApp({
     { path: '/admin', component: AdminDashboard },
     { path: '/admin/users', component: AdminUsers },
     { path: '/admin/orgs', component: AdminOrganizations },
-    { path: '/admin/organizacoes', component: AdminOrganizacoes },
     { path: '/admin/subs', component: AdminSubscriptions },
     { path: '/admin/api-keys', component: AdminApiKeys },
     { path: '/admin/plans', component: AdminPlans },

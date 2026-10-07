@@ -105,3 +105,35 @@ def test_revoke_subscription_licenses_is_idempotent(db):
 def test_admin_revoke_returns_none_for_unknown_license(db):
     db.set_table_data("licenses", [])
     assert license_service.revoke_license(db, "nope") is None
+
+
+class _GuardRefusingDb:
+    """A DB whose licenses UPDATE fails the way core 068's trigger does."""
+
+    def __init__(self, message: str):
+        self._message = message
+
+    def table(self, name):
+        return self
+
+    def update(self, payload):
+        return self
+
+    def eq(self, *_args):
+        return self
+
+    def execute(self):
+        raise RuntimeError(self._message)
+
+
+def test_admin_revoke_of_a_platform_license_is_a_domain_error():
+    db = _GuardRefusingDb(
+        "licenses_platform_org_guard: a licença da organização da plataforma não pode ser revogada"
+    )
+    with pytest.raises(license_service.PlatformLicenseProtected):
+        license_service.revoke_license(db, "lic-platform")
+
+
+def test_admin_revoke_reraises_any_other_db_error():
+    with pytest.raises(RuntimeError, match="connection reset"):
+        license_service.revoke_license(_GuardRefusingDb("connection reset"), "lic-1")

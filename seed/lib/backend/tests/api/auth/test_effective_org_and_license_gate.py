@@ -1,8 +1,9 @@
-"""Round 2 — effective-org resolver, license gate, act-as audit tagging.
+"""Round 2 — effective-org resolver + license gate.
 
-The load-bearing guarantee (no ``role == 'admin'`` license bypass anywhere): a
-superadmin reaches a product he has no home license for ONLY through a LIVE
-``act_as_sessions`` row, and the license is then checked against the TARGET org.
+The load-bearing guarantee (no ``role == 'admin'`` license bypass anywhere): the
+effective org is ALWAYS the caller's home org (act-as-org was removed
+2026-10-07), and the license is checked against it via ``public.licenses`` — the
+platform org reaches every product only because it holds every license (core 068).
 """
 from __future__ import annotations
 
@@ -39,16 +40,10 @@ def _reset_gate():
     clear_license_cache()
 
 
-def _core(*, users, sessions=()):
+def _core(*, users):
     sb = MockSupabaseClient()
     sb.set_table_data("noctus_users", list(users))
-    sb.set_table_data("act_as_sessions", list(sessions))
     return sb
-
-
-def _live(superadmin=ADMIN, target=TARGET, sid="s-1"):
-    return {"id": sid, "superadmin_id": superadmin, "target_org_id": target,
-            "entry_product_slug": "igig", "started_at": "2026-10-06T10:00:00+00:00", "ended_at": None}
 
 
 ADMIN_ROW = {"id": ADMIN, "org_id": HOME, "org_role": "admin", "role": "admin"}
@@ -58,26 +53,12 @@ USER_ROW = {"id": USER, "org_id": HOME, "org_role": "member", "role": "user"}
 class TestEffectiveOrg:
     def test_plain_user_resolves_to_home(self):
         eff = resolve_effective_org(_core(users=[USER_ROW]), USER)
-        assert (eff.org_id, eff.org_role, eff.acting_session_id) == (HOME, "member", None)
+        assert (eff.org_id, eff.org_role) == (HOME, "member")
 
-    def test_superadmin_without_session_resolves_to_home(self):
+    def test_superadmin_resolves_to_home_like_anyone(self):
+        # noctus_users.role == 'admin' changes nothing: no staff override exists.
         eff = resolve_effective_org(_core(users=[ADMIN_ROW]), ADMIN)
-        assert eff.org_id == HOME and not eff.acting
-
-    def test_superadmin_with_live_session_acts_as_target_owner(self):
-        eff = resolve_effective_org(_core(users=[ADMIN_ROW], sessions=[_live()]), ADMIN)
-        assert (eff.org_id, eff.org_role, eff.home_org_id) == (TARGET, "owner", HOME)
-        assert eff.acting_session_id == "s-1"
-
-    def test_ended_session_does_not_act(self):
-        ended = {**_live(), "ended_at": "2026-10-06T11:00:00+00:00"}
-        eff = resolve_effective_org(_core(users=[ADMIN_ROW], sessions=[ended]), ADMIN)
-        assert eff.org_id == HOME and not eff.acting
-
-    def test_non_superadmin_with_a_session_row_never_acts(self):
-        sess = _live(superadmin=USER)
-        eff = resolve_effective_org(_core(users=[USER_ROW], sessions=[sess]), USER)
-        assert eff.org_id == HOME and not eff.acting
+        assert (eff.org_id, eff.org_role) == (HOME, "admin")
 
     def test_no_row_is_none(self):
         assert resolve_effective_org(_core(users=[]), USER) is None
@@ -136,31 +117,15 @@ class TestLicenseGateInTrustedDep:
         assert (await dep(authorization="Bearer x"))[2] == HOME
 
     @pytest.mark.asyncio
-    async def test_no_admin_license_bypass_without_act_as(self):
-        # A superadmin whose HOME org is unlicensed is blocked like anyone else.
+    async def test_no_admin_license_bypass(self):
+        # A superadmin whose HOME org is unlicensed is blocked like anyone else —
+        # holding a license for some OTHER org changes nothing.
         _gate(FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}))
         dep = _dep(_core(users=[ADMIN_ROW]))
         with pytest.raises(HTTPException) as exc:
             await dep(authorization="Bearer x")
         assert exc.value.status_code == 403
         assert exc.value.detail["code"] == "org_sem_licenca"
-
-    @pytest.mark.asyncio
-    async def test_act_as_switches_org_and_checks_target_license(self):
-        checker = FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")})
-        _gate(checker)
-        dep = _dep(_core(users=[ADMIN_ROW], sessions=[_live()]))
-        _u, _t, org_id = await dep(authorization="Bearer x")
-        assert org_id == TARGET
-        assert checker.calls == [(TARGET, "igig")]
-
-    @pytest.mark.asyncio
-    async def test_act_as_target_without_license_is_403(self):
-        _gate(FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")}))
-        dep = _dep(_core(users=[ADMIN_ROW], sessions=[_live()]))
-        with pytest.raises(HTTPException) as exc:
-            await dep(authorization="Bearer x")
-        assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_lookup_outage_fails_closed_503(self):
@@ -182,40 +147,24 @@ class TestLicenseGateInTrustedDep:
         assert (await dep(authorization="Bearer x"))[2] == HOME
 
 
-class TestAuditTagging:
+class TestAuditActor:
     @pytest.mark.asyncio
-    async def test_acting_request_is_tagged_and_has_no_org_id(self):
+    async def test_request_actor_carries_the_home_org(self):
         request = SimpleNamespace(state=SimpleNamespace())
-        dep = _dep(_core(users=[ADMIN_ROW], sessions=[_live()]))
+        dep = _dep(_core(users=[ADMIN_ROW]))
         await dep(authorization="Bearer x", request=request)
         actor = request.state.audit_actor
-        assert actor.user_id == ADMIN
-        assert actor.org_id is None  # the customer's org-scoped audit read never sees it
-        assert actor.acting_org_id == TARGET
-        assert actor.act_as_session_id == "s-1"
+        assert (actor.user_id, actor.org_id) == (ADMIN, HOME)
 
-    @pytest.mark.asyncio
-    async def test_normal_request_is_not_tagged(self):
-        request = SimpleNamespace(state=SimpleNamespace())
-        dep = _dep(_core(users=[{**USER_ROW, "id": ADMIN}]))
-        await dep(authorization="Bearer x", request=request)
-        actor = request.state.audit_actor
-        assert actor.org_id == HOME and actor.acting_org_id is None and actor.act_as_session_id is None
-
-    def test_sink_row_carries_act_as_columns_only_when_acting(self):
+    def test_sink_row_never_writes_the_historical_act_as_columns(self):
         from noctusai_lib.api.audit.sink import _to_row
         from noctusai_lib.api.audit.types import AuditActor, AuditEntry
 
-        def entry(actor):
-            return AuditEntry(product_slug="igig", method="POST", route_template="/api/x",
-                              path_params={}, status=200, actor_kind="user", client_hint="web",
-                              actor=actor)
-
-        acting = _to_row(entry(AuditActor(user_id=ADMIN, acting_org_id=TARGET, act_as_session_id="s-1")))
-        assert acting["acting_org_id"] == TARGET and acting["act_as_session_id"] == "s-1"
-        assert acting["org_id"] is None
-        plain = _to_row(entry(AuditActor(user_id=USER, org_id=HOME)))
-        assert "act_as_session_id" not in plain and "acting_org_id" not in plain
+        row = _to_row(AuditEntry(product_slug="igig", method="POST", route_template="/api/x",
+                                 path_params={}, status=200, actor_kind="user", client_hint="web",
+                                 actor=AuditActor(user_id=USER, org_id=HOME)))
+        assert row["org_id"] == HOME
+        assert "act_as_session_id" not in row and "acting_org_id" not in row
 
 
 class TestLegacyBridgeGate:
@@ -226,12 +175,12 @@ class TestLegacyBridgeGate:
         async def get_current_user(authorization=None):
             return user, "tok"
 
-        core = _core(users=[ADMIN_ROW], sessions=[_live()])
+        core = _core(users=[ADMIN_ROW])
         resolver = make_trusted_legacy_jwt_resolver(get_current_user, lambda: core)
-        _gate(FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}))
+        _gate(FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")}))
         ctx = await resolver("jwt")
-        assert str(ctx.org_id) == TARGET
-        _gate(FakeLicenseChecker(allow_all=False))
+        assert str(ctx.org_id) == HOME
+        _gate(FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}))
         with pytest.raises(HTTPException) as exc:
             await resolver("jwt")
         assert exc.value.status_code == 403
@@ -321,11 +270,11 @@ class TestBaseDepGatedByConstruction:
         assert token == "t" and user.id == USER
 
     @pytest.mark.asyncio
-    async def test_act_as_checks_the_target_org(self):
-        core = _core(users=[ADMIN_ROW], sessions=[_live()])
-        dep = _gated_dep(core, FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}), uid=ADMIN)
-        assert (await dep(authorization="Bearer t"))[1] == "t"
+    async def test_superadmin_is_checked_against_the_home_org_only(self):
+        core = _core(users=[ADMIN_ROW])
         dep = _gated_dep(core, FakeLicenseChecker(allow_all=False, licensed={(HOME, "igig")}), uid=ADMIN)
+        assert (await dep(authorization="Bearer t"))[1] == "t"
+        dep = _gated_dep(core, FakeLicenseChecker(allow_all=False, licensed={(TARGET, "igig")}), uid=ADMIN)
         with pytest.raises(HTTPException) as exc:
             await dep(authorization="Bearer t")
         assert exc.value.status_code == 403

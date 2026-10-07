@@ -77,8 +77,7 @@ def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
 
 def resolve_org_membership(core_client: Any, user_id: Any) -> Optional[dict]:
     """``{"org_id", "org_role"}`` of the EFFECTIVE org (the ONE resolver,
-    :func:`noctusai_lib.api.auth.effective_org.resolve_effective_org` — a
-    superadmin acting as another org resolves to it) from the TRUSTED
+    :func:`noctusai_lib.api.auth.effective_org.resolve_effective_org`) from the TRUSTED
     ``public.noctus_users`` row,
     or ``None`` (no ``user_id`` / no row). Never reads ``user_metadata``.
     Raises on a DB error — callers fail closed.
@@ -325,7 +324,7 @@ def require_scopes(
                 },
             )
         if membership is not None:
-            # Round-2 license gate: the EFFECTIVE org (membership above) must
+            # License gate: the EFFECTIVE org (membership above) must
             # hold an active license for this product. Cookie-session callers
             # never pass the legacy bridge, so the gate is repeated here.
             enforce_license(membership.get("org_id"), role, allow_customer=True)

@@ -307,10 +307,7 @@ def _build_patches(
         ("app.services.website_leads_service.get_admin_client", mock_sb),
         ("app.routers.website_admin.get_current_admin", mock_get_admin),
         ("app.routers.website_admin.get_website_editor", mock_get_website_editor),
-        # Act-as-org router + service (round 2) — superadmin-only surface.
-        ("app.routers.act_as.get_admin_client", mock_sb),
-        ("app.routers.act_as.get_current_admin", mock_get_admin),
-        ("app.services.act_as_service.get_admin_client", mock_sb),
+        # audit_service.log (auth/users routers) — keep its writes on the mock.
         ("app.services.audit_service.get_admin_client", mock_sb),
     ]
 

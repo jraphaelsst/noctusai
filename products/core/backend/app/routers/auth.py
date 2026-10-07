@@ -415,12 +415,4 @@ async def logout(authorization: Optional[str] = Header(None)):
         client.auth.sign_out()
     except Exception as exc:
         logger.warning("auth: client.sign_out() failed for user_id=%s (%s); logout still returns ok", user.id, exc)
-    # Round 2: logging out of core ends any live act-as session (ended_by='logout').
-    # Best-effort for the sign-out itself, but a failure to end the session is
-    # logged loudly — a live row would keep acting after the logout.
-    try:
-        from app.services import act_as_service
-        act_as_service.end_live_session(user.id, "logout")
-    except Exception:
-        logger.error("auth: could not end act-as session on logout user_id=%s", user.id, exc_info=True)
     return {"ok": True}

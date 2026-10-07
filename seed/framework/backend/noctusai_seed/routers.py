@@ -11,7 +11,7 @@ Bundled routers live here:
   - "scheduler"    → `/api/scheduler/jobs[/{job_id}]` (read-only APScheduler view)
   - "status_paginas" → `/api/status-paginas` (list + change page-visibility status; admin/dev-gated)
   - "mfa"          → `/api/auth/mfa/*` (TOTP step-up; auto-mounted on every product)
-  - "me"           → `/api/me/access|context` (license/act-as identity reads; auto-mounted on every product)
+  - "me"           → `/api/me/access` (license-gate access read; auto-mounted on every product)
 
 Products declare which ones they want via the `standard_routers=[...]` kwarg
 on `create_product_app()`. `build_standard_routers()` resolves that list
@@ -653,7 +653,7 @@ def _build_mfa_router(deps, settings, product_name: str, version: str) -> APIRou
 
 
 def _build_me_router(deps, settings, product_name: str, version: str) -> APIRouter:
-    # Auto-mounted by create_product_app (round 2: license gate + act-as).
+    # Auto-mounted by create_product_app (round 2: license gate).
     from noctusai_seed.me_router import create_me_router
     return create_me_router(deps)
 

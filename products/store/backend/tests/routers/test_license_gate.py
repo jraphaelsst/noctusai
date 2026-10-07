@@ -20,7 +20,6 @@ def gate(client):
     # the mock auth user id comes from MockUser(); resolve it for the trusted row
     uid = sb.auth.get_user.return_value.user.id
     sb.set_table_data("noctus_users", [{"id": uid, "org_id": ORG, "org_role": "owner", "role": "user"}])
-    sb.set_table_data("act_as_sessions", [])
     yield sb
     configure_license_gate(None)
 

@@ -1,5 +1,5 @@
 {
- "_doc": "Frozen baseline of historical re-declarations of public.current_org_id()/current_user_org_id() (and the other org-identity fns) applied before the 2026-10-06 act-as branch; ledger-keyed by filename, superseded by core 065. Migrations are immutable so this never grows; the keeper enforces the canonical body on NEW/changed files only (content hash) and separately requires the last core re-declaration to be canonical. KB \u00a7 PATTERNS/backend/tenancy-license-and-act-as.md",
+ "_doc": "Frozen baseline of historical re-declarations of public.current_org_id()/current_user_org_id() (and the other org-identity fns) whose content differs from \u2014 or predates \u2014 today's canonical rendering. Includes core 065's act-as branch (applied 2026-10-06, superseded by core 067 which re-declares the canonical home-org body after act-as-org was removed 2026-10-07). Migrations are immutable so this only grows when an applied migration's copy is superseded; the keeper enforces the canonical body on NEW/changed files only (content hash) and separately requires the last core re-declaration to be canonical. KB \u00a7 PATTERNS/backend/database-rls.md",
  "legacy": {
   "products/academia-de-reciclagem/backend/migrations/001_academia-de-reciclagem.sql::current_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8",
   "products/academia-de-reciclagem/backend/migrations/013_customer_role_isolation.sql::current_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8",
@@ -35,6 +35,8 @@
   "products/store/backend/migrations/006_customer_role_isolation.sql::current_user_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8",
   "templates/product-seed/backend/migrations/001_seed.sql::current_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8",
   "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8",
-  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_user_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8"
+  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_user_org_id": "11ec53c1eaed66eac05e73e87de117ed177a097c49b2e01c5ac6a5d2801320b8",
+  "products/core/backend/migrations/065_act_as_sessions.sql::current_org_id": "e224d51243461e21d4816a77ecfe267e26954321ff2f697d06d43656817245bf",
+  "products/core/backend/migrations/065_act_as_sessions.sql::current_user_org_id": "e224d51243461e21d4816a77ecfe267e26954321ff2f697d06d43656817245bf"
  }
 }

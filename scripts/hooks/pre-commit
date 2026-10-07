@@ -506,7 +506,7 @@ fi
 
 # ─── 6b-sexies-ter. License gate by construction (blocking, critical) ─────
 # Keeper `check_license_gate_by_construction` (round 2, 2026-10-06): the license
-# gate + act-as live inside the seed's trusted auth deps; no product may
+# gate lives inside the seed's trusted auth deps; no product may
 # hand-roll an org dependency, opt out, or branch on `role == 'admin'` around a
 # license check. Runs when product backend code or the seed auth/licensing
 # surface is staged.
@@ -515,7 +515,7 @@ if [[ -n "$STAGED_LGC" ]] && have_py; then
     echo "[pre-commit] Checking license gate by construction..."
     if ! "$PY" "$CLI" --check-license-gate-by-construction; then
         echo "[pre-commit] license-gate-by-construction check FAILED. Commit aborted." >&2
-        echo "[pre-commit] KB § PATTERNS/backend/tenancy-license-and-act-as.md." >&2
+        echo "[pre-commit] KB § PATTERNS/backend/tenancy-license-gate.md." >&2
         exit 1
     fi
 fi

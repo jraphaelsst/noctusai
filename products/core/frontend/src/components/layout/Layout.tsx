@@ -13,7 +13,6 @@ import {
   Zap,
   Users,
   LogOut,
-  LogIn,
   PackageOpen,
   Brain,
   FileText,
@@ -53,7 +52,6 @@ export const NAV_GROUPS: NavGroup[] = [
         items: [
           { name: 'Usuarios', href: '/admin/users', icon: Users },
           { name: 'Organizacoes', href: '/admin/orgs', icon: Building2 },
-          { name: 'Entrar como org', href: '/admin/organizacoes', icon: LogIn },
         ],
       },
       {

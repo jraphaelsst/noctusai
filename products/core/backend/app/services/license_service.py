@@ -33,6 +33,19 @@ class LicenseConflict(RuntimeError):
     """An active license already exists for this org + product."""
 
 
+#: The exception prefix core 068's `licenses_platform_org_guard` trigger raises.
+PLATFORM_LICENSE_GUARD = "licenses_platform_org_guard"
+
+
+class PlatformLicenseProtected(RuntimeError):
+    """The platform org's active licenses cannot be revoked (core 068 guard).
+
+    The NoctusAI platform org holds every product license by construction;
+    the database refuses the write and this surfaces it as a domain error
+    instead of a bare 500. KB § PATTERNS/backend/tenancy-license-gate.md
+    """
+
+
 @dataclass(frozen=True)
 class GrantResult:
     license: dict[str, Any]
@@ -108,12 +121,20 @@ def revoke_license(
     db: Any, license_id: str, *, clock: Optional[Callable[[], datetime]] = None
 ) -> Optional[dict[str, Any]]:
     """Admin revoke of one license (any source). None when it doesn't exist."""
-    result = (
-        db.table("licenses")
-        .update({"status": "revoked", "fim": _now(clock).isoformat()})
-        .eq("id", license_id)
-        .execute()
-    )
+    try:
+        result = (
+            db.table("licenses")
+            .update({"status": "revoked", "fim": _now(clock).isoformat()})
+            .eq("id", license_id)
+            .execute()
+        )
+    except Exception as exc:
+        if PLATFORM_LICENSE_GUARD in str(exc):
+            raise PlatformLicenseProtected(
+                "A licença da organização da plataforma não pode ser revogada "
+                "(ela mantém acesso a todos os produtos)."
+            ) from exc
+        raise
     if not result.data:
         return None
     revoked = result.data[0]

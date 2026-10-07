@@ -38,7 +38,6 @@ import {
   AIBadgeStack,
   PendingConsentBadge,
   LLMSpendBadge,
-  ActingAsBanner,
 } from "@noctusai/lib/design-system";
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
@@ -513,7 +512,6 @@ export function createProductLayout(config: ProductLayoutConfig) {
           />
         )}
       >
-        <ActingAsBanner />
         <div className="p-4 sm:p-6 lg:p-8">
           {trialDays !== null && trialDays <= 7 && (
             <div className="mb-4 rounded-lg border border-warning bg-warning/10 px-4 py-3 text-sm text-warning-foreground">

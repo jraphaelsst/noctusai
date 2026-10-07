@@ -87,7 +87,10 @@ async def revoke_license(license_id: str, authorization: Optional[str] = Header(
     user, token = await get_current_admin(authorization)
     db = get_admin_client()
 
-    revoked_record = license_service.revoke_license(db, license_id)
+    try:
+        revoked_record = license_service.revoke_license(db, license_id)
+    except license_service.PlatformLicenseProtected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     if revoked_record is None:
         raise HTTPException(status_code=404, detail="Licença não encontrada")
 

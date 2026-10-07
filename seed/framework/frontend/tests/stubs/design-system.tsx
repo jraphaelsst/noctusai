@@ -146,7 +146,3 @@ export const PendingConsentBadge: React.FC = () => (
 export const LLMSpendBadge: React.FC = () => (
   <span data-testid="llm-spend-badge-stub" />
 );
-
-export const ActingAsBanner: React.FC = () => (
-  <span data-testid="acting-as-banner-stub" />
-);

@@ -1525,44 +1525,137 @@ END;
 )
 
 
-_ACT_AS_ONE_LIVE_PROBE = GuardProbe(
-    id="act_as_sessions.one_live_per_superadmin.unique",
+# ---------------------------------------------------------------------------
+# Registry — public.licenses: the platform org holds every product license
+# (core migration 068; owner decision 2026-10-07). Three probes: the guard
+# refuses revoking a platform license, live state has no unlicensed product,
+# and a product inserted now is licensed to the platform org by the trigger.
+# All three read the REAL platform org (`organizations.is_platform`, slug
+# 'noctusai' marked by 068); for the state assertions its absence IS the
+# violation, for the refusal probe it is `no_fixture` (still a failure).
+# ---------------------------------------------------------------------------
+
+_PLATFORM_ORG_MIGRATIONS = ("068_platform_org_all_licenses.sql",)
+
+def _platform_org_fixture(outcome: str) -> str:
+    """Resolve the platform org into `v_platform`. `outcome` is what a missing
+    prerequisite means: `no_fixture` for the write_refusal probe (nothing to
+    attempt the refusal against), `violation` for the state assertions (after
+    068, "no platform org" IS the broken state)."""
+    return f"""
+  IF to_regprocedure('public.grant_platform_org_licenses()') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:{outcome}: public.grant_platform_org_licenses() missing — core 068 not applied';
+  END IF;
+  SELECT id INTO v_platform FROM public.organizations WHERE is_platform LIMIT 1;
+  IF v_platform IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:{outcome}: no organizations row has is_platform = true — the platform org holds no guaranteed licenses';
+  END IF;
+"""
+
+
+_PLATFORM_ORG_REVOKE_REFUSED_PROBE = GuardProbe(
+    id="licenses.platform_org.revoke_refused",
     product="core",
     schema="public",
-    guard_name="idx_act_as_sessions_one_live",
+    guard_name="licenses_platform_org_guard",
     kind="write_refusal",
-    migrations=("065_act_as_sessions.sql",),
+    migrations=_PLATFORM_ORG_MIGRATIONS,
     rationale=(
-        "At most ONE live act-as session per superadmin: the RLS helper "
-        "current_org_id() LEFT JOINs the live row, so two live rows would fan "
-        "the identity function out to two orgs. The partial unique index is "
-        "what keeps 'which org am I acting as' single-valued."
+        "The platform org's licenses are what lets NoctusAI reach every "
+        "product without any role/org-id bypass in the license gate; a "
+        "revoked/expired platform license silently locks the operator out of "
+        "a product (403 org_sem_licenca)."
     ),
     sql=_do_block("""
 DECLARE
-  su uuid;
-  org uuid;
+  v_platform uuid;
+  v_lic uuid;
 BEGIN
-  SELECT id INTO su FROM public.noctus_users LIMIT 1;
-  SELECT id INTO org FROM public.organizations LIMIT 1;
-  IF su IS NULL OR org IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs one noctus_users row and one organizations row';
+""" + _platform_org_fixture("no_fixture") + """
+  SELECT id INTO v_lic FROM public.licenses
+   WHERE org_id = v_platform AND status = 'active' LIMIT 1;
+  IF v_lic IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: the platform org holds no active license to attempt revoking';
   END IF;
   BEGIN
-    INSERT INTO public.act_as_sessions (superadmin_id, target_org_id, entry_product_slug)
-    VALUES (su, org, 'noc-probe');
-    INSERT INTO public.act_as_sessions (superadmin_id, target_org_id, entry_product_slug)
-    VALUES (su, org, 'noc-probe');
-    RAISE EXCEPTION 'NOC_PROBE:permitted: a second LIVE act-as session for the same superadmin succeeded — the unique guard did not fire';
+    UPDATE public.licenses SET status = 'revoked' WHERE id = v_lic;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: revoking a platform-org license succeeded — the guard did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%idx_act_as_sessions_one_live%' THEN
+    ELSIF SQLERRM LIKE 'licenses_platform_org_guard:%' THEN
       RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
     ELSE
       RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
     END IF;
   END;
+END;
+"""),
+)
+
+_PLATFORM_ORG_HOLDS_EVERY_PRODUCT_PROBE = GuardProbe(
+    id="licenses.platform_org.holds_every_product",
+    product="core",
+    schema="public",
+    guard_name="grant_platform_org_licenses",
+    kind="state_assertion",
+    migrations=_PLATFORM_ORG_MIGRATIONS,
+    rationale=(
+        "Live state: every products row has an ACTIVE, permanent (fim NULL) "
+        "license for the platform org. A product missing one means the "
+        "insert trigger was bypassed or dropped."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_platform uuid;
+  v_missing bigint;
+BEGIN
+""" + _platform_org_fixture("violation") + """
+  SELECT count(*) INTO v_missing FROM public.products p
+   WHERE NOT EXISTS (
+     SELECT 1 FROM public.licenses l
+      WHERE l.org_id = v_platform AND l.product_id = p.id
+        AND l.status = 'active' AND l.fim IS NULL);
+  IF v_missing > 0 THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: % product(s) without an active permanent platform-org license', v_missing;
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:clean: the platform org holds an active permanent license for every product';
+END;
+"""),
+)
+
+_PLATFORM_ORG_NEW_PRODUCT_PROBE = GuardProbe(
+    id="licenses.platform_org.new_product_licensed",
+    product="core",
+    schema="public",
+    guard_name="products_grant_platform_org_license",
+    kind="state_assertion",
+    migrations=_PLATFORM_ORG_MIGRATIONS,
+    rationale=(
+        "The 'including future products' half: a product inserted now must "
+        "come out licensed to the platform org with no further step. "
+        "Self-provisions a throwaway product inside the rolled-back probe."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_platform uuid;
+  v_prod uuid;
+BEGIN
+""" + _platform_org_fixture("violation") + """
+  BEGIN
+    INSERT INTO public.products (nome, slug, url_base)
+    VALUES ('NOC probe product', 'noc-probe-' || gen_random_uuid()::text, 'https://noc-probe.invalid')
+    RETURNING id INTO v_prod;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'NOC_PROBE:ambiguous: could not self-provision the probe product: %', SQLERRM;
+  END;
+  IF NOT EXISTS (
+    SELECT 1 FROM public.licenses
+     WHERE org_id = v_platform AND product_id = v_prod
+       AND status = 'active' AND fim IS NULL) THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: a newly inserted product got no platform-org license — the products insert trigger did not fire';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:clean: a new product is licensed to the platform org by construction';
 END;
 """),
 )
@@ -4393,7 +4486,9 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _STORAGE_BUCKETS_PROBE,
     _SECDEF_EXECUTE_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
-    _ACT_AS_ONE_LIVE_PROBE,
+    _PLATFORM_ORG_REVOKE_REFUSED_PROBE,
+    _PLATFORM_ORG_HOLDS_EVERY_PRODUCT_PROBE,
+    _PLATFORM_ORG_NEW_PRODUCT_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
     _ESTRUTURA_STATUS_PROBE,
