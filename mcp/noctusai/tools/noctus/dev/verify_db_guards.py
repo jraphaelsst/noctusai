@@ -3174,6 +3174,60 @@ _SW_API_TOKEN_HASH_PROBE = GuardProbe(
     ),
 )
 
+_SW_ONE_PRIMARY_MARCA_PROBE = GuardProbe(
+    id="social_wiring.marcas.one_primary_per_org",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_marcas_one_primary_per_org",
+    kind="write_refusal",
+    migrations=("210_marca_primary_per_org.sql",),
+    sql=_constraint_refusal_probe(
+        setup_sql=_table_fixture_check("social_wiring.marcas") + _PROBE_ORG_SETUP,
+        op_sql="""
+    INSERT INTO social_wiring.marcas (org_id, slug, name, is_primary)
+    VALUES (v_org, 'noc-probe-a', 'NOC probe a', true),
+           (v_org, 'noc-probe-b', 'NOC probe b', true);
+""",
+        sqlstate_condition="unique_violation",
+        constraint_names=("uq_marcas_one_primary_per_org",),
+        what="a second primary marca in the same org",
+    ),
+    rationale=(
+        "An org owns ONE brand identity that its products inherit (owner "
+        "2026-10-07); two primaries make which identity a product renders "
+        "ambiguous."
+    ),
+)
+
+_SW_ONE_PRIMARY_KIT_PROBE = GuardProbe(
+    id="social_wiring.mc_brand_kits.one_primary_per_marca",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_mc_brand_kits_one_primary_per_marca",
+    kind="write_refusal",
+    migrations=("210_marca_primary_per_org.sql",),
+    sql=_constraint_refusal_probe(
+        # `v_prod` is the helper's spare uuid slot — here it holds the probe marca.
+        setup_sql=_table_fixture_check("social_wiring.mc_brand_kits") + _PROBE_ORG_SETUP + """
+  INSERT INTO social_wiring.marcas (org_id, slug, name)
+  VALUES (v_org, 'noc-probe-marca', 'NOC probe marca')
+  RETURNING id INTO v_prod;
+""",
+        op_sql="""
+    INSERT INTO social_wiring.mc_brand_kits (org_id, marca_id, name, is_primary)
+    VALUES (v_org, v_prod, 'NOC probe kit a', true),
+           (v_org, v_prod, 'NOC probe kit b', true);
+""",
+        sqlstate_condition="unique_violation",
+        constraint_names=("uq_mc_brand_kits_one_primary_per_marca",),
+        what="a second primary brand kit for the same marca",
+    ),
+    rationale=(
+        "The marca's primary kit is the identity its products render; two "
+        "primaries make the rendered identity ambiguous."
+    ),
+)
+
 _SW_RECIPIENT_CHANNEL_PROBE = GuardProbe(
     id="social_wiring.notification_recipients.has_channel",
     product="social-wiring",
@@ -4489,6 +4543,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _PLATFORM_ORG_REVOKE_REFUSED_PROBE,
     _PLATFORM_ORG_HOLDS_EVERY_PRODUCT_PROBE,
     _PLATFORM_ORG_NEW_PRODUCT_PROBE,
+    _SW_ONE_PRIMARY_MARCA_PROBE,
+    _SW_ONE_PRIMARY_KIT_PROBE,
     _CERTIDAO_CONSULTA_ORIGEM_PROBE,
     *_AGENTS_STUDIO_PROBES,
     _ESTRUTURA_STATUS_PROBE,

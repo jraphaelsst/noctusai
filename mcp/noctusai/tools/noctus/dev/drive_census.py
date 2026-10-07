@@ -1426,7 +1426,7 @@ def answer_key_folder(folder_id: str) -> dict[str, Any]:
 # + condomínio + m² + endereço interno. CANDIDATES ONLY — the owner confirms every match; nothing
 # here writes to any database or links anything.
 
-SW_ORG_ID = "6dd73140-74a4-41c6-aeff-bc94b5312b53"  # where the owner's SW data lives (per 3e)
+SW_ORG_ID = "fd169d29-4d0a-4b04-9a5e-25e69407614d"  # One Consultoria — owns the SW CRM since the org-per-brand move (2026-10-07)
 SNAPSHOT_MAX_AGE_S = 24 * 3600
 SNAPSHOT_SCHEMA = 2  # bump when _SNAPSHOT_SQL gains columns: an older snapshot is re-read once
 _SNAPSHOT_SQL = """SELECT i.codigo, i.empreendimento, i.logradouro, i.numero, i.complemento, i.bairro, i.cidade, i.uf,

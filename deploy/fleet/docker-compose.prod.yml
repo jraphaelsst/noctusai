@@ -547,7 +547,7 @@ services:
     environment:
       <<: *prod-env
       STORE_PUBLIC_URL: https://store.noctusai.com
-      STORE_ORG_ID: 6dd73140-74a4-41c6-aeff-bc94b5312b53
+      STORE_ORG_ID: 0ca4abef-c84f-410a-b878-4b22f4ea5ed9  # Gilson (shop owner) — org-per-brand 2026-10-07
       STORE_ADMIN_EMAILS: jraphaelsst@noctusai.com
     expose:
       - "8018"
