@@ -104,6 +104,12 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
         )
         for tipo in ("sinal", "intermediaria", "fgts", "saldo", "direta", "permuta")
     ],
+    # Migration 210's `mc_brand_kits_primary_has_marca`: a primary kit must
+    # belong to a marca (the org's identity). The `NOT is_template` half is a
+    # value rule, not presence — the template already forbids a marca (204).
+    "mc_brand_kits": [
+        ("is_primary", True, {"marca_id": True}),
+    ],
 }
 
 
