@@ -14,8 +14,12 @@
  * Loading (lying-loading-state.md): `showSkeleton = isPending && !data`;
  * a background refetch only shows a small spinner.
  */
-import { Link, useLocation, useParams } from "react-router-dom";
-import { AlertCircle, ArrowLeft, Loader2, Mail, MessageCircle } from "lucide-react";
+import { useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
+import { useAuthStore } from "@noctusai/seed/infra";
+import { resolveSSOContext } from "@noctusai/lib";
+import { AlertCircle, ArrowLeft, Loader2, Mail, MessageCircle, Trash2 } from "lucide-react";
 
 import { ImovelInteressesList } from "@/components/interesses/ImovelInteressesList";
 import { ProprietariosSection } from "@/components/interesses/ProprietariosSection";
@@ -24,7 +28,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
+import { useClienteMutations } from "@/hooks/useClientes";
 import { usePessoaResumo } from "@/hooks/usePessoa";
+import { toastServerError } from "@/lib/erroServidor";
 import { formatDate } from "@/lib/utils";
 import type { PessoaPapel, PessoaResumo } from "@/types/pessoa";
 
@@ -42,7 +49,16 @@ export default function PessoaPage() {
   const { pathname } = useLocation();
   const visao: PessoaVisao = pathname.startsWith("/vendedores") ? "vendedor" : "comprador";
 
+  const navigate = useNavigate();
   const query = usePessoaResumo(id);
+  const { remove: excluirCliente } = useClienteMutations();
+  const [confirmExcluirOpen, setConfirmExcluirOpen] = useState(false);
+  // UI convenience only — same gate as ClienteDetailModal; the server's
+  // `require_org_admin_role` on DELETE /api/clientes/{id} is the real one.
+  const { user } = useAuthStore();
+  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const isAdmin =
+    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
   const showSkeleton = query.isPending && !query.data;
   const isRefreshing = query.isFetching && !!query.data;
 
@@ -111,6 +127,30 @@ export default function PessoaPage() {
         resumo={resumo}
         refreshing={isRefreshing}
         outraVisao={outraVisao}
+        onExcluir={isAdmin ? () => setConfirmExcluirOpen(true) : undefined}
+      />
+
+      <ExcluirClienteConfirmDialog
+        open={confirmExcluirOpen}
+        pending={excluirCliente.isPending}
+        nome={resumo.cliente.nome_oficial || resumo.cliente.nome || ""}
+        onOpenChange={setConfirmExcluirOpen}
+        onConfirm={() => {
+          excluirCliente.mutate(id, {
+            onSuccess: (result) => {
+              setConfirmExcluirOpen(false);
+              if (result.storage_falhas.length > 0) {
+                toast.warning(
+                  "Cliente excluído, mas alguns arquivos não puderam ser removidos do armazenamento.",
+                  { description: result.storage_falhas.join(", ") },
+                );
+              }
+              navigate("/clientes", { replace: true });
+            },
+            // 409 (merge-survivor) message comes through toastServerError.
+            onError: (err) => toastServerError(err, "Não foi possível excluir o cliente."),
+          });
+        }}
       />
 
       {secoes.map((secao, i) => (
@@ -133,10 +173,12 @@ function PessoaCabecalho({
   resumo,
   refreshing,
   outraVisao,
+  onExcluir,
 }: {
   resumo: PessoaResumo;
   refreshing: boolean;
   outraVisao: { to: string; label: string };
+  onExcluir?: () => void;
 }) {
   const { cliente, papeis, contatos, atendimentos, contagens } = resumo;
   const nome = cliente.nome_oficial || cliente.nome || "Sem nome";
@@ -192,9 +234,23 @@ function PessoaCabecalho({
             )}
           </div>
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link to={outraVisao.to}>{outraVisao.label}</Link>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to={outraVisao.to}>{outraVisao.label}</Link>
+          </Button>
+          {onExcluir && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-destructive hover:text-destructive"
+              onClick={onExcluir}
+              data-testid="pessoa-excluir"
+            >
+              <Trash2 className="mr-2 h-4 w-4" aria-hidden />
+              Excluir cliente
+            </Button>
+          )}
+        </div>
       </CardHeader>
 
       <CardContent className="space-y-3">

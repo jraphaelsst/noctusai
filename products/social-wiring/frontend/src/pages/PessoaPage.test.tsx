@@ -1,7 +1,25 @@
 /** One component, two routes: section order differs by role (decision D3). */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const m = vi.hoisted(() => ({ usePessoaResumo: vi.fn() }));
+const m = vi.hoisted(() => ({
+  usePessoaResumo: vi.fn(),
+  role: { current: "member" as string },
+  mutate: vi.fn(),
+  toastError: vi.fn(),
+}));
+vi.mock("sonner", () => ({ toast: { error: m.toastError, warning: vi.fn() } }));
+vi.mock("@noctusai/seed/infra", () => ({
+  useAuthStore: () => ({ user: { user_metadata: { org_role: m.role.current } } }),
+}));
+vi.mock("@noctusai/lib", () => ({
+  resolveSSOContext: (md: any) => ({
+    isProductAdmin: false,
+    org: { role: md?.org_role ?? "member" },
+  }),
+}));
+vi.mock("@/hooks/useClientes", () => ({
+  useClienteMutations: () => ({ remove: { mutate: m.mutate, isPending: false } }),
+}));
 vi.mock("@/hooks/usePessoa", () => ({ usePessoaResumo: m.usePessoaResumo }));
 // The two sections are tested on their own; here only their ORDER matters.
 vi.mock("@/components/interesses/ImovelInteressesList", () => ({
@@ -15,7 +33,7 @@ vi.mock("@/components/interesses/ProprietariosSection", () => ({
   ),
 }));
 
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 
 import PessoaPage from "./PessoaPage";
@@ -24,6 +42,9 @@ import type { PessoaResumo } from "@/types/pessoa";
 afterEach(() => {
   cleanup();
   m.usePessoaResumo.mockReset();
+  m.mutate.mockReset();
+  m.toastError.mockReset();
+  m.role.current = "member";
 });
 
 const resumo: PessoaResumo = {
@@ -55,6 +76,7 @@ function renderEm(path: string) {
       <Routes>
         <Route path="/clientes/:id" element={<PessoaPage />} />
         <Route path="/vendedores/:id" element={<PessoaPage />} />
+        <Route path="/clientes" element={<div data-testid="lista-clientes" />} />
       </Routes>
     </MemoryRouter>,
   );
@@ -119,5 +141,41 @@ describe("PessoaPage", () => {
     expect(c.queryByTestId("pessoa-cabecalho")).toBeTruthy();
     expect(c.queryByTestId("pessoa-refreshing")).toBeTruthy();
     expect(c.queryByTestId("pessoa-loading")).toBeNull();
+  });
+
+  describe("Excluir cliente", () => {
+    const pronto = () =>
+      m.usePessoaResumo.mockReturnValue({ data: resumo, isPending: false, isFetching: false, isError: false });
+
+    it("is hidden for a non-admin", () => {
+      pronto();
+      renderEm("/clientes/c1");
+      expect(screen.queryByTestId("pessoa-excluir")).toBeNull();
+    });
+
+    it("admin: confirm dialog names the person, confirm deletes and navigates to /clientes", () => {
+      m.role.current = "admin";
+      pronto();
+      m.mutate.mockImplementation((_id, opts) => opts.onSuccess({ storage_falhas: [] }));
+      renderEm("/clientes/c1");
+      fireEvent.click(screen.getByTestId("pessoa-excluir"));
+      expect(screen.getByText("Ana Souza", { selector: "strong" })).toBeTruthy();
+      fireEvent.click(screen.getByTestId("excluir-cliente-confirm"));
+      expect(m.mutate).toHaveBeenCalledWith("c1", expect.any(Object));
+      expect(screen.getByTestId("lista-clientes")).toBeTruthy();
+    });
+
+    it("surfaces the API's 409 message and stays on the page", () => {
+      m.role.current = "owner";
+      pronto();
+      m.mutate.mockImplementation((_id, opts) =>
+        opts.onError({ body: { error: { message: "Cliente é sobrevivente de unificação" } } }),
+      );
+      renderEm("/clientes/c1");
+      fireEvent.click(screen.getByTestId("pessoa-excluir"));
+      fireEvent.click(screen.getByTestId("excluir-cliente-confirm"));
+      expect(m.toastError).toHaveBeenCalledWith("Cliente é sobrevivente de unificação");
+      expect(screen.queryByTestId("lista-clientes")).toBeNull();
+    });
   });
 });

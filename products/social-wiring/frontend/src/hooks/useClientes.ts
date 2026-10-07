@@ -161,6 +161,7 @@ export interface ClienteDeleteOut {
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const FAMILY_KEY = ["sw", "clientes"] as const;
+const PESSOA_ROOT_KEY = ["sw", "pessoa"] as const;
 const BOARD_KEY = (f: ClientesFiltros) => [...FAMILY_KEY, "board", f] as const;
 const BUSCA_KEY = (termo: string) => [...FAMILY_KEY, "busca", termo] as const;
 
@@ -245,9 +246,23 @@ export function useClienteMutations() {
     // ::excluir_cliente`'s docstring on the funil-orphan guard), so the
     // funil board must refetch alongside the clientes family or it keeps
     // showing a ghost card until something else happens to refresh it.
-    onSuccess: () => {
-      invalidateAll();
+    //
+    // 🔴 The deleted id's OWN queries (card, timeline, resumo, negociacoes…)
+    // must NOT be invalidated: they are still mounted (the dialog or the
+    // /clientes/:id page) at this instant, so an invalidate refetches a row
+    // that no longer exists → "[404] Cliente não encontrado" toasts, repeated
+    // on every refocus. They are cancelled and invalidation skips them; the
+    // cache entries are dropped one tick later, AFTER the caller's
+    // onSuccess has closed/navigated away and unmounted their observers (a
+    // removed query with a live observer still refetches on refocus).
+    onSuccess: (_result, id) => {
+      const doomed = (q: { queryKey: readonly unknown[] }) =>
+        q.queryKey[0] === "sw" && q.queryKey.includes(id);
+      void qc.cancelQueries({ predicate: doomed });
+      qc.invalidateQueries({ queryKey: FAMILY_KEY, predicate: (q) => !doomed(q) });
+      qc.invalidateQueries({ queryKey: PESSOA_ROOT_KEY, predicate: (q) => !doomed(q) });
       qc.invalidateQueries({ queryKey: ["sw-funil"] });
+      setTimeout(() => qc.removeQueries({ predicate: doomed }), 0);
     },
   });
 

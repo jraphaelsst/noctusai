@@ -57,7 +57,11 @@ vi.mock("@tanstack/react-query", () => {
       _mutationFn: mutationFn,
     }),
   );
-  const useQueryClient = vi.fn(() => ({ invalidateQueries: invalidateQueriesMock }));
+  const useQueryClient = vi.fn(() => ({
+    invalidateQueries: invalidateQueriesMock,
+    cancelQueries: vi.fn(),
+    removeQueries: vi.fn(),
+  }));
   return { useQuery, useMutation, useQueryClient };
 });
 
@@ -133,7 +137,9 @@ describe("useClienteMutations", () => {
     // The deleted cliente's atendimentos are gone server-side too — the
     // funil board must refetch alongside the clientes family, or it keeps
     // showing a ghost card.
-    expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["sw", "clientes"] });
+    expect(invalidateQueriesMock).toHaveBeenCalledWith(
+      expect.objectContaining({ queryKey: ["sw", "clientes"] }),
+    );
     expect(invalidateQueriesMock).toHaveBeenCalledWith({ queryKey: ["sw-funil"] });
   });
 });
