@@ -3,6 +3,7 @@
 > **Durable record** (per `KB § PATTERNS/common/roadmap-tracking.md`).
 > Origin: owner interview 2026-10-07. Each product's MASTER-PROMPT becomes the prompt that creates that product's agent.
 > Decision: **ship the design record now (Phase 1). Build P0→P6 in sequence; the P1 security project runs in parallel.**
+> Consumption split (D10, restated by owner 2026-10-07): **Claude Code consumes agent packages from LOCAL FILES** (no API calls, to save tokens). **The routing API is for app usage only** (bubble, One Chat, agent↔agent) until further decision.
 
 ## Origin
 
