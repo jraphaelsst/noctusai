@@ -58,7 +58,7 @@ async function render(props: Partial<Parameters<typeof RevisaoJuridicaSection>[0
     <RevisaoJuridicaSection
       contratoId="c1"
       versao={versao(aguardando())}
-      isAdmin
+      podeAprovarRevisao
       onAprovar={vi.fn()}
       {...props}
     />,
@@ -162,7 +162,7 @@ describe("RevisaoJuridicaSection", () => {
   });
 
   it("a non-admin sees who approves instead of a button", async () => {
-    const { screen } = await render({ isAdmin: false });
+    const { screen } = await render({ podeAprovarRevisao: false });
     expect(screen.queryByTestId("contrato-revisao-aprovar-c1")).toBeNull();
     expect(screen.getByTestId("contrato-revisao-so-admin-c1")).toBeTruthy();
   });

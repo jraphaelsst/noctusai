@@ -13,9 +13,10 @@
 // `corretor` is a real business role, not a permission tier: it carries
 // EXACTLY member-level rights (it appears in none of the grant arrays below)
 // and exists so an agency's brokers are identifiable as brokers on the team
-// page and attachable to their listings.
+// page and attachable to their listings. `juridico` is the same shape for an
+// org's legal staff, plus approving a contract's legal review (LEGAL_REVIEW_ROLES).
 export const ORG_ROLES = [
-  'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor',
+  'owner', 'admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor', 'juridico',
 ] as const;
 
 export type OrgRole = (typeof ORG_ROLES)[number];
@@ -38,6 +39,9 @@ export const DEV_ROLES: OrgRole[] = ['owner', 'dev', 'admin'];
 /** Roles that grant product-level platform_admin via SSO */
 export const PRODUCT_ADMIN_ROLES: OrgRole[] = ['owner', 'admin'];
 
+/** Roles that may approve a contract's legal review ("Aprovar revisão jurídica") */
+export const LEGAL_REVIEW_ROLES: OrgRole[] = ['owner', 'admin', 'juridico'];
+
 /** Portuguese labels for UI display */
 export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   owner: 'Proprietário',
@@ -48,6 +52,7 @@ export const ORG_ROLE_LABELS: Record<OrgRole, string> = {
   dev: 'Desenvolvedor',
   test: 'Teste',
   corretor: 'Corretor',
+  juridico: 'Jurídico',
 };
 
 /**
@@ -65,7 +70,7 @@ export function isCustomerRole(orgRole: string | null | undefined): boolean {
 }
 
 /** Assignable roles (cannot assign "owner" — that's the org creator only) */
-export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor'];
+export const ASSIGNABLE_ROLES: OrgRole[] = ['admin', 'manager', 'member', 'viewer', 'dev', 'test', 'corretor', 'juridico'];
 
 /**
  * Roles gated behind elevated privilege at invite time — mirrors the
@@ -100,6 +105,11 @@ export function isDevOrOwner(orgRole: string | null | undefined): boolean {
 /** Check if user can manage team (invite/remove) */
 export function canManageTeam(orgRole: string | null | undefined): boolean {
   return MANAGE_TEAM_ROLES.includes(orgRole as OrgRole);
+}
+
+/** Check if user can approve a contract's legal review */
+export function canReviewLegal(orgRole: string | null | undefined): boolean {
+  return LEGAL_REVIEW_ROLES.includes(orgRole as OrgRole);
 }
 
 /** Check if user can manage billing */

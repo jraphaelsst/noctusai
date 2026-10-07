@@ -17,7 +17,10 @@ from __future__ import annotations
 # and exists so an agency's brokers are identifiable as brokers on the team
 # page and attachable to their listings. The alternative was a product-local
 # role set in social-wiring, which is the fork this constant exists to prevent.
-ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test", "corretor")
+# `juridico` (2026-10-07) is the same shape for an org's legal staff: member-level
+# rights plus ONE elevation, approving a contract's legal review
+# (LEGAL_REVIEW_ROLES below). Never a team/billing/dev grant.
+ORG_ROLES = ("owner", "admin", "manager", "member", "viewer", "dev", "test", "corretor", "juridico")
 
 # Roles that grant team/billing management (can invite, remove, change roles)
 ADMIN_ROLES = ("owner", "admin")
@@ -31,6 +34,9 @@ DEV_ROLES = ("owner", "dev")
 # Roles that grant product-level platform_admin via SSO
 # (org owner/admin entering a product get full admin access)
 PRODUCT_ADMIN_ROLES = ("owner", "admin")
+
+# Roles that may approve a contract's legal review ("Aprovar revisão jurídica")
+LEGAL_REVIEW_ROLES = ("owner", "admin", "juridico")
 
 # Org roles that belong to END CUSTOMERS, not to the org's staff (SEC-2,
 # 2026-09-28). A customer self-registers into an org (e.g. Ninho Vazio's
@@ -81,6 +87,7 @@ ORG_ROLE_LABELS = {
     "dev": "Desenvolvedor",
     "test": "Teste",
     "corretor": "Corretor",
+    "juridico": "Jurídico",
 }
 
 
@@ -92,6 +99,11 @@ def is_dev_or_owner(org_role: str | None) -> bool:
 def can_manage_team(org_role: str | None) -> bool:
     """Check if the user can invite/remove team members."""
     return org_role in MANAGE_TEAM_ROLES
+
+
+def can_review_legal(org_role: str | None) -> bool:
+    """Check if the user can approve a contract's legal review."""
+    return org_role in LEGAL_REVIEW_ROLES
 
 
 def can_manage_billing(org_role: str | None) -> bool:

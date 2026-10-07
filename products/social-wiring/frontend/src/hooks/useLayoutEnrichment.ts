@@ -48,15 +48,9 @@
  */
 import { useAuthStore } from "@noctusai/seed/infra";
 import type { LayoutEnrichment } from "@noctusai/seed";
+import { ORG_ROLE_LABELS } from "@noctusai/lib";
 import { useTeamMembers } from "@/hooks/useTeam";
 
-const ORG_ROLE_LABELS: Record<string, string> = {
-  owner: "Proprietário",
-  admin: "Administrador",
-  manager: "Gerente",
-  member: "Membro",
-  viewer: "Visualizador",
-};
 
 export function useSocialWiringLayoutEnrichment(): LayoutEnrichment {
   const { user } = useAuthStore();
@@ -65,6 +59,6 @@ export function useSocialWiringLayoutEnrichment(): LayoutEnrichment {
   const ownRole = members?.find((m) => m.id === user?.id)?.org_role;
 
   return {
-    roleLabel: isPending ? "Carregando…" : ownRole ? ORG_ROLE_LABELS[ownRole] ?? ownRole : undefined,
+    roleLabel: isPending ? "Carregando…" : ownRole ? (ORG_ROLE_LABELS as Record<string, string>)[ownRole] ?? ownRole : undefined,
   };
 }

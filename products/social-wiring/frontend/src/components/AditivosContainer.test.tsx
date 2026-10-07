@@ -64,7 +64,7 @@ describe("AditivosContainer", () => {
     useAditivosMock.mockReturnValue({ data: undefined, isPending: true, isFetching: false, isError: false });
     useNegociacaoMock.mockReturnValue({ data: undefined });
     const rtl = await import("@testing-library/react");
-    rtl.render(<AditivosContainer clienteId="cl1" contratoId="c1" aberto={false} isAdmin={false} />);
+    rtl.render(<AditivosContainer clienteId="cl1" contratoId="c1" aberto={false} podeAprovarRevisao={false} />);
     expect(useAditivosMock).toHaveBeenCalledWith("cl1", "c1", false);
     expect(useNegociacaoMock).toHaveBeenCalledWith(null);
     expect(rtl.screen.queryByTestId("aditivos-skeleton")).toBeNull();
@@ -77,7 +77,7 @@ describe("AditivosContainer", () => {
       opts.onError(new Error("O aditivo está assinado e não pode ser alterado.")),
     );
     const rtl = await import("@testing-library/react");
-    rtl.render(<AditivosContainer clienteId="cl1" contratoId="c1" aberto isAdmin />);
+    rtl.render(<AditivosContainer clienteId="cl1" contratoId="c1" aberto podeAprovarRevisao />);
     expect(useNegociacaoMock).toHaveBeenCalledWith("cl1");
 
     rtl.fireEvent.click(rtl.screen.getByTestId("aditivo-adicionar-outro-ad1"));

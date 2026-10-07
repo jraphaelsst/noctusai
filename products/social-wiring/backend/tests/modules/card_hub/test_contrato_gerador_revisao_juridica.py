@@ -66,11 +66,11 @@ _CAMPO_REGISTRADO = {
 }
 
 
-def _make_admin(client) -> None:
-    """The review is owner/admin only — seed the TRUSTED row
-    `is_org_admin` reads (the shared `client` carries no role)."""
+def _make_admin(client, org_role: str = "owner") -> None:
+    """The review is LEGAL_REVIEW_ROLES only (owner/admin/jurídico) — seed the
+    TRUSTED row `is_org_admin` reads (the shared `client` carries no role)."""
     client.mock_supabase.set_table_data(
-        "noctus_users", [{"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": "owner"}]
+        "noctus_users", [{"id": TEST_USER_ID, "org_id": ORG_ID, "org_role": org_role}]
     )
 
 
@@ -197,6 +197,18 @@ class TestAprovarRevisaoJuridica:
         assert r.status_code == 403, r.text
         assert _versao_row(scoped, versao["id"]).get("revisado_em") is None
         assert _vendedor(scoped, ids)["cpf_confirmado_em"] is None
+
+    def test_a_corretor_is_refused(self, client, scoped, fake_storage):
+        _make_admin(client, "corretor")
+        ids, versao = _gerado_com_cpf_extraido(client, scoped)
+        assert _aprovar(client, ids, versao["id"]).status_code == 403
+
+    def test_the_juridico_role_may_approve(self, client, scoped, fake_storage):
+        _make_admin(client, "juridico")
+        ids, versao = _gerado_com_cpf_extraido(client, scoped)
+        r = _aprovar(client, ids, versao["id"])
+        assert r.status_code == 200, r.text
+        assert _versao_row(scoped, versao["id"]).get("revisado_em") is not None
 
     def test_a_jwt_claiming_admin_does_not_count(self, client, scoped, fake_storage):
         client.mock_supabase.auth.get_user.return_value.user.user_metadata["org_role"] = "admin"

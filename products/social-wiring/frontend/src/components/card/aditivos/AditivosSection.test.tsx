@@ -120,7 +120,7 @@ function baseProps(over: Record<string, unknown> = {}) {
     onPatchStatus: vi.fn(),
     onOpenVersao: vi.fn(),
     onDownloadVersao: vi.fn(),
-    isAdmin: true,
+    podeAprovarRevisao: true,
     onAprovarRevisao: vi.fn(),
     ...over,
   };

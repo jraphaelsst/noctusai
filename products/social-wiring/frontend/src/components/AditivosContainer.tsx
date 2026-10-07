@@ -36,7 +36,7 @@ export interface AditivosContainerProps {
   /** Whether the contract card's "Aditivos" collapsible is open — the lazy
    *  gate for every fetch below. */
   aberto: boolean;
-  isAdmin: boolean;
+  podeAprovarRevisao: boolean;
   /** The card dialog's "Resolver" jump — forwarded to each readiness list. */
   onIrPara?: (destino: GeracaoDestino) => void;
 }
@@ -45,7 +45,7 @@ export function AditivosContainer({
   clienteId,
   contratoId,
   aberto,
-  isAdmin,
+  podeAprovarRevisao,
   onIrPara,
 }: AditivosContainerProps) {
   const query = useAditivos(clienteId, contratoId, aberto);
@@ -145,7 +145,7 @@ export function AditivosContainer({
           ? (getUrl.variables?.versaoId ?? null)
           : null
       }
-      isAdmin={isAdmin}
+      podeAprovarRevisao={podeAprovarRevisao}
       onAprovarRevisao={(aditivoId, versaoId) =>
         aprovarRevisaoJuridica.mutate(
           { aditivoId, versaoId },

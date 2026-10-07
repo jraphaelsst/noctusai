@@ -82,7 +82,7 @@ export interface AditivosSectionProps {
   ) => void;
   baixandoDocxVersaoId?: string | null;
   /** UI convenience only — the server re-checks the trusted role. */
-  isAdmin: boolean;
+  podeAprovarRevisao: boolean;
   onAprovarRevisao?: (aditivoId: string, versaoId: string) => void;
   aprovandoAditivoId?: string | null;
 }
@@ -104,7 +104,7 @@ export function AditivosSection({
   onOpenVersao,
   onDownloadVersao,
   baixandoDocxVersaoId,
-  isAdmin,
+  podeAprovarRevisao,
   onAprovarRevisao,
   aprovandoAditivoId,
 }: AditivosSectionProps) {
@@ -193,7 +193,7 @@ export function AditivosSection({
                 onDownloadVersao(aditivo.id, versaoId, formato, opcoes)
               }
               baixandoDocxVersaoId={baixandoDocxVersaoId}
-              isAdmin={isAdmin}
+              podeAprovarRevisao={podeAprovarRevisao}
               onAprovarRevisao={
                 onAprovarRevisao ? (versaoId) => onAprovarRevisao(aditivo.id, versaoId) : undefined
               }
@@ -217,7 +217,7 @@ function AditivoItem({
   onOpenVersao,
   onDownloadVersao,
   baixandoDocxVersaoId,
-  isAdmin,
+  podeAprovarRevisao,
   onAprovarRevisao,
   aprovando,
 }: {
@@ -231,7 +231,7 @@ function AditivoItem({
   onOpenVersao: (versaoId: string, formato?: "pdf" | "docx") => void;
   onDownloadVersao: (versaoId: string, formato?: "pdf" | "docx", opcoes?: DownloadOpcoes) => void;
   baixandoDocxVersaoId?: string | null;
-  isAdmin: boolean;
+  podeAprovarRevisao: boolean;
   onAprovarRevisao?: (versaoId: string) => void;
   aprovando: boolean;
 }) {
@@ -300,7 +300,7 @@ function AditivoItem({
           <RevisaoJuridicaSection
             contratoId={aditivo.id}
             versao={atual}
-            isAdmin={isAdmin}
+            podeAprovarRevisao={podeAprovarRevisao}
             onAprovar={onAprovarRevisao}
             aprovando={aprovando}
             documento="aditivo"

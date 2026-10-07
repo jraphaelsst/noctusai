@@ -224,6 +224,9 @@ interface Props {
    *  sets is visible to everyone. Defaults to `false` — the checkbox is
    *  omitted, never mistakenly shown, while a caller hasn't wired it. */
   isAdmin?: boolean;
+  /** Who sees "Aprovar revisão jurídica" — `LEGAL_REVIEW_ROLES` (owner/admin/
+   *  jurídico). UI convenience only; the server re-checks the trusted role. */
+  podeAprovarRevisao?: boolean;
   onSetProcessoLegado?: (contratoId: string, ativo: boolean, motivo?: string) => void;
   settingProcessoLegadoContratoId?: string | null;
   /** Migration 157 — the Digital/Física toggle. Omitted ⇒ the toggle renders
@@ -270,6 +273,7 @@ export default function ContratosPanel({
   onCancelarAssinatura,
   cancelandoAssinaturaContratoId,
   isAdmin = false,
+  podeAprovarRevisao = false,
   onSetProcessoLegado,
   settingProcessoLegadoContratoId,
   onPatchModalidade,
@@ -391,6 +395,7 @@ export default function ContratosPanel({
               }
               cancelandoAssinatura={cancelandoAssinaturaContratoId === contrato.id}
               isAdmin={isAdmin}
+              podeAprovarRevisao={podeAprovarRevisao}
               onSetProcessoLegado={
                 onSetProcessoLegado
                   ? (ativo, motivo) => onSetProcessoLegado(contrato.id, ativo, motivo)
@@ -441,6 +446,7 @@ function ContratoCard({
   onCancelarAssinatura,
   cancelandoAssinatura = false,
   isAdmin = false,
+  podeAprovarRevisao = false,
   onSetProcessoLegado,
   settingProcessoLegado = false,
   onPatchModalidade,
@@ -478,6 +484,7 @@ function ContratoCard({
   onCancelarAssinatura?: (motivo: string) => void;
   cancelandoAssinatura?: boolean;
   isAdmin?: boolean;
+  podeAprovarRevisao?: boolean;
   onSetProcessoLegado?: (ativo: boolean, motivo?: string) => void;
   settingProcessoLegado?: boolean;
   onPatchModalidade?: (modalidade: ModalidadeAssinatura) => void;
@@ -665,7 +672,7 @@ function ContratoCard({
           <RevisaoJuridicaSection
             contratoId={contrato.id}
             versao={atual}
-            isAdmin={isAdmin}
+            podeAprovarRevisao={podeAprovarRevisao}
             onAprovar={onAprovarRevisaoJuridica}
             aprovando={aprovandoRevisao}
           />

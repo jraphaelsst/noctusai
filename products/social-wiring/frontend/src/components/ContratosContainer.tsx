@@ -36,7 +36,7 @@ import { memo, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { canReviewLegal, resolveSSOContext } from "@noctusai/lib";
 
 import { AditivosContainer } from "@/components/AditivosContainer";
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
@@ -83,6 +83,8 @@ export function ContratosContainer({
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdmin =
     ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+  // "Aprovar revisão jurídica" — admins plus the org's legal staff (jurídico).
+  const podeAprovarRevisao = isAdmin || canReviewLegal(ssoCtx.org.role);
   // The deal's imóvel — narrows the matrícula picker (see header note).
   const negociacao = useNegociacao(clienteId);
   const imovelCodigo = negociacao.data?.imovel_codigo ?? null;
@@ -165,11 +167,11 @@ export function ContratosContainer({
         clienteId={clienteId}
         contratoId={contratoId}
         aberto={aberto}
-        isAdmin={isAdmin}
+        podeAprovarRevisao={podeAprovarRevisao}
         onIrPara={irPara}
       />
     ),
-    [clienteId, isAdmin, irPara],
+    [clienteId, podeAprovarRevisao, irPara],
   );
 
   // 🔴 Two signals off `data`, never `isLoading`: it is false mid-refetch, so
@@ -336,6 +338,7 @@ export function ContratosContainer({
             : null
         }
         isAdmin={isAdmin}
+        podeAprovarRevisao={podeAprovarRevisao}
         onSetProcessoLegado={(contratoId, ativo, motivo) =>
           mutations.processoLegado.mutate(
             { contratoId, ativo, motivo },

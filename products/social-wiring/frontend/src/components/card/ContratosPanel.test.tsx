@@ -990,7 +990,7 @@ describe("revisão jurídica — one final review per contract (migration 177)",
       assinaturas: { c1: entry() },
       onAbrirEnvioAssinatura,
       onAprovarRevisaoJuridica,
-      isAdmin: true,
+      podeAprovarRevisao: true,
     });
     expect(screen.getByTestId("contrato-rascunho-c1").textContent).toContain("Rascunho");
     expect(screen.getByTestId("contrato-revisao-campo-cliente:p1:cpf")).toBeTruthy();

@@ -26,6 +26,7 @@ from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 
 from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.primitives.roles import LEGAL_REVIEW_ROLES
 
 from app.dependencies import get_core_client, get_current_user_org
 from app.modules.card_hub.auth import auth_parts
@@ -184,7 +185,7 @@ async def post_revisao_juridica_route(
     on its own row, every machine value the version relied on. Returns
     `{contrato, confirmados}`.
 
-    ADMIN/OWNER ONLY — the TRUSTED `noctus_users.org_role` row
+    LEGAL_REVIEW_ROLES ONLY (owner/admin/jurídico) — the TRUSTED `noctus_users.org_role` row
     (`is_org_admin`), never the spoofable JWT `user_metadata`: the same
     predicate that decides the extraction CONFLICTS (migration 138), the
     other human act over machine readings. One click here vouches for every
@@ -194,10 +195,12 @@ async def post_revisao_juridica_route(
     `REVISAO_JURIDICA_VERSAO_DESATUALIZADA` (nothing written)."""
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    if not is_org_admin(get_core_client(), usuario_id):
+    if not is_org_admin(
+        get_core_client(), usuario_id, admin_roles=frozenset(LEGAL_REVIEW_ROLES)
+    ):
         raise HTTPException(
             status_code=403,
-            detail="Aprovar a revisão jurídica do contrato é restrito a administradores.",
+            detail="Aprovar a revisão jurídica do contrato é restrito a administradores e ao jurídico.",
         )
     return revisao_juridica.aprovar(
         client, org_id, cliente_id, contrato_id, versao_id, usuario_id=usuario_id

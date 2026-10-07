@@ -23,6 +23,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.primitives.roles import LEGAL_REVIEW_ROLES
 
 from app.dependencies import get_core_client, get_current_user_org
 from app.modules.card_hub import contratos_service as contratos_svc
@@ -218,15 +219,17 @@ async def post_aditivo_revisao_juridica_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_card_hub_client),
 ) -> dict:
-    """"Aprovar revisão jurídica" of an aditivo version — ADMIN/OWNER ONLY,
+    """"Aprovar revisão jurídica" of an aditivo version — LEGAL_REVIEW_ROLES ONLY (owner/admin/jurídico),
     on the TRUSTED `noctus_users.org_role` row (`is_org_admin`), the same
     bar as the contract's review. Returns the aditivo."""
     user, org_id = auth_parts(auth)
     usuario_id = getattr(user, "id", None)
-    if not is_org_admin(get_core_client(), usuario_id):
+    if not is_org_admin(
+        get_core_client(), usuario_id, admin_roles=frozenset(LEGAL_REVIEW_ROLES)
+    ):
         raise HTTPException(
             status_code=403,
-            detail="Aprovar a revisão jurídica do aditivo é restrito a administradores.",
+            detail="Aprovar a revisão jurídica do aditivo é restrito a administradores e ao jurídico.",
         )
     store.contexto_contrato(client, org_id, cliente_id, contrato_id)
     store.exigir_aditivo(client, org_id, contrato_id, aditivo_id)

@@ -7,13 +7,12 @@ from uuid import UUID
 from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.primitives.roles import ORG_ROLES
 
-# 🔴 PARITY CONTRACT: keep identical to `ORG_ROLES` in
-# `seed/lib/frontend/src/roles.ts` — the canonical 7-role org hierarchy every
-# product's UI renders from. The prior `^(owner|admin|member)$` accepted only
-# 3 of the 7, so the admin panel's own role dropdown (which renders
-# `ASSIGNABLE_ROLES`) 422'd on manager / viewer / dev / test.
-ORG_ROLE_PATTERN = "^(owner|admin|manager|member|viewer|dev|test)$"
+# DERIVED from the canonical `ORG_ROLES` (seed roles.py ↔ roles.ts) — a
+# hand-written alternation here drifted twice (3 of 7 roles, then corretor
+# missing) and the admin panel's own dropdown 422'd on the absent ones.
+ORG_ROLE_PATTERN = "^(" + "|".join(ORG_ROLES) + ")$"
 
 # Platform role: only these two exist in `noctus_users.role` — `manager` is an
 # ORG role, never a platform one.

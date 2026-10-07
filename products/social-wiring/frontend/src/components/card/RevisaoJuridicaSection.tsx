@@ -86,7 +86,7 @@ export interface RevisaoJuridicaSectionProps {
   contratoId: string;
   versao: VersaoOut;
   /** UI convenience only — the server re-checks the trusted role. */
-  isAdmin: boolean;
+  podeAprovarRevisao: boolean;
   /** Omitted ⇒ no button (the caller has not wired the action). */
   onAprovar?: (versaoId: string) => void;
   aprovando?: boolean;
@@ -99,7 +99,7 @@ export interface RevisaoJuridicaSectionProps {
 export function RevisaoJuridicaSection({
   contratoId,
   versao,
-  isAdmin,
+  podeAprovarRevisao,
   onAprovar,
   aprovando = false,
   documento = "contrato",
@@ -175,7 +175,7 @@ export function RevisaoJuridicaSection({
         testId={`${testIdPrefix}-itens-${contratoId}`}
         tom="revisao"
       />
-      {onAprovar && isAdmin ? (
+      {onAprovar && podeAprovarRevisao ? (
         <Button
           type="button"
           size="sm"
@@ -199,7 +199,7 @@ export function RevisaoJuridicaSection({
           A revisão jurídica é aprovada por um administrador do escritório.
         </p>
       )}
-      {onAprovar && isAdmin && (
+      {onAprovar && podeAprovarRevisao && (
         <Dialog open={confirmarAberto} onOpenChange={setConfirmarAberto}>
           <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-md">
             <DialogHeader>

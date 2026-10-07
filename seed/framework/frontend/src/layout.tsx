@@ -43,7 +43,7 @@ import {
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
-  usePageStatus, filterNavByPageStatus, stripNavRoutes, env,
+  usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS,
 } from "@noctusai/lib";
 import type { NavGroupWithRoute, NavItemWithRoute, StatusPagina } from "@noctusai/lib";
 import { HelpChatBubble } from "@noctusai/lib/components";
@@ -238,15 +238,8 @@ export interface ProductLayoutConfig {
   helpChat?: Pick<HelpChatBubbleProps, "getBaseUrl" | "getAuthToken" | "title" | "starters" | "endpoint">;
 }
 
-const DEFAULT_ROLE_LABELS: Record<string, string> = {
-  owner: "Proprietário",
-  admin: "Administrador",
-  manager: "Gerente",
-  member: "Membro",
-  viewer: "Visualizador",
-  dev: "Desenvolvedor",
-  test: "Teste",
-};
+// Derived from the canonical role set — a hand copy here drifted (corretor was missing).
+const DEFAULT_ROLE_LABELS: Record<string, string> = ORG_ROLE_LABELS;
 
 // Canonical seed resolver (env.CORE_URL) — same-origin + house-port dev
 // default. Never hand-roll `VITE_CORE_URL || localhost:5173` (the stale-port

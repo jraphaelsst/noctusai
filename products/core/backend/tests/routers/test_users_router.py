@@ -17,7 +17,7 @@ ORG_B = "22222222-2222-4222-8222-222222222222"
 
 # 🔴 PARITY: mirrors `ORG_ROLES` in `seed/lib/frontend/src/roles.ts` — the
 # dropdown the admin panel renders. Every one of these must PATCH cleanly.
-ORG_ROLES = ["owner", "admin", "manager", "member", "viewer", "dev", "test"]
+ORG_ROLES = ["owner", "admin", "manager", "member", "viewer", "dev", "test", "corretor", "juridico"]
 
 SAMPLE_USERS = [
     {
