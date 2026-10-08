@@ -292,9 +292,14 @@ services:
     # env-fleet-empty-ok — REVIEWED: unset ⇒ the container stays healthy and
     # both features answer 503 `ia_nao_configurada` (loud, never faked).
     # The VALUE must be set in deploy/fleet/.env.fleet on the VPS (owner).
+    # Owner decision 2026-10-07: igig holds its OWN COPY of every AI key
+    # (never inherits the shared root-.env key) so its keys can later be
+    # swapped independently. `IGIG_OPENAI_API_KEY` overrides the
+    # OPENAI_API_KEY the root .env would otherwise hand down via env_file.
     environment:
       <<: *prod-env
       ANTHROPIC_API_KEY: ${IGIG_ANTHROPIC_API_KEY:-}  # env-fleet-empty-ok — see REVIEWED comment above
+      OPENAI_API_KEY: ${IGIG_OPENAI_API_KEY:-}  # env-fleet-empty-ok — igig has no OpenAI feature today; unset ⇒ nothing breaks
     expose:
       - "8013"
     healthcheck:
