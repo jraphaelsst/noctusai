@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 
 import pytest
-from noctusai_lib.domain.help_chat import HelpChatKnowledgeMissing, HelpChatRateLimiter
+from noctusai_lib.domain.help_chat import FakeHelpChatStore, HelpChatKnowledgeMissing, HelpChatRateLimiter
 from noctusai_lib.integrations.llm import LLMAPIError, LLMBudgetExceeded, LLMNotConfigured
 
 from tests.domain.help_chat.conftest import AUTH_HEADER, FakeStream, ORG_ID, build_harness
@@ -259,6 +259,8 @@ class TestKnowledgeMustLoadAtMount:
         with pytest.raises(HelpChatKnowledgeMissing):
             create_help_chat_router(
                 product_name="IgIg",
+                product_slug="igig",
+                store=FakeHelpChatStore(),
                 knowledge_path=tmp_path / "does-not-exist.md",
                 auth_dependency=lambda: None,
                 org_id_from_auth=lambda auth: "x",
@@ -272,6 +274,8 @@ class TestKnowledgeMustLoadAtMount:
         with pytest.raises(HelpChatKnowledgeMissing):
             create_help_chat_router(
                 product_name="IgIg",
+                product_slug="igig",
+                store=FakeHelpChatStore(),
                 knowledge_path=empty,
                 auth_dependency=lambda: None,
                 org_id_from_auth=lambda auth: "x",

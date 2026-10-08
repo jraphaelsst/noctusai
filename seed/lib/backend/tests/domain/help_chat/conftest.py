@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from noctusai_lib.domain.help_chat import HelpChatRateLimiter, create_help_chat_router
+from noctusai_lib.domain.help_chat import FakeHelpChatStore, HelpChatRateLimiter, create_help_chat_router
 from noctusai_lib.integrations.llm.providers.fake_provider import FakeProvider
 from noctusai_lib.primitives.exceptions import (
     AppException,
@@ -26,6 +26,7 @@ from noctusai_lib.primitives.exceptions import (
 
 ORG_ID = str(uuid4())
 USER_ID = str(uuid4())
+OUTRO_USER_ID = str(uuid4())
 AUTH_HEADER = {"Authorization": "Bearer test-token"}
 
 
@@ -92,6 +93,7 @@ class Harness:
     client: TestClient
     stream: FakeStream
     knowledge_path: Any
+    store: FakeHelpChatStore
 
 
 def build_harness(
@@ -104,13 +106,17 @@ def build_harness(
     max_chars_per_message: int = 4000,
     max_continuations: int = 2,
     rate_limiter: Optional[HelpChatRateLimiter] = None,
+    store: Optional[FakeHelpChatStore] = None,
 ) -> Harness:
     knowledge_path = tmp_path / "help_chat_knowledge.md"
     knowledge_path.write_text(knowledge_text, encoding="utf-8")
     fake_stream = stream or FakeStream()
+    fake_store = store or FakeHelpChatStore()
 
     router = create_help_chat_router(
         product_name="IgIg",
+        product_slug="igig",
+        store=fake_store,
         knowledge_path=knowledge_path,
         auth_dependency=_auth_dependency,
         org_id_from_auth=_org_id_from_auth,
@@ -127,7 +133,7 @@ def build_harness(
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(ValidationError, validation_exception_handler)
     app.include_router(router)
-    return Harness(app=app, client=TestClient(app), stream=fake_stream, knowledge_path=knowledge_path)
+    return Harness(app=app, client=TestClient(app), stream=fake_stream, knowledge_path=knowledge_path, store=fake_store)
 
 
 @pytest.fixture

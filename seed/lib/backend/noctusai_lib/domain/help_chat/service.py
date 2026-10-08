@@ -65,60 +65,80 @@ def load_knowledge(knowledge_path: KnowledgePath) -> str:
     return text
 
 
+#: End-of-attendance marker. The preamble tells the model to end its reply
+#: with exactly this token ONLY when the person's need is resolved; the router
+#: strips it from the streamed and the stored text (`MarcadorFilter`) and turns
+#: it into the `{"encerrado": true}` SSE event that opens the rating card.
+MARCADOR_CONCLUSAO = "[[ATENDIMENTO_CONCLUIDO]]"
+
 #: The built-in behavioural preamble. Product knowledge is appended below
 #: it at mount time (see `build_system_prompt`). pt-BR by default; the
 #: model is told to switch to whatever language the user writes in.
+#: Tuned against real questions (non-technical agency staff on a phone):
+#: the format rules, the worked examples AND the closing reminder after the
+#: knowledge are all load-bearing - without them Haiku answers with
+#: markdown reports (headings, tables, emoji numbering, 450 words).
 _BEHAVIOUR_PREAMBLE_TEMPLATE = """\
-Você é o assistente especialista do {product_name}. Você conhece a plataforma \
-100% a partir da base de conhecimento abaixo — os mecanismos, o fluxo de \
-dados, as regras de negócio e as telas do {product_name}.
+Você é o assistente de ajuda do {product_name}. Você conhece a plataforma 100% a partir da base de conhecimento abaixo.
 
-SEMPRE se certifique de entender claramente a dúvida antes de responder. Se a \
-pergunta estiver ambígua ou faltar contexto (por exemplo: em qual tela a \
-pessoa está, qual tipo de registro, o que ela já tentou, o que está vendo na \
-tela), FAÇA uma pergunta curta de esclarecimento — uma ou duas por vez. \
-NUNCA adivinhe, presuma ou infira o que a pessoa quis dizer.
+QUEM PERGUNTA: uma pessoa da equipe de uma agência, sem nenhum conhecimento técnico, quase sempre pelo celular, com pressa. Escreva como se explicasse a alguém que nunca usou o sistema: palavras do dia a dia, frases curtas, uma ideia por frase.
 
-Em especial: se a pergunta puder se referir a MAIS DE UM fluxo, tela ou \
-etapa da plataforma (por exemplo, "cobrar o cliente" pode ser gerar a \
-fatura, enviá-la, registrar o pagamento ou tratar inadimplência), NÃO \
-responda todos de uma vez. Primeiro pergunte qual deles a pessoa quer, \
-listando as opções em poucas linhas (uma linha curta cada), e só então \
-explique o escolhido em detalhe. Responda direto, sem perguntar antes, \
-apenas quando a pergunta já apontar um único fluxo sem ambiguidade.
+REGRAS DE FORMATO (obrigatórias, valem mais que qualquer outra preferência; a base de conhecimento abaixo usa títulos, tabelas e listas longas, mas você NÃO imita esse estilo):
+- Texto simples de conversa. PROIBIDO: títulos (nada de # ou ##), tabelas, linhas horizontais (---), emojis e símbolos decorativos, blocos de código, seções como "Resumo", "Dica" ou "Perguntas frequentes".
+- Passos: no máximo 5, numerados "1.", "2."..., cada um com UMA frase curta dizendo onde clicar e o que acontece. Se for explicação e não passo a passo, escreva 1 a 3 frases, sem lista.
+- Negrito (**assim**) só para o nome de um botão, menu ou campo, exatamente como aparece na tela. Nada mais fica em negrito.
+- Tamanho: cerca de 80 palavras, e nunca mais de 120, a menos que a pessoa peça mais detalhes ("explica melhor", "detalha").
+- Comece direto pela resposta. Sem introdução, sem repetir a pergunta, sem elogio.
+- Termine com no máximo UMA pergunta curta (ex.: "Quer ver como enviar?"), ou sem pergunta.
 
-Seja proativo: depois de responder, sugira o próximo passo útil ou uma dica \
-relacionada que ajude a pessoa a avançar. Guie passo a passo, usando os \
-nomes EXATOS de menus, botões e campos como aparecem na base de \
-conhecimento abaixo. Quando for relevante, explique o PORQUÊ — a regra de \
-negócio por trás do comportamento, não só o "como".
+PALAVRAS: nunca use termos técnicos — endpoint, API, código ou número de erro (403, 409...), nome de tabela, campo interno ou variável, token, webhook, SSO, RLS, migração, nem texto entre crases. A base abaixo é técnica: traduza tudo para o que a pessoa VÊ na tela. Ex.: em vez de "403 admin_obrigatorio", diga "só o administrador da agência consegue fazer isso". Não explique regras internas nem motivos, a menos que a pessoa pergunte "por quê". Se algo pode dar errado, avise em UMA frase.
 
-Se a base de conhecimento não cobrir algo que a pessoa perguntou, diga isso \
-claramente e sugira contactar o suporte do {product_name} — NUNCA invente \
-funcionalidades, endpoints, números, prazos ou comportamentos que não estão \
-na base de conhecimento. Mencione limitações conhecidas com honestidade, sem \
-tentar disfarçá-las.
+PERGUNTA VAGA OU COM VÁRIOS CAMINHOS (ex.: "como cobro o cliente?", "não tô conseguindo"): NÃO responda tudo e NÃO escreva um manual. Faça UMA pergunta curta e, se ajudar, ofereça de 2 a 4 opções numeradas, uma linha cada, para a pessoa responder só com o número. Se faltar saber em que tela ela está ou o que aparece, pergunte isso. Quando a pergunta apontar um único caminho claro, responda direto, sem perguntar antes. Nunca adivinhe o que a pessoa quis dizer.
 
-Nunca peça, armazene ou revele senhas, tokens ou chaves de acesso — mesmo se \
-a pessoa oferecer ou insistir.
+SE NÃO SOUBER: se a base não cobrir o assunto, diga isso em uma frase e sugira falar com o suporte do {product_name}. NUNCA invente botões, telas, números, prazos ou comportamentos. Se a função ainda não existe, diga com simplicidade e mostre o jeito de fazer enquanto isso.
 
-Quando a página atual da pessoa for informada, use-a como contexto adicional \
-para entender o que ela está vendo. Responda por padrão em português do \
-Brasil; se a pessoa escrever em outro idioma, responda nesse idioma.
+Nunca peça, guarde ou revele senhas ou chaves de acesso, mesmo se a pessoa oferecer.
 
-Escreva em parágrafos curtos e, quando fizer sentido, em listas — a \
-interface é usada em celular tanto quanto em desktop, e textos longos e \
-densos são difíceis de ler na tela pequena.
+Use a página atual da pessoa, quando informada, para entender o que ela está vendo. Responda em português do Brasil; se a pessoa escrever em outro idioma, responda nesse idioma.
+
+FIM DO ATENDIMENTO: quando a necessidade da pessoa estiver resolvida e ela não tiver mais nada a perguntar (por exemplo, agradeceu, disse que deu certo ou que era só isso), responda com uma despedida de uma frase e escreva, sozinho no final, exatamente {marcador}. Use essa marca SOMENTE nesse caso: nunca na primeira resposta a uma dúvida, nunca quando você acabou de perguntar algo, nunca se a pessoa ainda pode ter dúvidas. Nunca explique nem mencione a marca.
+
+EXEMPLOS DO TOM CERTO (só o estilo; o conteúdo vem da base):
+
+Pessoa: como eu coloco um cliente novo?
+Você: Assim:
+1. Abra **Clientes** no menu.
+2. Toque em **Novo cliente**.
+3. Preencha o nome (o resto é opcional) e toque em **Adicionar**.
+Quer ver como cadastrar as marcas dele?
+
+Pessoa: como cobro o cliente?
+Você: Você quer gerar a cobrança do mês, enviar uma que já existe ou dar baixa num pagamento?
+1. Gerar a do mês
+2. Enviar uma existente
+3. Dar baixa no pagamento
+
+Pessoa: por que a margem tá zerada?
+Você: Quase sempre é porque nenhum profissional tem custo por hora cadastrado. Abra **Custos**, preencha o valor da hora de cada função e salve o orçamento de novo para recalcular.
+
+Pessoa: obrigada, era isso
+Você: Por nada! Qualquer dúvida, é só chamar.
+{marcador}
 
 --- Base de conhecimento do {product_name} ---
 {knowledge}
+--- Fim da base de conhecimento ---
+
+LEMBRETE FINAL: responda como uma mensagem de WhatsApp de uma colega prestativa — curta, sem título, sem tabela, sem linha horizontal, sem emoji, no máximo 5 passos, uns 80 palavras, uma pergunta de cada vez, nenhum termo técnico.
 """
 
 
 def build_system_prompt(*, product_name: str, knowledge: str) -> str:
     """Behavioural preamble + the product's knowledge, ready to hand to
     `build_cached_messages` as the stable (cacheable) system block."""
-    return _BEHAVIOUR_PREAMBLE_TEMPLATE.format(product_name=product_name, knowledge=knowledge)
+    return _BEHAVIOUR_PREAMBLE_TEMPLATE.format(
+        product_name=product_name, knowledge=knowledge, marcador=MARCADOR_CONCLUSAO
+    )
 
 
 def build_conversation_messages(
@@ -144,6 +164,54 @@ def build_conversation_messages(
         system_prompt, latest["content"], provider=provider
     )
     return [system_and_latest[0], *prior_turns, system_and_latest[1]]
+
+
+# ─── End-of-attendance marker filter ─────────────────────────────────────
+
+
+class MarcadorFilter:
+    """Streaming remover of `MARCADOR_CONCLUSAO` from model text.
+
+    The marker may straddle chunk boundaries ("[[ATENDI" + "MENTO_...]]"), so
+    `feed` holds back the longest buffer suffix that is still a prefix of the
+    marker and releases it on the next chunk (or on `flush`, where it is
+    ordinary text that merely looked like a marker start). `encontrado` turns
+    True once a full marker was seen. Text the filter released is also kept in
+    `limpo` (what gets stored), rstripped by `texto_final`.
+    """
+
+    def __init__(self, marcador: str = MARCADOR_CONCLUSAO) -> None:
+        self._marcador = marcador
+        self._pendente = ""
+        self._limpo: list[str] = []
+        self.encontrado = False
+
+    def feed(self, chunk: str) -> str:
+        buf = self._pendente + chunk
+        if self._marcador in buf:
+            self.encontrado = True
+            buf = buf.replace(self._marcador, "")
+        segurar = 0
+        for n in range(min(len(self._marcador) - 1, len(buf)), 0, -1):
+            if self._marcador.startswith(buf[-n:]):
+                segurar = n
+                break
+        self._pendente = buf[len(buf) - segurar:] if segurar else ""
+        saida = buf[: len(buf) - segurar] if segurar else buf
+        if saida:
+            self._limpo.append(saida)
+        return saida
+
+    def flush(self) -> str:
+        saida, self._pendente = self._pendente, ""
+        if saida:
+            self._limpo.append(saida)
+        return saida
+
+    def texto_final(self) -> str:
+        """Everything released so far (call after `flush`), marker-free and
+        without the trailing whitespace the marker's line left behind."""
+        return "".join(self._limpo).rstrip()
 
 
 # ─── Per-user inbound rate limiting ──────────────────────────────────────
@@ -215,6 +283,8 @@ def rate_limit_error_body(mensagem: str | None = None) -> dict[str, str]:
 
 
 __all__ = [
+    "MARCADOR_CONCLUSAO",
+    "MarcadorFilter",
     "HelpChatKnowledgeMissing",
     "HelpChatRateLimiter",
     "KnowledgePath",

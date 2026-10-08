@@ -27,12 +27,14 @@ maintains "what the assistant knows."
 # products/<slug>/backend/app/main.py (or a routers/help_chat_router.py)
 from pathlib import Path
 
-from noctusai_lib.domain.help_chat import create_help_chat_router
+from noctusai_lib.domain.help_chat import create_help_chat_router, make_help_chat_store
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 
 help_chat_router = create_help_chat_router(
     product_name="IgIg",
+    product_slug="igig",
+    store=make_help_chat_store(client_fn=lambda: db.get_core_client()),
     knowledge_path=Path(__file__).parent / "help_chat_knowledge.md",
     auth_dependency=get_current_user_org,
     org_id_from_auth=lambda auth: str(coerce_org_uuid(auth[2])),
@@ -40,7 +42,12 @@ help_chat_router = create_help_chat_router(
 app.include_router(help_chat_router)
 ```
 
-Mounts `POST /api/ajuda/chat` (the default `prefix="/api/ajuda"`).
+Mounts `POST /api/ajuda/chat` and `POST /api/ajuda/avaliacao` (the default `prefix="/api/ajuda"`).
+
+`product_slug` and `store` are required: conversations are STORED (see
+"Conversation storage" below). `store=make_help_chat_store(client_fn=...)` where
+`client_fn` returns a service-role Supabase client bound to `public` (IgIg:
+`database._db.get_core_client()`); tests inject `FakeHelpChatStore()`.
 
 **The knowledge file is loaded ONCE, right here, at router-construction
 time** — which for a product means at process startup (routers are built
@@ -80,7 +87,8 @@ Content-Type: application/json
   "messages": [
     {"role": "user", "content": "Como eu crio um negócio?"}
   ],
-  "pagina_atual": "/comercial/negocios"   // optional — current route pathname
+  "pagina_atual": "/comercial/negocios",  // optional — current route pathname
+  "conversa_id": "<uuid>"                 // one per conversation; server generates one if absent
 }
 ```
 
@@ -92,8 +100,17 @@ data: {"delta": "Para criar um "}
 
 data: {"delta": "negócio, clique em..."}
 
+data: {"encerrado": true}   // only when the model judged the attendance concluded
+
 data: {"done": true}
 ```
+
+`encerrado` is emitted ONLY on a clean completion, immediately before `done`
+— never in a stream that carries an `error` frame. The model signals it by
+ending its reply with the marker `[[ATENDIMENTO_CONCLUIDO]]` (the preamble
+allows it only when the need is resolved and the person has nothing else);
+`MarcadorFilter` strips the marker from the streamed AND stored text, even
+when it straddles chunk boundaries.
 
 **Long answers are never silently cut.** Each model round is capped at
 `MAX_TOKENS_POR_RODADA` (4096). When the provider reports the reply hit that
@@ -152,14 +169,44 @@ All keyword-only on `create_help_chat_router(...)`:
 | `rate_limit` | `20` | Requests/minute per user (429 above, `limite_de_mensagens`). |
 | `prefix` | `"/api/ajuda"` | Router prefix. |
 
+## Conversation storage and rating
+
+Owner decisions (2026-10-07): the FULL text of every turn is stored, kept
+forever, readable ONLY by the NoctusAI platform team. Migration
+`products/core/backend/migrations/069_help_chat_conversas.sql` creates
+`public.help_chat_conversas` (id = `conversa_id`, `produto`, `org_id`,
+`user_id`, timestamps, `motivo_encerramento`, `nota`, `comentario`) and
+`public.help_chat_mensagens` (role, text, page, model, latency, `truncated`,
+`parcial`) with RLS ON, NO policies and grants revoked from anon/authenticated
+— only the service role (the store's client) can read or write.
+
+- The user turn is stored on request; the assistant reply when the stream ends
+  (a mid-stream error or a client disconnect stores the partial reply with
+  `parcial=true`).
+- A store failure never breaks the answer: it is logged at ERROR with org and
+  conversa ids (never text) and the stream goes on. A `conversa_id` already
+  owned by another user is not written to (same logged failure).
+- `POST {prefix}/avaliacao` `{conversa_id, nota 1..5, comentario<=1000,
+  motivo concluido|inatividade}` -> 204, upsert (last rating wins); 404
+  `conversa_nao_encontrada` for a conversation that is not the caller's; 503
+  `avaliacao_indisponivel` when the store is down.
+- `NOC-REMEDIATE[help-chat-retention]`: no purge job yet (kept forever).
+
+## Answer style (the preamble)
+
+`_BEHAVIOUR_PREAMBLE_TEMPLATE` is tuned against real questions from
+non-technical staff on a phone: hard format rules (no headings/tables/rules/
+emoji, <=5 steps, bold only for button names, ~80 words, one question at a
+time), worked examples, and a closing reminder AFTER the knowledge block —
+without those Haiku answered with 450-word markdown reports. The knowledge
+file itself is markdown-heavy; the preamble tells the model not to imitate it.
+Changing the preamble: re-run a multi-question harness (vague questions,
+"obrigada", a "detalha" follow-up) on the product's model before shipping.
+
 ## What this organ does NOT do
 
-- **Never persists conversation content server-side** — no table, no row,
-  nothing written. The frontend organ is the only place a transcript
-  lives (its own `sessionStorage`, capped, cleared per browser tab).
-- **Never logs message text** — only sizes/latency/usage (`chunk_count`,
-  `char_count`, `latency_ms`). A log line never contains what a user asked
-  or what the assistant answered.
+- **Never logs message text** — only ids/sizes/latency/usage. The text lives
+  in the store, not in log lines.
 - **Never accesses customer/tenant data** — only the knowledge file + the
   conversation itself reach the prompt.
 - **No non-streaming fallback** — the seed's `chat_completion_stream` seam

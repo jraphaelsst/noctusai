@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from noctusai_lib.domain.help_chat.service import (
+    MARCADOR_CONCLUSAO,
     HelpChatKnowledgeMissing,
     HelpChatRateLimiter,
     build_conversation_messages,
@@ -45,7 +46,7 @@ class TestBuildSystemPrompt:
 
     def test_encodes_the_clarifying_question_and_no_data_access_rules(self):
         prompt = build_system_prompt(product_name="IgIg", knowledge="k")
-        assert "pergunta curta de esclarecimento" in prompt
+        assert "UMA pergunta curta" in prompt
         assert "senhas" in prompt
 
     def test_a_multi_flow_question_is_disambiguated_before_answering(self):
@@ -53,8 +54,17 @@ class TestBuildSystemPrompt:
         full answer covering four flows instead of "which one?". The owner's
         rule is ask-first; the preamble must say so for multi-flow questions."""
         prompt = build_system_prompt(product_name="IgIg", knowledge="k")
-        assert "MAIS DE UM fluxo" in prompt
-        assert "Primeiro pergunte qual deles" in prompt
+        assert "VÁRIOS CAMINHOS" in prompt
+        assert "NÃO responda tudo" in prompt
+
+    def test_encodes_hard_format_rules_and_the_end_marker(self):
+        prompt = build_system_prompt(product_name="IgIg", knowledge="k")
+        assert "PROIBIDO: títulos" in prompt and "tabelas" in prompt and "emojis" in prompt
+        assert "no máximo 5" in prompt
+        assert MARCADOR_CONCLUSAO in prompt and "{marcador}" not in prompt
+        # the closing reminder sits AFTER the knowledge (recency beats the
+        # markdown-heavy manual's style)
+        assert prompt.index("k\n--- Fim") < prompt.index("LEMBRETE FINAL")
 
 
 class TestBuildConversationMessages:

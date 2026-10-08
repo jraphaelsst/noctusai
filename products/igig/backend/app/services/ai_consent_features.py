@@ -21,6 +21,9 @@ Two features:
     `noctusai_lib.domain.help_chat`) never receives customer/lead data —
     its ENTIRE context is the static platform knowledge guide
     (`app/knowledge/guia-igig.md`) plus the operator's own question.
+    Since 2026-10-07 the conversation text IS stored (public.help_chat_*,
+    service-role only, platform-team readable, kept forever) - disclosed
+    in the `rationale` below and in guia-igig §13.2.
     Registered here purely for billing/token-use transparency (the
     catalog entry appears in `/settings/ai` as always-on infrastructure);
     it is intentionally NOT wired to `consent_required(...)` anywhere —
@@ -99,7 +102,9 @@ register_feature(
         "O balão de ajuda responde perguntas sobre como usar o IgIg usando "
         "apenas o guia estático da plataforma — nunca dados de clientes, "
         "leads ou negócios. Aparece aqui apenas para transparência do uso "
-        "de tokens de IA; não pode ser desativado individualmente."
+        "de tokens de IA; não pode ser desativado individualmente. As conversas "
+        "(texto completo) e a nota do atendimento são gravadas e lidas apenas "
+        "pela equipe da plataforma NoctusAI, para melhorar o assistente."
     ),
     product="igig",
     default_granted=True,

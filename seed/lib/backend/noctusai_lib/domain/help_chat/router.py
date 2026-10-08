@@ -6,18 +6,32 @@ an org id out of whatever that dependency returns. Both arrive as
 parameters, so a product keeps its own DI seams and its tests keep
 overriding them exactly as they do for every other seed-mounted router.
 
-Mounts a single route:
+Mounts two routes:
 
     POST {prefix}/chat   (default prefix "/api/ajuda")
         body: {"messages": [{"role": "user"|"assistant", "content": str}, ...],
-               "pagina_atual": str | None}
+               "pagina_atual": str | None, "conversa_id": uuid | None}
         auth: `auth_dependency` (401 on missing/invalid auth)
         response: `text/event-stream` — SSE frames
             data: {"delta": "..."}          (one per streamed chunk)
             data: {"truncated": true}        (reply still cut off after every
                                               continuation round; precedes done)
+            data: {"encerrado": true}        (the model judged the attendance
+                                              concluded; ONLY on a clean
+                                              completion, never alongside an
+                                              `error`; precedes done)
             data: {"done": true}             (terminal, success)
             data: {"error": {"code", "message"}}   (terminal, mid-stream failure)
+
+    POST {prefix}/avaliacao   -> 204
+        body: {"conversa_id": uuid, "nota": 1..5, "comentario": str<=1000 | None,
+               "motivo": "concluido" | "inatividade"}
+        auth: `auth_dependency`; 404 `conversa_nao_encontrada` when the id is not
+        the caller's own conversation. Upsert: the last rating wins.
+
+Conversations are STORED (full text, via the injected `HelpChatStore`; read
+only by the platform team — see `store.py`). A store failure never breaks the
+answer: it is logged at ERROR with org/conversa ids and the stream goes on.
 
 Two distinct failure surfaces, because SSE cannot change its HTTP status
 once the first byte is sent:
@@ -34,17 +48,19 @@ once the first byte is sent:
     an HTTP status any more) is emitted as an in-band SSE `error` event —
     the frontend organ treats any `error` event as terminal.
 
-Never logs message content — only sizes/latency/usage (LGPD: this route
-must not persist or leak what a signed-in user asked their product's AI).
+Never LOGS message content — only ids/sizes/latency/usage (the text lives in
+the store, not in log lines).
 """
 from __future__ import annotations
 
 import logging
 import time
 from typing import Any, AsyncIterator, Callable, Optional
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import Response, StreamingResponse
 
 from noctusai_lib.integrations.llm import (
     LLMAPIError,
@@ -54,19 +70,21 @@ from noctusai_lib.integrations.llm import (
     chat_completion_stream,
 )
 
-from .schemas import HelpChatRequest
+from .schemas import HelpChatAvaliacaoRequest, HelpChatRequest
 from .service import (
     ERROR_IA_INDISPONIVEL,
     ERROR_IA_NAO_CONFIGURADA,
     ERROR_ORCAMENTO_IA_EXCEDIDO,
     HelpChatRateLimiter,
     KnowledgePath,
+    MarcadorFilter,
     build_conversation_messages,
     build_system_prompt,
     load_knowledge,
     rate_limit_error_body,
     sse_event,
 )
+from .store import HelpChatStore
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +138,9 @@ def _falha(status: int, code: str, mensagem: str) -> HTTPException:
 def create_help_chat_router(
     *,
     product_name: str,
+    product_slug: str,
     knowledge_path: KnowledgePath,
+    store: HelpChatStore,
     auth_dependency: Callable[..., Any],
     org_id_from_auth: Callable[[Any], str],
     user_id_from_auth: Optional[Callable[[Any], str]] = None,
@@ -147,6 +167,12 @@ def create_help_chat_router(
         ))
 
     Args:
+        product_slug: Stored in `help_chat_conversas.produto` (the organ's
+            tables are product-agnostic) - e.g. "igig".
+        store: Conversation storage seam (`make_help_chat_store(client_fn=...)`
+            in production, `FakeHelpChatStore()` in tests). Required: a help
+            chat that silently stores nothing would break the platform
+            team's ability to review it.
         product_name: Shown to the model in the behavioural preamble
             ("Você é o assistente especialista do {product_name}").
         knowledge_path: A `Path` to a markdown file, or a zero-arg callable
@@ -190,6 +216,20 @@ def create_help_chat_router(
     limiter = rate_limiter or HelpChatRateLimiter(max_requests=rate_limit, window_seconds=60.0)
     resolve_user_key = user_id_from_auth or org_id_from_auth
 
+    async def guardar(operacao: Callable[[], Any], descricao: str, org_id: str, conversa_id: str) -> bool:
+        """Run a store call off the event loop. NEVER raises: a store outage
+        must not break the user's answer, but it is logged at ERROR (ids and
+        exception class only - never message text)."""
+        try:
+            await run_in_threadpool(operacao)
+            return True
+        except Exception as exc:
+            logger.error(
+                "help_chat: falha ao armazenar %s org=%s conversa=%s (%s)",
+                descricao, org_id, conversa_id, type(exc).__name__,
+            )
+            return False
+
     router = APIRouter(prefix=prefix, tags=tags or ["help_chat"])
 
     @router.post("/chat")
@@ -231,6 +271,19 @@ def create_help_chat_router(
                     },
                 )
 
+        conversa_id = str(payload.conversa_id or uuid4())
+        guardando = await guardar(
+            lambda: store.registrar_turno_usuario(
+                conversa_id=conversa_id,
+                produto=product_slug,
+                org_id=org_id,
+                user_id=user_id_from_auth(auth) if user_id_from_auth else None,
+                conteudo=payload.messages[-1].content,
+                pagina_atual=payload.pagina_atual,
+            ),
+            "turno do usuário", org_id, conversa_id,
+        )
+
         history = [{"role": m.role, "content": m.content} for m in payload.messages]
         messages = build_conversation_messages(
             system_prompt=system_prompt, history=history, provider=provider
@@ -259,23 +312,55 @@ def create_help_chat_router(
         async def event_stream() -> AsyncIterator[str]:
             nonlocal outcome
             chunk_count = 0
-            # The reply so far — held in memory for this request only (to
-            # replay it to the model on a continuation round), never logged
-            # or persisted.
-            resposta: list[str] = []
+            # The raw reply so far - held in memory for this request only (to
+            # replay it to the model on a continuation round). `filtro` holds
+            # the marker-free text that is streamed and stored.
+            bruto: list[str] = []
+            filtro = MarcadorFilter()
             continuacoes = 0
+            salvo = False
+
+            def salvar(parcial: bool) -> None:
+                """Persist the reply (sync; also used from `finally`)."""
+                nonlocal salvo
+                if not guardando or salvo:
+                    return
+                salvo = True
+                texto = filtro.texto_final()
+                if not texto:
+                    return
+                try:
+                    store.registrar_resposta(
+                        conversa_id=conversa_id, conteudo=texto, modelo=model,
+                        latency_ms=int((time.monotonic() - started) * 1000),
+                        truncated=outcome.truncated, parcial=parcial,
+                    )
+                except Exception as exc:
+                    logger.error(
+                        "help_chat: falha ao armazenar resposta org=%s conversa=%s (%s)",
+                        org_id, conversa_id, type(exc).__name__,
+                    )
+
+            async def salvar_parcial() -> None:
+                filtro.flush()
+                await run_in_threadpool(salvar, True)
+
             try:
                 if first_chunk is not None:
                     chunk_count += 1
-                    resposta.append(first_chunk)
-                    yield sse_event({"delta": first_chunk})
+                    bruto.append(first_chunk)
+                    saida = filtro.feed(first_chunk)
+                    if saida:
+                        yield sse_event({"delta": saida})
                 rodada = agen
                 while True:
                     async for chunk in rodada:
                         chunk_count += 1
-                        resposta.append(chunk)
-                        yield sse_event({"delta": chunk})
-                    texto = "".join(resposta)
+                        bruto.append(chunk)
+                        saida = filtro.feed(chunk)
+                        if saida:
+                            yield sse_event({"delta": saida})
+                    texto = "".join(bruto)
                     if not outcome.truncated or continuacoes >= max_continuations or not texto.strip():
                         break
                     continuacoes += 1
@@ -291,35 +376,77 @@ def create_help_chat_router(
                     rodada = stream_fn(
                         continuacao, model=model, provider=provider, org_id=org_id, outcome=outcome
                     )
+                resto = filtro.flush()
+                if resto:
+                    yield sse_event({"delta": resto})
+                await run_in_threadpool(salvar, False)
                 if outcome.truncated:
                     yield sse_event({"truncated": True})
+                if filtro.encontrado:
+                    yield sse_event({"encerrado": True})
                 yield sse_event({"done": True})
                 logger.info(
-                    "help_chat: stream ok org=%s chunks=%d chars=%d continuations=%d "
-                    "truncated=%s latency_ms=%d",
-                    org_id, chunk_count, sum(len(c) for c in resposta), continuacoes,
-                    outcome.truncated, int((time.monotonic() - started) * 1000),
+                    "help_chat: stream ok org=%s conversa=%s chunks=%d chars=%d continuations=%d "
+                    "truncated=%s encerrado=%s latency_ms=%d",
+                    org_id, conversa_id, chunk_count, len(filtro.texto_final()), continuacoes,
+                    outcome.truncated, filtro.encontrado, int((time.monotonic() - started) * 1000),
                 )
             except LLMNotConfigured:
                 logger.warning("help_chat: IA não configurada mid-stream org=%s", org_id)
+                await salvar_parcial()
                 yield sse_event({"error": {"code": ERROR_IA_NAO_CONFIGURADA,
                                             "message": "A IA não está configurada (chave da Anthropic ausente)."}})
             except LLMBudgetExceeded:
                 logger.warning("help_chat: orçamento de IA excedido mid-stream org=%s", org_id)
+                await salvar_parcial()
                 yield sse_event({"error": {"code": ERROR_ORCAMENTO_IA_EXCEDIDO,
                                             "message": "O limite de uso de IA da organização foi atingido."}})
             except LLMAPIError:
                 logger.error("help_chat: provedor de IA falhou mid-stream org=%s", org_id)
+                await salvar_parcial()
                 yield sse_event({"error": {"code": ERROR_IA_INDISPONIVEL,
                                             "message": "O provedor de IA não respondeu. Tente novamente em instantes."}})
             except Exception:
                 # No silent errors: log loudly, still answer the client with
                 # a typed SSE error frame instead of an opaque broken stream.
                 logger.exception("help_chat: erro inesperado no streaming org=%s", org_id)
+                await salvar_parcial()
                 yield sse_event({"error": {"code": ERROR_IA_INDISPONIVEL,
                                             "message": "Ocorreu um erro inesperado. Tente novamente."}})
+            finally:
+                # Client disconnected (GeneratorExit/cancel) before any of the
+                # paths above stored the reply: keep what was streamed.
+                if not salvo:
+                    filtro.flush()
+                    salvar(True)
 
         return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+    @router.post("/avaliacao", status_code=204)
+    async def avaliar_atendimento(
+        payload: HelpChatAvaliacaoRequest,
+        auth: Any = Depends(auth_dependency),
+    ) -> Response:
+        org_id = org_id_from_auth(auth)
+        conversa_id = str(payload.conversa_id)
+        user_id = user_id_from_auth(auth) if user_id_from_auth else None
+        try:
+            ok = await run_in_threadpool(
+                lambda: store.avaliar(
+                    conversa_id=conversa_id, org_id=org_id, user_id=user_id,
+                    nota=payload.nota, comentario=payload.comentario, motivo=payload.motivo,
+                )
+            )
+        except Exception as exc:
+            logger.error(
+                "help_chat: falha ao armazenar avaliação org=%s conversa=%s (%s)",
+                org_id, conversa_id, type(exc).__name__,
+            )
+            raise _falha(503, "avaliacao_indisponivel",
+                         "Não foi possível registrar sua avaliação agora. Tente novamente.") from exc
+        if not ok:
+            raise _falha(404, "conversa_nao_encontrada", "Conversa não encontrada.")
+        return Response(status_code=204)
 
     return router
 
