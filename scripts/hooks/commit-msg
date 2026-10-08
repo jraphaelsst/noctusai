@@ -37,7 +37,11 @@ if [ -n "$_gd" ] && [ ! -f "$_gd/MERGE_HEAD" ] && git symbolic-ref -q HEAD >/dev
         _py="python3"
         [ -n "$_common" ] && [ -x "$(dirname "$_common")/venv/bin/python" ] && _py="$(dirname "$_common")/venv/bin/python"
     fi
-    if command -v "$_py" >/dev/null 2>&1 || [ -x "$_py" ]; then
+    if [ ! -f "$_root/mcp/noctusai/cli.py" ]; then
+        # Not a noctus checkout (e.g. a throwaway repo a test runs this hook
+        # in): there is no product guide to guard. Say so, never fail on it.
+        echo "commit-msg: product-guide co-change check skipped — no mcp/noctusai/cli.py in $_root." >&2
+    elif command -v "$_py" >/dev/null 2>&1 || [ -x "$_py" ]; then
         if ! "$_py" "$_root/mcp/noctusai/cli.py" --check-product-guide-cochange \
                 --commit-msg-file "$msg_file" --worktree-path "$_root"; then
             echo "commit-msg: PRODUCT-GUIDE-COCHANGE check FAILED. Commit aborted." >&2
