@@ -23,8 +23,9 @@
  * State: an in-memory conversation, mirrored to `sessionStorage` (capped,
  * try/catch — private-mode/quota failures degrade to "no history persisted"
  * rather than crashing the bubble) so a reload during the same tab session
- * doesn't lose the thread. Conversation content NEVER reaches any other
- * storage — see the backend module's "never persists" contract.
+ * doesn't lose the thread. The server stores the conversation itself
+ * (keyed by `conversaId`; see the backend organ README) — this mirror is
+ * only the tab's own copy.
  */
 import * as React from "react";
 import { MessageCircle, Plus, Send, Star, X } from "lucide-react";

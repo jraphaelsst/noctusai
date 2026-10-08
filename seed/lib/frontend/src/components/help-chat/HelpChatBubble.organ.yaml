@@ -17,9 +17,11 @@ known_facts:
 - Mobile layout reuses `useSheetLayout` (the same `<640px` breakpoint decision
   the card-hub organ standardizes) rather than a second ad-hoc media query —
   full-screen sheet below `sm`, a ~400x600 anchored panel above it.
-- Transcript persists to `sessionStorage` (capped, try/catch) — never any other
-  storage; the backend never persists conversation content either (see the
-  backend module's README "what this organ does NOT do").
+- Transcript is mirrored client-side to `sessionStorage` only (capped,
+  try/catch). Since 2026-10-07 the BACKEND stores every conversation
+  (`public.help_chat_conversas` / `help_chat_mensagens`, platform-team-only
+  read) keyed by the `conversa_id` this organ sends — the panel says so in
+  its "As conversas são registradas para melhorar o suporte." line.
 - Enablement is a `createProductLayout({ helpChat: {...} })` option (seed
   framework `layout.tsx`) that mounts the bubble on every authenticated page,
   OR manual mounting via this direct export for a product not on
