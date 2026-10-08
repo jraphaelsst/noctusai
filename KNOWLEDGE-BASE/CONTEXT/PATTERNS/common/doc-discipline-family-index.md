@@ -15,6 +15,10 @@ These eight are grouped because editing ANY of them is methodology surgery on a 
 - **MEMORY.md is a router of TOPICS, never a catalogue of memories.** It is auto-loaded AND read-capped (~24.4KB) — past the cap the read returns NOTHING, so recall fails silently; save the pointer to `MEMORY-<topic>.md`, never to `MEMORY.md`. → `KB § PATTERNS/common/memory-index-topic-split.md`
 - **8-way sync — methodology surfaces stay aligned.** Eight first-class surfaces (CLAUDE.md / MEMORY.md / `.claude/agents/` / KB / CONTEXTUALIZE.md / `.claude/skills/` / `.claude/commands/` / `.claude/cache/`) carry methodology prose/consumption. Enforced by `check_eight_way_sync`. → `KB § PATTERNS/common/eight-way-sync.md`
 
+## Adjacent (not a §1 member): live-state alignment
+
+Doc-propagation sync has a mechanical twin for **live org/product state**: a commit that changes a product's behaviour must stage its help-chat guide (keeper `check_product_guide_cochange`, `Guide-Unaffected: <reason>` trailer to override), and org/product facts in docs are verified against Supabase/prod by `noctus.dev.scan_live_state_claims` before a change counts as done. → `KB § PATTERNS/common/live-state-alignment.md`
+
 ## Why a family line
 
 These 8 rules shared one framework, and a session that needs one of them typically needs the rest — so a single router hop costs a lookup and returns 7 always-on lines of budget. The forcing function is the router keeper's rule-COUNT ceiling; the procedure is `/gc` step 5. → `KB § PATTERNS/common/claude-md-router-discipline.md`

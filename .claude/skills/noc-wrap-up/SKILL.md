@@ -10,12 +10,14 @@ version: 1.1.0
 
 ## Workflow
 
-1. **Survey five surfaces** (read-free; just check the actual state):
+1. **Survey six surfaces** (read-free; just check the actual state):
    - **Silent test failures** — `noctus.dev.pytest` over touched modules (or `pytest -q` on the slice's test file). Test files that import an undeclared dep silently skip; test files green-but-skipped count as failed surveys. → `KB § PATTERNS/common/silent-test-failure-from-missing-dep.md`.
    - **Two-leg dispatch footer leftovers** — `noctus.dev.auto_improvement_query open_only=true since=<session-start>` for unresolved `drift-found:` / `scoped-improvement:` entries opened in this session. Tech-lead RESOLVES; engineers SURFACE. Nothing should leave the session in s2-memory if a s3-codified move is cheap. → `KB § PATTERNS/common/scoped-auto-improvement.md`.
    - **s-stage backfills owed** — same query, status filter `s2-memory` or `s3-codified` without a same-target s4. `noctus.dev.codify_log` enforces s4-requires-s3; backfill in-session beats next-session-archaeology. → `KB § PATTERNS/common/methodology-codification-pipeline.md`.
    - **Untracked + uncommitted drift** — `git status --porcelain` at the worktree AND the primary checkout. Untracked at root = drift-fix-on-contact precondition; uncommitted in a peer worktree = potential cross-tree pollution. → `KB § PATTERNS/common/drift-fix-on-contact.md`.
    - **Pending dispatches / orphan branches / stale caches** — `noctus.dev.cleanup_stale_worktrees dry_run=true` + `noctus.dev.orphan_branch_sweep` + `noctus.dev.detect_stale_caches`. Three single calls, ~5s total.
+
+   - **Org/product/state change — live-state alignment** — if this work changed an org, a product, or any state docs describe: run `noctus.dev.scan_live_state_claims`, fix every `mismatch`, and confirm the product guide, memory, KB and catalog row were updated in the SAME change (the commit-time keeper `check_product_guide_cochange` only proves the guide was *touched*, not that it is right). → `KB § PATTERNS/common/live-state-alignment.md`.
 
 2. **Name 3-5 polish items WITH rationale** — for each surfaced surface, write one line: `<item> — <why it matters now>`. If a survey returns clean, SAY SO ("no s2-memory entries opened this session") rather than skipping the survey line (silent-skip = silent-error shape).
 

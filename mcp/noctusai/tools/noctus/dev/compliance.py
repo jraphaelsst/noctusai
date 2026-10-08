@@ -10552,6 +10552,239 @@ def check_no_metadata_authz(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_product_guide_cochange` — a product's help-chat knowledge guide is the
+# assistant's ENTIRE knowledge; a behaviour change that does not touch it
+# makes the assistant confidently describe behaviour that no longer exists.
+# COMMIT-TIME keeper over the STAGED diff (same idiom as
+# `check_primary_checkout_commit`); wired in `scripts/hooks/commit-msg` — the
+# only hook that can see the message, which the `Guide-Unaffected:` trailer
+# escape hatch needs. Guides are DERIVED from every
+# `create_help_chat_router(..., knowledge_path=...)` call, never listed by
+# hand. `KB § PATTERNS/common/live-state-alignment.md`.
+# ---------------------------------------------------------------------------
+
+_GUIDE_UNAFFECTED_RE = re.compile(r"^Guide-Unaffected:[ \t]*(\S.*)$", re.MULTILINE)
+_HELP_CHAT_SEED_PREFIX = "seed/lib/backend/noctusai_lib/domain/help_chat/"
+_GUIDE_SCAN_EXCLUDED_PARTS = frozenset({
+    "tests", "node_modules", "venv", ".venv", "__pycache__", "site-packages",
+})
+_TEST_FILE_RE = re.compile(
+    r"(^|/)(tests?|__tests__|e2e)/|(^|/)test_[^/]*\.py$|(^|/)conftest\.py$"
+    r"|\.(test|spec)\.[cm]?[jt]sx?$"
+)
+
+
+def _guide_eval_path(node: ast.AST, file_path: Path, assigns: dict[str, ast.AST],
+                     depth: int = 0) -> Path | None:
+    """Statically evaluate a ``knowledge_path`` expression to a filesystem path.
+
+    Handles ``Path(__file__)`` with ``.resolve()`` / ``.parent`` / ``.parents[N]``,
+    ``/ "segment"`` chains, ``str``/``Path`` literals and module-level names.
+    Anything else (a callable, an env lookup) returns None — the caller reports
+    it, never silently drops it.
+    """
+    if depth > 12:
+        return None
+    if isinstance(node, ast.Name):
+        target = assigns.get(node.id)
+        return _guide_eval_path(target, file_path, assigns, depth + 1) if target is not None else None
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return Path(node.value)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left = _guide_eval_path(node.left, file_path, assigns, depth + 1)
+        right = _guide_eval_path(node.right, file_path, assigns, depth + 1)
+        return left / right if left is not None and right is not None else None
+    if isinstance(node, ast.Attribute):
+        base = _guide_eval_path(node.value, file_path, assigns, depth + 1)
+        if base is None:
+            return None
+        if node.attr == "parent":
+            return base.parent
+        return None
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) \
+            and node.value.attr == "parents" and isinstance(node.slice, ast.Constant) \
+            and isinstance(node.slice.value, int):
+        base = _guide_eval_path(node.value.value, file_path, assigns, depth + 1)
+        try:
+            return base.parents[node.slice.value] if base is not None else None
+        except IndexError:
+            return None
+    if isinstance(node, ast.Call):
+        fn = node.func
+        if isinstance(fn, ast.Name) and fn.id == "Path" and len(node.args) == 1:
+            arg = node.args[0]
+            if isinstance(arg, ast.Name) and arg.id == "__file__":
+                return file_path
+            return _guide_eval_path(arg, file_path, assigns, depth + 1)
+        if isinstance(fn, ast.Attribute) and fn.attr in ("resolve", "absolute") and not node.args:
+            return _guide_eval_path(fn.value, file_path, assigns, depth + 1)
+    return None
+
+
+def derive_help_chat_guides(root: Path) -> tuple[dict[str, list[str]], list[dict]]:
+    """Derive ``{product_slug: [guide repo-relative paths]}`` from the code.
+
+    Every ``create_help_chat_router(..., knowledge_path=X)`` call under an
+    ACTIVE ``products/<slug>/backend/`` is a consumer. Returns
+    ``(guides, unresolved)`` — ``unresolved`` rows (``{product, file, line}``)
+    are consumers whose ``knowledge_path`` could not be statically evaluated.
+    """
+    guides: dict[str, list[str]] = {}
+    unresolved: list[dict] = []
+    for pdir in _active_product_dirs(root / "products"):
+        backend = pdir / "backend"
+        if not backend.is_dir():
+            continue
+        for path in sorted(backend.rglob("*.py")):
+            if any(p in _GUIDE_SCAN_EXCLUDED_PARTS for p in path.parts):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.debug("compliance: cannot read %s (%s)", path, exc)
+                continue
+            if "create_help_chat_router" not in content:
+                continue
+            try:
+                tree = ast.parse(content)
+            except SyntaxError as exc:
+                logger.debug("compliance: cannot parse %s (%s)", path, exc)
+                continue
+            assigns = {
+                t.id: n.value
+                for n in tree.body if isinstance(n, ast.Assign)
+                for t in n.targets if isinstance(t, ast.Name)
+            }
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Call) and (
+                    (isinstance(node.func, ast.Name) and node.func.id == "create_help_chat_router")
+                    or (isinstance(node.func, ast.Attribute) and node.func.attr == "create_help_chat_router")
+                )):
+                    continue
+                kp = next((k.value for k in node.keywords if k.arg == "knowledge_path"), None)
+                if kp is None and len(node.args) >= 2:
+                    kp = node.args[1]
+                resolved = _guide_eval_path(kp, path, assigns) if kp is not None else None
+                rel = None
+                if resolved is not None:
+                    try:
+                        rel = str(resolved.resolve().relative_to(root.resolve())) \
+                            if resolved.is_absolute() else str(resolved)
+                    except ValueError:
+                        rel = None
+                if rel is None:
+                    unresolved.append({
+                        "product": pdir.name,
+                        "file": str(path.relative_to(root)),
+                        "line": node.lineno,
+                    })
+                else:
+                    guides.setdefault(pdir.name, []).append(rel)
+    return guides, unresolved
+
+
+def _guide_cochange_is_behaviour(rel: str, slug: str) -> bool:
+    if _TEST_FILE_RE.search(rel):
+        return False
+    return rel.startswith(f"products/{slug}/backend/app/") or rel.startswith(
+        f"products/{slug}/frontend/src/"
+    )
+
+
+def check_product_guide_cochange(
+    repo_root: Path | None = None,
+    staged: list[str] | None = None,
+    commit_message: str | None = None,
+) -> list[dict]:
+    """A commit that changes product behaviour must stage the product's guide.
+
+    Fires when the STAGED diff contains non-test behaviour files
+    (``products/<slug>/backend/app/**`` or ``products/<slug>/frontend/src/**``)
+    of a product that has a help-chat knowledge guide, or the seed
+    ``help_chat`` domain (affects every consumer's guide), and the guide is not
+    staged. Escape hatch for a genuine no-behaviour change: a commit-message
+    trailer ``Guide-Unaffected: <reason>`` (reason mandatory). Guides are
+    derived from ``create_help_chat_router(knowledge_path=...)`` consumers.
+    Per ``KB § PATTERNS/common/live-state-alignment.md``.
+    """
+    issues: list[dict] = []
+    root = repo_root or REPO_ROOT
+    if staged is None:
+        try:
+            out = subprocess.run(
+                ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMRD"],
+                cwd=root, capture_output=True, text=True, timeout=30, check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return issues
+        if out.returncode != 0:
+            return issues
+        staged = [p.strip() for p in out.stdout.splitlines() if p.strip()]
+    if not staged:
+        return issues
+    if commit_message and _GUIDE_UNAFFECTED_RE.search(commit_message):
+        return issues
+
+    seed_hit = [
+        p for p in staged
+        if p.startswith(_HELP_CHAT_SEED_PREFIX) and not _TEST_FILE_RE.search(p)
+    ]
+    product_hit = {
+        s for s in {
+            p.split("/")[1] for p in staged
+            if p.startswith("products/") and p.count("/") >= 3
+        }
+        if any(_guide_cochange_is_behaviour(p, s) for p in staged)
+    }
+    if not seed_hit and not product_hit:
+        return issues
+
+    guides, unresolved = derive_help_chat_guides(root)
+    staged_set = set(staged)
+    trailer_hint = (
+        "If this change genuinely does not alter what the guide should say, add "
+        "the trailer `Guide-Unaffected: <reason>` to the commit message."
+    )
+
+    targets = set(guides) if seed_hit else product_hit & set(guides)
+    for slug in sorted(targets):
+        missing = [g for g in guides[slug] if g not in staged_set]
+        if not missing:
+            continue
+        trigger = (
+            f"seed help_chat change ({seed_hit[0]}"
+            f"{'…' if len(seed_hit) > 1 else ''})" if seed_hit
+            else f"`products/{slug}` behaviour change"
+        )
+        issues.append({
+            "product": slug,
+            "file": missing[0],
+            "issue": (
+                f"{trigger} staged without its help-chat knowledge guide "
+                f"`{missing[0]}`. The guide is the assistant's ENTIRE knowledge — "
+                f"a stale guide makes it confidently describe behaviour that no "
+                f"longer exists. Update the guide in this same commit and verify "
+                f"it against the code. {trailer_hint} "
+                f"Per `KB § PATTERNS/common/live-state-alignment.md`."
+            ),
+            "severity": "high",
+        })
+    for row in unresolved:
+        if row["product"] in targets or (seed_hit and row["product"]):
+            issues.append({
+                "product": row["product"],
+                "file": f"{row['file']}:{row['line']}",
+                "issue": (
+                    "help-chat consumer's `knowledge_path` cannot be statically "
+                    "resolved, so its guide cannot be co-change-checked. Use a "
+                    "`Path(__file__)...` / literal path expression."
+                ),
+                "severity": "warning",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Migration-SQL security keepers (2026-10-06 security sweep).
 #
 # `check_secdef_migration_revokes_execute` — STATIC twin of the runtime
@@ -16038,6 +16271,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/cache-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/orchestration-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
+    "CONTEXT/PATTERNS/common/live-state-alignment.md",  # universal commons: org/product live state vs docs — spans backend (orgs), frontend/product guides, devops (prod SHA); no single specialist domain
     "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/learning-posture-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/01-PHILOSOPHY.md",

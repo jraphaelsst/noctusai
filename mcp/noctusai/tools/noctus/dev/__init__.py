@@ -116,6 +116,7 @@ def register_all(server) -> None:
     from . import scaffold_migration
     from . import scaffold_seed_adapter
     from . import scan_remediation_markers
+    from . import scan_live_state_claims
     from . import scan_unified
     from . import scan_wiring
     from . import session_review
@@ -261,6 +262,7 @@ def register_all(server) -> None:
     scaffold_migration.register(server)
     scaffold_seed_adapter.register(server)
     scan_remediation_markers.register(server)
+    scan_live_state_claims.register(server)
     scan_unified.register(server)
     scan_wiring.register(server)
     session_review.register(server)

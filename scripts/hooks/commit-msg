@@ -15,11 +15,36 @@
 #     the attribution survives `task_branch integrate`'s rebase onto dev.
 # An existing `Noc-Branch:` trailer is NEVER rewritten (first author wins —
 # a cherry-pick onto a release branch keeps the originating branch).
-# Never blocks a commit: attribution failure degrades to "unattributed",
+# (The attribution step never blocks; only the guide gate above does.) Attribution failure degrades to "unattributed",
 # which the manifest already treats as UNAPPROVED (refuse-not-null there).
 # ──────────────────────────────────────────────────────────────
 msg_file="$1"
 [ -n "$msg_file" ] && [ -f "$msg_file" ] || exit 0
+
+# ─── Product-guide co-change gate (BLOCKING — the one thing this hook blocks) ─
+# Keeper `check_product_guide_cochange` (`KB § PATTERNS/common/live-state-
+# alignment.md`): a staged behaviour change of a product with a help-chat
+# knowledge guide must stage the guide too, unless the message carries a
+# `Guide-Unaffected: <reason>` trailer. Lives HERE (not pre-commit) because
+# only this hook can read the message. Skips merges and detached HEAD (rebase /
+# cherry-pick replays) like the attribution step below; skips when no python.
+_gd="$(git rev-parse --git-dir 2>/dev/null || true)"
+if [ -n "$_gd" ] && [ ! -f "$_gd/MERGE_HEAD" ] && git symbolic-ref -q HEAD >/dev/null 2>&1; then
+    _root="$(git rev-parse --show-toplevel)"
+    if [ -x "$_root/venv/bin/python" ]; then _py="$_root/venv/bin/python"
+    else
+        _common="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+        _py="python3"
+        [ -n "$_common" ] && [ -x "$(dirname "$_common")/venv/bin/python" ] && _py="$(dirname "$_common")/venv/bin/python"
+    fi
+    if command -v "$_py" >/dev/null 2>&1 || [ -x "$_py" ]; then
+        if ! "$_py" "$_root/mcp/noctusai/cli.py" --check-product-guide-cochange \
+                --commit-msg-file "$msg_file" --worktree-path "$_root"; then
+            echo "commit-msg: PRODUCT-GUIDE-COCHANGE check FAILED. Commit aborted." >&2
+            exit 1
+        fi
+    fi
+fi
 
 # An empty message aborts the commit — never turn it into a trailer-only one.
 grep -qvE '^[[:space:]]*(#.*)?$' "$msg_file" || exit 0
