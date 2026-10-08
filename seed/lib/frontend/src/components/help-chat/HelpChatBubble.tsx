@@ -27,7 +27,7 @@
  * storage — see the backend module's "never persists" contract.
  */
 import * as React from "react";
-import { MessageCircle, Plus, Send, X } from "lucide-react";
+import { MessageCircle, Plus, Send, Star, X } from "lucide-react";
 
 import { cn } from "../../utils";
 import { useSheetLayout } from "../card-hub/useSheetLayout";
@@ -56,12 +56,32 @@ export interface HelpChatBubbleProps
   storageKey?: string;
   /** Max messages kept in memory / sessionStorage / sent as history. */
   maxHistoryMessages?: number;
+  /** POST endpoint for the end-of-attendance rating, relative to `getBaseUrl()`. */
+  ratingEndpoint?: string;
+  /** Minutes without a new user message (after >=1 answer) before the attendance closes and a rating is asked. */
+  inactivityMinutes?: number;
   className?: string;
+}
+
+type RatingMotivo = "concluido" | "inatividade";
+
+interface StoredConversation {
+  conversaId: string;
+  messages: HelpChatMessage[];
+  /** Epoch ms of the last user message — drives the inactivity window across reloads. */
+  lastActivity: number;
+  /** Set once the attendance ended and a rating is waiting to be given or dismissed. */
+  pendingMotivo: RatingMotivo | null;
 }
 
 const DEFAULT_ENDPOINT = "/api/ajuda/chat";
 const DEFAULT_MAX_HISTORY = 20;
 /** Sent (as a visible user turn) by the "Continuar resposta" button. */
+const DEFAULT_RATING_ENDPOINT = "/api/ajuda/avaliacao";
+const DEFAULT_INACTIVITY_MINUTES = 15;
+const COMMENT_MAX = 1000;
+/** Server-side end-of-attendance marker; the server strips it, we strip defensively too. */
+const MARCADOR_ENCERRAMENTO = "[[ATENDIMENTO_CONCLUIDO]]";
 const PEDIDO_CONTINUAR = "Continue a resposta de onde parou.";
 
 //: Error codes the backend router can return — see
@@ -78,24 +98,59 @@ function friendlyError(code: string | undefined, fallback: string): string {
   return fallback;
 }
 
-function loadHistory(storageKey: string): HelpChatMessage[] {
+function newConversaId(): string {
+  const c = typeof globalThis !== "undefined" ? (globalThis as any).crypto : undefined;
+  if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  // uuid v4 fallback for non-secure contexts.
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    return (ch === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
+/** Removes the end-of-attendance marker (and a still-streaming partial prefix of it). */
+export function stripMarcador(content: string): string {
+  let out = content.split(MARCADOR_ENCERRAMENTO).join("");
+  for (let n = MARCADOR_ENCERRAMENTO.length - 1; n > 0; n--) {
+    if (out.endsWith(MARCADOR_ENCERRAMENTO.slice(0, n))) {
+      out = out.slice(0, out.length - n);
+      break;
+    }
+  }
+  return out.trimEnd();
+}
+
+function freshConversation(): StoredConversation {
+  return { conversaId: newConversaId(), messages: [], lastActivity: Date.now(), pendingMotivo: null };
+}
+
+function isMessage(m: any): m is HelpChatMessage {
+  return m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string";
+}
+
+function loadConversation(storageKey: string): StoredConversation {
   try {
     const raw = sessionStorage.getItem(storageKey);
-    if (!raw) return [];
+    if (!raw) return freshConversation();
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(
-      (m): m is HelpChatMessage =>
-        m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string",
-    );
+    // Legacy shape: a bare array of messages.
+    if (Array.isArray(parsed)) return { ...freshConversation(), messages: parsed.filter(isMessage) };
+    if (!parsed || typeof parsed !== "object") return freshConversation();
+    return {
+      conversaId: typeof parsed.conversaId === "string" && parsed.conversaId ? parsed.conversaId : newConversaId(),
+      messages: Array.isArray(parsed.messages) ? parsed.messages.filter(isMessage) : [],
+      lastActivity: typeof parsed.lastActivity === "number" ? parsed.lastActivity : Date.now(),
+      pendingMotivo:
+        parsed.pendingMotivo === "concluido" || parsed.pendingMotivo === "inatividade" ? parsed.pendingMotivo : null,
+    };
   } catch {
-    return [];
+    return freshConversation();
   }
 }
 
-function saveHistory(storageKey: string, messages: HelpChatMessage[], cap: number): void {
+function saveConversation(storageKey: string, conv: StoredConversation, cap: number): void {
   try {
-    sessionStorage.setItem(storageKey, JSON.stringify(messages.slice(-cap)));
+    sessionStorage.setItem(storageKey, JSON.stringify({ ...conv, messages: conv.messages.slice(-cap) }));
   } catch {
     // Private mode / quota exceeded — degrade to "no history persisted",
     // never throw (this is a nice-to-have, not the feature's core contract).
@@ -116,6 +171,97 @@ function TypingIndicator() {
   );
 }
 
+interface RatingCardProps {
+  onSubmit: (nota: number, comentario: string) => Promise<void>;
+  onDismiss: () => void;
+}
+
+function RatingCard({ onSubmit, onDismiss }: RatingCardProps) {
+  const [nota, setNota] = React.useState(0);
+  const [comentario, setComentario] = React.useState("");
+  const [sending, setSending] = React.useState(false);
+  const [sendError, setSendError] = React.useState<string | null>(null);
+
+  const submit = async () => {
+    if (!nota || sending) return;
+    setSending(true);
+    setSendError(null);
+    try {
+      await onSubmit(nota, comentario.trim());
+    } catch (err: any) {
+      setSendError(err?.message || "Não foi possível enviar a avaliação.");
+      setSending(false);
+    }
+  };
+
+  return (
+    <div
+      role="group"
+      aria-labelledby="help-chat-rating-title"
+      className="space-y-3 border-t border-border bg-background p-4"
+    >
+      <div>
+        <h3 id="help-chat-rating-title" className="text-sm font-semibold">
+          Atendimento encerrado
+        </h3>
+        <p className="mt-1 text-sm text-muted-foreground">Que nota você daria para este atendimento?</p>
+      </div>
+      <div className="flex items-center gap-1" role="group" aria-label="Nota do atendimento">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            aria-pressed={nota === n}
+            aria-label={`Nota ${n} de 5`}
+            onClick={() => setNota(n)}
+            className="flex h-10 w-10 items-center justify-center rounded-md text-muted-foreground hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Star className={cn("h-6 w-6", n <= nota && "fill-primary text-primary")} aria-hidden="true" />
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={comentario}
+        onChange={(e) => setComentario(e.target.value)}
+        maxLength={COMMENT_MAX}
+        rows={2}
+        aria-label="Comentário (opcional)"
+        placeholder="Quer deixar um comentário? (opcional)"
+        className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
+      {sendError && (
+        <div
+          role="alert"
+          className="flex items-center justify-between gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+        >
+          <span>{sendError}</span>
+          <button type="button" onClick={() => void submit()} className="shrink-0 font-medium underline underline-offset-2">
+            Tentar de novo
+          </button>
+        </div>
+      )}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onDismiss}
+          disabled={sending}
+          className="rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+        >
+          Agora não
+        </button>
+        <button
+          type="button"
+          onClick={() => void submit()}
+          disabled={!nota || sending}
+          className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
+        >
+          Enviar avaliação
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function HelpChatBubble({
   title,
   getBaseUrl,
@@ -124,13 +270,20 @@ export function HelpChatBubble({
   starters,
   storageKey,
   maxHistoryMessages = DEFAULT_MAX_HISTORY,
+  ratingEndpoint = DEFAULT_RATING_ENDPOINT,
+  inactivityMinutes = DEFAULT_INACTIVITY_MINUTES,
   className,
 }: HelpChatBubbleProps) {
   const resolvedStorageKey = storageKey ?? `noctus-help-chat:${title}`;
   const isSheet = useSheetLayout();
 
   const [open, setOpen] = React.useState(false);
-  const [messages, setMessages] = React.useState<HelpChatMessage[]>(() => loadHistory(resolvedStorageKey));
+  const [initial] = React.useState<StoredConversation>(() => loadConversation(resolvedStorageKey));
+  const [messages, setMessages] = React.useState<HelpChatMessage[]>(initial.messages);
+  const [conversaId, setConversaId] = React.useState(initial.conversaId);
+  const [lastActivity, setLastActivity] = React.useState(initial.lastActivity);
+  const [pendingMotivo, setPendingMotivo] = React.useState<RatingMotivo | null>(initial.pendingMotivo);
+  const [thanks, setThanks] = React.useState(false);
   const [input, setInput] = React.useState("");
   const [streaming, setStreaming] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
@@ -142,6 +295,8 @@ export function HelpChatBubble({
 
   const messagesRef = React.useRef(messages);
   messagesRef.current = messages;
+  const convRef = React.useRef({ conversaId, lastActivity, pendingMotivo });
+  convRef.current = { conversaId, lastActivity, pendingMotivo };
 
   const listRef = React.useRef<HTMLDivElement>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
@@ -166,9 +321,44 @@ export function HelpChatBubble({
   }, [open]);
 
   const persist = React.useCallback(
-    (next: HelpChatMessage[]) => saveHistory(resolvedStorageKey, next, maxHistoryMessages),
+    (next: HelpChatMessage[], override: Partial<StoredConversation> = {}) =>
+      saveConversation(resolvedStorageKey, { ...convRef.current, messages: next, ...override }, maxHistoryMessages),
     [resolvedStorageKey, maxHistoryMessages],
   );
+
+  const startFreshConversation = React.useCallback(() => {
+    const fresh = freshConversation();
+    setConversaId(fresh.conversaId);
+    setLastActivity(fresh.lastActivity);
+    setPendingMotivo(null);
+    setMessages([]);
+    messagesRef.current = [];
+    convRef.current = { conversaId: fresh.conversaId, lastActivity: fresh.lastActivity, pendingMotivo: null };
+    persist([], fresh);
+  }, [persist]);
+
+  const markEnded = React.useCallback(
+    (motivo: RatingMotivo) => {
+      setPendingMotivo((cur) => cur ?? motivo);
+      persist(messagesRef.current, { pendingMotivo: convRef.current.pendingMotivo ?? motivo });
+    },
+    [persist],
+  );
+
+  // Inactivity window: >=1 assistant answer and no new user message for N minutes.
+  // Computed from the stored last-activity timestamp, so a reload (or a timer that
+  // would have fired while the panel was closed) is not lost.
+  const hasAnswer = messages.some((m) => m.role === "assistant" && m.content.trim() !== "");
+  React.useEffect(() => {
+    if (pendingMotivo || streaming || !hasAnswer) return;
+    const remaining = lastActivity + inactivityMinutes * 60_000 - Date.now();
+    if (remaining <= 0) {
+      markEnded("inatividade");
+      return;
+    }
+    const t = setTimeout(() => markEnded("inatividade"), remaining);
+    return () => clearTimeout(t);
+  }, [pendingMotivo, streaming, hasAnswer, lastActivity, inactivityMinutes, markEnded]);
 
   const applyDelta = React.useCallback((delta: string) => {
     setMessages((prev) => {
@@ -186,6 +376,10 @@ export function HelpChatBubble({
 
       setError(null);
       setTruncated(false);
+      setThanks(false);
+      const now = Date.now();
+      setLastActivity(now);
+      convRef.current = { ...convRef.current, lastActivity: now };
       const history = [...messagesRef.current, { role: "user" as const, content: trimmed }];
       const withPlaceholder: HelpChatMessage[] = [...history, { role: "assistant" as const, content: "" }];
       setMessages(withPlaceholder);
@@ -204,6 +398,7 @@ export function HelpChatBubble({
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           body: JSON.stringify({
+            conversa_id: convRef.current.conversaId,
             messages: history.slice(-maxHistoryMessages),
             pagina_atual: typeof window !== "undefined" ? window.location.pathname : null,
           }),
@@ -231,6 +426,7 @@ export function HelpChatBubble({
         let buffer = "";
         let sawError: { code?: string; message: string } | null = null;
         let sawTruncated = false;
+        let sawEncerrado = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -253,6 +449,8 @@ export function HelpChatBubble({
               sawError = payload.error;
             } else if (payload?.truncated === true) {
               sawTruncated = true;
+            } else if (payload?.encerrado === true) {
+              sawEncerrado = true;
             }
             // `payload.done` needs no handling — the loop's own end is the signal.
           }
@@ -265,6 +463,7 @@ export function HelpChatBubble({
           setTruncated(true);
         }
         persist(messagesRef.current);
+        if (sawEncerrado && !sawError) markEnded("concluido");
       } catch (err: any) {
         if (err?.name === "AbortError") return;
         setError("Falha de conexão com o assistente. Verifique sua internet e tente novamente.");
@@ -290,10 +489,44 @@ export function HelpChatBubble({
 
   const handleNovaConversa = () => {
     abortRef.current?.abort();
-    setMessages([]);
     setError(null);
     setTruncated(false);
-    persist([]);
+    setThanks(false);
+    startFreshConversation();
+  };
+
+  const submitRating = async (nota: number, comentario: string) => {
+    const motivo = convRef.current.pendingMotivo;
+    const token = await getAuthToken();
+    let res: Response;
+    try {
+      res = await fetch(`${getBaseUrl()}${ratingEndpoint}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          conversa_id: convRef.current.conversaId,
+          nota,
+          ...(comentario ? { comentario } : {}),
+          motivo,
+        }),
+      });
+    } catch {
+      throw new Error("Falha de conexão. Verifique sua internet e tente novamente.");
+    }
+    if (!res.ok) {
+      const data = await res.json().catch(() => null);
+      throw new Error(extractErrorMessage(data, res.status));
+    }
+    setThanks(true);
+    startFreshConversation();
+  };
+
+  const dismissRating = () => {
+    setThanks(false);
+    startFreshConversation();
   };
 
   const retryLast = () => {
@@ -377,8 +610,8 @@ export function HelpChatBubble({
                   )}
                 >
                   {m.role === "assistant" ? (
-                    m.content ? (
-                      <MarkdownRenderer content={m.content} className="[&_p]:mt-0 [&_p]:text-sm" />
+                    stripMarcador(m.content) ? (
+                      <MarkdownRenderer content={stripMarcador(m.content)} className="[&_p]:mt-0 [&_p]:text-sm" />
                     ) : streaming && i === messages.length - 1 ? (
                       <TypingIndicator />
                     ) : null
@@ -388,6 +621,11 @@ export function HelpChatBubble({
                 </div>
               </div>
             ))}
+            {thanks && (
+              <p role="status" className="text-sm text-muted-foreground">
+                Obrigado pela avaliação.
+              </p>
+            )}
             {showStarters && (
               <div className="flex flex-col gap-2">
                 <p className="text-sm text-muted-foreground">
@@ -432,7 +670,11 @@ export function HelpChatBubble({
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-border p-3">
+          {pendingMotivo ? (
+            <RatingCard key={conversaId} onSubmit={submitRating} onDismiss={dismissRating} />
+          ) : (
+          <>
+          <form onSubmit={handleSubmit} className="flex items-end gap-2 border-t border-border p-3 pb-1">
             <textarea
               ref={textareaRef}
               value={input}
@@ -452,6 +694,11 @@ export function HelpChatBubble({
               <Send className="h-4 w-4" />
             </button>
           </form>
+          <p className="px-3 pb-2 text-[11px] leading-tight text-muted-foreground">
+            As conversas são registradas para melhorar o suporte.
+          </p>
+          </>
+          )}
         </div>
       )}
     </>

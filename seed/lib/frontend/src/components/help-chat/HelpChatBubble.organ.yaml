@@ -24,6 +24,16 @@ known_facts:
   framework `layout.tsx`) that mounts the bubble on every authenticated page,
   OR manual mounting via this direct export for a product not on
   `createProductLayout`.
+- 'Conversation storage + rating (2026-10-07): the bubble sends a client-generated
+  uuid v4 `conversa_id` (kept in the same sessionStorage record as the transcript
+  and last-activity timestamp; new id after "Nova conversa" / rating / dismissal).
+  The attendance ends on an SSE `{"encerrado": true}` frame or after
+  `inactivityMinutes` (default 15) without a user message, computed from the stored
+  timestamp so reloads do not lose it; it then asks a 1-5 rating
+  (POST `ratingEndpoint`, default /api/ajuda/avaliacao -> 204) and shows a quiet
+  "conversations are recorded" disclosure. The `[[ATENDIMENTO_CONCLUIDO]]` marker
+  is stripped client-side too. sessionStorage shape is now an object (legacy bare
+  array still loads).
 errors_encountered: []
 drifts_surfaced:
 - 'Found while wiring this organ into `createProductLayout`: the mobile

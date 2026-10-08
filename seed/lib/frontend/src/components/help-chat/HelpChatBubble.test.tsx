@@ -1,6 +1,6 @@
 /// <reference types="@testing-library/jest-dom" />
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { HelpChatBubble } from './HelpChatBubble';
@@ -290,5 +290,173 @@ describe('HelpChatBubble — sessionStorage', () => {
       })(),
     ).resolves.not.toThrow();
     spy.mockRestore();
+  });
+});
+
+describe('HelpChatBubble — conversation storage, rating and disclosure', () => {
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+  async function ask(user: ReturnType<typeof userEvent.setup>, text = 'oi') {
+    await user.type(screen.getByPlaceholderText('Digite sua pergunta...'), text);
+    await user.keyboard('{Enter}');
+  }
+
+  function routedFetch(chat: () => Response, rating: () => Response | Promise<Response>) {
+    return vi.fn().mockImplementation((url: string) =>
+      Promise.resolve(String(url).endsWith('/api/ajuda/avaliacao') ? rating() : chat()),
+    );
+  }
+
+  const ended = () => sseResponse(['{"delta":"Pronto. [[ATENDIMENTO_CONCLUIDO]]"}', '{"encerrado":true}', '{"done":true}']);
+  const ok204 = () => new Response(null, { status: 204 });
+
+  it('shows the recording disclosure', async () => {
+    const user = userEvent.setup();
+    setup();
+    await openPanel(user);
+    expect(screen.getByText('As conversas são registradas para melhorar o suporte.')).toBeInTheDocument();
+  });
+
+  it('sends a uuid v4 conversa_id, stable within a conversation', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(sseResponse(['{"delta":"a"}', '{"done":true}'])));
+    vi.stubGlobal('fetch', fetchMock);
+    setup();
+    await openPanel(user);
+    await ask(user, 'um');
+    await waitFor(() => expect(screen.getByText('a')).toBeInTheDocument());
+    await ask(user, 'dois');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const ids = fetchMock.mock.calls.map((c) => JSON.parse(c[1].body).conversa_id);
+    expect(ids[0]).toMatch(UUID);
+    expect(ids[1]).toBe(ids[0]);
+    expect(JSON.parse(sessionStorage.getItem('noctus-help-chat:Assistente IgIg')!).conversaId).toBe(ids[0]);
+  });
+
+  it('encerrado event shows the rating card and never shows the marker', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', routedFetch(ended, ok204));
+    setup();
+    await openPanel(user);
+    await ask(user);
+    expect(await screen.findByText('Atendimento encerrado')).toBeInTheDocument();
+    expect(screen.getByText('Que nota você daria para este atendimento?')).toBeInTheDocument();
+    expect(screen.queryByText(/ATENDIMENTO_CONCLUIDO/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Enviar avaliação' })).toBeDisabled();
+  });
+
+  it('inactivity shows the rating card once the window passes (fake timers)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    try {
+      sessionStorage.setItem(
+        'noctus-help-chat:Assistente IgIg',
+        JSON.stringify({
+          conversaId: '11111111-1111-4111-8111-111111111111',
+          messages: [
+            { role: 'user', content: 'oi' },
+            { role: 'assistant', content: 'resposta' },
+          ],
+          lastActivity: Date.now(),
+          pendingMotivo: null,
+        }),
+      );
+      setup({ inactivityMinutes: 15 });
+      fireEvent.click(screen.getByRole('button', { name: /abrir assistente igig/i }));
+      expect(screen.queryByText('Atendimento encerrado')).not.toBeInTheDocument();
+      await act(async () => {
+        vi.advanceTimersByTime(15 * 60_000 + 10);
+      });
+      expect(screen.getByText('Atendimento encerrado')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('shows the card on open when the window already elapsed (reload)', async () => {
+    const user = userEvent.setup();
+    sessionStorage.setItem(
+      'noctus-help-chat:Assistente IgIg',
+      JSON.stringify({
+        conversaId: '11111111-1111-4111-8111-111111111111',
+        messages: [
+          { role: 'user', content: 'oi' },
+          { role: 'assistant', content: 'resposta' },
+        ],
+        lastActivity: Date.now() - 20 * 60_000,
+        pendingMotivo: null,
+      }),
+    );
+    setup();
+    await openPanel(user);
+    expect(await screen.findByText('Atendimento encerrado')).toBeInTheDocument();
+  });
+
+  it('sending the rating posts the payload, thanks the user and starts a new conversa_id', async () => {
+    const user = userEvent.setup();
+    const fetchMock = routedFetch(ended, ok204);
+    vi.stubGlobal('fetch', fetchMock);
+    setup();
+    await openPanel(user);
+    await ask(user);
+    await screen.findByText('Atendimento encerrado');
+    const firstId = JSON.parse(fetchMock.mock.calls[0][1].body).conversa_id;
+
+    await user.click(screen.getByRole('button', { name: 'Nota 4 de 5' }));
+    await user.type(screen.getByLabelText('Comentário (opcional)'), 'Ajudou');
+    await user.click(screen.getByRole('button', { name: 'Enviar avaliação' }));
+
+    expect(await screen.findByText('Obrigado pela avaliação.')).toBeInTheDocument();
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe(`${BASE_URL}/api/ajuda/avaliacao`);
+    expect(init.headers.Authorization).toBe('Bearer token-123');
+    expect(JSON.parse(init.body)).toEqual({ conversa_id: firstId, nota: 4, comentario: 'Ajudou', motivo: 'concluido' });
+    expect(screen.queryByText('Atendimento encerrado')).not.toBeInTheDocument();
+
+    await ask(user, 'nova');
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    const secondId = JSON.parse(fetchMock.mock.calls[2][1].body).conversa_id;
+    expect(secondId).toMatch(UUID);
+    expect(secondId).not.toBe(firstId);
+  });
+
+  it('a send error is shown inline and can be retried', async () => {
+    const user = userEvent.setup();
+    let calls = 0;
+    const fetchMock = routedFetch(ended, () => {
+      calls += 1;
+      return calls === 1 ? jsonErrorResponse(500, 'erro_interno', 'Falhou ao salvar.') : ok204();
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    setup();
+    await openPanel(user);
+    await ask(user);
+    await screen.findByText('Atendimento encerrado');
+    await user.click(screen.getByRole('button', { name: 'Nota 5 de 5' }));
+    await user.click(screen.getByRole('button', { name: 'Enviar avaliação' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(within(alert).getByText('Falhou ao salvar.')).toBeInTheDocument();
+    expect(screen.getByText('Atendimento encerrado')).toBeInTheDocument();
+    await user.click(within(alert).getByRole('button', { name: 'Tentar de novo' }));
+    expect(await screen.findByText('Obrigado pela avaliação.')).toBeInTheDocument();
+  });
+
+  it('"Agora não" starts a new conversation without posting', async () => {
+    const user = userEvent.setup();
+    const fetchMock = routedFetch(ended, ok204);
+    vi.stubGlobal('fetch', fetchMock);
+    setup();
+    await openPanel(user);
+    await ask(user);
+    await screen.findByText('Atendimento encerrado');
+    const firstId = JSON.parse(fetchMock.mock.calls[0][1].body).conversa_id;
+
+    await user.click(screen.getByRole('button', { name: 'Agora não' }));
+    expect(screen.queryByText('Atendimento encerrado')).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const stored = JSON.parse(sessionStorage.getItem('noctus-help-chat:Assistente IgIg')!);
+    expect(stored.conversaId).not.toBe(firstId);
+    expect(stored.pendingMotivo).toBeNull();
+    expect(stored.messages).toEqual([]);
   });
 });
