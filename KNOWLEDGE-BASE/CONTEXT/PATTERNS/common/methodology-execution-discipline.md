@@ -423,6 +423,16 @@ added.
   `.env`'s still in the gate env (e.g. a shell that ran `set -a; . .env`)
   ⇒ no gate runs, `inconclusive`. Tests that assert a key is MISSING
   delenv it themselves — env hygiene, never a patched guard.
+
+  **A gate that can never finish inside its box is not a gate.** The full
+  toolkit suite (~21 min) never fit the merged-tip time-box, so every
+  toolkit integrate was `incomplete` — a verdict nobody could act on. The
+  merged-tip mcp gate is now `mcp_toolkit_tests:scoped`: changed test
+  files + tests importing a changed module (ast) + `test_<module>.py`;
+  the full suite runs only when shared test infra changed, and CI always
+  runs it whole. The name says "scoped" so a partial run is never read as
+  the full one, and a changed module no test imports surfaces as
+  `mcp_untested_change` (`incomplete`), never a silent pass.
 - **Signature** (advisory, for what preflight cannot know in advance): a
   non-zero gate whose output carries a known setup-failure fingerprint
   (`Executable doesn't exist at`, `Process from config.webServer was not

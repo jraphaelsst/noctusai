@@ -168,10 +168,22 @@ def test_build_gate_specs_product_backend_only_no_frontend_gate(tmp_path):
 
 
 def test_build_gate_specs_mcp_scope(tmp_path):
-    scope = GS._derive_scope(["mcp/noctusai/tools/noctus/dev/gate_sweep.py"])
+    # Shared test infra → the FULL toolkit suite (module changes are scoped;
+    # see TestMcpScopedTests).
+    scope = GS._derive_scope(["mcp/noctusai/tests/conftest.py"])
     specs = GS._build_gate_specs(tmp_path, scope)
     assert [s.gate for s in specs] == ["mcp_toolkit_tests"]
     assert specs[0].cwd == tmp_path
+
+
+def test_untested_toolkit_module_is_incomplete_not_green(tmp_path):
+    (tmp_path / "mcp/noctusai/tests").mkdir(parents=True)
+    (tmp_path / "mcp/noctusai/tools").mkdir(parents=True)
+    (tmp_path / "mcp/noctusai/tools/lonely.py").write_text("X = 1\n")
+    scope = GS._derive_scope(["mcp/noctusai/tools/lonely.py"])
+
+    assert GS._build_gate_specs(tmp_path, scope) == []
+    assert scope["mcp_untested_modules"] == ["tools/lonely.py"]
 
 
 def test_build_gate_specs_doc_only_scope_without_claude_md(tmp_path):
@@ -873,3 +885,82 @@ class TestDotenvResidueIsHarnessInvalid:
         gates = GS._run_gates([GS.GateSpec("pytest:x", ["true"], tmp_path)], lambda s: (0, "ok", 0.0), [])
 
         assert gates[0]["ran"] is True and GS._verdict(gates) == "green"
+
+
+class TestMcpScopedTests:
+    """2026-10-09: the full toolkit suite (~21 min) never fit the merged-tip
+    time-box, so every toolkit integrate came back `incomplete`. The gate now
+    runs only the affected test files; CI keeps the full run."""
+
+    def _pkg(self, root: Path) -> Path:
+        tests = root / "mcp/noctusai/tests"
+        (root / "mcp/noctusai/tools/noctus/dev").mkdir(parents=True)
+        tests.mkdir(parents=True)
+        (root / "mcp/noctusai/tools/noctus/dev/widget.py").write_text("X = 1\n")
+        (root / "mcp/noctusai/tools/noctus/dev/orphan.py").write_text("Y = 1\n")
+        (root / "mcp/noctusai/env_thing.py").write_text("Z = 1\n")
+        (tests / "test_from_pkg.py").write_text("from tools.noctus.dev import widget\n")
+        (tests / "test_lazy.py").write_text("def test_x():\n    from tools.noctus.dev.widget import X\n")
+        (tests / "test_env_thing.py").write_text("import json\n")  # same-stem match
+        (tests / "test_other.py").write_text("import env_thing\n")
+        (tests / "test_unrelated.py").write_text("import json\n")
+        return tests
+
+    def test_importers_any_depth_are_selected(self, tmp_path):
+        self._pkg(tmp_path)
+
+        tests, untested = GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tools/noctus/dev/widget.py"])
+
+        assert tests == ["mcp/noctusai/tests/test_from_pkg.py", "mcp/noctusai/tests/test_lazy.py"]
+        assert untested == []
+
+    def test_same_stem_and_root_module(self, tmp_path):
+        self._pkg(tmp_path)
+
+        tests, _ = GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/env_thing.py"])
+
+        assert tests == ["mcp/noctusai/tests/test_env_thing.py", "mcp/noctusai/tests/test_other.py"]
+
+    def test_changed_test_file_runs_itself(self, tmp_path):
+        self._pkg(tmp_path)
+
+        tests, _ = GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/test_unrelated.py"])
+
+        assert tests == ["mcp/noctusai/tests/test_unrelated.py"]
+
+    def test_module_no_test_imports_is_surfaced(self, tmp_path):
+        self._pkg(tmp_path)
+
+        tests, untested = GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tools/noctus/dev/orphan.py"])
+
+        assert tests == [] and untested == ["tools/noctus/dev/orphan.py"]
+
+    @pytest.mark.parametrize("changed", [
+        "mcp/noctusai/tests/conftest.py", "mcp/noctusai/settings.py",
+        "mcp/noctusai/requirements.txt", "mcp/noctusai/tests/helpers_shared.py",
+        "mcp/noctusai/node/scan.mjs",
+    ])
+    def test_shared_infra_falls_back_to_full_suite(self, tmp_path, changed):
+        self._pkg(tmp_path)
+
+        assert GS._mcp_scoped_test_files(tmp_path, [changed]) is None
+
+    def test_docs_have_no_test_surface(self, tmp_path):
+        self._pkg(tmp_path)
+
+        assert GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/README.md"]) == ([], [])
+
+    def test_gate_specs_name_the_scoped_run(self, tmp_path):
+        self._pkg(tmp_path)
+        scope = GS._derive_scope(["mcp/noctusai/tools/noctus/dev/widget.py"])
+
+        specs = GS._build_gate_specs(tmp_path, scope)
+
+        mcp = [s for s in specs if s.gate.startswith("mcp_toolkit_tests")]
+        assert [s.gate for s in mcp] == ["mcp_toolkit_tests:scoped"]
+        assert mcp[0].argv[-3:] == ["mcp/noctusai/tests/test_from_pkg.py", "mcp/noctusai/tests/test_lazy.py", "-q"]
+
+    def test_roadmap_docs_are_doc_only(self):
+        scope = GS._derive_scope(["project-history/roadmaps/x-2026-10.md"])
+
+        assert scope["doc_only"] is True and scope["unmapped_files"] == []

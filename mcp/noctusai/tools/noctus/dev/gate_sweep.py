@@ -41,8 +41,17 @@ A changed path buckets into exactly one of:
       + vitest roots CI actually runs — `seed/{lib,framework}/{backend,
       frontend}`) PLUS fleet-wide (every product's own gates — everyone
       consumes `seed/`).
-  `mcp/...`                                 -> `mcp_toolkit_tests`
-      (`pytest mcp/noctusai/tests/ -q`, the very suite incident #1 skipped).
+  `mcp/...`                                 -> `mcp_toolkit_tests:scoped`
+      (2026-10-09): pytest over ONLY the affected test files — every
+      changed `tests/test_*.py`, every test that imports a changed module
+      (ast, any depth in the file), and `test_<module>[_*].py`. The full
+      suite (~21 min, past the merged-tip time-box — every toolkit
+      integrate was `incomplete`) runs as `mcp_toolkit_tests` only when
+      shared test infra changed (conftest, settings, requirements, a
+      non-test helper under tests/, any non-.py toolkit file); CI always
+      runs it in full. A changed module NO test imports is surfaced as the
+      `mcp_untested_change` entry (ran=False → `incomplete`), never a
+      silent pass.
   KB/CLAUDE-doc paths, and ONLY those       -> `kb_sync_verify`
       (`cli.py --verify-kb-sync`), plus `claude_md_router`
       (`cli.py --check-claude-md-router`) when `CLAUDE.md` itself changed.
@@ -66,6 +75,7 @@ derivation per bucket) with zero real subprocesses.
 """
 from __future__ import annotations
 
+import ast
 import functools
 import json
 import re
@@ -99,7 +109,7 @@ _PRODUCT_RE = re.compile(r"^products/([^/]+)/(?:backend|frontend)/")
 _SEED_FLEET_RE = re.compile(r"^seed/")
 _MCP_RE = re.compile(r"^mcp/")
 _KB_DOC_RE = re.compile(
-    r"^(KNOWLEDGE-BASE/|CLAUDE\.md$|CLAUDE/|\.claude/(agents|skills|commands)/)"
+    r"^(KNOWLEDGE-BASE/|CLAUDE\.md$|CLAUDE/|\.claude/(agents|skills|commands)/|project-history/roadmaps/)"
 )
 
 # The seed roots CI actually runs as their own jobs (Seed Backend/Frontend
@@ -164,6 +174,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
     products: set[str] = set()
     seed_fleet_wide = False
     mcp_touched = False
+    mcp_files: list[str] = []
     doc_files: list[str] = []
     other_files: list[str] = []
     for f in files:
@@ -176,6 +187,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
             continue
         if _MCP_RE.match(f):
             mcp_touched = True
+            mcp_files.append(f)
             continue
         if _KB_DOC_RE.match(f):
             doc_files.append(f)
@@ -189,6 +201,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
         "products": sorted(products),
         "seed_fleet_wide": seed_fleet_wide,
         "mcp": mcp_touched,
+        "mcp_files": sorted(mcp_files),
         "doc_only": doc_only,
         "doc_files": sorted(doc_files),
         "unmapped_files": sorted(other_files),
@@ -398,6 +411,92 @@ def _seed_gate_specs(root: Path, py: str) -> list[GateSpec]:
     return specs
 
 
+# ─── mcp toolkit gate scoping (2026-10-09) ──────────────────────────────────
+_MCP_PKG = "mcp/noctusai/"
+#: Changes here can affect ANY toolkit test → full suite.
+_MCP_FULL_SUITE_FILES = frozenset({
+    "tests/conftest.py", "tests/__init__.py", "settings.py",
+    "requirements.txt", "pyproject.toml",
+})
+#: Docs with no test surface.
+_MCP_NO_TEST_SUFFIXES = (".md",)
+
+
+def _mcp_module_name(rel: str) -> str:
+    """`tools/noctus/dev/x.py` → `tools.noctus.dev.x` (tests put `mcp/noctusai`
+    on sys.path); a package `__init__.py` maps to the package."""
+    parts = rel[:-3].split("/")
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    return ".".join(parts)
+
+
+def _imported_names(tree: ast.AST) -> set[str]:
+    """Every dotted name a file imports, anywhere (lazy in-function imports
+    included). `from a.b import c` yields both `a.b` and `a.b.c` — `c` may be
+    a submodule (`from tools.noctus.dev import gate_sweep`)."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            names.add(node.module)
+            names.update(f"{node.module}.{a.name}" for a in node.names)
+    return names
+
+
+def _mcp_scoped_test_files(
+    root: Path, mcp_files: list[str]
+) -> tuple[list[str], list[str]] | None:
+    """Affected toolkit test files for `mcp_files`, or None = run the full suite.
+
+    Returns ``(tests, untested_modules)``: repo-relative test paths, and the
+    changed modules no test imports (surfaced, never silently passed)."""
+    pkg_dir = root / _MCP_PKG
+    changed_tests: set[str] = set()
+    changed_mods: dict[str, str] = {}
+    for f in mcp_files:
+        if not f.startswith(_MCP_PKG):
+            return None
+        rel = f[len(_MCP_PKG):]
+        if rel.endswith(_MCP_NO_TEST_SUFFIXES):
+            continue
+        if rel in _MCP_FULL_SUITE_FILES or not rel.endswith(".py"):
+            return None
+        if rel.startswith("tests/"):
+            if not Path(rel).name.startswith("test_"):
+                return None  # a shared test helper — anything may use it
+            if (root / f).exists():  # a deleted test has nothing to run
+                changed_tests.add(f)
+            continue
+        changed_mods[_mcp_module_name(rel)] = rel
+
+    affected = set(changed_tests)
+    covered: set[str] = set()
+    if changed_mods:
+        stems = {Path(rel).stem: mod for mod, rel in changed_mods.items()}
+        for test in sorted((pkg_dir / "tests").rglob("test_*.py")):
+            rel_test = str(test.relative_to(root))
+            stem_hit = next(
+                (m for st, m in stems.items()
+                 if test.stem == f"test_{st}" or test.stem.startswith(f"test_{st}_")),
+                None,
+            )
+            try:
+                imported = _imported_names(ast.parse(test.read_text(encoding="utf-8")))
+            except (SyntaxError, UnicodeDecodeError):
+                affected.add(rel_test)  # can't tell — run it
+                continue
+            hits = [m for m in changed_mods if m in imported]
+            if stem_hit:
+                hits.append(stem_hit)
+            if hits:
+                affected.add(rel_test)
+                covered.update(hits)
+    untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
+    return sorted(affected), untested
+
+
 def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
     py = resolve_test_python()
     specs: list[GateSpec] = []
@@ -427,9 +526,19 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
             specs.extend(_product_gate_specs(root, slug, py))
 
     if scope["mcp"]:
-        specs.append(
-            GateSpec("mcp_toolkit_tests", [py, "-m", "pytest", "mcp/noctusai/tests/", "-q"], root)
-        )
+        scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []))
+        if scoped is None:
+            specs.append(
+                GateSpec("mcp_toolkit_tests", [py, "-m", "pytest", "mcp/noctusai/tests/", "-q"], root)
+            )
+        else:
+            tests, untested = scoped
+            scope["mcp_scoped_tests"] = tests
+            scope["mcp_untested_modules"] = untested
+            if tests:
+                specs.append(
+                    GateSpec("mcp_toolkit_tests:scoped", [py, "-m", "pytest", *tests, "-q"], root)
+                )
 
     if scope["doc_only"]:
         specs.append(
@@ -699,6 +808,20 @@ def gate_sweep(
     # Measured against what `_default_run_gate` actually hands its subprocess.
     env_residue = dotenv_residue(sanitize_subprocess_env(), root)
     gates = _run_gates(specs, runner, env_residue)
+
+    if scope.get("mcp_untested_modules"):
+        untested = scope["mcp_untested_modules"]
+        gates.append({
+            "gate": "mcp_untested_change",
+            "ran": False,
+            "exit_code": None,
+            "summary": (
+                f"{len(untested)} changed toolkit module(s) no test imports: "
+                f"{untested[:20]}" + (" …" if len(untested) > 20 else "")
+                + " — only CI's full suite exercises them (indirectly, if at all)"
+            ),
+            "duration_s": 0.0,
+        })
 
     if scope["unmapped_files"]:
         gates.append({
