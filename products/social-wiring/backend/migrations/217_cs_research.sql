@@ -164,3 +164,11 @@ ON CONFLICT (slug) DO UPDATE SET
     label = EXCLUDED.label, grupo = EXCLUDED.grupo,
     description = EXCLUDED.description, corestudio_id = EXCLUDED.corestudio_id,
     sort_order = EXCLUDED.sort_order, classifiable = EXCLUDED.classifiable;
+
+-- ----------------------------------------------------------------------------
+-- 5. Nav gating for the new "Minha Pesquisa" page (owner/dev-visible until the
+--    owner validates the DRAFT classifier + taxonomy)
+-- ----------------------------------------------------------------------------
+INSERT INTO social_wiring.status_pagina (nome_pagina, status)
+VALUES ('media-creation-pesquisa', 'desenvolvimento')
+ON CONFLICT (nome_pagina) DO NOTHING;
