@@ -52,8 +52,25 @@ Rule for this project: the owner is interviewed for every specification; nothing
 ### Research variables
 - Correction: the merged list has **40 distinct concepts and no overlaps**. Only the 5 exact slug matches and one spelling variant (Pessoas e personagens conhecidos) are identities. Everything previously flagged as "overlap" (e.g. Crenças do meu público vs crenças limitantes) is a different concept. See `specs/variables-usage.md` §6.
 
+## Decided — 2026-10-05, round 5
+
+- The CoreStudio tree is added to the sidebar **one link per page, as each page is ready**. The current "Criação de mídia" page (3 tabs) stays as one link until it is merged.
+- First module: **Pesquisa** (Minha Pesquisa, then Extrair Pesquisa).
+- Pesquisa is scoped **per marca**, with a brand switcher on the page. All **40 variables**; the unclear ones are refined later from real use ("first a fully working prototype, then refine").
+- Approval like CoreStudio: manual add = approved, AI-produced = pending, rejected = hidden.
+- Item sources v1: **our own content** already in the platform, plus the **Instagram integration** (profile KPIs, charts, post cards newest first, post modal with insights over time).
+
+## Decided — 2026-10-09, round 7
+
+- **Headline system prompt** (hidden in CoreStudio): rebuild it by **merging** what the reverse engineering found (`prompts/headline-engenharia-reversa-DRAFT.md`) with our Método Audience (`backend/app/modules/media_creation/prompts/methodology.py`).
+- **Núcleo de Influência source**: the profile **bio**.
+- **Fetch 2–3 of the owner's own auto suggestions** (ids 201486–201503, confirmed the owner's): approved, read-only.
+- **Viral library source**: deferred. It will come from high-performing Instagram posts; where those come from (e.g. accounts the owner registers in a list and we monitor for viral posts) is still open.
+- Build contract for Minha Pesquisa v1: `specs/pesquisa-contract.md`.
+
 ## Open — to ask before building
 
+- Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items? Owner unsure (2026-10-09) — revisit when the headline module starts, with a worked example.
 - Rebuild or drop: Assuntos Virais pane, AI validation of brain answers, voice answers, the hidden "Minhas extrações" page.
-- Viral library source (our own scraped corpus or user references only).
+- Viral library source (see round 7).
 - Approval for checks that change the CoreStudio account (study spec §7), including one live generation (1 credit) to read the real HEADLINE/ROTEIRO prompts.
