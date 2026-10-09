@@ -11896,7 +11896,7 @@ def check_org_identity_function_parity(
 
 _OPR_KB = "KB § PATTERNS/backend/tenancy-license-gate.md § Platform org picker"
 _OPR_READY_RE = re.compile(
-    r"UPDATE\s+(?:public\.)?products\s+SET\s+(?P<set>.*?)\bWHERE\s+slug\s*=\s*'(?P<slug>[^']+)'",
+    r"UPDATE\s+(?:public\.)?products\s+SET\s+(?P<set>.*?)\bWHERE\s+(?P<col>slug|db_schema)\s*=\s*'(?P<val>[^']+)'",
     re.IGNORECASE | re.DOTALL,
 )
 _OPR_READY_VAL_RE = re.compile(r"org_picker_ready\s*=\s*(true|false)", re.IGNORECASE)
@@ -12000,6 +12000,8 @@ def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]
     A ready product's chain must ALSO call ``public.attach_acting_audit_triggers`` (core 072)
     somewhere -- presence only, order-insensitive.
     """
+    from tools.noctus.dev.migrate_product import _schema_from_main_py, _slug_to_schema
+
     root = repo_root or REPO_ROOT
     issues: list[dict] = []
     for mig_dir in sorted(root.glob("products/*/backend/migrations")):  # product-scope: all — a chain's readiness claim is judged wherever it is written, asleep or not
@@ -12007,11 +12009,14 @@ def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]
         files = sorted(mig_dir.glob("*.sql"))
         ready: bool | None = None
         ready_file = ""
+        # The flip may key on the product's db_schema instead of its slug (the seed chain does:
+        # it is the template for products whose slug differs from their schema).
+        schema = _schema_from_main_py(slug, root / "products") or _slug_to_schema(slug)
         policies: dict[str, tuple[str, str, int]] = {}  # key -> (text, file, idx)
         for path in files:
             for st in _opr_statements(path.read_text(encoding="utf-8")):
                 m = _OPR_READY_RE.match(st)
-                if m and m.group("slug") == slug:
+                if m and m.group("val") == (slug if m.group("col").lower() == "slug" else schema):
                     v = _OPR_READY_VAL_RE.search(m.group("set"))
                     if v:
                         ready = v.group(1).lower() == "true"

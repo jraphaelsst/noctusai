@@ -109,6 +109,13 @@ class TestOrgPickerReadyPolicies:
         root2 = _chain(tmp_path / "b", **{"001_a.sql": converted, "002_ready.sql": READY})
         assert check_org_picker_ready_policies(root2) == []
 
+    def test_ready_flip_keyed_on_db_schema_is_judged(self, tmp_path):
+        """The seed chain (template for every product) flips by db_schema, not slug."""
+        by_schema = "UPDATE public.products SET org_picker_ready = true WHERE db_schema = 'demo';\n"
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_ready.sql": by_schema})
+        issues = check_org_picker_ready_policies(root)
+        assert len(issues) == 1 and "HOME-ONLY" in issues[0]["issue"]
+
     def test_unready_product_needs_no_attach(self, tmp_path):
         root = _chain(tmp_path, **{"001_a.sql": PICKER_POLICY})
         assert check_org_picker_ready_policies(root) == []
