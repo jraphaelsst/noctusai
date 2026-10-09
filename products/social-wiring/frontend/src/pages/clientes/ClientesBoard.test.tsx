@@ -12,9 +12,15 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
 
+const orgRole = vi.hoisted(() => ({ current: "corretor" as string }));
 vi.mock("@noctusai/seed/infra", () => ({
   api: { get: vi.fn(), post: vi.fn(), patch: vi.fn(), delete: vi.fn() },
+  useAuthStore: () => ({ user: { user_metadata: { org_role: orgRole.current } } }),
 }));
+vi.mock("@/components/clientes/ClientesExcluidosPanel", async () => {
+  const React = await import("react");
+  return { ClientesExcluidosPanel: () => React.createElement("div", { "data-testid": "excluidos-panel" }) };
+});
 
 // Stub Radix Tabs with a real onValueChange wiring (context-based) rather
 // than depending on Radix's own state machine in jsdom — same rationale as
@@ -104,6 +110,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockUpdate.isPending = false;
   mockUpdate.variables = undefined;
+  orgRole.current = "corretor";
 });
 
 describe("ClientesBoard — loading/error", () => {
@@ -311,5 +318,29 @@ describe("ClientesBoard — click opens the card detail dialog (lead-card-hub Ph
     fireEvent.click(getByTestId("cliente-restaurar-btn"));
 
     expect(queryByTestId("cliente-detail-modal")).toBeNull();
+  });
+});
+
+describe("ClientesBoard — aba Excluídos (admin only)", () => {
+  it("hides the Excluídos tab for non-admins", async () => {
+    mockUseClientesBoard.mockReturnValue({
+      isPending: false, isFetching: false, isError: false,
+      data: { items: [], total: 0, page: 1, pages: 1 }, refetch: vi.fn(),
+    });
+    const { queryByTestId } = await renderPage();
+    expect(queryByTestId("clientes-tab-excluidos")).toBeNull();
+  });
+
+  it("admin sees the tab and the Excluídos panel replaces the board", async () => {
+    orgRole.current = "admin";
+    mockUseClientesBoard.mockReturnValue({
+      isPending: false, isFetching: false, isError: false,
+      data: { items: [], total: 0, page: 1, pages: 1 }, refetch: vi.fn(),
+    });
+    const { getByTestId, queryByTestId } = await renderPage();
+    const { fireEvent } = await import("@testing-library/react");
+    expect(queryByTestId("excluidos-panel")).toBeNull();
+    fireEvent.click(getByTestId("clientes-tab-excluidos"));
+    expect(getByTestId("excluidos-panel")).toBeTruthy();
   });
 });

@@ -93,6 +93,7 @@ import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 import { useContratoMutations } from "@/hooks/useContratos";
 import { useArquivarAtendimento } from "@/hooks/useAtendimentos";
 import { useClienteMutations } from "@/hooks/useClientes";
+import { mensagemClienteExcluido } from "@/lib/mensagemClienteExcluido";
 
 export interface ClienteDetailModalProps {
   clienteId: string | null;
@@ -976,6 +977,7 @@ export function ClienteDetailModal({
         excluirCliente.mutate(id, {
           onSuccess: (result) => {
             setConfirmExcluirOpen(false);
+            toast.success(mensagemClienteExcluido(result));
             if (result.storage_falhas.length > 0) {
               toast.warning(
                 "Cliente excluído, mas alguns arquivos não puderam ser removidos do armazenamento.",

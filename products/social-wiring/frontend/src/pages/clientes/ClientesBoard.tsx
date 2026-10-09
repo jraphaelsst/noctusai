@@ -35,6 +35,9 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useIsOrgAdmin } from "@noctusai/lib/design-system";
+
+import { ClientesExcluidosPanel } from "@/components/clientes/ClientesExcluidosPanel";
 
 import { ClienteCard } from "@/components/clientes/ClienteCard";
 import { ClienteDetailModal } from "@/components/ClienteDetailModal";
@@ -50,7 +53,8 @@ const PAGE_SIZE = 24;
 const ALL = "__all__";
 
 export default function ClientesBoard() {
-  const [statusTab, setStatusTab] = useState<"ativos" | "inativos">("ativos");
+  const [statusTab, setStatusTab] = useState<"ativos" | "inativos" | "excluidos">("ativos");
+  const isAdmin = useIsOrgAdmin();
   const [page, setPage] = useState(1);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState<string | undefined>(undefined);
@@ -71,6 +75,7 @@ export default function ClientesBoard() {
   };
 
   const board = useClientesBoard(filtros);
+  const verExcluidos = isAdmin && statusTab === "excluidos";
   const corretores = useLeadCorretores();
   const { update } = useClienteMutations();
 
@@ -86,7 +91,7 @@ export default function ClientesBoard() {
   const hasFilters = Boolean(search || corretorId);
   const isEmpty = !loading && !board.isError && (data?.items.length ?? 0) === 0;
 
-  function patchTab(tab: "ativos" | "inativos") {
+  function patchTab(tab: "ativos" | "inativos" | "excluidos") {
     setStatusTab(tab);
     setPage(1);
   }
@@ -113,10 +118,10 @@ export default function ClientesBoard() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Clientes</h1>
           <p className="text-sm text-muted-foreground">
-            {data ? `${data.total.toLocaleString("pt-BR")} pessoas` : "Carregando…"}
+            {verExcluidos ? "Pessoas excluídas — restauráveis a partir dos leads" : data ? `${data.total.toLocaleString("pt-BR")} pessoas` : "Carregando…"}
           </p>
         </div>
-        <Tabs value={statusTab} onValueChange={(v) => patchTab(v as "ativos" | "inativos")}>
+        <Tabs value={statusTab} onValueChange={(v) => patchTab(v as "ativos" | "inativos" | "excluidos")}>
           <TabsList>
             <TabsTrigger value="ativos" data-testid="clientes-tab-ativos">
               Ativos
@@ -124,10 +129,19 @@ export default function ClientesBoard() {
             <TabsTrigger value="inativos" data-testid="clientes-tab-inativos">
               Inativos
             </TabsTrigger>
+            {isAdmin && (
+              <TabsTrigger value="excluidos" data-testid="clientes-tab-excluidos">
+                Excluídos
+              </TabsTrigger>
+            )}
           </TabsList>
         </Tabs>
       </div>
 
+      {verExcluidos ? (
+        <ClientesExcluidosPanel />
+      ) : (
+      <>
       <Card>
         <CardContent className="flex flex-wrap gap-3 p-4">
           <div className="relative min-w-[220px] flex-1">
@@ -184,7 +198,7 @@ export default function ClientesBoard() {
         hasFilters ? (
           <EmptyFiltered onClear={clearFilters} />
         ) : (
-          <EmptyNoClientes tab={statusTab} />
+          <EmptyNoClientes tab={statusTab === "inativos" ? "inativos" : "ativos"} />
         )
       ) : (
         <>
@@ -224,6 +238,8 @@ export default function ClientesBoard() {
             </div>
           )}
         </>
+      )}
+      </>
       )}
 
       <ClienteDetailModal

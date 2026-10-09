@@ -29,6 +29,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
 import { useClienteMutations } from "@/hooks/useClientes";
+import { mensagemClienteExcluido } from "@/lib/mensagemClienteExcluido";
 import { usePessoaResumo } from "@/hooks/usePessoa";
 import { toastServerError } from "@/lib/erroServidor";
 import { formatDate } from "@/lib/utils";
@@ -135,6 +136,7 @@ export default function PessoaPage() {
           excluirCliente.mutate(id, {
             onSuccess: (result) => {
               setConfirmExcluirOpen(false);
+              toast.success(mensagemClienteExcluido(result));
               if (result.storage_falhas.length > 0) {
                 toast.warning(
                   "Cliente excluído, mas alguns arquivos não puderam ser removidos do armazenamento.",

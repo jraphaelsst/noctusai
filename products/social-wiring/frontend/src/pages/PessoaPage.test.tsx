@@ -6,8 +6,9 @@ const m = vi.hoisted(() => ({
   role: { current: "member" as string },
   mutate: vi.fn(),
   toastError: vi.fn(),
+  toastSuccess: vi.fn(),
 }));
-vi.mock("sonner", () => ({ toast: { error: m.toastError, warning: vi.fn() } }));
+vi.mock("sonner", () => ({ toast: { success: m.toastSuccess, error: m.toastError, warning: vi.fn() } }));
 vi.mock("@noctusai/seed/infra", () => ({
   useAuthStore: () => ({ user: { user_metadata: { org_role: m.role.current } } }),
 }));
@@ -158,6 +159,18 @@ describe("PessoaPage", () => {
       fireEvent.click(screen.getByTestId("excluir-cliente-confirm"));
       expect(m.mutate).toHaveBeenCalledWith("c1", expect.any(Object));
       expect(screen.getByTestId("lista-clientes")).toBeTruthy();
+    });
+
+    it("success toast says the person won't come back from their leads", () => {
+      m.role.current = "admin";
+      pronto();
+      m.mutate.mockImplementation((_id, opts) =>
+        opts.onSuccess({ storage_falhas: [], origens_bloqueadas: 2 }),
+      );
+      renderEm("/clientes/c1");
+      fireEvent.click(screen.getByTestId("pessoa-excluir"));
+      fireEvent.click(screen.getByTestId("excluir-cliente-confirm"));
+      expect(m.toastSuccess).toHaveBeenCalledWith(expect.stringMatching(/não voltará.*2 lead\(s\)/));
     });
 
     it("surfaces the API's 409 message and stays on the page", () => {

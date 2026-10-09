@@ -156,12 +156,38 @@ export interface ClienteDeleteOut {
   atendimentos_removidos: number;
   documentos_removidos: number;
   storage_falhas: string[];
+  /** Lead sources tombstoned so the backfill won't recreate the person.
+   *  Additive — absent on older servers. */
+  origens_bloqueadas?: number;
+}
+
+/** One row of `GET /api/clientes/excluidos` (admin/owner only). */
+export interface ClienteExcluido {
+  /** The DELETED cliente's id. */
+  cliente_id: string;
+  cliente_nome: string | null;
+  excluido_por: string | null;
+  excluido_por_nome: string | null;
+  excluido_em: string;
+  origens: number;
+}
+
+export interface ClientesExcluidosOut {
+  items: ClienteExcluido[];
+  total: number;
+}
+
+export interface ClienteRestauradoOut {
+  origens_restauradas: number;
+  /** The rebuilt cliente's id; null when nothing could be rebuilt. */
+  cliente_id: string | null;
 }
 
 // ─── Query keys ─────────────────────────────────────────────────────────────
 
 const FAMILY_KEY = ["sw", "clientes"] as const;
 const PESSOA_ROOT_KEY = ["sw", "pessoa"] as const;
+const EXCLUIDOS_KEY = [...FAMILY_KEY, "excluidos"] as const;
 const BOARD_KEY = (f: ClientesFiltros) => [...FAMILY_KEY, "board", f] as const;
 const BUSCA_KEY = (termo: string) => [...FAMILY_KEY, "busca", termo] as const;
 
@@ -361,4 +387,30 @@ export function maskCpf(cpf: string | null | undefined): string {
   const d = (canonicoIdentificador("cpf", cpf) ?? cpf).replace(/\D/g, "");
   if (d.length !== 11) return cpf;
   return `***.***.*${d[7]}${d[8]}-${d[9]}${d[10]}`;
+}
+
+// ─── Excluídos (tombstones) ─────────────────────────────────────────────────
+
+/** Deleted clientes, newest first. Admin/owner only — pass `enabled` from
+ *  `useIsOrgAdmin()` so a non-admin never fires the (403) request. */
+export function useClientesExcluidos(enabled = true) {
+  return useQuery<ClientesExcluidosOut>({
+    queryKey: EXCLUIDOS_KEY,
+    queryFn: () => api.get<ClientesExcluidosOut>(`${BASE}/excluidos`),
+    enabled,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export function useRestaurarClienteExcluido() {
+  const qc = useQueryClient();
+  return useMutation<ClienteRestauradoOut, unknown, string>({
+    mutationFn: (clienteId) =>
+      api.post<ClienteRestauradoOut>(
+        `${BASE}/excluidos/${encodeURIComponent(clienteId)}/restaurar`,
+        {},
+      ),
+    // FAMILY_KEY covers both the excluídos list and the board.
+    onSuccess: () => qc.invalidateQueries({ queryKey: FAMILY_KEY }),
+  });
 }
