@@ -33,6 +33,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
+import { FunilAtendimentoCard } from "@/components/painel/FunilAtendimentoCard";
+import { VisitasSemResposta } from "@/components/painel/VisitasSemResposta";
 import { usePainel, type PainelItem } from "@/hooks/usePainel";
 
 const BRL = new Intl.NumberFormat("pt-BR", {
@@ -196,6 +198,11 @@ export default function Dashboard() {
           detalhe="soma dos valores negociados em aberto"
           para="/funil"
         />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <VisitasSemResposta />
+        <FunilAtendimentoCard />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

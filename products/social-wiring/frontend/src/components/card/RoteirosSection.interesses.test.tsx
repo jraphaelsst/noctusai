@@ -24,7 +24,6 @@ function props(over: Partial<RoteirosSectionProps> = {}): RoteirosSectionProps {
     onPatchVisita: noop,
     onAddVisita: noop,
     onRemoveVisita: noop,
-    onPatchProposta: noop,
     ...over,
   };
 }

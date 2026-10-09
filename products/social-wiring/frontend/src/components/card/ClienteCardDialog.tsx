@@ -101,7 +101,7 @@ import type {
   Tag,
   TimelineEntry,
   TipoDocumento,
-  VisitaPropostaBody,
+  RoteiroFeedbackBody,
 } from "@/types/cardHub";
 // A VALUE, not a type — the two role vocabularies mirror
 // `compradores_service.PAPEIS_POR_LADO`, and the select offers exactly what
@@ -414,13 +414,11 @@ export interface ClienteCardDialogProps {
   ) => void;
   onAddVisita: (roteiroId: string, codigo: string) => void;
   onRemoveVisita: (roteiroId: string, visitaId: string) => void;
-  /** Record / undo a proposta and its acceptance on one visita. Accepting is
-   *  what names the imóvel of the deal (migration 104). */
-  onPatchProposta: (
-    roteiroId: string,
-    visitaId: string,
-    body: VisitaPropostaBody,
-  ) => void;
+  /** Answer "a visita aconteceu?" (CONTRACT sw-lead-to-contract §3.3). */
+  onResponderFeedbackRoteiro?: (roteiroId: string, body: RoteiroFeedbackBody) => void;
+  roteiroFeedbackPendingId?: string | null;
+  /** The visited-imóveis list ("Gerar proposta") under an answered roteiro. */
+  renderVisitadas?: (roteiro: Roteiro) => ReactNode;
   roteiroPdfPendingId?: string | null;
 
   // Membros
@@ -1091,7 +1089,9 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         onPatchVisita={props.onPatchVisita}
         onAddVisita={props.onAddVisita}
         onRemoveVisita={props.onRemoveVisita}
-        onPatchProposta={props.onPatchProposta}
+        onResponderFeedback={props.onResponderFeedbackRoteiro}
+        feedbackPendingId={props.roteiroFeedbackPendingId}
+        renderVisitadas={props.renderVisitadas}
         pdfPendingId={props.roteiroPdfPendingId}
       />
     ),

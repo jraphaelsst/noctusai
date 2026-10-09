@@ -85,7 +85,6 @@ function baseProps(overrides: Partial<RoteirosSectionProps> = {}): RoteirosSecti
     onPatchVisita: vi.fn(),
     onAddVisita: vi.fn(),
     onRemoveVisita: vi.fn(),
-    onPatchProposta: vi.fn(),
     ...overrides,
   };
 }
@@ -332,76 +331,17 @@ describe("RoteirosSection — editing an existing roteiro's properties", () => {
  * among six.
  */
 describe("RoteirosSection — visita → proposta → o imóvel do negócio", () => {
-  it("offers the proposta buttons as a row of their own, not as status pills", async () => {
-    const { getByTestId, getAllByTestId, queryByTestId } = await render(
+  it("🔴 no longer offers the proposta toggle pills (single acceptance path)", async () => {
+    const { getByTestId, queryByTestId } = await render(
       baseProps({ roteiros: [roteiro({ visitas: [visita("v1", "ONE9001")] })] }),
     );
 
-    expect(getByTestId("visita-proposta-v1")).toBeTruthy();
-    expect(getByTestId("visita-proposta-aceita-v1")).toBeTruthy();
+    expect(queryByTestId("visita-proposta-v1")).toBeNull();
+    expect(queryByTestId("visita-proposta-aceita-v1")).toBeNull();
     // The three status pills are untouched — three, still, not four.
     expect(getByTestId("visita-status-realizada-v1")).toBeTruthy();
     expect(getByTestId("visita-status-nao_realizada-v1")).toBeTruthy();
     expect(getByTestId("visita-status-pendente-v1")).toBeTruthy();
-  });
-
-  it("records a proposta through its own callback", async () => {
-    const onPatchProposta = vi.fn();
-    const { getByTestId, fireEvent } = await renderWith(
-      baseProps({
-        roteiros: [roteiro({ visitas: [visita("v1", "ONE9001")] })],
-        onPatchProposta,
-      }),
-    );
-
-    fireEvent.click(getByTestId("visita-proposta-v1"));
-
-    expect(onPatchProposta).toHaveBeenCalledWith("r1", "v1", { proposta: true });
-  });
-
-  it("accepting also asserts the proposta, so the server's CHECK cannot be tripped", async () => {
-    const onPatchProposta = vi.fn();
-    const { getByTestId, fireEvent } = await renderWith(
-      baseProps({
-        roteiros: [roteiro({ visitas: [visita("v1", "ONE9001")] })],
-        onPatchProposta,
-      }),
-    );
-
-    fireEvent.click(getByTestId("visita-proposta-aceita-v1"));
-
-    // `proposta_aceita_em IS NULL OR proposta_em IS NOT NULL` — an acceptance
-    // with no offer is refused, so the one-click path sends both.
-    expect(onPatchProposta).toHaveBeenCalledWith("r1", "v1", {
-      proposta: true,
-      aceita: true,
-    });
-  });
-
-  it("undoes an acceptance rather than re-sending it", async () => {
-    const onPatchProposta = vi.fn();
-    const { getByTestId, fireEvent } = await renderWith(
-      baseProps({
-        roteiros: [
-          roteiro({
-            visitas: [
-              visita("v1", "ONE9001", {
-                proposta_em: "2026-09-01T00:00:00+00:00",
-                proposta_aceita_em: "2026-09-02T00:00:00+00:00",
-              }),
-            ],
-          }),
-        ],
-        onPatchProposta,
-      }),
-    );
-
-    fireEvent.click(getByTestId("visita-proposta-aceita-v1"));
-
-    expect(onPatchProposta).toHaveBeenCalledWith("r1", "v1", {
-      proposta: true,
-      aceita: false,
-    });
   });
 
   it("makes the accepted visita unmistakable among several", async () => {
@@ -478,5 +418,109 @@ describe("RoteirosSection — visita → proposta → o imóvel do negócio", ()
     expect(
       getByTestId("visita-status-realizada-v1").getAttribute("aria-pressed"),
     ).toBe("true");
+  });
+});
+
+describe("RoteirosSection — a visita aconteceu? (sw-lead-to-contract §3)", () => {
+  const pendente = () =>
+    roteiro({
+      data_visita: "2020-01-01",
+      feedback_status: "pendente",
+      visitas: [visita("v1", "ONE9001"), visita("v2", "ONE9002")],
+    });
+
+  it("shows the banner only while the roteiro is due and a handler exists", async () => {
+    const { getByTestId, queryByTestId, rerender } = await (async () => {
+      const React = (await import("react")).default;
+      const rtl = await import("@testing-library/react");
+      const r = rtl.render(
+        React.createElement(RoteirosSection, baseProps({ roteiros: [pendente()], onResponderFeedback: vi.fn() })),
+      );
+      return {
+        getByTestId: r.getByTestId,
+        queryByTestId: r.queryByTestId,
+        rerender: (p: RoteirosSectionProps) => r.rerender(React.createElement(RoteirosSection, p)),
+      };
+    })();
+    expect(getByTestId("visita-feedback-banner-r1")).toBeTruthy();
+
+    rerender(baseProps({ roteiros: [roteiro({ data_visita: "2999-01-01", feedback_status: "pendente" })], onResponderFeedback: vi.fn() }));
+    expect(queryByTestId("visita-feedback-banner-r1")).toBeNull();
+    rerender(baseProps({ roteiros: [roteiro({ data_visita: "2020-01-01", feedback_status: "respondido" })], onResponderFeedback: vi.fn() }));
+    expect(queryByTestId("visita-feedback-banner-r1")).toBeNull();
+  });
+
+  it("answering 'não' sends every visita with one motivo (default outro)", async () => {
+    const onResponderFeedback = vi.fn();
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({ roteiros: [pendente()], onResponderFeedback }),
+    );
+    fireEvent.click(getByTestId("visita-feedback-abrir-r1"));
+    fireEvent.click(getByTestId("visita-feedback-nao"));
+    fireEvent.click(getByTestId("visita-feedback-enviar"));
+    expect(onResponderFeedback).toHaveBeenCalledWith("r1", {
+      aconteceu: false,
+      visitas: [
+        { visita_id: "v1", realizada: false, motivo: "outro" },
+        { visita_id: "v2", realizada: false, motivo: "outro" },
+      ],
+    });
+  });
+
+  it("answering 'sim' lists every visita and blocks a missed one without motivo", async () => {
+    const onResponderFeedback = vi.fn();
+    const { getByTestId, fireEvent } = await renderWith(
+      baseProps({ roteiros: [pendente()], onResponderFeedback }),
+    );
+    fireEvent.click(getByTestId("visita-feedback-abrir-r1"));
+    fireEvent.click(getByTestId("visita-feedback-sim"));
+    fireEvent.click(getByTestId("visita-feedback-realizada-v2"));
+    expect((getByTestId("visita-feedback-enviar") as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(getByTestId("visita-feedback-motivo-v2"), { target: { value: "reagendada" } });
+    fireEvent.click(getByTestId("visita-feedback-enviar"));
+    expect(onResponderFeedback).toHaveBeenCalledWith("r1", {
+      aconteceu: true,
+      visitas: [
+        { visita_id: "v1", realizada: true, motivo: null, observacao: null },
+        { visita_id: "v2", realizada: false, motivo: "reagendada", observacao: null },
+      ],
+    });
+  });
+
+  it("mounts the visited-list slot only on an answered roteiro", async () => {
+    const renderVisitadas = vi.fn(() => <div data-testid="slot-visitadas" />);
+    const { queryByTestId, rerender } = await (async () => {
+      const React = (await import("react")).default;
+      const rtl = await import("@testing-library/react");
+      const r = rtl.render(
+        React.createElement(RoteirosSection, baseProps({ roteiros: [pendente()], renderVisitadas })),
+      );
+      return {
+        queryByTestId: r.queryByTestId,
+        rerender: (p: RoteirosSectionProps) => r.rerender(React.createElement(RoteirosSection, p)),
+      };
+    })();
+    expect(queryByTestId("slot-visitadas")).toBeNull();
+    rerender(
+      baseProps({
+        roteiros: [roteiro({ feedback_status: "respondido" })],
+        renderVisitadas,
+      }),
+    );
+    expect(queryByTestId("slot-visitadas")).toBeTruthy();
+  });
+
+  it("shows the motivo of a missed visita", async () => {
+    const { getByTestId } = await render(
+      baseProps({
+        roteiros: [
+          roteiro({
+            visitas: [visita("v1", "ONE9001", { status: "nao_realizada", nao_realizada_motivo: "reagendada" })],
+          }),
+        ],
+      }),
+    );
+    expect(getByTestId("visita-motivo-v1").textContent).toBe("Reagendada");
   });
 });

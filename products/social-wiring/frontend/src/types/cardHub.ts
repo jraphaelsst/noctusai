@@ -381,6 +381,10 @@ export interface Visita {
   feedback_em: string | null;
   created_at: string | null;
   imovel: ImovelVisita | null;
+  /** Why the visit did not happen (migration 219); `null` unless `nao_realizada`. */
+  nao_realizada_motivo?: MotivoNaoRealizada | null;
+  /** When the status became `realizada` (migration 219). */
+  realizada_em?: string | null;
 
   /* ── The proposta axis (migration 104) ───────────────────────────────
    * 🔴 ORTHOGONAL to `status`, never a fourth value of it. A visita that
@@ -414,8 +418,75 @@ export interface Roteiro {
   /** `YYYY-MM-DD`; `null` only on rows that predate migration 184. */
   data_visita: string | null;
   created_at: string | null;
+  /** "visita aconteceu?" — `pendente` until the corretor answers (migration 219). */
+  feedback_status?: "pendente" | "respondido";
+  feedback_em?: string | null;
+  /** `HH:MM:SS`, optional; `data_visita` stays the date. */
+  hora_visita?: string | null;
   visitas: Visita[];
   contagem: ContagemVisitas;
+  /** Only on the create response: what the funnel did with `roteiro_criado`. */
+  funil?: { moveu: boolean; de: string | null; para: string | null; motivo: string | null };
+}
+
+/** Closed vocabulary of `visitas.nao_realizada_motivo` (CONTRACT §3.1). */
+export const MOTIVOS_NAO_REALIZADA = [
+  { value: "cliente_desistiu", label: "Cliente desistiu" },
+  { value: "cliente_nao_compareceu", label: "Cliente não compareceu" },
+  { value: "imovel_indisponivel", label: "Imóvel indisponível" },
+  { value: "reagendada", label: "Reagendada" },
+  { value: "outro", label: "Outro" },
+] as const;
+export type MotivoNaoRealizada = (typeof MOTIVOS_NAO_REALIZADA)[number]["value"];
+
+export interface VisitaFeedbackItem {
+  visita_id: string;
+  realizada: boolean;
+  motivo?: MotivoNaoRealizada | null;
+  observacao?: string | null;
+}
+
+/** `POST …/roteiros/{id}/feedback` (CONTRACT §3.3). */
+export interface RoteiroFeedbackBody {
+  aconteceu: boolean;
+  visitas: VisitaFeedbackItem[];
+}
+
+/** `GET /api/roteiros/pendentes-feedback` item (CONTRACT §3.2). */
+export interface RoteiroPendenteFeedback {
+  roteiro_id: string;
+  cliente_id: string;
+  atendimento_id: string;
+  cliente_nome: string | null;
+  data_visita: string;
+  visitas: { visita_id: string; imovel_codigo: string; titulo: string | null }[];
+}
+
+/** `GET …/roteiros/{id}/visitadas` item (CONTRACT §3.4). */
+export interface VisitadaItem {
+  visita_id: string;
+  imovel_codigo: string;
+  titulo: string | null;
+  realizada_em: string | null;
+  proposta: { id: string; status: string } | null;
+}
+
+/** `GET /api/metricas/atendimentos` (CONTRACT §3.5). */
+export interface MetricasFunil {
+  leads: number;
+  com_roteiro: number;
+  visitas_agendadas: number;
+  visitas_realizadas: number;
+  visitas_nao_realizadas: Record<string, number>;
+  propostas_criadas: number;
+  propostas_aceitas: number;
+  propostas_recusadas: number;
+  tempo_medio_dias: {
+    lead_a_roteiro: number | null;
+    roteiro_a_visita: number | null;
+    visita_a_proposta: number | null;
+    proposta_a_aceite: number | null;
+  };
 }
 
 export interface RoteiroCreateBody {

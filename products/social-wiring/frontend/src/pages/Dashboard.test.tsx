@@ -14,6 +14,14 @@ afterEach(async () => {
 const mockUsePainel = vi.fn();
 vi.mock("@/hooks/usePainel", () => ({ usePainel: mockUsePainel }));
 
+// The two funnel cards own their data hooks and have their own tests.
+vi.mock("@/components/painel/VisitasSemResposta", () => ({
+  VisitasSemResposta: () => <div data-testid="painel-visitas-sem-resposta" />,
+}));
+vi.mock("@/components/painel/FunilAtendimentoCard", () => ({
+  FunilAtendimentoCard: () => <div data-testid="painel-funil-atendimento" />,
+}));
+
 vi.mock("react-router-dom", () => ({
   Link: ({ to, children, ...rest }: any) => (
     <a href={to} {...rest}>

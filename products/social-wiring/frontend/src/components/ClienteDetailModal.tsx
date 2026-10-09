@@ -65,6 +65,8 @@ import {
 } from "@/hooks/useCardHub";
 
 import { ClienteCardDialog } from "@/components/card/ClienteCardDialog";
+import { VisitadasLista } from "@/components/card/VisitadasLista";
+import { useResponderFeedbackRoteiro } from "@/hooks/useRoteirosFeedback";
 import type { CardSubpageKey } from "@/components/card/cardSubpages";
 import { baixarArquivo } from "@noctusai/lib/components";
 import {
@@ -214,6 +216,7 @@ export function ClienteDetailModal({
   const agendamentoMutations = useAgendamentoMutations(id ?? "__none__");
   const roteiros = useRoteiros(idSeAbriu("roteiros"));
   const roteiroMutations = useRoteiroMutations(id ?? "__none__");
+  const responderFeedback = useResponderFeedbackRoteiro(id ?? "__none__");
   // Only `create` is used here — the rest of the contract mutations live
   // inside `ContratosContainer`, self-contained the same way
   // `FinanciamentoContainer` owns its own document mutations.
@@ -550,20 +553,22 @@ export function ClienteDetailModal({
           },
         )
       }
-      onPatchProposta={(roteiroId, visitaId, body) =>
-        roteiroMutations.patchProposta.mutate(
-          { roteiroId, visitaId, body },
+      onResponderFeedbackRoteiro={(roteiroId, body) =>
+        responderFeedback.mutate(
+          { roteiroId, body },
           {
-            // 🔴 The server REFUSES rather than guessing in two cases the
-            // operator must see: a second accepted proposta on the same
-            // atendimento, and an acceptance that would change an imóvel
-            // somebody already set on the negociação by hand. Both come back
-            // as a named 400, so the toast carries the server's sentence
-            // rather than a generic failure.
+            // A 400 here is a named refusal (missing motivo, a visita not
+            // listed): the toast carries the server's sentence.
             onError: (err) =>
-              toastServerError(err, "Não foi possível registrar a proposta."),
+              toastServerError(err, "Não foi possível registrar a resposta da visita."),
           },
         )
+      }
+      roteiroFeedbackPendingId={
+        responderFeedback.isPending ? (responderFeedback.variables?.roteiroId ?? null) : null
+      }
+      renderVisitadas={(roteiro) =>
+        id ? <VisitadasLista clienteId={id} roteiroId={roteiro.id} /> : null
       }
       roteiroPdfPendingId={roteiroPdfPendingId}
       allMembros={corretores.data ?? []}

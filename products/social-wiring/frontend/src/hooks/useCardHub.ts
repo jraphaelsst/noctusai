@@ -300,6 +300,10 @@ export function useAgendamentoMutations(clienteId: string) {
 
 // ─── Roteiros e visitas (migration 082) ─────────────────────────────────────
 
+/** The roteiros cache family — exported so `useRoteirosFeedback` invalidates
+ *  the SAME entries instead of re-deriving the key shape. */
+export const roteirosKeys = { list: ROTEIROS_KEY, family: FAMILY_KEY };
+
 export function useRoteiros(clienteId: string | null) {
   return useQuery({
     queryKey: ROTEIROS_KEY(clienteId ?? "__none__"),
