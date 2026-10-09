@@ -10,9 +10,9 @@
  *                   approach to hard-stop before it fires.
  *   - `hard_stop` → red chip "Limite IA atingido" — calls become 429s.
  *
- * **Admin-only visibility.** Reads `useAuthStore` (via `@noctusai/seed/infra`)
- * to extract `org_id` + admin role from the user's metadata. Non-admins
- * see nothing. The hook itself is `enabled: false` for non-admins so
+ * **Org-admin visibility.** `useIsOrgAdmin()` (org owner/admin or platform
+ * admin) gates it; core answers the same set for the caller's own org
+ * (owner decision 2026-10-09). Non-admins see nothing. The hook itself is `enabled: false` for non-admins so
  * we don't even fetch.
  *
  * **Click target.** `onClick` fires `onOpenDetail(orgId)` if provided
@@ -23,7 +23,9 @@
  */
 import { useState } from 'react';
 import { useAuthStore } from '@noctusai/seed/infra';
-import { resolveSSORoles } from '@noctusai/lib';
+
+// Relative, not the design-system barrel: this file IS inside that barrel.
+import { useIsOrgAdmin } from '../../use-is-org-admin';
 
 import { useLLMSpend, type SpendStatus } from './useLLMSpend';
 import { SpendDetailModal } from './SpendDetailModal';
@@ -50,14 +52,17 @@ export function LLMSpendBadge({ onOpenDetail, className = '' }: LLMSpendBadgePro
   const auth = useAuthStore();
   const user = (auth as { user?: { user_metadata?: Record<string, unknown> } | null })?.user ?? null;
   const metadata = user?.user_metadata ?? null;
-  const { isProductAdmin } = resolveSSORoles(metadata as Record<string, unknown> | null);
+  // THE canonical org-admin UX gate (org owner/admin or platform admin) —
+  // the same role set core's `require_spend_reader` admits for the caller's
+  // own org, so the badge never fetches for someone the endpoint would 403.
+  const isOrgAdmin = useIsOrgAdmin();
   const orgId = (metadata?.org_id as string | undefined) ?? null;
 
-  const { data } = useLLMSpend(orgId, isProductAdmin);
+  const { data } = useLLMSpend(orgId, isOrgAdmin);
   const [modalOpen, setModalOpen] = useState(false);
 
   // Non-admin / unset / ok / no-data → silent.
-  if (!isProductAdmin || !orgId || !data) return null;
+  if (!isOrgAdmin || !orgId || !data) return null;
   if (data.status === 'ok' || data.status === 'unset') return null;
   // Defence in depth alongside the hook's own shape check: a warning nobody
   // can read is worse than no warning. If the figures are missing there is

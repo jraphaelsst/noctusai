@@ -19,6 +19,7 @@ import { render, cleanup } from '@testing-library/react';
 
 afterEach(() => {
   cleanup();
+  mockMetadata = { org_id: 'org-1', org_role: 'owner' };
   vi.resetModules();
 });
 
@@ -29,17 +30,13 @@ vi.mock('./useLLMSpend', () => ({
   LLM_SPEND_REFETCH_INTERVAL_MS: 300000,
 }));
 
-vi.mock('@noctusai/seed/infra', () => ({
-  useAuthStore: () => ({
-    user: { user_metadata: { org_id: 'org-1', product_roles: { admin: true } } },
-  }),
-  coreApi: { get: vi.fn() },
-}));
+// The auth store is the only seam: the REAL `useIsOrgAdmin` runs over it, so
+// the gate under test is the canonical one, not a stub of it.
+let mockMetadata: Record<string, unknown> = { org_id: 'org-1', org_role: 'owner' };
 
-// The component imports `resolveSSORoles` from the package's public entry, so
-// that is the specifier to intercept — not the module it happens to live in.
-vi.mock('@noctusai/lib', () => ({
-  resolveSSORoles: () => ({ isProductAdmin: true }),
+vi.mock('@noctusai/seed/infra', () => ({
+  useAuthStore: () => ({ user: { user_metadata: mockMetadata } }),
+  coreApi: { get: vi.fn() },
 }));
 
 vi.mock('./SpendDetailModal', () => ({
@@ -102,6 +99,35 @@ describe('<LLMSpendBadge/> — never render a warning nobody can read', () => {
   it('renders nothing when the query has no data at all', async () => {
     mockUseLLMSpend.mockReturnValue({ data: undefined });
     const { container } = await renderBadge();
+    expect(container.textContent).toBe('');
+  });
+});
+
+describe('<LLMSpendBadge/> — only fetches for the roles core admits (2026-10-09 403 toast)', () => {
+  const warn = { data: { status: 'warn', used_pct: 85, spent_brl: 85, budget_brl: 100 } };
+
+  it.each([
+    ['org owner', { org_id: 'org-1', org_role: 'owner' }],
+    ['org admin', { org_id: 'org-1', org_role: 'admin' }],
+    ['platform admin', { org_id: 'org-1', org_role: 'member', noctus_role: 'admin' }],
+  ])('%s: the spend query is enabled', async (_label, meta) => {
+    mockMetadata = meta;
+    mockUseLLMSpend.mockReset();
+    mockUseLLMSpend.mockReturnValue(warn);
+    await renderBadge();
+    expect(mockUseLLMSpend).toHaveBeenCalledWith('org-1', true);
+  });
+
+  it.each([
+    ['manager', { org_id: 'org-1', org_role: 'manager' }],
+    ['member', { org_id: 'org-1', org_role: 'member' }],
+    ['no role', { org_id: 'org-1' }],
+  ])('%s: the spend query is disabled and nothing renders', async (_label, meta) => {
+    mockMetadata = meta;
+    mockUseLLMSpend.mockReset();
+    mockUseLLMSpend.mockReturnValue(warn);
+    const { container } = await renderBadge();
+    expect(mockUseLLMSpend).toHaveBeenCalledWith('org-1', false);
     expect(container.textContent).toBe('');
   });
 });
