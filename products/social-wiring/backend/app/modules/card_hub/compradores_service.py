@@ -777,6 +777,16 @@ def _casar(client: Any, org_id: UUID, a_id: str, b_id: str) -> None:
         _t(client, CLIENTES_TABLE).update(
             {"conjuge_cliente_id": str(outro)}
         ).eq("id", str(um)).eq("org_id", str(org_id)).execute()
+    _certificar_conjuge_tardio(client, org_id, a_id, b_id)
+
+
+def _certificar_conjuge_tardio(client: Any, org_id: Any, a_id: str, b_id: str) -> None:
+    """CONTRACT sw-lead-to-contract §7.1: a cônjuge linked to a seller of an
+    already-accepted deal is certified now, not only at Aceitar. Lazy import —
+    `pos_aceite_service` imports this package's services. Never raises."""
+    from app.modules.card_hub import pos_aceite_service
+
+    pos_aceite_service.ao_vincular_conjuge(client, org_id, a_id, b_id)
 
 
 def _vincular(

@@ -2500,6 +2500,7 @@ def vincular_conjuges(
         return []
     conflitos: list[dict] = []
     now = _now()
+    vinculou = False
     for eu, outro in ((cliente_a, cliente_b), (cliente_b, cliente_a)):
         rows = (
             _t(client, CLIENTES_TABLE)
@@ -2541,6 +2542,12 @@ def vincular_conjuges(
                 "updated_at": now,
             }
         ).eq("id", str(eu)).execute()
+        vinculou = True
+    if vinculou:
+        # CONTRACT sw-lead-to-contract §7.1 — same hook as `compradores_service._casar`.
+        from app.modules.card_hub import pos_aceite_service
+
+        pos_aceite_service.ao_vincular_conjuge(client, org_id, cliente_a, cliente_b)
     return conflitos
 
 

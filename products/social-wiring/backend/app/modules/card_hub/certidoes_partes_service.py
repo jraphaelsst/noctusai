@@ -639,7 +639,36 @@ def solicitar_emissao(
     ensure_cliente(client, org_id, cliente_id)
     alvo = _resolver_atendimento(client, org_id, cliente_id, atendimento_id, estrito=True)
     parte = _achar_parte(_todas_as_partes(client, org_id, cliente_id, alvo), kind, str(alvo_id))
+    return solicitar_emissao_da_parte(
+        client, org_id, parte, tipos=tipos, user_id=user_id, check_credentials=check_credentials,
+    )
 
+
+def todas_as_partes(
+    client: Any, org_id: UUID, cliente_id: UUID, atendimento_id: str
+) -> list[dict]:
+    """Public handle on the Certidões tab's party list (buyers, sellers, the
+    sellers' derived `EMP n`, then the previous owners) — what `montar` walks."""
+    return _todas_as_partes(client, org_id, cliente_id, atendimento_id)
+
+
+def solicitar_emissao_da_parte(
+    client: Any,
+    org_id: UUID,
+    parte: dict,
+    *,
+    tipos: Optional[list[str]],
+    user_id: Any,
+    check_credentials: Callable[[str], list[str]],
+) -> dict:
+    """The write half of `solicitar_emissao`, for a party ALREADY resolved.
+
+    Exists for callers that certify a person who is not a row of the
+    atendimento's party list — the registered cônjuge of a seller who never
+    got an `atendimento_partes` row of their own (post-aceite automation,
+    CONTRACT sw-lead-to-contract §7.1). Same validation, same pre-flight, same
+    consulta; `parte` needs `tipo_pessoa`, `nome`, `documento`, `cliente_id` /
+    `empresa_id` and (optionally) `parte_id`."""
     if tipos is None:
         configs = [c for c in CERTIDOES_CONFIG if c["tipo"] != TJSP_TIPO]
     else:
