@@ -28,8 +28,19 @@ MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
 FILE_A = MIGRATIONS / "007_org_picker_policies.sql"
 FILE_B = MIGRATIONS / "008_org_picker_acting_audit.sql"
 FILE_C = MIGRATIONS / "009_org_picker_ready.sql"
-SCHEMA = "seed"
-SLUG = "seed"
+
+
+def _render(text: str) -> str:
+    """The seed sync copies this test + the migrations into templates/product-seed with
+    ``{{X}}`` placeholders; render them so the same test runs in both copies."""
+    return re.sub(r"\{\{(\w+)\}\}", lambda m: f"tpl_{m.group(1).lower()}", text)
+
+
+def _read(path: Path) -> str:
+    return _render(path.read_text(encoding="utf-8"))
+
+
+SCHEMA = _render("seed")
 IDENTITY_FUNCS = {"current_org_id", "current_user_org_id"}
 
 # Owner/admin role checks that stay keyed on the caller's own noctus_users row
@@ -81,7 +92,7 @@ def _walk(upto_exclusive: str | None = None):
     for f in sorted(MIGRATIONS.glob("[0-9]*.sql")):
         if upto_exclusive and f.name >= upto_exclusive:
             break
-        for s in parse_sql(f.read_text(encoding="utf-8")):
+        for s in parse_sql(_read(f)):
             n = s.stmt
             if isinstance(n, ast.CreatePolicyStmt) and _in_schema(n.table):
                 pol[(n.table.relname, n.policy_name)] = (f.name, n.qual, n.with_check)
@@ -114,7 +125,7 @@ def _walk(upto_exclusive: str | None = None):
 
 
 def _stmts(path: Path):
-    return [s.stmt for s in parse_sql(path.read_text(encoding="utf-8"))]
+    return [s.stmt for s in parse_sql(_read(path))]
 
 
 def _alters():
@@ -154,14 +165,14 @@ def test_every_policy_uses_current_org_id_for_the_schema():
 def test_alters_only_this_schema_no_storage_no_helper_functions():
     for s in _alters():
         assert s.table.schemaname == SCHEMA
-    text = FILE_A.read_text(encoding="utf-8")
+    text = _read(FILE_A)
     code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("--"))
     assert "storage.objects" not in code
     assert not [s for s in _stmts(FILE_A) if isinstance(s, ast.CreateFunctionStmt)]
 
 
 def test_has_core_070_guard_and_does_not_flip_ready():
-    text = FILE_A.read_text(encoding="utf-8")
+    text = _read(FILE_A)
     assert "current_org_id_for(text)" in text.split("DO $guard$")[1].split("$guard$;")[0]
     code = "\n".join(l for l in text.splitlines() if not l.lstrip().startswith("--"))
     assert "org_picker_ready" not in code
@@ -180,7 +191,7 @@ def test_no_unconverted_policy_after_the_conversion():
     for f in sorted(MIGRATIONS.glob("[0-9]*.sql")):
         if f.name <= FILE_A.name:
             continue
-        for s in parse_sql(f.read_text(encoding="utf-8")):
+        for s in parse_sql(_read(f)):
             n = s.stmt
             if isinstance(n, (ast.CreatePolicyStmt, ast.AlterPolicyStmt)) and _in_schema(n.table):
                 if f.name in (FILE_B.name, FILE_C.name):
@@ -194,7 +205,7 @@ def test_no_unconverted_policy_after_the_conversion():
 def test_no_dynamic_policy_ddl_in_do_blocks():
     """A DO block building policies (format()) is invisible to the static walk -- none may exist."""
     for f in sorted(MIGRATIONS.glob("[0-9]*.sql")):
-        for s in parse_sql(f.read_text(encoding="utf-8")):
+        for s in parse_sql(_read(f)):
             if isinstance(s.stmt, ast.DoStmt):
                 body = "".join(a.arg.sval for a in s.stmt.args if a.defname == "as")
                 if re.search(r"(CREATE|ALTER)\s+POLICY", body, re.I):
@@ -202,7 +213,7 @@ def test_no_dynamic_policy_ddl_in_do_blocks():
 
 
 def test_acting_audit_migration():
-    sql = FILE_B.read_text(encoding="utf-8")
+    sql = _read(FILE_B)
     assert len(parse_sql(sql)) == 2
     assert "attach_acting_audit_triggers(text, text)" in sql.split("$guard$")[1]
     calls = re.findall(r"^SELECT public\.attach_acting_audit_triggers\(([^)]*)\);", sql, re.MULTILINE)
@@ -210,9 +221,8 @@ def test_acting_audit_migration():
 
 
 def test_ready_migration_is_last_and_scoped():
-    sql = FILE_C.read_text(encoding="utf-8")
+    sql = _read(FILE_C)
     assert len(parse_sql(sql)) == 1
-    assert f"slug = '{SLUG}'" in sql and f"db_schema = '{SCHEMA}'" in sql
+    assert f"WHERE db_schema = '{SCHEMA}'" in sql and "slug" not in sql.split("UPDATE", 1)[1]
     assert re.search(r"org_picker_ready\s*=\s*true", sql)
     assert FILE_A.name < FILE_B.name < FILE_C.name
-    assert max(f.name for f in MIGRATIONS.glob("[0-9]*.sql")) == FILE_C.name

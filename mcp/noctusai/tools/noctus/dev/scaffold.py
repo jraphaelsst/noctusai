@@ -1292,6 +1292,14 @@ def _emit_products_seed_row_migration(
 
     desc_sql = _sql_text_or_null(description)
     pgrst_block = f"\n{_pgrst_schema_exposure_sql(schema)}" if schema else ""
+    # products.db_schema (core 070) keys the org picker: the seed chain's org-picker migrations
+    # (attach_acting_audit_triggers + the ready flip) refuse / match nothing without it.
+    db_schema_block = (
+        f"\nUPDATE public.products SET db_schema = {_sql_text(schema)}\n"
+        f" WHERE slug = {_sql_text(slug)} AND db_schema IS NULL;\n"
+        if schema
+        else ""
+    )
     body = f"""\
 -- ============================================================
 -- {next_number:03d} — Seed {name} product row
@@ -1313,7 +1321,7 @@ VALUES (
     true
 )
 ON CONFLICT (slug) DO NOTHING;
-{pgrst_block}"""
+{db_schema_block}{pgrst_block}"""
     try:
         path.write_text(body, encoding="utf-8")
     except OSError as exc:

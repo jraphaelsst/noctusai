@@ -5,8 +5,9 @@
 -- audit triggers. Keeper check_org_picker_ready_policies refuses this flip if any
 -- seed policy still uses a home-only identity form. Reversible: set it back to false
 -- (the products trigger from core 070 then ends every live selection, 'revoked').
+-- Keyed on db_schema ONLY (unique, core 070): this chain is the template for every new
+-- product, whose slug differs from its schema; the scaffold's products-row migration sets it.
 
 UPDATE public.products
    SET org_picker_ready = true
- WHERE slug = 'seed'
-   AND db_schema = 'seed';
+ WHERE db_schema = 'seed';

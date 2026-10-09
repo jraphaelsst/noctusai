@@ -569,6 +569,7 @@ class TestPgrstSchemaExposureSql:
         )
         body = Path(result["path"]).read_text()
         assert "pgrst.db_schemas" not in body
+        assert "db_schema" not in body
 
     def test_emit_seed_row_migration_includes_block_when_schema_given(self, tmp_path):
         products_dir = tmp_path / "products"
@@ -588,6 +589,8 @@ class TestPgrstSchemaExposureSql:
         body = Path(result["path"]).read_text()
         assert "pgrst.db_schemas" in body
         assert "with_schema" in body
+        # products.db_schema keys the org picker: the seed chain's 008/009 need it
+        assert "UPDATE public.products SET db_schema = 'with_schema'\n WHERE slug = 'with-schema-test' AND db_schema IS NULL;" in body
 
 
 _FIXTURE_START_SH = """\
