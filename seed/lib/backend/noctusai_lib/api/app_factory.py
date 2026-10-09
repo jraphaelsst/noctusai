@@ -48,6 +48,9 @@ DEFAULT_CORS_ALLOW_HEADERS: tuple[str, ...] = (
     "Authorization", "Content-Type", "Accept", "Origin",
     "X-Requested-With", "X-Correlation-ID", "X-Request-ID",
     "X-Noctus-Client",
+    #: Org picker intent pin (staff with a live selection): the SPA sends the org it
+    #: believes it is acting in on every call; the API 409s on a mismatch.
+    "X-Noctus-Acting-Org",
 )
 
 

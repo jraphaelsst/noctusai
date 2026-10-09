@@ -25,6 +25,7 @@ from noctusai_seed import (
     create_dependencies,
     select_get_current_user,
 )
+from noctusai_lib.api.auth.effective_org import resolve_effective_org_for_request
 from noctusai_lib.api.auth import (
     first_or_none,  # noqa: F401 — re-exported for product imports
     make_get_current_user,
@@ -85,19 +86,31 @@ COMMUNITY_STAFF_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin", "modera
 _ADMIN_ORG_ROLES: frozenset[str] = frozenset({"owner", "admin"})
 
 
-def _perfil_of(user: Any) -> dict | None:
+def _perfil_of(user: Any, token: str | None = None) -> dict | None:
     """The caller's trusted `public.noctus_users` row (org_id, org_role, role),
     or None. Authorization reads THIS, never `user_metadata` — metadata is
-    writable by the user themselves (`auth.updateUser({data})`)."""
+    writable by the user themselves (`auth.updateUser({data})`).
+
+    `role` comes from the row; `org_id`/`org_role` come from the ONE effective-org
+    resolver (`product_slug="community"`), so platform staff acting in a customer org
+    through the org picker (given their bearer `token`) are judged in THAT org.
+    Without a token (imperative `user`-only call sites) the answer is the home org."""
+    core = _db.get_core_client()
+    uid = str(getattr(user, "id", ""))
     rows = (
-        _db.get_core_client()
-        .table("noctus_users")
+        core.table("noctus_users")
         .select("org_id, org_role, role")
-        .eq("id", str(getattr(user, "id", "")))
+        .eq("id", uid)
         .limit(1)
         .execute()
     ).data or []
-    return rows[0] if rows else None
+    if not rows:
+        return None
+    perfil = dict(rows[0])
+    eff = resolve_effective_org_for_request(core, uid, token=token)
+    if eff is not None and eff.acting:
+        perfil["org_id"], perfil["org_role"] = eff.org_id, eff.org_role
+    return perfil
 
 
 def _org_role_of(user: Any) -> str | None:
@@ -122,7 +135,7 @@ async def get_current_user_org(auth: tuple = Depends(_get_any_user_org)) -> tupl
     same boundary (`community.eh_equipe()`, migration 013); this is the API
     half. Member routes use `get_membro_context` instead.
     """
-    if not _eh_equipe(_perfil_of(auth[0])):
+    if not _eh_equipe(_perfil_of(auth[0], auth[1])):
         raise http_error(403, "Área restrita à equipe.")
     return auth
 
@@ -138,7 +151,7 @@ async def get_membro_context(auth: tuple = Depends(_get_any_user_org)) -> tuple:
     Portal handlers must project the columns they return.
     """
     user = auth[0]
-    perfil = _perfil_of(user)
+    perfil = _perfil_of(user, auth[1])
     if not perfil or perfil.get("org_role") != MEMBRO_ORG_ROLE or not perfil.get("org_id"):
         raise http_error(403, "Área exclusiva para membros.")
     org_id = coerce_org_uuid(perfil["org_id"])

@@ -33,6 +33,13 @@ class AuditActor:
     user_id: Optional[str] = None
     org_id: Optional[str] = None
     role: Optional[str] = None
+    #: Org picker (platform staff acting in a customer org): ``org_id`` is the TARGET org
+    #: (the client sees the DATA CHANGES staff make in their org), ``acting_org_id`` the
+    #: staff member's HOME org and ``act_as_session_id`` the ``platform_org_selections.id``.
+    #: Both ``None`` for every ordinary request. Selection start/end/swap and reads are
+    #: logged with ``org_id=None`` (platform-only) -- the client never sees staff browse.
+    acting_org_id: Optional[str] = None
+    act_as_session_id: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -66,6 +66,24 @@ def read_aal(access_token: str, *, validated_user: Any) -> Aal:
     return _aal_of(claims)
 
 
+def read_session_claims(access_token: Optional[str], *, user_id: Any) -> tuple[Optional[str], Aal]:
+    """``(session_id, aal)`` of a client-supplied token bound to ``user_id``.
+
+    The org picker keys a selection to the Supabase auth ``session_id`` (one login).
+    Same binding rule as :func:`read_aal`: the token's ``sub`` must equal ``user_id``
+    (the id ``auth.get_user`` returned for it), else ``(None, "aal1")`` -- unknown is
+    never a session and never ``aal2``. A non-JWT credential (a cookie-session id)
+    decodes to nothing and lands here too.
+    """
+    if not access_token or user_id is None:
+        return None, "aal1"
+    claims = _claims(access_token)
+    if str(claims.get("sub")) != str(user_id):
+        return None, "aal1"
+    sid = claims.get("session_id")
+    return (str(sid) if sid else None), _aal_of(claims)
+
+
 def read_aal_issued(access_token: Optional[str]) -> Optional[Aal]:
     """The ``aal`` of a token the auth provider issued to US (server-side).
 
@@ -76,4 +94,4 @@ def read_aal_issued(access_token: Optional[str]) -> Optional[Aal]:
     return _aal_of(_claims(access_token))
 
 
-__all__ = ["Aal", "read_aal", "read_aal_issued"]
+__all__ = ["Aal", "read_aal", "read_aal_issued", "read_session_claims"]

@@ -1661,6 +1661,374 @@ END;
 )
 
 
+
+# ---------------------------------------------------------------------------
+# Platform org picker (core 070) -- the selection store, its RPCs, the revocation
+# trigger and the RLS helper current_org_id_for(). Every probe builds its own
+# fixture INSIDE the rolled-back transaction (flips one product ready, forges the
+# caller via request.jwt.claims / request.headers) so nothing persists.
+# ---------------------------------------------------------------------------
+
+_ORG_PICKER_MIGRATIONS = ("070_platform_org_selections.sql",)
+
+_ORG_PICKER_DECLARE = """
+DECLARE
+  v_staff uuid; v_home uuid; v_plain uuid; v_plain_home uuid;
+  v_pid uuid; v_slug text; v_schema text; v_target uuid; v_unlic uuid;
+  v_sid uuid := gen_random_uuid();
+  v_other_sid uuid := gen_random_uuid();
+  v_got uuid; v_sel uuid;
+"""
+
+_ORG_PICKER_FIXTURE = """
+  IF to_regprocedure('public.current_org_id_for(text)') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.current_org_id_for(text) missing — core 070 not applied';
+  END IF;
+  SELECT u.id, u.org_id INTO v_staff, v_home
+    FROM public.noctus_users u JOIN public.organizations o ON o.id = u.org_id
+   WHERE u.role = 'admin' AND o.is_platform AND COALESCE(u.org_role, '') <> ALL (ARRAY['membro']) LIMIT 1;
+  IF v_staff IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no platform staff user (role=admin in the is_platform org)';
+  END IF;
+  SELECT u.id, u.org_id INTO v_plain, v_plain_home
+    FROM public.noctus_users u JOIN public.organizations o ON o.id = u.org_id
+   WHERE COALESCE(u.role, '') <> 'admin' AND NOT o.is_platform
+     AND COALESCE(u.org_role, '') <> ALL (ARRAY['membro']) LIMIT 1;
+  IF v_plain IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no ordinary (non-staff, non-platform-org) user';
+  END IF;
+  SELECT p.id, p.slug, p.db_schema, l.org_id INTO v_pid, v_slug, v_schema, v_target
+    FROM public.licenses l JOIN public.products p ON p.id = l.product_id
+   WHERE p.db_schema IS NOT NULL AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now())
+     AND l.org_id <> v_home LIMIT 1;
+  IF v_pid IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no product with a db_schema licensed to a non-platform org';
+  END IF;
+  SELECT o.id INTO v_unlic FROM public.organizations o
+   WHERE o.id <> v_home AND NOT EXISTS (
+     SELECT 1 FROM public.licenses l
+      WHERE l.org_id = o.id AND l.product_id = v_pid AND l.status = 'active') LIMIT 1;
+  UPDATE public.products SET org_picker_ready = true WHERE id = v_pid;
+"""
+
+
+def _caller_sql(uid: str, sid: str = "v_sid", aal: str = "aal2", header: str | None = None) -> str:
+    out = (
+        f"  PERFORM set_config('request.jwt.claims', json_build_object('sub', {uid}, "
+        f"'session_id', {sid}, 'aal', '{aal}')::text, true);\n"
+    )
+    if header is not None:
+        out += (
+            "  PERFORM set_config('request.headers', json_build_object("
+            f"'x-noctus-acting-org', {header})::text, true);\n"
+        )
+    return out
+
+
+def _org_picker_probe(*, probe_id: str, guard_name: str, kind: str, rationale: str, steps: str) -> GuardProbe:
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name=guard_name,
+        kind=kind,
+        migrations=_ORG_PICKER_MIGRATIONS,
+        rationale=rationale,
+        sql=_do_block(_ORG_PICKER_DECLARE + "BEGIN\n" + _ORG_PICKER_FIXTURE + steps + "\nEND;\n"),
+    )
+
+
+def _picker_rpc_refusal_probe(*, probe_id: str, code: str, setup: str, call: str, rationale: str) -> GuardProbe:
+    return _org_picker_probe(
+        probe_id=probe_id, guard_name="platform_org_selection_set", kind="write_refusal",
+        rationale=rationale,
+        steps=setup + f"""
+  BEGIN
+    {call}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: platform_org_selection_set succeeded — the {code} refusal did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE 'platform_org_selection:{code}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;""",
+    )
+
+
+def _picker_helper_probe(*, probe_id: str, rationale: str, steps: str, expect: str, what: str) -> GuardProbe:
+    """State assertion on ``current_org_id_for(v_schema)``: after ``steps`` forge a caller,
+    `v_got` is compared with `expect` (a SQL uuid expression)."""
+    return _org_picker_probe(
+        probe_id=probe_id, guard_name="current_org_id_for", kind="state_assertion", rationale=rationale,
+        steps=steps + f"""
+  v_got := public.current_org_id_for(v_schema);
+  IF v_got IS NOT DISTINCT FROM ({expect}) THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: {what}';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: {what} — helper returned %, expected %', v_got, ({expect});""",
+    )
+
+
+_ORG_PICKER_ONE_LIVE_PROBE = _org_picker_probe(
+    probe_id="platform_org_selections.one_live_per_product.unique",
+    guard_name="platform_org_selections_one_live",
+    kind="write_refusal",
+    rationale=(
+        "At most ONE live selection per (user, product): the helper and the Python store both "
+        "read 'the' live row, so two would make 'which org am I in' ambiguous."
+    ),
+    steps="""
+  BEGIN
+    INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+    VALUES (v_staff, v_pid, v_target, v_home, v_sid);
+    INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+    VALUES (v_staff, v_pid, v_target, v_home, v_sid);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second LIVE selection for the same (user, product) succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%platform_org_selections_one_live%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;""",
+)
+
+_ORG_PICKER_SET_NOT_STAFF_PROBE = _picker_rpc_refusal_probe(
+    probe_id="platform_org_selection_set.refuses_non_staff",
+    code="not_platform_staff",
+    setup="",
+    call="PERFORM public.platform_org_selection_set(v_plain, v_slug, v_target, v_sid);",
+    rationale=(
+        "Only platform staff (role=admin AND home org is_platform) may enter another org; "
+        "the RPC re-checks it itself, so a compromised or buggy API caller cannot grant it."
+    ),
+)
+
+_ORG_PICKER_SET_UNLICENSED_PROBE = _picker_rpc_refusal_probe(
+    probe_id="platform_org_selection_set.refuses_unlicensed_target",
+    code="target_not_licensed",
+    setup="""
+  IF v_unlic IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: every organization is licensed for the product — no unlicensed target to attempt';
+  END IF;""",
+    call="PERFORM public.platform_org_selection_set(v_staff, v_slug, v_unlic, v_sid);",
+    rationale="Staff may only enter an org holding an ACTIVE license for the product (owner decision 2026-10-08).",
+)
+
+_ORG_PICKER_SET_NOT_READY_PROBE = _picker_rpc_refusal_probe(
+    probe_id="platform_org_selection_set.refuses_not_ready_product",
+    code="product_not_ready",
+    setup="  UPDATE public.products SET org_picker_ready = false WHERE id = v_pid;",
+    call="PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);",
+    rationale=(
+        "A product whose policies are not all converted to current_org_id_for() must refuse the "
+        "picker: staff would otherwise see the HOME org's rows while believing they act elsewhere."
+    ),
+)
+
+_ORG_PICKER_HELPER_POSITIVE_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.returns_target_for_valid_selection",
+    rationale=(
+        "Positive control: a valid selection (staff, this login's session_id, aal2, licensed "
+        "target) resolves to the target -- without it every 'returns home' probe below would "
+        "pass vacuously on a helper that never honours a selection."
+    ),
+    steps="""
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+""" + _caller_sql("v_staff::text"),
+    expect="v_target",
+    what="a valid selection resolves to the target org",
+)
+
+_ORG_PICKER_HELPER_NON_STAFF_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_for_non_staff",
+    rationale=(
+        "A non-staff caller never acts: even with a (forged, table-level) selection row naming "
+        "another org, the helper answers their HOME org."
+    ),
+    steps="""
+  INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+  VALUES (v_plain, v_pid, v_target, v_plain_home, v_sid);
+""" + _caller_sql("v_plain::text"),
+    expect="v_plain_home",
+    what="a non-staff caller resolves to their home org",
+)
+
+_ORG_PICKER_HELPER_SESSION_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_on_session_mismatch",
+    rationale="A selection is bound to ONE login: another session_id (a new login) resolves home.",
+    steps="""
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+""" + _caller_sql("v_staff::text", sid="v_other_sid"),
+    expect="v_home",
+    what="another login session_id resolves to the home org",
+)
+
+_ORG_PICKER_HELPER_AAL1_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_for_aal1",
+    rationale="2FA is required to act: an aal1 token resolves home even with a live selection.",
+    steps="""
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+""" + _caller_sql("v_staff::text", aal="aal1"),
+    expect="v_home",
+    what="an aal1 token resolves to the home org",
+)
+
+_ORG_PICKER_HELPER_LICENSE_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_when_target_unlicensed",
+    rationale=(
+        "The helper re-checks the license itself: a selection whose target holds no active "
+        "license (inserted at table level, bypassing the RPC and the revocation trigger) "
+        "resolves home."
+    ),
+    steps="""
+  IF v_unlic IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: every organization is licensed for the product — no unlicensed target to forge';
+  END IF;
+  INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+  VALUES (v_staff, v_pid, v_unlic, v_home, v_sid);
+""" + _caller_sql("v_staff::text"),
+    expect="v_home",
+    what="an unlicensed target resolves to the home org",
+)
+
+_ORG_PICKER_HELPER_HEADER_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_on_narrowing_header_mismatch",
+    rationale=(
+        "x-noctus-acting-org is NARROWING only: a header naming another org than the target "
+        "resolves home (a stale tab never writes into the wrong org)."
+    ),
+    steps="""
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+""" + _caller_sql("v_staff::text", header="v_home::text"),
+    expect="v_home",
+    what="a mismatching x-noctus-acting-org resolves to the home org",
+)
+
+_ORG_PICKER_HELPER_HEADER_MATCH_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.target_on_matching_header",
+    rationale="Control for the narrowing header: a header equal to the target keeps the target.",
+    steps="""
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+""" + _caller_sql("v_staff::text", header="upper(v_target::text)"),
+    expect="v_target",
+    what="a matching x-noctus-acting-org keeps the target org",
+)
+
+_ORG_PICKER_REVOKE_PROBE = _org_picker_probe(
+    probe_id="platform_org_selections.revocation_trigger.ends_selection",
+    guard_name="organizations_revoke_org_selection",
+    kind="state_assertion",
+    rationale=(
+        "A live selection dies the moment its premise does: when the home org stops being "
+        "is_platform the staff's selection is ended 'revoked' by trigger, not by app code."
+    ),
+    steps="""
+  v_sel := public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+  UPDATE public.organizations SET is_platform = false WHERE id = v_home;
+  IF EXISTS (SELECT 1 FROM public.platform_org_selections WHERE id = v_sel AND ended_by = 'revoked' AND ended_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: losing is_platform ended the live selection (revoked)';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: the home org lost is_platform but the live selection was not revoked';""",
+)
+
+
+def _picker_constraint_probe(*, probe_id: str, guard_name: str, rationale: str, declare: str, steps: str, what: str) -> GuardProbe:
+    return GuardProbe(
+        id=probe_id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
+        migrations=_ORG_PICKER_MIGRATIONS, rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+{declare}
+BEGIN
+  BEGIN
+{steps}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {what} succeeded — the {guard_name} guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_ORG_PICKER_DB_SCHEMA_UNIQUE_PROBE = _picker_constraint_probe(
+    probe_id="products.db_schema.unique",
+    guard_name="products_db_schema_key",
+    rationale=(
+        "current_org_id_for(p_schema) resolves the product FROM db_schema; two products sharing "
+        "one schema would make a staff selection for one silently apply to the other."
+    ),
+    declare="  v_a uuid; v_b uuid; v_schema text;",
+    steps="""    SELECT id, db_schema INTO v_a, v_schema FROM public.products WHERE db_schema IS NOT NULL LIMIT 1;
+    SELECT id INTO v_b FROM public.products WHERE id <> v_a LIMIT 1;
+    IF v_a IS NULL OR v_b IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs two products rows, one with a db_schema';
+    END IF;
+    UPDATE public.products SET db_schema = v_schema WHERE id = v_b;""",
+    what="giving two products the same db_schema",
+)
+
+_ORG_PICKER_READY_NEEDS_SCHEMA_PROBE = _picker_constraint_probe(
+    probe_id="products.org_picker_ready.needs_db_schema",
+    guard_name="products_org_picker_ready_needs_schema",
+    rationale="A product flagged picker-ready must name its schema, else the RPC/helper cannot resolve it.",
+    declare="  v_a uuid;",
+    steps="""    SELECT id INTO v_a FROM public.products LIMIT 1;
+    IF v_a IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs one products row';
+    END IF;
+    UPDATE public.products SET db_schema = NULL, org_picker_ready = true WHERE id = v_a;""",
+    what="marking a product org_picker_ready with no db_schema",
+)
+
+_ORG_PICKER_ENDED_PAIR_PROBE = _picker_constraint_probe(
+    probe_id="platform_org_selections.ended_pair.check",
+    guard_name="platform_org_selections_ended_pair",
+    rationale="A selection is live (no ended_at, no ended_by) or ended (both): half-ended rows would be neither.",
+    declare="  v_staff uuid; v_home uuid; v_pid uuid; v_org uuid;",
+    steps="""    SELECT u.id, u.org_id INTO v_staff, v_home FROM public.noctus_users u LIMIT 1;
+    SELECT id INTO v_pid FROM public.products LIMIT 1;
+    SELECT id INTO v_org FROM public.organizations LIMIT 1;
+    IF v_staff IS NULL OR v_pid IS NULL OR v_org IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: needs one noctus_users, products and organizations row';
+    END IF;
+    INSERT INTO public.platform_org_selections
+      (user_id, product_id, target_org_id, home_org_id, auth_session_id, ended_at, ended_by)
+    VALUES (v_staff, v_pid, v_org, v_home, gen_random_uuid(), now(), NULL);""",
+    what="inserting a selection with ended_at set but no ended_by",
+)
+
+_ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
+    _ORG_PICKER_DB_SCHEMA_UNIQUE_PROBE,
+    _ORG_PICKER_READY_NEEDS_SCHEMA_PROBE,
+    _ORG_PICKER_ENDED_PAIR_PROBE,
+    _ORG_PICKER_ONE_LIVE_PROBE,
+    _ORG_PICKER_SET_NOT_STAFF_PROBE,
+    _ORG_PICKER_SET_UNLICENSED_PROBE,
+    _ORG_PICKER_SET_NOT_READY_PROBE,
+    _ORG_PICKER_HELPER_POSITIVE_PROBE,
+    _ORG_PICKER_HELPER_NON_STAFF_PROBE,
+    _ORG_PICKER_HELPER_SESSION_PROBE,
+    _ORG_PICKER_HELPER_AAL1_PROBE,
+    _ORG_PICKER_HELPER_LICENSE_PROBE,
+    _ORG_PICKER_HELPER_HEADER_PROBE,
+    _ORG_PICKER_HELPER_HEADER_MATCH_PROBE,
+    _ORG_PICKER_REVOKE_PROBE,
+)
+
+
 _CERTIDAO_CONSULTA_ORIGEM_PROBE = GuardProbe(
     id="certidao_consultas.origem.closed_vocabulary",
     product="social-wiring",
@@ -4540,6 +4908,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _STORAGE_BUCKETS_PROBE,
     _SECDEF_EXECUTE_PROBE,
     _INTERESSADOS_EMAIL_UNIQUE_PROBE,
+    *_ORG_PICKER_PROBES,
     _PLATFORM_ORG_REVOKE_REFUSED_PROBE,
     _PLATFORM_ORG_HOLDS_EVERY_PRODUCT_PROBE,
     _PLATFORM_ORG_NEW_PRODUCT_PROBE,

@@ -25,8 +25,11 @@ export { DEFAULT_COUNTRY_CODE, formatPhone, isValidPhone, normalizePhone, phoneD
 export { createApiClient, extractErrorMessage, ApiError, TransientAuthError, isTransientHttpStatus, refreshWithBackoff } from './api';
 export { mfaChallenge } from './mfaChallenge';
 export type { MfaTransport, MfaVerifyResult, MfaChallengeRequest } from './mfaChallenge';
-export { checkProductAccess, redirectToSemAcesso, isOrgSemLicencaBody, ORG_SEM_LICENCA_CODE, SEM_ACESSO_PATH } from './access';
-export type { MeAccess } from './access';
+export { checkProductAccess, redirectToSemAcesso, isOrgSemLicencaBody, ORG_SEM_LICENCA_CODE, SEM_ACESSO_PATH, ORG_SELECTION_CHANGED_CODE, isOrgSelectionChangedBody, orgSelectionOf, NO_ORG_SELECTION } from './access';
+export type { MeAccess, OrgSelectionState, OrgChoice, OrgRef } from './access';
+// Org picker pin store (dependency-free). The `useOrgSelection` hook lives with
+// its organs in `@noctusai/lib/design-system` — it needs `@noctusai/seed/infra`.
+export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth

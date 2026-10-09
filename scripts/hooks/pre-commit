@@ -479,6 +479,19 @@ if [[ -n "$STAGED_MIGRATIONS" ]] && have_py; then
     fi
 fi
 
+# ─── 6b-sexies-ter. Org-picker readiness (blocking, critical) ─────────────
+# Keeper `check_org_picker_ready_policies`: a product whose chain sets
+# products.org_picker_ready=true must have no home-only policy left.
+STAGED_OPR_MIGRATIONS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/migrations/.*\.sql$' || true)
+if [[ -n "$STAGED_OPR_MIGRATIONS" ]] && have_py; then
+    echo "[pre-commit] Checking org-picker readiness (ready products carry no home-only policy)..."
+    if ! "$PY" "$CLI" --check-org-picker-ready-policies --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] org-picker-ready-policies check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Convert the policy to current_org_id_for('<schema>'). KB § PATTERNS/backend/tenancy-license-gate.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6b-sexies-bis. Org-identity function parity (blocking, critical) ─────
 # Keeper `check_org_identity_function_parity` (SEC-2 customer-role isolation,
 # 2026-09-28). public.current_org_id() & co are ONE shared function that many

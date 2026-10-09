@@ -52,16 +52,16 @@ USER_ROW = {"id": USER, "org_id": HOME, "org_role": "member", "role": "user"}
 
 class TestEffectiveOrg:
     def test_plain_user_resolves_to_home(self):
-        eff = resolve_effective_org(_core(users=[USER_ROW]), USER)
+        eff = resolve_effective_org(_core(users=[USER_ROW]), USER, product_slug=None)
         assert (eff.org_id, eff.org_role) == (HOME, "member")
 
     def test_superadmin_resolves_to_home_like_anyone(self):
         # noctus_users.role == 'admin' changes nothing: no staff override exists.
-        eff = resolve_effective_org(_core(users=[ADMIN_ROW]), ADMIN)
+        eff = resolve_effective_org(_core(users=[ADMIN_ROW]), ADMIN, product_slug=None)
         assert (eff.org_id, eff.org_role) == (HOME, "admin")
 
     def test_no_row_is_none(self):
-        assert resolve_effective_org(_core(users=[]), USER) is None
+        assert resolve_effective_org(_core(users=[]), USER, product_slug=None) is None
 
 
 def _dep(core, **kw):

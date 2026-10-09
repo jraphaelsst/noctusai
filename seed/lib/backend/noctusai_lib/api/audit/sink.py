@@ -204,6 +204,11 @@ def _to_row(entry: AuditEntry) -> dict[str, Any]:
         # UA/IP to begin with (`client_hint` is the coarse, non-PII
         # substitute — see migration 053's LGPD note).
     }
+    if actor.act_as_session_id:
+        # Org-picker tagging (core 065 columns, historical name) -- only written while
+        # acting, so ordinary rows (and a deploy ahead of any migration) are unchanged.
+        row["acting_org_id"] = actor.acting_org_id
+        row["act_as_session_id"] = actor.act_as_session_id
     return row
 
 

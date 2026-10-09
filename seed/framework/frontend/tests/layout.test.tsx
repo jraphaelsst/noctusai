@@ -290,6 +290,23 @@ describe("createProductLayout — session mode (sessionAuth)", () => {
   });
 });
 
+describe("org picker gate (layout)", () => {
+  it("mounts <OrgSelectionGate/> once", () => {
+    renderLayout(createProductLayout({ ...baseConfig(), supabase: makeSupabaseClient() }));
+    expect(screen.getAllByTestId("org-selection-gate-stub")).toHaveLength(1);
+  });
+
+  it("logout ends the org selection best-effort BEFORE signOut", async () => {
+    const stub = await import("./stubs/design-system");
+    stub.orgSelectionCalls.length = 0;
+    const supabase = makeSupabaseClient();
+    renderLayout(createProductLayout({ ...baseConfig(), supabase }));
+    fireEvent.click(screen.getByTestId("logout-button"));
+    await waitFor(() => expect(supabase.auth.signOut).toHaveBeenCalled());
+    expect(stub.orgSelectionCalls).toEqual(["end"]);
+  });
+});
+
 describe("mobile sidebar drawer closes on navigation (2026-09-28 fix)", () => {
   it("closes the drawer when a nav item is picked — it used to stay open", async () => {
     const sessionAuth = makeSessionAuth();

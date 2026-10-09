@@ -35,6 +35,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.domain.licensing import enforce_license
@@ -72,7 +73,7 @@ def make_trusted_legacy_jwt_resolver(
     """
     from noctusai_lib.api.auth import _resolve_trusted_membership
 
-    async def _resolver(token: str) -> AuthContext | None:
+    async def _resolver(token: str, request: Any = None) -> AuthContext | None:
         try:
             result = await get_current_user_fn(authorization=f"Bearer {token}")
         except Exception:
@@ -89,7 +90,12 @@ def make_trusted_legacy_jwt_resolver(
         # user id (always a UUID) it is the identity.
         user_id = _to_uuid(user_id_raw)
         try:
-            membership = _resolve_trusted_membership(get_core_client_fn, str(user_id))
+            membership = _resolve_trusted_membership(
+                get_core_client_fn, str(user_id), token=token,
+                acting_header=acting_header_of(request),
+            )
+        except HTTPException:
+            raise
         except Exception:
             logger.error(
                 "trusted_legacy_bridge_lookup_error user_id=%s — failing closed "
@@ -127,6 +133,9 @@ def make_trusted_legacy_jwt_resolver(
             aal=read_aal(token, validated_user=user),
         )
 
+    # make_get_auth_context hands the request to resolvers that declare they take it
+    # (the org-picker intent pin rides on a request header).
+    _resolver.accepts_request = True  # type: ignore[attr-defined]
     return _resolver
 
 

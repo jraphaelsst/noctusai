@@ -11692,7 +11692,7 @@ def _oif_fn_re(names) -> "re.Pattern[str]":
     return re.compile(
         r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+public\.(?P<name>"
         + "|".join(re.escape(n) for n in names)
-        + r")\s*\(\s*\)(?P<head>.*?)\bAS\s+(?P<tag>\$[A-Za-z_]*\$)(?P<body>.*?)(?P=tag)",
+        + r")\s*\(\s*(?P<args>[^)]*?)\s*\)(?P<head>.*?)\bAS\s+(?P<tag>\$[A-Za-z_]*\$)(?P<body>.*?)(?P=tag)",
         re.IGNORECASE | re.DOTALL,
     )
 
@@ -11712,7 +11712,11 @@ def org_identity_declarations(sql_text: str, names) -> list[dict]:
             continue
         out.append({
             "name": m.group("name").lower(),
-            "head": _oif_norm(m.group("head")),
+            # Parameterised helpers (current_org_id_for(p_schema text)) carry their
+            # arg list in the head; the zero-arg functions keep their historical
+            # head (so ratified baseline hashes are unchanged).
+            "head": (_oif_norm(f"({m.group('args')}) ") if m.group("args").strip() else "")
+            + _oif_norm(m.group("head")),
             "body": _oif_norm(m.group("body")),
             "line": sql_text.count("\n", 0, m.start()) + 1,
         })
@@ -11750,7 +11754,9 @@ def _oif_load_canon(root: Path) -> tuple[dict[str, dict], frozenset[str]]:
         raise ValueError(f"cannot load {'/'.join(_OIF_TEMPLATES_PY)}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    names = tuple(getattr(mod, "ORG_IDENTITY_FUNCTION_NAMES"))
+    names = tuple(getattr(mod, "ORG_IDENTITY_FUNCTION_NAMES")) + tuple(
+        getattr(mod, "ORG_PICKER_FUNCTION_NAMES", ())
+    )
     canon: dict[str, dict] = {}
     for n in names:
         decl = org_identity_declarations(mod.org_identity_function_sql(n, customer_roles=roles), (n,))
@@ -11862,10 +11868,12 @@ def check_org_identity_function_parity(
             for decl in org_identity_declarations(path.read_text(encoding="utf-8"), tuple(canon)):
                 if decl["name"] not in last or num >= last[decl["name"]][0]:
                     last[decl["name"]] = (num, str(path.relative_to(root)), decl)
-        for name in ("current_org_id", "current_user_org_id"):
+        for name in ("current_org_id", "current_user_org_id", "current_org_id_for"):
             if name not in canon:
                 continue
             got = last.get(name)
+            if got is None and name == "current_org_id_for":
+                continue  # the picker helper arrives with core 070; a pre-070 chain simply has none
             if got is None or got[2]["head"] != canon[name]["head"] or got[2]["body"] != canon[name]["body"]:
                 where = got[1] if got else "products/core/backend/migrations"
                 issues.append({
@@ -11875,6 +11883,119 @@ def check_org_identity_function_parity(
                         f"the LAST core migration re-declaring public.{name}() must equal the "
                         f"canonical body (a fresh core apply leaves it behind) — "
                         f"{'none found' if got is None else 'it differs'}. Per `{_OIF_KB}`."
+                    ),
+                    "severity": "critical",
+                })
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# Org-picker readiness: a product flagged `org_picker_ready = true` must have
+# EVERY policy in its migration chain converted to current_org_id_for().
+# ---------------------------------------------------------------------------
+
+_OPR_KB = "KB § PATTERNS/backend/tenancy-license-gate.md § Platform org picker"
+_OPR_READY_RE = re.compile(
+    r"UPDATE\s+(?:public\.)?products\s+SET\s+(?P<set>.*?)\bWHERE\s+slug\s*=\s*'(?P<slug>[^']+)'",
+    re.IGNORECASE | re.DOTALL,
+)
+_OPR_READY_VAL_RE = re.compile(r"org_picker_ready\s*=\s*(true|false)", re.IGNORECASE)
+_OPR_CREATE_RE = re.compile(
+    r'^CREATE\s+POLICY\s+(?P<name>"[^"]+"|\w+)\s+ON\s+(?P<table>[\w."]+)(?P<rest>.*)$',
+    re.IGNORECASE | re.DOTALL,
+)
+_OPR_ALTER_RE = re.compile(
+    r'^ALTER\s+POLICY\s+(?P<name>"[^"]+"|\w+)\s+ON\s+(?P<table>[\w."]+)(?P<rest>.*)$',
+    re.IGNORECASE | re.DOTALL,
+)
+_OPR_DROP_POLICY_RE = re.compile(
+    r'^DROP\s+POLICY\s+(?:IF\s+EXISTS\s+)?(?P<name>"[^"]+"|\w+)\s+ON\s+(?P<table>[\w."]+)',
+    re.IGNORECASE,
+)
+_OPR_DROP_TABLE_RE = re.compile(r"^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>[\w.\",\s]+?)(?:\s+CASCADE)?$", re.IGNORECASE)
+_OPR_HOME_ONLY_RE = re.compile(
+    r"\bcurrent_org_id\s*\(|\bcurrent_user_org_id\s*\(|\bnoctus_users\b", re.IGNORECASE
+)
+
+
+def _opr_statements(sql_text: str) -> list[str]:
+    """Top-level statements with comments stripped. Dollar-quoted bodies are
+    blanked first (a DO/function body is not a static policy declaration), so a
+    policy created dynamically inside one is a documented blind spot."""
+    text = re.sub(r"(\$[A-Za-z_]*\$).*?\1", " ", sql_text, flags=re.DOTALL)
+    text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
+    text = re.sub(r"--[^\n]*", " ", text)
+    return [st.strip() for st in text.split(";") if st.strip()]
+
+
+def _opr_table_key(raw: str) -> str:
+    return raw.replace('"', "").lower()
+
+
+def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]:
+    """A product whose chain LAST sets ``products.org_picker_ready = true`` for its
+    own slug must not carry any policy (latest definition per ``table::name``) that
+    still keys on ``public.current_org_id()`` / ``current_user_org_id()`` or an
+    inline ``noctus_users`` org subquery -- those are HOME-ONLY, so a staff member
+    who picked another org would be shown the home org's rows. Convert the policy to
+    ``(SELECT public.current_org_id_for('<schema>'))`` first.
+
+    Static, chain-local approximation: statements are split on ``;`` with comments and
+    dollar-quoted bodies removed (policies created inside a DO block are invisible);
+    ``ALTER POLICY`` replaces the stored text. The live flag itself lives in the DB
+    (this keeper cannot read it) -- it judges the flag as the chain leaves it.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for mig_dir in sorted(root.glob("products/*/backend/migrations")):  # product-scope: all — a chain's readiness claim is judged wherever it is written, asleep or not
+        slug = mig_dir.parent.parent.name
+        files = sorted(mig_dir.glob("*.sql"))
+        ready: bool | None = None
+        ready_file = ""
+        policies: dict[str, tuple[str, str, int]] = {}  # key -> (text, file, idx)
+        for path in files:
+            for st in _opr_statements(path.read_text(encoding="utf-8")):
+                m = _OPR_READY_RE.match(st)
+                if m and m.group("slug") == slug:
+                    v = _OPR_READY_VAL_RE.search(m.group("set"))
+                    if v:
+                        ready = v.group(1).lower() == "true"
+                        ready_file = path.name
+                    continue
+                m = _OPR_CREATE_RE.match(st)
+                if m:
+                    key = f"{_opr_table_key(m.group('table'))}::{_opr_table_key(m.group('name'))}"
+                    policies[key] = (m.group("rest"), path.name, 0)
+                    continue
+                m = _OPR_ALTER_RE.match(st)
+                if m:
+                    key = f"{_opr_table_key(m.group('table'))}::{_opr_table_key(m.group('name'))}"
+                    prev = policies.get(key)
+                    rest = m.group("rest")
+                    if re.search(r"\b(USING|WITH\s+CHECK)\b", rest, re.IGNORECASE) or prev is None:
+                        policies[key] = (rest, path.name, 0)
+                    continue
+                m = _OPR_DROP_POLICY_RE.match(st)
+                if m:
+                    policies.pop(f"{_opr_table_key(m.group('table'))}::{_opr_table_key(m.group('name'))}", None)
+                    continue
+                m = _OPR_DROP_TABLE_RE.match(st)
+                if m:
+                    gone = {_opr_table_key(t.strip()) for t in m.group("table").split(",")}
+                    for key in [k for k in policies if k.split("::")[0] in gone]:
+                        policies.pop(key, None)
+        if not ready:
+            continue
+        for key, (text, fname, _i) in sorted(policies.items()):
+            if _OPR_HOME_ONLY_RE.search(text):
+                issues.append({
+                    "product": slug,
+                    "file": f"products/{slug}/backend/migrations/{fname}",
+                    "issue": (
+                        f"{slug} is org_picker_ready=true (set in {ready_file}) but policy `{key}` still "
+                        f"uses a HOME-ONLY org identity (current_org_id()/current_user_org_id()/"
+                        f"noctus_users subquery). Convert it to (SELECT public.current_org_id_for("
+                        f"'<schema>')) before flipping the flag. Per `{_OPR_KB}`."
                     ),
                     "severity": "critical",
                 })

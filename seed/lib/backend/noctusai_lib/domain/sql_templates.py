@@ -238,6 +238,16 @@ ORG_IDENTITY_FUNCTION_NAMES: tuple[str, ...] = (
 )
 
 
+#: Org-picker RLS helpers (core 070) the parity keeper polices alongside the
+#: functions above. A SEPARATE tuple on purpose: ``org_identity_functions_sql()``
+#: embeds every ``ORG_IDENTITY_FUNCTION_NAMES`` member in forward migrations of
+#: any chain, while these read ``platform_org_selections`` (core 070 only).
+#: ``current_org_id_for(p_schema)`` is the ONLY org-picker-aware helper; the
+#: functions above stay HOME-ONLY forever (public tables / storage / realtime
+#: never act-as). KB § PATTERNS/backend/tenancy-license-gate.md § Platform org picker.
+ORG_PICKER_FUNCTION_NAMES: tuple[str, ...] = ("current_org_id_for",)
+
+
 def customer_roles_sql_array(customer_roles: Iterable[str] | None = None) -> str:
     """``ARRAY['membro', ...]`` rendered from ``CUSTOMER_ORG_ROLES`` (sorted,
     so the rendering is deterministic).
@@ -267,6 +277,70 @@ def _org_fn(name: str, returns: str, body: str) -> str:
     )
 
 
+def _org_picker_fn_sql(roles: str) -> str:
+    """Canonical ``public.current_org_id_for(p_schema text)`` — the product-policy
+    opt-in (``(SELECT public.current_org_id_for('<schema>'))``) for the platform org
+    picker. Staff (``noctus_users.role='admin'`` AND home org ``is_platform``) with a
+    LIVE selection for the product whose ``db_schema = p_schema``, bound to THIS login
+    (``session_id`` claim), aal2, target still licensed, and (optional narrowing)
+    ``x-noctus-acting-org`` equal to the target, resolve to the target org; EVERYONE
+    else resolves the home rule (customers excluded → NULL)."""
+    return (
+        "CREATE OR REPLACE FUNCTION public.current_org_id_for(p_schema text)\n"
+        "  RETURNS uuid\n"
+        "  LANGUAGE plpgsql\n"
+        "  STABLE SECURITY DEFINER\n"
+        "  SET search_path TO 'public'\n"
+        "AS $f$\n"
+        "DECLARE\n"
+        "  v_uid      uuid := auth.uid();\n"
+        "  v_claims   jsonb := auth.jwt();\n"
+        "  v_home     uuid;\n"
+        "  v_org_role text;\n"
+        "  v_role     text;\n"
+        "  v_target   uuid;\n"
+        "  v_hdr      text;\n"
+        "BEGIN\n"
+        "  SELECT u.org_id, u.org_role, u.role INTO v_home, v_org_role, v_role\n"
+        "    FROM public.noctus_users u WHERE u.id = v_uid;\n"
+        "  IF NOT FOUND THEN\n"
+        "    RETURN NULL;\n"
+        "  END IF;\n"
+        f"  IF COALESCE(v_org_role, '') = ANY ({roles}) THEN\n"
+        "    RETURN NULL;\n"
+        "  END IF;\n"
+        "  IF v_role = 'admin' AND p_schema IS NOT NULL\n"
+        "     AND EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = v_home AND o.is_platform)\n"
+        "  THEN\n"
+        "    SELECT s.target_org_id INTO v_target\n"
+        "      FROM public.products p\n"
+        "      JOIN public.platform_org_selections s\n"
+        "        ON s.product_id = p.id AND s.user_id = v_uid AND s.ended_at IS NULL\n"
+        "     WHERE p.db_schema = p_schema\n"
+        "       AND s.auth_session_id = NULLIF(v_claims ->> 'session_id', '')::uuid\n"
+        "       AND v_claims ->> 'aal' = 'aal2'\n"
+        "       AND EXISTS (\n"
+        "         SELECT 1 FROM public.licenses l\n"
+        "          WHERE l.org_id = s.target_org_id AND l.product_id = p.id\n"
+        "            AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()));\n"
+        "    IF FOUND THEN\n"
+        "      BEGIN\n"
+        "        v_hdr := NULLIF(btrim(NULLIF(current_setting('request.headers', true), '')::json\n"
+        "                              ->> 'x-noctus-acting-org'), '');\n"
+        "      EXCEPTION WHEN OTHERS THEN\n"
+        "        v_hdr := NULL;\n"
+        "      END;\n"
+        "      IF v_hdr IS NULL OR lower(v_hdr) = v_target::text THEN\n"
+        "        RETURN v_target;\n"
+        "      END IF;\n"
+        "    END IF;\n"
+        "  END IF;\n"
+        "  RETURN v_home;\n"
+        "END;\n"
+        "$f$;"
+    )
+
+
 def org_identity_function_sql(name: str, customer_roles: Iterable[str] | None = None) -> str:
     """The canonical ``CREATE OR REPLACE FUNCTION public.<name>()`` statement.
 
@@ -274,6 +348,8 @@ def org_identity_function_sql(name: str, customer_roles: Iterable[str] | None = 
     parity keeper compares whitespace-normalized text against this.
     """
     roles = customer_roles_sql_array(customer_roles)
+    if name == "current_org_id_for":
+        return _org_picker_fn_sql(roles)
     staff_org = (
         "  SELECT org_id FROM public.noctus_users\n"
         "   WHERE id = (SELECT auth.uid())\n"
@@ -306,7 +382,8 @@ def org_identity_function_sql(name: str, customer_roles: Iterable[str] | None = 
             f"     AND org_role = ANY ({roles});",
         )
     raise ValueError(
-        f"unknown org-identity function {name!r}; expected one of {ORG_IDENTITY_FUNCTION_NAMES}"
+        f"unknown org-identity function {name!r}; expected one of "
+        f"{ORG_IDENTITY_FUNCTION_NAMES + ORG_PICKER_FUNCTION_NAMES}"
     )
 
 

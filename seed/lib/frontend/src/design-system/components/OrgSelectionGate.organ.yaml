@@ -1,0 +1,22 @@
+name: OrgSelectionGate
+path: seed/lib/frontend/src/design-system/components/OrgSelectionGate.tsx
+phase: pilot-seed
+registered_at: "2026-10-08"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Composition mounted once by createProductLayout: ActingAsBanner + OrgPickerModal. Non-staff render nothing."
+  - "useOrgSelection() owns the access/choices queries, the X-Noctus-Acting-Org pin (api.ts + Supabase client fetch) and the 409 org_selection_changed refetch/reopen."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered: []
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

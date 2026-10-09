@@ -1,7 +1,8 @@
 # Tenancy: the product license gate
 
 > Formalized 2026-10-06 (round 2). Act-as-org removed + platform-org rule added
-> 2026-10-07 (owner decision). Self-contained.
+> 2026-10-07 (owner decision). Platform org picker added 2026-10-08 (§ Platform org
+> picker). Self-contained.
 
 ## The rule
 
@@ -11,11 +12,11 @@
    {"detail":"Sua organização não tem acesso a este produto.","code":"org_sem_licenca"}`.
    Public/unauthenticated routes are untouched; `core` is exempt. Customers
    (`membro`, `allow_customer`) need the license AND `products.aceita_clientes`.
-2. **The effective org is always the caller's home org.** It comes from the trusted
-   `public.noctus_users` row (`org_id`, `org_role`), never `user_metadata`. There is NO
-   staff override: NoctusAI staff do not enter customer orgs (the superadmin
-   "act-as-org" feature of 2026-10-06 was removed end to end on 2026-10-07 — core 067
-   dropped `act_as_sessions` and restored the plain RLS helpers).
+2. **The effective org is the caller's home org** — it comes from the trusted
+   `public.noctus_users` row (`org_id`, `org_role`), never `user_metadata`. The ONLY
+   exception is the explicit, 2FA-gated, per-login **platform org picker** (§ below);
+   there is no implicit staff override (the superadmin "act-as-org" of 2026-10-06 was
+   removed on 2026-10-07 — core 067).
 3. **No admin license bypass — `public.licenses` is the single source of truth.** There
    is NO `role == 'admin'` (or org-id) branch around the license check anywhere, in the
    seed or a product.
@@ -92,5 +93,52 @@ around a license call; it also pins the seed wiring. Strict `== 401` / `== 403` 
   untouched. No keeper allowlist exists for store.
 - `/api/me/access` uses the ungated dep on purpose — it answers
   `has_access=false` instead of 403.
+
+## Platform org picker (2026-10-08, core 070 + seed `me_router`)
+
+Contract: `projects/org-picker/CONTRACT.md`. Platform STAFF enter a customer org **per
+product, per login**; everyone else enters their own org and the picker endpoints answer a
+strict `403 {"code":"not_platform_staff"}`.
+
+- **Staff = explicit grant, never derived from `org_role`:** `noctus_users.role='admin'`
+  (superadmin, writable only through the superadmin-gated users router) AND the home org
+  `organizations.is_platform`. Re-checked by the RPC and the SQL helper themselves.
+- **Data model (core 070, expand-only):** `products.db_schema` (= the product's
+  `create_product_app(schema=…)`, pinned to the tree by `test_migration_070`) +
+  `products.org_picker_ready` (default false); `platform_org_selections` (service-role only;
+  one LIVE row per (user, product); bound to the Supabase auth `session_id`; `ended_by` ∈
+  replaced | new_session | exit | logout | revoked); RPCs `platform_org_selection_set/_end`
+  (SECDEF, EXECUTE service_role only; errors `platform_org_selection:not_platform_staff |
+  target_not_licensed | product_not_ready`); triggers end a live selection `revoked` when the
+  user's org/role changes, the home org stops being `is_platform`, or the target's license
+  lapses.
+- **RLS:** `public.current_org_id_for(p_schema)` (canonical text in `sql_templates`, parity
+  keeper `check_org_identity_function_parity`; keeps caller EXECUTE via the `rls-helper`
+  marker) returns the live selection's target only for staff + this login's `session_id` +
+  `aal2` + a still-licensed target (+ optional narrowing header `x-noctus-acting-org`);
+  otherwise the home rule (customers NULL). `current_org_id()` / `current_user_org_id()` stay
+  HOME-ONLY forever. A product's policies opt in with
+  `(SELECT public.current_org_id_for('<schema>'))`; it flips `org_picker_ready=true` only
+  when every policy is converted — keeper `check_org_picker_ready_policies` fails a chain that
+  flips it with a home-only policy left (NOC-REMEDIATE[org-picker-policy-conversion]).
+- **Seed:** `OrgSelectionStore` (Protocol + Real + Fake + factory, `api/auth/org_selection.py`);
+  the gate (`configure_license_gate(selection_store=, db_schema=)`) carries it;
+  `resolve_effective_org(core, user_id, *, product_slug, token, acting_header, …)` is still
+  the ONE resolver: staff + live selection + same login + aal2 + licensed ⇒ target with role
+  `owner`, else home (no aal2 ⇒ home + `mfa_required`). Intent pin: header present and ≠
+  resolved org ⇒ `409 {"code":"org_selection_changed"}` (non-staff: ignored).
+  `/api/me/access` gains `org_selection{available, required, mfa_required, acting, org,
+  home_org, selection_id, org_role}`; `GET /api/me/org-choices` (home first, licensed orgs,
+  `no-store`), `PUT`/`DELETE /api/me/org-choice` (`403 mfa_required`, `403 org_sem_licenca`,
+  `409 product_not_ready`). Core logout ends all selections.
+- **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
+  `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
+  client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads
+  are logged with `org_id NULL` (platform-only).
+- **Probes:** `noctus.dev.verify_db_guards` — `platform_org_selections.*`,
+  `platform_org_selection_set.refuses_*`, `current_org_id_for.*` (positive control + home for
+  non-staff / other session / aal1 / unlicensed / mismatching header), revocation trigger.
+- **Team grants (core):** `owner` is never grantable via invite or role change; granting
+  `admin` needs an inviter who is owner/admin or the platform superadmin.
 
 Composes with: `no-metadata-authz.md`, `database-rls.md`, `audit-trail.md`.

@@ -1755,6 +1755,8 @@ class MockSupabaseClient:
         self.storage = MagicMock()
         self._tables: dict[str, MockRequestBuilder] = {}
         self._rpcs: dict = {}
+        #: Every ``rpc(name, params)`` made, in order (read-side assertion; no patching).
+        self.rpc_calls: list[tuple[str, dict]] = []
         self._validate_schema = validate_schema
         self._schema = schema
         self._strict_unknown_tables = strict_unknown_tables
@@ -1858,6 +1860,7 @@ class MockSupabaseClient:
         scoped.auth = self.auth
         scoped.storage = self.storage
         scoped._rpcs = self._rpcs
+        scoped.rpc_calls = self.rpc_calls
         return scoped
 
     def set_table_data(self, name, data):
@@ -1880,5 +1883,6 @@ class MockSupabaseClient:
 
     def rpc(self, name, params=None):
         """Simulate an RPC call."""
+        self.rpc_calls.append((name, dict(params or {})))
         data = self._rpcs.get(name, [])
         return MockSelectBuilder(data)

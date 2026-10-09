@@ -26,6 +26,15 @@ export { PageSkeleton } from "./components/PageSkeleton";
 export { LoginForm } from "./components/LoginForm";
 export type { LoginFormProps } from "./components/LoginForm";
 
+// Org picker (platform staff enter a customer org once per login).
+export { OrgPickerModal, OrgPickerModalView } from "./components/OrgPickerModal";
+export type { OrgPickerModalViewProps } from "./components/OrgPickerModal";
+export { ActingAsBanner, ActingAsBannerView } from "./components/ActingAsBanner";
+export type { ActingAsBannerViewProps } from "./components/ActingAsBanner";
+export { OrgSelectionGate } from "./components/OrgSelectionGate";
+export { useOrgSelection, endOrgSelectionBestEffort, ME_ACCESS_QUERY_KEY, ORG_CHOICES_QUERY_KEY } from "../org-selection";
+export type { UseOrgSelectionResult } from "../org-selection";
+
 export { ForgotPasswordPage } from "./components/ForgotPasswordPage";
 export type { ForgotPasswordPageProps } from "./components/ForgotPasswordPage";
 

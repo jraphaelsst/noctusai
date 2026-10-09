@@ -1,0 +1,25 @@
+name: ActingAsBanner
+path: seed/lib/frontend/src/design-system/components/ActingAsBanner.tsx
+phase: pilot-seed
+registered_at: "2026-10-08"
+organ_version: "2.0"
+validation_status: emerging
+
+known_facts:
+  - "Staff in their home org (available && !acting && !required) get a slim OrgSwitchBar with Trocar org instead of the full banner."
+  - "Rebuilt for the org picker (replaces the removed act-as-org banner). Shows 'Você está atuando em <org> (NoctusAI)' + 'Trocar org' ONLY when GET /api/me/access org_selection.available AND acting; customers never see it."
+  - "'Trocar org' reopens OrgPickerModal; the swap PUTs /api/me/org-choice then hard-reloads (no cross-org cache)."
+  - "Visibility is driven off query data, never isLoading (lying-loading-state rule). Mounted by OrgSelectionGate in the seed layout — zero per-product code."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Per-product banner rejected: the picker is a platform concept; the seed shell mounts it once."
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

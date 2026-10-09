@@ -68,6 +68,7 @@ import jwt
 from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.audit import AuditActor
+from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.api.auth.effective_org import resolve_effective_org_via
 from noctusai_lib.domain.licensing import enforce_license as _enforce_license
 from noctusai_lib.domain.licensing import enforce_license_for_user as _enforce_license_for_user
@@ -302,9 +303,15 @@ def make_get_current_user(get_supabase_client_fn):
     """
     ungated = make_get_current_user_ungated(get_supabase_client_fn)
 
-    async def _product_get_current_user(authorization: Optional[str] = Header(None)):
+    async def _product_get_current_user(
+        authorization: Optional[str] = Header(None),
+        x_noctus_acting_org: Optional[str] = Header(None),
+    ):
         user, token = await ungated(authorization)
-        _enforce_license_for_user(getattr(user, "id", None))
+        _enforce_license_for_user(
+            getattr(user, "id", None), token=token,
+            acting_header=x_noctus_acting_org if isinstance(x_noctus_acting_org, str) else None,
+        )
         return user, token
 
     _product_get_current_user.ungated = ungated
@@ -459,7 +466,8 @@ def make_require_role(get_current_user_fn, get_user_role_fn):
 
 
 def _resolve_trusted_membership(
-    get_admin_client_fn: Callable[[], Any], user_id
+    get_admin_client_fn: Callable[[], Any], user_id,
+    *, token: Optional[str] = None, acting_header: Optional[str] = None,
 ) -> Optional[dict]:
     """``{"org_id", "org_role"}`` for ``user_id`` — the EFFECTIVE org (see
     :mod:`noctusai_lib.api.auth.effective_org`), or ``None`` when no
@@ -470,10 +478,16 @@ def _resolve_trusted_membership(
     A thin dict view over the ONE effective-org resolver, so every path that
     reads through here agrees with the license gate on the org.
     """
-    eff = resolve_effective_org_via(get_admin_client_fn, user_id)
+    eff = resolve_effective_org_via(
+        get_admin_client_fn, user_id, token=token, acting_header=acting_header
+    )
     if eff is None:
         return None
-    return {"org_id": eff.org_id, "org_role": eff.org_role}
+    out = {"org_id": eff.org_id, "org_role": eff.org_role}
+    if eff.acting:
+        out["home_org_id"] = eff.home_org_id
+        out["selection_id"] = eff.selection_id
+    return out
 
 
 def _resolve_trusted_org_id(get_admin_client_fn: Callable[[], Any], user_id) -> Optional[str]:
@@ -800,8 +814,18 @@ def make_get_current_user_org(
         # `noctusai_lib.api.audit` module docstring. `request` is `None`
         # for the direct-call (non-`Depends`) shape above — nothing to
         # stash onto, and nothing reads it there either.
-        def _stash_actor(org_id: Optional[str]) -> None:
+        def _stash_actor(org_id: Optional[str], acting: Optional[dict] = None) -> None:
             if request is None:
+                return
+            if acting:
+                # Org picker: staff acting in a customer org -- the row carries the
+                # TARGET org (the client sees the data changes), tagged with the home
+                # org + selection id, role "platform_support".
+                request.state.audit_actor = AuditActor(
+                    user_id=getattr(user, "id", None), org_id=org_id, role="platform_support",
+                    acting_org_id=acting.get("home_org_id"),
+                    act_as_session_id=acting.get("selection_id"),
+                )
                 return
             request.state.audit_actor = AuditActor(
                 user_id=getattr(user, "id", None), org_id=org_id, role=None
@@ -811,7 +835,13 @@ def make_get_current_user_org(
         # every product's RLS `current_org_id()` reads. `get_org_id_fn`
         # (historically `user_metadata`) is never consulted (SEC-2).
         try:
-            membership = _resolve_trusted_membership(get_admin_client_fn, user.id)
+            membership = _resolve_trusted_membership(
+                get_admin_client_fn, user.id, token=token,
+                acting_header=acting_header_of(request),
+            )
+        except HTTPException:
+            # 409 org_selection_changed (org-picker intent pin) -- not a lookup failure.
+            raise
         except Exception:
             # Fail CLOSED on a genuine DB/transport error. Falling back to
             # the spoofable resolver here would reopen the exact hole this
@@ -873,7 +903,7 @@ def make_get_current_user_org(
             _enforce_license(
                 org_id, membership.get("org_role"), allow_customer=allow_customer
             )
-        _stash_actor(org_id)
+        _stash_actor(org_id, membership if membership.get("selection_id") else None)
         return user, token, org_id
     return get_current_user_org
 

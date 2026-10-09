@@ -146,3 +146,11 @@ export const PendingConsentBadge: React.FC = () => (
 export const LLMSpendBadge: React.FC = () => (
   <span data-testid="llm-spend-badge-stub" />
 );
+
+/** Org picker gate: inert in the harness (needs seed infra + a query client). */
+export const OrgSelectionGate: React.FC = () => <div data-testid="org-selection-gate-stub" />;
+/** Call log so layout tests can assert the logout path ends the selection first. */
+export const orgSelectionCalls: string[] = [];
+export const endOrgSelectionBestEffort = async (): Promise<void> => {
+  orgSelectionCalls.push("end");
+};

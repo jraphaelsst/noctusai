@@ -53,10 +53,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from noctusai_lib.api.auth import _resolve_trusted_membership
+from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.domain.licensing import enforce_license
 from noctusai_lib.primitives.roles import is_customer_role
 from noctusai_lib.api.auth.session import (
@@ -268,7 +269,7 @@ def _coerce_org_uuid(raw_org: Any) -> UUID:
         return _uuid.uuid5(_uuid.NAMESPACE_OID, str(raw_org))
 
 
-def _require_org_admin(core_client: Any, ctx: AuthContext) -> None:
+def _require_org_admin(core_client: Any, ctx: AuthContext, request: Any = None) -> None:
     """403 unless ``ctx.user_id`` has owner/admin ``org_role`` on the
     TRUSTED ``public.noctus_users`` row.
 
@@ -297,7 +298,12 @@ def _require_org_admin(core_client: Any, ctx: AuthContext) -> None:
     # a minted token / revoke is scoped by ``ctx.org_id``, which must never be
     # an org the caller is not actually an admin of.
     try:
-        membership = resolve_org_membership(core_client, ctx.user_id)
+        membership = resolve_org_membership(
+            core_client, ctx.user_id, token=ctx.raw_token,
+            acting_header=acting_header_of(request),
+        )
+    except HTTPException:
+        raise
     except Exception:
         logger.error("org_admin_lookup_error user_id=%s", ctx.user_id, exc_info=True)
         raise HTTPException(
@@ -522,6 +528,7 @@ def create_auth_router(
     async def create_api_token(
         body: ApiTokenCreateRequest,
         ctx: AuthContext = Depends(get_auth_context),
+        request: Request = None,
     ) -> ApiTokenCreatedDTO:
         """Mint a new ``pk_*`` token. Trusted-DB owner/admin only. The raw
         secret is returned exactly once — the caller MUST persist it."""
@@ -534,7 +541,7 @@ def create_auth_router(
                 detail="Only human users can mint API tokens",
             )
 
-        _require_org_admin(deps.get_core_client(), ctx)
+        _require_org_admin(deps.get_core_client(), ctx, request)
 
         raw_secret, prefix = _mint_secret()
         token_id = uuid4()
@@ -617,6 +624,7 @@ def create_auth_router(
     async def revoke_api_token(
         token_id: UUID,
         ctx: AuthContext = Depends(get_auth_context),
+        request: Request = None,
     ) -> Response:
         """Soft-revoke a token by stamping ``revoked_at = now()``.
         Trusted-DB owner/admin only; cross-org revocation refused at the
@@ -624,7 +632,7 @@ def create_auth_router(
         if ctx.caller_kind != "user":
             raise HTTPException(status_code=403, detail="Restricted to human users")
 
-        _require_org_admin(deps.get_core_client(), ctx)
+        _require_org_admin(deps.get_core_client(), ctx, request)
 
         now_iso = datetime.now(timezone.utc).isoformat()
         sb = deps.get_admin_client()

@@ -1,0 +1,24 @@
+name: OrgPickerModal
+path: seed/lib/frontend/src/design-system/components/OrgPickerModal.tsx
+phase: pilot-seed
+registered_at: "2026-10-08"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Popup where platform staff pick the org to enter once per login. Non-dismissible while org_selection.required (no Escape/backdrop/close). Home org listed first as 'Entrar como NoctusAI (minha org)'."
+  - "choose(orgId) = PUT /api/me/org-choice then window.location.reload(). Loading/empty/error states; mfa_required swaps the list for a 'Configurar 2FA' link to core /security."
+  - "Server is the gate (strict 403 for non-staff / no aal2); this is UX only. Mounted by OrgSelectionGate in the seed layout."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Dismissible picker rejected: required means required, otherwise the staff user lands in an unchosen org."
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []

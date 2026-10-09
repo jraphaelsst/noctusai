@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import { env } from './env';
+import { orgPinFetch } from './org-pin';
 
 /**
  * Actionable message for the #1 silent-blank-page defect: the seed's
@@ -54,6 +55,8 @@ export function createProductSupabase(schema?: string) {
       persistSession: true,
       detectSessionInUrl: true,
     },
+    // Org-picker intent pin on PostgREST too (RLS helper narrows on it).
+    global: { fetch: orgPinFetch },
     ...(schema ? { db: { schema } } : {}),
   });
 }

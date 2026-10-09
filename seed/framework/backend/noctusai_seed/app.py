@@ -41,6 +41,7 @@ from noctusai_lib.config.deploy_config import (
     baseline_required_prod_env,
     require_prod_config,
 )
+from noctusai_lib.api.auth.org_selection import OrgSelectionStore, make_org_selection_store
 from noctusai_lib.domain.licensing import (
     CORE_SLUG,
     LicenseChecker,
@@ -84,6 +85,7 @@ def create_product_app(
     team: Optional[TeamPolicy] = None,
     product_slug: Optional[str] = None,
     license_checker: Optional[LicenseChecker] = None,
+    org_selection_store: Optional[OrgSelectionStore] = None,
 ) -> FastAPI:
     """Create a fully configured FastAPI app for a NoctusAI product.
 
@@ -132,6 +134,10 @@ def create_product_app(
             from the schema (e.g. schema ``erp`` ↔ ``erp-imobiliario``). ``core``
             (``schema="public"``) is exempt. A product licensed for nobody
             still boots — the gate is evaluated per request, never at import.
+        org_selection_store: DI override for the platform org picker's
+            ``OrgSelectionStore`` (default ``make_org_selection_store`` -- Real in
+            prod, empty Fake under pytest). The picker only activates for a product
+            whose ``products.org_picker_ready`` is true.
         license_checker: DI override for the ``LicenseChecker`` (default
             ``make_license_checker`` — Real in prod, allow-all Fake under pytest).
         consent_features: Dotted module path whose import-time side effect
@@ -284,11 +290,16 @@ def create_product_app(
     _license_checker = license_checker or make_license_checker(
         lambda: db.get_core_client()
     )
+    _selection_store = org_selection_store or make_org_selection_store(
+        lambda: db.get_core_client()
+    )
     configure_license_gate(
         _product_slug,
         _license_checker,
         exempt=(schema == "public" or _product_slug == CORE_SLUG),
         get_core_client=lambda: db.get_core_client(),
+        selection_store=_selection_store,
+        db_schema=schema,
     )
 
     # 3a. Audit trail (owner directive 2026-09-23 — "record history of
@@ -490,6 +501,7 @@ def create_product_app(
     app.state.db = db
     app.state.deps = deps
     app.state.license_checker = _license_checker
+    app.state.org_selection_store = _selection_store
 
     # 8. Apply shared configuration (Sentry, CORS, exceptions, middleware, rate limiting)
     _effective_max_body_path_overrides = configure_app(

@@ -38,6 +38,8 @@ import {
   AIBadgeStack,
   PendingConsentBadge,
   LLMSpendBadge,
+  OrgSelectionGate,
+  endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
 import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
@@ -397,6 +399,8 @@ export function createProductLayout(config: ProductLayoutConfig) {
     // invalidate the server-side session; there is no default fallback
     // here on purpose — a silent no-op is exactly the bug being prevented.
     const handleLogout = async () => {
+      // Org picker: end this product's selection while the token is still valid.
+      await endOrgSelectionBestEffort();
       if (sessionAuth) {
         await sessionAuth.onLogout();
       } else {
@@ -441,6 +445,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
 
     return (
       <>
+      <OrgSelectionGate />
       <AppShell
         sidebar={({ closeSidebar }) => (
           <Sidebar

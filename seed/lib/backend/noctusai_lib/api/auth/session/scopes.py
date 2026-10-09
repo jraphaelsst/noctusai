@@ -42,7 +42,10 @@ from typing import Any, Awaitable, Callable, Literal, Optional
 from fastapi import Depends, HTTPException, Request, Response
 
 from noctusai_lib.api.auth.mfa.gate import ADMIN_TIER_ROLES, require_admin_assurance
-from noctusai_lib.api.auth.effective_org import resolve_effective_org
+from noctusai_lib.api.auth.effective_org import (
+    acting_header_of,
+    resolve_effective_org_for_request,
+)
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.domain.licensing import enforce_license
 
@@ -71,18 +74,26 @@ def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
         The role string (e.g. ``"owner"``) or ``None`` when
         ``user_id`` is ``None`` or no matching row exists.
     """
-    eff = resolve_effective_org(core_client, user_id)
+    # HOME role: no token/header is passed, so a staff member's org-picker selection
+    # is never applied here (the acting role/org ride on the auth dependencies).
+    eff = resolve_effective_org_for_request(core_client, user_id)
     return eff.org_role if eff is not None else None
 
 
-def resolve_org_membership(core_client: Any, user_id: Any) -> Optional[dict]:
+def resolve_org_membership(
+    core_client: Any, user_id: Any, *, token: Optional[str] = None,
+    acting_header: Optional[str] = None,
+) -> Optional[dict]:
     """``{"org_id", "org_role"}`` of the EFFECTIVE org (the ONE resolver,
     :func:`noctusai_lib.api.auth.effective_org.resolve_effective_org`) from the TRUSTED
     ``public.noctus_users`` row,
     or ``None`` (no ``user_id`` / no row). Never reads ``user_metadata``.
-    Raises on a DB error — callers fail closed.
+    Raises on a DB error — callers fail closed. ``token`` / ``acting_header`` let
+    platform staff's live org-picker selection resolve (see ``effective_org``).
     """
-    eff = resolve_effective_org(core_client, user_id)
+    eff = resolve_effective_org_for_request(
+        core_client, user_id, token=token, acting_header=acting_header
+    )
     if eff is None:
         return None
     return {"org_id": eff.org_id, "org_role": eff.org_role}
@@ -307,7 +318,11 @@ def require_scopes(
 
         # caller_kind == "user"
         membership = (
-            resolve_org_membership(get_core_client(), ctx.user_id)
+            resolve_org_membership(
+                get_core_client(), ctx.user_id,
+                token=ctx.raw_token,
+                acting_header=acting_header_of(request),
+            )
             if get_core_client is not None
             else None
         )

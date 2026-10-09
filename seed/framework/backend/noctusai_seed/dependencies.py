@@ -43,6 +43,7 @@ from noctusai_lib.api.auth import (
     make_resolve_platform_role,
     validate_bearer_token,
 )
+from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.domain.licensing import enforce_license, enforce_license_for_user
 
@@ -201,7 +202,10 @@ class ProductDependencies:
         with zero per-product code. The raw, explicitly-named exemption is
         :meth:`get_current_user_ungated` (keeper-allowlisted)."""
         user, token = await self.get_current_user_ungated(authorization, request)
-        enforce_license_for_user(getattr(user, "id", None))
+        enforce_license_for_user(
+            getattr(user, "id", None), token=token,
+            acting_header=acting_header_of(request),
+        )
         return user, token
 
     def get_user_role(self, user) -> str:

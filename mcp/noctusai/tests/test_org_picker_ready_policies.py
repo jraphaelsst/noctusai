@@ -1,0 +1,80 @@
+"""Regression tests for `check_org_picker_ready_policies`: a product whose chain last
+sets products.org_picker_ready=true must carry no home-only policy (latest definition)."""
+from __future__ import annotations
+
+from pathlib import Path
+
+from tools.noctus.dev.compliance import check_org_picker_ready_policies
+
+READY = "UPDATE public.products SET org_picker_ready = true WHERE slug = 'demo';\n"
+UNREADY = "UPDATE public.products SET org_picker_ready = false WHERE slug = 'demo';\n"
+HOME_POLICY = (
+    "CREATE POLICY leads_org ON demo.leads FOR ALL TO authenticated\n"
+    "  USING (org_id = (SELECT public.current_org_id())) WITH CHECK (org_id = (SELECT public.current_org_id()));\n"
+)
+PICKER_POLICY = (
+    "CREATE POLICY leads_org ON demo.leads FOR ALL TO authenticated\n"
+    "  USING (org_id = (SELECT public.current_org_id_for('demo')));\n"
+)
+
+
+def _chain(tmp_path: Path, **files: str) -> Path:
+    d = tmp_path / "products" / "demo" / "backend" / "migrations"
+    d.mkdir(parents=True)
+    for name, sql in files.items():
+        (d / name).write_text(sql, encoding="utf-8")
+    return tmp_path
+
+
+class TestOrgPickerReadyPolicies:
+    def test_ready_with_a_home_only_policy_is_flagged(self, tmp_path):
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_ready.sql": READY})
+        issues = check_org_picker_ready_policies(root)
+        assert len(issues) == 1
+        assert issues[0]["product"] == "demo" and "demo.leads::leads_org" in issues[0]["issue"]
+        assert issues[0]["severity"] == "critical"
+
+
+    def test_converted_policy_passes(self, tmp_path):
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_conv.sql": "DROP POLICY leads_org ON demo.leads;\n" + PICKER_POLICY,
+                                   "003_ready.sql": READY})
+        assert check_org_picker_ready_policies(root) == []
+
+
+    def test_alter_policy_to_the_picker_helper_passes(self, tmp_path):
+        alter = "ALTER POLICY leads_org ON demo.leads USING (org_id = (SELECT public.current_org_id_for('demo')));\n"
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_alter.sql": alter, "003_ready.sql": READY})
+        assert check_org_picker_ready_policies(root) == []
+
+
+    def test_inline_noctus_users_subquery_counts_as_home_only(self, tmp_path):
+        inline = ("CREATE POLICY p ON demo.t USING (org_id IN (SELECT org_id FROM public.noctus_users "
+                  "WHERE id = (SELECT auth.uid())));\n")
+        root = _chain(tmp_path, **{"001_a.sql": inline, "002_ready.sql": READY})
+        assert len(check_org_picker_ready_policies(root)) == 1
+
+
+    def test_a_later_unready_flag_means_nothing_to_judge(self, tmp_path):
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_ready.sql": READY, "003_off.sql": UNREADY})
+        assert check_org_picker_ready_policies(root) == []
+
+
+    def test_never_ready_products_are_not_judged(self, tmp_path):
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY})
+        assert check_org_picker_ready_policies(root) == []
+
+
+    def test_dropped_table_drops_its_policies(self, tmp_path):
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_drop.sql": "DROP TABLE IF EXISTS demo.leads;\n",
+                                   "003_ready.sql": READY})
+        assert check_org_picker_ready_policies(root) == []
+
+
+    def test_comments_and_prose_are_not_statements(self, tmp_path):
+        prose = "-- CREATE POLICY x ON demo.t USING (org_id = public.current_org_id());\n" + PICKER_POLICY
+        root = _chain(tmp_path, **{"001_a.sql": prose, "002_ready.sql": READY})
+        assert check_org_picker_ready_policies(root) == []
+
+
+    def test_live_tree_is_clean(self):
+        assert check_org_picker_ready_policies() == []

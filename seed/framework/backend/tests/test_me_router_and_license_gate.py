@@ -86,8 +86,12 @@ class TestAuthBoundary:
 class TestMeAccess:
     def test_licensed_user_has_access(self):
         body = _make([USER_ROW]).get("/api/me/access", headers=H_USER).json()
-        assert body == {"has_access": True, "product_slug": "igig",
-                        "org": {"id": HOME, "nome": "Casa"}}
+        assert body["has_access"] is True
+        assert body["product_slug"] == "igig"
+        assert body["org"] == {"id": HOME, "nome": "Casa"}
+        sel = body["org_selection"]
+        assert (sel["available"], sel["required"], sel["acting"]) == (False, False, False)
+        assert sel["org_role"] == "member"
 
     def test_unlicensed_user_gets_200_has_access_false_not_403(self):
         c = _make([USER_ROW], checker=FakeLicenseChecker(allow_all=False))

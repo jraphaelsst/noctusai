@@ -78,6 +78,30 @@ async def _require_team_manage(user, db):
     return profile
 
 
+#: Who may grant which org role (mirror of the seed team router's ``_GRANT_REQUIRES``).
+#: ``owner`` is NEVER grantable here -- not by invite, not by a role change, not by anyone
+#: (ownership moves only through its dedicated flow). ``admin`` needs an inviter who is
+#: already owner/admin, or the platform superadmin (``noctus_users.role = 'admin'``) inside
+#: their own org -- without it any ``team:manage`` holder (e.g. a manager) could mint an
+#: admin and take the org over.
+_GRANT_REQUIRES = {"admin": frozenset({"owner", "admin"})}
+
+
+def _require_can_grant(profile: dict, role: str) -> None:
+    """403 unless the caller may hand out ``role`` (see ``_GRANT_REQUIRES``)."""
+    if role == "owner":
+        raise HTTPException(
+            status_code=403,
+            detail="Não é possível conceder o papel de proprietário por esta rota",
+        )
+    grantors = _GRANT_REQUIRES.get(role)
+    if grantors is not None and profile.get("org_role") not in grantors and profile.get("role") != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Você não tem permissão para conceder este papel",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -118,6 +142,7 @@ async def convidar_membro(
 
     profile = await _require_team_manage(user, db)
     org_id = profile["org_id"]
+    _require_can_grant(profile, body.role)
 
     # Ensure the email is not already in this org
     existing = (
@@ -290,6 +315,8 @@ async def alterar_role_membro(
 
     profile = await _require_team_manage(user, db)
     org_id = profile["org_id"]
+
+    _require_can_grant(profile, body.role)
 
     # Cannot change your own role
     if user_id == user.id:

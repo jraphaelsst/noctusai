@@ -117,7 +117,10 @@ def make_get_auth_context(
             # configured; otherwise 401. The dep never tries to parse
             # JWTs itself — that's the bridge's job.
             if legacy_jwt_resolver is not None:
-                ctx = await legacy_jwt_resolver(token)
+                if getattr(legacy_jwt_resolver, "accepts_request", False):
+                    ctx = await legacy_jwt_resolver(token, request)
+                else:
+                    ctx = await legacy_jwt_resolver(token)
                 if ctx is not None:
                     request.state.auth_context = ctx
                     return ctx

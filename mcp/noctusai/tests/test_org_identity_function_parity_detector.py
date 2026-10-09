@@ -176,6 +176,39 @@ class TestFrozenBaselineAndLastWriter:
         assert check_org_identity_function_parity(root) == []
 
 
+class TestOrgPickerHelperCanon:
+    """`current_org_id_for(p_schema text)` (core 070) is policed like the zero-arg helpers."""
+
+    def _core(self, root: Path, name: str, sql: str) -> None:
+        d = root / "products" / "core" / "backend" / "migrations"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / name).write_text(sql, encoding="utf-8")
+
+    def test_canonical_helper_passes(self, tmp_path: Path):
+        root = _tree(tmp_path, migration=_render("current_org_id_for"))
+        assert check_org_identity_function_parity(root) == []
+
+    def test_drifted_helper_is_flagged(self, tmp_path: Path):
+        drifted = _render("current_org_id_for").replace("aal2", "aal1")
+        root = _tree(tmp_path, migration=drifted)
+        issues = check_org_identity_function_parity(root)
+        assert any("current_org_id_for" in i["issue"] for i in issues)
+
+    def test_helper_arg_list_is_part_of_the_signature(self, tmp_path: Path):
+        renamed = _render("current_org_id_for").replace("(p_schema text)", "(p_other text)", 1)
+        root = _tree(tmp_path, migration=renamed)
+        assert any("current_org_id_for" in i["issue"] for i in check_org_identity_function_parity(root))
+
+    def test_last_core_writer_of_the_helper_must_be_canonical(self, tmp_path: Path):
+        root = _tree(tmp_path)
+        both = _render("current_org_id") + "\n" + _render("current_user_org_id")
+        self._core(root, "067_canon.sql", both)
+        self._core(root, "070_helper.sql", _render("current_org_id_for"))
+        self._core(root, "071_drift.sql", _render("current_org_id_for").replace("aal2", "aal1"))
+        issues = check_org_identity_function_parity(root)
+        assert any("LAST core migration" in i["issue"] and "current_org_id_for" in i["issue"] for i in issues)
+
+
 def test_live_tree_is_clean():
     """The real tree: every NEW/changed re-declaration matches the canon (historical
     copies are frozen in org_identity_parity_baseline.json) and the last core

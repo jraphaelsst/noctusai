@@ -208,6 +208,30 @@ class TestLogout:
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
 
+    def test_logout_ends_every_org_selection(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.auth.sign_out = MagicMock()
+        mock_sb.set_rpc_data("platform_org_selection_end", 1)
+
+        resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 200
+        assert mock_sb.rpc_calls == [
+            ("platform_org_selection_end", {"p_user_id": "test-user-123", "p_reason": "logout"})
+        ]
+
+    def test_logout_still_ok_when_ending_selections_fails(self, client, caplog):
+        mock_sb = client.mock_supabase
+        mock_sb.auth.sign_out = MagicMock()
+
+        def boom(name, params=None):
+            raise RuntimeError("db down")
+
+        mock_sb.rpc = boom
+        with caplog.at_level("ERROR"):
+            resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 200
+        assert "could not end org selections" in caplog.text
+
     def test_logout_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/auth/logout")
         assert resp.status_code == 401

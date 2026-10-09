@@ -20,6 +20,7 @@ from app.rate_limit import limiter
 from app.services import login_mfa
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
+from noctusai_lib.api.auth.org_selection import make_org_selection_store
 from noctusai_lib.config.product_urls import resolve_product_url
 from noctusai_lib.primitives.roles import customer_may_access_product
 
@@ -415,4 +416,13 @@ async def logout(authorization: Optional[str] = Header(None)):
         client.auth.sign_out()
     except Exception as exc:
         logger.warning("auth: client.sign_out() failed for user_id=%s (%s); logout still returns ok", user.id, exc)
+    # Platform org picker: logging out of core ends ALL of the user's live selections
+    # (ended_by='logout') -- the next login starts clean. The sign-out itself is
+    # best-effort, but a selection that could not be ended is logged LOUDLY: the
+    # revocation triggers and the session_id binding still keep a stale row inert
+    # (a new login never matches it), yet it must be visible.
+    try:
+        make_org_selection_store(get_admin_client, force_real=True).end(user.id, None, "logout")
+    except Exception:
+        logger.error("auth: could not end org selections on logout user_id=%s", user.id, exc_info=True)
     return {"ok": True}

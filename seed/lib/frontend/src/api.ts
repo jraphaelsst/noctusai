@@ -6,7 +6,8 @@
  * is written once.
  */
 
-import { isOrgSemLicencaBody, redirectToSemAcesso } from './access';
+import { isOrgSelectionChangedBody, isOrgSemLicencaBody, redirectToSemAcesso } from './access';
+import { ORG_PIN_HEADER, getOrgPin, notifyOrgSelectionChanged } from './org-pin';
 
 // ---------------------------------------------------------------------------
 // X-Noctus-Client — the caller-kind signal `AuditMiddleware`
@@ -347,6 +348,11 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     if (t) {
       headers['Authorization'] = `Bearer ${t}`;
     }
+    // Org-picker intent pin: tells the server which org this SPA believes it
+    // is in, so a selection changed elsewhere (another tab) 409s instead of
+    // silently acting on a different org.
+    const pin = getOrgPin();
+    if (pin) headers[ORG_PIN_HEADER] = pin;
     return headers;
   }
 
@@ -457,12 +463,22 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
     if (isOrgSemLicencaBody(data)) (onOrgSemLicenca ?? redirectToSemAcesso)();
   }
 
+  // Org-picker: a 409 `org_selection_changed` means the pin is stale. Drop it
+  // (so nothing re-sends it) and let the registered handler refetch access +
+  // reopen the picker. The response still propagates to the caller.
+  async function checkOrgSelectionRefusal(response: Response): Promise<void> {
+    if (response.status !== 409) return;
+    const data = await response.clone().json().catch(() => null);
+    if (isOrgSelectionChangedBody(data)) notifyOrgSelectionChanged();
+  }
+
   // The MFA interceptor wraps the auth-retrying fetch. `raw` (no interceptor)
   // is what the dialog itself talks through — a 403 there must never reopen it.
   let rawClient: ApiClient;
   async function fetchWithMfa(url: string, init: RequestInit): Promise<Response> {
     const response = await fetchWithAuthRetry(url, init);
     await checkLicenseRefusal(response);
+    await checkOrgSelectionRefusal(response);
     const required = await readMfaRequired(response);
     if (!required) return response;
     const verified = await mfaChallenge.request({
