@@ -161,7 +161,9 @@ def create_mfa_router(
     def _validate(token: str) -> tuple[Any, Optional[str]]:
         if bearer_validator is not None:
             return bearer_validator(token)
-        return validate_bearer_token_with_aal(deps.get_client(), token)
+        # ProductDependencies exposes get_core_client (service role); auth.get_user(token) verifies
+        # the JWT with any key. There is no deps.get_client -- calling it 500'd every bearer call.
+        return validate_bearer_token_with_aal(deps.get_core_client(), token)
 
     async def get_caller(request: Request) -> _Caller:
         cookie = request.cookies.get(_SESSION_COOKIE)

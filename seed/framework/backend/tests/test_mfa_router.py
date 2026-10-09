@@ -75,7 +75,7 @@ def env():
     store = FakeSessionStore()
     exchanger = FakeTokenExchanger()
     sink = _Sink()
-    deps = SimpleNamespace(get_core_client=lambda: _CoreClient(), get_client=lambda: None)
+    deps = SimpleNamespace(get_core_client=lambda: _CoreClient())  # the surface ProductDependencies really has
     app = FastAPI()
     app.state.audit_sink, app.state.audit_enabled = sink, True
     app.include_router(create_mfa_router(
@@ -320,3 +320,34 @@ def test_create_product_app_mounts_mfa_by_default():
     routers = build_standard_routers(SimpleNamespace(), SimpleNamespace(), "P", "0", names=[*names, "mfa"])
     paths = {r.path for rt in routers for r in rt.routes}
     assert {f"{BASE}/status", f"{BASE}/enroll", f"{BASE}/verify"} <= paths
+
+
+# ─── Default bearer path, wired with the REAL ProductDependencies ──────────
+# Every test above injects `bearer_validator`, so the default path never ran: it called a
+# `deps.get_client()` that ProductDependencies does not have and 500'd every bearer call in
+# prod (core /api/auth/mfa/status, 2026-10-09).
+
+def test_default_bearer_path_works_with_real_product_dependencies():
+    from noctusai_seed.dependencies import ProductDependencies
+
+    class _Auth:
+        def get_user(self, token):
+            if token != "tok-real":
+                err = RuntimeError("invalid JWT")
+                err.status = 401  # the provider's 4xx = an authoritative rejection
+                raise err
+            return SimpleNamespace(user=SimpleNamespace(id="u-member", user_metadata={"org_id": "org-1"}))
+
+    class _Core(_CoreClient):
+        auth = _Auth()
+
+    deps = ProductDependencies(db=SimpleNamespace(get_core_client=lambda: _Core()))
+    app = FastAPI()
+    app.state.audit_sink, app.state.audit_enabled = _Sink(), True
+    app.include_router(create_mfa_router(
+        deps, SimpleNamespace(), client=FakeMfaClient(valid_code=CODE), session_store=FakeSessionStore(),
+        token_exchanger=FakeTokenExchanger(), verify_limiter=SlidingWindowLimiter(),
+    ))
+    http = TestClient(app, raise_server_exceptions=False)
+    assert http.get("/api/auth/mfa/status", headers=H("tok-real")).status_code == 200
+    assert http.get("/api/auth/mfa/status", headers=H("tok-bogus")).status_code == 401
