@@ -68,6 +68,8 @@ import {
   Plus,
   UserCog,
   Wallet,
+  Search,
+  Lightbulb,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -123,6 +125,7 @@ const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
 const Testemunhas = lazyWithReload(() => import("@/pages/Testemunhas"));
+const Pesquisa = lazyWithReload(() => import("@/pages/Pesquisa"));
 const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
 // W6; Regras — W7; Curadores — notify slice; Painel — W9; Modelos +
@@ -219,6 +222,16 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Wand2,
     items: [
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
+    ],
+    groups: [
+      {
+        key: "media-creation-pesquisa",
+        label: "Pesquisa",
+        icon: Search,
+        items: [
+          { name: "Minha Pesquisa", href: "/media-creation/pesquisa", icon: Lightbulb, route: "media-creation-pesquisa" },
+        ],
+      },
     ],
   },
   {
@@ -373,6 +386,16 @@ const NAV_FALLBACK: NavGroup[] = [
     items: [
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
     ],
+    groups: [
+      {
+        key: "media-creation-pesquisa",
+        label: "Pesquisa",
+        icon: Search,
+        items: [
+          { name: "Minha Pesquisa", href: "/media-creation/pesquisa", icon: Lightbulb },
+        ],
+      },
+    ],
   },
   {
     key: "marketing",
@@ -460,6 +483,7 @@ export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
     { path: "/media-creation", component: MediaCreation },
+    { path: "/media-creation/pesquisa", component: Pesquisa },
     // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
