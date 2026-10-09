@@ -224,6 +224,16 @@ testing = [
     "uvicorn>=0.31.1",
 ]
 
+# Self-hosted transcription worker (`noctusai_lib.integrations.transcription.server`,
+# the `noctus-transcriber` container). An EXTRA so no product image ever installs
+# ctranslate2 / faster-whisper; only deploy/services/transcriber/ does. Versions
+# are RANGES here — the exact freeze is the hash-locked requirements.lock there.
+transcription-local = [
+    "faster-whisper>=1.2.1,<1.3",
+    "numpy>=1.26",
+    "uvicorn>=0.31.1",
+]
+
 [tool.setuptools.packages.find]
 include = ["noctusai_lib*"]
 

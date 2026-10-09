@@ -1,0 +1,12 @@
+# Direct deps of the transcriber image. requirements.lock is the hash-locked closure:
+#   uv pip compile requirements.in --python-version 3.12 --python-platform x86_64-manylinux_2_28 \
+#       --generate-hashes -o requirements.lock
+# (the production VPS is linux/amd64; re-run on any bump and commit both files)
+faster-whisper==1.2.1
+numpy
+fastapi
+starlette>=0.49.1,<1.7.0  # same bound as the seed lib pyproject
+uvicorn
+pydantic
+httpx
+huggingface_hub

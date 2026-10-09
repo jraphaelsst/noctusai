@@ -1,0 +1,64 @@
+# Build & push the noctus-transcriber image (infrastructure service, NOT a product).
+#
+# Separate from build-and-push.yml on purpose: that workflow's scope is the product
+# catalog (build-scope.txt); the transcriber is a ~1.3 GB image with a baked model
+# that must rebuild ONLY when its own inputs change (transcription-contract.md §2).
+#
+# Triggers: push to main/prod touching the Dockerfile, its lock, or the worker package;
+# or manual dispatch. Tags: :<model-rev8>-<git-sha8> (immutable). :latest moves ONLY on
+# a prod-ref build (same PROD-PIN rule as build-and-push.yml). Deploy is separate
+# (see needs-decision in the commit: non-product service deploy path).
+name: Build Transcriber Image (GHCR)
+
+on:
+  push:
+    branches: [main, prod]
+    paths:
+      - "deploy/services/transcriber/**"
+      - "seed/lib/backend/noctusai_lib/integrations/transcription/**"
+      - ".github/workflows/build-transcriber.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-transcriber-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    name: Build + push transcriber
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve tags
+        id: tags
+        run: |
+          set -euo pipefail
+          REV=$(grep -oP '^ARG MODEL_REVISION=\K[0-9a-f]{8}' deploy/services/transcriber/Dockerfile)
+          SHA=$(git rev-parse --short=8 HEAD)
+          IMG=ghcr.io/jraphaelsst/noctus-transcriber
+          TAGS="${IMG}:${REV}-${SHA}"
+          if [ "${GITHUB_REF}" = "refs/heads/prod" ]; then TAGS="${TAGS},${IMG}:latest"; else TAGS="${TAGS},${IMG}:edge"; fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/services/transcriber/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=transcriber
+          cache-to: type=gha,mode=max,scope=transcriber
