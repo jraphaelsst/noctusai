@@ -95,7 +95,10 @@ def test_rpc_requires_owner_or_admin_org_role_for_staff():
     assert "u.org_role IN ('owner', 'admin')" in SQL
 
 
-def test_helper_is_the_canonical_rendering():
+def test_the_last_core_declaration_of_the_helper_is_the_canonical_rendering():
+    """070 is a historical copy once a later core migration re-declares the helper (073 put
+    aal2 behind products.org_picker_requires_mfa); the canonical rendering must live in the
+    LAST core migration declaring it -- the one a fresh core apply leaves behind."""
     import importlib.util
 
     tpl = ROOT / "seed/lib/backend/noctusai_lib/domain/sql_templates.py"
@@ -103,7 +106,12 @@ def test_helper_is_the_canonical_rendering():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     canon = " ".join(mod.org_identity_function_sql("current_org_id_for").split())
-    assert canon in " ".join(SQL.split())
+    declaring = [
+        p for p in sorted((ROOT / "products/core/backend/migrations").glob("[0-9]*.sql"))
+        if re.search(r"FUNCTION\s+public\.current_org_id_for\s*\(", p.read_text(encoding="utf-8"))
+    ]
+    assert declaring and declaring[0].name.startswith("070_")
+    assert canon in " ".join(declaring[-1].read_text(encoding="utf-8").split()), declaring[-1].name
 
 
 def test_the_file_parses_as_postgres():
