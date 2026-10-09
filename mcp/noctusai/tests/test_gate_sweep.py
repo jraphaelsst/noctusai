@@ -964,3 +964,40 @@ class TestMcpScopedTests:
         scope = GS._derive_scope(["project-history/roadmaps/x-2026-10.md"])
 
         assert scope["doc_only"] is True and scope["unmapped_files"] == []
+
+
+class TestStaleServerEnvGatesStillRun:
+    def test_dotenv_value_without_marker_never_reaches_the_gate(self, tmp_path, monkeypatch):
+        env_bootstrap._loaded_keys.clear()
+        monkeypatch.delenv(env_bootstrap.LOADED_KEYS_ENV_MARKER, raising=False)
+        (tmp_path / ".env").write_text("NOC_STALE_GATE_SECRET=sb_secret_stale_xyz123\n")
+        monkeypatch.setenv("NOC_STALE_GATE_SECRET", "sb_secret_stale_xyz123")
+        spec = GS.GateSpec("probe", [sys.executable, "-c",
+            "import os, sys; sys.exit(0 if os.environ.get('NOC_STALE_GATE_SECRET') is None else 1)"],
+            tmp_path)
+
+        exit_code, *_ = GS._default_run_gate(spec)
+
+        assert exit_code == 0
+        assert env_bootstrap.dotenv_residue(env_bootstrap.gate_subprocess_env(tmp_path), tmp_path) == []
+
+
+def test_hook_script_maps_to_the_tests_that_load_it(tmp_path):
+    (tmp_path / "scripts/hooks").mkdir(parents=True)
+    (tmp_path / "scripts/hooks/my-hook.py").write_text("x = 1\n")
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    (tests / "test_my_hook.py").write_text('HOOK = "scripts/hooks/my-hook.py"\n')
+    (tests / "test_other.py").write_text("import json\n")
+    scope = GS._derive_scope(["scripts/hooks/my-hook.py"])
+
+    assert scope["mcp"] is True and scope["unmapped_files"] == []
+    assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (
+        ["mcp/noctusai/tests/test_my_hook.py"], [])
+
+
+def test_untested_hook_script_is_surfaced(tmp_path):
+    (tmp_path / "mcp/noctusai/tests").mkdir(parents=True)
+
+    assert GS._mcp_scoped_test_files(tmp_path, ["scripts/hooks/lonely.py"]) == (
+        [], ["scripts/hooks/lonely.py"])

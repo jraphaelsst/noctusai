@@ -18,10 +18,17 @@ runs the sweep and records its one-line summary in `<git-common-dir>/
 noc-worktree-sweep.last`; the NEXT session start prints that line once if it
 is new. Advisory by construction: always exits 0, failures only to stderr.
 Stdlib-only.
+
+2026-10-09: the child FIRST fast-forwards the primary checkout to origin/dev
+(`mcp/noctusai/primary_ff.py`, loaded by path; ff-only, refuses a non-dev
+branch / detached HEAD / tracked edits / diverged dev, each reported in the
+summary line). The sweep and every "run the primary's cli.py" path otherwise
+execute stale toolkit code until someone fast-forwards by hand.
 """
 from __future__ import annotations
 
 import fcntl
+import importlib.util
 import json
 import os
 import subprocess
@@ -30,6 +37,7 @@ from pathlib import Path
 
 TIMEOUT_S = 900  # the detached child may take its time; nobody waits on it
 LAST_NAME = "noc-worktree-sweep.last"
+FF_LOCK_NAME = "noc-primary-ff.lock"
 LOCK_NAME = "noc-worktree-sweep.lock"
 
 
@@ -82,9 +90,32 @@ def sweep(root: Path, *, timeout: float = TIMEOUT_S) -> str:
         lock.close()
 
 
+def fast_forward_primary(root: Path) -> str:
+    """ff-only the primary to origin/dev; the summary line ('' if up to date)."""
+    mod_path = root / "mcp" / "noctusai" / "primary_ff.py"
+    if not mod_path.exists():
+        return ""
+    lock = (root / ".git" / FF_LOCK_NAME).open("w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        lock.close()
+        return ""  # a peer session is fast-forwarding right now
+    try:
+        spec = importlib.util.spec_from_file_location("_noc_primary_ff", mod_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.summary_line(mod.ff_primary_to_dev(str(root), fetch=True))
+    finally:
+        lock.close()
+
+
 def run_child(root: Path) -> None:
-    """Detached-child entry: sweep, then record a non-empty summary as unseen."""
-    line = sweep(root)
+    """Detached-child entry: fast-forward the primary, sweep, then record a
+    non-empty summary as unseen. The FF runs first so the sweep (and every
+    later cli.py run from the primary) uses the code that is on dev."""
+    lines = [fast_forward_primary(root), sweep(root)]
+    line = " | ".join(x for x in lines if x)
     if line:
         (root / ".git" / LAST_NAME).write_text(json.dumps({"line": line, "shown": False}))
 
@@ -123,9 +154,7 @@ def main() -> int:
         line = take_previous_line(root)
         if line:
             print(line)
-        wt_dir = root / ".claude" / "worktrees"
-        if wt_dir.is_dir() and any(wt_dir.iterdir()):
-            spawn_detached(root)
+        spawn_detached(root)  # always: the primary FF runs even with no worktrees
     except Exception as e:  # noqa: BLE001 - advisory; never block a session start
         print(f"[noc-sweep] skipped: {type(e).__name__}: {e}", file=sys.stderr)
     return 0

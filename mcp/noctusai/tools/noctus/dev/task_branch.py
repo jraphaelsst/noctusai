@@ -114,6 +114,14 @@ _BANNED_TOKENS = (
     "reset", "checkout", "switch", "restore", "clean", "merge", "cherry-pick",
     "--hard", "--force", "--force-with-lease", "-f", "-D",
 )
+# The ONE explicit carve-out (2026-10-09): after a successful integrate push,
+# `primary_ff.ff_primary_to_dev` runs `git merge --ff-only --quiet
+# <remote>/<dev>` in the PRIMARY checkout — a fixed argv, never via `_git`,
+# so `merge` stays banned for everything else here. ff-only cannot create a
+# commit or rewrite history, and the helper refuses a non-dev branch, a
+# detached HEAD, tracked modifications and a diverged dev. Without it the
+# primary's cli.py (fresh-subprocess fallback, SessionStart sweep, merged-tip
+# gates) kept running pre-integrate code until someone fast-forwarded by hand.
 
 # Known-benign refresh artifacts — files the pre-commit / cache-refresh hooks
 # write as side-effects inside the worktree. These appear in `git status
@@ -467,6 +475,26 @@ def _stash_benign_artifacts(
         log_prefix="task_branch.integrate",
         label_hint=wt_path,
     )
+
+
+def _ff_primary_after_integrate(runner, root: str, dev_branch: str, remote: str) -> dict[str, Any]:
+    """Fast-forward the primary checkout via `primary_ff` (best-effort: a
+    refusal or error is reported in the result, never fails the integrate)."""
+    from primary_ff import ff_primary_to_dev  # lazy: mcp/noctusai is on sys.path
+
+    def git(*args: str, timeout: float = 120) -> tuple[int, str, str]:
+        rc, out, err = runner(["git", "-C", root, *args])
+        return rc, (out or "").strip(), (err or "").strip()
+
+    try:
+        return ff_primary_to_dev(root, dev_branch=dev_branch, remote=remote, git=git)
+    except Exception as e:  # noqa: BLE001 — never fail a completed integrate
+        return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
+
+
+def _primary_ff_summary(result: dict[str, Any]) -> str:
+    from primary_ff import summary_line  # lazy
+    return summary_line(result)
 
 
 def _pop_stash(runner, wt_path: str, ref: str | None, verbose: bool = False) -> None:
@@ -2072,6 +2100,14 @@ def task_branch(
                         dev_branch=dev_branch, remote=remote, verbose=verbose)
                 except Exception as e:  # best-effort — never fail a clean integrate
                     result["ledger_drain"] = {"ok": False, "error": str(e)}
+                # Move the primary checkout onto what was just pushed (ff-only;
+                # see the carve-out note under `_BANNED_TOKENS`). AFTER the drain:
+                # the drain may itself push from the primary.
+                result["primary_ff"] = _ff_primary_after_integrate(
+                    runner, _resolve_primary_root(primary_root), dev_branch, remote)
+                ff_line = _primary_ff_summary(result["primary_ff"])
+                if ff_line:
+                    result["message"] += f" {ff_line}."
                 # ── AUTO-CLEANUP — compliance by construction (2026-10-09).
                 # Reuses the `cleanup` action below verbatim (same merged
                 # check, refuse-if-dirty, pointer -> shipped, claim release);

@@ -51,7 +51,9 @@ A changed path buckets into exactly one of:
       non-test helper under tests/, any non-.py toolkit file); CI always
       runs it in full. A changed module NO test imports is surfaced as the
       `mcp_untested_change` entry (ran=False → `incomplete`), never a
-      silent pass.
+      silent pass. `scripts/hooks/<name>.py` joins this bucket: its tests live
+      in the toolkit suite and load the hook by path, so the tests whose text
+      names the file are selected.
   KB/CLAUDE-doc paths, and ONLY those       -> `kb_sync_verify`
       (`cli.py --verify-kb-sync`), plus `claude_md_router`
       (`cli.py --check-claude-md-router`) when `CLAUDE.md` itself changed.
@@ -85,7 +87,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from env_bootstrap import dotenv_residue, redact_secrets_in_text, sanitize_subprocess_env
+from env_bootstrap import dotenv_residue, gate_subprocess_env, redact_secrets_in_text
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -107,7 +109,7 @@ from .product_scope import filter_active
 
 _PRODUCT_RE = re.compile(r"^products/([^/]+)/(?:backend|frontend)/")
 _SEED_FLEET_RE = re.compile(r"^seed/")
-_MCP_RE = re.compile(r"^mcp/")
+_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$)")
 _KB_DOC_RE = re.compile(
     r"^(KNOWLEDGE-BASE/|CLAUDE\.md$|CLAUDE/|\.claude/(agents|skills|commands)/|project-history/roadmaps/)"
 )
@@ -455,7 +457,11 @@ def _mcp_scoped_test_files(
     pkg_dir = root / _MCP_PKG
     changed_tests: set[str] = set()
     changed_mods: dict[str, str] = {}
+    hook_files: list[str] = []
     for f in mcp_files:
+        if f.startswith("scripts/hooks/"):
+            hook_files.append(f)  # tested from the toolkit suite, loaded by path
+            continue
         if not f.startswith(_MCP_PKG):
             return None
         rel = f[len(_MCP_PKG):]
@@ -494,7 +500,14 @@ def _mcp_scoped_test_files(
                 affected.add(rel_test)
                 covered.update(hits)
     untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
-    return sorted(affected), untested
+    for hook in hook_files:
+        name = Path(hook).name
+        hits = [str(t.relative_to(root)) for t in sorted((pkg_dir / "tests").rglob("test_*.py"))
+                if name in t.read_text(encoding="utf-8", errors="replace")]
+        affected.update(hits)
+        if not hits:
+            untested.append(hook)
+    return sorted(affected), sorted(untested)
 
 
 def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
@@ -574,7 +587,8 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     directly. `exit_code=None` means the gate did not produce a verdict at
     all (timeout, missing executable) — never conflated with `0`.
 
-    🔴 ENV HYGIENE (2026-09-27) — runs with `sanitize_subprocess_env()`,
+    🔴 ENV HYGIENE (2026-09-27; value scrub 2026-10-09) — runs with `gate_subprocess_env()`
+    (= `sanitize_subprocess_env()` + a scrub of every .env-identical value),
     NOT a bare inherited `os.environ`. This process (the MCP server / CLI)
     may have loaded real secrets from `.env` via `env_bootstrap`; CI runs
     these exact suites from a scrubbed `env -i` (see `.github/workflows/
@@ -590,7 +604,7 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
     try:
         proc = subprocess.run(
             spec.argv, cwd=str(spec.cwd), capture_output=True, text=True, timeout=timeout,
-            env=sanitize_subprocess_env(),
+            env=gate_subprocess_env(Path(spec.cwd)),
         )
     except subprocess.TimeoutExpired:
         return None, f"timeout after {timeout}s", time.time() - start
@@ -805,8 +819,10 @@ def gate_sweep(
     specs = _build_gate_specs(root, scope)
     runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
 
-    # Measured against what `_default_run_gate` actually hands its subprocess.
-    env_residue = dotenv_residue(sanitize_subprocess_env(), root)
+    # Measured against what `_default_run_gate` actually hands its subprocess
+    # (provenance strip + .env-value scrub) — a backstop that only fires if the
+    # scrub ever regresses; the scrub itself makes it empty by construction.
+    env_residue = dotenv_residue(gate_subprocess_env(root), root)
     gates = _run_gates(specs, runner, env_residue)
 
     if scope.get("mcp_untested_modules"):

@@ -407,3 +407,29 @@ class TestDotenvResidue:
 
     def test_no_dotenv_is_empty(self, tmp_path):
         assert env_bootstrap.dotenv_residue({"X": "whatever-long"}, tmp_path) == []
+
+
+class TestGateSubprocessEnvScrub:
+    """2026-10-09: a 'stale server' — started before the provenance marker, or
+    from a shell that sourced .env — carries the .env VALUES with no marker and
+    no `_loaded_keys`. The gate env must still be clean."""
+
+    def test_stale_server_env_is_scrubbed(self, tmp_path):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text("NOC_STALE_SECRET=super-secret-value\nNOC_FLAG=true\n")
+        stale = {"NOC_STALE_SECRET": "super-secret-value", "NOC_FLAG": "true",
+                 "NOC_OVERRIDE": "ci-provided", "PATH": "/usr/bin"}
+
+        env = env_bootstrap.gate_subprocess_env(tmp_path, stale)
+
+        assert "NOC_STALE_SECRET" not in env
+        assert env["NOC_FLAG"] == "true"  # too short to be evidence
+        assert env["NOC_OVERRIDE"] == "ci-provided" and env["PATH"] == "/usr/bin"
+
+    def test_different_value_is_a_deliberate_override_and_kept(self, tmp_path):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text("NOC_STALE_SECRET=super-secret-value\n")
+
+        env = env_bootstrap.gate_subprocess_env(tmp_path, {"NOC_STALE_SECRET": "ci-value-xyz"})
+
+        assert env == {"NOC_STALE_SECRET": "ci-value-xyz"}

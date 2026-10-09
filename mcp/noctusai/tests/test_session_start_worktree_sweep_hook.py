@@ -69,3 +69,31 @@ def test_next_start_prints_previous_line_once(tmp_path):
     (tmp_path / ".git" / H.LAST_NAME).write_text(json.dumps({"line": "noc: reclaimed 3", "shown": False}))
     assert H.take_previous_line(tmp_path) == "noc: reclaimed 3"
     assert H.take_previous_line(tmp_path) == ""
+
+
+def test_child_fast_forwards_the_primary_and_records_the_line(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    mod = tmp_path / "mcp" / "noctusai" / "primary_ff.py"
+    mod.parent.mkdir(parents=True)
+    mod.write_text(
+        "def ff_primary_to_dev(root, fetch=False):\n"
+        "    assert fetch is True\n"
+        "    return {'status': 'fast_forwarded', 'from': 'a1', 'to': 'b2', 'commits': 3}\n"
+        "def summary_line(r):\n"
+        "    return f\"noc: primary checkout fast-forwarded {r['from']}..{r['to']}\"\n")
+
+    H.run_child(tmp_path)  # no worktrees dir: the sweep is a no-op, the FF still runs
+
+    data = json.loads((tmp_path / ".git" / H.LAST_NAME).read_text())
+    assert data == {"line": "noc: primary checkout fast-forwarded a1..b2", "shown": False}
+
+
+def test_hook_spawns_the_child_even_without_worktrees(tmp_path, monkeypatch):
+    spawned = []
+    monkeypatch.setattr(H, "spawn_detached", lambda root: spawned.append(root))
+    monkeypatch.setattr(H, "primary_root", lambda start: tmp_path)
+    monkeypatch.setattr(H.sys, "stdin", __import__("io").StringIO("{}"))
+    monkeypatch.setattr(H.sys, "argv", ["hook"])
+
+    assert H.main() == 0
+    assert spawned == [tmp_path]

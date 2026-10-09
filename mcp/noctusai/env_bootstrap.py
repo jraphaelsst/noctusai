@@ -326,6 +326,23 @@ def dotenv_residue(env: Mapping[str, str], repo_root: Path) -> list[str]:
     return sorted(residue)
 
 
+def gate_subprocess_env(repo_root: Path, base_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    """The env a GATE subprocess (test/build suite) runs with: the provenance-
+    based :func:`sanitize_subprocess_env` PLUS a value-based scrub of every key
+    whose value is identical to the repo ``.env``'s (:func:`dotenv_residue`).
+
+    The scrub is what makes gates runnable however the server was launched —
+    an MCP server started before the provenance marker existed, or from a shell
+    that sourced ``.env``, carries the values with no marker (2026-10-09: 4/4
+    integrates ``inconclusive`` on ``env_free_of_dotenv``). A value equal to the
+    developer ``.env``'s is by definition that ``.env`` leaking in, never a
+    deliberate override, and CI runs these suites with no ``.env`` at all."""
+    env = sanitize_subprocess_env(base_env)
+    for key in dotenv_residue(env, repo_root):
+        env.pop(key, None)
+    return env
+
+
 def _known_secret_values() -> dict[str, str]:
     """Env values presumed sensitive RIGHT NOW: everything
     :func:`load_repo_env` injected from ``.env``, plus anything else
@@ -377,6 +394,7 @@ __all__ = [
     "get_loaded_keys",
     "sanitize_subprocess_env",
     "dotenv_residue",
+    "gate_subprocess_env",
     "LOADED_KEYS_ENV_MARKER",
     "redact_secrets_in_text",
 ]
