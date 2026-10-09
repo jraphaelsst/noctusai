@@ -5,7 +5,8 @@ Plan, slices and live-test script: [`PROJECT.md`](PROJECT.md). Paths are relativ
 
 Conventions, for every route below:
 - Seed envelope `{"data": …}`; auth = the card_hub org-scoped user (same dependency as the existing `/api/clientes/{cliente_id}/…` routes).
-- Errors: `400` for a WRONG value, `404` for an unknown/other-org id, `409` for a state conflict (with `{"detail", "code"}`).
+- Errors use the SEED envelope (`AppException` → `{"error": {"code", "message", "details"}}`, read on the FE through the seed `ApiError` `code` / `details` / `extractErrorMessage`): `400` for a WRONG value, `404` for an unknown/other-org id, `409` for a state conflict. Never a flat `{detail, code}` body.
+- Migrations: no pre-assigned numbers. Each slice takes `noctus.dev.next_migration_number` when it writes the file; `task_branch integrate` blocks on a collision.
 - Strict `== 401` without a token (auth tests assert exactly 401).
 - New tables get the org-picker RLS shape (mig 211: `_select_own_org` / `_write_own_org` / `_service_role`) and `SELECT public.attach_acting_audit_triggers('social_wiring')` (mig 214).
 - No silent fallbacks: a missing input is a reported `faltando`, never a guessed default.
@@ -77,7 +78,7 @@ Accepted MIME types gain `image/heic` (converted to JPEG on ingest).
 
 ## §3 · S3 Roteiro, "visita aconteceu?" and metrics
 
-### 3.1 Data (mig 219)
+### 3.1 Data (migration: next free number)
 - `visitas.nao_realizada_motivo text NULL`, checked against `('cliente_desistiu','cliente_nao_compareceu','imovel_indisponivel','reagendada','outro')`.
 - `visitas.realizada_em timestamptz NULL` (set when the status becomes `realizada`).
 - `roteiros.feedback_status text NOT NULL DEFAULT 'pendente'`, checked against `('pendente','respondido')`, and `roteiros.feedback_em timestamptz`.
@@ -115,7 +116,7 @@ The old "Proposta enviada / aceita" toggle pills are REMOVED from the FE. Their 
 
 ## §4 · S4 Proposta
 
-### 4.1 Data model (mig 217)
+### 4.1 Data model (migration: next free number)
 
 **Reasoning.** A proposta is an **offer snapshot**. An atendimento can have several at once (competing imóveis, counter-offers), and each must keep its terms even after another one is accepted. The contract generator, on the other hand, reads ONE live negotiation set keyed by `atendimento_id` (`atendimento_negociacao` + `_termos` + `_parcelas` + `_favorecidos` + `_intermediarios`), and that set is well tested.
 
@@ -171,7 +172,9 @@ Constraints and indexes:
 - `PATCH "/{id}"`, partial body with any editable field. `409` `code="proposta_fechada"` when the status is `aceita`, `recusada` or `cancelada`.
 - `POST "/{id}/enviar"` → status `enviada`, `enviada_em`.
 - `POST "/{id}/recusar"`, body `{motivo: str}` (required) → `recusada`.
-- `POST "/{id}/aceitar"`, body `{}` → see §4.4. Response `{proposta: Proposta, contrato_id, geracao: {pronto, faltando, bloqueios, avisos}}`.
+- `POST "/{id}/aceitar"`, body `{}` → see §4.4. Response `{proposta: Proposta, contrato_id, geracao: {pronto, faltando, bloqueios, avisos}, passos: [{passo: 'materializar'|'visita'|'contrato'|'status'|'funil'|'pos_aceite', status: 'ok'|'erro'|'pulado', mensagem: str|null}], pos_aceite: PosAceite}`.
+- `POST "/{id}/pos-aceite"` → `PosAceite` (§7.3); re-runs §7, idempotent.
+- Refusals (409 codes): `proposta_fechada`, `proposta_ja_aceita`, `imovel_divergente`, `visita_nao_realizada`, `proposta_nao_aceita`. Snapshot validation: 400 `snapshot_invalido` with `details.campos = [{path: 'parcelas.0.valor', mensagem}]`.
 - `DELETE "/{id}"`: only `rascunho` (else `409`); a hard delete is fine for a never-sent draft.
 
 `Proposta` = every column above, plus `imovel: {codigo, titulo, endereco}`, `visita: {id, data_visita}|null`, `imobiliaria: {id, razao_social}|null`, `testemunhas: [{id, nome}]`, `saldo_nao_alocado` (= `valor_proposto` − Σ parcelas), and `completude: [str]` (what the contract would still lack: reported, never blocking a save).
@@ -199,7 +202,8 @@ Then, in order:
 2. If the proposta came from a visita, stamp `visitas.proposta_aceita_em`.
 3. Call `contrato_gerador.service.iniciar`. Set the contract's `imobiliaria_id` and testemunhas from the proposta. Store `contrato_id`.
 4. Set `status='aceita'`.
-5. Emit funnel event `proposta_aceita` (§6).
+5. Emit funnel event `proposta_aceita` (§6). This step only calls `mover_por_evento`; the mover itself calls `pipeline.aceite.aceitar_proposta` (§6), so there is ONE caller.
+6. `pos_aceite_service.disparar` (§7). Imported lazily: a missing module reports `status:'erro', mensagem:'módulo indisponível'` in `passos`, and the accept still stands.
 
 On a failure after step 1, report it with the exact step and leave the proposta `enviada`. Every step is idempotent, so retrying Aceitar is safe.
 
@@ -221,7 +225,7 @@ On a failure after step 1, report it with the exact step and leave the proposta 
 | `lead_criado` | `qualificacao` (spawn already does it; no-op) |
 | `roteiro_criado` | `visitas` |
 | `proposta_criada` | `proposta_recebida` |
-| `proposta_aceita` | `proposta_decisao`, then `pipeline.aceitar_proposta` (§5.4) |
+| `proposta_aceita` | `proposta_decisao`, then `app.modules.pipeline.aceite.aceitar_proposta(client, org_id, atendimento_id, actor_id) -> {processo, already_accepted}` (§5.4; `boards.py`'s route becomes a thin wrapper over the same function) |
 
 - Uses `mover_atendimento` internally, so `stage_gate` still applies.
 - When the gate refuses, return `moveu=false` with the `pendencias` as `motivo`; the caller surfaces it, never raises.
@@ -237,8 +241,9 @@ Owner: "the certidões emissions and data extraction, the matrícula extraction,
 New module `backend/app/modules/card_hub/pos_aceite_service.py`, entry point `disparar(client, org_id, atendimento_id, actor) -> PosAceite`. §4.4 calls it as **step 6**, after the funnel event. Its failure never undoes the accept: it is reported in the Aceitar response and is re-runnable.
 
 ### 7.1 Certidões
-For every party of the atendimento with `lado='vendedor'`, PF and PJ (`partes_service.listar_partes`), plus every derived `EMP n` company of those vendedores (the certidões-partes matrix's empresa columns), call `certidoes_partes_service.solicitar_emissao(kind, alvo_id, tipos=None, …)`, i.e. every AUTOMATIC tipo. Manual-upload tipos (TJSP e-SAJ/e-PROC, Serasa) become checklist cells, never fake emissions.
-- **Skip** an anuente spouse (never certified), and any party that already has a non-stale certidão for every automatic tipo or a consulta still in flight (idempotent: re-running emits only what's missing or stale; staleness = the contract gate's own predicate).
+**Who is a vendedor (owner 2026-10-09):** the owners registered on the imóvel (`imovel_proprietarios` and the vendedor partes of the atendimento) **plus ALL their cônjuges**, whether co-owner or anuente, and whether registered now or added later as a new cliente linked by the casamento (`clientes.conjuge_cliente_id`). This SUPERSEDES the 2026-10-05 rule "anuente spouse gets no certidões". For each of them, PF and PJ, plus every derived `EMP n` company, call `certidoes_partes_service.solicitar_emissao(kind, alvo_id, tipos=None, …)`, i.e. every AUTOMATIC tipo. Manual-upload tipos (TJSP e-SAJ/e-PROC, Serasa) become checklist cells, never fake emissions.
+- **Spouse added after the aceite:** linking a cônjuge to an owner of an atendimento whose proposta is `aceita` triggers `disparar` for that atendimento (hook in the cônjuge-link write path), so a late spouse is certified when added, not only at Aceitar.
+- **Skip** any party that already has a non-stale certidão for every automatic tipo or a consulta still in flight (idempotent: re-running emits only what's missing or stale; staleness = the contract gate's own predicate).
 - **Antigos proprietários** (seller's purchase < 5 years): already emitted automatically once the matrícula is on the card (`antigos_proprietarios_service`). S5 only makes sure that runs after 7.2, never duplicating it.
 - Credentials pre-flight failure (no InfoSimples key) ⇒ `status='bloqueado', motivo='credenciais'` for the whole step, before any billed request.
 - Emissions are billed InfoSimples requests. The response lists each one so the cost is visible.
