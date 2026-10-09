@@ -26,6 +26,7 @@ import { useEffect, useState } from 'react';
 import type { User } from '@supabase/supabase-js';
 
 import { env } from './env';
+import { dropProductCookieSession, verifySessionWithServer } from './identity';
 import { isTransientHttpStatus, refreshWithBackoff, type RefreshAttempt, type RefreshWithBackoffOptions } from './api';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -173,6 +174,9 @@ function devAutologinUser(): User {
   } as any as User;
 }
 
+/** Minimum gap between server identity checks, per tab. */
+export const IDENTITY_CHECK_THROTTLE_MS = 60_000;
+
 export function useSupabaseAuthInit(
   supabase: AnySupabaseClient,
   setUser: (user: User | null) => void,
@@ -194,10 +198,26 @@ export function useSupabaseAuthInit(
       return;
     }
 
+    let disposed = false;
+    let lastCheck = 0;
+    // Server-validated identity check (boot + tab refocus, <= 1/min per tab).
+    // The stored session is only a claim; only an auth REJECTION ends it.
+    const verify = async () => {
+      const now = Date.now();
+      if (now - lastCheck < IDENTITY_CHECK_THROTTLE_MS) return;
+      lastCheck = now;
+      const verdict = await verifySessionWithServer(supabase);
+      if (disposed || verdict !== 'rejected') return;
+      try { await supabase.auth.signOut?.({ scope: 'local' }); } catch { /* best-effort */ }
+      await dropProductCookieSession();
+      if (!disposed) setUser(null);
+    };
+
     supabase.auth.getSession().then(({ data: { session } }: { data: { session: any } }) => {
       setUser(session?.user ?? null);
       setInitialized?.();
       markAuthReady();
+      if (session) void verify();
     });
 
     const {
@@ -206,7 +226,16 @@ export function useSupabaseAuthInit(
       setUser(session?.user ?? null);
     });
 
-    return () => subscription.unsubscribe();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void verify();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      subscription.unsubscribe();
+    };
   }, [supabase, setUser, setInitialized]);
 }
 

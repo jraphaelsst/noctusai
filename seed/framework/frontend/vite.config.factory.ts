@@ -272,6 +272,38 @@ function parseProductsRegistry(repoRoot: string): Record<number, number> {
 }
 
 /**
+ * Resolve the product slug for `VITE_PRODUCT_SLUG` (the SSO audience the SPA
+ * sends to core when redeeming a token). Order: the `start.sh PRODUCTS` row
+ * whose frontend port matches (single source of truth) -> the
+ * `products/<slug>/frontend` directory name -> `undefined` (the SPA then fails
+ * loudly in dev, see `createProductApp`).
+ */
+export function resolveProductSlug(
+  productDir: string,
+  repoRoot: string,
+  port: number,
+): string | undefined {
+  const startSh = path.join(repoRoot, "start.sh");
+  if (fs.existsSync(startSh)) {
+    const text = fs.readFileSync(startSh, "utf-8");
+    const begin = text.indexOf("# BEGIN_PRODUCTS_REGISTRY");
+    const end = text.indexOf("# END_PRODUCTS_REGISTRY");
+    if (begin !== -1 && end > begin) {
+      const rowRe = /"\s*([a-z0-9][a-z0-9-]*)\s*:\s*[^:"]*?\s*:\s*\d+\s*:\s*(\d+)\s*"/g;
+      let m: RegExpExecArray | null;
+      while ((m = rowRe.exec(text.slice(begin, end))) !== null) {
+        if (parseInt(m[2], 10) === port) return m[1];
+      }
+    }
+  }
+  const parent = path.resolve(productDir, "..");
+  if (path.basename(path.resolve(parent, "..")) === "products") {
+    return path.basename(parent);
+  }
+  return undefined;
+}
+
+/**
  * Resolve the backend port for a given frontend `port`.
  *
  * Order: explicit `backendPort` option → registry derivation → THROW.
@@ -327,6 +359,7 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
   // backend database module → THROW (see resolveProductSchema). NOT keyed
   // by port — port→schema coupling was a per-product literal that drifted.
   const resolvedSchema = resolveProductSchema(productDir, schema);
+  const resolvedSlug = resolveProductSlug(productDir, repoRoot, port);
 
   // Single-container mode (project: containerization-single-container).
   // When `VITE_SAME_ORIGIN=1` is set (every product Dockerfile sets it
@@ -368,6 +401,7 @@ export function createViteConfig(options: ViteConfigOptions): UserConfig {
     define: {
       "import.meta.env.VITE_BACKEND_API_URL": backendApiUrlDefine,
       "import.meta.env.VITE_PRODUCT_SCHEMA": JSON.stringify(resolvedSchema),
+      "import.meta.env.VITE_PRODUCT_SLUG": JSON.stringify(resolvedSlug ?? ""),
     },
 
     build: {

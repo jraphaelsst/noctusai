@@ -51,6 +51,12 @@ export interface ProductEnv {
    * for every current product; standalone deploys opt out.
    */
   CORE_ATTACHED: boolean;
+  /**
+   * This product's slug (SSO audience) — injected as `VITE_PRODUCT_SLUG` by
+   * `createViteConfig` (derived from the start.sh registry / product dir).
+   * Empty when not derivable; `createProductApp` then fails loudly in dev.
+   */
+  PRODUCT_SLUG: string;
 }
 
 /** All required VITE_ var names with descriptions and defaults */
@@ -90,6 +96,12 @@ export const ENV_VARS: Record<keyof ProductEnv, { viteKey: string; description: 
     description: 'Dev-only auto-login bypass (pairs with backend SEED_DEV_AUTH) — NEVER set in prod',
     required: false,
     defaultDev: 'false',
+  },
+  PRODUCT_SLUG: {
+    viteKey: 'VITE_PRODUCT_SLUG',
+    description: 'This product slug (SSO audience) — injected by createViteConfig, do not set by hand',
+    required: false,
+    defaultDev: '',
   },
   CORE_ATTACHED: {
     viteKey: 'VITE_CORE_ATTACHED',
@@ -133,6 +145,8 @@ export const env: ProductEnv = {
   // consume `env.CORE_URL` / `env.CORE_API_URL` — NOT hand-roll the resolution.
   // canonical-default-ok: core is a named same-origin service (see
   // seed-canonical-defaults.md § 4).
+  // Literal member read so createViteConfig's `define` inlines it at build time.
+  get PRODUCT_SLUG() { return import.meta.env.VITE_PRODUCT_SLUG || ''; },
   get CORE_URL() { return getViteVar('VITE_CORE_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core named service (house port)
   get CORE_API_URL() { return getViteVar('VITE_CORE_API_URL') || getViteVar('VITE_CORE_URL') || 'http://localhost:8000'; }, // canonical-default-ok: core same-origin
   // Read the LITERAL member expression so Vite's build-time inline

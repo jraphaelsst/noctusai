@@ -197,6 +197,16 @@ export function createProductApp(config: ProductAppConfig) {
   }
 
   const queryClient = createQueryClient();
+  // The SSO audience binding needs this product's slug (VITE_PRODUCT_SLUG,
+  // injected by createViteConfig). Never silently omit it: core refuses an
+  // unbound token, so a product without a slug cannot log in.
+  if (supabase && !env.PRODUCT_SLUG) {
+    console.error(
+      "createProductApp: VITE_PRODUCT_SLUG is empty — SSO redemption would omit " +
+        "product_slug. Build with createViteConfig (derives it from start.sh / " +
+        "products/<slug>/frontend).",
+    );
+  }
   const AuthProvider = authProvider
     ? authProvider.AuthProvider
     : createAuthProvider(supabase!, useAuthStore!);
@@ -362,6 +372,8 @@ export function createProductApp(config: ProductAppConfig) {
                   supabase={supabase}
                   coreApiUrl={env.CORE_API_URL}
                   coreUrl={env.CORE_URL}
+                  productSlug={env.PRODUCT_SLUG || undefined}
+                  onIdentityChange={() => queryClient.clear()}
                 />
               }
             />

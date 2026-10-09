@@ -33,7 +33,8 @@ export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth
-export { useSupabaseAuthInit, useAuthReady, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler } from './auth';
+export { useSupabaseAuthInit, useAuthReady, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler, IDENTITY_CHECK_THROTTLE_MS } from './auth';
+export { clearLocalIdentity, dropProductCookieSession, isAuthRejection, verifySessionWithServer } from './identity';
 
 // SSO
 export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining, isOrgAdmin } from './sso';

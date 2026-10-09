@@ -34,7 +34,8 @@ const DEFAULT_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const DEFAULT_READING_TIMEOUT = 3 * 60 * 1000; // 3 minutes
 const MOUSEMOVE_THROTTLE = 1000; // 1 second
 const FAILURE_BACKOFF = 30 * 1000; // 30 seconds
-const STORAGE_KEY = "noctus_last_token_refresh";
+export const ACTIVITY_REFRESH_STORAGE_KEY = "noctus_last_token_refresh";
+const STORAGE_KEY = ACTIVITY_REFRESH_STORAGE_KEY;
 
 interface UseActivityRefreshOptions {
   /** Called to refresh the token. */
