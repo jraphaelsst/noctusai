@@ -190,7 +190,7 @@ A worktree perfectly isolates your **Edits**. It does NOT, by itself, isolate **
 - **Reusing "inline" for this mode.** `inline` = no-dispatch (size). This = self-isolate (write-vs-read). Distinct axes (§1).
 - **Blind `--ff-only` / `push origin dev` from a shared local `dev`.** The integration site is `origin/dev` via rebase+retry from the worktree, never a switch-and-push of the shared local `dev` (which moves it under siblings).
 - **An engineer touching `dev`/`main`/`prod`.** Engineers commit only on their own branch; the architect (or peer-as-own-architect) integrates.
-- **Leaving the worktree behind after integrate.** Always `cleanup`; the terminal returns to the `dev` baseline. (Stale worktrees are caught by [[storage-hygiene]], but lifecycle hygiene is the agent's job.)
+- **Leaving the worktree behind after integrate.** No longer a discipline item (2026-10-09, 37 worktrees / 9.9 GB made VS Code list ~42 repos): `integrate` auto-runs `cleanup` (opt out `keep_worktree=True`), and a SessionStart hook sweeps the rest. Do not call `cleanup` in a loop. Legacy text: always `cleanup`; the terminal returns to the `dev` baseline. (Stale worktrees are caught by [[storage-hygiene]], but lifecycle hygiene is the agent's job.)
 
 ---
 
@@ -848,3 +848,12 @@ What stays until S4 (trigger T1: 7 consecutive days with zero ledger commits on
 drains (`_drain_ledgers_from_primary`, `deliver_trailing_ledgers`, which also publish
 this clone's spooled rows now), and the ledger-drain keeper. They exist only for
 peers still running pre-move code. Full design: `KB § PATTERNS/common/ledger-store.md`.
+
+## Automatic worktree reclamation (2026-10-09)
+
+Cleanup used to be a discipline-only ritual; sessions that integrated and then ended, crashed or forgot left the worktree forever. Compliance by construction, two legs, both reusing existing code:
+
+1. **`task_branch integrate` auto-cleans.** After the FF-push (and ledger drain) it runs the `cleanup` action for the same slug: merged check, refuse-if-dirty, `worktree remove` from the PRIMARY checkout, merged-branch delete, pointer -> `shipped`, claim release. The caller's cwd (usually the worktree) no longer exists afterwards (`result.auto_cleanup.cwd_removed`). A dirty tree is SKIPPED (`auto_cleanup.status=skipped`), never failing the integrate. Opt out: `keep_worktree=True` (CLI `--task-branch-keep-worktree`). Default is on for the real runner, off under an injected test `run` (same rule as `settle`).
+2. **SessionStart backstop** `scripts/hooks/claude-session-start-worktree-sweep.py` (wired in `.claude/settings.json`) runs `cleanup_stale_worktrees(force=True, respect_min_age=True)` via cli.py. Every guard stays on: dirty / stash / lock / live pointer / 60-min recent-mtime / 60-min min-age (`respect_min_age` stops `force` from bypassing the age guard, so a peer's brand-new 0-ahead fork is never taken). Silent on no-op, one stdout line when it removed something, lock-file protected, never blocks (exit 0).
+
+Known limit: a worktree whose pointer is stuck at the non-terminal `integrated-worktree-live` (crash between integrate's pointer write and cleanup) stays `pointer_blocked` by design.

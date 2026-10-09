@@ -1428,6 +1428,31 @@ def _pointer_claim(
         return {"status": "error", "error": str(e)[:300]}
 
 
+def _auto_cleanup_after_integrate(
+    runner, wt_path: str, slug: str, task_branch_fn, kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Run `cleanup` for a just-integrated worktree iff it is clean.
+
+    Dirty (real, non-gitignored) work => SKIP with the reason: cleanup would
+    refuse anyway; checking first keeps the integrate result honest and spares
+    the pointer a pointless transition. Never raises, never fails the integrate.
+    """
+    try:
+        abs_wt = _absolute_wt_path(wt_path, _resolve_primary_root(kwargs.get("primary_root")))
+        if _is_dirty_excluding_gitignored(runner, abs_wt):
+            return {"status": "skipped", "cwd_removed": False,
+                    "reason": "worktree has uncommitted changes - left in place; the "
+                              "SessionStart sweep reclaims it once clean and idle"}
+        res = task_branch_fn(action="cleanup", slug=slug, confirm=True, **kwargs)
+    except Exception as e:  # best-effort: a landed integrate must still report success
+        return {"status": "error", "cwd_removed": False, "reason": f"{type(e).__name__}: {e}"}
+    ok = res.get("status") == "cleaned"
+    return {"status": res.get("status"), "cwd_removed": ok,
+            "worktree_removed": bool(res.get("worktree_removed")),
+            "branch_deleted": bool(res.get("branch_deleted")),
+            "reason": res.get("error") or res.get("reason") or res.get("message", "")}
+
+
 def _task_branch_is_write(bound_args: dict) -> bool:
     """`task_branch`'s REFUSE predicate (2026-09-18, the incident tool
     itself): only the MUTATING actions — `start` / `integrate` / `cleanup`
@@ -1457,6 +1482,7 @@ def task_branch(
     migration_check: Callable[[str], list[dict]] | None = None,
     migration_applied_check: Callable[[str, str, str], str] | None = None,
     verify_merged_tip: bool = True,
+    keep_worktree: bool | None = None,
     merged_tip_check: Callable[[str, str], dict[str, Any]] | None = None,
     merged_tip_timeout: int = 90,
     regenerate_kb_counts_at_integrate: bool = True,
@@ -1492,6 +1518,21 @@ def task_branch(
     `origin/dev` just revealed. See the gate's inline comment in the
     `integrate` branch below for why blocking here is safe (no legitimate
     first-mover casualty, unlike pre-commit Leg B).
+
+    `keep_worktree` (only meaningful on `action='integrate'`): by DEFAULT a
+    successful integrate AUTO-RUNS `cleanup` for the worktree it just landed
+    (compliance by construction — the manual cleanup ritual was skipped by
+    every session that ended/crashed after integrate: 37 worktrees / 9.9 GB,
+    2026-10-09). The teardown runs from the PRIMARY checkout (`git worktree
+    remove <relative path>`), so the caller's own cwd — usually the worktree
+    — is GONE afterwards (`result['auto_cleanup']['cwd_removed']`). It is
+    skipped, loudly and without failing the integrate, when the worktree has
+    real uncommitted work. `keep_worktree=True` opts out (keep working in the
+    worktree after landing); `cleanup_stale_worktrees` (run at SessionStart)
+    reclaims a kept/crashed one once it is idle. Default `None` = on for the
+    real runner, off under an injected `run` (same "production default ONLY
+    on the real runner" rule as `settle`); pass `keep_worktree=False`
+    explicitly to exercise the auto-cleanup leg under a fake runner.
 
     `wire_env` (only meaningful on `action='start'`; DEFAULTS TO TRUE — a
     fresh worktree must come ready to run gates, `KB § PATTERNS/common/
@@ -1550,6 +1591,7 @@ def task_branch(
     # tree here would write REAL symlinks into the caller's actual
     # `.claude/worktrees/<slug>` as a side effect of running a unit test.
     wire_env = wire_env and (primary_root is not None or run is None)
+    auto_cleanup = (not keep_worktree) if keep_worktree is not None else (run is None)
     # Same production-only rule: an injected `run` must never write the REAL
     # branch-tree ledger as a side effect of a unit test.
     pointer_fn = pointer_ops if pointer_ops is not None else (
@@ -2030,6 +2072,27 @@ def task_branch(
                         dev_branch=dev_branch, remote=remote, verbose=verbose)
                 except Exception as e:  # best-effort — never fail a clean integrate
                     result["ledger_drain"] = {"ok": False, "error": str(e)}
+                # ── AUTO-CLEANUP — compliance by construction (2026-10-09).
+                # Reuses the `cleanup` action below verbatim (same merged
+                # check, refuse-if-dirty, pointer -> shipped, claim release);
+                # never a parallel implementation. LAST on purpose: it runs
+                # its own settle + drain, and removes the caller's cwd.
+                if auto_cleanup:
+                    result["auto_cleanup"] = _auto_cleanup_after_integrate(
+                        runner, wt_path, slug, task_branch, dict(
+                            remote=remote, dev_branch=dev_branch,
+                            worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
+                            primary_root=primary_root, run=run, fs=fs, settle=settle,
+                            pointer_ops=pointer_ops, verbose=verbose,
+                            allow_stale_toolkit=True))
+                    ac = result["auto_cleanup"]
+                    result["message"] += (
+                        f" Auto-cleanup: {ac['status']}"
+                        + (" - worktree removed; your cwd no longer exists, cd to the "
+                           "primary checkout." if ac.get("cwd_removed") else
+                           f" ({ac.get('reason', '')})."))
+                else:
+                    result["message"] += " Worktree kept (keep_worktree)."
                 return result
             # non-FF: a peer pushed between rebase and push → loop, re-fetch+rebase
             if verbose:
@@ -2231,6 +2294,10 @@ def register(server) -> None:
             "fill it; project omitted => inherited from parent's pointer), integrate records "
             "the POST-REBASE commit as integrated-worktree-live, cleanup closes it shipped; the "
             "outcome rides on result['pointer'] and never blocks the git lifecycle. "
+            "AUTO-CLEANUP (2026-10-09): a successful integrate also tears down "
+            "its worktree + merged branch (result['auto_cleanup']; skipped if "
+            "dirty) - the caller's cwd is gone afterwards; keep_worktree=True "
+            "opts out. "
             "status: status|planned|started|integrated|conflict|up_to_date|"
             "cleaned|partial|blocked|refused_stale_toolkit|error."
         ),
@@ -2242,6 +2309,7 @@ def register(server) -> None:
         wire_env: bool = True,
         verbose: bool = False,
         allow_stale_toolkit: bool = False,
+        keep_worktree: bool = False,
         project: str | None = None,
         brief: str | None = None,
         paths: list[str] | None = None,
@@ -2250,6 +2318,7 @@ def register(server) -> None:
         parent: str | None = None,
     ) -> dict:
         return task_branch(action=action, slug=slug, confirm=confirm,
+                           keep_worktree=keep_worktree,
                            wire_env=wire_env, verbose=verbose,
                            allow_stale_toolkit=allow_stale_toolkit,
                            project=project, brief=brief, paths=paths,

@@ -19,7 +19,7 @@ The orchestrator IS the architect/tech-lead (plans + dispatches + integrates + s
 6. **Detect collisions** — (a) path-overlap AND (b) semantic-duplicate git can't see.
 7. Merge `--no-ff` least-conflict-first; **dedicated honest reconciliation commit** for any reconciliation.
 8. Architect runs the FULL gate ONCE at integration on a clean `origin/dev` tree (engineers run only the narrowest scoped check).
-9. Cleanup worktrees (salvage-before-delete).
+9. Cleanup worktrees: automatic - `task_branch integrate` removes its own worktree on success, and the SessionStart sweep reclaims abandoned merged+clean ones (no manual ritual).
 10. Gate `main` only at 100% — human-gated per R4.
 
 ## Guardrails

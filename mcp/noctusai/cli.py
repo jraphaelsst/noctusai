@@ -369,6 +369,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-parent", default=None, help="With --task-branch action=start: the branch-tree pointer's parent branch.")
     parser.add_argument("--task-branch-no-wire-env", action="store_true", help="With --task-branch action=start: skip the §5a verification-env auto-wiring (default is to wire it).")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
+    parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
+    parser.add_argument("--task-branch-keep-worktree", action="store_true", help="With --task-branch integrate: do NOT auto-clean the worktree after a successful integrate (default: integrate tears down its worktree + merged branch).")
     parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
     parser.add_argument("--component-bundle", metavar="NAME", help="Return the structured organ bundle for a seed-lib frontend component (source, types, tests, deps, consumers, wiring_snippet, validation_status, last_touched). KB § PATTERNS/architect/component-bundle-tool.md")
@@ -2893,7 +2895,7 @@ def main():
 
     elif args.cleanup_stale_worktrees:
         from tools.noctus.dev.cleanup_worktrees import cleanup_stale_worktrees
-        r = cleanup_stale_worktrees(force=args.force)
+        r = cleanup_stale_worktrees(force=args.force, respect_min_age=bool(getattr(args, 'cleanup_respect_min_age', False)))
         print(json.dumps(r, indent=2, default=str))
         sys.exit(0)
 
@@ -3017,6 +3019,7 @@ def main():
             slug=getattr(args, "task_branch_slug", None),
             confirm=bool(getattr(args, "task_branch_confirm", False)),
             wire_env=not bool(getattr(args, "task_branch_no_wire_env", False)),
+            keep_worktree=bool(getattr(args, "task_branch_keep_worktree", False)),
             verbose=bool(getattr(args, "task_branch_verbose", False)),
             allow_stale_toolkit=bool(getattr(args, "task_branch_allow_stale_toolkit", False)),
             project=getattr(args, "task_branch_project", None),

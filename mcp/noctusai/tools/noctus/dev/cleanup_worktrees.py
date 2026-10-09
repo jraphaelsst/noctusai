@@ -124,6 +124,7 @@ def cleanup_stale_worktrees(
     *,
     worktree_path: str | Path | None = None,
     force: bool = False,
+    respect_min_age: bool = False,
     min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
     recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
 ) -> dict:
@@ -196,6 +197,10 @@ def cleanup_stale_worktrees(
             ``worktree_path``.
         worktree_path: caller-aware path resolution (same contract as the
             sibling dev tools).
+        respect_min_age: ``True`` → the min-age guard (3) applies EVEN with
+            ``force=True``. Used by the unattended SessionStart sweep, which
+            must never take a peer session's brand-new worktree (a 0-ahead
+            fresh fork reads as merged; several sessions start at once).
         force: ``False`` (default) → dry-run classification only; ``True``
             → remove the stale set (dirty/locked/pointer/mtime gates still
             apply; the age gate is the ONLY guard ``force`` may bypass).
@@ -436,7 +441,7 @@ def cleanup_stale_worktrees(
             is_young, age_seconds, min_age_seconds = wts.is_too_young(
                 wts_run, wt_path, branch, min_age_minutes=min_age_minutes,
             )
-            if is_young and not force:
+            if is_young and (respect_min_age or not force):
                 too_young.append({
                     "path": wt,
                     "branch": branch,
@@ -649,11 +654,12 @@ def register(server) -> None:
     def _cleanup_stale_worktrees(
         worktree_path: str | None = None,
         force: bool = False,
+        respect_min_age: bool = False,
         min_age_minutes: float = wts.DEFAULT_MIN_AGE_MINUTES,
         recent_mtime_minutes: float = wts.DEFAULT_RECENT_MTIME_MINUTES,
     ) -> dict:
         return cleanup_stale_worktrees(
-            worktree_path=worktree_path, force=force,
+            worktree_path=worktree_path, force=force, respect_min_age=respect_min_age,
             min_age_minutes=min_age_minutes,
             recent_mtime_minutes=recent_mtime_minutes,
         )

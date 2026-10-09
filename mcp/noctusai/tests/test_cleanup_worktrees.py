@@ -432,6 +432,17 @@ class TestMinAgeGuardTool:
         assert str(wt) in young_paths
         assert wt.exists()
 
+    def test_respect_min_age_keeps_age_guard_under_force(self, repo):
+        # The unattended SessionStart sweep passes force=True + respect_min_age
+        # so a peer's brand-new worktree is never taken.
+        wt = _add_worktree(repo, "agent-fresh-peer", "feat/fresh-peer")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=True, recent_mtime_minutes=0,
+        )
+        assert str(wt) in [p["path"] for p in result["too_young"]]
+        assert result["removed"] == 0
+        assert wt.exists()
+
     def test_force_bypasses_the_age_guard_but_not_when_pointer_blocks(self, repo):
         # recent_mtime_minutes=0: force MAY bypass age but never mtime — this
         # test is isolated to the age guard (the mtime-never-bypassed case is

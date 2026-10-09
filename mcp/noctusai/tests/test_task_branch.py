@@ -2902,3 +2902,59 @@ def test_plan_env_wiring_never_links_transient_node_modules_dirs(tmp_path):
     names = {os.path.basename(w["link"]) for w in wire if w["kind"] == "node_modules_entry"}
     assert "react" in names
     assert not names & {".vite-temp", ".vite", ".cache"}
+
+
+# -- integrate auto-cleanup (2026-10-09) ---------------------------------------
+def _integrate_fake():
+    return FakeGit(
+        refs={"origin/dev": "d0", "feat/x": "b0"},
+        anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""},
+        head_sha="b0",
+    )
+
+
+def test_integrate_auto_cleans_worktree_by_default_in_real_mode():
+    fake = _integrate_fake()
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", keep_worktree=False)
+    assert res["status"] == "integrated"
+    assert res["auto_cleanup"]["status"] == "cleaned"
+    assert res["auto_cleanup"]["cwd_removed"] is True
+    assert fake.ran("worktree remove .claude/worktrees/x")
+    assert fake.ran("branch -d feat/x")
+    assert "cd to the primary checkout" in res["message"]
+
+
+def test_integrate_keep_worktree_opts_out():
+    fake = _integrate_fake()
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", keep_worktree=True)
+    assert res["status"] == "integrated" and "auto_cleanup" not in res
+    assert not fake.ran("worktree remove")
+
+
+def test_integrate_auto_cleanup_skips_dirty_worktree_without_failing():
+    class DirtyAfter(FakeGit):
+        def __call__(self, cmd, cwd=None):
+            # status is only consulted by the post-push dirtiness probe
+            # (earlier probes saw a clean tree: flip after the push landed)
+            if len(self.pushes()) and "status" in cmd:
+                self.status_output = " M real_file.py"
+            return super().__call__(cmd, cwd)
+
+    fake = DirtyAfter(
+        refs={"origin/dev": "d0", "feat/x": "b0"}, anc=_anc_pairs([]),
+        logs={"d0..b0": "c1 x", "b0..d0": ""}, head_sha="b0")
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", keep_worktree=False)
+    assert res["status"] == "integrated" and res["exit_code"] == 0
+    assert res["auto_cleanup"]["status"] == "skipped"
+    assert res["auto_cleanup"]["cwd_removed"] is False
+    assert not fake.ran("worktree remove")
+
+
+def test_integrate_under_injected_runner_does_not_auto_clean_by_default():
+    fake = _integrate_fake()
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
+    assert res["status"] == "integrated" and "auto_cleanup" not in res
