@@ -2958,3 +2958,65 @@ def test_integrate_under_injected_runner_does_not_auto_clean_by_default():
     fake = _integrate_fake()
     res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake)
     assert res["status"] == "integrated" and "auto_cleanup" not in res
+
+
+# -- detached post-integrate tail (2026-10-09) ----------------------------------
+# Two integrates hit the 1800 s fresh-subprocess timeout (`outcome_unknown`):
+# the settle (noc-graph rebuild) ran twice inline and the primary FF's
+# post-merge hook waited on OpenAI. The critical path must always return.
+def test_detached_tail_runs_once_after_cleanup_and_inline_settle_never_runs():
+    fake = _integrate_fake()
+    order: list[str] = []
+    settle_calls: list[int] = []
+
+    def settle():
+        settle_calls.append(1)
+        return {"ok": True}
+
+    def post_integrate(root, dev, remote):
+        order.append(f"post:{root}:{dev}:{remote}")
+        order.append("worktree_removed" if fake.ran("worktree remove .claude/worktrees/x") else "worktree_present")
+        return {"status": "scheduled", "pid": 4242, "log": "/repo/.git/noc-post-integrate.log"}
+
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", keep_worktree=False,
+                        settle=settle, post_integrate=post_integrate)
+
+    assert res["status"] == "integrated" and res["exit_code"] == 0
+    assert settle_calls == []  # neither integrate nor its auto-cleanup settled inline
+    assert "cache_settle" not in res and "ledger_drain" not in res
+    assert order == ["post:/repo:dev:origin", "worktree_removed"]  # LAST, after cleanup
+    assert res["post_integrate"]["status"] == "scheduled"
+    assert "noc-post-integrate.log" in res["message"]
+    assert "primary_ff" in res and res["auto_cleanup"]["status"] == "cleaned"
+
+
+def test_detached_tail_failure_never_fails_a_landed_integrate():
+    fake = _integrate_fake()
+
+    def boom(root, dev, remote):
+        raise OSError("spawn failed")
+
+    res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", keep_worktree=False, post_integrate=boom)
+    assert res["status"] == "integrated" and res["exit_code"] == 0
+    assert res["post_integrate"]["status"] == "error"
+    assert "spawn failed" in res["post_integrate"]["error"]
+
+
+def test_spawn_post_integrate_detaches_and_logs(tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    spawned = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kw):
+            spawned.update(argv=argv, kw=kw)
+            self.pid = 777
+
+    monkeypatch.setattr(T.subprocess, "Popen", FakePopen)
+    r = T._spawn_post_integrate(str(tmp_path), "dev", "origin")
+    assert r == {"status": "scheduled", "pid": 777,
+                 "log": str(tmp_path / ".git" / T.POST_INTEGRATE_LOG)}
+    assert "--task-branch-post-integrate" in spawned["argv"]
+    assert spawned["kw"]["start_new_session"] is True
+    assert "post-integrate" in (tmp_path / ".git" / T.POST_INTEGRATE_LOG).read_text()

@@ -1456,6 +1456,52 @@ def _pointer_claim(
         return {"status": "error", "error": str(e)[:300]}
 
 
+POST_INTEGRATE_LOG = "noc-post-integrate.log"
+
+
+def run_post_integrate(primary_root: str | None = None, dev_branch: str = "dev",
+                       remote: str = "origin") -> dict[str, Any]:
+    """The slow best-effort integrate tail, in its required order: structural
+    cache settle, THEN the primary-checkout ledger drain (see
+    `_drain_ledgers_from_primary` — a drain before the settle could not ship
+    what the settle writes). Runs in the detached child spawned by
+    `_spawn_post_integrate`; callable directly (CLI
+    `--task-branch-post-integrate`). Never raises."""
+    out: dict[str, Any] = {}
+    try:
+        out["cache_settle"] = _settle_structural_caches()
+    except Exception as e:  # noqa: BLE001
+        out["cache_settle"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    try:
+        out["ledger_drain"] = _drain_ledgers_from_primary(
+            _default_run_local, root=_resolve_primary_root(primary_root),
+            dev_branch=dev_branch, remote=remote)
+    except Exception as e:  # noqa: BLE001
+        out["ledger_drain"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    return out
+
+
+def _spawn_post_integrate(primary_root: str, dev_branch: str, remote: str) -> dict[str, Any]:
+    """Start `run_post_integrate` DETACHED (own session; stdout/stderr to
+    `<primary>/.git/noc-post-integrate.log`) and return at once — the caller's
+    result says `scheduled` + the log path, never a silent drop."""
+    import sys
+    cli = Path(__file__).resolve().parents[3] / "cli.py"
+    git_dir = Path(primary_root) / ".git"
+    log_path = (git_dir if git_dir.is_dir() else Path(primary_root)) / POST_INTEGRATE_LOG
+    with open(log_path, "a", encoding="utf-8") as log:
+        log.write(f"\n=== post-integrate {datetime.now(timezone.utc).isoformat()} "
+                  f"dev={dev_branch} remote={remote}\n")
+        log.flush()
+        proc = subprocess.Popen(
+            [sys.executable, str(cli), "--task-branch-post-integrate",
+             "--task-branch-post-dev-branch", dev_branch,
+             "--task-branch-post-remote", remote],
+            cwd=primary_root, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+            start_new_session=True, close_fds=True)
+    return {"status": "scheduled", "pid": proc.pid, "log": str(log_path)}
+
+
 def _auto_cleanup_after_integrate(
     runner, wt_path: str, slug: str, task_branch_fn, kwargs: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1507,6 +1553,8 @@ def task_branch(
     run: Callable[..., tuple[int, str, str]] | None = None,
     fs: FsOps | None = None,
     settle: Callable[..., dict[str, Any]] | None = None,
+    post_integrate: Callable[[str, str, str], dict[str, Any]] | None = None,
+    settle_and_drain: bool = True,
     migration_check: Callable[[str], list[dict]] | None = None,
     migration_applied_check: Callable[[str, str, str], str] | None = None,
     verify_merged_tip: bool = True,
@@ -1589,6 +1637,14 @@ def task_branch(
     # that must not touch the real shared caches.
     settle_fn = settle if settle is not None else (
         _settle_structural_caches if run is None else None)
+    # 2026-10-09: on the REAL runner the slow best-effort tail (structural settle
+    # ~80 s+ incl. a noc-graph rebuild, then the ledger drain) runs DETACHED after
+    # the critical path, so push + pointer + primary_ff + cleanup always come back
+    # to the caller (two integrates hit the 1800 s fresh-subprocess timeout and
+    # returned `outcome_unknown`). Injected `run`/`settle` (tests) keep the inline
+    # tail; an explicit `post_integrate` is the seam for the detached one.
+    post_integrate_fn = post_integrate if post_integrate is not None else (
+        _spawn_post_integrate if (run is None and settle is None) else None)
     # Same "production default ONLY on the real runner" rule as settle_fn —
     # an injected `run` means a test/custom context that must not shell out
     # to a real `check_migration_number_collision` filesystem scan.
@@ -2086,20 +2142,22 @@ def task_branch(
                     pointer_fn, branch=branch, status="integrated-worktree-live",
                     commit=(new_head or "")[:9] or None,
                     notes=f"task_branch integrate → {dev_branch}@{(new_dev or '')[:9]}")
-                if settle_fn is not None:
+                if post_integrate_fn is None:
+                    # Inline tail (tests / injected runner): unchanged ordering.
+                    if settle_fn is not None:
+                        try:
+                            result["cache_settle"] = settle_fn()
+                        except Exception as e:  # best-effort — never fail a clean integrate
+                            result["cache_settle"] = {"ok": False, "error": str(e)}
+                    # 🔴 AFTER the settle AND the pointer write, deliberately — see
+                    # `_drain_ledgers_from_primary`. Both dirty ledgers, so a drain
+                    # placed before them could never ship what they write.
                     try:
-                        result["cache_settle"] = settle_fn()
+                        result["ledger_drain"] = _drain_ledgers_from_primary(
+                            runner, root=_resolve_primary_root(primary_root),
+                            dev_branch=dev_branch, remote=remote, verbose=verbose)
                     except Exception as e:  # best-effort — never fail a clean integrate
-                        result["cache_settle"] = {"ok": False, "error": str(e)}
-                # 🔴 AFTER the settle AND the pointer write, deliberately — see
-                # `_drain_ledgers_from_primary`. Both dirty ledgers, so a drain
-                # placed before them could never ship what they write.
-                try:
-                    result["ledger_drain"] = _drain_ledgers_from_primary(
-                        runner, root=_resolve_primary_root(primary_root),
-                        dev_branch=dev_branch, remote=remote, verbose=verbose)
-                except Exception as e:  # best-effort — never fail a clean integrate
-                    result["ledger_drain"] = {"ok": False, "error": str(e)}
+                        result["ledger_drain"] = {"ok": False, "error": str(e)}
                 # Move the primary checkout onto what was just pushed (ff-only;
                 # see the carve-out note under `_BANNED_TOKENS`). AFTER the drain:
                 # the drain may itself push from the primary.
@@ -2120,6 +2178,8 @@ def task_branch(
                             worktrees_dir=worktrees_dir, branch_prefix=branch_prefix,
                             primary_root=primary_root, run=run, fs=fs, settle=settle,
                             pointer_ops=pointer_ops, verbose=verbose,
+                            # the detached post-integrate job settles + drains ONCE
+                            settle_and_drain=post_integrate_fn is None,
                             allow_stale_toolkit=True))
                     ac = result["auto_cleanup"]
                     result["message"] += (
@@ -2129,6 +2189,20 @@ def task_branch(
                            f" ({ac.get('reason', '')})."))
                 else:
                     result["message"] += " Worktree kept (keep_worktree)."
+                # LAST: the slow best-effort tail, detached (settle → drain, in
+                # that order, after primary_ff so they never race in the primary).
+                if post_integrate_fn is not None:
+                    try:
+                        result["post_integrate"] = post_integrate_fn(
+                            _resolve_primary_root(primary_root), dev_branch, remote)
+                    except Exception as e:  # never fail a landed integrate
+                        result["post_integrate"] = {"status": "error",
+                                                    "error": f"{type(e).__name__}: {e}"}
+                    pi = result["post_integrate"]
+                    result["message"] += (
+                        f" Cache settle + ledger drain {pi.get('status')}"
+                        + (f" (log: {pi['log']})." if pi.get("log") else ".")
+                        + ("" if pi.get("status") == "scheduled" else f" {pi.get('error', '')}"))
                 return result
             # non-FF: a peer pushed between rebase and push → loop, re-fetch+rebase
             if verbose:
@@ -2253,6 +2327,12 @@ def task_branch(
     result["pointer"] = _pointer_transition(
         pointer_fn, branch=branch, status="shipped",
         notes=f"task_branch cleanup: merged into {dev_branch}, worktree removed")
+    if not settle_and_drain:
+        # Called from integrate's auto-cleanup: its detached post-integrate job
+        # settles + drains once for both (never twice per integrate).
+        result["cache_settle"] = {"status": "deferred_to_post_integrate"}
+        result["ledger_drain"] = {"status": "deferred_to_post_integrate"}
+        return result
     if settle_fn is not None:
         try:
             result["cache_settle"] = settle_fn()

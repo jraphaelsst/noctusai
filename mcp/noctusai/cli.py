@@ -371,6 +371,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-no-wire-env", action="store_true", help="With --task-branch action=start: skip the §5a verification-env auto-wiring (default is to wire it).")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
+    parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
+    parser.add_argument("--task-branch-post-dev-branch", default="dev", help="With --task-branch-post-integrate: the dev branch name.")
+    parser.add_argument("--task-branch-post-remote", default="origin", help="With --task-branch-post-integrate: the remote.")
     parser.add_argument("--task-branch-keep-worktree", action="store_true", help="With --task-branch integrate: do NOT auto-clean the worktree after a successful integrate (default: integrate tears down its worktree + merged branch).")
     parser.add_argument("--task-branch-allow-stale-toolkit", action="store_true", help="With --task-branch: bypass the toolkit-staleness refusal on a mutating action for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
     parser.add_argument("--catalog", action="store_true", help="Regenerate shared-library catalog (symbols, importers, orphans, duplicates)")
@@ -3021,6 +3024,13 @@ def main():
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.task_branch_post_integrate:
+        from tools.noctus.dev.task_branch import run_post_integrate
+        res = run_post_integrate(dev_branch=args.task_branch_post_dev_branch,
+                                 remote=args.task_branch_post_remote)
+        print(json.dumps(res, indent=2, default=str))
+        sys.exit(0)
 
     elif args.task_branch:
         from tools.noctus.dev.task_branch import task_branch

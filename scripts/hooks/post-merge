@@ -91,8 +91,16 @@ if have_py; then
     # ─── memory-embeddings cache — out-of-repo source, no in-repo signal
     # to gate on. Refresh is fast when memory dir unchanged (per-file
     # source_sha skip). Always-attempt per the universal-refresh rule.
-    echo "[post-merge] Refreshing memory-embeddings cache (out-of-repo source)..."
-    "$PY" "$CLI" --refresh-memory-embeddings 2>&1 | tail -1 | sed 's/^/[post-merge] memory-embed: /' || true
+    # DETACHED (2026-10-09): this is an OpenAI-backed refresh. With the key
+    # out of credits it took 271-346 s (per-chunk 429 retries) INSIDE the
+    # hook — every `git pull` / `task_branch` primary fast-forward waited on
+    # it, and two integrates hit their 1800 s timeout. A merge must never wait
+    # on a network embedding call; it is advisory (`|| true` before), so it
+    # now runs in its own session and logs to .git/noc-memory-embed.log.
+    MEMLOG="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/noc-memory-embed.log"
+    echo "[post-merge] memory-embeddings refresh started in background (log: $MEMLOG)."
+    nohup "$PY" "$CLI" --refresh-memory-embeddings >>"$MEMLOG" 2>&1 </dev/null &
+    disown 2>/dev/null || true
 fi
 
 echo "[post-merge] cache refresh pass complete."
