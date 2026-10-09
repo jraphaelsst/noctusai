@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@noctusai/seed/infra';
+import { api, supabase } from '@noctusai/seed/infra';
 
 import { orgSelectionOf } from './access';
 import type { MeAccess, OrgChoice, OrgSelectionState } from './access';
@@ -19,6 +19,19 @@ export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 
 export const ME_ACCESS_QUERY_KEY = ['me', 'access'] as const;
 export const ORG_CHOICES_QUERY_KEY = ['me', 'org-choices'] as const;
+
+/**
+ * Drop every Supabase realtime channel so a stale subscription can't keep
+ * streaming the previous org after a swap / stale-pin 409. Cookie-session
+ * products have no browser client (`supabase` undefined) → nothing to do.
+ */
+async function teardownRealtime(): Promise<void> {
+  try {
+    await (supabase as { removeAllChannels?: () => Promise<unknown> } | undefined)?.removeAllChannels?.();
+  } catch {
+    /* best-effort: the reload that follows drops the sockets anyway */
+  }
+}
 
 /** Reload hook point (jsdom-friendly, overridable in tests via window.location). */
 function reloadPage(): void {
@@ -92,6 +105,7 @@ export function useOrgSelection(): UseOrgSelectionResult {
   useEffect(() => {
     setOrgSelectionChangedHandler(() => {
       setForced(true);
+      void teardownRealtime();
       void qc.invalidateQueries({ queryKey: ME_ACCESS_QUERY_KEY });
     });
     return () => setOrgSelectionChangedHandler(null);
@@ -113,6 +127,7 @@ export function useOrgSelection(): UseOrgSelectionResult {
     await chooseM.mutateAsync(orgId);
     setOrgPin(orgId);
     setForced(false);
+    await teardownRealtime();
     reloadPage();
   }, [chooseM]);
 
@@ -150,7 +165,8 @@ export function useOrgSelection(): UseOrgSelectionResult {
  */
 export async function endOrgSelectionBestEffort(): Promise<void> {
   try {
-    await api.delete('/api/me/org-choice');
+    // ?all=true ends the selections for EVERY product (staff-only server-side).
+    await api.delete('/api/me/org-choice?all=true');
   } catch {
     /* best-effort by design: signOut proceeds; core logout ends all selections */
   } finally {

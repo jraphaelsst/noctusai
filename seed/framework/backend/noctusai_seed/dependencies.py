@@ -43,7 +43,7 @@ from noctusai_lib.api.auth import (
     make_resolve_platform_role,
     validate_bearer_token,
 )
-from noctusai_lib.api.auth.effective_org import acting_header_of
+from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.domain.licensing import enforce_license, enforce_license_for_user
 
@@ -202,10 +202,14 @@ class ProductDependencies:
         with zero per-product code. The raw, explicitly-named exemption is
         :meth:`get_current_user_ungated` (keeper-allowlisted)."""
         user, token = await self.get_current_user_ungated(authorization, request)
-        enforce_license_for_user(
+        eff = enforce_license_for_user(
             getattr(user, "id", None), token=token,
             acting_header=acting_header_of(request),
         )
+        # Org picker: a write made while ACTING is client-visible (org_id = target).
+        actor = acting_audit_actor(getattr(user, "id", None), eff)
+        if actor is not None and request is not None:
+            request.state.audit_actor = actor
         return user, token
 
     def get_user_role(self, user) -> str:
@@ -253,7 +257,8 @@ class ProductDependencies:
 
         * no ``noctus_users`` row / no org → 403 (a metadata org is ignored);
         * effective org without a license  → 403 ``org_sem_licenca`` (round 2;
-          acting superadmin ⇒ the target org);
+          always the HOME org here: this method receives no token, so a platform-staff org-picker
+          selection is never applied — use ``make_get_current_user_org``);
         * DB / transport error             → 503 (fail closed, no fallback).
 
         Prefer the ``org_id`` already unpacked from ``get_current_user_org``
@@ -284,7 +289,7 @@ class ProductDependencies:
         org_id = membership.get("org_id") if membership else None
         if not org_id:
             raise HTTPException(status_code=403, detail="Usuario sem organizacao associada")
-        # Round-2 license gate on the EFFECTIVE org (acting ⇒ target org).
+        # Round-2 license gate on the caller's HOME org (no token ⇒ no picker selection).
         enforce_license(org_id, membership.get("org_role"), allow_customer=True)
         return org_id
 

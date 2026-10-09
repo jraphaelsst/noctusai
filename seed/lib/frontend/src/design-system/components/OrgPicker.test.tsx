@@ -7,7 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const apiGet = vi.fn();
 const apiPut = vi.fn();
 const apiDelete = vi.fn();
+const removeAllChannels = vi.fn(async () => []);
 vi.mock('@noctusai/seed/infra', () => ({
+  supabase: { removeAllChannels: () => removeAllChannels() },
   api: {
     get: (...a: unknown[]) => apiGet(...a),
     put: (...a: unknown[]) => apiPut(...a),
@@ -46,7 +48,7 @@ describe('OrgPickerModal', () => {
   const reload = vi.fn();
   const orig = window.location;
   beforeEach(() => {
-    [apiGet, apiPut, apiDelete, reload].forEach((m) => m.mockReset());
+    [apiGet, apiPut, apiDelete, reload, removeAllChannels].forEach((m) => m.mockReset());
     setOrgPin(null);
     Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
   });
@@ -81,6 +83,8 @@ describe('OrgPickerModal', () => {
     await waitFor(() => expect(apiPut).toHaveBeenCalledWith('/api/me/org-choice', { org_id: 'o1' }));
     await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
     expect(getOrgPin()).toBe('o1');
+    expect(removeAllChannels).toHaveBeenCalledTimes(1);
+    expect(removeAllChannels.mock.invocationCallOrder[0]).toBeLessThan(reload.mock.invocationCallOrder[0]);
   });
 
   it('shows the error and does not reload when the PUT fails', async () => {
@@ -164,7 +168,7 @@ describe('ActingAsBanner / OrgSelectionGate', () => {
     setOrgPin('o1');
     apiDelete.mockRejectedValue(new Error('403'));
     await expect(endOrgSelectionBestEffort()).resolves.toBeUndefined();
-    expect(apiDelete).toHaveBeenCalledWith('/api/me/org-choice');
+    expect(apiDelete).toHaveBeenCalledWith('/api/me/org-choice?all=true');
     expect(getOrgPin()).toBeNull();
   });
 });

@@ -10,7 +10,8 @@
 --     realtime never act). A product's policies opt in by calling
 --     (SELECT public.current_org_id_for('<schema>')) -- a policy literal, never a header.
 --
--- WHO (staff): noctus_users.role = 'admin' AND the user's home org is_platform=true.
+-- WHO (staff): noctus_users.role = 'admin' AND org_role IN ('owner','admin') AND the user's
+--   home org is_platform=true.
 -- WHEN: one live selection per (user, product); bound to the Supabase auth session_id
 --   (a new login never inherits it); aal2 is required for the helper to honour it.
 -- ENDS (ended_by): replaced | new_session | exit | logout | revoked. The set RPC tags the
@@ -127,7 +128,7 @@ BEGIN
    WHERE u.id = p_user_id
      AND u.role = 'admin'
      AND o.is_platform
-     AND COALESCE(u.org_role, '') <> ALL (ARRAY['membro']);
+     AND u.org_role IN ('owner', 'admin');
   IF v_home IS NULL THEN
     RAISE EXCEPTION 'platform_org_selection:not_platform_staff';
   END IF;
@@ -256,6 +257,30 @@ CREATE TRIGGER noctus_users_revoke_org_selection
           OR OLD.role IS DISTINCT FROM NEW.role)
     EXECUTE FUNCTION public.platform_org_selection_revoke_user();
 
+-- A product losing org_picker_ready (or changing its schema) ends every live selection for it.
+CREATE OR REPLACE FUNCTION public.platform_org_selection_revoke_product()
+  RETURNS trigger
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path TO 'public'
+AS $$
+BEGIN
+  UPDATE public.platform_org_selections
+     SET ended_at = now(), ended_by = 'revoked'
+   WHERE product_id = NEW.id AND ended_at IS NULL;
+  RETURN NULL;
+END;
+$$;
+REVOKE EXECUTE ON FUNCTION public.platform_org_selection_revoke_product() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS products_revoke_org_selection ON public.products;
+CREATE TRIGGER products_revoke_org_selection
+    AFTER UPDATE OF org_picker_ready, db_schema ON public.products
+    FOR EACH ROW
+    WHEN (OLD.org_picker_ready IS DISTINCT FROM NEW.org_picker_ready
+          OR OLD.db_schema IS DISTINCT FROM NEW.db_schema)
+    EXECUTE FUNCTION public.platform_org_selection_revoke_product();
+
 DROP TRIGGER IF EXISTS organizations_revoke_org_selection ON public.organizations;
 CREATE TRIGGER organizations_revoke_org_selection
     AFTER UPDATE OF is_platform ON public.organizations
@@ -294,30 +319,35 @@ BEGIN
   IF COALESCE(v_org_role, '') = ANY (ARRAY['membro']) THEN
     RETURN NULL;
   END IF;
-  IF v_role = 'admin' AND p_schema IS NOT NULL
+  IF v_role = 'admin' AND p_schema IS NOT NULL AND v_org_role IN ('owner', 'admin')
      AND EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = v_home AND o.is_platform)
   THEN
+    BEGIN
+      v_hdr := NULLIF(btrim(NULLIF(current_setting('request.headers', true), '')::json
+                            ->> 'x-noctus-acting-org'), '');
+    EXCEPTION WHEN OTHERS THEN
+      v_hdr := NULL;
+    END;
     SELECT s.target_org_id INTO v_target
       FROM public.products p
       JOIN public.platform_org_selections s
         ON s.product_id = p.id AND s.user_id = v_uid AND s.ended_at IS NULL
-     WHERE p.db_schema = p_schema
+     WHERE p.db_schema = p_schema AND p.org_picker_ready
        AND s.auth_session_id = NULLIF(v_claims ->> 'session_id', '')::uuid
        AND v_claims ->> 'aal' = 'aal2'
+       AND EXISTS (SELECT 1 FROM auth.sessions se WHERE se.id = s.auth_session_id)
        AND EXISTS (
          SELECT 1 FROM public.licenses l
           WHERE l.org_id = s.target_org_id AND l.product_id = p.id
             AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()));
     IF FOUND THEN
-      BEGIN
-        v_hdr := NULLIF(btrim(NULLIF(current_setting('request.headers', true), '')::json
-                              ->> 'x-noctus-acting-org'), '');
-      EXCEPTION WHEN OTHERS THEN
-        v_hdr := NULL;
-      END;
       IF v_hdr IS NULL OR lower(v_hdr) = v_target::text THEN
         RETURN v_target;
       END IF;
+      RETURN NULL;
+    END IF;
+    IF v_hdr IS NOT NULL AND lower(v_hdr) <> v_home::text THEN
+      RETURN NULL;
     END IF;
   END IF;
   RETURN v_home;
@@ -325,6 +355,7 @@ END;
 $f$;
 
 COMMENT ON FUNCTION public.current_org_id_for(text) IS
-    'Org picker RLS helper: the live-selection target for platform staff (aal2, this login, still '
-    'licensed, optional x-noctus-acting-org narrowing), else the HOME rule (customers NULL). '
+    'Org picker RLS helper: the live-selection target for platform staff (aal2, this login with an '
+    'existing auth session, product ready, still licensed); a present x-noctus-acting-org that differs '
+    'from the result DENIES (NULL); else the HOME rule (customers NULL). '
     'Product policies opt in with (SELECT public.current_org_id_for(''<schema>'')).';

@@ -35,6 +35,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 
+from noctusai_lib.api.audit.types import AuditActor
 from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.api.auth.mfa.aal import read_aal
 from noctusai_lib.api.auth.session.types import AuthContext
@@ -122,6 +123,13 @@ def make_trusted_legacy_jwt_resolver(
             raise HTTPException(status_code=403, detail="Área restrita à equipe.")
         # Round-2 license gate on the EFFECTIVE org (acting ⇒ the target org).
         enforce_license(org_raw, membership.get("org_role"), allow_customer=allow_customer)
+        if membership.get("selection_id") and request is not None and hasattr(request, "state"):
+            # Org picker: a write made while ACTING is client-visible (org_id = target).
+            request.state.audit_actor = AuditActor(
+                user_id=str(user_id), org_id=str(org_raw), role="platform_support",
+                acting_org_id=membership.get("home_org_id"),
+                act_as_session_id=membership.get("selection_id"),
+            )
 
         return AuthContext(
             org_id=_to_uuid(org_raw),

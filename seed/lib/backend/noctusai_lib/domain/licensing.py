@@ -366,7 +366,7 @@ def enforce_license(org_id: Any, org_role: Optional[str], *, allow_customer: boo
 
 def enforce_license_for_user(
     user_id: Any, *, token: Optional[str] = None, acting_header: Optional[str] = None
-) -> None:
+) -> Any:
     """License gate for the BASE authenticated dependency (auth without an org
     lookup): resolve the caller's EFFECTIVE org and enforce.
 
@@ -376,10 +376,13 @@ def enforce_license_for_user(
     data (every org-scoped dep already 403s them), so there is nothing to license --
     passes through. A lookup error fails closed (503). Customers are checked with
     ``allow_customer=True`` (license AND ``products.aceita_clientes``).
+
+    Returns the resolved ``EffectiveOrg`` (``None`` when nothing was resolved) so the base
+    auth dependencies can stash the client-visible audit actor while acting.
     """
     gate = _gate
     if gate is None or not gate.enforcing or gate.get_core_client is None or user_id is None:
-        return
+        return None
     from noctusai_lib.api.auth.effective_org import resolve_effective_org_for_request
 
     try:
@@ -394,8 +397,9 @@ def enforce_license_for_user(
         logger.error("license_gate_org_lookup_error user_id=%s — failing closed", user_id, exc_info=True)
         raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
     if eff is None or not eff.org_id:
-        return
+        return None
     enforce_license(eff.org_id, eff.org_role, allow_customer=True)
+    return eff
 
 
 __all__ = [

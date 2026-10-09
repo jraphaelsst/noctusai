@@ -1686,9 +1686,9 @@ _ORG_PICKER_FIXTURE = """
   END IF;
   SELECT u.id, u.org_id INTO v_staff, v_home
     FROM public.noctus_users u JOIN public.organizations o ON o.id = u.org_id
-   WHERE u.role = 'admin' AND o.is_platform AND COALESCE(u.org_role, '') <> ALL (ARRAY['membro']) LIMIT 1;
+   WHERE u.role = 'admin' AND o.is_platform AND u.org_role IN ('owner', 'admin') LIMIT 1;
   IF v_staff IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no platform staff user (role=admin in the is_platform org)';
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no platform staff user (role=admin, org_role owner/admin, in the is_platform org)';
   END IF;
   SELECT u.id, u.org_id INTO v_plain, v_plain_home
     FROM public.noctus_users u JOIN public.organizations o ON o.id = u.org_id
@@ -1709,6 +1709,9 @@ _ORG_PICKER_FIXTURE = """
      SELECT 1 FROM public.licenses l
       WHERE l.org_id = o.id AND l.product_id = v_pid AND l.status = 'active') LIMIT 1;
   UPDATE public.products SET org_picker_ready = true WHERE id = v_pid;
+  -- the helper requires the login to still exist in auth.sessions
+  INSERT INTO auth.sessions (id, user_id) VALUES (v_sid, v_staff);
+  INSERT INTO auth.sessions (id, user_id) VALUES (v_other_sid, v_staff);
 """
 
 
@@ -1900,14 +1903,14 @@ _ORG_PICKER_HELPER_LICENSE_PROBE = _picker_helper_probe(
 _ORG_PICKER_HELPER_HEADER_PROBE = _picker_helper_probe(
     probe_id="current_org_id_for.home_on_narrowing_header_mismatch",
     rationale=(
-        "x-noctus-acting-org is NARROWING only: a header naming another org than the target "
-        "resolves home (a stale tab never writes into the wrong org)."
+        "A present x-noctus-acting-org that differs from the resolved org DENIES (NULL): a stale "
+        "tab never reads or writes the wrong org."
     ),
     steps="""
   PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
 """ + _caller_sql("v_staff::text", header="v_home::text"),
-    expect="v_home",
-    what="a mismatching x-noctus-acting-org resolves to the home org",
+    expect="NULL::uuid",
+    what="a mismatching x-noctus-acting-org is denied (NULL)",
 )
 
 _ORG_PICKER_HELPER_HEADER_MATCH_PROBE = _picker_helper_probe(
@@ -1918,6 +1921,69 @@ _ORG_PICKER_HELPER_HEADER_MATCH_PROBE = _picker_helper_probe(
 """ + _caller_sql("v_staff::text", header="upper(v_target::text)"),
     expect="v_target",
     what="a matching x-noctus-acting-org keeps the target org",
+)
+
+
+_ORG_PICKER_HELPER_STALE_HEADER_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.null_on_stale_header_without_selection",
+    rationale=(
+        "Staff whose selection ended elsewhere but whose tab still pins the old target: the "
+        "home fall-through must DENY (NULL), not silently serve the home org."
+    ),
+    steps="""
+""" + _caller_sql("v_staff::text", header="v_target::text"),
+    expect="NULL::uuid",
+    what="a pin header with no live selection is denied (NULL)",
+)
+
+_ORG_PICKER_HELPER_SESSION_GONE_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_when_auth_session_gone",
+    rationale="A selection dies with its login: once the auth.sessions row is gone the helper resolves home.",
+    steps="""
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+  DELETE FROM auth.sessions WHERE id = v_sid;
+""" + _caller_sql("v_staff::text"),
+    expect="v_home",
+    what="a selection whose auth session is gone resolves to the home org",
+)
+
+_ORG_PICKER_HELPER_NOT_READY_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_when_product_not_ready",
+    rationale="A product that is not org_picker_ready never honours a selection (table-level forged row).",
+    steps="""
+  INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+  VALUES (v_staff, v_pid, v_target, v_home, v_sid);
+  ALTER TABLE public.products DISABLE TRIGGER products_revoke_org_selection;
+  UPDATE public.products SET org_picker_ready = false WHERE id = v_pid;
+""" + _caller_sql("v_staff::text"),
+    expect="v_home",
+    what="a not-ready product resolves to the home org",
+)
+
+_ORG_PICKER_HELPER_STAFF_ROLE_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_for_platform_admin_without_owner_or_admin_org_role",
+    rationale="Staff additionally needs home org_role owner/admin: a platform-org admin-flag with a lesser org role never acts.",
+    steps="""
+  UPDATE public.noctus_users SET org_role = 'viewer' WHERE id = v_staff;
+  INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+  VALUES (v_staff, v_pid, v_target, v_home, v_sid);
+""" + _caller_sql("v_staff::text"),
+    expect="v_home",
+    what="role=admin without an owner/admin org_role resolves to the home org",
+)
+
+_ORG_PICKER_PRODUCT_REVOKE_PROBE = _org_picker_probe(
+    probe_id="platform_org_selections.product_trigger.ends_selection",
+    guard_name="products_revoke_org_selection",
+    kind="state_assertion",
+    rationale="Un-readying a product (or changing its schema) ends every live selection for it, by trigger.",
+    steps="""
+  v_sel := public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+  UPDATE public.products SET org_picker_ready = false WHERE id = v_pid;
+  IF EXISTS (SELECT 1 FROM public.platform_org_selections WHERE id = v_sel AND ended_by = 'revoked' AND ended_at IS NOT NULL) THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: un-readying the product ended the live selection (revoked)';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: the product lost org_picker_ready but the live selection was not revoked';""",
 )
 
 _ORG_PICKER_REVOKE_PROBE = _org_picker_probe(
@@ -2026,6 +2092,11 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_HELPER_HEADER_PROBE,
     _ORG_PICKER_HELPER_HEADER_MATCH_PROBE,
     _ORG_PICKER_REVOKE_PROBE,
+    _ORG_PICKER_HELPER_STALE_HEADER_PROBE,
+    _ORG_PICKER_HELPER_SESSION_GONE_PROBE,
+    _ORG_PICKER_HELPER_NOT_READY_PROBE,
+    _ORG_PICKER_HELPER_STAFF_ROLE_PROBE,
+    _ORG_PICKER_PRODUCT_REVOKE_PROBE,
 )
 
 

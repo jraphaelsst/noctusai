@@ -46,6 +46,7 @@ from noctusai_lib.api.auth.effective_org import (
     acting_header_of,
     resolve_effective_org_for_request,
 )
+from noctusai_lib.api.audit.types import AuditActor
 from noctusai_lib.api.auth.session.types import AuthContext
 from noctusai_lib.domain.licensing import enforce_license
 
@@ -343,6 +344,13 @@ def require_scopes(
             # hold an active license for this product. Cookie-session callers
             # never pass the legacy bridge, so the gate is repeated here.
             enforce_license(membership.get("org_id"), role, allow_customer=True)
+            if membership.get("selection_id") and request is not None and hasattr(request, "state"):
+                # Org picker: a write made while ACTING is client-visible (org_id = target).
+                request.state.audit_actor = AuditActor(
+                    user_id=str(ctx.user_id), org_id=str(membership.get("org_id")),
+                    role="platform_support", acting_org_id=membership.get("home_org_id"),
+                    act_as_session_id=membership.get("selection_id"),
+                )
         if role not in user_roles:
             raise HTTPException(
                 status_code=403,

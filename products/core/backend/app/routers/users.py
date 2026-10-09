@@ -115,8 +115,9 @@ async def atualizar_user(user_id: str, body: UserUpdate, authorization: Optional
     (`noctus_users.org_id` is NOT NULL, no membership join table), so "revoke"
     is a move to another org, never a detach. The move is what actually grants
     product data access: every product's RLS resolves through
-    `public.current_org_id()` → `noctus_users.org_id`, and the platform
-    `role='admin'` flag grants nothing at the data layer.
+    `public.current_org_id()` → `noctus_users.org_id`; the platform `role='admin'`
+    flag alone grants nothing at the data layer (platform staff enter another org only
+    through the 2FA-gated org picker, which RLS honours via `current_org_id_for`).
     """
     admin_user, _token = await get_current_admin(authorization)
     db = get_admin_client()

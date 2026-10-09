@@ -89,3 +89,53 @@ class TestUsersRouterRoleChangesStaySuperadminOnly:
         for body in ({"role": "admin"}, {"org_role": "owner"}):
             resp = client.patch("/api/admin/users/some-user", json=body)
             assert resp.status_code == 403
+
+
+class TestTargetRules:
+    """Role change / removal of an owner (strict 403) or an admin (needs owner/admin/superadmin)."""
+
+    def _remove_setup(self, mock_sb, caller_org_role, caller_role, target_org_role):
+        mock_sb.set_table_responses("noctus_users", [
+            _caller(mock_sb, caller_org_role, caller_role),
+            {"id": "other-user", "org_id": "org-1", "org_role": target_org_role, "email": "o@example.com"},
+            [],
+        ])
+
+    @pytest.mark.parametrize("caller", [("owner", "user"), ("admin", "user"), ("manager", "admin")])
+    def test_owner_target_cannot_be_removed(self, admin_client, caller):
+        self._remove_setup(admin_client.mock_supabase, caller[0], caller[1], "owner")
+        assert admin_client.delete("/api/team/other-user").status_code == 403
+
+    def test_manager_cannot_remove_an_admin(self, admin_client):
+        self._remove_setup(admin_client.mock_supabase, "manager", "user", "admin")
+        assert admin_client.delete("/api/team/other-user").status_code == 403
+
+    @pytest.mark.parametrize("caller", [("owner", "user"), ("admin", "user"), ("manager", "admin")])
+    def test_owner_admin_or_superadmin_can_remove_an_admin(self, admin_client, caller):
+        self._remove_setup(admin_client.mock_supabase, caller[0], caller[1], "admin")
+        assert admin_client.delete("/api/team/other-user").status_code == 200
+
+    def test_manager_can_still_remove_a_member(self, admin_client):
+        self._remove_setup(admin_client.mock_supabase, "manager", "user", "member")
+        assert admin_client.delete("/api/team/other-user").status_code == 200
+
+    def _role_setup(self, mock_sb, caller_org_role, caller_role, target_org_role):
+        mock_sb.set_table_responses("noctus_users", [
+            _caller(mock_sb, caller_org_role, caller_role),
+            {"id": "other-user", "org_id": "org-1", "org_role": target_org_role, "email": "o@example.com"},
+            [{"id": "other-user", "org_id": "org-1", "org_role": "viewer"}],
+        ])
+        mock_sb.set_table_data("roles", [{"id": "r1", "slug": "viewer"}])
+
+    def test_owner_target_role_cannot_change(self, admin_client):
+        self._role_setup(admin_client.mock_supabase, "owner", "user", "owner")
+        assert admin_client.patch("/api/team/other-user/role", json={"role": "viewer"}).status_code == 403
+
+    def test_manager_cannot_demote_an_admin(self, admin_client):
+        self._role_setup(admin_client.mock_supabase, "manager", "user", "admin")
+        assert admin_client.patch("/api/team/other-user/role", json={"role": "viewer"}).status_code == 403
+
+    @pytest.mark.parametrize("caller", [("owner", "user"), ("admin", "user"), ("manager", "admin")])
+    def test_owner_admin_or_superadmin_can_demote_an_admin(self, admin_client, caller):
+        self._role_setup(admin_client.mock_supabase, caller[0], caller[1], "admin")
+        assert admin_client.patch("/api/team/other-user/role", json={"role": "viewer"}).status_code == 200

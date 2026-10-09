@@ -23,8 +23,9 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Optional
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.effective_org import (
@@ -66,7 +67,7 @@ def _org_dto(core_client: Any, org_id: Optional[str]) -> Optional[dict]:
 
 
 class OrgChoiceBody(StrictHttpModel):
-    org_id: str
+    org_id: UUID
 
 
 def _selection_block(core: Any, eff: Optional[EffectiveOrg]) -> dict:
@@ -180,7 +181,7 @@ def create_me_router(deps) -> APIRouter:
         if not session_id:
             raise _err(403, "Sessão sem identificador.", MFA_REQUIRED)
         try:
-            store.set(user.id, slug, body.org_id, session_id)
+            store.set(user.id, slug, str(body.org_id), session_id)
         except OrgSelectionError as exc:
             if exc.code == "not_platform_staff":
                 raise _err(403, "Acesso restrito à equipe da plataforma.", NOT_PLATFORM_STAFF)
@@ -193,10 +194,25 @@ def create_me_router(deps) -> APIRouter:
         return _access_body(core, user.id, token)
 
     @router.delete("/org-choice", status_code=204)
-    async def delete_org_choice(auth=Depends(deps.get_current_user_ungated)) -> Response:
+    async def delete_org_choice(
+        all_products: bool = Query(False, alias="all"),
+        auth=Depends(deps.get_current_user_ungated),
+    ) -> Response:
+        """End this product's selection (``exit``); ``?all=true`` ends EVERY product's
+        selection of the caller (``logout`` -- the SPA calls it before signing out)."""
         user, _token = auth
         core = deps.get_core_client()
         _staff_gate(core, user.id)
+        if all_products:
+            gate = get_license_gate()
+            store = gate.selection_store if gate else None
+            if store is not None:
+                try:
+                    store.end(user.id, None, "logout")
+                except Exception:
+                    logger.error("org_choice_end_all_error user_id=%s", user.id, exc_info=True)
+                    raise HTTPException(status_code=503, detail="Falha ao encerrar as seleções")
+            return Response(status_code=204)
         gate = get_license_gate()
         store = gate.selection_store if gate else None
         slug = gate.product_slug if gate and not gate.exempt else None

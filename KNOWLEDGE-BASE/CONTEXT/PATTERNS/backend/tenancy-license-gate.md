@@ -101,8 +101,8 @@ product, per login**; everyone else enters their own org and the picker endpoint
 strict `403 {"code":"not_platform_staff"}`.
 
 - **Staff = explicit grant, never derived from `org_role`:** `noctus_users.role='admin'`
-  (superadmin, writable only through the superadmin-gated users router) AND the home org
-  `organizations.is_platform`. Re-checked by the RPC and the SQL helper themselves.
+  (superadmin, writable only through the superadmin-gated users router) AND home
+  `org_role IN ('owner','admin')` AND the home org `organizations.is_platform`. Re-checked by the RPC and the SQL helper themselves.
 - **Data model (core 070, expand-only):** `products.db_schema` (= the product's
   `create_product_app(schema=…)`, pinned to the tree by `test_migration_070`) +
   `products.org_picker_ready` (default false); `platform_org_selections` (service-role only;
@@ -114,9 +114,12 @@ strict `403 {"code":"not_platform_staff"}`.
   lapses.
 - **RLS:** `public.current_org_id_for(p_schema)` (canonical text in `sql_templates`, parity
   keeper `check_org_identity_function_parity`; keeps caller EXECUTE via the `rls-helper`
-  marker) returns the live selection's target only for staff + this login's `session_id` +
-  `aal2` + a still-licensed target (+ optional narrowing header `x-noctus-acting-org`);
-  otherwise the home rule (customers NULL). `current_org_id()` / `current_user_org_id()` stay
+  marker) returns the live selection's target only for staff + this login's `session_id` (and
+  that `auth.sessions` row still exists) + `aal2` + a `org_picker_ready` product + a
+  still-licensed target; a staff request whose `x-noctus-acting-org` is present and differs
+  from the result is DENIED (NULL, also on the home fall-through); otherwise the home rule
+  (customers NULL). Un-readying a product (or changing its `db_schema`) ends its live
+  selections by trigger. `current_org_id()` / `current_user_org_id()` stay
   HOME-ONLY forever. A product's policies opt in with
   `(SELECT public.current_org_id_for('<schema>'))`; it flips `org_picker_ready=true` only
   when every policy is converted — keeper `check_org_picker_ready_policies` fails a chain that
@@ -130,15 +133,22 @@ strict `403 {"code":"not_platform_staff"}`.
   `/api/me/access` gains `org_selection{available, required, mfa_required, acting, org,
   home_org, selection_id, org_role}`; `GET /api/me/org-choices` (home first, licensed orgs,
   `no-store`), `PUT`/`DELETE /api/me/org-choice` (`403 mfa_required`, `403 org_sem_licenca`,
-  `409 product_not_ready`). Core logout ends all selections.
+  `409 product_not_ready`; `DELETE …?all=true`, staff-only, ends every product's selection
+  as `logout`). Core logout ends all selections. `org_id` must be a UUID (422 otherwise).
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads
-  are logged with `org_id NULL` (platform-only).
+  are logged with `org_id NULL` (platform-only). The acting actor is stashed on EVERY
+  FastAPI auth path (org dep, base dep, `require_scopes`/legacy bridge). Browser writes sent
+  straight to PostgREST while acting carry no audit row: NOC-REMEDIATE[org-picker-postgrest-audit]
+  — a per-table trigger reading `current_org_id_for` would close it. — 2026-10-08
+  Realtime DOES act on converted tables; the SPA tears channels down on swap.
 - **Probes:** `noctus.dev.verify_db_guards` — `platform_org_selections.*`,
   `platform_org_selection_set.refuses_*`, `current_org_id_for.*` (positive control + home for
   non-staff / other session / aal1 / unlicensed / mismatching header), revocation trigger.
-- **Team grants (core):** `owner` is never grantable via invite or role change; granting
-  `admin` needs an inviter who is owner/admin or the platform superadmin.
+- **Team rules (core):** `owner` is never grantable via invite or role change; granting
+  `admin` needs an inviter who is owner/admin or the platform superadmin; an `owner` target
+  can be neither re-roled nor removed (strict 403) and an `admin` target needs the same
+  caller. (The seed team router has no role-change route and refuses removal with 409.)
 
 Composes with: `no-metadata-authz.md`, `database-rls.md`, `audit-trail.md`.

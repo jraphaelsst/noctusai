@@ -102,6 +102,18 @@ def _require_can_grant(profile: dict, role: str) -> None:
         )
 
 
+def _require_can_touch_target(profile: dict, target_org_role: Optional[str]) -> None:
+    """Acting ON a member (role change / removal) mirrors the grant rule: an ``owner`` target
+    is untouchable here (strict 403); an ``admin`` target needs a caller who is owner/admin
+    or the platform superadmin -- otherwise any ``team:manage`` holder (e.g. a manager) could
+    demote or delete the admins above them."""
+    if target_org_role == "owner":
+        raise HTTPException(status_code=403, detail="Não é possível alterar o proprietário da organização")
+    if target_org_role == "admin" and profile.get("org_role") not in _GRANT_REQUIRES["admin"] \
+            and profile.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Você não tem permissão para alterar um administrador")
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -256,12 +268,13 @@ async def remover_membro(
     if not target.data:
         raise HTTPException(status_code=404, detail="Membro não encontrado")
 
-    # Cannot remove the owner
+    # Cannot remove the owner; removing an admin needs owner/admin (or superadmin)
     if target.data.get("org_role") == "owner":
         raise HTTPException(
             status_code=403,
             detail="Não é possível remover o proprietário da organização",
         )
+    _require_can_touch_target(profile, target.data.get("org_role"))
 
     # Remove the member: delete their noctus_users profile.
     # (org_id is NOT NULL, so we cannot just clear it.)
@@ -351,12 +364,13 @@ async def alterar_role_membro(
     if not target.data:
         raise HTTPException(status_code=404, detail="Membro não encontrado")
 
-    # Cannot change the owner's role
+    # Cannot change the owner's role; changing an admin's needs owner/admin (or superadmin)
     if target.data.get("org_role") == "owner":
         raise HTTPException(
             status_code=403,
             detail="Não é possível alterar o papel do proprietário",
         )
+    _require_can_touch_target(profile, target.data.get("org_role"))
 
     result = (
         db.table("noctus_users")

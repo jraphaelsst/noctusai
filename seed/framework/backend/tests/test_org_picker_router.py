@@ -9,10 +9,10 @@ from types import SimpleNamespace
 from typing import Optional
 
 import pytest
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.testclient import TestClient
 
-from noctusai_lib.api.auth import make_get_current_user_org
+from noctusai_lib.api.auth import make_get_current_user, make_get_current_user_org
 from noctusai_lib.api.auth.org_selection import FakeOrgSelectionStore
 from noctusai_lib.domain.licensing import FakeLicenseChecker, configure_license_gate
 from noctusai_lib.primitives.exceptions import http_exception_handler
@@ -88,6 +88,17 @@ def _make(*, ready=True, users=None):
     @app.get("/api/things")
     async def things(auth=Depends(guarded)):
         return {"org_id": auth[2]}
+
+    base = make_get_current_user(lambda: SimpleNamespace(
+        auth=SimpleNamespace(get_user=lambda t: SimpleNamespace(user=SimpleNamespace(
+            id=json.loads(base64.urlsafe_b64decode(t.split(".")[1] + "==") )["sub"], user_metadata={})))))
+
+    @app.post("/api/base-write")
+    async def base_write(request: Request, auth=Depends(base)):
+        actor = getattr(request.state, "audit_actor", None)
+        return {"org_id": getattr(actor, "org_id", None), "role": getattr(actor, "role", None),
+                "acting_org_id": getattr(actor, "acting_org_id", None),
+                "tag": getattr(actor, "act_as_session_id", None)}
 
     return TestClient(app), store
 
@@ -269,3 +280,50 @@ class TestIntentPin:
         resp = c.get("/api/things", headers={**_h(OWNER), "X-Noctus-Acting-Org": CLIENT_Z})
         assert resp.status_code == 200
         assert resp.json() == {"org_id": CLIENT_A}
+
+
+class TestStaffEligibilityAndBody:
+    def test_platform_admin_with_a_lesser_org_role_is_not_staff(self):
+        users = [{"id": STAFF, "org_id": HOME, "org_role": "manager", "role": "admin"}]
+        c, _ = _make(users=users)
+        assert c.get("/api/me/org-choices", headers=_h(STAFF)).json()["code"] == "not_platform_staff"
+        assert c.get("/api/me/access", headers=_h(STAFF)).json()["org_selection"]["available"] is False
+
+    def test_org_id_must_be_a_uuid(self):
+        c, store = _make()
+        resp = c.put("/api/me/org-choice", json={"org_id": "not-a-uuid"}, headers=_h(STAFF))
+        assert resp.status_code == 422
+        assert store.rows == []
+
+
+class TestDeleteAll:
+    def test_all_true_ends_every_products_selection_as_logout(self):
+        c, store = _make()
+        c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF))
+        store.rows.append({"id": "x", "user_id": STAFF, "slug": "other", "target": CLIENT_A,
+                           "home": HOME, "session": SESSION, "ended_by": None})
+        assert c.delete("/api/me/org-choice?all=true", headers=_h(STAFF)).status_code == 204
+        assert [r["ended_by"] for r in store.rows] == ["logout", "logout"]
+
+    def test_all_true_is_staff_only(self):
+        c, _ = _make()
+        resp = c.delete("/api/me/org-choice?all=true", headers=_h(OWNER))
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "not_platform_staff"
+
+
+class TestActingWritesAreClientVisible:
+    """Every FastAPI write while acting -- including through the BASE auth dependency
+    (no org lookup) -- carries org_id = target, role platform_support, home + selection tags."""
+
+    def test_base_dep_stashes_the_acting_actor(self):
+        c, store = _make()
+        c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF))
+        body = c.post("/api/base-write", headers=_h(STAFF)).json()
+        assert body == {"org_id": CLIENT_A, "role": "platform_support", "acting_org_id": HOME,
+                        "tag": store.rows[0]["id"]}
+
+    def test_base_dep_for_an_ordinary_user_has_no_acting_tags(self):
+        c, _ = _make()
+        body = c.post("/api/base-write", headers=_h(OWNER)).json()
+        assert body["tag"] is None and body["role"] is None

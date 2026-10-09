@@ -31,8 +31,8 @@ from typing import Any, Callable, Optional
 
 from fastapi import HTTPException
 
+from noctusai_lib.api.audit.types import AuditActor
 from noctusai_lib.api.auth.mfa.aal import read_session_claims
-from noctusai_lib.primitives.roles import is_customer_role
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 STAFF_ROLE = "admin"
 #: The org role an acting staff member has inside the selected org.
 ACTING_ORG_ROLE = "owner"
+#: Home ``org_role`` platform staff additionally needs (superadmin flag + platform org + this).
+STAFF_ORG_ROLES = frozenset({"owner", "admin"})
+#: Audit role stamped on rows written while acting (the client sees "Suporte NoctusAI").
+ACTING_AUDIT_ROLE = "platform_support"
 #: Intent-pin request header (also PostgREST: helper treats it as narrowing only).
 ACTING_ORG_HEADER = "x-noctus-acting-org"
 ORG_SELECTION_CHANGED_CODE = "org_selection_changed"
@@ -108,8 +112,8 @@ def _home_is_platform(core_client: Any, org_id: Any) -> bool:
 
 
 def is_platform_staff(core_client: Any, user_id: Any) -> bool:
-    """Trusted check: ``noctus_users.role='admin'`` AND the home org ``is_platform`` (and the
-    home ``org_role`` is not a customer role). Explicit grant only -- NEVER derived from
+    """Trusted check: ``noctus_users.role='admin'`` AND home ``org_role`` owner/admin AND the
+    home org ``is_platform``. Explicit grant only -- NEVER derived from
     ``org_role``. Raises on a DB error (callers fail closed)."""
     if user_id is None:
         return False
@@ -122,8 +126,20 @@ def is_platform_staff(core_client: Any, user_id: Any) -> bool:
     row = rows[0]
     return (
         row.get("role") == STAFF_ROLE
-        and not is_customer_role(row.get("org_role"))
+        and row.get("org_role") in STAFF_ORG_ROLES
         and _home_is_platform(core_client, row.get("org_id"))
+    )
+
+
+def acting_audit_actor(user_id: Any, eff: Optional["EffectiveOrg"]) -> Optional[AuditActor]:
+    """The client-visible audit actor for a request made while ACTING in a customer org
+    (``org_id`` = the target, tagged with the home org + selection id), else ``None``."""
+    if eff is None or not eff.acting:
+        return None
+    return AuditActor(
+        user_id=str(user_id) if user_id is not None else None,
+        org_id=eff.org_id, role=ACTING_AUDIT_ROLE,
+        acting_org_id=eff.home_org_id, act_as_session_id=eff.selection_id,
     )
 
 
@@ -163,7 +179,7 @@ def resolve_effective_org(
         or selection_store is None
         or not product_slug
         or product_slug == CORE_SLUG
-        or is_customer_role(row.get("org_role"))
+        or row.get("org_role") not in STAFF_ORG_ROLES
         or not selection_store.product_ready(product_slug)
         or not _home_is_platform(core_client, home.org_id)
     ):
@@ -228,7 +244,10 @@ def resolve_effective_org_via(
 
 __all__ = [
     "ACTING_ORG_HEADER",
+    "ACTING_AUDIT_ROLE",
     "ACTING_ORG_ROLE",
+    "STAFF_ORG_ROLES",
+    "acting_audit_actor",
     "ORG_SELECTION_CHANGED_CODE",
     "STAFF_ROLE",
     "EffectiveOrg",

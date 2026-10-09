@@ -72,13 +72,27 @@ def test_revocation_triggers_cover_every_premise():
     assert "AFTER UPDATE OF org_id, org_role, role ON public.noctus_users" in SQL
     assert "AFTER UPDATE OF is_platform ON public.organizations" in SQL
     assert "AFTER UPDATE OF status, fim, org_id, product_id OR DELETE ON public.licenses" in SQL
-    assert SQL.count("ended_by = 'revoked'") == 3
+    assert "AFTER UPDATE OF org_picker_ready, db_schema ON public.products" in SQL
+    assert "REVOKE EXECUTE ON FUNCTION public.platform_org_selection_revoke_product() FROM PUBLIC, anon, authenticated" in SQL
+    assert SQL.count("ended_by = 'revoked'") == 4
 
 
 def test_helper_keeps_caller_execute_with_the_rls_helper_marker():
     marker = re.search(r"-- secdef-execute-ok: rls-helper[^\n]*\nCREATE OR REPLACE FUNCTION public\.current_org_id_for", SQL)
     assert marker is not None
     assert "REVOKE EXECUTE ON FUNCTION public.current_org_id_for" not in SQL
+
+
+def test_helper_requires_ready_product_live_auth_session_and_denies_on_pin_mismatch():
+    assert "AND p.org_picker_ready" in SQL
+    assert "EXISTS (SELECT 1 FROM auth.sessions se WHERE se.id = s.auth_session_id)" in SQL
+    assert "v_org_role IN ('owner', 'admin')" in SQL
+    # a present pin that differs from the result returns NULL (deny), target OR home fall-through
+    assert SQL.count("RETURN NULL;") >= 4
+
+
+def test_rpc_requires_owner_or_admin_org_role_for_staff():
+    assert "u.org_role IN ('owner', 'admin')" in SQL
 
 
 def test_helper_is_the_canonical_rendering():

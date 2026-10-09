@@ -8,7 +8,7 @@ build to.
 
 1. **Who (staff):** EXPLICIT grant only — never derived from org_role. Platform staff =
    `noctus_users.role = 'admin'` (superadmin; writable only via superadmin-gated endpoints)
-   AND the user's home org has `organizations.is_platform = true`. Today: the owner only.
+   AND `org_role IN ('owner','admin')` AND the user's home org has `organizations.is_platform = true`. Today: the owner only.
    Everyone else enters their own org, no picker, picker endpoints → strict 403.
 2. **When:** once per product per LOGIN (Supabase auth `session_id`). Popup modal on first
    entry to a picker-ready product; remembered until logout; "Trocar org" swap inside the
@@ -52,10 +52,12 @@ build to.
   returns the live selection's target IFF caller is staff AND a live selection exists for
   the product whose `db_schema = p_schema` AND `auth_session_id = (auth.jwt()->>'session_id')::uuid`
   AND the JWT is aal2 (`auth.jwt()->>'aal' = 'aal2'`) AND the target holds an active
-  license for that product AND (optional narrowing) header `x-noctus-acting-org`, if
-  present, equals the target; otherwise the existing home rule (customers excluded).
+  license for that product AND the auth session still exists (`auth.sessions`) AND the product
+  is `org_picker_ready`, AND the header `x-noctus-acting-org` (if present) equals the target;
+  a present header that differs from the result is a DENY (NULL); otherwise the existing home
+  rule (customers excluded).
   Non-staff exit after one indexed lookup. `current_org_id()` / `current_user_org_id()`
-  stay HOME-ONLY forever (public tables, storage, realtime never act).
+  stay HOME-ONLY forever (public tables and storage never act; realtime DOES act on converted tables -- the SPA tears channels down on swap).
 - Product policies opt in by calling `(SELECT public.current_org_id_for('<schema>'))` —
   policy literal, never a request header. Pilot: social-wiring (migration 211). A product
   sets `products.org_picker_ready = true` only once every policy in its schema is converted
@@ -83,11 +85,12 @@ for non-staff, `403 code mfa_required` without aal2, `401` without a token.
   nome). `Cache-Control: no-store`.
 - `PUT /api/me/org-choice` body `{"org_id": "…"}` → returns the new `/api/me/access` body.
   Unlicensed target → `403 code org_sem_licenca`; product not ready → `409 code product_not_ready`.
-- `DELETE /api/me/org-choice` → `204` (ends this product's selection, `exit`).
+- `DELETE /api/me/org-choice` → `204` (ends this product's selection, `exit`);
+  `?all=true` (staff-only) ends EVERY product's selection (`logout`) -- the SPA calls it before sign-out.
 - Intent pin: for staff with a live selection the SPA sends `X-Noctus-Acting-Org: <org id>`
   on every API request (FastAPI + PostgREST). FastAPI auth deps: header present and ≠
   resolved org → `409 {"code": "org_selection_changed"}`. SQL helper: header present and ≠
-  target → resolve home (narrowing only). Non-staff header: ignored silently. Header added
+  target → DENY (the helper returns NULL, also on a home fall-through: a stale tab never reads/writes the wrong org). Non-staff header: ignored silently. Header added
   to CORS allow-list.
 - Core `POST /api/auth/logout` ends ALL the user's selections (`logout`).
 
@@ -108,3 +111,11 @@ for non-staff, `403 code mfa_required` without aal2, `401` without a token.
 - Other products' policy conversion → one migration per product, flips `org_picker_ready`
   (NOC-REMEDIATE[org-picker-policy-conversion]).
 - Drop of the prod-only `act_as_sessions` shim → core 071 after deploy_verify (contract step).
+
+## Named destinations added by the security review (2026-10-08)
+
+- NOC-REMEDIATE[org-picker-postgrest-audit]: FastAPI writes while acting are client-visible
+  (`org_id = target`, role `platform_support`) on EVERY auth path (org dep, base dep,
+  `require_scopes`/bridge). Writes the browser sends straight to PostgREST while acting
+  carry no audit row yet; a per-table trigger reading `current_org_id_for` would close it.
+  Not built now (no trigger). — 2026-10-08

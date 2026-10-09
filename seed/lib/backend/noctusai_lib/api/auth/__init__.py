@@ -68,7 +68,7 @@ import jwt
 from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.audit import AuditActor
-from noctusai_lib.api.auth.effective_org import acting_header_of
+from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
 from noctusai_lib.api.auth.effective_org import resolve_effective_org_via
 from noctusai_lib.domain.licensing import enforce_license as _enforce_license
 from noctusai_lib.domain.licensing import enforce_license_for_user as _enforce_license_for_user
@@ -306,12 +306,17 @@ def make_get_current_user(get_supabase_client_fn):
     async def _product_get_current_user(
         authorization: Optional[str] = Header(None),
         x_noctus_acting_org: Optional[str] = Header(None),
+        request: Request = None,
     ):
         user, token = await ungated(authorization)
-        _enforce_license_for_user(
+        eff = _enforce_license_for_user(
             getattr(user, "id", None), token=token,
             acting_header=x_noctus_acting_org if isinstance(x_noctus_acting_org, str) else None,
         )
+        # Org picker: a write made while ACTING is client-visible (org_id = target).
+        actor = acting_audit_actor(getattr(user, "id", None), eff)
+        if actor is not None and request is not None:
+            request.state.audit_actor = actor
         return user, token
 
     _product_get_current_user.ungated = ungated

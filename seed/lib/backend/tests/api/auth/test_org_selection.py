@@ -191,6 +191,31 @@ class TestResolverIneligiblePaths:
         assert eff.org_id == HOME
 
 
+class TestStaffEligibilityAndActorHelper:
+    def test_platform_admin_with_a_lesser_org_role_never_acts(self):
+        row = {"id": STAFF, "org_id": HOME, "org_role": "manager", "role": "admin"}
+        c = MockSupabaseClient()
+        c.set_table_data("noctus_users", [row])
+        c.set_table_data("organizations", [{"id": HOME, "nome": "Casa", "is_platform": True}])
+        store = FakeOrgSelectionStore(ready={"igig"}, staff={STAFF}, licensed={(TARGET, "igig")},
+                                      home_orgs={STAFF: HOME})
+        store.set(STAFF, "igig", TARGET, SID)
+        eff = resolve_effective_org(c, STAFF, product_slug="igig",
+                                    token=_tok(STAFF, session_id=SID, aal="aal2"), selection_store=store)
+        assert eff.org_id == HOME and eff.is_staff is False
+
+    def test_acting_actor_is_client_visible_and_tagged(self):
+        from noctusai_lib.api.auth.effective_org import EffectiveOrg, acting_audit_actor
+
+        eff = EffectiveOrg(org_id=TARGET, org_role="owner", home_org_id=HOME, selection_id="sel-1", is_staff=True)
+        actor = acting_audit_actor(STAFF, eff)
+        assert (actor.org_id, actor.role, actor.acting_org_id, actor.act_as_session_id) == (
+            TARGET, "platform_support", HOME, "sel-1")
+        home = EffectiveOrg(org_id=HOME, org_role="owner", home_org_id=HOME, selection_id="sel-2", is_staff=True)
+        assert acting_audit_actor(STAFF, home) is None
+        assert acting_audit_actor(STAFF, None) is None
+
+
 class TestAuditTagging:
     def _row(self, actor):
         return _to_row(AuditEntry(product_slug="igig", method="POST", route_template="/api/x",
