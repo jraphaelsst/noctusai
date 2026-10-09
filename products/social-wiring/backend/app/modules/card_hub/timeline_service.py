@@ -148,6 +148,9 @@ def _gather_movimentos(
                 "id": m["id"],
                 "de_etapa": stage_names.get(m.get("de_etapa_id")),
                 "para_etapa": stage_names.get(m.get("para_etapa_id")),
+                # `etapa_auto:<evento>` marks a move the funnel made on its own
+                # (pipeline.funil_eventos); a human drag carries no/free motivo.
+                "motivo": m.get("motivo"),
                 "autor": _actor(resolved, m.get("responsavel_id")),
             },
         }

@@ -69,6 +69,7 @@ from app.modules.card_hub.contrato_gerador.router import (
 from app.modules.card_hub.certidoes_partes_router import (
     router as certidoes_partes_router,
 )
+from app.modules.card_hub.roteiros_router import router as roteiros_feedback_router
 from app.modules.card_hub.antigos_proprietarios_router import (
     router as antigos_proprietarios_router,
 )
@@ -159,6 +160,8 @@ router.include_router(certidoes_partes_router)
 router.include_router(antigos_proprietarios_router)
 # WhatsApp conversation + document request/triage (CONTRACT §2) — .../conversa[...], .../documentos/a-classificar.
 router.include_router(conversa_router)
+# Roteiro feedback (migration 219) — .../roteiros/{id}/feedback|visitadas.
+router.include_router(roteiros_feedback_router)
 
 #: Shared with the included routers — see `card_hub/auth.py`.
 _auth_parts = auth_parts
@@ -452,6 +455,7 @@ async def create_roteiro_route(
         titulo=body.titulo,
         atendimento_id=body.atendimento_id,
         data_visita=body.data_visita,
+        usuario_id=getattr(_user, "id", None),
     )
 
 

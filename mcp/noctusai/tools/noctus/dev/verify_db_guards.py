@@ -1251,6 +1251,61 @@ END;
 )
 
 
+_VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
+    id="visitas.nao_realizada_motivo.allowed_values",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="visitas_nao_realizada_motivo_valido",
+    kind="write_refusal",
+    migrations=("219_visita_feedback.sql",),
+    rationale=(
+        "`nao_realizada_motivo` is a closed vocabulary — the funnel metric "
+        "(GET /api/metricas/atendimentos) groups missed visits by it, so a "
+        "free-text value would split one reason across spellings instead of "
+        "erroring where it was written."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="visitas",
+        columns_sql="org_id, roteiro_id, codigo, ordem, nao_realizada_motivo",
+        values_sql="org_id, roteiro_id, codigo, 9999, 'noc-probe-not-a-motivo'",
+        fixture_from=f"{_SW_SCHEMA}.visitas",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.visitas to borrow an FK-valid "
+            "(roteiro_id, codigo) from"
+        ),
+        guard_fragment='constraint "visitas_nao_realizada_motivo_valido"',
+    ),
+)
+
+
+_ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE = GuardProbe(
+    id="roteiros.feedback_status.allowed_values",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="roteiros_feedback_status_valido",
+    kind="write_refusal",
+    migrations=("219_visita_feedback.sql",),
+    rationale=(
+        "`feedback_status` is the two-state 'visita aconteceu?' flag the "
+        "daily prompt and the pending list filter on by exact string; a "
+        "third spelling would make a roteiro invisible to both."
+    ),
+    sql=_insert_check_probe(
+        schema=_SW_SCHEMA,
+        table="roteiros",
+        columns_sql="org_id, atendimento_id, feedback_status",
+        values_sql="org_id, atendimento_id, 'noc-probe-not-a-status'",
+        fixture_from=f"{_SW_SCHEMA}.roteiros",
+        fixture_description=(
+            f"no row in {_SW_SCHEMA}.roteiros to borrow an FK-valid "
+            "atendimento_id from"
+        ),
+        guard_fragment='constraint "roteiros_feedback_status_valido"',
+    ),
+)
+
+
 _CS_RESEARCH_ITEM_UNIQUE_PROBE = GuardProbe(
     id="cs_research_items.marca_variable_content.unique",
     product="social-wiring",
@@ -5430,6 +5485,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE,
     _CS_RESEARCH_ITEM_UNIQUE_PROBE,
     *_CS_WAVE2_PROBES,
+    _VISITA_MOTIVO_CHECK_PROBE,
+    _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,

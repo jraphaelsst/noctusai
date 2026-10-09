@@ -510,3 +510,7 @@ Authored 2026-10-09 (owner decision "mark as deleted, keep leads"). Creates `cli
 ## atendimento_propostas (file: `*_atendimento_propostas.sql`) (proposta = offer snapshot) — NOT APPLIED
 
 Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §4.1). Creates `atendimento_propostas` (status CHECK, `valor_proposto > 0` CHECK, partial UNIQUE one `aceita` per atendimento, org-picker RLS, acting-audit attach). Apply BEFORE deploying the image that reads/writes it.
+
+## 219 — visita_feedback (visitas.nao_realizada_motivo/realizada_em, roteiros.feedback_status/feedback_em/hora_visita) — NOT APPLIED
+
+Authored 2026-10-09 (sw-lead-to-contract CONTRACT §3.1). Additive columns + CHECKs + a partial index; no new table. Apply BEFORE deploying the image that reads/writes them.

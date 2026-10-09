@@ -56,6 +56,7 @@ owns the two rules a constraint cannot:
 """
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -73,6 +74,8 @@ from app.modules.imovel_hub.busca_service import canonical, enriquecer
 from app.modules.imovel_hub.dados_service import ensure_imovel
 from app.services import table_reads
 
+logger = logging.getLogger(__name__)
+
 TABLE = "roteiros"
 VISITAS_TABLE = "visitas"
 
@@ -81,7 +84,11 @@ VISITAS_TABLE = "visitas"
 #: future job). Neither is redundant with the other.
 STATUS_VALIDOS = ("pendente", "realizada", "nao_realizada")
 
-_ROTEIRO_FIELDS = ("id", "atendimento_id", "titulo", "data_visita", "created_at")
+_ROTEIRO_FIELDS = (
+    "id", "atendimento_id", "titulo", "data_visita", "created_at",
+    # Migration 219 — the "visita aconteceu?" axis.
+    "hora_visita", "feedback_status", "feedback_em",
+)
 
 #: Same sentence the request schema (`roteiro_schemas`) raises, so the 422 from
 #: the body and the typed error from a direct service call read identically.
@@ -89,6 +96,8 @@ MSG_DATA_OBRIGATORIA = "Informe a data da visita."
 _VISITA_FIELDS = (
     "id", "roteiro_id", "codigo", "ordem", "status",
     "observacao", "feedback_em", "created_at",
+    # Migration 219.
+    "nao_realizada_motivo", "realizada_em",
     # Migration 104 — the proposta axis. Deliberately NOT folded into
     # `status`: see that migration's header and `registrar_proposta` below.
     "proposta_em", "proposta_por", "proposta_aceita_em", "proposta_aceita_por",
@@ -225,8 +234,13 @@ def criar(
     data_visita: Optional[date] = None,
     titulo: Optional[str] = None,
     atendimento_id: Optional[UUID] = None,
+    usuario_id: Optional[Any] = None,
 ) -> dict:
     """A route and one visita per property, in the order given.
+
+    Also advances the atendimento's funil stage to `visitas` (CONTRACT §6,
+    `roteiro_criado`), and returns that outcome under `funil` so the caller
+    can surface a refusal instead of it being silent.
 
     `data_visita` is REQUIRED (CONTRACT §5.1); it defaults to `None` only so a
     caller that forgets it gets the typed `ValidationError_` below rather than a
@@ -246,6 +260,7 @@ def criar(
             "atendimento_id": alvo,
             "titulo": (titulo or "").strip() or None,
             "data_visita": data_visita,
+            "feedback_status": "pendente",
             "created_at": agora,
         }
     ).execute()
@@ -265,7 +280,21 @@ def criar(
         ]
     ).execute()
 
-    return obter(client, org_id, cliente_id, UUID(roteiro_id))
+    roteiro = obter(client, org_id, cliente_id, UUID(roteiro_id))
+    roteiro["funil"] = _mover_funil(client, org_id, alvo, usuario_id)
+    return roteiro
+
+
+def _mover_funil(client: Any, org_id: UUID, atendimento_id: str, usuario_id: Any) -> dict:
+    """`roteiro_criado` -> stage `visitas`. The roteiro is already saved, so a
+    funnel failure is REPORTED (`motivo`), never raised over a good write."""
+    from app.modules.pipeline.funil_eventos import mover_por_evento
+
+    try:
+        return mover_por_evento(client, org_id, atendimento_id, "roteiro_criado", usuario_id)
+    except Exception:  # noqa: BLE001 - reported in the result, logged with trace
+        logger.exception("funil: roteiro_criado failed for atendimento %s", atendimento_id)
+        return {"moveu": False, "de": None, "para": None, "motivo": "erro_funil"}
 
 
 def _exigir_data(valor: Any) -> str:
@@ -449,6 +478,15 @@ def atualizar_visita(
         # from, and a second stamp would move a past event forward in the sort.
         if status != "pendente" and not atual.get("feedback_em"):
             updates["feedback_em"] = _now()
+        # Migration 219: `realizada_em` follows the status; the motivo only
+        # exists for a visit that did not happen.
+        if status == "realizada":
+            updates["realizada_em"] = atual.get("realizada_em") or _now()
+            updates["nao_realizada_motivo"] = None
+        else:
+            updates["realizada_em"] = None
+            if status != "nao_realizada":
+                updates["nao_realizada_motivo"] = None
 
     if updates:
         _t(client, VISITAS_TABLE).update(updates).eq("id", str(visita_id)).execute()

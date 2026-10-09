@@ -103,6 +103,8 @@ def register() -> Any:
         financiamento_service,
         negociacao_extracao_service,
     )
+    from app.modules.card_hub import roteiros_feedback_scheduler
+    from app.modules.card_hub.roteiros_router import metricas_router, pendentes_router
     from app.modules.card_hub.router import defaults_router, proveniencia_router, router
 
     # Configured at import time — before `start_scheduler()` fires in
@@ -117,9 +119,12 @@ def register() -> Any:
     # recovery sweep (guia_itbi / proposta_financiamento / contrato_
     # financiamento), built on the shared `app.services.extracao_varredura`.
     negociacao_extracao_service.configure()
+    # Daily "visita aconteceu?" prompt (CONTRACT sw-lead-to-contract §3.2).
+    roteiros_feedback_scheduler.configure()
 
     return ModuleRegistration(
-        routers=[router, defaults_router, proveniencia_router], standard_routers=()
+        routers=[router, defaults_router, proveniencia_router, pendentes_router, metricas_router],
+        standard_routers=(),
     )
 
 

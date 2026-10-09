@@ -899,6 +899,67 @@ class NotificationService:
         )
         return {"subject": subject, "html": html, "text": text}
 
+    async def notify_visita_feedback(
+        self, *, org_id: UUID, pendentes: list[dict[str, Any]]
+    ) -> DispatchOutcome:
+        """Daily prompt: roteiros whose visit date passed with no answer
+        ("Visita de {cliente} aconteceu?"), sent as ONE digest per org.
+
+        Recipients are the org's active notification roster (the only
+        addressing the notification system has; atendimentos carry no corretor
+        identity). Never raises per-recipient (same contract as the others).
+        """
+        if not pendentes:
+            return DispatchOutcome()
+        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+        if not recipients:
+            logger.warning(
+                "notify_visita_feedback: %d roteiro(s) await feedback (org=%s) but NO "
+                "active notification recipient is configured — nobody was alerted.",
+                len(pendentes), org_id,
+            )
+            return DispatchOutcome()
+        message = self._build_visita_feedback_message(pendentes)
+        return await self._dispatch(
+            kind="visita_feedback", org_id=org_id, recipients=recipients, message=message
+        )
+
+    def _build_visita_feedback_message(
+        self, pendentes: list[dict[str, Any]]
+    ) -> dict[str, str]:
+        from app.config import settings
+
+        base = (settings.frontend_base_url or "").rstrip("/")
+        linhas = []
+        for p in pendentes:
+            nome = p.get("cliente_nome") or "Cliente sem nome"
+            link = (
+                f"{base}/clientes/{p['cliente_id']}?aba=roteiros"
+                if base and p.get("cliente_id") else ""
+            )
+            linhas.append((f"Visita de {nome} aconteceu?", link))
+        subject = (
+            "[Social Wiring] Visita aconteceu?"
+            if len(linhas) == 1
+            else f"[Social Wiring] {len(linhas)} visitas aguardam resposta"
+        )
+        text = "\n".join(
+            [f"{t}" + (f" {l}" if l else "") for t, l in linhas]
+            + ["", "Responda no card do cliente, aba Roteiros.", "", "Enviado pelo Social Wiring."]
+        )
+        itens = "".join(
+            f"<li>{t}" + (f" <a href='{l}'>abrir</a>" if l else "") + "</li>"
+            for t, l in linhas
+        )
+        html = (
+            "<div style='font-family:sans-serif;max-width:560px'>"
+            "<h2 style='margin:0 0 8px'>Visita aconteceu?</h2>"
+            f"<ul>{itens}</ul>"
+            "<p style='color:#888;font-size:12px;margin:24px 0 0'>"
+            "Enviado pelo Social Wiring.</p></div>"
+        )
+        return {"subject": subject, "html": html, "text": text}
+
     def _build_lead_message(self, lead: dict[str, Any]) -> dict[str, str]:
         """Compose the new-lead notification body — pt-BR copy, same
         subject/html/text shape as :meth:`_build_upload_message`.
