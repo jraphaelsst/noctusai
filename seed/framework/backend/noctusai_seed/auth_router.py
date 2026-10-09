@@ -60,6 +60,7 @@ from noctusai_lib.api.auth import _resolve_trusted_membership
 from noctusai_lib.api.auth.effective_org import acting_header_of
 from noctusai_lib.domain.licensing import enforce_license
 from noctusai_lib.primitives.roles import is_customer_role
+from noctusai_lib.api.auth.session.cookie import clear_session_cookie, set_session_cookie
 from noctusai_lib.api.auth.session import (
     ADMIN_ORG_ROLES,
     ApiTokenResolver,
@@ -464,15 +465,7 @@ def create_auth_router(
             ttl_seconds=_SESSION_TTL_SECONDS,
         )
 
-        response.set_cookie(
-            key=_SESSION_COOKIE,
-            value=session_id,
-            max_age=_SESSION_TTL_SECONDS,
-            httponly=True,
-            secure=True,
-            samesite="strict",
-            path="/",
-        )
+        set_session_cookie(response, _SESSION_COOKIE, session_id, _SESSION_TTL_SECONDS)
 
         # display-only (never authorization): the org label shown after login
         org_name = (getattr(user, "user_metadata", None) or {}).get("org_name")  # display-only
@@ -516,7 +509,7 @@ def create_auth_router(
             if tokens is not None and tokens.refresh_token:
                 await session_revoker.revoke(tokens.refresh_token)
             await session_store.delete(session_cookie)
-        response.delete_cookie(_SESSION_COOKIE, path="/")
+        clear_session_cookie(response, _SESSION_COOKIE)
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
 

@@ -47,7 +47,7 @@ import logging
 from typing import Awaitable, Callable
 
 from fastapi import Cookie, Header, HTTPException, Request
-from fastapi.responses import Response
+from noctusai_lib.api.auth.session.cookie import session_cookie_clear_header
 
 from noctusai_lib.api.auth.session.api_tokens import ApiTokenResolver
 from noctusai_lib.api.auth.session.store import SessionStore
@@ -63,19 +63,6 @@ an ``AuthContext`` if the JWT validates against the legacy verifier,
 or ``None`` to fall through to 401. Lets the new dep coexist with
 ``make_get_current_user`` callers during the migration window.
 """
-
-
-def _cookie_clear_header(cookie_name: str) -> str:
-    """``Set-Cookie`` value deleting the session cookie.
-
-    Same attributes the login route sets it with (path/secure/httponly/
-    samesite), so the browser matches and drops the exact cookie.
-    """
-    resp = Response()
-    resp.delete_cookie(
-        cookie_name, path="/", secure=True, httponly=True, samesite="strict"
-    )
-    return resp.headers["set-cookie"]
 
 
 def make_get_auth_context(
@@ -143,7 +130,7 @@ def make_get_auth_context(
         raise HTTPException(
             status_code=401,
             detail="Session and bearer identify different users",
-            headers={"Set-Cookie": _cookie_clear_header(session_cookie_name)},
+            headers={"Set-Cookie": session_cookie_clear_header(session_cookie_name)},
         )
 
     async def get_auth_context(
