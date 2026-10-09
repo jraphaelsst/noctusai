@@ -26,10 +26,18 @@ import pytest
 from noctusai_lib.config.deploy_config import MissingProdConfigError
 
 
+# Every key these tests declare: each test sets the ones it wants present, so
+# none may arrive from the host (a developer .env carries ENCRYPTION_KEY and
+# false-redded the "missing" assertions under a .env-loaded gate, 2026-10-09).
+_DECLARED_KEYS = ("ENCRYPTION_KEY", "P_STUDIO_ORG_ID", "SOME_OTHER_KEY")
+
+
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("APP_ENV", raising=False)
     for key in [k for k in os.environ if k.startswith("PRODUCT_URL_")]:
+        monkeypatch.delenv(key, raising=False)
+    for key in _DECLARED_KEYS:
         monkeypatch.delenv(key, raising=False)
 
 

@@ -37,10 +37,15 @@ def clean_env(monkeypatch: pytest.MonkeyPatch) -> None:
     Removes ``APP_ENV`` and every ``PRODUCT_URL_*`` key the host might carry
     (the local MCP runtime can export them). ``raising=False`` keeps it a no-op
     when a key is already absent. ``monkeypatch`` restores the original env
-    after each test.
+    after each test. Also the baseline required-in-prod keys (derived from
+    ``BASELINE_REQUIRED_PROD_ENV``): a developer ``.env`` carries
+    ``REDIS_SESSION_ENCRYPTION_KEY``, and a test asserting it is MISSING must
+    not depend on the host env (false red under a .env-loaded gate, 2026-10-09).
     """
     monkeypatch.delenv("APP_ENV", raising=False)
     for key in [k for k in os.environ if k.startswith("PRODUCT_URL_")]:
+        monkeypatch.delenv(key, raising=False)
+    for key in BASELINE_REQUIRED_PROD_ENV:
         monkeypatch.delenv(key, raising=False)
 
 

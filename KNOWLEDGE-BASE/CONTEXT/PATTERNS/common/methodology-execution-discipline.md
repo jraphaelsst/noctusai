@@ -410,6 +410,19 @@ added.
   `npm ci`/`npm install` writes. Both halves were fixed: the probe, and
   `wire_env`, which must not manufacture a half-state that reads as a whole
   one (`test_plan_env_wiring_does_not_manufacture_a_partial_node_modules`).
+
+  🔴 **The env is a precondition too — and its provenance must survive a
+  process hop.** Gate subprocesses run on `sanitize_subprocess_env()` (CI
+  runs these suites with no `.env`). On 2026-10-09 the merged-tip check
+  still false-redded 4 "unset key → X" seed-backend tests: `task_branch`'s
+  staleness fallback re-ran as a child `cli.py` with the parent's env, the
+  child's `load_repo_env` saw every `.env` key as already set (0 new), and
+  sanitize stripped nothing. `env_bootstrap` now hands the injected key
+  NAMES down in `NOCTUS_ENV_BOOTSTRAP_KEYS`, and `gate_sweep` preflights
+  `env_free_of_dotenv`: any key whose value is identical to the repo
+  `.env`'s still in the gate env (e.g. a shell that ran `set -a; . .env`)
+  ⇒ no gate runs, `inconclusive`. Tests that assert a key is MISSING
+  delenv it themselves — env hygiene, never a patched guard.
 - **Signature** (advisory, for what preflight cannot know in advance): a
   non-zero gate whose output carries a known setup-failure fingerprint
   (`Executable doesn't exist at`, `Process from config.webServer was not

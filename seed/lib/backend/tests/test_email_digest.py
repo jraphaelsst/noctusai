@@ -121,8 +121,11 @@ class TestSendDigestErrors:
 
 class TestResolveResendConfig:
     def test_no_key_returns_none(self, monkeypatch):
-        from noctusai_lib.config import credentials as creds
-        monkeypatch.setattr(creds, "resolve_credential", lambda key, org_id=None: None)
+        # Real 3-tier chain with no key configured. (The old
+        # `creds.resolve_credential` stub never reached `digest`, which imported
+        # the name at load — the test silently depended on RESEND_API_KEY being
+        # unset and false-redded under a developer .env, 2026-10-09.)
+        monkeypatch.delenv("RESEND_API_KEY", raising=False)
         from noctusai_lib.integrations.email.digest import _resolve_resend_config
         assert _resolve_resend_config(org_id="org-1") is None
 

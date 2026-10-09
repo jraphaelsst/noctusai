@@ -43,6 +43,9 @@ def _restore_environ():
     from `.env` (it wasn't; it was set directly via `monkeypatch.setenv`)."""
     before = frozenset(env_bootstrap._loaded_keys)
     with patch.dict(os.environ):
+        # A parent's provenance marker (e.g. this suite launched by a CLI that
+        # loaded .env) must not leak into tests that reason about this process.
+        os.environ.pop(env_bootstrap.LOADED_KEYS_ENV_MARKER, None)
         yield
     env_bootstrap._loaded_keys.clear()
     env_bootstrap._loaded_keys.update(before)
@@ -336,3 +339,71 @@ class TestRedactSecretsInText:
 
         assert "abcdefghijklmno" not in redacted
         assert redacted.count("***REDACTED***") == 1
+
+
+class TestProvenanceSurvivesProcessHop:
+    """2026-10-09: the toolkit-staleness fresh-subprocess fallback re-ran
+    `task_branch integrate` as a child `cli.py` with the parent's env. The
+    child's `load_repo_env` saw every `.env` key as already set (0 new), so
+    `sanitize_subprocess_env()` stripped nothing and the merged-tip pytest
+    gate false-redded 4 "unset key -> X" seed-backend tests."""
+
+    def test_load_publishes_the_marker(self, tmp_path, probe_env_var):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text(f"{probe_env_var}=super-secret-value\n")
+        load_repo_env(tmp_path)
+
+        assert probe_env_var in os.environ[env_bootstrap.LOADED_KEYS_ENV_MARKER].split(",")
+
+    def test_child_strips_keys_the_parent_injected(self, tmp_path, probe_env_var):
+        # The child: the value arrived as a plain env var + the marker, and its
+        # own load finds it already set (0 new keys).
+        env_bootstrap._loaded_keys.clear()
+        os.environ[probe_env_var] = "super-secret-value"
+        os.environ[env_bootstrap.LOADED_KEYS_ENV_MARKER] = probe_env_var
+        (tmp_path / ".env").write_text(f"{probe_env_var}=super-secret-value\n")
+        load_repo_env(tmp_path)
+        assert env_bootstrap._loaded_keys == set()
+
+        sanitized = sanitize_subprocess_env()
+
+        assert probe_env_var not in sanitized
+        assert env_bootstrap.LOADED_KEYS_ENV_MARKER not in sanitized
+
+    def test_real_child_process_end_to_end(self, tmp_path, probe_env_var):
+        env_bootstrap._loaded_keys.clear()
+        (tmp_path / ".env").write_text(f"{probe_env_var}=super-secret-value\n")
+        load_repo_env(tmp_path)
+        child = (
+            "import os, sys; sys.path.insert(0, %r); import env_bootstrap as e; "
+            "e.load_repo_env(__import__('pathlib').Path(%r)); "
+            "print(%r in e.sanitize_subprocess_env())"
+        ) % (str(Path(env_bootstrap.__file__).parent), str(tmp_path), probe_env_var)
+        out = subprocess.run(
+            [os.sys.executable, "-c", child], env=dict(os.environ),
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        assert out == "False"
+
+    def test_marker_names_absent_here_are_ignored(self):
+        env_bootstrap._loaded_keys.clear()
+        os.environ[env_bootstrap.LOADED_KEYS_ENV_MARKER] = "NOC_NOT_SET_ANYWHERE_XYZ"
+
+        assert get_loaded_keys() == frozenset()
+
+
+class TestDotenvResidue:
+    def test_flags_exact_dotenv_value_still_in_env(self, tmp_path):
+        (tmp_path / ".env").write_text("NOC_RESIDUE_KEY=super-secret-value\nNOC_FLAG=true\n")
+        env = {"NOC_RESIDUE_KEY": "super-secret-value", "NOC_FLAG": "true", "PATH": "/usr/bin"}
+
+        assert env_bootstrap.dotenv_residue(env, tmp_path) == ["NOC_RESIDUE_KEY"]
+
+    def test_same_name_different_value_is_not_residue(self, tmp_path):
+        (tmp_path / ".env").write_text("NOC_RESIDUE_KEY=super-secret-value\n")
+
+        assert env_bootstrap.dotenv_residue({"NOC_RESIDUE_KEY": "ci-provided-value"}, tmp_path) == []
+
+    def test_no_dotenv_is_empty(self, tmp_path):
+        assert env_bootstrap.dotenv_residue({"X": "whatever-long"}, tmp_path) == []

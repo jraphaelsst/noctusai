@@ -75,7 +75,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from env_bootstrap import redact_secrets_in_text, sanitize_subprocess_env
+from env_bootstrap import dotenv_residue, redact_secrets_in_text, sanitize_subprocess_env
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -497,7 +497,9 @@ def _default_run_gate(spec: GateSpec, timeout: int = 300) -> GateRunResult:
 
 
 def _run_gates(
-    specs: list[GateSpec], run_gate: Callable[[GateSpec], GateRunResult]
+    specs: list[GateSpec],
+    run_gate: Callable[[GateSpec], GateRunResult],
+    env_residue: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Preflight, then run, then classify — in that order.
 
@@ -507,6 +509,30 @@ def _run_gates(
     missing and how to fix it."""
     results: list[dict[str, Any]] = []
     for spec in specs:
+        if env_residue:
+            # The developer's `.env` is still in the gate env (2026-10-09:
+            # merged-tip pytest false-redded 4 "unset key -> X" tests). The
+            # result would judge the `.env`, not the code — do not run it.
+            results.append({
+                "gate": spec.gate,
+                "ran": False,
+                "exit_code": None,
+                "summary": (
+                    "HARNESS INVALID — gate NOT run: the gate env still carries "
+                    f"{len(env_residue)} key(s) with the repo .env's exact values"
+                ),
+                "duration_s": 0.0,
+                "harness_invalid": [{
+                    "precondition": "env_free_of_dotenv",
+                    "missing_path": ", ".join(env_residue),
+                    "remedy": (
+                        "unset these in the launching shell (they were exported from "
+                        ".env, e.g. `set -a; . .env`) or run from a clean shell — CI "
+                        "runs these suites without .env"
+                    ),
+                }],
+            })
+            continue
         unmet = [p for p in spec.preconditions if not p.path.exists()]
         if unmet:
             results.append({
@@ -670,7 +696,9 @@ def gate_sweep(
     specs = _build_gate_specs(root, scope)
     runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
 
-    gates = _run_gates(specs, runner)
+    # Measured against what `_default_run_gate` actually hands its subprocess.
+    env_residue = dotenv_residue(sanitize_subprocess_env(), root)
+    gates = _run_gates(specs, runner, env_residue)
 
     if scope["unmapped_files"]:
         gates.append({

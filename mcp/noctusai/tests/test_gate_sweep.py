@@ -851,3 +851,25 @@ class TestDefaultRunGateEnvHygiene:
         )
 
         assert result["status"] == "green"
+
+
+class TestDotenvResidueIsHarnessInvalid:
+    """2026-10-09: a gate env still carrying the developer's `.env` values
+    judges the `.env`, not the code — never run, never red (inconclusive)."""
+
+    def test_residue_marks_every_gate_harness_invalid_and_unrun(self, tmp_path):
+        calls = []
+        specs = [GS.GateSpec("pytest:x", ["true"], tmp_path), GS.GateSpec("vitest:y", ["true"], tmp_path)]
+
+        gates = GS._run_gates(specs, lambda s: calls.append(s) or (1, "boom", 0.0), ["ENCRYPTION_KEY"])
+
+        assert calls == []
+        assert [g["ran"] for g in gates] == [False, False]
+        assert gates[0]["harness_invalid"][0]["precondition"] == "env_free_of_dotenv"
+        assert "ENCRYPTION_KEY" in gates[0]["harness_invalid"][0]["missing_path"]
+        assert GS._verdict(gates) == "inconclusive"
+
+    def test_no_residue_runs_normally(self, tmp_path):
+        gates = GS._run_gates([GS.GateSpec("pytest:x", ["true"], tmp_path)], lambda s: (0, "ok", 0.0), [])
+
+        assert gates[0]["ran"] is True and GS._verdict(gates) == "green"

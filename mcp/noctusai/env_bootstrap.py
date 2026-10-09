@@ -74,6 +74,24 @@ _DOTENV_FILENAME = ".env"
 # actually landed in ``os.environ`` on ``override=False``).
 _loaded_keys: set[str] = set()
 
+# Provenance that SURVIVES A PROCESS HOP (2026-10-09). `_loaded_keys` is
+# per-process: a child spawned with this process's env (the toolkit-
+# staleness fresh-subprocess fallback, any `cli.py` re-exec) inherits the
+# `.env` VALUES as plain env vars, its own `load_repo_env` sees them as
+# "already set" (0 new keys) and its `sanitize_subprocess_env()` strips
+# NOTHING — the merged-tip pytest gate then ran on the developer's `.env`
+# and false-redded every "unset key → X" test. So the names ride along as
+# this marker (names only, never values) and `get_loaded_keys()` honours
+# an inherited one.
+LOADED_KEYS_ENV_MARKER = "NOCTUS_ENV_BOOTSTRAP_KEYS"
+
+
+def _inherited_loaded_keys() -> set[str]:
+    """Names a PARENT process's ``load_repo_env`` injected (via the marker),
+    restricted to keys still present here."""
+    raw = os.environ.get(LOADED_KEYS_ENV_MARKER, "")
+    return {k for k in raw.split(",") if k and k in os.environ}
+
 
 @dataclass(frozen=True)
 class EnvBootstrapResult:
@@ -178,6 +196,11 @@ def load_repo_env(
                 env_path, len(newly_set),
             )
 
+    # Publish provenance for any child process (see LOADED_KEYS_ENV_MARKER).
+    known = get_loaded_keys()
+    if known:
+        os.environ[LOADED_KEYS_ENV_MARKER] = ",".join(sorted(known))
+
     if not loaded_from:
         tried = ", ".join(str(c / _DOTENV_FILENAME) for c in attempted)
         log.info(
@@ -204,8 +227,10 @@ def get_loaded_keys() -> frozenset[str]:
     far. Empty before the first :func:`load_repo_env` call — a bare unit
     test importing this module directly, or a process that legitimately
     found no ``.env`` at all, must treat that as "nothing known to strip",
-    never as an error."""
-    return frozenset(_loaded_keys)
+    never as an error. Includes names a PARENT process injected and handed
+    down via :data:`LOADED_KEYS_ENV_MARKER` — provenance must survive the
+    hop, or a re-exec'd child strips nothing."""
+    return frozenset(_loaded_keys | _inherited_loaded_keys())
 
 
 # Env-var NAME shapes presumed secret regardless of provenance — catches a
@@ -265,9 +290,40 @@ def sanitize_subprocess_env(
     env = dict(base_env if base_env is not None else os.environ)
     for key in get_loaded_keys():
         env.pop(key, None)
+    env.pop(LOADED_KEYS_ENV_MARKER, None)
     for key in extra_strip:
         env.pop(key, None)
     return env
+
+
+def dotenv_residue(env: Mapping[str, str], repo_root: Path) -> list[str]:
+    """Names (never values) of keys in ``env`` whose value is IDENTICAL to the
+    repo ``.env``'s (any candidate root) — i.e. the developer's ``.env`` is
+    still in a gate subprocess's env even after :func:`sanitize_subprocess_env`
+    (a shell that ran ``set -a; . .env``, or a parent that dropped the
+    provenance marker). A gate run on such an env judges the ``.env``, not
+    the code (verdict-channel integrity) — ``gate_sweep`` refuses to run it.
+    Values shorter than ``_MIN_MASKABLE_VALUE_LENGTH`` are ignored (a flag or
+    enum like ``true`` coinciding is not evidence of provenance). Never
+    raises: unreadable ``.env`` / no python-dotenv ⇒ ``[]``."""
+    try:
+        from dotenv import dotenv_values
+    except ImportError:  # pragma: no cover — dependency is pinned
+        return []
+    residue: set[str] = set()
+    for candidate in _candidate_roots(repo_root):
+        env_path = candidate / _DOTENV_FILENAME
+        if not env_path.exists():
+            continue
+        try:
+            values = dotenv_values(env_path)
+        except (OSError, UnicodeDecodeError):
+            continue
+        for key, value in values.items():
+            if (value is not None and len(value) >= _MIN_MASKABLE_VALUE_LENGTH
+                    and env.get(key) == value):
+                residue.add(key)
+    return sorted(residue)
 
 
 def _known_secret_values() -> dict[str, str]:
@@ -320,5 +376,7 @@ __all__ = [
     "load_repo_env",
     "get_loaded_keys",
     "sanitize_subprocess_env",
+    "dotenv_residue",
+    "LOADED_KEYS_ENV_MARKER",
     "redact_secrets_in_text",
 ]
