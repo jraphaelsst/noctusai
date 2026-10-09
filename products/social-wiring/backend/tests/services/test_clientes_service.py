@@ -1715,3 +1715,154 @@ class TestChainedDealSamePersonByCpf:
         )
 
         assert svc.list_cpf_review_groups(client, ORG) == []
+
+
+# ─── delete = tombstone (migration 216) ───────────────────────────────────
+
+
+def _tombstones(client) -> list[dict]:
+    return client.table("cliente_origens_excluidas").select("*").execute().data or []
+
+
+def _delete_like_postgres(client, cliente_id: str, *, userid=None):
+    """`excluir_cliente`, then what Postgres does on its own: the
+    `cliente_touches` FK CASCADEs with the cliente (the mock has no FK
+    emulation). This is exactly the state the prod backfill then saw."""
+    out = svc.excluir_cliente(client, ORG, cliente_id, excluido_por=userid)
+    client.table("cliente_touches").delete().eq("cliente_id", cliente_id).execute()
+    return out
+
+
+def _cliente_of(client, origem_tabela: str, origem_id: str):
+    rows = [
+        t for t in _touches(client)
+        if t["origem_tabela"] == origem_tabela and t["origem_id"] == origem_id
+    ]
+    return rows[0]["cliente_id"] if rows else None
+
+
+class TestExcluirClienteTombstone:
+    """Leads are EVENTS (kept); a cliente is a PERSON. Deleting the person
+    must stick across the 6-hourly backfill (prod, deal 876, 2026-10-09)."""
+
+    def _setup(self):
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Ana Silva", K1)])
+        client.set_table_data("meta_ads_leads", [_meta_lead("M1", "Bia Souza", phone=K2)])
+        client.set_table_data("atendimentos", [])
+        client.set_table_data("cliente_merges", [])
+        client.set_table_data("cliente_origens_excluidas", [])
+        svc.run_backfill(client, ORG)
+        return client
+
+    def test_delete_then_backfill_does_not_recreate_for_leads_and_meta(self):
+        client = self._setup()
+        a = _cliente_of(client, "leads", "L1")
+        b = _cliente_of(client, "meta_ads_leads", "M1")
+        assert a and b
+
+        _delete_like_postgres(client, a)
+        _delete_like_postgres(client, b)
+        assert _clientes(client) == []
+
+        svc.run_backfill(client, ORG)
+        assert _clientes(client) == []
+        assert _touches(client) == []
+        # The leads themselves are untouched.
+        assert len(client.table("leads").select("*").execute().data) == 1
+        assert len(client.table("meta_ads_leads").select("*").execute().data) == 1
+
+    def test_tombstone_rows_carry_who_what_and_the_count(self):
+        client = self._setup()
+        a = _cliente_of(client, "leads", "L1")
+        user = str(uuid4())
+
+        out = _delete_like_postgres(client, a, userid=user)
+
+        assert out["origens_bloqueadas"] == 1
+        [row] = _tombstones(client)
+        assert (row["origem_tabela"], row["origem_id"]) == ("leads", "L1")
+        assert row["cliente_id"] == a
+        assert row["cliente_nome"] == "Ana Silva"
+        assert row["excluido_por"] == user
+        assert row["org_id"] == ORG
+
+    def test_tombstone_write_is_idempotent(self):
+        client = self._setup()
+        a = _cliente_of(client, "leads", "L1")
+        client.set_table_data(
+            "cliente_origens_excluidas",
+            [{"id": str(uuid4()), "org_id": ORG, "origem_tabela": "leads",
+              "origem_id": "L1", "cliente_id": str(uuid4()), "cliente_nome": "old",
+              "excluido_por": None}],
+        )
+        svc.excluir_cliente(client, ORG, a)
+        assert len(_tombstones(client)) == 1
+
+    def test_merge_survivor_delete_is_refused_and_writes_no_tombstone(self):
+        client = self._setup()
+        a = _cliente_of(client, "leads", "L1")
+        client.set_table_data(
+            "cliente_merges",
+            [{"id": str(uuid4()), "org_id": ORG, "cliente_id_sobrevivente": a,
+              "cliente_id_absorvido": str(uuid4())}],
+        )
+        with pytest.raises(svc.ClienteEhSobreviventeDeMerge):
+            svc.excluir_cliente(client, ORG, a)
+        assert _tombstones(client) == []
+        assert any(c["id"] == a for c in _clientes(client))
+
+    def test_merge_and_undo_merge_write_no_tombstones(self):
+        client = _scoped_client()
+        a_id, b_id = TestMergeAndUndo()._seed_two_review_candidates(client)
+        client.set_table_data("cliente_origens_excluidas", [])
+        merge_id = svc.merge_clientes(
+            client, ORG, cliente_id_sobrevivente=a_id, cliente_id_absorvido=b_id,
+            motivo="C5", automatico=False,
+        )
+        assert _tombstones(client) == []
+        svc.undo_merge(client, ORG, merge_id)
+        assert _tombstones(client) == []
+
+    def test_a_new_lead_from_the_same_person_creates_a_new_cliente(self):
+        client = self._setup()
+        a = _cliente_of(client, "leads", "L1")
+        _delete_like_postgres(client, a)
+
+        client.set_table_data(
+            "leads",
+            [_lead("L1", "Ana Silva", K1), _lead("L1b", "Ana Silva", K1, data="2026-10-10")],
+        )
+        svc.run_backfill(client, ORG)
+
+        novo = _cliente_of(client, "leads", "L1b")
+        assert novo and novo != a
+        assert novo in {c["id"] for c in _clientes(client)}
+        # The old source stays tombstoned: it does not come back with it.
+        assert _cliente_of(client, "leads", "L1") is None
+
+    def test_dry_run_reads_no_tombstones_and_stays_unchanged(self):
+        client = _scoped_client()
+        client.set_table_data("leads", [_lead("L1", "Solo", K1)])
+        client.set_table_data("meta_ads_leads", [])
+        # No cliente_origens_excluidas table seeded: a dry-run must not read it
+        # (it can run before migration 216 is even applied).
+        report = svc.run_backfill(client, ORG, dry_run=True)
+        assert report.clientes_created == 1
+
+
+class TestRestaurarClienteExcluido:
+    def test_restore_covers_meta_ads_leads_and_links_the_touch(self):
+        client = TestExcluirClienteTombstone()._setup()
+        b = _cliente_of(client, "meta_ads_leads", "M1")
+        _delete_like_postgres(client, b)
+        assert _cliente_of(client, "meta_ads_leads", "M1") is None
+
+        out = svc.restaurar_cliente_excluido(client, ORG, b)
+
+        assert out["origens_restauradas"] == 1
+        assert out["cliente_id"] == _cliente_of(client, "meta_ads_leads", "M1")
+        assert out["cliente_id"] != b
+        assert _tombstones(client) == []
+        with pytest.raises(svc.ClienteExcluidoNotFound):
+            svc.restaurar_cliente_excluido(client, ORG, b)

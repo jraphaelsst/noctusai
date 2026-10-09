@@ -1211,6 +1211,46 @@ END;
 )
 
 
+_CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE = GuardProbe(
+    id="cliente_origens_excluidas.origem.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_sw_cliente_origens_excluidas_origem",
+    kind="write_refusal",
+    migrations=("216_cliente_origens_excluidas.sql",),
+    rationale=(
+        "One tombstone per source row (origem_tabela, origem_id), globally — "
+        "the same identity as cliente_touches; the service upserts, this "
+        "index is the backstop under a race."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe tombstone';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.cliente_origens_excluidas (org_id, origem_tabela, origem_id, cliente_id)
+    VALUES (v_org_id, 'leads', 'noc-probe-origem', gen_random_uuid());
+    INSERT INTO {_SW_SCHEMA}.cliente_origens_excluidas (org_id, origem_tabela, origem_id, cliente_id)
+    VALUES (v_org_id, 'leads', 'noc-probe-origem', gen_random_uuid());
+    RAISE EXCEPTION 'NOC_PROBE:permitted: duplicate (origem_tabela, origem_id) insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%uq_sw_cliente_origens_excluidas_origem%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — social_wiring.imovel_dados_endereco_registro_confirmado CHECK
 # (migration 139).
@@ -5123,6 +5163,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,
     _IMOBILIARIA_CNPJ_UNIQUE_PROBE,
+    _CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,

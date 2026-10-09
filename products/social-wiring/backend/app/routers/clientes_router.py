@@ -47,7 +47,7 @@ from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
-from noctusai_lib.primitives.exceptions import ConflictError, NotFoundError
+from noctusai_lib.primitives.exceptions import AppException, ConflictError, NotFoundError
 
 from app.dependencies import (
     coerce_org_uuid,
@@ -453,7 +453,30 @@ class ClienteDeleteOut(BaseModel):
     deleted: bool = True
     atendimentos_removidos: int
     documentos_removidos: int
+    # Source rows (leads / meta leads) tombstoned so the backfill cannot
+    # recreate this person; the leads themselves are kept.
+    origens_bloqueadas: int = 0
     storage_falhas: list[str] = Field(default_factory=list)
+
+
+class ClienteExcluidoOut(BaseModel):
+    cliente_id: UUID
+    cliente_nome: Optional[str] = None
+    excluido_por: Optional[UUID] = None
+    # Not resolved: no name helper for core users is available to this router.
+    excluido_por_nome: Optional[str] = None
+    excluido_em: Optional[datetime] = None
+    origens: int
+
+
+class ClientesExcluidosOut(BaseModel):
+    items: list[ClienteExcluidoOut]
+    total: int
+
+
+class RestaurarClienteOut(BaseModel):
+    origens_restauradas: int
+    cliente_id: Optional[UUID] = None
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────
@@ -652,6 +675,46 @@ def get_backfill_runner():
     → KB § PATTERNS/backend/di-test-seam.md.
     """
     return clientes_backfill_job.run_now
+
+
+# Declared BEFORE every `/{cliente_id}...` route so `/excluidos` is never
+# captured as a cliente id.
+@router.get("/excluidos", response_model=ClientesExcluidosOut)
+async def list_excluidos_route(
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> ClientesExcluidosOut:
+    """Deleted clientes whose source leads are tombstoned (admin/owner only,
+    the same trusted gate as DELETE). Grouped by the deleted cliente id,
+    newest first."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Clientes excluídos")
+    items = svc.list_clientes_excluidos(client, org_id)
+    return ClientesExcluidosOut(items=items, total=len(items))
+
+
+@router.post("/excluidos/{cliente_id}/restaurar", response_model=RestaurarClienteOut)
+async def restaurar_excluido_route(
+    cliente_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_clientes_client),
+) -> RestaurarClienteOut:
+    """Lift the tombstones of a deleted cliente and rebuild the person NOW from
+    its leads. CPF, documents, notes etc. removed by the hard delete are NOT
+    recovered. Admin/owner only; 404 when nothing is tombstoned for this id."""
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Restaurar cliente")
+    try:
+        return RestaurarClienteOut(**svc.restaurar_cliente_excluido(client, org_id, cliente_id))
+    except svc.ClienteExcluidoNotFound as exc:
+        raise AppException(
+            "CLIENTE_EXCLUIDO_NAO_ENCONTRADO",
+            "Nenhum cliente excluído encontrado para restaurar.",
+            status_code=404,
+            details={"cliente_id": str(cliente_id)},
+        ) from exc
 
 
 @router.post("/backfill", response_model=BackfillOut)
@@ -1045,7 +1108,9 @@ async def excluir_cliente_route(
     require_org_admin_role(get_core_client(), getattr(_user, "id", None), "Excluir cliente")
 
     try:
-        resultado = svc.excluir_cliente(client, org_id, cliente_id)
+        resultado = svc.excluir_cliente(
+            client, org_id, cliente_id, excluido_por=getattr(_user, "id", None)
+        )
     except svc.ClienteNotFound as exc:
         raise NotFoundError("clientes", str(cliente_id)) from exc
     except svc.ClienteEhSobreviventeDeMerge as exc:
@@ -1077,6 +1142,7 @@ async def excluir_cliente_route(
     return ClienteDeleteOut(
         atendimentos_removidos=resultado["atendimentos_removidos"],
         documentos_removidos=len(resultado["documentos"]),
+        origens_bloqueadas=resultado["origens_bloqueadas"],
         storage_falhas=storage_falhas,
     )
 

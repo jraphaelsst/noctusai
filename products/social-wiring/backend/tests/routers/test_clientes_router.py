@@ -209,6 +209,8 @@ UNAUTHENTICATED_ROUTES = [
     ("get", f"/api/clientes/{_CLIENTE_ID}/touches"),
     ("patch", f"/api/clientes/{_CLIENTE_ID}"),
     ("delete", f"/api/clientes/{_CLIENTE_ID}"),
+    ("get", "/api/clientes/excluidos"),
+    ("post", f"/api/clientes/excluidos/{_CLIENTE_ID}/restaurar"),
     ("get", "/api/clientes/revisao"),
     ("post", f"/api/clientes/revisao/{_GRUPO}/merge"),
     ("post", f"/api/clientes/revisao/{_GRUPO}/manter-separados"),
@@ -1176,6 +1178,7 @@ class TestExcluirCliente:
         assert body["deleted"] is True
         assert body["atendimentos_removidos"] == 2
         assert body["documentos_removidos"] == 2
+        assert body["origens_bloqueadas"] == 0  # this cliente has no touches
         # `FakeStorageBackend.delete` on a never-`put` key returns `False`
         # (no matching object), never raises — that is NOT a failure (the
         # goal state, "no file at this path", already holds), so it must
@@ -1184,6 +1187,40 @@ class TestExcluirCliente:
 
         assert get_clientes_client().table("clientes").select("*").execute().data == []
         assert get_clientes_client().table("atendimentos").select("*").execute().data == []
+
+    def test_delete_tombstones_each_source_and_reports_the_count(
+        self, admin_client, fake_storage
+    ):
+        """Leads are kept; each touched source is tombstoned (with the acting
+        user) so the 6-hourly backfill cannot recreate the person."""
+        a1 = str(uuid4())
+        c = get_clientes_client()
+        c.set_table_data("clientes", [_cliente(a1, "Ana")])
+        c.set_table_data("atendimentos", [])
+        c.set_table_data("cliente_merges", [])
+        c.set_table_data("cliente_documentos", [])
+        c.set_table_data("cliente_origens_excluidas", [])
+        c.set_table_data(
+            "cliente_touches",
+            [
+                {"id": str(uuid4()), "cliente_id": a1, "org_id": ORG_ID,
+                 "origem_tabela": "leads", "origem_id": "L1",
+                 "ocorreu_em": "2026-01-01"},
+                {"id": str(uuid4()), "cliente_id": a1, "org_id": ORG_ID,
+                 "origem_tabela": "meta_ads_leads", "origem_id": "M1",
+                 "ocorreu_em": "2026-01-02"},
+            ],
+        )
+
+        resp = admin_client.delete(f"/api/clientes/{a1}", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["origens_bloqueadas"] == 2
+        rows = c.table("cliente_origens_excluidas").select("*").execute().data
+        assert {(r["origem_tabela"], r["origem_id"]) for r in rows} == {
+            ("leads", "L1"), ("meta_ads_leads", "M1"),
+        }
+        assert all(r["cliente_id"] == a1 and r["cliente_nome"] == "Ana" for r in rows)
+        assert all(r["excluido_por"] for r in rows)
 
     def test_a_storage_delete_failure_is_reported_not_swallowed(
         self, admin_client, raising_storage
@@ -1207,6 +1244,80 @@ class TestExcluirCliente:
         assert body["storage_falhas"] == ["boom.pdf"]
         # The DB side still fully completed despite the storage failure.
         assert get_clientes_client().table("clientes").select("*").execute().data == []
+
+
+def _tomb(cliente_id, origem_id, *, tabela="leads", org=None, nome="Ana", em="2026-10-01T00:00:00+00:00"):
+    return {
+        "id": str(uuid4()), "org_id": org or ORG_ID, "origem_tabela": tabela,
+        "origem_id": origem_id, "cliente_id": cliente_id, "cliente_nome": nome,
+        "excluido_por": str(uuid4()), "excluido_em": em,
+    }
+
+
+class TestExcluidosListEhRestaurar:
+    def test_list_is_admin_only_grouped_newest_first_and_org_scoped(
+        self, admin_client
+    ):
+        c = get_clientes_client()
+        d1, d2 = str(uuid4()), str(uuid4())
+        c.set_table_data("cliente_origens_excluidas", [
+            _tomb(d1, "L1", em="2026-10-01T00:00:00+00:00"),
+            _tomb(d1, "M1", tabela="meta_ads_leads", em="2026-10-01T00:00:00+00:00"),
+            _tomb(d2, "L2", nome="Bia", em="2026-10-05T00:00:00+00:00"),
+            _tomb(str(uuid4()), "L9", org=str(uuid4())),
+        ])
+        # Not captured by the `/{cliente_id}` route (would be 422/404).
+        resp = admin_client.get("/api/clientes/excluidos", headers=_auth())
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 2
+        assert [i["cliente_id"] for i in body["items"]] == [d2, d1]
+        assert body["items"][1]["origens"] == 2
+        assert body["items"][0]["cliente_nome"] == "Bia"
+        assert body["items"][0]["excluido_por_nome"] is None
+
+    def test_member_gets_strict_403_on_list_and_restaurar(self, member_client):
+        assert member_client.get("/api/clientes/excluidos", headers=_auth()).status_code == 403
+        r = member_client.post(
+            f"/api/clientes/excluidos/{uuid4()}/restaurar", headers=_auth()
+        )
+        assert r.status_code == 403
+
+    def test_restaurar_rebuilds_from_the_lead_once_and_backfill_does_not_duplicate(
+        self, admin_client
+    ):
+        from app.services import clientes_service as svc
+
+        c = get_clientes_client()
+        dead = str(uuid4())
+        c.set_table_data("leads", [{
+            "id": "L1", "org_id": ORG_ID, "cliente_nome": "Ana Silva",
+            "contato_norm": "+5511900000001", "contato_tipo": "telefone",
+            "data_entrada": "2026-01-01",
+        }])
+        c.set_table_data("meta_ads_leads", [])
+        for t in ("clientes", "cliente_touches", "cliente_merges", "atendimentos"):
+            c.set_table_data(t, [])
+        c.set_table_data("cliente_origens_excluidas", [_tomb(dead, "L1")])
+
+        resp = admin_client.post(
+            f"/api/clientes/excluidos/{dead}/restaurar", headers=_auth()
+        )
+        assert resp.status_code == 200, resp.text
+        out = resp.json()
+        assert out["origens_restauradas"] == 1
+        [touch] = c.table("cliente_touches").select("*").execute().data
+        assert touch["origem_id"] == "L1" and touch["cliente_id"] == out["cliente_id"]
+        assert c.table("cliente_origens_excluidas").select("*").execute().data == []
+
+        again = admin_client.post(
+            f"/api/clientes/excluidos/{dead}/restaurar", headers=_auth()
+        )
+        assert again.status_code == 404
+        assert again.json()["error"]["code"] == "CLIENTE_EXCLUIDO_NAO_ENCONTRADO"
+
+        svc.run_backfill(c, coerce_org_uuid(ORG_RAW))
+        assert len(c.table("clientes").select("*").execute().data) == 1
 
 
 class TestMergeSeguros:

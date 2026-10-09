@@ -99,6 +99,9 @@ __all__ = [
     "MergeNotFound",
     "MergeAlreadyUndone",
     "ClienteEhSobreviventeDeMerge",
+    "ClienteExcluidoNotFound",
+    "list_clientes_excluidos",
+    "restaurar_cliente_excluido",
     "BackfillReport",
     "run_backfill",
     "attach_lead_now",
@@ -333,30 +336,14 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         ident.meta_lead_row_to_source(r) for r in meta_rows
     ]
 
-    existing_touch_keys = set() if dry_run else _existing_touch_keys(client, org_id)
+    # Touched sources are done with; TOMBSTONED sources (their cliente was
+    # deleted on purpose — `excluir_cliente`) must never become a person again.
+    skip_keys = set() if dry_run else _skip_source_keys(client, org_id)
     new_sources = [
-        s for s in sources if (s.origem_tabela, s.origem_id) not in existing_touch_keys
+        s for s in sources if (s.origem_tabela, s.origem_id) not in skip_keys
     ]
 
-    keyed = [s for s in new_sources if s.chave_canonica]
-    keyless = [s for s in new_sources if not s.chave_canonica]
-
-    report.keyless_clientes += len(keyless)
-    for row in keyless:
-        _create_clientes_for_cluster(
-            client, org_id,
-            nome=ident.longest_raw_name([row]),
-            chave_canonica=None, chave_tipo=None, identidade_incerta=True,
-            members=[row], report=report, dry_run=dry_run,
-        )
-
-    groups: dict[str, list[SourceRow]] = {}
-    for s in keyed:
-        groups.setdefault(s.chave_canonica, []).append(s)
-    report.groups_total += len(groups)
-
-    for group_rows in groups.values():
-        _resolve_group(client, org_id, group_rows, report, dry_run=dry_run)
+    _resolve_sources(client, org_id, new_sources, report, dry_run=dry_run)
 
     if not dry_run:
         # 🔴 SOURCES THAT ALREADY HAVE A TOUCH ARE NOT DONE WITH.
@@ -389,6 +376,35 @@ def run_backfill(client: Any, org_id: UUID, *, dry_run: bool = False) -> Backfil
         _reconcile_imoveis(client, org_id, report)
 
     return report
+
+
+def _resolve_sources(
+    client: Any, org_id: UUID, new_sources: list[SourceRow], report: BackfillReport,
+    *, dry_run: bool,
+) -> None:
+    """Turn not-yet-resolved sources into clientes: keyless → one uncertain
+    cliente each, keyed → grouped by `chave_canonica` through `_resolve_group`.
+    Shared by `run_backfill` and `restaurar_cliente_excluido` (one resolution
+    path, never two)."""
+    keyed = [s for s in new_sources if s.chave_canonica]
+    keyless = [s for s in new_sources if not s.chave_canonica]
+
+    report.keyless_clientes += len(keyless)
+    for row in keyless:
+        _create_clientes_for_cluster(
+            client, org_id,
+            nome=ident.longest_raw_name([row]),
+            chave_canonica=None, chave_tipo=None, identidade_incerta=True,
+            members=[row], report=report, dry_run=dry_run,
+        )
+
+    groups: dict[str, list[SourceRow]] = {}
+    for s in keyed:
+        groups.setdefault(s.chave_canonica, []).append(s)
+    report.groups_total += len(groups)
+
+    for group_rows in groups.values():
+        _resolve_group(client, org_id, group_rows, report, dry_run=dry_run)
 
 
 def _reconcile_imoveis(client: Any, org_id: UUID, report: BackfillReport) -> None:
@@ -528,6 +544,20 @@ def _repoint_one_atendimento(
 def _existing_touch_keys(client: Any, org_id: UUID) -> set[tuple[str, str]]:
     rows = _select_all(client, "cliente_touches", org_id, columns="origem_tabela,origem_id")
     return {(r["origem_tabela"], r["origem_id"]) for r in rows}
+
+
+def _excluded_source_keys(client: Any, org_id: UUID) -> set[tuple[str, str]]:
+    """Source rows whose cliente was deleted on purpose (tombstones, migration 216)."""
+    rows = _select_all(
+        client, "cliente_origens_excluidas", org_id, columns="origem_tabela,origem_id"
+    )
+    return {(r["origem_tabela"], r["origem_id"]) for r in rows}
+
+
+def _skip_source_keys(client: Any, org_id: UUID) -> set[tuple[str, str]]:
+    """Every source the backfill must NOT turn into a new cliente: already
+    touched ∪ tombstoned. The single place the two are unioned."""
+    return _existing_touch_keys(client, org_id) | _excluded_source_keys(client, org_id)
 
 
 def _find_existing_for_key(client: Any, org_id: UUID, chave_canonica: str) -> list[dict]:
@@ -2086,7 +2116,9 @@ def update_cliente(
     return {**resultado, "pendente_confirmacao": pendentes}
 
 
-def excluir_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+def excluir_cliente(
+    client: Any, org_id: UUID, cliente_id: UUID, *, excluido_por: Optional[UUID] = None
+) -> dict:
     """Hard delete (`DELETE /api/clientes/{id}`, owner directive
     2026-09-24) — admin/owner-only, enforced by the ROUTE (this function
     trusts its caller and does not re-check the role).
@@ -2101,6 +2133,16 @@ def excluir_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     cliente row is deleted, because `cliente_documentos` CASCADEs
     (migration 057) and its rows would otherwise be gone by the time the
     caller tried to read their paths.
+
+    Tombstones (migration 216, owner decision 2026-10-09 "mark as deleted,
+    keep leads"): the leads are EVENTS and stay; the cliente is a PERSON and
+    goes. `cliente_touches` CASCADEs with the cliente, which made `run_backfill`
+    see every lead as NEW and recreate the person (prod, deal 876). So, after
+    the merge-survivor check and BEFORE any delete, one
+    `cliente_origens_excluidas` row is written per touched source
+    (idempotent). Tombstone first: a tombstone beside a still-living cliente
+    is harmless (the backfill skips touched sources anyway); the reverse order
+    is the bug. Merges never write tombstones — only this function does.
 
     Ordering, and why:
       1. `cliente_merges.cliente_id_sobrevivente` has NO `ON DELETE`
@@ -2122,7 +2164,7 @@ def excluir_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
          certidões FKs 107, the matrícula-qualificações FKs 137) — no
          further app-level cleanup needed for any of those.
     """
-    _require_cliente(client, org_id, cliente_id)
+    cliente = _require_cliente(client, org_id, cliente_id)
 
     sobrevivente = (
         _t(client, "cliente_merges")
@@ -2136,6 +2178,26 @@ def excluir_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
         raise ClienteEhSobreviventeDeMerge(
             f"cliente {cliente_id} is the surviving side of a merge and cannot be deleted"
         )
+
+    touches = _select_all_where(
+        client, "cliente_touches", org_id, {"cliente_id": str(cliente_id)},
+        columns="origem_tabela,origem_id",
+    )
+    tombstones = [
+        {
+            "org_id": str(org_id),
+            "origem_tabela": t["origem_tabela"],
+            "origem_id": t["origem_id"],
+            "cliente_id": str(cliente_id),
+            "cliente_nome": (cliente or {}).get("nome"),
+            "excluido_por": str(excluido_por) if excluido_por else None,
+        }
+        for t in touches
+    ]
+    if tombstones:
+        _t(client, "cliente_origens_excluidas").upsert(
+            tombstones, on_conflict="origem_tabela,origem_id", ignore_duplicates=True
+        ).execute()
 
     documentos = _select_all_where(
         client, "cliente_documentos", org_id, {"cliente_id": str(cliente_id)},
@@ -2161,6 +2223,7 @@ def excluir_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
     return {
         "atendimentos_removidos": len(atendimentos_removidos),
         "documentos": documentos,
+        "origens_bloqueadas": len(tombstones),
     }
 
 
@@ -2361,3 +2424,84 @@ def negociacoes_do_cliente(client: Any, org_id: UUID, cliente_id: UUID) -> list[
             }
         )
     return out
+
+
+class ClienteExcluidoNotFound(Exception):
+    """No tombstones exist for this deleted cliente id in this org."""
+
+
+def list_clientes_excluidos(client: Any, org_id: UUID) -> list[dict]:
+    """Deleted clientes (tombstones grouped by the deleted `cliente_id`),
+    newest first. Paged past PostgREST's 1 000-row cap. `origens` = how many
+    source rows were blocked."""
+    rows = _select_all(client, "cliente_origens_excluidas", org_id)
+    grupos: dict[str, dict] = {}
+    for r in rows:
+        g = grupos.setdefault(
+            r["cliente_id"],
+            {
+                "cliente_id": r["cliente_id"],
+                "cliente_nome": r.get("cliente_nome"),
+                "excluido_por": r.get("excluido_por"),
+                "excluido_em": r.get("excluido_em"),
+                "origens": 0,
+            },
+        )
+        g["origens"] += 1
+    return sorted(grupos.values(), key=lambda g: str(g["excluido_em"] or ""), reverse=True)
+
+
+def restaurar_cliente_excluido(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+    """Undo `excluir_cliente`'s block: drop the deleted cliente's tombstones and
+    re-resolve THOSE sources now, through the same path the backfill uses.
+
+    The restored person is REBUILT from the leads. CPF, documents, notes,
+    tags, atendimento data etc. removed by the hard delete are NOT recovered.
+    Sources whose lead/meta lead no longer exists are skipped (logged). If
+    resolution yields no cliente, `cliente_id` is None and the 6-hourly sweep
+    is the fallback (logged, never silent). Raises `ClienteExcluidoNotFound`
+    when no tombstones exist (so a second restore is a 404)."""
+    tombs = _select_all_where(
+        client, "cliente_origens_excluidas", org_id, {"cliente_id": str(cliente_id)}
+    )
+    if not tombs:
+        raise ClienteExcluidoNotFound(f"no tombstones for cliente {cliente_id}")
+
+    _t(client, "cliente_origens_excluidas").delete().eq("org_id", str(org_id)).eq(
+        "cliente_id", str(cliente_id)
+    ).execute()
+
+    sources: list[SourceRow] = []
+    for t in tombs:
+        tabela = t["origem_tabela"]
+        rows = (
+            _t(client, tabela).select("*").eq("org_id", str(org_id))
+            .eq("id", t["origem_id"]).limit(1).execute()
+        ).data or []
+        if not rows:
+            logger.warning(
+                "restaurar_cliente_excluido: source %s/%s no longer exists "
+                "(org %s) — nothing to rebuild from", tabela, t["origem_id"], org_id,
+            )
+            continue
+        sources.append(
+            ident.leads_row_to_source(rows[0]) if tabela == "leads"
+            else ident.meta_lead_row_to_source(rows[0])
+        )
+
+    novo: Optional[str] = None
+    if sources:
+        report = BackfillReport(org_id=str(org_id), dry_run=False)
+        _resolve_sources(client, org_id, sources, report, dry_run=False)
+        for src in sources:
+            cid = _cliente_id_for_source(client, org_id, src)
+            if cid:
+                _repoint_one_atendimento(client, org_id, src, cid)
+                novo = novo or cid
+    if novo is None:
+        logger.warning(
+            "restaurar_cliente_excluido: no cliente resolved for deleted %s "
+            "(org %s) — the next clientes_backfill sweep is the fallback",
+            cliente_id, org_id,
+        )
+    return {"origens_restauradas": len(tombs), "cliente_id": novo}

@@ -502,3 +502,7 @@ All were applied one file per request (each request is one implicit transaction)
 ## 215 — org_imobiliarias (signing companies per org) — NOT APPLIED
 
 Authored 2026-10-09 (projects/signing-companies/CONTRACT.md). Creates `org_imobiliarias`, adds `atendimento_contratos.imobiliaria_id`, backfills the org's current company as registry entry #1 and points every existing contract at it, org-picker RLS, acting-audit attach, `status_pagina('imobiliarias')`. Applying it is the tech-lead's + owner's call; apply BEFORE deploying the image that reads it.
+
+## 216 — cliente_origens_excluidas (tombstones for deleted clientes) — NOT APPLIED
+
+Authored 2026-10-09 (owner decision "mark as deleted, keep leads"). Creates `cliente_origens_excluidas` (UNIQUE (origem_tabela, origem_id), org-picker RLS, acting-audit attach). `excluir_cliente` writes one tombstone per touched source; `run_backfill` skips tombstoned sources. Apply BEFORE deploying the image that reads/writes it (the new code writes the table on every cliente delete).
