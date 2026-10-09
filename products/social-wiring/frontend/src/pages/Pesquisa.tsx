@@ -27,7 +27,9 @@ import {
 import { AdicionarItensModal } from "@/components/pesquisa/AdicionarItensModal";
 import { ConfirmarModal } from "@/components/pesquisa/ConfirmarModal";
 import { GRUPO_ROTULO } from "@/components/pesquisa/labels";
+import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { VariavelSelect } from "@/components/pesquisa/VariavelSelect";
+import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
 import {
   useAcaoEmMassa,
@@ -47,23 +49,6 @@ import {
 const PAGE_SIZE = 50;
 const GROUPED_PAGE_SIZE = 200;
 const BULK_CHUNK = 500;
-const MARCA_STORAGE_KEY = "sw.pesquisa.marca";
-
-function lerMarcaSalva(): string | null {
-  try {
-    return window.localStorage.getItem(MARCA_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function salvarMarca(id: string) {
-  try {
-    window.localStorage.setItem(MARCA_STORAGE_KEY, id);
-  } catch {
-    // storage unavailable (private mode / quota): the switcher just won't be remembered.
-  }
-}
 
 type ConfirmAcao =
   | { tipo: "excluir-item"; item: PesquisaItem }
@@ -73,9 +58,7 @@ type ConfirmAcao =
 export default function Pesquisa() {
   const marcasQ = useMarcas();
   const marcas = marcasQ.data ?? [];
-  const [marcaSalva, setMarcaSalva] = useState<string | null>(() => lerMarcaSalva());
-  const marcaId = marcas.find((m) => m.id === marcaSalva)?.id ?? marcas[0]?.id ?? null;
-  const marca = marcas.find((m) => m.id === marcaId) ?? null;
+  const { marcaId, marca, escolherMarca: salvarEscolha } = useMarcaPesquisa(marcas);
 
   const [status, setStatus] = useState<PesquisaStatus>("approved");
   const [sort, setSort] = useState<PesquisaSort>("recent");
@@ -112,8 +95,7 @@ export default function Pesquisa() {
   }, [marcaId, status, variavel, sort, agrupar]);
 
   function escolherMarca(id: string) {
-    setMarcaSalva(id);
-    salvarMarca(id);
+    salvarEscolha(id);
     setVariavel("");
   }
 
@@ -192,20 +174,7 @@ export default function Pesquisa() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          {marcas.length > 0 && (
-            <select
-              aria-label="Marca"
-              value={marcaId ?? ""}
-              onChange={(e) => escolherMarca(e.target.value)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-sm"
-            >
-              {marcas.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-          )}
+          <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
           <Button onClick={() => setAdicionarAberto(true)} disabled={!marcaId}>
             <Plus className="mr-1.5 h-4 w-4" />
             Adicionar itens
