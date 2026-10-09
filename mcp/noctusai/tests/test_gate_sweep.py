@@ -1001,3 +1001,176 @@ def test_untested_hook_script_is_surfaced(tmp_path):
 
     assert GS._mcp_scoped_test_files(tmp_path, ["scripts/hooks/lonely.py"]) == (
         [], ["scripts/hooks/lonely.py"])
+
+
+# ── seed fan-out scoping + parallel runner (2026-10-09) ───────────────────
+
+
+def _w(root: Path, rel: str, text: str = "") -> None:
+    p = root / rel
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+def _seed_fixture(tmp_path: Path) -> Path:
+    lib = "seed/lib/backend/noctusai_lib"
+    fw = "seed/framework/backend/noctusai_seed"
+    _w(tmp_path, f"{lib}/__init__.py")
+    _w(tmp_path, f"{lib}/integrations/__init__.py")
+    _w(tmp_path, f"{lib}/integrations/leaf.py", "X = 1\n")          # used by one product only
+    _w(tmp_path, f"{lib}/util.py", "Y = 1\n")                       # imported by noctusai_seed
+    _w(tmp_path, f"{lib}/chain_a.py", "Z = 1\n")                    # chain_a <- chain_b <- seed.core (relative)
+    _w(tmp_path, f"{fw}/__init__.py", "from noctusai_lib.util import Y\nfrom .core import C\n")
+    _w(tmp_path, f"{fw}/core.py", "from noctusai_lib import chain_a\nC = 1\n")
+    (tmp_path / "seed/lib/backend/tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "seed/framework/backend/tests").mkdir(parents=True, exist_ok=True)
+    _w(tmp_path, "seed/lib/frontend/package.json", "{}")
+    _w(tmp_path, "seed/framework/frontend/package.json", "{}")
+    (tmp_path / "seed/lib/frontend/node_modules").mkdir()
+    (tmp_path / "seed/framework/frontend/node_modules").mkdir()
+    # products
+    _make_product(tmp_path, "uses-leaf")
+    _w(tmp_path, "products/uses-leaf/backend/app/m.py", "from noctusai_lib.integrations.leaf import X\n")
+    _make_product(tmp_path, "uses-seed")
+    _w(tmp_path, "products/uses-seed/backend/app/m.py", "import noctusai_seed\n")
+    _make_product(tmp_path, "plain")
+    _w(tmp_path, "products/plain/backend/app/m.py", "import os\n")
+    _w(tmp_path, "products/uses-seed/frontend/package.json",
+       '{"dependencies": {"@noctusai/seed": "file:x"}}')
+    _w(tmp_path, "products/uses-leaf/frontend/package.json",
+       '{"dependencies": {"@noctusai/lib": "file:x"}}')
+    return tmp_path
+
+
+def _plan(root, *files):
+    return GS._seed_fanout_plan(root, list(files))
+
+
+def test_fanout_leaf_module_scopes_to_its_one_product(tmp_path):
+    root = _seed_fixture(tmp_path)
+    plan = _plan(root, "seed/lib/backend/noctusai_lib/integrations/leaf.py")
+    assert plan["py_products"] == {"uses-leaf"}
+    assert plan["fe_products"] == set()
+    scope = GS._derive_scope(["seed/lib/backend/noctusai_lib/integrations/leaf.py"])
+    names = {s.gate for s in GS._build_gate_specs(root, scope)}
+    assert "pytest:uses-leaf" in names
+    assert not {n for n in names if n.startswith(("vite_build:", "vitest:"))}
+    assert "pytest:uses-seed" not in names and "pytest:plain" not in names
+    assert scope["seed_fanout"]["mode"] == "scoped"
+    assert "plain" in scope["seed_fanout"]["excluded_products"]
+
+
+def test_fanout_module_imported_by_seed_reaches_seed_importers(tmp_path):
+    root = _seed_fixture(tmp_path)
+    plan = _plan(root, "seed/lib/backend/noctusai_lib/util.py")
+    assert "noctusai_seed" in plan["python_modules"]
+    assert plan["py_products"] == {"uses-seed"}
+    assert plan["py_roots"] == ["seed/framework/backend", "seed/lib/backend"]
+
+
+def test_fanout_relative_import_chain(tmp_path):
+    root = _seed_fixture(tmp_path)
+    plan = _plan(root, "seed/lib/backend/noctusai_lib/chain_a.py")
+    # chain_a <- noctusai_seed.core <- (relative) noctusai_seed.__init__ <- product
+    assert {"noctusai_seed.core", "noctusai_seed"} <= set(plan["python_modules"])
+    assert plan["py_products"] == {"uses-seed"}
+
+
+def test_fanout_fe_only_has_no_pytest_gates(tmp_path):
+    root = _seed_fixture(tmp_path)
+    f = "seed/lib/frontend/src/design-system/X.tsx"
+    plan = _plan(root, f)
+    assert plan["py_products"] == set()
+    assert plan["fe_products"] == {"uses-leaf", "uses-seed"}  # lib change reaches seed dependents
+    scope = GS._derive_scope([f])
+    names = {s.gate for s in GS._build_gate_specs(root, scope)}
+    assert not any(n.startswith("pytest:") for n in names)
+    assert {"vite_build:uses-leaf", "vite_build:uses-seed", "vitest:seed/lib/frontend",
+            "vitest:seed/framework/frontend"} <= names
+    assert "vite_build:plain" not in names
+
+
+def test_fanout_seed_fe_package_not_lib_only_framework(tmp_path):
+    root = _seed_fixture(tmp_path)
+    plan = _plan(root, "seed/framework/frontend/src/app.tsx")
+    assert plan["fe_products"] == {"uses-seed"}
+    assert plan["fe_roots"] == ["seed/framework/frontend"]
+
+
+def test_fanout_tests_only_runs_that_seed_suite(tmp_path):
+    root = _seed_fixture(tmp_path)
+    plan = _plan(root, "seed/lib/backend/tests/test_x.py", "seed/lib/frontend/src/a.test.tsx", "seed/x/README.md")
+    assert plan["py_products"] == set() and plan["fe_products"] == set()
+    assert plan["py_roots"] == ["seed/lib/backend"] and plan["fe_roots"] == ["seed/lib/frontend"]
+    scope = GS._derive_scope(["seed/lib/backend/tests/test_x.py"])
+    names = {s.gate for s in GS._build_gate_specs(root, scope)}
+    assert names == {"pytest:seed/lib/backend"}
+
+
+@pytest.mark.parametrize("f", [
+    "seed/lib/backend/conftest.py",
+    "seed/framework/frontend/vite.config.factory.ts",
+    "seed/lib/frontend/package.json",
+    "seed/docker/Dockerfile.backend-base",
+    "seed/lib/backend/pyproject.toml",
+])
+def test_fanout_infra_change_is_whole_fleet(tmp_path, f):
+    root = _seed_fixture(tmp_path)
+    assert _plan(root, f) is None
+    scope = GS._derive_scope([f])
+    names = {s.gate for s in GS._build_gate_specs(root, scope)}
+    assert {"pytest:plain", "pytest:uses-leaf", "vite_build:uses-leaf"} <= names
+    assert scope["seed_fanout"]["mode"] == "fleet"
+
+
+def test_fanout_unknown_module_falls_back_to_fleet(tmp_path):
+    root = _seed_fixture(tmp_path)
+    assert _plan(root, "seed/lib/backend/noctusai_lib/deleted_module.py") is None
+
+
+def test_fanout_scoped_keeps_directly_touched_products_and_warns(tmp_path):
+    root = _seed_fixture(tmp_path)
+    diff = "seed/lib/backend/noctusai_lib/integrations/leaf.py\nproducts/plain/backend/app/m.py\n"
+    out = GS.gate_sweep(
+        repo_root=str(root), git_runner=_clean_git_runner(diff_files=diff),
+        run_gate=lambda s: (0, "ok", 0.0), max_workers=1,
+    )
+    names = {g["gate"] for g in out["gates"]}
+    assert {"pytest:uses-leaf", "pytest:plain"} <= names
+    assert "pytest:uses-seed" not in names
+    assert any("seed fan-out SCOPED" in w for w in out["warnings"])
+
+
+def test_parallel_runner_preserves_spec_order(tmp_path):
+    import time as _t
+    specs = [GS.GateSpec(f"g{i}", ["x"], tmp_path) for i in range(8)]
+
+    def slow_first(spec):
+        _t.sleep(0.2 if spec.gate == "g0" else 0.0)
+        return 0, spec.gate, 0.0
+
+    gates = GS._run_gates(specs, slow_first, None, max_workers=4)
+    assert [g["gate"] for g in gates] == [f"g{i}" for i in range(8)]
+    assert [g["summary"] for g in gates] == [f"g{i}" for i in range(8)]
+
+
+def test_parallel_deadline_overrun_is_incomplete_never_green(tmp_path):
+    """Gates starting after a shared deadline return exit None (the
+    task_branch time-box shape) -> `incomplete`, naming what didn't run."""
+    root = _seed_fixture(tmp_path)
+    diff = "seed/lib/backend/noctusai_lib/util.py\n"
+    done = {"n": 0}
+
+    def boxed(spec):
+        done["n"] += 1
+        if done["n"] > 1:
+            return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
+        return 0, "ok", 0.0
+
+    out = GS.gate_sweep(
+        repo_root=str(root), git_runner=_clean_git_runner(diff_files=diff),
+        run_gate=boxed, max_workers=3,
+    )
+    assert out["status"] == "incomplete" and out["exit_code"] == 1
+    unrun = [g["gate"] for g in out["gates"] if not g["ran"]]
+    assert unrun and out["scope"]["seed_fanout"]["mode"] == "scoped"

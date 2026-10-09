@@ -37,10 +37,26 @@ A changed path buckets into exactly one of:
   `products/<slug>/(backend|frontend)/...` -> that product's own gates
       (`pytest:<slug>` if `backend/tests/` exists, `vite_build:<slug>` if
       `frontend/package.json` exists).
-  `seed/...`                                -> seed suites (the 4 seed pytest
-      + vitest roots CI actually runs — `seed/{lib,framework}/{backend,
-      frontend}`) PLUS fleet-wide (every product's own gates — everyone
-      consumes `seed/`).
+  `seed/...`                                -> seed suites PLUS the products the
+      change can reach (2026-10-09 — was: every active product x pytest +
+      vite_build + e2e, which blew the merged-tip time-box on every seed
+      integrate). `_seed_fanout_plan` classifies each seed file: `.md`
+      ignored; `*/backend/tests/**` / FE test files -> that seed suite only;
+      `.py` under `noctusai_lib` / `noctusai_seed` -> changed python module,
+      expanded by REVERSE TRANSITIVE CLOSURE over the seed import graph
+      (absolute + relative imports; importing `a.b.c` also depends on `a`,
+      `a.b`), and a product is a py-consumer iff any .py under its backend
+      (app + tests) imports an affected module; non-test files under
+      `seed/{lib,framework}/frontend/src` -> changed FE package, consumers =
+      products whose package.json lists it (a `@noctusai/lib` change also
+      reaches `@noctusai/seed` dependents). ANYTHING ELSE under seed/
+      (conftest, pyproject/requirements, package.json/lockfiles, vite
+      factory, Dockerfiles, non-.py data, unparseable files) -> the WHOLE
+      fleet, exactly as before: when unsure, never under-scope. Directly
+      diffed products always keep their own gates. `scope["seed_fanout"]`
+      records mode scoped|fleet and what was included/excluded, and a scoped
+      run adds a warning (CI runs the full matrix). Gates run in parallel
+      (`max_workers`, default cpu//2), results kept in spec order.
   `mcp/...`                                 -> `mcp_toolkit_tests:scoped`
       (2026-10-09): pytest over ONLY the affected test files — every
       changed `tests/test_*.py`, every test that imports a changed module
@@ -80,9 +96,11 @@ from __future__ import annotations
 import ast
 import functools
 import json
+import os
 import re
 import subprocess
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -175,6 +193,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
     docstring "SCOPE DERIVATION"."""
     products: set[str] = set()
     seed_fleet_wide = False
+    seed_files: list[str] = []
     mcp_touched = False
     mcp_files: list[str] = []
     doc_files: list[str] = []
@@ -186,6 +205,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
             continue
         if _SEED_FLEET_RE.match(f):
             seed_fleet_wide = True
+            seed_files.append(f)
             continue
         if _MCP_RE.match(f):
             mcp_touched = True
@@ -202,6 +222,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
     return {
         "products": sorted(products),
         "seed_fleet_wide": seed_fleet_wide,
+        "seed_files": sorted(seed_files),
         "mcp": mcp_touched,
         "mcp_files": sorted(mcp_files),
         "doc_only": doc_only,
@@ -413,6 +434,226 @@ def _seed_gate_specs(root: Path, py: str) -> list[GateSpec]:
     return specs
 
 
+# ─── seed fan-out scoping (2026-10-09) ──────────────────────────────────────
+# A seed/ change used to fan out to EVERY active product x (pytest + vite_build
+# + e2e) — past the merged-tip time-box, so every seed integrate ended
+# `incomplete`. `_seed_fanout_plan` narrows it to the products that can
+# actually be affected, or returns None (= whole fleet) whenever it cannot
+# PROVE a narrower set: when unsure, never under-scope. CI runs the full matrix.
+
+#: package name -> (repo-relative package dir, seed pytest root)
+_SEED_PY_PKGS = {
+    "noctusai_lib": ("seed/lib/backend/noctusai_lib", "seed/lib/backend"),
+    "noctusai_seed": ("seed/framework/backend/noctusai_seed", "seed/framework/backend"),
+}
+#: npm package -> (repo-relative src dir, seed vitest root)
+_SEED_FE_PKGS = {
+    "@noctusai/lib": ("seed/lib/frontend/src", "seed/lib/frontend"),
+    "@noctusai/seed": ("seed/framework/frontend/src", "seed/framework/frontend"),
+}
+_FE_TEST_FILE_RE = re.compile(r"\.(test|spec)\.[jt]sx?$")
+_SKIP_DIRS = frozenset({".venv", "venv", "node_modules", "__pycache__", ".git", "dist"})
+
+
+def _py_files_under(base: Path):
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS]
+        for fn in filenames:
+            if fn.endswith(".py"):
+                yield Path(dirpath) / fn
+
+
+def _seed_module_index(root: Path) -> dict[str, Path]:
+    """dotted module name -> file, for both seed python packages
+    (`__init__.py` maps to its package)."""
+    mods: dict[str, Path] = {}
+    for pkg, (rel, _r) in _SEED_PY_PKGS.items():
+        base = root / rel
+        if not base.is_dir():
+            continue
+        for f in _py_files_under(base):
+            parts = list(f.relative_to(base).with_suffix("").parts)
+            if parts[-1] == "__init__":
+                parts = parts[:-1]
+            mods[".".join([pkg, *parts])] = f
+    return mods
+
+
+def _file_import_deps(
+    tree: ast.AST, known: set[str], own_pkg: str | None = None
+) -> set[str]:
+    """Known seed modules a parsed file depends on. `own_pkg` = the dotted
+    package a relative import resolves against (None = no relative imports).
+    Importing `a.b.c` executes `a` and `a.b` too, so every existing prefix of
+    each imported name counts; `from a.b import c` also tries `a.b.c`."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names.update(a.name for a in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                if own_pkg is None:
+                    continue
+                parts = own_pkg.split(".")
+                if node.level - 1 > len(parts) - 1:
+                    continue
+                base_parts = parts[: len(parts) - (node.level - 1)]
+                base = ".".join(base_parts + ([node.module] if node.module else []))
+            elif node.module:
+                base = node.module
+            else:
+                continue
+            names.add(base)
+            names.update(f"{base}.{a.name}" for a in node.names if a.name != "*")
+    deps: set[str] = set()
+    for n in names:
+        parts = n.split(".")
+        for i in range(1, len(parts) + 1):
+            cand = ".".join(parts[:i])
+            if cand in known:
+                deps.add(cand)
+    return deps
+
+
+def _seed_py_graph(root: Path, mods: dict[str, Path]) -> dict[str, set[str]]:
+    known = set(mods)
+    graph: dict[str, set[str]] = {}
+    for name, f in mods.items():
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            raise _FallBack(f"unparseable seed module {f.name}")
+        own_pkg = name if f.name == "__init__.py" else name.rpartition(".")[0]
+        graph[name] = _file_import_deps(tree, known, own_pkg or None) - {name}
+    return graph
+
+
+class _FallBack(Exception):
+    """The plan cannot be proven narrower than the fleet."""
+
+
+def _product_py_deps(root: Path, slug: str, known: set[str]) -> set[str]:
+    backend = root / "products" / slug / "backend"
+    deps: set[str] = set()
+    if not backend.is_dir():
+        return deps
+    for f in _py_files_under(backend):
+        try:
+            text = f.read_text(encoding="utf-8")
+            if "noctusai" not in text:
+                continue  # cannot import a seed package (cheap pre-filter)
+            tree = ast.parse(text)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            raise _FallBack(f"unparseable product file {slug}/{f.name}")
+        deps |= _file_import_deps(tree, known, None)
+    return deps
+
+
+def _product_fe_deps(root: Path, slug: str) -> set[str]:
+    pj = _pkg_json(root / "products" / slug / "frontend")
+    return set((pj.get("dependencies") or {})) | set((pj.get("devDependencies") or {}))
+
+
+def _seed_fanout_plan(root: Path, seed_files: list[str]) -> dict[str, Any] | None:
+    """Narrow a seed/ diff to the consumers it can reach, or None (= whole
+    fleet). See the "seed fan-out scoping" comment above and the module
+    docstring's SCOPE DERIVATION."""
+    try:
+        return _seed_fanout_plan_inner(root, seed_files)
+    except _FallBack:
+        return None
+
+
+def _seed_fanout_plan_inner(root: Path, seed_files: list[str]) -> dict[str, Any] | None:
+    py_roots: set[str] = set()
+    fe_roots: set[str] = set()
+    changed_py: set[str] = set()   # candidate module names (resolved below)
+    changed_fe: set[str] = set()
+    for f in seed_files:
+        if f.endswith(".md"):
+            continue
+        matched = False
+        for root_rel in ("seed/lib/backend", "seed/framework/backend"):
+            if f.startswith(root_rel + "/tests/"):
+                py_roots.add(root_rel)
+                matched = True
+        for root_rel in _SEED_FE_PKGS.values():
+            if f.startswith(root_rel[1] + "/tests/"):
+                fe_roots.add(root_rel[1])
+                matched = True
+        if matched:
+            continue
+        for pkg, (rel, _r) in _SEED_PY_PKGS.items():
+            if f.startswith(rel + "/") and f.endswith(".py"):
+                parts = f[len(rel) + 1:-3].split("/")
+                if parts[-1] == "__init__":
+                    parts = parts[:-1]
+                changed_py.add(".".join([pkg, *parts]))
+                matched = True
+        if matched:
+            continue
+        for pkg, (rel, vroot) in _SEED_FE_PKGS.items():
+            if f.startswith(rel + "/"):
+                if "/__tests__/" in f or "/tests/" in f or _FE_TEST_FILE_RE.search(f):
+                    fe_roots.add(vroot)
+                else:
+                    changed_fe.add(pkg)
+                matched = True
+                break
+        if not matched:
+            return None  # conftest / pyproject / package.json / factory / docker / ...
+
+    consumers_py: set[str] = set()
+    affected: set[str] = set()
+    if changed_py:
+        mods = _seed_module_index(root)
+        known = set(mods)
+        # A deleted/renamed module is not in the index — nothing to anchor on.
+        changed_known = {m for m in changed_py if m in known}
+        if changed_known != changed_py:
+            return None
+        graph = _seed_py_graph(root, mods)
+        affected = set(changed_known)
+        grew = True
+        while grew:
+            grew = False
+            for m, deps in graph.items():
+                if m not in affected and deps & affected:
+                    affected.add(m)
+                    grew = True
+        for m in affected:
+            py_roots.add(_SEED_PY_PKGS[m.split(".", 1)[0]][1])
+        for slug in _all_product_slugs(root):
+            if _product_py_deps(root, slug, known) & affected:
+                consumers_py.add(slug)
+
+    consumers_fe: set[str] = set()
+    if changed_fe:
+        # @noctusai/seed bundles @noctusai/lib: a lib change reaches both.
+        reach = set(changed_fe)
+        if "@noctusai/lib" in changed_fe:
+            reach.add("@noctusai/seed")
+            fe_roots.add(_SEED_FE_PKGS["@noctusai/lib"][1])
+            fe_roots.add(_SEED_FE_PKGS["@noctusai/seed"][1])
+        if "@noctusai/seed" in changed_fe:
+            fe_roots.add(_SEED_FE_PKGS["@noctusai/seed"][1])
+        for slug in _all_product_slugs(root):
+            if _product_fe_deps(root, slug) & reach:
+                consumers_fe.add(slug)
+
+    return {
+        "seed_py": bool(py_roots),
+        "seed_fe": bool(fe_roots),
+        "py_roots": sorted(py_roots),
+        "fe_roots": sorted(fe_roots),
+        "py_products": consumers_py,
+        "fe_products": consumers_fe,
+        "python_modules": sorted(affected) if changed_py else [],
+        "changed_python_modules": sorted(changed_py),
+        "frontend_packages": sorted(changed_fe),
+    }
+
+
 # ─── mcp toolkit gate scoping (2026-10-09) ──────────────────────────────────
 _MCP_PKG = "mcp/noctusai/"
 #: Changes here can affect ANY toolkit test → full suite.
@@ -515,16 +756,54 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
     specs: list[GateSpec] = []
 
     if scope["seed_fleet_wide"]:
-        specs.extend(_seed_gate_specs(root, py))
-        # A seed change fans out to every product's own gates — but only
-        # the ACTIVE (awake) ones. An asleep product (dormant_slugs, per
-        # deploy/fleet/active-scope.txt) is surfaced in `skipped_asleep`,
-        # never dropped silently (see product_scope.py's module docstring).
         all_slugs = _all_product_slugs(root)
         active_slugs = filter_active(all_slugs, root=root)
         scope["skipped_asleep"] = sorted(set(all_slugs) - set(active_slugs))
-        for slug in active_slugs:
-            specs.extend(_product_gate_specs(root, slug, py))
+        plan = _seed_fanout_plan(root, scope.get("seed_files", []))
+        if plan is None:
+            # Whole fleet. A seed change fans out to every product's own
+            # gates — but only the ACTIVE (awake) ones. An asleep product
+            # (dormant_slugs, per deploy/fleet/active-scope.txt) is surfaced
+            # in `skipped_asleep`, never dropped silently (see
+            # product_scope.py's module docstring).
+            scope["seed_fanout"] = {"mode": "fleet", "reason": "seed change not provably narrower than the fleet"}
+            specs.extend(_seed_gate_specs(root, py))
+            for slug in active_slugs:
+                specs.extend(_product_gate_specs(root, slug, py))
+        else:
+            direct = set(scope["products"])
+            for spec in _seed_gate_specs(root, py):
+                rel = spec.gate.split(":", 1)[1]
+                if spec.gate.startswith("pytest:") and rel in plan["py_roots"]:
+                    specs.append(spec)
+                elif spec.gate.startswith("vitest:") and rel in plan["fe_roots"]:
+                    specs.append(spec)
+            included_py: set[str] = set()
+            included_fe: set[str] = set()
+            for slug in active_slugs:
+                for spec in _product_gate_specs(root, slug, py):
+                    kind = spec.gate.split(":", 1)[0]
+                    wanted = (
+                        slug in direct
+                        or (kind == "pytest" and slug in plan["py_products"])
+                        or (kind in ("vite_build", "e2e") and slug in plan["fe_products"])
+                    )
+                    if wanted:
+                        specs.append(spec)
+                        (included_py if kind == "pytest" else included_fe).add(slug)
+            excluded = sorted(set(active_slugs) - included_py - included_fe)
+            scope["seed_fanout"] = {
+                "mode": "scoped",
+                "reason": "seed diff resolved to a provable consumer set",
+                "python_modules": plan["python_modules"],
+                "changed_python_modules": plan["changed_python_modules"],
+                "frontend_packages": plan["frontend_packages"],
+                "seed_pytest_roots": plan["py_roots"],
+                "seed_vitest_roots": plan["fe_roots"],
+                "products_pytest": sorted(included_py),
+                "products_frontend": sorted(included_fe),
+                "excluded_products": excluded,
+            }
     else:
         # Products here come from an ACTUAL diff under products/<slug>/ —
         # already an explicit signal (someone is touching that product's
@@ -623,79 +902,90 @@ def _run_gates(
     specs: list[GateSpec],
     run_gate: Callable[[GateSpec], GateRunResult],
     env_residue: list[str] | None = None,
+    max_workers: int = 1,
 ) -> list[dict[str, Any]]:
     """Preflight, then run, then classify — in that order.
 
     A gate whose preconditions are unmet is NOT RUN. That is the point: an
     unrun gate has no exit code to be mistaken for a verdict about the
     code. It is recorded `ran=False` with `harness_invalid` naming what is
-    missing and how to fix it."""
-    results: list[dict[str, Any]] = []
-    for spec in specs:
-        if env_residue:
-            # The developer's `.env` is still in the gate env (2026-10-09:
-            # merged-tip pytest false-redded 4 "unset key -> X" tests). The
-            # result would judge the `.env`, not the code — do not run it.
-            results.append({
-                "gate": spec.gate,
-                "ran": False,
-                "exit_code": None,
-                "summary": (
-                    "HARNESS INVALID — gate NOT run: the gate env still carries "
-                    f"{len(env_residue)} key(s) with the repo .env's exact values"
-                ),
-                "duration_s": 0.0,
-                "harness_invalid": [{
-                    "precondition": "env_free_of_dotenv",
-                    "missing_path": ", ".join(env_residue),
-                    "remedy": (
-                        "unset these in the launching shell (they were exported from "
-                        ".env, e.g. `set -a; . .env`) or run from a clean shell — CI "
-                        "runs these suites without .env"
-                    ),
-                }],
-            })
-            continue
-        unmet = [p for p in spec.preconditions if not p.path.exists()]
-        if unmet:
-            results.append({
-                "gate": spec.gate,
-                "ran": False,
-                "exit_code": None,
-                "summary": (
-                    "HARNESS INVALID — gate NOT run (its result would have "
-                    "described the setup, not the code): "
-                    + ", ".join(p.name for p in unmet)
-                ),
-                "duration_s": 0.0,
-                "harness_invalid": [
-                    {"precondition": p.name, "missing_path": str(p.path), "remedy": p.remedy}
-                    for p in unmet
-                ],
-            })
-            continue
+    missing and how to fix it.
 
-        raw = run_gate(spec)
-        # 3-tuple seams stay supported; see GateRunResult.
-        exit_code, summary, duration, output = raw if len(raw) == 4 else (*raw, raw[1])
-        entry: dict[str, Any] = {
+    Gates run on up to `max_workers` threads (each is its own subprocess, so
+    threads only wait); results are returned in SPEC ORDER regardless."""
+    workers = max(1, min(max_workers, len(specs) or 1))
+    if workers == 1:
+        return [_run_one_gate(spec, run_gate, env_residue) for spec in specs]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return list(pool.map(lambda sp: _run_one_gate(sp, run_gate, env_residue), specs))
+
+
+def _run_one_gate(
+    spec: GateSpec,
+    run_gate: Callable[[GateSpec], GateRunResult],
+    env_residue: list[str] | None,
+) -> dict[str, Any]:
+    if env_residue:
+        # The developer's `.env` is still in the gate env (2026-10-09:
+        # merged-tip pytest false-redded 4 "unset key -> X" tests). The
+        # result would judge the `.env`, not the code — do not run it.
+        return {
             "gate": spec.gate,
-            "ran": exit_code is not None,
-            "exit_code": exit_code,
-            "summary": summary,
-            "duration_s": round(duration, 2),
+            "ran": False,
+            "exit_code": None,
+            "summary": (
+                "HARNESS INVALID — gate NOT run: the gate env still carries "
+                f"{len(env_residue)} key(s) with the repo .env's exact values"
+            ),
+            "duration_s": 0.0,
+            "harness_invalid": [{
+                "precondition": "env_free_of_dotenv",
+                "missing_path": ", ".join(env_residue),
+                "remedy": (
+                    "unset these in the launching shell (they were exported from "
+                    ".env, e.g. `set -a; . .env`) or run from a clean shell — CI "
+                    "runs these suites without .env"
+                ),
+            }],
         }
-        if exit_code not in (0, None):
-            suspect = _harness_suspect(output or "", exit_code)
-            if suspect:
-                # `matched_line` is sliced from the RAW combined stdout/
-                # stderr (see `harness_signatures.harness_suspect`), so it
-                # is a second leak surface independent of `summary` — same
-                # redaction, same reason (module docstring, 2026-09-27).
-                suspect["matched_line"] = redact_secrets_in_text(suspect["matched_line"])
-                entry["harness_suspect"] = suspect
-        results.append(entry)
-    return results
+    unmet = [p for p in spec.preconditions if not p.path.exists()]
+    if unmet:
+        return {
+            "gate": spec.gate,
+            "ran": False,
+            "exit_code": None,
+            "summary": (
+                "HARNESS INVALID — gate NOT run (its result would have "
+                "described the setup, not the code): "
+                + ", ".join(p.name for p in unmet)
+            ),
+            "duration_s": 0.0,
+            "harness_invalid": [
+                {"precondition": p.name, "missing_path": str(p.path), "remedy": p.remedy}
+                for p in unmet
+            ],
+        }
+
+    raw = run_gate(spec)
+    # 3-tuple seams stay supported; see GateRunResult.
+    exit_code, summary, duration, output = raw if len(raw) == 4 else (*raw, raw[1])
+    entry: dict[str, Any] = {
+        "gate": spec.gate,
+        "ran": exit_code is not None,
+        "exit_code": exit_code,
+        "summary": summary,
+        "duration_s": round(duration, 2),
+    }
+    if exit_code not in (0, None):
+        suspect = _harness_suspect(output or "", exit_code)
+        if suspect:
+            # `matched_line` is sliced from the RAW combined stdout/
+            # stderr (see `harness_signatures.harness_suspect`), so it
+            # is a second leak surface independent of `summary` — same
+            # redaction, same reason (module docstring, 2026-09-27).
+            suspect["matched_line"] = redact_secrets_in_text(suspect["matched_line"])
+            entry["harness_suspect"] = suspect
+    return entry
 
 
 def _verdict(gates: list[dict[str, Any]]) -> str:
@@ -739,6 +1029,7 @@ def gate_sweep(
     timeout: int = 300,
     run_gate: Callable[[GateSpec], GateRunResult] | None = None,
     git_runner: GitRunner | None = None,
+    max_workers: int | None = None,
 ) -> dict[str, Any]:
     """Run the canonical gate set for what actually changed vs. `base_ref`;
     return a structured, measured verdict. See module docstring.
@@ -761,6 +1052,8 @@ def gate_sweep(
             (exit_code, summary, duration_s)`.
         git_runner: injectable `GitRunner` (test seam) — same Protocol
             `noctus.dev.migrate_product` uses.
+        max_workers: gate parallelism (default max(1, cpu_count//2)); results
+            stay in spec order.
 
     Returns:
         {ok, status ('green'|'red'|'inconclusive'|'incomplete'|
@@ -823,7 +1116,17 @@ def gate_sweep(
     # (provenance strip + .env-value scrub) — a backstop that only fires if the
     # scrub ever regresses; the scrub itself makes it empty by construction.
     env_residue = dotenv_residue(gate_subprocess_env(root), root)
-    gates = _run_gates(specs, runner, env_residue)
+    workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
+    gates = _run_gates(specs, runner, env_residue, max_workers=workers)
+
+    fanout = scope.get("seed_fanout") or {}
+    if fanout.get("mode") == "scoped":
+        warnings.append(
+            "seed fan-out SCOPED to "
+            f"pytest={fanout['products_pytest']} frontend={fanout['products_frontend']} "
+            f"(excluded: {len(fanout['excluded_products'])} active product(s)) — "
+            "CI runs the full matrix"
+        )
 
     if scope.get("mcp_untested_modules"):
         untested = scope["mcp_untested_modules"]
