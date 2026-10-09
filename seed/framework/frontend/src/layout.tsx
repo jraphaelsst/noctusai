@@ -41,7 +41,7 @@ import {
   OrgSelectionGate,
   endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
-import type { NavGroup, NavItem } from "@noctusai/lib/design-system";
+import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system";
 import {
   resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining,
   usePageStatus, filterNavByPageStatus, stripNavRoutes, env, ORG_ROLE_LABELS,
@@ -247,6 +247,14 @@ const DEFAULT_ROLE_LABELS: Record<string, string> = ORG_ROLE_LABELS;
 // landmine: 5173 is the dead pre-house vite port). Non-local deploys set
 // VITE_CORE_URL; the getter encodes the fallback once for every consumer.
 const CORE_URL = env.CORE_URL;
+/**
+ * What the header's sign-out revokes. ONE value feeds both the Supabase
+ * `signOut({ scope })` call and the Header (whose label is derived from it),
+ * so the control can never claim a different scope than it performs. Global:
+ * signing out of a product ends the user's sessions everywhere (matching
+ * core's logout since 2026-10-09).
+ */
+const LOGOUT_SCOPE: LogoutScope = "global";
 
 const BackToCore = (
   <a
@@ -404,7 +412,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
       if (sessionAuth) {
         await sessionAuth.onLogout();
       } else {
-        await supabase!.auth.signOut();
+        await supabase!.auth.signOut({ scope: LOGOUT_SCOPE });
       }
       window.location.href = ssoCtx.isSSO ? CORE_URL : "/login";
     };
@@ -482,6 +490,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             // Was "redirect", which made this button silently skip signOut and
             // leave the session live (fixed 2026-07-07).
             logoutBehavior="signout"
+            logoutScope={LOGOUT_SCOPE}
             platformUrl={CORE_URL}
             onLogout={handleLogout}
             theme={theme}

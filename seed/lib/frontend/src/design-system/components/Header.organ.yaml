@@ -7,14 +7,16 @@ validation_status: emerging
 
 known_facts:
   - "Full-featured header: hamburger toggle (mobile), user HoverCard (avatar/name/role/edit profile/change password), dark/light theme toggle, logout. Products pass user data and callbacks — zero product-specific imports in this component."
-  - "logoutBehavior prop distinguishes 'signout' (Core platform — actually signs out) vs 'redirect' (products — redirects to platformUrl without signing out, preserving SSO session). This seam is critical for cross-product navigation."
+  - "logoutBehavior prop distinguishes 'signout' (actually signs out) vs 'redirect' (navigates to platformUrl without signing out). Since 2026-07-07 the framework product layout uses 'signout' too; 'Voltar ao NoctusAI' is a separate Sidebar control."
+  - "logoutScope ('global' default | 'local') declares what onLogout revokes; the sign-out label is DERIVED from it via LOGOUT_LABELS (global → 'Sair de todos os dispositivos'). Callers pass the SAME value their onLogout uses (framework layout: one LOGOUT_SCOPE constant for both signOut({scope}) and the Header). Replaced the free-text logoutLabel prop on 2026-10-09."
   - "actions slot enables product-specific content (e.g. NotificationBell) without forking the component. variant prop ('default' | 'dark') controls the header bar color for products with dark sidebar that extends to the header."
   - "5 import sites from @noctusai/lib/design-system in products (core Layout.tsx + 4 more) plus indirect consumption via createProductLayout — highest explicit import count of the shell trio."
-  - "No colocated unit test — emerging status pending colocated test."
+  - "Colocated test Header.test.tsx (2026-10-09): label follows logoutScope; redirect is labelled as navigation."
 
 errors_encountered: []
 
-drifts_surfaced: []
+drifts_surfaced:
+  - "2026-10-09: the free-text logoutLabel prop let 5 hand-configured core headers diverge (only 1 said 'Sair de todos os dispositivos' while all revoked globally). Fixed by construction: core CoreHeader (one binding) + label derived from logoutScope in this organ. No keeper added: the drift was a free-text label, now impossible; a 'N>=3 identical <Header> configs' keeper would also flag legitimately different configs. The organ keeper (check_canonical_organ_consumption) already covers local re-implementations of Header."
 
 alternatives_considered:
   - "Per-product header components existed before absorption. The actions slot pattern replaced product-level forks by providing a clean injection point."

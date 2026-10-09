@@ -23,6 +23,15 @@ export interface HeaderUser {
   role: string;
 }
 
+/** What a sign-out revokes (mirrors supabase-js `signOut({ scope })`). */
+export type LogoutScope = "global" | "local";
+
+/** The sign-out control's label, derived from what it revokes — never free text. */
+export const LOGOUT_LABELS: Record<LogoutScope, string> = {
+  global: "Sair de todos os dispositivos",
+  local: "Sair",
+};
+
 export interface HeaderProps {
   user: HeaderUser;
   onMenuToggle?: () => void;
@@ -37,8 +46,16 @@ export interface HeaderProps {
   platformUrl?: string;
   /** Called when logoutBehavior is "signout". Performs the actual sign-out. */
   onLogout: () => void;
-  /** Tooltip/aria label of the sign-out control when logoutBehavior is "signout" (default "Sair"). */
-  logoutLabel?: string;
+  /**
+   * What `onLogout` revokes — the sign-out control's label FOLLOWS it, so a
+   * product can't promise one thing and do another. "global" (default — the
+   * same default as `supabase.auth.signOut()`, and what core's
+   * `/api/auth/logout` does) ends the user's sessions on every product and
+   * device; "local" ends only this browser's. Pass the SAME value your
+   * `onLogout` uses (e.g. `signOut({ scope })`). 2026-10-09: a free-text
+   * `logoutLabel` drifted across 5 hand-configured core headers.
+   */
+  logoutScope?: LogoutScope;
   /** Current theme: 'light' or 'dark' */
   theme: "light" | "dark";
   /** Called when user toggles theme */
@@ -61,7 +78,7 @@ export function Header({
   logoutBehavior = "signout",
   platformUrl,
   onLogout,
-  logoutLabel = "Sair",
+  logoutScope = "global",
   theme,
   onThemeToggle,
   actions,
@@ -192,8 +209,8 @@ export function Header({
                         onLogout();
                       }
                     }}
-                    title={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : logoutLabel}
-                    aria-label={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : logoutLabel}
+                    title={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : LOGOUT_LABELS[logoutScope]}
+                    aria-label={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : LOGOUT_LABELS[logoutScope]}
                     className="h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                   >
                     <LogOut className="h-4 w-4" />

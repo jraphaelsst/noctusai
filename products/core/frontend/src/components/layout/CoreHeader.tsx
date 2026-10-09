@@ -8,12 +8,13 @@
  */
 import type { ComponentProps, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Header, useTheme } from '@noctusai/lib/design-system';
+import { Header, LOGOUT_LABELS, useTheme } from '@noctusai/lib/design-system';
 import { useAuth } from '../../lib/auth-context';
 import { api } from '../../lib/api';
 import { NotificationBell } from '../NotificationBell';
 
-export const LOGOUT_LABEL = 'Sair de todos os dispositivos';
+/** Core logout revokes globally (`/api/auth/logout` → admin sign_out scope=global). */
+export const LOGOUT_LABEL = LOGOUT_LABELS.global;
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'Administrador',
@@ -68,7 +69,7 @@ export function CoreHeader({ actions, variant, onMenuToggle, profileEditable = f
       variant={variant}
       onMenuToggle={onMenuToggle}
       onLogout={handleLogout}
-      logoutLabel={LOGOUT_LABEL}
+      logoutScope="global"
       theme={theme}
       onThemeToggle={toggleTheme}
       actions={

@@ -14,8 +14,8 @@ export type { AppShellProps, SidebarRailMode, SidebarRailState } from "./compone
 export { Sidebar } from "./components/Sidebar";
 export type { SidebarProps, NavGroup, NavItem } from "./components/Sidebar";
 
-export { Header } from "./components/Header";
-export type { HeaderProps, HeaderUser } from "./components/Header";
+export { Header, LOGOUT_LABELS } from "./components/Header";
+export type { HeaderProps, HeaderUser, LogoutScope } from "./components/Header";
 
 export { useTheme } from "./useTheme";
 export { useActivityRefresh } from "./useActivityRefresh";
