@@ -769,6 +769,14 @@ state change, not a removal.
 - **Scope:** the two files, each carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 - **Revisit trigger:** identical to 9a's (a).
 
+### 9g SessionStart worktree-sweep hook retains shell (`[carve:hook]`, 2026-10-09)
+
+- **Subject:** `scripts/hooks/claude-session-start-worktree-sweep.py` (SessionStart): the crash backstop for worktree reclamation.
+- **Decision `[A]`:** stays a script, `[carve:hook]` bucket. The harness invokes SessionStart hooks as processes before any MCP server is connected. The logic IS a toolkit tool, `noctus.dev.cleanup_stale_worktrees`, invoked through `cli.py --cleanup-stale-worktrees --force --cleanup-respect-min-age`. The adapter owns only the protocol: a detached child so startup never blocks, a flock so concurrent starters skip, and a one-line summary printed on the next start.
+- **Why:** on 2026-10-09, 37 merged, clean worktrees (9.9 GB) built up because cleanup was a manual step after integrate. Integrate now auto-cleans, and this hook reclaims what crashed sessions leave behind. → `KB § PATTERNS/common/self-branching-mode.md`
+- **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
+- **Revisit trigger:** identical to 9a's (a).
+
 ### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
 
 - **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).
