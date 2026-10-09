@@ -14,6 +14,18 @@ be silently overridden by an automation token attached to the same
 request (the security-sensitive case is the inverse — automation
 tokens scoped narrowly, must not inherit user-session privileges).
 
+**Identity-mismatch rule (cookie vs bearer).** When a valid session
+cookie AND a valid user-bearer (JWT via ``legacy_jwt_resolver``) are
+both present and name DIFFERENT users, the dep refuses with a strict
+401 and a ``Set-Cookie`` deletion header for the session cookie — it
+never silently picks one (a stale cookie of account A used to win over
+the bearer of account B, attributing B's actions to A). Same user, or
+only one credential present → unchanged behaviour. The rule concerns
+two VALID, DIFFERENT identities only: a bearer that is invalid/expired
+while the cookie is valid keeps today's behaviour (cookie wins), and a
+``pk_*`` token (no user identity) never triggers it. A structured
+WARNING with user ids only (never tokens) is logged on mismatch.
+
 Wave 2 consumer projects pass real adapters; Wave 1 dev/test wiring
 passes ``FakeSessionStore`` + ``FakeApiTokenResolver``. The factory
 itself is identical in both paths — adapter swap is the entire
@@ -31,13 +43,17 @@ today. Purely additive: the return value and every existing
 
 from __future__ import annotations
 
+import logging
 from typing import Awaitable, Callable
 
 from fastapi import Cookie, Header, HTTPException, Request
+from fastapi.responses import Response
 
 from noctusai_lib.api.auth.session.api_tokens import ApiTokenResolver
 from noctusai_lib.api.auth.session.store import SessionStore
 from noctusai_lib.api.auth.session.types import AuthContext
+
+logger = logging.getLogger(__name__)
 
 LegacyJwtResolver = Callable[[str], Awaitable[AuthContext | None]]
 """Optional bridge for the existing JWT-only auth scheme.
@@ -47,6 +63,19 @@ an ``AuthContext`` if the JWT validates against the legacy verifier,
 or ``None`` to fall through to 401. Lets the new dep coexist with
 ``make_get_current_user`` callers during the migration window.
 """
+
+
+def _cookie_clear_header(cookie_name: str) -> str:
+    """``Set-Cookie`` value deleting the session cookie.
+
+    Same attributes the login route sets it with (path/secure/httponly/
+    samesite), so the browser matches and drops the exact cookie.
+    """
+    resp = Response()
+    resp.delete_cookie(
+        cookie_name, path="/", secure=True, httponly=True, samesite="strict"
+    )
+    return resp.headers["set-cookie"]
 
 
 def make_get_auth_context(
@@ -80,6 +109,43 @@ def make_get_auth_context(
         the resolved ``AuthContext`` otherwise.
     """
 
+    async def _refuse_identity_mismatch(
+        request: Request, authorization: str | None, cookie_ctx: AuthContext
+    ) -> None:
+        """401 + cookie-clear when a valid user bearer names another user."""
+        if cookie_ctx.user_id is None:
+            return
+        if not (authorization and authorization.startswith("Bearer ")):
+            return
+        token = authorization[len("Bearer ") :].strip()
+        # pk_* carries no user identity; no bridge → nothing to compare.
+        if token.startswith("pk_") or legacy_jwt_resolver is None:
+            return
+        try:
+            if getattr(legacy_jwt_resolver, "accepts_request", False):
+                bearer_ctx = await legacy_jwt_resolver(token, request)
+            else:
+                bearer_ctx = await legacy_jwt_resolver(token)
+        except Exception as exc:  # invalid/expired bearer → cookie wins
+            logger.debug("cookie_bearer_check_bearer_unresolved err=%s", type(exc).__name__)
+            return
+        if (
+            bearer_ctx is None
+            or bearer_ctx.user_id is None
+            or bearer_ctx.user_id == cookie_ctx.user_id
+        ):
+            return
+        logger.warning(
+            "auth_cookie_bearer_identity_mismatch cookie_user_id=%s bearer_user_id=%s",
+            cookie_ctx.user_id,
+            bearer_ctx.user_id,
+        )
+        raise HTTPException(
+            status_code=401,
+            detail="Session and bearer identify different users",
+            headers={"Set-Cookie": _cookie_clear_header(session_cookie_name)},
+        )
+
     async def get_auth_context(
         request: Request,
         authorization: str | None = Header(None),
@@ -89,6 +155,7 @@ def make_get_auth_context(
         if session_cookie:
             ctx = await session_store.lookup(session_cookie)
             if ctx is not None:
+                await _refuse_identity_mismatch(request, authorization, ctx)
                 request.state.auth_context = ctx
                 return ctx
             # Cookie present but unrecognised/expired → 401 with a

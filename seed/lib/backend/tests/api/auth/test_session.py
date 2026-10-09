@@ -386,6 +386,107 @@ def test_dep_returns_401_for_bearer_jwt_without_bridge():
     assert "Bearer" in resp.json()["detail"]
 
 
+# ── cookie vs bearer identity mismatch ───────────────────────────────
+
+
+def _mismatch_app(bearer_users: dict[str, UUID]):
+    """App whose legacy bridge maps ``jwt-<name>`` → a user (else None)."""
+    org = uuid4()
+
+    async def legacy(token: str) -> AuthContext | None:
+        uid = bearer_users.get(token)
+        if uid is None:
+            return None
+        return AuthContext(
+            org_id=org, caller_kind="user", user_id=uid,
+            scopes=[], raw_token=token, api_token_id=None,
+        )
+
+    app, store, _r = _build_app(legacy_jwt_resolver=legacy)
+    return app, store, org
+
+
+def _cookie_for(store, user_id, org):
+    return _run(
+        store.create(
+            user_id=user_id, org_id=org,
+            supabase_refresh_token="rt", ttl_seconds=60,
+        )
+    )
+
+
+def test_dep_cookie_a_bearer_b_is_401_and_clears_cookie():
+    a, b = uuid4(), uuid4()
+    app, store, org = _mismatch_app({"jwt-b": b})
+    sid = _cookie_for(store, a, org)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/whoami",
+        cookies={"nai_session": sid},
+        headers={"Authorization": "Bearer jwt-b"},
+    )
+
+    assert resp.status_code == 401
+    set_cookie = resp.headers["set-cookie"]
+    assert "nai_session=" in set_cookie
+    assert "Max-Age=0" in set_cookie
+
+
+def test_dep_cookie_a_bearer_a_resolves_as_a():
+    a = uuid4()
+    app, store, org = _mismatch_app({"jwt-a": a})
+    sid = _cookie_for(store, a, org)
+    client = TestClient(app)
+
+    resp = client.get(
+        "/whoami",
+        cookies={"nai_session": sid},
+        headers={"Authorization": "Bearer jwt-a"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["user_id"] == str(a)
+
+
+def test_dep_cookie_only_resolves_cookie_user():
+    a = uuid4()
+    app, store, org = _mismatch_app({})
+    sid = _cookie_for(store, a, org)
+
+    resp = TestClient(app).get("/whoami", cookies={"nai_session": sid})
+
+    assert resp.status_code == 200
+    assert resp.json()["user_id"] == str(a)
+
+
+def test_dep_bearer_only_resolves_bearer_user():
+    b = uuid4()
+    app, _store, _org = _mismatch_app({"jwt-b": b})
+
+    resp = TestClient(app).get(
+        "/whoami", headers={"Authorization": "Bearer jwt-b"}
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["user_id"] == str(b)
+
+
+def test_dep_cookie_a_invalid_bearer_keeps_cookie_wins():
+    a = uuid4()
+    app, store, org = _mismatch_app({})
+    sid = _cookie_for(store, a, org)
+
+    resp = TestClient(app).get(
+        "/whoami",
+        cookies={"nai_session": sid},
+        headers={"Authorization": "Bearer jwt-garbage"},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["user_id"] == str(a)
+
+
 # ── time.monotonic patch helper ──────────────────────────────────────
 
 
