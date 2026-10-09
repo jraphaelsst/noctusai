@@ -24,7 +24,7 @@ import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
 import { Button } from "@/components/ui/button";
@@ -148,7 +148,7 @@ export function ImovelConflitosCard({ codigo }: { codigo: string }) {
   // UI convenience only — the server reads the TRUSTED `noctus_users` row
   // and 403s a spoofed claim regardless (`decidir_conflito_route`).
   const isAdmin =
-    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+    isOrgAdmin(ssoCtx);
 
   const conflitos = useImovelConflitos(codigo);
   // Shares `ImovelDocumentosCard`'s own cache entry — no second request.

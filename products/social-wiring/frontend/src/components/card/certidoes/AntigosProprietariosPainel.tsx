@@ -14,7 +14,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Loader2, Plus } from "lucide-react";
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -68,7 +68,7 @@ export function AntigosProprietariosPainel(props: {
 
   const { user } = useAuthStore();
   const sso = resolveSSOContext(user?.user_metadata);
-  const isAdmin = sso.isProductAdmin || sso.org.role === "owner" || sso.org.role === "admin";
+  const isAdmin = isOrgAdmin(sso);
 
   // Backstop sync, once per opening of the subtab (re-keyed by the deal).
   const sincronizouPara = useRef<string | null>(null);

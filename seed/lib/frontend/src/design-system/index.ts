@@ -34,6 +34,7 @@ export type { ActingAsBannerViewProps } from "./components/ActingAsBanner";
 export { OrgSelectionGate } from "./components/OrgSelectionGate";
 export { useOrgSelection, endOrgSelectionBestEffort, ME_ACCESS_QUERY_KEY, ORG_CHOICES_QUERY_KEY } from "../org-selection";
 export type { UseOrgSelectionResult } from "../org-selection";
+export { useIsOrgAdmin } from "../use-is-org-admin";
 
 export { ForgotPasswordPage } from "./components/ForgotPasswordPage";
 export type { ForgotPasswordPageProps } from "./components/ForgotPasswordPage";

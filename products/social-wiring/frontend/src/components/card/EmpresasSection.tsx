@@ -18,7 +18,7 @@
 import { useMemo, useState } from "react";
 import { Building2, CheckCircle2, Circle, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 import { CollapsibleSection, baixarArquivo } from "@noctusai/lib/components";
 import { useAuthStore } from "@noctusai/seed/infra";
 
@@ -242,7 +242,7 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdmin =
-    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+    isOrgAdmin(ssoCtx);
 
   const [editando, setEditando] = useState(false);
   const [confirmRemoverOpen, setConfirmRemoverOpen] = useState(false);

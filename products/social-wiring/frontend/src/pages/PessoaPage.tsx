@@ -17,8 +17,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 import { AlertCircle, ArrowLeft, Loader2, Mail, MessageCircle, Trash2 } from "lucide-react";
 
 import { ImovelInteressesList } from "@/components/interesses/ImovelInteressesList";
@@ -55,10 +54,7 @@ export default function PessoaPage() {
   const [confirmExcluirOpen, setConfirmExcluirOpen] = useState(false);
   // UI convenience only — same gate as ClienteDetailModal; the server's
   // `require_org_admin_role` on DELETE /api/clientes/{id} is the real one.
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
-  const isAdmin =
-    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+  const isAdmin = useIsOrgAdmin();
   const showSkeleton = query.isPending && !query.data;
   const isRefreshing = query.isFetching && !!query.data;
 

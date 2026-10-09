@@ -15925,6 +15925,9 @@ def check_all_products() -> tuple[int, list]:
     # branch over live data. Severity warning (observe-first on a brand-new
     # detector). KB § PATTERNS/frontend/lying-loading-state.md.
     all_issues.extend(check_lying_loading_state())
+    # Hand-copied org-admin UX gate (2026-10-09) — the seed's isOrgAdmin /
+    # useIsOrgAdmin is the only home. KB § PATTERNS/frontend/org-admin-ux-gate.md.
+    all_issues.extend(check_hand_copied_org_admin())
     # status_pagina dev-visibility parity (2026-07-29) — the RLS policy that
     # RETURNS a 'desenvolvimento' row and the FE const that RENDERS it are two
     # halves of one contract in two languages across N+1 files. Divergence is
@@ -22053,6 +22056,71 @@ def check_license_gate_by_construction(
                 if "/tests/" in rel or (wanted is not None and rel not in wanted):
                     continue
                 issues.extend(_lgc_scan_source(f.read_text(encoding="utf-8"), rel, slug, is_product=True))
+    return issues
+
+
+# ─── check_hand_copied_org_admin ──────────────────────────────────────────────
+# The FE "is this user an org admin?" UX gate was hand-copied 15x across 7
+# products as `ctx.isProductAdmin || ctx.org.role === "owner" || ctx.org.role
+# === "admin"` before it was formalized (2026-10-09) as the seed lib's
+# `isOrgAdmin(ctx)` / `useIsOrgAdmin()` (`seed/lib/frontend/src/sso.ts` +
+# `use-is-org-admin.ts`). This keeper blocks the 16th copy in an AWAKE product
+# frontend — the canonical home is the only place the expression may live.
+# Asleep products are skipped (`_active_product_dirs`); they keep their copies
+# until woken, and a woken product's first commit here surfaces them.
+
+_HCOA_OWNER_ADMIN = re.compile(
+    r"""[A-Za-z_$][\w$]*\.org\.role\s*===\s*["'](?P<a>owner|admin)["']\s*\|\|\s*"""
+    r"""[A-Za-z_$][\w$]*\.org\.role\s*===\s*["'](?!(?P=a)["'])(?:owner|admin)["']"""
+)
+_HCOA_PRODUCT_ADMIN = re.compile(r"\.isProductAdmin\b")
+
+
+def _hcoa_scan_source(text: str) -> list[int]:
+    """1-based line numbers where the owner/admin pair is OR-ed with `.isProductAdmin`
+    in the same statement (whitespace/newlines between operands tolerated)."""
+    hits: list[int] = []
+    for m in _HCOA_OWNER_ADMIN.finditer(text):
+        # The statement around the match: back to the previous `;`/`{`/`}` and
+        # forward to the next `;` or line-ending `)`/`}` — enough to catch the
+        # `isProductAdmin ||` prefix (or `|| isProductAdmin` suffix) of a copy.
+        start = max(text.rfind(";", 0, m.start()), text.rfind("{", 0, m.start()), text.rfind("}", 0, m.start())) + 1
+        end_candidates = [i for i in (text.find(";", m.end()), text.find("\n\n", m.end())) if i != -1]
+        end = min(end_candidates) if end_candidates else len(text)
+        if _HCOA_PRODUCT_ADMIN.search(text[start:end]):
+            hits.append(text.count("\n", 0, m.start()) + 1)
+    return hits
+
+
+def check_hand_copied_org_admin(repo_root: Path | None = None) -> list[dict]:
+    """Keeper: no awake product frontend hand-copies the org-admin UX gate.
+
+    Flags `X.isProductAdmin || X.org.role === "owner" || X.org.role === "admin"`
+    (either role order, any binding name) in `products/<awake>/frontend/src`
+    non-test `.ts`/`.tsx`. Fix: `useIsOrgAdmin()` (component) or
+    `isOrgAdmin(ctx)` (pure) from `@noctusai/lib`. Severity high (blocking).
+    → `KB § PATTERNS/frontend/org-admin-ux-gate.md`.
+    """
+    root = repo_root or REPO_ROOT
+    issues: list[dict] = []
+    for product_dir in _active_product_dirs(root / "products"):
+        src = product_dir / "frontend" / "src"
+        if not src.is_dir():
+            continue
+        for f in sorted(p for ext in ("*.ts", "*.tsx") for p in src.rglob(ext)):
+            name = f.name
+            if ".test." in name or ".spec." in name or "node_modules" in f.parts:
+                continue
+            for line in _hcoa_scan_source(f.read_text(encoding="utf-8")):
+                issues.append({
+                    "product": product_dir.name,
+                    "file": f"{f.relative_to(root)}:{line}",
+                    "issue": (
+                        "hand-copied org-admin gate (`isProductAdmin || org.role owner/admin`) — "
+                        "use `useIsOrgAdmin()` / `isOrgAdmin(ctx)` from @noctusai/lib"
+                    ),
+                    "severity": "high",
+                })
     return issues
 
 

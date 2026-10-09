@@ -30,7 +30,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import {
@@ -229,7 +229,7 @@ export function ClienteDetailModal({
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdmin =
-    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+    isOrgAdmin(ssoCtx);
   const documentoMutations = useDocumentoMutations(id ?? "__none__");
   const documentoChecklistMutation = useDocumentoChecklistMutation(id ?? "__none__");
   const sugestaoMutation = useExtracaoSugestaoMutation(id ?? "__none__");

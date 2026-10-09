@@ -11,12 +11,7 @@ vi.mock("sonner", () => ({ toast: { error: m.toastError, warning: vi.fn() } }));
 vi.mock("@noctusai/seed/infra", () => ({
   useAuthStore: () => ({ user: { user_metadata: { org_role: m.role.current } } }),
 }));
-vi.mock("@noctusai/lib", () => ({
-  resolveSSOContext: (md: any) => ({
-    isProductAdmin: false,
-    org: { role: md?.org_role ?? "member" },
-  }),
-}));
+// useIsOrgAdmin (seed) runs for real over the mocked auth store above.
 vi.mock("@/hooks/useClientes", () => ({
   useClienteMutations: () => ({ remove: { mutate: m.mutate, isPending: false } }),
 }));

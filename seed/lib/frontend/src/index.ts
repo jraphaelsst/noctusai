@@ -36,7 +36,7 @@ export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBack
 export { useSupabaseAuthInit, useAuthReady, classifySupabaseRefresh, createSupabaseTokenRefresher, createDeadSessionHandler } from './auth';
 
 // SSO
-export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining } from './sso';
+export { resolveSSORoles, resolveSSOContext, isTrial, subscriptionDaysRemaining, licenseDaysRemaining, isOrgAdmin } from './sso';
 export type { SSORoleInfo, SSOContext, SSOPlanInfo, SSOSubscriptionInfo, SSOLicenseInfo, SSOOrgInfo } from './sso';
 
 // Roles

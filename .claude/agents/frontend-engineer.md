@@ -11,6 +11,7 @@ owns_kb:
   - CONTEXT/PATTERNS/frontend/product-icon-registry.md
   - CONTEXT/PATTERNS/frontend/lying-loading-state.md
   - CONTEXT/PATTERNS/frontend/status-pagina-dev-visibility.md
+  - CONTEXT/PATTERNS/frontend/org-admin-ux-gate.md
   - CONTEXT/PATTERNS/frontend/svg-render-mode.md
   - CONTEXT/PATTERNS/frontend/spa-cache-and-service-worker.md
   - CONTEXT/PATTERNS/frontend/inbox-chat-surface.md
@@ -38,6 +39,7 @@ Build UI slices via the seed factories — pages, hooks, design-system usage, co
 - **`desenvolvimento` needs an RLS policy too — and the roles must match on both sides.** Without `dev_veem_desenvolvimento` the row is returned to NOBODY, so the FE's dev/owner branch is dead code; the SQL role array and `DEV_ROLES` must stay identical. `check_status_pagina_role_parity` enforces. → `KB § PATTERNS/frontend/status-pagina-dev-visibility.md`
 - **Product icon must render.** A product's `icone` must register as a REAL icon — empty/missing fails `check_product_icon_registered`. → `KB § PATTERNS/frontend/product-icon-registry.md`
 - **Loading UI = two signals off `data`, never `isLoading` and never a bare `isFetching`.** `showSkeleton = isPending && !data` · `isRefreshing = isFetching && !!data` (indicator only, never an early `return`) · `placeholderData: (prev) => prev` on any user-keyed query, unless it returns authorisation-scoped personal data (say why in a comment). `isLoading` false mid-refetch ⇒ empty lies over data (2026-07-21); `isPending || isFetching` ⇒ the subtree unmounts on every mutation (2026-08-31, 70 sites). Compute it in the HOOK, not per consumer. `check_lying_loading_state` (warning) catches the first mode only. → `KB § PATTERNS/frontend/lying-loading-state.md`
+- **Org-admin UX gate = `useIsOrgAdmin()` / `isOrgAdmin(ctx)` from `@noctusai/lib`, never the inline `isProductAdmin || org.role owner/admin` copy.** Correct under the org picker (staff carry `noctus_role` admin); UX only, the server enforces. `check_hand_copied_org_admin` blocks. → `KB § PATTERNS/frontend/org-admin-ux-gate.md`
 - **Any chat/inbox surface = `ChatWindow` organ + adapter + DB-first reads + ONE realtime stream.** Never fork the organ, never put a vendor call on the read path, never `refetchInterval`. Register every new organ's `.organ.yaml` — a missing registration makes the catalog report it as shelfware, which is what manufactured the three existing chat forks. → `KB § PATTERNS/frontend/inbox-chat-surface.md`
 - **SVG via seed primitive.** Use `svg_render` (the media-creator residual) — not hand-rolled `<svg>` strings in components. → `KB § PATTERNS/frontend/svg-render-mode.md`
 - **Consent routes are seed-mounted — never re-declare per-product.** Do NOT declare `ConsentHubPage`/`PrivacyPolicyPage`/`TermsOfUsePage` locally; `createProductApp` mounts `/consent*` by construction. `check_consent_routes_mounted` enforces. → `KB § PATTERNS/frontend/consent-routes-mandate.md`

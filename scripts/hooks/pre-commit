@@ -889,6 +889,22 @@ if [[ -n "$STAGED_LOADING_TSX" ]] && have_py; then
     # this gate; never block the commit on a brand-new detector's findings.
 fi
 
+# ─── 6f2. Hand-copied org-admin UX gate (blocking, only when a product ─────
+# frontend .ts/.tsx changed) ──────────────────────────────────────────────
+# Keeper `check_hand_copied_org_admin` + `KB § PATTERNS/frontend/org-admin-
+# ux-gate.md`. `isProductAdmin || org.role === "owner" || org.role === "admin"`
+# was hand-copied 15x across 7 products before it became the seed's
+# `isOrgAdmin(ctx)` / `useIsOrgAdmin()` (2026-10-09); this blocks the next
+# copy in an AWAKE product. Scoped to staged product frontend sources.
+STAGED_ORG_ADMIN_FE=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/frontend/src/.*\.tsx?$' || true)
+if [[ -n "$STAGED_ORG_ADMIN_FE" ]] && have_py; then
+    echo "[pre-commit] product frontend source staged — checking for hand-copied org-admin gates..."
+    "$PY" "$CLI" --check-hand-copied-org-admin --worktree-path "$REPO_ROOT" || {
+        echo "[pre-commit] Use useIsOrgAdmin() (component) or isOrgAdmin(ctx) from @noctusai/lib instead of the inline expression." >&2
+        exit 1
+    }
+fi
+
 # ─── 6g. PostgREST schema-qualified table gate (blocking, only when backend ──
 # Python changed) ────────────────────────────────────────────────────────
 # Keeper `check_postgrest_schema_qualified_table` +

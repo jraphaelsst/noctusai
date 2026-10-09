@@ -8,6 +8,9 @@
  * context-aware UI consistently.
  */
 
+import { ADMIN_ROLES } from './roles';
+import type { OrgRole } from './roles';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Metadata = Record<string, any> | undefined | null;
 
@@ -130,4 +133,18 @@ export function licenseDaysRemaining(ctx: SSOContext): number | null {
   if (!exp) return null;
   const diff = new Date(exp).getTime() - Date.now();
   return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+}
+
+/**
+ * THE "is this user an org admin?" UX gate (was hand-copied 14x).
+ *
+ * True for a product admin (`org_role` owner/admin or `noctus_role` admin)
+ * OR an org role of owner/admin. Org-picker note: platform staff are
+ * `noctus_role === 'admin'` so `isProductAdmin` is already true for them
+ * whichever org they pick (owner-equivalent per the 2026-10-08 spec); the
+ * picked org needs no extra input. UX only: the backend (effective-org
+ * resolver) is authoritative and re-enforces on every request.
+ */
+export function isOrgAdmin(ctx: Pick<SSOContext, 'isProductAdmin'> & { org: { role: string } }): boolean {
+  return ctx.isProductAdmin || ADMIN_ROLES.includes(ctx.org.role as OrgRole);
 }

@@ -14,7 +14,7 @@
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext } from "@noctusai/lib";
+import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
 import { useConflitosPendentes, useDecidirConflitoMutation } from "@/hooks/useCardHub";
@@ -36,7 +36,7 @@ export function ConflitosPendentesPanel({ clienteId }: ConflitosPendentesPanelPr
   // TRUSTED `noctus_users` row and 403s a spoofed claim regardless of what
   // this renders.
   const isAdmin =
-    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+    isOrgAdmin(ssoCtx);
 
   const conflitos = useConflitosPendentes(clienteId);
   const decidir = useDecidirConflitoMutation();

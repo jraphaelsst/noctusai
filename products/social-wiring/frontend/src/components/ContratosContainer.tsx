@@ -36,7 +36,7 @@ import { memo, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useAuthStore } from "@noctusai/seed/infra";
-import { canReviewLegal, resolveSSOContext } from "@noctusai/lib";
+import { canReviewLegal, resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 import { AditivosContainer } from "@/components/AditivosContainer";
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
@@ -82,7 +82,7 @@ export function ContratosContainer({
   const { user } = useAuthStore();
   const ssoCtx = resolveSSOContext(user?.user_metadata);
   const isAdmin =
-    ssoCtx.isProductAdmin || ssoCtx.org.role === "owner" || ssoCtx.org.role === "admin";
+    isOrgAdmin(ssoCtx);
   // "Aprovar revisão jurídica" — admins plus the org's legal staff (jurídico).
   const podeAprovarRevisao = isAdmin || canReviewLegal(ssoCtx.org.role);
   // The deal's imóvel — narrows the matrícula picker (see header note).

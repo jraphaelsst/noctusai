@@ -68,7 +68,9 @@ vi.mock("@noctusai/seed/infra", () => ({
   useAuthStore: () => ({ user: { user_metadata: {} } }),
 }));
 
-vi.mock("@noctusai/lib", () => ({
+vi.mock("@noctusai/lib", async () => ({
+  // Real seed helper over the stubbed resolveSSOContext below.
+  isOrgAdmin: (await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib")).isOrgAdmin,
   resolveSSOContext: (metadata: any) => {
     const m = metadata || {};
     return {

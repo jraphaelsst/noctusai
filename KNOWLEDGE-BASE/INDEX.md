@@ -139,6 +139,7 @@ KNOWLEDGE-BASE/
 │   │   │   ├── minimum-viable-rebuild.md
 │   │   │   ├── noc-graph.md
 │   │   │   ├── notifications.md
+│   │   │   ├── org-admin-ux-gate.md
 │   │   │   ├── orchestration-family-index.md
 │   │   │   ├── orphan-branch-sweeper.md
 │   │   │   ├── outbound-rate-limiting.md

@@ -1,5 +1,5 @@
 import { api, useAuthStore } from "@noctusai/seed/infra";
-import { StatusPaginaPanel, TeamPage, resolveSSOContext } from "@noctusai/lib";
+import { StatusPaginaPanel, TeamPage, resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 // The canonical seed Equipe organ — roster, policy-driven invite and pending
 // invitations. Removal is a NoctusAI Core action. Orbity extends it through the
@@ -9,7 +9,7 @@ import { StatusPaginaPanel, TeamPage, resolveSSOContext } from "@noctusai/lib";
 export default function Equipe() {
   const user = useAuthStore((s) => s.user);
   const sso = resolveSSOContext(user?.user_metadata ?? undefined);
-  const isAdmin = sso.isProductAdmin || sso.org.role === "owner" || sso.org.role === "admin";
+  const isAdmin = isOrgAdmin(sso);
   return (
     <TeamPage api={api} user={user}>
       {isAdmin && <StatusPaginaPanel api={api} enabled />}
