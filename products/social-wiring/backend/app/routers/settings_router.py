@@ -34,9 +34,11 @@ from pydantic import Field, field_validator
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session import require_org_admin_role
+from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.integrations.llm.credit_probe import QUOTA_MARKERS
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
+from noctusai_lib.primitives.exceptions import AppException
 from noctusai_lib.primitives.phone import normalize_phone
 
 from app.config import SocialWiringSettings, settings
@@ -90,6 +92,7 @@ from app.services.app_config_store import (
     resolve_meta_app_creds,
 )
 from app.services import clientes_inactivity_service, documento_retencao, table_reads
+from app.services import imobiliarias_service as imobiliarias_svc
 from app.services.chatbot_service import append_memory as _append_chat_memory
 from noctusai_lib.integrations.vista import (
     VistaError as CRMServiceError,
@@ -1486,21 +1489,9 @@ _IMOBILIARIA_TABLE = "org_dados_cadastrais"
 #: the token, never accepted — an accepted `org_id` is a cross-tenant write
 #: waiting for its first bug.
 _IMOBILIARIA_CAMPOS: tuple[str, ...] = (
-    "razao_social",
-    "nome_fantasia",
-    "cnpj",
-    "creci_pj",
-    "responsavel_nome",
-    "responsavel_creci",
-    "telefone",
-    "email",
-    "endereco_cep",
-    "endereco_logradouro",
-    "endereco_numero",
-    "endereco_complemento",
-    "endereco_bairro",
-    "endereco_cidade",
-    "endereco_uf",
+    # Migration 215: the company IDENTITY (razão social, CNPJ, CRECI, endereço…)
+    # moved to the per-org registry `org_imobiliarias`; this org-wide row keeps
+    # only the operational answers below.
     # Migration 117 (contract F6) — the office's own operational answers:
     # which platform the instrument is signed on, the daily fine for a
     # holdover ("posse"), and the default pendências window. See
@@ -1525,29 +1516,13 @@ def _validar_https(value: Optional[str]) -> Optional[str]:
 
 
 class DadosImobiliariaBody(StrictHttpModel):
-    """The agency's cadastral data. Every field optional — see the note above.
+    """The agency's ORG-WIDE operational data. Every field optional — see the
+    note above.
 
-    `creci_pj` is the field that keeps this table product-local rather than on
-    the shared `public.organizations` row: a brokerage licence is meaningless
-    to the other twelve products on this platform. Migration 100's header
-    carries the full accept-with-rationale.
+    Migration 215: the company identity (razão social, CNPJ, CRECI, endereço…)
+    is per company in `org_imobiliarias` (`/imobiliarias`); sending one of
+    those fields here is a 422 (StrictHttpModel).
     """
-
-    razao_social: Optional[str] = Field(default=None, max_length=255)
-    nome_fantasia: Optional[str] = Field(default=None, max_length=255)
-    cnpj: Optional[str] = Field(default=None, max_length=32)
-    creci_pj: Optional[str] = Field(default=None, max_length=64)
-    responsavel_nome: Optional[str] = Field(default=None, max_length=255)
-    responsavel_creci: Optional[str] = Field(default=None, max_length=64)
-    telefone: Optional[str] = Field(default=None, max_length=32)
-    email: Optional[str] = Field(default=None, max_length=255)
-    endereco_cep: Optional[str] = Field(default=None, max_length=16)
-    endereco_logradouro: Optional[str] = Field(default=None, max_length=255)
-    endereco_numero: Optional[str] = Field(default=None, max_length=32)
-    endereco_complemento: Optional[str] = Field(default=None, max_length=120)
-    endereco_bairro: Optional[str] = Field(default=None, max_length=120)
-    endereco_cidade: Optional[str] = Field(default=None, max_length=120)
-    endereco_uf: Optional[str] = Field(default=None, max_length=2)
 
     # ─── Migration 117 (contract F6) — the office's operational answers ────
     #: The signing platform's name (e.g. "ClickSign", "D4Sign") — free text,
@@ -1664,6 +1639,219 @@ def update_dados_imobiliaria(
     # already resolved for THIS request by the `Depends()` above — is passed
     # through explicitly rather than re-resolved.
     return get_dados_imobiliaria(auth, supabase)
+
+
+# ─── Imobiliárias (migration 215) — the org's registry of signing companies ──
+#
+# Same family as the witness registry just below: soft delete (`excluida_em`),
+# a contract CHOOSES one (`atendimento_contratos.imobiliaria_id`, card_hub
+# `contrato_imobiliaria_router`). Contract: projects/signing-companies/
+# CONTRACT.md. The ops fields stay org-wide on `/imobiliaria` (singular) above.
+
+def _validar_cnpj_imobiliaria(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    if not cnpj_valido(value):
+        raise ValueError("CNPJ inválido (dígitos verificadores não conferem)")
+    return value
+
+
+class ImobiliariaCreateBody(StrictHttpModel):
+    razao_social: str = Field(min_length=1, max_length=255)
+    cnpj: str = Field(min_length=14, max_length=32)
+    _validar_cnpj = field_validator("cnpj")(_validar_cnpj_imobiliaria)
+    nome_fantasia: Optional[str] = Field(default=None, max_length=255)
+    creci_pj: Optional[str] = Field(default=None, max_length=64)
+    creci_pj_regiao: Optional[str] = Field(default=None, max_length=64)
+    responsavel_nome: Optional[str] = Field(default=None, max_length=255)
+    responsavel_creci: Optional[str] = Field(default=None, max_length=64)
+    responsavel_creci_regiao: Optional[str] = Field(default=None, max_length=64)
+    telefone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
+    endereco_cep: Optional[str] = Field(default=None, max_length=16)
+    endereco_logradouro: Optional[str] = Field(default=None, max_length=255)
+    endereco_numero: Optional[str] = Field(default=None, max_length=32)
+    endereco_complemento: Optional[str] = Field(default=None, max_length=120)
+    endereco_bairro: Optional[str] = Field(default=None, max_length=120)
+    endereco_cidade: Optional[str] = Field(default=None, max_length=120)
+    endereco_uf: Optional[str] = Field(default=None, max_length=2)
+
+
+class ImobiliariaPatchBody(StrictHttpModel):
+    """Every field optional; only the sent fields change. `razao_social`, if
+    sent, must be non-empty; `cnpj`, if sent, must be valid."""
+
+    razao_social: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    cnpj: Optional[str] = Field(default=None, min_length=14, max_length=32)
+    _validar_cnpj = field_validator("cnpj")(_validar_cnpj_imobiliaria)
+    nome_fantasia: Optional[str] = Field(default=None, max_length=255)
+    creci_pj: Optional[str] = Field(default=None, max_length=64)
+    creci_pj_regiao: Optional[str] = Field(default=None, max_length=64)
+    responsavel_nome: Optional[str] = Field(default=None, max_length=255)
+    responsavel_creci: Optional[str] = Field(default=None, max_length=64)
+    responsavel_creci_regiao: Optional[str] = Field(default=None, max_length=64)
+    telefone: Optional[str] = Field(default=None, max_length=32)
+    email: Optional[str] = Field(default=None, max_length=255)
+    endereco_cep: Optional[str] = Field(default=None, max_length=16)
+    endereco_logradouro: Optional[str] = Field(default=None, max_length=255)
+    endereco_numero: Optional[str] = Field(default=None, max_length=32)
+    endereco_complemento: Optional[str] = Field(default=None, max_length=120)
+    endereco_bairro: Optional[str] = Field(default=None, max_length=120)
+    endereco_cidade: Optional[str] = Field(default=None, max_length=120)
+    endereco_uf: Optional[str] = Field(default=None, max_length=2)
+
+
+class ImobiliariaCnpjDuplicado(AppException):
+    """409 with the shared `{error: {code, message}}` body (the FE's
+    `extractErrorMessage` ignores a dict `detail`)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="IMOBILIARIA_CNPJ_DUPLICADO",
+            message="Já existe uma imobiliária ativa com este CNPJ.",
+            status_code=409,
+        )
+
+
+def _so_digitos(valor: Optional[str]) -> str:
+    return "".join(ch for ch in (valor or "") if ch.isdigit())
+
+
+def _exigir_cnpj_livre(
+    supabase: Any, org_id: UUID, cnpj: Optional[str], *, ignorar_id: Optional[str] = None
+) -> None:
+    """409 when another ACTIVE company of the org already carries this CNPJ
+    (digits compared; the partial unique index of migration 215 is the
+    backstop under a race)."""
+    alvo = _so_digitos(cnpj)
+    if not alvo:
+        return
+    for r in imobiliarias_svc.listar_ativas(supabase, org_id):
+        if str(r["id"]) != (ignorar_id or "") and _so_digitos(r.get("cnpj")) == alvo:
+            raise ImobiliariaCnpjDuplicado()
+
+
+@router.get("/imobiliarias")
+def list_imobiliarias(
+    auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
+) -> dict:
+    _user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    rows = imobiliarias_svc.listar_ativas(supabase, org_id)
+    # Contracts that chose each company — INFORMATIVE in the delete
+    # confirmation, never blocking (a delete is soft). Paged: contracts grow
+    # with the org's lifetime.
+    contratos = table_reads.paged_rows(
+        supabase, "atendimento_contratos", org_id, select="id, imobiliaria_id, deleted_at"
+    )
+    em_uso: dict[str, int] = {}
+    for c in contratos:
+        if c.get("imobiliaria_id") and not c.get("deleted_at"):
+            chave = str(c["imobiliaria_id"])
+            em_uso[chave] = em_uso.get(chave, 0) + 1
+    items = []
+    for r in rows:
+        saida = imobiliarias_svc.imobiliaria_out(r)
+        saida["contratos_em_uso"] = em_uso.get(str(r["id"]), 0)
+        items.append(saida)
+    return {"items": items, "total": len(items)}
+
+
+@router.post("/imobiliarias", status_code=201)
+def create_imobiliaria(
+    body: ImobiliariaCreateBody,
+    auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
+) -> dict:
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    _exigir_cnpj_livre(supabase, org_id, body.cnpj)
+    linha = {
+        campo: valor
+        for campo, valor in body.model_dump().items()
+        if campo in imobiliarias_svc.CAMPOS
+    }
+    linha["id"] = str(uuid4())
+    linha["org_id"] = str(org_id)
+    linha["created_at"] = datetime.now(timezone.utc).isoformat()
+    if getattr(user, "id", None):
+        linha["created_por"] = str(user.id)
+    response = supabase.table(imobiliarias_svc.TABLE).insert(linha).execute()
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="imobiliaria insert returned no rows",
+        )
+    return imobiliarias_svc.imobiliaria_out(response.data[0])
+
+
+@router.patch("/imobiliarias/{imobiliaria_id}")
+def update_imobiliaria(
+    imobiliaria_id: UUID,
+    body: ImobiliariaPatchBody,
+    auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
+) -> dict:
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    patch = body.model_dump(exclude_unset=True)
+    if not patch:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="no fields to update"
+        )
+    if "cnpj" in patch:
+        _exigir_cnpj_livre(supabase, org_id, patch["cnpj"], ignorar_id=str(imobiliaria_id))
+    patch["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if getattr(user, "id", None):
+        patch["updated_por"] = str(user.id)
+    response = (
+        supabase
+        .table(imobiliarias_svc.TABLE)
+        .update(patch)
+        .eq("id", str(imobiliaria_id))
+        .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="imobiliaria not found"
+        )
+    return imobiliarias_svc.imobiliaria_out(response.data[0])
+
+
+@router.delete(
+    "/imobiliarias/{imobiliaria_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_imobiliaria(
+    imobiliaria_id: UUID,
+    auth: tuple = Depends(get_current_user_org),
+    supabase: Any = Depends(get_social_wiring_client),
+) -> None:
+    """SOFT delete: the company leaves the registry and cannot be newly
+    chosen; every contract that already chose it KEEPS it (the FK is
+    `ON DELETE RESTRICT`, migration 215)."""
+    user, _token, raw_org = auth
+    org_id = coerce_org_uuid(raw_org)
+    marca = {"excluida_em": datetime.now(timezone.utc).isoformat()}
+    if getattr(user, "id", None):
+        marca["updated_por"] = str(user.id)
+    response = (
+        supabase
+        .table(imobiliarias_svc.TABLE)
+        .update(marca)
+        .eq("id", str(imobiliaria_id))
+        .eq("org_id", str(org_id))
+        .is_("excluida_em", "null")
+        .execute()
+    )
+    if not response.data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="imobiliaria not found"
+        )
 
 
 # ─── Testemunhas (migration 108, opened up to a registry by 168) ─────────

@@ -338,6 +338,7 @@ def base_v1() -> DadosContrato:
         ],
         financiamento=Financiamento(existe=True, situacao="aprovado", fgts=False),
         imobiliaria=Imobiliaria(
+            id="imobiliaria-1",
             razao_social="Imobiliária Exemplo Ltda",
             nome_fantasia="Exemplo Imóveis",
             cnpj="11222333000181",

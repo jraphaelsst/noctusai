@@ -2925,8 +2925,36 @@ def _certidoes(
         )
 
 
+def _corretagem_favorecido_vs_imobiliaria(av: Avaliacao, d: DadosContrato) -> None:
+    """[Migration 215, D4] NON-BLOCKING aviso: the commission payee of the
+    office's own intermediação is typed per deal and may legitimately differ
+    from the company that signs — but a mismatch is worth a second look at the
+    PIX. Never blocks."""
+    org = d.imobiliaria
+    cnpj_empresa = "".join(ch for ch in (org.cnpj or "") if ch.isdigit())
+    if org.id is None or not cnpj_empresa:
+        return
+    favorecidos = {f.id: f for f in d.favorecidos}
+    for it in d.intermediarios:
+        if not it.corretor_id or not it.favorecido_id:
+            continue
+        fav = favorecidos.get(it.favorecido_id)
+        digitos = "".join(ch for ch in ((fav.cpf_cnpj if fav else None) or "") if ch.isdigit())
+        if fav is not None and digitos and digitos != cnpj_empresa:
+            av.avisa(
+                "CORRETAGEM_FAVORECIDO_DIFERENTE_DA_IMOBILIARIA",
+                f"O favorecido da corretagem ({fav.nome}) não é a imobiliária que assina "
+                f"o contrato ({org.razao_social or 'imobiliária'}). Confira o PIX.",
+            )
+
+
 def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     org = d.imobiliaria
+    # [Migration 215] The company that signs is the contract's CHOICE (or the
+    # org's only active one — `imobiliarias_service.resolver`, resolved by the
+    # carregador). None resolved => never a silent fallback: a named gap.
+    if org.id is None:
+        av.falta("imobiliaria.selecao", "Imobiliária que assina o contrato", "imobiliaria")
     for valor, campo, rotulo in (
         (org.razao_social, "razao_social", "Razão social da imobiliária"),
         (org.cnpj, "cnpj", "CNPJ da imobiliária"),
@@ -2936,6 +2964,7 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     ):
         if not valor:
             av.falta(f"imobiliaria.{campo}", rotulo, "imobiliaria")
+    _corretagem_favorecido_vs_imobiliaria(av, d)
     # [Migration 168, owner decision 2026-09-24] The registry is open-ended
     # and a contract SELECTS 2 to 5 witnesses (`contrato_testemunhas`) — the
     # carregador only ever loads the SELECTED set. Fewer than 2 is a gap, not

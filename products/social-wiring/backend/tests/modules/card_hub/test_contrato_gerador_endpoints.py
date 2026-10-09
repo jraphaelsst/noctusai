@@ -72,7 +72,7 @@ _TABELAS = (
     "atendimento_favorecidos", "atendimento_intermediarios", "atendimento_financiamento",
     "atendimento_documentos", "certidao_consultas", "certidao_resultados",
     "atendimento_contrato_matricula_atos", "matricula_extracoes", "matricula_atos",
-    "imovel_documento_acessos", "org_dados_cadastrais", "org_testemunhas",
+    "imovel_documento_acessos", "org_dados_cadastrais", "org_imobiliarias", "org_testemunhas",
     # Migration 168 — per-contract witness selection.
     "contrato_testemunhas",
     # Migrations 114-118.
@@ -468,13 +468,22 @@ def _seed_completo(scoped, n: int = 1) -> dict:
         "agente_financeiro_id": None, "numero_proposta": None, "created_at": _T0, "updated_at": None,
     }])
 
-    scoped.set_table_data("org_dados_cadastrais", [{
-        "org_id": ORG_ID, "razao_social": "Imobiliária Exemplo Ltda", "nome_fantasia": None,
-        "cnpj": "11222333000181", "creci_pj": "00001-J", "responsavel_nome": "Sicrano Responsável",
-        "responsavel_creci": "000002-F", "telefone": None, "email": "contato@exemplo.test",
+    # [Migration 215] The company IDENTITY lives in the registry; the org-wide
+    # row keeps only the operational answers. ONE active company => auto-selected.
+    ids_imobiliaria = str(uuid4())
+    scoped.set_table_data("org_imobiliarias", [{
+        "id": ids_imobiliaria, "org_id": ORG_ID, "razao_social": "Imobiliária Exemplo Ltda",
+        "nome_fantasia": None,
+        "cnpj": "11222333000181", "creci_pj": "00001-J", "creci_pj_regiao": None,
+        "responsavel_nome": "Sicrano Responsável",
+        "responsavel_creci": "000002-F", "responsavel_creci_regiao": None,
+        "telefone": None, "email": "contato@exemplo.test",
         "endereco_cep": "01000000", "endereco_logradouro": "Rua das Amostras", "endereco_numero": "200",
         "endereco_complemento": None, "endereco_bairro": "Bairro Teste", "endereco_cidade": "Cidade Exemplo",
-        "endereco_uf": "SP",
+        "endereco_uf": "SP", "created_at": _T0, "updated_at": None, "excluida_em": None,
+    }])
+    scoped.set_table_data("org_dados_cadastrais", [{
+        "org_id": ORG_ID,
         # Migration 117 — the office's operational answers.
         "plataforma_assinatura_nome": "Plataforma Exemplo",
         "plataforma_assinatura_url": "https://assinatura.exemplo.test",

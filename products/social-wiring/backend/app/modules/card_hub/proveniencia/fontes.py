@@ -572,7 +572,7 @@ MANUAL_APENAS: frozenset[str] = frozenset(
         "negociacao_parcelas", "negociacao_favorecidos",
         "negociacao_termos", "confissao", "permuta_termos", "posse",
         "intermediarios_qualificacao", "intermediarios_comissao",
-        "org_dados_cadastrais", "testemunhas", "parte_email",
+        "org_dados_cadastrais", "org_imobiliarias", "testemunhas", "parte_email",
         "assinatura_data", "contrato_modelo", "matricula_atos_selecionados",
         "permuta_ativo_endereco",
         # 🔴 `certidao_pj_situacao_cadastral` DROPPED (P0c contract §C1): a

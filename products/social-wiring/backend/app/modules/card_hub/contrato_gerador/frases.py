@@ -1215,10 +1215,15 @@ def qualificacao_imobiliaria(org: Imobiliaria) -> str:
     texto += f", pessoa jurídica inscrita no CNPJ sob o nº {documento(org.cnpj)[1]}"
     if org.creci_pj:
         texto += f", com inscrição no CRECI sob o nº {org.creci_pj}"
+        # [Migration 215, D3] Unset região => text exactly as before.
+        if org.creci_pj_regiao:
+            texto += f" ({org.creci_pj_regiao})"
     texto += (
         f", neste ato representada por seu sócio {org.responsavel_nome}, corretor de imóveis "
         f"CRECI {org.responsavel_creci}"
     )
+    if org.responsavel_creci_regiao:
+        texto += f" ({org.responsavel_creci_regiao})"
     if org.email:
         texto += f", endereço eletrônico: {org.email.strip().lower()}"
     if org.endereco.logradouro:

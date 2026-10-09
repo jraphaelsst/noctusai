@@ -498,3 +498,7 @@ migration header and `NOC-REMEDIATE[transcricao-formatacao-backfill]`.
   - **123 failed on first apply** with 42P01: `fotos_lote_visivel` was created before `fotos_lotes`. The script rolled back whole, so nothing was half-applied. It was fixed in `71d279e5` and re-applied cleanly, followed by 124–128.
 
 All were applied one file per request (each request is one implicit transaction) and recorded in `social_wiring.schema_migrations`.
+
+## 215 — org_imobiliarias (signing companies per org) — NOT APPLIED
+
+Authored 2026-10-09 (projects/signing-companies/CONTRACT.md). Creates `org_imobiliarias`, adds `atendimento_contratos.imobiliaria_id`, backfills the org's current company as registry entry #1 and points every existing contract at it, org-picker RLS, acting-audit attach, `status_pagina('imobiliarias')`. Applying it is the tech-lead's + owner's call; apply BEFORE deploying the image that reads it.

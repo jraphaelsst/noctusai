@@ -101,7 +101,7 @@ loads; a test keeps the two in lockstep).
 | Proposta de financiamento (`proposta_financiamento`) | atendimento | `banco_codigo`, `banco_nome`, `numero_proposta`, `valor_compra_venda`, `valor_fgts`, `valor_financiado` | `noctusai_lib.integrations.documents.financiamento_imobiliario.make_proposta_financiamento_extractor` | `proposta_financiamento` | `atendimento_card_upload` |
 | Contrato de financiamento imobiliário (`contrato_financiamento`) | atendimento | `banco_codigo`, `banco_nome`, `conta_credito_vendedor`, `quadro_encontrado`, `valor_compra_venda`, `valor_fgts`, `valor_financiado` | `noctusai_lib.integrations.documents.financiamento_imobiliario.make_contrato_financiamento_extractor` | `contrato_financiamento` | `atendimento_card_upload` |
 
-**Manual-only — no document carries it (by design, not a gap):** `assinatura_data`, `confissao`, `contrato_modelo`, `intermediarios_comissao`, `intermediarios_qualificacao`, `matricula_atos_selecionados`, `negociacao_favorecidos`, `negociacao_parcelas`, `negociacao_termos`, `org_dados_cadastrais`, `parte_email`, `parte_papel_no_card`, `permuta_ativo_endereco`, `permuta_termos`, `politica_constantes`, `posse`, `testemunhas`.
+**Manual-only — no document carries it (by design, not a gap):** `assinatura_data`, `confissao`, `contrato_modelo`, `intermediarios_comissao`, `intermediarios_qualificacao`, `matricula_atos_selecionados`, `negociacao_favorecidos`, `negociacao_parcelas`, `negociacao_termos`, `org_dados_cadastrais`, `org_imobiliarias`, `parte_email`, `parte_papel_no_card`, `permuta_ativo_endereco`, `permuta_termos`, `politica_constantes`, `posse`, `testemunhas`.
 <!-- AUTOGEN:fontes-secao-0a:end -->
 
 

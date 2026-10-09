@@ -28,7 +28,8 @@ each now lives on the ENTITY IT DESCRIBES rather than in a side-car:
   <- `certidao_consultas` (116).
 - `Pessoa.certidoes`    <- reachable for EVERY party incl. the titular (116).
 - `Pessoa.data_casamento` / `.certidao_estado_civil_emitida_em` <- 117.
-- `Imobiliaria` office settings <- `org_dados_cadastrais` (117).
+- `Imobiliaria` identity <- the resolved `org_imobiliarias` row (215); office
+  settings <- `org_dados_cadastrais` (117).
 - `Imovel.certidoes`    <- `GET /api/imoveis/{codigo}/certidoes` (118).
 - `DadosContrato.prazo_pendencias_dias` <- the contract row (114).
 
@@ -503,12 +504,19 @@ class Financiamento:
 
 @dataclass
 class Imobiliaria:
+    #: [Migration 215] The resolved signing company's registry id
+    #: (`imobiliarias_service.resolver`); `None` = no company resolved — a
+    #: `faltando` ("imobiliaria.selecao"), identity fields then all None.
+    id: Optional[str] = None
     razao_social: Optional[str] = None
     nome_fantasia: Optional[str] = None
     cnpj: Optional[str] = None
     creci_pj: Optional[str] = None
+    #: [Migration 215, D3] Printed in parentheses after the CRECI when set.
+    creci_pj_regiao: Optional[str] = None
     responsavel_nome: Optional[str] = None
     responsavel_creci: Optional[str] = None
+    responsavel_creci_regiao: Optional[str] = None
     email: Optional[str] = None
     endereco: Endereco = field(default_factory=Endereco)
     #: [Q12] The office's posse multa diária (R$ per day of delay), used in

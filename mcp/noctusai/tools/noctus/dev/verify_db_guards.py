@@ -1170,6 +1170,47 @@ END;
 )
 
 
+_IMOBILIARIA_CNPJ_UNIQUE_PROBE = GuardProbe(
+    id="org_imobiliarias.org_cnpj_ativa.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_sw_org_imobiliarias_org_cnpj_ativa",
+    kind="write_refusal",
+    migrations=("215_org_imobiliarias.sql",),
+    rationale=(
+        "Two ACTIVE signing companies of one org with the same CNPJ (digits "
+        "compared, so formatting cannot dodge it) would make the contract's "
+        "company choice ambiguous; the API pre-checks, this index is the "
+        "backstop under a race."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe company';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.org_imobiliarias (org_id, razao_social, cnpj)
+    VALUES (v_org_id, 'noc-probe-a', '11222333000181');
+    INSERT INTO {_SW_SCHEMA}.org_imobiliarias (org_id, razao_social, cnpj)
+    VALUES (v_org_id, 'noc-probe-b', '11.222.333/0001-81');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: duplicate active CNPJ insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%uq_sw_org_imobiliarias_org_cnpj_ativa%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — social_wiring.imovel_dados_endereco_registro_confirmado CHECK
 # (migration 139).
@@ -5052,6 +5093,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _CERTIDAO_ACAO_CHECK_PROBE,
     *_ABERTURA_PROBES,
     _ABERTURA_UNIQUE_PROBE,
+    _IMOBILIARIA_CNPJ_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,

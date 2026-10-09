@@ -16,7 +16,8 @@
 | matrícula literal text        | `matriculas.estrutura_service.obter_selecao` (logs the text read) |
 | ônus source acts (kind/nº)    | `matriculas.estrutura_service.listar_atos` (logs the text read)   |
 | permuta ativos (114)          | `permuta_ativos` rows via `table_reads.in_batched_rows` |
-| org cadastral                 | `settings_router.get_dados_imobiliaria`                            |
+| org cadastral (ops, org-wide) | `settings_router.get_dados_imobiliaria`                            |
+| signing company (identity)    | `imobiliarias_service.resolver` (215)                              |
 | testemunhas SELECIONADAS (168)| `contrato_testemunhas_service.listar` (never the whole registry)  |
 
 Services are called DIRECTLY (Python), never over HTTP — one request, one
@@ -80,6 +81,7 @@ from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import busca_service, dados_service
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 from app.modules.matriculas import estrutura_service, titulo_service
+from app.services import imobiliarias_service as imobiliarias_svc
 from app.services import table_reads
 
 #: `permuta_ativos`' own address snapshot (migration 101) — bare column names,
@@ -607,23 +609,32 @@ def _clausulas_extras(bruto: Any) -> dict[str, ClausulaExtra]:
     return saida
 
 
-def _imobiliaria(client: Any, org_id: UUID) -> Imobiliaria:
+def _imobiliaria(client: Any, org_id: UUID, imobiliaria_id: Any) -> Imobiliaria:
+    """[Migration 215] Identity from the contract's RESOLVED company
+    (`imobiliarias_service.resolver` — the one rule shared with the GET route
+    and readiness); the org-wide operational answers from `org_dados_cadastrais`.
+    No resolved company => `id=None` and every identity field None."""
     # Imported here, not at module top: `settings_router` pulls in the whole
     # settings surface and card_hub must not import it at app assembly time.
     from app.routers import settings_router
 
     auth = (None, None, str(org_id))
     org = settings_router.get_dados_imobiliaria(auth, client)
+    empresa, _origem = imobiliarias_svc.resolver(client, org_id, imobiliaria_id)
+    empresa = empresa or {}
     return Imobiliaria(
-        razao_social=org.get("razao_social"),
-        nome_fantasia=org.get("nome_fantasia"),
-        cnpj=org.get("cnpj"),
-        creci_pj=org.get("creci_pj"),
-        responsavel_nome=org.get("responsavel_nome"),
-        responsavel_creci=org.get("responsavel_creci"),
-        email=org.get("email"),
-        endereco=_endereco(org),
-        # Migration 117 — the office's own operational answers.
+        id=str(empresa["id"]) if empresa.get("id") else None,
+        razao_social=empresa.get("razao_social"),
+        nome_fantasia=empresa.get("nome_fantasia"),
+        cnpj=empresa.get("cnpj"),
+        creci_pj=empresa.get("creci_pj"),
+        creci_pj_regiao=empresa.get("creci_pj_regiao"),
+        responsavel_nome=empresa.get("responsavel_nome"),
+        responsavel_creci=empresa.get("responsavel_creci"),
+        responsavel_creci_regiao=empresa.get("responsavel_creci_regiao"),
+        email=empresa.get("email"),
+        endereco=_endereco(empresa),
+        # Migration 117 — the office's own operational answers (org-wide).
         posse_multa_diaria=_dec(org.get("posse_multa_diaria")),
         plataforma_assinatura_nome=org.get("plataforma_assinatura_nome"),
         plataforma_assinatura_url=org.get("plataforma_assinatura_url"),
@@ -703,7 +714,7 @@ def carregar(
         if selecao.get("extracao_id")
         else None
     )
-    imobiliaria = _imobiliaria(client, org_id)
+    imobiliaria = _imobiliaria(client, org_id, contrato.get("imobiliaria_id"))
     testemunhas = _testemunhas_selecionadas(client, org_id, atendimento_id, contrato_id)
 
     parcelas = [
