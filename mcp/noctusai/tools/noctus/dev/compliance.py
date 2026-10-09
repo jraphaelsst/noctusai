@@ -11913,6 +11913,36 @@ _OPR_DROP_POLICY_RE = re.compile(
     re.IGNORECASE,
 )
 _OPR_DROP_TABLE_RE = re.compile(r"^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>[\w.\",\s]+?)(?:\s+CASCADE)?$", re.IGNORECASE)
+_OPR_RENAME_TABLE_RE = re.compile(
+    r'^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?P<table>[\w."]+)\s+RENAME\s+TO\s+(?P<new>"[^"]+"|\w+)$', re.IGNORECASE
+)
+_OPR_RENAME_POLICY_RE = re.compile(
+    r'^ALTER\s+POLICY\s+(?P<name>"[^"]+"|\w+)\s+ON\s+(?P<table>[\w."]+)\s+RENAME\s+TO\s+(?P<new>"[^"]+"|\w+)$', re.IGNORECASE
+)
+# Policies that are home-only BY DESIGN. storage.objects never acts (contract: storage
+# never acts as the picked org); the table-qualified key is matched exactly.
+_OPR_STORAGE_TABLE = "storage.objects"
+# Exact `schema.table::policy` -> rationale. No wildcards: each is an individual decision.
+_OPR_ALLOWED_HOME_ONLY: dict[str, str] = {
+    f"social_wiring.{t}::{n}": (
+        "the owner/admin role check reads the caller's own noctus_users row; the backend "
+        "writes this table with service_role; a JWT-direct write while acting is refused "
+        "(fails closed). The org predicate beside it IS converted."
+    )
+    for t, n in (
+        ("api_tokens", "api_tokens_insert_own_org_admin"),
+        ("api_tokens", "api_tokens_update_own_org_admin"),
+        ("portal_receiver_tokens", "portal_receiver_tokens_insert_own_org_admin"),
+        ("portal_receiver_tokens", "portal_receiver_tokens_update_own_org_admin"),
+        ("portal_lead_forward_targets", "portal_lead_forward_targets_write_own_org_admin"),
+    )
+}
+# Policy renames done by a DO/format() loop (invisible to a static scan), pinned by file:
+# file name -> (table key, old name prefix, new name prefix). 046 renamed marcas' inherited
+# `clients_*` policies to `marcas_*` in a loop (verified against live pg_policies).
+_OPR_DYNAMIC_POLICY_RENAMES: dict[str, tuple[str, str, str]] = {
+    "046_clients_to_marcas.sql": ("social_wiring.marcas", "clients_", "marcas_"),
+}
 _OPR_HOME_ONLY_RE = re.compile(
     r"\bcurrent_org_id\s*\(|\bcurrent_user_org_id\s*\(|\bnoctus_users\b", re.IGNORECASE
 )
@@ -11922,7 +11952,14 @@ def _opr_statements(sql_text: str) -> list[str]:
     """Top-level statements with comments stripped. Dollar-quoted bodies are
     blanked first (a DO/function body is not a static policy declaration), so a
     policy created dynamically inside one is a documented blind spot."""
-    text = re.sub(r"(\$[A-Za-z_]*\$).*?\1", " ", sql_text, flags=re.DOTALL)
+    def _literal_renames(m: re.Match) -> str:
+        # a literal ALTER TABLE .. RENAME inside a DO guard is a real, static rename
+        found = re.findall(
+            r'ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\w."]+\s+RENAME\s+TO\s+(?:"[^"]+"|\w+)\s*;', m.group(0), re.I
+        )
+        return " ; " + " ".join(found) + " ; " if found else " "
+
+    text = re.sub(r"(\$[A-Za-z_]*\$).*?\1", _literal_renames, sql_text, flags=re.DOTALL)
     text = re.sub(r"/\*.*?\*/", " ", text, flags=re.DOTALL)
     text = re.sub(r"--[^\n]*", " ", text)
     return [st.strip() for st in text.split(";") if st.strip()]
@@ -11962,6 +11999,20 @@ def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]
                         ready = v.group(1).lower() == "true"
                         ready_file = path.name
                     continue
+                m = _OPR_RENAME_TABLE_RE.match(st)
+                if m:
+                    old = _opr_table_key(m.group("table"))
+                    new = (old.rsplit(".", 1)[0] + "." if "." in old else "") + _opr_table_key(m.group("new"))
+                    for key in [k for k in policies if k.split("::")[0] == old]:
+                        policies[f"{new}::{key.split('::', 1)[1]}"] = policies.pop(key)
+                    continue
+                m = _OPR_RENAME_POLICY_RE.match(st)
+                if m:
+                    tbl = _opr_table_key(m.group("table"))
+                    prev = policies.pop(f"{tbl}::{_opr_table_key(m.group('name'))}", None)
+                    if prev is not None:
+                        policies[f"{tbl}::{_opr_table_key(m.group('new'))}"] = prev
+                    continue
                 m = _OPR_CREATE_RE.match(st)
                 if m:
                     key = f"{_opr_table_key(m.group('table'))}::{_opr_table_key(m.group('name'))}"
@@ -11984,9 +12035,16 @@ def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]
                     gone = {_opr_table_key(t.strip()) for t in m.group("table").split(",")}
                     for key in [k for k in policies if k.split("::")[0] in gone]:
                         policies.pop(key, None)
+            dyn = _OPR_DYNAMIC_POLICY_RENAMES.get(path.name)
+            if dyn:
+                tbl, old, new = dyn
+                for key in [k for k in policies if k.startswith(f"{tbl}::{old}")]:
+                    policies[f"{tbl}::{new}{key.split('::', 1)[1][len(old):]}"] = policies.pop(key)
         if not ready:
             continue
         for key, (text, fname, _i) in sorted(policies.items()):
+            if key.split("::")[0] == _OPR_STORAGE_TABLE or key in _OPR_ALLOWED_HOME_ONLY:
+                continue
             if _OPR_HOME_ONLY_RE.search(text):
                 issues.append({
                     "product": slug,

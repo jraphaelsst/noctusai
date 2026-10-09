@@ -78,3 +78,36 @@ class TestOrgPickerReadyPolicies:
 
     def test_live_tree_is_clean(self):
         assert check_org_picker_ready_policies() == []
+
+
+class TestOrgPickerReadyExemptions:
+    def test_storage_objects_is_home_only_by_design(self, tmp_path):
+        sql = ("CREATE POLICY b_sel ON storage.objects FOR SELECT TO authenticated\n"
+               "  USING ((storage.foldername(name))[1] = (current_org_id())::text);\n")
+        root = _chain(tmp_path, **{"001_a.sql": sql, "002_ready.sql": READY})
+        assert check_org_picker_ready_policies(root) == []
+
+    def test_literal_table_rename_inside_do_guard_is_followed(self, tmp_path):
+        rename = "DO $$ BEGIN ALTER TABLE demo.leads RENAME TO prospects; END $$;\n"
+        converted = ("ALTER POLICY leads_org ON demo.prospects\n"
+                     "  USING (org_id = (SELECT public.current_org_id_for('demo')));\n")
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_r.sql": rename,
+                                   "003_c.sql": converted, "004_ready.sql": READY})
+        assert check_org_picker_ready_policies(root) == []
+
+    def test_renamed_table_unconverted_policy_still_flagged(self, tmp_path):
+        rename = "ALTER TABLE demo.leads RENAME TO prospects;\n"
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_r.sql": rename, "003_ready.sql": READY})
+        issues = check_org_picker_ready_policies(root)
+        assert len(issues) == 1 and "demo.prospects::leads_org" in issues[0]["issue"]
+
+    def test_policy_rename_is_followed(self, tmp_path):
+        ren = "ALTER POLICY leads_org ON demo.leads RENAME TO leads_new;\n"
+        root = _chain(tmp_path, **{"001_a.sql": HOME_POLICY, "002_r.sql": ren, "003_ready.sql": READY})
+        issues = check_org_picker_ready_policies(root)
+        assert len(issues) == 1 and "demo.leads::leads_new" in issues[0]["issue"]
+
+    def test_allowlist_entries_are_exact_and_justified(self):
+        from tools.noctus.dev.compliance import _OPR_ALLOWED_HOME_ONLY
+        assert len(_OPR_ALLOWED_HOME_ONLY) == 5
+        assert all("::" in k and "*" not in k and v for k, v in _OPR_ALLOWED_HOME_ONLY.items())
