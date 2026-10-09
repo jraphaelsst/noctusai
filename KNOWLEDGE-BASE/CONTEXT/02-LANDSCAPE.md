@@ -39,24 +39,24 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 <!-- kb-counts:start:inventory -->
 | Product | Routers | Services | Pages | Hooks | Test files | Test fns |
 |---------|---------|----------|-------|-------|-----------|---------|
-| Core | 33 | 31 | 54 | 3 | 73 | 909 |
+| Core | 33 | 31 | 54 | 3 | 74 | 914 |
 | Erp Imobiliario | 64 | 56 | 80 | 79 | 136 | 1,897 |
 | Personal Finance | 15 | 18 | 30 | 26 | 48 | 482 |
 | Therapy Platform | 40 | 46 | 65 | 36 | 85 | 1,143 |
-| Seed | 2 | 1 | 8 | 1 | 6 | 19 |
+| Seed | 2 | 1 | 8 | 1 | 7 | 29 |
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 26 | 51 | 160 | 130 | 395 | 6,314 |
+| Social Wiring | 26 | 51 | 160 | 130 | 396 | 6,317 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
-| Igig | 23 | 26 | 31 | 26 | 42 | 963 |
+| Igig | 23 | 26 | 31 | 26 | 43 | 974 |
 | P Studio | 8 | 10 | 12 | 1 | 20 | 331 |
-| Academia De Reciclagem | 10 | 0 | 26 | 9 | 22 | 175 |
-| Agents | 14 | 1 | 39 | 27 | 78 | 1,077 |
-| Community | 23 | 29 | 49 | 30 | 57 | 645 |
+| Academia De Reciclagem | 10 | 0 | 26 | 9 | 23 | 185 |
+| Agents | 14 | 1 | 39 | 27 | 79 | 1,087 |
+| Community | 23 | 29 | 49 | 30 | 58 | 656 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
-| **Total** | **291** | **317** | **632** | **404** | **1071** | **15,336** |
+| **Total** | **291** | **317** | **632** | **404** | **1078** | **15,396** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
