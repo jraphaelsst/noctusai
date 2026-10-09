@@ -1,10 +1,12 @@
 /**
- * Dados cadastrais da imobiliária (migration 100) — the Configurações subtab.
+ * Dados da imobiliária — ORG-WIDE operational settings only (the
+ * Configurações subtab): e-signature platform, holdover fine, default
+ * pendência window, support contact.
  *
- * The agency's own qualification: razão social, CNPJ, CRECI PJ, address. Every
- * generated instrument needs it twice — once in the header naming who
- * intermediated, once in the corretagem clause naming who is owed the
- * commission.
+ * The company IDENTITY (razão social, CNPJ, CRECI, responsável, address) moved
+ * to the per-company registry — `useImobiliarias.ts` — when an org became able
+ * to register N signing companies. The backend now answers 422 on an identity
+ * field here (StrictHttpModel), so this type no longer carries them.
  *
  * 🔴 NEVER 404s, AND THE FORM IS ALWAYS SAVEABLE.
  * An org that has never opened this tab reads as every field null, not as an
@@ -17,24 +19,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 export interface DadosImobiliaria {
-  razao_social: string | null;
-  nome_fantasia: string | null;
-  cnpj: string | null;
-  /** The brokerage licence. This is the field that keeps these columns
-   *  product-local rather than on the shared tenant row — a CRECI means
-   *  nothing to the other twelve products on this platform. */
-  creci_pj: string | null;
-  responsavel_nome: string | null;
-  responsavel_creci: string | null;
-  telefone: string | null;
-  email: string | null;
-  endereco_cep: string | null;
-  endereco_logradouro: string | null;
-  endereco_numero: string | null;
-  endereco_complemento: string | null;
-  endereco_bairro: string | null;
-  endereco_cidade: string | null;
-  endereco_uf: string | null;
   // ─── Migration 117 (contract F6) — the office's own operational answers,
   // required by the contract generator (contrato_gerador/derivacao.py) and
   // absent from the UI until this slice — see settings_router.py's

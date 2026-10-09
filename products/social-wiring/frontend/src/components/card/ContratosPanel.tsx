@@ -199,6 +199,9 @@ interface Props {
    *  `aberto` gates the caller's lazy fetch, same discipline as
    *  `renderGeradorContrato`. Optional — omitted entirely while the caller
    *  has not wired it. */
+  /** Renders the REQUIRED "Imobiliária que assina" select for one contract
+   *  (signing-companies). Always visible, never behind a collapsible. */
+  renderImobiliariaSelect?: (contratoId: string) => ReactNode;
   renderTestemunhasSelect?: (contratoId: string, aberto: boolean) => ReactNode;
   /** Renders the "Aditivos" block (contrato-aditivos-CONTRACT) for one
    *  contract — offered only on a contract that admits one
@@ -266,6 +269,7 @@ export default function ContratosPanel({
   renderMatriculaAtos,
   renderGeradorContrato,
   renderProveniencia,
+  renderImobiliariaSelect,
   renderTestemunhasSelect,
   renderAditivos,
   assinaturas = {},
@@ -379,6 +383,7 @@ export default function ContratosPanel({
               renderMatriculaAtos={renderMatriculaAtos}
               renderGeradorContrato={renderGeradorContrato}
               renderProveniencia={renderProveniencia}
+              renderImobiliariaSelect={renderImobiliariaSelect}
               renderTestemunhasSelect={renderTestemunhasSelect}
               renderAditivos={renderAditivos}
               recemIniciado={contratoIniciadoId === contrato.id}
@@ -438,6 +443,7 @@ function ContratoCard({
   renderMatriculaAtos,
   renderGeradorContrato,
   renderProveniencia,
+  renderImobiliariaSelect,
   renderTestemunhasSelect,
   renderAditivos,
   recemIniciado = false,
@@ -474,6 +480,9 @@ function ContratoCard({
   renderMatriculaAtos?: (contratoId: string) => ReactNode;
   renderGeradorContrato?: (contratoId: string, aberto: boolean) => ReactNode;
   renderProveniencia?: (contratoId: string, aberto: boolean) => ReactNode;
+  /** Renders the REQUIRED "Imobiliária que assina" select for one contract
+   *  (signing-companies). Always visible, never behind a collapsible. */
+  renderImobiliariaSelect?: (contratoId: string) => ReactNode;
   renderTestemunhasSelect?: (contratoId: string, aberto: boolean) => ReactNode;
   renderAditivos?: (contratoId: string, aberto: boolean) => ReactNode;
   recemIniciado?: boolean;
@@ -514,6 +523,10 @@ function ContratoCard({
   const geradorEl = useMemo(
     () => renderGeradorContrato?.(contrato.id, geradorAberto),
     [renderGeradorContrato, contrato.id, geradorAberto],
+  );
+  const imobiliariaEl = useMemo(
+    () => renderImobiliariaSelect?.(contrato.id),
+    [renderImobiliariaSelect, contrato.id],
   );
   const testemunhasEl = useMemo(
     () => renderTestemunhasSelect?.(contrato.id, testemunhasAberta),
@@ -856,6 +869,8 @@ function ContratoCard({
             </CollapsibleContent>
           </Collapsible>
         )}
+
+        {renderImobiliariaSelect && imobiliariaEl}
 
         {renderGeradorContrato && (
           <Collapsible open={geradorAberto} onOpenChange={setGeradorAberto}>

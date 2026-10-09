@@ -123,6 +123,7 @@ const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
 const Testemunhas = lazyWithReload(() => import("@/pages/Testemunhas"));
+const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
 // W6; Regras — W7; Curadores — notify slice; Painel — W9; Modelos +
 // Processamento — W8) are all shipped.
@@ -284,6 +285,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Settings2,
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
+      { name: "Imobiliárias", href: "/imobiliarias", icon: Building2, route: "imobiliarias" },
       { name: "Testemunhas", href: "/testemunhas", icon: UserRound, route: "testemunhas" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Custos", href: "/custos", icon: Wallet, route: "custos" },
@@ -436,6 +438,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Settings2,
     items: [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
+      { name: "Imobiliárias", href: "/imobiliarias", icon: Building2 },
       { name: "Testemunhas", href: "/testemunhas", icon: UserRound },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Custos", href: "/custos", icon: Wallet },
@@ -468,6 +471,7 @@ export default createProductApp({
     { path: "/matriculas", component: Matriculas },
     { path: "/agentes-financeiros", component: AgentesFinanceiros },
     { path: "/testemunhas", component: Testemunhas },
+    { path: "/imobiliarias", component: Imobiliarias },
     { path: "/edicao-fotos", component: EdicaoFotosLotes },
     { path: "/edicao-fotos/novo", component: EdicaoFotosNovoLote },
     { path: "/edicao-fotos/lotes/:loteId/revisao", component: EdicaoFotosLoteRevisao },

@@ -40,6 +40,7 @@ import { canReviewLegal, resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
 
 import { AditivosContainer } from "@/components/AditivosContainer";
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
+import { ImobiliariaSelectContainer } from "@/components/ImobiliariaSelectContainer";
 import { TestemunhasSelectContainer } from "@/components/TestemunhasSelectContainer";
 import type { GeracaoDestino } from "@/components/card/GeradorContratoSection";
 import { MatriculaAtosContainer } from "@/components/MatriculaAtosContainer";
@@ -60,6 +61,7 @@ import { toastServerError } from "@/lib/erroServidor";
 const MatriculaAtosMemo = memo(MatriculaAtosContainer);
 const GeradorContratoMemo = memo(GeradorContratoContainer);
 const ProvenienciaMemo = memo(ProvenienciaContainer);
+const ImobiliariaSelectMemo = memo(ImobiliariaSelectContainer);
 const TestemunhasSelectMemo = memo(TestemunhasSelectContainer);
 const AditivosMemo = memo(AditivosContainer);
 
@@ -152,6 +154,12 @@ export function ContratosContainer({
   const renderProveniencia = useCallback(
     (contratoId: string, aberto: boolean) => (
       <ProvenienciaMemo clienteId={clienteId} contratoId={contratoId} aberto={aberto} />
+    ),
+    [clienteId],
+  );
+  const renderImobiliariaSelect = useCallback(
+    (contratoId: string) => (
+      <ImobiliariaSelectMemo clienteId={clienteId} contratoId={contratoId} />
     ),
     [clienteId],
   );
@@ -319,6 +327,7 @@ export function ContratosContainer({
         renderMatriculaAtos={renderMatriculaAtos}
         renderGeradorContrato={renderGeradorContrato}
         renderProveniencia={renderProveniencia}
+        renderImobiliariaSelect={renderImobiliariaSelect}
         renderTestemunhasSelect={renderTestemunhasSelect}
         renderAditivos={renderAditivos}
         assinaturas={assinaturas}

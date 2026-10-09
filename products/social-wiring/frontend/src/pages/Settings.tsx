@@ -126,11 +126,9 @@ const ORG_WIDE = "__org__";
 // ─── Dados da imobiliária (migration 100) ────────────────────────────────────
 
 /**
- * The agency's OWN qualification — razão social, CNPJ, CRECI PJ, address.
- *
- * Every generated instrument needs it twice: in the header naming who
- * intermediated, and in the corretagem clause naming who is owed the
- * commission. Until migration 100 there was nowhere in this product to put it.
+ * The agency's ORG-WIDE settings — signature platform, holdover fine, default
+ * pendência window, support contact. The company identity is per company and
+ * lives in the Imobiliárias registry (`ImobiliariasSection`).
  *
  * 🔴 A PARTLY-FILLED FORM SAVES. Nobody sits down and fills this in one
  * sitting, and refusing until it is complete would discard what they had
@@ -258,8 +256,8 @@ function DadosImobiliariaTab() {
           <div>
             <CardTitle>Dados da imobiliária</CardTitle>
             <CardDescription>
-              Usados nos documentos gerados — no cabeçalho que identifica quem
-              intermediou e na cláusula de corretagem.
+              Configurações comuns a toda a organização, usadas nos documentos
+              gerados e no atendimento.
             </CardDescription>
           </div>
           {/* 🔴 Two signals, never `isLoading`: the skeleton gates on
@@ -299,156 +297,20 @@ function DadosImobiliariaTab() {
           </div>
         ) : (
           <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-razao">Razão social</Label>
-                <Input
-                  id="imob-razao"
-                  value={valor("razao_social")}
-                  onChange={(e) => campo("razao_social", e.target.value)}
-                  data-testid="imob-razao"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-fantasia">Nome fantasia</Label>
-                <Input
-                  id="imob-fantasia"
-                  value={valor("nome_fantasia")}
-                  onChange={(e) => campo("nome_fantasia", e.target.value)}
-                  data-testid="imob-fantasia"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-cnpj">CNPJ</Label>
-                <Input
-                  id="imob-cnpj"
-                  value={valor("cnpj")}
-                  onChange={(e) => campo("cnpj", e.target.value)}
-                  placeholder="12.345.678/0001-90"
-                  data-testid="imob-cnpj"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-creci">CRECI PJ</Label>
-                <Input
-                  id="imob-creci"
-                  value={valor("creci_pj")}
-                  onChange={(e) => campo("creci_pj", e.target.value)}
-                  placeholder="CRECI/SP J-12345"
-                  data-testid="imob-creci"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-resp">Responsável técnico</Label>
-                <Input
-                  id="imob-resp"
-                  value={valor("responsavel_nome")}
-                  onChange={(e) => campo("responsavel_nome", e.target.value)}
-                  data-testid="imob-responsavel"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-resp-creci">CRECI do responsável</Label>
-                <Input
-                  id="imob-resp-creci"
-                  value={valor("responsavel_creci")}
-                  onChange={(e) => campo("responsavel_creci", e.target.value)}
-                  data-testid="imob-responsavel-creci"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-tel">Telefone</Label>
-                <Input
-                  id="imob-tel"
-                  value={valor("telefone")}
-                  onChange={(e) => campo("telefone", e.target.value)}
-                  data-testid="imob-telefone"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-email">E-mail</Label>
-                <Input
-                  id="imob-email"
-                  value={valor("email")}
-                  onChange={(e) => campo("email", e.target.value)}
-                  data-testid="imob-email"
-                />
-              </div>
-            </div>
-
-            <p className="pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Endereço
+            {/* The company identity (razão social, CNPJ, CRECI, responsável,
+                endereço) is per company now — it lives in the registry, and
+                each contract picks which company signs. */}
+            <p
+              className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground"
+              data-testid="imob-link-imobiliarias"
+            >
+              Os dados de cada imobiliária que assina (razão social, CNPJ, CRECI,
+              responsável e endereço) ficam em{" "}
+              <a href="/imobiliarias" className="font-medium text-primary underline">
+                Imobiliárias
+              </a>
+              . Aqui ficam apenas as configurações comuns a toda a organização.
             </p>
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-cep">CEP</Label>
-                <Input
-                  id="imob-cep"
-                  value={valor("endereco_cep")}
-                  onChange={(e) => campo("endereco_cep", e.target.value)}
-                  data-testid="imob-cep"
-                />
-              </div>
-              <div className="space-y-1.5 sm:col-span-2">
-                <Label htmlFor="imob-logradouro">Logradouro</Label>
-                <Input
-                  id="imob-logradouro"
-                  value={valor("endereco_logradouro")}
-                  onChange={(e) => campo("endereco_logradouro", e.target.value)}
-                  data-testid="imob-logradouro"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-numero">Número</Label>
-                <Input
-                  id="imob-numero"
-                  value={valor("endereco_numero")}
-                  onChange={(e) => campo("endereco_numero", e.target.value)}
-                  data-testid="imob-numero"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-compl">Complemento</Label>
-                <Input
-                  id="imob-compl"
-                  value={valor("endereco_complemento")}
-                  onChange={(e) =>
-                    campo("endereco_complemento", e.target.value)
-                  }
-                  data-testid="imob-complemento"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-bairro">Bairro</Label>
-                <Input
-                  id="imob-bairro"
-                  value={valor("endereco_bairro")}
-                  onChange={(e) => campo("endereco_bairro", e.target.value)}
-                  data-testid="imob-bairro"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-cidade">Cidade</Label>
-                <Input
-                  id="imob-cidade"
-                  value={valor("endereco_cidade")}
-                  onChange={(e) => campo("endereco_cidade", e.target.value)}
-                  data-testid="imob-cidade"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="imob-uf">UF</Label>
-                <Input
-                  id="imob-uf"
-                  maxLength={2}
-                  value={valor("endereco_uf")}
-                  onChange={(e) =>
-                    campo("endereco_uf", e.target.value.toUpperCase())
-                  }
-                  data-testid="imob-uf"
-                />
-              </div>
-            </div>
 
             {/* Migration 117 (contract F6) — the office's own operational
                 answers the contract generator refuses without. Until this

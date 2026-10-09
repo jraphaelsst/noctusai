@@ -76,21 +76,6 @@ beforeEach(() => {
 });
 
 const FIXTURE = {
-  razao_social: "Imobiliária Exemplo LTDA",
-  nome_fantasia: null,
-  cnpj: null,
-  creci_pj: null,
-  responsavel_nome: null,
-  responsavel_creci: null,
-  telefone: null,
-  email: null,
-  endereco_cep: null,
-  endereco_logradouro: null,
-  endereco_numero: null,
-  endereco_complemento: null,
-  endereco_bairro: null,
-  endereco_cidade: null,
-  endereco_uf: null,
   plataforma_assinatura_nome: "ClickSign",
   plataforma_assinatura_url: "https://app.clicksign.com",
   posse_multa_diaria: 150.5,

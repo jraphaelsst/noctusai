@@ -279,21 +279,6 @@ const API_KEYS_UNCONFIGURED = {
 // Migration 117 (contract F6) fixture — a filled-in row so the tab's
 // "success" state is what most suites in this file see by default.
 const IMOB_FIXTURE = {
-  razao_social: "Imobiliária Exemplo LTDA",
-  nome_fantasia: "Exemplo Imóveis",
-  cnpj: "12.345.678/0001-90",
-  creci_pj: "CRECI/SP J-12345",
-  responsavel_nome: "Maria Silva",
-  responsavel_creci: "CRECI/SP 98765",
-  telefone: "1140028922",
-  email: "contato@exemplo.com.br",
-  endereco_cep: "01310-100",
-  endereco_logradouro: "Av. Paulista",
-  endereco_numero: "1000",
-  endereco_complemento: null,
-  endereco_bairro: "Bela Vista",
-  endereco_cidade: "São Paulo",
-  endereco_uf: "SP",
   plataforma_assinatura_nome: "ClickSign",
   plataforma_assinatura_url: "https://app.clicksign.com",
   posse_multa_diaria: 150.5,
@@ -1372,6 +1357,29 @@ describe("DadosImobiliariaTab", () => {
     ).toBe("ClickSign");
   });
 
+  it("🔴 carries ONLY the org-wide fields — company identity moved to the Imobiliárias registry", async () => {
+    const { getByTestId, queryByTestId } = await renderSettingsOnKeysTab();
+    for (const id of [
+      "imob-razao",
+      "imob-fantasia",
+      "imob-cnpj",
+      "imob-creci",
+      "imob-responsavel",
+      "imob-responsavel-creci",
+      "imob-telefone",
+      "imob-email",
+      "imob-cep",
+      "imob-cidade",
+      "imob-uf",
+    ]) {
+      expect(queryByTestId(id), id).toBeNull();
+    }
+    expect(getByTestId("imob-plataforma-nome")).toBeTruthy();
+    expect(getByTestId("imob-suporte-email")).toBeTruthy();
+    const link = getByTestId("imob-link-imobiliarias").querySelector("a");
+    expect(link?.getAttribute("href")).toBe("/imobiliarias");
+  });
+
   it("renders the four migration-117 fields with the saved values", async () => {
     const { getByTestId } = await renderSettingsOnKeysTab();
     expect((getByTestId("imob-plataforma-nome") as HTMLInputElement).value).toBe(
@@ -1391,21 +1399,6 @@ describe("DadosImobiliariaTab", () => {
   it("shows every field blank for an org that never saved this tab, and still lets it save", async () => {
     mockUseDadosImobiliaria.mockReturnValue({
       data: {
-        razao_social: null,
-        nome_fantasia: null,
-        cnpj: null,
-        creci_pj: null,
-        responsavel_nome: null,
-        responsavel_creci: null,
-        telefone: null,
-        email: null,
-        endereco_cep: null,
-        endereco_logradouro: null,
-        endereco_numero: null,
-        endereco_complemento: null,
-        endereco_bairro: null,
-        endereco_cidade: null,
-        endereco_uf: null,
         plataforma_assinatura_nome: null,
         plataforma_assinatura_url: null,
         posse_multa_diaria: null,
