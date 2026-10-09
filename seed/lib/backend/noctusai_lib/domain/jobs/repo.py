@@ -41,6 +41,17 @@ class DeadLetterError(RuntimeError):
     """
 
 
+class RescheduleLater(RuntimeError):
+    """Raised by handlers to put the job back on the queue after `delay_s`
+    WITHOUT consuming a retry (downstream busy, not a failure). The Worker
+    catches it and calls `JobRepository.reschedule`.
+    """
+
+    def __init__(self, delay_s: float, reason: str = "") -> None:
+        super().__init__(reason or f"rescheduled in {delay_s}s")
+        self.delay_s = float(delay_s)
+
+
 class LeaseLostError(RuntimeError):
     """Raised by `extend_lease` when the caller no longer holds the
     job's lease — another worker's `claim_next` already reclaimed it
@@ -143,6 +154,11 @@ class JobRepository(Protocol):
         `scheduled_for` set via `next_retry_at(retry_count, policy,
         now)`; lands on DEAD_LETTER once exhausted. Releases the lease
         either way. Returns the updated Job.
+        """
+
+    async def reschedule(self, job_id: str, *, delay_s: float) -> Job:
+        """Release the lease and return a RUNNING job to PENDING with
+        `scheduled_for = now + delay_s`, leaving `retry_count` untouched.
         """
 
     async def enqueue(
@@ -353,6 +369,25 @@ class FakeJobRepository:
         )
         self._jobs[job_id] = requeued
         return requeued
+
+    async def reschedule(self, job_id: str, *, delay_s: float) -> Job:
+        job = self._jobs.get(job_id)
+        if job is None:
+            raise KeyError(f"Job not found: {job_id}")
+        now = self._now()
+        # Deliberately NOT via with_status_transition: RUNNING->PENDING stays
+        # illegal in the state machine (a failure must go through FAILED);
+        # a reschedule is the one non-failure release and is made explicit here.
+        pending = replace(
+            job,
+            status=JobStatus.PENDING,
+            updated_at=now,
+            scheduled_for=now + timedelta(seconds=delay_s),
+            worker_id=None,
+            lease_expires_at=None,
+        )
+        self._jobs[job_id] = pending
+        return pending
 
     async def list_dead_letters(
         self,
@@ -698,6 +733,24 @@ class RealSupabaseJobRepository:
             },
         )
         result = await self._execute(rpc_builder)
+        rows: list[dict[str, Any]] = getattr(result, "data", None) or []
+        if not rows:
+            raise KeyError(f"Job not found: {job_id}")
+        return self._row_to_job(rows[0])
+
+    async def reschedule(self, job_id: str, *, delay_s: float) -> Job:
+        now = datetime.now(timezone.utc)
+        payload = {
+            "status": JobStatus.PENDING.value,
+            "scheduled_for": (now + timedelta(seconds=delay_s)).isoformat(),
+            "worker_id": None,
+            "lease_expires_at": None,
+            "updated_at": now.isoformat(),
+        }
+        await self._execute(self._table_builder().update(payload).eq("id", job_id))
+        result = await self._execute(
+            self._table_builder().select("*").eq("id", job_id).limit(1)
+        )
         rows: list[dict[str, Any]] = getattr(result, "data", None) or []
         if not rows:
             raise KeyError(f"Job not found: {job_id}")

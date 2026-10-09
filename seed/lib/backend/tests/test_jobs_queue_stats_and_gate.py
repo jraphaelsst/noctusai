@@ -97,3 +97,27 @@ def test_worker_without_gate_is_unchanged() -> None:
         return await worker.claim_allowed()
 
     assert run(scenario()) is True
+
+
+def test_reschedule_later_keeps_retry_budget_and_delays_claim() -> None:
+    from noctusai_lib.domain.jobs.repo import RescheduleLater
+
+    async def scenario():
+        repo = FakeJobRepository()
+        job = await repo.enqueue(type="t", payload={})
+
+        async def busy(_job):
+            raise RescheduleLater(30)
+
+        w = Worker(repo, worker_id="w", handlers={"t": busy})
+        assert await w.run_once() is True
+        after = repo._jobs[job.id]
+        again = await repo.claim_next(worker_id="w", job_types=["t"])
+        return after, again
+
+    after, again = run(scenario())
+    assert after.status.value == "pending"
+    assert after.retry_count == 0
+    assert after.worker_id is None and after.lease_expires_at is None
+    assert after.scheduled_for is not None and after.scheduled_for > datetime.now(timezone.utc)
+    assert again is None

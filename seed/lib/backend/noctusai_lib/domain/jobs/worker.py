@@ -47,6 +47,7 @@ from noctusai_lib.domain.jobs.repo import (
     DeadLetterError,
     JobRepository,
     LeaseLostError,
+    RescheduleLater,
 )
 from noctusai_lib.domain.jobs.retry_policy import (
     DEFAULT_POLICY,
@@ -254,6 +255,17 @@ class Worker:
                     exc,
                 )
                 await self._repo.mark_failed(job.id, str(exc), dead_letter=True)
+                return
+            except RescheduleLater as exc:
+                # Not a failure: back to PENDING after the delay, retry
+                # budget untouched.
+                logger.info(
+                    "worker.reschedule job_id=%s type=%s delay_s=%s",
+                    job.id,
+                    job.type,
+                    exc.delay_s,
+                )
+                await self._repo.reschedule(job.id, delay_s=exc.delay_s)
                 return
             except Exception as exc:
                 logger.warning(
