@@ -108,14 +108,23 @@ for non-staff, `403 code mfa_required` without aal2, `401` without a token.
 
 ## Out of scope (named destinations)
 
-- Other products' policy conversion → one migration per product, flips `org_picker_ready`
-  (NOC-REMEDIATE[org-picker-policy-conversion]).
-- Drop of the prod-only `act_as_sessions` shim → core 071 after deploy_verify (contract step).
+- Other products' policy conversion → DONE 2026-10-09 for agents (020-022),
+  academia-de-reciclagem (015-017), seed (007-009), community (017-019), igig (038-040): each
+  converts its policies, attaches the acting-audit triggers, then flips `org_picker_ready`.
+  Store is excluded on purpose (always scoped to `STORE_ORG_ID`). Other products: same
+  three-migration shape when they need the picker.
+- Drop of the prod-only `act_as_sessions` shim → core 071 (2026-10-09; prod verified empty, no dependents).
 
 ## Named destinations added by the security review (2026-10-08)
 
-- NOC-REMEDIATE[org-picker-postgrest-audit]: FastAPI writes while acting are client-visible
-  (`org_id = target`, role `platform_support`) on EVERY auth path (org dep, base dep,
-  `require_scopes`/bridge). Writes the browser sends straight to PostgREST while acting
-  carry no audit row yet; a per-table trigger reading `current_org_id_for` would close it.
-  Not built now (no trigger). — 2026-10-08
+- PostgREST acting writes (closed 2026-10-09, core 072): FastAPI writes while acting are
+  client-visible (`org_id = target`, role `platform_support`) on EVERY auth path. Writes the
+  browser sends straight to PostgREST are audited by the row trigger
+  `public.audit_acting_write()` (TG_ARGV[0] = product db_schema): when
+  `current_org_id_for(schema) <> current_org_id()` it writes one `audit_logs` row
+  (org = target, acting_org_id = home, act_as_session_id = live selection, role
+  `platform_support`, `details.columns` = changed column NAMES only, never values). A failed
+  audit insert fails the write. Backends write with service_role (`auth.uid()` NULL), so a
+  FastAPI write is never double-audited. Products attach it with
+  `SELECT public.attach_acting_audit_triggers('<schema>'[, '<product schema>'])` — every
+  org_id-bearing base table; the readiness keeper requires that call before the flag flips.

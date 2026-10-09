@@ -2076,6 +2076,86 @@ _ORG_PICKER_ENDED_PAIR_PROBE = _picker_constraint_probe(
     what="inserting a selection with ended_at set but no ended_by",
 )
 
+# core 072 -- public.audit_acting_write(): a write the BROWSER sends to PostgREST while acting
+# must leave exactly one audit row in the TARGET org; nobody else's write leaves any. The probe
+# table lives in the fixture product's own schema (so current_org_id_for(v_schema) resolves) and
+# is created + written as `authenticated` inside the rolled-back transaction.
+_ACTING_AUDIT_DECLARE = _ORG_PICKER_DECLARE + "  v_n int; v_rid uuid; v_acting uuid; v_role text; v_tag uuid;\n"
+
+_ACTING_AUDIT_SETUP = """
+  IF to_regprocedure('public.audit_acting_write()') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.audit_acting_write() missing — core 072 not applied';
+  END IF;
+  EXECUTE format('CREATE TABLE %I.noc_probe_acting_audit (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), org_id uuid)', v_schema);
+  EXECUTE format('GRANT INSERT ON %I.noc_probe_acting_audit TO authenticated', v_schema);
+  EXECUTE format('GRANT USAGE ON SCHEMA %I TO authenticated', v_schema);
+  EXECUTE format('CREATE TRIGGER audit_acting_write AFTER INSERT OR UPDATE OR DELETE ON %I.noc_probe_acting_audit '
+                 'FOR EACH ROW EXECUTE FUNCTION public.audit_acting_write(%L)', v_schema, v_schema);
+"""
+
+
+def _acting_audit_probe(*, probe_id: str, rationale: str, caller: str, org: str, verdict: str) -> GuardProbe:
+    """INSERT one probe row as ``authenticated`` with the caller forged by ``caller`` (after a live
+    selection for v_staff exists), then hand the audit rows written for it to ``verdict``."""
+    steps = _ACTING_AUDIT_SETUP + """
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+  SELECT s.id INTO v_sel FROM public.platform_org_selections s
+   WHERE s.user_id = v_staff AND s.product_id = v_pid AND s.ended_at IS NULL;
+""" + caller + f"""
+  v_rid := gen_random_uuid();
+  SET LOCAL ROLE authenticated;
+  EXECUTE format('INSERT INTO %I.noc_probe_acting_audit (id, org_id) VALUES ($1, $2)', v_schema) USING v_rid, {org};
+  RESET ROLE;
+  SELECT count(*), max(a.org_id::text)::uuid, max(a.acting_org_id::text)::uuid, max(a.role), max(a.act_as_session_id::text)::uuid
+    INTO v_n, v_got, v_acting, v_role, v_tag
+    FROM public.audit_logs a
+   WHERE a.resource_type = v_schema || '.noc_probe_acting_audit' AND a.resource_id = v_rid::text;
+""" + verdict
+    return GuardProbe(
+        id=probe_id,
+        product="core",
+        schema="public",
+        guard_name="audit_acting_write",
+        kind="state_assertion",
+        migrations=_ORG_PICKER_MIGRATIONS + ("072_audit_acting_write.sql",),
+        rationale=rationale,
+        sql=_do_block(_ACTING_AUDIT_DECLARE + "BEGIN\n" + _ORG_PICKER_FIXTURE + steps + "\nEND;\n"),
+    )
+
+
+_ACTING_AUDIT_ACTING_WRITE_PROBE = _acting_audit_probe(
+    probe_id="audit_acting_write.acting_postgrest_write_is_audited_in_target",
+    rationale=(
+        "A staff member acting in another org who writes straight through PostgREST must leave "
+        "exactly ONE audit row, client-visible in the TARGET org and tagged platform_support with "
+        "the home org + the live selection -- otherwise the client cannot see who changed their data."
+    ),
+    caller=_caller_sql("v_staff::text"),
+    org="v_target",
+    verdict="""
+  IF v_n = 1 AND v_got = v_target AND v_acting = v_home AND v_role = 'platform_support' AND v_tag = v_sel THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: one acting audit row (org=target, acting=home, platform_support, selection id)';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: acting write audit rows=% org=% acting=% role=% selection=% (expected 1 / % / % / platform_support / %)',
+    v_n, v_got, v_acting, v_role, v_tag, v_target, v_home, v_sel;""",
+)
+
+_ACTING_AUDIT_PLAIN_WRITE_PROBE = _acting_audit_probe(
+    probe_id="audit_acting_write.non_acting_write_writes_nothing",
+    rationale=(
+        "Control: an ordinary user writing in their own org is not acting -- the trigger must stay "
+        "silent (no audit noise, and the positive probe above is not vacuous)."
+    ),
+    caller=_caller_sql("v_plain::text"),
+    org="v_plain_home",
+    verdict="""
+  IF v_n = 0 THEN
+    RAISE EXCEPTION 'NOC_PROBE:clean: a non-acting write wrote no acting audit row';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:violation: a non-acting write wrote % acting audit row(s)', v_n;""",
+)
+
+
 _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_DB_SCHEMA_UNIQUE_PROBE,
     _ORG_PICKER_READY_NEEDS_SCHEMA_PROBE,
@@ -2097,6 +2177,8 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_HELPER_NOT_READY_PROBE,
     _ORG_PICKER_HELPER_STAFF_ROLE_PROBE,
     _ORG_PICKER_PRODUCT_REVOKE_PROBE,
+    _ACTING_AUDIT_ACTING_WRITE_PROBE,
+    _ACTING_AUDIT_PLAIN_WRITE_PROBE,
 )
 
 

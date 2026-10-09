@@ -11924,17 +11924,23 @@ _OPR_RENAME_POLICY_RE = re.compile(
 _OPR_STORAGE_TABLE = "storage.objects"
 # Exact `schema.table::policy` -> rationale. No wildcards: each is an individual decision.
 _OPR_ALLOWED_HOME_ONLY: dict[str, str] = {
-    f"social_wiring.{t}::{n}": (
+    f"{s}.{t}::{n}": (
         "the owner/admin role check reads the caller's own noctus_users row; the backend "
         "writes this table with service_role; a JWT-direct write while acting is refused "
         "(fails closed). The org predicate beside it IS converted."
     )
-    for t, n in (
-        ("api_tokens", "api_tokens_insert_own_org_admin"),
-        ("api_tokens", "api_tokens_update_own_org_admin"),
-        ("portal_receiver_tokens", "portal_receiver_tokens_insert_own_org_admin"),
-        ("portal_receiver_tokens", "portal_receiver_tokens_update_own_org_admin"),
-        ("portal_lead_forward_targets", "portal_lead_forward_targets_write_own_org_admin"),
+    for s, t, n in (
+        ("social_wiring", "api_tokens", "api_tokens_insert_own_org_admin"),
+        ("social_wiring", "api_tokens", "api_tokens_update_own_org_admin"),
+        ("social_wiring", "portal_receiver_tokens", "portal_receiver_tokens_insert_own_org_admin"),
+        ("social_wiring", "portal_receiver_tokens", "portal_receiver_tokens_update_own_org_admin"),
+        ("social_wiring", "portal_lead_forward_targets", "portal_lead_forward_targets_write_own_org_admin"),
+        # The seed-shipped api_tokens (seed api_tokens migration) carries the same pair in every
+        # product that has it; agents 020 / academia 015 convert the org predicate beside it.
+        ("agents", "api_tokens", "api_tokens_insert_own_org_admin"),
+        ("agents", "api_tokens", "api_tokens_update_own_org_admin"),
+        ("academia_de_reciclagem", "api_tokens", "api_tokens_insert_own_org_admin"),
+        ("academia_de_reciclagem", "api_tokens", "api_tokens_update_own_org_admin"),
     )
 }
 # Policy renames done by a DO/format() loop (invisible to a static scan), pinned by file:
@@ -11946,6 +11952,10 @@ _OPR_DYNAMIC_POLICY_RENAMES: dict[str, tuple[str, str, str]] = {
 _OPR_HOME_ONLY_RE = re.compile(
     r"\bcurrent_org_id\s*\(|\bcurrent_user_org_id\s*\(|\bnoctus_users\b", re.IGNORECASE
 )
+# A ready product must also audit its PostgREST acting writes (core 072): its chain calls
+# public.attach_acting_audit_triggers(...) (order-insensitive -- a later migration may satisfy it).
+_OPR_AUDIT_ATTACH_RE = re.compile(r"\battach_acting_audit_triggers\s*\(", re.IGNORECASE)
+_OPR_PICKER_HELPER_RE = re.compile(r"\bcurrent_org_id_for\s*\(", re.IGNORECASE)
 
 
 def _opr_statements(sql_text: str) -> list[str]:
@@ -11965,6 +11975,11 @@ def _opr_statements(sql_text: str) -> list[str]:
     return [st.strip() for st in text.split(";") if st.strip()]
 
 
+def _opr_strip_comments(sql_text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", " ", sql_text, flags=re.DOTALL)
+    return re.sub(r"--[^\n]*", " ", text)
+
+
 def _opr_table_key(raw: str) -> str:
     return raw.replace('"', "").lower()
 
@@ -11981,6 +11996,9 @@ def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]
     dollar-quoted bodies removed (policies created inside a DO block are invisible);
     ``ALTER POLICY`` replaces the stored text. The live flag itself lives in the DB
     (this keeper cannot read it) -- it judges the flag as the chain leaves it.
+
+    A ready product's chain must ALSO call ``public.attach_acting_audit_triggers`` (core 072)
+    somewhere -- presence only, order-insensitive.
     """
     root = repo_root or REPO_ROOT
     issues: list[dict] = []
@@ -12042,8 +12060,37 @@ def check_org_picker_ready_policies(repo_root: Path | None = None) -> list[dict]
                     policies[f"{tbl}::{new}{key.split('::', 1)[1][len(old):]}"] = policies.pop(key)
         if not ready:
             continue
+        if not any(
+            _OPR_AUDIT_ATTACH_RE.search(_opr_strip_comments(f.read_text(encoding="utf-8"))) for f in files
+        ):
+            issues.append({
+                "product": slug,
+                "file": f"products/{slug}/backend/migrations/{ready_file}",
+                "issue": (
+                    f"{slug} is org_picker_ready=true (set in {ready_file}) but no migration in its chain "
+                    f"calls public.attach_acting_audit_triggers('<schema>'): a staff member's direct "
+                    f"PostgREST writes while acting would carry no audit row. Add a migration with "
+                    f"`SELECT public.attach_acting_audit_triggers('<schema>');` (core 072). "
+                    f"Per `{_OPR_KB}`."
+                ),
+                "severity": "critical",
+            })
         for key, (text, fname, _i) in sorted(policies.items()):
-            if key.split("::")[0] == _OPR_STORAGE_TABLE or key in _OPR_ALLOWED_HOME_ONLY:
+            if key.split("::")[0] == _OPR_STORAGE_TABLE:
+                continue
+            if key in _OPR_ALLOWED_HOME_ONLY:
+                # Only the ROLE check may stay home-keyed: the org predicate beside it must be converted.
+                if not _OPR_PICKER_HELPER_RE.search(text):
+                    issues.append({
+                        "product": slug,
+                        "file": f"products/{slug}/backend/migrations/{fname}",
+                        "issue": (
+                            f"policy `{key}` is allowlisted for its home-keyed ROLE check only, but its org "
+                            f"predicate is not converted to (SELECT public.current_org_id_for('<schema>')). "
+                            f"Per `{_OPR_KB}`."
+                        ),
+                        "severity": "critical",
+                    })
                 continue
             if _OPR_HOME_ONLY_RE.search(text):
                 issues.append({

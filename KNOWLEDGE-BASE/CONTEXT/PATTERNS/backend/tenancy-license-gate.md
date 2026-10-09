@@ -123,7 +123,13 @@ strict `403 {"code":"not_platform_staff"}`.
   HOME-ONLY forever. A product's policies opt in with
   `(SELECT public.current_org_id_for('<schema>'))`; it flips `org_picker_ready=true` only
   when every policy is converted — keeper `check_org_picker_ready_policies` fails a chain that
-  flips it with a home-only policy left (NOC-REMEDIATE[org-picker-policy-conversion]).
+  flips it with a home-only policy left (or without the acting-audit attach). Rolled out
+  2026-10-09: social-wiring, agents, academia-de-reciclagem, seed, community, igig (store
+  excluded: `STORE_ORG_ID`). Shape per product: `<n>_org_picker_policies` (ALTER POLICY from
+  live `pg_policies`) → `<n+1>_org_picker_acting_audit` → `<n+2>_org_picker_ready`. A role
+  check on the caller's own `noctus_users` row may stay home-keyed (staff are `role='admin'`
+  with home `org_role` owner/admin, so they pass it) — an exact allowlist entry, and the org
+  predicate beside it must still be converted.
 - **Seed:** `OrgSelectionStore` (Protocol + Real + Fake + factory, `api/auth/org_selection.py`);
   the gate (`configure_license_gate(selection_store=, db_schema=)`) carries it;
   `resolve_effective_org(core, user_id, *, product_slug, token, acting_header, …)` is still
@@ -140,12 +146,16 @@ strict `403 {"code":"not_platform_staff"}`.
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads
   are logged with `org_id NULL` (platform-only). The acting actor is stashed on EVERY
   FastAPI auth path (org dep, base dep, `require_scopes`/legacy bridge). Browser writes sent
-  straight to PostgREST while acting carry no audit row: NOC-REMEDIATE[org-picker-postgrest-audit]
-  — a per-table trigger reading `current_org_id_for` would close it. — 2026-10-08
+  straight to PostgREST while acting are audited by core 072's row trigger
+  `public.audit_acting_write()` (same tags; changed column NAMES only, never values; a failed
+  audit insert fails the write), attached per product via
+  `public.attach_acting_audit_triggers('<schema>')`. `check_org_picker_ready_policies` refuses
+  a ready flip whose chain lacks that call. — 2026-10-09
   Realtime DOES act on converted tables; the SPA tears channels down on swap.
 - **Probes:** `noctus.dev.verify_db_guards` — `platform_org_selections.*`,
   `platform_org_selection_set.refuses_*`, `current_org_id_for.*` (positive control + home for
-  non-staff / other session / aal1 / unlicensed / mismatching header), revocation trigger.
+  non-staff / other session / aal1 / unlicensed / mismatching header), revocation trigger,
+  `audit_acting_write.*` (acting write ⇒ one target-org row; non-acting write ⇒ none).
 - **Team rules (core):** `owner` is never grantable via invite or role change; granting
   `admin` needs an inviter who is owner/admin or the platform superadmin; an `owner` target
   can be neither re-roled nor removed (strict 403) and an `admin` target needs the same
