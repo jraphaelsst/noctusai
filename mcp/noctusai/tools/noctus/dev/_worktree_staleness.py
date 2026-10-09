@@ -420,6 +420,25 @@ def merged_into_base_confirms_dead(run: GitRunner, branch: str, base: str) -> bo
     return is_ancestor(run, branch, base)
 
 
+def integrated_live_pointer_confirms_dead(
+    run: GitRunner, branch: str, base: str, status: str | None,
+) -> bool:
+    """Third liveness signal (2026-10-09): a pointer stuck at
+    ``integrated-worktree-live`` whose branch tip is an ancestor of ``base``.
+
+    ``task_branch integrate`` writes that status after the FF-push, and the
+    teardown that should follow is the step sessions skipped/crashed before -
+    all 37 worktrees of the 2026-10-09 incident were exactly this shape, so
+    without this the SessionStart backstop skips the very incident it exists
+    for. Unlike :func:`merged_into_base_confirms_dead` NO divergence is
+    required: the status itself proves an integrate ran, so branch tip == base
+    tip (right after the FF) is legitimate. ``on_going`` / ``blocked`` /
+    unknown pointers are NOT covered - they keep blocking. The dirty / stash /
+    lock / recent-mtime / min-age guards still run after this.
+    """
+    return status == "integrated-worktree-live" and is_ancestor(run, branch, base)
+
+
 def pointer_block_reason(status: str | None) -> str:
     """Human-readable reason string for a pointer-blocked removal — shared by
     both consumers (``cleanup_worktrees.py``, ``mole.py``) so the wording

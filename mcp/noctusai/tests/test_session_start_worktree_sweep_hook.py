@@ -7,6 +7,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import time
 from pathlib import Path
 
 HOOK = Path(__file__).resolve().parents[3] / "scripts" / "hooks" / "claude-session-start-worktree-sweep.py"
@@ -46,3 +47,25 @@ def test_sweep_no_worktrees_dir_is_silent(tmp_path):
 
 def test_sweep_cli_failure_is_silent_on_stdout(tmp_path):
     assert H.sweep(_root(tmp_path, "import sys; sys.exit(2)\n")) == ""
+
+
+def test_hook_returns_quickly_while_detached_child_does_the_work(tmp_path):
+    body = ("import time, json\ntime.sleep(3)\n"
+            "print(json.dumps({'removed': 2, 'stale': ['/x/a', '/x/b']}))\n")
+    root = _root(tmp_path, body)
+    t0 = time.monotonic()
+    H.spawn_detached(root)
+    assert time.monotonic() - t0 < 1.5, "spawn must not wait for the sweep"
+    last = root / ".git" / H.LAST_NAME
+    assert not last.exists(), "child is still working when the hook has returned"
+    deadline = time.monotonic() + 20
+    while not last.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert "reclaimed 2" in json.loads(last.read_text())["line"]
+
+
+def test_next_start_prints_previous_line_once(tmp_path):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / H.LAST_NAME).write_text(json.dumps({"line": "noc: reclaimed 3", "shown": False}))
+    assert H.take_previous_line(tmp_path) == "noc: reclaimed 3"
+    assert H.take_previous_line(tmp_path) == ""

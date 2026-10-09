@@ -604,3 +604,39 @@ class TestGuardResultShape:
         assert result["pointer_blocked"] == []
         assert result["recently_active"] == []
         assert result["too_young"] == []
+
+
+class TestIntegratedLivePointer:
+    """2026-10-09: pointers stuck at integrated-worktree-live (integrate ran,
+    teardown never did) must not make a merged, clean, idle worktree immortal;
+    on_going must still block. Real git, real ledger rows."""
+
+    def test_integrated_live_plus_merged_tip_is_removed_and_pointer_closed(self, repo):
+        from tools.noctus.dev import branch_pointer as bp
+        wt = _add_worktree(repo, "feat-il", "feat/il", publish_shipped_pointer=False)
+        _publish_pointer_row(repo, branch="feat/il", status="integrated-worktree-live")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, respect_min_age=False,
+            min_age_minutes=0, recent_mtime_minutes=0)
+        assert not wt.exists()
+        assert result["stale_signals"][str(wt)] == "integrated_live_merged"
+        assert result["pointers_closed"] == ["feat/il"]
+        from tools.noctus.dev import _worktree_staleness as wts
+        run = wts.make_subprocess_runner(repo)
+        assert wts.pointer_status_for_branch("feat/il", run) == "shipped"
+
+    def test_on_going_plus_merged_tip_is_kept(self, repo):
+        wt = _add_worktree(repo, "feat-og", "feat/og", publish_shipped_pointer=False)
+        _publish_pointer_row(repo, branch="feat/og", status="on_going")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0, recent_mtime_minutes=0)
+        assert wt.exists()
+        assert [p["branch"] for p in result["pointer_blocked"]] == ["feat/og"]
+
+    def test_integrated_live_but_dirty_is_still_kept(self, repo):
+        wt = _add_worktree(repo, "feat-ild", "feat/ild", publish_shipped_pointer=False)
+        _publish_pointer_row(repo, branch="feat/ild", status="integrated-worktree-live")
+        (wt / "wip.txt").write_text("x")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0, recent_mtime_minutes=0)
+        assert wt.exists() and result["dirty"]

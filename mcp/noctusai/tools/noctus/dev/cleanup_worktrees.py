@@ -407,6 +407,10 @@ def cleanup_stale_worktrees(
                 if wts.merged_into_base_confirms_dead(wts_run, branch, base):
                     blocks = False
                     removal_signal = "merged_into_base"
+            if blocks and wts.integrated_live_pointer_confirms_dead(
+                    wts_run, branch, base, pointer_status):
+                blocks = False
+                removal_signal = "integrated_live_merged"
             if blocks:
                 pointer_blocked.append({
                     "path": wt,
@@ -566,6 +570,7 @@ def cleanup_stale_worktrees(
                 failed += 1
 
     _git(root, "worktree", "prune")
+    pointers_closed = _close_pointers(removed_records, wts_run, root)
     # Extract-before-delete: write recovery pointers to the tracked ledger
     # (caller commits it, like ledger.ndjson). `unwrap_worktree_root(root)`
     # corrects `root` ONLY when it is itself a worktree (an explicit
@@ -600,7 +605,35 @@ def cleanup_stale_worktrees(
         "status": "removed",
         "salvage_ledger": str(salvage_ledger) if salvage_ledger else None,
         "salvaged": len(removed_records),
+        "pointers_closed": pointers_closed,
     }
+
+
+def _close_pointers(removed_records: list[dict], run, root: Path) -> list[str]:
+    """Self-heal the ledger: a removed worktree's NON-terminal pointer
+    (integrated-worktree-live / on_going) is closed to ``shipped`` - every
+    removal path (manual, auto, SessionStart sweep) leaves no phantom claim.
+    Reuses ``branch_pointer.update`` (no parallel writer); best-effort."""
+    closed: list[str] = []
+    try:
+        from tools.noctus.dev import branch_pointer as bp
+        from tools.noctus.dev._ledger_store import flush_pending
+        for rec in removed_records:
+            branch = rec.get("branch")
+            if not branch:
+                continue
+            status = wts.pointer_status_for_branch(branch, run)
+            if status is None or status in bp.TERMINAL_STATUSES:
+                continue
+            res = bp.update(branch=branch, status="shipped", push_dev=False, runner=run,
+                            notes="closed by cleanup_stale_worktrees: merged, worktree removed")
+            if res.get("ok"):
+                closed.append(branch)
+        if closed:
+            flush_pending(unwrap_worktree_root(root) or root)
+    except Exception as exc:  # noqa: BLE001 - never fail a completed removal
+        logger.warning("cleanup_stale_worktrees: pointer close failed: %s", exc)
+    return closed
 
 
 def register(server) -> None:
