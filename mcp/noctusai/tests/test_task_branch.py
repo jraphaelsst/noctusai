@@ -3020,3 +3020,55 @@ def test_spawn_post_integrate_detaches_and_logs(tmp_path, monkeypatch):
     assert "--task-branch-post-integrate" in spawned["argv"]
     assert spawned["kw"]["start_new_session"] is True
     assert "post-integrate" in (tmp_path / ".git" / T.POST_INTEGRATE_LOG).read_text()
+
+
+# -- coalesced post-integrate tail (2026-10-09) ---------------------------------
+def test_post_integrate_coalesces_a_concurrent_request(tmp_path):
+    (tmp_path / ".git").mkdir()
+    calls: list[int] = []
+
+    def tail():
+        calls.append(1)
+        if len(calls) == 1:
+            # a second job arrives while the first holds the lock
+            r = T.run_post_integrate(str(tmp_path), tail=lambda: {"inner": True})
+            assert r["status"] == "coalesced"
+        return {"cache_settle": {"ok": True}, "ledger_drain": {"ok": True}}
+
+    r = T.run_post_integrate(str(tmp_path), tail=tail)
+    assert r["status"] == "done"
+    assert len(calls) == 2  # the holder re-ran ONCE for the coalesced request
+    assert not (tmp_path / ".git" / T.POST_INTEGRATE_RERUN).exists()
+
+
+def test_post_integrate_single_pass_when_uncontended(tmp_path):
+    (tmp_path / ".git").mkdir()
+    calls: list[int] = []
+    r = T.run_post_integrate(str(tmp_path), tail=lambda: calls.append(1) or {"cache_settle": {}})
+    assert r["status"] == "done" and len(calls) == 1
+
+
+def test_post_integrate_passes_are_bounded(tmp_path):
+    (tmp_path / ".git").mkdir()
+    calls: list[int] = []
+
+    def always_rerequested():
+        calls.append(1)
+        (tmp_path / ".git" / T.POST_INTEGRATE_RERUN).touch()
+        return {}
+
+    r = T.run_post_integrate(str(tmp_path), tail=always_rerequested)
+    assert r["status"] == "done" and len(calls) == T._POST_INTEGRATE_MAX_PASSES
+
+
+def test_standalone_cleanup_schedules_the_detached_tail():
+    fake = _integrate_fake()
+    T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                  primary_root="/repo", keep_worktree=True,
+                  post_integrate=lambda r, d, rm: {"status": "scheduled"})
+    settle_calls: list[int] = []
+    res = T.task_branch(action="cleanup", slug="x", confirm=True, run=fake,
+                        primary_root="/repo", settle=lambda: settle_calls.append(1) or {},
+                        post_integrate=lambda r, d, rm: {"status": "scheduled", "log": "L"})
+    assert res["status"] == "cleaned", res
+    assert settle_calls == [] and res["post_integrate"]["status"] == "scheduled"

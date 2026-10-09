@@ -1459,14 +1459,57 @@ def _pointer_claim(
 POST_INTEGRATE_LOG = "noc-post-integrate.log"
 
 
+POST_INTEGRATE_LOCK = "noc-post-integrate.lock"
+POST_INTEGRATE_RERUN = "noc-post-integrate.rerun"
+_POST_INTEGRATE_MAX_PASSES = 3
+
+
 def run_post_integrate(primary_root: str | None = None, dev_branch: str = "dev",
-                       remote: str = "origin") -> dict[str, Any]:
-    """The slow best-effort integrate tail, in its required order: structural
-    cache settle, THEN the primary-checkout ledger drain (see
-    `_drain_ledgers_from_primary` — a drain before the settle could not ship
-    what the settle writes). Runs in the detached child spawned by
-    `_spawn_post_integrate`; callable directly (CLI
-    `--task-branch-post-integrate`). Never raises."""
+                       remote: str = "origin", tail: Callable[[], dict[str, Any]] | None = None,
+                       ) -> dict[str, Any]:
+    """COALESCED post-integrate tail (2026-10-09): at most ONE runs at a time.
+
+    Six sessions integrating concurrently each spawned a settle; they thrashed
+    (one noc-graph build took 198 s under contention vs 25 s alone, a whole
+    settle 1026–2202 s). The settle is only-stale + source_sha-guarded, so a
+    single pass AFTER the latest integrate covers every earlier one: a job that
+    finds the lock held drops a "rerun requested" marker and exits
+    (`coalesced`); the holder loops while the marker reappears (bounded), and
+    re-checks it after releasing the lock so a late request is never lost.
+    `tail` is the test seam (default: settle then ledger drain)."""
+    import fcntl
+
+    root = Path(_resolve_primary_root(primary_root))
+    git_dir = root / ".git" if (root / ".git").is_dir() else root
+    rerun = git_dir / POST_INTEGRATE_RERUN
+    run_tail = tail or (lambda: _post_integrate_tail(str(root), dev_branch, remote))
+    passes: list[dict[str, Any]] = []
+    while True:
+        lock = open(git_dir / POST_INTEGRATE_LOCK, "w")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock.close()
+            rerun.touch()
+            return {"status": "coalesced", "passes": passes,
+                    "reason": "a post-integrate job is already running; it will re-run once"}
+        try:
+            for _ in range(_POST_INTEGRATE_MAX_PASSES):
+                rerun.unlink(missing_ok=True)
+                passes.append(run_tail())
+                if not rerun.exists():
+                    break
+        finally:
+            lock.close()
+        # A request that landed between our last check and the unlock.
+        if not rerun.exists() or len(passes) >= _POST_INTEGRATE_MAX_PASSES:
+            return {"status": "done", "passes": passes, **(passes[-1] if passes else {})}
+
+
+def _post_integrate_tail(primary_root: str, dev_branch: str, remote: str) -> dict[str, Any]:
+    """One pass, in its required order: structural cache settle, THEN the
+    primary-checkout ledger drain (see `_drain_ledgers_from_primary` — a drain
+    before the settle could not ship what the settle writes). Never raises."""
     out: dict[str, Any] = {}
     try:
         out["cache_settle"] = _settle_structural_caches()
@@ -2332,6 +2375,15 @@ def task_branch(
         # settles + drains once for both (never twice per integrate).
         result["cache_settle"] = {"status": "deferred_to_post_integrate"}
         result["ledger_drain"] = {"status": "deferred_to_post_integrate"}
+        return result
+    if post_integrate_fn is not None:
+        # Standalone cleanup on the real runner: the same detached, coalesced
+        # tail as integrate — a teardown never blocks on a noc-graph rebuild.
+        try:
+            result["post_integrate"] = post_integrate_fn(
+                _resolve_primary_root(primary_root), dev_branch, remote)
+        except Exception as e:  # never fail a completed teardown
+            result["post_integrate"] = {"status": "error", "error": f"{type(e).__name__}: {e}"}
         return result
     if settle_fn is not None:
         try:
