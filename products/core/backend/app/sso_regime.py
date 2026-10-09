@@ -36,14 +36,29 @@ def sso_regime(row: Optional[Mapping[str, Any]]) -> SSORegime:
     return "strict"
 
 
-def build_sso_launch_url(slug: str, product_row: Mapping[str, Any], sso_token: str) -> str:
+class ProductUrlUnresolvable(Exception):
+    """No launch URL can be resolved for the product (no PRODUCT_URL_<SLUG> /
+    PRODUCT_URL_PATTERN override and no usable `url_base` row). Routers map it
+    to a typed 409 BEFORE minting a token — never a 500 after one."""
+
+
+def resolve_launch_base(slug: str, product_row: Mapping[str, Any]) -> str:
+    """The product's launch base URL, or ProductUrlUnresolvable."""
+    try:
+        return resolve_product_url(slug, db_url_base=product_row.get("url_base"))
+    except ValueError as e:
+        raise ProductUrlUnresolvable(str(e)) from e
+
+
+def build_sso_launch_url(slug: str, product_row: Mapping[str, Any], sso_token: str,
+                         base: Optional[str] = None) -> str:
     """Absolute product URL carrying the token in the regime's transport.
 
     strict -> ``<base>/sso#token=<t>`` (a fragment never reaches an access log
     or a ``Referer``); legacy -> ``<base>/sso?token=<t>``. The base is resolved
     through ``resolve_product_url`` so a deploy overrides the DB-stored URL.
     """
-    base = resolve_product_url(slug, db_url_base=product_row.get("url_base"))
+    base = base if base is not None else resolve_launch_base(slug, product_row)
     if sso_regime(product_row) == "legacy":
         return f"{base}/sso?token={sso_token}"
     return f"{base}/sso#token={sso_token}"

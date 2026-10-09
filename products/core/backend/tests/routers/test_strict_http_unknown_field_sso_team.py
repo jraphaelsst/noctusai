@@ -50,7 +50,7 @@ class TestStrictHttpUnknownFieldRejectedW4:
         )
         _assert_422_names_field(resp, "definitely_not_a_field")
 
-    def test_sso_validate_rejects_unknown_field_with_422(self, client):
+    def test_sso_validate_rejects_unknown_field_with_422(self, client, platform_admin_override):
         resp = client.post(
             "/api/sso/validate",
             json={

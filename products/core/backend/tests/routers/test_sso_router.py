@@ -98,8 +98,27 @@ class TestGenerateSSOToken:
 # POST /api/sso/validate
 # ---------------------------------------------------------------------------
 
+@pytest.fixture
+def admin_client(client, platform_admin_override):
+    """`client` with the platform-admin gate satisfied."""
+    return client
+
+
 class TestValidateSSOToken:
-    def test_validate_sso_token_success(self, client):
+    # 2026-10-09: no longer an unauthenticated, non-consuming token oracle.
+    def test_validate_refuses_a_non_admin(self, client):
+        with patch("app.routers.sso.verify_sso_token", return_value={"sub": "u"}) as verify:
+            resp = client.post("/api/sso/validate", json={"token": "any-token"})
+        assert resp.status_code == 403
+        verify.assert_not_called()
+
+    def test_validate_refuses_anonymous(self, unauth_client):
+        with patch("app.routers.sso.verify_sso_token", return_value={"sub": "u"}) as verify:
+            resp = unauth_client.post("/api/sso/validate", json={"token": "any-token"})
+        assert resp.status_code == 401
+        verify.assert_not_called()
+
+    def test_validate_sso_token_success(self, admin_client):
         mock_payload = {
             "sub": "user-123",
             "org_id": "org-1",
@@ -110,7 +129,7 @@ class TestValidateSSOToken:
         }
 
         with patch("app.routers.sso.verify_sso_token", return_value=mock_payload):
-            resp = client.post("/api/sso/validate", json={
+            resp = admin_client.post("/api/sso/validate", json={
                 "token": "valid-sso-token",
             })
             assert resp.status_code == 200
@@ -120,32 +139,32 @@ class TestValidateSSOToken:
             assert data["org_id"] == "org-1"
             assert data["product"] == "erp"
 
-    def test_validate_sso_token_expired(self, client):
+    def test_validate_sso_token_expired(self, admin_client):
         from fastapi import HTTPException
 
         def _mock_verify(token):
             raise HTTPException(status_code=401, detail="Token SSO expirado")
 
         with patch("app.routers.sso.verify_sso_token", side_effect=_mock_verify):
-            resp = client.post("/api/sso/validate", json={
+            resp = admin_client.post("/api/sso/validate", json={
                 "token": "expired-token",
             })
             assert resp.status_code == 401
 
-    def test_validate_sso_token_invalid(self, client):
+    def test_validate_sso_token_invalid(self, admin_client):
         from fastapi import HTTPException
 
         def _mock_verify(token):
             raise HTTPException(status_code=401, detail="Token SSO invalido")
 
         with patch("app.routers.sso.verify_sso_token", side_effect=_mock_verify):
-            resp = client.post("/api/sso/validate", json={
+            resp = admin_client.post("/api/sso/validate", json={
                 "token": "bad-token",
             })
             assert resp.status_code == 401
 
-    def test_validate_sso_token_missing_token(self, client):
-        resp = client.post("/api/sso/validate", json={})
+    def test_validate_sso_token_missing_token(self, admin_client):
+        resp = admin_client.post("/api/sso/validate", json={})
         assert resp.status_code == 422
 
 
@@ -1049,3 +1068,40 @@ class TestSSOCallbackMarkerParity:
         if seed is None:  # core image ships without the seed source tree
             pytest.skip("seed source not present")
         assert f"SSO_CALLBACK_MARKER = '{SSO_CALLBACK_MARKER}'" in seed.read_text()
+
+
+# ---------------------------------------------------------------------------
+# Unresolvable launch URL → typed 409 BEFORE minting (2026-10-09)
+# ---------------------------------------------------------------------------
+
+class TestUnresolvableLaunchUrl:
+    def _seed(self, client, monkeypatch):
+        for k in [k for k in __import__("os").environ if k.startswith("PRODUCT_URL_")]:
+            monkeypatch.delenv(k, raising=False)
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123", "org_id": "org-1", "role": "user",
+            "email": "test@example.com",
+        })
+        mock_sb.set_table_data("products", {
+            "id": "prod-1", "slug": "ghost", "ativo": True,
+            "deploy_scope": "live", "url_base": None,
+        })
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
+        }])
+
+    def test_token_is_409_and_nothing_minted(self, client, monkeypatch):
+        self._seed(client, monkeypatch)
+        with patch("app.routers.sso.create_sso_token", return_value="t") as mint:
+            resp = client.post("/api/sso/token", json={"product_slug": "ghost"})
+        assert resp.status_code == 409
+        assert "URL" in resp.text
+        mint.assert_not_called()
+
+    def test_launch_is_409_and_nothing_minted(self, client, monkeypatch):
+        self._seed(client, monkeypatch)
+        with patch("app.routers.sso.create_sso_token", return_value="t") as mint:
+            resp = client.get("/api/sso/launch/ghost", follow_redirects=False)
+        assert resp.status_code == 409
+        mint.assert_not_called()

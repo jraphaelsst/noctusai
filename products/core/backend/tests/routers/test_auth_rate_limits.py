@@ -39,7 +39,7 @@ class TestSSORateLimits:
         responses = [client.post("/api/sso/token", json=body) for _ in range(21)]
         assert responses[-1].status_code == 429
 
-    def test_sso_validate_rate_limited(self, client):
+    def test_sso_validate_rate_limited(self, client, platform_admin_override):
         body = {"token": "fake-token"}
         responses = [client.post("/api/sso/validate", json=body) for _ in range(21)]
         assert responses[-1].status_code == 429

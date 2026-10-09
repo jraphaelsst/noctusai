@@ -180,7 +180,7 @@ class TestSSOTokenFlow:
         assert metadata["org_role"] == "owner"
         assert metadata["org_id"] == "org-1"
 
-    def test_sso_validate_returns_payload(self, client):
+    def test_sso_validate_returns_payload(self, client, platform_admin_override):
         """POST /api/sso/validate -> returns decoded token fields."""
         sso_token = _create_sso_token(
             user_id="u-1", org_id="o-1", product_slug="pf",

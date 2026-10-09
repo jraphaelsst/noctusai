@@ -629,3 +629,17 @@ def unauth_client():
         bind_consent_module_to_mock(mock_sb)
         tc = TestClient(app)
         yield UnauthClient(tc, mock_sb)
+
+
+
+@pytest.fixture
+def platform_admin_override():
+    """Satisfy `require_platform_admin_dep` (FastAPI dependency_overrides) for
+    tests that exercise an admin-gated route's own behaviour — e.g. POST
+    /api/sso/validate, gated to platform admins on 2026-10-09."""
+    from app.main import app
+    from app.services.trusted_auth import require_platform_admin_dep
+
+    app.dependency_overrides[require_platform_admin_dep] = lambda: None
+    yield
+    app.dependency_overrides.pop(require_platform_admin_dep, None)

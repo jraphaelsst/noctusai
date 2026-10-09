@@ -15,7 +15,10 @@ import threading
 import time
 from typing import Dict, Optional, Tuple
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from noctusai_lib.api.auth.session.types import AuthContext
+
+from app.services.trusted_auth import require_platform_admin_dep
 from fastapi.responses import JSONResponse, RedirectResponse
 from supabase import create_client
 
@@ -23,7 +26,7 @@ from app.config import settings
 from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
-from app.sso_regime import build_sso_launch_url, sso_regime
+from app.sso_regime import ProductUrlUnresolvable, build_sso_launch_url, resolve_launch_base, sso_regime
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
 logger = logging.getLogger(__name__)
@@ -164,6 +167,17 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
     if not check_org_license(db, org_id, product.data["id"]):
         raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
 
+    # Resolve the launch URL BEFORE minting: an unresolvable product is a typed
+    # 409, never a token minted and then a 500.
+    try:
+        launch_base = resolve_launch_base(body.product_slug, product.data)
+    except ProductUrlUnresolvable:
+        logger.error("sso: no launch URL resolvable for product=%s", body.product_slug)
+        raise HTTPException(
+            status_code=409,
+            detail="Produto sem URL de acesso configurada — contate o suporte NoctusAI",
+        )
+
     # Generate SSO token
     sso_token = create_sso_token(
         user_id=user.id,
@@ -178,14 +192,24 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
     return SSOTokenResponse(
         sso_token=sso_token,
         product_slug=body.product_slug,
-        redirect_url=build_sso_launch_url(body.product_slug, product.data, sso_token),
+        redirect_url=build_sso_launch_url(body.product_slug, product.data, sso_token, base=launch_base),
     )
 
 
 @router.post("/validate")
 @limiter.limit("20/minute")
-async def validate_sso_token(request: Request, body: SSOValidateRequest):
-    """Validate an SSO token. Called by products to verify user access."""
+async def validate_sso_token(
+    request: Request,
+    body: SSOValidateRequest,
+    _: AuthContext = Depends(require_platform_admin_dep),
+):
+    """Decode an SSO token WITHOUT consuming it — platform admins only.
+
+    2026-10-09 (SSO roadmap follow-up): this was an unauthenticated,
+    non-consuming token oracle with no audience binding. No product or frontend
+    calls it (repo grep); n8n workflows could not be listed (API 401), so it is
+    gated to platform admins rather than removed. Products redeem via
+    POST /api/sso/session, which binds and consumes."""
     payload = verify_sso_token(body.token)
     return {
         "valid": True,
@@ -227,6 +251,15 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
     if not check_org_license(db, org_id, product.data["id"]):
         raise HTTPException(status_code=403, detail="Sem acesso a este produto")
 
+    try:
+        launch_base = resolve_launch_base(product_slug, product.data)
+    except ProductUrlUnresolvable:
+        logger.error("sso: no launch URL resolvable for product=%s", product_slug)
+        raise HTTPException(
+            status_code=409,
+            detail="Produto sem URL de acesso configurada — contate o suporte NoctusAI",
+        )
+
     # Generate SSO token
     sso_token = create_sso_token(
         user_id=user.id,
@@ -239,7 +272,7 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
 
     # Token transport per the catalog-derived regime (strict -> URL fragment,
     # legacy -> query), URL resolved through the seed `resolve_product_url`.
-    redirect_url = build_sso_launch_url(product_slug, product.data, sso_token)
+    redirect_url = build_sso_launch_url(product_slug, product.data, sso_token, base=launch_base)
     return RedirectResponse(url=redirect_url, status_code=302)
 
 
