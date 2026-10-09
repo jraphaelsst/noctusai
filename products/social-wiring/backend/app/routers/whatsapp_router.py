@@ -166,6 +166,49 @@ def _fire_and_forget(coro) -> None:
     task.add_done_callback(_bg_tasks.discard)
 
 
+def _payload_com_anexo(
+    payload: dict | None, *, media_url: str | None, mimetype: str | None, filename: str | None
+) -> dict | None:
+    """Mark the message as carrying an attachment (CONTRACT §2.1 `Mensagem.anexo`).
+    `documento_id` is filled by the document intake once the file is stored."""
+    if not media_url:
+        return payload
+    return {
+        **(payload or {}),
+        "anexo": {"mime": mimetype, "nome": filename, "documento_id": None},
+    }
+
+
+def _vincular_e_receber_midia(
+    *, connection, chat_id: str, stored_message, media_url, mimetype, filename
+) -> None:
+    """Store the chat<->card link (CONTRACT §2.1) and, when the chat belongs to a
+    card and the message carries media, hand the media to the document intake
+    (§2.3) detached from the webhook. Best-effort: a failure here must not
+    cost the (already durable) message."""
+    try:
+        from app.modules.card_hub.deps import get_card_hub_client
+        from app.services import chat_cliente_link
+        from app.services.documento_intake_service import processar_midia_do_webhook
+
+        cliente_id = chat_cliente_link.vincular_chat(
+            get_card_hub_client(), connection.org_id, connection.id, chat_id
+        )
+        if cliente_id and media_url:
+            _fire_and_forget(
+                processar_midia_do_webhook(
+                    connection.org_id, UUID(cliente_id),
+                    mensagem_id=stored_message.id, media_url=media_url,
+                    mimetype=mimetype, filename=filename,
+                )
+            )
+    except Exception:
+        logger.warning(
+            "whatsapp: chat link / media intake scheduling failed for chat=%s",
+            chat_id, exc_info=True,
+        )
+
+
 async def _register_contact_bg(
     *,
     base_url: str,
@@ -595,6 +638,12 @@ async def _process_waha_body(
         except Exception:
             logger.exception("media resolution failed for %s", sender)
 
+    if not message_body and media_url:
+        # Media with no caption and no resolvable text (e.g. no OpenAI key):
+        # still a message the operator must see and the document intake
+        # (CONTRACT §2.3) must process — never dropped silently.
+        message_body = "[Anexo recebido]"
+
     if not message_body:
         # No text, no resolvable media → nothing meaningful for the
         # chatbot to react to. ACK and move on.
@@ -624,7 +673,10 @@ async def _process_waha_body(
             body=message_body,
             provider_message_id=provider_message_id or None,
             authorized=True,
-            structured_payload=resolved_media.structured_payload if resolved_media else None,
+            structured_payload=_payload_com_anexo(
+                resolved_media.structured_payload if resolved_media else None,
+                media_url=media_url, mimetype=media_mimetype, filename=media_filename,
+            ),
             connection_id=connection.id if connection is not None else None,
             chat_id=chat_id,
         )
@@ -675,6 +727,11 @@ async def _process_waha_body(
                 connection.id, chat_id,
             )
             chat_summary = None
+
+        _vincular_e_receber_midia(
+            connection=connection, chat_id=chat_id, stored_message=stored_message,
+            media_url=media_url, mimetype=media_mimetype, filename=media_filename,
+        )
 
         bus = get_whatsapp_bus(cfg.redis_url)
         await publish_whatsapp_event(

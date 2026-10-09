@@ -122,6 +122,7 @@ import {
   DocumentoChecklistSection,
   progressoChecklist,
 } from "./DocumentoChecklistSection";
+import { ConversaDocumentosPanel } from "./ConversaDocumentosPanel";
 import { CasadoToggle } from "./CasadoToggle";
 import { DocumentoTipoSlot } from "./DocumentoTipoSlot";
 import { SLOTS_DO_CASAMENTO } from "./slotsDoCasamento";
@@ -845,6 +846,10 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
                   onReextrairDocumento={props.onReextrairDocumento}
                   reextraindoDocumentoId={props.reextraindoDocumentoId}
                 />
+
+                {props.roteirosClienteId && (
+                  <ConversaDocumentosPanel clienteId={props.roteirosClienteId} />
+                )}
 
                 {props.onCriarChecklistExtra && (
                   <CollapsibleSection

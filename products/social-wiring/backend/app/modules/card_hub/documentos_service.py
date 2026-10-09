@@ -61,9 +61,28 @@ logger = logging.getLogger(__name__)
 # rejection message stays truthful at both this size AND the legacy 800 KB
 # one (which used to integer-divide to a misleading "0MB").
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB — see the note above
+#: HEIC/HEIF (an iPhone's default photo format, and what a WhatsApp attachment
+#: from one can be) is accepted and CONVERTED to JPEG on ingest — nothing
+#: downstream (the extractors, the viewers) reads HEIC.
+MIMES_HEIC = frozenset({"image/heic", "image/heif"})
 ALLOWED_MIME_TYPES = frozenset(
-    {"application/pdf", "image/jpeg", "image/png", "image/webp"}
+    {"application/pdf", "image/jpeg", "image/png", "image/webp"} | MIMES_HEIC
 )
+
+
+def heic_para_jpeg(data: bytes) -> bytes:
+    """HEIC/HEIF bytes -> JPEG (Pillow + pillow-heif, declared by the seed lib).
+    Raises on an undecodable file."""
+    import io
+
+    from PIL import Image  # heavy: only HEIC pays for the import
+    from pillow_heif import register_heif_opener
+
+    register_heif_opener()
+    with Image.open(io.BytesIO(data)) as img:
+        out = io.BytesIO()
+        img.convert("RGB").save(out, format="JPEG", quality=92)
+    return out.getvalue()
 
 #: The retention sweep's scheduler job id. STABLE across releases:
 #: re-registering the same id replaces the job, a changed id would register a
@@ -96,10 +115,33 @@ async def upload_documento(
     data: bytes,
     tipo_documento: str,
     enviado_por: Optional[UUID],
+    permitir_a_classificar: bool = False,
 ) -> dict:
     """Validate → put → insert (seed). `max_bytes` is THIS module's
     `MAX_UPLOAD_BYTES`, read at CALL time — the one place the limit is
-    written, not a value frozen into the config when it was built."""
+    written, not a value frozen into the config when it was built.
+
+    HEIC/HEIF is converted to JPEG here, BEFORE the seed validates and stores:
+    the card upload and the WhatsApp intake share this one path.
+
+    `a_classificar` is the WhatsApp intake's holding type (migration 220) —
+    only the intake (`permitir_a_classificar=True`) may file under it; a person
+    uploading picks a real type."""
+    if tipo_documento == "a_classificar" and not permitir_a_classificar:
+        raise ValidationError_(
+            "tipo_documento 'a_classificar' é reservado à triagem do WhatsApp",
+            field="tipo_documento",
+        )
+    if (content_type or "").lower() in MIMES_HEIC:
+        try:
+            data = heic_para_jpeg(data)
+        except Exception as exc:  # noqa: BLE001 - surfaced as a 400, never a silent drop
+            raise ValidationError_(
+                "Não foi possível converter a imagem HEIC para JPEG.", field="mime_type"
+            ) from exc
+        content_type = "image/jpeg"
+        base = filename.rsplit(".", 1)[0] if "." in filename else filename
+        filename = f"{base}.jpg"
     return await seed_docs.upload_documento(
         card_hub_config(),
         client,

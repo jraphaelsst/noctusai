@@ -4842,14 +4842,13 @@ async def varrer_extracoes_pendentes(
             org_id = UUID(str(row["org_id"]))
             cliente_id = UUID(str(row["cliente_id"]))
             tipo_documento = str(row.get("tipo_documento") or "")
-            extractor = (
-                extractor_factory(str(org_id), tipo_documento)
-                if extractor_factory
-                else None
-            )
-            await extrair_identidade(
-                client, storage, org_id, cliente_id, documento_id,
-                extractor=extractor,
+            # Through the one `tipo -> extractor` seam (CONTRACT §7.4), like
+            # every other caller — not `extrair_identidade` by name.
+            from app.modules.card_hub.extracao import registry
+
+            await registry.extrair(
+                tipo_documento, client, storage, org_id, cliente_id, documento_id,
+                extractor_factory=extractor_factory,
                 notification_service=notification_service,
                 cep_lookup=cep_lookup,
             )

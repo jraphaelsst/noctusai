@@ -118,7 +118,7 @@ from app.services.whatsapp_realtime import (
     whatsapp_scope,
 )
 
-from app.services import table_reads
+from app.services import chat_cliente_link
 
 logger = logging.getLogger(__name__)
 
@@ -814,25 +814,9 @@ def _message_dto_from_row(row: dict[str, Any]) -> MessageDTO:
     )
 
 
-def _telefone_do_chat(chat_id: str) -> Optional[str]:
-    """The E.164 key for a chat, or None when it is not a phone conversation.
-
-    WhatsApp chat ids look like `5511974693365@c.us`. Groups (`@g.us`) and LID
-    identifiers (`@lid`) are not phone numbers and must not be matched against
-    one — `182364311425240` is a LID, and pattern-matching it onto a cliente
-    would put a stranger's name on a stranger's conversation.
-    """
-    if not chat_id or "@" not in chat_id:
-        return None
-    local, _, dominio = chat_id.partition("@")
-    if dominio not in ("c.us", "s.whatsapp.net"):
-        return None
-    digitos = "".join(c for c in local if c.isdigit())
-    # Brazilian mobiles are 12-13 digits with the country code; anything much
-    # shorter or longer is not a number this CRM would hold.
-    if not (10 <= len(digitos) <= 15):
-        return None
-    return f"+{digitos}"
+#: The matching rule lives in `app.services.chat_cliente_link` (CONTRACT §2.1),
+#: shared with the stored chat<->card link. Alias kept for existing imports.
+_telefone_do_chat = chat_cliente_link.telefone_do_chat
 
 
 def _nomear_pelos_clientes(org_id: UUID, items: list[ChatDTO]) -> None:
@@ -849,28 +833,18 @@ def _nomear_pelos_clientes(org_id: UUID, items: list[ChatDTO]) -> None:
     on the other end chose to be called, and overriding it with a CRM
     registration would be a downgrade, not an improvement.
     """
-    por_chave: dict[str, ChatDTO] = {}
-    for item in items:
-        chave = _telefone_do_chat(item.chat_id)
-        if chave:
-            por_chave.setdefault(chave, item)
-    if not por_chave:
-        return
-
+    por_chat: dict[str, ChatDTO] = {i.chat_id: i for i in items}
     try:
         client = get_scoped_admin_client("social_wiring")
-        linhas = table_reads.in_batched_rows(
-            client, "clientes", org_id, "chave_canonica", sorted(por_chave),
-            select="id,nome,chave_canonica",
-        )
+        achados = chat_cliente_link.clientes_por_chat(client, org_id, list(por_chat))
     except Exception:
         # The inbox must render even if the CRM lookup fails. A conversation
         # labelled with a phone number is the status quo; a 500 is not.
         logger.warning("whatsapp: não foi possível resolver nomes de clientes", exc_info=True)
         return
 
-    for linha in linhas:
-        item = por_chave.get(str(linha.get("chave_canonica") or ""))
+    for chat_id, linha in achados.items():
+        item = por_chat.get(chat_id)
         if item is None:
             continue
         item.cliente_id = str(linha["id"])

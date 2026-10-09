@@ -55,6 +55,8 @@ from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import empresas_service as empresas_svc
 from app.modules.card_hub import financiamento_service as financiamento_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
+from app.modules.card_hub.extracao import registry as extracao_registry
+from app.modules.card_hub.conversa_router import router as conversa_router
 from app.modules.card_hub import negociacao_estruturada_service as neg_estruturada_svc
 from app.modules.card_hub import negociacao_extracao_service as negociacao_extracao_svc
 from app.modules.card_hub import negociacao_service as negociacao_svc
@@ -155,6 +157,8 @@ router.include_router(propostas_router)
 router.include_router(partes_router)
 router.include_router(certidoes_partes_router)
 router.include_router(antigos_proprietarios_router)
+# WhatsApp conversation + document request/triage (CONTRACT §2) — .../conversa[...], .../documentos/a-classificar.
+router.include_router(conversa_router)
 
 #: Shared with the included routers — see `card_hub/auth.py`.
 _auth_parts = auth_parts
@@ -690,13 +694,14 @@ async def upload_documento_route(
     # `extracao_status='pendente'`; the job only ever moves that forward.
     if identidade_svc.deve_extrair(tipo_documento):
         background.add_task(
-            identidade_svc.extrair_identidade,
+            extracao_registry.extrair,
+            tipo_documento,
             client,
             storage,
             org_id,
             cliente_id,
             UUID(documento["id"]),
-            extractor=extractor_factory(str(org_id), tipo_documento),
+            extractor_factory=extractor_factory,
             notification_service=notification_service,
             cep_lookup=cep_lookup,
         )
@@ -727,13 +732,14 @@ async def reextrair_documento_route(
     _user, org_id = _auth_parts(auth)
     documento = docs_svc.reextrair_documento(client, org_id, cliente_id, documento_id)
     background.add_task(
-        identidade_svc.extrair_identidade,
+        extracao_registry.extrair,
+        documento["tipo_documento"],
         client,
         storage,
         org_id,
         cliente_id,
         documento_id,
-        extractor=extractor_factory(str(org_id), documento["tipo_documento"]),
+        extractor_factory=extractor_factory,
         notification_service=notification_service,
         cep_lookup=cep_lookup,
     )

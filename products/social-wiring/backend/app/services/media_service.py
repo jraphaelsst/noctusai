@@ -652,6 +652,11 @@ class MediaService:
         return (response.choices[0].message.content or "").strip()
 
     # ─── Network ───────────────────────────────────────────────────────
+    async def download(self, url: str) -> bytes:
+        """Public WAHA media download (same rewrite + API key as the chatbot
+        path) — the document intake's downloader (CONTRACT §2.3)."""
+        return await self._download(url)
+
     async def _download(self, url: str) -> bytes:
         """Download media bytes from WAHA.
 

@@ -205,6 +205,8 @@ const clienteBase = (clienteId: string) => `/api/clientes/${encodeURIComponent(c
 // ─── Generated (seed) hooks, under SW's historical names ───────────────────
 
 export { flattenTimeline };
+/** The card's query family — `useConversaDocumentos` nests under it so every card-wide invalidation also refreshes the conversation + triage list. */
+export const cardFamilyKey = FAMILY_KEY;
 export const useCardResumo = cardHub.useCardResumo;
 export const useTimeline = cardHub.useTimeline;
 export const useNotaMutations = cardHub.useNotaMutations;

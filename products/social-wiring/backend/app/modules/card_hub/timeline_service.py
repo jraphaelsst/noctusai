@@ -212,6 +212,10 @@ def _gather_sistema(
                     "payload": {"evento": "merge_desfeito", "detalhe": m.get("nome_absorvido")},
                 }
             )
+    # CONTRACT §2.2 — each "Pedir documentos" sent over WhatsApp.
+    from app.modules.card_hub import conversa_service
+
+    events.extend(conversa_service.eventos_documentos_solicitados(client, org_id, cliente_id))
     return events
 
 

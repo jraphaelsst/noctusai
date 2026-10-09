@@ -87,6 +87,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import ValidationError_
 
+from app.services import chat_cliente_link
 from app.services import identidade_service as ident
 from app.services import identificadores as idf
 from app.services import table_reads
@@ -779,6 +780,20 @@ def _enrich_cliente(
         _t(client, "clientes").update(patch).eq("id", cliente_id).execute()
 
 
+def _vincular_chats_best_effort(
+    client: Any, org_id: UUID, cliente_id: Any, chave_canonica: Optional[str]
+) -> None:
+    """CONTRACT §2.1: a created/merged cliente claims the WhatsApp chats of its
+    phone. A failed link must never fail the create or the merge — the inbound
+    webhook re-resolves it on the next message — but it is logged, not hidden."""
+    try:
+        chat_cliente_link.vincular_chats_do_cliente(client, org_id, cliente_id, chave_canonica)
+    except Exception:
+        logger.warning(
+            "clientes: could not link whatsapp chats to cliente %s", cliente_id, exc_info=True
+        )
+
+
 def _create_clientes_for_cluster(
     client: Any,
     org_id: UUID,
@@ -814,6 +829,7 @@ def _create_clientes_for_cluster(
     report.clientes_created += 1
     if not dry_run:
         _t(client, "clientes").insert(row).execute()
+        _vincular_chats_best_effort(client, org_id, cliente_id, chave_canonica)
 
     # The touch carries the REAL key even when the cliente itself does not
     # claim it (review candidates) — see the migration header.
@@ -1335,6 +1351,13 @@ def merge_clientes(
         cliente_id_absorvido=cliente_id_absorvido,
         cliente_id_sobrevivente=cliente_id_sobrevivente,
     )
+
+    try:
+        chat_cliente_link.reapontar_chats(
+            client, org_id, cliente_id_absorvido, cliente_id_sobrevivente
+        )
+    except Exception:
+        logger.warning("clientes: could not repoint whatsapp chats on merge", exc_info=True)
 
     merge_id = str(uuid4())
     _t(client, "cliente_merges").insert(
