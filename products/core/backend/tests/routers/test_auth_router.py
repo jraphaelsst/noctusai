@@ -200,17 +200,37 @@ class TestGetMe:
 # ---------------------------------------------------------------------------
 
 class TestLogout:
-    def test_logout_success(self, client):
-        mock_sb = client.mock_supabase
-        mock_sb.auth.sign_out = MagicMock()
+    def test_logout_revokes_every_session_with_the_users_jwt(self, client):
+        from app.routers import sso as sso_module
 
-        resp = client.post("/api/auth/logout")
+        admin_sign_out = MagicMock()
+        client.mock_supabase.auth.admin.sign_out = admin_sign_out
+        sso_module._session_cache.clear()
+        sso_module._session_cache.set(
+            sso_module._ScopedSSOSessionCache.scoped_key("test@example.com", "org-1", "p1"),
+            {"access_token": "cached"},
+        )
+
+        resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+
         assert resp.status_code == 200
         assert resp.json() == {"ok": True}
+        # The caller's access token (not the user id) and the GLOBAL scope.
+        admin_sign_out.assert_called_once_with("test-token-valid", scope="global")
+        # Cached per-product SSO sessions of that user are flushed.
+        assert sso_module._session_cache._store == {}
+
+    def test_logout_revocation_failure_is_not_ok(self, client, caplog):
+        client.mock_supabase.auth.admin.sign_out = MagicMock(side_effect=RuntimeError("gotrue down"))
+        with caplog.at_level("ERROR"):
+            resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
+        assert resp.status_code == 502
+        assert resp.json().get("ok") is not True
+        assert "global sign_out failed" in caplog.text
 
     def test_logout_ends_every_org_selection(self, client):
         mock_sb = client.mock_supabase
-        mock_sb.auth.sign_out = MagicMock()
+        mock_sb.auth.admin.sign_out = MagicMock()
         mock_sb.set_rpc_data("platform_org_selection_end", 1)
 
         resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
@@ -221,7 +241,7 @@ class TestLogout:
 
     def test_logout_still_ok_when_ending_selections_fails(self, client, caplog):
         mock_sb = client.mock_supabase
-        mock_sb.auth.sign_out = MagicMock()
+        mock_sb.auth.admin.sign_out = MagicMock()
 
         def boom(name, params=None):
             raise RuntimeError("db down")
@@ -235,6 +255,35 @@ class TestLogout:
     def test_logout_unauthenticated(self, unauth_client):
         resp = unauth_client.post("/api/auth/logout")
         assert resp.status_code == 401
+
+
+class TestChangePasswordRevokesOtherSessions:
+    def test_passes_the_jwt_with_scope_others(self, client):
+        admin = client.mock_supabase.auth.admin
+        admin.update_user_by_id = MagicMock()
+        admin.sign_out = MagicMock()
+        resp = client.post(
+            "/api/auth/change-password",
+            json={"new_password": "longenough1"},
+            headers={"Authorization": "Bearer t"},
+        )
+        assert resp.status_code == 200
+        admin.sign_out.assert_called_once_with("test-token-valid", scope="others")
+        assert resp.json()["other_sessions_revoked"] is True
+
+    def test_revocation_failure_is_surfaced_not_swallowed(self, client, caplog):
+        admin = client.mock_supabase.auth.admin
+        admin.update_user_by_id = MagicMock()
+        admin.sign_out = MagicMock(side_effect=RuntimeError("boom"))
+        with caplog.at_level("ERROR"):
+            resp = client.post(
+                "/api/auth/change-password",
+                json={"new_password": "longenough1"},
+                headers={"Authorization": "Bearer t"},
+            )
+        assert resp.status_code == 200
+        assert resp.json()["other_sessions_revoked"] is False
+        assert "could not revoke other sessions" in caplog.text
 
 
 # ---------------------------------------------------------------------------

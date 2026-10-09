@@ -110,8 +110,8 @@ export function Layout({ children }: { children?: React.ReactNode }) {
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate('/login');
   }
 
@@ -157,6 +157,7 @@ export function Layout({ children }: { children?: React.ReactNode }) {
           user={headerUser}
           onMenuToggle={onMenuToggle}
           onLogout={handleLogout}
+          logoutLabel="Sair de todos os dispositivos"
           theme={theme}
           onThemeToggle={toggleTheme}
           onUpdateProfile={handleUpdateProfile}

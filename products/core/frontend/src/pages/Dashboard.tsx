@@ -60,7 +60,7 @@ export function Dashboard() {
       try {
         meRes = await api.get('/api/auth/me');
       } catch {
-        logout();
+        await logout();
         navigate('/login');
         setLoading(false);
         return;
@@ -112,8 +112,8 @@ export function Dashboard() {
     }
   }
 
-  function handleLogout() {
-    logout();
+  async function handleLogout() {
+    await logout();
     navigate('/login');
   }
 

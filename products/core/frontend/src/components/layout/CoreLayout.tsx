@@ -28,8 +28,8 @@ export function CoreLayout({ children }: { children: React.ReactNode }) {
     if (res.refresh_token) setRefreshToken(res.refresh_token);
   };
 
-  const onExpired = () => {
-    logout();
+  const onExpired = async () => {
+    await logout();
     window.location.href = '/login';
   };
 

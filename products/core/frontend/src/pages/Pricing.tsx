@@ -141,7 +141,7 @@ export function Pricing({ onRedirect = redirectTo }: { onRedirect?: (url: string
     <div className="min-h-screen bg-background">
       <Header
         user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
-        onLogout={() => { logout(); navigate('/login'); }}
+        onLogout={async () => { await logout(); navigate('/login'); }}
         theme={theme}
         onThemeToggle={toggleTheme}
         actions={

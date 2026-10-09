@@ -76,3 +76,26 @@ class TestCacheTTL:
     def test_ttl_is_five_minutes(self):
         """Phase 6 decision: TTL reduced from 3500s (58min) to 300s (5min)."""
         assert sso_module._CACHE_TTL == 300
+
+
+class TestScopedSessionCache:
+    """Cache is keyed (email, org_id, product_slug): no cross-origin / cross-org reuse."""
+
+    def test_distinct_scopes_are_distinct_entries_and_one_flush_clears_all(self):
+        _reset_cache()
+        key = sso_module._ScopedSSOSessionCache.scoped_key
+        sso_module._session_cache.set(key("a@example.com", "org-1", "p1"), {"t": 1})
+        sso_module._session_cache.set(key("a@example.com", "org-2", "p1"), {"t": 2})
+        sso_module._session_cache.set(key("a@example.com", "org-1", "p2"), {"t": 3})
+        sso_module._session_cache.set(key("ab@example.com", "org-1", "p1"), {"t": 4})
+
+        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p1")) == {"t": 1}
+        assert sso_module._session_cache.get(key("a@example.com", "org-2", "p1")) == {"t": 2}
+        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p2")) == {"t": 3}
+
+        assert sso_module.invalidate_sso_cache_for_user("a@example.com") is True
+        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p1")) is None
+        assert sso_module._session_cache.get(key("a@example.com", "org-2", "p1")) is None
+        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p2")) is None
+        # A different user whose email merely starts with the same text survives.
+        assert sso_module._session_cache.get(key("ab@example.com", "org-1", "p1")) == {"t": 4}

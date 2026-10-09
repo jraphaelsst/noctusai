@@ -35,7 +35,7 @@ interface AuthState {
 }
 
 interface AuthContextType extends AuthState {
-  logout: () => void;
+  logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -45,7 +45,7 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isMarketing: false,
   loading: true,
-  logout: () => {},
+  logout: async () => {},
   refresh: async () => {},
 });
 
@@ -110,7 +110,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }
 
-  function logout() {
+  // Core logout ends the user's sessions EVERYWHERE (owner decision 2026-10-09):
+  // the server revokes first (it needs the bearer), then local state is cleared
+  // regardless of the outcome -- a network error must never leave the user logged in.
+  async function logout() {
+    try {
+      if (isAuthenticated()) await api.post('/api/auth/logout', {});
+    } catch (err) {
+      console.error('core logout: server-side revocation failed; clearing local session anyway', err);
+    }
     clearToken();
     setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
   }

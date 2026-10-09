@@ -318,11 +318,20 @@ async def change_password(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # Revoke all other sessions for this user (best-effort)
+    # Revoke every OTHER session of this user. GoTrue's admin sign_out takes the
+    # session's access-token JWT (NOT the user id -- passing the id never worked and
+    # the old broad except hid that). The password itself IS already changed, so a
+    # failed revocation does not roll the change back; but it is surfaced to the
+    # caller (`other_sessions_revoked: false`) and logged at ERROR, never swallowed.
+    other_sessions_revoked = True
     try:
-        db.auth.admin.sign_out(str(user.id), scope="others")
-    except Exception as exc:
-        logger.warning("auth: sign_out other sessions failed for user_id=%s (%s); password change proceeds", user.id, exc)
+        db.auth.admin.sign_out(token, scope="others")
+    except Exception:
+        other_sessions_revoked = False
+        logger.error(
+            "auth: could not revoke other sessions after password change user_id=%s",
+            user.id, exc_info=True,
+        )
 
     # Audit log (best-effort)
     try:
@@ -335,7 +344,11 @@ async def change_password(
     except Exception as exc:
         logger.warning("auth: password-change audit log failed for user_id=%s (%s)", user.id, exc)
 
-    return {"ok": True, "message": "Senha atualizada com sucesso"}
+    return {
+        "ok": True,
+        "message": "Senha atualizada com sucesso",
+        "other_sessions_revoked": other_sessions_revoked,
+    }
 
 
 @router.post("/refresh")
@@ -409,13 +422,29 @@ async def update_profile(
 
 @router.post("/logout")
 async def logout(authorization: Optional[str] = Header(None)):
-    """Sign out the current user."""
+    """Sign the current user out EVERYWHERE (Supabase scope "global").
+
+    Owner decision 2026-10-09: logging out of core ends the user's sessions on every
+    product and every other device. The previous implementation called sign_out() on
+    a fresh anonymous client, which revokes nothing. GoTrue's admin sign_out takes the
+    caller's access-token JWT. A revocation that fails is an error response -- never
+    ``ok: true`` over a session that is still alive.
+    """
     user, token = await get_current_user(authorization)
-    client = create_client(settings.supabase_url, settings.supabase_anon_key)
     try:
-        client.auth.sign_out()
+        get_admin_client().auth.admin.sign_out(token, scope="global")
     except Exception as exc:
-        logger.warning("auth: client.sign_out() failed for user_id=%s (%s); logout still returns ok", user.id, exc)
+        logger.error("auth: global sign_out failed user_id=%s", user.id, exc_info=True)
+        if is_authoritative_token_rejection(exc):
+            # Supabase already considers this token dead -- the session is gone.
+            raise HTTPException(status_code=401, detail="Sessão inválida") from exc
+        raise HTTPException(status_code=502, detail="Não foi possível encerrar as sessões") from exc
+
+    # Core's cached per-product SSO sessions would otherwise keep handing out the
+    # (now revoked) tokens for up to the cache TTL.
+    from app.routers.sso import invalidate_sso_cache_for_user
+    invalidate_sso_cache_for_user(getattr(user, "email", None) or "")
+
     # Platform org picker: logging out of core ends ALL of the user's live selections
     # (ended_by='logout') -- the next login starts clean. The sign-out itself is
     # best-effort, but a selection that could not be ended is logged LOUDLY: the

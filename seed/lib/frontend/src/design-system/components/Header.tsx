@@ -37,6 +37,8 @@ export interface HeaderProps {
   platformUrl?: string;
   /** Called when logoutBehavior is "signout". Performs the actual sign-out. */
   onLogout: () => void;
+  /** Tooltip/aria label of the sign-out control when logoutBehavior is "signout" (default "Sair"). */
+  logoutLabel?: string;
   /** Current theme: 'light' or 'dark' */
   theme: "light" | "dark";
   /** Called when user toggles theme */
@@ -59,6 +61,7 @@ export function Header({
   logoutBehavior = "signout",
   platformUrl,
   onLogout,
+  logoutLabel = "Sair",
   theme,
   onThemeToggle,
   actions,
@@ -189,7 +192,8 @@ export function Header({
                         onLogout();
                       }
                     }}
-                    title={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : "Sair"}
+                    title={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : logoutLabel}
+                    aria-label={logoutBehavior === "redirect" ? "Voltar ao NoctusAI" : logoutLabel}
                     className="h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
                   >
                     <LogOut className="h-4 w-4" />
