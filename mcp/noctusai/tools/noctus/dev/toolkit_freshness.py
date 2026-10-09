@@ -446,6 +446,8 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--task-branch-parent={kwargs['parent']}")
         if kwargs.get("wire_env") is False:
             argv.append("--task-branch-no-wire-env")
+        if kwargs.get("wire_products") is not None:
+            argv.append(f"--task-branch-wire-products={','.join(str(p) for p in kwargs['wire_products'])}")
         if kwargs.get("verbose"):
             argv.append("--task-branch-verbose")
         if kwargs.get("keep_worktree"):
@@ -477,6 +479,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",
         "role", "parent", "wire_env", "verbose", "keep_worktree",
+        "wire_products",
     }),
 }
 

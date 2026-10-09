@@ -627,6 +627,38 @@ def _derive_seed_frontends(primary_root: str, fs: "FsOps") -> list[str]:
     return sorted(found) if found else list(_SEED_FRONTENDS)
 
 
+WIRE_ALL_PRODUCTS = "*"
+
+
+def _derive_wire_scope(paths: list[str] | None,
+                       wire_products: list[str] | None) -> set[str] | None:
+    """Which products' `node_modules` a fresh worktree gets overlaid with.
+    `None` = every product; a set (possibly empty) = only those slugs.
+
+    WHY A SCOPE (2026-10-09). The per-entry overlay is one symlink per
+    top-level package, and wiring EVERY product cost ~5,865 links per
+    worktree (8 live worktrees = 46,920) for slices that touched one product
+    or none. The slice already declares what it touches — its pointer
+    `paths` — so the scope is DERIVED from those, never a second list to keep
+    in sync: a path under `products/<slug>/` puts `<slug>` in scope.
+
+    `wire_products` overrides the derivation outright: an explicit slug list,
+    or `["*"]` for the old wire-everything behavior (a seed-frontend slice
+    that wants to build every consumer). No product paths and no override ⇒
+    the empty set: `.env`, the toolkit and seed node_modules are still wired
+    (a handful of links); product node_modules are not, and every product
+    left out is REPORTED in `skipped` with the exact opt-in — never silent."""
+    if wire_products is not None:
+        cleaned = {p.strip() for p in wire_products if p and p.strip()}
+        return None if WIRE_ALL_PRODUCTS in cleaned else cleaned
+    scope: set[str] = set()
+    for raw in paths or []:
+        parts = Path(str(raw).strip().lstrip("./")).parts
+        if len(parts) >= 2 and parts[0] == "products":
+            scope.add(parts[1])
+    return scope
+
+
 class FsOps:
     """Filesystem seam for env-wiring — real `os`/`pathlib` by default; the test
     injects a fixture-backed instance so the planner runs over a tmp tree."""
@@ -676,15 +708,18 @@ class FsOps:
         Path(p).write_text(content, encoding="utf-8")
 
 
-def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[dict], list[dict]]:
+def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
+                     products: set[str] | None = None) -> tuple[list[dict], list[dict]]:
     """Pure (read-only) planner. Returns (wire, skipped): `wire` = symlink/dir
     specs {link, target, kind} the recipe WOULD create; `skipped` = {link,
     reason} for anything best-effort skipped (absent primary source / a real
-    dir already in the worktree). Order is deterministic: seed node_modules
-    (whole-dir symlink — safe, see module doc), then per-product node_modules
-    (per-entry overlay — the primary-contamination fix, see module doc) + the
-    two @noctusai re-points. The repo-root `.env` is planned FIRST — see
-    `_link_root_dotenv`."""
+    dir already in the worktree / a product outside `products`). Order is
+    deterministic: seed node_modules (whole-dir symlink — safe, see module
+    doc), then per-product node_modules (per-entry overlay — the
+    primary-contamination fix, see module doc) + the two @noctusai
+    re-points. The repo-root `.env` is planned FIRST — see
+    `_link_root_dotenv`. `products` scopes the per-product overlay (`None` =
+    every product) — see `_derive_wire_scope`."""
     wire: list[dict] = []
     skipped: list[dict] = []
 
@@ -811,6 +846,11 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps) -> tuple[list[d
     # (`_derive_product_repoints`) — never a single fleet-wide assumption.
     for slug in fs.list_product_frontends(primary_root):
         rel_fe = f"products/{slug}/frontend"
+        if products is not None and slug not in products:
+            skipped.append({"link": os.path.join(wt_root, rel_fe, "node_modules"), "reason": (
+                f"outside this slice's wire scope — pass wire_products=['{slug}'] "
+                f"(or a path under products/{slug}/) to overlay its node_modules")})
+            continue
         has_node_modules = _link_product_node_modules(rel_fe)
         nm = os.path.join(wt_root, rel_fe, "node_modules")
         if not has_node_modules:
@@ -1614,6 +1654,7 @@ def task_branch(
     role: str | None = None,
     parent: str | None = None,
     verbose: bool = False,
+    wire_products: list[str] | None = None,
 ) -> dict[str, Any]:
     """`action` ∈ {status, start, integrate, cleanup}.
 
@@ -1666,6 +1707,9 @@ def task_branch(
     a missing local install (the 2026-09-17 four-incidents-one-session
     recurrence this formalizes). Pass `wire_env=False` to skip it (e.g. a
     doc-only slice on a large repo where the symlink pass is pure overhead).
+    The per-product overlay is SCOPED by `paths` (a path under
+    `products/<slug>/` puts `<slug>` in scope); `wire_products` overrides
+    (`["*"]` = every product) — see `_derive_wire_scope`.
     All target paths are gitignored ⇒ never staged. Honors dry-run: without
     `confirm` it REPORTS the plan (the symlinks it WOULD create) without
     touching the filesystem. Best-effort: missing primary node_modules (the
@@ -1718,6 +1762,10 @@ def task_branch(
     # tree here would write REAL symlinks into the caller's actual
     # `.claude/worktrees/<slug>` as a side effect of running a unit test.
     wire_env = wire_env and (primary_root is not None or run is None)
+    # Which products get a node_modules overlay — DERIVED from the slice's
+    # own `paths` unless `wire_products` overrides (see `_derive_wire_scope`).
+    wire_scope = _derive_wire_scope(paths, wire_products)
+    scope_label: Any = WIRE_ALL_PRODUCTS if wire_scope is None else sorted(wire_scope)
     auto_cleanup = (not keep_worktree) if keep_worktree is not None else (run is None)
     # Same production-only rule: an injected `run` must never write the REAL
     # branch-tree ledger as a side effect of a unit test.
@@ -1789,14 +1837,14 @@ def task_branch(
             plan_extra: dict[str, Any] = {}
             if wire_env:
                 proot, wt_root = _roots()
-                would, skipped = _plan_env_wiring(proot, wt_root, fsops)
+                would, skipped = _plan_env_wiring(proot, wt_root, fsops, wire_scope)
                 if verbose:
-                    plan_extra = {"wire_env": True, "would_wire": would, "skipped": skipped}
+                    plan_extra = {"wire_env": True, "wire_scope": scope_label, "would_wire": would, "skipped": skipped}
                 else:
                     report_path = _write_wire_env_report(
-                        proot, slug, {"wire_env": True, "would_wire": would, "skipped": skipped})
+                        proot, slug, {"wire_env": True, "wire_scope": scope_label, "would_wire": would, "skipped": skipped})
                     plan_extra = {
-                        "wire_env": True,
+                        "wire_env": True, "wire_scope": scope_label,
                         "would_wire": _compact_wire_list(would),
                         "skipped": _compact_wire_list(skipped),
                         "full_report": report_path,
@@ -1829,17 +1877,17 @@ def task_branch(
         wired_count = 0
         if wire_env:
             proot, wt_root = _roots()
-            would, skipped = _plan_env_wiring(proot, wt_root, fsops)
+            would, skipped = _plan_env_wiring(proot, wt_root, fsops, wire_scope)
             created, failed = _apply_env_wiring(would, fsops)
             wired_count = len(created)
             all_skipped = skipped + failed
             if verbose:
-                wired_extra = {"wire_env": True, "wired": created, "skipped": all_skipped}
+                wired_extra = {"wire_env": True, "wire_scope": scope_label, "wired": created, "skipped": all_skipped}
             else:
                 report_path = _write_wire_env_report(
-                    proot, slug, {"wire_env": True, "wired": created, "skipped": all_skipped})
+                    proot, slug, {"wire_env": True, "wire_scope": scope_label, "wired": created, "skipped": all_skipped})
                 wired_extra = {
-                    "wire_env": True,
+                    "wire_env": True, "wire_scope": scope_label,
                     "wired": _compact_wire_list(created),
                     "skipped": _compact_wire_list(all_skipped),
                     "full_report": report_path,
@@ -2433,7 +2481,13 @@ def register(server) -> None:
             "product's own package.json, at the worktree's seed copies) so a "
             "vite build / vitest / noctus.dev.predeploy_check can run THERE "
             "without false-redding on a missing local install (pass "
-            "wire_env=False to skip for a doc-only slice); all gitignored ⇒ "
+            "wire_env=False to skip for a doc-only slice). The per-product "
+            "node_modules overlay is SCOPED (2026-10-09): only products named "
+            "by a `paths` entry under products/<slug>/ are overlaid (~200-490 "
+            "links each, vs ~5,865 for the whole fleet); no product paths ⇒ "
+            "none (.env/toolkit/seed still wired); wire_products=[slugs] "
+            "overrides, ['*'] = every product; each left-out product is "
+            "reported in skipped with the opt-in; all gitignored ⇒ "
             "never staged; best-effort (missing/real-dir paths reported in "
             "skipped — a missing PRIMARY node_modules names the exact `npm "
             "install` to run — never clobbered) and dry-run-honored (reports "
@@ -2484,10 +2538,12 @@ def register(server) -> None:
         agent: str | None = None,
         role: str | None = None,
         parent: str | None = None,
+        wire_products: list[str] | None = None,
     ) -> dict:
         return task_branch(action=action, slug=slug, confirm=confirm,
                            keep_worktree=keep_worktree,
                            wire_env=wire_env, verbose=verbose,
+                           wire_products=wire_products,
                            allow_stale_toolkit=allow_stale_toolkit,
                            project=project, brief=brief, paths=paths,
                            agent=agent, role=role, parent=parent)

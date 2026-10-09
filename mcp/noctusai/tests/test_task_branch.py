@@ -748,7 +748,8 @@ def test_two_worktrees_wire_env_never_contaminates_primary(tmp_path):
 
     for slug, wt in (("peer-one", wt1), ("peer-two", wt2)):
         res = T.task_branch(action="start", slug=slug, confirm=True, verbose=True,
-                            wire_env=True, primary_root=str(primary), run=fake)
+                            wire_env=True, primary_root=str(primary), run=fake,
+                            paths=["products/alpha/frontend/src/App.tsx"])
         assert res["status"] == "started" and not res["wired"] == []
 
     # the PRIMARY's own product node_modules never grew an @noctusai entry —
@@ -773,7 +774,8 @@ def test_start_wire_env_dry_run_reports_plan_without_creating(tmp_path):
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
 
     res = T.task_branch(action="start", slug="feat-x", confirm=False, verbose=True,
-                        wire_env=True, primary_root=str(primary), run=fake)
+                        wire_env=True, primary_root=str(primary), run=fake,
+                        paths=["products/alpha/frontend/src/App.tsx"])
     assert res["status"] == "planned" and res["wire_env"] is True
     would_links = {w["link"] for w in res["would_wire"]}
     assert str(wt_root / "seed/lib/frontend/node_modules") in would_links
@@ -792,7 +794,8 @@ def test_start_wire_env_confirm_creates_symlinks(tmp_path):
     fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
 
     res = T.task_branch(action="start", slug="feat-y", confirm=True, verbose=True,
-                        wire_env=True, primary_root=str(primary), run=fake)
+                        wire_env=True, primary_root=str(primary), run=fake,
+                        paths=["products/alpha/frontend/src/App.tsx"])
     assert res["status"] == "started" and res["wire_env"] is True
     # seed node_modules: whole-dir symlink to primary (safe — nothing nests here)
     seed_nm = wt_root / "seed/lib/frontend/node_modules"
@@ -3072,3 +3075,115 @@ def test_standalone_cleanup_schedules_the_detached_tail():
                         post_integrate=lambda r, d, rm: {"status": "scheduled", "log": "L"})
     assert res["status"] == "cleaned", res
     assert settle_calls == [] and res["post_integrate"]["status"] == "scheduled"
+
+# ── wire_env SCOPE (2026-10-09): overlay only the products the slice touches ──
+# Wiring every product cost ~5,865 links per worktree (46,920 across 8 live
+# worktrees) for slices touching one product or none. The scope is DERIVED
+# from the slice's own `paths`; `wire_products` overrides; ['*'] = everything.
+
+def test_derive_wire_scope_from_paths():
+    assert T._derive_wire_scope(
+        ["products/alpha/frontend/src/App.tsx", "./products/beta/backend/x.py",
+         "seed/lib/frontend/src/a.ts", "KNOWLEDGE-BASE/INDEX.md"], None) == {"alpha", "beta"}
+
+
+def test_derive_wire_scope_no_product_paths_is_lean():
+    assert T._derive_wire_scope(None, None) == set()
+    assert T._derive_wire_scope(["mcp/noctusai/cli.py", "products"], None) == set()
+
+
+def test_derive_wire_scope_override_wins_and_star_means_all():
+    assert T._derive_wire_scope(["products/alpha/x"], ["gamma", " "]) == {"gamma"}
+    assert T._derive_wire_scope(["products/alpha/x"], []) == set()
+    assert T._derive_wire_scope(None, ["*"]) is None
+    assert T._derive_wire_scope(None, ["alpha", "*"]) is None
+
+
+def _entry_links(wire, slug):
+    marker = f"/products/{slug}/frontend/node_modules/"
+    return [w for w in wire if w["kind"] == "node_modules_entry" and marker in w["link"]]
+
+
+def test_plan_env_wiring_scoped_overlays_only_in_scope_products(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "s"
+    _seed_primary(primary, slugs=("alpha", "beta", "gamma"),
+                  product_nm_entries=("react", "vite", "zod"))
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps(), {"beta"})
+
+    assert len(_entry_links(wire, "beta")) == 3
+    assert _entry_links(wire, "alpha") == [] and _entry_links(wire, "gamma") == []
+    # left-out products are REPORTED with the opt-in, never silently dropped
+    out_of_scope = [s for s in skipped if "outside this slice's wire scope" in s["reason"]]
+    assert {Path(s["link"]).parts[-3] for s in out_of_scope} == {"alpha", "gamma"}
+    assert all("wire_products=" in s["reason"] for s in out_of_scope)
+    # no @noctusai re-point is planned into an out-of-scope product either
+    assert not any(w["kind"] == "@noctusai" and "/products/alpha/" in w["link"] for w in wire)
+    # .env / toolkit / seed node_modules stay wired regardless of scope
+    kinds = {w["kind"] for w in wire}
+    assert {"dotenv", "node_modules"} <= kinds
+
+
+def test_plan_env_wiring_empty_scope_wires_no_product_entries(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "s"
+    _seed_primary(primary, slugs=("alpha", "beta"), product_nm_entries=("react", "vite"))
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps(), set())
+
+    assert not any(w["kind"] in ("node_modules_entry", "@noctusai", "ensure_real_dir") for w in wire)
+    assert sum("outside this slice's wire scope" in s["reason"] for s in skipped) == 2
+
+
+def test_plan_env_wiring_none_scope_keeps_wire_everything(tmp_path):
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "s"
+    _seed_primary(primary, slugs=("alpha", "beta"), product_nm_entries=("react",))
+    _seed_worktree_tree(wt_root)
+
+    wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps(), None)
+
+    assert len(_entry_links(wire, "alpha")) == 1 and len(_entry_links(wire, "beta")) == 1
+    assert not any("outside this slice's wire scope" in s["reason"] for s in skipped)
+
+
+def test_wire_env_link_budget_does_not_regress(tmp_path):
+    """REGRESSION GATE on the per-worktree link count. A fleet-shaped fixture
+    (17 products × 300 vendor entries ≈ the live 5,865) must plan a handful of
+    links for a slice that names no product, and only ONE product's worth for
+    a single-product slice. If someone restores wire-everything as the
+    default, this fails with the count instead of a 47k-link surprise."""
+    primary = tmp_path / "primary"
+    wt_root = primary / ".claude" / "worktrees" / "s"
+    slugs = tuple(f"p{i:02d}" for i in range(17))
+    entries = tuple(f"pkg{i:03d}" for i in range(300))
+    _seed_primary(primary, slugs=slugs, product_nm_entries=entries)
+    _seed_worktree_tree(wt_root)
+
+    lean, _ = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps(),
+                                 T._derive_wire_scope(["mcp/noctusai/cli.py"], None))
+    one, _ = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps(),
+                                T._derive_wire_scope(["products/p03/frontend/src/x.tsx"], None))
+    everything, _ = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps(),
+                                       T._derive_wire_scope(None, ["*"]))
+
+    assert len(lean) <= 10, f"no-product slice planned {len(lean)} links"
+    assert len(one) <= len(entries) + 10, f"one-product slice planned {len(one)} links"
+    assert len(everything) >= len(slugs) * len(entries)  # the opt-in still works
+
+
+def test_task_branch_start_dry_run_reports_wire_scope(tmp_path):
+    primary = tmp_path / "primary"
+    _seed_primary(primary, slugs=("alpha", "beta"), product_nm_entries=("react",))
+    (primary / ".claude" / "worktrees" / "s").mkdir(parents=True)
+    _seed_worktree_tree(primary / ".claude" / "worktrees" / "s")
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    r = T.task_branch(action="start", slug="s", run=fake, primary_root=str(primary),
+                      paths=["products/beta/frontend/src/a.tsx"], verbose=True)
+    assert r["status"] == "planned"
+    assert r["wire_scope"] == ["beta"]
+    assert _entry_links(r["would_wire"], "alpha") == []
+    assert len(_entry_links(r["would_wire"], "beta")) == 1

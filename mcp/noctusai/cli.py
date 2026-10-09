@@ -369,6 +369,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-role", default=None, help="With --task-branch action=start: the branch-tree pointer's role.")
     parser.add_argument("--task-branch-parent", default=None, help="With --task-branch action=start: the branch-tree pointer's parent branch.")
     parser.add_argument("--task-branch-no-wire-env", action="store_true", help="With --task-branch action=start: skip the §5a verification-env auto-wiring (default is to wire it).")
+    parser.add_argument("--task-branch-wire-products", default=None, help="With --task-branch action=start: comma-separated product slugs whose node_modules wire_env overlays (overrides the scope derived from --task-branch-paths; '*' = every product).")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
@@ -3044,6 +3045,8 @@ def main():
         from tools.noctus.dev.task_branch import task_branch
         raw_paths = getattr(args, "task_branch_paths", None)
         paths = [p.strip() for p in raw_paths.split(",") if p.strip()] if raw_paths else None
+        raw_wp = getattr(args, "task_branch_wire_products", None)
+        wire_products = [p.strip() for p in raw_wp.split(",") if p.strip()] if raw_wp is not None else None
         r = task_branch(
             action=args.task_branch,
             slug=getattr(args, "task_branch_slug", None),
@@ -3055,6 +3058,7 @@ def main():
             project=getattr(args, "task_branch_project", None),
             brief=getattr(args, "task_branch_brief", None),
             paths=paths,
+            wire_products=wire_products,
             agent=getattr(args, "task_branch_agent", None),
             role=getattr(args, "task_branch_role", None),
             parent=getattr(args, "task_branch_parent", None),
