@@ -51,7 +51,7 @@ export function VisitasSemResposta() {
             {data.map((r) => (
               <li key={r.roteiro_id}>
                 <Link
-                  to={`/clientes/${r.cliente_id}?aba=roteiros`}
+                  to={`/clientes?cliente=${r.cliente_id}&aba=roteiros`}
                   className="flex items-center justify-between gap-3 py-2.5 hover:bg-muted/40"
                   data-testid={`painel-visita-pendente-${r.roteiro_id}`}
                 >

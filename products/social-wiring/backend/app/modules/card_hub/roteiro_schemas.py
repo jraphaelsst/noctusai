@@ -12,7 +12,7 @@ a corretor can act on. Past dates are accepted (CONTRACT §11, provisional).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, time
 from typing import Any, Optional
 from uuid import UUID
 
@@ -29,6 +29,9 @@ class RoteiroCreateBodyV2(StrictHttpModel):
     data_visita: date
     titulo: Optional[str] = None
     atendimento_id: Optional[UUID] = None
+    #: Optional time of the visit ("HH:MM"); makes the feedback prompt due
+    #: from that time instead of from the start of `data_visita`.
+    hora_visita: Optional[time] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -41,6 +44,8 @@ class RoteiroCreateBodyV2(StrictHttpModel):
 class RoteiroPatchBodyV2(StrictHttpModel):
     titulo: Optional[str] = None
     data_visita: Optional[date] = None
+    #: Explicit null clears the time (unlike `data_visita`, it is optional).
+    hora_visita: Optional[time] = None
 
     @model_validator(mode="before")
     @classmethod

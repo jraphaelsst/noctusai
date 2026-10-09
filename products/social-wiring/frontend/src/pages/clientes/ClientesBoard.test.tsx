@@ -72,8 +72,25 @@ vi.mock("@/hooks/useLeadsCorretores", () => ({
 vi.mock("@/components/ClienteDetailModal", async () => {
   const React = await import("react");
   return {
-    ClienteDetailModal: ({ clienteId, open }: { clienteId: string | null; open: boolean }) =>
-      open ? React.createElement("div", { "data-testid": "cliente-detail-modal", "data-cliente-id": clienteId }) : null,
+    ClienteDetailModal: ({
+      clienteId,
+      open,
+      abaInicial,
+      onClose,
+    }: {
+      clienteId: string | null;
+      open: boolean;
+      abaInicial?: string;
+      onClose: () => void;
+    }) =>
+      open
+        ? React.createElement("button", {
+            "data-testid": "cliente-detail-modal",
+            "data-cliente-id": clienteId,
+            "data-aba": abaInicial ?? "",
+            onClick: onClose,
+          })
+        : null,
   };
 });
 
@@ -95,14 +112,14 @@ function cliente(overrides: Partial<any> = {}) {
   };
 }
 
-async function renderPage() {
+async function renderPage(entry = "/clientes") {
   const React = (await import("react")).default;
   const { default: ClientesBoard } = await import("./ClientesBoard");
   const rtl = await import("@testing-library/react");
   // A Router: each card's name links to the person page (`PessoaLink`).
   const { MemoryRouter } = await import("react-router-dom");
   return {
-    ...rtl.render(React.createElement(MemoryRouter, null, React.createElement(ClientesBoard))),
+    ...rtl.render(React.createElement(MemoryRouter, { initialEntries: [entry] }, React.createElement(ClientesBoard))),
   };
 }
 
@@ -342,5 +359,45 @@ describe("ClientesBoard — aba Excluídos (admin only)", () => {
     expect(queryByTestId("excluidos-panel")).toBeNull();
     fireEvent.click(getByTestId("clientes-tab-excluidos"));
     expect(getByTestId("excluidos-panel")).toBeTruthy();
+  });
+});
+
+
+describe("ClientesBoard — deep link (?cliente=&aba=)", () => {
+  const boardOk = () =>
+    mockUseClientesBoard.mockReturnValue({
+      isPending: false,
+      isFetching: false,
+      isError: false,
+      data: { items: [], total: 0, page: 1, pages: 1, page_size: 24 },
+      refetch: vi.fn(),
+    });
+
+  it("opens that card on that subpage", async () => {
+    boardOk();
+    const { getByTestId } = await renderPage("/clientes?cliente=cl9&aba=roteiros");
+    const modal = getByTestId("cliente-detail-modal");
+    expect(modal.getAttribute("data-cliente-id")).toBe("cl9");
+    expect(modal.getAttribute("data-aba")).toBe("roteiros");
+  });
+
+  it("an unknown aba opens the default tab, never throws", async () => {
+    boardOk();
+    const { getByTestId } = await renderPage("/clientes?cliente=cl9&aba=bogus");
+    expect(getByTestId("cliente-detail-modal").getAttribute("data-aba")).toBe("");
+  });
+
+  it("closing clears the link so it does not reopen", async () => {
+    boardOk();
+    const { getByTestId, queryByTestId } = await renderPage("/clientes?cliente=cl9&aba=roteiros");
+    const rtl = await import("@testing-library/react");
+    rtl.fireEvent.click(getByTestId("cliente-detail-modal"));
+    expect(queryByTestId("cliente-detail-modal")).toBeNull();
+  });
+
+  it("without params no card is opened", async () => {
+    boardOk();
+    const { queryByTestId } = await renderPage();
+    expect(queryByTestId("cliente-detail-modal")).toBeNull();
   });
 });

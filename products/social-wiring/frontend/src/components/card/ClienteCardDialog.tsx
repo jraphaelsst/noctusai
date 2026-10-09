@@ -550,6 +550,8 @@ export interface ClienteCardDialogProps {
    * the first screen, and it is paid deliberately.
    */
   onSubpageChange?: (key: CardSubpageKey) => void;
+  /** Subpage the card opens on (deep link `?aba=`). Default `geral`. */
+  defaultSubpage?: CardSubpageKey;
 }
 
 export function ClienteCardDialog(props: ClienteCardDialogProps) {
@@ -1232,7 +1234,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
       subpages={subpages}
       // `geral` is the open-on-mount subpage: the card is opened to DO
       // something far more often than to read the record behind it.
-      defaultSubpage="geral"
+      defaultSubpage={props.defaultSubpage ?? "geral"}
       // 🔴 Reported upward so the owner can fetch a tab's data WHEN IT IS
       // OPENED.
       onSubpageChange={props.onSubpageChange}

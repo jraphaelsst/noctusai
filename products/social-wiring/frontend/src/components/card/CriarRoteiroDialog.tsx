@@ -100,6 +100,7 @@ export function CriarRoteiroDialog({
   const somenteOrdenar = inicial !== undefined;
   const [titulo, setTitulo] = useState("");
   const [dataVisita, setDataVisita] = useState("");
+  const [horaVisita, setHoraVisita] = useState("");
   const [atendimentoId, setAtendimentoId] = useState("");
   const [termo, setTermo] = useState("");
   const [escolhidos, setEscolhidos] = useState<ImovelVisita[]>(() => inicial ?? []);
@@ -178,6 +179,8 @@ export function CriarRoteiroDialog({
       // In list order — the array index becomes `visitas.ordem` server-side.
       imoveis: escolhidos.map((i) => i.codigo),
       data_visita: dataVisita,
+      // Optional "HH:MM": the "visita aconteceu?" prompt is due from this time.
+      ...(horaVisita ? { hora_visita: horaVisita } : {}),
       ...(precisaAtendimento ? { atendimento_id: atendimentoId } : {}),
     });
   }
@@ -225,6 +228,22 @@ export function CriarRoteiroDialog({
               value={dataVisita}
               onChange={(e) => setDataVisita(e.target.value)}
               data-testid="roteiro-data-visita"
+            />
+          </div>
+
+          <div>
+            <label
+              className="mb-1 block text-xs font-medium text-muted-foreground"
+              htmlFor="roteiro-hora-visita"
+            >
+              Horário da visita (opcional)
+            </label>
+            <Input
+              id="roteiro-hora-visita"
+              type="time"
+              value={horaVisita}
+              onChange={(e) => setHoraVisita(e.target.value)}
+              data-testid="roteiro-hora-visita"
             />
           </div>
 

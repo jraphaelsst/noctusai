@@ -456,6 +456,7 @@ async def create_roteiro_route(
         atendimento_id=body.atendimento_id,
         data_visita=body.data_visita,
         usuario_id=getattr(_user, "id", None),
+        hora_visita=body.hora_visita,
     )
 
 
@@ -476,6 +477,7 @@ async def patch_roteiro_route(
         roteiro_id,
         titulo=updates.get("titulo", ...),
         data_visita=updates.get("data_visita", ...),
+        hora_visita=updates.get("hora_visita", ...),
     )
 
 

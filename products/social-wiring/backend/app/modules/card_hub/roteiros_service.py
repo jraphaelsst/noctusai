@@ -57,7 +57,7 @@ owns the two rules a constraint cannot:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
@@ -235,6 +235,7 @@ def criar(
     titulo: Optional[str] = None,
     atendimento_id: Optional[UUID] = None,
     usuario_id: Optional[Any] = None,
+    hora_visita: Optional[time] = None,
 ) -> dict:
     """A route and one visita per property, in the order given.
 
@@ -261,6 +262,7 @@ def criar(
             "titulo": (titulo or "").strip() or None,
             "data_visita": data_visita,
             "feedback_status": "pendente",
+            "hora_visita": _hora(hora_visita),
             "created_at": agora,
         }
     ).execute()
@@ -295,6 +297,11 @@ def _mover_funil(client: Any, org_id: UUID, atendimento_id: str, usuario_id: Any
     except Exception:  # noqa: BLE001 - reported in the result, logged with trace
         logger.exception("funil: roteiro_criado failed for atendimento %s", atendimento_id)
         return {"moveu": False, "de": None, "para": None, "motivo": "erro_funil"}
+
+
+def _hora(valor: Optional[time]) -> Optional[str]:
+    """`time` -> `HH:MM:SS` for the TIME column; `None` clears it."""
+    return valor.strftime("%H:%M:%S") if valor is not None else None
 
 
 def _exigir_data(valor: Any) -> str:
@@ -347,6 +354,7 @@ def atualizar(
     *,
     titulo: Optional[str] = ...,
     data_visita: Optional[date] = ...,
+    hora_visita: Optional[time] = ...,
 ) -> dict:
     """`...` sentinels an unset field — only what the PATCH carried is written.
     An explicit `data_visita=None` is refused: a roteiro never loses its date."""
@@ -356,6 +364,8 @@ def atualizar(
         updates["titulo"] = (titulo or "").strip() or None
     if data_visita is not ...:
         updates["data_visita"] = _exigir_data(data_visita)
+    if hora_visita is not ...:
+        updates["hora_visita"] = _hora(hora_visita)
     if updates:
         _t(client, TABLE).update(updates).eq("id", str(roteiro_id)).execute()
     return obter(client, org_id, cliente_id, roteiro_id)

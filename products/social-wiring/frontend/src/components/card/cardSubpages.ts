@@ -154,3 +154,9 @@ export function partesPjDoLado(
     (p) => p.tipo_pessoa === "PJ" && p.lado === lado && !p.titular && p.parte_id !== null,
   );
 }
+
+/** A `?aba=` URL value → a subpage key, or `undefined` when it names nothing
+ *  (an unknown value opens the default tab; it never throws). */
+export function parseCardSubpage(valor: string | null | undefined): CardSubpageKey | undefined {
+  return CARD_SUBPAGES.find((s) => s.key === valor)?.key;
+}

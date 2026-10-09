@@ -33,7 +33,7 @@ describe("VisitasSemResposta", () => {
     expect(getByTestId("painel-visitas-sem-resposta-badge").textContent).toBe("1");
     const link = getByTestId("painel-visita-pendente-r1");
     expect(link.textContent).toContain("Visita de Ana aconteceu?");
-    expect(link.getAttribute("href")).toBe("/clientes/c1?aba=roteiros");
+    expect(link.getAttribute("href")).toBe("/clientes?cliente=c1&aba=roteiros");
   });
 
   it("never claims 'nenhuma' while the first load is pending", () => {

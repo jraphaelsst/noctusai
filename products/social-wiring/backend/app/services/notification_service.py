@@ -903,26 +903,96 @@ class NotificationService:
         self, *, org_id: UUID, pendentes: list[dict[str, Any]]
     ) -> DispatchOutcome:
         """Daily prompt: roteiros whose visit date passed with no answer
-        ("Visita de {cliente} aconteceu?"), sent as ONE digest per org.
+        ("Visita de {cliente} aconteceu?").
 
-        Recipients are the org's active notification roster (the only
-        addressing the notification system has; atendimentos carry no corretor
-        identity). Never raises per-recipient (same contract as the others).
+        Addressed to EVERY member assigned to the card (the "Membros" button —
+        parceria means several brokers), one message per member listing their
+        cards. A card with no assigned member, or whose members have no
+        reachable channel (`lead_corretores.email_login` / `telefone`), falls
+        back to the org's notification roster — logged, never silent.
+        Never raises per-recipient (same contract as the other notifiers).
         """
+        total = DispatchOutcome()
         if not pendentes:
-            return DispatchOutcome()
-        recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
-        if not recipients:
-            logger.warning(
-                "notify_visita_feedback: %d roteiro(s) await feedback (org=%s) but NO "
-                "active notification recipient is configured — nobody was alerted.",
-                len(pendentes), org_id,
-            )
-            return DispatchOutcome()
-        message = self._build_visita_feedback_message(pendentes)
-        return await self._dispatch(
-            kind="visita_feedback", org_id=org_id, recipients=recipients, message=message
+            return total
+        por_membro: dict[str, list[dict[str, Any]]] = {}
+        org_items: list[dict[str, Any]] = []
+        contatos = self._fetch_corretor_contacts(
+            org_id, {m["id"] for p in pendentes for m in p.get("membros") or []}
         )
+        for p in pendentes:
+            alcancaveis = [m["id"] for m in p.get("membros") or [] if m["id"] in contatos]
+            if not alcancaveis:
+                if p.get("membros"):
+                    logger.warning(
+                        "notify_visita_feedback: card %s has members but none with an "
+                        "email/telefone — falling back to the org roster",
+                        p.get("cliente_id"),
+                    )
+                org_items.append(p)
+                continue
+            for mid in alcancaveis:
+                por_membro.setdefault(mid, []).append(p)
+
+        for mid, itens in por_membro.items():
+            outcome = await self._dispatch(
+                kind="visita_feedback", org_id=org_id,
+                recipients=[contatos[mid]],
+                message=self._build_visita_feedback_message(itens),
+            )
+            total.recipients += outcome.recipients
+            total.attempted += outcome.attempted
+            total.succeeded += outcome.succeeded
+            total.failed += outcome.failed
+
+        if org_items:
+            recipients = self._fetch_recipients_scoped(org_id=org_id, marca_id=None)
+            if not recipients:
+                logger.warning(
+                    "notify_visita_feedback: %d roteiro(s) await feedback (org=%s), the "
+                    "card has no reachable member and NO active notification recipient "
+                    "is configured — nobody was alerted.",
+                    len(org_items), org_id,
+                )
+                return total
+            outcome = await self._dispatch(
+                kind="visita_feedback", org_id=org_id, recipients=recipients,
+                message=self._build_visita_feedback_message(org_items),
+            )
+            total.recipients += outcome.recipients
+            total.attempted += outcome.attempted
+            total.succeeded += outcome.succeeded
+            total.failed += outcome.failed
+        return total
+
+    def _fetch_corretor_contacts(
+        self, org_id: UUID, corretor_ids: set[str]
+    ) -> dict[str, dict[str, Any]]:
+        """`lead_corretores.id -> recipient dict` for those with a channel.
+        `id` is None: the notification_log FK points at notification_recipients,
+        which a broker is not."""
+        if not corretor_ids:
+            return {}
+        rows = (
+            self._admin.schema(_SCHEMA)
+            .table("lead_corretores")
+            .select("id, nome, email_login, telefone")
+            .eq("org_id", str(org_id))
+            .in_("id", sorted(corretor_ids))
+            .execute()
+            .data
+            or []
+        )
+        return {
+            str(r["id"]): {
+                "id": None,
+                "name": r.get("nome"),
+                "email": r.get("email_login"),
+                "whatsapp_number": r.get("telefone"),
+            }
+            for r in rows
+            if r.get("email_login") or r.get("telefone")
+        }
 
     def _build_visita_feedback_message(
         self, pendentes: list[dict[str, Any]]
@@ -934,7 +1004,7 @@ class NotificationService:
         for p in pendentes:
             nome = p.get("cliente_nome") or "Cliente sem nome"
             link = (
-                f"{base}/clientes/{p['cliente_id']}?aba=roteiros"
+                f"{base}/clientes?cliente={p['cliente_id']}&aba=roteiros"
                 if base and p.get("cliente_id") else ""
             )
             linhas.append((f"Visita de {nome} aconteceu?", link))

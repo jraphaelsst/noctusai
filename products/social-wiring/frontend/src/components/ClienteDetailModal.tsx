@@ -112,6 +112,8 @@ export interface ClienteDetailModalProps {
    * nothing here is optional-but-usually-set — it is genuinely absent.
    */
   atendimentoId?: string | null;
+  /** Subpage to open on (from a `?aba=` deep link); default `geral`. */
+  abaInicial?: CardSubpageKey;
 }
 
 // `toastServerError` — the server's own sentence (envelope `error.message`
@@ -123,6 +125,7 @@ export function ClienteDetailModal({
   onClose,
   acoes,
   atendimentoId,
+  abaInicial,
 }: ClienteDetailModalProps) {
   // Colour-blind mode has no persistence surface in this contract (a Trello
   // account-level preference; nothing in §2/§3 models one) — kept as
@@ -179,7 +182,7 @@ export function ClienteDetailModal({
   // which are visible from every tab. Gating those would trade a fast open for
   // a header that populates late, which is worse.
   const [abasVisitadas, setAbasVisitadas] = useState<Set<CardSubpageKey>>(
-    () => new Set<CardSubpageKey>(["geral"]),
+    () => new Set<CardSubpageKey>(["geral", ...(abaInicial ? [abaInicial] : [])]),
   );
   const idSeAbriu = (aba: CardSubpageKey) => (abasVisitadas.has(aba) ? id : null);
 
@@ -450,6 +453,7 @@ export function ClienteDetailModal({
     <ClienteCardDialog
       open={open}
       onClose={onClose}
+      defaultSubpage={abaInicial}
       acoes={acoes}
       // Presence-gated, mirroring every other optional action prop on this
       // component: no `atendimentoId` (e.g. opened from the Clientes board)

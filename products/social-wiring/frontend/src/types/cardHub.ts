@@ -494,6 +494,8 @@ export interface RoteiroCreateBody {
   imoveis: string[];
   /** `YYYY-MM-DD`, no time — REQUIRED (CONTRACT §5.1). */
   data_visita: string;
+  /** Optional `HH:MM`; the due prompt waits for it on the day. */
+  hora_visita?: string;
   titulo?: string | null;
   /** Only needed when the person has more than one open atendimento. */
   atendimento_id?: string;

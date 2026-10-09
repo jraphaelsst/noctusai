@@ -22,6 +22,16 @@ vi.mock("sonner", () => ({ toast: { error: toastError, warning: vi.fn() } }));
 
 // The party hooks own their own react-query reads (no QueryClient in this
 // harness): stubbed at the hook boundary, like `useCardHub` below.
+// The "visita aconteceu?" answer mutation needs a QueryClient; this suite
+// mocks the hook layer, so it is stubbed here (covered by RoteirosSection tests).
+vi.mock("@/hooks/useRoteirosFeedback", () => ({
+  useResponderFeedbackRoteiro: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+  useVisitadas: () => ({ data: undefined, isPending: true, isFetching: true, isError: false }),
+}));
+vi.mock("@/hooks/useGerarProposta", () => ({
+  useGerarProposta: () => ({ mutate: vi.fn(), isPending: false, variables: undefined }),
+}));
+
 vi.mock("@/hooks/usePartes", () => ({
   usePartes: () => ({ data: undefined, showSkeleton: false, isRefreshing: false }),
   useAdicionarParte: () => ({ mutate: vi.fn(), isPending: false }),

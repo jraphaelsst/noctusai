@@ -81,6 +81,34 @@ def vencido(roteiro: dict, agora: datetime) -> bool:
     return hora is None or hora <= agora.time().replace(tzinfo=None)
 
 
+# ── who is on the card ──────────────────────────────────────────────────────
+
+MEMBROS_TABLE = "cliente_membros"
+CORRETORES_TABLE = "lead_corretores"
+
+
+def membros_do_cliente(client: Any, org_id: UUID, cliente_id: Any) -> list[dict]:
+    """The brokers assigned to the card (the "Membros" button), active ones.
+
+    Several can be assigned at once (parceria: brokers working together and
+    sharing commission). `cliente_membros` has NO `id` column — it pages on the
+    member FK, exactly like the seed's `get_membros`.
+    """
+    if not cliente_id:
+        return []
+    links = table_reads.paged_rows(
+        client, MEMBROS_TABLE, org_id,
+        eq_filters={"cliente_id": str(cliente_id)},
+        order_col="lead_corretor_id", id_key="lead_corretor_id",
+    )
+    ids = [str(link["lead_corretor_id"]) for link in links]
+    corretores = table_reads.in_batched_rows(client, CORRETORES_TABLE, org_id, "id", ids)
+    return sorted(
+        ({"id": str(c["id"]), "nome": c.get("nome")} for c in corretores if c.get("ativo", True)),
+        key=lambda m: m["nome"] or "",
+    )
+
+
 # ── 3.2 — the prompt ────────────────────────────────────────────────────────
 
 def pendentes(
@@ -124,6 +152,7 @@ def pendentes(
         if not atendimento:  # orphan roteiro: nothing to answer on
             continue
         cliente = clientes.get(str(atendimento.get("cliente_id")), {})
+        membros = membros_do_cliente(client, org_id, atendimento.get("cliente_id"))
         saida.append(
             {
                 "roteiro_id": r["id"],
@@ -131,6 +160,10 @@ def pendentes(
                 "atendimento_id": r["atendimento_id"],
                 "cliente_nome": cliente.get("nome"),
                 "data_visita": r["data_visita"],
+                # Who gets asked: every member assigned to the card; with none,
+                # the org's notification roster (`destino` says which).
+                "membros": membros,
+                "destino": "membros" if membros else "org",
                 "visitas": [
                     {
                         "visita_id": v["id"],

@@ -227,6 +227,24 @@ describe("CriarRoteiroDialog — salvar", () => {
     });
   });
 
+  it("sends hora_visita (HH:MM) only when a time was typed", async () => {
+    mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
+    const onCriar = vi.fn();
+    const { getByTestId } = await render({ onCriar });
+    const rtl = await import("@testing-library/react");
+    await digitar(getByTestId, "ONE9");
+    rtl.fireEvent.click(getByTestId("roteiro-busca-item-ONE9001"));
+    rtl.fireEvent.change(getByTestId("roteiro-data-visita"), { target: { value: "2026-10-05" } });
+    rtl.fireEvent.change(getByTestId("roteiro-hora-visita"), { target: { value: "15:30" } });
+    rtl.fireEvent.click(getByTestId("roteiro-salvar"));
+    expect(onCriar).toHaveBeenCalledWith({
+      titulo: null,
+      imoveis: ["ONE9001"],
+      data_visita: "2026-10-05",
+      hora_visita: "15:30",
+    });
+  });
+
   it("sends a null título rather than an empty string", async () => {
     mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
     const onCriar = vi.fn();

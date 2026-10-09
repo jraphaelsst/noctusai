@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from app.modules.card_hub.roteiros_feedback_service import MOTIVO_PADRAO
+from app.modules.card_hub.roteiros_feedback_service import MOTIVO_PADRAO, membros_do_cliente
 from app.services import table_reads
 
 PROPOSTAS_TABLE = "atendimento_propostas"
@@ -47,12 +47,30 @@ def _coorte(
     atendimentos = table_reads.paged_rows(client, "atendimentos", org_id, refine=refine)
     if corretor_id is None:
         return atendimentos
-    leads = table_reads.in_batched_rows(
-        client, "leads", org_id, "id",
-        [str(a["lead_id"]) for a in atendimentos if a.get("lead_id")],
+    # A card counts for EACH member assigned to it (parceria). One read: the
+    # cards this broker is on.
+    links = table_reads.paged_rows(
+        client, "cliente_membros", org_id,
+        eq_filters={"lead_corretor_id": str(corretor_id)},
+        order_col="cliente_id", id_key="cliente_id",
     )
-    do_corretor = {str(l["id"]) for l in leads if str(l.get("corretor_id")) == str(corretor_id)}
-    return [a for a in atendimentos if str(a.get("lead_id")) in do_corretor]
+    do_corretor = {str(l["cliente_id"]) for l in links}
+    escolhidos = [a for a in atendimentos if str(a.get("cliente_id")) in do_corretor]
+
+    # Fallback ONLY for cards with no member at all: the lead's corretor.
+    resto = [a for a in atendimentos if str(a.get("cliente_id")) not in do_corretor]
+    leads = {
+        str(l["id"]): l
+        for l in table_reads.in_batched_rows(
+            client, "leads", org_id, "id",
+            [str(a["lead_id"]) for a in resto if a.get("lead_id")],
+        )
+        if str(l.get("corretor_id")) == str(corretor_id)
+    }
+    for a in resto:
+        if str(a.get("lead_id")) in leads and not membros_do_cliente(client, org_id, a.get("cliente_id")):
+            escolhidos.append(a)
+    return escolhidos
 
 
 def funil(
