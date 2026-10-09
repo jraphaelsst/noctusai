@@ -331,3 +331,49 @@ class TestLegacyDeployPathIsNotFleetWide:
         ])
         assert d["products"] == ["social-wiring"]
         assert d["fleet_wide"] is False
+
+
+# ── rebuild_set: fleet-wide expands to the DERIVED build set (2026-10-09) ──
+LIVE = ["academia-de-reciclagem", "agents", "community", "core", "igig", "seed",
+        "social-wiring", "store"]
+
+
+def test_seed_change_puts_every_live_product_in_the_rebuild_set():
+    d = DP._rebuild_decision(["seed/lib/backend/noctusai_lib/api/cors.py"], build_set=LIVE)
+    assert d["fleet_wide"] is True and d["rebuild_set"] == LIVE
+
+
+def test_mixed_seed_and_product_diff_still_rebuilds_untouched_live_products():
+    # The 06f5ccc5c shape: seed + several products changed, store untouched
+    # directly — it was missed because only the direct list was reported.
+    d = DP._rebuild_decision([
+        "seed/framework/backend/noctusai_seed/mfa_router.py",
+        "products/core/backend/app/routers/auth.py",
+        "products/social-wiring/frontend/src/App.tsx",
+        "products/orbity/frontend/src/pages/Equipe.tsx",
+    ], build_set=LIVE)
+    assert "store" in d["rebuild_set"] and d["rebuild_set"] == LIVE
+    assert d["products"] == ["core", "orbity", "social-wiring"]  # direct, unchanged semantics
+    assert d["not_built"] == ["orbity"]  # no maintained image — surfaced, not rebuilt
+
+
+def test_product_only_change_rebuilds_only_that_product():
+    d = DP._rebuild_decision(["products/store/backend/app/main.py"], build_set=LIVE)
+    assert d["fleet_wide"] is False and d["rebuild_set"] == ["store"]
+
+
+def test_real_build_scope_file_drives_the_set():
+    # No injected set: the committed deploy/fleet/build-scope.txt is the source.
+    from tools.noctus.dev.build_scope import read_build_scope
+
+    d = DP._rebuild_decision(["seed/lib/backend/noctusai_lib/api/cors.py"])
+    assert d["rebuild_set"] == read_build_scope() and "store" in d["rebuild_set"]
+    assert d["build_set_warning"] is None
+
+
+def test_missing_build_scope_falls_back_to_fleet_with_warning():
+    from tools.noctus.dev.build_scope import fleet_slugs
+
+    slugs, warning = DP._build_set(scope=[])
+    assert slugs == fleet_slugs() and slugs
+    assert "build-scope.txt" in warning

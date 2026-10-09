@@ -91,7 +91,22 @@ _COSMETIC_NONRUNTIME = re.compile(r"_version_static\.py$")
 _NON_FLEET_DEPLOY = re.compile(r"^deploy/legacy/")
 
 
-def _rebuild_decision(files: list[str]) -> dict[str, Any]:
+def _build_set(scope: list[str] | None = None) -> tuple[list[str], str | None]:
+    """The products we maintain images for — DERIVED, never listed here:
+    `deploy/fleet/build-scope.txt` (catalog `ativo ∧ deploy_scope='live'` +
+    `core`), the same file `build-and-push.yml` builds from. Missing/empty ⇒
+    every fleet-compose service, with a warning (a fleet-wide change must never
+    resolve to "rebuild nothing")."""
+    from .build_scope import fleet_slugs, read_build_scope  # lazy: settings import
+    if scope is None:  # `scope` is the test seam: the parsed build-scope rows
+        scope = read_build_scope()
+    if scope:
+        return scope, None
+    return fleet_slugs(), ("deploy/fleet/build-scope.txt missing/empty — rebuild set "
+                           "falls back to every fleet-compose service")
+
+
+def _rebuild_decision(files: list[str], build_set: list[str] | None = None) -> dict[str, Any]:
     """Derive — never eyeball — whether the incoming diff needs a rebuild and
     of which products. Per-product runtime path → that product; a Dockerfile /
     Dockerfile / seed / build-script change → fleet-wide (mirrors build-and-push.yml);
@@ -124,10 +139,26 @@ def _rebuild_decision(files: list[str]) -> dict[str, Any]:
             continue
         if _RUNTIME_CONFIG.search(f):
             config_reasons.append(f)
+    # 🔴 `rebuild_set` — WHAT TO REBUILD (2026-10-09). `products` is only the
+    # directly-changed slugs; a fleet-wide change used to surface solely as
+    # "fleet-wide" when `products` was EMPTY, so a mixed diff (seed + a few
+    # products) reported just those products and `store` — untouched directly,
+    # but baking the changed seed — was never rebuilt (prod deploy 06f5ccc5c,
+    # manual image swap). Fleet-wide ⇒ the WHOLE derived build set.
+    warning = None
+    if build_set is None:
+        build_set, warning = _build_set() if (fleet or products) else ([], None)
+    built = set(build_set)
+    rebuild_set = sorted((built if fleet else set()) | (products & built))
     return {
         # `needed` = an IMAGE rebuild (build inputs changed). Compose/config
         # changes are the separate `config_changed` / `recreate_needed` signal.
         "needed": bool(products) or fleet,
+        "rebuild_set": rebuild_set,
+        # Directly changed but no maintained image (asleep / dev-only) — surfaced,
+        # never silently dropped: changing them needs no prod rebuild.
+        "not_built": sorted(products - built),
+        "build_set_warning": warning,
         "config_changed": bool(config_reasons),
         "config_reasons": config_reasons[:20],
         "recreate_needed": bool(products) or fleet or bool(config_reasons),
@@ -454,14 +485,20 @@ def deploy_pull(
         "new_sha": new_sha, "verified_head": verified,
         "deploy_local_preserved": preserved,
         "backup_ref": backup_ref, "backup_tar": backup_tar,
-        "rebuild_required": rebuild["needed"], "rebuild_products": rebuild["products"],
+        "rebuild_required": rebuild["needed"], "rebuild_products": rebuild["rebuild_set"],
+        "rebuild_not_built": rebuild["not_built"],
         "mirror": mirror_result,
         "message": (
             "deployed via clean fast-forward; "
             + (
                 "REBUILD required for "
-                + ", ".join(rebuild["products"] or ["fleet-wide"])
+                + ", ".join(rebuild["rebuild_set"] or ["(no maintained image)"])
+                + (" [fleet-wide: seed/Dockerfile/build-script changed]"
+                   if rebuild["fleet_wide"] else "")
                 + " — run noctus.dev.deploy_image <product> (C2 atomic redeploy)"
+                + (f"; changed but no maintained image: {', '.join(rebuild['not_built'])}"
+                   if rebuild["not_built"] else "")
+                + (f"; ⚠ {rebuild['build_set_warning']}" if rebuild["build_set_warning"] else "")
                 if rebuild["needed"]
                 else (
                     "no image rebuild needed; compose/config changed ("
