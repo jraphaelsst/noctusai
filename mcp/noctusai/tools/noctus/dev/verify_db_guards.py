@@ -1296,6 +1296,117 @@ END;
 )
 
 
+_CS_WAVE2_MIGRATION = "221_cs_research_extraction.sql"
+
+
+def _cs_wave2_unique_probe(*, probe_id: str, guard_name: str, setup: str, first: str, second: str, rationale: str) -> GuardProbe:
+    """Duplicate-insert probe for a migration-221 unique index (rolled back)."""
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=("217_cs_research.sql", _CS_WAVE2_MIGRATION),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_marca_id uuid;
+  v_job_id uuid;
+  v_topic_id uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
+  VALUES (v_org_id, 'noc-probe-pesquisa-w2', 'noc-probe-pesquisa-w2')
+  RETURNING id INTO v_marca_id;
+{setup}
+  BEGIN
+{first}
+{second}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: duplicate insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_CS_JOB_INS = (
+    f"    INSERT INTO {_SW_SCHEMA}.cs_extraction_jobs (org_id, marca_id, created_by, tipos, status, posts) "
+    "VALUES (v_org_id, v_marca_id, '00000000-0000-0000-0000-00000000f0a1', ARRAY['pesquisa'], '{st}', '[]'::jsonb);"
+)
+_CS_JOB_SETUP = (
+    f"  INSERT INTO {_SW_SCHEMA}.cs_extraction_jobs (org_id, marca_id, created_by, tipos, status, posts) "
+    "VALUES (v_org_id, v_marca_id, '00000000-0000-0000-0000-00000000f0a2', ARRAY['pesquisa'], 'completed', '[]'::jsonb) "
+    "RETURNING id INTO v_job_id;"
+)
+_CS_TOPIC_INS = (
+    f"  INSERT INTO {_SW_SCHEMA}.cs_viral_topics (org_id, marca_id, topic, status, origin) "
+    "VALUES (v_org_id, v_marca_id, '{t}', 'approved', 'manual')"
+)
+
+_CS_WAVE2_PROBES: tuple[GuardProbe, ...] = (
+    _cs_wave2_unique_probe(
+        probe_id="cs_viral_topics.marca_topic.unique",
+        guard_name="cs_viral_topics_marca_topic_uq",
+        setup="",
+        first=_CS_TOPIC_INS.format(t="noc probe topic") + ";",
+        second=_CS_TOPIC_INS.format(t="NOC PROBE TOPIC") + ";",
+        rationale="One viral topic per (marca, lower(topic)); a case-variant re-add is a no-op, never a second row.",
+    ),
+    _cs_wave2_unique_probe(
+        probe_id="cs_extraction_jobs.one_active_per_user.unique",
+        guard_name="cs_extraction_jobs_one_active_per_user_uq",
+        setup="",
+        first=_CS_JOB_INS.format(st="queued"),
+        second=_CS_JOB_INS.format(st="running"),
+        rationale=(
+            "At most one queued/running extraction per user, enforced in the database so two "
+            "concurrent submits cannot both pass (the service maps the refusal to 409)."
+        ),
+    ),
+    _cs_wave2_unique_probe(
+        probe_id="cs_viral_topic_sources.post.unique",
+        guard_name="cs_viral_topic_sources_post_uq",
+        setup=_CS_TOPIC_INS.format(t="noc probe src topic") + "\n  RETURNING id INTO v_topic_id;",
+        first=(
+            f"    INSERT INTO {_SW_SCHEMA}.cs_viral_topic_sources (org_id, topic_id, source_kind, source_id) "
+            "VALUES (v_org_id, v_topic_id, 'mc_post', 'noc-probe-post');"
+        ),
+        second=(
+            f"    INSERT INTO {_SW_SCHEMA}.cs_viral_topic_sources (org_id, topic_id, source_kind, source_id) "
+            "VALUES (v_org_id, v_topic_id, 'mc_post', 'noc-probe-post');"
+        ),
+        rationale="A post backs a topic at most once (NULL account_id coalesced), so re-extraction cannot duplicate sources.",
+    ),
+    _cs_wave2_unique_probe(
+        probe_id="cs_extraction_post_runs.post.unique",
+        guard_name="cs_extraction_post_runs_post_uq",
+        setup=_CS_JOB_SETUP,
+        first=(
+            f"    INSERT INTO {_SW_SCHEMA}.cs_extraction_post_runs (org_id, marca_id, extracao_id, tipo, source_kind, source_id, status) "
+            "VALUES (v_org_id, v_marca_id, v_job_id, 'pesquisa', 'mc_post', 'noc-probe-post', 'done');"
+        ),
+        second=(
+            f"    INSERT INTO {_SW_SCHEMA}.cs_extraction_post_runs (org_id, marca_id, extracao_id, tipo, source_kind, source_id, status) "
+            "VALUES (v_org_id, v_marca_id, v_job_id, 'pesquisa', 'mc_post', 'noc-probe-post', 'done');"
+        ),
+        rationale="One run row per (job, tipo, post): a retried handler resumes instead of paying the LLM twice.",
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — social_wiring.imovel_dados_endereco_registro_confirmado CHECK
 # (migration 139).
@@ -5210,6 +5321,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _IMOBILIARIA_CNPJ_UNIQUE_PROBE,
     _CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE,
     _CS_RESEARCH_ITEM_UNIQUE_PROBE,
+    *_CS_WAVE2_PROBES,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,
