@@ -49,6 +49,27 @@ class LLMAPIError(AppException):
         )
 
 
+class ProviderQuotaExhausted(LLMAPIError):
+    """The provider account has no credit/quota left (billing, NOT a rate limit).
+
+    OpenAI answers this with HTTP 429 `insufficient_quota`, which looks like a
+    rate limit but is permanent until someone tops up the account: retrying it
+    only burns time (the 2026-10-09 incident: 119 identical failures, 271-346 s
+    inside a git hook). Subclasses `LLMAPIError` so existing handlers still
+    catch it, but it is NEVER retried and batch callers abort on the first one.
+    Status 503: the upstream capability is unavailable, not our code.
+    """
+
+    def __init__(self, provider: str, message: str = ""):
+        super().__init__(provider, message or "cota/créditos esgotados", status_code=503)
+        self.code = "LLM_QUOTA_EXHAUSTED"
+        self.message = (
+            f"Créditos da API {provider.capitalize()} esgotados. "
+            "Recarregue a conta do provedor ou troque a chave em Configurações."
+        )
+        self.args = (self.message,)
+
+
 class LLMBudgetExceeded(AppException):
     """The org's monthly LLM budget has been exhausted.
 

@@ -20,13 +20,74 @@ from typing import Any, Optional, Union
 
 from openai import AsyncOpenAI
 from openai import OpenAIError
+import openai
 
-from ..exceptions import LLMAPIError, LLMNotConfigured
+from ..exceptions import LLMAPIError, LLMNotConfigured, ProviderQuotaExhausted
 from ..registry import register
 from ..stream_types import StreamOutcome
 from ..vision_types import VisionResult
 
 logger = logging.getLogger(__name__)
+
+_QUOTA_MARKERS = frozenset({"insufficient_quota", "credit_balance_exhausted"})
+
+
+def is_quota_exhausted(exc: BaseException) -> bool:
+    """True for OpenAI's billing 429 (`insufficient_quota` /
+    `credit_balance_exhausted`) as opposed to a real `rate_limit_exceeded`."""
+    if not isinstance(exc, openai.APIStatusError):
+        return False
+    if exc.status_code not in (400, 402, 429):
+        return False
+    body = exc.body if isinstance(exc.body, dict) else {}
+    inner = body.get("error") if isinstance(body.get("error"), dict) else body
+    candidates = {
+        getattr(exc, "code", None), getattr(exc, "type", None),
+        inner.get("code"), inner.get("type"),
+    }
+    return bool(_QUOTA_MARKERS & {c for c in candidates if isinstance(c, str)})
+
+
+def _is_retryable(exc: BaseException) -> bool:
+    """Transient failures only. Quota exhaustion is permanent -> never."""
+    if is_quota_exhausted(exc):
+        return False
+    if isinstance(exc, (openai.RateLimitError, openai.APIConnectionError,
+                        openai.InternalServerError)):
+        return True
+    return isinstance(exc, openai.APIStatusError) and exc.status_code in (408, 409)
+
+
+def _retry_after(exc: BaseException) -> Optional[float]:
+    from noctusai_lib.integrations import rate_limit
+
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if headers is None:
+        return None
+    return rate_limit.parse_retry_after(headers.get("retry-after"))
+
+
+async def _create_retrying(create, *args: Any, bucket: str = "default", **kwargs: Any):
+    """Call an SDK `.create`, retrying only transient errors with backoff.
+
+    The client is built with `max_retries=0` because the SDK's own retry loop
+    treats EVERY 429 as retryable, including `insufficient_quota`.
+    """
+    from noctusai_lib.integrations import rate_limit
+
+    return await rate_limit.retry_with_backoff_async(
+        lambda: create(*args, **kwargs),
+        bucket=bucket,
+        is_retryable=_is_retryable,
+        retry_after=_retry_after,
+    )
+
+
+def _to_llm_error(exc: OpenAIError) -> LLMAPIError:
+    if is_quota_exhausted(exc):
+        return ProviderQuotaExhausted("openai", str(exc))
+    return LLMAPIError("openai", str(exc))
 
 
 class OpenAIProvider:
@@ -43,7 +104,7 @@ class OpenAIProvider:
             raise LLMNotConfigured("openai")
         client = self._clients.get(api_key)
         if client is None:
-            client = AsyncOpenAI(api_key=api_key)
+            client = AsyncOpenAI(api_key=api_key, max_retries=0)
             self._clients[api_key] = client
         return client
 
@@ -73,7 +134,7 @@ class OpenAIProvider:
             if response_format is not None:
                 payload["response_format"] = response_format
             payload.update(kwargs)
-            response = await client.chat.completions.create(**payload)
+            response = await _create_retrying(client.chat.completions.create, **payload)
             content = response.choices[0].message.content or ""
             usage = getattr(response, "usage", None)
             await record_usage(
@@ -89,7 +150,7 @@ class OpenAIProvider:
             return content.strip()
         except OpenAIError as exc:
             logger.error("OpenAI chat_completion failed: %s", exc)
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def generate_embedding(
         self,
@@ -110,7 +171,7 @@ class OpenAIProvider:
         # 2026-07-24). Async-safe; never blocks the event loop.
         await rate_limit.acquire_async("openai_embed")
         try:
-            response = await client.embeddings.create(
+            response = await _create_retrying(client.embeddings.create, bucket="openai_embed",
                 model=model,
                 input=text,
                 **kwargs,
@@ -129,7 +190,7 @@ class OpenAIProvider:
             return response.data[0].embedding
         except OpenAIError as exc:
             logger.error("OpenAI generate_embedding failed: %s", exc)
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def generate_embeddings_batch(
         self,
@@ -165,7 +226,7 @@ class OpenAIProvider:
         # regardless of how many texts ride inside it.
         await rate_limit.acquire_async("openai_embed")
         try:
-            response = await client.embeddings.create(
+            response = await _create_retrying(client.embeddings.create, bucket="openai_embed",
                 model=model,
                 input=texts,
                 **kwargs,
@@ -188,7 +249,7 @@ class OpenAIProvider:
                 "OpenAI generate_embeddings_batch failed (%d texts): %s",
                 len(texts), exc,
             )
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def transcribe_audio(
         self,
@@ -211,7 +272,7 @@ class OpenAIProvider:
         try:
             buf = io.BytesIO(audio)
             buf.name = kwargs.pop("filename", "audio.mp3")
-            response = await client.audio.transcriptions.create(
+            response = await _create_retrying(client.audio.transcriptions.create,
                 model=model,
                 file=buf,
                 **kwargs,
@@ -234,7 +295,7 @@ class OpenAIProvider:
             return (response.text or "").strip()
         except OpenAIError as exc:
             logger.error("OpenAI transcribe_audio failed: %s", exc)
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def analyze_image(
         self,
@@ -263,7 +324,7 @@ class OpenAIProvider:
             image_url = image
 
         try:
-            response = await client.chat.completions.create(
+            response = await _create_retrying(client.chat.completions.create,
                 model=model,
                 messages=[
                     {
@@ -299,7 +360,7 @@ class OpenAIProvider:
             return texto
         except OpenAIError as exc:
             logger.error("OpenAI analyze_image failed: %s", exc)
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
     async def analyze_images(
         self,
@@ -354,7 +415,7 @@ class OpenAIProvider:
             content.append({"type": "image_url", "image_url": {"url": image_url}})
 
         try:
-            response = await client.chat.completions.create(
+            response = await _create_retrying(client.chat.completions.create,
                 model=model,
                 messages=[{"role": "user", "content": content}],
                 response_format={
@@ -382,7 +443,7 @@ class OpenAIProvider:
             logger.error(
                 "OpenAI analyze_images failed (%d images): %s", len(images), exc,
             )
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
         raw = (response.choices[0].message.content or "").strip()
         try:
@@ -431,7 +492,7 @@ class OpenAIProvider:
         prompt_tokens = completion_tokens = total_tokens = None
         model_version = None
         try:
-            stream = await client.chat.completions.create(**payload)
+            stream = await _create_retrying(client.chat.completions.create, **payload)
             async for chunk in stream:
                 if chunk.choices:
                     delta = chunk.choices[0].delta.content
@@ -449,7 +510,7 @@ class OpenAIProvider:
                     total_tokens = getattr(usage, "total_tokens", None)
         except OpenAIError as exc:
             logger.error("OpenAI chat_completion_stream failed: %s", exc)
-            raise LLMAPIError("openai", str(exc)) from exc
+            raise _to_llm_error(exc) from exc
 
         await record_usage(
             provider="openai",

@@ -117,6 +117,8 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
     result = _ec.refresh_markdown_corpus(
         _CORPUS, force=force, paths=paths, cost_namespace="memory-embeddings"
     )
+    if result.get("status") == "quota_exhausted":
+        return result  # do NOT stamp source_sha: the cache is NOT fresh
     # Write aggregate source_sha for freshness keeper.
     try:
         # connect_cache applies WAL + busy_timeout — this is a WRITER, so without

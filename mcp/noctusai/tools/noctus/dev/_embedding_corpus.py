@@ -232,6 +232,54 @@ def embed_batch_sync(texts: list[str]) -> list[list[float]]:
     return run_coro_blocking(generate_embeddings_batch(texts))
 
 
+def _quota_exc() -> type[BaseException]:
+    from noctusai_lib.integrations.llm.exceptions import ProviderQuotaExhausted
+    return ProviderQuotaExhausted
+
+
+# ── Quota-exhausted abort (shared by every refresh loop) ────────────────────
+def abort_on_quota(
+    conn: sqlite3.Connection,
+    restore_usage: Callable[[], None],
+    exc: BaseException,
+    *,
+    rel: str,
+    refreshed: list[str],
+    skipped: list[str],
+    errors: list[dict],
+    rows_written: int,
+) -> dict[str, Any]:
+    """Stop a refresh on the FIRST `ProviderQuotaExhausted` and report it.
+
+    Quota exhaustion is permanent until the account is topped up, so grinding
+    through the remaining items only repeats the same failure (2026-10-09:
+    119 identical errors, 271-346 s inside the git post-merge hook). Rolls
+    back the in-flight (uncommitted) file — each loop commits before it
+    deletes a file's old rows, so the cache is left exactly as it was before
+    this file started — and returns `status: "quota_exhausted"`, never a
+    "rebuilt 0 chunks" lookalike. Pruning and cost logging are skipped.
+    """
+    conn.rollback()
+    conn.close()
+    restore_usage()
+    msg = str(getattr(exc, "message", None) or exc)[:200]
+    errors.append({"path": rel, "error": f"quota_exhausted: {msg}"})
+    return {
+        "ok": False,
+        "status": "quota_exhausted",
+        "refreshed": refreshed,
+        "skipped": skipped,
+        "errors": errors,
+        "rows_written": rows_written,
+        "pruned": [],
+        "message": (
+            "Embedding provider has no credits left (insufficient_quota); "
+            "refresh aborted on the first failure. Existing cache rows are "
+            "untouched. Top up the OpenAI account and re-run."
+        ),
+    }
+
+
 # ── Real-usage capture ─────────────────────────────────────────────────────
 # The provider (openai_provider.generate_embedding) already records the REAL
 # `usage.total_tokens` from the API response via `record_usage`, which
@@ -792,6 +840,7 @@ def refresh_markdown_corpus(
                 skipped.append(rel)
                 continue
 
+        conn.commit()  # checkpoint: a quota abort rolls back only THIS file
         _delete_rows_for_path(conn, corpus, rel)
 
         try:
@@ -831,6 +880,12 @@ def refresh_markdown_corpus(
             batch_texts = [c for _idx, c in batch]
             try:
                 vecs = embed_batch_sync(batch_texts)
+            except _quota_exc() as qe:
+                return abort_on_quota(
+                    conn, _restore_usage, qe, rel=rel, refreshed=refreshed,
+                    skipped=skipped, errors=errors,
+                    rows_written=total_rows - len(per_doc_rowids),
+                )
             except Exception as e:  # noqa: BLE001
                 errors.append({
                     "path": rel, "chunk_idx": batch[0][0], "error": str(e)[:200],

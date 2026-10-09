@@ -1146,6 +1146,8 @@ def main():
             print(f"  {YELLOW}⚠ {r.get('message', 'memory dir not found')}{RESET}")
         elif r["status"] == "in-sync":
             print(f"  {GREEN}✓ memory embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
+        elif r.get("status") == "quota_exhausted":
+            print(f"  {YELLOW}⚠ memory embeddings refresh ABORTED — provider quota exhausted (insufficient_quota). Cache untouched; top up the OpenAI account.{RESET}")
         else:
             print(f"  {GREEN}✓ memory embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} doc(s).{RESET}")
             if r["errors"]:
@@ -1176,6 +1178,8 @@ def main():
         r = cee.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ corpus embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
+        elif r.get("status") == "quota_exhausted":
+            print(f"  {YELLOW}⚠ corpus embeddings refresh ABORTED — provider quota exhausted (insufficient_quota). Cache untouched; top up the OpenAI account.{RESET}")
         else:
             print(f"  {GREEN}✓ corpus embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} doc(s).{RESET}")
             if r["errors"]:
@@ -1206,6 +1210,8 @@ def main():
         r = kbe.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ kb embeddings cache in-sync ({len(r['skipped'])} doc(s); --force to rebuild).{RESET}")
+        elif r.get("status") == "quota_exhausted":
+            print(f"  {YELLOW}⚠ kb embeddings refresh ABORTED — provider quota exhausted (insufficient_quota). Cache untouched; top up the OpenAI account.{RESET}")
         else:
             print(f"  {GREEN}✓ kb embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} doc(s).{RESET}")
             if r["errors"]:
@@ -1252,6 +1258,8 @@ def main():
         r = ce.refresh(force=args.force)
         if r["status"] == "in-sync":
             print(f"  {GREEN}✓ code embeddings cache in-sync ({len(r['skipped'])} file(s); --force to rebuild).{RESET}")
+        elif r.get("status") == "quota_exhausted":
+            print(f"  {YELLOW}⚠ code embeddings refresh ABORTED — provider quota exhausted (insufficient_quota). Cache untouched; top up the OpenAI account.{RESET}")
         else:
             print(f"  {GREEN}✓ code embeddings cache rebuilt — {r['rows_written']} chunks across {len(r['refreshed'])} file(s).{RESET}")
             if r["errors"]:

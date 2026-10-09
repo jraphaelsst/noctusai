@@ -180,6 +180,7 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
         # unconditionally (2026-08-14 fix), not just the current process's
         # `_HAS_VEC` branch: a PRIOR refresh of this same doc may have run
         # under a DIFFERENT environment (see `_ec.delete_embedding_rows`).
+        conn.commit()  # checkpoint: a quota abort rolls back only THIS file
         cur = conn.execute("SELECT rowid_alias FROM kb_chunks WHERE path=?", (rel,))
         old_rowids = [r[0] for r in cur.fetchall()]
         if old_rowids:
@@ -215,6 +216,12 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
             batch_texts = [c for _idx, c in batch]
             try:
                 vecs = _embed_batch_sync(batch_texts)
+            except _ec._quota_exc() as qe:
+                return _ec.abort_on_quota(
+                    conn, _restore_usage, qe, rel=rel, refreshed=refreshed,
+                    skipped=skipped, errors=errors,
+                    rows_written=total_rows - len(per_doc_rowids),
+                )
             except Exception as e:  # noqa: BLE001 — surface the provider error
                 errors.append({
                     "path": rel, "chunk_idx": batch[0][0], "error": str(e)[:200],

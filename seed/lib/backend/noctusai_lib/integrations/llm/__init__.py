@@ -72,6 +72,7 @@ from .budget import (
 )
 from .exceptions import (
     LLMAPIError,
+    ProviderQuotaExhausted,
     LLMBudgetExceeded,
     LLMNotConfigured,
     ProviderNotImplemented,
@@ -143,6 +144,7 @@ __all__ = [
     "shutdown_llm",
     # Exceptions
     "LLMAPIError",
+    "ProviderQuotaExhausted",
     "LLMBudgetExceeded",
     "LLMNotConfigured",
     "ProviderNotImplemented",
