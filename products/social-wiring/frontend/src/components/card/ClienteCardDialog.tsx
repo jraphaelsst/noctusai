@@ -342,6 +342,12 @@ export interface ClienteCardDialogProps {
    */
   renderAtendimentoImoveis?: () => ReactNode;
   /**
+   * The atendimento's propostas (`PropostasSection`, lead-to-contract §4.3),
+   * mounted on Geral right after the imóveis. Handed `irPara` so Aceitar can
+   * land on the Contratos / Certidões tabs.
+   */
+  renderPropostas?: (nav: { irPara: (subpage: CardSubpageKey) => void }) => ReactNode;
+  /**
    * Every party of the atendimento from `GET …/partes` (§2.1). Only its PJ
    * rows are rendered here — the PF rows come from `compradores`/`vendedores`
    * (which carry the `cliente` the per-person panels need). Removal reuses
@@ -746,7 +752,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
   // ── GERAL ──────────────────────────────────────────────────────────────
   // The seed spine in the order the work happens; SW's blocks enter at the
   // named slots — never by copying the subpage.
-  const renderGeral = () => (
+  const renderGeral = (ctx?: CardHubRenderCtx<CardSubpageKey>) => (
     <GeralSubpage
       tags={props.selectedTags}
       descricao={{
@@ -785,6 +791,11 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
             {props.renderAtendimentoImoveis && (
               <div className="mb-4" data-testid="atendimento-imoveis-slot">
                 {props.renderAtendimentoImoveis()}
+              </div>
+            )}
+            {props.renderPropostas && (
+              <div className="mb-4" data-testid="propostas-slot">
+                {props.renderPropostas({ irPara: (key) => ctx?.select(key) })}
               </div>
             )}
           </>

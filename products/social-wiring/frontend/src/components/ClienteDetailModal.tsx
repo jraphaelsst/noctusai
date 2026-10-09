@@ -73,6 +73,7 @@ import {
   AdicionarCompradorDialog,
   type AdicionarCompradorValues,
 } from "@/components/card/AdicionarCompradorDialog";
+import { PropostasSection } from "@/components/propostas/PropostasSection";
 import { AtendimentoImoveisSection } from "@/components/card/AtendimentoImoveisSection";
 import { useAdicionarParte, useAtualizarContratoParte, usePartes } from "@/hooks/usePartes";
 import { toastServerError } from "@/lib/erroServidor";
@@ -919,6 +920,7 @@ export function ClienteDetailModal({
       renderAtendimentoImoveis={() =>
         id && <AtendimentoImoveisSection clienteId={id} atendimentoId={atendimentoId} />
       }
+      renderPropostas={({ irPara }) => id && <PropostasSection clienteId={id} irPara={irPara} />}
       renderCertidoes={() =>
         id && <CertidoesPartesTab clienteId={id} atendimentoId={atendimentoId} />
       }
