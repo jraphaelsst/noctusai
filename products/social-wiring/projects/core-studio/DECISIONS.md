@@ -68,9 +68,16 @@ Rule for this project: the owner is interviewed for every specification; nothing
 - **Viral library source**: deferred. It will come from high-performing Instagram posts; where those come from (e.g. accounts the owner registers in a list and we monitor for viral posts) is still open.
 - Build contract for Minha Pesquisa v1: `specs/pesquisa-contract.md`.
 
+## Decided — 2026-10-09, round 8
+
+- **Assuntos Virais**: rebuild now, refine later (tab on Minha Pesquisa; `specs/pesquisa-wave2-contract.md`).
+- **AI checking of brain answers**: yes, but never blocking — the AI suggests (approve / reject + reason), the user accepts or dismisses.
+- **Voice answers**: yes.
+- **Minhas extrações**: keep.
+- **Transcription**: self-hosted faster-whisper (large-v3-turbo, CPU int8, pt) on the prod server as its own container, hard-capped (1 core, ~2 GB, one job at a time, DB queue), so it can never degrade the products; shielded against abuse (login, per-user rate limit + daily minutes, size/duration caps, type check, kill switch). Design: `specs/transcription-contract.md`.
+
 ## Open — to ask before building
 
 - Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items? Owner unsure (2026-10-09) — revisit when the headline module starts, with a worked example.
-- Rebuild or drop: Assuntos Virais pane, AI validation of brain answers, voice answers, the hidden "Minhas extrações" page.
 - Viral library source (see round 7).
 - Approval for checks that change the CoreStudio account (study spec §7), including one live generation (1 credit) to read the real HEADLINE/ROTEIRO prompts.
