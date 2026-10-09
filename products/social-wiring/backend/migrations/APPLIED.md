@@ -506,3 +506,7 @@ Authored 2026-10-09 (projects/signing-companies/CONTRACT.md). Creates `org_imobi
 ## 216 — cliente_origens_excluidas (tombstones for deleted clientes) — NOT APPLIED
 
 Authored 2026-10-09 (owner decision "mark as deleted, keep leads"). Creates `cliente_origens_excluidas` (UNIQUE (origem_tabela, origem_id), org-picker RLS, acting-audit attach). `excluir_cliente` writes one tombstone per touched source; `run_backfill` skips tombstoned sources. Apply BEFORE deploying the image that reads/writes it (the new code writes the table on every cliente delete).
+
+## atendimento_propostas (file: `*_atendimento_propostas.sql`) (proposta = offer snapshot) — NOT APPLIED
+
+Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §4.1). Creates `atendimento_propostas` (status CHECK, `valor_proposto > 0` CHECK, partial UNIQUE one `aceita` per atendimento, org-picker RLS, acting-audit attach). Apply BEFORE deploying the image that reads/writes it.

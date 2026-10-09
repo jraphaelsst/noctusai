@@ -74,6 +74,7 @@ from app.modules.card_hub.partes_router import router as partes_router
 from app.modules.card_hub.contrato_imobiliaria_router import (
     router as contrato_imobiliaria_router,
 )
+from app.modules.card_hub.propostas.router import router as propostas_router
 from app.modules.card_hub.contrato_testemunhas_router import (
     router as contrato_testemunhas_router,
 )
@@ -146,6 +147,7 @@ router.include_router(assinatura_router)
 router.include_router(contrato_testemunhas_router)
 # Per-contract signing-company choice (migration 215) — .../contratos/{id}/imobiliaria.
 router.include_router(contrato_imobiliaria_router)
+router.include_router(propostas_router)
 # atendimento-partes-imoveis (CONTRACT §10): all-parties surface
 # (`.../partes`, `.../partes/lookup`) and per-party certidões
 # (`.../certidoes/partes…`). Literal ≥3-segment paths with a distinct 2nd

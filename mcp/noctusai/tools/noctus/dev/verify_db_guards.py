@@ -4725,6 +4725,55 @@ _SW_207_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_M_PROPOSTAS = "222_atendimento_propostas.sql"  # rename with the migration file at integrate
+
+
+def _proposta_ins(extra_cols: str = "", extra_vals: str = "") -> str:
+    return (
+        f"    INSERT INTO {_S}.atendimento_propostas "
+        f"(org_id, atendimento_id, cliente_id, imovel_codigo{extra_cols})\n"
+        f"    VALUES (v_org, v_atendimento, gen_random_uuid(), 'NOC_PROBE'{extra_vals});"
+    )
+
+
+#: atendimento_propostas (sw-lead-to-contract CONTRACT §4.1).
+_SW_PROPOSTAS_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="atendimento_propostas.status_valido",
+        guard_name="atendimento_propostas_status_valido",
+        migration=_M_PROPOSTAS,
+        rationale="status drives which edits/transitions a proposta allows; an unknown value would be neither open nor closed.",
+        fixtures=("atendimento_org",),
+        ops_sql=_proposta_ins(", status", ", 'noc_probe_bogus'"),
+        sqlstate_condition=_CHECK,
+        what="an atendimento_propostas row with an out-of-vocabulary status",
+        tabelas=(f"{_S}.atendimento_propostas",),
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_propostas.valor_positivo",
+        guard_name="atendimento_propostas_valor_positivo",
+        migration=_M_PROPOSTAS,
+        rationale="An offer of zero or less is not an offer; the contract's price would print as nothing.",
+        fixtures=("atendimento_org",),
+        ops_sql=_proposta_ins(", valor_proposto", ", 0"),
+        sqlstate_condition=_CHECK,
+        what="a zero valor_proposto",
+        tabelas=(f"{_S}.atendimento_propostas",),
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_propostas.one_aceita_per_atendimento",
+        guard_name="uq_sw_atendimento_propostas_uma_aceita",
+        migration=_M_PROPOSTAS,
+        rationale="The live negotiation set holds one imóvel and one set of terms; two accepted propostas would be two answers to what is being sold.",
+        fixtures=("atendimento_org",),
+        ops_sql=_proposta_ins(", status", ", 'aceita'") + "\n" + _proposta_ins(", status", ", 'aceita'"),
+        sqlstate_condition=_UNIQ,
+        what="two accepted atendimento_propostas for one atendimento",
+        tabelas=(f"{_S}.atendimento_propostas",),
+    ),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — seed editorial workflow (`noctusai_lib.domain.sql_templates.
 # editorial_tables`; project `seed-editorial-workflow`, slice E2).
@@ -5419,6 +5468,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_201_PROBES,
     *_SW_207_PROBES,
     *_SW_218_PROBES,
+    *_SW_PROPOSTAS_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
