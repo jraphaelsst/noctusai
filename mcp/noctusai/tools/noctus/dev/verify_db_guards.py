@@ -5198,6 +5198,65 @@ _BRANDING_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+
+# ─── SW 218 — campanha intake (sw-lead-to-contract S1) ─────────────────────
+_SW_218_SETUP = (
+    _table_fixture_check("social_wiring.campanha_veiculacoes")
+    + _PROBE_ORG_SETUP
+    + """
+  INSERT INTO social_wiring.campanhas (org_id, nome) VALUES (v_org, 'noc probe campanha')
+  RETURNING id INTO v_prod;  -- v_prod reused as the campanha id
+"""
+)
+
+_SW_218_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="social_wiring.campanha_veiculacoes.meta_ref_unique",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="campanha_veiculacoes_meta_ref_unico",
+        kind="write_refusal",
+        migrations=("218_campanha_intake.sql",),
+        sql=_constraint_refusal_probe(
+            setup_sql=_SW_218_SETUP,
+            op_sql="""
+    INSERT INTO social_wiring.campanha_veiculacoes (org_id, campanha_id, canal, nivel, ref_tabela, ref_codigo)
+    VALUES (v_org, v_prod, 'meta_ads', 'ad', 'ads_objects', 'noc-probe-ad'),
+           (v_org, v_prod, 'meta_ads', 'ad', 'ads_objects', 'noc-probe-ad');
+""",
+            sqlstate_condition="unique_violation",
+            constraint_names=("campanha_veiculacoes_meta_ref_unico",),
+            what="the same Meta ad registered twice in one org",
+        ),
+        rationale=(
+            "Lead intake resolves ad/adset/campaign/form ids to ONE campanha (CONTRACT §1.2); "
+            "a duplicate row would make the imóvel link a guess."
+        ),
+    ),
+    GuardProbe(
+        id="social_wiring.campanha_veiculacoes.meta_requires_nivel",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="campanha_veiculacoes_nivel_valido",
+        kind="write_refusal",
+        migrations=("218_campanha_intake.sql",),
+        sql=_constraint_refusal_probe(
+            setup_sql=_SW_218_SETUP,
+            op_sql="""
+    INSERT INTO social_wiring.campanha_veiculacoes (org_id, campanha_id, canal, nivel, ref_tabela, ref_codigo)
+    VALUES (v_org, v_prod, 'meta_ads', NULL, 'ads_objects', 'noc-probe-no-level');
+""",
+            sqlstate_condition="check_violation",
+            constraint_names=("campanha_veiculacoes_nivel_valido",),
+            what="a Meta veiculação without a nivel",
+        ),
+        rationale=(
+            "Without the level, an id could match the wrong Meta object kind at intake "
+            "(ad vs adset vs campaign vs form)."
+        ),
+    ),
+)
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -5247,6 +5306,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_192_PROBES,
     *_SW_201_PROBES,
     *_SW_207_PROBES,
+    *_SW_218_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
