@@ -17,9 +17,11 @@ export interface PropostasSectionProps {
   clienteId: string;
   /** Switches the card to another subpage (Contratos / Certidões). */
   irPara?: (subpage: CardSubpageKey) => void;
+  /** Tells the Contratos tab which draft to open (set before `irPara`). */
+  onAbrirContrato?: (contratoId: string) => void;
 }
 
-export function PropostasSection({ clienteId, irPara }: PropostasSectionProps) {
+export function PropostasSection({ clienteId, irPara, onAbrirContrato }: PropostasSectionProps) {
   const query = usePropostas(clienteId);
   const [aberta, setAberta] = useState<string | null>(null);
   const items = query.data ?? [];
@@ -55,6 +57,7 @@ export function PropostasSection({ clienteId, irPara }: PropostasSectionProps) {
           propostaId={aberta}
           onClose={() => setAberta(null)}
           irPara={irPara}
+          onAbrirContrato={onAbrirContrato}
         />
       )}
     </section>

@@ -86,9 +86,10 @@ export interface PropostaModalProps {
   propostaId: string;
   onClose: () => void;
   irPara?: (subpage: CardSubpageKey) => void;
+  onAbrirContrato?: (contratoId: string) => void;
 }
 
-export function PropostaModal({ clienteId, propostaId, onClose, irPara }: PropostaModalProps) {
+export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirContrato }: PropostaModalProps) {
   const query = useProposta(clienteId, propostaId);
   const m = usePropostaMutations(clienteId);
   const imobs = useImobiliarias();
@@ -221,7 +222,12 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara }: Propos
             onTentarAceiteDeNovo={() => void handleAceitar()}
             onTentarPosAceiteDeNovo={() => void handlePosAceite()}
             onAbrirCertidoes={irPara ? () => { irPara("certidoes"); onClose(); } : undefined}
-            onAbrirContratos={irPara ? () => { irPara("contratos"); onClose(); } : undefined}
+            onAbrirContratos={irPara ? () => {
+              const id = aceite.contrato_id ?? aceite.proposta.contrato_id;
+              if (id) onAbrirContrato?.(id);
+              irPara("contratos");
+              onClose();
+            } : undefined}
           />
         ) : proposta && draft ? (
           <div className="space-y-5">

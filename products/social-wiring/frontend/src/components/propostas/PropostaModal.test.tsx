@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 
+import { ApiError } from "@noctusai/lib";
 import type { Proposta } from "@/types/propostas";
 
 const m = vi.hoisted(() => ({
@@ -74,14 +75,14 @@ afterEach(async () => {
   m.toast.error.mockReset();
 });
 
-async function abrir(irPara = vi.fn()) {
+async function abrir(irPara = vi.fn(), onAbrirContrato = vi.fn()) {
   const rtl = await import("@testing-library/react");
   rtl.render(
     <MemoryRouter>
-      <PropostaModal clienteId="c1" propostaId="p1" onClose={vi.fn()} irPara={irPara} />
+      <PropostaModal clienteId="c1" propostaId="p1" onClose={vi.fn()} irPara={irPara} onAbrirContrato={onAbrirContrato} />
     </MemoryRouter>,
   );
-  return { rtl, irPara };
+  return { rtl, irPara, onAbrirContrato };
 }
 
 describe("PropostasSection", () => {
@@ -148,7 +149,7 @@ describe("PropostaModal", () => {
         matricula: { status: "faltando", documento_id: null, motivo: "matricula_ausente" },
       },
     });
-    const { rtl, irPara } = await abrir();
+    const { rtl, irPara, onAbrirContrato } = await abrir();
     rtl.fireEvent.click(rtl.screen.getByTestId("proposta-aceitar"));
     expect((await rtl.screen.findByTestId("aceitar-completude")).textContent).toContain("Imobiliária");
     rtl.fireEvent.click(rtl.screen.getByTestId("aceitar-confirmar"));
@@ -159,13 +160,14 @@ describe("PropostaModal", () => {
     expect(rtl.screen.getByTestId("aceite-tentar-de-novo")).toBeTruthy();
     expect(m.toast.success).toHaveBeenCalled();
     rtl.fireEvent.click(rtl.screen.getByTestId("ir-contratos"));
+    expect(onAbrirContrato).toHaveBeenCalledWith("k1");
     expect(irPara).toHaveBeenCalledWith("contratos");
   });
 
   it("maps 409 codes to friendly copy and highlights 400 field paths", async () => {
     m.salvar.mockRejectedValue(
-      Object.assign(new Error("[400] x"), {
-        body: { error: { code: "VALIDATION", message: "x", details: [{ loc: ["valor_proposto"] }] } },
+      new ApiError(400, "Proposta inválida", {
+        error: { code: "snapshot_invalido", message: "Proposta inválida", details: { campos: [{ path: "valor_proposto", mensagem: "x" }] } },
       }),
     );
     const { rtl } = await abrir();
@@ -178,7 +180,9 @@ describe("PropostaModal", () => {
     rtl.fireEvent.click(rtl.screen.getByTestId("proposta-salvar"));
     await rtl.waitFor(() => expect(m.salvar).toHaveBeenCalledTimes(2));
     m.aceitar.mockRejectedValue(
-      Object.assign(new Error("[409]"), { body: { error: { code: "imovel_divergente", message: "raw" } } }),
+      new ApiError(409, "O imóvel desta proposta é diferente do imóvel já em negociação.", {
+        error: { code: "imovel_divergente", message: "O imóvel desta proposta é diferente do imóvel já em negociação." },
+      }),
     );
     rtl.fireEvent.click(rtl.screen.getByTestId("proposta-aceitar"));
     rtl.fireEvent.click(await rtl.screen.findByTestId("aceitar-confirmar"));
@@ -202,5 +206,17 @@ describe("PropostaModal", () => {
     const { rtl } = await abrir();
     expect(rtl.screen.queryByTestId("proposta-excluir")).toBeNull();
     expect(rtl.screen.queryByTestId("proposta-enviar")).toBeNull();
+  });
+});
+
+describe("lerErroProposta", () => {
+  it("prefers the server message, falls back to the code map, then to the caller copy", async () => {
+    const { lerErroProposta } = await import("./erroProposta");
+    const srv = new ApiError(409, "Mensagem do servidor", { error: { code: "proposta_fechada", message: "Mensagem do servidor" } });
+    expect(lerErroProposta(srv, "fb").mensagem).toBe("Mensagem do servidor");
+    expect(lerErroProposta(srv, "fb").code).toBe("proposta_fechada");
+    const semMsg = new ApiError(409, "", { error: { code: "proposta_ja_aceita" } });
+    expect(lerErroProposta(semMsg, "fb").mensagem).toContain("aceita");
+    expect(lerErroProposta(new Error(""), "fb").mensagem).toBe("fb");
   });
 });

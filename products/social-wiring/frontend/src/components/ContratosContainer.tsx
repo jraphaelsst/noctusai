@@ -69,11 +69,15 @@ export function ContratosContainer({
   clienteId,
   onNovoContrato,
   onIrPara,
+  contratoId,
 }: {
   clienteId: string;
   onNovoContrato: () => void;
   /** The card dialog's "Resolver" jump — forwarded to the readiness list. */
   onIrPara?: (destino: GeracaoDestino) => void;
+  /** Opens this contract's card (matrícula + gerador sections) on mount —
+   *  the proposta-aceite hand-off lands on the new draft. */
+  contratoId?: string | null;
 }) {
   const query = useContratos(clienteId);
   const mutations = useContratoMutations(clienteId);
@@ -212,7 +216,7 @@ export function ContratosContainer({
           })
         }
         iniciandoGeracao={mutations.iniciar.isPending}
-        contratoIniciadoId={contratoIniciadoId}
+        contratoIniciadoId={contratoIniciadoId ?? contratoId ?? null}
         addingVersaoContratoId={
           mutations.addVersao.isPending
             ? (mutations.addVersao.variables?.contratoId ?? null)

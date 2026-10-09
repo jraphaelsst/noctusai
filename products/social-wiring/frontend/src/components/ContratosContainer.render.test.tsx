@@ -93,4 +93,26 @@ describe("ContratosContainer — render stability", () => {
     expect(getSpy.mock.calls.length).toBeGreaterThan(getsAntes); // the refetch really happened
     expect(counts).toEqual(antes);
   });
+
+  it("contratoId opens that draft's matrícula + gerador sections on mount", async () => {
+    const React = await import("react");
+    const { render, screen } = await import("@testing-library/react");
+    const { QueryClient, QueryClientProvider } = await import("@tanstack/react-query");
+    const { MemoryRouter } = await import("react-router-dom");
+    const antes = counts.gerador;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      React.createElement(
+        QueryClientProvider,
+        { client: qc },
+        React.createElement(
+          MemoryRouter,
+          null,
+          React.createElement(ContratosContainer, { clienteId: "cli2", onNovoContrato: () => {}, contratoId: "c1" }),
+        ),
+      ),
+    );
+    await screen.findByTestId("contrato-gerador-toggle-c1");
+    expect(counts.gerador).toBeGreaterThan(antes); // rendered open without any click
+  });
 });

@@ -148,6 +148,7 @@ export function ClienteDetailModal({
   const [roteiroDialogOpen, setRoteiroDialogOpen] = useState(false);
   // Sibling of `roteiroDialogOpen` for the same reason: a Dialog nested inside
   // `ClienteCardDialog`'s own Dialog content fights the outer focus trap.
+  const [contratoAlvoId, setContratoAlvoId] = useState<string | null>(null);
   const [contratoDialogOpen, setContratoDialogOpen] = useState(false);
   // Migration 110 — "Ver cadastro" on a linked cônjuge opens a SECOND card,
   // for the exact same focus-trap reason every other dialog here is a
@@ -920,13 +921,18 @@ export function ClienteDetailModal({
       renderAtendimentoImoveis={() =>
         id && <AtendimentoImoveisSection clienteId={id} atendimentoId={atendimentoId} />
       }
-      renderPropostas={({ irPara }) => id && <PropostasSection clienteId={id} irPara={irPara} />}
+      renderPropostas={({ irPara }) =>
+        id && (
+          <PropostasSection clienteId={id} irPara={irPara} onAbrirContrato={setContratoAlvoId} />
+        )
+      }
       renderCertidoes={() =>
         id && <CertidoesPartesTab clienteId={id} atendimentoId={atendimentoId} />
       }
       renderContratos={({ irPara }) => (
         <ContratosContainer
           clienteId={id as string}
+          contratoId={contratoAlvoId}
           onNovoContrato={() => setContratoDialogOpen(true)}
           onIrPara={irPara}
         />

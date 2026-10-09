@@ -1,7 +1,12 @@
 /**
  * Maps a failed proposta request to pt-BR copy + the field paths a 400
- * snapshot-validation error names (addendum): `{message, code, campos}`.
+ * `snapshot_invalido` names. Read through the seed `ApiError`
+ * (`err.code`, `err.details`): the backend emits the seed envelope
+ * `{error: {code, message, details: {campos: [{path, mensagem}]}}}`.
+ * The server's pt-BR `message` wins; the code→copy map is only a fallback.
  */
+import { ApiError } from "@noctusai/lib";
+
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import { PROPOSTA_ERRO_409 } from "@/types/propostas";
 
@@ -11,32 +16,22 @@ export interface ErroProposta {
   campos: string[];
 }
 
-function textoDoCaminho(x: unknown): string | null {
-  if (typeof x === "string") return x;
-  if (Array.isArray(x)) return x.map(String).join(".");
-  if (x && typeof x === "object") {
-    const o = x as Record<string, unknown>;
-    return textoDoCaminho(o.path ?? o.loc ?? o.campo ?? o.field);
-  }
-  return null;
-}
-
 export function lerErroProposta(err: unknown, fallback: string): ErroProposta {
-  const envelope = (err as { body?: { error?: Record<string, unknown> } } | null)?.body?.error;
-  const code = typeof envelope?.code === "string" ? envelope.code : null;
-  const details = envelope?.details as unknown;
-  const bruto: unknown[] = Array.isArray(details)
-    ? details
-    : details && typeof details === "object"
-      ? [
-          ...(((details as Record<string, unknown>).campos as unknown[]) ?? []),
-          ...(((details as Record<string, unknown>).fields as unknown[]) ?? []),
-          ...(((details as Record<string, unknown>).errors as unknown[]) ?? []),
-        ]
-      : [];
-  const campos = bruto.map(textoDoCaminho).filter((c): c is string => !!c);
-  const amigavel = code ? PROPOSTA_ERRO_409[code.toLowerCase()] : undefined;
-  return { mensagem: amigavel ?? mensagemErroServidor(err, fallback), code, campos };
+  const api = err instanceof ApiError ? err : null;
+  const code = api?.code ?? null;
+  const details = api?.details as { campos?: { path?: unknown }[] } | null | undefined;
+  const campos = (Array.isArray(details?.campos) ? details.campos : [])
+    .map((c) => c?.path)
+    .filter((p): p is string => typeof p === "string" && !!p);
+  // `ApiError.message` carries a `[status] ` prefix: read the envelope's own text.
+  const envelope = (api?.body as { error?: { message?: unknown } } | undefined)?.error?.message;
+  const doServidor =
+    typeof envelope === "string" && envelope
+      ? envelope
+      : mensagemErroServidor(err, "").replace(/^\[\d+\]\s*/, "").trim();
+  const mensagem =
+    doServidor || (code ? PROPOSTA_ERRO_409[code.toLowerCase()] : undefined) || fallback;
+  return { mensagem, code, campos };
 }
 
 /** True when `campos` flags `caminho` itself or anything under it. */
