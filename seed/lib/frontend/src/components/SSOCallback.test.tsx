@@ -13,9 +13,9 @@ function makeSupabase() {
   };
 }
 
-function mount(supabase: ReturnType<typeof makeSupabase>, productSlug?: string) {
+function mount(supabase: ReturnType<typeof makeSupabase>, productSlug?: string, entry = '/sso?token=abc.def.ghi') {
   return render(
-    <MemoryRouter initialEntries={['/sso?token=abc.def.ghi']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route
           path="/sso"
@@ -58,6 +58,45 @@ describe('SSOCallback token hygiene', () => {
     await waitFor(() => expect(supabase.auth.setSession).toHaveBeenCalled());
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toEqual({ token: 'abc.def.ghi', product_slug: 'erp' });
+  });
+});
+
+describe('SSOCallback fragment token hygiene (P2.1)', () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ access_token: 'a', refresh_token: 'r' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.history.replaceState({}, '', '/sso#token=abc.def.ghi');
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('reads #token= and strips it from history BEFORE any await (first supabase call)', async () => {
+    const order: string[] = [];
+    const supabase = makeSupabase();
+    supabase.auth.getSession = vi.fn().mockImplementation(async () => {
+      // By the time the flow first awaits anything, the fragment is gone.
+      order.push(`getSession:hash=${window.location.hash}`);
+      return { data: { session: null } };
+    });
+    const spy = vi.spyOn(window.history, 'replaceState');
+    spy.mockImplementation(((...a: Parameters<History['replaceState']>) => {
+      order.push('replaceState');
+      return History.prototype.replaceState.apply(window.history, a);
+    }) as History['replaceState']);
+    mount(supabase, 'erp', '/sso');
+    await waitFor(() => expect(supabase.auth.setSession).toHaveBeenCalled());
+    expect(order[0]).toBe('replaceState');
+    expect(order[1]).toBe('getSession:hash=');
+    expect(window.location.hash).toBe('');
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body).toEqual({ token: 'abc.def.ghi', product_slug: 'erp' });
+    spy.mockRestore();
   });
 });
 

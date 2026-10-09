@@ -1,10 +1,14 @@
 """
 SSO Router — Generate and validate SSO tokens for cross-product authentication.
 
-POST  /api/sso/token           — Generate SSO token for a product
+POST  /api/sso/token           — Generate SSO token for a product (+ server-built redirect_url)
 POST  /api/sso/validate        — Validate SSO token (called by products)
 GET   /api/sso/launch/{slug}   — Redirect to product with SSO token
 POST  /api/sso/session         — Exchange SSO token for a Supabase session
+
+Token transport / redemption strictness is MIXED and catalog-derived: see
+``app.sso_regime`` (strict = fragment + mandatory product_slug; legacy = query,
+slug optional, only for active dev-scope products on the old callback).
 """
 import logging
 import threading
@@ -19,7 +23,8 @@ from app.config import settings
 from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
-from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOValidateRequest
+from app.sso_regime import build_sso_launch_url, sso_regime
+from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sso", tags=["SSO"])
@@ -129,7 +134,7 @@ class _RateLimitError(Exception):
     pass
 
 
-@router.post("/token")
+@router.post("/token", response_model=SSOTokenResponse)
 @limiter.limit("20/minute")
 async def generate_sso_token(request: Request, body: SSOTokenRequest, authorization: Optional[str] = Header(None)):
     """Generate a short-lived SSO token to access a product."""
@@ -146,11 +151,14 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
     org_role = profile.data.get("org_role", "member")
 
     # Check if org has access to product (including expiry check)
-    product = db.table("products").select("id, slug, aceita_clientes").eq("slug", body.product_slug).single().execute()
+    product = db.table("products").select("id, slug, aceita_clientes, url_base, ativo, deploy_scope").eq("slug", body.product_slug).single().execute()
     if not product.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     if not customer_may_access_product(org_role, product.data):
         raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED)
+    if product.data.get("ativo") is not True:
+        # An inactive (asleep) product is not launchable -- fail closed.
+        raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
 
     from app.dependencies import check_org_license
     if not check_org_license(db, org_id, product.data["id"]):
@@ -167,7 +175,11 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
     )
 
     logger.info(f"SSO token generated for user={user.id} product={body.product_slug}")
-    return {"sso_token": sso_token, "product_slug": body.product_slug}
+    return SSOTokenResponse(
+        sso_token=sso_token,
+        product_slug=body.product_slug,
+        redirect_url=build_sso_launch_url(body.product_slug, product.data, sso_token),
+    )
 
 
 @router.post("/validate")
@@ -207,6 +219,8 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     if not customer_may_access_product(org_role, product.data):
         raise HTTPException(status_code=403, detail=_CUSTOMER_REFUSED)
+    if product.data.get("ativo") is not True:
+        raise HTTPException(status_code=403, detail="Sem acesso a este produto")
 
     # Check license (including expiry)
     from app.dependencies import check_org_license
@@ -223,15 +237,9 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
         org_role=org_role,
     )
 
-    # Redirect to product with token. Resolved through the seed-side
-    # `resolve_product_url` so a deploy can override the DB-stored
-    # localhost URL via PRODUCT_URL_<UPPER_SLUG> or PRODUCT_URL_PATTERN
-    # without rewriting public.products rows on every environment.
-    url_base = resolve_product_url(
-        product_slug,
-        db_url_base=product.data.get("url_base"),
-    )
-    redirect_url = f"{url_base}/sso?token={sso_token}"
+    # Token transport per the catalog-derived regime (strict -> URL fragment,
+    # legacy -> query), URL resolved through the seed `resolve_product_url`.
+    redirect_url = build_sso_launch_url(product_slug, product.data, sso_token)
     return RedirectResponse(url=redirect_url, status_code=302)
 
 
@@ -468,12 +476,21 @@ async def sso_session(request: Request, body: SSOSessionRequest):
 
     db = get_admin_client()
 
-    # Re-check the license at redemption — a revoked license cannot redeem.
+    # The token's product row decides the regime (never the request). One
+    # select serves the regime, the license check and the id lookup.
     product_row = (
-        db.table("products").select("id").eq("slug", token_product).limit(1).execute()
+        db.table("products").select("id, ativo, deploy_scope").eq("slug", token_product).limit(1).execute()
     )
     if not product_row.data:
         raise HTTPException(status_code=403, detail="Produto não encontrado")
+    regime = sso_regime(product_row.data[0])
+
+    # Strict: the redeemer must name itself. ALL binding/strictness 401s run
+    # BEFORE `_claim_sso_jti`, so a rejected relay never burns a legitimate token.
+    if regime == "strict" and body.product_slug is None:
+        raise HTTPException(status_code=401, detail="Token SSO não é válido para este produto")
+
+    # Re-check the license at redemption — a revoked license cannot redeem.
     from app.dependencies import check_org_license
     if not check_org_license(db, org_id, product_row.data[0]["id"]):
         raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
@@ -481,6 +498,14 @@ async def sso_session(request: Request, body: SSOSessionRequest):
     # Single use: claim the jti BEFORE issuing anything.
     jti = payload["jti"]
     _claim_sso_jti(db, jti, user_id, token_product)
+
+    if regime == "legacy":
+        # Drives the "legacy reaches zero" exit criterion (roadmap P2.1). Never the token.
+        logger.warning(
+            "sso_legacy_redeem jti=%s product=%s user_id=%s org_id=%s origin=%s slug_present=%s",
+            jti, token_product, user_id, org_id,
+            request.headers.get("origin"), body.product_slug is not None,
+        )
 
     logger.info(
         "SSO session para email=%s, org=%s, role=%s, org_role=%s",

@@ -23,6 +23,25 @@ exact failure this feature exists to prevent.
 import pytest
 
 
+from app.routers.products import get_sso_callback_prober  # noqa: E402
+from app.services.sso_callback_probe import CallbackProbeResult  # noqa: E402
+
+
+def _prober(ok: bool, detail: str = "x"):
+    async def _probe(_url_base):
+        return CallbackProbeResult(ok, detail)
+    return _probe
+
+
+@pytest.fixture(autouse=True)
+def _sso_bundle_ok(admin_client):
+    """Default: the product's bundle carries the new-callback marker (no network)."""
+    app = admin_client.raw().app
+    app.dependency_overrides[get_sso_callback_prober] = lambda: _prober(True)
+    yield
+    app.dependency_overrides.pop(get_sso_callback_prober, None)
+
+
 def _product(**over):
     row = {
         "id": "prod-1",
@@ -109,6 +128,31 @@ class TestDeployScope:
 
         assert resp.status_code == 200
         assert resp.json()["data"]["deploy_scope"] == "live"
+
+    def test_promotion_refused_when_bundle_has_old_sso_callback(self, admin_client):
+        """P2.1: live => strict SSO; rebuild first, then flip. Nothing is written."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("products", _product(ativo=True, deploy_scope="dev"))
+        app = admin_client.raw().app
+        app.dependency_overrides[get_sso_callback_prober] = lambda: _prober(False, "no marker")
+
+        resp = admin_client.post(
+            "/api/products/prod-1/deploy-scope", json={"deploy_scope": "live"}
+        )
+
+        assert resp.status_code == 409
+        assert "SSOCallback" in resp.json()["error"]["message"]
+
+    def test_demotion_does_not_probe(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("products", _product(ativo=True, deploy_scope="live"))
+        app = admin_client.raw().app
+        app.dependency_overrides[get_sso_callback_prober] = lambda: _prober(False, "no marker")
+
+        resp = admin_client.post(
+            "/api/products/prod-1/deploy-scope", json={"deploy_scope": "dev"}
+        )
+        assert resp.status_code == 200
 
     def test_demote_active_product_to_dev(self, admin_client):
         mock_sb = admin_client.mock_supabase

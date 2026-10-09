@@ -14,6 +14,14 @@ class SSOTokenRequest(StrictHttpModel):
     product_slug: str
 
 
+class SSOTokenResponse(StrictHttpModel):
+    sso_token: str
+    product_slug: str
+    # Server-built launch URL (regime-aware transport: fragment vs query). The
+    # frontend opens it verbatim and never recomputes the regime.
+    redirect_url: str
+
+
 class SSOValidateRequest(StrictHttpModel):
     token: str
 

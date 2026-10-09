@@ -23,6 +23,16 @@ import { clearLocalIdentity, dropProductCookieSession } from '../identity';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
 
+/**
+ * Build-time marker of the always-redeem + `product_slug` callback (SSO P2.1).
+ * Rendered as `data-sso-callback` so the literal survives minification and core
+ * can detect, in a product's PROD bundle, that it runs the new callback before
+ * the product is promoted to `live` (strict regime). Keep in sync with
+ * `SSO_CALLBACK_MARKER` in core's `app/services/sso_callback_probe.py`
+ * (a core test asserts the two match).
+ */
+export const SSO_CALLBACK_MARKER = 'noctus-sso-callback/p21';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -304,7 +314,9 @@ export function SSOCallback({
     tokenRef.current = token;
 
     // The token is a bearer credential: strip it from the address bar (and
-    // history) immediately so it cannot leak via history/referrer/screenshots.
+    // history) SYNCHRONOUSLY on mount -- read above, stripped here, before any
+    // await, router redirect or telemetry (`/sso` is a top-level route with no
+    // guard ahead of it, so nothing can drop the fragment first). Strip so it cannot leak via history/referrer/screenshots.
     // The in-memory copy above is all the flow needs.
     stripTokenFromLocation();
 
@@ -424,7 +436,7 @@ export function SSOCallback({
 
   // --- Loading ---
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="min-h-screen flex items-center justify-center bg-background" data-sso-callback={SSO_CALLBACK_MARKER}>
       <div className="text-center space-y-4">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto" />
         <p className="text-muted-foreground">{state.message}</p>

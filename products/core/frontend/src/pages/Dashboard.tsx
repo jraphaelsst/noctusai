@@ -95,7 +95,9 @@ export function Dashboard() {
 
     try {
       const res = await api.post('/api/sso/token', { product_slug: product.slug });
-      window.open(`${product.url_base}/sso?token=${res.sso_token}`, '_blank');
+      // Core builds the launch URL server-side (token transport depends on the
+      // product's catalog-derived SSO regime) -- the frontend never recomputes it.
+      window.open(res.redirect_url, '_blank', 'noopener');
     } catch (err: any) {
       // A dead session (401) is already handled by the seed api-client's
       // `onUnauthenticated` seam (lib/api.ts) — it redirects to `/login`

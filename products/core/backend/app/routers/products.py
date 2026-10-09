@@ -26,6 +26,8 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
+from noctusai_lib.config.product_urls import resolve_product_url
+
 from app.database import get_admin_client
 from app.dependencies import get_current_user, get_current_admin
 from app.services import audit_service
@@ -35,6 +37,7 @@ from app.schemas.products import (
     ProductDeployScope,
     ProductUpdate,
 )
+from app.services.sso_callback_probe import SSOCallbackProber, probe_sso_callback
 from app.services.deployment_status import (
     FleetProber,
     get_deployment_status,
@@ -44,6 +47,11 @@ from app.services.deployment_status import (
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/products", tags=["Products"])
+
+
+def get_sso_callback_prober() -> SSOCallbackProber:
+    """DI seam for the SSO-callback bundle probe -- overridden in tests (no network)."""
+    return probe_sso_callback
 
 
 def get_fleet_prober() -> FleetProber:
@@ -276,8 +284,14 @@ async def definir_deploy_scope(
     body: ProductDeployScope,
     request: Request,
     authorization: Optional[str] = Header(None),
+    sso_prober: SSOCallbackProber = Depends(get_sso_callback_prober),
 ):
     """Move a product between `live` and `dev` working scope (admin only).
+
+    Promotion to `live` also makes the product's SSO regime STRICT (fragment
+    launch + mandatory `product_slug`), so it is refused with 409 unless the
+    product's served bundle already carries the new-callback marker -- rebuild
+    on the current seed first, then flip (SSO P2.1, `services/sso_callback_probe`).
 
     Refuses with 409 when the product is inactive — an inactive product is one
     we have agreed not to touch at all, so giving it a working scope is
@@ -300,6 +314,23 @@ async def definir_deploy_scope(
                 "ele volta em DEV e pode então ser promovido."
             ),
         )
+
+    # NOC-REMEDIATE[sso-promotion-sql-bypass]: this API is the only guarded flip;
+    # a hand SQL UPDATE / the sync-product-scope workflow can still set 'live'
+    # without the bundle probe -- mirror the check into that path (dest: roadmap
+    # sso-identity-hardening-2026-10 P2.1 exit) -- 2026-10-09
+    if body.deploy_scope == "live" and current.data[0].get("deploy_scope") != "live":
+        slug = current.data[0].get("slug")
+        url_base = resolve_product_url(slug, db_url_base=current.data[0].get("url_base"))
+        verdict = await sso_prober(url_base)
+        if not verdict.ok:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Produto ainda roda o SSOCallback antigo: reconstrua-o na seed atual "
+                    f"e publique antes de promover para LIVE. ({verdict.detail})"
+                ),
+            )
 
     result = (
         db.table("products")

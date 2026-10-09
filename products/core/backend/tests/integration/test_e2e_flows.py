@@ -62,7 +62,7 @@ class TestSSOTokenFlow:
         ])
         # products lookup
         ms.set_table_data("products", [
-            {"id": "prod-1", "slug": "erp-imobiliario"},
+            {"id": "prod-1", "slug": "erp-imobiliario", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8001"},
         ])
         # licenses lookup (check_org_license)
         ms.set_table_data("licenses", [
@@ -104,12 +104,12 @@ class TestSSOTokenFlow:
             {"id": "org-1", "nome": "Test Corp", "logo_url": None},
         ])
         ms.set_table_responses("subscriptions", [[]])
-        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario"}])
+        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8001"}])
         ms.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
         }])
 
-        resp = client.post("/api/sso/session", json={"token": sso_token})
+        resp = client.post("/api/sso/session", json={"token": sso_token, "product_slug": "erp-imobiliario"})
         assert resp.status_code == 200
         body = resp.json()
         assert body["access_token"] == "new-access-tok"
@@ -137,12 +137,12 @@ class TestSSOTokenFlow:
             {"id": "org-1", "nome": "Admin Corp", "logo_url": None},
         ])
         ms.set_table_responses("subscriptions", [[]])
-        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario"}])
+        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8001"}])
         ms.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
         }])
 
-        resp = client.post("/api/sso/session", json={"token": sso_token})
+        resp = client.post("/api/sso/session", json={"token": sso_token, "product_slug": "erp-imobiliario"})
         assert resp.status_code == 200
 
         # Verify the metadata update includes noctus_role=admin
@@ -167,12 +167,12 @@ class TestSSOTokenFlow:
             {"id": "org-1", "nome": "Owner Corp", "logo_url": None},
         ])
         ms.set_table_responses("subscriptions", [[]])
-        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario"}])
+        ms.set_table_data("products", [{"id": "prod-1", "slug": "erp-imobiliario", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8001"}])
         ms.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
         }])
 
-        resp = client.post("/api/sso/session", json={"token": sso_token})
+        resp = client.post("/api/sso/session", json={"token": sso_token, "product_slug": "erp-imobiliario"})
         assert resp.status_code == 200
 
         call_args = ms.auth.admin.update_user_by_id.call_args

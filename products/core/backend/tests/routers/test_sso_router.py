@@ -30,7 +30,7 @@ class TestGenerateSSOToken:
             "role": "user",
             "email": "test@example.com",
         })
-        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp-imobiliario"})
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp-imobiliario", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8080"})
         mock_sb.set_table_data("licenses", [{
             "id": "lic-1", "status": "active",
             "org_id": "org-1", "product_id": "prod-1",
@@ -75,7 +75,7 @@ class TestGenerateSSOToken:
             "org_id": "org-1",
             "role": "user",
         })
-        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8080"})
         mock_sb.set_table_data("licenses", [])
 
         resp = client.post("/api/sso/token", json={
@@ -165,6 +165,7 @@ class TestLaunchProduct:
             "id": "prod-1",
             "slug": "erp",
             "url_base": "http://localhost:8080",
+            "ativo": True, "deploy_scope": "live",
         })
         mock_sb.set_table_data("licenses", [{
             "id": "lic-1", "status": "active",
@@ -183,6 +184,7 @@ class TestLaunchProduct:
             "id": "prod-1",
             "slug": "erp",
             "url_base": "http://localhost:8080",
+            "ativo": True, "deploy_scope": "live",
         })
         mock_sb.set_table_data("licenses", [])
 
@@ -268,7 +270,11 @@ def sso_session_client(client):
     mock_sb.auth.admin.generate_link.return_value = _mock_generate_link()
     mock_sb.auth.verify_otp.return_value = _mock_verify_otp()
     # /session re-checks the license at redemption.
-    mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+    # Legacy-regime row (active + dev) so the pre-P2.1 slug-optional flows keep
+    # their coverage; the strict regime is exercised in TestSSORegimeMixed.
+    mock_sb.set_table_data("products", [
+        {"id": "prod-1", "slug": "therapy-platform", "ativo": True, "deploy_scope": "dev"},
+    ])
     mock_sb.set_table_data("licenses", [{
         "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
     }])
@@ -453,7 +459,9 @@ class TestSSOSessionSupabaseAdminNull:
         """When supabase_admin is None, return 500."""
         from app.routers.sso import _session_cache
         _session_cache.clear()
-        client.mock_supabase.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+        client.mock_supabase.set_table_data("products", [
+            {"id": "prod-1", "slug": "therapy-platform", "ativo": True, "deploy_scope": "dev"},
+        ])
         client.mock_supabase.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
         }])
@@ -522,7 +530,7 @@ class TestSSOTokenOrgRole:
             "org_role": "owner",
             "email": "test@example.com",
         })
-        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8080"})
         mock_sb.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "fim": None,
             "org_id": "org-1", "product_id": "prod-1",
@@ -548,7 +556,7 @@ class TestSSOTokenOrgRole:
             "role": "user",
             # org_role intentionally missing
         })
-        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp"})
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp", "ativo": True, "deploy_scope": "live", "url_base": "http://localhost:8080"})
         mock_sb.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "fim": None,
             "org_id": "org-1", "product_id": "prod-1",
@@ -659,7 +667,9 @@ class TestSSOSessionContextEnrichment:
         """License expiry for the target product should be synced."""
         client, mock_admin = sso_session_client
         mock_sb = client.mock_supabase
-        mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+        mock_sb.set_table_data("products", [
+            {"id": "prod-1", "slug": "therapy-platform", "ativo": True, "deploy_scope": "dev"},
+        ])
         mock_sb.set_table_data("licenses", [{
             "org_id": "org-123", "product_id": "prod-1", "status": "active",
             "fim": "2026-12-31T00:00:00+00:00",
@@ -718,6 +728,7 @@ def _seed(mock_sb, *, org_role, aceita_clientes):
     mock_sb.set_table_data("products", {
         "id": "prod-1", "slug": "social-wiring", "url_base": "http://localhost:8080",
         "aceita_clientes": aceita_clientes,
+        "ativo": True, "deploy_scope": "live",
     })
     mock_sb.set_table_data("licenses", _LICENSE)
 
@@ -789,7 +800,9 @@ class TestSSOSessionSingleUseAndBinding:
     """Security hotfix 2026-10: single-use jti, audience binding, license recheck."""
 
     def _prime(self, mock_sb, licensed=True):
-        mock_sb.set_table_data("products", [{"id": "prod-1", "slug": "therapy-platform"}])
+        mock_sb.set_table_data("products", [
+            {"id": "prod-1", "slug": "therapy-platform", "ativo": True, "deploy_scope": "dev"},
+        ])
         mock_sb.set_table_data("licenses", [{
             "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
         }] if licensed else [])
@@ -855,3 +868,184 @@ class TestSSOSessionSingleUseAndBinding:
         self._prime(mock_sb, licensed=False)
         resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
         assert resp.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# P2.1 -- mixed regime derived from the catalog (strict vs legacy)
+# ---------------------------------------------------------------------------
+
+import logging  # noqa: E402
+
+from app.sso_regime import sso_regime  # noqa: E402
+
+
+class TestSSORegimePredicate:
+    @pytest.mark.parametrize("row,expected", [
+        ({"ativo": True, "deploy_scope": "dev"}, "legacy"),
+        ({"ativo": True, "deploy_scope": "live"}, "strict"),
+        ({"ativo": True, "deploy_scope": None}, "strict"),
+        ({"ativo": True, "deploy_scope": "staging"}, "strict"),
+        ({"ativo": True}, "strict"),
+        ({"ativo": False, "deploy_scope": "dev"}, "strict"),
+        ({"ativo": None, "deploy_scope": "dev"}, "strict"),
+        ({"ativo": "true", "deploy_scope": "dev"}, "strict"),
+        ({"deploy_scope": "dev"}, "strict"),
+        ({}, "strict"),
+        (None, "strict"),
+    ])
+    def test_allowlist_table(self, row, expected):
+        assert sso_regime(row) == expected
+
+
+def _prime_regime(mock_sb, *, ativo=True, scope="live", slug="therapy-platform"):
+    mock_sb.set_table_data("products", [
+        {"id": "prod-1", "slug": slug, "ativo": ativo, "deploy_scope": scope},
+    ])
+    mock_sb.set_table_data("licenses", [{
+        "id": "lic-1", "status": "active", "org_id": "org-123", "product_id": "prod-1",
+    }])
+
+
+class TestSSORegimeMixed:
+    def test_live_token_without_slug_is_401(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
+        assert resp.status_code == 401
+
+    def test_dev_token_with_other_slug_is_401(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="dev")
+        resp = client.post("/api/sso/session", json={
+            "token": _make_sso_token(), "product_slug": "social-wiring",
+        })
+        assert resp.status_code == 401
+
+    def test_live_token_with_other_live_slug_is_401(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        resp = client.post("/api/sso/session", json={
+            "token": _make_sso_token(), "product_slug": "social-wiring",
+        })
+        assert resp.status_code == 401
+
+    def test_live_token_with_matching_slug_is_200(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        resp = client.post("/api/sso/session", json={
+            "token": _make_sso_token(), "product_slug": "therapy-platform",
+        })
+        assert resp.status_code == 200
+
+    def test_dev_token_without_slug_is_200_and_logs_legacy(self, sso_session_client, caplog):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="dev")
+        jti = str(uuid.uuid4())
+        token = _make_sso_token(jti=jti)
+        with caplog.at_level(logging.WARNING, logger="app.routers.sso"):
+            resp = client.post(
+                "/api/sso/session", json={"token": token},
+                headers={"Origin": "https://orbity.example"},
+            )
+        assert resp.status_code == 200
+        line = next(r.getMessage() for r in caplog.records if "sso_legacy_redeem" in r.getMessage())
+        assert f"jti={jti}" in line
+        assert "product=therapy-platform" in line
+        assert "user_id=user-uid-123" in line
+        assert "org_id=org-123" in line
+        assert "origin=https://orbity.example" in line
+        assert "slug_present=False" in line
+        assert token not in line
+
+    def test_strict_redemption_does_not_log_legacy(self, sso_session_client, caplog):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        with caplog.at_level(logging.WARNING, logger="app.routers.sso"):
+            resp = client.post("/api/sso/session", json={
+                "token": _make_sso_token(), "product_slug": "therapy-platform",
+            })
+        assert resp.status_code == 200
+        assert not [r for r in caplog.records if "sso_legacy_redeem" in r.getMessage()]
+
+    @pytest.mark.parametrize("ativo,scope", [(True, None), (True, "weird"), (False, "dev"), (False, "live")])
+    def test_unknown_scope_or_inactive_is_strict(self, sso_session_client, ativo, scope):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, ativo=ativo, scope=scope)
+        resp = client.post("/api/sso/session", json={"token": _make_sso_token()})
+        assert resp.status_code == 401
+
+    def test_rejected_request_does_not_burn_the_jti(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        token = _make_sso_token()
+        # A relay without the slug is refused ...
+        assert client.post("/api/sso/session", json={"token": token}).status_code == 401
+        # ... a wrong slug too ...
+        assert client.post("/api/sso/session", json={
+            "token": token, "product_slug": "attacker",
+        }).status_code == 401
+        assert mock_sb.table("sso_token_redemptions").inserted_payloads == []
+        # ... and the legitimate redeemer still gets its session.
+        ok = client.post("/api/sso/session", json={"token": token, "product_slug": "therapy-platform"})
+        assert ok.status_code == 200
+
+
+class TestSSOLaunchTransport:
+    def _seed_product(self, client, scope, ativo=True):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123", "org_id": "org-1", "role": "user", "org_role": "member",
+            "email": "test@example.com",
+        })
+        mock_sb.set_table_data("products", {
+            "id": "prod-1", "slug": "erp", "url_base": "http://localhost:8080",
+            "aceita_clientes": False, "ativo": ativo, "deploy_scope": scope,
+        })
+        mock_sb.set_table_data("licenses", _LICENSE)
+
+    def test_strict_token_returns_fragment_url(self, client):
+        self._seed_product(client, "live")
+        data = client.post("/api/sso/token", json={"product_slug": "erp"}).json()
+        assert data["redirect_url"] == f"http://localhost:8080/sso#token={data['sso_token']}"
+        assert "?token=" not in data["redirect_url"]
+
+    def test_legacy_token_returns_query_url(self, client):
+        self._seed_product(client, "dev")
+        data = client.post("/api/sso/token", json={"product_slug": "erp"}).json()
+        assert data["redirect_url"] == f"http://localhost:8080/sso?token={data['sso_token']}"
+
+    def test_strict_launch_redirects_to_fragment(self, client):
+        self._seed_product(client, "live")
+        loc = client.get("/api/sso/launch/erp", follow_redirects=False).headers["location"]
+        assert "/sso#token=" in loc and "?token=" not in loc
+
+    def test_legacy_launch_redirects_to_query(self, client):
+        self._seed_product(client, "dev")
+        loc = client.get("/api/sso/launch/erp", follow_redirects=False).headers["location"]
+        assert "/sso?token=" in loc and "#token=" not in loc
+
+    def test_inactive_product_cannot_mint_token(self, client):
+        self._seed_product(client, "dev", ativo=False)
+        assert client.post("/api/sso/token", json={"product_slug": "erp"}).status_code == 403
+
+    def test_inactive_product_cannot_launch(self, client):
+        self._seed_product(client, "dev", ativo=False)
+        assert client.get("/api/sso/launch/erp", follow_redirects=False).status_code == 403
+
+
+class TestSSOCallbackMarkerParity:
+    def test_core_probe_marker_matches_seed_callback(self):
+        """The probe's marker and the seed component's literal must not drift."""
+        from pathlib import Path
+
+        from app.services.sso_callback_probe import SSO_CALLBACK_MARKER
+
+        seed = next(
+            (p / "seed/lib/frontend/src/components/SSOCallback.tsx"
+             for p in Path(__file__).resolve().parents
+             if (p / "seed/lib/frontend/src/components/SSOCallback.tsx").exists()),
+            None,
+        )
+        if seed is None:  # core image ships without the seed source tree
+            pytest.skip("seed source not present")
+        assert f"SSO_CALLBACK_MARKER = '{SSO_CALLBACK_MARKER}'" in seed.read_text()
