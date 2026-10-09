@@ -1251,6 +1251,51 @@ END;
 )
 
 
+_CS_RESEARCH_ITEM_UNIQUE_PROBE = GuardProbe(
+    id="cs_research_items.marca_variable_content.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="cs_research_items_dedupe_uq",
+    kind="write_refusal",
+    migrations=("217_cs_research.sql",),
+    rationale=(
+        "Minha Pesquisa dedupe: one item per (marca, variable, lower(content)) "
+        "so a case-variant re-add is a no-op, never a second row; the service "
+        "pre-checks and reports it as skipped, this index is the backstop "
+        "under a race."
+    ),
+    sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_marca_id uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
+  VALUES (v_org_id, 'noc-probe-pesquisa', 'noc-probe-pesquisa')
+  RETURNING id INTO v_marca_id;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.cs_research_items (org_id, marca_id, variable_slug, content, status, origin)
+    VALUES (v_org_id, v_marca_id, 'GPT', 'noc probe item', 'approved', 'manual');
+    INSERT INTO {_SW_SCHEMA}.cs_research_items (org_id, marca_id, variable_slug, content, status, origin)
+    VALUES (v_org_id, v_marca_id, 'GPT', 'NOC PROBE ITEM', 'pending', 'ai_classified');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: case-variant duplicate item insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%cs_research_items_dedupe_uq%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 # ---------------------------------------------------------------------------
 # Registry — social_wiring.imovel_dados_endereco_registro_confirmado CHECK
 # (migration 139).
@@ -5164,6 +5209,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ABERTURA_UNIQUE_PROBE,
     _IMOBILIARIA_CNPJ_UNIQUE_PROBE,
     _CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE,
+    _CS_RESEARCH_ITEM_UNIQUE_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_NATUREZA_PROBE,

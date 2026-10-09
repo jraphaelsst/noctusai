@@ -22,7 +22,7 @@ Add it to the app by appending it to ``MODULES``:
 
 What ``register()`` does
 ────────────────────────
-* Imports the routers (brand_kits / branding / references / posts / generation).
+* Imports the routers (brand_kits / branding / references / posts / generation / pesquisa).
 * Returns the ``ModuleRegistration`` with no extra standard-router needs
   (the routers all gate via ``Depends(get_current_user_org)``).
 
@@ -77,6 +77,7 @@ def register() -> Any:
         brand_kits,
         branding,
         generation,
+        pesquisa,
         posts,
         references,
     )
@@ -90,6 +91,7 @@ def register() -> Any:
             references.router,
             posts.router,
             generation.router,
+            pesquisa.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
