@@ -141,3 +141,18 @@ describe("excluida e faltando", () => {
     expect(el.querySelector("a")?.getAttribute("href")).toBe("/imobiliarias");
   });
 });
+
+describe("alvo da lista de pendências", () => {
+  it("renderiza o id contrato-imobiliaria-select-<contrato> quando recebe contratoId", async () => {
+    const { render: rtlRender } = await import("@testing-library/react");
+    const { container } = rtlRender(
+      <ImobiliariaSelect
+        atual={{ imobiliaria: resolvida(), origem: "selecionada" } as ContratoImobiliaria}
+        registro={[imob()]}
+        onChange={vi.fn()}
+        contratoId="c1"
+      />,
+    );
+    expect(container.querySelector("#contrato-imobiliaria-select-c1")).toBeTruthy();
+  });
+});

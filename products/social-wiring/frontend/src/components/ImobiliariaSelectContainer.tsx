@@ -50,6 +50,7 @@ export function ImobiliariaSelectContainer({ clienteId, contratoId }: Imobiliari
   return (
     <div data-refreshing={isRefreshing || undefined}>
       <ImobiliariaSelect
+        contratoId={contratoId}
         atual={selecao.data}
         registro={registro.data?.items ?? []}
         onChange={(id) =>

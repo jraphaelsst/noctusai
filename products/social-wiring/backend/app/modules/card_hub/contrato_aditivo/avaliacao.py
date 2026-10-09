@@ -33,6 +33,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import (
     Destinos,
     _negociacao,
     _partes,
+    alvo_testemunhas_select,
     derivar_switches,
     partes_pj_contratantes,
     resolver_endereco_posse,
@@ -129,12 +130,14 @@ def _assinatura(av: Avaliacao, d: DadosContrato, ad: DadosAditivo) -> None:
             "imobiliaria.endereco_cidade",
             "Cidade da imobiliária (local de assinatura)",
             "imobiliaria",
+            destino_em="imobiliarias",
         )
     if len(d.testemunhas) < MIN_TESTEMUNHAS:
         av.falta(
             "imobiliaria.testemunhas",
             f"Ao menos {MIN_TESTEMUNHAS} testemunhas selecionadas no contrato",
             "contrato",
+            alvo=alvo_testemunhas_select(av.destinos.contrato_id),
         )
     for i, t in enumerate(d.testemunhas, start=1):
         if not t.nome:

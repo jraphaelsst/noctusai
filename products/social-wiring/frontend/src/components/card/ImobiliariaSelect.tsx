@@ -27,13 +27,17 @@ export interface ImobiliariaSelectProps {
   registro: Imobiliaria[];
   onChange: (imobiliariaId: string) => void;
   salvando?: boolean;
+  /** Renders the DOM id the readiness list's `destino.alvo` names
+   *  (`contrato-imobiliaria-select-<id>`, `derivacao.alvo_imobiliaria_select`)
+   *  so "Resolver" lands on this picker. */
+  contratoId?: string;
 }
 
 function rotulo(i: { razao_social: string | null; nome_fantasia: string | null; cnpj: string | null }): string {
   return i.razao_social || i.nome_fantasia || i.cnpj || "Imobiliária sem nome";
 }
 
-export function ImobiliariaSelect({ atual, registro, onChange, salvando = false }: ImobiliariaSelectProps) {
+export function ImobiliariaSelect({ atual, registro, onChange, salvando = false, contratoId }: ImobiliariaSelectProps) {
   const escolhida = atual.imobiliaria;
   // Options: the active registry, plus the chosen company when it was removed
   // from the registry (it must still render as the current value).
@@ -46,7 +50,12 @@ export function ImobiliariaSelect({ atual, registro, onChange, salvando = false 
   ];
 
   return (
-    <div className="space-y-1.5" data-testid="imobiliaria-select">
+    <div
+      className="space-y-1.5"
+      data-testid="imobiliaria-select"
+      id={contratoId ? `contrato-imobiliaria-select-${contratoId}` : undefined}
+      tabIndex={contratoId ? -1 : undefined}
+    >
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium">
           Imobiliária que assina <span className="text-destructive">*</span>

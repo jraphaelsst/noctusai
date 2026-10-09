@@ -300,3 +300,12 @@ def test_the_snapshot_hash_is_deterministic_and_data_sensitive(estilo):
     b = documento.snapshot_aditivo_sha256(d, _aditivo(POSSE, estilo=estilo), POLITICA_PADRAO, DATA)
     c = documento.snapshot_aditivo_sha256(d, _aditivo(COMISSAO, estilo=estilo), POLITICA_PADRAO, DATA)
     assert a == b != c
+
+
+def test_aditivo_testemunhas_falta_lands_on_the_contratos_picker():
+    d = fx.base_v1()
+    d = replace(d, testemunhas=[])
+    av = avaliar(d, _aditivo(POSSE), POLITICA_PADRAO, DATA, DATA)
+    f = next(x for x in av.faltando if x["campo"] == "imobiliaria.testemunhas")
+    assert f["destino"]["tela"] == "card_contratos"
+    assert f["destino"]["alvo"] == f"contrato-testemunhas-select-{d.contrato_id}"

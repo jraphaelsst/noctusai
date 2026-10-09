@@ -893,6 +893,9 @@ function ContratoCard({
         )}
 
         {renderTestemunhasSelect && (
+          // Always mounted (the collapsible body is not) so the readiness
+          // list's "Resolver" (`derivacao.alvo_testemunhas_select`) can land.
+          <div id={`contrato-testemunhas-select-${contrato.id}`} tabIndex={-1}>
           <Collapsible open={testemunhasAberta} onOpenChange={setTestemunhasAberta}>
             <CollapsibleTrigger asChild>
               <button
@@ -910,6 +913,7 @@ function ContratoCard({
               {testemunhasEl}
             </CollapsibleContent>
           </Collapsible>
+          </div>
         )}
 
         {renderAditivos && contratoAdmiteAditivo(contrato) && (

@@ -1944,3 +1944,50 @@ class TestParceiroSemCreci:
         # NEVER added to "as empresas a seguir qualificadas" — no PJ
         # qualification sentence is printed for it anywhere (in either case).
         assert "parceiro sem creci exemplo ltda, pessoa jurídica inscrita" not in texto.lower()
+
+
+class TestDestinoDasFaltasDaImobiliaria:
+    """The readiness list links each company/witness gap to the screen that
+    fixes it: the CARD's contratos picker for the two selections, the
+    `/imobiliarias` page for company identity, `/configuracoes` for org-wide."""
+
+    @staticmethod
+    def _falta(av, campo):
+        return next(f for f in av.faltando if f["campo"] == campo)
+
+    def test_selecao_points_at_the_card_picker_of_this_contrato(self):
+        d = fx.variante(1)
+        d = replace(d, imobiliaria=replace(d.imobiliaria, id=None))
+        _d, _p, _s, av = _avaliar(1, d)
+        f = self._falta(av, "imobiliaria.selecao")
+        assert f["onde"] == "imobiliaria"
+        assert f["destino"]["tela"] == "card_contratos"
+        assert f["destino"]["rota"] == "/clientes"
+        assert f["destino"]["ancora"] == "contratos"
+        assert f["destino"]["alvo"] == f"contrato-imobiliaria-select-{d.contrato_id}"
+        assert f["destino"]["ids"]["contrato_id"] == d.contrato_id
+
+    def test_testemunhas_points_at_the_card_picker_of_this_contrato(self):
+        d = replace(fx.variante(1), testemunhas=[])
+        _d, _p, _s, av = _avaliar(1, d)
+        f = self._falta(av, "imobiliaria.testemunhas")
+        assert f["onde"] == "imobiliaria"
+        assert (f["destino"]["tela"], f["destino"]["ancora"]) == ("card_contratos", "contratos")
+        assert f["destino"]["alvo"] == f"contrato-testemunhas-select-{d.contrato_id}"
+
+    def test_company_identity_points_at_the_imobiliarias_page(self):
+        d = fx.variante(1)
+        d = replace(d, imobiliaria=replace(d.imobiliaria, cnpj=None, razao_social=None))
+        _d, _p, _s, av = _avaliar(1, d)
+        for campo in ("imobiliaria.cnpj", "imobiliaria.razao_social"):
+            f = self._falta(av, campo)
+            assert f["onde"] == "imobiliaria"
+            assert (f["destino"]["tela"], f["destino"]["rota"]) == ("imobiliarias", "/imobiliarias")
+            assert f["destino"]["ancora"] is None and f["destino"]["alvo"] is None
+
+    def test_org_wide_gap_stays_on_configuracoes(self):
+        d = fx.variante(1)
+        d = replace(d, imobiliaria=replace(d.imobiliaria, plataforma_assinatura_nome=None))
+        _d, _p, _s, av = _avaliar(1, d)
+        f = self._falta(av, "imobiliaria.plataforma_assinatura")
+        assert f["destino"]["rota"] == "/configuracoes"

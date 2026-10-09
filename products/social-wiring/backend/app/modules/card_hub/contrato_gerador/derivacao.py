@@ -523,6 +523,10 @@ _DESTINO_POR_ONDE: dict[str, tuple[str, str, Optional[str]]] = {
     "financiamento": ("card_financiamento", "/clientes", "financiamento"),
     "contrato": ("card_contratos", "/clientes", "contratos"),
     "imobiliaria": ("configuracoes", "/configuracoes", "imobiliaria"),
+    # [Migration 215] The signing companies' own settings page (identity:
+    # razão social, CNPJ, responsável, CRECI, cidade). Reached through a
+    # falta grouped under `onde="imobiliaria"` via `destino_em=`.
+    "imobiliarias": ("imobiliarias", "/imobiliarias", None),
 }
 
 #: The card subpage each side's parties live on — a vendedor is fixed on the
@@ -593,6 +597,20 @@ ALVO_DOCUMENTOS_DO_IMOVEL = "imovel-documentos"
 #: permuta imóvel's own posse controls — `TermosNegocioSection`'s two sections.
 ALVO_POSSE = "termos-posse-controles"
 ALVO_PERMUTA_POSSE = "termos-permuta-posse-controles"
+
+
+def alvo_imobiliaria_select(contrato_id: Optional[str]) -> Optional[str]:
+    """DOM id of the contract's "Imobiliária que assina" picker
+    (`ImobiliariaSelect`). Per CONTRACT — a card lists several, so the id
+    carries the contrato id (the `aditivo-<id>` convention). `None` when the
+    evaluation has no contrato (the card subpage itself is the answer)."""
+    return f"contrato-imobiliaria-select-{contrato_id}" if contrato_id else None
+
+
+def alvo_testemunhas_select(contrato_id: Optional[str]) -> Optional[str]:
+    """DOM id of the contract's witnesses picker block (`ContratosPanel`'s
+    testemunhas wrapper — always mounted, unlike the collapsible's body)."""
+    return f"contrato-testemunhas-select-{contrato_id}" if contrato_id else None
 
 
 def alvo_emissao_certidao_imovel(tipo: str) -> str:
@@ -2954,7 +2972,13 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
     # org's only active one — `imobiliarias_service.resolver`, resolved by the
     # carregador). None resolved => never a silent fallback: a named gap.
     if org.id is None:
-        av.falta("imobiliaria.selecao", "Imobiliária que assina o contrato", "imobiliaria")
+        av.falta(
+            "imobiliaria.selecao",
+            "Imobiliária que assina o contrato",
+            "imobiliaria",
+            destino_em="contrato",
+            alvo=alvo_imobiliaria_select(av.destinos.contrato_id),
+        )
     for valor, campo, rotulo in (
         (org.razao_social, "razao_social", "Razão social da imobiliária"),
         (org.cnpj, "cnpj", "CNPJ da imobiliária"),
@@ -2963,7 +2987,7 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
         (org.endereco.cidade, "endereco_cidade", "Cidade da imobiliária (local de assinatura)"),
     ):
         if not valor:
-            av.falta(f"imobiliaria.{campo}", rotulo, "imobiliaria")
+            av.falta(f"imobiliaria.{campo}", rotulo, "imobiliaria", destino_em="imobiliarias")
     _corretagem_favorecido_vs_imobiliaria(av, d)
     # [Migration 168, owner decision 2026-09-24] The registry is open-ended
     # and a contract SELECTS 2 to 5 witnesses (`contrato_testemunhas`) — the
@@ -2974,6 +2998,8 @@ def _imobiliaria(av: Avaliacao, d: DadosContrato, politica: Politica) -> None:
             "imobiliaria.testemunhas",
             f"Ao menos {MIN_TESTEMUNHAS} testemunhas selecionadas",
             "imobiliaria",
+            destino_em="contrato",
+            alvo=alvo_testemunhas_select(av.destinos.contrato_id),
         )
     for i, t in enumerate(d.testemunhas, start=1):
         if not t.nome:
@@ -3313,6 +3339,8 @@ def avaliar(
 
 
 __all__ = [
+    "alvo_imobiliaria_select",
+    "alvo_testemunhas_select",
     "ALVO_ANTIGOS_PROPRIETARIOS",
     "ALVO_AD_CORPUS",
     "ALVO_PERMUTA_POSSE",

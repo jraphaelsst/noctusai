@@ -217,6 +217,28 @@ describe("GeradorContratoSection", () => {
     );
   });
 
+  it("a /imobiliarias destino (company identity) links to the settings page, no tab caption", async () => {
+    const { screen } = await render({
+      status: status({
+        pronto: false,
+        faltando: [
+          {
+            campo: "imobiliaria.cnpj",
+            rotulo: "CNPJ da imobiliária",
+            onde: "imobiliaria",
+            parte_id: null,
+            destino: destino({ tela: "imobiliarias", rota: "/imobiliarias", ancora: null }),
+          },
+        ],
+      }),
+    });
+    const link = screen.getByTestId(
+      "gerador-contrato-faltando-link-imobiliaria.cnpj-",
+    ) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/imobiliarias");
+    expect(screen.getByTestId("gerador-contrato-faltando").textContent).not.toContain("(aba");
+  });
+
   it("🔴 a card-scoped destino renders guidance naming the subpage, never a fabricated deep link", async () => {
     const { screen } = await render({
       status: status({

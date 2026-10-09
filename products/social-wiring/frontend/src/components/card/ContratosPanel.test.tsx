@@ -139,6 +139,16 @@ describe("ContratosPanel — aditivos (contrato-aditivos-CONTRACT)", () => {
   });
 });
 
+describe("ContratosPanel — alvo do Resolver das pendências", () => {
+  it("renders the always-mounted testemunhas block id the readiness destino.alvo names", async () => {
+    const { container } = await render({
+      renderTestemunhasSelect: () => <div />,
+      contratos: [contrato({ id: "c9" })],
+    });
+    expect(container.querySelector("#contrato-testemunhas-select-c9")).toBeTruthy();
+  });
+});
+
 describe("ContratosPanel", () => {
   it("names both upload AND auto-generation in the empty state", async () => {
     const { screen } = await render({ contratos: [] });
