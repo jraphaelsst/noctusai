@@ -90,9 +90,14 @@ def _publish_pointer_row(repo: Path, *, branch: str, status: str) -> None:
     import json as _json
 
     ledger = repo / "project-history" / "branch-tree.ndjson"
+    # Real pointer rows always carry `session` (branch_pointer never writes a
+    # null one). Without it, `update` falls back to resolving the session from
+    # ~/.claude transcripts — present on a dev machine, absent in CI — so the
+    # test silently depended on the developer's HOME.
     row = _json.dumps({
         "branch": branch, "status": status,
         "ts": "2026-09-16T19:05:00+00:00",
+        "session": "test-session",
     })
     with ledger.open("a") as fh:
         fh.write(row + "\n")

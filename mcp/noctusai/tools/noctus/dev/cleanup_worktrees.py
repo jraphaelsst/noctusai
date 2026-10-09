@@ -629,6 +629,9 @@ def _close_pointers(removed_records: list[dict], run, root: Path) -> list[str]:
                             notes="closed by cleanup_stale_worktrees: merged, worktree removed")
             if res.get("ok"):
                 closed.append(branch)
+            else:
+                logger.warning("cleanup_stale_worktrees: pointer close for %s refused: %s",
+                               branch, res.get("error"))
         if closed:
             flush_pending(unwrap_worktree_root(root) or root)
     except Exception as exc:  # noqa: BLE001 - never fail a completed removal
