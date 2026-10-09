@@ -68,7 +68,7 @@ export function ParcelasEditor({
   value, onChange, favorecidos, disabled, campos,
 }: Common & {
   value: PropostaParcela[];
-  onChange: (v: PropostaParcela[]) => void;
+  onChange: (v: PropostaParcela[], removido?: number) => void;
   favorecidos: PropostaFavorecido[];
 }) {
   const set = (i: number, patch: Partial<PropostaParcela>) =>
@@ -76,7 +76,7 @@ export function ParcelasEditor({
   return (
     <div className="space-y-2" data-testid="proposta-parcelas">
       {value.map((p, i) => (
-        <Linha key={i} disabled={disabled} testId={`parcela-row-${i}`} onRemover={() => onChange(value.filter((_, j) => j !== i))}>
+        <Linha key={i} disabled={disabled} testId={`parcela-row-${i}`} onRemover={() => onChange(value.filter((_, j) => j !== i), i)}>
           <Campo label="Tipo" span={2}>
             <Select value={p.tipo} onValueChange={(v) => set(i, { tipo: v as ParcelaTipo })} disabled={disabled}>
               <SelectTrigger aria-label={`Tipo da parcela ${i + 1}`}><SelectValue /></SelectTrigger>
@@ -125,14 +125,14 @@ export function ParcelasEditor({
 // ─── Favorecidos ───────────────────────────────────────────────────────────
 export function FavorecidosEditor({ value, onChange, disabled, campos }: Common & {
   value: PropostaFavorecido[];
-  onChange: (v: PropostaFavorecido[]) => void;
+  onChange: (v: PropostaFavorecido[], removido?: number) => void;
 }) {
   const set = (i: number, patch: Partial<PropostaFavorecido>) =>
     onChange(value.map((p, j) => (j === i ? { ...p, ...patch } : p)));
   return (
     <div className="space-y-2" data-testid="proposta-favorecidos">
       {value.map((f, i) => (
-        <Linha key={i} disabled={disabled} testId={`favorecido-row-${i}`} onRemover={() => onChange(value.filter((_, j) => j !== i))}>
+        <Linha key={i} disabled={disabled} testId={`favorecido-row-${i}`} onRemover={() => onChange(value.filter((_, j) => j !== i), i)}>
           <Campo label="Nome" span={4}>
             <Input aria-label={`Nome do favorecido ${i + 1}`} className={bad(campos, `favorecidos.${i}.nome`)} disabled={disabled} value={f.nome} onChange={(e) => set(i, { nome: e.target.value })} />
           </Campo>

@@ -209,6 +209,57 @@ describe("PropostaModal", () => {
   });
 });
 
+describe("snapshot refs and ids", () => {
+  it("sends real-id fields as null and re-points fav: refs when a favorecido is removed", async () => {
+    m.one.mockReturnValue(resp(proposta({
+      favorecidos: [{ nome: "A" }, { nome: "B" }],
+      parcelas: [{ tipo: "sinal", valor: "1.00", favorecido_ref: "fav:0" }, { tipo: "saldo", valor: "2.00", favorecido_ref: "fav:1" }],
+      termos: { posse_marco_parcela_ref: "parcela:1", posse_marco_parcela_id: "real-id", ad_corpus: null },
+    })));
+    m.salvar.mockResolvedValue(proposta());
+    const { rtl } = await abrir();
+    rtl.fireEvent.click(rtl.screen.getByTestId("favorecido-row-0").querySelector("button[aria-label='Remover linha']")!);
+    rtl.fireEvent.click(rtl.screen.getByTestId("proposta-salvar"));
+    await rtl.waitFor(() => expect(m.salvar).toHaveBeenCalled());
+    const patch = m.salvar.mock.calls[0][0].patch;
+    expect(patch.parcelas[0].favorecido_ref).toBeNull();
+    expect(patch.parcelas[1].favorecido_ref).toBe("fav:0");
+    expect(patch.parcelas.every((p: { favorecido_id: unknown }) => p.favorecido_id === null)).toBe(true);
+    expect(patch.termos.posse_marco_parcela_id).toBeNull();
+    expect(patch.termos.permuta_posse_marco_parcela_id).toBeNull();
+    expect(patch.termos.posse_marco_parcela_ref).toBe("parcela:1");
+    expect("ad_corpus" in patch.termos).toBe(true); // keys round-trip
+  });
+
+  it("re-points parcela: refs when a parcela is removed", async () => {
+    m.one.mockReturnValue(resp(proposta({
+      parcelas: [{ tipo: "sinal", valor: "1.00" }, { tipo: "saldo", valor: "2.00" }],
+      termos: { posse_marco_parcela_ref: "parcela:1" },
+    })));
+    m.salvar.mockResolvedValue(proposta());
+    const { rtl } = await abrir();
+    rtl.fireEvent.click(rtl.screen.getByTestId("parcela-row-0").querySelector("button[aria-label='Remover linha']")!);
+    rtl.fireEvent.click(rtl.screen.getByTestId("proposta-salvar"));
+    await rtl.waitFor(() => expect(m.salvar).toHaveBeenCalled());
+    expect(m.salvar.mock.calls[0][0].patch.termos.posse_marco_parcela_ref).toBe("parcela:0");
+  });
+});
+
+describe("lerErroProposta 422", () => {
+  it("maps detail[].loc to field paths with a generic message", async () => {
+    const { lerErroProposta } = await import("./erroProposta");
+    const e = new ApiError(422, "x", { detail: [{ loc: ["body", "parcelas", 0, "valor"], msg: "bad" }] });
+    const r = lerErroProposta(e, "fb");
+    expect(r.campos).toEqual(["parcelas.0.valor"]);
+    expect(r.mensagem).toContain("inválidos");
+  });
+  it("covers the new 4xx codes without details", async () => {
+    const { lerErroProposta } = await import("./erroProposta");
+    const e = new ApiError(409, "", { error: { code: "proposta_nao_rascunho" } });
+    expect(lerErroProposta(e, "fb").mensagem).toContain("rascunho");
+  });
+});
+
 describe("lerErroProposta", () => {
   it("prefers the server message, falls back to the code map, then to the caller copy", async () => {
     const { lerErroProposta } = await import("./erroProposta");

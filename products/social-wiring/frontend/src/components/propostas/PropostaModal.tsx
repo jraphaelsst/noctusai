@@ -59,13 +59,36 @@ function draftDe(p: Proposta): Draft {
 }
 
 /** Money fields: what a Brazilian types → the decimal string on the wire. */
+/** Real-id fields must be null inside a proposta (a real id is a 400). */
+const IDS_REAIS_TERMOS = [
+  "posse_marco_parcela_id",
+  "permuta_posse_marco_parcela_id",
+] as const;
+
+/** After removing item `i` of a list referenced as `<prefixo>:<n>`. */
+function remapRef(ref: string | null | undefined, prefixo: string, removido: number) {
+  if (!ref || !ref.startsWith(`${prefixo}:`)) return ref ?? null;
+  const n = Number(ref.slice(prefixo.length + 1));
+  if (!Number.isInteger(n)) return ref;
+  if (n === removido) return null;
+  return n > removido ? `${prefixo}:${n - 1}` : ref;
+}
+
 function paraEnvio(d: Draft): PropostaPatch {
   const vazioNulo = (s: string | null | undefined) => (s == null || s.trim() === "" ? null : lerValorDigitado(s));
   return {
     ...d,
+    termos: {
+      ...d.termos,
+      ...Object.fromEntries(IDS_REAIS_TERMOS.map((k) => [k, null])),
+    },
     valor_proposto: vazioNulo(d.valor_proposto),
     pct_comissao: vazioNulo(d.pct_comissao),
-    parcelas: d.parcelas.map((p) => ({ ...p, valor: lerValorDigitado(p.valor) })),
+    parcelas: d.parcelas.map((p) => ({
+      ...p,
+      valor: lerValorDigitado(p.valor),
+      favorecido_id: null,
+    })),
     intermediarios: d.intermediarios.map((m) => ({
       ...m,
       valor: m.valor ? lerValorDigitado(m.valor) : null,
@@ -115,6 +138,27 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
   function alterar(patch: Partial<Draft>) {
     setDraft((d) => (d ? { ...d, ...patch } : d));
     setSujo(true);
+  }
+  /** Removing parcela `i` re-points (or clears) every "parcela:<n>" ref. */
+  function alterarParcelas(v: Draft["parcelas"], removido?: number) {
+    if (removido === undefined || !draft) return alterar({ parcelas: v });
+    const t = draft.termos;
+    alterar({
+      parcelas: v,
+      termos: {
+        ...t,
+        posse_marco_parcela_ref: remapRef(t.posse_marco_parcela_ref, "parcela", removido),
+        permuta_posse_marco_parcela_ref: remapRef(t.permuta_posse_marco_parcela_ref, "parcela", removido),
+      },
+    });
+  }
+  /** Removing favorecido `i` re-points (or clears) every "fav:<n>" ref. */
+  function alterarFavorecidos(v: Draft["favorecidos"], removido?: number) {
+    if (removido === undefined || !draft) return alterar({ favorecidos: v });
+    alterar({
+      favorecidos: v,
+      parcelas: draft.parcelas.map((p) => ({ ...p, favorecido_ref: remapRef(p.favorecido_ref, "fav", removido) })),
+    });
   }
   function falha(err: unknown, fallback: string) {
     const e = lerErroProposta(err, fallback);
@@ -276,7 +320,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
             </Secao>
 
             <Secao titulo="Parcelas">
-              <ParcelasEditor value={draft.parcelas} onChange={(v) => alterar({ parcelas: v })} favorecidos={draft.favorecidos} disabled={!editavel} campos={campos} />
+              <ParcelasEditor value={draft.parcelas} onChange={(v, removido) => alterarParcelas(v, removido)} favorecidos={draft.favorecidos} disabled={!editavel} campos={campos} />
               {saldo !== null && (
                 <p
                   className={Number(saldo) === 0 ? "text-xs text-green-700" : "text-xs text-amber-700"}
@@ -288,7 +332,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
             </Secao>
 
             <Secao titulo="Favorecidos">
-              <FavorecidosEditor value={draft.favorecidos} onChange={(v) => alterar({ favorecidos: v })} disabled={!editavel} campos={campos} />
+              <FavorecidosEditor value={draft.favorecidos} onChange={(v, removido) => alterarFavorecidos(v, removido)} disabled={!editavel} campos={campos} />
             </Secao>
 
             <Secao titulo="Intermediários">
@@ -312,6 +356,12 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
                       <SelectValue placeholder="Selecione a imobiliária" />
                     </SelectTrigger>
                     <SelectContent>
+                      {/* A soft-deleted company can't be newly chosen, but the one already held stays selectable (re-savable). */}
+                      {proposta.imobiliaria && !(imobs.data?.items ?? []).some((i) => i.id === proposta.imobiliaria?.id) && (
+                        <SelectItem value={proposta.imobiliaria.id}>
+                          {proposta.imobiliaria.razao_social ?? "Imobiliária atual"} (removida do cadastro)
+                        </SelectItem>
+                      )}
                       {(imobs.data?.items ?? []).map((i) => (
                         <SelectItem key={i.id} value={i.id}>
                           {i.razao_social || i.nome_fantasia || i.cnpj || "Imobiliária sem nome"}

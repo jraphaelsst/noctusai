@@ -31,6 +31,20 @@ export function lerErroProposta(err: unknown, fallback: string): ErroProposta {
       : mensagemErroServidor(err, "").replace(/^\[\d+\]\s*/, "").trim();
   const mensagem =
     doServidor || (code ? PROPOSTA_ERRO_409[code.toLowerCase()] : undefined) || fallback;
+  // FastAPI 422 (`{detail: [{loc, msg}]}`, malformed types / unknown keys /
+  // out-of-range values): highlight by `loc` (minus the leading "body").
+  const bruto = (api?.body as { detail?: unknown } | undefined)?.detail;
+  const lista422 = api?.status === 422 && Array.isArray(bruto) ? (bruto as { loc?: unknown }[]) : [];
+  const campos422 = lista422
+    .map((d) => (Array.isArray(d?.loc) ? d.loc.map(String).filter((x) => x !== "body").join(".") : ""))
+    .filter(Boolean);
+  if (lista422.length > 0) {
+    return {
+      mensagem: "Alguns campos da proposta estão inválidos. Confira os destacados.",
+      code: code ?? "validacao_422",
+      campos: campos422,
+    };
+  }
   return { mensagem, code, campos };
 }
 

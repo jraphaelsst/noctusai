@@ -26,6 +26,8 @@ export interface PropostaParcela {
   evento?: string | null;
   forma_pagamento?: string | null;
   favorecido_ref?: string | null;
+  /** Real ids are not allowed in a snapshot: always sent null. */
+  favorecido_id?: null;
   confissao_divida?: boolean;
   dispara_corretagem?: boolean;
 }
@@ -58,6 +60,9 @@ export interface PropostaTermos {
   confissao_garantia?: string | null;
   corretagem_contratantes?: string | null;
   clausulas_extras?: Record<string, { texto: string; modo: "acrescentar" | "substituir" }>;
+  /** Snapshot refs ("parcela:<i>"); real ids must stay null inside a proposta. */
+  posse_marco_parcela_ref?: string | null;
+  permuta_posse_marco_parcela_ref?: string | null;
   [k: string]: unknown;
 }
 
@@ -177,4 +182,7 @@ export const PROPOSTA_ERRO_409: Record<string, string> = {
   imovel_divergente:
     "O imóvel desta proposta é diferente do imóvel já em negociação neste atendimento.",
   visita_nao_realizada: "A visita ainda não foi marcada como realizada.",
+  proposta_nao_aceita: "Esta proposta ainda não foi aceita.",
+  proposta_nao_rascunho: "Só é possível excluir uma proposta em rascunho.",
+  motivo_obrigatorio: "Informe o motivo da recusa.",
 };
