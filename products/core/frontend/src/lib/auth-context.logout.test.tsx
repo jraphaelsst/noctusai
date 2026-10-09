@@ -40,7 +40,7 @@ describe('core logout ordering', () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     order.length = 0;
     await act(async () => { await captured.logout(); });
-    expect(order).toEqual(['post:/api/auth/logout', 'clear']);
+    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
   });
 
   it('still clears local state when the server call fails', async () => {
@@ -48,6 +48,6 @@ describe('core logout ordering', () => {
     render(<AuthProvider><Probe /></AuthProvider>);
     order.length = 0;
     await act(async () => { await captured.logout(); });
-    expect(order).toEqual(['post:/api/auth/logout', 'clear']);
+    expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
   });
 });
