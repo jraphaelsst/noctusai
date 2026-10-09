@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
 import { formatCurrency, formatDate } from '../lib/utils';
-import { NotificationBell } from '../components/NotificationBell';
-import { Header, useTheme } from "@noctusai/lib/design-system";
+import { CoreHeader } from '../components/layout/CoreHeader';
 
 interface BillingPlan {
   id: string;
@@ -58,13 +57,12 @@ interface Invoice {
 }
 
 export function BillingSettings() {
-  const { user, organization, isAdmin, loading: authLoading, logout } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
   const navigate = useNavigate();
-  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (authLoading) return;
@@ -146,11 +144,6 @@ export function BillingSettings() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    navigate('/login');
-  }
-
   if (authLoading || loading) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-background">
@@ -162,21 +155,14 @@ export function BillingSettings() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header
-        user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
-        onLogout={handleLogout}
-        theme={theme}
-        onThemeToggle={toggleTheme}
+      <CoreHeader
         actions={
-          <div className="flex items-center gap-2">
             <button
               className="h-9 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted transition-colors"
               onClick={() => navigate('/')}
             >
               Voltar
             </button>
-            <NotificationBell />
-          </div>
         }
       />
 

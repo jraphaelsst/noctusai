@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
-import { NotificationBell } from '../components/NotificationBell';
-import { Header, useTheme } from "@noctusai/lib/design-system";
+import { CoreHeader } from '../components/layout/CoreHeader';
 import { ORG_ROLE_LABELS } from "@noctusai/lib";
 
 interface Member {
@@ -34,9 +33,8 @@ interface Role {
 }
 
 export function TeamManagement() {
-  const { user, organization, isAdmin, logout } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
-  const { theme, toggleTheme } = useTheme();
 
   const [members, setMembers] = useState<Member[]>([]);
   const [invitations, setInvitations] = useState<Invitation[]>([]);
@@ -130,11 +128,6 @@ export function TeamManagement() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    navigate('/login');
-  }
-
   // Filter roles for assignment (non-owner roles)
   const assignableRoles = roles.filter(r => r.slug !== 'owner');
 
@@ -150,21 +143,14 @@ export function TeamManagement() {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <Header
-        user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
-        onLogout={handleLogout}
-        theme={theme}
-        onThemeToggle={toggleTheme}
+      <CoreHeader
         actions={
-          <div className="flex items-center gap-2">
             <button
               className="h-9 rounded-md border border-border bg-background px-4 text-sm font-medium text-foreground hover:bg-muted transition-colors"
               onClick={() => navigate('/')}
             >
               Dashboard
             </button>
-            <NotificationBell />
-          </div>
         }
       />
 

@@ -1,4 +1,3 @@
-import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Building2,
@@ -22,9 +21,8 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../../lib/auth-context';
-import { api } from '../../lib/api';
-import { NotificationBell } from '../NotificationBell';
-import { AppShell, Sidebar, Header, useTheme } from '@noctusai/lib/design-system';
+import { CoreHeader } from './CoreHeader';
+import { AppShell, Sidebar } from '@noctusai/lib/design-system';
 import type { NavGroup } from '@noctusai/lib/design-system';
 
 export const NAV_GROUPS: NavGroup[] = [
@@ -106,39 +104,9 @@ export function visibleNavGroups(role: string | undefined): NavGroup[] {
 }
 
 export function Layout({ children }: { children?: React.ReactNode }) {
-  const { user, logout, refresh } = useAuth();
-  const navigate = useNavigate();
-  const { theme, toggleTheme } = useTheme();
-
-  async function handleLogout() {
-    await logout();
-    navigate('/login');
-  }
-
-  const handleUpdateProfile = async (data: { name: string; email: string; phone: string }) => {
-    await api.patch('/api/auth/profile', { nome: data.name });
-    refresh();
-  };
-
-  const handleUpdatePassword = async (newPassword: string) => {
-    await api.post('/api/auth/change-password', { new_password: newPassword });
-  };
-
-  const ROLE_LABELS: Record<string, string> = {
-    admin: 'Administrador',
-    manager: 'Gerente',
-    user: 'Membro',
-    marketing: 'Marketing',
-  };
+  const { user } = useAuth();
 
   const navGroups = visibleNavGroups(user?.role);
-
-  const headerUser = {
-    name: user?.nome || '',
-    email: user?.email || '',
-    role: ROLE_LABELS[user?.role || ''] || 'Membro',
-    avatar: user?.avatar_url,
-  };
 
   return (
     <AppShell
@@ -153,17 +121,7 @@ export function Layout({ children }: { children?: React.ReactNode }) {
         />
       }
       header={({ onMenuToggle }) => (
-        <Header
-          user={headerUser}
-          onMenuToggle={onMenuToggle}
-          onLogout={handleLogout}
-          logoutLabel="Sair de todos os dispositivos"
-          theme={theme}
-          onThemeToggle={toggleTheme}
-          onUpdateProfile={handleUpdateProfile}
-          onUpdatePassword={handleUpdatePassword}
-          actions={<NotificationBell />}
-        />
+        <CoreHeader onMenuToggle={onMenuToggle} profileEditable />
       )}
     >
       <div className="p-4 sm:p-6 lg:p-8">{children}</div>

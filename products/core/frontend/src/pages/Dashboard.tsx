@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '../lib/auth-context';
 import { api } from '../lib/api';
-import { NotificationBell } from '../components/NotificationBell';
-import { Header, useTheme } from "@noctusai/lib/design-system";
+import { CoreHeader } from '../components/layout/CoreHeader';
 import { ProductIcon } from '../lib/product-icon';
 import {
   DeployScopeToggle,
@@ -35,7 +34,7 @@ interface Subscription {
 }
 
 export function Dashboard() {
-  const { user, organization, isAdmin, loading: authLoading, logout, refresh } = useAuth();
+  const { user, organization, isAdmin, loading: authLoading, logout } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   // slug -> is the product's container deployed (reachable) in THIS env.
   // Undefined while loading; a slug mapped to `false` shows a "dev" badge.
@@ -44,7 +43,6 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [launching, setLaunching] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     if (authLoading) return;
@@ -112,11 +110,6 @@ export function Dashboard() {
     }
   }
 
-  async function handleLogout() {
-    await logout();
-    navigate('/login');
-  }
-
   const isTestOrg = organization?.category === 'test';
   const isFreeOrg = !subscription || subscription.plans?.slug === 'free';
   const isTrial = subscription?.status === 'trial';
@@ -140,43 +133,20 @@ export function Dashboard() {
     );
   }
 
-  const headerUser = {
-    name: user?.nome || '',
-    email: user?.email || '',
-    role: isAdmin ? 'Administrador' : 'Membro',
-  };
-
-  const handleUpdateProfile = async (data: { name: string; email: string; phone: string }) => {
-    await api.patch('/api/auth/profile', { nome: data.name });
-    refresh();
-  };
-
-  const handleUpdatePassword = async (newPassword: string) => {
-    await api.post('/api/auth/change-password', { new_password: newPassword });
-  };
-
   return (
     <div className="min-h-screen bg-background">
-      <Header
+      <CoreHeader
         variant="dark"
-        user={headerUser}
-        onLogout={handleLogout}
-        theme={theme}
-        onThemeToggle={toggleTheme}
-        onUpdateProfile={handleUpdateProfile}
-        onUpdatePassword={handleUpdatePassword}
+        profileEditable
         actions={
-          <div className="flex items-center gap-2">
-            {isAdmin && (
+          isAdmin ? (
               <button
                 className="h-9 rounded-md bg-primary text-primary-foreground px-4 text-sm font-medium hover:bg-primary/90 transition-colors"
                 onClick={() => navigate('/admin')}
               >
                 Admin Panel
               </button>
-            )}
-            <NotificationBell />
-          </div>
+          ) : null
         }
       />
 

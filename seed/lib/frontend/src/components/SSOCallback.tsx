@@ -114,7 +114,7 @@ export function SSOCallback({
   const navigate = useNavigate();
   const [state, setState] = useState<SSOState>({
     status: 'loading',
-    message: 'Verificando sessao...',
+    message: 'Verificando sessão...',
   });
   const cancelledRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -221,7 +221,7 @@ export function SSOCallback({
       if (cancelledRef.current) return;
 
       try {
-        setState({ status: 'loading', message: 'Verificando sessao...' });
+        setState({ status: 'loading', message: 'Verificando sessão...' });
         const {
           data: { session: local },
         } = await supabase.auth.getSession();
@@ -298,7 +298,7 @@ export function SSOCallback({
   useEffect(() => {
     const token = tokenRef.current ?? readTokenFromLocation(searchParams);
     if (!token) {
-      setState({ status: 'error', message: 'Token SSO nao encontrado na URL.' });
+      setState({ status: 'error', message: 'Token SSO não encontrado na URL.' });
       return;
     }
     tokenRef.current = token;
@@ -326,7 +326,7 @@ export function SSOCallback({
             Entrar como {state.newEmail || 'outra conta'}?
           </h1>
           <p className="text-muted-foreground">
-            Voce esta conectado como {state.currentEmail || 'outra conta'}.
+            Você está conectado como {state.currentEmail || 'outra conta'}.
           </p>
           <div className="flex flex-col gap-2">
             <button
@@ -383,7 +383,7 @@ export function SSOCallback({
           <p className="text-muted-foreground">{state.message}</p>
           {state.currentEmail ? (
             <>
-              <p className="text-sm text-muted-foreground">Voce esta conectado como {state.currentEmail}.</p>
+              <p className="text-sm text-muted-foreground">Você está conectado como {state.currentEmail}.</p>
               <div className="flex flex-col gap-2">
                 <button
                   onClick={() => void keepCurrent()}

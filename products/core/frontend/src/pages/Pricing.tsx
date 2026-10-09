@@ -17,9 +17,8 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Button, Header, Input, Skeleton, useTheme } from '@noctusai/lib/design-system';
-import { NotificationBell } from '../components/NotificationBell';
-import { useAuth } from '../lib/auth-context';
+import { Button, Input, Skeleton } from '@noctusai/lib/design-system';
+import { CoreHeader } from '../components/layout/CoreHeader';
 import {
   type BillingCycle,
   type BillingPlan,
@@ -93,9 +92,7 @@ function PixPanel({ result }: { result: SubscribeResult }) {
 }
 
 export function Pricing({ onRedirect = redirectTo }: { onRedirect?: (url: string) => void } = {}) {
-  const { user, isAdmin, logout } = useAuth();
   const navigate = useNavigate();
-  const { theme, toggleTheme } = useTheme();
   const { data, isPending, isFetching, error } = usePublicCatalog();
   const [cycle, setCycle] = useState<BillingCycle>('monthly');
   const [selected, setSelected] = useState<BillingPlan | null>(null);
@@ -139,16 +136,9 @@ export function Pricing({ onRedirect = redirectTo }: { onRedirect?: (url: string
 
   return (
     <div className="min-h-screen bg-background">
-      <Header
-        user={{ name: user?.nome || '', email: user?.email || '', role: isAdmin ? 'Administrador' : 'Membro' }}
-        onLogout={async () => { await logout(); navigate('/login'); }}
-        theme={theme}
-        onThemeToggle={toggleTheme}
+      <CoreHeader
         actions={
-          <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => navigate('/')}>Voltar</Button>
-            <NotificationBell />
-          </div>
         }
       />
 
