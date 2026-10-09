@@ -1,6 +1,6 @@
 # core-studio — reference material
 
-Everything extracted from **corestudio.ai** (studied 2026-10-05, read-only, on the owner's own account) to rebuild its headline and roteiro creation system in-home as **Criação de Mídia**, a module of social-wiring (it may become its own product later). Nothing here is code yet; the build has not started.
+Everything extracted from **corestudio.ai** (studied 2026-10-05, read-only, on the owner's own account) to rebuild its headline and roteiro creation system in-home as **Criação de Mídia**, a module of social-wiring (it may become its own product later). The build started 2026-10-09 with Minha Pesquisa v1 (`specs/pesquisa-contract.md`).
 
 Start with `specs/page-map-v2.md` (authoritative page map, 2026-10-06) and `specs/mechanisms.md` (how each mechanism works behind the pages; updated the same day with the read-only XHR results, including the real headline payload in `prompts/headline-engenharia-reversa-DRAFT.md`), then `docs/platform-study.md` and `DECISIONS.md`. Where the 2026-10-06 files disagree with the 2026-10-05 study, the 2026-10-06 files win; `page-map-v2.md` §0.2 lists every correction.
 
@@ -10,6 +10,7 @@ Start with `specs/page-map-v2.md` (authoritative page map, 2026-10-06) and `spec
 | --- | --- |
 | `docs/` | The platform study doc (Markdown and PDF export) and its "Spec — Pesquisa & Cérebro" tab. Live version: https://claude.ai/code/artifact/7ce00856-d593-457d-9a6e-99fa58cc8b9c (the Markdown export drops the 19 embedded screenshots; they are in `screenshots/`). |
 | `DECISIONS.md` | Every interview answer so far, and what is still open. |
+| `TEST-CHECKLIST.md` | Live test checklist, one section per shipped module (walk it with the owner on prod). |
 | `specs/` | Build specs and analyses. **`page-map-v2.md`** (every route, its params, sections, fields, data sources, endpoints, categories; route × endpoint matrix; corrections to the first map) · **`mechanisms.md`** (research variables, brains, the three "Extrair" mechanisms, headline and roteiro generation, Biblioteca, Instagram integration, chat; data model, state machines, triggers, AI calls, confidence tags, Método Audience alignment, open questions) · **`xhr-to-fetch.md`** (read-only GETs still needed, plus the GETs that must not be called) · Pesquisa + Segundo Cérebro spec (code + live, §9 wins), research-variable usage map, live variable findings, Biblioteca and roteiro analysis, front-end JS analysis. |
 | `prompts/` | **All DRAFTS — extracted from CoreStudio, not validated; do not use as final.** `headline-engenharia-reversa-DRAFT.md` (the real headline-job payload reconstructed as a template: Núcleo line + per-viral blueprint with `{{DB-SLUG}}` slots, output contract, 6-sample diff, worked examples; the system prompt is not visible) · `roteiro-DRAFT.md` (Roteiro Avançado params contract and observed behaviour; no roteiro prompt was capturable) · `pesquisa-classifier-prompt.md` (the Pesquisa classifier system prompt, verbatim). |
 | `screenshots/` | 28 screenshots: sidebar states (01–03, 13), Minha Pesquisa (04–12), Extrair Pesquisa (14–16), Segundo Cérebro (17–24), Gerar Headlines (25–28). |
