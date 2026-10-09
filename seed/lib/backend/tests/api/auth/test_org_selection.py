@@ -94,6 +94,21 @@ class TestRealStore:
         assert store.end(STAFF, None, "logout") == 2
         assert client.calls[1] == ("platform_org_selection_end", {"p_user_id": STAFF, "p_reason": "logout"})
 
+    def test_requires_mfa_reads_the_product_flag_and_fails_closed(self):
+        core = MockSupabaseClient()
+        core.set_table_data("products", [
+            {"id": "p1", "slug": "off", "org_picker_ready": True, "db_schema": "off", "org_picker_requires_mfa": False},
+            {"id": "p2", "slug": "on", "org_picker_ready": True, "db_schema": "on", "org_picker_requires_mfa": True},
+            {"id": "p3", "slug": "pre073", "org_picker_ready": True, "db_schema": "pre073"},
+            {"id": "p4", "slug": "nulled", "org_picker_ready": True, "db_schema": "nulled", "org_picker_requires_mfa": None},
+        ])
+        store = RealOrgSelectionStore(lambda: core)
+        assert store.requires_mfa("off") is False
+        assert store.requires_mfa("on") is True
+        assert store.requires_mfa("pre073") is True  # column absent: the 2026-10-08 rule
+        assert store.requires_mfa("nulled") is True
+        assert store.requires_mfa("missing") is True
+
     def test_product_ready_and_live_and_licensed_orgs(self):
         core = MockSupabaseClient()
         core.set_table_data("products", [{"id": PID, "slug": "igig", "org_picker_ready": True, "db_schema": "igig"}])

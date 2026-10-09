@@ -20,6 +20,13 @@ build to.
 5. **2FA:** required. Picking/switching and every request while acting require an aal2
    session (seed `require_admin_assurance` semantics). No aal2 → picker endpoints 403
    `mfa_required`; an existing selection is ignored (resolves home) until aal2.
+   **REVISED 2026-10-09 (owner):** requirement switched OFF for now. Owner's words: "do it so
+   we can move on" (2FA enrollment was broken by the core `/api/auth/mfa/status` 500, fixed the
+   same day in seed `mfa_router`). Mechanism: `products.org_picker_requires_mfa` (core 073,
+   default true, set false fleet-wide) is read by `current_org_id_for`, `resolve_effective_org`
+   and the picker endpoints; with it false, an aal1 staff session picks and acts.
+   **Revisit trigger:** the owner has enrolled 2FA → `UPDATE public.products SET
+   org_picker_requires_mfa = true;` (no deploy; aal1 selections then fall back to home).
 6. **Audit / LGPD:** the client sees DATA CHANGES staff make in their org (e.g. lead
    created/deleted) — audit row `org_id = target`, `acting_org_id = home`,
    `act_as_session_id = selection id`, actor shown as "Suporte NoctusAI". The client must

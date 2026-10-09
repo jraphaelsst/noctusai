@@ -6,11 +6,12 @@
 import { ActingAsBanner } from './ActingAsBanner';
 import { OrgPickerModal } from './OrgPickerModal';
 
-export function OrgSelectionGate() {
+/** `onSignOut` = the shell's logout; the required picker shows it as "Sair". */
+export function OrgSelectionGate({ onSignOut }: { onSignOut?: () => void | Promise<void> } = {}) {
   return (
     <>
       <ActingAsBanner />
-      <OrgPickerModal />
+      <OrgPickerModal onSignOut={onSignOut} />
     </>
   );
 }

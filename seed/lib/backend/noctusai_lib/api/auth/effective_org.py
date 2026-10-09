@@ -186,12 +186,13 @@ def resolve_effective_org(
         return home
 
     session_id, aal = read_session_claims(token, user_id=user_id)
+    mfa_ok = aal == "aal2" or not selection_store.requires_mfa(product_slug)
     staff_home = EffectiveOrg(
         org_id=home.org_id, org_role=home.org_role, home_org_id=home.org_id,
-        is_staff=True, mfa_required=(aal != "aal2"),
+        is_staff=True, mfa_required=not mfa_ok,
     )
     eff = staff_home
-    if session_id and aal == "aal2":
+    if session_id and mfa_ok:
         sel = selection_store.live(user_id, product_slug)
         if (
             sel is not None

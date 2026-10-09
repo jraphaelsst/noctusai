@@ -18,7 +18,7 @@ vi.mock('@noctusai/seed/infra', () => ({
 }));
 
 import { ActingAsBanner } from './ActingAsBanner';
-import { OrgPickerModal } from './OrgPickerModal';
+import { OrgPickerModal, OrgPickerModalView } from './OrgPickerModal';
 import { OrgSelectionGate } from './OrgSelectionGate';
 import { endOrgSelectionBestEffort, setOrgPickerForced } from '../../org-selection';
 import { getOrgPin, setOrgPin } from '../../org-pin';
@@ -103,6 +103,25 @@ describe('OrgPickerModal', () => {
     expect(cta.getAttribute('href')).toMatch(/\/security$/);
     expect(screen.queryByTestId('org-picker-list')).toBeNull();
     expect(apiGet).not.toHaveBeenCalledWith('/api/me/org-choices');
+  });
+
+  it('required: "Sair" calls the shell logout (the modal covers the header avatar menu)', async () => {
+    route({ ...base, org_selection: sel({ mfa_required: true }) });
+    const onSignOut = vi.fn();
+    mount(<OrgPickerModal onSignOut={onSignOut} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Sair' }));
+    expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('dismissible ("Trocar org") picker has no "Sair" — the header is reachable', () => {
+    render(
+      <OrgPickerModalView
+        open required={false} onClose={() => {}} mfaRequired={false} mfaUrl="/security"
+        choices={choices.orgs} loading={false} error={false} onRetry={() => {}} onChoose={() => {}}
+        onSignOut={() => {}}
+      />,
+    );
+    expect(screen.queryByRole('button', { name: 'Sair' })).toBeNull();
   });
 
   it('empty choices → empty state', async () => {

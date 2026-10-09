@@ -56,6 +56,8 @@ class LiveSelection:
 class OrgSelectionStore(Protocol):
     def product_ready(self, product_slug: str) -> bool: ...
 
+    def requires_mfa(self, product_slug: str) -> bool: ...
+
     def live(self, user_id: Any, product_slug: str) -> Optional[LiveSelection]: ...
 
     def set(
@@ -86,31 +88,41 @@ def _code_from(exc: Exception) -> Optional[str]:
 class RealOrgSelectionStore:
     def __init__(self, get_core_client: Callable[[], Any]) -> None:
         self._core = get_core_client
-        self._ready: dict[str, tuple[float, bool]] = {}
+        self._ready: dict[str, tuple[float, bool, bool]] = {}
         self._ids: dict[str, str] = {}
         self._lock = threading.Lock()
 
     def _product(self, slug: str) -> Optional[dict]:
         rows = (
             self._core().table("products")
-            .select("id, org_picker_ready, db_schema")
+            .select("id, org_picker_ready, org_picker_requires_mfa, db_schema")
             .eq("slug", slug).limit(1).execute().data or []
         )
         return rows[0] if rows else None
 
-    def product_ready(self, product_slug: str) -> bool:
+    def _flags(self, product_slug: str) -> tuple[bool, bool]:
+        """``(ready, requires_mfa)`` of the product row, reused for ``READY_TTL_S``."""
         now = time.monotonic()
         with self._lock:
             hit = self._ready.get(product_slug)
             if hit and hit[0] > now:
-                return hit[1]
+                return hit[1], hit[2]
         row = self._product(product_slug)
         ready = bool(row and row.get("org_picker_ready") and row.get("db_schema"))
+        # Fail closed: a row without the column (pre core 073) or NULL still requires aal2.
+        requires_mfa = not (row and row.get("org_picker_requires_mfa") is False)
         with self._lock:
-            self._ready[product_slug] = (now + READY_TTL_S, ready)
+            self._ready[product_slug] = (now + READY_TTL_S, ready, requires_mfa)
             if row:
                 self._ids[product_slug] = row["id"]
-        return ready
+        return ready, requires_mfa
+
+    def product_ready(self, product_slug: str) -> bool:
+        return self._flags(product_slug)[0]
+
+    def requires_mfa(self, product_slug: str) -> bool:
+        """Whether acting in this product needs an aal2 session (``products.org_picker_requires_mfa``)."""
+        return self._flags(product_slug)[1]
 
     def _product_id(self, slug: str) -> Optional[str]:
         with self._lock:
@@ -206,9 +218,14 @@ class FakeOrgSelectionStore:
     home_orgs: dict[str, str] = field(default_factory=dict)
     rows: list[dict] = field(default_factory=list)
     unavailable: bool = False
+    #: Slugs whose picker does NOT require aal2 (``org_picker_requires_mfa = false``).
+    mfa_optional: set[str] = field(default_factory=set)
 
     def product_ready(self, product_slug: str) -> bool:
         return product_slug in self.ready
+
+    def requires_mfa(self, product_slug: str) -> bool:
+        return product_slug not in self.mfa_optional
 
     def live(self, user_id: Any, product_slug: str) -> Optional[LiveSelection]:
         if self.unavailable:

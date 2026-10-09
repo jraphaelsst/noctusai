@@ -134,7 +134,9 @@ strict `403 {"code":"not_platform_staff"}`.
   the gate (`configure_license_gate(selection_store=, db_schema=)`) carries it;
   `resolve_effective_org(core, user_id, *, product_slug, token, acting_header, …)` is still
   the ONE resolver: staff + live selection + same login + aal2 + licensed ⇒ target with role
-  `owner`, else home (no aal2 ⇒ home + `mfa_required`). Intent pin: header present and ≠
+  `owner`, else home (no aal2 ⇒ home + `mfa_required`; the aal2 leg applies only while the
+  product's `org_picker_requires_mfa` is true — core 073, owner switched it off 2026-10-09,
+  restore = `UPDATE products SET org_picker_requires_mfa = true`). Intent pin: header present and ≠
   resolved org ⇒ `409 {"code":"org_selection_changed"}` (non-staff: ignored).
   `/api/me/access` gains `org_selection{available, required, mfa_required, acting, org,
   home_org, selection_id, org_role}`; `GET /api/me/org-choices` (home first, licensed orgs,

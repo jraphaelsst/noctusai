@@ -282,7 +282,8 @@ def _org_picker_fn_sql(roles: str) -> str:
     opt-in (``(SELECT public.current_org_id_for('<schema>'))``) for the platform org
     picker. Staff (``noctus_users.role='admin'`` AND home org ``is_platform``) with a
     LIVE selection for the product whose ``db_schema = p_schema``, bound to THIS login
-    (``session_id`` claim), aal2, target still licensed, and (optional narrowing)
+    (``session_id`` claim), aal2 when the product's ``org_picker_requires_mfa`` (core 073),
+    target still licensed, and (optional narrowing)
     ``x-noctus-acting-org`` equal to the target, resolve to the target org. A staff
     request whose pin header is present and DIFFERENT from the result (target or home
     fall-through) is DENIED (NULL) -- a stale tab never reads/writes the wrong org.
@@ -326,7 +327,7 @@ def _org_picker_fn_sql(roles: str) -> str:
         "        ON s.product_id = p.id AND s.user_id = v_uid AND s.ended_at IS NULL\n"
         "     WHERE p.db_schema = p_schema AND p.org_picker_ready\n"
         "       AND s.auth_session_id = NULLIF(v_claims ->> 'session_id', '')::uuid\n"
-        "       AND v_claims ->> 'aal' = 'aal2'\n"
+        "       AND (NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')\n"
         "       AND EXISTS (SELECT 1 FROM auth.sessions se WHERE se.id = s.auth_session_id)\n"
         "       AND EXISTS (\n"
         "         SELECT 1 FROM public.licenses l\n"

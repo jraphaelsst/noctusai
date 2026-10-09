@@ -1913,14 +1913,42 @@ _ORG_PICKER_HELPER_SESSION_PROBE = _picker_helper_probe(
     what="another login session_id resolves to the home org",
 )
 
+# Core 073 put the aal2 rule behind products.org_picker_requires_mfa (owner switched it off
+# 2026-10-09). Each probe pins the flag itself inside the rolled-back transaction, so both
+# branches stay proven whatever the live value is.
+_PIN_MFA_SQL = """
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public'
+              AND table_name = 'products' AND column_name = 'org_picker_requires_mfa') THEN
+    EXECUTE 'UPDATE public.products SET org_picker_requires_mfa = {val} WHERE id = $1' USING v_pid;
+  ELSIF NOT {val} THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: products.org_picker_requires_mfa missing — core 073 not applied';
+  END IF;
+"""
+
 _ORG_PICKER_HELPER_AAL1_PROBE = _picker_helper_probe(
     probe_id="current_org_id_for.home_for_aal1",
-    rationale="2FA is required to act: an aal1 token resolves home even with a live selection.",
-    steps="""
+    rationale=(
+        "When the product requires 2FA (org_picker_requires_mfa, the 2026-10-08 rule): an aal1 "
+        "token resolves home even with a live selection."
+    ),
+    steps=_PIN_MFA_SQL.format(val="true") + """
   PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
 """ + _caller_sql("v_staff::text", aal="aal1"),
     expect="v_home",
-    what="an aal1 token resolves to the home org",
+    what="an aal1 token resolves to the home org when the product requires 2FA",
+)
+
+_ORG_PICKER_HELPER_AAL1_OPTIONAL_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.target_for_aal1_when_mfa_optional",
+    rationale=(
+        "Core 073: with org_picker_requires_mfa = false (owner, 2026-10-09) an aal1 staff token "
+        "with a valid selection resolves the target -- the switch really switches."
+    ),
+    steps=_PIN_MFA_SQL.format(val="false") + """
+  PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
+""" + _caller_sql("v_staff::text", aal="aal1"),
+    expect="v_target",
+    what="an aal1 token resolves to the target when the product does not require 2FA",
 )
 
 _ORG_PICKER_HELPER_LICENSE_PROBE = _picker_helper_probe(
@@ -2209,6 +2237,7 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_HELPER_NON_STAFF_PROBE,
     _ORG_PICKER_HELPER_SESSION_PROBE,
     _ORG_PICKER_HELPER_AAL1_PROBE,
+    _ORG_PICKER_HELPER_AAL1_OPTIONAL_PROBE,
     _ORG_PICKER_HELPER_LICENSE_PROBE,
     _ORG_PICKER_HELPER_HEADER_PROBE,
     _ORG_PICKER_HELPER_HEADER_MATCH_PROBE,

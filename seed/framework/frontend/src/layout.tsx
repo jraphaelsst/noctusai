@@ -445,7 +445,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
 
     return (
       <>
-      <OrgSelectionGate />
+      <OrgSelectionGate onSignOut={handleLogout} />
       <AppShell
         sidebar={({ closeSidebar }) => (
           <Sidebar

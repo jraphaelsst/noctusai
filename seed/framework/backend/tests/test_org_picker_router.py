@@ -43,7 +43,7 @@ USERS = [
 ]
 
 
-def _make(*, ready=True, users=None):
+def _make(*, ready=True, users=None, mfa_optional=False):
     core = MockSupabaseClient()
     core.set_table_data("noctus_users", users or USERS)
     core.set_table_data("organizations", [
@@ -57,6 +57,7 @@ def _make(*, ready=True, users=None):
         ready={SLUG} if ready else set(), staff={STAFF}, licensed=licensed,
         orgs={HOME: "NoctusAI", CLIENT_A: "Zeta Imob", CLIENT_Z: "Alfa Imob"},
         home_orgs={STAFF: HOME},
+        mfa_optional={SLUG} if mfa_optional else set(),
     )
 
     async def get_current_user(authorization: Optional[str] = Header(None)):
@@ -150,6 +151,23 @@ class TestBoundary:
         resp = c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF, aal="aal1"))
         assert resp.status_code == 403
         assert resp.json()["code"] == "mfa_required"
+
+    def test_product_without_mfa_requirement_lets_aal1_staff_pick_and_act(self):
+        """products.org_picker_requires_mfa = false (core 073, owner 2026-10-09): no aal2 needed."""
+        c, store = _make(mfa_optional=True)
+        assert c.get("/api/me/org-choices", headers=_h(STAFF, aal="aal1")).status_code == 200
+        resp = c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF, aal="aal1"))
+        assert resp.status_code == 200
+        sel = c.get("/api/me/access", headers=_h(STAFF, aal="aal1")).json()["org_selection"]
+        assert (sel["acting"], sel["mfa_required"], sel["org"]["id"]) == (True, False, CLIENT_A)
+
+    def test_requirement_restored_stops_an_aal1_selection_resolving(self):
+        """Flipping the flag back (the revisit trigger) falls an aal1 session back to home."""
+        c, store = _make(mfa_optional=True)
+        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF, aal="aal1")).status_code == 200
+        store.mfa_optional.clear()
+        sel = c.get("/api/me/access", headers=_h(STAFF, aal="aal1")).json()["org_selection"]
+        assert (sel["acting"], sel["mfa_required"], sel["org"]["id"]) == (False, True, HOME)
 
     def test_product_not_ready_is_409(self):
         c, _ = _make(ready=False)

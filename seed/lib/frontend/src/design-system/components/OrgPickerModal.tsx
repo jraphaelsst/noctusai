@@ -5,7 +5,9 @@
  * server says `required`), and reopened by "Trocar org" (dismissible).
  * The home org is listed first as "Entrar como NoctusAI (minha org)". Staff
  * without an aal2 session see a 2FA CTA instead of the list (server also
- * refuses with `mfa_required`).
+ * refuses with `mfa_required`). While non-dismissible it covers the header, so
+ * it carries its own "Sair" (logout) — otherwise a staff user who cannot pick
+ * (2FA broken, no licensed org, list error) is trapped (2026-10-09).
  *
  * `OrgPickerModalView` is the pure presentational half; `OrgPickerModal`
  * binds it to `useOrgSelection()`.
@@ -35,6 +37,8 @@ export interface OrgPickerModalViewProps {
   /** Org id being entered (button spinner). */
   choosingId?: string | null;
   chooseErrorMessage?: string | null;
+  /** Shell logout. Shown as "Sair" only while `required` (the modal hides the header's avatar menu). */
+  onSignOut?: () => void | Promise<void>;
 }
 
 const noop = () => {};
@@ -42,7 +46,7 @@ const noop = () => {};
 export function OrgPickerModalView(props: OrgPickerModalViewProps) {
   const {
     open, required, onClose, mfaRequired, mfaUrl, choices, loading, error, onRetry,
-    onChoose, choosingId = null, chooseErrorMessage = null,
+    onChoose, choosingId = null, chooseErrorMessage = null, onSignOut,
   } = props;
   const busy = choosingId !== null;
 
@@ -113,6 +117,13 @@ export function OrgPickerModalView(props: OrgPickerModalViewProps) {
         {chooseErrorMessage && (
           <p role="alert" className="mt-3 text-sm text-destructive">{chooseErrorMessage}</p>
         )}
+        {required && onSignOut && (
+          <div className="mt-4 flex justify-end border-t border-border pt-3">
+            <Button type="button" variant="ghost" disabled={busy} onClick={() => void onSignOut()}>
+              Sair
+            </Button>
+          </div>
+        )}
       </DialogBody>
     </Dialog>
   );
@@ -123,7 +134,7 @@ export function coreMfaUrl(): string {
   return `${env.CORE_URL.replace(/\/$/, '')}/security`;
 }
 
-export function OrgPickerModal() {
+export function OrgPickerModal({ onSignOut }: { onSignOut?: () => void | Promise<void> } = {}) {
   const sel = useOrgSelection();
   const [choosingId, setChoosingId] = useState<string | null>(null);
   const [chooseErr, setChooseErr] = useState<string | null>(null);
@@ -152,6 +163,7 @@ export function OrgPickerModal() {
       onChoose={onChoose}
       choosingId={choosingId}
       chooseErrorMessage={chooseErr}
+      onSignOut={onSignOut}
     />
   );
 }

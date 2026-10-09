@@ -21,4 +21,5 @@ e2e_test:
   status: pending
   last_run: null
   runs_in_ci: false
-bugs_fixed_during_dev: []
+bugs_fixed_during_dev:
+  - "2026-10-09 prod: the required (non-dismissible) modal covered the header, so a staff user who could not pick (2FA enrol 500, then no exit) had no way to log out. Fix: 'Sair' button while required, wired to the shell's handleLogout via OrgSelectionGate onSignOut."

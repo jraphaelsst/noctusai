@@ -127,14 +127,20 @@ def create_me_router(deps) -> APIRouter:
             raise _err(403, "Acesso restrito à equipe da plataforma.", NOT_PLATFORM_STAFF)
 
     def _picker_ctx(core: Any, user, token: str, *, need_aal2: bool = True):
-        """Staff gate -> aal2 -> product ready. Returns ``(slug, store, session_id)``."""
+        """Staff gate -> aal2 (when the product requires it) -> product ready.
+        Returns ``(slug, store, session_id)``."""
         _staff_gate(core, user.id)
         session_id, aal = read_session_claims(token, user_id=user.id)
-        if need_aal2 and aal != "aal2":
-            raise _err(403, "Verificação em duas etapas (MFA) obrigatória.", MFA_REQUIRED)
         gate = get_license_gate()
         store = gate.selection_store if gate else None
         slug = gate.product_slug if gate and not gate.exempt else None
+        try:
+            requires_mfa = not (store and slug) or store.requires_mfa(slug)
+        except Exception:
+            logger.error("org_picker_mfa_lookup_error product=%s", slug, exc_info=True)
+            raise HTTPException(status_code=503, detail="Falha ao consultar o produto")
+        if need_aal2 and requires_mfa and aal != "aal2":
+            raise _err(403, "Verificação em duas etapas (MFA) obrigatória.", MFA_REQUIRED)
         try:
             ready = bool(store and slug and store.product_ready(slug))
         except Exception:
