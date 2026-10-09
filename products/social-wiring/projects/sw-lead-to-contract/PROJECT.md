@@ -25,6 +25,7 @@ Out of scope for now (owner: "skeleton first"): message automations around the p
 | **S1** campaign→imóvel + immediate cliente + lead simulation | **noc-4** (noctusai-b5) | `backend/app/modules/meta_ads/**`, `backend/app/modules/leads/services/meta_ingest_service.py`, new `campanhas` veiculação service + router, FE `pages/campanhas/**` (new) | 218 |
 | **S3** visita aconteceu? + metrics + visited list + stage coupling | **noc-2** subagents | `card_hub/roteiros_service.py`, roteiro routes in `card_hub/router.py` (roteiro block only), new `pipeline/funil_eventos` helper, FE `RoteirosSection.tsx`, `ImovelVisitaCard.tsx`, `useRoteiros.ts`, new `VisitaFeedbackPrompt` | 219 |
 | **S4-FE** proposta card + modal | **noc-2** subagent | new FE `components/propostas/**`, `hooks/usePropostas.ts`, one `renderPropostas` slot in `ClienteDetailModal.tsx` / `ClienteCardDialog.tsx` Geral | — |
+| **S5** post-aceite: certidões for all vendedores + their companies, matrícula extraction | **noc-2** subagent | new `card_hub/pos_aceite_service.py` + its re-run route + FE "Preparando contrato" panel (new component, mounted by S4-FE) | — |
 | **S2** chat↔card link + "Pedir documentos" + inbound media → documento + simulate | **noc-2** subagents (or the next idle session) | `routers/whatsapp_router.py`, `services/media_service.py`, `whatsapp_connections_router.py`, `card_hub/documentos_service.py` (accept HEIC), new `services/documento_intake_service.py` | 220 |
 
 Shared helper: the **funnel-stage mover** `pipeline/funil_eventos.mover_por_evento()` is owned by S3 and consumed by S1/S4 by import only (CONTRACT §6). Migration numbers are tentative; each slice re-runs `noctus.dev.next_migration_number` at integrate.
@@ -46,10 +47,15 @@ Collision rules: noc-3 (noctusai-ba) owns seed FE/core auth, so nothing here tou
 5. After `data_visita`, the "visita aconteceu?" prompt appears; answer yes for 2 and no (with reason) for 1. Metrics update.
 6. The visited list shows 2 imóveis with "Gerar proposta"; generate a proposta for one; card moves to **Proposta recebida**; the proposta card is on Geral.
 7. Edit the proposta in the modal (valor, parcelas, termos, imobiliária = Tangerino, testemunhas); save; reload; values persist.
-8. Recusar a second proposta (reason recorded). Aceitar the first: negociação materialized, contract draft created with imobiliária + testemunhas preset, funnel → processos_venda at elaboração de contrato; `GET …/geracao` shows what is still missing.
+8. Recusar a second proposta (reason recorded). Aceitar the first: negociação materialized, contract draft created with imobiliária + testemunhas preset, funnel → processos_venda at elaboração de contrato.
+9. Post-aceite (S5): certidões start emitting for every vendedor and their companies, the matrícula is extracted (or flagged missing), and antigos proprietários are certified when the purchase is < 5 years. `GET …/geracao` then shows what is still missing.
 
 ## Open owner questions (asked as we reach them, never assumed)
 - Q1: on Aceitar, should the atendimento close into **processos_venda** (today's `aceitar-proposta` behavior), or stay on the funil until the contract is signed? (CONTRACT §5.4 assumes today's behavior.)
 - Q2: when one proposta is accepted, do the other open propostas of the same atendimento become `recusada` automatically, or stay as they are?
 - Q3: should the "visita aconteceu?" prompt be per roteiro (one question, then per-imóvel detail) or per imóvel? (The CONTRACT supports both: the roteiro-level answer fills the per-imóvel ones.)
 - Q4: the proposta's validity period (`validade_ate`): is there a default?
+- Q5: matrícula EMISSION: should the system request the certidão de matrícula itself (ARISP/ONR, or an InfoSimples product if one exists), or does the office keep uploading it? Nothing in the repo emits matrículas today (CONTRACT §7.2).
+
+## Next phase (owner's MAIN goal, after this skeleton; not built now)
+A reliable contract-generation tool: walk through uploading every document one by one; **one dedicated, rule-based extractor per document type** (patterns and parsing, not "let the AI decide"); 100% of file-borne data extracted and stored; an explicit list of the data that must be typed by hand; the generated contract 100% compliant with the data. The skeleton keeps that seam: one `tipo → extractor` interface used by card upload, WhatsApp intake (§2.3) and post-aceite (§7). Memory: `project_sw_reliable_contract_generation_goal`.

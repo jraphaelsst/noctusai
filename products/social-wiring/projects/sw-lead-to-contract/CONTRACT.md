@@ -227,3 +227,32 @@ On a failure after step 1, report it with the exact step and leave the proposta 
 - When the gate refuses, return `moveu=false` with the `pendencias` as `motivo`; the caller surfaces it, never raises.
 - An org that renamed or removed a stage `chave` gets `moveu=false, motivo='etapa_inexistente'` (no silent skip).
 - Every move writes a timeline event `etapa_auto` carrying the evento.
+
+---
+
+## §7 · S5 Post-aceite automation: certidões + matrícula (owner 2026-10-09)
+
+Owner: "the certidões emissions and data extraction, the matrícula extraction, both automated right after the aceite de proposta. It runs for all vendedores and their companies, just like we talked about in other sessions." Standing owner rules, not re-litigated: memory `project_sw_owner_decisions_2026_10_05`, `project_contract_automation`.
+
+New module `backend/app/modules/card_hub/pos_aceite_service.py`, entry point `disparar(client, org_id, atendimento_id, actor) -> PosAceite`. §4.4 calls it as **step 6**, after the funnel event. Its failure never undoes the accept: it is reported in the Aceitar response and is re-runnable.
+
+### 7.1 Certidões
+For every party of the atendimento with `lado='vendedor'`, PF and PJ (`partes_service.listar_partes`), plus every derived `EMP n` company of those vendedores (the certidões-partes matrix's empresa columns), call `certidoes_partes_service.solicitar_emissao(kind, alvo_id, tipos=None, …)`, i.e. every AUTOMATIC tipo. Manual-upload tipos (TJSP e-SAJ/e-PROC, Serasa) become checklist cells, never fake emissions.
+- **Skip** an anuente spouse (never certified), and any party that already has a non-stale certidão for every automatic tipo or a consulta still in flight (idempotent: re-running emits only what's missing or stale; staleness = the contract gate's own predicate).
+- **Antigos proprietários** (seller's purchase < 5 years): already emitted automatically once the matrícula is on the card (`antigos_proprietarios_service`). S5 only makes sure that runs after 7.2, never duplicating it.
+- Credentials pre-flight failure (no InfoSimples key) ⇒ `status='bloqueado', motivo='credenciais'` for the whole step, before any billed request.
+- Emissions are billed InfoSimples requests. The response lists each one so the cost is visible.
+
+### 7.2 Matrícula
+For the accepted proposta's `imovel_codigo`:
+- **A matrícula document on file:** ensure its extraction + autopilot ran (`matriculas` extraction → `autopiloto_service._aplicar_autopiloto`), re-running when the document is newer than the last extraction. That yields título aquisitivo, ônus, antigos proprietários (which triggers their certidões, 7.1).
+- **None on file:** `status='faltando', motivo='matricula_ausente'`, plus a checklist pendência "Certidão de matrícula atualizada" on the imóvel. 🔴 The repo has **no automatic matrícula emission** today (no ARISP/ONR/InfoSimples matrícula integration): owner question Q5 in PROJECT.md. Until answered, the matrícula is uploaded, and its extraction then runs automatically on upload.
+
+### 7.3 Response + UI
+`PosAceite = {certidoes: [{parte_nome, kind, alvo_id, consulta_id|null, status:'emitindo'|'ja_valida'|'pulada'|'bloqueado'|'erro', motivo|null, tipos:[str]}], matricula: {status:'extraindo'|'ok'|'faltando'|'erro', documento_id|null, motivo|null}}`
+- It is returned inside the Aceitar response (`pos_aceite`).
+- `POST /api/clientes/{cliente_id}/propostas/{id}/pos-aceite` re-runs it (idempotent).
+- FE: after Aceitar, a "Preparando contrato" panel lists these statuses, with links to the Certidões tab (vendedores | antigos proprietários subtabs) and the imóvel page. Each certidão result is extracted by the existing certidões readers when it lands, and the generator's `geracao` readiness reflects them.
+
+### 7.4 Next phase seam (owner's main goal, not built now)
+Every extraction here goes through ONE interface per document type (`tipo → extractor`), so each type's reader can be replaced by a dedicated, rule-based parser one at a time in the next phase, without touching the orchestration. See memory `project_sw_reliable_contract_generation_goal`. S2's inbound-media classifier routes through that SAME interface (§2.3).
