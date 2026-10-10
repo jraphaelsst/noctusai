@@ -38,13 +38,38 @@ def live_supabase_env_keys(environ: Mapping[str, str] | None = None) -> list[str
     return hits
 
 
+def live_settings_keys(settings_cls=None) -> list[str]:
+    """Defense in depth: names of RESOLVED seed-settings fields that point at a
+    live project (what a product's settings would actually load, incl. any
+    ``.env`` the no-env-file seam did not drop). Names only, never values.
+    ``settings_cls`` is the injection seam (default: the seed base)."""
+    if settings_cls is None:
+        from noctusai_lib.config.settings import BaseAppSettings as settings_cls
+    try:
+        resolved = settings_cls()
+    except Exception as exc:  # noqa: BLE001 -- loud, not silent
+        raise RuntimeError(
+            f"live_db_guard: cannot resolve seed settings ({type(exc).__name__}); refusing"
+        ) from exc
+    hits = []
+    for name in ("supabase_url",):
+        value = str(getattr(resolved, name, "") or "")
+        if PROD_PROJECT_REF in value or _SUPABASE_HOST.search(value):
+            hits.append(f"settings.{name}")
+    return hits
+
+
 def non_realdb_item_count(items: Iterable) -> int:
     return sum(1 for it in items if it.get_closest_marker("realdb") is None)
 
 
-def assert_hermetic(items: Iterable, environ: Mapping[str, str] | None = None) -> None:
+def assert_hermetic(
+    items: Iterable, environ: Mapping[str, str] | None = None, settings_cls=None,
+) -> None:
     """Raise ``RuntimeError`` (loud) when a live DB env meets hermetic tests."""
     hits = live_supabase_env_keys(environ)
+    if environ is None:  # real session: also inspect what settings RESOLVE
+        hits += live_settings_keys(settings_cls)
     if not hits:
         return
     n = non_realdb_item_count(list(items))

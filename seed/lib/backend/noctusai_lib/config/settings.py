@@ -7,9 +7,14 @@ contains only the fields that every backend needs.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import SecretStr, field_validator
+
+
+NO_ENV_FILE_VAR = "NOCTUS_SETTINGS_NO_ENV_FILE"
+_TRUTHY = {"1", "true", "yes", "on"}
 
 
 class BaseAppSettings(BaseSettings):
@@ -21,6 +26,27 @@ class BaseAppSettings(BaseSettings):
     must be set by the product since each backend resolves the root
     .env from a different __file__ location.
     """
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings,
+    ):
+        """Declared seam: ``NOCTUS_SETTINGS_NO_ENV_FILE=1`` drops the ``.env``
+        source so settings resolve from the process env + explicit kwargs only.
+
+        The seed pytest plugin sets it for every test session: a hermetic test
+        must never inherit credentials from a tree-root ``.env`` (2026-10-09
+        incident: a primary ``.env`` with prod creds reached settings via the
+        file even though ``os.environ`` was clean). An env_file passed
+        EXPLICITLY (``Settings(_env_file=tmp)``) differs from the class
+        ``model_config`` one and is kept.
+        """
+        sources = [init_settings, env_settings, dotenv_settings, file_secret_settings]
+        if os.environ.get(NO_ENV_FILE_VAR, "").strip().lower() in _TRUTHY:
+            declared = settings_cls.model_config.get("env_file")
+            if getattr(dotenv_settings, "env_file", declared) == declared:
+                sources.remove(dotenv_settings)
+        return tuple(sources)
 
     # Supabase
     supabase_url: str = ""

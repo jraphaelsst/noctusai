@@ -52,10 +52,18 @@ def pytest_collection_finish(session) -> None:  # noqa: D401 — pytest hook
 def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
     """Probe for `app.main` and import it to load the consent catalog.
 
+    Also declares the no-env-file seam (``NOCTUS_SETTINGS_NO_ENV_FILE=1``) so
+    seed settings never read a tree-root ``.env`` under pytest.
+
     Runs once per pytest session, before any test or fixture. Silent
     no-op when `app.main` is not on the import path (seed-lib own tests,
     MCP tests, ad-hoc scripts).
     """
+    import os
+
+    from noctusai_lib.config.settings import NO_ENV_FILE_VAR
+
+    os.environ[NO_ENV_FILE_VAR] = "1"
     try:
         importlib.import_module("app.main")
     except ModuleNotFoundError:
