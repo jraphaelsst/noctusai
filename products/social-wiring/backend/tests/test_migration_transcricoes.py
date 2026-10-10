@@ -1,4 +1,4 @@
-"""Structural (parse-based) tests for `225_transcricoes.sql` — the shared transcription
+"""Structural (parse-based) tests for the `*_transcricoes.sql` migration — the shared transcription
 layer (transcription-contract.md sections 3 and 5). `tests/support/rpc_fakes.py ::
 reservar_transcricao` is the contract fake pinned against the numbers asserted here."""
 from __future__ import annotations
@@ -8,8 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from noctusai_lib.testing.migrations import migration_path
+
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
-MIGRATION = MIGRATIONS / "225_transcricoes.sql"
+# Resolved by NAME, never by number — a renumber on integrate must not break this.
+MIGRATION = migration_path(MIGRATIONS, "transcricoes")
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +33,7 @@ def test_parses(sql):
 
 
 def test_number_is_unique_in_the_directory():
-    assert len(list(MIGRATIONS.glob("225_*.sql"))) == 1
+    assert len(list(MIGRATIONS.glob("*_transcricoes.sql"))) == 1
 
 
 def test_forward_only_and_search_path(flat):
@@ -99,6 +102,6 @@ def test_cerebro_fks_with_set_null(flat):
     assert "FOREIGN KEY (transcricao_id) ' 'REFERENCES social_wiring.transcricoes (id) ON DELETE SET NULL'" in flat
 
 
-def test_the_224_deferral_marker_is_gone():
-    assert "NOC-REMEDIATE[fk-transcricoes]" not in (MIGRATIONS / "224_cs_cerebro.sql").read_text(encoding="utf-8")
+def test_the_cerebro_deferral_marker_is_gone():
+    assert "NOC-REMEDIATE[fk-transcricoes]" not in migration_path(MIGRATIONS, "cs_cerebro").read_text(encoding="utf-8")
     assert "NOC-REMEDIATE" not in MIGRATION.read_text(encoding="utf-8")
