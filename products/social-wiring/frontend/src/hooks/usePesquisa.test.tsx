@@ -3,7 +3,7 @@
  * the two-signal loading rule and list+counts invalidation after mutations.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor, act } from "@testing-library/react";
+import { renderHook, waitFor, act, configure } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 
@@ -12,7 +12,17 @@ vi.mock("@noctusai/seed/infra", () => ({
 }));
 
 import { api } from "@noctusai/seed/infra";
-import { PESQUISA_KEY, useAprovarItem, usePesquisaItens, useZerarPesquisa } from "./usePesquisa";
+import {
+  PESQUISA_KEY,
+  useAprovarItem,
+  usePesquisaItens,
+  useZerarPesquisa,
+} from "./usePesquisa";
+
+// waitFor is an upper bound, not a delay: under machine load the first
+// query round-trip can exceed the 1s default; assertions still resolve as soon
+// as they hold.
+configure({ asyncUtilTimeout: 10_000 });
 
 const get = api.get as ReturnType<typeof vi.fn>;
 const post = api.post as ReturnType<typeof vi.fn>;
@@ -25,17 +35,31 @@ function wrapper() {
 }
 
 const it1 = (id: string) => ({ id, content: id });
-const filters = { marcaId: "m1", status: "approved" as const, variableSlug: "DORES", sort: "plays" as const, pageSize: 2 };
+const filters = {
+  marcaId: "m1",
+  status: "approved" as const,
+  variableSlug: "DORES",
+  sort: "plays" as const,
+  pageSize: 2,
+};
 
 beforeEach(() => vi.clearAllMocks());
 
 describe("usePesquisaItens", () => {
   it("builds the query, exposes showSkeleton then pages by offset", async () => {
     get
-      .mockResolvedValueOnce({ success: true, data: { items: [it1("a"), it1("b")], total: 3 } })
-      .mockResolvedValueOnce({ success: true, data: { items: [it1("c")], total: 3 } });
+      .mockResolvedValueOnce({
+        success: true,
+        data: { items: [it1("a"), it1("b")], total: 3 },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: { items: [it1("c")], total: 3 },
+      });
     const { W } = wrapper();
-    const { result } = renderHook(() => usePesquisaItens(filters), { wrapper: W });
+    const { result } = renderHook(() => usePesquisaItens(filters), {
+      wrapper: W,
+    });
     expect(result.current.showSkeleton).toBe(true);
     await waitFor(() => expect(result.current.items).toHaveLength(2));
     expect(result.current.showSkeleton).toBe(false);
@@ -57,7 +81,10 @@ describe("usePesquisaItens", () => {
 
   it("does not fetch without a marca", () => {
     const { W } = wrapper();
-    const { result } = renderHook(() => usePesquisaItens({ ...filters, marcaId: null }), { wrapper: W });
+    const { result } = renderHook(
+      () => usePesquisaItens({ ...filters, marcaId: null }),
+      { wrapper: W },
+    );
     expect(get).not.toHaveBeenCalled();
     expect(result.current.showSkeleton).toBe(false);
   });
@@ -68,11 +95,16 @@ describe("mutations", () => {
     post.mockResolvedValue({ success: true, data: {} });
     const { qc, W } = wrapper();
     const spy = vi.spyOn(qc, "invalidateQueries");
-    const { result } = renderHook(() => ({ ap: useAprovarItem(), ze: useZerarPesquisa() }), { wrapper: W });
+    const { result } = renderHook(
+      () => ({ ap: useAprovarItem(), ze: useZerarPesquisa() }),
+      { wrapper: W },
+    );
     await act(async () => {
       await result.current.ap.mutateAsync("i1");
     });
-    expect(post.mock.calls[0][0]).toBe("/api/media-creation/pesquisa/items/i1/approve");
+    expect(post.mock.calls[0][0]).toBe(
+      "/api/media-creation/pesquisa/items/i1/approve",
+    );
     expect(spy).toHaveBeenCalledWith({ queryKey: PESQUISA_KEY });
     await act(async () => {
       await result.current.ze.mutateAsync("m1");

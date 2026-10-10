@@ -34,6 +34,23 @@ export interface PesquisaVariable {
   sort_order: number;
 }
 
+export type FonteKind = "instagram_media" | "youtube_video" | "mc_post";
+
+/** Provenance of an extraction-origin item (contract wave2 §3.1). */
+export interface SourceRef {
+  kind: FonteKind;
+  account_id: string | null;
+  id: string;
+  url: string | null;
+  thumbnail_url: string | null;
+  published_at: string | null;
+  plays: number | null;
+  likes: number | null;
+  comments: number | null;
+  excerpt: string | null;
+  extracao_id: string | null;
+}
+
 export interface PesquisaItem {
   id: string;
   marca_id: string;
@@ -42,7 +59,7 @@ export interface PesquisaItem {
   status: PesquisaStatus;
   origin: PesquisaOrigem;
   plays: number | null;
-  source_ref: object | null;
+  source_ref: SourceRef | null;
   created_at: string;
 }
 
