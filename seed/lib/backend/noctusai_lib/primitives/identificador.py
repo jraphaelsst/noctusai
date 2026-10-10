@@ -333,6 +333,18 @@ def _resolver_perfil_im(ctx: _Ctx) -> Optional[tuple[int, ...]]:
     return _PERFIS_IM.get(ibge or "")
 
 
+def municipio_em_texto(texto: str) -> Optional[str]:
+    """The municipality (a key of the inscrição-profile table) a document's
+    text names, or None. Lets a caller that does not know the imóvel's city
+    still read a prefeitura document's inscrição in its own mask — the page
+    header (`PREFEITURA DE COTIA`) says whose mask applies."""
+    alvo = _deaccent_upper(texto or "")
+    for nome in _IBGE_POR_MUNICIPIO:
+        if re.search(r"(?<![A-Z])" + re.escape(nome) + r"(?![A-Z])", alvo):
+            return nome
+    return None
+
+
 def _mascara_im(d: str, grupos: tuple[int, ...]) -> str:
     partes, i = [], 0
     for g in grupos:

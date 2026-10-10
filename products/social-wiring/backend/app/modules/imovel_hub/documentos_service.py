@@ -212,6 +212,11 @@ def _documento_out(row: dict, resolved: dict) -> dict:
         "validade_ate": row.get("validade_ate"),
         "resultado": row.get("resultado"),
         "inscricao_imobiliaria": row.get("inscricao_imobiliaria"),
+        # A non-failure note on the structured read (e.g. inscrição ilegível
+        # na foto) — `estrutura_erro` carries it when the status is not `erro`.
+        "estrutura_aviso": (
+            row.get("estrutura_erro") if row.get("estrutura_status") != "erro" else None
+        ),
         # Migration 199 — a matrícula upload's kind (certidao | visualizacao)
         # and why its emitida_em is empty (P5 B1).
         "tipo_documento_matricula": row.get("tipo_documento_matricula"),
@@ -811,8 +816,77 @@ def _pagina(p: Any) -> PaginaLida:
     return p if isinstance(p, PaginaLida) else PaginaLida(texto=str(p))
 
 
-async def _extrair_paginas(
+async def _reextrair_paginas_escalado(
     conteudo: bytes, mimetype: Optional[str], org_id: Optional[str]
+) -> tuple[PaginaLida, ...]:
+    """Re-transcription of the SAME bytes with the stronger vision model."""
+    return await _extrair_paginas(conteudo, mimetype, org_id, escalar=True)
+
+
+#: Code of the aviso recorded on the document row when a vision-read
+#: inscrição fails its município's mask even after the stronger re-read.
+AVISO_INSCRICAO_ILEGIVEL = "inscricao_ilegivel_foto"
+_MSG_INSCRICAO_ILEGIVEL = (
+    "inscrição ilegível na foto — envie o PDF ou uma foto melhor"
+)
+
+
+def inscricao_valida_na_mascara(
+    valor: str, municipio: Optional[str], texto: str = ""
+) -> Optional[bool]:
+    """Does `valor` fit the município's inscrição mask? `True`/`False`, or
+    `None` when there is no mask to judge by (município unknown / without a
+    profile) — then the existing behaviour stands. The município is the
+    imóvel's; failing that, the one the page itself names. Never repairs
+    digits: a value either fits as printed or it does not."""
+    from noctusai_lib.primitives import identificador as _ident
+
+    for mun in (municipio, _ident.municipio_em_texto(texto)):
+        if not mun:
+            continue
+        leitura = _ident.ler("inscricao_municipal", valor, municipio=mun)
+        if leitura.motivo == "municipio_sem_perfil":
+            continue
+        return bool(leitura.canonico)
+    return None
+
+
+async def _reler_inscricao_escalada(
+    blob: Any, mimetype: Optional[str], org_id: str, tipo: str,
+    analyze_estrutura: Any, reler_texto: Any, municipio: Optional[str],
+) -> Optional[str]:
+    """Re-transcribe with the stronger model and re-ask for the inscrição.
+    Returns the value only when it is printed in the new transcription
+    (the per-page analyzer anchors it) AND fits the mask; else None."""
+    paginas = tuple(_pagina(p) for p in await reler_texto(blob, mimetype, org_id))
+    for p in paginas:
+        if not p.via_visao:
+            continue
+        resposta = await analyze_estrutura(p.texto, tipo, org_id)
+        valor = (resposta or {}).get("inscricao_imobiliaria")
+        if (
+            valor
+            and _so_digitos(valor)
+            and _texto_contem_digitos(p.texto, valor)
+            and inscricao_valida_na_mascara(valor, municipio, p.texto) is True
+        ):
+            return valor
+    return None
+
+
+def _texto_contem_digitos(texto: str, valor: str) -> bool:
+    alvo = _so_digitos(valor)
+    return bool(alvo) and bool(
+        re.search(r"(?<!\d)" + r"\D{0,3}".join(alvo) + r"(?!\d)", texto)
+    )
+
+
+async def _extrair_paginas(
+    conteudo: bytes,
+    mimetype: Optional[str],
+    org_id: Optional[str],
+    *,
+    escalar: bool = False,
 ) -> tuple[PaginaLida, ...]:
     """Bytes → the document's PAGES, text only, via the seed transcription
     ladder (`noctusai_lib.integrations.documents.make_document_transcriber`)
@@ -839,10 +913,21 @@ async def _extrair_paginas(
 
         from app.services.api_keys_store import resolve_vision_provider
 
+        provider = resolve_vision_provider(org_id)
+        ocr_model = None
+        if escalar:
+            # The stronger re-read model (`releitura` ladder) — same pin the
+            # identity / guia-ITBI re-reads use.
+            from noctusai_lib.integrations.documents.providers import (
+                ESCALATION_OCR_MODELS,
+            )
+
+            ocr_model = ESCALATION_OCR_MODELS.get(provider)
         transcriber = make_document_transcriber(
             real=True,
             org_id=org_id,
-            provider=resolve_vision_provider(org_id),
+            provider=provider,
+            ocr_model=ocr_model,
         )
         resultado = await transcriber.transcribe(
             conteudo, mimetype=mimetype or "application/pdf"
@@ -979,6 +1064,7 @@ async def extrair_estrutura(
     extract_text: Optional[Any] = None,
     analyze_estrutura: Optional[Any] = None,
     notificador: Optional[Any] = None,
+    reler_texto: Optional[Any] = None,
 ) -> dict:
     """Read numero/emitida_em/validade_ate/resultado/inscricao_imobiliaria
     off a CND/guia/matrícula upload, and feed `imovel_dados` (migration 118).
@@ -1015,6 +1101,7 @@ async def extrair_estrutura(
 
     extract_text = extract_text or _extrair_paginas
     analyze_estrutura = analyze_estrutura or _analisar_estrutura
+    reler_texto = reler_texto or _reextrair_paginas_escalado
 
     rows = (
         _t(client, TABLE)
@@ -1121,6 +1208,55 @@ async def extrair_estrutura(
         )
         return _falhou("erro_inesperado", str(exc))
 
+    aviso: Optional[str] = None
+    descartada = False
+    if (
+        via_ia
+        and tipo in _ALIMENTA_IMOVEL_DADOS
+        and via_ia.get("inscricao_imobiliaria")
+    ):
+        # 🔴 MASK GATE (owner rule 2026-10-10: store exactly what is printed,
+        # never complete/guess digits). A vision transcription of a photo may
+        # itself be wrong (17 digits for Cotia's 18) while agreeing with its
+        # own text, so the município's mask is the independent check. A value
+        # that fails it is NOT a reading: escalate once (stronger model,
+        # `releitura` ladder), else drop it and record a named aviso.
+        try:
+            municipio = dados_service.municipio_do_imovel(client, org_id, codigo)
+        except Exception as exc:  # noqa: BLE001 - mask is best-effort context
+            logger.warning(
+                "extracao estrutura %s: municipio do imovel ilegivel: %s", documento_id, exc
+            )
+            municipio = None
+        texto_doc = "\n".join(p.texto for p in paginas)
+        valida = inscricao_valida_na_mascara(
+            via_ia["inscricao_imobiliaria"], municipio, texto_doc
+        )
+        if valida is False:
+            logger.warning(
+                "extracao estrutura %s: inscricao fora da mascara do municipio "
+                "(via_visao=%s)", documento_id, inscricao_via_visao,
+            )
+            corrigida = None
+            if inscricao_via_visao:
+                try:
+                    corrigida = await _reler_inscricao_escalada(
+                        blob.data, doc.get("mime_type"), str(org_id), tipo,
+                        analyze_estrutura, reler_texto, municipio,
+                    )
+                except Exception as exc:  # noqa: BLE001 - falls to the aviso
+                    logger.warning(
+                        "extracao estrutura %s: releitura da inscricao falhou: %s",
+                        documento_id, exc,
+                    )
+            if corrigida:
+                via_ia["inscricao_imobiliaria"] = corrigida
+            else:
+                via_ia.pop("inscricao_imobiliaria")
+                descartada = True
+                aviso = f"{AVISO_INSCRICAO_ILEGIVEL}: {_MSG_INSCRICAO_ILEGIVEL}"
+    limpar_inscricao = {"inscricao_imobiliaria": None} if descartada else {}
+
     if not paginas:
         logger.info("extracao estrutura %s: sem texto legivel", documento_id)
         _marcar(
@@ -1136,7 +1272,8 @@ async def extrair_estrutura(
         _marcar(
             client, documento_id,
             **(via_ia or {}),
-            estrutura_status="sem_dados", estrutura_erro=None, estrutura_em=now_iso(),
+            **limpar_inscricao,
+            estrutura_status="sem_dados", estrutura_erro=aviso, estrutura_em=now_iso(),
         )
         if tipo == "matricula":
             try:
@@ -1154,9 +1291,10 @@ async def extrair_estrutura(
         client,
         documento_id,
         **via_ia,
+        **limpar_inscricao,
         origem="ia",
         estrutura_status="ok",
-        estrutura_erro=None,
+        estrutura_erro=aviso,
         estrutura_em=now_iso(),
     )
 
