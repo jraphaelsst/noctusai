@@ -415,6 +415,20 @@ def adicionar(
             else "Esta pessoa já é parte deste atendimento."
         )
 
+    # 🔴 A party added AS `conjuge` is a marriage, not a label: record the link
+    # both ways (same choke point `atualizar_papel` uses). Checked BEFORE the
+    # insert so a refusal leaves nothing half-applied; ambiguous principal ->
+    # label lands, link does not (guessing would name the wrong signer).
+    principal_conjuge: Optional[str] = None
+    if papel == PAPEL_CONJUGE and novo_cliente_id:
+        principal_conjuge = _principal_do_conjuge(
+            client, org_id,
+            {"atendimento_id": alvo, "cliente_id": novo_cliente_id},
+            lado_alvo,
+        )
+        if principal_conjuge is not None:
+            _recusar_conjuge_ocupado(client, org_id, novo_cliente_id, principal_conjuge)
+
     # Ordem is per SIDE: each panel numbers its own people from zero, so the
     # first vendedor is ordem 0 (the proprietário) rather than continuing the
     # buyer list's count.
@@ -448,6 +462,8 @@ def adicionar(
         # Migration 203 — provenance of a previous-owner party row.
         row["origem"] = origem
     _t(client, TABLE).insert(row).execute()
+    if principal_conjuge is not None and novo_cliente_id:
+        _casar(client, org_id, novo_cliente_id, principal_conjuge)
     if cpf and parte_cliente_id is not None:
         # After the insert: a refused double-click must not leave a conflict.
         clientes_svc.registrar_cpf_divergente(client, org_id, parte_cliente_id, cpf)

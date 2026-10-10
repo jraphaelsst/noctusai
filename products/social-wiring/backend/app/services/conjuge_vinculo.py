@@ -6,7 +6,9 @@ document) and the generic cliente PATCH (`clientes_service.update_cliente`).
 Each keeps its own policy (who may overwrite whom, provenance, admin gating);
 what they share, and what lives ONLY here, is the consequence of a link:
 CONTRACT sw-lead-to-contract §7.1 — a cônjuge linked to a seller of an
-already-accepted deal is certified now (`pos_aceite_service.ao_vincular_conjuge`).
+already-accepted deal is certified now (`pos_aceite_service.ao_vincular_conjuge`),
+and a certidão de casamento already read on either spouse is applied to the other
+(`identidade_extracao_service.aplicar_certidao_casamento_ao_conjuge`).
 
 * `vincular_conjuge` — writes one side of the link (+ the caller's provenance
   columns) and then runs the consequence.
@@ -32,8 +34,17 @@ CLIENTES = "clientes"
 def apos_vincular_conjuge(
     client: Any, org_id: Any, cliente_id: Any, conjuge_cliente_id: Any, *, actor: Any = None
 ) -> None:
-    """The late-spouse consequence (see the module docstring). Lazy import:
+    """The late-spouse consequences (see the module docstring); the certidão is
+    applied FIRST so the pós-aceite pass sees the spouse's filled data. Lazy import:
     `card_hub` imports this package's services."""
+    try:
+        from app.modules.card_hub import identidade_extracao_service
+
+        identidade_extracao_service.aplicar_certidao_casamento_ao_conjuge(
+            client, org_id, cliente_id, conjuge_cliente_id
+        )
+    except Exception as exc:  # noqa: BLE001 - the link landed; logged at ERROR, never raised
+        logger.error("vínculo de cônjuge: certidão de casamento falhou: %s", exc, exc_info=True)
     try:
         from app.modules.card_hub import pos_aceite_service
 

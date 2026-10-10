@@ -86,6 +86,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import ValidationError_
+from noctusai_lib.primitives.phone import normalize_phone
 
 from app.services import chat_cliente_link
 from app.services import identidade_service as ident
@@ -778,6 +779,50 @@ def _enrich_cliente(
     }
     if patch:
         _t(client, "clientes").update(patch).eq("id", cliente_id).execute()
+
+
+def _chave_do_celular(
+    client: Any, org_id: UUID, cliente_id: UUID, celular: str
+) -> Optional[str]:
+    """The `chave_canonica` a hand-typed `celular` should give a cliente that
+    has none — `None` when nothing should be written.
+
+    The WhatsApp chat<->card link resolves by `chave_canonica`; a phone typed
+    in the checklist left it NULL, so the chat never found the card (deal 876).
+    Same normalizer as every other writer (`leads_service`/`ident`:
+    `normalize_phone`). Never overwrites an existing key (a keyed cliente's
+    identity is the dedup space's business, not a field edit's), and never
+    writes a key another cliente of the org already holds
+    (`UNIQUE(org_id, chave_canonica)`): that is a duplicate person, which the
+    identity review decides — logged, not forced."""
+    chave = normalize_phone(celular)
+    if not chave:
+        return None
+    proprio = (
+        _t(client, "clientes")
+        .select("id,chave_canonica")
+        .eq("org_id", str(org_id))
+        .eq("id", str(cliente_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not proprio or proprio[0].get("chave_canonica"):
+        return None
+    outro = (
+        _t(client, "clientes")
+        .select("id")
+        .eq("org_id", str(org_id))
+        .eq("chave_canonica", chave)
+        .limit(1)
+        .execute()
+    ).data or []
+    if outro:
+        logger.warning(
+            "clientes: celular de %s já é a chave de outro cliente (%s) — chave_canonica não gravada",
+            cliente_id, outro[0].get("id"),
+        )
+        return None
+    return chave
 
 
 def _vincular_chats_best_effort(
@@ -2093,6 +2138,15 @@ def update_cliente(
         payload["certidao_estado_civil_emitida_em_origem"] = "manual" if valor else None
         payload["certidao_estado_civil_emitida_em_em"] = _now() if valor else None
 
+    chave_nova = (
+        _chave_do_celular(client, org_id, cliente_id, payload["celular"])
+        if payload.get("celular")
+        else None
+    )
+    if chave_nova:
+        payload["chave_canonica"] = chave_nova
+        payload["chave_tipo"] = "telefone"
+
     payload["updated_at"] = _now()
     resp = (
         _t(client, "clientes")
@@ -2105,6 +2159,8 @@ def update_cliente(
     if not rows:
         raise ClienteNotFound(f"cliente {cliente_id} not found for org {org_id}")
     resultado = rows[0]
+    if chave_nova:
+        _vincular_chats_best_effort(client, org_id, cliente_id, chave_nova)
 
     if payload.get("conjuge_cliente_id"):
         # The cônjuge link is written by this PATCH too — same consequence as

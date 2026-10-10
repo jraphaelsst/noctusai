@@ -2546,6 +2546,123 @@ def vincular_conjuges(
     return conflitos
 
 
+def _entradas_conjuges(documento: dict) -> list[dict]:
+    bruto = documento.get("extracao_conjuges")
+    if isinstance(bruto, str):
+        try:
+            bruto = json.loads(bruto)
+        except ValueError:
+            logger.warning("extracao_conjuges is not JSON on documento %s", documento.get("id"))
+            return []
+    return [e for e in (bruto or []) if isinstance(e, dict)]
+
+
+def _lidos_da_entrada_conjuge(entrada: dict, documento: dict) -> dict[str, tuple]:
+    """`_lidos_do_conjuge`, rebuilt from what a certidão left on its own row
+    (`extracao_conjuges` entry + the couple-level `extracao_*` columns) — for
+    a spouse who became known AFTER the document was read."""
+    lidos = _lidos_vazios()
+    rot = "certidão de casamento (cônjuge)"
+
+    def item(valor: Any, confianca: Any, rotulo: Optional[str]) -> tuple:
+        return (valor, confianca or "media", rotulo, bool(valor))
+
+    for campo, chave in (*_CHAVE_CONJUGE.items(), ("nacionalidade", "nacionalidade")):
+        lidos[campo] = item(entrada.get(chave), "media", "NOMES" if campo == "nome_oficial" else rot)
+    for chave in ("estado_civil", "regime_bens", "data_casamento"):
+        lidos[chave] = item(
+            documento.get(f"extracao_{chave}"),
+            documento.get(f"extracao_{chave}_confianca"),
+            documento.get(f"extracao_{chave}_rotulo"),
+        )
+    return lidos
+
+
+def _confere_com_entrada(row: dict, entrada: dict) -> bool:
+    """May the certidão's spouse entry be applied to this cliente? Yes unless
+    something on file actively disagrees (a different CPF or a real, different
+    name) — an old certidão of a previous marriage must not fill the current
+    spouse (same posture as `_conjuge_por_lado_unico`)."""
+    cpf_entrada = only_digits(str(entrada.get("cpf") or ""))
+    if cpf_entrada and row.get("cpf"):
+        return only_digits(str(row["cpf"])) == cpf_entrada
+    nome_atual = next(
+        (n for n in (row.get("nome_oficial"), row.get("nome_completo"), row.get("nome")) if n),
+        None,
+    )
+    if nome_atual is None or _nome_vazio_ou_placeholder(nome_atual):
+        return True
+    return any(
+        nomes_compativeis(entrada.get("nome"), n)
+        for n in (row.get("nome_oficial"), row.get("nome_completo"), row.get("nome"))
+        if n
+    )
+
+
+def aplicar_certidao_casamento_ao_conjuge(
+    client: Any, org_id: UUID, cliente_a: UUID, cliente_b: UUID
+) -> list[dict]:
+    """A spouse LINKED after the certidão de casamento was read still gets what
+    the certidão says about her.
+
+    `extrair_identidade` applies the non-titular entry only to a spouse that
+    already exists when the document is read; the usual order on a real deal is
+    the opposite (upload the certidão on the titular, THEN "Adicionar
+    cônjuge"), which left her Estado civil / Nacionalidade / Gênero pending
+    forever (deal 876). Called by the link choke point
+    (`services.conjuge_vinculo.apos_vincular_conjuge`) for every way a link is
+    written. For each live, read certidão on either cliente: the non-titular
+    entry is applied to the OTHER cliente with `origem='certidao_casamento'` +
+    `documento_id` (couple facts included), through the same D1 mechanics as
+    the extraction (conflict-not-overwrite), and the entry's `cliente_id` is
+    recorded on the document. Idempotent. Returns newly opened conflicts.
+    """
+    ids = [str(cliente_a), str(cliente_b)]
+    docs = (
+        _t(client, DOCUMENTOS_TABLE)
+        .select("*")
+        .eq("org_id", str(org_id))
+        .in_("cliente_id", ids)
+        .eq("tipo_documento", "certidao_casamento")
+        .eq("extracao_status", "ok")
+        .is_("deleted_at", "null")
+        .is_("extracao_descartada_em", "null")
+        .execute()
+    ).data or []
+    conflitos: list[dict] = []
+    for doc in sorted(docs, key=lambda d: d.get("created_at") or ""):
+        dono = str(doc["cliente_id"])
+        alvo = ids[1] if dono == ids[0] else ids[0]
+        entradas = _entradas_conjuges(doc)
+        nao_titulares = [e for e in entradas if not e.get("titular")]
+        if len(nao_titulares) != 1:
+            continue  # absent or ambiguous: nothing to attribute
+        entrada = nao_titulares[0]
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select("id,nome,nome_completo,nome_oficial,cpf")
+            .eq("org_id", str(org_id))
+            .eq("id", alvo)
+            .limit(1)
+            .execute()
+        ).data or []
+        if not rows or not _confere_com_entrada(rows[0], entrada):
+            continue
+        _, abertos = aplicar_campos_ao_cliente(
+            client, org_id, UUID(alvo), "certidao_casamento",
+            _lidos_da_entrada_conjuge(entrada, doc),
+            documento_id=UUID(str(doc["id"])),
+            fonte_tabela=DOCUMENTOS_TABLE,
+            fonte_id=UUID(str(doc["id"])),
+            nomes_anteriores={"nome_oficial": entrada.get("nome_anterior")},
+        )
+        conflitos += abertos
+        if entrada.get("cliente_id") != alvo:
+            entrada["cliente_id"] = alvo
+            _marcar(client, UUID(str(doc["id"])), extracao_conjuges=entradas)
+    return conflitos
+
+
 # ─── Admin notification (migration 138's queue, now announced) ──────────────
 
 
@@ -5360,6 +5477,44 @@ def certidao_estado_civil_mais_recente(
         {"documento_id": r["id"], "emitida_em": r["extracao_data_emissao"]}
         for r in rows
     ]
+
+    # A certidão de CASAMENTO is one document for two people: uploaded on the
+    # titular, it is equally the spouse's certidão de estado civil (deal 876:
+    # the spouse's emission date stayed unanswerable though the couple's
+    # certidão was on file). Only the casamento type crosses — a nascimento
+    # is personal. Only for a spouse the certidão actually names
+    # (`_confere_com_entrada`): a certidão of a previous marriage is not hers.
+    conjuge_id = _conjuge_vinculado(client, org_id, cliente_id)
+    if conjuge_id is not None:
+        proprio = (
+            _t(client, CLIENTES_TABLE)
+            .select("id,nome,nome_completo,nome_oficial,cpf")
+            .eq("org_id", str(org_id))
+            .eq("id", str(cliente_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        docs_conjuge = (
+            _t(client, DOCUMENTOS_TABLE)
+            .select("id,extracao_conjuges," + ",".join(_COLUNAS_DATA_EMISSAO))
+            .eq("org_id", str(org_id))
+            .eq("cliente_id", conjuge_id)
+            .eq("tipo_documento", "certidao_casamento")
+            .is_("deleted_at", "null")
+            .is_("extracao_descartada_em", "null")
+            .not_.is_("extracao_data_emissao", "null")
+            .execute()
+        ).data or []
+        for d in docs_conjuge:
+            nao_titulares = [e for e in _entradas_conjuges(d) if not e.get("titular")]
+            if (
+                proprio
+                and len(nao_titulares) == 1
+                and _confere_com_entrada(proprio[0], nao_titulares[0])
+            ):
+                candidatos.append(
+                    {"documento_id": d["id"], "emitida_em": d["extracao_data_emissao"]}
+                )
 
     cliente_rows = (
         _t(client, CLIENTES_TABLE)

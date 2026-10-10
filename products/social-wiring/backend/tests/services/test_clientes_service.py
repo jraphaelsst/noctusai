@@ -1866,3 +1866,38 @@ class TestRestaurarClienteExcluido:
         assert _tombstones(client) == []
         with pytest.raises(svc.ClienteExcluidoNotFound):
             svc.restaurar_cliente_excluido(client, ORG, b)
+
+
+class TestCelularDerivesChaveCanonica:
+    """Deal 876: a phone typed in the checklist left chave_canonica NULL, so the
+    WhatsApp chat never resolved to the card."""
+
+    def _cliente(self, db, cid, **over):
+        row = {"id": cid, "org_id": ORG, "nome": "Ana", "chave_canonica": None,
+               "chave_tipo": None, "celular": None}
+        row.update(over)
+        db.set_table_data("clientes", [*(db.table("clientes").select("*").execute().data or []), row])
+
+    def test_celular_sets_the_key_when_null(self):
+        db = _scoped_client()
+        cid = str(uuid4())
+        self._cliente(db, cid)
+        out = svc.update_cliente(db, ORG, cid, celular="(11) 99457-3387")
+        assert out["chave_canonica"] == "+5511994573387"
+        assert out["chave_tipo"] == "telefone"
+
+    def test_an_existing_key_is_never_overwritten(self):
+        db = _scoped_client()
+        cid = str(uuid4())
+        self._cliente(db, cid, chave_canonica="+5511900000000", chave_tipo="telefone")
+        out = svc.update_cliente(db, ORG, cid, celular="(11) 99457-3387")
+        assert out["chave_canonica"] == "+5511900000000"
+
+    def test_a_key_held_by_another_cliente_is_not_stolen(self):
+        db = _scoped_client()
+        cid, outro = str(uuid4()), str(uuid4())
+        self._cliente(db, outro, chave_canonica="+5511994573387", chave_tipo="telefone")
+        self._cliente(db, cid)
+        out = svc.update_cliente(db, ORG, cid, celular="(11) 99457-3387")
+        assert out.get("chave_canonica") is None
+        assert out["celular"] == "(11) 99457-3387"

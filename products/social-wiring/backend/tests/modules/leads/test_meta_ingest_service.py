@@ -72,12 +72,18 @@ class TestMapMetaLeadToLeadPayload:
         # phone is untouched by the missing name
         assert payload["contato"] == "+5511994573387"
 
-    def test_missing_phone_leaves_contato_none(self):
+    def test_missing_phone_falls_back_to_email(self):
         payload = map_meta_lead_to_lead_payload(
             _meta_lead(phone=None), origem_source_id="SRC1"
         )
-        assert payload["contato"] is None
+        assert payload["contato"] == "ana@example.com"
         assert payload["cliente_nome"] == "Ana Souza"
+
+    def test_no_phone_and_no_email_leaves_contato_none(self):
+        payload = map_meta_lead_to_lead_payload(
+            _meta_lead(phone=None, email=None), origem_source_id="SRC1"
+        )
+        assert payload["contato"] is None
 
     def test_empty_answers_yields_no_observacoes(self):
         payload = map_meta_lead_to_lead_payload(

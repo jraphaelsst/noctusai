@@ -927,3 +927,35 @@ class TestUmaParteSoEAlcancavelPeloSeuProprioCliente:
 
         assert out.status_code == 200, out.text
         assert out.json()["papel"] == "conjuge"
+
+
+class TestAddingAConjugeRecordsTheMarriage:
+    """Deal 876: "Adicionar cônjuge" created the party and never the link."""
+
+    def test_a_conjuge_added_by_name_is_linked_both_ways(self, client, scoped):
+        cid, aid = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Maria Mauricio", "papel": "conjuge"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201
+        esposa = r.json()["cliente_id"]
+        rows = {
+            x["id"]: x for x in scoped.table("clientes").select("*").execute().data
+        }
+        assert rows[esposa]["conjuge_cliente_id"] == cid
+        assert rows[cid]["conjuge_cliente_id"] == esposa
+
+    def test_a_non_conjuge_papel_does_not_link(self, client, scoped):
+        cid, aid = _titular(scoped)
+        r = client.post(
+            f"/api/clientes/{cid}/compradores",
+            json={"nome": "Irmão", "papel": "comprador"},
+            headers=_auth(),
+        )
+        assert r.status_code == 201
+        rows = {
+            x["id"]: x for x in scoped.table("clientes").select("*").execute().data
+        }
+        assert not rows[cid].get("conjuge_cliente_id")

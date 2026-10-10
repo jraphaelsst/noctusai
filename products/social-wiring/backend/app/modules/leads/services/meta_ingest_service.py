@@ -34,7 +34,7 @@ read-then-skip check before ever inserting, mirroring
 Field mapping (brief, §2)
 ──────────────────────────
 * ``cliente_nome`` <- ``full_name``
-* ``contato``      <- ``phone`` (migration 037's
+* ``contato``      <- ``phone``, else ``email`` (migration 037's
   ``canonicalize_meta_lead_phone_trigger`` already canonicalizes this to
   E.164 on ``meta_ads_leads`` itself — this module does NOT re-normalize
   it; ``leads_service.create_lead``'s own ``_derive_contato_fields``
@@ -248,7 +248,12 @@ def map_meta_lead_to_lead_payload(
         # `desconhecido` `create_lead` would otherwise stamp.
         "tipo_lead": "novo",
         "cliente_nome": meta_lead.get("full_name"),
-        "contato": meta_lead.get("phone"),
+        # Phone first; an email-only lead (Meta forms may ask only EMAIL) lands
+        # its email as `contato` so `leads_service._derive_contato_fields`
+        # types it `email` and the cliente is keyed on it — NULL here left
+        # such a lead `desconhecido` and the cliente without any contact
+        # (deal 876).
+        "contato": meta_lead.get("phone") or meta_lead.get("email"),
         "observacoes": render_answers_pt_br(
             answers, question_types=question_types, question_labels=question_labels
         ),
