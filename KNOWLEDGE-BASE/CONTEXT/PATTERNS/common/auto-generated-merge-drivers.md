@@ -33,7 +33,7 @@ Two details that matter if you touch this:
 - **The render goes to a file, never stdout.** `cli.py` prints a banner (and a `--worktree-path` override notice) to stdout before dispatch; piping the render would embed that in a KB doc. `--out` makes the driver immune to any present or future stdout noise.
 - **Failure degrades to surfacing the conflict**, never to a half-written doc: if python/the CLI is missing or the render exits non-zero, the driver falls through with the *unrendered* merge result, which still carries its markers and therefore still exits 1.
 
-Regression tests: `mcp/noctusai/tests/test_kb_sync.py::test_render_kb_counts_*` — purity (the on-disk file is byte-identical after a render), block-only rewriting, and that a prose conflict outside the block survives so the marker guard can fire.
+Regression tests: `mcp/noctusai/tests/test_kb_sync.py::test_render_kb_counts_*` — purity (the on-disk file is byte-identical after a render), block-only rewriting, and that a prose conflict outside the block survives so the marker guard can fire. The shell half — what git actually invokes — is pinned by `mcp/noctusai/tests/test_merge_kb_counts_driver.py`: it runs the real driver in a throwaway repo against a recording stub CLI and asserts the exit-code contract (clean render → 0 + %A rewritten; markers remain / render fails → 1 + %A byte-identical; no %P → 1 without a CLI call) and that the driver writes %A and nothing else (clean `git status`, no temp leftover).
 
 ## Why not `merge=ours` / why not stop stamping
 
