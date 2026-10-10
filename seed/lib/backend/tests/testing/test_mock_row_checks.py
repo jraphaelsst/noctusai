@@ -50,7 +50,7 @@ class TestSqlCheck:
         ("(origem = 'gerado' AND sha ~ '^[0-9a-f]{4}$') OR (origem = 'upload' AND sha IS NULL)",
          {"origem": "gerado", "sha": "ABCD"}, False),
         ("vinculado_a IS NULL OR vinculado_a <> id", {"vinculado_a": "u1", "id": "u1"}, False),
-        # pg_get_constraintdef renders IN as `= ANY (ARRAY[...])` — catalog-generated DDL (SW 236)
+        # pg_get_constraintdef renders IN as `= ANY (ARRAY[...])` — catalog-generated DDL (pg_dump / prod catalog)
         ("(status = ANY (ARRAY['ativa'::text, 'pausada'::text]))", {"status": "pausada"}, True),
         ("(status = ANY (ARRAY['ativa'::text, 'pausada'::text]))", {"status": "bogus"}, False),
         ("(rating = ANY (ARRAY['-1'::integer, 1]))", {"rating": -1}, True),

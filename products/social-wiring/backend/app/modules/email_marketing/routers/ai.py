@@ -203,7 +203,7 @@ async def segment_contacts_endpoint(
                 prompt_version=o.get("prompt_version"),
                 metadata=o.get("metadata") or {},
             )
-            # NOC-REMEDIATE[mailing-schema-keep-or-retire]: owner question — this is the live writer keeping the legacy `mailing` schema alive (prod 2026-10-10: 16 tables, 0 rows except status_pagina 9; SW 236 now declares it in code). Retire = re-point email_marketing's AI persistence at social_wiring.ai_outputs and drop mailing; keep = leave as is. A product decision, not a migration's — 2026-10-10
+            # NOC-REMEDIATE[mailing-schema-keep-or-retire]: owner decided 2026-10-10: retire; harvest into email_marketing — this writer moves to social_wiring and the legacy `mailing` schema is dropped (prod: 16 tables, 0 rows except status_pagina 9) — 2026-10-10
             persisted.append(persist_output(db, schema="mailing", output=output))
         except Exception as e:
             logger.warning(

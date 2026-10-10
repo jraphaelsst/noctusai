@@ -4016,125 +4016,6 @@ _ANON_SEQUENCE_PROBES: tuple[GuardProbe, ...] = (
     _anon_sequence_probe("academia-de-reciclagem", "academia_de_reciclagem", "018_anon_sequence_lockdown.sql"),
 )
 
-_MAILING_ANON_LOCKDOWN_PROBE = GuardProbe(
-    id="mailing.anon_only_reads_status_pagina",
-    product="social-wiring",
-    schema="mailing",
-    guard_name="mailing_anon_grant_lockdown",
-    kind="state_assertion",
-    migrations=("237_mailing_anon_lockdown.sql",),
-    sql=_state_assertion_probe(
-        select_count_sql=(
-            "SELECT (SELECT count(*) FROM information_schema.role_table_grants"
-            " WHERE grantee = 'anon' AND table_schema = 'mailing'"
-            " AND NOT (table_name = 'status_pagina' AND privilege_type = 'SELECT'))"
-            " + (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
-            " WHERE n.nspname = 'mailing' AND c.relkind = 'S' AND c.relacl::text LIKE '%anon=%')"
-            " + (SELECT count(*) FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace"
-            " WHERE n.nspname = 'mailing' AND d.defaclacl::text LIKE '%anon=%')"
-            " INTO v_count;"
-        ),
-        clean_message="anon holds only SELECT on mailing.status_pagina; no anon sequence/default privileges",
-        violation_message_prefix="anon privilege(s) / default ACL entries LIVE in mailing —",
-    ),
-    rationale=(
-        "mailing is PostgREST-exposed and still written by SW email_marketing; RLS alone "
-        "stood between the public anon key and its 16 tables until 237 (2026-10-10)."
-    ),
-)
-
-
-_M236 = ("236_mailing_schema.sql",)
-
-# Parent rows a probe inserts first (inside the same rollback-only wrapper — never
-# committed): v_org is a throwaway org id, v_auto / v_contact the parents a child
-# row's NOT NULL FK needs.
-_MAILING_PARENTS = {
-    "automation": "  INSERT INTO mailing.automations (org_id, nome, trigger_type, created_by)"
-                  " VALUES (v_org, 'noc-probe', 'contact_added', gen_random_uuid()) RETURNING id INTO v_auto;\n",
-    "contact": "  INSERT INTO mailing.contacts (org_id, email) VALUES (v_org, 'noc-probe@example.invalid')"
-               " RETURNING id INTO v_contact;\n",
-}
-
-
-def _mailing_check_probe(table: str, guard: str, insert_sql: str, parents: tuple[str, ...] = ()) -> GuardProbe:
-    """Self-provisioning write-refusal probe for one `mailing` CHECK (SW 236 declares
-    them; they pre-date it in prod). Inserts parents, then ONE row whose single
-    off-domain value only `guard` can refuse."""
-    setup = "".join(_MAILING_PARENTS[p] for p in parents)
-    return GuardProbe(
-        id=f"mailing.{guard}",
-        product="social-wiring",
-        schema="mailing",
-        guard_name=guard,
-        kind="write_refusal",
-        migrations=_M236,
-        sql=_do_block(f"""
-DECLARE
-  v_org uuid := gen_random_uuid();
-  v_auto uuid;
-  v_contact uuid;
-BEGIN
-  IF to_regclass('mailing.{table}') IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: mailing.{table} does not exist';
-  END IF;
-  BEGIN
-{setup}    {insert_sql};
-    RAISE EXCEPTION 'NOC_PROBE:permitted: an off-domain mailing.{table} row was accepted — {guard} did not fire';
-  EXCEPTION WHEN OTHERS THEN
-    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
-      RAISE;
-    ELSIF SQLSTATE = '23514' AND SQLERRM LIKE '%{guard}%' THEN
-      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
-    ELSE
-      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
-    END IF;
-  END;
-END;
-"""),
-        rationale=f"mailing.{table}: {guard} keeps an off-domain value out of the legacy email-marketing schema SW still writes.",
-    )
-
-
-_MAILING_CHECK_PROBES: tuple[GuardProbe, ...] = (
-    _mailing_check_probe("ai_feedback", "ai_feedback_rating_check",
-        "INSERT INTO mailing.ai_feedback (org_id, user_id, output_ref, rating) VALUES (v_org, gen_random_uuid(), 'noc-probe', 5)"),
-    _mailing_check_probe("ai_outputs", "ai_outputs_confidence_range",
-        "INSERT INTO mailing.ai_outputs (org_id, ref_type, ref_id, kind, label, confidence) VALUES (v_org, 'contact', gen_random_uuid(), 'score', 'noc-probe', 2)"),
-    _mailing_check_probe("ai_outputs", "ai_outputs_kind_check",
-        "INSERT INTO mailing.ai_outputs (org_id, ref_type, ref_id, kind, label) VALUES (v_org, 'contact', gen_random_uuid(), 'bogus', 'noc-probe')"),
-    _mailing_check_probe("automations", "automations_status_check",
-        "INSERT INTO mailing.automations (org_id, nome, trigger_type, created_by, status) VALUES (v_org, 'noc-probe', 'contact_added', gen_random_uuid(), 'bogus')"),
-    _mailing_check_probe("automations", "automations_trigger_type_check",
-        "INSERT INTO mailing.automations (org_id, nome, trigger_type, created_by) VALUES (v_org, 'noc-probe', 'bogus', gen_random_uuid())"),
-    _mailing_check_probe("automation_steps", "automation_steps_tipo_check",
-        "INSERT INTO mailing.automation_steps (automation_id, posicao, tipo) VALUES (v_auto, 1, 'bogus')", ("automation",)),
-    _mailing_check_probe("automation_enrollments", "automation_enrollments_status_check",
-        "INSERT INTO mailing.automation_enrollments (automation_id, contact_id, status) VALUES (v_auto, v_contact, 'bogus')",
-        ("automation", "contact")),
-    _mailing_check_probe("campaigns", "campaigns_status_check",
-        "INSERT INTO mailing.campaigns (org_id, nome, created_by, status) VALUES (v_org, 'noc-probe', gen_random_uuid(), 'bogus')"),
-    _mailing_check_probe("contact_lists", "contact_lists_tipo_check",
-        "INSERT INTO mailing.contact_lists (org_id, nome, tipo) VALUES (v_org, 'noc-probe', 'bogus')"),
-    _mailing_check_probe("contacts", "contacts_source_check",
-        "INSERT INTO mailing.contacts (org_id, email, source) VALUES (v_org, 'noc-probe@example.invalid', 'bogus')"),
-    _mailing_check_probe("contacts", "contacts_status_check",
-        "INSERT INTO mailing.contacts (org_id, email, status) VALUES (v_org, 'noc-probe@example.invalid', 'bogus')"),
-    _mailing_check_probe("invitations", "invitations_status_check",
-        "INSERT INTO mailing.invitations (org_id, email, invited_by, token, status) VALUES (v_org, 'noc-probe@example.invalid', gen_random_uuid(), gen_random_uuid()::text, 'bogus')"),
-    _mailing_check_probe("send_logs", "send_logs_status_check",
-        "INSERT INTO mailing.send_logs (org_id, contact_id, email, status) VALUES (v_org, v_contact, 'noc-probe@example.invalid', 'bogus')", ("contact",)),
-    _mailing_check_probe("sender_domains", "sender_domains_status_check",
-        "INSERT INTO mailing.sender_domains (org_id, domain, status) VALUES (v_org, 'noc-probe.invalid', 'bogus')"),
-    _mailing_check_probe("status_pagina", "status_pagina_status_check",
-        "INSERT INTO mailing.status_pagina (nome_pagina, status) VALUES ('noc-probe-' || gen_random_uuid(), 'bogus')"),
-    _mailing_check_probe("templates", "templates_categoria_check",
-        "INSERT INTO mailing.templates (org_id, nome, assunto, corpo_html, categoria) VALUES (v_org, 'noc-probe', 'noc-probe', '<p/>', 'bogus')"),
-    _mailing_check_probe("unsubscribes", "unsubscribes_reason_check",
-        "INSERT INTO mailing.unsubscribes (org_id, contact_id, email, reason) VALUES (v_org, v_contact, 'noc-probe@example.invalid', 'bogus')", ("contact",)),
-)
-
-
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
     id="erp.current_org_id_excludes_customer",
     product="social-wiring",
@@ -6403,8 +6284,6 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SEED_ANON_LOCKDOWN_PROBES,
     *_ANON_SEQUENCE_PROBES,
     _ERP_CURRENT_ORG_ID_PROBE,
-    _MAILING_ANON_LOCKDOWN_PROBE,
-    *_MAILING_CHECK_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,
