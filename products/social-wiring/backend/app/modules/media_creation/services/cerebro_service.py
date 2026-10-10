@@ -103,6 +103,12 @@ def text_sha(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
+def block_header(kind: str, label: str, when: Optional[datetime] = None) -> str:
+    """Single source of the append headers (contract §4): ``### Arquivo:`` /
+    ``### YouTube:`` / ``### Extração:`` ``«label» (dd/mm/aaaa)``."""
+    return f"### {kind}: «{label}» ({(when or _now()).strftime('%d/%m/%Y')})"
+
+
 def _is_over_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
     return "check_violation" in msg or "23514" in msg or "cs_brains_content_check" in msg

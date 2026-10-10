@@ -75,6 +75,7 @@ def client():
 
         from app.config import settings
         from app.modules.media_creation import register
+        from app.modules.media_creation.routers import cerebro_fontes
         from app.modules.media_creation.deps import get_branding_storage
         from noctusai_lib.integrations.storage import FakeStorageBackend
         from app.modules.media_creation.routers.generation import (
@@ -97,6 +98,8 @@ def client():
             limiter=limiter,
             standard_routers=standard,
             routers=list(reg.routers),
+            # the Cérebro file-import route declares an UploadFile: boot refuses without it
+            max_body_path_overrides=cerebro_fontes.MAX_BODY_PATH_OVERRIDES,
         )
         bind_consent_module_to_mock(mock_sb)
 

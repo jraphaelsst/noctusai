@@ -468,6 +468,14 @@ _MAX_BODY_PATH_OVERRIDES = {
     # checklist line would get a 413 from the middleware, before the route that
     # would have accepted it ever ran.
     "/api/clientes/*/checklist-extras/*/documento": 30 * 1024 * 1024,  # 30 MB
+    # Segundo Cérebro file import (POST
+    # /api/media-creation/cerebro/brains/{brain_id}/imports/file —
+    # `media_creation.routers.cerebro_fontes`). `{brain_id}` is a dynamic
+    # segment, so the `*` wildcard. The handler reads the file into memory
+    # (capped at `MAX_FILE_BYTES` = 20 MB, the business-policy limit) — this
+    # outer bound adds 512 KB of multipart overhead. The module mirrors the
+    # same entry in its own `MAX_BODY_PATH_OVERRIDES` (pinned by a test).
+    "/api/media-creation/cerebro/brains/*/imports/file": 20 * 1024 * 1024 + 512 * 1024,
     # Chatbot platform-chat file staging (POST /api/chat/upload-file —
     # `chat_router.stage_chat_file`). No dynamic segment, plain prefix.
     # `stage_browser_upload` streams straight to disk with

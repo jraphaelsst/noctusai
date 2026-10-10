@@ -12,6 +12,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md`.
 
+- [ ] **Uploaded brain source files (pdf/docx/txt/md/csv) may contain personal data and the original is retained in the private bucket social-wiring-cerebro.** at `products/social-wiring/backend/app/modules/media_creation/services/cerebro_fontes_service.py` — Retention is until the brain is deleted (delete_brain removes the storage objects and surfaces failures); no per-file delete endpoint and no TTL in v1. Owner to confirm this retention is acceptable.
+  - *Mitigation*: Private bucket, backend-only, org/marca/brain-scoped paths, signed URLs only; deletion cascades with the brain.
+  - *Flagged*: 2026-10-10
 - [ ] **Voice recordings (personal data, possibly sensitive) are uploaded for self-hosted transcription (Segundo Cérebro voice answers; later YouTube/Minhas extrações). Purpose, retention and deletion must be defined and enforced.** at `products/social-wiring/projects/core-studio/specs/transcription-contract.md` — New data category in social-wiring: user voice audio + transcripts, stored in a private bucket and processed by the noctus-transcriber container.
   - *Mitigation*: Private bucket sw-transcricoes (public=false); path org/user/uuid (no original filename); audio deleted immediately on success, failed/dead-lettered audio deleted after 72h by a 15-min sweep (audio_apagado_em recorded); unsaved transcripts purged after 7 days; logs never contain transcript text or paths; transcriber has no egress and no DB credentials; owner-only RLS SELECT, service-role writes.
   - *Flagged*: 2026-10-09

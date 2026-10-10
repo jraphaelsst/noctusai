@@ -78,6 +78,7 @@ def register() -> Any:
         brand_kits,
         branding,
         cerebro,
+        cerebro_fontes,
         generation,
         pesquisa,
         pesquisa_extracao,
@@ -102,6 +103,7 @@ def register() -> Any:
             assuntos_virais.router,
             pesquisa_extracao.router,
             cerebro.router,
+            cerebro_fontes.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
