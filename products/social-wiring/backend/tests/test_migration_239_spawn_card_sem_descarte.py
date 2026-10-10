@@ -44,7 +44,7 @@ process.stdout.write(JSON.stringify(out));
 """
 
 SCHEMA = """
-CREATE ROLE authenticated; CREATE ROLE service_role;
+CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
 CREATE SCHEMA social_wiring;
 CREATE FUNCTION public.current_org_id_for(t text) RETURNS uuid LANGUAGE sql AS $$ SELECT NULL::uuid $$;
 CREATE TABLE social_wiring.pipeline_stages (id uuid primary key default gen_random_uuid(), org_id uuid, pipeline text, ativo boolean default true, posicao int default 0, slug text);
