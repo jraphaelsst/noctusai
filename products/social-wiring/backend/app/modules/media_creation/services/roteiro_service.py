@@ -22,7 +22,7 @@ seed or core); next step = a seed web-search seam, or the Anthropic server-side 
 seed tool calling lands. 2026-10-10
 NOC-REMEDIATE[roteiro-link-source]: ``fonte='link'`` (fetch a user-given URL) stays closed behind
 the URL-sources security review (``cerebro-contract.md`` section 10.3). 2026-10-10
-NOC-REMEDIATE[roteiro-viral-card]: ``Roteiro.viral`` is a minimal ViralCard (no signed thumbnail);
+``Roteiro.viral`` is the shared ``viral_card`` presenter (signed thumbnail from the private library bucket);
 swap in the BE-2 library presenter when ``services/biblioteca_service.py`` lands. 2026-10-10
 """
 from __future__ import annotations
@@ -33,6 +33,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Optional
 
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
+from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, chat_completion, resolve_api_key
 
 from app.modules.media_creation.geracao_scheduler import MSG_JOB_FAILED
@@ -49,6 +50,7 @@ from app.modules.media_creation.prompts.roteiro_perguntas import (
 )
 from app.modules.media_creation.schemas.roteiros import MAX_CONTEUDO, MAX_INSTRUCOES, MAX_NOME
 from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services.viral_card import viral_cards
 
 logger = logging.getLogger(__name__)
 
@@ -192,26 +194,6 @@ def present_roteiro(row: dict[str, Any], viral: Optional[dict[str, Any]] = None)
     }
 
 
-def _viral_card(row: dict[str, Any], handle: Optional[str]) -> dict[str, Any]:
-    """A minimal ``ViralCard`` (NOC-REMEDIATE[roteiro-viral-card]: no signed thumbnail yet)."""
-    caption = (row.get("caption") or "").strip()
-    return {
-        "id": row["id"],
-        "codigo": row.get("codigo"),
-        "perfil": {"id": row.get("perfil_id"), "handle": handle or ""},
-        "thumbnail_url": None,
-        "permalink": row.get("permalink") or "",
-        "publicado_em": row.get("publicado_em"),
-        "views": row.get("views"),
-        "likes": row.get("likes"),
-        "comments": row.get("comments"),
-        "duracao_s": row.get("duracao_s"),
-        "score_viral": row.get("score_viral"),
-        "e_viral": bool(row.get("e_viral")),
-        "trecho": caption[:200] or None,
-    }
-
-
 def _default_nome(headline: str) -> str:
     h = " ".join(headline.split())
     return f"Roteiro: {h[:100]}"[:MAX_NOME]
@@ -230,6 +212,7 @@ class RoteiroService:
         cfg: Any,
         jobs: Optional[JobRepository] = None,
         ia_check: IaCheck = check_ia_configurada,
+        storage: Optional[StorageBackend] = None,
     ):
         self.db = db
         self.org_id = org_id
@@ -237,6 +220,7 @@ class RoteiroService:
         self.cfg = cfg
         self.jobs = jobs
         self.ia_check = ia_check
+        self.storage = storage
 
     # guards / lookups (everything is scoped to the org: a foreign id is a 404)
 
@@ -265,24 +249,13 @@ class RoteiroService:
             raise RoteiroError(404, "Roteiro não encontrado")
         return rows[0]
 
-    def _viral_for(self, viral_id: Optional[str]) -> Optional[dict[str, Any]]:
+    async def _viral_for(self, viral_id: Optional[str]) -> Optional[dict[str, Any]]:
         if not viral_id:
             return None
-        rows = (
-            self.db.table(VIRAIS)
-            .select("id,codigo,perfil_id,permalink,caption,publicado_em,likes,comments,views,duracao_s,score_viral,e_viral")
-            .eq("id", viral_id).eq("org_id", self.org_id).execute().data
-        )
-        if not rows:
-            return None
-        perfil = (
-            self.db.table(PERFIS).select("handle").eq("id", rows[0].get("perfil_id")).eq("org_id", self.org_id)
-            .execute().data
-        )
-        return _viral_card(rows[0], perfil[0]["handle"] if perfil else None)
+        return (await viral_cards(self.db, self.org_id, self.storage, [viral_id])).get(str(viral_id))
 
-    def _present(self, row: dict[str, Any]) -> dict[str, Any]:
-        return present_roteiro(row, self._viral_for(row.get("viral_id")))
+    async def _present(self, row: dict[str, Any]) -> dict[str, Any]:
+        return present_roteiro(row, await self._viral_for(row.get("viral_id")))
 
     def _usage_hoje(self) -> int:
         """Roteiros this user created in the rolling window (capped read: never needs more than the cap)."""
@@ -294,10 +267,11 @@ class RoteiroService:
         )
         return len(rows)
 
-    def _assert_pode_gerar(self) -> None:
+    async def _assert_pode_gerar(self) -> None:
         """Refusals shared by every path that spends LLM money, BEFORE a row is written."""
         geracao_jobs.assert_geracao_disponivel(self.cfg)
         self.ia_check(self.org_id)
+        await geracao_jobs.assert_orcamento_ia(self.org_id)
         if self._usage_hoje() >= int(self.cfg.roteiros_dia_usuario):
             raise RoteiroError(
                 429, "Limite diário de roteiros atingido", headers={"Retry-After": str(RETRY_AFTER_S)}
@@ -348,8 +322,8 @@ class RoteiroService:
         total = res.count if getattr(res, "count", None) is not None else len(rows)
         return {"items": [present_resumo(r) for r in rows], "total": total}
 
-    def get(self, roteiro_id: str) -> dict[str, Any]:
-        return self._present(self._get_row(roteiro_id))
+    async def get(self, roteiro_id: str) -> dict[str, Any]:
+        return await self._present(self._get_row(roteiro_id))
 
     # writes
 
@@ -368,7 +342,7 @@ class RoteiroService:
         headline = body.headline_texto.strip()
         if not headline:
             raise RoteiroError(422, "Informe a headline")
-        self._assert_pode_gerar()
+        await self._assert_pode_gerar()
 
         roteiro_id = str(uuid.uuid4())
         pergunta_primeiro = bool(body.gerar_perguntas)
@@ -387,9 +361,9 @@ class RoteiroService:
         saved = inserted[0] if inserted else row
         queue_id = await self._enqueue(roteiro_id, JOB_PERGUNTAS if pergunta_primeiro else JOB_GERAR)
         upd = self._table().update({"queue_job_id": queue_id}).eq("id", roteiro_id).eq("org_id", self.org_id).execute().data
-        return self._present(upd[0] if upd else {**saved, "queue_job_id": queue_id})
+        return await self._present(upd[0] if upd else {**saved, "queue_job_id": queue_id})
 
-    def responder(self, roteiro_id: str, respostas: list[Any]) -> dict[str, Any]:
+    async def responder(self, roteiro_id: str, respostas: list[Any]) -> dict[str, Any]:
         row = self._get_row(roteiro_id)
         if row["status"] != "perguntas":
             raise RoteiroError(409, "O roteiro não está aguardando respostas")
@@ -402,7 +376,7 @@ class RoteiroService:
             by_id[r.id] = r.resposta.strip()
         merged = [{**p, "resposta": by_id.get(p["id"], p.get("resposta") or "")} for p in perguntas]
         saved = self._patch(roteiro_id, {"perguntas": merged}, where_status=["perguntas"])
-        return self._present({**row, **saved})
+        return await self._present({**row, **saved})
 
     async def gerar(self, roteiro_id: str, *, pular_perguntas: bool) -> dict[str, Any]:
         row = self._get_row(roteiro_id)
@@ -411,15 +385,16 @@ class RoteiroService:
             raise RoteiroError(409, "O roteiro não pode ser gerado neste estado")
         geracao_jobs.assert_geracao_disponivel(self.cfg)
         self.ia_check(self.org_id)
+        await geracao_jobs.assert_orcamento_ia(self.org_id)
         patch: dict[str, Any] = {"status": "processando", "etapa": ETAPA_GERANDO, "erro": None}
         if pular_perguntas:
             patch["perguntas"] = []
         saved = self._patch(roteiro_id, patch, where_status=permitido)
         queue_id = await self._enqueue(roteiro_id, JOB_GERAR)
         upd = self._table().update({"queue_job_id": queue_id}).eq("id", roteiro_id).eq("org_id", self.org_id).execute().data
-        return self._present({**row, **saved, **(upd[0] if upd else {"queue_job_id": queue_id})})
+        return await self._present({**row, **saved, **(upd[0] if upd else {"queue_job_id": queue_id})})
 
-    def salvar(self, roteiro_id: str, body: Any) -> dict[str, Any]:
+    async def salvar(self, roteiro_id: str, body: Any) -> dict[str, Any]:
         row = self._get_row(roteiro_id)
         if row["status"] != "completo":
             raise RoteiroError(409, "O roteiro ainda não está pronto para edição")
@@ -437,9 +412,9 @@ class RoteiroService:
         )
         if not rows:
             raise RoteiroError(409, "O roteiro mudou; recarregue a página")
-        return self._present({**row, **rows[0]})
+        return await self._present({**row, **rows[0]})
 
-    def feedback(self, roteiro_id: str, feedback: str, motivo: Optional[str]) -> dict[str, Any]:
+    async def feedback(self, roteiro_id: str, feedback: str, motivo: Optional[str]) -> dict[str, Any]:
         row = self._get_row(roteiro_id)
         if row["status"] != "completo":
             raise RoteiroError(409, "O feedback só vale para roteiros concluídos")
@@ -448,7 +423,7 @@ class RoteiroService:
             {"feedback": feedback, "feedback_motivo": (motivo or "").strip() or None},
             where_status=["completo"],
         )
-        return self._present({**row, **saved})
+        return await self._present({**row, **saved})
 
     async def reprocessar(self, roteiro_id: str, instrucoes_adicionais: Optional[str]) -> dict[str, Any]:
         origem = self._get_row(roteiro_id)
@@ -460,7 +435,7 @@ class RoteiroService:
             instrucoes = f"{instrucoes}\n\n{extra}".strip()
         if len(instrucoes) > MAX_INSTRUCOES:
             raise RoteiroError(422, f"As instruções passam de {MAX_INSTRUCOES} caracteres")
-        self._assert_pode_gerar()
+        await self._assert_pode_gerar()
         novo_id = str(uuid.uuid4())
         row = {
             "id": novo_id, "org_id": self.org_id, "marca_id": origem["marca_id"], "created_by": self.user_id,
@@ -475,7 +450,7 @@ class RoteiroService:
         saved = inserted[0] if inserted else row
         queue_id = await self._enqueue(novo_id, JOB_GERAR)
         upd = self._table().update({"queue_job_id": queue_id}).eq("id", novo_id).eq("org_id", self.org_id).execute().data
-        return self._present(upd[0] if upd else {**saved, "queue_job_id": queue_id})
+        return await self._present(upd[0] if upd else {**saved, "queue_job_id": queue_id})
 
     def excluir(self, ids: list[str]) -> dict[str, Any]:
         rows = self._table().delete().in_("id", ids).eq("org_id", self.org_id).execute().data or []

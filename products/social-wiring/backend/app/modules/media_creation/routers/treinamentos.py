@@ -31,8 +31,9 @@ def _raise(exc: TreinamentoError):
 
 
 @router.get("")
-async def listar_treinamentos(auth=Depends(get_current_user_org)):
-    return success_response(_svc(auth).listar())
+async def listar_treinamentos(auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check)):
+    """Members see the active lessons; a platform admin also sees the inactive ones (``ativo: false``)."""
+    return success_response(_svc(auth).listar(incluir_inativos=bool(is_admin(str(auth[0].id)))))
 
 
 @router.get("/admin")

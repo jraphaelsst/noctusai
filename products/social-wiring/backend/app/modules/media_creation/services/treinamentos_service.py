@@ -59,8 +59,13 @@ class TreinamentosService:
     def _t(self):
         return self.db.table(TABLE)
 
-    def listar(self) -> list[dict[str, Any]]:
-        rows = self._t().select(COLS).eq("ativo", True).order("ordem").execute().data or []
+    def listar(self, *, incluir_inativos: bool = False) -> list[dict[str, Any]]:
+        """Active lessons; a platform admin (``incluir_inativos``) also sees the deactivated ones
+        (``ativo: false``) so a lesson switched off can be found and switched back on."""
+        q = self._t().select(COLS)
+        if not incluir_inativos:
+            q = q.eq("ativo", True)
+        rows = q.order("ordem").execute().data or []
         return [_out(r) for r in sorted(rows, key=lambda r: r["ordem"])]
 
     def _get(self, treinamento_id: str) -> dict[str, Any]:

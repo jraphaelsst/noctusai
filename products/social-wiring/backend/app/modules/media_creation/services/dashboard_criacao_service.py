@@ -9,13 +9,16 @@ import logging
 from collections import defaultdict
 from typing import Any, Optional
 
+from noctusai_lib.integrations.storage import StorageBackend
+
+from app.modules.media_creation.services.viral_card import viral_cards
+
 logger = logging.getLogger(__name__)
 
 HISTORICO_MAX = 30
 SUGERIDAS_MAX = 20
 #: How many recent automatic headlines are ranked before the top ``SUGERIDAS_MAX`` are kept.
 SUGERIDAS_POOL = 100
-TRECHO_CHARS = 140
 ORDENS = ("data_desc", "data_asc", "tipo")
 
 _ORIGEM_TEXTO = {
@@ -53,9 +56,10 @@ def _metrica(viral: Optional[dict[str, Any]]) -> float:
 
 
 class DashboardCriacaoService:
-    def __init__(self, db, org_id: str):
+    def __init__(self, db, org_id: str, storage: Optional[StorageBackend] = None):
         self.db = db
         self.org_id = org_id
+        self.storage = storage
 
     def _q(self, table: str, cols: str, marca_id: str, **count):
         return self.db.table(table).select(cols, **count).eq("org_id", self.org_id).eq("marca_id", marca_id)
@@ -144,7 +148,7 @@ class DashboardCriacaoService:
 
     # ── Sugeridas ───────────────────────────────────────────────────────
 
-    def sugeridas(self, marca_id: str) -> list[dict[str, Any]]:
+    async def sugeridas(self, marca_id: str) -> list[dict[str, Any]]:
         rows = (
             self._q(
                 "cs_headlines",
@@ -152,7 +156,7 @@ class DashboardCriacaoService:
                 marca_id,
             ).eq("modo", "automatico").order("created_at", desc=True).limit(SUGERIDAS_POOL).execute().data or []
         )
-        virais = self._virais({r["viral_id"] for r in rows if r.get("viral_id")})
+        virais = await self._virais({r["viral_id"] for r in rows if r.get("viral_id")})
         roteiros = self._roteiros_por_headline([r["id"] for r in rows])
         items = [
             {
@@ -178,45 +182,13 @@ class DashboardCriacaoService:
                 out.setdefault(r["headline_id"], r["id"])
         return out
 
-    def _virais(self, ids: set[str]) -> dict[str, dict[str, Any]]:
-        """Light ``ViralCard`` per viral id. ``thumbnail_url`` is None here (see the marker)."""
-        if not ids:
-            return {}
-        # NOC-REMEDIATE[geracao-viralcard-serializer]: the dashboard card carries no signed thumbnail;
-        # fold into the Biblioteca ViralCard serializer (BE-2) once it lands — 2026-10-10
-        ordered = sorted(ids)
-        rows: list[dict[str, Any]] = []
-        for i in range(0, len(ordered), 100):
-            rows += (
-                self.db.table("cs_virais")
-                .select("id,perfil_id,codigo,permalink,publicado_em,views,likes,comments,duracao_s,"
-                        "score_viral,e_viral,caption,gancho")
-                .eq("org_id", self.org_id).in_("id", ordered[i:i + 100]).execute().data or []
-            )
-        perfil_ids = sorted({r["perfil_id"] for r in rows})
-        handles: dict[str, str] = {}
-        for i in range(0, len(perfil_ids), 100):
-            for p in (
-                self.db.table("cs_perfis_monitorados").select("id,handle")
-                .eq("org_id", self.org_id).in_("id", perfil_ids[i:i + 100]).execute().data or []
-            ):
-                handles[p["id"]] = p["handle"]
-        return {
-            r["id"]: {
-                "id": r["id"], "codigo": r.get("codigo"),
-                "perfil": {"id": r["perfil_id"], "handle": handles.get(r["perfil_id"], "")},
-                "thumbnail_url": None, "permalink": r.get("permalink") or "",
-                "publicado_em": r.get("publicado_em"), "views": r.get("views"), "likes": r.get("likes"),
-                "comments": r.get("comments"), "duracao_s": r.get("duracao_s"),
-                "score_viral": r.get("score_viral"), "e_viral": bool(r.get("e_viral")),
-                "trecho": ((r.get("gancho") or r.get("caption") or "")[:TRECHO_CHARS]) or None,
-            }
-            for r in rows
-        }
+    async def _virais(self, ids: set[str]) -> dict[str, dict[str, Any]]:
+        """``ViralCard`` per viral id via the shared presenter (signed thumbnail)."""
+        return await viral_cards(self.db, self.org_id, self.storage, sorted(ids))
 
     # ── Whole payload ───────────────────────────────────────────────────
 
-    def dashboard(self, marca_id: str, ordem: str, user: Any) -> dict[str, Any]:
+    async def dashboard(self, marca_id: str, ordem: str, user: Any) -> dict[str, Any]:
         if ordem not in ORDENS:
             raise DashboardError(422, "Ordenação inválida")
         self.assert_marca(marca_id)
@@ -224,5 +196,5 @@ class DashboardCriacaoService:
             "saudacao_nome": saudacao_nome(user),
             "kpis": self.kpis(marca_id),
             "historico": self.historico(marca_id, ordem),
-            "sugeridas": self.sugeridas(marca_id),
+            "sugeridas": await self.sugeridas(marca_id),
         }

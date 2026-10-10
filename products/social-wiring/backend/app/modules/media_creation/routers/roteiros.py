@@ -15,10 +15,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 from noctusai_lib.domain.jobs import JobRepository
+from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
 from app.config import settings
 from app.dependencies import get_admin_client, get_current_user_org
+from app.modules.media_creation.deps import get_cerebro_storage
 from app.modules.media_creation.schemas.roteiros import (
     ExcluirRequest,
     FeedbackRequest,
@@ -51,10 +53,18 @@ def get_roteiro_jobs() -> JobRepository:
     return make_jobs_repository(get_admin_client())
 
 
-def _svc(auth, cfg, jobs: Optional[JobRepository] = None, ia_check: Optional[IaCheck] = None) -> RoteiroService:
+def get_roteiro_storage() -> StorageBackend:
+    """Blob storage used only to sign the viral thumbnail. Tests override with a ``FakeStorageBackend``."""
+    return get_cerebro_storage()
+
+
+def _svc(
+    auth, cfg, jobs: Optional[JobRepository] = None, ia_check: Optional[IaCheck] = None,
+    storage: Optional[StorageBackend] = None,
+) -> RoteiroService:
     user, _, org_id = auth
     kwargs = {"ia_check": ia_check} if ia_check is not None else {}
-    return RoteiroService(get_admin_client(), org_id, str(user.id), cfg=cfg, jobs=jobs, **kwargs)
+    return RoteiroService(get_admin_client(), org_id, str(user.id), cfg=cfg, jobs=jobs, storage=storage, **kwargs)
 
 
 def _raise(exc: RoteiroError):
@@ -68,11 +78,12 @@ async def criar_roteiro(
     body: RoteiroCreate,
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
     jobs: JobRepository = Depends(get_roteiro_jobs),
     ia_check: IaCheck = Depends(get_roteiro_ia_check),
 ):
     try:
-        return success_response(await _svc(auth, cfg, jobs, ia_check).create(body))
+        return success_response(await _svc(auth, cfg, jobs, ia_check, storage).create(body))
     except RoteiroError as exc:
         _raise(exc)
 
@@ -105,9 +116,10 @@ async def excluir_roteiros(
 @router.get("/{roteiro_id}")
 async def obter_roteiro(
     roteiro_id: uuid.UUID, auth=Depends(get_current_user_org), cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
 ):
     try:
-        return success_response(_svc(auth, cfg).get(str(roteiro_id)))
+        return success_response(await _svc(auth, cfg, storage=storage).get(str(roteiro_id)))
     except RoteiroError as exc:
         _raise(exc)
 
@@ -118,9 +130,10 @@ async def responder_perguntas(
     body: RespostasUpdate,
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
 ):
     try:
-        return success_response(_svc(auth, cfg).responder(str(roteiro_id), body.respostas))
+        return success_response(await _svc(auth, cfg, storage=storage).responder(str(roteiro_id), body.respostas))
     except RoteiroError as exc:
         _raise(exc)
 
@@ -133,12 +146,13 @@ async def gerar_roteiro(
     body: GerarRequest,
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
     jobs: JobRepository = Depends(get_roteiro_jobs),
     ia_check: IaCheck = Depends(get_roteiro_ia_check),
 ):
     try:
         return success_response(
-            await _svc(auth, cfg, jobs, ia_check).gerar(str(roteiro_id), pular_perguntas=body.pular_perguntas)
+            await _svc(auth, cfg, jobs, ia_check, storage).gerar(str(roteiro_id), pular_perguntas=body.pular_perguntas)
         )
     except RoteiroError as exc:
         _raise(exc)
@@ -150,9 +164,10 @@ async def salvar_roteiro(
     body: RoteiroUpdate,
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
 ):
     try:
-        return success_response(_svc(auth, cfg).salvar(str(roteiro_id), body))
+        return success_response(await _svc(auth, cfg, storage=storage).salvar(str(roteiro_id), body))
     except RoteiroError as exc:
         _raise(exc)
 
@@ -163,9 +178,10 @@ async def feedback_roteiro(
     body: FeedbackRequest,
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
 ):
     try:
-        return success_response(_svc(auth, cfg).feedback(str(roteiro_id), body.feedback, body.motivo))
+        return success_response(await _svc(auth, cfg, storage=storage).feedback(str(roteiro_id), body.feedback, body.motivo))
     except RoteiroError as exc:
         _raise(exc)
 
@@ -178,12 +194,13 @@ async def reprocessar_roteiro(
     body: ReprocessarRequest,
     auth=Depends(get_current_user_org),
     cfg=Depends(get_roteiro_settings),
+    storage: StorageBackend = Depends(get_roteiro_storage),
     jobs: JobRepository = Depends(get_roteiro_jobs),
     ia_check: IaCheck = Depends(get_roteiro_ia_check),
 ):
     try:
         return success_response(
-            await _svc(auth, cfg, jobs, ia_check).reprocessar(str(roteiro_id), body.instrucoes_adicionais)
+            await _svc(auth, cfg, jobs, ia_check, storage).reprocessar(str(roteiro_id), body.instrucoes_adicionais)
         )
     except RoteiroError as exc:
         _raise(exc)

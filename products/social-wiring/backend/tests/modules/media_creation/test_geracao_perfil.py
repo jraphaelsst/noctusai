@@ -150,6 +150,15 @@ class TestTreinamentos:
         assert [a["titulo"] for a in d] == ["A", "B"]
         assert set(d[0]) == {"id", "ordem", "titulo", "descricao", "video_url", "ativo"}
 
+    def test_platform_admin_also_sees_inactive_lessons(self, gc):
+        _seed_aula(gc, 1, "A")
+        _seed_aula(gc, 2, "B", ativo=False)
+        gc.admin = True
+        d = gc.get(f"{BASE}/treinamentos").json()["data"]
+        assert [(a["titulo"], a["ativo"]) for a in d] == [("A", True), ("B", False)]
+        gc.admin = False
+        assert [a["titulo"] for a in gc.get(f"{BASE}/treinamentos").json()["data"]] == ["A"]
+
     def test_admin_flag_envelope(self, gc):
         r = gc.get(f"{BASE}/treinamentos/admin")
         assert r.status_code == 200 and r.json()["data"] == {"is_admin": False}

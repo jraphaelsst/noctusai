@@ -82,7 +82,7 @@ def _assert_ia(auth, check) -> None:
     except LLMNotConfigured as exc:
         raise HTTPException(
             status_code=503,
-            detail={"codigo": "ia_nao_configurada", "mensagem": "A IA não está configurada para esta organização."},
+            detail={"code": "ia_nao_configurada", "message": "A IA não está configurada para esta organização."},
         ) from exc
 
 
@@ -101,6 +101,7 @@ async def create_lote(
 ):
     geracao_jobs.assert_geracao_disponivel(cfg)
     _assert_ia(auth, ia_check)
+    await geracao_jobs.assert_orcamento_ia(auth[2])
     try:
         return success_response(await _svc(auth, cfg, jobs).create_lote(body.model_dump(mode="json")))
     except HeadlineError as exc:
@@ -155,6 +156,7 @@ async def reprocessar_lote(
 ):
     geracao_jobs.assert_geracao_disponivel(cfg)
     _assert_ia(auth, ia_check)
+    await geracao_jobs.assert_orcamento_ia(auth[2])
     try:
         return success_response(await _svc(auth, cfg, jobs).reprocessar(str(lote_id)))
     except HeadlineError as exc:
@@ -188,6 +190,7 @@ async def gerar_sugestoes_agora(
 ):
     geracao_jobs.assert_geracao_disponivel(cfg)
     _assert_ia(auth, ia_check)
+    await geracao_jobs.assert_orcamento_ia(auth[2])
     try:
         return success_response(await _svc(auth, cfg, jobs).criar_sugestao(str(body.marca_id)))
     except HeadlineError as exc:

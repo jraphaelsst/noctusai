@@ -156,7 +156,7 @@ class TestLifecycle:
         assert gj.is_running()["geracao"] is False
         with pytest.raises(Exception) as exc:
             gj.assert_geracao_disponivel(off)
-        assert exc.value.status_code == 503 and exc.value.detail["codigo"] == "geracao_indisponivel"
+        assert exc.value.status_code == 503 and exc.value.detail["code"] == "geracao_indisponivel"
         gj.assert_geracao_disponivel(CFG)  # on: no raise
 
     def test_start_and_stop_both_workers(self):

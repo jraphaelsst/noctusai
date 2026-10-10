@@ -37,6 +37,8 @@ from typing import Any, Awaitable, Callable, Optional, Union
 
 from fastapi import HTTPException
 
+from noctusai_lib.integrations.llm import LLMBudgetExceeded, enforce_budget
+
 from noctusai_lib.domain.jobs import (
     DeadLetterError,
     Job,
@@ -327,8 +329,25 @@ def assert_geracao_disponivel(cfg: Any = None) -> None:
     if not cfg.geracao_worker_enabled:
         raise HTTPException(
             status_code=503,
-            detail={"codigo": "geracao_indisponivel", "mensagem": "A geração está indisponível no momento."},
+            detail={"code": "geracao_indisponivel", "message": "A geração está indisponível no momento."},
         )
+
+
+MSG_ORCAMENTO_IA = "O orçamento de IA da organização foi excedido."
+
+
+async def assert_orcamento_ia(
+    org_id: Optional[str], *, enforce: Callable[[Optional[str]], Awaitable[None]] = enforce_budget
+) -> None:
+    """Submit-side guard (contract 9.4): 503 ``orcamento_ia_excedido`` BEFORE a job is enqueued, via the
+    seed's ``enforce_budget`` pre-check (fail-open by the seed's own design when the budget module is
+    unconfigured or its read fails; the worker still settles ``falha`` if the cap is crossed mid-queue)."""
+    try:
+        await enforce(org_id)
+    except LLMBudgetExceeded as exc:
+        raise HTTPException(
+            status_code=503, detail={"code": "orcamento_ia_excedido", "message": MSG_ORCAMENTO_IA}
+        ) from exc
 
 
 def is_running() -> dict[str, bool]:

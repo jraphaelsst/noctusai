@@ -25,19 +25,14 @@ from noctusai_lib.integrations.persistence.table_reads import PAGE_SIZE, batched
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
-from app.modules.media_creation.deps import SIGNED_URL_TTL_SECONDS
 from app.modules.media_creation.geracao_taxonomias import FORMATO_IDS
 from app.modules.media_creation.pesquisa_variables import VARIABLE_SLUGS
 from app.modules.media_creation.services import headline_pipeline as pipe
+from app.modules.media_creation.services.viral_card import viral_cards
 
 logger = logging.getLogger(__name__)
 
 BRT = ZoneInfo("America/Sao_Paulo")
-
-#: The private library bucket of migration 229. NOC-REMEDIATE[biblioteca-bucket-const]: move to
-#: ``media_creation/deps.py`` next to the other bucket constants once BE-2 (which owns the library)
-#: integrates, and import it from there.
-THUMB_BUCKET = "sw-biblioteca"
 
 FORM_ORIGENS = ("form_me", "form_public", "form_viral")
 ALL_ORIGENS = FORM_ORIGENS + ("biblioteca", "sugestao_auto")
@@ -60,10 +55,6 @@ LOTE_COLS = (
 HEADLINE_COLS = (
     "id,marca_id,lote_id,viral_id,template_metodo,texto,texto_original,angulo,itens_usados,favorita,"
     "favoritada_em,modo,created_at"
-)
-VIRAL_COLS = (
-    "id,codigo,perfil_id,permalink,publicado_em,views,likes,comments,duracao_s,score_viral,e_viral,"
-    "gancho,caption,thumbnail_path"
 )
 
 
@@ -135,48 +126,8 @@ class HeadlineService:
 
     # ── presenters ──────────────────────────────────────────────────────
 
-    async def _sign(self, path: Optional[str]) -> Optional[str]:
-        if not path or self.storage is None:
-            return None
-        try:
-            return await self.storage.signed_url(
-                bucket=THUMB_BUCKET, key=path, expires_in_seconds=SIGNED_URL_TTL_SECONDS
-            )
-        except Exception as exc:  # noqa: BLE001 - a missing thumbnail never fails a list
-            logger.warning("headlines: thumbnail %s não assinada: %s", path, exc)
-            return None
-
     async def _viral_cards(self, viral_ids: list[str]) -> dict[str, dict[str, Any]]:
-        ids = sorted({i for i in viral_ids if i})
-        if not ids:
-            return {}
-        rows: list[dict[str, Any]] = []
-        for chunk in batched(ids):
-            rows.extend(
-                self.db.table(pipe.VIRAIS).select(VIRAL_COLS)
-                .eq("org_id", self.org_id).in_("id", chunk).execute().data or []
-            )
-        perfis: dict[str, str] = {}
-        perfil_ids = sorted({str(r["perfil_id"]) for r in rows})
-        for chunk in batched(perfil_ids):
-            for p in (
-                self.db.table("cs_perfis_monitorados").select("id,handle")
-                .eq("org_id", self.org_id).in_("id", chunk).execute().data or []
-            ):
-                perfis[str(p["id"])] = p["handle"]
-        cards: dict[str, dict[str, Any]] = {}
-        for r in rows:
-            trecho = (r.get("gancho") or r.get("caption") or "").strip()
-            cards[str(r["id"])] = {
-                "id": str(r["id"]), "codigo": r["codigo"],
-                "perfil": {"id": str(r["perfil_id"]), "handle": perfis.get(str(r["perfil_id"]), "")},
-                "thumbnail_url": await self._sign(r.get("thumbnail_path")),
-                "permalink": r["permalink"], "publicado_em": r["publicado_em"],
-                "views": r.get("views"), "likes": r.get("likes"), "comments": r.get("comments"),
-                "duracao_s": r.get("duracao_s"), "score_viral": r.get("score_viral"),
-                "e_viral": bool(r.get("e_viral")), "trecho": trecho[:140] or None,
-            }
-        return cards
+        return await viral_cards(self.db, self.org_id, self.storage, viral_ids)
 
     def _roteiros_por_headline(self, headline_ids: list[str]) -> dict[str, str]:
         out: dict[str, str] = {}
@@ -598,7 +549,6 @@ class HeadlineService:
 __all__ = [
     "HeadlineError",
     "HeadlineService",
-    "THUMB_BUCKET",
     "metrica",
     "resumo_do_lote",
 ]

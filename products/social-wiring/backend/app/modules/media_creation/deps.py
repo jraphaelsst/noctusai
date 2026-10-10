@@ -38,3 +38,8 @@ def get_cerebro_storage() -> StorageBackend:
     ``MagicMock`` that answers anything).
     """
     return storage_for(get_admin_client())
+
+
+#: PRIVATE bucket (migration 229): library thumbnails, never public. The ONE constant every
+#: ViralCard presenter signs against (``services/viral_card.py``).
+BIBLIOTECA_BUCKET = "sw-biblioteca"
