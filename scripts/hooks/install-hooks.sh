@@ -58,6 +58,16 @@ git -C "$REPO_ROOT" config merge.kb-counts.name "regenerate auto-derived kb-coun
 git -C "$REPO_ROOT" config merge.kb-counts.driver "$REPO_ROOT/scripts/hooks/merge-kb-counts.sh %O %A %B %P"
 echo "  merge driver: kb-counts (regenerate inventory blocks; no churn conflicts)"
 
+# ─── merge driver: lgpd-warnings (entry-aware merge of LGPD-WARNINGS.md)
+# `.gitattributes` maps LGPD-WARNINGS.md to merge=lgpd-warnings. Every flag inserts
+# at the same anchor, so parallel flags always conflict; the driver merges by
+# (concern, path) identity and keeps BOTH sides' entries. Per-repo git config.
+# KB § PATTERNS/common/lgpd-entry-keeper.md
+chmod +x "$REPO_ROOT/scripts/hooks/merge-lgpd-warnings.sh"
+git -C "$REPO_ROOT" config merge.lgpd-warnings.name "entry-aware merge of LGPD-WARNINGS.md (keeps both sides' entries)"
+git -C "$REPO_ROOT" config merge.lgpd-warnings.driver "$REPO_ROOT/scripts/hooks/merge-lgpd-warnings.sh %O %A %B %P"
+echo "  merge driver: lgpd-warnings (entry-aware; parallel flags merge cleanly)"
+
 # ─── post-merge: auto-refresh caches after git pull / merge.
 # Without this, `git pull` brings in remote KB / code changes but the
 # local caches stay stale (no commit boundary means pre-commit doesn't fire).

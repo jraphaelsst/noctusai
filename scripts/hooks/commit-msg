@@ -15,7 +15,7 @@
 #     the attribution survives `task_branch integrate`'s rebase onto dev.
 # An existing `Noc-Branch:` trailer is NEVER rewritten (first author wins —
 # a cherry-pick onto a release branch keeps the originating branch).
-# (The attribution step never blocks; only the guide gate above does.) Attribution failure degrades to "unattributed",
+# (The attribution step never blocks; only the guide + LGPD gates above do.) Attribution failure degrades to "unattributed",
 # which the manifest already treats as UNAPPROVED (refuse-not-null there).
 # ──────────────────────────────────────────────────────────────
 msg_file="$1"
@@ -46,6 +46,34 @@ if [ -n "$_gd" ] && [ ! -f "$_gd/MERGE_HEAD" ] && git symbolic-ref -q HEAD >/dev
                 --commit-msg-file "$msg_file" --worktree-path "$_root"; then
             echo "commit-msg: PRODUCT-GUIDE-COCHANGE check FAILED. Commit aborted." >&2
             exit 1
+        fi
+    fi
+fi
+
+# ─── LGPD entry-removal gate (BLOCKING) ─────────────────────────────────────
+# Keeper `check_lgpd_entry_removal` (`KB § PATTERNS/common/lgpd-entry-keeper.md`):
+# a commit must not REMOVE an unresolved `- [ ]` entry from LGPD-WARNINGS.md
+# (2026-10-10 incident: a conflict resolution replaced one). Override: a
+# `LGPD-Entry-Removed: <concern or path prefix> — <reason>` trailer. Unlike the
+# guide gate above this also runs on detached HEAD (a rebase conflict resolution
+# is exactly where an entry gets lost) and mid-merge (merge-aware). Only fires
+# when LGPD-WARNINGS.md is staged-different from HEAD; skips when no python.
+_gd2="$(git rev-parse --git-dir 2>/dev/null || true)"
+if [ -n "$_gd2" ]; then
+    _root2="$(git rev-parse --show-toplevel)"
+    if [ -f "$_root2/mcp/noctusai/cli.py" ] && ! git diff --cached --quiet -- LGPD-WARNINGS.md 2>/dev/null; then
+        if [ -x "$_root2/venv/bin/python" ]; then _py2="$_root2/venv/bin/python"
+        else
+            _common2="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+            _py2="python3"
+            [ -n "$_common2" ] && [ -x "$(dirname "$_common2")/venv/bin/python" ] && _py2="$(dirname "$_common2")/venv/bin/python"
+        fi
+        if command -v "$_py2" >/dev/null 2>&1 || [ -x "$_py2" ]; then
+            if ! "$_py2" "$_root2/mcp/noctusai/cli.py" --check-lgpd-entry-removal \
+                    --commit-msg-file "$msg_file" --worktree-path "$_root2"; then
+                echo "commit-msg: LGPD-ENTRY-REMOVAL check FAILED. Commit aborted." >&2
+                exit 1
+            fi
         fi
     fi
 fi

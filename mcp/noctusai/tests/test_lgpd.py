@@ -126,3 +126,26 @@ class TestIdempotency:
         content = _redirect_warnings_file.read_text(encoding="utf-8")
         assert "First flagged*: 2026-04-01" in content
         assert "Last seen*: 2026-04-18" in content
+
+
+class TestEntryParsing:
+    """Regression: an entry whose concern contains a lone `*` (e.g. "pk_* tokens")
+    failed `_ENTRY_RE`, was swallowed into the "header", and `flag()` DROPPED it on
+    the next rewrite (the core transcription-API entry, 2026-10-10)."""
+
+    def test_concern_with_asterisk_survives_the_next_flag(self, _redirect_warnings_file):
+        lgpd.flag(code_path="p0", concern="pk_* tokens may submit third-party voices", reason="r0")
+        lgpd.flag(code_path="p1", concern="c1", reason="r1")
+        content = _redirect_warnings_file.read_text(encoding="utf-8")
+        assert "**pk_* tokens may submit third-party voices** at `p0`" in content
+        assert [e["code_path"] for e in lgpd.list_warnings()["entries"]] == ["p1", "p0"]
+
+    def test_the_live_file_parses_every_entry(self):
+        live = Path(__file__).resolve().parents[3] / "LGPD-WARNINGS.md"
+        text = live.read_text(encoding="utf-8")
+        starts = sum(1 for line in text.splitlines() if line.startswith(("- [ ] ", "- [x] ")))
+        header, blocks = lgpd.parse_warnings(text)
+        assert len(blocks) == starts
+        # every UNRESOLVED entry must carry a real (concern, path) identity; struck-through
+        # resolved ones (`- [x] ~~**...`) fall back to a first-line identity and that is fine.
+        assert all(lgpd.entry_identity(b)[0] for b in blocks if not lgpd.entry_is_resolved(b))

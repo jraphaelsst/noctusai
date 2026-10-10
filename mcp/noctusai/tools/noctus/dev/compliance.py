@@ -11289,6 +11289,227 @@ def check_product_guide_cochange(
 
 
 # ---------------------------------------------------------------------------
+# `check_lgpd_entry_removal` — an unresolved `- [ ]` entry in LGPD-WARNINGS.md
+# must never be silently lost. Incident 2026-10-10: commit 7c2667c83 resolved a
+# same-line merge conflict by REPLACING the core-transcription-API entry with a
+# new one; the concern was missing on dev until re-filed (c12dfca47). The file
+# says "Do not delete items" — this keeper makes that mechanical.
+#
+# Identity = the (concern, code_path) pair parsed by lgpd.py's own `_ENTRY_RE`
+# (no second parser). Allowed: tick to `- [x]`, edit reason/mitigation/
+# timestamps in place, add entries. Refused: an unresolved base entry whose
+# identity is absent afterwards (a changed concern/path text reads as
+# remove+add). Override: trailer
+# `LGPD-Entry-Removed: <concern or path prefix> — <reason>` (reason mandatory).
+#
+# Two legs, same rule: COMMIT-TIME (scripts/hooks/commit-msg — the only hook
+# that can read the message; staged index vs HEAD, merge-aware) and CI (each
+# commit of the pushed/PR range vs its parent with its OWN message — job
+# `lgpd-entry-removal` in .github/workflows/test.yml). A range-mode removal is
+# forgiven when the range TIP still carries the identity (removed then
+# re-filed), so a dev->main fast-forward that carries an already-healed
+# incident does not wedge the release. KB § PATTERNS/common/lgpd-entry-keeper.md.
+# ---------------------------------------------------------------------------
+
+_LGPD_WARNINGS_REL = "LGPD-WARNINGS.md"
+_LGPD_OVERRIDE_RES = (
+    re.compile(r"^LGPD-Entry-Removed:[ \t]*(?P<sel>.+?)[ \t]*(?:\u2014|\u2013|--)[ \t]*(?P<reason>\S.*)$", re.MULTILINE),
+    re.compile(r"^LGPD-Entry-Removed:[ \t]*(?P<sel>.+?)[ \t]+-[ \t]+(?P<reason>\S.*)$", re.MULTILINE),
+)
+_LGPD_MIN_SELECTOR = 6
+# Historical removals already accounted for (full sha -> rationale), skipped by the
+# CI range leg. The one incident the keeper was born from: re-filed in c12dfca47
+# under a NEW concern text (so the "still at the range tip" forgiveness cannot
+# match it) and commits are immutable, so it can never carry the trailer.
+_LGPD_ACCEPTED_HISTORICAL = {
+    "7c2667c834d59bf76fdc9940febb8281b6b8e010":
+        "dropped the core transcription-API entry (2026-10-10); re-filed in c12dfca47",
+}
+
+
+def lgpd_lost_entries(
+    parent_text: str | None,
+    result_text: str | None,
+    ancestor_text: str | None = None,
+) -> list[tuple[str, str]]:
+    """Unresolved (concern, path) identities in ``parent_text`` that are absent
+    from ``result_text`` (any checked state counts as present). With
+    ``ancestor_text`` (merge case), identities already absent from the common
+    ancestor are the OTHER side's accepted deletions and are not counted — what
+    remains are additions lost by the merge resolution."""
+    from tools.noctus.dev.lgpd import entry_identity, entry_is_resolved, parse_warnings
+
+    def idents(text: str | None, unresolved_only: bool) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for block in parse_warnings(text or "")[1]:
+            ident = entry_identity(block)
+            if ident and not (unresolved_only and entry_is_resolved(block)):
+                out.append(ident)
+        return out
+
+    kept = set(idents(result_text, False))
+    in_ancestor = set(idents(ancestor_text, False)) if ancestor_text is not None else set()
+    lost: list[tuple[str, str]] = []
+    for ident in idents(parent_text, True):
+        if ident not in kept and ident not in in_ancestor and ident not in lost:
+            lost.append(ident)
+    return lost
+
+
+def lgpd_removal_overrides(commit_message: str | None) -> list[tuple[str, str]]:
+    """(selector, reason) pairs from ``LGPD-Entry-Removed:`` trailers. A trailer
+    without a reason, or with a selector shorter than 6 chars (it would match
+    everything), is ignored."""
+    found: list[tuple[str, str]] = []
+    for rx in _LGPD_OVERRIDE_RES:
+        for m in rx.finditer(commit_message or ""):
+            sel, reason = m.group("sel").strip(), m.group("reason").strip()
+            if len(sel) >= _LGPD_MIN_SELECTOR and reason and (sel, reason) not in found:
+                found.append((sel, reason))
+    return found
+
+
+def _lgpd_removal_issues(
+    lost: list[tuple[str, str]], commit_message: str | None, where: str,
+) -> list[dict]:
+    overrides = lgpd_removal_overrides(commit_message)
+    refused = [
+        (c, p) for c, p in lost
+        if not any(c.startswith(sel) or p.startswith(sel) for sel, _ in overrides)
+    ]
+    if not refused:
+        return []
+    names = "; ".join(f"**{c[:90]}{'…' if len(c) > 90 else ''}** at `{p[:70]}`" for c, p in refused)
+    return [{
+        "product": "<lgpd>",
+        "file": _LGPD_WARNINGS_REL,
+        "issue": (
+            f"{where} removes {len(refused)} unresolved LGPD entr"
+            f"{'y' if len(refused) == 1 else 'ies'} from {_LGPD_WARNINGS_REL}: {names}. "
+            f"An unresolved `- [ ]` entry may be ticked (`- [x]`) or edited in place, "
+            f"never dropped, and changing its concern/path text counts as a removal "
+            f"(identity = the concern+path pair). Restore it (a merge/rebase conflict "
+            f"must KEEP both sides' entries). For a genuine duplicate or an in-place "
+            f"re-key add the trailer `LGPD-Entry-Removed: <concern or path prefix, "
+            f">=6 chars> \u2014 <reason>` to the commit message. "
+            f"Per `KB § PATTERNS/common/lgpd-entry-keeper.md`."
+        ),
+        "severity": "high",
+    }]
+
+
+def _lgpd_git(root: Path, *args: str) -> subprocess.CompletedProcess | None:
+    try:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True,
+                              timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _lgpd_blob(root: Path, ref: str) -> str | None:
+    """File content at ``ref`` (``<rev>:path`` or ``:path``); None when absent."""
+    r = _lgpd_git(root, "show", f"{ref}:{_LGPD_WARNINGS_REL}" if ref else f":{_LGPD_WARNINGS_REL}")
+    return r.stdout if r is not None and r.returncode == 0 else None
+
+
+def check_lgpd_entry_removal(
+    repo_root: Path | None = None,
+    commit_message: str | None = None,
+    *,
+    parent_texts: list[str | None] | None = None,
+    new_text: str | None = None,
+    ancestor_text: str | None = None,
+) -> list[dict]:
+    """COMMIT-TIME leg: the staged ``LGPD-WARNINGS.md`` must not drop an
+    unresolved entry present in HEAD (or, mid-merge, in either parent — then
+    only additions lost by the resolution count). Texts are injectable; by
+    default they are read from the index / HEAD / MERGE_HEAD."""
+    root = repo_root or REPO_ROOT
+    if parent_texts is None:
+        gd = _lgpd_git(root, "rev-parse", "--absolute-git-dir")
+        git_dir = Path(gd.stdout.strip()) if gd is not None and gd.returncode == 0 else None
+        merging = bool(git_dir and (git_dir / "MERGE_HEAD").exists())
+        parent_texts = [_lgpd_blob(root, "HEAD")]
+        if merging:
+            parent_texts.append(_lgpd_blob(root, "MERGE_HEAD"))
+            mb = _lgpd_git(root, "merge-base", "HEAD", "MERGE_HEAD")
+            if mb is not None and mb.returncode == 0 and mb.stdout.strip():
+                ancestor_text = _lgpd_blob(root, mb.stdout.strip()) or ""
+        if new_text is None:
+            new_text = _lgpd_blob(root, "") or ""
+    new_text = new_text or ""
+    merge = len(parent_texts) > 1
+    lost: list[tuple[str, str]] = []
+    for pt in parent_texts:
+        if pt is None:
+            continue
+        for ident in lgpd_lost_entries(pt, new_text, ancestor_text if merge else None):
+            if ident not in lost:
+                lost.append(ident)
+    return _lgpd_removal_issues(lost, commit_message, "This commit" + (" (merge resolution)" if merge else ""))
+
+
+def check_lgpd_entry_removal_range(
+    rev_range: str,
+    repo_root: Path | None = None,
+    max_commits: int = 500,
+    accepted: dict[str, str] | None = None,
+) -> list[dict]:
+    """CI leg: every commit in ``<base>..<tip>`` is checked against its parent
+    with its OWN message. Only commits that can change the file are examined
+    (non-merge commits touching it, and every merge — a merge resolution is the
+    incident class). A removal still present at the range tip is forgiven."""
+    root = repo_root or REPO_ROOT
+    if ".." not in rev_range or "..." in rev_range:
+        return [{"product": "<lgpd>", "file": _LGPD_WARNINGS_REL, "severity": "high",
+                 "issue": f"check_lgpd_entry_removal_range needs a `<base>..<tip>` range, got {rev_range!r}."}]
+    tip = _lgpd_git(root, "rev-list", "-1", rev_range)
+    if tip is None or tip.returncode != 0:
+        return [{"product": "<lgpd>", "file": _LGPD_WARNINGS_REL, "severity": "high",
+                 "issue": f"cannot resolve range {rev_range!r} ({(tip.stderr if tip else 'git unavailable').strip()}); "
+                          "fail-closed — an unreadable range is not a pass."}]
+    if not tip.stdout.strip():
+        return []
+    tip_text = _lgpd_blob(root, tip.stdout.strip()) or ""
+    touching = _lgpd_git(root, "log", "--no-merges", "--full-history", "--format=%H",
+                         f"--max-count={max_commits}", rev_range, "--", _LGPD_WARNINGS_REL)
+    merges = _lgpd_git(root, "rev-list", "--merges", f"--max-count={max_commits}", rev_range)
+    if touching is None or merges is None or touching.returncode != 0 or merges.returncode != 0:
+        return [{"product": "<lgpd>", "file": _LGPD_WARNINGS_REL, "severity": "high",
+                 "issue": f"git failed listing commits of {rev_range!r}; fail-closed."}]
+    shas = list(dict.fromkeys(touching.stdout.split() + merges.stdout.split()))
+    from tools.noctus.dev.lgpd import entry_identity, parse_warnings
+    tip_idents = {entry_identity(b) for b in parse_warnings(tip_text)[1]}
+    issues: list[dict] = []
+    accepted = _LGPD_ACCEPTED_HISTORICAL if accepted is None else accepted
+    for sha in shas:
+        if sha in accepted:
+            continue
+        parents_r = _lgpd_git(root, "rev-list", "--parents", "-n", "1", sha)
+        msg_r = _lgpd_git(root, "log", "-1", "--format=%B", sha)
+        if parents_r is None or msg_r is None or parents_r.returncode or msg_r.returncode:
+            issues.append({"product": "<lgpd>", "file": _LGPD_WARNINGS_REL, "severity": "high",
+                           "issue": f"cannot read commit {sha[:9]}; fail-closed."})
+            continue
+        parents = parents_r.stdout.split()[1:]
+        if not parents:
+            continue
+        result = _lgpd_blob(root, sha) or ""
+        ancestor = None
+        if len(parents) > 1:
+            mb = _lgpd_git(root, "merge-base", *parents)
+            ancestor = (_lgpd_blob(root, mb.stdout.split()[0]) or "") if mb is not None and mb.returncode == 0 and mb.stdout.split() else ""
+        lost: list[tuple[str, str]] = []
+        for par in parents:
+            for ident in lgpd_lost_entries(_lgpd_blob(root, par), result, ancestor):
+                if ident not in lost:
+                    lost.append(ident)
+        lost = [i for i in lost if i not in tip_idents]
+        issues.extend(_lgpd_removal_issues(lost, msg_r.stdout, f"Commit {sha[:9]}"))
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Migration-SQL security keepers (2026-10-06 security sweep).
 #
 # `check_secdef_migration_revokes_execute` — STATIC twin of the runtime
@@ -17062,6 +17283,7 @@ _AGENT_KB_UNOWNED_ALLOWLIST = frozenset({
     "CONTEXT/PATTERNS/common/orchestration-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/knowledge-lifecycle-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/live-state-alignment.md",  # universal commons: org/product live state vs docs — spans backend (orgs), frontend/product guides, devops (prod SHA); no single specialist domain
+    "CONTEXT/PATTERNS/common/lgpd-entry-keeper.md",  # universal commons: a commit-time/CI gate + merge driver on LGPD-WARNINGS.md that EVERY committing lens (any agent that flags a concern) runs into; the LGPD domain depth stays owned by security (security/lgpd.md)
     "CONTEXT/PATTERNS/common/doc-discipline-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/PATTERNS/common/learning-posture-family-index.md",  # universal commons: §1 family index (router hop), members keep their own owners
     "CONTEXT/01-PHILOSOPHY.md",

@@ -48,10 +48,17 @@ def _resolve_warnings_file(worktree_path: str | Path | None) -> tuple[Path, Path
     root = resolve_caller_root(worktree_path)
     return root / "LGPD-WARNINGS.md", root
 
+# `concern` is LAZY up to the closing `** at `: a concern may itself contain a
+# lone `*` (e.g. "pk_* tokens"). The old `[^*]+` silently failed to parse such an
+# entry, so `flag()` dropped it on the next rewrite (the core transcription-API
+# entry, 2026-10-10) and swallowed it into the "header".
 _ENTRY_RE = re.compile(
-    r"^- \[(?P<checked>[ x])\] \*\*(?P<concern>[^*]+)\*\* at `(?P<path>[^`]+)`",
+    r"^- \[(?P<checked>[ x])\] \*\*(?P<concern>.+?)\*\* at `(?P<path>[^`]+)`",
     re.MULTILINE,
 )
+# Any entry START (parseable or not) — block boundaries never depend on the
+# identity regex, so an entry of an unexpected shape is kept verbatim, not lost.
+_ENTRY_START_RE = re.compile(r"^- \[[ x]\] ", re.MULTILINE)
 
 _FILE_HEADER = """# LGPD Concerns — Rolling Log
 
@@ -63,9 +70,12 @@ _FILE_HEADER = """# LGPD Concerns — Rolling Log
 >
 > Mark an item `- [x]` when the concern is resolved (code changed or
 > dismissed with rationale). Do not delete items — strike through or
-> move to an "Archive" section at the bottom.
+> move to an "Archive" section at the bottom. A commit that removes an
+> unresolved item is refused by keeper `check_lgpd_entry_removal`; a genuine
+> duplicate or re-key needs the commit trailer
+> `LGPD-Entry-Removed: <concern or path prefix> — <reason>`.
 >
-> Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md`.
+> Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md`.
 
 """
 
@@ -109,7 +119,7 @@ def _split_entries(existing: str) -> list[str]:
     entries: list[list[str]] = []
     current: list[str] = []
     for line in lines:
-        if _ENTRY_RE.match(line.rstrip("\n")):
+        if _ENTRY_START_RE.match(line):
             if current:
                 entries.append(current)
             current = [line]
@@ -119,6 +129,143 @@ def _split_entries(existing: str) -> list[str]:
     if current:
         entries.append(current)
     return ["".join(e).rstrip() + "\n" for e in entries]
+
+
+# ---------------------------------------------------------------------------
+# Entry-aware parsing + 3-way merge (the `merge=lgpd-warnings` git driver).
+#
+# `flag()` always inserts a new entry at index 0, so two parallel branches that
+# each flag a concern insert at the SAME anchor and git's text merge conflicts
+# every time (2026-10-10: the conflict was resolved by REPLACING one entry with
+# the other, silently losing an unresolved concern). `merge=union` is not an
+# option (it duplicates / mangles multi-line blocks), so the driver merges by
+# ENTRY IDENTITY. Shell half: scripts/hooks/merge-lgpd-warnings.sh. The
+# commit-time guard against a lost entry is keeper `check_lgpd_entry_removal`
+# (compliance.py): the driver does NOT re-police deletes.
+# KB § PATTERNS/common/auto-generated-merge-drivers.md
+# ---------------------------------------------------------------------------
+
+_FLAGGED_RE = re.compile(r"\*(?:First flagged|Flagged)\*:\s*(\d{4}-\d{2}-\d{2})")
+
+
+def entry_identity(block: str) -> tuple[str, str] | None:
+    """The (concern, code_path) identity of one entry block, or None."""
+    m = _ENTRY_RE.match(block)
+    if m:
+        return m.group("concern"), m.group("path")
+    # Unparseable shape: identify by its first line so it still cannot vanish.
+    return ("", block.split("\n", 1)[0].strip()) if _ENTRY_START_RE.match(block) else None
+
+
+def entry_is_resolved(block: str) -> bool:
+    return bool(re.match(r"- \[x\] ", block))
+
+
+def parse_warnings(text: str) -> tuple[str, list[str]]:
+    """Split the file into (header, entry blocks) with the SAME regex/splitter
+    `flag()` and `list_warnings()` use (no second parser)."""
+    m = _ENTRY_START_RE.search(text or "")
+    if not m:
+        return text or "", []
+    return text[: m.start()], _split_entries(text[m.start():])
+
+
+def _keyed_blocks(blocks: list[str]) -> dict[tuple, str]:
+    """Key each block by identity + ordinal counted from the BOTTOM.
+
+    The same (concern, path) can appear twice (a ticked entry plus a re-flagged
+    unresolved one). New entries are inserted at the top, so counting from the
+    bottom keeps an old entry's key stable when entries are added above it.
+    """
+    seen: dict[tuple[str, str], int] = {}
+    keyed: dict[tuple, str] = {}
+    for block in reversed(blocks):
+        ident = entry_identity(block) or ("", block.strip())
+        n = seen.get(ident, 0)
+        seen[ident] = n + 1
+        keyed[(ident, n)] = block
+    return keyed
+
+
+def _norm(block: str | None) -> str | None:
+    return None if block is None else block.rstrip()
+
+
+def _conflict(ours: str | None, theirs: str | None) -> str:
+    return (
+        "<<<<<<< ours\n" + ((ours or "").rstrip() + "\n" if ours else "")
+        + "=======\n" + ((theirs or "").rstrip() + "\n" if theirs else "")
+        + ">>>>>>> theirs\n"
+    )
+
+
+def _flagged_on(block: str) -> str:
+    m = _FLAGGED_RE.search(block)
+    return m.group(1) if m else ""
+
+
+def merge_warnings(base: str, ours: str, theirs: str) -> tuple[str, bool]:
+    """Entry-aware 3-way merge of `LGPD-WARNINGS.md`. Returns (text, conflicted).
+
+    * Header: 3-way (a header edit on one side only is kept; both sides editing
+      it differently conflicts, in markers around the header only).
+    * Entries are keyed by identity (see `_keyed_blocks`).
+    * Added on one side, or on both under different keys: all kept. Entries new
+      relative to base are placed at the top, newest first (flagged date desc,
+      then identity), so the result does not depend on merge direction.
+    * Changed on one side only: that side's version. Changed identically on
+      both: kept once.
+    * Changed differently on both sides (or modified vs deleted): standard
+      conflict markers around just that block, `conflicted=True`.
+    * Deleted on one side and unchanged on the other: deleted. The driver does
+      NOT re-police deletes; keeper `check_lgpd_entry_removal` governs them at
+      commit time.
+    Entries present in base keep OURS' relative order.
+    """
+    h_base, b_blocks = parse_warnings(base)
+    h_ours, o_blocks = parse_warnings(ours)
+    h_theirs, t_blocks = parse_warnings(theirs)
+    kb, ko, kt = _keyed_blocks(b_blocks), _keyed_blocks(o_blocks), _keyed_blocks(t_blocks)
+
+    conflicted = False
+    if h_ours == h_theirs or h_theirs == h_base:
+        header = h_ours
+    elif h_ours == h_base:
+        header = h_theirs
+    else:
+        conflicted = True
+        header = _conflict(h_ours, h_theirs)
+    if header and not header.endswith("\n\n") and not conflicted:
+        header = header.rstrip("\n") + "\n\n"
+
+    def resolve(key: tuple) -> tuple[str | None, bool]:
+        b, o, t = kb.get(key), ko.get(key), kt.get(key)
+        nb, no, nt = _norm(b), _norm(o), _norm(t)
+        if no == nt:
+            return o, False
+        if no == nb:
+            return t, False
+        if nt == nb:
+            return o, False
+        return _conflict(o, t), True
+
+    resolved: dict[tuple, str | None] = {}
+    for key in {*kb, *ko, *kt}:
+        out, c = resolve(key)
+        resolved[key] = out
+        conflicted = conflicted or c
+
+    new_keys = [k for k in resolved if k not in kb and resolved[k] is not None]
+    new_keys.sort(key=lambda k: k[0])
+    new_keys.sort(key=lambda k: _flagged_on(resolved[k] or ""), reverse=True)
+    # `ko` is bottom-up (see _keyed_blocks): restore file order for ours.
+    old_keys = [k for k in reversed(list(ko)) if k in kb and resolved.get(k) is not None] + [
+        k for k in reversed(list(kt)) if k in kb and k not in ko and resolved.get(k) is not None
+    ]
+
+    body = [resolved[k].rstrip() for k in new_keys + old_keys if resolved[k] is not None]
+    text = header + "\n".join(body) + ("\n" if body else "")
+    return text, conflicted
 
 
 def flag(
@@ -160,10 +307,9 @@ def flag(
 
     # Split existing content: header (up to and including the last blank line
     # before the first entry) + entry blocks.
-    body_split = re.split(r"(?=^- \[)", existing, maxsplit=1, flags=re.MULTILINE)
-    header = body_split[0] if len(body_split) > 1 else existing or _FILE_HEADER
-    entries_text = body_split[1] if len(body_split) > 1 else ""
-    entries = _split_entries(entries_text)
+    header, entries = parse_warnings(existing)
+    if not entries:
+        header = existing or _FILE_HEADER
 
     now = _now()
     deduped = False

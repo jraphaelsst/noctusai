@@ -1190,6 +1190,55 @@ jobs:
       - name: Keeper check_harness_mod_integrity
         run: python mcp/noctusai/cli.py --check-harness-mod
 
+  lgpd-entry-removal:
+    # CI leg of keeper `check_lgpd_entry_removal` (the commit-msg leg is
+    # scripts/hooks/commit-msg). Each commit in the pushed / PR'd range is
+    # checked against its parent with its OWN message: it must not remove an
+    # unresolved `- [ ]` entry from LGPD-WARNINGS.md unless it carries an
+    # `LGPD-Entry-Removed: <prefix> — <reason>` trailer. Born from the
+    # 2026-10-10 conflict resolution that silently replaced one. Cheap and
+    # scope-independent: runs on every push/PR (no `changes` dependency) so a
+    # --no-verify-less hook-less clone cannot slip a removal through.
+    # KB § PATTERNS/common/lgpd-entry-keeper.md
+    name: LGPD entry-removal keeper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the range needs parents + merge-bases
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install keeper dependencies (MCP toolkit set)
+        run: (cd mcp/noctusai && pip install -r requirements.txt)
+
+      - name: Keeper check_lgpd_entry_removal (range)
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "pull_request" ]; then
+            RANGE="${PR_BASE}..${PR_HEAD}"
+          elif [ -n "${PUSH_BEFORE:-}" ] && [ "${PUSH_BEFORE//0/}" != "" ] \
+               && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+            RANGE="${PUSH_BEFORE}..${SHA}"
+          else
+            # New branch / manual dispatch / force-push that orphaned `before`:
+            # no trustworthy base, so scan the last 50 commits (fail toward coverage).
+            RANGE="${SHA}~50..${SHA}"
+            git rev-parse --verify -q "${SHA}~50" >/dev/null || RANGE="$(git rev-list --max-parents=0 "${SHA}" | tail -1)..${SHA}"
+          fi
+          echo "range: ${RANGE}"
+          python mcp/noctusai/cli.py --check-lgpd-entry-removal --lgpd-range "${RANGE}"
+
   tooling-tests:
     # The TOOLING half of the repo — everything with a real suite that is
     # neither a product nor the seed: `dev_team` (167), the 14 MCP connectors

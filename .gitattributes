@@ -21,3 +21,12 @@ project-history/*.ndjson                 merge=union
 KNOWLEDGE-BASE/CONTEXT/02-LANDSCAPE.md   merge=kb-counts
 KNOWLEDGE-BASE/CONTEXT/06-AGENTS.md      merge=kb-counts
 KNOWLEDGE-BASE/AGENT-CONTEXT.md          merge=kb-counts
+
+# LGPD-WARNINGS.md: `noctus.dev.lgpd_flag` inserts every new entry at the SAME
+# anchor (top of the list), so two parallel flags ALWAYS conflict — and the
+# 2026-10-10 hand-resolution silently dropped an unresolved concern. `union` is
+# wrong (mangles multi-line blocks); the `lgpd-warnings` driver merges BY ENTRY
+# IDENTITY (concern + path). Driver = scripts/hooks/merge-lgpd-warnings.sh,
+# registered by scripts/hooks/install-hooks.sh. Deletes are governed by keeper
+# check_lgpd_entry_removal. KB § PATTERNS/common/lgpd-entry-keeper.md
+LGPD-WARNINGS.md                         merge=lgpd-warnings

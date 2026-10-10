@@ -267,7 +267,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-seed-declared-imports", action="store_true", help="Keeper: every RUNTIME third-party import in seed/*/backend/<pkg>/ must name a distribution declared in THAT package's pyproject.toml. Static — never consults the installed environment, which is the thing that lies. Generalises the 2026-09-09 bcrypt incident: the seed-test CI jobs only catch an undeclared import where a test exercises it; this catches the rest. First run found apscheduler (module-level in noctusai_lib.api.scheduler), starlette (direct in noctusai_seed.app), postgrest + pytest (module-level in noctusai_lib.testing). try/except-ImportError and TYPE_CHECKING imports are exempt by design. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-every-test-file-is-gated", action="store_true", help="Keeper (OPEN-WORLD): every tracked test file must sit under an area some workflow actually runs. Sibling of --check-ci-test-matrix-coverage (products) and --check-seed-test-root-ci-coverage (seed), which are closed-world and can only police roots they already know — which is how every gap in this family was found by accident. This one asks the inverse: given every test file git tracks, is there anywhere it could hide? Found dev_team + 14 MCP connectors + codemods + the product-seed template (714 tests) and then seed/framework/frontend (55) that the seed keeper had wrongly written off. Severity high. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--check-product-guide-cochange", action="store_true", help="Keeper (commit-time, over the STAGED diff): a commit that stages non-test behaviour files of a product with a help-chat knowledge guide (products/<slug>/backend/app/** or frontend/src/**) — or the seed help_chat domain — must also stage that guide (derived from create_help_chat_router(knowledge_path=...) consumers). Escape hatch: a `Guide-Unaffected: <reason>` commit-message trailer (pass the message via --commit-msg-file; wired in scripts/hooks/commit-msg). Severity high. KB § PATTERNS/common/live-state-alignment.md.")
-    parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange: path of the commit message file (so the Guide-Unaffected trailer escape hatch can be read).")
+    parser.add_argument("--commit-msg-file", default=None, help="With --check-product-guide-cochange / --check-lgpd-entry-removal: path of the commit message file (so the Guide-Unaffected / LGPD-Entry-Removed trailer escape hatch can be read).")
+    parser.add_argument("--check-lgpd-entry-removal", action="store_true", help="Keeper (commit-msg stage, over the STAGED LGPD-WARNINGS.md vs HEAD; merge-aware): a commit must not REMOVE an unresolved `- [ ]` entry (identity = the concern+path pair; ticking `- [x]`, in-place edits and additions are fine; changing the concern/path text reads as remove+add). Override: a `LGPD-Entry-Removed: <concern or path prefix> \u2014 <reason>` trailer (read from --commit-msg-file; reason mandatory). With --lgpd-range BASE..TIP it runs the CI leg instead: every commit of the range vs its parent with its OWN message. Severity high. Born from the 2026-10-10 loss of an unresolved entry in a conflict resolution. KB § PATTERNS/common/lgpd-entry-keeper.md.")
+    parser.add_argument("--lgpd-range", metavar="BASE..TIP", default=None, help="With --check-lgpd-entry-removal: check each commit of this range against its parent (CI leg).")
+    parser.add_argument("--merge-lgpd-warnings", nargs=3, metavar=("BASE", "OURS", "THEIRS"), default=None, help="Entry-aware 3-way merge of LGPD-WARNINGS.md (pure: reads the three files, writes ONLY --out). Exit 0 clean, 10 conflicted (markers around just the conflicting block in --out), 2 usage/IO error. The shell half is scripts/hooks/merge-lgpd-warnings.sh (git merge driver `lgpd-warnings`). KB § PATTERNS/common/auto-generated-merge-drivers.md.")
     parser.add_argument("--check-migration-number-refs-in-tests", action="store_true", help="Keeper (ratchet, 2026-10-10): an awake product's backend test must not reference a migration by NUMBER (\"217_x.sql\", migrations/217_) — task_branch integrate renumbers colliding migrations, breaking the test. Use noctusai_lib.testing.migrations.migration_path(root, name_suffix). Pre-existing offenders are baselined in mcp/noctusai/tests/migration_number_refs_baseline.json; only a new file or grown count blocks. `--paths` narrows reporting (pre-commit). Severity high. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--refresh-migration-number-refs-baseline", action="store_true", help="Shrink-only refresh of the --check-migration-number-refs-in-tests baseline (first run records current offenders; later runs only lower counts / drop fixed files, never add).")
     parser.add_argument("--check-upload-route-body-override", action="store_true", help="Keeper: every UploadFile-declaring route under products/<slug>/backend/app/ (any annotation shape — UploadFile, list[UploadFile]/List[UploadFile], UploadFile | None, Optional[UploadFile], Annotated[UploadFile, File(...)]) must have a matching entry in that product's max_body_path_overrides map — a real byte ceiling, or the explicit noctusai_lib.api.middleware.KEEP_DEFAULT_MAX_BODY opt-out. A forgotten entry silently caps the route at the 1 MB webhook-DoS default and 413s in production on any realistically-sized upload, before the handler that would have accepted it ever runs. 2026-08-31: only social-wiring had ANY entries (and was missing 3 of its own routes); erp-imobiliario/igig/adconnect/therapy-platform had zero. STATIC backstop for the exhaustive runtime refusal in create_product_app / noctusai_seed.upload_route_overrides — see that module's docstring for this keeper's narrower static-resolution scope. No auto-fix (the ceiling is a per-route judgment call). Severity high. KB § PATTERNS/backend/upload-route-body-override-derivation.md.")
@@ -2140,6 +2143,43 @@ def main():
             print(f"    {RED}[{i['severity']}]{RESET} {i.get('product','?')} {i.get('file','?')} \u2014 {i['issue']}")
         blocking = any(i.get("severity") in ("high", "critical", "error") for i in issues)
         sys.exit(1 if blocking else 0)
+
+    elif args.merge_lgpd_warnings:
+        from tools.noctus.dev.lgpd import merge_warnings
+        if not args.out:
+            print("--merge-lgpd-warnings requires --out FILE", file=sys.stderr)
+            sys.exit(2)
+        try:
+            _texts = [Path(f).expanduser().read_text(encoding="utf-8") if Path(f).expanduser().exists() else ""
+                      for f in args.merge_lgpd_warnings]
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"--merge-lgpd-warnings: cannot read input: {exc}", file=sys.stderr)
+            sys.exit(2)
+        _merged, _conflicted = merge_warnings(*_texts)
+        Path(args.out).expanduser().write_text(_merged, encoding="utf-8")
+        sys.exit(10 if _conflicted else 0)
+
+    elif args.check_lgpd_entry_removal:
+        from settings import REPO_ROOT as _LGPD_ROOT
+        from tools.noctus.dev.compliance import check_lgpd_entry_removal, check_lgpd_entry_removal_range
+        if args.lgpd_range:
+            issues = check_lgpd_entry_removal_range(args.lgpd_range, repo_root=Path(_LGPD_ROOT))
+        else:
+            _msg = None
+            if args.commit_msg_file:
+                try:
+                    _msg = Path(args.commit_msg_file).read_text(encoding="utf-8")
+                except OSError as exc:
+                    print(f"  {RED}\u2717 cannot read --commit-msg-file: {exc}{RESET}")
+                    sys.exit(2)
+            issues = check_lgpd_entry_removal(repo_root=Path(_LGPD_ROOT), commit_message=_msg)
+        if not issues:
+            print(f"  {GREEN}\u2713 lgpd-entry-removal: clean (no unresolved LGPD entry removed).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} lgpd-entry-removal issue(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} \u2014 {i['issue']}")
+        sys.exit(1 if any(i.get("severity") in ("high", "critical", "error") for i in issues) else 0)
 
     elif args.check_migration_number_refs_in_tests:
         from tools.noctus.dev.compliance import check_migration_number_refs_in_tests

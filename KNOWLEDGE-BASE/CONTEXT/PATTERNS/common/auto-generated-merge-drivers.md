@@ -2,12 +2,13 @@
 
 > **Principle.** A file region that is **deterministically (re)generated from the tree** must never be hand-resolved on merge/rebase. Two parallel branches mutate the same generated region → git's default 3-way text merge reports a conflict on pure machine churn. The fix is a `.gitattributes` merge driver matched to the region's *shape*, codified at the root — never a per-occurrence manual resolution (a recurring gate is a fix, not a chore → `KB § PATTERNS/common/methodology-execution-discipline.md`).
 
-## Two shapes, two drivers
+## Three shapes, three drivers
 
 | Generated shape | Conflict cause | Correct driver | Why |
 |---|---|---|---|
 | **Append-only log** (`project-history/*.ndjson` — vector-costs, auto-improvement, absorptions, branch-tree) | each branch appends DISTINCT lines to the tail | built-in **`merge=union`** | keeps BOTH sides' lines, no markers — appends never conflict. Codified 2026-05-30. |
 | **Derived block** (`<!-- kb-counts:start:X -->…:end:X -->` inventory tables in `02-LANDSCAPE.md` / `06-AGENTS.md` / `AGENT-CONTEXT.md`) | each branch bumps the SAME row/grand-total (file & line tallies) | custom **`merge=kb-counts`** → `scripts/hooks/merge-kb-counts.sh` | `union` is WRONG (duplicates table rows). Instead **re-derive** the block from the merged tree. Codified 2026-06-05. |
+| **Insert-at-anchor entry list** (`LGPD-WARNINGS.md` — `lgpd_flag` always inserts at the top) | every parallel flag inserts at the SAME anchor → always conflicts, and a hand-resolution once silently dropped an unresolved entry (2026-10-10) | custom **`merge=lgpd-warnings`** → `scripts/hooks/merge-lgpd-warnings.sh` → pure `lgpd.merge_warnings` | `union` mangles multi-line blocks; merge BY ENTRY IDENTITY (concern+path): keep every addition, conflict only a block both sides changed differently. Deletes are policed by keeper `check_lgpd_entry_removal`, not by the driver. → `KB § PATTERNS/common/lgpd-entry-keeper.md`. |
 
 **The discriminator:** is the conflicting region *accumulated* (append) or *recomputed* (derive)? Union for the first; regenerate for the second.
 
