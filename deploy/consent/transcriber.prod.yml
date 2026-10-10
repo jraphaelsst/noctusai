@@ -1,0 +1,14 @@
+consented_by: joaoraphaelsst@gmail.com
+consented_on: 2026-10-09
+consent_ref: 'products/social-wiring/projects/core-studio/specs/transcription-contract.md#7'
+dev_validated: true
+recorded_by: agent
+authorization:
+  phrase: "I authorize transcriber to be published to production."
+  prompt_source: typed
+  tier: performative
+  evidence_rank: canonical-exact/typed
+  candidates_considered: 5
+  session_id: 88eef9e7-dea6-4f4b-9b00-ea86b1c80120
+  transcript_sha256: b10bf872e2f3f5aa8f7850f14550d6b8f7aaf2ce7347692687db676f46c27eea
+  recorded_at: 2026-10-10T02:35:32+00:00
