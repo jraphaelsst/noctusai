@@ -9,13 +9,14 @@ from noctusai_lib.integrations.transcription.fake import FakeTranscriber
 from noctusai_lib.integrations.transcription.local_whisper_http import LocalWhisperTranscriber
 from noctusai_lib.integrations.transcription.openai_whisper import OpenAIWhisperTranscriber
 from noctusai_lib.integrations.transcription.types import Transcriber, TranscriptionError
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 BACKEND_ENV = "TRANSCRIPTION_BACKEND"
 URL_ENV = "TRANSCRIBER_URL"
 TOKEN_ENV = "TRANSCRIBER_TOKEN"
 
 
-class TranscriptionNotConfigured(TranscriptionError):
+class TranscriptionNotConfigured(TranscriptionError, IntegrationNotConfigured):
     """Backend unset/unknown or `local_whisper` missing URL/token. Never
     falls back to another backend."""
 

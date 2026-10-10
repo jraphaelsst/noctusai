@@ -230,7 +230,12 @@ build_product() {
 boot_smoke() {
   local slug="$1" image="$2"
   echo "[fleet] boot smoke ${image}"
-  if ! docker run --rm -i --network none --entrypoint python \
+  # REDIS_URL= : under --network none there IS no Redis — say so, rather than
+  # letting a product default to `redis://noctus-redis` and refuse to boot
+  # (social-wiring's session store fails closed at import when a Redis URL is
+  # set without REDIS_SESSION_ENCRYPTION_KEY — correct in prod, where both
+  # are set; a false red here). Empty ⇒ the documented in-memory fallback.
+  if ! docker run --rm -i --network none -e REDIS_URL= --entrypoint python \
       -w "/app/products/${slug}/backend" "${image}" - \
       < "$REPO_ROOT/scripts/infra/image_boot_smoke.py"; then
     echo "ERROR: ${image} failed the boot smoke — NOT pushing. Most often a runtime dep missing from products/${slug}/backend/requirements.txt (the shared venv hides it)." >&2

@@ -10,9 +10,10 @@ from __future__ import annotations
 from typing import Optional
 
 from noctusai_lib.primitives.exceptions import AppException
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 
-class LLMNotConfigured(AppException):
+class LLMNotConfigured(AppException, IntegrationNotConfigured):
     """The resolved API key for the requested provider is empty/missing.
 
     Raised when `key_provider(provider, org_id)` returns None after checking

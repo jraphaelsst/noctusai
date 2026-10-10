@@ -41,6 +41,7 @@ from noctusai_lib.domain.photo_editing.types import (
     ReferencePair,
     Room,
 )
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class ReferenceNotFoundError(LookupError):
     code = "referencia_nao_encontrada"
 
 
-class ReferenceStorageNotConfigured(RuntimeError):
+class ReferenceStorageNotConfigured(RuntimeError, IntegrationNotConfigured):
     """``PhotoEditingPorts.reference_storage`` is not wired."""
 
     code = "armazenamento_referencias_indisponivel"

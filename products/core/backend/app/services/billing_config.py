@@ -30,6 +30,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Callable, Literal, Optional
 
 from noctusai_lib.security.app_config import AppConfigStore, RealAppConfigStore
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -61,11 +62,11 @@ _ASAAS_PREFIX_MODE = {"$aact_prod_": "live", "$aact_hmlg_": "test"}
 _ASAAS_MIN_WEBHOOK_TOKEN = 16
 
 
-class EncryptionNotConfigured(RuntimeError):
+class EncryptionNotConfigured(RuntimeError, IntegrationNotConfigured):
     """`ENCRYPTION_KEY` is missing or not a valid Fernet key."""
 
 
-class GatewayNotConfigured(RuntimeError):
+class GatewayNotConfigured(RuntimeError, IntegrationNotConfigured):
     """A gateway was asked for with no key configured for that mode."""
 
 

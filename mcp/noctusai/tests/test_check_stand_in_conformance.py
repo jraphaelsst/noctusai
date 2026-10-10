@@ -355,3 +355,67 @@ class TestCheckStandInConformance:
         scoped = [i for i in issues if i.get("leg") != "B(iv)"]
         findings = [i for i in scoped if i.get("status") == "finding"]
         assert findings == [], findings
+
+
+# ---------------------------------------------------------------------------
+# LEG A — fail-closed "not configured" integrations + Optional-None deps
+# (2026-10-10). A config-less subprocess makes every correctly fail-closed
+# integration raise; recognised BY TYPE via the seed marker, through a
+# wrapping re-raise — never by message text, never by a per-site allowlist.
+# ---------------------------------------------------------------------------
+
+_MARKER_SRC = (Path(__file__).resolve().parents[3]
+               / "seed/lib/backend/noctusai_lib/primitives/not_configured.py")
+
+
+def _scratch_with_marker(tmp_path: Path, deps_source: str) -> Path:
+    for pkg in ("noctusai_lib", "noctusai_lib/primitives"):
+        _write(tmp_path, f"seed/lib/backend/{pkg}/__init__.py", "")
+    _write(tmp_path, "seed/lib/backend/noctusai_lib/primitives/not_configured.py", _MARKER_SRC.read_text())
+    return _scratch_product(tmp_path, deps_source)
+
+
+_DEPS_NOT_CONFIGURED_WRAPPED = """\
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
+
+
+class VendorConfigError(RuntimeError, IntegrationNotConfigured):
+    pass
+
+
+class HTTPError503(Exception):
+    pass
+
+
+def get_admin_client():
+    try:
+        raise VendorConfigError("VENDOR_BASE_URL is empty")
+    except VendorConfigError as exc:
+        raise HTTPError503("vendor_nao_configurado") from exc
+"""
+
+_DEPS_UNMARKED_FAILURE = """\
+def get_admin_client():
+    raise RuntimeError("VENDOR_BASE_URL is empty")  # same text, no marker
+"""
+
+_DEPS_OPTIONAL_NONE = """\
+def get_admin_client():
+    return None
+"""
+
+
+class TestCheckStandInConformanceNotConfigured:
+    def test_marked_not_configured_through_a_wrapper_is_skipped(self, tmp_path):
+        product_dir = _scratch_with_marker(tmp_path, _DEPS_NOT_CONFIGURED_WRAPPED)
+        assert _leg_a_check_product("widget", product_dir, tmp_path, Path(sys.executable)) == []
+
+    def test_unmarked_failure_is_still_a_finding(self, tmp_path):
+        product_dir = _scratch_with_marker(tmp_path, _DEPS_UNMARKED_FAILURE)
+        issues = _leg_a_check_product("widget", product_dir, tmp_path, Path(sys.executable))
+        assert [i["leg"] for i in issues] == ["A"], issues
+        assert issues[0]["severity"] == "high"
+
+    def test_optional_dependency_resolving_to_none_is_not_a_weakref_finding(self, tmp_path):
+        product_dir = _scratch_with_marker(tmp_path, _DEPS_OPTIONAL_NONE)
+        assert _leg_a_check_product("widget", product_dir, tmp_path, Path(sys.executable)) == []

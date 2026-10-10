@@ -18,6 +18,7 @@ returning `"dry_run": False` from a mock).
 from __future__ import annotations
 
 from typing import Optional, Sequence
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 
 class SignatureError(Exception):
@@ -45,7 +46,7 @@ class SignatureError(Exception):
         super().__init__(message)
 
 
-class ProvedorNaoConfigurado(SignatureError):
+class ProvedorNaoConfigurado(SignatureError, IntegrationNotConfigured):
     """Credentials absent for this org/provider.
 
     Raised by `make_signature_adapter` — it never returns a Fake in

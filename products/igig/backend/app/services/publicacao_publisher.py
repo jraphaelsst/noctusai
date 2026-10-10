@@ -38,6 +38,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from app.repositories import Repositorios
 from app.services.varredura import linhas_cross_org, orgs_distintos
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ CANAIS_HOMOLOGADOS: frozenset[str] = frozenset()
 STUCK_APOS_MINUTOS = 15
 
 
-class PublisherNotConfigured(RuntimeError):
+class PublisherNotConfigured(RuntimeError, IntegrationNotConfigured):
     """Base: the channel cannot be published to as requested right now.
 
     Distinguishing subclasses exist because the operator's correct next

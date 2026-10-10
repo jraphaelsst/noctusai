@@ -27,6 +27,7 @@ from noctusai_lib.integrations.email import (
     SmtpConfig,
     SmtpEmailSender,
 )
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 _STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 _COLLAPSE_WHITESPACE_RE = re.compile(r"\s+")
@@ -39,7 +40,7 @@ class EmailServiceError(Exception):
     creds, malformed address)."""
 
 
-class EmailNotConfigured(EmailServiceError):
+class EmailNotConfigured(EmailServiceError, IntegrationNotConfigured):
     """SMTP_USER / SMTP_PASSWORD missing — refuse to dispatch. The
     Settings → API Keys tab surfaces this loudly so the operator can't
     silently end up with notifications going nowhere."""

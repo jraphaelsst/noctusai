@@ -35,6 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from noctusai_lib.security.encrypted_tokens import decrypt, encrypt
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +57,7 @@ __all__ = [
 ]
 
 
-class CanalNaoConfigurado(Exception):
+class CanalNaoConfigurado(Exception, IntegrationNotConfigured):
     """A channel an action needs is not configured for this org (or the
     stored secret cannot be read). The message is pt-BR and user-facing — the
     automation log shows it verbatim."""

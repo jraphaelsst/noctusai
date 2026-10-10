@@ -36,6 +36,7 @@ from noctusai_lib.security.token_store import (
 )
 
 from app.config import settings
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 __all__ = [
     "CredentialDecryptError",
@@ -64,7 +65,7 @@ _METADATA_COLUMNS = {
 }
 
 
-class EncryptionNotConfigured(RuntimeError):
+class EncryptionNotConfigured(RuntimeError, IntegrationNotConfigured):
     """ENCRYPTION_KEY missing or invalid — refuse to write plaintext.
 
     Product-local (the seed factory silently returns a Fake when the key

@@ -73,3 +73,4 @@ def test_build_script_smokes_every_image_before_the_push_section():
     assert 'boot_smoke "$slug" "$image"' in build_fn
     assert src.index("boot_smoke() {") < src.index("# ── 3. login + push")
     assert "--network none" in src and "image_boot_smoke.py" in src
+    assert "-e REDIS_URL=" in src  # no service reachable ⇒ declare no Redis

@@ -74,6 +74,7 @@ from app.modules.card_hub import services as svc
 from app.modules.card_hub.deps import SignatureAdapterFactory
 from app.services import table_reads
 from app.services.documento_store import now_iso
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -163,7 +164,7 @@ class AssinaturaVersaoNaoGerada(AppException):
         )
 
 
-class AssinaturaProvedorNaoConfigurado(AppException):
+class AssinaturaProvedorNaoConfigurado(AppException, IntegrationNotConfigured):
     def __init__(self, faltando: Sequence[str]) -> None:
         super().__init__(
             code="ASSINATURA_PROVEDOR_NAO_CONFIGURADO",

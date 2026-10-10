@@ -17,6 +17,7 @@ consumer catches one exception type regardless of which provider is
 configured.
 """
 from __future__ import annotations
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 
 class LiveRoomError(Exception):
@@ -38,7 +39,7 @@ class LiveRoomError(Exception):
         return f"LiveRoomError(op={self.op!r}, detail={self.detail!r})"
 
 
-class LiveRoomNotConfigured(LiveRoomError):
+class LiveRoomNotConfigured(LiveRoomError, IntegrationNotConfigured):
     """Raised by `make_live_room_provider` when `use_fake=False` and the
     real provider's required credentials (`url`/`api_key`/`api_secret`)
     are missing.

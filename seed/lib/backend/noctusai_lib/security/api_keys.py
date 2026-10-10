@@ -72,6 +72,7 @@ from noctusai_lib.security.token_store import (
     StoredCredential,
     make_credential_store,
 )
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 
 def resolve_credential(key: str, org_id: Optional[str] = None) -> Optional[str]:
@@ -199,7 +200,7 @@ def mask_value(value: Optional[str], spec: ApiKeySpec) -> Optional[str]:
     return f"...{value[-4:]}"
 
 
-class EncryptionNotConfigured(RuntimeError):
+class EncryptionNotConfigured(RuntimeError, IntegrationNotConfigured):
     """ENCRYPTION_KEY missing or invalid — refuse to write plaintext.
 
     Every write-path consumer of this module maps this to a 503

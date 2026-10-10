@@ -20,6 +20,7 @@ from noctusai_lib.integrations.payments.webhook_events import (
     PaymentWebhookSignatureError,
     parse_webhook_event,
 )
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ class ParsedGatewayEvent:
         return self.event.inbox_key
 
 
-class WebhookNotConfigured(RuntimeError):
+class WebhookNotConfigured(RuntimeError, IntegrationNotConfigured):
     """No secret is configured for any mode — our gap, not the caller's."""
 
 

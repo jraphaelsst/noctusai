@@ -25,6 +25,7 @@ response — see `openai_adapter.py`'s module docstring):
 from __future__ import annotations
 
 from typing import Optional
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 
 class ImageEditError(Exception):
@@ -58,7 +59,7 @@ class ImageEditFatalError(ImageEditError):
     retryable = False
 
 
-class ImageEditNotConfigured(ImageEditFatalError):
+class ImageEditNotConfigured(ImageEditFatalError, IntegrationNotConfigured):
     """The resolved API key for the requested provider is empty/missing.
 
     Mirrors `noctusai_lib.integrations.llm.exceptions.LLMNotConfigured`.

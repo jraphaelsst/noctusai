@@ -265,6 +265,29 @@ def _is_network_error(exc):
     return isinstance(exc, network_types)
 
 
+#: An integration that REFUSES to construct because its configuration is
+#: absent (VISTA_BASE_URL / ENCRYPTION_KEY / a provider API key — none of
+#: which this config-less subprocess has) is fail-closed BY DESIGN, not a
+#: stand-in defect. Recognised by TYPE through the seed marker
+#: (`noctusai_lib.primitives.not_configured`), across a wrapping re-raise
+#: (`raise api_error(503, ...) from exc`) — never by message text.
+#: Unimportable marker => recognise nothing (the error is reported, never
+#: hidden).
+try:
+    from noctusai_lib.primitives.not_configured import is_integration_not_configured as _is_not_configured
+except Exception:
+    def _is_not_configured(exc):
+        return False
+
+
+def _skip_reason(exc):
+    if _is_network_error(exc):
+        return "requires a live network call (" + type(exc).__name__ + ") — out of scope for construction-only resolution"
+    if _is_not_configured(exc):
+        return "integration not configured in this environment (" + type(exc).__name__ + ", fail-closed by design) — out of scope for construction-only resolution"
+    return None
+
+
 def _resolve(fn, cache):
     if fn in cache:
         return cache[fn]
@@ -323,16 +346,22 @@ for (mod_name, name), fn in candidates.items():
         results.append({"module": mod_name, "name": name, "status": "skipped", "reason": str(exc)})
         continue
     except Exception as exc:
-        if _is_network_error(exc):
-            results.append({
-                "module": mod_name, "name": name, "status": "skipped",
-                "reason": "requires a live network call (" + type(exc).__name__ + ") — out of scope for construction-only resolution",
-            })
+        reason = _skip_reason(exc)
+        if reason is not None:
+            results.append({"module": mod_name, "name": name, "status": "skipped", "reason": reason})
             continue
         results.append({
             "module": mod_name, "name": name, "status": "error", "leg": "A",
             "exc_type": type(exc).__name__, "exc_msg": str(exc),
         })
+        continue
+
+    if obj is None:
+        # An Optional dependency's documented "unavailable" value (e.g.
+        # `get_credenciais_service_opcional`). None is a sentinel, never a
+        # stand-in for a real object — B(i)/B(ii) do not apply to it.
+        results.append({"module": mod_name, "name": name, "status": "skipped",
+                        "reason": "resolved to None (Optional dependency, unavailable here)"})
         continue
 
     try:
@@ -347,11 +376,9 @@ for (mod_name, name), fn in candidates.items():
     try:
         obj2 = _resolve(fn, {})
     except Exception as exc:
-        if _is_network_error(exc):
-            results.append({
-                "module": mod_name, "name": name, "status": "skipped",
-                "reason": "requires a live network call (" + type(exc).__name__ + ") — out of scope for construction-only resolution",
-            })
+        reason = _skip_reason(exc)
+        if reason is not None:
+            results.append({"module": mod_name, "name": name, "status": "skipped", "reason": reason})
             continue
         results.append({
             "module": mod_name, "name": name, "status": "error", "leg": "A",

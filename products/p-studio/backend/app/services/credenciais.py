@@ -42,6 +42,7 @@ from noctusai_lib.security.token_store import (
 )
 
 from app.config import settings
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 __all__ = [
     "AMBIENTES",
@@ -80,7 +81,7 @@ BASE_URL_POR_AMBIENTE: dict[str, str] = {
 }
 
 
-class EncryptionNotConfigured(RuntimeError):
+class EncryptionNotConfigured(RuntimeError, IntegrationNotConfigured):
     """`ENCRYPTION_KEY` ausente ou malformada — recusa gravar em claro.
 
     Local do produto, não do seed: a factory do seed degrada para Fake em

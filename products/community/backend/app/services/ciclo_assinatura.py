@@ -33,6 +33,7 @@ from noctusai_lib.security.api_keys import resolve_api_key
 from postgrest.exceptions import APIError
 
 from app.config import settings
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,7 @@ class TransicaoIlegal(ValueError):
         )
 
 
-class GatewayNaoConfigurado(RuntimeError):
+class GatewayNaoConfigurado(RuntimeError, IntegrationNotConfigured):
     """No API key resolves for the gateway this subscription lives on."""
 
 

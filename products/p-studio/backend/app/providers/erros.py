@@ -12,6 +12,7 @@ Então o service levanta `ErroProvedor`, e um `@app.exception_handler` traduz
 para HTTP só quando a chamada veio de uma rota.
 """
 from typing import Optional
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 
 class ErroProvedor(Exception):
@@ -47,7 +48,7 @@ class ErroProvedor(Exception):
         )
 
 
-class ProvedorNaoConfigurado(ErroProvedor):
+class ProvedorNaoConfigurado(ErroProvedor, IntegrationNotConfigured):
     """Credencial ausente. Mesma forma do guard de `get_admin_client()`:
     o app sobe sem a credencial e só reclama quando alguém tenta usar."""
 

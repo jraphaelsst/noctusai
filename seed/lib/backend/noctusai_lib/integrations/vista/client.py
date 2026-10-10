@@ -19,6 +19,7 @@ import time
 from typing import Any, Mapping, Optional
 
 import httpx
+from noctusai_lib.primitives.not_configured import IntegrationNotConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class VistaError(Exception):
     """Base class for any Vista adapter failure."""
 
 
-class VistaConfigError(VistaError):
+class VistaConfigError(VistaError, IntegrationNotConfigured):
     """Vista base URL or API key is missing/empty."""
 
 
