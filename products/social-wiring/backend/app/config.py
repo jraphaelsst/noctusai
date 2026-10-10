@@ -299,6 +299,20 @@ class SocialWiringSettings(ProductSettings):
     pesquisa_extracao_poll_seconds: float = 2.0
     pesquisa_extracao_lease_seconds: float = 600.0
 
+    # ─── Voice transcription (app/modules/transcricoes) ──────────────────
+    # Shared product layer over the seed `transcription` seam + the
+    # `noctus-transcriber` worker (specs/transcription-contract.md). The
+    # backend itself (`TRANSCRIPTION_BACKEND` / `TRANSCRIBER_URL` /
+    # `TRANSCRIBER_TOKEN`) is read from the environment by the seed factory
+    # `make_transcriber()`. The LIVE kill switch is the platform setting
+    # `transcricao_habilitada` (DB first, then env; default OFF), not a field here.
+    # Hard switch: off => the transcription worker is not started in this process.
+    transcricao_worker_enabled: bool = True
+    transcricao_poll_seconds: float = 2.0
+    transcricao_lease_seconds: float = 300.0
+    # How long a process trusts its last read of `transcricao_habilitada`.
+    transcricao_gate_ttl_seconds: float = 10.0
+
     # ─── WhatsApp inbound (Phase 5) ────────────────────────────────────
     # Comma-separated E.164 phone numbers authorized to trigger uploads
     whatsapp_authorized_numbers: str = "+5511974693365"

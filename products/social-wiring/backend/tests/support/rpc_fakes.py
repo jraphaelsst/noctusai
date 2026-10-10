@@ -6,6 +6,7 @@ the real SQL is pinned structurally by its migration test.
 """
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from noctusai_lib.primitives import identificador
@@ -84,3 +85,58 @@ def cs_brain_append(client: Any, params: dict) -> MockSelectBuilder:
     versao = (atual.get("content_version") or 0) + 1
     client.table("cs_brains").update({"content": novo, "content_version": versao}).eq("id", brain).execute()
     return MockSelectBuilder([versao])
+
+
+def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
+    """Migration 225 `social_wiring.reservar_transcricao(...)`: the atomic quota gate
+    + insert. Same limits, order and codes as the SQL (transcription-contract.md
+    section 3): per user 2 in flight, 10/h, 1800 s rolling 24 h; per org 7200 s;
+    global queue depth 20 (503), global 36000 s (503). Refunded rows
+    (`minutos_reembolsados`) never count toward the windows."""
+    tabela = "transcricoes"
+    agora = datetime.now(timezone.utc)
+    rows = client.table(tabela).select("*").execute().data or []
+
+    def quando(r: dict) -> datetime:
+        return datetime.fromisoformat(str(r["criado_em"]))
+
+    def nega(codigo: str, http: int, retry: int) -> MockSelectBuilder:
+        return MockSelectBuilder([{"ok": False, "codigo": codigo, "http": http, "retry_after_s": retry}])
+
+    def alivio(janela: list[dict], horas: int) -> int:
+        mais_antigo = min(quando(r) for r in janela)
+        return max(60, int((mais_antigo + timedelta(hours=horas) - agora).total_seconds()) + 1)
+
+    user, org = str(params["p_user"]), str(params["p_org"])
+    dur = float(params["p_duracao_s"])
+    nao_reembolsadas = [r for r in rows if not r.get("minutos_reembolsados")]
+    meus = [r for r in rows if str(r["user_id"]) == user]
+
+    if sum(1 for r in meus if r["status"] in ("na_fila", "processando")) >= 2:
+        return nega("limite_usuario", 429, 60)
+    hora = [r for r in meus if not r.get("minutos_reembolsados") and quando(r) > agora - timedelta(hours=1)]
+    if len(hora) >= 10:
+        return nega("limite_usuario", 429, alivio(hora, 1))
+    dia_user = [r for r in meus if not r.get("minutos_reembolsados") and quando(r) > agora - timedelta(hours=24)]
+    if sum(float(r["duracao_s"]) for r in dia_user) + dur > 1800:
+        return nega("cota_diaria_usuario", 429, alivio(dia_user, 24))
+    dia_org = [r for r in nao_reembolsadas if str(r["org_id"]) == org and quando(r) > agora - timedelta(hours=24)]
+    if sum(float(r["duracao_s"]) for r in dia_org) + dur > 7200:
+        return nega("cota_diaria_org", 429, alivio(dia_org, 24))
+    if sum(1 for r in rows if r["status"] in ("na_fila", "processando")) >= 20:
+        return nega("fila_cheia", 503, 120)
+    dia_global = [r for r in nao_reembolsadas if quando(r) > agora - timedelta(hours=24)]
+    if sum(float(r["duracao_s"]) for r in dia_global) + dur > 36000:
+        return nega("capacidade_diaria", 503, alivio(dia_global, 24))
+
+    row = {
+        "id": params["p_id"], "org_id": org, "user_id": user,
+        "contexto_tipo": params["p_contexto_tipo"], "contexto_ref": params["p_contexto_ref"],
+        "storage_path": params["p_storage_path"], "bytes": params["p_bytes"], "duracao_s": dur,
+        "formato": params["p_formato"], "status": "na_fila", "texto": None, "erro_codigo": None,
+        "modelo": None, "rtf": None, "criado_em": agora.isoformat(), "iniciado_em": None,
+        "concluido_em": None, "audio_apagado_em": None, "minutos_reembolsados": False,
+        "hook_aplicado_em": None,
+    }
+    client.table(tabela).insert(row).execute()
+    return MockSelectBuilder([{"ok": True, "row": row}])

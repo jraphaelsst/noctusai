@@ -39,6 +39,7 @@ from app.modules.media_creation.cerebro_templates import (
 from app.modules.media_creation.deps import CEREBRO_BUCKET
 from app.modules.media_creation.prompts.cerebro_review import ReviewItem
 from app.modules.media_creation.schemas.cerebro import MAX_CONTENT_CHARS
+from app.modules.transcricoes.service import transcricoes_por_id
 from app.modules.media_creation.services.cerebro_ai import (
     CerebroLlm,
     review_answers,
@@ -176,14 +177,17 @@ def template_dict(spec: BrainTemplateSpec) -> dict[str, Any]:
     }
 
 
-def answer_dict(qid: str, row: Optional[dict[str, Any]]) -> dict[str, Any]:
+def answer_dict(
+    qid: str, row: Optional[dict[str, Any]], transcricoes: Optional[dict[str, dict[str, Any]]] = None
+) -> dict[str, Any]:
+    """``transcricoes`` = ``{id: public job shape}`` (shared transcription layer);
+    the answer's job is looked up by its ``transcricao_id``."""
     row = row or {}
     return {
         "question_id": qid,
         "text": row.get("text") or "",
         "updated_at": row.get("updated_at"),
-        # Voice answers arrive with the shared transcription slice (BE-B).
-        "transcricao": None,
+        "transcricao": (transcricoes or {}).get(str(row.get("transcricao_id") or "")),
         "review": {
             "status": row.get("review_status") or "none",
             "verdict": row.get("review_verdict"),
@@ -383,8 +387,11 @@ class CerebroService:
         row = self.get_brain_row(brain_id)
         spec = self._spec(row)
         stored = {a["question_id"]: a for a in self._answers_of([row["id"]]).get(row["id"], [])}
+        jobs = transcricoes_por_id(
+            self.db, self.org_id, [a.get("transcricao_id") for a in stored.values() if a.get("transcricao_id")]
+        )
         answers = (
-            [answer_dict(question_id(spec.slug, q.position), stored.get(question_id(spec.slug, q.position)))
+            [answer_dict(question_id(spec.slug, q.position), stored.get(question_id(spec.slug, q.position)), jobs)
              for q in spec.questions]
             if spec else []
         )
@@ -503,6 +510,11 @@ class CerebroService:
         )
         return rows[0] if rows else None
 
+    def _answer_out(self, qid: str, row: dict[str, Any]) -> dict[str, Any]:
+        tid = row.get("transcricao_id")
+        jobs = transcricoes_por_id(self.db, self.org_id, [tid]) if tid else None
+        return answer_dict(qid, row, jobs)
+
     @staticmethod
     def _assert_question(spec: BrainTemplateSpec, qid: str) -> None:
         if qid not in {question_id(spec.slug, q.position) for q in spec.questions}:
@@ -518,7 +530,7 @@ class CerebroService:
                     "id": str(uuid.uuid4()), "org_id": self.org_id, "brain_id": brain_id,
                     "question_id": qid, "text": text, "review_status": "none",
                 }).execute().data
-                return answer_dict(qid, res[0])
+                return self._answer_out(qid, res[0])
             except Exception as exc:  # noqa: BLE001 - concurrent first autosave: fall through to update
                 if not _is_unique_violation(exc):
                     raise
@@ -535,7 +547,33 @@ class CerebroService:
             self.db.table(ANSWERS).update(patch)
             .eq("id", existing["id"]).eq("org_id", self.org_id).execute().data
         )
-        return answer_dict(qid, res[0] if res else {**existing, **patch})
+        return self._answer_out(qid, res[0] if res else {**existing, **patch})
+
+    def link_transcricao(self, brain_id: str, qid: str, transcricao_id: str) -> dict[str, Any]:
+        """Point the answer at its (just submitted) voice transcription so the brain detail
+        shows the job's status / position / error from the moment of the upload. The text
+        itself is only written by the completion hook. Creates a blank answer row when the
+        user recorded before typing anything."""
+        existing = self._answer_row(brain_id, qid)
+        if existing is None:
+            try:
+                res = self.db.table(ANSWERS).insert({
+                    "id": str(uuid.uuid4()), "org_id": self.org_id, "brain_id": brain_id,
+                    "question_id": qid, "text": "", "review_status": "none",
+                    "transcricao_id": transcricao_id,
+                }).execute().data
+                return self._answer_out(qid, res[0])
+            except Exception as exc:  # noqa: BLE001 - concurrent first autosave: fall through to update
+                if not _is_unique_violation(exc):
+                    raise
+                existing = self._answer_row(brain_id, qid)
+                if existing is None:
+                    raise
+        res = (
+            self.db.table(ANSWERS).update({"transcricao_id": transcricao_id})
+            .eq("id", existing["id"]).eq("org_id", self.org_id).execute().data
+        )
+        return self._answer_out(qid, res[0] if res else {**existing, "transcricao_id": transcricao_id})
 
     @staticmethod
     def _review_reset() -> dict[str, Any]:
@@ -655,7 +693,7 @@ class CerebroService:
             self.db.table(ANSWERS).update(patch)
             .eq("id", ans["id"]).eq("org_id", self.org_id).execute().data
         )
-        return answer_dict(qid, res[0] if res else {**ans, **patch})
+        return self._answer_out(qid, res[0] if res else {**ans, **patch})
 
     # ── synthesis (endpoint 12) ─────────────────────────────────────────
 

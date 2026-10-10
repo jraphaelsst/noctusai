@@ -14,6 +14,7 @@ from fastapi import (
 )
 
 from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
+from noctusai_lib.domain.jobs import JobRepository
 from noctusai_lib.integrations.documents.transcription import DocumentTranscriber
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
@@ -31,7 +32,19 @@ from app.modules.media_creation.services.cerebro_fontes_service import (
     MSG_YOUTUBE_UNAVAILABLE,
     CerebroFontesService,
 )
-from app.modules.media_creation.services.cerebro_service import CerebroError
+from app.modules.media_creation.services.cerebro_service import CerebroError, CerebroService
+from app.modules.media_creation.services import cerebro_transcricao
+from app.modules.transcricoes.deps import (
+    KillSwitch,
+    TranscriberFactory,
+    get_kill_switch,
+    get_transcricao_jobs,
+    get_transcricao_storage,
+    get_transcriber_factory,
+)
+from app.modules.transcricoes.errors import TranscricaoErro, erro_response
+from app.modules.transcricoes.router import build_service as build_transcricao_service
+from app.modules.transcricoes.service import MAX_BODY_BYTES as TRANSCRICAO_MAX_BODY_BYTES
 from app.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
@@ -43,6 +56,8 @@ router = APIRouter(
 #: (every mounted `UploadFile` route needs one). 20 MB file + multipart overhead.
 MAX_BODY_PATH_OVERRIDES = {
     "/api/media-creation/cerebro/brains/*/imports/file": MAX_FILE_BYTES + 512 * 1024,
+    # Voice answer (endpoint 13): same cap as the shared transcription upload.
+    "/api/media-creation/cerebro/brains/*/answers/*/audio": TRANSCRICAO_MAX_BODY_BYTES,
 }
 
 
@@ -82,6 +97,40 @@ async def import_file(
         svc.run_file_import, record["id"], str(brain_id), record["filename"], content, transcriber
     )
     return success_response(record)
+
+
+@router.post("/brains/{brain_id}/answers/{question_id}/audio", status_code=202)
+@limiter.limit(DEFAULT_AI_RL)
+async def answer_audio(
+    request: Request,
+    brain_id: uuid.UUID,
+    question_id: str,
+    arquivo: UploadFile = File(...),
+    auth=Depends(get_current_user_org),
+    storage: StorageBackend = Depends(get_transcricao_storage),
+    jobs: JobRepository = Depends(get_transcricao_jobs),
+    factory: TranscriberFactory = Depends(get_transcriber_factory),
+    kill_switch: KillSwitch = Depends(get_kill_switch),
+):
+    """Endpoint 13 — a THIN delegate of the shared transcription submit: ownership of
+    the brain/question is checked by the `cerebro_resposta` context's `validar`, then
+    the shared pipeline applies the same caps and 413/415/422/429/503 codes. The
+    transcript lands in the answer when the job completes (completion hook), and is
+    surfaced as `Answer.transcricao` in the brain detail."""
+    svc = build_transcricao_service(auth, storage, jobs, factory, kill_switch)
+    try:
+        job = await svc.submit_upload(
+            arquivo, cerebro_transcricao.CONTEXTO_TIPO,
+            cerebro_transcricao.make_ref(str(brain_id), question_id),
+        )
+    except TranscricaoErro as exc:
+        return erro_response(exc)
+    # Link the new job to the answer NOW so a reload (or a failure) still shows it; the
+    # completion hook only writes the text.
+    answer = CerebroService(get_admin_client(), svc.org_id, svc.user_id).link_transcricao(
+        str(brain_id), question_id, job["id"]
+    )
+    return success_response(answer)
 
 
 @router.post("/brains/{brain_id}/imports/youtube")

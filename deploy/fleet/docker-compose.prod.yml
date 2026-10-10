@@ -261,6 +261,16 @@ services:
     networks:
       - noctus-net
       - transcribe-net
+    # Merge the FULL prod env, then add the transcription seam's env (read by the
+    # seed `make_transcriber()`; transcription-contract.md §1). Feature stays OFF
+    # until the platform setting `transcricao_habilitada` is flipped.
+    environment:
+      <<: *prod-env
+      TRANSCRIPTION_BACKEND: local_whisper
+      TRANSCRIBER_URL: http://noctus-transcriber:9000
+      # env-fleet-empty-ok — REVIEWED 2026-10-09: the token IS set in .env.fleet on the
+      # VPS; empty = the factory raises (503 transcricao_indisponivel), never falls back.
+      TRANSCRIBER_TOKEN: ${TRANSCRIBER_TOKEN:-}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8011/api/health"]
       interval: 30s

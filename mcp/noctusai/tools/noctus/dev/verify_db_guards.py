@@ -5472,6 +5472,79 @@ _SW_218_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring.transcricoes (225): the shared voice-transcription layer.
+# ---------------------------------------------------------------------------
+
+_TRANSCRICOES_MIGRATION = "225_transcricoes.sql"
+_TRANSCRICOES_SETUP = (
+    _table_fixture_check("social_wiring.transcricoes")
+    + _PROBE_ORG_SETUP
+)
+
+_TRANSCRICOES_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="social_wiring.transcricoes.reembolso_so_terminal",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="transcricoes_reembolso_so_terminal",
+        kind="write_refusal",
+        migrations=(_TRANSCRICOES_MIGRATION,),
+        sql=_constraint_refusal_probe(
+            setup_sql=_TRANSCRICOES_SETUP,
+            op_sql="""
+    INSERT INTO social_wiring.transcricoes
+        (org_id, user_id, contexto_tipo, contexto_ref, storage_path, bytes, duracao_s, formato,
+         status, minutos_reembolsados)
+    VALUES (v_org, gen_random_uuid(), 'noc_probe', 'noc-probe', 'noc/probe.webm', 1, 5, 'webm',
+            'concluida', true);
+""",
+            sqlstate_condition="check_violation",
+            constraint_names=("transcricoes_reembolso_so_terminal",),
+            what="a refund recorded on a transcription that succeeded",
+        ),
+        rationale=(
+            "Refunded minutes stop counting toward every quota window; a refund on a "
+            "finished transcription would hand back minutes that were really used."
+        ),
+    ),
+    GuardProbe(
+        id="social_wiring.reservar_transcricao.limite_usuario",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="reservar_transcricao",
+        kind="write_refusal",
+        migrations=(_TRANSCRICOES_MIGRATION,),
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid;
+  v_user uuid := gen_random_uuid();
+  v_res jsonb;
+BEGIN
+{_TRANSCRICOES_SETUP}
+  PERFORM social_wiring.reservar_transcricao(
+    gen_random_uuid(), v_org, v_user, 5, 100, 'webm', 'noc_probe', 'a', 'noc/a.webm');
+  PERFORM social_wiring.reservar_transcricao(
+    gen_random_uuid(), v_org, v_user, 5, 100, 'webm', 'noc_probe', 'b', 'noc/b.webm');
+  v_res := social_wiring.reservar_transcricao(
+    gen_random_uuid(), v_org, v_user, 5, 100, 'webm', 'noc_probe', 'c', 'noc/c.webm');
+  IF (v_res->>'ok')::boolean THEN
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a third in-flight transcription for one user succeeded — the quota gate did not fire';
+  ELSIF v_res->>'codigo' = 'limite_usuario' THEN
+    RAISE EXCEPTION 'NOC_PROBE:refused: third in-flight transcription refused with %', v_res->>'codigo';
+  ELSE
+    RAISE EXCEPTION 'NOC_PROBE:ambiguous: refused with an unexpected code %', v_res->>'codigo';
+  END IF;
+END;
+"""),
+        rationale=(
+            "The per-user in-flight cap (2) is what keeps one person from filling the "
+            "single-lane transcriber queue; it lives in SQL so it is atomic under the advisory lock."
+        ),
+    ),
+)
+
+
 _CEREBRO_MIGRATION = "224_cs_cerebro.sql"
 
 
@@ -5625,6 +5698,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
     *_CEREBRO_PROBES,
+    *_TRANSCRICOES_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

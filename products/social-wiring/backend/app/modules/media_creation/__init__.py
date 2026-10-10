@@ -86,11 +86,14 @@ def register() -> Any:
         references,
     )
     from app.modules.media_creation import cerebro_scheduler
+    from app.modules.media_creation.services import cerebro_transcricao
 
     from app.main import ModuleRegistration
 
     # Import-time registration, BEFORE `start_scheduler()` — the stale-work sweep.
     cerebro_scheduler.configure()
+    # Voice answers: the `cerebro_resposta` context of the shared transcription layer.
+    cerebro_transcricao.register_contexto()
 
     return ModuleRegistration(
         routers=[

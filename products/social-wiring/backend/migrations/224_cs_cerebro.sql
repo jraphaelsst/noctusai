@@ -21,11 +21,10 @@
 -- statement appends a block and bumps `content_version`, so a concurrent editor
 -- save can never lose an appended block (it gets a version conflict instead).
 --
--- NOC-REMEDIATE[fk-transcricoes]: `transcricao_id` on cs_brain_answers /
--- cs_brain_imports / cs_extractions is a plain nullable uuid for now --
--- `social_wiring.transcricoes` does not exist yet. The shared transcription
--- product slice (transcription-contract.md S3) owns adding the FK
--- (`REFERENCES social_wiring.transcricoes (id) ON DELETE SET NULL`). -- 2026-10-09
+-- `transcricao_id` on cs_brain_answers / cs_brain_imports / cs_extractions is a
+-- plain nullable uuid here -- `social_wiring.transcricoes` did not exist yet.
+-- Migration 225 (transcription-contract.md S3) adds the FKs
+-- (`REFERENCES social_wiring.transcricoes (id) ON DELETE SET NULL`).
 --
 -- FORWARD-ONLY, IDEMPOTENT.
 -- ============================================================================
@@ -119,8 +118,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.cs_brain_answers (
     brain_id             UUID NOT NULL REFERENCES social_wiring.cs_brains (id) ON DELETE CASCADE,
     question_id          TEXT NOT NULL REFERENCES social_wiring.cs_brain_questions (id),
     text                 TEXT NOT NULL DEFAULT '' CHECK (char_length(text) <= 10000),
-    -- NOC-REMEDIATE[fk-transcricoes]: plain uuid until social_wiring.transcricoes exists; the
-    -- transcription product slice adds the FK (ON DELETE SET NULL). -- 2026-10-09
+    -- plain uuid here; the FK (ON DELETE SET NULL) is added by migration 225
     transcricao_id       UUID,
     review_status        TEXT NOT NULL DEFAULT 'none' CHECK (review_status IN ('none', 'pending', 'done', 'error')),
     review_verdict       TEXT CHECK (review_verdict IN ('approved', 'rejected')),
@@ -154,7 +152,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.cs_brain_imports (
     storage_path   TEXT,
     size_bytes     BIGINT,
     source_url     TEXT,
-    -- NOC-REMEDIATE[fk-transcricoes]: see cs_brain_answers.transcricao_id. -- 2026-10-09
+    -- FK added by migration 225 (see cs_brain_answers.transcricao_id)
     transcricao_id UUID,
     status         TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ('processing', 'appended', 'error')),
     chars_appended INTEGER,
@@ -182,7 +180,7 @@ CREATE TABLE IF NOT EXISTS social_wiring.cs_extractions (
     source_kind    TEXT NOT NULL CHECK (source_kind IN ('url', 'text')),
     source_url     TEXT,
     transcript     TEXT CHECK (char_length(transcript) <= 200000),
-    -- NOC-REMEDIATE[fk-transcricoes]: see cs_brain_answers.transcricao_id. -- 2026-10-09
+    -- FK added by migration 225 (see cs_brain_answers.transcricao_id)
     transcricao_id UUID,
     status         TEXT NOT NULL CHECK (status IN ('transcribing', 'ready', 'applied', 'error')),
     error_message  TEXT,

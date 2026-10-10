@@ -39,6 +39,9 @@ class TestSocialWiringMaxBodyPathOverrides:
             "/api/chat/upload-file": 500 * 1024 * 1024,
             "/api/leads/import/preview": 50 * 1024 * 1024,
             "/api/leads/import/commit": 50 * 1024 * 1024,
+            # Shared voice transcription upload + its Cérebro delegate (15 MB + framing).
+            "/api/transcricoes": 15 * 1024 * 1024 + 512 * 1024,
+            "/api/media-creation/cerebro/brains/11111111-1111-1111-1111-111111111111/answers/nucleo-de-influencia.01/audio": 15 * 1024 * 1024 + 512 * 1024,
             # Pre-existing — asserted here too so a future edit to the
             # shared dict can't silently regress them.
             "/api/videos/upload": 500 * 1024 * 1024,

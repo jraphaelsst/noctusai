@@ -66,8 +66,8 @@ class TestTemplates:
         sql = _FILES[0].read_text()
         assert seed_sql() in sql
         assert "social-wiring-cerebro" in sql and "'media-creation-cerebro', 'desenvolvimento'" in sql
-        assert "cs_brain_append" in sql and "NOC-REMEDIATE[fk-transcricoes]" in sql
-        # transcricao_id stays a plain uuid until social_wiring.transcricoes exists
+        assert "cs_brain_append" in sql and "NOC-REMEDIATE[fk-transcricoes]" not in sql
+        # transcricao_id stays a plain uuid in 224; the FKs are added by migration 225
         assert not re.search(r"transcricao_id\s+UUID\s+REFERENCES", sql)
         assert "cs_transcriptions" not in sql
 

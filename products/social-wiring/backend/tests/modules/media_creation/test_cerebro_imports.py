@@ -178,7 +178,7 @@ class TestFileImport:
         assert ".." not in key and key.endswith("-pa_ss.txt")
 
     def test_upload_route_has_a_body_override_covering_20mb(self):
-        (limit,) = MAX_BODY_PATH_OVERRIDES.values()
+        limit = MAX_BODY_PATH_OVERRIDES["/api/media-creation/cerebro/brains/*/imports/file"]
         assert limit > fontes.MAX_FILE_BYTES
 
 

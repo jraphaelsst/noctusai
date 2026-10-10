@@ -266,6 +266,7 @@ from app.modules.youtube import register as _youtube
 from app.modules.instagram import register as _instagram
 from app.modules.edicao_fotos import register as _edicao_fotos
 from app.modules.empresas import register as _empresas
+from app.modules.transcricoes import register as _transcricoes
 
 # Append W2.2 (email_marketing) / W2.3 (scheduling) / W2.4 (media_creation)
 # / Phase 8 (youtube) / Leads-module (leads) / Meta-Ads-console (meta_ads)
@@ -295,6 +296,7 @@ MODULES = [
     _register_email_marketing,
     _scheduling,
     _register_media_creation,
+    _transcricoes,
     _mailchimp,
     _leads,
     _meta_ads,
@@ -476,6 +478,14 @@ _MAX_BODY_PATH_OVERRIDES = {
     # outer bound adds 512 KB of multipart overhead. The module mirrors the
     # same entry in its own `MAX_BODY_PATH_OVERRIDES` (pinned by a test).
     "/api/media-creation/cerebro/brains/*/imports/file": 20 * 1024 * 1024 + 512 * 1024,
+    # Voice transcription upload (POST /api/transcricoes — `transcricoes.router`)
+    # and its Cérebro delegate (POST /api/media-creation/cerebro/brains/{brain_id}/
+    # answers/{question_id}/audio — endpoint 13). The business cap is 15 MB
+    # (`TranscriptionLimits.max_bytes`, enforced by the route's stream cut -> 413
+    # `arquivo_grande`); this outer bound adds 512 KB of multipart framing. Both
+    # modules mirror their entries in their own `MAX_BODY_PATH_OVERRIDES`.
+    "/api/transcricoes": 15 * 1024 * 1024 + 512 * 1024,
+    "/api/media-creation/cerebro/brains/*/answers/*/audio": 15 * 1024 * 1024 + 512 * 1024,
     # Chatbot platform-chat file staging (POST /api/chat/upload-file —
     # `chat_router.stage_chat_file`). No dynamic segment, plain prefix.
     # `stage_browser_upload` streams straight to disk with

@@ -162,6 +162,15 @@ async def on_startup() -> None:
         await start_pesquisa_extracao_worker(settings)
     except Exception:
         logger.exception("pesquisa_extracao: worker NÃO iniciado — as extrações ficam na fila.")
+    # Transcription worker — its OWN seed Worker (type "transcricao", concurrency 1,
+    # lease 300 s, heartbeat). Its claim gate is the kill switch
+    # `transcricao_habilitada` (default OFF): while off, jobs stay pending.
+    from app.modules.transcricoes.worker import start_worker as start_transcricao_worker
+
+    try:
+        await start_transcricao_worker(settings)
+    except Exception:
+        logger.exception("transcricoes: worker NÃO iniciado — as transcrições ficam na fila.")
     # Daily model-notes catch-up — same reason and shape as the Vista one.
     schedule_fotos_catch_up()
 
@@ -179,8 +188,11 @@ async def on_shutdown() -> None:
         stop_worker as stop_pesquisa_extracao_worker,
     )
 
+    from app.modules.transcricoes.worker import stop_worker as stop_transcricao_worker
+
     await stop_fotos_worker()
     await stop_pesquisa_extracao_worker()
+    await stop_transcricao_worker()
     await stop_worker()
     stop_scheduler()
     logger.info("Social Wiring lifespan shutdown complete.")

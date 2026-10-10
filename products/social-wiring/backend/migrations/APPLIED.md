@@ -526,3 +526,7 @@ Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §8, S6). Creates 
 ## 227 — campanha_veiculacoes_nivel_not_null (218's nivel CHECK let NULL through for meta_ads) — NOT APPLIED
 
 Authored 2026-10-10 (fix-forward of 218, caught post-deploy by `verify_db_guards` probe `social_wiring.campanha_veiculacoes.meta_requires_nivel`). Recreates `campanha_veiculacoes_nivel_valido` with `nivel IS NOT NULL` on the meta_ads arm — a CHECK passes on NULL, so `nivel IN (...)` alone never refused a missing level. Pre-check refuses if any meta_ads row already has nivel NULL (prod table was empty at authoring). No image dependency — apply any time.
+
+## 225 — transcricoes (shared voice transcription: table, reservar_transcricao quota RPC, private sw-transcricoes bucket, cs_* transcricao_id FKs) — NOT APPLIED
+
+Authored 2026-10-09 (projects/core-studio/specs/transcription-contract.md S3). Requires 224. Apply BEFORE deploying the image that reads/writes it. The kill switch `transcricao_habilitada` ships OFF.
