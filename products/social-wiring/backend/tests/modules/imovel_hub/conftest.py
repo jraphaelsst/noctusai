@@ -254,6 +254,44 @@ def seed(
     scoped.set_table_data("imovel_campo_conflitos", conflitos or [])
 
 
+def manual(scoped, codigo="SW-0001", *, titulo="Casa Reserva do Vianna", **dados_extra) -> None:
+    """A MANUAL imóvel already registered (registry + captação + dados), as
+    `POST /api/imoveis/manuais` leaves it (migration 226)."""
+    seed(
+        scoped,
+        registry=[registry_row(codigo, ativo_no_vista=False, origem_descoberta="manual")],
+        imoveis=[],
+        dados=[
+            dados_row(
+                codigo,
+                endereco_manual_logradouro="Alameda Liverpool",
+                endereco_manual_numero="81",
+                endereco_manual_bairro="Reserva do Vianna",
+                endereco_manual_cidade="Cotia",
+                endereco_manual_uf="SP",
+                endereco_manual_cep="05422-000",
+                **dados_extra,
+            )
+        ],
+    )
+    scoped.set_table_data(
+        "imovel_captacao",
+        [
+            {
+                "org_id": ORG_ID,
+                "codigo_canonical": codigo,
+                "titulo": titulo,
+                "categoria": "Casa",
+                "status": "Venda",
+                "finalidades": ["venda"],
+                "valor_venda": 1500000,
+                "created_at": "2026-10-09T10:00:00+00:00",
+                "updated_at": "2026-10-09T10:00:00+00:00",
+            }
+        ],
+    )
+
+
 class FakeImovelNotifier:
     """Records `notify_imovel_field_conflict` calls instead of touching WAHA
     / SMTP — the migration-154 DI seam (`imovel_hub.deps.

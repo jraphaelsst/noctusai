@@ -55,6 +55,7 @@ from app.services import table_reads
 MIRROR_TABLE = "imoveis"
 REGISTRY_TABLE = "imovel_registry"
 DADOS_TABLE = "imovel_dados"
+CAPTACAO_TABLE = "imovel_captacao"
 
 #: A one-character term matches most of a 3000-row catalog, so the round trip
 #: buys a list nobody can use. The frontend gates on the same number; this is
@@ -125,6 +126,32 @@ _SNAP_MAP = {
 _MIRROR_BUSCA_COLS = ("codigo", "titulo", "bairro", "empreendimento", "logradouro")
 _REGISTRY_BUSCA_COLS = ("codigo_canonical", "snap_titulo", "snap_bairro")
 
+#: MANUAL imóveis (migration 226) have no mirror row and no `snap_*`: their
+#: text lives on `imovel_captacao` (título) and `imovel_dados` (the manual
+#: address + empreendimento). Searched as two more per-column sources so a
+#: typed term finds them by the same fields as a Vista imóvel.
+_CAPTACAO_BUSCA_COLS = ("titulo",)
+_DADOS_BUSCA_COLS = (
+    "endereco_manual_logradouro", "endereco_manual_bairro", "empreendimento_manual",
+)
+
+#: `imovel_captacao` columns -> the display keys `_MIRROR_FIELDS` carries.
+#: Address + empreendimento come from `imovel_dados` (`_DADOS_ENDERECO`).
+_CAPTACAO_CAMPOS = (
+    "titulo", "categoria", "valor_venda", "valor_locacao", "dormitorios",
+    "suites", "vagas", "area_total", "area_privativa", "area_construida",
+)
+_DADOS_ENDERECO = {
+    "logradouro": "endereco_manual_logradouro",
+    "numero": "endereco_manual_numero",
+    "complemento": "endereco_manual_complemento",
+    "bairro": "endereco_manual_bairro",
+    "cidade": "endereco_manual_cidade",
+    "uf": "endereco_manual_uf",
+    "cep": "endereco_manual_cep",
+    "empreendimento": "empreendimento_manual",
+}
+
 # NOC-REMEDIATE[imovel-busca-accent-fold]: `_ilike_rows` runs `ILIKE
 # %termo%` verbatim — case-insensitive (Postgres ILIKE) but NOT accent-
 # insensitive ("sao paulo" will not match a stored "São Paulo"). A true fix
@@ -184,13 +211,21 @@ def enriquecer(client: Any, org_id: UUID, codigos: list[str]) -> dict[str, dict]
             client, DADOS_TABLE, org_id, "codigo", unicos, order_col="codigo",
         )
     }
+    captacao = {
+        str(r["codigo_canonical"]): r
+        for r in table_reads.in_batched_rows(
+            client, CAPTACAO_TABLE, org_id, "codigo_canonical", unicos,
+            order_col="codigo_canonical",
+        )
+    }
     atores = table_reads.resolve_actors(
         {d["captador_user_id"] for d in dados.values() if d.get("captador_user_id")}
     )
 
     return {
         codigo: _imovel_out(
-            codigo, registry.get(codigo), mirror.get(codigo), dados.get(codigo), atores
+            codigo, registry.get(codigo), mirror.get(codigo), dados.get(codigo), atores,
+            cap=captacao.get(codigo),
         )
         for codigo in unicos
     }
@@ -202,11 +237,26 @@ def _imovel_out(
     esp: Optional[dict],
     dad: Optional[dict],
     atores: dict,
+    *,
+    cap: Optional[dict] = None,
 ) -> dict:
     if esp is not None:
         campos = {k: esp.get(k) for k in _MIRROR_FIELDS}
         campos["corretores"] = esp.get("corretores") or []
         fonte = "imoveis"
+    elif cap is not None or (reg or {}).get("origem_descoberta") == "manual":
+        # A MANUAL imóvel (migration 226): mirror absent by construction, the
+        # listing lives on `imovel_captacao` (absent for a registry-only
+        # typed-código registration: título and every listing field null) + the
+        # manual address on `imovel_dados`. Every Vista-only display key
+        # (foto_destaque, corretores) is an honest null/empty — never a
+        # KeyError downstream.
+        cap = cap or {}
+        campos = {k: None for k in _MIRROR_FIELDS}
+        campos["corretores"] = []
+        campos.update({k: cap.get(k) for k in _CAPTACAO_CAMPOS})
+        campos.update({k: (dad or {}).get(col) for k, col in _DADOS_ENDERECO.items()})
+        fonte = "manual"
     else:
         campos = {k: None for k in _MIRROR_FIELDS}
         campos["corretores"] = []
@@ -336,6 +386,23 @@ def buscar(
             if r.get("codigo_canonical")
         )
 
+    # MANUAL imóveis (migration 226): título on `imovel_captacao`, address +
+    # empreendimento on `imovel_dados`. Strictly additive passes — a Vista
+    # imóvel has no captação row and its `imovel_dados.endereco_manual_*` is an
+    # override of an address the mirror passes already searched.
+    for coluna in _CAPTACAO_BUSCA_COLS:
+        codigos.update(
+            canonical(str(r["codigo_canonical"]))
+            for r in _ilike_rows(client, CAPTACAO_TABLE, org_id, coluna, termo, limite)
+            if r.get("codigo_canonical")
+        )
+    for coluna in _DADOS_BUSCA_COLS:
+        codigos.update(
+            canonical(str(r["codigo"]))
+            for r in _ilike_rows(client, DADOS_TABLE, org_id, coluna, termo, limite)
+            if r.get("codigo")
+        )
+
     # Document numbers (owner rule 2026-10-01, `canonical-identifiers`): the
     # matrícula / inscrição municipal a card RENDERS (`79.826`) finds the
     # imóvel, as does the bare number or a fragment of it. The needle is keyed
@@ -375,7 +442,9 @@ def _ilike_rows(
     a single column would let one column's alphabetical head crowd out an
     exact código match from another.
     """
-    coluna_saida = "codigo_canonical" if tabela == REGISTRY_TABLE else "codigo"
+    coluna_saida = (
+        "codigo_canonical" if tabela in (REGISTRY_TABLE, CAPTACAO_TABLE) else "codigo"
+    )
     rows = (
         table_reads.table(client, tabela)
         .select(coluna_saida)

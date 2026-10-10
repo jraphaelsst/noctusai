@@ -518,3 +518,7 @@ Authored 2026-10-09 (sw-lead-to-contract CONTRACT §3.1). Additive columns + CHE
 ## 224 — cs_cerebro (Segundo Cérebro: brains, answers, imports, extractions, profile bio) — NOT APPLIED
 
 Authored 2026-10-09 (projects/core-studio/specs/cerebro-contract.md §2 + §10). Creates `cs_brain_templates`/`cs_brain_questions` (seeded from `cerebro_templates.py`), `cs_brains`, `cs_brain_answers`, `cs_brain_imports`, `cs_extractions`, `cs_extraction_targets`, `cs_marca_perfil`, `cs_brain_append()`, the private `social-wiring-cerebro` bucket and `status_pagina('media-creation-cerebro','desenvolvimento')`. `transcricao_id` columns are plain uuids until `social_wiring.transcricoes` exists (`NOC-REMEDIATE[fk-transcricoes]`). Requires 217. Apply BEFORE deploying the image that reads/writes it.
+
+## 226 — imovel_captacao_manual (manual captação + deal refs on imovel_dados + `imoveis_catalogo` view) — NOT APPLIED
+
+Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §8, S6). Creates `imovel_captacao` (FK → `imovel_registry`, org-picker RLS, acting-audit attach), adds `imovel_dados.processo_atual_numero/drive_folder_url/drive_folder_id` (+ Drive-URL CHECK) and the `imoveis_catalogo` view (`security_invoker`, Vista ∪ manual). Apply BEFORE deploying the image that reads it (the list route reads the view).

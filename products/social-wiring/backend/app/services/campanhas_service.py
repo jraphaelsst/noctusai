@@ -15,6 +15,8 @@ import logging
 from typing import Any, Optional
 from uuid import UUID
 
+from app.modules.imovel_hub import busca_service
+
 logger = logging.getLogger(__name__)
 
 _SCHEMA = "social_wiring"
@@ -186,7 +188,31 @@ class CampanhasService:
         if status:
             query = query.eq("status", status)
         resp = query.order("solicitado_em", desc=True).limit(500).execute()
-        return resp.data or []
+        rows = resp.data or []
+        self._resolver_exibicao(org_id, [r.get("imovel_registry") for r in rows])
+        return rows
+
+    def _resolver_exibicao(self, org_id: UUID, registros: list) -> None:
+        """Fill the display `snap_*` of any registry join that has none
+        (an ACTIVE Vista imóvel before its delist snapshot, a MANUAL imóvel
+        — migration 226 — which never gets one) from the canonical
+        mirror → captação → snapshot resolver. Resolved for the response
+        only; nothing is written back."""
+        pendentes = {
+            r["codigo_canonical"]: r
+            for r in registros
+            if r and r.get("codigo_canonical") and not r.get("snap_titulo")
+        }
+        if not pendentes:
+            return
+        resolvidos = busca_service.enriquecer(
+            self._client.schema(_SCHEMA), org_id, sorted(pendentes)
+        )
+        for codigo, registro in pendentes.items():
+            imovel = resolvidos.get(codigo) or {}
+            registro["snap_titulo"] = imovel.get("titulo")
+            registro["snap_bairro"] = registro.get("snap_bairro") or imovel.get("bairro")
+            registro["snap_cidade"] = registro.get("snap_cidade") or imovel.get("cidade")
 
 
 def build_campanhas_service(client: Any) -> CampanhasService:

@@ -9,7 +9,7 @@ from datetime import date
 from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -104,6 +104,78 @@ class RegistrarImovelBody(StrictHttpModel):
     cep: str = Field(min_length=1, max_length=9)
 
 
+class EnderecoManualIn(StrictHttpModel):
+    """`endereco` of `POST /manuais`: logradouro/número/bairro/cidade/UF are
+    required (migration 159); the CEP is optional here but format-checked
+    (8 digits, optional hyphen) when given."""
+
+    logradouro: str = Field(min_length=1, max_length=200)
+    numero: str = Field(min_length=1, max_length=20)
+    complemento: Optional[str] = Field(default=None, max_length=100)
+    bairro: str = Field(min_length=1, max_length=120)
+    cidade: str = Field(min_length=1, max_length=120)
+    uf: str = Field(min_length=2, max_length=2)
+    cep: Optional[str] = Field(default=None, pattern=r"^\d{5}-?\d{3}$")
+
+
+class _ImovelManualCampos(StrictHttpModel):
+    """The listing fields shared by create and patch (CONTRACT §8.3). Money
+    and areas are > 0 and rooms >= 0 — the same rules as the table's CHECKs, so
+    a bad value is a 422 naming the field, never a 500 from the database."""
+
+    categoria: Optional[str] = Field(default=None, max_length=120)
+    #: finalidade, free text like the mirror: "Venda" | "Aluguel" | "Venda e Aluguel"
+    status: Optional[str] = Field(default=None, max_length=60)
+    finalidades: Optional[list[str]] = None
+    valor_venda: Optional[float] = Field(default=None, gt=0)
+    valor_locacao: Optional[float] = Field(default=None, gt=0)
+    valor_condominio: Optional[float] = Field(default=None, gt=0)
+    valor_iptu: Optional[float] = Field(default=None, gt=0)
+    area_total: Optional[float] = Field(default=None, gt=0)
+    area_privativa: Optional[float] = Field(default=None, gt=0)
+    area_construida: Optional[float] = Field(default=None, gt=0)
+    dormitorios: Optional[int] = Field(default=None, ge=0)
+    suites: Optional[int] = Field(default=None, ge=0)
+    vagas: Optional[int] = Field(default=None, ge=0)
+    descricao_web: Optional[str] = Field(default=None, max_length=10000)
+    observacoes: Optional[str] = Field(default=None, max_length=10000)
+    empreendimento: Optional[str] = Field(default=None, max_length=200)
+    em_condominio: Optional[bool] = None
+    processo_atual_numero: Optional[str] = Field(default=None, max_length=64)
+    drive_folder_url: Optional[str] = Field(default=None, max_length=500)
+
+
+class ImovelManualIn(_ImovelManualCampos):
+    """`POST /api/imoveis/manuais`. `titulo` and the address (same required
+    set as migration 159, minus the CEP) are mandatory."""
+
+    titulo: str = Field(min_length=1, max_length=200)
+    endereco: EnderecoManualIn
+
+
+class ImovelManualPatch(_ImovelManualCampos):
+    """`PATCH /api/imoveis/manuais/{codigo}` — partial: absence leaves a
+    field alone (`model_fields_set`), `null` clears it. `titulo` is NOT NULL
+    in the table, so it cannot be cleared."""
+
+    titulo: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    endereco: Optional[EnderecoManualPatchBody] = None
+
+    @model_validator(mode="after")
+    def _titulo_nao_nulo(self):
+        if "titulo" in self.model_fields_set and self.titulo is None:
+            raise ValueError("titulo não pode ser limpo")
+        return self
+
+
+class ReferenciasPatchBody(StrictHttpModel):
+    """`PATCH /api/imoveis/{codigo}/referencias` — the deal's refs, for ANY
+    imóvel. Absence leaves a field alone; `null`/empty clears it."""
+
+    processo_atual_numero: Optional[str] = Field(default=None, max_length=64)
+    drive_folder_url: Optional[str] = Field(default=None, max_length=500)
+
+
 class ImovelDocumentoExtracaoPatchBody(StrictHttpModel):
     """The operator's confirmation/edit of one document's structured
     extraction (migration 118) — `PATCH .../documentos/{id}/extracao`.
@@ -139,4 +211,9 @@ __all__ = [
     "EnderecoManualPatchBody",
     "ImovelDadosPatchBody",
     "ImovelDocumentoExtracaoPatchBody",
+    "EnderecoManualIn",
+    "ImovelManualIn",
+    "ImovelManualPatch",
+    "RegistrarImovelBody",
+    "ReferenciasPatchBody",
 ]

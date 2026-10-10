@@ -1,11 +1,11 @@
 """Imóveis router — /api/imoveis.
 
 Endpoints:
-    GET  /api/imoveis                  → paginated rows from the local mirror
+    GET  /api/imoveis                  → paginated rows: Vista mirror ∪ manual (imoveis_catalogo)
     GET  /api/imoveis/busca            → typeahead over the REGISTRY ∪ mirror
     GET  /api/imoveis/filtros          → distinct filter values (derived)
     GET  /api/imoveis/caracteristicas  → amenity slug → count, usage-ordered
-    GET  /api/imoveis/{codigo}         → one imóvel
+    GET  /api/imoveis/{codigo}         → one imóvel (Vista mirror, or manual captação)
     POST /api/imoveis/sync             → full pull from Vista (D1 manual refresh)
 
 Auth: ``Depends(get_current_user_org)`` on every route, no exceptions. Reads
@@ -31,6 +31,8 @@ from app.dependencies import (
     get_current_user_org,
 )
 from app.modules.imovel_hub import busca_service as busca_svc
+from app.modules.imovel_hub import captacao_service as captacao_svc
+from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub.deps import get_imovel_hub_client
 from app.services.imoveis_service import (
     build_imoveis_service,
@@ -257,21 +259,38 @@ async def sync_imoveis(
 # `ImovelPageOut.items` above: `ImoveisService.get` already returns every
 # column plus the derived `orientacao_solar`/`dias_desde_atualizacao`
 # (CONTRACT §3), and a typed schema here would just be a second field list
-# to keep in sync with the first. DISPLAY ONLY: no PATCH/PUT route exists on
-# this router and none should be added — Vista rejects writes on this key
-# (`/imoveis/alterar` → 404 on this tenant, CONTRACT §"Scope").
+# to keep in sync with the first.
+#
+# The Vista row is READ-ONLY (Vista rejects writes on this key — CONTRACT
+# §"Scope"); the editable surfaces are `PATCH /manuais/{codigo}` and
+# `PATCH /{codigo}/referencias`, both on the `imovel_hub` router (CONTRACT
+# §8.3). A MANUAL código (migration 226) has no mirror row: it is built from
+# `imovel_captacao` + `imovel_dados` into the SAME shape, `fonte: "manual"`.
+# Every imóvel carries `fonte` and `referencias`.
 @router.get("/{codigo}")
 async def get_imovel(
     codigo: str,
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),
+    hub=Depends(get_imovel_hub_client),
 ) -> dict:
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
-    row = build_imoveis_service(db).get(org_id, codigo.upper())
-    if row is None:
+    canonico = codigo.strip().upper()
+    row = build_imoveis_service(db).get(org_id, canonico)
+    if row is not None:
+        dados = dados_svc.linha(hub, org_id, canonico)
+        row["fonte"] = "vista"
+        row["referencias"] = dados_svc.referencias_da_linha(dados)
+        # `empreendimento` is already the mirror's column; `em_condominio` is
+        # ours (imovel_dados, migration 202) — both on the shape for EVERY
+        # imóvel so the edit modal needs no second query.
+        row["em_condominio"] = (dados or {}).get("em_condominio")
+        return row
+    manual = captacao_svc.obter_manual(hub, org_id, canonico)
+    if manual is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Imóvel {codigo} não encontrado.",
         )
-    return row
+    return manual

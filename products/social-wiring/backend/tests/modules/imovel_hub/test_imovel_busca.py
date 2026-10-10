@@ -164,7 +164,9 @@ class TestOrigemMarksAHandRegisteredCodigo:
             mirror=[],
         )
         item = buscar(client, "EUROVILLE-535")["items"][0]
-        assert item["fonte"] == "registry"
+        # migration 226: a hand-registered imóvel IS a manual imóvel — it
+        # resolves from captação/imovel_dados (null here), not the delist snapshot
+        assert item["fonte"] == "manual"
         assert item["origem"] == "manual"
 
     def test_a_vista_sync_delisted_codigo_carries_no_manual_origem(self, client, scoped):

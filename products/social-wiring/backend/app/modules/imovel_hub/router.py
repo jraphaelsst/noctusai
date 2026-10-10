@@ -41,6 +41,7 @@ from noctusai_lib.primitives.exceptions import ConflictError, ValidationError_
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
 from app.modules.imovel_hub import busca_service
 from app.modules.imovel_hub import campos_extraidos_service as campos_svc
+from app.modules.imovel_hub import captacao_service as captacao_svc
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import documentos_service as docs_svc
 from app.modules.imovel_hub import matricula_extracao_service as matricula_svc
@@ -56,7 +57,10 @@ from app.modules.imovel_hub.schemas import (
     EnderecoManualPatchBody,
     ImovelDadosPatchBody,
     ImovelDocumentoExtracaoPatchBody,
+    ImovelManualIn,
+    ImovelManualPatch,
     RegistrarImovelBody,
+    ReferenciasPatchBody,
 )
 # NOC-REMEDIATE[matricula-pipeline-consolidation] (partial — see module
 # docstring below): the imóvel-page upload now queues the SAME full
@@ -83,6 +87,61 @@ router = APIRouter(prefix="/api/imoveis", tags=["imoveis-dados"])
 def _auth_parts(auth):
     user, _token, raw_org = auth
     return user, coerce_org_uuid(raw_org)
+
+
+# ─── Manual captação (migration 226, CONTRACT §8) ─────────────────────────
+#
+# 🔴 ROUTE ORDER: `PATCH /manuais/{codigo}` is two segments like
+# `PATCH /{codigo}/dados` — declared FIRST so `manuais` is never read as a
+# `codigo` (a test pins this). `POST /manuais` has no `/{codigo}` sibling.
+
+
+@router.post("/manuais", status_code=status.HTTP_201_CREATED)
+async def criar_imovel_manual_route(
+    body: ImovelManualIn,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Register a property by hand (an agent's new captação) → the full
+    `Imovel` (`fonte: "manual"`). Código `SW-NNNN` is generated."""
+    user, org_id = _auth_parts(auth)
+    return captacao_svc.registrar_manual(
+        client, org_id, body.model_dump(exclude_unset=True),
+        usuario_id=getattr(user, "id", None),
+    )
+
+
+@router.patch("/manuais/{codigo}")
+async def atualizar_imovel_manual_route(
+    codigo: str,
+    body: ImovelManualPatch,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """Edit a manual imóvel. `409 imovel_vista_somente_leitura` for any
+    código the registry knows through another path (Vista is read-only here);
+    404 unknown / other org."""
+    user, org_id = _auth_parts(auth)
+    valores = body.model_dump(exclude_unset=True)
+    if valores.get("endereco") is None:
+        valores.pop("endereco", None)
+    return captacao_svc.atualizar_manual(
+        client, org_id, codigo, valores, usuario_id=getattr(user, "id", None)
+    )
+
+
+@router.patch("/{codigo}/referencias")
+async def patch_referencias_route(
+    codigo: str,
+    body: ReferenciasPatchBody,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """The deal's refs (processo atual + Drive folder) for ANY imóvel, Vista
+    or manual. `400 drive_url_invalida` for a link that is not a Drive folder."""
+    _user, org_id = _auth_parts(auth)
+    valores = {k: getattr(body, k) for k in body.model_fields_set}
+    return dados_svc.gravar_referencias(client, org_id, codigo.upper(), valores=valores)
 
 
 # ─── Cartório data ────────────────────────────────────────────────────────

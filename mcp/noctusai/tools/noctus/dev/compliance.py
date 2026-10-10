@@ -13210,6 +13210,30 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
     ),
+    # Migration 226 (social-wiring, sw-lead-to-contract CONTRACT §8 / S6) is
+    # FILE-ONLY until the tech-lead applies it via `migrate_product`. Same
+    # reasoning as 167/171/017 above: `verify_db_guards` probes LIVE production
+    # and cannot exercise a CHECK on a table/column that does not exist there
+    # yet. Remove these three entries and register real `GuardProbe`s in
+    # `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies 226.
+    (
+        "products/social-wiring/backend/migrations/226_imovel_captacao_manual.sql",
+        "imovel_captacao_valores_positivos",
+        "Migration 226 unapplied — the imovel_captacao money/area > 0 CHECK has no live table to probe "
+        "against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/226_imovel_captacao_manual.sql",
+        "imovel_captacao_comodos_nao_negativos",
+        "Migration 226 unapplied — the imovel_captacao rooms >= 0 CHECK has no live table to probe "
+        "against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/226_imovel_captacao_manual.sql",
+        "imovel_dados_drive_folder_url_drive",
+        "Migration 226 unapplied — the imovel_dados.drive_folder_url Drive-prefix CHECK has no live "
+        "column to probe against yet.",
+    ),
 )
 
 

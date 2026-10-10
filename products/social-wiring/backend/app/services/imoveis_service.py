@@ -62,6 +62,10 @@ class ImoveisLookupError(Exception):
 
 _SCHEMA = "social_wiring"
 _TABLE = "imoveis"
+# Vista mirror ∪ manual captação (migration 226): what the LIST and the filter
+# dropdowns read, so a manual imóvel appears with exact filters / count / order
+# / pages from ONE PostgREST query. Single-imóvel `get` stays on the mirror.
+_CATALOGO = "imoveis_catalogo"
 # Our permanent imóvel identity (migration 063). `imoveis` is a disposable
 # mirror of the ACTIVE Vista catalog; this survives an imóvel leaving it, and
 # is what leads/vendas/campanhas actually reference.
@@ -352,6 +356,9 @@ class ImoveisService:
     def _table(self):
         return self._client.schema(_SCHEMA).table(_TABLE)
 
+    def _catalogo(self):
+        return self._client.schema(_SCHEMA).table(_CATALOGO)
+
     def list(
         self,
         org_id: UUID,
@@ -365,7 +372,7 @@ class ImoveisService:
         search: Optional[str] = None,
         caracteristicas: Optional[list[str]] = None,
     ) -> dict:
-        query = self._table().select("*", count="exact").eq("org_id", str(org_id))
+        query = self._catalogo().select("*", count="exact").eq("org_id", str(org_id))
         if status:
             query = query.eq("status", status)
         if categoria:
@@ -478,7 +485,7 @@ class ImoveisService:
         start = 0
         while True:
             result = (
-                self._table()
+                self._catalogo()
                 .select(columns)
                 .eq("org_id", str(org_id))
                 .range(start, start + page_size - 1)

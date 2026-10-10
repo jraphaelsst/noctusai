@@ -29,11 +29,16 @@ exactly what the conflict exists to stop.
 """
 from __future__ import annotations
 
+import re
 from datetime import date, datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
-from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
+from noctusai_lib.primitives.exceptions import (
+    AppException,
+    NotFoundError,
+    ValidationError_,
+)
 
 from app.services import identificadores as idf
 from app.services import table_reads
@@ -360,13 +365,28 @@ def registrar_imovel(
     if existing:
         return canonico
 
+    inserir_registry(client, org_id, canonico, display=(codigo or "").strip(), origem=origem)
+    return canonico
+
+
+def inserir_registry(
+    client: Any, org_id: UUID, canonico: str, *, display: str, origem: str
+) -> None:
+    """The ONE `imovel_registry` insert shape (a plain INSERT — a conflict on
+    `uq_imovel_registry_org_codigo` propagates, it is never swallowed).
+
+    `registrar_imovel` calls it after its read-then-insert existence check;
+    `captacao_service.registrar_manual` calls it directly because it must
+    know it WON the código (a generated `SW-NNNN` two requests raced for),
+    which the idempotent read-first path would hide.
+    """
     _t(client, REGISTRY_TABLE).insert(
         {
             "org_id": str(org_id),
             "codigo_canonical": canonico,
             # The spelling we actually received, kept for tracing. 063 keeps
             # it for display and never matches on it.
-            "codigo_display": (codigo or "").strip(),
+            "codigo_display": display,
             "ativo_no_vista": False,
             "origem_descoberta": origem,
             "primeiro_visto_em": _now(),
@@ -374,7 +394,6 @@ def registrar_imovel(
             "updated_at": _now(),
         }
     ).execute()
-    return canonico
 
 
 def registro_status(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
@@ -950,6 +969,81 @@ def gravar_endereco_manual(
     if historico:
         _t(client, HISTORICO_ENDERECO_TABLE).insert(historico).execute()
     return obter(client, org_id, codigo)
+
+
+# ─── Deal references (migration 226) ──────────────────────────────────────
+#
+# Valid for ANY imóvel, Vista or manual: authored data that belongs on
+# `imovel_dados`, never on the Vista mirror. `processo_atual_numero` is a
+# convenience pointer to TODAY's deal (an imóvel can be sold or rented more
+# than once; deals live in `processos_venda`), not the deal's identity.
+
+CAMPOS_REFERENCIAS: tuple[str, ...] = (
+    "processo_atual_numero",
+    "drive_folder_url",
+    "drive_folder_id",
+)
+
+#: A Drive FOLDER link only: `…/drive/folders/<id>`, `…/drive/u/0/folders/<id>`
+#: or `…/folders/<id>`, optionally followed by a query string. A file link, a
+#: `open?id=` link or any other host is refused (never guessed at).
+_DRIVE_PASTA_RE = re.compile(
+    r"^https://drive\.google\.com/(?:drive/(?:u/\d+/)?)?folders/(?P<id>[A-Za-z0-9_-]+)(?:[/?#].*)?$"
+)
+
+
+def parse_drive_folder_url(url: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """`(url, folder_id)` for a Drive folder link; `(None, None)` clears.
+
+    The id is DERIVED here, never typed (migration 226). A URL that is not a
+    Drive folder is a 400 `drive_url_invalida`, never stored.
+    """
+    limpo = (url or "").strip()
+    if not limpo:
+        return None, None
+    m = _DRIVE_PASTA_RE.match(limpo)
+    if not m:
+        raise AppException(
+            code="drive_url_invalida",
+            message="Informe o link de uma PASTA do Google Drive (https://drive.google.com/drive/folders/…).",
+            status_code=400,
+            details={"campo": "drive_folder_url"},
+        )
+    return limpo, m.group("id")
+
+
+def referencias_da_linha(row: Optional[dict]) -> dict:
+    """The three refs as the wire shape, nulls when nothing is stored."""
+    row = row or {}
+    return {campo: row.get(campo) for campo in CAMPOS_REFERENCIAS}
+
+
+def gravar_referencias(
+    client: Any, org_id: UUID, codigo: str, *, valores: dict
+) -> dict:
+    """Partial write of `processo_atual_numero` / `drive_folder_url`
+    (+ derived `drive_folder_id`) for ANY registered imóvel. Absence leaves a
+    field alone; `None`/empty clears it. Returns the wire shape."""
+    ensure_imovel(client, org_id, codigo)
+    recusados = sorted(set(valores) - {"processo_atual_numero", "drive_folder_url"})
+    if recusados:
+        raise ValidationError_(
+            f"Campos não editáveis: {', '.join(recusados)}", field=recusados[0]
+        )
+    patch: dict = {}
+    if "processo_atual_numero" in valores:
+        numero = (valores["processo_atual_numero"] or "").strip()
+        patch["processo_atual_numero"] = numero or None
+    if "drive_folder_url" in valores:
+        # Validated BEFORE any write: a bad link must leave nothing behind.
+        url, pasta = parse_drive_folder_url(valores["drive_folder_url"])
+        patch["drive_folder_url"] = url
+        patch["drive_folder_id"] = pasta
+    atual = linha(client, org_id, codigo)
+    if patch:
+        _gravar(client, org_id, codigo, atual, patch)
+        atual = linha(client, org_id, codigo)
+    return referencias_da_linha(atual)
 
 
 def historico_endereco(client: Any, org_id: UUID, codigo: str) -> list[dict]:

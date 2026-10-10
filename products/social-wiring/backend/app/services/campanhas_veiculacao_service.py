@@ -25,6 +25,7 @@ from uuid import UUID
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
 
+from app.modules.imovel_hub import busca_service
 from app.services.campanhas_service import (
     CampanhaError,
     CampanhasService,
@@ -119,6 +120,17 @@ class CampanhasVeiculacaoService:
             )
         }
         veics = self._veiculacoes(org_id, ids)
+        # A registry row with no `snap_titulo` (an active Vista imóvel, or a
+        # MANUAL one — migration 226) is titled by the canonical resolver.
+        sem_titulo = sorted(
+            r["codigo_canonical"] for r in registry.values() if not r.get("snap_titulo")
+        )
+        titulos = {
+            codigo: (item or {}).get("titulo")
+            for codigo, item in (
+                busca_service.enriquecer(scoped, org_id, sem_titulo) if sem_titulo else {}
+            ).items()
+        }
 
         imoveis_by: dict[str, list[dict]] = {i: [] for i in ids}
         for link in links:
@@ -127,7 +139,12 @@ class CampanhasVeiculacaoService:
                 continue
             codigo = reg.get("codigo_display") or reg["codigo_canonical"]
             imoveis_by[link["campanha_id"]].append(
-                {"codigo": codigo, "titulo": reg.get("snap_titulo") or codigo}
+                {
+                    "codigo": codigo,
+                    "titulo": reg.get("snap_titulo")
+                    or titulos.get(reg["codigo_canonical"])
+                    or codigo,
+                }
             )
         veic_by: dict[str, list[dict]] = {i: [] for i in ids}
         for v in veics:
