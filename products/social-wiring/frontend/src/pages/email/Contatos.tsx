@@ -12,9 +12,11 @@
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { Upload } from "lucide-react";
+import { Sparkles, Upload } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { ResourceManager } from "@noctusai/lib/components";
+import { AIIndicator } from "@noctusai/lib/design-system";
 import { api } from "@/lib/api";
 
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 
 import {
+  useEmAi,
   useEmContactMutations,
   type EmContact,
 } from "@/hooks/useEmailMarketing";
@@ -144,10 +147,109 @@ function ImportDialog() {
   );
 }
 
+interface SegmentRow {
+  ref_id: string;
+  label: string;
+  chip?: string | null;
+}
+
+/** Group persisted per-contact segment rows into `{label → count}` (desc). */
+export function summarizeSegments(
+  rows: SegmentRow[],
+): Array<{ label: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const r of rows) counts.set(r.label, (counts.get(r.label) ?? 0) + 1);
+  return [...counts.entries()]
+    .map(([label, count]) => ({ label, count }))
+    .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
+/** Human message for a failed segmentation call; 403 = consent not granted. */
+export function segmentErrorMessage(err: unknown): string {
+  const status = (err as { status?: number | null })?.status;
+  if (status === 403) {
+    return "Segmentação por IA não autorizada: ative o consentimento “email_marketing.segment_contacts” nas configurações de IA.";
+  }
+  if (status === 429) return "Muitas tentativas — aguarde um minuto.";
+  return err instanceof Error ? err.message : "Erro ao segmentar contatos.";
+}
+
+function SegmentButton() {
+  const qc = useQueryClient();
+  const { segmentContacts } = useEmAi();
+  const result = segmentContacts.data?.data as
+    | { persisted?: SegmentRow[]; segmented?: number }
+    | undefined;
+  const segments = summarizeSegments(result?.persisted ?? []);
+
+  function run() {
+    segmentContacts.mutate(
+      {},
+      {
+        onSuccess: (res) => {
+          const n = (res?.data as { segmented?: number } | undefined)?.segmented ?? 0;
+          qc.invalidateQueries({ queryKey: ["ai_outputs"] });
+          if (n === 0) toast.info("Nenhum contato ativo para segmentar.");
+          else toast.success(`Segmentação concluída — ${n} contato(s) classificados.`);
+        },
+        onError: (err: unknown) =>
+          toast.error("Erro ao segmentar contatos.", {
+            description: segmentErrorMessage(err),
+          }),
+      },
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-end gap-2" data-testid="contatos-segment">
+      <Button
+        variant="outline"
+        onClick={run}
+        disabled={segmentContacts.isPending}
+        data-testid="contatos-segment-run"
+      >
+        <Sparkles className="mr-2 h-4 w-4" />
+        {segmentContacts.isPending ? "Segmentando…" : "Segmentar com IA"}
+      </Button>
+      {segmentContacts.isError && (
+        <p
+          role="alert"
+          className="max-w-md text-right text-sm text-destructive"
+          data-testid="contatos-segment-error"
+        >
+          {segmentErrorMessage(segmentContacts.error)}
+        </p>
+      )}
+      {segmentContacts.isSuccess && segments.length === 0 && (
+        <p className="text-sm text-muted-foreground" data-testid="contatos-segment-empty">
+          Nenhum contato ativo para segmentar.
+        </p>
+      )}
+      {segments.length > 0 && (
+        <ul
+          className="flex flex-wrap justify-end gap-2"
+          data-testid="contatos-segment-summary"
+        >
+          {segments.map((s) => (
+            <li
+              key={s.label}
+              className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs"
+              data-testid="contatos-segment-chip"
+            >
+              {s.label} · {s.count}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 export default function EmailContatos() {
   return (
     <div className="flex flex-col gap-4 p-6" data-testid="email-contatos-page">
-      <div className="flex items-center justify-end">
+      <div className="flex items-start justify-end gap-2">
+        <SegmentButton />
         <ImportDialog />
       </div>
 
@@ -162,6 +264,13 @@ export default function EmailContatos() {
           { key: "email", header: "E-mail" },
           { key: "nome", header: "Nome", render: (r) => r.nome ?? "—" },
           { key: "empresa", header: "Empresa", render: (r) => r.empresa ?? "—" },
+          {
+            key: "segmento",
+            header: "Segmento (IA)",
+            render: (r) => (
+              <AIIndicator refType="contact" refId={r.id} hideIcon />
+            ),
+          },
           {
             key: "status",
             header: "Status",

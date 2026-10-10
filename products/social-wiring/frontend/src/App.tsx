@@ -130,6 +130,7 @@ const EmailListasNoc = lazyWithReload(() => import("@/pages/email/Listas"));
 const EmailTemplatesNoc = lazyWithReload(() => import("@/pages/email/Templates"));
 const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"));
 const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
+const EmailDescadastro = lazyWithReload(() => import("@/pages/email/Descadastro"));
 const Certidoes = lazyWithReload(() => import("@/pages/Certidoes"));
 const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
 const AgentesFinanceiros = lazyWithReload(
@@ -671,6 +672,8 @@ export default createProductApp({
   // posture. The same panel renders as YouTube → Upload → Chat.
   publicRoutes: [
     { path: "/chat", component: Chat },
+    // Public e-mail unsubscribe link target (token-authenticated, no login).
+    { path: "/descadastro/:token", component: EmailDescadastro },
   ],
   Layout,
   ...infra.appConfig,
