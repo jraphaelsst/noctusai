@@ -1762,7 +1762,27 @@ def _post_integrate_tail(primary_root: str, dev_branch: str, remote: str) -> dic
             dev_branch=dev_branch, remote=remote)
     except Exception as e:  # noqa: BLE001
         out["ledger_drain"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+    try:
+        out["worktree_sweep"] = _sweep_merged_worktrees(_resolve_primary_root(primary_root))
+    except Exception as e:  # noqa: BLE001
+        out["worktree_sweep"] = {"ok": False, "error": f"{type(e).__name__}: {e}"}
     return out
+
+
+def _sweep_merged_worktrees(primary_root: str) -> dict[str, Any]:
+    """Reclaim merged worktrees after every integrate, not only at session
+    start (2026-10-10: long-lived sessions dispatching agents for hours piled
+    up 25 merged worktrees between starts). Reuses the SessionStart hook's
+    `sweep` (same flock, same min-age/lock/dirty/mtime guards) by path."""
+    import importlib.util
+    root = Path(primary_root)
+    hook = root / "scripts" / "hooks" / "claude-session-start-worktree-sweep.py"
+    if not hook.exists():
+        return {"ok": False, "skipped": "sweep hook not found", "path": str(hook)}
+    spec = importlib.util.spec_from_file_location("_noc_worktree_sweep", hook)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return {"ok": True, "summary": mod.sweep(root) or "nothing to reclaim"}
 
 
 def _spawn_post_integrate(primary_root: str, dev_branch: str, remote: str) -> dict[str, Any]:

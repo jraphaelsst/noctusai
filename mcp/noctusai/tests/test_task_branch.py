@@ -3456,3 +3456,20 @@ def test_scrub_worktree_dotenvs_converts_only_symlinks(tmp_path):
     assert not (old / ".env").is_symlink() and "hunter2pass" not in (old / ".env").read_text()
     assert (own / ".env").read_text() == "MINE=1\n" and not (fresh / ".env").exists()
     assert T.scrub_worktree_dotenvs(str(primary)) == {"converted": [], "failed": []}  # idempotent
+
+
+def test_post_integrate_sweep_runs_the_session_start_sweep(tmp_path):
+    """2026-10-10: merged worktrees are reclaimed after every integrate, not
+    only at session start — by the SAME hook `sweep` (one implementation)."""
+    from tools.noctus.dev.task_branch import _sweep_merged_worktrees
+    hook = tmp_path / "scripts" / "hooks" / "claude-session-start-worktree-sweep.py"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("def sweep(root):\n    return f'noc: reclaimed 2 merged worktree(s) under {root.name}'\n")
+    res = _sweep_merged_worktrees(str(tmp_path))
+    assert res == {"ok": True, "summary": f"noc: reclaimed 2 merged worktree(s) under {tmp_path.name}"}
+
+
+def test_post_integrate_sweep_reports_a_missing_hook(tmp_path):
+    from tools.noctus.dev.task_branch import _sweep_merged_worktrees
+    res = _sweep_merged_worktrees(str(tmp_path))
+    assert res["ok"] is False and res["skipped"] == "sweep hook not found"
