@@ -68,4 +68,13 @@ describe("ImovelProprietariosCard", () => {
     m.useProprietarios.mockReturnValue({ data: undefined, isPending: false, isFetching: false, isError: true });
     expect(doRender().getByTestId("proprietarios-erro")).toBeTruthy();
   });
+
+  it("labels an owner that comes from the linked cadastro, not one of this código", () => {
+    m.useProprietarios.mockReturnValue(
+      ok([dono("1", { fonte_codigo: "SW-0001" }), dono("2", { fonte_codigo: "ONE9001" })]),
+    );
+    const { getByTestId, queryByTestId } = doRender();
+    expect(getByTestId("proprietario-fonte-1").textContent).toBe("do cadastro SW-0001");
+    expect(queryByTestId("proprietario-fonte-2")).toBeNull();
+  });
 });

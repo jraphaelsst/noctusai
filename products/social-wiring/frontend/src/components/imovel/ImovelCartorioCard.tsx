@@ -23,6 +23,7 @@
  * there (`GET/PUT .../extracoes/{id}/fontes`); a badge that links to the
  * matrícula page is the whole feature, not a placeholder for a bigger one.
  */
+import VinculoLegalMarca from "@/components/imovel/VinculoLegalMarca";
 import { useEffect, useState } from "react";
 import { Landmark, Link2, Loader2, ScrollText } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -203,6 +204,7 @@ export default function ImovelCartorioCard({
       <CardContent className="space-y-4">
         <div className="space-y-1.5">
           <Label htmlFor="numero-matricula">Número da matrícula</Label>
+          <VinculoLegalMarca vinculoLegal={dados?.vinculo_legal} campo="numero_matricula" />
           <Input
             id="numero-matricula"
             value={draft.numero_matricula}
@@ -228,6 +230,7 @@ export default function ImovelCartorioCard({
 
         <div className="space-y-1.5">
           <Label htmlFor="numero-registro">Número do registro de imóveis</Label>
+          <VinculoLegalMarca vinculoLegal={dados?.vinculo_legal} campo="numero_registro_imoveis" />
           <Input
             id="numero-registro"
             value={draft.numero_registro_imoveis}
@@ -252,6 +255,7 @@ export default function ImovelCartorioCard({
               calls this field "Inscrição municipal (cadastro na
               prefeitura)" — this label now matches it. */}
           <Label htmlFor="prefeitura">Inscrição municipal (cadastro na prefeitura)</Label>
+          <VinculoLegalMarca vinculoLegal={dados?.vinculo_legal} campo="prefeitura_cadastro_imobiliario" />
           <Input
             id="prefeitura"
             value={draft.prefeitura_cadastro_imobiliario}
@@ -343,6 +347,7 @@ export default function ImovelCartorioCard({
             policy is still the user's to decide. */}
         <div className="space-y-1.5 border-t pt-4">
           <Label htmlFor="imovel-onus">Situação de ônus</Label>
+          <VinculoLegalMarca vinculoLegal={dados?.vinculo_legal} campo="situacao_onus" />
           <Select
             value={draft.situacao_onus}
             onValueChange={set("situacao_onus")}

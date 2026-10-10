@@ -59,6 +59,8 @@ export interface ItemsTotal<T> {
 /** CONTRACT §4.2 `GET /api/imoveis/{codigo}/proprietarios` item. */
 export interface ProprietarioDoImovel {
   id: string;
+  /** Set after a manual↔Vista link: the código whose record holds this row. */
+  fonte_codigo?: string | null;
   tipo_pessoa: "PF" | "PJ";
   cliente_id: string | null;
   empresa_id: string | null;

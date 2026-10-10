@@ -148,7 +148,7 @@ describe("ImovelDocumentosCard", () => {
     });
     fireEvent.click(screen.getByLabelText(/remover matricula\.pdf/i));
     fireEvent.click(screen.getByTestId("imovel-documento-remover-confirm"));
-    expect(onRemove).toHaveBeenCalledWith("d1", "Removido pelo usuário");
+    expect(onRemove).toHaveBeenCalledWith("d1", "Removido pelo usuário", "AP1234");
   });
 
   it("disables the confirm dialog's actions while a removal is in flight", async () => {
@@ -236,7 +236,7 @@ describe("ImovelDocumentosCard — re-read a finished (or failed) document", () 
       documentos: [doc({ extracao_status: "erro", extracao_erro: "boom" })],
     });
     fireEvent.click(screen.getByTestId("imovel-documento-reextrair-d1"));
-    expect(onReextrair).toHaveBeenCalledWith("d1");
+    expect(onReextrair).toHaveBeenCalledWith("d1", "AP1234");
   });
 
   it("disables + spins ONLY the row whose re-read is in flight", async () => {
@@ -354,5 +354,46 @@ describe("ImovelDocumentosCard — structured read (guia de IPTU / CND de IPTU)"
     });
     expect(screen.getByText("matricula.pdf")).toBeTruthy();
     expect(container.textContent).not.toContain("should-not-render");
+  });
+});
+
+describe("ImovelDocumentosCard — linked imóvel (docs of the manual record)", () => {
+  const linked = doc({ id: "dm", codigo: "SW-0001", fonte_codigo: "SW-0001", nome_original: "manual.pdf" });
+  const proprio = doc({ id: "dv", codigo: "ONE1234", nome_original: "vista.pdf" });
+
+  it("open / re-read / remove use the document's OWN código, never the page's", async () => {
+    const { screen, fireEvent, onOpen, onReextrair, onRemove } = await render({
+      codigo: "ONE1234",
+      documentos: [linked, proprio],
+    });
+    fireEvent.click(screen.getByText("manual.pdf"));
+    expect(onOpen).toHaveBeenLastCalledWith("dm", "SW-0001");
+    fireEvent.click(screen.getByText("vista.pdf"));
+    expect(onOpen).toHaveBeenLastCalledWith("dv", "ONE1234");
+    fireEvent.click(screen.getByTestId("imovel-documento-reextrair-dm"));
+    expect(onReextrair).toHaveBeenLastCalledWith("dm", "SW-0001");
+    fireEvent.click(screen.getByLabelText("Remover manual.pdf"));
+    fireEvent.click(screen.getByTestId("imovel-documento-remover-confirm"));
+    expect(onRemove).toHaveBeenLastCalledWith("dm", expect.any(String), "SW-0001");
+  });
+
+  it("falls back to fonte_codigo, then the page código", async () => {
+    const { screen, fireEvent, onOpen } = await render({
+      codigo: "ONE1234",
+      documentos: [
+        { ...linked, codigo: undefined as unknown as string, nome_original: "a.pdf" },
+        { ...proprio, codigo: undefined as unknown as string, fonte_codigo: null, nome_original: "b.pdf" },
+      ],
+    });
+    fireEvent.click(screen.getByText("a.pdf"));
+    expect(onOpen).toHaveBeenLastCalledWith("dm", "SW-0001");
+    fireEvent.click(screen.getByText("b.pdf"));
+    expect(onOpen).toHaveBeenLastCalledWith("dv", "ONE1234");
+  });
+
+  it("labels only documents from another código", async () => {
+    const { screen } = await render({ codigo: "ONE1234", documentos: [linked, proprio] });
+    expect(screen.getByTestId("imovel-documento-fonte-dm").textContent).toBe("do cadastro SW-0001");
+    expect(screen.queryByTestId("imovel-documento-fonte-dv")).toBeNull();
   });
 });

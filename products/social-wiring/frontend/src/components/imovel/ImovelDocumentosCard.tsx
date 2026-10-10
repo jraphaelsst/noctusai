@@ -68,7 +68,7 @@ import {
 } from "@/components/ui/select";
 
 import type { ImovelDocumento } from "@/hooks/useImovelDados";
-import { TIPOS_DOCUMENTO, formatBytes } from "@/hooks/useImovelDados";
+import { TIPOS_DOCUMENTO, codigoDoDocumento, formatBytes } from "@/hooks/useImovelDados";
 import { CAMPOS_POR_TIPO, RESULTADO_LABEL } from "@/hooks/useImovelContrato";
 import { isValidadeVencida } from "@/types/certidoesEstruturadas";
 import { formatDate } from "@/lib/utils";
@@ -78,6 +78,9 @@ import { formatDate } from "@/lib/utils";
 const MOTIVO_REMOCAO = "Removido pelo usuário";
 
 interface Props {
+  /** The page's código — used for the "do cadastro X" label and as the last
+   *  fallback for a document's own código. */
+  codigo?: string;
   documentos: ImovelDocumento[];
   loading: boolean;
   uploading: boolean;
@@ -87,13 +90,14 @@ interface Props {
   removing?: boolean;
   error?: string | null;
   onUpload: (file: File, tipoDocumento: string) => void;
-  onRemove: (documentoId: string, motivo: string) => void;
-  onOpen: (documentoId: string) => void;
+  /** `codigo` = the document's OWN código (path of the action). */
+  onRemove: (documentoId: string, motivo: string, codigo?: string) => void;
+  onOpen: (documentoId: string, codigo?: string) => void;
   /** Re-queues a finished (`ok`/`sem_dados`) or failed (`erro`) read IN
    *  PLACE — never delete + re-upload, which would destroy this document's
    *  LGPD access history. Optional: a caller that has not wired the
    *  mutation yet simply gets no retry affordance, never a crash. */
-  onReextrair?: (documentoId: string) => void;
+  onReextrair?: (documentoId: string, codigo?: string) => void;
 }
 
 const TIPO_LABEL: Record<string, string> = Object.fromEntries(
@@ -123,6 +127,7 @@ function podeReexecutarLeitura(d: ImovelDocumento): boolean {
 }
 
 export default function ImovelDocumentosCard({
+  codigo: pageCodigo = "",
   documentos,
   loading,
   uploading,
@@ -151,7 +156,11 @@ export default function ImovelDocumentosCard({
 
   function confirmarRemocao() {
     if (!removerAlvo) return;
-    onRemove(removerAlvo.id, MOTIVO_REMOCAO);
+    onRemove(
+      removerAlvo.id,
+      MOTIVO_REMOCAO,
+      codigoDoDocumento(removerAlvo, pageCodigo) || undefined,
+    );
     setRemoverAlvo(null);
   }
 
@@ -226,7 +235,7 @@ export default function ImovelDocumentosCard({
                 <div className="min-w-0 space-y-1">
                   <button
                     type="button"
-                    onClick={() => onOpen(d.id)}
+                    onClick={() => onOpen(d.id, codigoDoDocumento(d, pageCodigo) || undefined)}
                     className="truncate text-sm font-medium hover:underline"
                   >
                     {d.nome_original}
@@ -235,6 +244,14 @@ export default function ImovelDocumentosCard({
                     {TIPO_LABEL[d.tipo_documento] ?? d.tipo_documento} ·{" "}
                     {formatBytes(d.tamanho_bytes)}
                   </p>
+                  {d.fonte_codigo && d.fonte_codigo !== pageCodigo && (
+                    <p
+                      className="text-xs text-sky-800 dark:text-sky-300"
+                      data-testid={`imovel-documento-fonte-${d.id}`}
+                    >
+                      do cadastro {d.fonte_codigo}
+                    </p>
+                  )}
                   <ExtracaoLinha documento={d} />
                   <EstruturaLinha documento={d} />
                 </div>
@@ -250,7 +267,7 @@ export default function ImovelDocumentosCard({
                       title="Ler o documento novamente"
                       data-testid={`imovel-documento-reextrair-${d.id}`}
                       disabled={reextraindo}
-                      onClick={() => onReextrair(d.id)}
+                      onClick={() => onReextrair(d.id, codigoDoDocumento(d, pageCodigo) || undefined)}
                     >
                       <RotateCw
                         className={`h-4 w-4 ${reextraindo ? "animate-spin" : ""}`}

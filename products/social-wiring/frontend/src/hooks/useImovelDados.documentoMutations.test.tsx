@@ -204,4 +204,15 @@ describe("useImovelDocumentoMutations — reextrair", () => {
       expect.objectContaining({ queryKey: DOCUMENTOS_KEY(CODIGO) }),
     );
   });
+
+  it("uses the document's own código in the path when given one (linked imóvel)", async () => {
+    mockPost.mockResolvedValue(makeDoc({ id: "dm" }));
+    const { result } = renderHook(() => useImovelDocumentoMutations(CODIGO), {
+      wrapper: makeWrapper(qc),
+    });
+    await act(async () => {
+      await result.current.reextrair.mutateAsync({ documentoId: "dm", codigo: "SW-0001" });
+    });
+    expect(mockPost).toHaveBeenCalledWith("/api/imoveis/SW-0001/documentos/dm/extrair");
+  });
 });

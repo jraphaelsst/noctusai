@@ -53,8 +53,18 @@ export interface ImovelFonteOnus {
   confirmado_em: string | null;
 }
 
+/** `GET /dados` after a manual↔Vista link (CONTRACT §8.7). `fontes` maps a
+ *  field → the código it was filled from; `conflitos` lists fields in conflict
+ *  (names, or objects carrying `campo`). Both tolerated in either shape. */
+export interface VinculoLegal {
+  manual_codigo: string;
+  fontes?: Record<string, string> | string[] | null;
+  conflitos?: (string | { campo?: string })[] | number | null;
+}
+
 export interface ImovelDados {
   codigo: string;
+  vinculo_legal?: VinculoLegal | null;
   numero_matricula: string | null;
   /** `'manual'` (a human typed it) | `'matricula'` (read off the document). */
   numero_matricula_origem: string | null;
@@ -186,6 +196,9 @@ export type ExtracaoStatus =
 export interface ImovelDocumento {
   id: string;
   codigo: string;
+  /** After a link, the código whose record owns this document (may differ
+   *  from the page's código). */
+  fonte_codigo?: string | null;
   nome_original: string;
   mime_type: string;
   tamanho_bytes: number;
@@ -392,6 +405,24 @@ export function useEnderecoManualMutation(codigo: string) {
   });
 }
 
+/** A document action target: the id alone (page's código) or id + the
+ *  document's OWN código (a linked imóvel lists the manual record's docs). */
+export type DocumentoRef = string | { documentoId: string; codigo?: string | null };
+
+function refParts(ref: DocumentoRef, pageCodigo: string) {
+  return typeof ref === "string"
+    ? { documentoId: ref, codigo: pageCodigo }
+    : { documentoId: ref.documentoId, codigo: ref.codigo || pageCodigo };
+}
+
+/** Which código owns a listed document — never the page's blindly. */
+export function codigoDoDocumento(
+  d: { codigo?: string | null; fonte_codigo?: string | null },
+  pageCodigo: string,
+): string {
+  return d.codigo ?? d.fonte_codigo ?? pageCodigo;
+}
+
 export function useImovelDocumentoMutations(codigo: string) {
   const qc = useQueryClient();
   const invalidate = () => {
@@ -492,21 +523,25 @@ export function useImovelDocumentoMutations(codigo: string) {
     mutationFn: ({
       documentoId,
       motivo,
+      codigo: docCodigo,
     }: {
       documentoId: string;
       motivo: string;
+      codigo?: string | null;
     }) =>
       api.delete(
-        `${base(codigo)}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
+        `${base(docCodigo || codigo)}/documentos/${encodeURIComponent(documentoId)}?motivo=${encodeURIComponent(motivo)}`,
       ),
     onSuccess: invalidate,
   });
 
   const getUrl = useMutation({
-    mutationFn: (documentoId: string) =>
-      api.get<DocumentoUrlResponse>(
-        `${base(codigo)}/documentos/${encodeURIComponent(documentoId)}/url`,
-      ),
+    mutationFn: (ref: DocumentoRef) => {
+      const r = refParts(ref, codigo);
+      return api.get<DocumentoUrlResponse>(
+        `${base(r.codigo)}/documentos/${encodeURIComponent(r.documentoId)}/url`,
+      );
+    },
   });
 
   // Re-queues a finished (`ok`/`sem_dados`) or failed (`erro`) read IN
@@ -514,10 +549,12 @@ export function useImovelDocumentoMutations(codigo: string) {
   // `imovel_documento_acessos` LGPD access history (migration 109/111).
   // Mirrors `useDocumentoMutations().reextrair` (the card_hub Anexos organ).
   const reextrair = useMutation({
-    mutationFn: (documentoId: string) =>
-      api.post<ImovelDocumento>(
-        `${base(codigo)}/documentos/${encodeURIComponent(documentoId)}/extrair`,
-      ),
+    mutationFn: (ref: DocumentoRef) => {
+      const r = refParts(ref, codigo);
+      return api.post<ImovelDocumento>(
+        `${base(r.codigo)}/documentos/${encodeURIComponent(r.documentoId)}/extrair`,
+      );
+    },
     onSuccess: invalidate,
   });
 

@@ -226,3 +226,25 @@ describe("ImovelCartorioCard — em_condominio (migration 202)", () => {
     expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ em_condominio: true }));
   });
 });
+
+describe("ImovelCartorioCard — vinculo_legal markers", () => {
+  it("marks fields filled from the manual record and fields in conflict", async () => {
+    const { screen } = await render({
+      vinculo_legal: {
+        manual_codigo: "SW-0001",
+        fontes: { numero_matricula: "SW-0001" },
+        conflitos: ["numero_registro_imoveis"],
+      },
+    });
+    expect(screen.getByTestId("vinculo-legal-numero_matricula").textContent).toBe("do cadastro manual");
+    const c = screen.getByTestId("vinculo-legal-numero_registro_imoveis");
+    expect(c.textContent).toBe("em conflito — revise");
+    expect(c.getAttribute("href")).toBe("#imovel-conflitos");
+    expect(screen.queryByTestId("vinculo-legal-situacao_onus")).toBeNull();
+  });
+
+  it("no markers without a vínculo", async () => {
+    const { screen } = await render();
+    expect(screen.queryByTestId("vinculo-legal-numero_matricula")).toBeNull();
+  });
+});

@@ -66,6 +66,14 @@ export function ImovelProprietariosCard({ codigo }: { codigo: string }) {
                 ) : (
                   <span className="text-sm font-semibold">{p.nome || "Sem nome"}</span>
                 )}
+                {p.fonte_codigo && p.fonte_codigo !== codigo && (
+                  <span
+                    className="text-xs text-sky-800 dark:text-sky-300"
+                    data-testid={`proprietario-fonte-${p.id}`}
+                  >
+                    do cadastro {p.fonte_codigo}
+                  </span>
+                )}
                 <Badge variant="outline" className="text-[10px]">
                   {p.tipo_pessoa === "PJ" ? "Empresa" : "Pessoa"}
                 </Badge>

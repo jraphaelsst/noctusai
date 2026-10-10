@@ -448,13 +448,16 @@ export default function ImovelDetalhes() {
           />
 
           <ImovelDocumentosCard
+            codigo={codigo}
             documentos={documentosQuery.data ?? []}
             loading={documentosQuery.isPending && !documentosQuery.data}
             uploading={documentoMutations.upload.isPending}
             removing={documentoMutations.remove.isPending}
             reextraindoId={
               documentoMutations.reextrair.isPending
-                ? (documentoMutations.reextrair.variables ?? null)
+                ? (typeof documentoMutations.reextrair.variables === "string"
+                    ? documentoMutations.reextrair.variables
+                    : (documentoMutations.reextrair.variables?.documentoId ?? null))
                 : null
             }
             error={
@@ -466,14 +469,17 @@ export default function ImovelDetalhes() {
             onUpload={(file, tipoDocumento) =>
               documentoMutations.upload.mutate({ file, tipoDocumento })
             }
-            onRemove={(documentoId, motivo) =>
-              documentoMutations.remove.mutate({ documentoId, motivo })
+            onRemove={(documentoId, motivo, docCodigo) =>
+              documentoMutations.remove.mutate({ documentoId, motivo, codigo: docCodigo })
             }
-            onReextrair={(documentoId) =>
-              documentoMutations.reextrair.mutate(documentoId)
+            onReextrair={(documentoId, docCodigo) =>
+              documentoMutations.reextrair.mutate({ documentoId, codigo: docCodigo })
             }
-            onOpen={async (documentoId) => {
-              const res = await documentoMutations.getUrl.mutateAsync(documentoId);
+            onOpen={async (documentoId, docCodigo) => {
+              const res = await documentoMutations.getUrl.mutateAsync({
+                documentoId,
+                codigo: docCodigo,
+              });
               // `noopener` — a signed URL opened into a tab that keeps a
               // handle on this one is a needless cross-window reference.
               if (res?.url) window.open(res.url, "_blank", "noopener,noreferrer");
