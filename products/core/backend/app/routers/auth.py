@@ -18,6 +18,7 @@ from app.database import get_admin_client
 from app.dependencies import get_current_user
 from app.rate_limit import limiter
 from app.services import login_mfa
+from app.schemas.products import PRODUCT_PUBLIC_KEYS as _PUBLIC_PRODUCT_KEYS
 from app.schemas.auth import SignupRequest, LoginRequest, ProfileUpdate, PasswordChange, RefreshRequest
 from noctusai_lib.api.auth import auth_provider_unavailable, is_authoritative_token_rejection
 from noctusai_lib.api.auth.org_selection import make_org_selection_store
@@ -282,8 +283,11 @@ async def get_me(authorization: Optional[str] = Header(None)):
                 product.get("slug"), exc,
             )
             resolved_url = product.get("url_base") or ""
+        # RESPONSE is the public allowlist only; the wide row above exists solely
+        # so customer_may_access_product can read `aceita_clientes`. Operational
+        # columns (house_port, sso_callback_verified_at, db_schema, ...) never leave.
         products_with_access.append({
-            **product,
+            **{k: product[k] for k in _PUBLIC_PRODUCT_KEYS if k in product},
             "url_base": resolved_url,
             # SEC-2: a customer (CUSTOMER_ORG_ROLES) only reaches products
             # whose catalog row declares `aceita_clientes` — the switcher

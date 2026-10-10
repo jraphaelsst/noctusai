@@ -21,6 +21,9 @@ PRODUCT_PUBLIC_COLUMNS = (
     "logout_behavior, created_at"
 )
 
+#: Same allowlist as a key tuple (for shaping rows already read wide).
+PRODUCT_PUBLIC_KEYS = tuple(c.strip() for c in PRODUCT_PUBLIC_COLUMNS.split(","))
+
 
 class ProductCreate(StrictHttpModel):
     nome: str

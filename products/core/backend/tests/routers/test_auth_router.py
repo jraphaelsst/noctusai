@@ -183,6 +183,32 @@ class TestGetMe:
         # pinned as a regression guard.
         assert data["user"]["role"] == "admin"
 
+    def test_get_me_products_omit_operational_columns(self, client):
+        """Non-admin /me products carry the public allowlist + has_access only.
+        aceita_clientes is read internally (customer gate) but the FE never
+        reads it, so it is not echoed."""
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123", "email": "test@example.com", "nome": "T",
+            "org_id": "org-1", "role": "user", "org_role": "member",
+        })
+        mock_sb.set_table_data("organizations", {"id": "org-1", "nome": "Test Corp"})
+        mock_sb.set_table_data("licenses", [])
+        mock_sb.set_table_data("products", [{
+            "id": "prod-1", "nome": "ERP", "slug": "erp", "descricao": "d", "icone": "Building2",
+            "url_base": "https://erp.noctusai.com", "cor": "#111", "ativo": True,
+            "deploy_scope": "live", "logout_behavior": "redirect", "created_at": "2026-01-01",
+            "house_port": 8001, "sso_callback_verified_at": "2026-10-01T00:00:00Z",
+            "db_schema": "erp", "aceita_clientes": False,
+        }])
+        prods = client.get("/api/auth/me").json()["products"]
+        assert len(prods) == 1
+        for k in ("house_port", "sso_callback_verified_at", "db_schema", "aceita_clientes"):
+            assert k not in prods[0]
+        for k in ("id", "nome", "slug", "descricao", "icone", "url_base", "cor",
+                  "ativo", "deploy_scope", "has_access"):
+            assert k in prods[0]
+
     def test_get_me_profile_not_found(self, client):
         mock_sb = client.mock_supabase
         mock_sb.set_table_data("noctus_users", None)
