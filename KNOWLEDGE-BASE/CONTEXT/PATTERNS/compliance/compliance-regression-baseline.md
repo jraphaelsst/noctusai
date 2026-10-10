@@ -154,3 +154,7 @@ When `compliance.py` is in a diff, `gate_sweep` now schedules two seconds-scale 
 The full `test_all_products_compliant` still runs in CI and the full toolkit suite. `keeper_delta` is the early, budget-fitting proof, not a replacement.
 
 Related: a non-`.py` file under `mcp/noctusai/tests/` (a fixture or a baseline .json) now maps to the test files that name it. It no longer forces the full toolkit suite, which was what pushed that integrate into its timeout.
+
+## 2026-10-10 — environment-state keepers are excluded by construction
+
+`test_all_products_compliant[<platform-global>]` flapped (red ~2 of 4 runs, identical trees): a cache-freshness keeper reported `<name> cache missing` (machine-local keeper-mirror cache, present or not depending on what peer sessions had refreshed), a text variant the `"cache STALE"` substring exclusion did not cover. Root fix, not another substring: keepers whose verdict is machine/shared-git/date/cache state (`*_cache_freshness`, `check_git_leftovers`, `check_branch_orphan`, `check_archive_staleness`, `check_dispatcher_staleness`, `check_prod_cache_reachable`) are wrapped in `@env_state_keeper`, which stamps `"env_state": True` on every issue; `is_env_artifact_issue` (baseline helper, used by the gate and the regenerator) honours it. A new machine-state keeper gets the decorator, never a new text entry. The keepers behave unchanged for CLI / pre-commit / `validate`.

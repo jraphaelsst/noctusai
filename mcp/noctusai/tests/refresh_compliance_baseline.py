@@ -102,6 +102,13 @@ def is_env_artifact(issue_text: str) -> bool:
     return False
 
 
+def is_env_artifact_issue(issue: dict) -> bool:
+    """Issue-level env-artifact test: the structured ``env_state`` flag a keeper sets
+    BY CONSTRUCTION (``compliance.env_state_keeper`` -- machine/shared-git/date/cache
+    state, not a property of the code), OR the legacy text classes above."""
+    return bool(issue.get("env_state")) or is_env_artifact(issue.get("issue", ""))
+
+
 def fingerprint(issue: dict) -> str:
     """Stable, line-churn-robust identity for one high/critical issue."""
     txt = issue.get("issue", "")
@@ -122,7 +129,7 @@ def live_high_critical_fingerprints() -> tuple[int, list[str]]:
         i
         for i in issues
         if i.get("severity") in ("high", "critical")
-        and not is_env_artifact(i.get("issue", ""))
+        and not is_env_artifact_issue(i)
     ]
     return score, sorted({fingerprint(i) for i in hc})
 

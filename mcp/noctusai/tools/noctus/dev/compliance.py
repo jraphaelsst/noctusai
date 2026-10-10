@@ -49,6 +49,33 @@ logger = logging.getLogger(__name__)
 from settings import REPO_ROOT, PRODUCTS_DIR  # noqa: E402  (path constants)
 
 
+def env_state_keeper(fn):
+    """Mark a keeper whose verdict is MACHINE/ENVIRONMENT state, not a property of the code.
+
+    Every issue the wrapped keeper returns gets ``"env_state": True``. The
+    compliance regression baseline (``tests/refresh_compliance_baseline.py``)
+    excludes those issues BY CONSTRUCTION -- a structured field, not a text
+    substring -- so the platform-global gate cannot flap on shared git state
+    (worktrees, branches), the date, or the per-machine keeper-mirror caches
+    that peer sessions mutate concurrently. The keeper itself is unchanged for
+    its own CLI / pre-commit / ``validate`` use (2026-10-10; root cause of the
+    flaky ``test_all_products_compliant[<platform-global>]``: a cache-freshness
+    keeper reporting ``cache missing`` -- a text variant the old
+    ``cache STALE`` substring exclusion did not cover).
+    """
+    import functools
+
+    @functools.wraps(fn)
+    def _wrapped(*args, **kwargs):
+        issues = fn(*args, **kwargs)
+        for issue in issues:
+            if isinstance(issue, dict):
+                issue["env_state"] = True
+        return issues
+
+    return _wrapped
+
+
 def _active_product_dirs(products_dir: Path) -> list[Path]:
     """Product directories to actually CHECK — active only, sorted.
 
@@ -3463,6 +3490,7 @@ def _parse_iso_date(s: str):
         return None
 
 
+@env_state_keeper
 def check_archive_staleness(repo_root: Path | None = None) -> list[dict]:
     """Detect date-stamped folders under `archive/<bucket>/YYYY-MM-DD/` that
     are older than D-2 (D = today, D-1 = yesterday).
@@ -3646,6 +3674,7 @@ def check_codification_debt(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+@env_state_keeper
 def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
     """Detect entries in `.claude/dispatcher.md` `## Pending` section that
     were appended >24h ago and never moved to `## Completed`.
@@ -3716,6 +3745,7 @@ def check_dispatcher_staleness(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+@env_state_keeper
 def check_branch_orphan(repo_root: Path | None = None) -> list[dict]:
     """Detect local branches whose last commit is >30 days old AND that
     are either merged to `origin/main` or otherwise abandonable.
@@ -17366,6 +17396,7 @@ def check_agent_kb_alignment(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+@env_state_keeper
 def check_git_leftovers(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26, drift-fix-on-contact): scan for the git-shape
     drift class that recurred despite existing keepers (check_branch_orphan /
@@ -17487,6 +17518,7 @@ def _cache_label(cache: Path, root: Path) -> str:
         return str(cache)
 
 
+@env_state_keeper
 def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26): the local keeper-pattern cache MUST mirror
     `compliance.py` — the user mandate is *"the memory should always be the
@@ -17558,6 +17590,7 @@ def check_keeper_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+@env_state_keeper
 def check_agent_context_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26, Phase B): the agent-context cache MUST mirror
     each agent's `bundle_sha = sha256(agent.md ∪ each owned_kb)`. Sibling of
@@ -17831,6 +17864,7 @@ def check_kb_vector_canonical(repo_root: Path | None = None) -> list[dict]:
     return issues
 
 
+@env_state_keeper
 def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26, W2-E3'): the code-embeddings cache MUST
     mirror each source file's `sha256(file)`. Fifth member of the keeper-mirror
@@ -17923,6 +17957,7 @@ def check_code_embeddings_cache_freshness(repo_root: Path | None = None) -> list
     return issues
 
 
+@env_state_keeper
 def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-27, hardened 2026-05-28 in the 7→8-way
     promotion): the noc-graph cache MUST mirror the aggregate sha of
@@ -18012,6 +18047,7 @@ def check_noc_graph_cache_freshness(repo_root: Path | None = None) -> list[dict]
     return issues
 
 
+@env_state_keeper
 def check_absorptions_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-06-02): the absorptions cache MUST mirror
     `project-history/absorptions.ndjson`. 9th member of the keeper-mirror
@@ -18487,6 +18523,7 @@ def check_commands_listed_in_router(repo_root: Path | None = None) -> list[dict]
     return issues
 
 
+@env_state_keeper
 def check_all_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 composition keeper (2026-05-28, 7→8-way promotion):
     every keeper-mirror cache under `.claude/cache/` MUST be structurally
@@ -18830,6 +18867,7 @@ def check_embed_funnel_self_configures(repo_root: Path | None = None) -> list[di
     return issues
 
 
+@env_state_keeper
 def check_kb_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-28, 7→8-way promotion): the kb-embeddings
     cache (`.claude/cache/kb-embeddings.sqlite`) MUST have per-doc
@@ -18858,6 +18896,7 @@ def check_kb_embeddings_cache_freshness(repo_root: Path | None = None) -> list[d
         }]
 
 
+@env_state_keeper
 def check_corpus_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-28, 7→8-way promotion): the corpus-embeddings
     cache (`.claude/cache/corpus-embeddings.sqlite`) MUST mirror the
@@ -18919,6 +18958,7 @@ def check_corpus_embeddings_cache_freshness(repo_root: Path | None = None) -> li
     return issues
 
 
+@env_state_keeper
 def check_memory_embeddings_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-28, 7→8-way promotion): the memory-embeddings
     cache (`.claude/cache/memory-embeddings.sqlite`) MUST mirror the
@@ -19322,6 +19362,7 @@ def _contextualize_freshness_issues(
     return issues
 
 
+@env_state_keeper
 def check_auto_improvement_cache_freshness(repo_root: Path | None = None) -> list[dict]:
     """Stage-4 keeper (2026-05-26, Phase B): the auto-improvement cache MUST
     mirror `project-history/auto-improvement.ndjson`. Third member of the
@@ -19710,6 +19751,7 @@ def check_project_has_dispatch_routing(repo_root: Path | None = None) -> list[di
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+@env_state_keeper
 def check_prod_cache_reachable(repo_root: Path | None = None) -> list[dict]:
     """Verify the configured cache backend is reachable.
 

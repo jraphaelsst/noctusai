@@ -69,6 +69,7 @@ _rcb_spec.loader.exec_module(_rcb)
 _BASELINE_PATH = _rcb.BASELINE_PATH
 fingerprint = _rcb.fingerprint
 is_env_artifact = _rcb.is_env_artifact
+is_env_artifact_issue = _rcb.is_env_artifact_issue
 live_high_critical_fingerprints = _rcb.live_high_critical_fingerprints
 
 
@@ -171,6 +172,46 @@ class TestEnvArtifactExclusion:
             "matches (method=GET, normalized=/api/subscriptions)."
         )
         assert not is_env_artifact(real), real
+
+    def test_structured_env_state_flag_excluded(self):
+        """A keeper-set ``env_state`` flag excludes an issue BY CONSTRUCTION, whatever
+        its text -- the text-variant gap ("cache missing" vs "cache STALE") that made
+        ``test_all_products_compliant[<platform-global>]`` flap (2026-10-10)."""
+        text = "keeper-pattern cache missing — run `--refresh-keeper-cache`"
+        assert not is_env_artifact(text)  # text classes alone do NOT cover it
+        assert is_env_artifact_issue({"issue": text, "env_state": True})
+        assert not is_env_artifact_issue({"issue": text})
+        assert not is_env_artifact_issue({"issue": text, "env_state": False})
+
+    def test_env_state_keeper_decorator_tags_every_issue(self):
+        from tools.noctus.dev.compliance import env_state_keeper
+
+        @env_state_keeper
+        def synthetic(n):
+            return [{"issue": f"i{k}", "severity": "high"} for k in range(n)]
+
+        out = synthetic(3)
+        assert len(out) == 3 and all(i["env_state"] is True for i in out)
+        assert synthetic(0) == []
+
+    def test_machine_state_keepers_are_tagged(self):
+        """Every keeper whose verdict is shared-git / date / machine-cache state is
+        wrapped (``functools.wraps`` => ``__wrapped__``), so the global gate is
+        hermetic against what peer sessions mutate."""
+        import tools.noctus.dev.compliance as c
+        import inspect
+        names = [
+            n for n, f in inspect.getmembers(c, inspect.isfunction)
+            if n.startswith("check_") and (
+                n.endswith("cache_freshness")
+                or n in {"check_git_leftovers", "check_branch_orphan",
+                         "check_archive_staleness", "check_dispatcher_staleness",
+                         "check_prod_cache_reachable"}
+            )
+        ]
+        assert len(names) >= 13, names
+        untagged = [n for n in names if not hasattr(getattr(c, n), "__wrapped__")]
+        assert untagged == [], untagged
 
     def test_seed_stamp_not_in_committed_baseline(self):
         """Belt-and-suspenders: no `_version_static.py` fingerprint leaked into
@@ -533,7 +574,7 @@ class TestAIFeatureCompleteness:
         live_fps = sorted({
             fingerprint(i) for i in issues
             if i.get("severity") in ("high", "critical")
-            and not is_env_artifact(i.get("issue", ""))
+            and not is_env_artifact_issue(i)
         })
         baseline = _load_baseline_fingerprints()
         new_high_critical = sorted(set(live_fps) - baseline)
