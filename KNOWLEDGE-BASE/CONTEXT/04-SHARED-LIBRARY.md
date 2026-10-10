@@ -112,7 +112,7 @@ Keeper `check_private_accent_fold` (pre-commit, blocking): no `unicodedata.norma
 
 ### `security/` — Webhook signatures + (future) secret-redaction
 
-Top-level seed-lib layer for cross-product security primitives. Today it ships `webhook_signatures` (every inbound webhook in the monorepo verifies through this module). Future redaction / scrubbing helpers land here too.
+Top-level seed-lib layer for cross-product security primitives. Today it ships `webhook_signatures` (every inbound webhook in the monorepo verifies through this module) and `signed_tokens` (2026-10-10: purpose-bound HMAC tokens for public links — unsubscribe, email confirmation, click tracking. `sign(purpose, payload, secret, ttl_seconds=)` / `verify(purpose, token, secret) -> payload | None`. The purpose is inside the MAC, so a token never crosses purposes, and a signed redirect target cannot be edited: no open redirect. An empty secret refuses to sign). Future redaction / scrubbing helpers land here too.
 
 | Symbol | Purpose |
 |---|---|
@@ -252,7 +252,13 @@ The `email_templates.py` flat module became a sub-package on 2026-04-25 (ai-expa
 | `EmailError` / `EmailNotConfigured` / `EmailSendError` | Typed errors — `EmailNotConfigured` at construction (missing creds), `EmailSendError` at send time (SMTP auth/transport/recipient failure). |
 | `FakeEmailSender()` | Deterministic in-memory double; `.sent` list; monotonic `<fake-N@fake.noctus.test>` ids. |
 | `SmtpEmailSender(config: SmtpConfig)` | Stdlib `smtplib`; SSL and STARTTLS; builds attachments via `EmailMessage.add_attachment`; generates a proper `Message-ID` from the sender's domain via `email.utils.make_msgid` when the caller doesn't supply one — the id the reply watcher threads on. Bcc is addressed via the SMTP envelope only, never as a header (would otherwise leak the blind-copy to every other recipient). |
-| `make_email_sender(config: SmtpConfig \| None = None)` | Factory — `None` → `FakeEmailSender`, a config → `SmtpEmailSender`. |
+| `ResendEmailSender(config: ResendConfig)` | Real sender over Resend's HTTP API (2026-10-10). It has the same raise-on-failure contract and returns Resend's id as `message_id`. `ResendConfig(api_key, from_email, from_name)` refuses an incomplete config. |
+| `make_email_sender(config: SmtpConfig \| ResendConfig \| None = None)` | Factory: `None` → `FakeEmailSender`, `SmtpConfig` → `SmtpEmailSender`, `ResendConfig` → `ResendEmailSender`. |
+
+**`integrations/resend/domains`** (2026-10-10) handles sender-domain verification over the Resend Domains API.
+- The `ResendDomains` Protocol has `create(name)` (returns the SPF/DKIM/DMARC records to publish), `get(id)` and `verify(id)`.
+- `FakeResendDomains(verifiable=...)` and `HttpResendDomains(api_key)` implement it.
+- `make_resend_domains(api_key, use_fake=False)`: no key raises `ResendNotConfigured` (callers answer 503). A Fake is never returned implicitly.
 | `send_test(sender, *, to, subject="Teste de envio", from_label="NoctusAI")` | "Testar envio" button's zero-effort default — composes a minimal `OutgoingEmail` and sends it through whichever sender the caller already picked. |
 
 **Pilot consumer:** social-wiring's `products/social-wiring/backend/app/services/email_service.py` — `EmailService` is now a thin shim (unchanged public API/exceptions; SW is live in prod) that builds an `SmtpConfig(security="ssl", ...)` (matching its always-`SMTP_SSL` prior behaviour exactly) and delegates to `SmtpEmailSender`.

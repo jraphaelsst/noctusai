@@ -6,12 +6,13 @@ from typing import Optional, Union
 
 from .config import SmtpConfig
 from .fake_adapter import FakeEmailSender
+from .resend_adapter import ResendConfig, ResendEmailSender
 from .smtp_adapter import SmtpEmailSender
 
 
 def make_email_sender(
-    config: Optional[SmtpConfig] = None,
-) -> Union[SmtpEmailSender, FakeEmailSender]:
+    config: Optional[Union[SmtpConfig, ResendConfig]] = None,
+) -> Union[SmtpEmailSender, ResendEmailSender, FakeEmailSender]:
     """Build an `EmailSender`.
 
     `config=None` (no SMTP credentials resolved for this org/platform)
@@ -19,10 +20,13 @@ def make_email_sender(
     state, mirroring `make_olx_lead_manager_client`'s leniency contract:
     a tenant that hasn't set up email yet must not stop the host app
     from starting or the caller from exercising the send path in tests.
-    A `config` present returns the Real SMTP sender.
+    A `SmtpConfig` returns the Real SMTP sender; a `ResendConfig` the Real
+    Resend sender (2026-10-10).
     """
     if config is None:
         return FakeEmailSender()
+    if isinstance(config, ResendConfig):
+        return ResendEmailSender(config)
     return SmtpEmailSender(config)
 
 

@@ -34,6 +34,7 @@ from .config import SmtpConfig
 from .errors import EmailError, EmailNotConfigured, EmailSendError
 from .fake_adapter import FakeEmailSender
 from .smtp_adapter import SmtpEmailSender
+from .resend_adapter import ResendConfig, ResendEmailSender
 from .factory import make_email_sender
 from .convenience import send_test
 
@@ -54,6 +55,8 @@ __all__ = [
     "EmailSendError",
     "FakeEmailSender",
     "SmtpEmailSender",
+    "ResendConfig",
+    "ResendEmailSender",
     "make_email_sender",
     "send_test",
 ]
