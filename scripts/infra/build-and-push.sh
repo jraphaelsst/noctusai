@@ -216,6 +216,26 @@ build_product() {
     --label "org.opencontainers.image.revision=${GIT_SHA}" \
     "$@" \
     .
+  boot_smoke "$slug" "$image"
+}
+
+# ── boot smoke: the image must import its app + answer /api/health ─────
+# Runs INSIDE the freshly built image, BEFORE the push section below, so an
+# image that cannot boot never reaches GHCR (`set -e` aborts the whole run).
+# 2026-10-10: core crash-looped in prod on a dep (python-multipart) its own
+# requirements.txt lacked — every venv-based gate passed because the shared
+# venv carries it transitively. `--network none`: no service is reachable, so
+# the check stays about the image's own deps (lifespan hooks are the deploy
+# health probe's job). Payload: scripts/infra/image_boot_smoke.py.
+boot_smoke() {
+  local slug="$1" image="$2"
+  echo "[fleet] boot smoke ${image}"
+  if ! docker run --rm -i --network none --entrypoint python \
+      -w "/app/products/${slug}/backend" "${image}" - \
+      < "$REPO_ROOT/scripts/infra/image_boot_smoke.py"; then
+    echo "ERROR: ${image} failed the boot smoke — NOT pushing. Most often a runtime dep missing from products/${slug}/backend/requirements.txt (the shared venv hides it)." >&2
+    exit 1
+  fi
 }
 
 if want core; then

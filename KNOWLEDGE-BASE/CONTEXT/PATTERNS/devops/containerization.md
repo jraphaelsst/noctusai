@@ -928,3 +928,13 @@ The rebuild repoints all three bind mounts (`/app/seed`, `/app/products/<slug>/b
 > in-line on purpose — **do not** point at `projects/` or `archive/`
 > folders for it; they are not persisted long-term (see the durable-doc
 > rule in `KB § 01-PHILOSOPHY.md`).
+
+## Image boot smoke before push (2026-10-10)
+
+`scripts/infra/build-and-push.sh` runs `scripts/infra/image_boot_smoke.py` INSIDE every freshly built product image, before the push section.
+
+- **How it runs:** `docker run --network none --entrypoint python -w /app/products/<slug>/backend <image> - < payload`.
+- **What it checks:** the image must import `app.main` and answer `GET /api/health` with 200. The lifespan is deliberately not run: startup hooks need Redis/Supabase, and the deploy health probe owns those.
+- **On failure:** the run aborts, so a broken image never reaches GHCR.
+
+Why: the core image crash-looped in prod. `routers/transcriptions.py` used `Form`/`File`, and core's own requirements.txt lacked `python-multipart`; FastAPI raises while registering such a route, i.e. at import. pytest, predeploy and CI all passed, because they run in the shared venv, which carries the package transitively. Only the image's own dependency set lacked it, so only a check inside the image can see it. Any venv-based gate is blind to this class by construction.
