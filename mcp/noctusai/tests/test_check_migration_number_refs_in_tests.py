@@ -29,50 +29,54 @@ def _awake(monkeypatch):
 T = "products/p/backend/tests/test_x.py"
 
 
-def test_flags_number_literal(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: 'F = "217_thing.sql"\n'})
-    issues = c.check_migration_number_refs_in_tests(root)
-    assert len(issues) == 1 and issues[0]["severity"] == "high" and issues[0]["file"] == T
-
-
-def test_flags_path_form(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: 'p = "migrations/217_"\n'})
-    assert len(c.check_migration_number_refs_in_tests(root)) == 1
-
-
-def test_suffix_helper_usage_is_clean(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: 'sql = migration_sql(root, "thing")  # 12 migrations\n'})
-    assert c.check_migration_number_refs_in_tests(root) == []
-
-
-def test_baseline_tolerates_then_blocks_growth(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: '"217_a.sql"\n'}, baseline={T: 1})
-    assert c.check_migration_number_refs_in_tests(root) == []
-    (root / T).write_text('"217_a.sql"\n"218_b.sql"\n')
-    assert len(c.check_migration_number_refs_in_tests(root)) == 1
-
-
-def test_new_file_blocks_even_with_baseline(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: '"217_a.sql"\n', "products/p/backend/tests/test_new.py": '"300_n.sql"'}, baseline={T: 1})
-    issues = c.check_migration_number_refs_in_tests(root)
-    assert [i["file"] for i in issues] == ["products/p/backend/tests/test_new.py"]
-
-
-def test_paths_narrow_reporting(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: '"217_a.sql"'})
-    assert c.check_migration_number_refs_in_tests(root, paths=["other.py"]) == []
-
-
-def test_refresh_only_shrinks(tmp_path, monkeypatch):
-    _awake(monkeypatch)
-    root = _tree(tmp_path, {T: '"217_a.sql"\n"218_b.sql"\n', "products/p/backend/tests/test_y.py": '"1_x.sql" "400_y.sql"'})
-    assert c.refresh_migration_number_refs_baseline(root) == {T: 2, "products/p/backend/tests/test_y.py": 1}
-    (root / T).write_text('"217_a.sql"\n')
-    (root / "products/p/backend/tests/test_z.py").write_text('"500_z.sql"')
-    assert c.refresh_migration_number_refs_baseline(root) == {T: 1, "products/p/backend/tests/test_y.py": 1}
+class TestCheckMigrationNumberRefsInTests:
+    """Pins the keeper's true/false-positive shapes and the ratchet (registered for check_detector_has_regression_test)."""
+    
+    
+    def test_flags_number_literal(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: 'F = "217_thing.sql"\n'})
+        issues = c.check_migration_number_refs_in_tests(root)
+        assert len(issues) == 1 and issues[0]["severity"] == "high" and issues[0]["file"] == T
+    
+    
+    def test_flags_path_form(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: 'p = "migrations/217_"\n'})
+        assert len(c.check_migration_number_refs_in_tests(root)) == 1
+    
+    
+    def test_suffix_helper_usage_is_clean(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: 'sql = migration_sql(root, "thing")  # 12 migrations\n'})
+        assert c.check_migration_number_refs_in_tests(root) == []
+    
+    
+    def test_baseline_tolerates_then_blocks_growth(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: '"217_a.sql"\n'}, baseline={T: 1})
+        assert c.check_migration_number_refs_in_tests(root) == []
+        (root / T).write_text('"217_a.sql"\n"218_b.sql"\n')
+        assert len(c.check_migration_number_refs_in_tests(root)) == 1
+    
+    
+    def test_new_file_blocks_even_with_baseline(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: '"217_a.sql"\n', "products/p/backend/tests/test_new.py": '"300_n.sql"'}, baseline={T: 1})
+        issues = c.check_migration_number_refs_in_tests(root)
+        assert [i["file"] for i in issues] == ["products/p/backend/tests/test_new.py"]
+    
+    
+    def test_paths_narrow_reporting(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: '"217_a.sql"'})
+        assert c.check_migration_number_refs_in_tests(root, paths=["other.py"]) == []
+    
+    
+    def test_refresh_only_shrinks(self, tmp_path, monkeypatch):
+        _awake(monkeypatch)
+        root = _tree(tmp_path, {T: '"217_a.sql"\n"218_b.sql"\n', "products/p/backend/tests/test_y.py": '"1_x.sql" "400_y.sql"'})
+        assert c.refresh_migration_number_refs_baseline(root) == {T: 2, "products/p/backend/tests/test_y.py": 1}
+        (root / T).write_text('"217_a.sql"\n')
+        (root / "products/p/backend/tests/test_z.py").write_text('"500_z.sql"')
+        assert c.refresh_migration_number_refs_baseline(root) == {T: 1, "products/p/backend/tests/test_y.py": 1}
