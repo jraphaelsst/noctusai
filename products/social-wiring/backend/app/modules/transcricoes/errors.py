@@ -30,6 +30,10 @@ CODIGOS: dict[str, tuple[int, str]] = {
     "em_processamento": (409, "A transcrição já está em processamento e não pode ser cancelada."),
     "nao_cancelavel": (409, "Esta transcrição já foi finalizada."),
     "tempo_esgotado": (422, "A transcrição demorou demais e foi cancelada. Tente novamente."),
+    "reel_longo": (422, "O vídeo excede a duração máxima para transcrição da biblioteca."),
+    "fila_biblioteca_cheia": (503, "A fila de transcrição da biblioteca está cheia. Tente novamente em alguns minutos."),
+    "cota_diaria_biblioteca_org": (429, "Sua organização atingiu o limite diário de transcrição da biblioteca."),
+    "capacidade_diaria_biblioteca": (503, "A capacidade diária de transcrição da biblioteca foi atingida."),
     "audio_ausente": (422, "O áudio desta gravação não está mais disponível."),
 }
 

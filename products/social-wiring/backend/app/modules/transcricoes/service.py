@@ -35,7 +35,11 @@ logger = logging.getLogger(__name__)
 
 TABLE = "transcricoes"
 RPC_RESERVAR = "reservar_transcricao"
+RPC_RESERVAR_BIBLIOTECA = "reservar_transcricao_biblioteca"
 JOB_TYPE = "transcricao"
+#: The library lane (geracao-contract 3.4): its own job type, claimed by its own worker.
+JOB_TYPE_BIBLIOTECA = "transcricao.biblioteca"
+CONTEXTO_BIBLIOTECA = "biblioteca_viral"
 IN_FLIGHT = ("na_fila", "processando")
 COLS = (
     "id,org_id,user_id,contexto_tipo,contexto_ref,storage_path,bytes,duracao_s,formato,status,texto,"
@@ -241,22 +245,7 @@ class TranscricaoService:
         path = _storage_key(self.org_id, self.user_id, transcricao_id, container)
         row = self._reservar(transcricao_id, probe.duracao_s, len(data), container, contexto_tipo, contexto_ref, path)
         # 5. store + enqueue; any failure releases the reservation
-        try:
-            await self.storage.put(
-                bucket=BUCKET, key=path, data=data, content_type=_CONTENT_TYPES.get(container, "application/octet-stream")
-            )
-            await self.jobs.enqueue(
-                type=JOB_TYPE, payload={"transcricao_id": transcricao_id},
-                max_retries=JOB_MAX_RETRIES, dedupe_key=f"{JOB_TYPE}:{transcricao_id}",
-            )
-        except Exception:
-            logger.error("transcricoes: store/enqueue failed id=%s; releasing the reservation", transcricao_id, exc_info=True)
-            marcar_falha(self.db, transcricao_id, "transcricao_indisponivel", reembolsar=True)
-            try:
-                await self.storage.delete(bucket=BUCKET, key=path)
-            except Exception:  # noqa: BLE001 - the sweep deletes a failed row's audio
-                logger.warning("transcricoes: cleanup delete failed id=%s", transcricao_id, exc_info=True)
-            raise TranscricaoErro("transcricao_indisponivel") from None
+        await self._armazenar_e_enfileirar(JOB_TYPE, transcricao_id, path, data, container)
         posicao, estimativa = posicao_e_estimativa(fila_snapshot(self.db), row["id"])
         logger.info(
             "transcricao.enfileirada id=%s org=%s user=%s bytes=%s duracao_s=%s posicao=%s",
@@ -266,6 +255,65 @@ class TranscricaoService:
             "id": row["id"], "status": "na_fila", "posicao": posicao or 1,
             "estimativa_s": estimativa or int(round(probe.duracao_s * ETA_RTF)),
             "duracao_s": float(probe.duracao_s),
+        }
+
+    async def _armazenar_e_enfileirar(
+        self, job_type: str, transcricao_id: str, path: str, data: bytes, container: str
+    ) -> None:
+        """Store the audio and enqueue ``job_type``; any failure releases the reservation."""
+        try:
+            await self.storage.put(
+                bucket=BUCKET, key=path, data=data, content_type=_CONTENT_TYPES.get(container, "application/octet-stream")
+            )
+            await self.jobs.enqueue(
+                type=job_type, payload={"transcricao_id": transcricao_id},
+                max_retries=JOB_MAX_RETRIES, dedupe_key=f"{job_type}:{transcricao_id}",
+            )
+        except Exception:
+            logger.error("transcricoes: store/enqueue failed id=%s; releasing the reservation", transcricao_id, exc_info=True)
+            marcar_falha(self.db, transcricao_id, "transcricao_indisponivel", reembolsar=True)
+            try:
+                await self.storage.delete(bucket=BUCKET, key=path)
+            except Exception:  # noqa: BLE001 - the sweep deletes a failed row's audio
+                logger.warning("transcricoes: cleanup delete failed id=%s", transcricao_id, exc_info=True)
+            raise TranscricaoErro("transcricao_indisponivel") from None
+
+    async def submit_sistema(self, data: bytes, contexto_ref: str, *, user_id: str) -> dict[str, Any]:
+        """Library lane (geracao-contract 3.4): a SYSTEM-originated transcription (a viral
+        reel), charged to its own budget (``reservar_transcricao_biblioteca``) and queued as
+        ``transcricao.biblioteca``. Same validation order as :meth:`submit`
+        (size -> magic bytes -> hook ``validar`` -> probe). No kill-switch check here: the
+        library worker's claim gate holds the job while the feature is off."""
+        user_id = str(user_id)
+        if len(data) > self.limits.max_bytes:
+            raise TranscricaoErro("arquivo_grande")
+        if check_format(data, self.limits):
+            raise TranscricaoErro("formato_invalido")
+        container = sniff_container(data)
+        handler = hooks.get_contexto(CONTEXTO_BIBLIOTECA)
+        if handler is None:
+            raise TranscricaoErro("contexto_invalido")
+        handler.validar(self.db, self.org_id, user_id, contexto_ref)
+        probe = await self._probe(data)
+        codigo = check_probe(probe, self.limits)
+        if codigo:
+            raise TranscricaoErro(codigo, status=422)
+        transcricao_id = str(uuid.uuid4())
+        path = _storage_key(self.org_id, user_id, transcricao_id, container)
+        res = self.db.rpc(RPC_RESERVAR_BIBLIOTECA, {
+            "p_id": transcricao_id, "p_org": self.org_id, "p_user": user_id,
+            "p_duracao_s": float(probe.duracao_s), "p_bytes": len(data), "p_formato": container,
+            "p_contexto_ref": contexto_ref, "p_storage_path": path,
+        }).execute().data
+        row = self._row_da_reserva(res, RPC_RESERVAR_BIBLIOTECA)
+        await self._armazenar_e_enfileirar(JOB_TYPE_BIBLIOTECA, transcricao_id, path, data, container)
+        logger.info(
+            "transcricao.biblioteca.enfileirada id=%s org=%s bytes=%s duracao_s=%s",
+            row["id"], self.org_id, len(data), probe.duracao_s,
+        )
+        return {
+            "id": row["id"], "status": "na_fila",
+            "estimativa_s": int(round(probe.duracao_s * ETA_RTF)), "duracao_s": float(probe.duracao_s),
         }
 
     async def _probe(self, data: bytes):
@@ -297,10 +345,14 @@ class TranscricaoService:
             "p_duracao_s": float(duracao_s), "p_bytes": size, "p_formato": formato,
             "p_contexto_tipo": contexto_tipo, "p_contexto_ref": contexto_ref, "p_storage_path": path,
         }).execute().data
+        return self._row_da_reserva(res, RPC_RESERVAR)
+
+    @staticmethod
+    def _row_da_reserva(res: Any, rpc: str) -> dict[str, Any]:
         if isinstance(res, list):
             res = res[0] if res else None
         if not isinstance(res, dict):
-            logger.error("transcricoes: reservar_transcricao returned %r", type(res).__name__)
+            logger.error("transcricoes: %s returned %r", rpc, type(res).__name__)
             raise TranscricaoErro("transcricao_indisponivel")
         if not res.get("ok"):
             raise TranscricaoErro(

@@ -41,10 +41,21 @@ def register() -> Any:
             await start_worker(settings)
         except Exception:
             logger.exception("transcricoes: worker NÃO iniciado — as transcrições ficam na fila.")
+        # The library lane's OWN worker (type "transcricao.biblioteca", geracao-contract 3.4):
+        # yields to voice answers and to an unhealthy transcriber (its claim gate). Started
+        # here, not as a 3rd hook, so the module keeps ONE startup / ONE shutdown entry.
+        from app.modules.transcricoes.biblioteca_worker import start_worker as start_biblioteca
+
+        try:
+            await start_biblioteca(settings)
+        except Exception:
+            logger.exception("transcricoes: worker da biblioteca NÃO iniciado — as transcrições ficam na fila.")
 
     async def stop_worker_hook() -> None:
+        from app.modules.transcricoes import biblioteca_worker
         from app.modules.transcricoes.worker import stop_worker
 
+        await biblioteca_worker.stop_worker()
         await stop_worker()
 
     return ModuleRegistration(
