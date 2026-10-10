@@ -5640,6 +5640,44 @@ _CEREBRO_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+_CORE_JOBS_DEDUPE_UNIQUE_PROBE = GuardProbe(
+    id="core.jobs.dedupe_key.unique",
+    product="core",
+    schema="public",
+    guard_name="ux_jobs_dedupe_key",
+    kind="write_refusal",
+    migrations=("074_transcription_api.sql",),
+    rationale=(
+        "Core's job queue (seed jobs template; first consumer: the platform "
+        "transcription API) dedupes enqueues on dedupe_key — without the "
+        "unique index a retried submit enqueues the same transcription twice "
+        "and the one-job-at-a-time worker burns its capacity on duplicates."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_key text := 'noc_probe_dedupe_' || gen_random_uuid()::text;
+BEGIN
+  IF to_regclass('public.jobs') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.jobs does not exist (core migration transcription_api not applied)';
+  END IF;
+  BEGIN
+    INSERT INTO public.jobs (type, payload, dedupe_key) VALUES ('noc_probe', '{}'::jsonb, v_key);
+    INSERT INTO public.jobs (type, payload, dedupe_key) VALUES ('noc_probe', '{}'::jsonb, v_key);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: duplicate dedupe_key insert succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%ux_jobs_dedupe_key%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -5699,6 +5737,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_BRANDING_PROBES,
     *_CEREBRO_PROBES,
     *_TRANSCRICOES_PROBES,
+    _CORE_JOBS_DEDUPE_UNIQUE_PROBE,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the
