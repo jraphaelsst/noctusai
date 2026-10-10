@@ -798,6 +798,22 @@ if [[ -n "$STAGED_CI_MATRIX" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies-pre. Product declared-imports gate (blocking, only when a ────
+# product's backend app/ or requirements, or a seed manifest, changed) ─────
+# Keeper `check_product_declared_imports` — the product half of the seed gate
+# below. 2026-10-10: core crash-looped in prod on FastAPI Form/File without
+# python-multipart in its requirements; every shared-venv gate passed. Scoped
+# to the staged products (--paths); a seed pyproject keeps the full fleet.
+STAGED_PRODUCT_IMPORTS=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/[^/]+/backend/(app/.*\.py|requirements[^/]*\.txt)|seed/[^/]+/backend/pyproject\.toml)$' || true)
+if [[ -n "$STAGED_PRODUCT_IMPORTS" ]] && have_py; then
+    echo "[pre-commit] product backend python/requirements staged — checking declared imports..."
+    if ! "$PY" "$CLI" --check-product-declared-imports --paths "$(echo "$STAGED_PRODUCT_IMPORTS" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] PRODUCT-DECLARED-IMPORTS check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Add the distribution to products/<slug>/backend/requirements.txt (and the root requirements.txt superset). The image installs only those + the seed pyprojects; the shared venv hides the gap." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-sexies. Seed declared-imports gate (blocking, only when seed ───────
 # python or a seed manifest changed) ───────────────────────────────────────
 # Keeper `check_seed_declared_imports` + `KB § PATTERNS/devops/

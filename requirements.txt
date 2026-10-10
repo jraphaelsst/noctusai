@@ -131,3 +131,8 @@ pglast>=6.0                     # social-wiring (migration DDL parse tests)
 # Same class as the 2026-09-09 `bcrypt` incident, one directory over — and
 # invisible to `check_seed_declared_imports`, whose domain is seed/* only.
 libcst>=1.1.0
+
+# Direct product imports of former transitives (check_product_declared_imports, 2026-10-10).
+limits>=2.3
+anyio>=3.6.2,<5
+pydantic-core

@@ -65,3 +65,7 @@ reportlab>=4.0.0
 # rendering backend and was already here for other reasons — this adds the
 # HTML front half.
 xhtml2pdf>=0.2.0
+
+# Imported directly (check_product_declared_imports) — previously resolved only
+# transitively; bounds mirror the provider so resolution is unchanged.
+pydantic-core  # app/modules/leads/schemas.py; exact version is pinned by pydantic

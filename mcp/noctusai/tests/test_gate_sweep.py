@@ -1274,3 +1274,12 @@ def test_unreferenced_tests_data_file_is_surfaced_untested(tmp_path):
     (tests / "orphan.json").write_text("{}")
     assert GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/orphan.json"]) == (
         [], ["mcp/noctusai/tests/orphan.json"])
+
+
+def test_scripts_infra_maps_to_tests_naming_it(tmp_path):
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    (tests / "test_smoke.py").write_text('P = "scripts/infra/image_boot_smoke.py"\n')
+    scope = GS._derive_scope(["scripts/infra/image_boot_smoke.py"])
+    assert scope["mcp"] and not scope.get("unmapped_files")
+    assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (["mcp/noctusai/tests/test_smoke.py"], [])

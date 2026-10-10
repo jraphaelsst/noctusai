@@ -31,3 +31,7 @@ APScheduler>=3.10.0
 # loaded when `postgres_url` is set. See `KB § PATTERNS/llm-tool-audit.md`.
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
+
+# Imported directly (check_product_declared_imports) — previously resolved only
+# transitively; bounds mirror the provider so resolution is unchanged.
+limits>=2.3  # app/services/transcription_api/limits.py (via slowapi before)

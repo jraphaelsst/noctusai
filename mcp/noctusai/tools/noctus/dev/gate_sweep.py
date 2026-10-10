@@ -67,9 +67,9 @@ A changed path buckets into exactly one of:
       non-test helper under tests/, any non-.py toolkit file); CI always
       runs it in full. A changed module NO test imports is surfaced as the
       `mcp_untested_change` entry (ran=False → `incomplete`), never a
-      silent pass. `scripts/hooks/<name>.py` joins this bucket: its tests live
-      in the toolkit suite and load the hook by path, so the tests whose text
-      names the file are selected.
+      silent pass. `scripts/hooks/<name>.py` and `scripts/infra/<name>.{py,sh}`
+      join this bucket: their tests live in the toolkit suite and load the
+      script by path, so the tests whose text names the file are selected.
   KB/CLAUDE-doc paths, and ONLY those       -> `kb_sync_verify`
       (`cli.py --verify-kb-sync`), plus `claude_md_router`
       (`cli.py --check-claude-md-router`) when `CLAUDE.md` itself changed.
@@ -127,7 +127,10 @@ from .product_scope import filter_active
 
 _PRODUCT_RE = re.compile(r"^products/([^/]+)/(?:backend|frontend)/")
 _SEED_FLEET_RE = re.compile(r"^seed/")
-_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$)")
+# `scripts/infra/*.{py,sh}` (2026-10-10): build/deploy tooling whose tests live
+# in the toolkit suite and name the script (e.g. test_image_boot_smoke.py);
+# previously unmapped ⇒ every integrate touching it read `incomplete`.
+_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$|scripts/infra/[^/]+\.(py|sh)$)")
 _KB_DOC_RE = re.compile(
     r"^(KNOWLEDGE-BASE/|CLAUDE\.md$|CLAUDE/|\.claude/(agents|skills|commands)/|project-history/roadmaps/)"
 )
@@ -779,7 +782,7 @@ def _mcp_scoped_test_files(
     hook_files: list[str] = []
     data_files: list[str] = []
     for f in mcp_files:
-        if f.startswith("scripts/hooks/"):
+        if f.startswith(("scripts/hooks/", "scripts/infra/")):
             hook_files.append(f)  # tested from the toolkit suite, loaded by path
             continue
         if not f.startswith(_MCP_PKG):

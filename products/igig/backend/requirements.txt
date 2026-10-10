@@ -24,3 +24,7 @@ pytest-asyncio>=0.21.0
 # PDFs (orçamento/contrato) render through the seed's
 # noctusai_lib.integrations.documents.render_html_pdf — xhtml2pdf + reportlab
 # are declared by seed/lib/backend (installed above), not here.
+
+# Imported directly (check_product_declared_imports) — previously resolved only
+# transitively; bounds mirror the provider so resolution is unchanged.
+anyio>=3.6.2,<5  # app/routers/orcamento_router.py (via starlette before)

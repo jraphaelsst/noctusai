@@ -656,3 +656,17 @@ Mechanism + gate, same commit (gate↔methodology sync):
   whose `frontend/package.json` has no sibling `package-lock.json` (severity
   high), instead of skipping it. Same §6e pre-commit trigger (a staged
   `package.json` / lockfile change) and `--check-product-lockfile-dep-sync`.
+
+## Product declared imports — the image's own dependency set (2026-10-10)
+
+Keeper `check_product_declared_imports` is the product half of `check_seed_declared_imports`. It answers from AST + manifests and never consults the environment.
+
+- **The rule:** every runtime import under an active product's `backend/app/` must resolve to what the product IMAGE installs: the seed lib/framework pyproject deps (base image) plus `products/<slug>/backend/requirements.txt`, following `-r`.
+- **Implied requirements:** a name that needs a distribution nobody imports by name is mapped in `_IMPLIED_DISTS`:
+  - fastapi `Form` / `File` / `UploadFile` → `python-multipart`;
+  - pydantic `EmailStr` → `email-validator` / `pydantic[email]`.
+  This is the incident class itself. Core imported `Form`/`File`, never `multipart`, and crash-looped in prod while every shared-venv gate passed.
+- **Same exemptions as the seed keeper:** stdlib, first-party, `try`/`TYPE_CHECKING`. `tests/` is out of scope (not in the image).
+- **Where it runs:** pre-commit (staged product `app/` .py or requirements, scoped via `--paths`; a staged seed pyproject keeps the full fleet) and the `check_all_products` aggregator.
+- **First run:** 3 direct imports of transitives (core `limits`, igig `anyio`, social-wiring `pydantic_core`). Fixed on contact with provider-mirroring bounds, so there is no baseline.
+- **Second layer:** the in-image boot smoke (`scripts/infra/image_boot_smoke.py`, see `devops/containerization.md`) catches whatever an allow-map cannot.

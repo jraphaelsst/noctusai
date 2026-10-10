@@ -7030,6 +7030,157 @@ def check_seed_declared_imports(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_product_declared_imports` — the PRODUCT half of
+# `check_seed_declared_imports` (2026-10-10).
+#
+# WHY. The core image crash-looped in prod: `routers/transcriptions.py` used
+# FastAPI `Form`/`File`, and core's requirements.txt lacked `python-multipart`.
+# pytest, predeploy and CI all passed — they run in the shared venv, which
+# carries it transitively. The image boot smoke (scripts/infra/
+# image_boot_smoke.py) now stops such an image before GHCR; this keeper stops
+# the commit, before any image is built.
+#
+# A product image installs exactly: the seed lib + framework (base image, their
+# pyproject deps) + `products/<slug>/backend/requirements.txt`. So every runtime
+# import under `backend/app/` must resolve to one of those — same AST rules,
+# exemptions and `_IMPORT_TO_DIST` allow-map as the seed keeper.
+#
+# IMPLIED requirements. The incident never imported `multipart`: it imported
+# `Form` from fastapi, and FastAPI needs the `python-multipart` DISTRIBUTION
+# behind it, checked when the route registers. An import-only scan is blind to
+# that, so `_IMPLIED_DISTS` maps `(module, imported name)` → the distribution it
+# silently requires. Allow-map again: a new implicit dep is added deliberately.
+#
+# First run (2026-10-10) found 3 — core `limits`, igig `anyio`, social-wiring
+# `pydantic_core`, all direct imports of transitives — fixed on contact, so
+# no baseline/ratchet: every finding blocks. Active products only (`_active_product_dirs`). Severity high (prod boot).
+# ---------------------------------------------------------------------------
+
+#: `(module, name imported from it)` → distribution(s) that name needs at runtime
+#: although nothing imports them by module name. Any one candidate satisfies.
+_IMPLIED_DISTS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("fastapi", "Form"): ("python-multipart",),
+    ("fastapi", "File"): ("python-multipart",),
+    ("fastapi", "UploadFile"): ("python-multipart",),
+    ("pydantic", "EmailStr"): ("email-validator", "pydantic[email]"),
+}
+
+def _requirements_distributions(req: Path, _seen: set[Path] | None = None) -> set[str]:
+    """Distributions named in a requirements file, following `-r` includes.
+    `-e <path>` lines are editable seed installs — their deps come from the
+    seed pyprojects, added by the caller, not parsed here."""
+    seen = _seen if _seen is not None else set()
+    if req in seen or not req.is_file():
+        return set()
+    seen.add(req)
+    out: set[str] = set()
+    for raw in req.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith(("-r ", "--requirement ")):
+            out |= _requirements_distributions((req.parent / line.split(None, 1)[1]).resolve(), seen)
+            continue
+        if line.startswith("-"):
+            continue
+        name = re.split(r"[\[<>=!~ ;@]", line, maxsplit=1)[0]
+        if name:
+            out.add(_normalize_dist(name))
+            extras = re.search(r"\[([^\]]+)\]", line)
+            if extras:  # `pydantic[email]` satisfies an implied `pydantic[email]`
+                out.update(_normalize_dist(f"{name}[{e.strip()}]") for e in extras.group(1).split(","))
+    return out
+
+
+def _implied_runtime_requirements(pkg_root: Path) -> dict[str, tuple[str, int, tuple[str, ...]]]:
+    """`{required dist: (first file, lineno, candidate dists)}` for every
+    unguarded `from <module> import <Name>` listed in `_IMPLIED_DISTS`."""
+    found: dict[str, tuple[str, int, tuple[str, ...]]] = {}
+    for path in sorted(pkg_root.rglob("*.py")):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", path, exc)
+            continue
+        exempt: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try) or (
+                isinstance(node, ast.If) and "TYPE_CHECKING" in ast.dump(node.test)
+            ):
+                exempt.update(id(sub) for sub in ast.walk(node))
+        for node in ast.walk(tree):
+            if id(node) in exempt or not isinstance(node, ast.ImportFrom) or node.level or not node.module:
+                continue
+            for alias in node.names:
+                key = (node.module.split(".", 1)[0], alias.name)
+                if key in _IMPLIED_DISTS:
+                    # One finding per required distribution (Form/File/UploadFile
+                    # all need python-multipart), naming the first importer.
+                    found.setdefault(_IMPLIED_DISTS[key][0], (str(path), node.lineno, _IMPLIED_DISTS[key]))
+    return found
+
+
+def _product_declared_imports_findings(root: Path, product_dirs: list[Path]) -> list[dict]:
+    seed_declared: set[str] = set()
+    for _label, pyproject, _pkg in _seed_python_packages(root):
+        seed_declared |= _declared_distributions(pyproject)
+    issues: list[dict] = []
+    for d in product_dirs:
+        app_dir = d / "backend" / "app"
+        req = d / "backend" / "requirements.txt"
+        if not app_dir.is_dir() or not req.is_file():
+            continue
+        declared = seed_declared | _requirements_distributions(req)
+        req_rel = str(req.relative_to(root))
+
+        def _finding(path: str, lineno: int, what: str) -> dict:
+            try:
+                rel = str(Path(path).relative_to(root))
+            except ValueError:
+                rel = path
+            return {"product": d.name, "file": rel, "severity": "high", "issue": (
+                f"`{rel}:{lineno}` {what}, but neither `{req_rel}` nor the seed "
+                f"lib/framework pyproject declares a distribution providing it. The "
+                f"product image installs ONLY those, so it boots today only where the "
+                f"shared venv supplies it transitively — the 2026-10-10 core prod "
+                f"crash-loop (python-multipart). Fix: add it to `{req_rel}`. If the "
+                f"import name differs from the distribution, map it in `_IMPORT_TO_DIST`.")}
+
+        for mod, (path, lineno) in sorted(_runtime_imports(app_dir).items()):
+            if mod in STDLIB_MODULE_NAMES or mod in _SEED_FIRST_PARTY or mod == "app":
+                continue
+            candidates = _IMPORT_TO_DIST.get(mod, (mod,))
+            if any(_normalize_dist(c) in declared for c in candidates):
+                continue
+            issues.append(_finding(path, lineno, f"imports `{mod}` at runtime"))
+        for dist, (path, lineno, candidates) in sorted(_implied_runtime_requirements(app_dir).items()):
+            if any(_normalize_dist(c) in declared for c in candidates):
+                continue
+            issues.append(_finding(path, lineno, (
+                f"uses a name that needs the `{dist}` distribution at runtime "
+                f"(nothing imports it by module name — see `_IMPLIED_DISTS`)")))
+    return issues
+
+
+def check_product_declared_imports(
+    repo_root: Path | None = None, paths: list[str] | None = None,
+) -> list[dict]:
+    """Every runtime third-party import (and implied dependency) in an ACTIVE
+    product's `backend/app/` must be declared by that product's requirements.txt
+    or the seed lib/framework pyproject. See the header for the rules.
+
+    `paths` (pre-commit's staged files) narrows the scan to the products those
+    paths belong to; a staged seed pyproject (which can REMOVE a declaration)
+    keeps the full fleet. Omitted = full audit."""
+    root = repo_root or REPO_ROOT
+    product_dirs = _active_product_dirs(root / "products")
+    if paths is not None and not any(p.startswith("seed/") and p.endswith("pyproject.toml") for p in paths):
+        slugs = {p.split("/")[1] for p in paths if p.startswith("products/") and p.count("/") >= 2}
+        product_dirs = [d for d in product_dirs if d.name in slugs]
+    return _product_declared_imports_findings(root, product_dirs)
+
+
+# ---------------------------------------------------------------------------
 # `check_redis_client_via_seam` — every Redis client is built by the seed seam
 # (`noctusai_lib.integrations.redis`: make_redis_client / make_async_redis_client
 # / redis_connection_url) and nowhere else.
@@ -15993,6 +16144,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_ci_test_matrix_coverage())
     all_issues.extend(check_seed_test_root_ci_coverage())
     all_issues.extend(check_seed_declared_imports())
+    all_issues.extend(check_product_declared_imports())
     all_issues.extend(check_redis_client_via_seam())
     all_issues.extend(check_every_test_file_is_gated())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
