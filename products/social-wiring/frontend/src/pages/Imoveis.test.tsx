@@ -271,3 +271,35 @@ describe("Imoveis — S6 cadastrar imóvel + manual imóvel on the list", () => 
     expect(getByTestId("imovel-manual-modal")).toBeTruthy();
   });
 });
+
+describe("Imoveis — S6 possível duplicado", () => {
+  it("badge only on a card flagged possivel_duplicado", async () => {
+    mockUseImoveis.mockReturnValue({
+      data: makePage([
+        makeImovel({ codigo: "A1", possivel_duplicado: true }),
+        makeImovel({ codigo: "A2", possivel_duplicado: false }),
+      ]),
+      isPending: false,
+      isError: false,
+    });
+    const { getAllByTestId } = await renderImoveis();
+    expect(getAllByTestId("imovel-duplicado-badge")).toHaveLength(1);
+  });
+
+  it("filter toggle puts possivel_duplicado=true in the list query and toggles back", async () => {
+    mockUseImoveis.mockReturnValue({
+      data: makePage([makeImovel()]),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, fireEvent } = await renderImoveis();
+    fireEvent.click(getByTestId("filtro-possivel-duplicado"));
+    expect(mockUseImoveis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ possivel_duplicado: true }),
+    );
+    fireEvent.click(getByTestId("filtro-possivel-duplicado"));
+    expect(mockUseImoveis).toHaveBeenLastCalledWith(
+      expect.objectContaining({ possivel_duplicado: undefined }),
+    );
+  });
+});

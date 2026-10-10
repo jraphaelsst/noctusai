@@ -49,6 +49,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
+import ImovelDuplicadoBadge from "@/components/imovel/ImovelDuplicadoBadge";
 import ImovelManualBadge from "@/components/imovel/ImovelManualBadge";
 import ImovelManualModal from "@/components/imovel/ImovelManualModal";
 import {
@@ -99,6 +100,7 @@ export default function Imoveis() {
       filters.cidade ||
       filters.bairro ||
       filters.search ||
+      filters.possivel_duplicado ||
       (filters.caracteristicas?.length ?? 0) > 0,
   );
   const isEmpty = !loading && (page?.items.length ?? 0) === 0;
@@ -232,6 +234,19 @@ export default function Imoveis() {
               options={filtros.data?.cidade ?? []}
               onChange={(v) => patch({ cidade: v })}
             />
+
+            <Button
+              type="button"
+              variant={filters.possivel_duplicado ? "default" : "outline"}
+              size="sm"
+              aria-pressed={!!filters.possivel_duplicado}
+              onClick={() =>
+                patch({ possivel_duplicado: filters.possivel_duplicado ? undefined : true })
+              }
+              data-testid="filtro-possivel-duplicado"
+            >
+              Possíveis duplicados
+            </Button>
 
             {hasFilters && (
               <Button variant="ghost" size="sm" onClick={clearFilters}>
@@ -404,6 +419,11 @@ function ImovelCard({ imovel }: { imovel: Imovel }) {
           {imovel.fonte === "manual" && (
             <span className="absolute bottom-2 left-2">
               <ImovelManualBadge />
+            </span>
+          )}
+          {imovel.possivel_duplicado && (
+            <span className="absolute bottom-2 right-2">
+              <ImovelDuplicadoBadge />
             </span>
           )}
           {imovel.status && (

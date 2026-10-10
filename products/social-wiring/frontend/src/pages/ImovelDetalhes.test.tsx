@@ -71,6 +71,14 @@ vi.mock("@/hooks/useMatriculaEstrutura", async (importOriginal) => {
 const mockUseTeamMembers = vi.fn();
 // The relationship cards fetch on their own (tested in their own files); stub
 // them so this page's tests stay about the page.
+vi.mock("@/components/imovel/ImovelDuplicatasSection", () => ({
+  default: () => <div data-testid="mock-duplicatas-section" />,
+}));
+vi.mock("@/components/imovel/ImovelVinculoBanner", () => ({
+  default: ({ vinculo }: { vinculo: { manual_codigo: string } }) => (
+    <div data-testid="mock-vinculo-banner">{vinculo.manual_codigo}</div>
+  ),
+}));
 vi.mock("@/components/imovel/ImovelInteressadosCard", () => ({
   ImovelInteressadosCard: () => null,
 }));
@@ -433,5 +441,36 @@ describe("ImovelDetalhes — S6 referências + manual imóvel", () => {
       "Alameda Liverpool",
     );
     expect((getByTestId("imovel-manual-processo") as HTMLInputElement).value).toBe("876");
+  });
+});
+
+describe("ImovelDetalhes — S6 duplicados + vínculo", () => {
+  it("pending pair → header badge + review section; no vínculo → no banner", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({
+        duplicatas_pendentes: [{ id: "d1", outro_codigo: "ONE1", score: 0.9 }],
+      }),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, queryByTestId } = await renderDetalhes("AP1234");
+    expect(getByTestId("imovel-duplicado-badge")).toBeTruthy();
+    expect(getByTestId("mock-duplicatas-section")).toBeTruthy();
+    expect(queryByTestId("mock-vinculo-banner")).toBeNull();
+  });
+
+  it("vínculo → banner; no pair → no badge/section", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({
+        duplicatas_pendentes: [],
+        vinculo: { manual_codigo: "SW-0001", vista_codigo: "AP1234" },
+      }),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, queryByTestId } = await renderDetalhes("AP1234");
+    expect(getByTestId("mock-vinculo-banner").textContent).toBe("SW-0001");
+    expect(queryByTestId("imovel-duplicado-badge")).toBeNull();
+    expect(queryByTestId("mock-duplicatas-section")).toBeNull();
   });
 });

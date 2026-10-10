@@ -341,6 +341,8 @@ export interface CorretorImovel {
  */
 export interface ImovelVisita {
   codigo: string;
+  /** S6 dup: set on a Vista hit that a manual cadastro is linked to. */
+  vinculado_a_manual?: string | null;
   titulo: string | null;
   /** Vista's `Empreendimento` — this is what the UI calls "condomínio". */
   empreendimento: string | null;

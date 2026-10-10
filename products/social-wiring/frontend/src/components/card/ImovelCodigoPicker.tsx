@@ -333,6 +333,14 @@ export function ImovelCodigoPicker({
                 <span className="min-w-0 flex-1 truncate">
                   {rotuloDoImovel(imovel)}
                 </span>
+                {imovel.vinculado_a_manual && (
+                  <span
+                    className="shrink-0 text-[10px] text-muted-foreground"
+                    data-testid={`${testId}-vinculado-${imovel.codigo}`}
+                  >
+                    vinculado a {imovel.vinculado_a_manual}
+                  </span>
+                )}
                 {ehImovelManual(imovel) ? (
                   // 🔴 A hand-registered código was NEVER in the catálogo —
                   // "fora do catálogo" would claim it left one it never

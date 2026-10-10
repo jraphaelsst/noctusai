@@ -40,6 +40,11 @@ export interface Imovel {
    *  price). Absent on an older backend, so treat undefined as "vista". */
   fonte?: "vista" | "manual";
   referencias?: ImovelReferencias;
+  /** S6 dup (CONTRACT §8.6/§8.7). Absent on an older backend. */
+  duplicatas_pendentes?: { id: string; outro_codigo: string; score: number }[];
+  vinculo?: { manual_codigo: string; vista_codigo: string } | null;
+  /** List items only. */
+  possivel_duplicado?: boolean;
   /** Both returned for every imóvel (S6). */
   em_condominio?: boolean | null;
   codigo: string;
@@ -159,6 +164,7 @@ export interface ImovelFilters {
   bairro?: string;
   search?: string;
   caracteristicas?: string[];
+  possivel_duplicado?: boolean;
 }
 
 export interface FiltroOptions {
@@ -200,6 +206,7 @@ function buildQuery(f: ImovelFilters): string {
   if (f.cidade) params.set("cidade", f.cidade);
   if (f.bairro) params.set("bairro", f.bairro);
   if (f.search) params.set("search", f.search);
+  if (f.possivel_duplicado) params.set("possivel_duplicado", "true");
   // Repeated key, not comma-joined — FastAPI's `Query(None)` on a list
   // parses `?caracteristicas=a&caracteristicas=b`, and a comma-joined
   // string would arrive as one slug named "a,b" that matches nothing.

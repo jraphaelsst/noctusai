@@ -128,6 +128,17 @@ async function preencherEndereco(screen: Awaited<ReturnType<typeof render>>["scr
 }
 
 describe("ImovelCodigoPicker", () => {
+  it("shows the 'vinculado a SW-0001' hint on a Vista hit linked to a manual cadastro", async () => {
+    mockUseImoveisBusca.mockReturnValue(
+      busca([hit("ONE1234", { vinculado_a_manual: "SW-0001" })]),
+    );
+    const { screen } = await render();
+    await digitar("ONE1234");
+    expect(
+      screen.getByTestId("imovel-picker-vinculado-ONE1234").textContent,
+    ).toBe("vinculado a SW-0001");
+  });
+
   it("offers a delisted imóvel, labelled as out of the catalog", async () => {
     mockUseImoveisBusca.mockReturnValue(
       busca([hit("ONE4770", { ativo_no_vista: false, fonte: "registry" })]),

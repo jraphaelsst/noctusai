@@ -54,6 +54,9 @@ import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
 import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
 import { ImovelProprietariosCard } from "@/components/imovel/ImovelProprietariosCard";
 import { ImovelSimilaresCard } from "@/components/imovel/ImovelSimilaresCard";
+import ImovelDuplicadoBadge from "@/components/imovel/ImovelDuplicadoBadge";
+import ImovelDuplicatasSection from "@/components/imovel/ImovelDuplicatasSection";
+import ImovelVinculoBanner from "@/components/imovel/ImovelVinculoBanner";
 import ImovelManualBadge from "@/components/imovel/ImovelManualBadge";
 import ImovelManualModal from "@/components/imovel/ImovelManualModal";
 import ImovelReferenciasCard from "@/components/imovel/ImovelReferenciasCard";
@@ -148,6 +151,7 @@ export default function ImovelDetalhes() {
     .filter(Boolean)
     .join(", ");
   const manual = imovel.fonte === "manual";
+  const temDuplicatas = (imovel.duplicatas_pendentes?.length ?? 0) > 0;
   const jaSolicitado = Boolean(solicitacao.data?.id);
   const carregandoSolicitacao =
     solicitacao.isPending || solicitacao.isFetching;
@@ -160,6 +164,8 @@ export default function ImovelDetalhes() {
           Imóveis
         </Link>
       </Button>
+
+      {imovel.vinculo && <ImovelVinculoBanner vinculo={imovel.vinculo} />}
 
       {/* ── § 5.1 Cabeçalho ── */}
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -183,6 +189,7 @@ export default function ImovelDetalhes() {
             )}
             {imovel.tour_360 && <Badge variant="outline">Tour 360°</Badge>}
             {manual && <ImovelManualBadge />}
+            {temDuplicatas && <ImovelDuplicadoBadge />}
             {manual ? (
               <Button
                 type="button"
@@ -262,6 +269,10 @@ export default function ImovelDetalhes() {
           </div>
         </div>
       </div>
+
+      {codigo && temDuplicatas && (
+        <ImovelDuplicatasSection codigo={codigo} temPendentes={temDuplicatas} />
+      )}
 
       {/* ── Photo ── */}
       {imovel.foto_destaque && (
