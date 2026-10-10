@@ -494,6 +494,10 @@ _MAX_BODY_PATH_OVERRIDES = {
     # outer bound adds 512 KB of multipart overhead. The module mirrors the
     # same entry in its own `MAX_BODY_PATH_OVERRIDES` (pinned by a test).
     "/api/media-creation/cerebro/brains/*/imports/file": 20 * 1024 * 1024 + 512 * 1024,
+    # Esteira post card hub uploads (documentos + checklist-extra documento) — mirrored in
+    # `media_creation.routers.esteira.MAX_BODY_PATH_OVERRIDES`; 30 MB like the other card hubs.
+    "/api/media-creation/esteira/posts/*/documentos": 30 * 1024 * 1024,
+    "/api/media-creation/esteira/posts/*/checklist-extras/*/documento": 30 * 1024 * 1024,
     # Voice transcription upload (POST /api/transcricoes — `transcricoes.router`)
     # and its Cérebro delegate (POST /api/media-creation/cerebro/brains/{brain_id}/
     # answers/{question_id}/audio — endpoint 13). The business cap is 15 MB

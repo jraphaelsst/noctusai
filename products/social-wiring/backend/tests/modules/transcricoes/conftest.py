@@ -61,6 +61,7 @@ def client():
         from app.config import settings
         from app.modules.media_creation import register as register_media_creation
         from app.modules.media_creation.routers import cerebro_fontes
+        from app.modules.media_creation.routers import esteira as esteira_router
         from app.modules.transcricoes import register as register_transcricoes
         from app.modules.transcricoes import router as transcricoes_router
         from app.modules.transcricoes.deps import (
@@ -84,6 +85,7 @@ def client():
             # every mounted UploadFile route needs a body-size entry: boot refuses without it
             max_body_path_overrides={
                 **cerebro_fontes.MAX_BODY_PATH_OVERRIDES,
+                **esteira_router.MAX_BODY_PATH_OVERRIDES,
                 **transcricoes_router.MAX_BODY_PATH_OVERRIDES,
             },
         )

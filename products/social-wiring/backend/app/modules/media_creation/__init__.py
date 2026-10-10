@@ -85,6 +85,8 @@ def register() -> Any:
         chat,
         cerebro_fontes,
         dashboard_criacao,
+        equipe,
+        esteira,
         generation,
         perfil_criacao,
         headlines,
@@ -164,6 +166,8 @@ def register() -> Any:
             biblioteca.router,
             headlines.router,
             esteira_legenda.router,
+            equipe.router,
+            *esteira.ROUTERS,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()

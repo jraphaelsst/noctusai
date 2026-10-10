@@ -9,9 +9,8 @@ and a test pins that the file still carries exactly that text -- never hand-edit
 Code keys only on stage ROLES (``gravacao``, ``postado``, ``cancelado``), never on
 slugs or labels, so a renamed "Gravacao" keeps its gate.
 
-NOC-REMEDIATE[esteira-timeline-movimento]: ``CS_POST_HUB.timeline_gatherers`` is the seed
-default until BE-1 lands ``gather_movimentos_esteira`` (esteira_service.py) and rebinds
-it with ``dataclasses.replace`` -- 2026-10-10.
+The ``movimento`` timeline kind is :func:`esteira_timeline.gather_movimentos_esteira`
+(bound at construction below).
 """
 from __future__ import annotations
 
@@ -24,6 +23,7 @@ from noctusai_lib.domain.card_hub import (
 from noctusai_lib.domain.card_hub.gatherers import SEED_GATHERERS
 from noctusai_lib.domain.pipeline import PipelineConfig, StageDefault
 
+from app.modules.media_creation.esteira_timeline import gather_movimentos_esteira
 from app.services import table_reads
 
 __all__ = [
@@ -80,10 +80,10 @@ CS_POST_HUB = CardHubConfig(
     entity_fk="post_id",
     id_param="post_id",
     table_prefix="cs_post",
-    member_source=MemberSource(table="cs_equipe", fk="equipe_id", label="nome", cor="cor"),
+    member_source=MemberSource(table="cs_equipe", fk="equipe_id", label="nome", cor="cor", body_field="membro_ids"),
     bucket=BUCKET_ESTEIRA,
     actor_resolver=table_reads.resolve_actors,
-    timeline_gatherers=dict(SEED_GATHERERS),
+    timeline_gatherers={**SEED_GATHERERS, "movimento": gather_movimentos_esteira},
     entity_datas=True,
     lembretes_crud=True,
     stage_table="pipeline_stages",

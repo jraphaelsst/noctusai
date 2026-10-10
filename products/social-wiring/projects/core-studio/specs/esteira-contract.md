@@ -462,14 +462,14 @@ The server is the authority (`services/esteira_service.py :: mover_post`). The F
 | 2 | `GET /board` | `marca_id?`, `busca?` (titulo/headline ilike), `membro_id?`, `incluir_arquivados=false`, `limite_por_etapa=50` | `{colunas:[{etapa, stage, cards, total, exibidos}], orfaos:int}`; cards = `PostCard` (§5.4). `marca_id` of another org → 404 |
 | 3 | `POST /posts` | `PostCreate {marca_id, titulo?, headline_id?, etapa_id?, conta_id?, gravacao_em?, data_entrega?}` | `titulo` is required unless `headline_id` is given. Default stage: the entry stage, or the 2nd position when `headline_id` is given. Placed on top. 201 `PostDetalhe` |
 | 4 | `GET /posts/{id}` | | `PostDetalhe` (with `headline`, `roteiro` summaries, `conta`, `marca`) |
-| 5 | `PATCH /posts/{id}` | `PostUpdate {titulo?, conta_id?, gravacao_em?, legenda?, hashtags?, primeiro_comentario?, links_producao?, permalink?, ig_media_id?, arquivado?}` | **never** `etapa_id`, `marca_id`, `headline_id`, `roteiro_id` (422 `campo_nao_editavel`). The Datas go through the hub's `/card` route |
+| 5 | `PATCH /posts/{id}` | `PostUpdate {titulo?, conta_id?, gravacao_em?, legenda?, hashtags?, primeiro_comentario?, links_producao?, permalink?, ig_media_id?, arquivado?, data_inicio?, data_entrega?, entrega_concluida?, lembrete_minutos_antes?, recorrencia?}` | **never** `etapa_id`, `marca_id`, `headline_id`, `roteiro_id` (422 `campo_nao_editavel`). The Datas are written HERE (decision 2026-10-10: the seed hub's `/card` is read-only and SW's `/datas` was retired 2026-08-19); `recorrencia` in `diaria\|semanal\|mensal\|anual`, `lembrete_minutos_antes` 0..525600; explicit null clears the nullable ones |
 | 6 | `DELETE /posts/{id}` | | hard delete; the hub tables CASCADE; headline and roteiro stay unbound in the library; 204 |
 | 7 | `POST /posts/{id}/mover-etapa` | `MoverEtapaRequest {para_etapa_id, novo_indice?, motivo?, permalink?}` (SW shape + `permalink`) | §4 rules; 200 `PostCard` |
 | 8 | `PUT /posts/{id}/headline` | `{headline_id}` or `{texto}` (≤ 1 000; creates a `cs_headlines` row with `lote_id NULL`, `marca_id` of the post) | §3.4/§3.7; 409 `headline_ja_em_post`; 422 other marca |
 | 9 | `DELETE /posts/{id}/headline` | | unbind; 204 |
 | 10 | `PUT /posts/{id}/roteiro` | `{roteiro_id}` | §3.6 |
 | 11 | `DELETE /posts/{id}/roteiro` | | unbind; 204 |
-| 12 | card hub routes | seed `card_hub_routers(CS_POST_HUB, …)` mounted under `/api/media-creation/esteira/posts/{post_id}/…` | notas, tags, membros, lembretes, checklists, checklist-extras, documentos, timeline, `/card` (resumo + Datas) |
+| 12 | card hub routes | seed `card_hub_routers(CS_POST_HUB, …)` mounted under `/api/media-creation/esteira/posts/{post_id}/…` | notas, tags, membros, lembretes, checklists, checklist-extras, documentos, timeline, `/card` (read-only resumo + Datas). Members: `PUT /membros` body `{membro_ids: []}` (`MemberSource.body_field`) |
 
 ### 5.2 Equipe (`routers/equipe.py`, BE-1)
 
