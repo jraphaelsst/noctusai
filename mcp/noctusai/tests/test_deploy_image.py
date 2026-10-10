@@ -670,3 +670,38 @@ def test_curl_edge_returns_false_on_timeout():
         assert "unreachable" in detail
     finally:
         urllib.request.urlopen = orig
+
+
+# ── SANCTIONED NON-PRODUCT SERVICE ALLOWLIST (deploy/fleet/services.txt) ──
+def test_allowlisted_service_passes_the_catalog_scope_guard(tmp_path, monkeypatch):
+    from tools.noctus.dev import build_scope as BS
+    svc = tmp_path / "services.txt"
+    svc.write_text("# c\ntranscriber\n")
+    monkeypatch.setattr(BS, "SERVICES_PATH", svc)
+    f = FakeDocker()
+    r = DI.deploy_image("transcriber", run_remote=f, sleep=lambda s: None, now=_now,
+                        confirm=False, live_products_fn=lambda: ["orbity"])
+    assert r["status"] != "refused_catalog_scope"
+    assert r["catalog_scope"]["in_scope"] is True
+    assert r["catalog_scope"]["sanctioned_service"] is True
+
+
+def test_non_allowlisted_inactive_product_still_refused_with_services_file(tmp_path, monkeypatch):
+    from tools.noctus.dev import build_scope as BS
+    svc = tmp_path / "services.txt"
+    svc.write_text("transcriber\n")
+    monkeypatch.setattr(BS, "SERVICES_PATH", svc)
+    f = FakeDocker()
+    r = DI.deploy_image("erp-imobiliario", run_remote=f, sleep=lambda s: None, now=_now,
+                        confirm=True, live_products_fn=lambda: ["orbity"])
+    assert r["status"] == "refused_catalog_scope"
+    assert f.calls == []
+
+
+def test_allowlist_does_not_leak_into_migrate_product_guard(tmp_path, monkeypatch):
+    from tools.noctus.dev import build_scope as BS
+    from tools.noctus.dev import _catalog_scope_guard as G
+    svc = tmp_path / "services.txt"
+    svc.write_text("transcriber\n")
+    monkeypatch.setattr(BS, "SERVICES_PATH", svc)
+    assert G.check_catalog_scope("transcriber", lambda: ["orbity"])["in_scope"] is False

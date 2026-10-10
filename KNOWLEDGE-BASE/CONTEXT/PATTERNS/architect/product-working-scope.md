@@ -130,6 +130,18 @@ place — the catalog-scope guard is what closes this, not a "revision ==
 prod tip" assertion (which would wrongly refuse routine, healthy re-deploys
 of live products). See `KB § PATTERNS/devops/prod-deploy-safety-gates.md`.
 
+**Sanctioned non-product services (2026-10-09).** Infra containers that are not
+catalog rows (first: `transcriber`, `noctus-transcriber`) can never satisfy
+`ativo AND live`. They are admitted by ONE declarative allowlist,
+`deploy/fleet/services.txt` (one slug per line; hand-maintained by design, unlike
+the catalog-generated scope files; the review of the line IS the sanction). It is
+consumed ONLY by `deploy_image` (guard passes via
+`check_catalog_scope(include_services=True)`; health probe, auto-rollback,
+swap-verify and ancestry guard all still apply) and `deploy_verify` (roster
+includes it; absent container = `missing`). NOT consumed by `migrate_product`,
+schema exposure, build/active scope. No escape-hatch flag; everything not in the
+catalog-live set or `services.txt` stays refused exactly as above.
+
 ## 4c · Asleep products leave EVERY gate, not just deploy (2026-09-22)
 
 **The friction.** §4b closed the deploy/migrate ACTIONS, but the TEST/CHECK side

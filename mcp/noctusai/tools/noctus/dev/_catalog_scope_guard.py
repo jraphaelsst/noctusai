@@ -75,6 +75,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from . import build_scope as _build_scope
 from . import deploy_verify as _deploy_verify
 
 #: Shared status key both `deploy_image` and `migrate_product` return on
@@ -86,6 +87,8 @@ REFUSED_STATUS = "refused_catalog_scope"
 def check_catalog_scope(
     product: str,
     live_products_fn: Callable[[], list[str]] | None = None,
+    *,
+    include_services: bool = False,
 ) -> dict[str, Any]:
     """Resolve whether `product` is `ativo=true AND deploy_scope='live'`
     (or `core`, the one documented non-catalog member) — by delegating to
@@ -106,6 +109,12 @@ def check_catalog_scope(
                               # (the caller composes the full refusal message)
         }
 
+    `include_services=True` (deploy_image only) ALSO accepts a slug listed in
+    `deploy/fleet/services.txt` — the sanctioned non-product service allowlist
+    (infra containers such as `transcriber`, not catalog rows). Off by default so
+    `migrate_product` (which needs a product schema) is unaffected. It is checked
+    only after the catalog resolved — the fail-closed `unavailable` path is unchanged.
+
     Fail-closed: `catalog_source == 'unavailable'` (neither the live
     catalog nor the fallback file could be read) resolves `in_scope=False`
     — "cannot tell" is never "allowed".
@@ -123,16 +132,21 @@ def check_catalog_scope(
                 "is never silently 'yes')."
             ),
         }
-    in_scope = product in live
+    sanctioned = (
+        product in _build_scope.read_sanctioned_services() if include_services else False
+    )
+    in_scope = product in live or sanctioned
     return {
         "in_scope": in_scope,
         "live_products": sorted(live),
         "catalog_source": source,
         "catalog_warning": warning,
+        "sanctioned_service": sanctioned,
         "detail": (
             f"{product!r} is {'in' if in_scope else 'NOT in'} the catalog's live "
-            f"set (ativo=true AND deploy_scope='live', plus core) — "
-            f"catalog_source={source}."
+            f"set (ativo=true AND deploy_scope='live', plus core)"
+            f"{' / the sanctioned non-product service allowlist (deploy/fleet/services.txt)' if sanctioned else ''}"
+            f" — catalog_source={source}."
         ),
     }
 

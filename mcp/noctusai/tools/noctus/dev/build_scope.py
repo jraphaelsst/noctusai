@@ -40,6 +40,15 @@ FLEET_COMPOSE = REPO_ROOT / "deploy" / "fleet" / "docker-compose.prod.yml"
 #: documented non-product member. Kept explicit so its absence is never a silent drop.
 ALWAYS_BUILD = ("core",)
 
+#: Sanctioned NON-PRODUCT services (e.g. `transcriber`) — infrastructure containers that
+#: live in the prod fleet compose but are NOT `public.products` rows, so no catalog query
+#: can ever return them. This is the ONLY way such a container passes
+#: `deploy_image`'s catalog-scope guard / joins `deploy_verify`'s roster: a one-slug-per-line
+#: declarative file, hand-maintained BY DESIGN (there is no upstream to derive it from —
+#: unlike build-scope.txt/active-scope.txt), reviewed in the PR that adds the service.
+#: Deliberately NOT consumed by build/active scope, migrate_product, or schema exposure.
+SERVICES_PATH = REPO_ROOT / "deploy" / "fleet" / "services.txt"
+
 _KEY_RE = re.compile(r"^  ([a-z0-9][a-z0-9-]*):\s*$")
 
 
@@ -212,6 +221,15 @@ def read_build_scope() -> list[str]:
     if not SCOPE_PATH.exists():
         return []
     return _parse_slugs(SCOPE_PATH.read_text(encoding="utf-8"))
+
+
+def read_sanctioned_services(path: Path | None = None) -> list[str]:
+    """The sanctioned non-product service slugs (`deploy/fleet/services.txt`).
+    Missing file => [] (nothing sanctioned; everything else stays refused)."""
+    p = path or SERVICES_PATH
+    if not p.exists():
+        return []
+    return _parse_slugs(p.read_text(encoding="utf-8"))
 
 
 def register(server) -> None:

@@ -525,6 +525,9 @@ def deploy_verify(
             return {"ok": False, "status": "error", "exit_code": 1,
                     "error": f"cannot resolve the product roster — {roster_error}"}
         compose_by_slug = {r["slug"]: r for r in compose_roster}
+        # Sanctioned non-product services (deploy/fleet/services.txt) are
+        # actionable too: a missing container is a real `missing` finding.
+        live_set = live_set | set(_build_scope.read_sanctioned_services())
         # UNION, not the compose set alone — a catalog-live product absent
         # from the fleet entirely (p-studio, 2026-08-17) must still surface
         # as 'missing', which a compose-driven loop could never see.

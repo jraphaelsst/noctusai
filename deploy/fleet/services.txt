@@ -1,0 +1,14 @@
+# services.txt — SANCTIONED NON-PRODUCT SERVICES. One slug per line.
+#
+# Infrastructure containers that run in the prod fleet but are NOT `public.products`
+# rows, so no catalog query returns them (unlike build-scope.txt / active-scope.txt,
+# which are GENERATED from the catalog, this file is hand-maintained by design — there
+# is no upstream to derive it from). Add a line in the same PR that adds the service to
+# docker-compose.prod.yml; the review of that line IS the sanction.
+#
+# Effect: `noctus.dev.deploy_image` accepts the slug past its catalog-scope guard (health
+# probe, auto-rollback, swap-verify and ancestry guard all still apply) and
+# `noctus.dev.deploy_verify` includes it in its roster (no container => `missing`).
+# NOT consumed by build/active scope, migrate_product or schema exposure.
+# KB § PATTERNS/architect/product-working-scope.md
+transcriber

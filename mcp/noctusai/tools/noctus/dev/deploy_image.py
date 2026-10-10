@@ -31,7 +31,9 @@ asserts no banned token is ever emitted).
 CATALOG-SCOPE GUARD (2026-09-17 incident — see `_catalog_scope_guard.py`): the
 very first thing this function does, before any SSH/docker call, is refuse
 (`status='refused_catalog_scope'`, container untouched) unless `product` is
-`ativo=true AND deploy_scope='live'` in the product catalog (or `core`). This
+`ativo=true AND deploy_scope='live'` in the product catalog (or `core`, or a sanctioned non-product service listed in
+`deploy/fleet/services.txt` such as `transcriber` — the allowlist IS the
+sanction, no flag). This
 closes the actual production incident — `deploy_image` reported `deployed` +
 healthy + swap-verified for `erp-imobiliario`, which is `ativo=false,
 deploy_scope='dev'`, because none of the OTHER gates below ask "should this be
@@ -306,7 +308,9 @@ def deploy_image(
 
     CATALOG-SCOPE GUARD (2026-09-17): before touching SSH/docker at all,
     REFUSES (`status='refused_catalog_scope'`, fail-closed, container
-    untouched) unless `product` is `ativo=true AND deploy_scope='live'` in
+    untouched) unless `product` is listed in `deploy/fleet/services.txt` (the
+    sanctioned non-product service allowlist, e.g. `transcriber`) or is
+    `ativo=true AND deploy_scope='live'` in
     the product catalog (or `core`) — reusing
     `deploy_verify._resolve_live_products`'s catalog resolution (see
     `_catalog_scope_guard.py`), never a second hand-rolled catalog read.
@@ -358,7 +362,9 @@ def deploy_image(
     #    before any SSH/docker call: refuse a product the catalog does not
     #    say is ativo=true+deploy_scope='live' (or core). See
     #    _catalog_scope_guard.py for the full incident + reasoning. ──
-    catalog_scope = _catalog_scope_guard.check_catalog_scope(product, live_products_fn)
+    catalog_scope = _catalog_scope_guard.check_catalog_scope(
+        product, live_products_fn, include_services=True,
+    )
     if not catalog_scope["in_scope"] and not allow_inactive:
         return {
             "ok": False, "status": _catalog_scope_guard.REFUSED_STATUS, "exit_code": 1,

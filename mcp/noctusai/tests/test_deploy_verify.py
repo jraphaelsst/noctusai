@@ -26,6 +26,15 @@ sys.path.insert(0, str(_REPO_ROOT / "mcp" / "noctusai"))
 from tools.noctus.dev import build_scope as BS  # noqa: E402
 from tools.noctus.dev import deploy_verify as DV  # noqa: E402
 
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_real_services_allowlist(tmp_path_factory, monkeypatch):
+    """Hermetic: the repo's real deploy/fleet/services.txt must not leak in."""
+    monkeypatch.setattr(BS, "SERVICES_PATH", tmp_path_factory.mktemp("svc") / "none.txt")
+
+
 _CONTAINER_RE = re.compile(r"noctus-([a-z0-9-]+)")
 
 _COMPOSE_YML = """\
@@ -504,3 +513,22 @@ def test_genuinely_absent_container_is_still_missing():
     assert r["missing"] == ["core"]
     assert r["status"] == "missing"
     assert "not deployed at all" in r["products"][0]["note"]
+
+
+def test_roster_includes_sanctioned_services_and_missing_container_is_a_finding(tmp_path, monkeypatch):
+    svc = tmp_path / "services.txt"
+    svc.write_text("transcriber\n")
+    monkeypatch.setattr(BS, "SERVICES_PATH", svc)
+    kw = _with_compose(tmp_path)
+    r, vps, git = _run(
+        containers={
+            "erp-imobiliario": {"revision": _SHA}, "igig": {"revision": _SHA},
+            "orbity": {"revision": _SHA}, "seed": {"revision": _SHA},
+            "social-wiring": {"revision": _SHA}, "core": {"revision": _SHA},
+            "transcriber": {"found": False},
+        },
+        **kw,
+    )
+    assert r["missing"] == ["transcriber"] and r["status"] == "missing"
+    t = next(p for p in r["products"] if p["product"] == "transcriber")
+    assert t["actionable"] is True and t["container"] == "noctus-transcriber"
