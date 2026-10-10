@@ -522,3 +522,7 @@ Authored 2026-10-09 (projects/core-studio/specs/cerebro-contract.md §2 + §10).
 ## 226 — imovel_captacao_manual (manual captação + deal refs on imovel_dados + `imoveis_catalogo` view) — NOT APPLIED
 
 Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §8, S6). Creates `imovel_captacao` (FK → `imovel_registry`, org-picker RLS, acting-audit attach), adds `imovel_dados.processo_atual_numero/drive_folder_url/drive_folder_id` (+ Drive-URL CHECK) and the `imoveis_catalogo` view (`security_invoker`, Vista ∪ manual). Apply BEFORE deploying the image that reads it (the list route reads the view).
+
+## 227 — campanha_veiculacoes_nivel_not_null (218's nivel CHECK let NULL through for meta_ads) — NOT APPLIED
+
+Authored 2026-10-10 (fix-forward of 218, caught post-deploy by `verify_db_guards` probe `social_wiring.campanha_veiculacoes.meta_requires_nivel`). Recreates `campanha_veiculacoes_nivel_valido` with `nivel IS NOT NULL` on the meta_ads arm — a CHECK passes on NULL, so `nivel IN (...)` alone never refused a missing level. Pre-check refuses if any meta_ads row already has nivel NULL (prod table was empty at authoring). No image dependency — apply any time.
