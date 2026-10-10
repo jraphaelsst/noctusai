@@ -206,6 +206,29 @@ class TestEnrollContacts:
 
         assert len(result) == 2
 
+    def test_re_enrolling_clears_the_pause_reason(self):
+        db = MockSupabaseClient()
+        db.set_table_data("automations", [{"id": "a1", "org_id": ORG, "status": "ativa"}])
+        db.set_sequential_responses("automation_steps", [MockSupabaseResponse(data=[{"id": "s1", "posicao": 1}])])
+        captured = {}
+        real_table = db.table
+
+        def table(name):
+            t = real_table(name)
+            if name == "automation_enrollments":
+                orig = t.upsert
+
+                def upsert(rows, **kw):
+                    captured["rows"] = rows
+                    return orig(rows, **kw)
+                t.upsert = upsert
+            return t
+        db.table = table  # test double wiring on the Mock client, not product code
+
+        AutomationService(db, ORG).enroll_contacts("a1", ["ct1"])
+        (row,) = captured["rows"]
+        assert row["status"] == "active" and row["pause_reason"] is None and row["paused_at"] is None
+
     def test_enroll_with_no_steps_sets_none_step(self):
         db = MockSupabaseClient()
         db.set_table_data("automations", [{"id": "a1", "org_id": ORG, "status": "ativa"}])

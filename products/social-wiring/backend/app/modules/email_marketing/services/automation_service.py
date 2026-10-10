@@ -155,6 +155,9 @@ class AutomationService:
             "contact_id": cid,
             "current_step_id": first_step_id,
             "status": "active",
+            # re-enrolling a paused contact starts clean (migration 243)
+            "pause_reason": None,
+            "paused_at": None,
         } for cid in contact_ids]
         result = self.db.table("automation_enrollments").upsert(
             rows, on_conflict="automation_id,contact_id"

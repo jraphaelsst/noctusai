@@ -292,6 +292,8 @@ class TestExitsAndRefusals:
         assert db.enrollment["status"] == "paused" and db.contact["tags"] == []
         (job,) = dead(repo)
         assert "webhook" in job.last_error and "not supported" in job.last_error
+        # the reason is recorded where an operator sees it, not only in the dead letter
+        assert db.enrollment["pause_reason"] == job.last_error and db.enrollment["paused_at"]
 
     @pytest.mark.parametrize("tipo,config", [
         ("wait", {}), ("wait", {"hours": -1}), ("add_tag", {}), ("move_to_list", {}),
@@ -306,6 +308,7 @@ class TestExitsAndRefusals:
         assert db.enrollment["status"] == "paused" and db.contact["tags"] == []
         (job,) = dead(repo)
         assert "malformed" in job.last_error
+        assert "malformed" in db.enrollment["pause_reason"] and db.enrollment["paused_at"]
 
 
 class TestAutomationSendGoesThroughSendService:

@@ -117,7 +117,10 @@ def _update_enrollment(db: Any, enrollment_id: str, **changes: Any) -> None:
 
 def _pause(db: Any, enrollment_id: str, reason: str) -> DeadLetterError:
     """Pause the enrollment and return the dead-letter error carrying ``reason`` (to be raised)."""
-    _update_enrollment(db, enrollment_id, status="paused")
+    # The reason is RECORDED on the enrollment (shown in Automações), never only
+    # in the dead letter an operator never sees (migration 243).
+    _update_enrollment(db, enrollment_id, status="paused", pause_reason=reason[:500],
+                       paused_at=_now().isoformat())
     logger.warning("email_marketing automation: enrollment %s paused -- %s", enrollment_id, reason)
     return DeadLetterError(reason)
 

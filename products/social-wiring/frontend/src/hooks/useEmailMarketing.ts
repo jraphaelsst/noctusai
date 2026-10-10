@@ -149,6 +149,9 @@ export interface EmEnrollment {
   next_action_at: string | null;
   enrolled_at: string;
   completed_at: string | null;
+  /** Why the step executor paused it (migration 243); null unless paused. */
+  pause_reason?: string | null;
+  paused_at?: string | null;
 }
 
 /** One DNS record Resend asks the owner to publish (SPF / DKIM / DMARC / MX). */

@@ -51,6 +51,7 @@ import {
   useEmAutomations,
   useEmContacts,
   type EmAutomation,
+  type EmEnrollment,
 } from "@/hooks/useEmailMarketing";
 
 const TRIGGER_OPTIONS = [
@@ -231,6 +232,17 @@ function StepsPanel({ automation }: { automation: EmAutomation }) {
   );
 }
 
+// ─── Why an enrollment is paused (migration 243) ─────────────────────────────
+
+export function EnrollmentPauseReason({ enrollment: e }: { enrollment: EmEnrollment }) {
+  if (e.status !== "paused") return null;
+  return (
+    <p className="text-xs text-destructive" data-testid={`enrollment-pause-reason-${e.id}`}>
+      {e.pause_reason ? `Pausada: ${e.pause_reason}` : "Pausada (motivo não registrado)"}
+    </p>
+  );
+}
+
 // ─── Enrollment panel ────────────────────────────────────────────────────────
 
 function EnrollPanel({ automation }: { automation: EmAutomation }) {
@@ -313,8 +325,11 @@ function EnrollPanel({ automation }: { automation: EmAutomation }) {
                 className="flex items-center justify-between px-3 py-2 text-sm"
                 data-testid={`enrollment-row-${e.id}`}
               >
-                <span>{emailById.get(e.contact_id) ?? e.contact_id}</span>
-                <Badge variant="secondary">{e.status}</Badge>
+                <div className="min-w-0">
+                  <span>{emailById.get(e.contact_id) ?? e.contact_id}</span>
+                  <EnrollmentPauseReason enrollment={e} />
+                </div>
+                <Badge variant={e.status === "paused" ? "destructive" : "secondary"}>{e.status}</Badge>
               </li>
             ))}
           </ul>
