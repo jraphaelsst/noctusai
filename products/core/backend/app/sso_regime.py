@@ -22,7 +22,9 @@ influence it.
 """
 from __future__ import annotations
 
+import ipaddress
 from typing import Any, Literal, Mapping, Optional
+from urllib.parse import urlsplit
 
 from noctusai_lib.config.product_urls import resolve_product_url
 
@@ -125,3 +127,90 @@ def bind_verdict(cookie_nonce: Optional[str], bnd: Optional[str], *, allow_unbou
     if cookie_nonce is None:
         return "unbound_allowed" if allow_unbound else "unbound_rejected"
     return "bound" if bind_matches(cookie_nonce, bnd) else "mismatch"
+
+
+# ---------------------------------------------------------------------------
+# Same-site guard (roadmap P2.2 follow-up, 2026-10-10)
+# ---------------------------------------------------------------------------
+# The bind cookie is SameSite=Strict on core's host. A browser sends it on the
+# product's credentialed redeem XHR only when the product host is SAME-SITE
+# with core (same registrable domain; scheme and port do not matter for the
+# cookie decision -- http vs https and :8080 vs :8000 are the same site). A
+# cross-site launch would therefore ALWAYS redeem unbound, so the launch paths
+# refuse to build one rather than silently launching a binding-less flow.
+
+#: Multi-label public suffixes we may realistically meet. NOT the full Public
+#: Suffix List (no PSL library is a core dependency and none was added): the
+#: rule is "last two labels", widened to three for these. Core itself lives on
+#: noctusai.com, so a missing suffix can only matter if core moves to a
+#: multi-label-suffix domain -- extend this set (or adopt a PSL lib) then.
+_MULTI_LABEL_SUFFIXES = frozenset({
+    "com.br", "net.br", "org.br", "gov.br", "edu.br", "eco.br", "app.br",
+    "co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au",
+    "co.nz", "co.jp", "com.ar", "com.mx", "co.za",
+})
+
+
+def site_of(url_or_host: str) -> Optional[str]:
+    """The cookie "site" of a URL (or bare host): registrable domain for DNS
+    names, the exact host for IP literals and single-label hosts (localhost),
+    ``None`` when no host can be parsed.
+    """
+    raw = (url_or_host or "").strip()
+    if not raw:
+        return None
+    host = urlsplit(raw if "//" in raw else f"//{raw}").hostname
+    if not host:
+        return None
+    host = host.lower().rstrip(".")
+    if not host:
+        return None
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        pass
+    labels = host.split(".")
+    if len(labels) == 1:
+        return host
+    if len(labels) >= 3 and ".".join(labels[-2:]) in _MULTI_LABEL_SUFFIXES:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
+def is_same_site(url_or_host: str, core_url: str) -> bool:
+    """True iff both parse AND share the same site (see :func:`site_of`)."""
+    a, b = site_of(url_or_host), site_of(core_url)
+    return a is not None and a == b
+
+
+def core_site_url() -> str:
+    """Core's own canonical URL -- the same resolver every product uses
+    (``PRODUCT_URL_CORE`` -> ``PRODUCT_URL_PATTERN``). ValueError if unset."""
+    return resolve_product_url("core")
+
+
+def origin_same_site(origin: Optional[str]) -> Optional[bool]:
+    """Is the request ``Origin`` same-site with core? ``None`` when there is no
+    Origin header or core's URL cannot be resolved (unknown, not a guess)."""
+    if not origin:
+        return None
+    try:
+        return is_same_site(origin, core_site_url())
+    except ValueError:
+        return None
+
+
+class LaunchNotSameSite(Exception):
+    """The launch URL's host is not same-site with core (or core's URL is
+    unresolvable): the SameSite=Strict bind cookie could never reach redeem.
+    Routers map it to a typed 409 BEFORE minting."""
+
+
+def assert_launch_same_site(launch_base: str) -> None:
+    try:
+        core = core_site_url()
+    except ValueError as e:
+        raise LaunchNotSameSite(f"core URL unresolvable: {e}") from e
+    if not is_same_site(launch_base, core):
+        raise LaunchNotSameSite(f"launch host {site_of(launch_base)!r} is not same-site with core {site_of(core)!r}")

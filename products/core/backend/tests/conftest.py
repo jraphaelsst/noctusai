@@ -643,3 +643,10 @@ def platform_admin_override():
     app.dependency_overrides[require_platform_admin_dep] = lambda: None
     yield
     app.dependency_overrides.pop(require_platform_admin_dep, None)
+
+
+@pytest.fixture(autouse=True)
+def _core_site_env(monkeypatch):
+    """Core's own URL (the same-site guard's reference). Local-dev shape:
+    localhost == localhost regardless of port, matching the fixtures' url_base."""
+    monkeypatch.setenv("PRODUCT_URL_CORE", "http://localhost:8000")

@@ -1229,3 +1229,55 @@ class TestSSOBrowserBind:
         a = client.post("/api/sso/token", json={"product_slug": "erp"})
         b = client.post("/api/sso/token", json={"product_slug": "erp"})
         assert a.headers["set-cookie"].split("=")[0] != b.headers["set-cookie"].split("=")[0]
+
+
+# ---------------------------------------------------------------------------
+# Cross-site launch guard: typed 409 BEFORE minting, never a silent launch
+# ---------------------------------------------------------------------------
+
+class TestCrossSiteLaunchGuard:
+    def _seed(self, client, url_base):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {
+            "id": "test-user-123", "org_id": "org-1", "role": "user", "email": "test@example.com",
+        })
+        mock_sb.set_table_data("products", {
+            "id": "prod-1", "slug": "academia-x", "ativo": True, "deploy_scope": "live",
+            "url_base": url_base,
+        })
+        mock_sb.set_table_data("licenses", [{
+            "id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1",
+        }])
+
+    def test_token_cross_site_is_409_and_no_token_or_cookie(self, client, monkeypatch):
+        monkeypatch.setenv("PRODUCT_URL_CORE", "https://noctusai.com")
+        monkeypatch.setenv("PRODUCT_URL_ACADEMIA_X", "https://academiadareciclagem.eco")
+        self._seed(client, None)
+        resp = client.post("/api/sso/token", json={"product_slug": "academia-x"})
+        assert resp.status_code == 409
+        assert "mesmo site" in resp.text
+        assert "set-cookie" not in resp.headers
+
+    def test_launch_cross_site_is_409_no_redirect_no_cookie(self, client, monkeypatch):
+        monkeypatch.setenv("PRODUCT_URL_CORE", "https://noctusai.com")
+        monkeypatch.setenv("PRODUCT_URL_ACADEMIA_X", "https://academiadareciclagem.eco")
+        self._seed(client, None)
+        resp = client.get("/api/sso/launch/academia-x", follow_redirects=False)
+        assert resp.status_code == 409
+        assert "location" not in resp.headers
+        assert "set-cookie" not in resp.headers
+
+    def test_same_site_subdomain_still_launches(self, client, monkeypatch):
+        monkeypatch.setenv("PRODUCT_URL_CORE", "https://noctusai.com")
+        monkeypatch.setenv("PRODUCT_URL_ACADEMIA_X", "https://academia-x.noctusai.com")
+        self._seed(client, None)
+        resp = client.post("/api/sso/token", json={"product_slug": "academia-x"})
+        assert resp.status_code == 200
+        assert resp.json()["redirect_url"].startswith("https://academia-x.noctusai.com/sso#token=")
+
+    def test_unresolvable_core_is_409(self, client, monkeypatch):
+        for k in [k for k in __import__("os").environ if k.startswith("PRODUCT_URL_")]:
+            monkeypatch.delenv(k, raising=False)
+        self._seed(client, "https://academia-x.noctusai.com")
+        resp = client.post("/api/sso/token", json={"product_slug": "academia-x"})
+        assert resp.status_code == 409

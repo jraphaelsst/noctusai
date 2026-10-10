@@ -29,8 +29,9 @@ from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
 from app.sso_regime import (
-    SSO_BIND_COOKIE_PATH, ProductUrlUnresolvable, bind_verdict, build_sso_launch_url, new_bind_nonce,
-    resolve_launch_base, sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
+    SSO_BIND_COOKIE_PATH, LaunchNotSameSite, ProductUrlUnresolvable, assert_launch_same_site, bind_verdict,
+    build_sso_launch_url, new_bind_nonce, origin_same_site, resolve_launch_base, site_of,
+    sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
 )
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
@@ -61,6 +62,13 @@ from noctusai_lib.primitives.roles import customer_may_access_product
 # SEC-2 (2026-09-28): an end customer (org_role in CUSTOMER_ORG_ROLES) only
 # ever SSOs into a product whose catalog row declares `aceita_clientes`.
 _CUSTOMER_REFUSED = "Área restrita à equipe."
+
+# Launch host must be same-site with core or the SameSite=Strict bind cookie
+# never reaches redeem (roadmap P2.2). Typed 409, never a silent launch.
+_CROSS_SITE_DETAIL = (
+    "O endereço de acesso do produto não pertence ao mesmo site do NoctusAI — "
+    "contate o suporte NoctusAI"
+)
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 
@@ -169,6 +177,11 @@ async def generate_sso_token(request: Request, response: Response, body: SSOToke
             status_code=409,
             detail="Produto sem URL de acesso configurada — contate o suporte NoctusAI",
         )
+    try:
+        assert_launch_same_site(launch_base)
+    except LaunchNotSameSite as exc:
+        logger.error("sso_launch_cross_site product=%s base_site=%s: %s", body.product_slug, site_of(launch_base), exc)
+        raise HTTPException(status_code=409, detail=_CROSS_SITE_DETAIL)
 
     # Generate SSO token
     jti = str(uuid.uuid4())
@@ -256,6 +269,11 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
             status_code=409,
             detail="Produto sem URL de acesso configurada — contate o suporte NoctusAI",
         )
+    try:
+        assert_launch_same_site(launch_base)
+    except LaunchNotSameSite as exc:
+        logger.error("sso_launch_cross_site product=%s base_site=%s: %s", product_slug, site_of(launch_base), exc)
+        raise HTTPException(status_code=409, detail=_CROSS_SITE_DETAIL)
 
     # Generate SSO token
     jti = str(uuid.uuid4())
@@ -542,7 +560,10 @@ async def sso_session(request: Request, response: Response, body: SSOSessionRequ
         allow_unbound=unbound_redeem_allowed(regime),
     )
     if verdict == "mismatch":
-        logger.warning("sso_bind_mismatch jti=%s product=%s origin=%s", jti, token_product, request.headers.get("origin"))
+        logger.warning(
+            "sso_bind_mismatch jti=%s product=%s origin=%s same_site=%s",
+            jti, token_product, request.headers.get("origin"), origin_same_site(request.headers.get("origin")),
+        )
     if verdict in ("mismatch", "unbound_rejected"):
         raise HTTPException(status_code=401, detail="Token SSO não pertence a este navegador")
     # NOC-REMEDIATE[sso-unbound-redeem-allow]: an absent cookie is ALLOWED today
@@ -556,8 +577,9 @@ async def sso_session(request: Request, response: Response, body: SSOSessionRequ
     if unbound:
         # Drives the "unbound reaches zero" exit criterion (roadmap P2.2). Never the token/nonce.
         logger.warning(
-            "sso_unbound_redeem jti=%s product=%s regime=%s origin=%s",
+            "sso_unbound_redeem jti=%s product=%s regime=%s origin=%s same_site=%s",
             jti, token_product, regime, request.headers.get("origin"),
+            origin_same_site(request.headers.get("origin")),
         )
     elif verdict == "bound":
         # Single use: the cookie has done its job.
