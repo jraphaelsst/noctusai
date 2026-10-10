@@ -299,3 +299,60 @@ Owner: "a way to register properties, as if my agents go inside the platform to 
 
 ### 8.5 First real use
 noc-2 registers Al. Liverpool 81 (Reserva do Vianna), processo atual `876`, Drive https://drive.google.com/drive/folders/1vfD3HHF7jN8EiMwhcHkKYrvuxz5GDlEK, through the UI.
+
+### 8.6 Possível duplicado (owner 2026-10-09: "build it this run please")
+A manual imóvel (SW-####) and a Vista listing may be the same property. This section is **detect, surface, dismiss**. They are **never** merged automatically.
+
+**Data.** `social_wiring.imovel_duplicata_candidatos`:
+
+| Column | Notes |
+|---|---|
+| `id uuid pk`, `org_id` | |
+| `codigo_manual`, `codigo_vista` | canonical códigos, each FK → `imovel_registry(org_id, codigo_canonical)`; UNIQUE `(org_id, codigo_manual, codigo_vista)` |
+| `score numeric(4,3)` | 0..1 |
+| `sinais jsonb` | `[{sinal, detalhe}]`, sinal ∈ `matricula_cri` \| `matricula` \| `endereco` \| `empreendimento_area_preco` |
+| `status text` | `pendente` \| `descartado` \| `confirmado` (`confirmado` is reserved for the §8.7 action; nothing sets it yet) |
+| `detectado_em`, `atualizado_em`, `resolvido_por`, `resolvido_em` | |
+
+Org-picker RLS plus acting-audit, same as every table in this contract.
+
+**Detection.** One function, `duplicatas_service.detectar(client, org_id, codigos_manuais=None)`, compares each manual imóvel against the Vista catalog (signals, strongest first):
+
+| Signal | Match | Score |
+|---|---|---|
+| `matricula_cri` | same `imovel_dados.numero_matricula` (digits only) AND same `numero_registro_imoveis` | 0.95 |
+| `matricula` | same matrícula, CRI unknown on one side (also against the mirror's `matricula_vista`) | 0.80 |
+| `endereco` | same normalized logradouro (unaccented, lowercased, type prefix "rua/r./avenida/av./alameda/al." stripped) + same número + (same CEP digits OR same normalized bairro) | 0.70 |
+| `empreendimento_area_preco` | same normalized empreendimento + área (total or privativa) within ±5% + price within ±10% | 0.50 |
+
+- The score is the highest signal plus 0.05 for each other signal that matched, capped at 0.99. A pair is recorded at ≥ 0.50.
+- Re-detection updates `score`/`sinais`/`atualizado_em` on `pendente` rows. It **never resurrects a `descartado` pair**. That pair is never suggested again, even if its signals change.
+- Runs after a complete Vista sync, as a separate step whose failure is logged loudly and never fails the sync. It also runs after a manual create/edit (for that código only).
+
+**Routes** (prefix `/api/imoveis`, bare JSON, seed error envelope, strict `== 401`):
+- `GET /duplicatas?status=pendente` returns `[{id, score, sinais, status, detectado_em, manual: ImovelResumo, vista: ImovelResumo}]`, highest score first. `ImovelResumo = {codigo, titulo, endereco_resumo, valor_venda, area_total, foto_destaque}`.
+- `POST /duplicatas/{id}/descartar` → `200` pair with status `descartado` (+ resolvido_por/em). `409 duplicata_ja_resolvida` if the pair is not pendente.
+- `GET /{codigo}` (Imovel) gains `duplicatas_pendentes: [{id, outro_codigo, score}]`, on both the manual and the Vista side.
+- List: the `imoveis_catalogo` view gains `possivel_duplicado boolean` (EXISTS a pendente pair involving the código) and `GET ""` accepts `possivel_duplicado=true`.
+
+**FE.**
+- A "Possível duplicado" badge on list cards and the details header.
+- On the details page, a section listing the candidate pairs (side by side: código, título, endereço, valor, área, the matched signals) with **"Não é o mesmo"**.
+- A "Possíveis duplicados" filter on /imoveis.
+- "É o mesmo imóvel" is NOT shown until §8.7 is approved and built.
+
+### 8.7 "É o mesmo imóvel" (PROPOSED, not built; for noc-2's review)
+Proposed action: **LINK, don't move.**
+
+- **Mechanism.** `imovel_registry` gains `vinculado_a uuid NULL` (FK → registry.id, the Vista row). Confirming a pair:
+  - sets `vinculado_a` on the manual registry row;
+  - sets the pair to `confirmado`;
+  - writes a timeline/audit row.
+  - The manual código stays a valid, stable identity. **No FK in the 12+ referencing tables is rewritten**, so every atendimento_imoveis / interesses / visitas / propostas / documentos / negociação row keeps pointing where it did. Nothing is re-pointed silently, and nothing can be half-moved.
+- **Resolution.** `busca_service.enriquecer` and `GET /{codigo}` resolve a linked manual código to the Vista listing's catalog data (title, photos, price, specs) while keeping the manual record's OWN authored data (deal refs, Drive folder, matrícula, documents, address override), shown as "Cadastro manual vinculado a ONE1234".
+- **Display.**
+  - New associations: the picker hides the linked manual entry and shows the Vista one with a "vinculado a SW-0001" hint, so new leads/campaigns attach to the canonical Vista código.
+  - Old rows keep the SW código, which renders the same data through the link.
+  - Reports that group by imóvel group by `coalesce(vinculado_a → codigo, codigo)`.
+- **Reversible.** "Desvincular" clears `vinculado_a` and returns the pair to `pendente`. Because nothing was moved, unlinking is exact.
+- **Explicitly not proposed.** Re-pointing FKs from SW-#### to the Vista código is lossy (two rows can collide on per-imóvel uniques like `imovel_dados` PK and `atendimento_imoveis` uniques), not cleanly reversible, and touches every table at once without a transaction.
