@@ -4,6 +4,7 @@
  * a library row into a post and opens it on the board. The library keeps every
  * row — the post only points at it.
  */
+import { ApiError } from "@noctusai/lib";
 import { Link, useNavigate } from "react-router-dom";
 import { FilePlus2 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,12 +28,6 @@ export function NoPostBadge({ post, className }: { post?: PostRef | null; classN
       </Badge>
     </Link>
   );
-}
-
-function erroCriarPost(e: unknown): string {
-  const bruto = e instanceof Error ? e.message : "";
-  if (/headline_ja_em_post/.test(bruto) || /^\[409\]/.test(bruto)) return "Esta headline já está em um post.";
-  return mensagemErro(e, "Não foi possível criar o post.");
 }
 
 interface CriarPostProps {
@@ -83,7 +78,18 @@ export function CriarPostButton({
       toast.success("Post criado na Esteira.");
       navigate(esteiraPostUrl(novo.id));
     } catch (e) {
-      toast.error(erroCriarPost(e));
+      // 409 headline_ja_em_post carries the owning post's id (§3.4): offer to open it.
+      if (e instanceof ApiError && e.code === "headline_ja_em_post") {
+        const existente = e.field("post_id");
+        toast.error("Esta headline já está em um post.", {
+          action:
+            typeof existente === "string"
+              ? { label: "Abrir post", onClick: () => navigate(esteiraPostUrl(existente)) }
+              : undefined,
+        });
+        return;
+      }
+      toast.error(mensagemErro(e, "Não foi possível criar o post."));
     }
   }
 

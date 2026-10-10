@@ -200,6 +200,29 @@ describe("RoteiroAvancadoModal", () => {
   });
 });
 
+describe("RoteiroAvancadoModal — postId (Esteira)", () => {
+  it("envia post_id no create e mostra 'Vinculado ao post <título>' quando criado", async () => {
+    m.criar.mockResolvedValue({ ...base, status: "criando" });
+    render(<RoteiroAvancadoModal open onOpenChange={vi.fn()} marcaId="m1" headlineInicial={{ texto: "x" }} postId="p1" />);
+    m.roteiro.mockReturnValue(
+      q({ ...base, post: { id: "p1", titulo: "Reel do ap", etapa_label: "Roteiro" } }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Criar roteiro" }));
+    await waitFor(() => expect(m.criar).toHaveBeenCalledWith(expect.objectContaining({ post_id: "p1" })));
+    expect(await screen.findByTestId("roteiro-vinculado")).toHaveTextContent("Vinculado ao post Reel do ap");
+  });
+
+  it("sem postId não envia post_id nem mostra o vínculo", async () => {
+    m.criar.mockResolvedValue({ ...base, status: "criando" });
+    render(<RoteiroAvancadoModal open onOpenChange={vi.fn()} marcaId="m1" headlineInicial={{ texto: "x" }} />);
+    m.roteiro.mockReturnValue(q({ ...base }));
+    fireEvent.click(screen.getByRole("button", { name: "Criar roteiro" }));
+    await screen.findByText("Roteiro criado com sucesso!");
+    expect(m.criar.mock.calls[0][0]).not.toHaveProperty("post_id");
+    expect(screen.queryByTestId("roteiro-vinculado")).toBeNull();
+  });
+});
+
 describe("EditarRoteiroModal", () => {
   function abrir() {
     return render(<EditarRoteiroModal open onOpenChange={vi.fn()} roteiroId="r1" />);

@@ -123,6 +123,17 @@ describe("Dashboard", () => {
     expect(rtl.screen.queryByText("Abrir link")).toBeNull();
   });
 
+  it("a sugerida already in an Esteira post shows the 'No post' link; others show none", () => {
+    m.dash.mockReturnValue(
+      q(payload({ sugeridas: [headline(1, { post: { id: "p1", titulo: "Reel", etapa_label: "Roteiro" } }), headline(2)] })),
+    );
+    renderPage();
+    const badges = rtl.screen.getAllByTestId("no-post-badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0].textContent).toBe("No post: Reel · Roteiro");
+    expect(badges[0].getAttribute("href")).toBe("/media-creation/esteira?post=p1");
+  });
+
   it("shows the honest empty state when there are no sugeridas", () => {
     m.dash.mockReturnValue(q(payload({ sugeridas: [], historico: [] })));
     renderPage();

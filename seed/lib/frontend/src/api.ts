@@ -116,11 +116,40 @@ export class ApiError extends Error {
    * string. Nested wins when a body somehow carries both.
    */
   get code(): string | null {
-    const body = this.body as { error?: { code?: unknown }; code?: unknown } | undefined;
+    const body = this.body as
+      | { error?: { code?: unknown }; code?: unknown; detail?: { code?: unknown } | unknown }
+      | undefined;
     const nested = body?.error?.code;
     if (typeof nested === 'string') return nested;
     const flat = body?.code;
-    return typeof flat === 'string' ? flat : null;
+    if (typeof flat === 'string') return flat;
+    // FastAPI `HTTPException(detail={code, ...})` -> `{detail: {code, ...}}`.
+    const det = body?.detail;
+    const fromDetail = det && typeof det === 'object' ? (det as { code?: unknown }).code : undefined;
+    return typeof fromDetail === 'string' ? fromDetail : null;
+  }
+
+  /**
+   * An extra field the server attached next to the error code (e.g. the
+   * `post_id` of a 409 `headline_ja_em_post`). Looked up in the same shapes
+   * `code` reads: `error.details`, `error`, a flat body, or an object `detail`.
+   * Returns `undefined` when absent.
+   */
+  field(key: string): unknown {
+    const body = this.body as Record<string, unknown> | undefined;
+    if (!body || typeof body !== 'object') return undefined;
+    const err = body.error as Record<string, unknown> | undefined;
+    const det = body.detail;
+    const candidates: unknown[] = [
+      err && typeof err === 'object' ? (err.details as Record<string, unknown> | undefined) : undefined,
+      err,
+      det && typeof det === 'object' ? det : undefined,
+      body,
+    ];
+    for (const c of candidates) {
+      if (c && typeof c === 'object' && key in (c as object)) return (c as Record<string, unknown>)[key];
+    }
+    return undefined;
   }
 
   /** `error.details` from a `{error: {details, ...}}` body, or `null`. */

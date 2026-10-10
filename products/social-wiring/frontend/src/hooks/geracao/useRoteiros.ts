@@ -87,6 +87,8 @@ export interface CriarRoteiroInput {
   brain_id?: string | null;
   viral_id?: string | null;
   gerar_perguntas: boolean;
+  /** Created from inside an Esteira post: the server binds the roteiro to it (esteira-contract §3.5). */
+  post_id?: string;
 }
 
 export function useCriarRoteiro() {

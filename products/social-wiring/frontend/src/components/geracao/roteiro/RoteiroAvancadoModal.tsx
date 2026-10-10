@@ -63,6 +63,8 @@ interface Props {
   /** Prefill from a favorita / sugerida / dashboard row; omit for an empty headline. */
   headlineInicial?: HeadlineInicial | null;
   onCriado?: (roteiro: Roteiro) => void;
+  /** Opened from an Esteira post card: the roteiro is created bound to this post (contract §3.5). */
+  postId?: string;
 }
 
 function mensagemErro(e: unknown, fallback: string): string {
@@ -70,7 +72,7 @@ function mensagemErro(e: unknown, fallback: string): string {
   return msg || fallback;
 }
 
-export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInicial, onCriado }: Props) {
+export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInicial, onCriado, postId }: Props) {
   const [headline, setHeadline] = useState("");
   const [instrucoes, setInstrucoes] = useState("");
   const [duracao, setDuracao] = useState<Roteiro["duracao"]>("auto");
@@ -131,6 +133,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
         brain_id: brainId || null,
         viral_id: viralId,
         gerar_perguntas: comPerguntas,
+        ...(postId ? { post_id: postId } : {}),
       });
       setRoteiroId(novo.id);
       onCriado?.(novo);
@@ -374,6 +377,11 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
         {roteiro && status === "completo" && (
           <div className="space-y-4">
             <p className="font-medium text-emerald-700">Roteiro criado com sucesso!</p>
+            {(roteiro.post || postId) && (
+              <p className="text-sm text-muted-foreground" data-testid="roteiro-vinculado">
+                {roteiro.post ? `Vinculado ao post ${roteiro.post.titulo}` : "Vinculado ao post."}
+              </p>
+            )}
             <RoteiroCorpo
               roteiro={roteiro}
               edicao={edicao}

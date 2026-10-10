@@ -368,3 +368,19 @@ describe('api.download', () => {
     });
   });
 });
+
+describe('ApiError.code / field() — FastAPI detail object + extra fields', () => {
+  it('reads code from {detail:{code}} and fields from every supported shape', () => {
+    const a = new ApiError(409, 'x', { detail: { code: 'headline_ja_em_post', post_id: 'p1' } });
+    expect(a.code).toBe('headline_ja_em_post');
+    expect(a.field('post_id')).toBe('p1');
+    expect(new ApiError(409, 'x', { error: { code: 'c', details: { post_id: 'p2' } } }).field('post_id')).toBe('p2');
+    expect(new ApiError(409, 'x', { code: 'c', post_id: 'p3' }).field('post_id')).toBe('p3');
+  });
+  it('stays null/undefined when absent, and a string detail is not a code', () => {
+    const a = new ApiError(500, 'x', { detail: 'boom' });
+    expect(a.code).toBeNull();
+    expect(a.field('post_id')).toBeUndefined();
+    expect(new ApiError(null, 'offline').field('post_id')).toBeUndefined();
+  });
+});

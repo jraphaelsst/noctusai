@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 
 import { EditarHeadlineModal } from "@/components/geracao/headlines/EditarHeadlineModal";
 import { MetricaPill } from "@/components/geracao/MetricaPill";
+import { NoPostBadge } from "@/components/geracao/PostEsteira";
 import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { Button } from "@/components/ui/button";
@@ -185,6 +186,7 @@ export default function Dashboard() {
                         <span className="min-w-0 flex-1 truncate text-sm" title={h.texto}>
                           {h.texto}
                         </span>
+                        <NoPostBadge post={h.post} />
                         <MetricaPill viral={h.viral} />
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>

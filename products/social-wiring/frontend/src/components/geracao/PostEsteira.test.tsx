@@ -2,7 +2,8 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import "@testing-library/jest-dom/vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ApiError } from "@noctusai/lib";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 
@@ -76,13 +77,37 @@ describe("CriarPostButton", () => {
     expect(api.put).toHaveBeenCalledWith("/api/media-creation/esteira/posts/p9/roteiro", { roteiro_id: "r1" });
   });
 
-  it("erro 409 headline_ja_em_post: avisa, não navega e libera o botão", async () => {
-    api.post.mockRejectedValue(new Error("[409] headline_ja_em_post"));
+  it("409 headline_ja_em_post: avisa, oferece 'Abrir post' com o post_id do servidor, não navega sozinho", async () => {
+    api.post.mockRejectedValue(
+      new ApiError(409, "headline_ja_em_post", { detail: { code: "headline_ja_em_post", post_id: "p7" } }),
+    );
     renderUi(<CriarPostButton marcaId="m1" headlineId="h1" />);
     fireEvent.click(screen.getByRole("button", { name: /criar post/i }));
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("Esta headline já está em um post."));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    const [msg, opts] = toast.error.mock.calls[0];
+    expect(msg).toBe("Esta headline já está em um post.");
+    expect(opts.action.label).toBe("Abrir post");
     expect(screen.getByTestId("where")).toHaveTextContent("/media-creation/headlines/favoritas");
     expect(screen.getByRole("button", { name: /criar post/i })).toBeEnabled();
+    act(() => opts.action.onClick());
+    await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("/media-creation/esteira?post=p7"));
+  });
+
+  it("409 com envelope {error:{code,details:{post_id}}} também oferece 'Abrir post'", async () => {
+    api.post.mockRejectedValue(
+      new ApiError(409, "x", { error: { code: "headline_ja_em_post", details: { post_id: "p8" } } }),
+    );
+    renderUi(<CriarPostButton marcaId="m1" headlineId="h1" />);
+    fireEvent.click(screen.getByRole("button", { name: /criar post/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.error.mock.calls[0][1].action.label).toBe("Abrir post");
+  });
+
+  it("um 409 de outro código não é tratado como headline_ja_em_post", async () => {
+    api.post.mockRejectedValue(new ApiError(409, "conflito qualquer", { detail: { code: "outro" } }));
+    renderUi(<CriarPostButton marcaId="m1" headlineId="h1" />);
+    fireEvent.click(screen.getByRole("button", { name: /criar post/i }));
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("conflito qualquer"));
   });
 
   it("erro genérico: mostra a mensagem do servidor", async () => {
