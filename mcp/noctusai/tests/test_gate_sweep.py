@@ -1189,3 +1189,50 @@ def test_run_gates_named_runs_only_named_gates_and_reports_unknown(tmp_path):
     assert ran == ["pytest:p"]
     assert [g["gate"] for g in res["gates"]] == ["pytest:p"]
     assert sorted(res["unknown"]) == ["e2e:p", "pytest:nope"]
+
+
+# ── PEP 562 lazy seed package + TYPE_CHECKING in the import graph ──────────
+
+
+def _lazy_seed_fixture(tmp_path: Path) -> Path:
+    fw = "seed/framework/backend/noctusai_seed"
+    _w(tmp_path, "seed/lib/backend/noctusai_lib/__init__.py")
+    _w(tmp_path, f"{fw}/__init__.py",
+       "from typing import TYPE_CHECKING\n"
+       "if TYPE_CHECKING:\n"
+       "    from noctusai_seed.alpha import A\n"
+       "    from noctusai_seed.beta import B\n"
+       '_LAZY_ATTRS = {"A": "noctusai_seed.alpha", "B": "noctusai_seed.beta"}\n')
+    _w(tmp_path, f"{fw}/alpha.py", "A = 1\n")
+    _w(tmp_path, f"{fw}/beta.py", "B = 1\n")
+    (tmp_path / "seed/framework/backend/tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "seed/lib/backend/tests").mkdir(parents=True, exist_ok=True)
+    _make_product(tmp_path, "wants-a")
+    _w(tmp_path, "products/wants-a/backend/app/m.py", "from noctusai_seed import A\n")
+    _make_product(tmp_path, "wants-b")
+    _w(tmp_path, "products/wants-b/backend/app/m.py", "from noctusai_seed import B\n")
+    _make_product(tmp_path, "bare")
+    _w(tmp_path, "products/bare/backend/app/m.py", "import noctusai_seed\n")
+    return tmp_path
+
+
+def test_fanout_lazy_package_reaches_only_the_importers_of_that_name(tmp_path):
+    root = _lazy_seed_fixture(tmp_path)
+    plan = _plan(root, "seed/framework/backend/noctusai_seed/alpha.py")
+    # TYPE_CHECKING imports are not runtime edges; `from pkg import A` -> alpha;
+    # a bare `import pkg` (invisible attribute access) conservatively reaches all.
+    assert plan["py_products"] == {"wants-a", "bare"}
+
+
+def test_fanout_non_lazy_package_still_reaches_importers_of_the_package(tmp_path):
+    root = _seed_fixture(tmp_path)  # eager __init__: unchanged behaviour
+    plan = _plan(root, "seed/framework/backend/noctusai_seed/core.py")
+    assert plan["py_products"] == {"uses-seed"}
+
+
+def test_runtime_nodes_skips_type_checking_body_keeps_else():
+    import ast
+    tree = ast.parse(
+        "if TYPE_CHECKING:\n    import a\nelse:\n    import b\n")
+    imported = {n.names[0].name for n in GS._runtime_nodes(tree) if isinstance(n, ast.Import)}
+    assert imported == {"b"}

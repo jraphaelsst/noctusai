@@ -479,17 +479,80 @@ def _seed_module_index(root: Path) -> dict[str, Path]:
     return mods
 
 
+def _is_type_checking_test(test: ast.expr) -> bool:
+    return (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+        isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+    )
+
+
+def _runtime_nodes(tree: ast.AST):
+    """`ast.walk`, minus `if TYPE_CHECKING:` bodies — those imports never run,
+    so they are not runtime dependencies (the `else:` branch still is)."""
+    todo = [tree]
+    while todo:
+        node = todo.pop()
+        yield node
+        if isinstance(node, ast.If) and _is_type_checking_test(node.test):
+            todo.extend(node.orelse)
+            continue
+        todo.extend(ast.iter_child_nodes(node))
+
+
+def _seed_lazy_maps(mods: dict[str, Path]) -> dict[str, dict[str, str]]:
+    """package -> {public name: providing module} for every seed package whose
+    `__init__` is a PEP 562 lazy package (a module-level ``_LAZY_ATTRS`` dict
+    literal of str -> str). `from pkg import name` then depends on the module
+    that actually provides `name`, not on every module the package could load."""
+    out: dict[str, dict[str, str]] = {}
+    for name, f in mods.items():
+        if f.name != "__init__.py":
+            continue
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            raise _FallBack(f"unparseable seed module {f.name}")
+        for node in tree.body:
+            target = (
+                node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1
+                else node.target if isinstance(node, ast.AnnAssign) else None
+            )
+            if isinstance(target, ast.Name) and target.id == "_LAZY_ATTRS" and isinstance(
+                node.value, ast.Dict
+            ):
+                mapping: dict[str, str] = {}
+                for k, v in zip(node.value.keys, node.value.values):
+                    if not (
+                        isinstance(k, ast.Constant) and isinstance(k.value, str)
+                        and isinstance(v, ast.Constant) and isinstance(v.value, str)
+                    ):
+                        raise _FallBack(f"non-literal _LAZY_ATTRS in {name}")
+                    mapping[k.value] = v.value
+                out[name] = mapping
+    return out
+
+
 def _file_import_deps(
-    tree: ast.AST, known: set[str], own_pkg: str | None = None
+    tree: ast.AST,
+    known: set[str],
+    own_pkg: str | None = None,
+    lazy: dict[str, dict[str, str]] | None = None,
 ) -> set[str]:
     """Known seed modules a parsed file depends on. `own_pkg` = the dotted
     package a relative import resolves against (None = no relative imports).
     Importing `a.b.c` executes `a` and `a.b` too, so every existing prefix of
-    each imported name counts; `from a.b import c` also tries `a.b.c`."""
+    each imported name counts; `from a.b import c` also tries `a.b.c`.
+    `lazy` = `_seed_lazy_maps`: `from lazy_pkg import X` depends on the module
+    providing X; a bare `import lazy_pkg` (attribute access we cannot see)
+    conservatively depends on every module the package can load."""
+    lazy = lazy or {}
     names: set[str] = set()
-    for node in ast.walk(tree):
+    for node in _runtime_nodes(tree):
         if isinstance(node, ast.Import):
-            names.update(a.name for a in node.names)
+            for a in node.names:
+                names.add(a.name)
+                if a.name in lazy:
+                    names.update(lazy[a.name].values())
+                    names.update(k for k in known if k.startswith(a.name + "."))
         elif isinstance(node, ast.ImportFrom):
             if node.level:
                 if own_pkg is None:
@@ -505,6 +568,12 @@ def _file_import_deps(
                 continue
             names.add(base)
             names.update(f"{base}.{a.name}" for a in node.names if a.name != "*")
+            if base in lazy:
+                for a in node.names:
+                    if a.name == "*":  # star-import resolves every public name
+                        names.update(lazy[base].values())
+                    elif a.name in lazy[base]:
+                        names.add(lazy[base][a.name])
     deps: set[str] = set()
     for n in names:
         parts = n.split(".")
@@ -517,6 +586,7 @@ def _file_import_deps(
 
 def _seed_py_graph(root: Path, mods: dict[str, Path]) -> dict[str, set[str]]:
     known = set(mods)
+    lazy = _seed_lazy_maps(mods)
     graph: dict[str, set[str]] = {}
     for name, f in mods.items():
         try:
@@ -524,7 +594,7 @@ def _seed_py_graph(root: Path, mods: dict[str, Path]) -> dict[str, set[str]]:
         except (SyntaxError, UnicodeDecodeError, OSError):
             raise _FallBack(f"unparseable seed module {f.name}")
         own_pkg = name if f.name == "__init__.py" else name.rpartition(".")[0]
-        graph[name] = _file_import_deps(tree, known, own_pkg or None) - {name}
+        graph[name] = _file_import_deps(tree, known, own_pkg or None, lazy) - {name}
     return graph
 
 
@@ -532,7 +602,9 @@ class _FallBack(Exception):
     """The plan cannot be proven narrower than the fleet."""
 
 
-def _product_py_deps(root: Path, slug: str, known: set[str]) -> set[str]:
+def _product_py_deps(
+    root: Path, slug: str, known: set[str], lazy: dict[str, dict[str, str]] | None = None
+) -> set[str]:
     backend = root / "products" / slug / "backend"
     deps: set[str] = set()
     if not backend.is_dir():
@@ -545,7 +617,7 @@ def _product_py_deps(root: Path, slug: str, known: set[str]) -> set[str]:
             tree = ast.parse(text)
         except (SyntaxError, UnicodeDecodeError, OSError):
             raise _FallBack(f"unparseable product file {slug}/{f.name}")
-        deps |= _file_import_deps(tree, known, None)
+        deps |= _file_import_deps(tree, known, None, lazy)
     return deps
 
 
@@ -613,6 +685,7 @@ def _seed_fanout_plan_inner(root: Path, seed_files: list[str]) -> dict[str, Any]
         if changed_known != changed_py:
             return None
         graph = _seed_py_graph(root, mods)
+        lazy = _seed_lazy_maps(mods)
         affected = set(changed_known)
         grew = True
         while grew:
@@ -624,7 +697,7 @@ def _seed_fanout_plan_inner(root: Path, seed_files: list[str]) -> dict[str, Any]
         for m in affected:
             py_roots.add(_SEED_PY_PKGS[m.split(".", 1)[0]][1])
         for slug in _all_product_slugs(root):
-            if _product_py_deps(root, slug, known) & affected:
+            if _product_py_deps(root, slug, known, lazy) & affected:
                 consumers_py.add(slug)
 
     consumers_fe: set[str] = set()
