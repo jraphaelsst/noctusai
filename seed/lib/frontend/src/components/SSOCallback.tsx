@@ -153,6 +153,9 @@ export function SSOCallback({
       const p = (async (): Promise<RedeemResult> => {
         const response = await fetch(`${coreApiUrl}${ssoEndpoint}`, {
           method: 'POST',
+          // Browser-bind (SSO P2.2): sends core's per-launch HttpOnly cookie so
+          // core can check it against the token's `bnd` claim.
+          credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(productSlug ? { token, product_slug: productSlug } : { token }),
         });

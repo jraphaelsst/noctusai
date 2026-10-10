@@ -62,3 +62,48 @@ def build_sso_launch_url(slug: str, product_row: Mapping[str, Any], sso_token: s
     if sso_regime(product_row) == "legacy":
         return f"{base}/sso?token={sso_token}"
     return f"{base}/sso#token={sso_token}"
+
+
+# ---------------------------------------------------------------------------
+# Browser-bind (roadmap P2.2): launch sets an HttpOnly nonce cookie on core and
+# puts hash(nonce) in the token (`bnd`); redeem compares them.
+# ---------------------------------------------------------------------------
+
+SSO_BIND_COOKIE_PREFIX = "sso_bnd_"
+SSO_BIND_COOKIE_PATH = "/api/sso/session"
+
+
+def sso_bind_cookie_name(jti: str) -> str:
+    """One cookie PER LAUNCH, named after the token's jti: two concurrent
+    launches (two tabs, two products) never overwrite each other's nonce."""
+    return f"{SSO_BIND_COOKIE_PREFIX}{jti}"
+
+
+def new_bind_nonce() -> tuple[str, str]:
+    """``(nonce, hash)``: the nonce goes ONLY into the Set-Cookie; the hash into the token."""
+    import hashlib
+    import secrets
+
+    nonce = secrets.token_urlsafe(32)
+    return nonce, hashlib.sha256(nonce.encode()).hexdigest()
+
+
+def bind_matches(nonce: str, bnd: str) -> bool:
+    import hashlib
+    import hmac
+
+    return hmac.compare_digest(hashlib.sha256(nonce.encode()).hexdigest(), bnd)
+
+
+def unbound_redeem_allowed(regime: SSORegime) -> bool:
+    """May a redeem that carries NO bind cookie proceed?
+
+    NOC-REMEDIATE[sso-unbound-redeem-allow]: True for every regime while the
+    fleet still runs SSOCallbacks that never send credentials (legacy
+    orbity/p-studio, and any strict product not yet rebuilt). Flip to
+    ``regime == "legacy"`` (strict => absent cookie 401s) when the
+    ``sso_unbound_redeem`` count for STRICT products is zero for 7 consecutive
+    days after the fleet rebuild that carries the credentials:'include'
+    SSOCallback (roadmap P2.2 trigger T6). Single switch -- do not inline.
+    """
+    return True

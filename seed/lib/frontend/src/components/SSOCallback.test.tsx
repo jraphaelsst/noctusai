@@ -59,6 +59,13 @@ describe('SSOCallback token hygiene', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body).toEqual({ token: 'abc.def.ghi', product_slug: 'erp' });
   });
+
+  it("redeems with credentials:'include' (browser-bind cookie, SSO P2.2)", async () => {
+    const supabase = makeSupabase();
+    mount(supabase, 'erp');
+    await waitFor(() => expect(supabase.auth.setSession).toHaveBeenCalled());
+    expect(fetchMock.mock.calls[0][1].credentials).toBe('include');
+  });
 });
 
 describe('SSOCallback fragment token hygiene (P2.1)', () => {

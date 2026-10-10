@@ -15,7 +15,9 @@ import threading
 import time
 from typing import Dict, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+import uuid
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from noctusai_lib.api.auth.session.types import AuthContext
 
 from app.services.trusted_auth import require_platform_admin_dep
@@ -26,7 +28,10 @@ from app.config import settings
 from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
-from app.sso_regime import ProductUrlUnresolvable, build_sso_launch_url, resolve_launch_base, sso_regime
+from app.sso_regime import (
+    SSO_BIND_COOKIE_PATH, ProductUrlUnresolvable, bind_matches, build_sso_launch_url, new_bind_nonce,
+    resolve_launch_base, sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
+)
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
 
 logger = logging.getLogger(__name__)
@@ -137,9 +142,21 @@ class _RateLimitError(Exception):
     pass
 
 
+def _set_bind_cookie(response: Response, jti: str, nonce: str) -> None:
+    """Browser-bind cookie (P2.2). HttpOnly (JS never sees the nonce), Secure,
+    SameSite=Strict (products are same-SITE subdomains, so their credentialed
+    redeem XHR still carries it; a cross-site attacker page does not), scoped to
+    the redeem path, living exactly as long as the token."""
+    response.set_cookie(
+        key=sso_bind_cookie_name(jti), value=nonce,
+        max_age=settings.sso_token_expiration_minutes * 60,
+        path=SSO_BIND_COOKIE_PATH, secure=True, httponly=True, samesite="strict",
+    )
+
+
 @router.post("/token", response_model=SSOTokenResponse)
 @limiter.limit("20/minute")
-async def generate_sso_token(request: Request, body: SSOTokenRequest, authorization: Optional[str] = Header(None)):
+async def generate_sso_token(request: Request, response: Response, body: SSOTokenRequest, authorization: Optional[str] = Header(None)):
     """Generate a short-lived SSO token to access a product."""
     user, token = await get_current_user(authorization)
     db = get_admin_client()
@@ -179,6 +196,8 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
         )
 
     # Generate SSO token
+    jti = str(uuid.uuid4())
+    nonce, bnd = new_bind_nonce()
     sso_token = create_sso_token(
         user_id=user.id,
         org_id=org_id,
@@ -186,7 +205,10 @@ async def generate_sso_token(request: Request, body: SSOTokenRequest, authorizat
         email=user.email,
         role=role,
         org_role=org_role,
+        jti=jti,
+        binding=bnd,
     )
+    _set_bind_cookie(response, jti, nonce)
 
     logger.info(f"SSO token generated for user={user.id} product={body.product_slug}")
     return SSOTokenResponse(
@@ -261,6 +283,8 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
         )
 
     # Generate SSO token
+    jti = str(uuid.uuid4())
+    nonce, bnd = new_bind_nonce()
     sso_token = create_sso_token(
         user_id=user.id,
         org_id=org_id,
@@ -268,12 +292,16 @@ async def launch_product(request: Request, product_slug: str, authorization: Opt
         email=user.email,
         role=role,
         org_role=org_role,
+        jti=jti,
+        binding=bnd,
     )
 
     # Token transport per the catalog-derived regime (strict -> URL fragment,
     # legacy -> query), URL resolved through the seed `resolve_product_url`.
     redirect_url = build_sso_launch_url(product_slug, product.data, sso_token, base=launch_base)
-    return RedirectResponse(url=redirect_url, status_code=302)
+    redirect = RedirectResponse(url=redirect_url, status_code=302)
+    _set_bind_cookie(redirect, jti, nonce)
+    return redirect
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +506,7 @@ def _release_sso_jti(db, jti: str) -> None:
 
 @router.post("/session", response_model=SSOSessionResponse)
 @limiter.limit("20/minute")
-async def sso_session(request: Request, body: SSOSessionRequest):
+async def sso_session(request: Request, response: Response, body: SSOSessionRequest):
     """Exchange an SSO token for a Supabase session.
 
     Called by product frontends directly. The Core is the sole owner of
@@ -528,9 +556,37 @@ async def sso_session(request: Request, body: SSOSessionRequest):
     if not check_org_license(db, org_id, product_row.data[0]["id"]):
         raise HTTPException(status_code=403, detail="Organização não tem acesso a este produto")
 
-    # Single use: claim the jti BEFORE issuing anything.
+    # Browser-bind (P2.2). Present-and-wrong is a relayed token: 401 BEFORE the
+    # claim so the legitimate holder's token is not burned. Absent is allowed
+    # only while `unbound_redeem_allowed` says so (deploy-order safety).
     jti = payload["jti"]
+    bnd = payload.get("bnd")
+    bind_nonce = request.cookies.get(sso_bind_cookie_name(jti))
+    unbound = False
+    if bnd and bind_nonce is not None:
+        if not bind_matches(bind_nonce, bnd):
+            logger.warning("sso_bind_mismatch jti=%s product=%s origin=%s", jti, token_product, request.headers.get("origin"))
+            raise HTTPException(status_code=401, detail="Token SSO não pertence a este navegador")
+    elif bnd:
+        # NOC-REMEDIATE[sso-unbound-redeem-allow]: absent cookie is ALLOWED today
+        # (old SSOCallbacks never send credentials); the switch is
+        # `unbound_redeem_allowed` -- flip trigger T6 in the SSO roadmap.
+        unbound = True
+        if not unbound_redeem_allowed(regime):
+            raise HTTPException(status_code=401, detail="Token SSO não pertence a este navegador")
+
+    # Single use: claim the jti BEFORE issuing anything.
     _claim_sso_jti(db, jti, user_id, token_product)
+
+    if unbound:
+        # Drives the "unbound reaches zero" exit criterion (roadmap P2.2). Never the token/nonce.
+        logger.warning(
+            "sso_unbound_redeem jti=%s product=%s regime=%s origin=%s",
+            jti, token_product, regime, request.headers.get("origin"),
+        )
+    elif bnd:
+        # Single use: the cookie has done its job.
+        response.delete_cookie(sso_bind_cookie_name(jti), path=SSO_BIND_COOKIE_PATH, secure=True, httponly=True, samesite="strict")
 
     if regime == "legacy":
         # Drives the "legacy reaches zero" exit criterion (roadmap P2.1). Never the token.

@@ -146,6 +146,8 @@ endpoint returns session tokens; an open subdomain-regex exposes them to subdoma
 takeover on any unclaimed `x.noctusai.com`.  The closed registry-derived set is the
 correct boundary.
 
+**Browser-bind (SSO P2.2).** The redeem XHR is sent `credentials:'include'`: core's launch sets cookie `sso_bnd_<jti>` (HttpOnly/Secure/SameSite=Strict, Path `/api/sso/session`, TTL = token TTL) and the token's `bnd` = sha256(nonce); a present-but-wrong cookie is a 401 before the jti claim, an absent one is allowed + logged `sso_unbound_redeem` until `unbound_redeem_allowed` flips (roadmap `project-history/roadmaps/sso-identity-hardening-2026-10.md` T6). This is why the CORS roster must stay an explicit-origin list (credentials + wildcard is invalid).
+
 Born 2026-06-04 (`feat/sso-cors-roster-by-construction`) after orbity's SSO broke
 ("Failed to fetch") because no `PRODUCT_URL_ORBITY` existed on the VPS.
 

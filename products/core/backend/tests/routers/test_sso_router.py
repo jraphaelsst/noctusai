@@ -229,7 +229,7 @@ class TestLaunchProduct:
 
 def _make_sso_token(
     email="user@test.com", org_id="org-123", expired=False, token_type="sso",
-    role="user", org_role="member", product="therapy-platform", jti=None,
+    role="user", org_role="member", product="therapy-platform", jti=None, bnd=None,
 ):
     """Create a valid SSO JWT token for testing.
 
@@ -254,6 +254,8 @@ def _make_sso_token(
         "iat": now,
         "exp": (now - 600) if expired else (now + 300),
     }
+    if bnd:
+        payload["bnd"] = bnd
     secret = (getattr(settings, "sso_jwt_secret", "") or "").strip() or settings.jwt_secret
     return jwt.encode(payload, secret, algorithm=settings.jwt_algorithm)
 
@@ -1105,3 +1107,112 @@ class TestUnresolvableLaunchUrl:
             resp = client.get("/api/sso/launch/ghost", follow_redirects=False)
         assert resp.status_code == 409
         mint.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# P2.2 browser-bind
+# ---------------------------------------------------------------------------
+
+class TestSSOBrowserBind:
+    NONCE = "nonce-for-browser-x"
+
+    @staticmethod
+    def _bnd(nonce):
+        import hashlib
+        return hashlib.sha256(nonce.encode()).hexdigest()
+
+    def _redeem(self, client, jti, bnd, cookie=None, **kw):
+        token = _make_sso_token(jti=jti, bnd=bnd)
+        cookies = {f"sso_bnd_{jti}": cookie} if cookie is not None else None
+        return client.post("/api/sso/session", json={"token": token, "product_slug": "therapy-platform"},
+                           cookies=cookies, **kw)
+
+    def test_match_redeems_and_clears_cookie(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        jti = str(uuid.uuid4())
+        resp = self._redeem(client, jti, self._bnd(self.NONCE), cookie=self.NONCE)
+        assert resp.status_code == 200
+        assert f"sso_bnd_{jti}=" in resp.headers.get("set-cookie", "")
+        assert "Max-Age=0" in resp.headers["set-cookie"]
+
+    def test_mismatch_is_exactly_401_and_does_not_burn_jti(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        jti = str(uuid.uuid4())
+        resp = self._redeem(client, jti, self._bnd(self.NONCE), cookie="attacker-browser-nonce")
+        assert resp.status_code == 401
+        # the legitimate browser (right cookie) still redeems the same token
+        resp = self._redeem(client, jti, self._bnd(self.NONCE), cookie=self.NONCE)
+        assert resp.status_code == 200
+
+    def test_absent_cookie_allowed_and_logged(self, sso_session_client, caplog):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        jti = str(uuid.uuid4())
+        with caplog.at_level(logging.WARNING, logger="app.routers.sso"):
+            resp = self._redeem(client, jti, self._bnd(self.NONCE), headers={"Origin": "https://social.example"})
+        assert resp.status_code == 200
+        line = next(r.getMessage() for r in caplog.records if "sso_unbound_redeem" in r.getMessage())
+        assert f"jti={jti}" in line and "product=therapy-platform" in line and "regime=strict" in line
+        assert "origin=https://social.example" in line
+        assert self.NONCE not in line
+
+    def test_absent_cookie_rejected_when_switch_flipped(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        with patch("app.routers.sso.unbound_redeem_allowed", return_value=False):
+            resp = self._redeem(client, str(uuid.uuid4()), self._bnd(self.NONCE))
+        assert resp.status_code == 401
+
+    def test_cookie_for_another_jti_does_not_satisfy(self, sso_session_client):
+        client, mock_sb = sso_session_client
+        _prime_regime(mock_sb, scope="live")
+        jti = str(uuid.uuid4())
+        resp = client.post("/api/sso/session",
+                           json={"token": _make_sso_token(jti=jti, bnd=self._bnd(self.NONCE)), "product_slug": "therapy-platform"},
+                           cookies={f"sso_bnd_{uuid.uuid4()}": self.NONCE})
+        assert resp.status_code == 200  # treated as absent (allowed today)
+
+    def _setup_launch(self, client):
+        mock_sb = client.mock_supabase
+        mock_sb.set_table_data("noctus_users", {"id": "test-user-123", "org_id": "org-1", "role": "user"})
+        mock_sb.set_table_data("products", {"id": "prod-1", "slug": "erp", "url_base": "http://localhost:8080",
+                                            "ativo": True, "deploy_scope": "live"})
+        mock_sb.set_table_data("licenses", [{"id": "lic-1", "status": "active", "org_id": "org-1", "product_id": "prod-1"}])
+
+    def _assert_bind(self, resp, token_holder):
+        sc = resp.headers["set-cookie"]
+        name, _, rest = sc.partition("=")
+        jti = name.removeprefix("sso_bnd_")
+        nonce = rest.split(";")[0]
+        assert name.startswith("sso_bnd_") and nonce
+        for attr in ("HttpOnly", "Secure", "SameSite=strict", "Path=/api/sso/session",
+                     f"Max-Age={settings.sso_token_expiration_minutes * 60}"):
+            assert attr.lower() in sc.lower(), attr
+        payload = jwt.decode(token_holder, options={"verify_signature": False})
+        assert payload["jti"] == jti
+        assert payload["bnd"] == self._bnd(nonce) and payload["bnd"] != nonce
+        return nonce
+
+    def test_token_endpoint_sets_bind_cookie_and_claim(self, client):
+        self._setup_launch(client)
+        resp = client.post("/api/sso/token", json={"product_slug": "erp"})
+        assert resp.status_code == 200
+        nonce = self._assert_bind(resp, resp.json()["sso_token"])
+        assert nonce not in resp.text
+
+    def test_launch_sets_bind_cookie_and_claim(self, client):
+        self._setup_launch(client)
+        resp = client.get("/api/sso/launch/erp", follow_redirects=False)
+        assert resp.status_code == 302
+        loc = resp.headers["location"]
+        token = loc.split("token=")[1]
+        nonce = self._assert_bind(resp, token)
+        assert nonce not in loc
+
+    def test_each_launch_gets_its_own_cookie(self, client):
+        self._setup_launch(client)
+        a = client.post("/api/sso/token", json={"product_slug": "erp"})
+        b = client.post("/api/sso/token", json={"product_slug": "erp"})
+        assert a.headers["set-cookie"].split("=")[0] != b.headers["set-cookie"].split("=")[0]

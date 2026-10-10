@@ -1012,7 +1012,13 @@ def create_sso_token_factory(settings) -> Callable[..., str]:
             email: str,
             role: str = "user",
             org_role: str = "member",
+            jti: str | None = None,
+            binding: str | None = None,
         ) -> str
+
+    `jti` lets the caller pre-pick the token id (the browser-bind cookie is
+    named after it); `binding` is the hash of the launch nonce, carried as the
+    `bnd` claim (SSO roadmap P2.2). Both default to the pre-P2.2 behaviour.
 
     `role` is the NoctusAI platform-level role (admin / manager / user).
     `org_role` is the user's role within their org (owner / admin / member /
@@ -1025,6 +1031,8 @@ def create_sso_token_factory(settings) -> Callable[..., str]:
         email: str,
         role: str = "user",
         org_role: str = "member",
+        jti: str | None = None,
+        binding: str | None = None,
     ) -> str:
         payload = {
             "sub": user_id,
@@ -1035,7 +1043,7 @@ def create_sso_token_factory(settings) -> Callable[..., str]:
             "org_role": org_role,
             "type": "sso",
             # Unique id: lets the redeeming side enforce single use.
-            "jti": str(uuid.uuid4()),
+            "jti": jti or str(uuid.uuid4()),
             "iss": SSO_ISSUER,
             "aud": SSO_AUDIENCE,
             "exp": now_utc() + datetime.timedelta(
@@ -1043,6 +1051,8 @@ def create_sso_token_factory(settings) -> Callable[..., str]:
             ),
             "iat": now_utc(),
         }
+        if binding:
+            payload["bnd"] = binding
         return jwt.encode(payload, _sso_secret(settings), algorithm=settings.jwt_algorithm)
 
     return create_sso_token
