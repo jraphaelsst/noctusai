@@ -16,7 +16,7 @@ Usage::
 
     app = create_product_app(
         name="Mailing",
-        schema="mailing",
+        schema="social_wiring",
         settings=settings,
         routers=[contacts.router, campaigns.router],
         version="0.1.0",
@@ -103,7 +103,7 @@ def create_product_app(
 
     Args:
         name: Human-readable product name (e.g. "Mailing", "ERP Imobiliario")
-        schema: Database schema name (e.g. "mailing", "erp")
+        schema: Database schema name (e.g. "social_wiring", "erp")
         settings: Product settings instance (extends ProductSettings)
         routers: List of product-specific APIRouter instances
         version: API version string

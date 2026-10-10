@@ -559,6 +559,14 @@ Authored 2026-10-10 (esteira-contract.md §5.3, BE-2). One row per caption gener
 
 Authored 2026-10-10 (`projects/email-marketing-p1b-CONTRACT.md` § (d)). Additive + idempotent: `email_optin TEXT NOT NULL DEFAULT 'not_required'` with the named `contacts_email_optin_check` (`not_required|pending|confirmed`, added only if absent) and `email_confirmed_at TIMESTAMPTZ`. Existing rows (incl. WhatsApp contacts — `contacts.status` is untouched) become `not_required`. Apply BEFORE deploying the image that reads/writes it (the campaign/automation send gate selects `email_optin`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.contacts_email_optin_check`.
 
+## 243 — automation_enrollments.pause_reason + paused_at (email-marketing step executor) — NOT APPLIED
+
+Authored 2026-10-10. Additive + idempotent (ADD COLUMN IF NOT EXISTS). The step executor records why it paused an enrollment (webhook step, malformed config, missing template/list); Automações shows it; re-enrolling clears it. No CHECK/UNIQUE/trigger, so no GuardProbe.
+
+## 245 — DROP the retired legacy `mailing` schema — NOT APPLIED
+
+Authored 2026-10-10 (owner decision: retire legacy mailing; value harvested into email_marketing). REQUIRES core 077 (removes `mailing` from authenticator's pgrst.db_schemas) applied FIRST — 245 refuses while `mailing` is still exposed (dropping an exposed schema can break PostgREST's schema reload for every product). Prod `mailing`: 16 tables, 0 rows except status_pagina 9; no outside dependency. Snapshot (catalog + every row): `~/.noctusai/private/incidents/2026-10-10-mailing-teardown/`. Order at release: `migrate_product core sha=<blessed>` → `migrate_product social-wiring sha=<blessed>`.
+
 ## 246 — status_pagina_media_creation_desativado (retire the legacy Criação de mídia page, A-3) — NOT APPLIED
 
 Authored 2026-10-10 (esteira-contract.md §A, A-3, FE-Z). Sets `status_pagina.media_creation` to `desativado`; no data touched (legacy posts/brand-kit tables + routers stay). Requires 241. Apply together with the image that ships the `/media-creation` → Carrosséis/Branding redirect.

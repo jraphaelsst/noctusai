@@ -10,7 +10,7 @@ Usage::
 
     from noctusai_seed import create_database_module
 
-    db = create_database_module(settings, schema="mailing")
+    db = create_database_module(settings, schema="social_wiring")
 
     # In routers/services:
     client = db.get_client(token)       # user-authenticated
@@ -199,6 +199,6 @@ def create_database_module(settings, schema: str) -> DatabaseModule:
 
     Args:
         settings: Product settings instance (must have supabase_url, etc.)
-        schema: Database schema name (e.g. "mailing", "erp", "therapy")
+        schema: Database schema name (e.g. "social_wiring", "erp", "therapy")
     """
     return DatabaseModule(settings, schema)

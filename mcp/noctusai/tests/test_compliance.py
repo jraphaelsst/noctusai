@@ -235,10 +235,6 @@ class TestSeedCompliance:
         issues = check_seed_compliance(PRODUCTS_DIR / "seed")
         assert len(issues) == 0, f"Seed has issues: {issues}"
 
-    def test_mailing_is_compliant(self):
-        issues = check_seed_compliance(PRODUCTS_DIR / "mailing")
-        assert len(issues) == 0, f"Mailing has issues: {issues}"
-
     @pytest.mark.parametrize("product", _COMPLIANCE_PARAM_IDS)
     def test_all_products_compliant(self, product, _compliance_snapshot):
         """Platform-wide compliance REGRESSION gate (Option A — locked

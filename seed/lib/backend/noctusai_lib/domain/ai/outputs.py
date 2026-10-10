@@ -100,7 +100,7 @@ def persist_output(db, schema: str, output: AIOutput) -> dict[str, Any]:
     Args:
         db: any Supabase-like client. Must support `.schema(name).table(name)
             .insert(payload).execute()`. Tests pass `MockSupabaseClient`.
-        schema: target product schema (e.g. 'erp', 'mailing', 'pf'). Bare
+        schema: target product schema (e.g. 'erp', 'social_wiring', 'pf'). Bare
             `public` callers pass `schema=None` and let the bound client
             decide.
         output: the `AIOutput` to persist.

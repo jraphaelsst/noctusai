@@ -115,7 +115,7 @@ def service_role_bypass(table: str, schema: str = "public") -> str:
         schema: Schema-qualifying the table. Defaults to ``"public"``
             (matches the few core tables that don't use a product-private
             schema). Pass the product schema for every real adopter
-            (``"therapy"``, ``"erp"``, ``"mailing"``, ...). Dashed schema
+            (``"therapy"``, ``"erp"``, ``"social_wiring"``, ...). Dashed schema
             names (``"personal-finance"``) pass through unchanged —
             Postgres-quoting is the caller's responsibility upstream.
 
