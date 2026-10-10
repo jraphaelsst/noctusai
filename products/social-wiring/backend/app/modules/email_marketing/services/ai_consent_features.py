@@ -4,13 +4,13 @@ Per `consent-guard-rollout` Phase 2 (2026-04-27). This module is imported
 once by `app.main` so its `register_feature(...)` calls populate the
 platform-wide consent catalog at boot.
 
-All 7 mailing features default to `default_granted=True` per the §7.2
+All 7 email_marketing features default to `default_granted=True` per the §7.2
 rubric (low/medium-risk org-internal AI). Users still see them in
 `/api/me/consents` for transparency (LGPD + billing) and can toggle off.
 
 **LGPD redaction (llm-tool-audit-rollout Phase 3, 2026-05-11).** Each
 feature declares `redact_arguments` + `redact_result` callables that
-scrub PII before AuditRecord values land in `mailing.tool_call_audits`.
+scrub PII before AuditRecord values land in `social_wiring.tool_call_audits`.
 The general policy:
 
   - Email + phone literals are masked (`a***@***.com`, `+55***`) so
@@ -128,14 +128,14 @@ def _scrub_review_args(value: Any) -> Any:
 
 # M1 — Subject-line generation (low-risk: org-internal copy)
 register_feature(
-    "mailing.subject_gen",
+    "email_marketing.subject_gen",
     title="Geração de linha de assunto por IA",
     rationale=(
         "A IA lê o resumo da campanha e sugere variantes de assunto "
         "(3-5 opções com tons diferentes). Conteúdo do resumo transita "
         "pelo provedor LLM para gerar as sugestões."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=lambda v: {"campaign_summary": _scrub_text((v or {}).get("campaign_summary"))}
         if isinstance(v, dict) else _scrub_text(v),
@@ -144,13 +144,13 @@ register_feature(
 
 # M2 — Template draft from prompt (low-risk: org-internal copy)
 register_feature(
-    "mailing.template_draft",
+    "email_marketing.template_draft",
     title="Rascunho de template de e-mail por IA",
     rationale=(
         "A IA gera um rascunho HTML responsivo a partir do briefing "
         "fornecido. O briefing transita pelo provedor LLM."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=lambda v: {"prompt": _scrub_text((v or {}).get("prompt"))}
         if isinstance(v, dict) else _scrub_text(v),
@@ -159,13 +159,13 @@ register_feature(
 
 # M5 — Re-engagement variants (low-risk: org-internal copy)
 register_feature(
-    "mailing.reengagement_variants",
+    "email_marketing.reengagement_variants",
     title="Variantes de re-engajamento",
     rationale=(
         "A IA gera 3 variantes de e-mail de re-engajamento (leve, direto, "
         "valor) a partir do contexto. O contexto transita pelo provedor LLM."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=lambda v: {"context": _scrub_text((v or {}).get("context"))}
         if isinstance(v, dict) else _scrub_text(v),
@@ -174,7 +174,7 @@ register_feature(
 
 # M6 — Deliverability review (low-risk: org-internal copy)
 register_feature(
-    "mailing.deliverability_review",
+    "email_marketing.deliverability_review",
     title="Revisão de entregabilidade",
     rationale=(
         "A IA analisa o HTML e o assunto para sinalizar palavras de "
@@ -182,7 +182,7 @@ register_feature(
         "Apenas o conteúdo da campanha (sem dados de contatos) entra "
         "no prompt."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=_scrub_review_args,
     redact_result=lambda v: {
@@ -192,13 +192,13 @@ register_feature(
 
 # M7 — Translation (low-risk: org-internal copy)
 register_feature(
-    "mailing.translate",
+    "email_marketing.translate",
     title="Tradução de templates",
     rationale=(
         "A IA traduz o HTML do template (PT → EN/ES/FR) preservando a "
         "estrutura. O conteúdo do template transita pelo provedor LLM."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=lambda v: (
         {
@@ -211,7 +211,7 @@ register_feature(
 
 # M3 — Contact segmentation (medium-risk: contact PII in embeddings)
 register_feature(
-    "mailing.segment_contacts",
+    "email_marketing.segment_contacts",
     title="Segmentação automática de contatos",
     rationale=(
         "A IA gera embeddings e agrupa seus contatos em segmentos por "
@@ -219,7 +219,7 @@ register_feature(
         "dados de contato entram no provedor LLM apenas para gerar "
         "embeddings — não são armazenados externamente."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=_summarize_contacts_arg,
     redact_result=_summarize_segmentation_result,
@@ -227,7 +227,7 @@ register_feature(
 
 # M4 — Campaign debrief (low-risk: anonymous aggregates)
 register_feature(
-    "mailing.campaign_debrief",
+    "email_marketing.campaign_debrief",
     title="Resumo automático de campanha (debrief)",
     rationale=(
         "Após cada envio, a IA gera um relatório de 3 parágrafos com "
@@ -235,7 +235,7 @@ register_feature(
         "narrativo. Apenas estatísticas anônimas entram no prompt — "
         "nenhum e-mail individual ou conteúdo de contato."
     ),
-    product="mailing",
+    product="social-wiring",
     default_granted=True,
     redact_arguments=lambda v: {
         "campaign_id": (v or {}).get("campaign_id") if isinstance(v, dict) else None,

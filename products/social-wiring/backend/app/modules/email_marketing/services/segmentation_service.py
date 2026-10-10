@@ -9,8 +9,8 @@ Pipeline:
      + an uppercase chip (≤ 18 chars).
   5. Return list of AIOutput-shaped dicts (one per contact).
 
-The router persists each dict to `mailing.ai_outputs` via
-`noctusai_lib.ai.persist_output(db, schema="mailing", output)`.
+The router persists each dict to `social_wiring.ai_outputs` via
+`noctusai_lib.ai.persist_output(db, schema="social_wiring", output)`.
 
 LGPD posture: contact emails / nome are PII, but each embedding/naming call
 is scoped to the requesting org and the LLM call uses `cache=True` only on
@@ -76,7 +76,7 @@ def _record_audit(
         writer(record)
     except Exception:
         logger.exception(
-            "mailing.segmentation: audit write failed for feature=%s tool=%s",
+            "email_marketing.segmentation: audit write failed for feature=%s tool=%s",
             feature_key,
             tool_name,
         )
@@ -84,7 +84,7 @@ def _record_audit(
 MODEL = "gpt-4o-mini"
 EMBEDDING_MODEL = "text-embedding-3-small"
 
-PROMPT_VERSION_SEGMENT = "mailing-segment@v1"
+PROMPT_VERSION_SEGMENT = "email-marketing-segment@v1"
 
 DEFAULT_THRESHOLD = 0.78
 DEFAULT_MAX_SEGMENTS = 8
@@ -218,7 +218,7 @@ async def _name_segment(
             org_id=org_id,
         )
     except Exception:
-        logger.warning("mailing.segment.name_segment: LLM unavailable")
+        logger.warning("email_marketing.segment.name_segment: LLM unavailable")
         return fallback_label, fallback_chip
 
     label = ""
@@ -270,7 +270,7 @@ async def segment_contacts(
     }
     if not contacts:
         _record_audit(
-            "mailing.segment_contacts",
+            "email_marketing.segment_contacts",
             "segment_contacts",
             arguments=arguments,
             result=[],
@@ -290,14 +290,14 @@ async def segment_contacts(
             emb = await generate_embedding(t, model=EMBEDDING_MODEL, org_id=org_id)
             embeddings.append(emb)
     except Exception as exc:
-        logger.warning("mailing.segment_contacts: embedding step unavailable")
+        logger.warning("email_marketing.segment_contacts: embedding step unavailable")
         empty = _empty_output()
         fallback_out = [
             {**empty, "_contact_id": c["id"], "metadata": {"cluster": -1}}
             for c in contacts
         ]
         _record_audit(
-            "mailing.segment_contacts",
+            "email_marketing.segment_contacts",
             "segment_contacts",
             arguments=arguments,
             result=fallback_out,
@@ -344,7 +344,7 @@ async def segment_contacts(
             "metadata": {"cluster": cluster_idx},
         })
     _record_audit(
-        "mailing.segment_contacts",
+        "email_marketing.segment_contacts",
         "segment_contacts",
         arguments=arguments,
         result=out,

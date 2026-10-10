@@ -47,7 +47,7 @@ class TranslationRequest(StrictHttpModel):
 async def generate_subjects_endpoint(
     request: Request,
     body: SubjectsRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.subject_gen")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.subject_gen")),
 ):
     """M1 — generate 3–5 subject-line variants with tone labels."""
     user, _, org_id = auth
@@ -62,7 +62,7 @@ async def generate_subjects_endpoint(
 async def template_draft_endpoint(
     request: Request,
     body: TemplateDraftRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.template_draft")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.template_draft")),
 ):
     """M2 — draft an HTML email body from a prompt."""
     user, _, org_id = auth
@@ -75,7 +75,7 @@ async def template_draft_endpoint(
 async def reengagement_endpoint(
     request: Request,
     body: ReengagementRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.reengagement_variants")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.reengagement_variants")),
 ):
     """M5 — 3 re-engagement email variants (leve/direto/valor)."""
     user, _, org_id = auth
@@ -88,7 +88,7 @@ async def reengagement_endpoint(
 async def deliverability_endpoint(
     request: Request,
     body: DeliverabilityRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.deliverability_review")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.deliverability_review")),
 ):
     """M6 — review HTML for spam/deliverability issues. Returns `{findings: [...]}`."""
     user, _, org_id = auth
@@ -103,7 +103,7 @@ async def deliverability_endpoint(
 async def translate_endpoint(
     request: Request,
     body: TranslationRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.translate")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.translate")),
 ):
     """M7 — translate PT HTML email to EN/ES/FR preserving template structure."""
     user, _, org_id = auth
@@ -129,10 +129,10 @@ class SegmentRequest(StrictHttpModel):
 async def segment_contacts_endpoint(
     request: Request,
     body: SegmentRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.segment_contacts")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.segment_contacts")),
 ):
     """M3 — embed + cluster contacts, name segments via LLM, persist one
-    `<AIIndicator/>` row per contact to `mailing.ai_outputs`. Returns the
+    `<AIIndicator/>` row per contact to `social_wiring.ai_outputs`. Returns the
     persisted rows so the caller can update the UI immediately.
     """
     user, token, org_id = auth
@@ -203,11 +203,10 @@ async def segment_contacts_endpoint(
                 prompt_version=o.get("prompt_version"),
                 metadata=o.get("metadata") or {},
             )
-            # NOC-REMEDIATE[mailing-schema-keep-or-retire]: owner decided 2026-10-10: retire; harvest into email_marketing — this writer moves to social_wiring and the legacy `mailing` schema is dropped (prod: 16 tables, 0 rows except status_pagina 9) — 2026-10-10
-            persisted.append(persist_output(db, schema="mailing", output=output))
+            persisted.append(persist_output(db, schema="social_wiring", output=output))
         except Exception as e:
             logger.warning(
-                "mailing.segment_contacts persist failed for contact %s: %s",
+                "email_marketing.segment_contacts persist failed for contact %s: %s",
                 contact_id,
                 e,
             )
@@ -229,7 +228,7 @@ class CampaignDebriefRequest(StrictHttpModel):
 async def campaign_debrief_preview_endpoint(
     request: Request,
     campaign_id: str,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.campaign_debrief")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.campaign_debrief")),
 ):
     """M4 — build the post-send debrief for a campaign. Returns body +
     structured summary (no email send). Used by the campaign detail page."""
@@ -257,7 +256,7 @@ async def campaign_debrief_send_endpoint(
     request: Request,
     campaign_id: str,
     body: CampaignDebriefRequest,
-    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("mailing.campaign_debrief")),
+    auth = Depends(get_current_user_org), _consent: None = Depends(consent_required("email_marketing.campaign_debrief")),
 ):
     """M4 — build + email the post-send debrief. Cron / send-completion
     hook calls this with the campaign creator as recipient."""

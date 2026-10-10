@@ -17,7 +17,7 @@ the response cache keys rotate (per `ai-expansion` §7 Q4).
 **LLM tool-call audit (llm-tool-audit-rollout Phase 3, 2026-05-11).** Each
 of the 5 chat sites + the 1 embedding loop in `segmentation_service` wraps
 its LLM call with `_record_audit(...)` so a row lands in
-`mailing.tool_call_audits` (best-effort; never breaks user-facing dispatch).
+`social_wiring.tool_call_audits` (best-effort; never breaks user-facing dispatch).
 Redaction applied per
 `app/modules/email_marketing/services/ai_consent_features.py` — see
 `KB § PATTERNS/llm-tool-audit.md` for the canonical pattern.
@@ -42,7 +42,7 @@ from app.modules.email_marketing.services.audit_hook import get_audit_writer
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "mailing-ai@v1"
+PROMPT_VERSION = "email-marketing-ai@v1"
 
 
 def _record_audit(
@@ -68,7 +68,7 @@ def _record_audit(
             arguments=arguments,
             result=result,
             error=error,
-            conversation_id=org_id,  # mailing has no per-conversation surface; org_id stands in.
+            conversation_id=org_id,  # email marketing has no per-conversation surface; org_id stands in.
         )
         feature = get_feature(feature_key)
         if feature is not None:
@@ -81,7 +81,7 @@ def _record_audit(
         writer(record)
     except Exception:
         logger.exception(
-            "mailing.ai: audit write failed for feature=%s tool=%s",
+            "email_marketing.ai: audit write failed for feature=%s tool=%s",
             feature_key,
             tool_name,
         )
@@ -124,7 +124,7 @@ async def generate_subjects(campaign_summary: str, *, org_id: Optional[str] = No
         )
     except (LLMNotConfigured, RuntimeError) as exc:
         _record_audit(
-            "mailing.subject_gen",
+            "email_marketing.subject_gen",
             "generate_subjects",
             arguments=arguments,
             result=None,
@@ -133,7 +133,7 @@ async def generate_subjects(campaign_summary: str, *, org_id: Optional[str] = No
             error=str(exc),
             org_id=org_id,
         )
-        logger.warning("mailing.ai.generate_subjects: LLM not configured — returning empty list")
+        logger.warning("email_marketing.ai.generate_subjects: LLM not configured — returning empty list")
         return []
 
     parsed = _safe_json_loads(raw)
@@ -147,7 +147,7 @@ async def generate_subjects(campaign_summary: str, *, org_id: Optional[str] = No
             if isinstance(item, dict) and item.get("text")
         ][:5]
     _record_audit(
-        "mailing.subject_gen",
+        "email_marketing.subject_gen",
         "generate_subjects",
         arguments=arguments,
         result=variants,
@@ -193,7 +193,7 @@ async def draft_template(prompt: str, *, org_id: Optional[str] = None) -> str:
         )
     except (LLMNotConfigured, RuntimeError) as exc:
         _record_audit(
-            "mailing.template_draft",
+            "email_marketing.template_draft",
             "draft_template",
             arguments=arguments,
             result=None,
@@ -202,11 +202,11 @@ async def draft_template(prompt: str, *, org_id: Optional[str] = None) -> str:
             error=str(exc),
             org_id=org_id,
         )
-        logger.warning("mailing.ai.draft_template: LLM not configured — returning empty string")
+        logger.warning("email_marketing.ai.draft_template: LLM not configured — returning empty string")
         return ""
     result = raw.strip()
     _record_audit(
-        "mailing.template_draft",
+        "email_marketing.template_draft",
         "draft_template",
         arguments=arguments,
         result=result,
@@ -253,7 +253,7 @@ async def reengagement_variants(context: str, *, org_id: Optional[str] = None) -
         )
     except (LLMNotConfigured, RuntimeError) as exc:
         _record_audit(
-            "mailing.reengagement_variants",
+            "email_marketing.reengagement_variants",
             "reengagement_variants",
             arguments=arguments,
             result=None,
@@ -262,7 +262,7 @@ async def reengagement_variants(context: str, *, org_id: Optional[str] = None) -
             error=str(exc),
             org_id=org_id,
         )
-        logger.warning("mailing.ai.reengagement_variants: LLM not configured — returning empty list")
+        logger.warning("email_marketing.ai.reengagement_variants: LLM not configured — returning empty list")
         return []
     parsed = _safe_json_loads(raw)
     if not isinstance(parsed, list):
@@ -278,7 +278,7 @@ async def reengagement_variants(context: str, *, org_id: Optional[str] = None) -
             if isinstance(item, dict) and item.get("subject")
         ][:3]
     _record_audit(
-        "mailing.reengagement_variants",
+        "email_marketing.reengagement_variants",
         "reengagement_variants",
         arguments=arguments,
         result=variants,
@@ -328,7 +328,7 @@ async def review_deliverability(
         )
     except (LLMNotConfigured, RuntimeError) as exc:
         _record_audit(
-            "mailing.deliverability_review",
+            "email_marketing.deliverability_review",
             "review_deliverability",
             arguments=arguments,
             result=None,
@@ -337,7 +337,7 @@ async def review_deliverability(
             error=str(exc),
             org_id=org_id,
         )
-        logger.warning("mailing.ai.review_deliverability: LLM not configured")
+        logger.warning("email_marketing.ai.review_deliverability: LLM not configured")
         return {"findings": []}
     parsed = _safe_json_loads(raw)
     if not isinstance(parsed, dict) or not isinstance(parsed.get("findings"), list):
@@ -355,7 +355,7 @@ async def review_deliverability(
             ]
         }
     _record_audit(
-        "mailing.deliverability_review",
+        "email_marketing.deliverability_review",
         "review_deliverability",
         arguments=arguments,
         result=result,
@@ -392,7 +392,7 @@ async def translate_template(html: str, target_lang: str, *, org_id: Optional[st
     arguments = {"html": html, "target_lang": target_lang, "org_id": org_id}
     if target_lang not in _SUPPORTED_LANGS:
         _record_audit(
-            "mailing.translate",
+            "email_marketing.translate",
             "translate_template",
             arguments=arguments,
             result=None,
@@ -401,7 +401,7 @@ async def translate_template(html: str, target_lang: str, *, org_id: Optional[st
             error=f"unsupported target_lang={target_lang!r}",
             org_id=org_id,
         )
-        logger.warning("mailing.ai.translate_template: unsupported target_lang=%r", target_lang)
+        logger.warning("email_marketing.ai.translate_template: unsupported target_lang=%r", target_lang)
         return html
     system_prompt = _TRANSLATE_SYSTEM_FMT.format(target_lang=_SUPPORTED_LANGS[target_lang])
     try:
@@ -416,7 +416,7 @@ async def translate_template(html: str, target_lang: str, *, org_id: Optional[st
         )
     except (LLMNotConfigured, RuntimeError) as exc:
         _record_audit(
-            "mailing.translate",
+            "email_marketing.translate",
             "translate_template",
             arguments=arguments,
             result=None,
@@ -425,11 +425,11 @@ async def translate_template(html: str, target_lang: str, *, org_id: Optional[st
             error=str(exc),
             org_id=org_id,
         )
-        logger.warning("mailing.ai.translate_template: LLM not configured — returning original")
+        logger.warning("email_marketing.ai.translate_template: LLM not configured — returning original")
         return html
     result = raw.strip()
     _record_audit(
-        "mailing.translate",
+        "email_marketing.translate",
         "translate_template",
         arguments=arguments,
         result=result,

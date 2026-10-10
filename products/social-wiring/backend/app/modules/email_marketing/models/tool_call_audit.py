@@ -1,4 +1,4 @@
-"""ORM model for mailing.tool_call_audits.
+"""ORM model for social_wiring.tool_call_audits.
 
 Bound to `noctusai_lib.domain.ai.tool_audit.AuditRecord` via the
 `make_audit_writer(db, ToolCallAudit)` factory — see

@@ -89,7 +89,7 @@ class TestCampaignDebriefAggregate:
 class TestCampaignDebriefAuditWiring:
     """llm-tool-audit-rollout — closes the originating M-4 gap: the
     `campaign_debrief` LLM site now writes one redacted row to
-    `mailing.tool_call_audits`. We exercise the real `_record_audit`
+    `social_wiring.tool_call_audits`. We exercise the real `_record_audit`
     helper + the seed `make_audit_writer` over in-memory SQLite (no
     monkeypatching of our own code), and assert the `mailing.campaign_debrief`
     feature redactors scrub correctly (campaign_id kept, body dropped).
@@ -132,7 +132,7 @@ class TestCampaignDebriefAuditWiring:
         import app.modules.email_marketing.services.ai_consent_features  # noqa: F401 — registers
         from noctusai_lib.domain.ai import get_feature
 
-        feature = get_feature("mailing.campaign_debrief")
+        feature = get_feature("email_marketing.campaign_debrief")
         assert feature is not None
         red_args = feature.redact_arguments(
             {"campaign_id": "c-123", "org_id": "org-9"}
@@ -176,7 +176,7 @@ class TestCampaignDebriefAuditWiring:
         # `get_audit_writer` module symbol — the redaction/record-build
         # logic still runs, which is the point. Per KB § PATTERNS/di-test-seam.md.
         cds._record_audit(
-            "mailing.campaign_debrief",
+            "email_marketing.campaign_debrief",
             "campaign_debrief",
             arguments={"campaign_id": "c-77", "org_id": "org-1"},
             result="Narrativa longa com joao@x.com — sigiloso.",

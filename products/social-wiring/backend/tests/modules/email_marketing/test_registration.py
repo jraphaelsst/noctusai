@@ -68,9 +68,9 @@ def test_consent_features_registered_at_import():
 
     register()
     for key in (
-        "mailing.subject_gen",
-        "mailing.template_draft",
-        "mailing.segment_contacts",
-        "mailing.campaign_debrief",
+        "email_marketing.subject_gen",
+        "email_marketing.template_draft",
+        "email_marketing.segment_contacts",
+        "email_marketing.campaign_debrief",
     ):
         assert get_feature(key) is not None, f"consent feature {key} missing"

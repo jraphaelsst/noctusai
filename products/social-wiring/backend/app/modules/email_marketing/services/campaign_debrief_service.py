@@ -4,9 +4,9 @@ Mailing M4 — campaign debrief (ai-expansion Phase 12).
 After a campaign finishes sending (status='enviada' / completed_at set),
 this service produces a post-mortem narrative for the campaign creator:
 
-  1. Aggregates `mailing.send_logs` for the campaign:
+  1. Aggregates `social_wiring.send_logs` for the campaign:
      - Total recipients, sent, delivered, opened, clicked, bounced, complained, failed
-     - Top clicked links (joined from `mailing.link_clicks`)
+     - Top clicked links (joined from `social_wiring.link_clicks`)
      - Bounce rate + open rate + click rate
   2. Asks `chat_completion(cache=True, temperature=0)` for a 3-paragraph
      PT debrief: (1) panorama dos números, (2) o que funcionou ou não,
@@ -25,8 +25,8 @@ enter the prompt; per-link click counts (anonymous totals) do.
 
 **LLM tool-call audit (llm-tool-audit-rollout — closes the originating
 M-4 gap).** The single `digest_narrative` LLM call in `_generate_narrative`
-writes one row to `mailing.tool_call_audits` (best-effort; never breaks
-the user-facing debrief). Redaction applied per the `mailing.campaign_debrief`
+writes one row to `social_wiring.tool_call_audits` (best-effort; never breaks
+the user-facing debrief). Redaction applied per the `email_marketing.campaign_debrief`
 feature in `app/.../services/ai_consent_features.py` — only `campaign_id`
 survives in `arguments`, the narrative body is dropped from `result`. See
 `KB § PATTERNS/llm-tool-audit.md` for the canonical pattern.
@@ -108,7 +108,7 @@ def _record_audit(
         writer(record)
     except Exception:
         logger.exception(
-            "mailing.campaign_debrief: audit write failed for feature=%s tool=%s",
+            "email_marketing.campaign_debrief: audit write failed for feature=%s tool=%s",
             feature_key,
             tool_name,
         )
@@ -116,7 +116,7 @@ def _record_audit(
 _TEMPLATE_DIR = email_template_dir(__file__)
 
 MODEL = "gpt-4o-mini"
-PROMPT_VERSION = "mailing-campaign-debrief@v1"
+PROMPT_VERSION = "email-marketing-campaign-debrief@v1"
 
 
 def _pct(num: int, denom: int) -> float:
@@ -173,7 +173,7 @@ async def _generate_narrative(
     # absorbed email_marketing surface). `digest_narrative` never raises — it
     # returns `fallback` when the LLM is unavailable — so we infer status from
     # whether the fallback was returned. Args carry only `campaign_id` after
-    # the `mailing.campaign_debrief` redactor; the narrative body is dropped
+    # the `email_marketing.campaign_debrief` redactor; the narrative body is dropped
     # by `_drop_body` (see `ai_consent_features.py`).
     started = time.perf_counter()
     arguments = {"campaign_id": campaign_id, "org_id": org_id}
@@ -186,7 +186,7 @@ async def _generate_narrative(
         fallback=fallback,
     )
     _record_audit(
-        "mailing.campaign_debrief",
+        "email_marketing.campaign_debrief",
         "campaign_debrief",
         arguments=arguments,
         result=text,

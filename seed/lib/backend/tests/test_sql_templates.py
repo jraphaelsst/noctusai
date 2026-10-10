@@ -291,3 +291,28 @@ def test_core_056_is_exactly_the_rendered_sweep():
     repo = Path(__file__).resolve().parents[4]
     migration = repo / "products/core/backend/migrations/056_invitation_token_lockdown_all_schemas.sql"
     assert invitation_token_lockdown_all_sql() in migration.read_text()
+
+
+class TestAiTablesTemplates:
+    """ai_outputs / ai_feedback: the 4th hand-copy formalized (2026-10-10)."""
+
+    def test_render_for_a_schema_and_stay_idempotent(self):
+        from noctusai_lib.domain.sql_templates import ai_feedback_table_sql, ai_outputs_table_sql
+
+        out, fb = ai_outputs_table_sql("demo"), ai_feedback_table_sql("demo")
+        assert "CREATE TABLE IF NOT EXISTS demo.ai_outputs" in out
+        assert "CREATE TABLE IF NOT EXISTS demo.ai_feedback" in fb
+        for sql in (out, fb):
+            # every policy is dropped before it is created, so a re-apply is safe
+            assert sql.count("CREATE POLICY") == sql.count("DROP POLICY IF EXISTS")
+            assert "current_org_id_for('demo')" in sql
+            assert "REVOKE ALL ON" in sql and "FROM anon" in sql
+        assert "UNIQUE (user_id, output_ref)" in fb  # the seed router upserts on it
+
+    def test_refuse_an_unsafe_schema_name(self):
+        import pytest
+
+        from noctusai_lib.domain.sql_templates import ai_outputs_table_sql
+
+        with pytest.raises(ValueError):
+            ai_outputs_table_sql("x; DROP SCHEMA public")

@@ -73,7 +73,7 @@ def register() -> Any:
     is already imported by the time the loop runs, so importing
     ``ModuleRegistration`` here is not circular.
     """
-    # Populate the consent catalog (mailing.* feature keys, kept verbatim
+    # Populate the consent catalog (email_marketing.* feature keys (renamed from mailing.* on 2026-10-10; 0 consent rows existed)
     # for behavioural parity with the AI router's consent_required(...)
     # gates). Side-effect import — register_feature(...) runs at import.
     from app.modules.email_marketing.services import (  # noqa: F401

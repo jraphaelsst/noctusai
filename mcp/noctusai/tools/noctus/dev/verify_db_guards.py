@@ -4016,6 +4016,60 @@ _ANON_SEQUENCE_PROBES: tuple[GuardProbe, ...] = (
     _anon_sequence_probe("academia-de-reciclagem", "academia_de_reciclagem", "018_anon_sequence_lockdown.sql"),
 )
 
+def _ai_tables_probe(product: str, schema: str, migration: str, guard: str, table: str,
+                     insert_sql: str, sqlstate: str) -> GuardProbe:
+    """Self-provisioning write-refusal probe for the canonical seed AI tables
+    (``sql_templates.ai_outputs_table_sql`` / ``ai_feedback_table_sql``)."""
+    return GuardProbe(
+        id=f"{schema}.{guard}",
+        product=product,
+        schema=schema,
+        guard_name=guard,
+        kind="write_refusal",
+        migrations=(migration,),
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  v_user uuid := gen_random_uuid();
+BEGIN
+  IF to_regclass('{schema}.{table}') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: {schema}.{table} does not exist';
+  END IF;
+  BEGIN
+    {insert_sql};
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {guard} did not refuse the write';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLSTATE = '{sqlstate}' AND SQLERRM LIKE '%{guard}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+        rationale=f"{schema}.{table}: {guard} keeps an out-of-contract AI output / feedback row out.",
+    )
+
+
+def _ai_tables_probes(product: str, schema: str, migration: str) -> tuple[GuardProbe, ...]:
+    o, f = f"{schema}.ai_outputs", f"{schema}.ai_feedback"
+    return (
+        _ai_tables_probe(product, schema, migration, "ai_outputs_kind_check", "ai_outputs",
+            f"INSERT INTO {o} (org_id, ref_type, ref_id, kind, label) VALUES (v_org, 'noc-probe', gen_random_uuid(), 'bogus', 'x')", "23514"),
+        _ai_tables_probe(product, schema, migration, "ai_outputs_confidence_range", "ai_outputs",
+            f"INSERT INTO {o} (org_id, ref_type, ref_id, kind, label, confidence) VALUES (v_org, 'noc-probe', gen_random_uuid(), 'score', 'x', 2)", "23514"),
+        _ai_tables_probe(product, schema, migration, "ai_feedback_rating_check", "ai_feedback",
+            f"INSERT INTO {f} (org_id, user_id, output_ref, rating) VALUES (v_org, v_user, 'noc-probe', 5)", "23514"),
+        _ai_tables_probe(product, schema, migration, "ai_feedback_user_ref_unique", "ai_feedback",
+            f"INSERT INTO {f} (org_id, user_id, output_ref, rating) VALUES (v_org, v_user, 'noc-probe', 1), (v_org, v_user, 'noc-probe', -1)", "23505"),
+    )
+
+
+_SW_AI_TABLES_PROBES = _ai_tables_probes("social-wiring", "social_wiring", "239_ai_outputs_ai_feedback.sql")
+
+
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
     id="erp.current_org_id_excludes_customer",
     product="social-wiring",
@@ -6284,6 +6338,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SEED_ANON_LOCKDOWN_PROBES,
     *_ANON_SEQUENCE_PROBES,
     _ERP_CURRENT_ORG_ID_PROBE,
+    *_SW_AI_TABLES_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,

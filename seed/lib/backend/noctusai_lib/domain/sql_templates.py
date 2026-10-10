@@ -408,6 +408,91 @@ def org_identity_functions_sql() -> str:
     return "\n\n".join(org_identity_function_sql(n) for n in ORG_IDENTITY_FUNCTION_NAMES)
 
 
+def _checked_schema(schema: str) -> str:
+    if not schema or not schema.replace("_", "").isalnum():
+        raise ValueError(f"invalid schema name {schema!r}")
+    return schema
+
+
+def ai_outputs_table_sql(schema: str) -> str:
+    """Canonical ``<schema>.ai_outputs`` — the per-entity AI-output store the
+    seed ``persist_output`` / ``ai_outputs`` standard router read and write
+    (``noctusai_lib.domain.ai.outputs``). Org-scoped through
+    ``public.current_org_id_for('<schema>')``; anon gets nothing.
+    Idempotent (IF NOT EXISTS / DROP POLICY IF EXISTS), so a migration can
+    paste it verbatim and replay twice. Formalized 2026-10-10 at the 4th
+    hand-copy (daily-life 006, erp 021, personal-finance 006 → social-wiring).
+    """
+    s = _checked_schema(schema)
+    org = f"(SELECT public.current_org_id_for('{s}'))"
+    return f"""CREATE TABLE IF NOT EXISTS {s}.ai_outputs (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         UUID NOT NULL DEFAULT public.current_org_id_for('{s}'),
+    ref_type       TEXT NOT NULL,
+    ref_id         UUID NOT NULL,
+    kind           TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    score          NUMERIC,
+    chip           TEXT,
+    explanation    TEXT,
+    confidence     NUMERIC,
+    model_version  TEXT,
+    prompt_version TEXT,
+    metadata       JSONB NOT NULL DEFAULT '{{}}',
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ai_outputs_kind_check CHECK (
+        kind IN ('classification', 'score', 'flag', 'extraction', 'narrative')),
+    CONSTRAINT ai_outputs_confidence_range CHECK (
+        confidence IS NULL OR (confidence >= 0 AND confidence <= 1))
+);
+CREATE INDEX IF NOT EXISTS ai_outputs_ref_idx ON {s}.ai_outputs (ref_type, ref_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS ai_outputs_org_idx ON {s}.ai_outputs (org_id);
+ALTER TABLE {s}.ai_outputs ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ai_outputs_own_org ON {s}.ai_outputs;
+CREATE POLICY ai_outputs_own_org ON {s}.ai_outputs FOR ALL TO authenticated
+    USING (org_id = {org}) WITH CHECK (org_id = {org});
+DROP POLICY IF EXISTS service_role_bypass ON {s}.ai_outputs;
+CREATE POLICY service_role_bypass ON {s}.ai_outputs FOR ALL TO service_role
+    USING (true) WITH CHECK (true);
+REVOKE ALL ON {s}.ai_outputs FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON {s}.ai_outputs TO authenticated;
+GRANT ALL ON {s}.ai_outputs TO service_role;"""
+
+
+def ai_feedback_table_sql(schema: str) -> str:
+    """Canonical ``<schema>.ai_feedback`` — the thumbs store behind the seed
+    ``ai_feedback`` standard router (upsert on ``(user_id, output_ref)``).
+    A user writes only their own row in their own org. Idempotent; see
+    ``ai_outputs_table_sql``."""
+    s = _checked_schema(schema)
+    org = f"(SELECT public.current_org_id_for('{s}'))"
+    return f"""CREATE TABLE IF NOT EXISTS {s}.ai_feedback (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id         UUID NOT NULL DEFAULT public.current_org_id_for('{s}'),
+    user_id        UUID NOT NULL,
+    output_ref     TEXT NOT NULL,
+    rating         INTEGER NOT NULL,
+    notes          TEXT,
+    prompt_version TEXT,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ai_feedback_user_ref_unique UNIQUE (user_id, output_ref),
+    CONSTRAINT ai_feedback_rating_check CHECK (rating IN (-1, 1))
+);
+CREATE INDEX IF NOT EXISTS ai_feedback_org_idx ON {s}.ai_feedback (org_id);
+ALTER TABLE {s}.ai_feedback ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS ai_feedback_own_org ON {s}.ai_feedback;
+CREATE POLICY ai_feedback_own_org ON {s}.ai_feedback FOR ALL TO authenticated
+    USING (org_id = {org})
+    WITH CHECK (org_id = {org} AND user_id = (SELECT auth.uid()));
+DROP POLICY IF EXISTS service_role_bypass ON {s}.ai_feedback;
+CREATE POLICY service_role_bypass ON {s}.ai_feedback FOR ALL TO service_role
+    USING (true) WITH CHECK (true);
+REVOKE ALL ON {s}.ai_feedback FROM anon;
+GRANT SELECT, INSERT, UPDATE, DELETE ON {s}.ai_feedback TO authenticated;
+GRANT ALL ON {s}.ai_feedback TO service_role;"""
+
+
 def invitation_token_lockdown_sql(schema: str) -> str:
     """Make ``<schema>.invitations.token`` unreadable through the API roles.
 
