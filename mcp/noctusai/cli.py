@@ -346,6 +346,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action="store_true", help="Drift-check mode for --update-kb-counts / --render-project-history / --gen-promotions-index / --propagate (report only, exit 1 on drift; no write).")
     parser.add_argument("--force", action="store_true", help="Authorize the destructive path for --mole sweep / --archive-clean / --cleanup-stale-worktrees (default = dry-run/report).")
     parser.add_argument("--sync-seed-template", action="store_true", help="Sync products/seed → templates/product-seed (absorbed scripts/sync-seed-template.sh). Pair --dry for preview. MCP: noctus.dev.sync_seed_template.")
+    parser.add_argument("--check-seed-template-sync", action="store_true", help="Keeper: templates/product-seed/ must equal products/seed/ rendered by the sync (copy + placeholders), EXCEPT the declared divergences in templates/product-seed-divergences.json — whose content is exempt but whose template file must still exist (and still name a seed file). Today: the template's 001/003 migrations are idempotent (migration_replay applies new files twice) while the seed's are applied, therefore immutable. Severity high. KB § PATTERNS/backend/migration-chain-replay.md.")
     parser.add_argument("--dry", action="store_true", help="Preview mode for --sync-seed-template / --propagate (no write).")
     parser.add_argument("--stamp-seed-version", action="store_true", help="Stamp short SHA + /VERSION SemVer into seed _version_static.py. MCP: noctus.dev.stamp_seed_version.")
     parser.add_argument("--check-version-bump", action="store_true", help="Gate MAJOR-bump authorization: refuse working-tree VERSION whose MAJOR exceeds HEAD's unless .major-bump-authorized marker exists. Autonomous PATCH/MINOR pass. KB § PATTERNS/common/versioning.md. MCP: noctus.dev.version_guard.")
@@ -3067,6 +3068,17 @@ def main():
         r = update_kb_counts(check=args.check, repo_root=repo_root)
         print(r.get("message", json.dumps(r, default=str)))
         sys.exit(int(r.get("exit_code", 1 if r.get("drift") else 0)))
+
+    elif args.check_seed_template_sync:
+        from tools.noctus.dev.sync_seed_template import check_seed_template_sync
+        issues = check_seed_template_sync()
+        if not issues:
+            print(f"  {GREEN}\u2713 seed-template-sync: clean (template == rendered seed + declared divergences).{RESET}")
+            sys.exit(0)
+        print(f"  {RED}\u2717 {len(issues)} seed\u2194template drift(s):{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i.get('file','?')} \u2014 {i['issue']}")
+        sys.exit(1)
 
     elif args.sync_seed_template:
         from tools.noctus.dev.sync_seed_template import sync_seed_template

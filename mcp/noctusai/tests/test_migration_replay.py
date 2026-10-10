@@ -162,6 +162,41 @@ def test_products_for_paths_maps_migrations_and_config_only():
     ]) == ["igig"]
 
 
+# ── a freshly scaffolded product ─────────────────────────────────────────────
+
+def test_scaffolded_product_chain_is_green_and_idempotent(tmp_path, pglite, monkeypatch):
+    """A new product's FIRST migration commit makes every one of its files a
+    target (applied whole, then a second time). The scaffold copies
+    templates/product-seed/ — whose 001/003 diverge from the applied (immutable)
+    seed copies precisely so they re-apply cleanly (templates/product-seed-
+    divergences.json). Real scaffold, real core chain, real template."""
+    from tools.noctus.dev import scaffold as scaffold_module
+
+    async def _no_llm(template_content, **_kwargs):
+        return None
+    monkeypatch.setattr(scaffold_module, "llm_rewrite_file_content", _no_llm)  # self-patch-ok: declared LLM seam (prose only, not under test)
+
+    repo = Path(REPO_ROOT)
+    core = tmp_path / "products" / mr.CORE / "backend"
+    shutil.copytree(repo / mr._migration_dir(mr.CORE), core / "migrations")
+    core_cfg = repo / "products" / mr.CORE / "backend" / mr.CONFIG_NAME
+    if core_cfg.exists():
+        shutil.copy(core_cfg, core / mr.CONFIG_NAME)
+
+    slug = "replay-probe"
+    result = scaffold_module.scaffold_product(
+        "Replay Probe", slug, "replay_probe", 8990, 8991, brief={},
+        products_dir=tmp_path / "products", template_dir=repo / "templates" / "product-seed",
+    )
+    assert result.get("created") is True, result
+    targets = [f"{mr._migration_dir(slug)}/{name}" for name, _ in mr.chain_files(tmp_path, slug)]
+    assert f"{mr._migration_dir(slug)}/001_{slug}.sql" in targets
+    assert f"{mr._migration_dir(slug)}/003_examples.sql" in targets
+
+    r = _replay(tmp_path, slug, targets)
+    assert r["status"] == "green", mr.format_report(r)
+
+
 # ── the real chains ──────────────────────────────────────────────────────────
 
 def test_active_chains_replay_green_against_their_residue(pglite):

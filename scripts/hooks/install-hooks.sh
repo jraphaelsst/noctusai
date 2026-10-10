@@ -15,6 +15,9 @@
 #                force-push + deletion of main/prod. Free equivalent of
 #                GitHub branch protection (which needs Pro on a private repo).
 #
+# Also: `npm ci --prefix mcp/noctusai/node` (the toolkit's pinned PGlite for
+# noctus.dev.migration_replay; advisory — a failure warns, never aborts).
+#
 # Canonical scripts live at scripts/hooks/{pre-commit,pre-push} — the hooks are
 # symlinks so edits take effect without re-installing.
 # ──────────────────────────────────────────────────────────────
@@ -91,6 +94,19 @@ if [[ -f "$HOOKS_DIR/post-commit" && ! -L "$HOOKS_DIR/post-commit" ]]; then
         rm -f "$HOOKS_DIR/post-commit"
         echo "  post-commit: removed (legacy seed sync → moved to pre-commit)"
     fi
+fi
+
+# ─── Toolkit node deps: the pinned PGlite that pre-commit's migration_replay
+# gate (step 6i) executes chains on. Without it every migration commit is
+# `inconclusive` locally. KB § PATTERNS/backend/migration-chain-replay.md.
+if command -v npm >/dev/null 2>&1; then
+    if npm ci --prefix "$REPO_ROOT/mcp/noctusai/node" --no-audit --no-fund; then
+        echo "  toolkit node deps: installed (mcp/noctusai/node — PGlite for migration_replay)"
+    else
+        echo "  toolkit node deps: npm ci FAILED — migration_replay stays inconclusive until: npm ci --prefix mcp/noctusai/node" >&2
+    fi
+else
+    echo "  toolkit node deps: npm not on PATH — migration_replay stays inconclusive until: npm ci --prefix mcp/noctusai/node" >&2
 fi
 
 echo ""

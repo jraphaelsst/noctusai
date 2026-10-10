@@ -97,3 +97,14 @@ def test_hook_spawns_the_child_even_without_worktrees(tmp_path, monkeypatch):
 
     assert H.main() == 0
     assert spawned == [tmp_path]
+
+
+def test_pglite_hint_one_line_when_missing(tmp_path):
+    hint = H.pglite_hint(tmp_path)
+    assert hint == "migration_replay unavailable: run npm ci --prefix mcp/noctusai/node"
+    assert "\n" not in hint
+
+
+def test_pglite_hint_silent_when_installed(tmp_path):
+    (tmp_path / H.PGLITE_REL).mkdir(parents=True)
+    assert H.pglite_hint(tmp_path) == ""

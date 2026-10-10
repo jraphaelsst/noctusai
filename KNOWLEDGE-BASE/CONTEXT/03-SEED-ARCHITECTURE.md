@@ -106,6 +106,7 @@ Examples:
 - `products/seed/`
 - `templates/product-seed/`
 - `noctus.dev.sync_seed_template`
+- `templates/product-seed-divergences.json`: the declared files where the template differs from the seed (idempotent 001/003 migrations, because the seed's own are applied and immutable). The sync skips them and `check_seed_template_sync` exempts them. → `KB § PATTERNS/backend/migration-chain-replay.md`
 
 This path is valid, but it is not the mechanism that keeps existing products aligned.
 

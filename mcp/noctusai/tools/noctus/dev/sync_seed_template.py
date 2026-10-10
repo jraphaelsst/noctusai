@@ -12,12 +12,24 @@ Behaviour-preserving vs the retired shell script:
   4. Replace product values with placeholders (SAME ordering + regexes)
   5. Validate expected placeholders exist
 
+**Declared divergences.** A template file that must NOT mirror the seed is
+listed in ``templates/product-seed-divergences.json`` (one entry per file,
+each with a one-line rationale). The sync leaves those template files
+untouched, and the drift keeper (:func:`check_seed_template_sync`) skips
+their content but still requires them to exist. Today's entries: the seed's
+own 001/003 migrations are applied in prod (ledger-checksummed ⇒ immutable),
+while the template copies must be idempotent for ``migration_replay``.
+KB § PATTERNS/backend/migration-chain-replay.md § The seed template.
+
 ``dry=True`` mirrors the script's ``--dry`` (reports, mutates nothing).
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -67,6 +79,35 @@ EXPECTED_PLACEHOLDERS = (
 # Validation grep restricted to these extensions (mirrors the shell
 # `grep -r --include=` set).
 _VALIDATE_SUFFIXES = {".py", ".ts", ".tsx", ".json", ".sql"}
+
+# The named seam where the template is ALLOWED to diverge from the seed.
+# Data, not code: the sync and the drift keeper both read it, so neither can
+# grow a private `if path == ...` exception the other does not know about.
+DIVERGENCES_REL = Path("templates") / "product-seed-divergences.json"
+
+
+def load_divergences(root: Path) -> dict[str, str]:
+    """``{template-relative path: rationale}`` from the declared divergence list.
+
+    A missing file means "no declared divergences" (synthetic test trees);
+    the keeper separately refuses a real template without one. A malformed
+    entry raises — a divergence without a rationale is a silent fork.
+    """
+    path = root / DIVERGENCES_REL
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, str] = {}
+    for entry in data.get("divergences", []):
+        rel = str(entry.get("path") or "").strip()
+        why = str(entry.get("rationale") or "").strip()
+        if not rel or not why or rel.startswith("/") or ".." in Path(rel).parts:
+            raise ValueError(
+                f"{DIVERGENCES_REL}: every divergence needs a template-relative "
+                f"`path` and a one-line `rationale` (got {entry!r})"
+            )
+        out[rel] = why
+    return out
 
 
 def _excluded(rel_parts: tuple[str, ...], excludes: set[str]) -> bool:
@@ -217,14 +258,143 @@ def _is_text_file(p: Path) -> bool:
     return p.name.endswith(".env.example")
 
 
+def _placeholderize_tree(tree: Path) -> None:
+    """Apply :func:`_apply_placeholders` to every text file under ``tree``."""
+    for p in tree.rglob("*"):
+        if not p.is_file():
+            continue
+        if ".backup" in p.relative_to(tree).parts:
+            continue
+        if not _is_text_file(p):
+            continue
+        try:
+            original = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        name = p.name
+        is_compose = "docker-compose" in name and name.endswith(".yml")
+        is_dockerfile = name == "Dockerfile"
+        updated = _apply_placeholders(original, name, is_compose, is_dockerfile)
+        if updated != original:
+            p.write_text(updated, encoding="utf-8")
+
+
+def _tree_files(tree: Path, excludes: set[str], *, git_root: Path | None = None) -> set[str]:
+    """Relative file paths under ``tree``. With ``git_root``, only files git
+    would commit (tracked + untracked-not-ignored) — so a local build cache in
+    the working tree (``.ruff_cache``, ``tsbuildinfo``…) is not reported as drift."""
+    candidates: list[Path]
+    if git_root is not None:
+        proc = subprocess.run(
+            ["git", "ls-files", "-co", "--exclude-standard", "--", str(tree)],
+            cwd=git_root, capture_output=True, text=True,
+        )
+        if proc.returncode == 0:
+            candidates = [git_root / line for line in proc.stdout.splitlines() if line]
+        else:
+            candidates = list(tree.rglob("*"))
+    else:
+        candidates = list(tree.rglob("*"))
+    out: set[str] = set()
+    for p in candidates:
+        rel = p.relative_to(tree)
+        if _excluded(rel.parts, excludes) or _is_egg_info(rel.parts):
+            continue
+        if p.is_file() or p.is_symlink():
+            out.add(rel.as_posix())
+    return out
+
+
+def check_seed_template_sync(repo_root: Path | None = None) -> list[dict]:
+    """Drift keeper: ``templates/product-seed/`` == the seed rendered by this sync.
+
+    Renders ``products/seed/`` exactly as :func:`sync_seed_template` would
+    (copy + placeholderize, in a temp dir) and diffs it against the checked-
+    in template. Declared divergences (``templates/product-seed-divergences.
+    json``) are exempt from the CONTENT comparison only — each must still
+    exist in the template, and must still name a file the seed ships (a
+    divergence from nothing is a stale entry).
+    """
+    root = Path(repo_root) if repo_root else Path(REPO_ROOT)
+    seed = root / "products" / "seed"
+    template = root / "templates" / "product-seed"
+    if not seed.is_dir() or not template.is_dir():
+        return []
+
+    def issue(rel: str, text: str) -> dict:
+        return {
+            "keeper": "check_seed_template_sync",
+            "severity": "high",
+            "file": f"templates/product-seed/{rel}" if rel else str(DIVERGENCES_REL),
+            "issue": text,
+        }
+
+    issues: list[dict] = []
+    if not (root / DIVERGENCES_REL).is_file():
+        issues.append(issue("", (
+            f"{DIVERGENCES_REL} is missing — the declared seed↔template divergence "
+            "list is gone, so the next sync would overwrite the idempotent template "
+            "migrations with the seed's applied (non-idempotent) ones."
+        )))
+    try:
+        divergences = load_divergences(root)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return issues + [issue("", f"{DIVERGENCES_REL} unreadable: {exc}")]
+
+    with tempfile.TemporaryDirectory(prefix="seed-template-render-") as tmp:
+        rendered = Path(tmp) / "product-seed"
+        _copy_tree(seed, rendered, _TEMPLATE_EXTRA_EXCLUDES)
+        _placeholderize_tree(rendered)
+        git_root = root if (root / ".git").exists() else None
+        seed_files = _tree_files(seed, _TEMPLATE_EXTRA_EXCLUDES, git_root=git_root)
+        want = {r for r in _tree_files(rendered, _TEMPLATE_EXTRA_EXCLUDES) if r in seed_files}
+        have = _tree_files(template, _TEMPLATE_EXTRA_EXCLUDES, git_root=git_root)
+
+        for rel in sorted(divergences):
+            if rel not in have:
+                issues.append(issue(rel, (
+                    f"declared divergence `{rel}` is missing from the template "
+                    f"(rationale: {divergences[rel]}). Restore it, or drop the "
+                    f"entry from {DIVERGENCES_REL}."
+                )))
+            if rel not in want:
+                issues.append(issue(rel, (
+                    f"declared divergence `{rel}` no longer exists in products/seed/ "
+                    f"— a divergence from nothing is a stale entry; drop it from "
+                    f"{DIVERGENCES_REL}."
+                )))
+        sync_hint = (
+            "Edit products/seed/ and let the sync regenerate the template "
+            "(`python mcp/noctusai/cli.py --sync-seed-template`); a template file "
+            f"that must differ is declared in {DIVERGENCES_REL}."
+        )
+        for rel in sorted(want - have - set(divergences)):
+            issues.append(issue(rel, f"`{rel}` is in products/seed/ but not in the template. {sync_hint}"))
+        for rel in sorted(have - want - set(divergences)):
+            issues.append(issue(rel, f"`{rel}` is in the template but not in products/seed/. {sync_hint}"))
+        for rel in sorted((want & have) - set(divergences)):
+            if (rendered / rel).read_bytes() != (template / rel).read_bytes():
+                issues.append(issue(rel, f"`{rel}` differs from the seed's rendering. {sync_hint}"))
+    return issues
+
+
 def sync_seed_template(
-    dry: bool = False, worktree_path: str | None = None
+    dry: bool = False,
+    worktree_path: str | None = None,
+    *,
+    repo_root: Path | None = None,
 ) -> dict[str, Any]:
     """Sync products/seed → templates/product-seed with placeholderization.
 
+    ``repo_root`` is the explicit-root seam (tests, synthetic trees); callers
+    inside a git worktree pass ``worktree_path`` instead.
+
     Returns ``{ok, dry, steps, validation, seed, template, message}``.
     """
-    root = resolve_caller_root(worktree_path) if worktree_path else Path(REPO_ROOT)
+    if repo_root is not None:
+        root = Path(repo_root)
+    else:
+        root = resolve_caller_root(worktree_path) if worktree_path else Path(REPO_ROOT)
     seed = root / "products" / "seed"
     template = root / "templates" / "product-seed"
     steps: list[str] = []
@@ -248,6 +418,11 @@ def sync_seed_template(
             "seed→{{SCHEMA_NAME}}, 8004→{{BACKEND_PORT}}, "
             "8100→{{FRONTEND_PORT}}, Sprout→{{PRODUCT_ICON}}"
         )
+        try:
+            for rel in load_divergences(root):
+                steps.append(f"Would keep declared divergence {rel} (template copy untouched)")
+        except (ValueError, json.JSONDecodeError) as exc:
+            return {"ok": False, "dry": True, "steps": steps, "error": str(exc)}
         return {
             "ok": True,
             "dry": True,
@@ -257,6 +432,15 @@ def sync_seed_template(
             "template": str(template),
             "message": "Dry run complete — no changes made.",
         }
+
+    try:
+        divergences = load_divergences(root)
+    except (ValueError, json.JSONDecodeError) as exc:
+        return {"ok": False, "dry": False, "steps": steps, "error": str(exc)}
+    stashed: dict[str, bytes | None] = {
+        rel: ((template / rel).read_bytes() if (template / rel).is_file() else None)
+        for rel in divergences
+    }
 
     # ─── Step 1: backup seed (and template if present) ───────────────
     _copy_tree(seed, seed / ".backup", _BACKUP_EXCLUDES)
@@ -284,24 +468,33 @@ def sync_seed_template(
     steps.append("Copied seed → template")
 
     # ─── Step 3: placeholderize ──────────────────────────────────────
-    for p in template.rglob("*"):
-        if not p.is_file():
-            continue
-        if ".backup" in p.relative_to(template).parts:
-            continue
-        if not _is_text_file(p):
-            continue
-        try:
-            original = p.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        name = p.name
-        is_compose = "docker-compose" in name and name.endswith(".yml")
-        is_dockerfile = name == "Dockerfile"
-        updated = _apply_placeholders(original, name, is_compose, is_dockerfile)
-        if updated != original:
-            p.write_text(updated, encoding="utf-8")
+    _placeholderize_tree(template)
     steps.append("Replaced product values with placeholders")
+
+    # ─── Step 3b: restore the declared divergences ───────────────────
+    # The seed's rendering of a divergent path is discarded and the
+    # template's own copy put back. A declared path whose template copy is
+    # MISSING is not papered over with the seed's version (that would
+    # silently undo the divergence): the rendered copy is removed and the
+    # sync reports not-ok, so the drift keeper's existence leg blocks.
+    divergence_errors: list[str] = []
+    for rel, body in stashed.items():
+        target = template / rel
+        if body is None:
+            if target.exists():
+                target.unlink()
+            divergence_errors.append(
+                f"declared divergence {rel} is missing from the template — "
+                f"restore it (or drop its entry from {DIVERGENCES_REL})"
+            )
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+    if stashed:
+        steps.append(
+            f"Kept {len(stashed) - len(divergence_errors)} declared divergence(s) "
+            f"from {DIVERGENCES_REL}"
+        )
 
     # ─── Step 4: validate ────────────────────────────────────────────
     validation: list[dict[str, Any]] = []
@@ -323,15 +516,18 @@ def sync_seed_template(
             errors += 1
 
     return {
-        "ok": errors == 0,
+        "ok": errors == 0 and not divergence_errors,
         "dry": False,
         "steps": steps,
         "validation": validation,
         "missing_placeholders": errors,
+        "divergence_errors": divergence_errors,
         "seed": str(seed),
         "template": str(template),
         "message": (
-            "Sync complete!"
+            "; ".join(divergence_errors)
+            if divergence_errors
+            else "Sync complete!"
             if errors == 0
             else f"{errors} placeholder(s) missing — template may be incomplete"
         ),
@@ -356,4 +552,11 @@ def register(server) -> None:
         return sync_seed_template(dry=dry, worktree_path=worktree_path)
 
 
-__all__ = ["sync_seed_template", "EXPECTED_PLACEHOLDERS", "register"]
+__all__ = [
+    "DIVERGENCES_REL",
+    "EXPECTED_PLACEHOLDERS",
+    "check_seed_template_sync",
+    "load_divergences",
+    "register",
+    "sync_seed_template",
+]

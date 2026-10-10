@@ -12,6 +12,8 @@
 #
 # Steps (all pre-commit, no amend; auto-derived updates staged in-commit):
 #   1. seed → template mirror            (cli --sync-seed-template)
+#   1b. seed ↔ template drift (blocking) (cli --check-seed-template-sync;
+#                                          declared divergences exempt)
 #   2. KB auto-derived count blocks      (cli --update-kb-counts; mutating
 #                                          only on `dev` itself — `--check`
 #                                          only on a feature branch. The
@@ -157,6 +159,23 @@ if [[ -d "$REPO_ROOT/products/seed" ]] && have_py; then
         else
             echo "[pre-commit] Template already matches seed — no changes needed."
         fi
+    fi
+fi
+
+# ─── 1b. Seed ↔ template drift keeper (blocking) ─────────────────
+# `check_seed_template_sync`: the template must equal the seed rendered by the
+# sync above, except the DECLARED divergences in
+# templates/product-seed-divergences.json (content exempt, existence still
+# required). Runs whenever the seed, the template or the divergence list is
+# staged — a hand-edit to the template that is not declared would be silently
+# overwritten by the next seed-triggered sync.
+STAGED_SEED_TEMPLATE=$(git diff --cached --name-only 2>/dev/null | grep -E '^(products/seed/|templates/product-seed/|templates/product-seed-divergences\.json$)' || true)
+if [[ -n "$STAGED_SEED_TEMPLATE" ]] && have_py; then
+    echo "[pre-commit] seed/template staged — checking seed ↔ template drift..."
+    if ! "$PY" "$CLI" --check-seed-template-sync --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] SEED-TEMPLATE-SYNC check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Edit products/seed/ and re-run: python mcp/noctusai/cli.py --sync-seed-template. A template file that must differ is declared (path + rationale) in templates/product-seed-divergences.json. See KB § PATTERNS/backend/migration-chain-replay.md § The seed template." >&2
+        exit 1
     fi
 fi
 

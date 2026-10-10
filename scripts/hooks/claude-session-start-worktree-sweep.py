@@ -24,6 +24,12 @@ Stdlib-only.
 branch / detached HEAD / tracked edits / diverged dev, each reported in the
 summary line). The sweep and every "run the primary's cli.py" path otherwise
 execute stale toolkit code until someone fast-forwards by hand.
+
+2026-10-10: also prints ONE line when the primary lacks the toolkit's PGlite
+(`mcp/noctusai/node/node_modules/@electric-sql/pglite`) — without it
+`noctus.dev.migration_replay` is inconclusive on every migration commit.
+Advisory only: no network install at session start (`bash scripts/
+install-hooks.sh` runs the `npm ci`).
 """
 from __future__ import annotations
 
@@ -39,6 +45,8 @@ TIMEOUT_S = 900  # the detached child may take its time; nobody waits on it
 LAST_NAME = "noc-worktree-sweep.last"
 FF_LOCK_NAME = "noc-primary-ff.lock"
 LOCK_NAME = "noc-worktree-sweep.lock"
+PGLITE_REL = Path("mcp/noctusai/node/node_modules/@electric-sql/pglite")
+PGLITE_HINT = "migration_replay unavailable: run npm ci --prefix mcp/noctusai/node"
 
 
 def primary_root(start: Path) -> Path | None:
@@ -151,6 +159,11 @@ def spawn_detached(root: Path) -> None:
         start_new_session=True, close_fds=True)
 
 
+def pglite_hint(root: Path) -> str:
+    """The one-line install hint when the primary has no PGlite, else ''."""
+    return "" if (root / PGLITE_REL).is_dir() else PGLITE_HINT
+
+
 def take_previous_line(root: Path) -> str:
     """The previous run's summary if not yet shown (marks it shown), else ''."""
     f = root / ".git" / LAST_NAME
@@ -177,6 +190,9 @@ def main() -> int:
         line = take_previous_line(root)
         if line:
             print(line)
+        hint = pglite_hint(root)
+        if hint:
+            print(hint)
         spawn_detached(root)  # always: the primary FF runs even with no worktrees
     except Exception as e:  # noqa: BLE001 - advisory; never block a session start
         print(f"[noc-sweep] skipped: {type(e).__name__}: {e}", file=sys.stderr)

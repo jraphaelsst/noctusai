@@ -7,6 +7,7 @@ REPO_ROOT monkeypatched.
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -197,3 +198,99 @@ def test_template_backup_preserved_across_resync(tmp_path, monkeypatch):
     # by the script's own backup of the pre-sync template — the contract
     # is that template/.backup survives the rm-and-recopy of step 2.
     assert (tpl / ".backup").is_dir()
+
+
+# ── declared divergences (templates/product-seed-divergences.json) ──────────
+
+_DIVERGENT = "backend/migrations/001_seed.sql"
+_IDEMPOTENT = "CREATE SCHEMA IF NOT EXISTS {{SCHEMA_NAME}};\n"
+
+
+def _declare(root: Path, *paths: str) -> None:
+    (root / "templates").mkdir(parents=True, exist_ok=True)
+    (root / sst.DIVERGENCES_REL).write_text(json.dumps({"divergences": [
+        {"path": p, "rationale": "seed copy applied in prod, template copy idempotent"} for p in paths
+    ]}), encoding="utf-8")
+
+
+def _synced(root: Path) -> Path:
+    """Seed + a fresh sync + an idempotent hand-written divergent template file."""
+    _mk_seed(root)
+    assert sst.sync_seed_template(dry=False, repo_root=root)["ok"] is True
+    tpl = root / "templates" / "product-seed"
+    (tpl / _DIVERGENT).write_text(_IDEMPOTENT, encoding="utf-8")
+    _declare(root, _DIVERGENT)
+    return tpl
+
+
+def test_sync_keeps_a_declared_divergence(tmp_path):
+    tpl = _synced(tmp_path)
+    r = sst.sync_seed_template(dry=False, repo_root=tmp_path)
+    assert r["ok"] is True, r
+    assert (tpl / _DIVERGENT).read_text(encoding="utf-8") == _IDEMPOTENT
+    # Everything NOT declared is still re-rendered from the seed.
+    assert '"{{SCHEMA_NAME}}"' in (tpl / "backend" / "app" / "main.py").read_text()
+
+
+def test_sync_refuses_to_backfill_a_missing_declared_divergence(tmp_path):
+    tpl = _synced(tmp_path)
+    (tpl / _DIVERGENT).unlink()
+    r = sst.sync_seed_template(dry=False, repo_root=tmp_path)
+    assert r["ok"] is False
+    assert _DIVERGENT in r["message"]
+    # Not silently replaced by the seed's (non-idempotent) rendering.
+    assert not (tpl / _DIVERGENT).exists()
+
+
+def test_divergence_without_rationale_is_refused(tmp_path):
+    _mk_seed(tmp_path)
+    (tmp_path / "templates").mkdir()
+    (tmp_path / sst.DIVERGENCES_REL).write_text(
+        json.dumps({"divergences": [{"path": _DIVERGENT}]}), encoding="utf-8")
+    r = sst.sync_seed_template(dry=False, repo_root=tmp_path)
+    assert r["ok"] is False and "rationale" in r["error"]
+
+
+def test_keeper_clean_after_sync_with_declared_divergence(tmp_path):
+    _synced(tmp_path)
+    assert sst.check_seed_template_sync(tmp_path) == []
+
+
+def test_keeper_flags_undeclared_template_edit(tmp_path):
+    tpl = _synced(tmp_path)
+    (tpl / "backend" / "app" / "main.py").write_text("hand edit\n", encoding="utf-8")
+    (issue,) = sst.check_seed_template_sync(tmp_path)
+    assert issue["file"] == "templates/product-seed/backend/app/main.py"
+    assert issue["severity"] == "high"
+
+
+def test_keeper_flags_missing_declared_divergence(tmp_path):
+    tpl = _synced(tmp_path)
+    (tpl / _DIVERGENT).unlink()
+    (issue,) = sst.check_seed_template_sync(tmp_path)
+    assert "missing from the template" in issue["issue"]
+
+
+def test_keeper_flags_stale_divergence_entry(tmp_path):
+    tpl = _synced(tmp_path)
+    (tpl / "backend" / "migrations" / "099_gone.sql").write_text("SELECT 1;\n", encoding="utf-8")
+    _declare(tmp_path, _DIVERGENT, "backend/migrations/099_gone.sql")
+    (issue,) = sst.check_seed_template_sync(tmp_path)
+    assert "no longer exists in products/seed/" in issue["issue"]
+
+
+def test_keeper_flags_missing_divergence_list(tmp_path):
+    _synced(tmp_path)
+    (tmp_path / sst.DIVERGENCES_REL).unlink()
+    issues = sst.check_seed_template_sync(tmp_path)
+    assert any(i["file"] == str(sst.DIVERGENCES_REL) for i in issues)
+
+
+def test_real_template_matches_seed_plus_declared_divergences():
+    """The checked-in tree: template == rendered seed, outside the declared list."""
+    from settings import REPO_ROOT
+
+    assert sst.check_seed_template_sync(Path(REPO_ROOT)) == []
+    assert set(sst.load_divergences(Path(REPO_ROOT))) == {
+        "backend/migrations/001_seed.sql", "backend/migrations/003_examples.sql",
+    }

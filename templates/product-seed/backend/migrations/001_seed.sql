@@ -10,6 +10,16 @@
 
 SET search_path = {{SCHEMA_NAME}}, public;
 
+-- IDEMPOTENT BY CONSTRUCTION — every statement below is safe on a second apply
+-- (IF NOT EXISTS / DROP POLICY IF EXISTS / CREATE OR REPLACE / ON CONFLICT).
+-- `noctus.dev.migration_replay` applies every NEW migration file twice, so a
+-- product's first migration commit goes red if this file is not re-runnable.
+-- This template copy deliberately diverges from the seed product's own 001
+-- (applied in prod ⇒ ledger-checksummed ⇒ immutable); the divergence is
+-- declared in templates/product-seed-divergences.json, so the seed → template
+-- sync never overwrites it. Edit THIS file for new products.
+-- KB § PATTERNS/backend/migration-chain-replay.md.
+
 CREATE SCHEMA IF NOT EXISTS {{SCHEMA_NAME}};
 
 -- ============================================================================
@@ -80,7 +90,7 @@ $f$;
 -- Page status (feature flags)
 -- ============================================================================
 
-CREATE TABLE {{SCHEMA_NAME}}.status_pagina (
+CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.status_pagina (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     nome_pagina TEXT NOT NULL UNIQUE,
     status TEXT NOT NULL DEFAULT 'producao' CHECK (status IN ('producao', 'desenvolvimento', 'desativado')),
@@ -93,6 +103,7 @@ ALTER TABLE {{SCHEMA_NAME}}.status_pagina ENABLE ROW LEVEL SECURITY;
 -- Note: this policy intentionally does NOT use `rls_subquery_policy` — that
 -- helper always emits `TO authenticated`, but `todos_veem_producao` is an
 -- anonymous-readable policy (anon role too).
+DROP POLICY IF EXISTS "todos_veem_producao" ON {{SCHEMA_NAME}}.status_pagina;
 CREATE POLICY "todos_veem_producao" ON {{SCHEMA_NAME}}.status_pagina
     FOR SELECT USING (status = 'producao');
 
@@ -108,7 +119,7 @@ GRANT SELECT ON {{SCHEMA_NAME}}.status_pagina TO anon;
 -- Invitations
 -- ============================================================================
 
-CREATE TABLE {{SCHEMA_NAME}}.invitations (
+CREATE TABLE IF NOT EXISTS {{SCHEMA_NAME}}.invitations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id UUID NOT NULL,
     email TEXT NOT NULL,
@@ -126,12 +137,13 @@ ALTER TABLE {{SCHEMA_NAME}}.invitations ENABLE ROW LEVEL SECURITY;
 -- NOTE: the scaffold regression test in test_scaffold.py was updated in the
 -- same commit (011_rls_current_org_id) to assert current_org_id() instead
 -- of the old jwt()-based form.
+DROP POLICY IF EXISTS "invitations_select_own_org" ON {{SCHEMA_NAME}}.invitations;
 CREATE POLICY "invitations_select_own_org" ON {{SCHEMA_NAME}}.invitations
     FOR SELECT TO authenticated
     USING (org_id = current_org_id());
 
-CREATE INDEX idx_{{SCHEMA_NAME}}_invitations_org ON {{SCHEMA_NAME}}.invitations(org_id);
-CREATE INDEX idx_{{SCHEMA_NAME}}_invitations_token ON {{SCHEMA_NAME}}.invitations(token);
+CREATE INDEX IF NOT EXISTS idx_{{SCHEMA_NAME}}_invitations_org ON {{SCHEMA_NAME}}.invitations(org_id);
+CREATE INDEX IF NOT EXISTS idx_{{SCHEMA_NAME}}_invitations_token ON {{SCHEMA_NAME}}.invitations(token);
 
 
 -- ============================================================================

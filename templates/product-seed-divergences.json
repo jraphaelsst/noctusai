@@ -1,0 +1,13 @@
+{
+  "$comment": "Declared divergences between templates/product-seed/ and products/seed/. Read by noctus.dev.sync_seed_template (never overwrites these template files) and its drift keeper check_seed_template_sync (skips their content, still requires them to exist). One entry per template-relative path, each with a one-line rationale. KB § PATTERNS/backend/migration-chain-replay.md § The seed template.",
+  "divergences": [
+    {
+      "path": "backend/migrations/001_seed.sql",
+      "rationale": "Template copy is idempotent (migration_replay applies every new file twice); the seed's own 001 is applied in prod, ledger-checksummed, therefore immutable."
+    },
+    {
+      "path": "backend/migrations/003_examples.sql",
+      "rationale": "Template copy is idempotent (migration_replay applies every new file twice); the seed's own 003 is applied in prod, ledger-checksummed, therefore immutable."
+    }
+  ]
+}

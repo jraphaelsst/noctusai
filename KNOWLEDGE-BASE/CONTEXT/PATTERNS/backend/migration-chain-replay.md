@@ -72,7 +72,7 @@ active chains: ~9s wall. That fits the 90s integrate box with a wide margin.
   SW one is 166). The gate only applies files twice when they are new or changed.
 - `products/seed`'s `001_seed.sql` / `003_examples.sql` (the scaffold source) fail
   a re-apply (`status_pagina` / `examples` already exist). A product scaffolded from
-  them goes red on its first commit until the template is idempotent.
+  them went red on its first commit. Fixed in the template, see below.
 
 Applied migrations are **immutable**: `schema_migrations` stores each file's sha256.
 So the residue is baselined with a destination instead of being fixed by editing
@@ -81,6 +81,38 @@ history:
 - `migration-chain-rebaseline`: core 002/027, SW 001;
 - `mailing-schema-migration`: a migration that creates the schema;
 - `erp-asleep-owner`.
+
+## The seed template: a declared divergence
+
+A newly scaffolded product's first migration commit makes **every** one of its files
+a target, so every file the scaffold copies must apply twice. The scaffold copies
+`templates/product-seed/`, which the pre-commit sync regenerates from `products/seed/`.
+The seed's own files cannot be made idempotent, because they are applied in prod and
+therefore immutable (the ledger checksum).
+
+So the template copies of `001_seed.sql` and `003_examples.sql` are idempotent
+(`CREATE TABLE/INDEX IF NOT EXISTS`, `DROP POLICY IF EXISTS` before each
+`CREATE POLICY`, `CREATE OR REPLACE`, `ON CONFLICT`) and diverge from the seed on
+purpose. The divergence is a **named seam at the sync point**, not an `if`:
+
+- **`templates/product-seed-divergences.json`**: data, one `{path, rationale}` entry
+  per template-relative file. A missing rationale is refused.
+- **`noctus.dev.sync_seed_template`** (pre-commit step 1) leaves those template files
+  untouched. A declared file that is missing is not backfilled with the seed's
+  version. The sync reports not-ok instead.
+- **`check_seed_template_sync`** (keeper, CLI `--check-seed-template-sync`,
+  pre-commit step 1b, `check_all_products`) renders the seed in a temp dir and diffs
+  it against the template. A declared file's content is exempt. It must still exist
+  in the template, and it must still name a file the seed ships, or the entry is
+  stale.
+- **Scaffold**: `scaffold_product` copies the template whole and renames `001_seed.sql`
+  to `001_<slug>.sql`, so the idempotent copies are what a new product gets.
+  Regression: `tests/test_migration_replay.py::test_scaffolded_product_chain_is_green_and_idempotent`
+  scaffolds into a tmp repo with the real core chain and replays every new file as a
+  target.
+
+A change to the seed's 001/003 now reaches new products only through the template.
+Edit `templates/product-seed/backend/migrations/` by hand, and keep it idempotent.
 
 ## Composed with
 

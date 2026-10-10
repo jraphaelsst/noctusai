@@ -16560,6 +16560,10 @@ def check_all_products() -> tuple[int, list]:
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())
+    # 2026-10-10 — templates/product-seed/ drifting from the seed it is generated
+    # from, outside the declared divergences (templates/product-seed-divergences.json).
+    from tools.noctus.dev.sync_seed_template import check_seed_template_sync
+    all_issues.extend(check_seed_template_sync())
     # Claude Code mod (.claude/mods) = UX layer over the Python gates, never a gate.
     all_issues.extend(check_harness_mod_integrity())
     # symbol-first-stage-4-codification — Stage-3⇒4 codification of the
