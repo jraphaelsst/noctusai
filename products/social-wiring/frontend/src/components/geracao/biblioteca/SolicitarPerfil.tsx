@@ -65,12 +65,15 @@ export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
     }
   }
 
+  // The check result only speaks for the CURRENT, settled handle; a stale error from the
+  // previous value (or a cleared field) must never keep the opt-out message on screen.
+  const erroDaVerificacao = norm.ok && !aguardando ? verificar.error : null;
   let mensagem: string | null = null;
-  if (ehPerfilOptout(verificar.error) || optout) mensagem = MSG_PERFIL_OPTOUT;
+  if (ehPerfilOptout(erroDaVerificacao) || optout) mensagem = MSG_PERFIL_OPTOUT;
   else if (texto.trim() && norm.ok === false) mensagem = norm.erro;
   else if (status) mensagem = MSG_VERIFICACAO[status];
   else if (norm.ok && (aguardando || verificar.isFetching)) mensagem = "Verificando...";
-  else if (norm.ok && verificar.isError) mensagem = "Não foi possível verificar o perfil agora.";
+  else if (norm.ok && !aguardando && verificar.isError) mensagem = "Não foi possível verificar o perfil agora.";
 
   return (
     <form

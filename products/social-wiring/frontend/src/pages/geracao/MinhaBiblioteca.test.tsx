@@ -216,6 +216,25 @@ describe("Opt-out (LGPD)", () => {
     expect(rtl.screen.queryByText(/Não foi possível verificar/)).toBeNull();
   });
 
+  it("the opt-out message clears as soon as the handle is cleared or edited", async () => {
+    // Worst case: the query keeps handing back the stale opt-out error for the old handle.
+    m.verificar.mockReturnValue({
+      data: undefined,
+      isFetching: false,
+      isError: true,
+      error: Object.assign(new Error("[422] x"), { code: "perfil_optout" }),
+    });
+    renderPage();
+    await abrirSolicitar();
+    const campo = rtl.screen.getByLabelText(/Perfil do Instagram/);
+    await userEvent.type(campo, "@pediu");
+    expect(await rtl.screen.findByText("Este perfil pediu para não ser monitorado.")).toBeTruthy();
+    await userEvent.type(campo, "x");
+    expect(rtl.screen.queryByText("Este perfil pediu para não ser monitorado.")).toBeNull();
+    await userEvent.clear(campo);
+    expect(rtl.screen.queryByText("Este perfil pediu para não ser monitorado.")).toBeNull();
+  });
+
   it("perfil_optout on submit shows the inline message", async () => {
     m.verificar.mockImplementation((h: string) => ({ data: h ? { status: "disponivel" } : undefined, isFetching: false, isError: false }));
     m.solicitar.mockRejectedValue(Object.assign(new Error("[422] x"), { code: "perfil_optout" }));
