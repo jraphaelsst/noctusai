@@ -1158,12 +1158,25 @@ class TestSSOBrowserBind:
         assert "origin=https://social.example" in line
         assert self.NONCE not in line
 
-    def test_absent_cookie_rejected_when_switch_flipped(self, sso_session_client):
-        client, mock_sb = sso_session_client
-        _prime_regime(mock_sb, scope="live")
-        with patch("app.routers.sso.unbound_redeem_allowed", return_value=False):
-            resp = self._redeem(client, str(uuid.uuid4()), self._bnd(self.NONCE))
-        assert resp.status_code == 401
+    @pytest.mark.parametrize("cookie,bnd,allow,expected", [
+        (None, None, True, "no_bnd"),
+        ("n", None, False, "no_bnd"),
+        ("n", "HASH", True, "bound"),
+        ("n", "HASH", False, "bound"),
+        ("other", "HASH", True, "mismatch"),
+        (None, "HASH", True, "unbound_allowed"),
+        (None, "HASH", False, "unbound_rejected"),
+    ])
+    def test_bind_verdict_every_branch(self, cookie, bnd, allow, expected):
+        from app.sso_regime import bind_verdict
+        if bnd == "HASH":
+            bnd = self._bnd("n")
+        assert bind_verdict(cookie, bnd, allow_unbound=allow) == expected
+
+    def test_unbound_redeem_currently_allowed_for_both_regimes(self):
+        from app.sso_regime import unbound_redeem_allowed
+        assert unbound_redeem_allowed("strict") is True
+        assert unbound_redeem_allowed("legacy") is True
 
     def test_cookie_for_another_jti_does_not_satisfy(self, sso_session_client):
         client, mock_sb = sso_session_client

@@ -107,3 +107,21 @@ def unbound_redeem_allowed(regime: SSORegime) -> bool:
     SSOCallback (roadmap P2.2 trigger T6). Single switch -- do not inline.
     """
     return True
+
+
+BindVerdict = Literal["bound", "mismatch", "unbound_allowed", "unbound_rejected", "no_bnd"]
+
+
+def bind_verdict(cookie_nonce: Optional[str], bnd: Optional[str], *, allow_unbound: bool) -> BindVerdict:
+    """Pure browser-bind decision (no I/O, no request).
+
+    ``no_bnd`` -- token minted before P2.2 (no claim): nothing to check.
+    ``bound`` -- cookie present and hash matches.  ``mismatch`` -- cookie present,
+    hash differs (a relayed token).  Cookie absent: ``unbound_allowed`` or
+    ``unbound_rejected`` per ``allow_unbound`` (``unbound_redeem_allowed(regime)``).
+    """
+    if not bnd:
+        return "no_bnd"
+    if cookie_nonce is None:
+        return "unbound_allowed" if allow_unbound else "unbound_rejected"
+    return "bound" if bind_matches(cookie_nonce, bnd) else "mismatch"

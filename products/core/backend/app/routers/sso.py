@@ -29,7 +29,7 @@ from app.database import get_admin_client, supabase_admin
 from app.dependencies import get_current_user, create_sso_token, verify_sso_token
 from app.rate_limit import limiter
 from app.sso_regime import (
-    SSO_BIND_COOKIE_PATH, ProductUrlUnresolvable, bind_matches, build_sso_launch_url, new_bind_nonce,
+    SSO_BIND_COOKIE_PATH, ProductUrlUnresolvable, bind_verdict, build_sso_launch_url, new_bind_nonce,
     resolve_launch_base, sso_bind_cookie_name, sso_regime, unbound_redeem_allowed,
 )
 from app.schemas.sso import SSOSessionRequest, SSOSessionResponse, SSOTokenRequest, SSOTokenResponse, SSOValidateRequest
@@ -561,19 +561,18 @@ async def sso_session(request: Request, response: Response, body: SSOSessionRequ
     # only while `unbound_redeem_allowed` says so (deploy-order safety).
     jti = payload["jti"]
     bnd = payload.get("bnd")
-    bind_nonce = request.cookies.get(sso_bind_cookie_name(jti))
-    unbound = False
-    if bnd and bind_nonce is not None:
-        if not bind_matches(bind_nonce, bnd):
-            logger.warning("sso_bind_mismatch jti=%s product=%s origin=%s", jti, token_product, request.headers.get("origin"))
-            raise HTTPException(status_code=401, detail="Token SSO não pertence a este navegador")
-    elif bnd:
-        # NOC-REMEDIATE[sso-unbound-redeem-allow]: absent cookie is ALLOWED today
-        # (old SSOCallbacks never send credentials); the switch is
-        # `unbound_redeem_allowed` -- flip trigger T6 in the SSO roadmap.
-        unbound = True
-        if not unbound_redeem_allowed(regime):
-            raise HTTPException(status_code=401, detail="Token SSO não pertence a este navegador")
+    verdict = bind_verdict(
+        request.cookies.get(sso_bind_cookie_name(jti)), bnd,
+        allow_unbound=unbound_redeem_allowed(regime),
+    )
+    if verdict == "mismatch":
+        logger.warning("sso_bind_mismatch jti=%s product=%s origin=%s", jti, token_product, request.headers.get("origin"))
+    if verdict in ("mismatch", "unbound_rejected"):
+        raise HTTPException(status_code=401, detail="Token SSO não pertence a este navegador")
+    # NOC-REMEDIATE[sso-unbound-redeem-allow]: an absent cookie is ALLOWED today
+    # (old SSOCallbacks never send credentials); the switch is
+    # `unbound_redeem_allowed` -- flip trigger T6 in the SSO roadmap.
+    unbound = verdict == "unbound_allowed"
 
     # Single use: claim the jti BEFORE issuing anything.
     _claim_sso_jti(db, jti, user_id, token_product)
@@ -584,7 +583,7 @@ async def sso_session(request: Request, response: Response, body: SSOSessionRequ
             "sso_unbound_redeem jti=%s product=%s regime=%s origin=%s",
             jti, token_product, regime, request.headers.get("origin"),
         )
-    elif bnd:
+    elif verdict == "bound":
         # Single use: the cookie has done its job.
         response.delete_cookie(sso_bind_cookie_name(jti), path=SSO_BIND_COOKIE_PATH, secure=True, httponly=True, samesite="strict")
 
