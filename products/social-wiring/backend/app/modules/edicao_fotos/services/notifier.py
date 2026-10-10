@@ -40,6 +40,7 @@ import asyncio
 import logging
 from typing import Any, Awaitable, Callable, Optional
 
+from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.domain.photo_editing import BatchReadyNotice, PhotoEditingRepository
 from noctusai_lib.integrations.whatsapp import chat_id_for_phone, get_whatsapp_client
 
@@ -49,7 +50,6 @@ from app.modules.edicao_fotos.services.notificacoes_preferencias import (
 
 logger = logging.getLogger(__name__)
 
-NOTIFICATION_TYPE = "system"
 FEATURE = "edicao_fotos.lote_pronto"
 
 #: `(to, subject, html, text, org_id) -> sent?` — DI seam for tests
@@ -96,22 +96,18 @@ class InAppBatchReadyNotifier:
             )
             return
         title, body = batch_ready_message(notice)
-        row = {
-            "user_id": notice.criado_por,
-            "org_id": notice.org_id,
-            "type": NOTIFICATION_TYPE,
-            "title": title,
-            "message": body,
-            "metadata": {
-                "feature_key": FEATURE,
-                "lote_id": notice.lote_id,
-                "link": f"/edicao-fotos/lotes/{notice.lote_id}/revisao",
-            },
+        metadata = {
+            "feature_key": FEATURE,
+            "lote_id": notice.lote_id,
+            "link": f"/edicao-fotos/lotes/{notice.lote_id}/revisao",
         }
         client = self._core_client()
         # Raises on failure: the engine's `fotos.lote_pronto` handler is
         # at-least-once and retries a notice that did not land.
-        await asyncio.to_thread(lambda: client.table("notifications").insert(row).execute())
+        await asyncio.to_thread(lambda: write_in_app(
+            client, user_ids=[notice.criado_por], kind=FEATURE, title=title,
+            message=body, metadata=metadata, org_id=notice.org_id,
+        ))
 
 
 async def _default_send_email(
@@ -277,18 +273,10 @@ class MultiChannelBatchReadyNotifier:
         client = self._core_client()
 
         def _insert() -> None:
-            rows = [
-                {
-                    "user_id": r.user_id,
-                    "org_id": notice.org_id,
-                    "type": NOTIFICATION_TYPE,
-                    "title": title,
-                    "message": body,
-                    "metadata": metadata,
-                }
-                for r in recipients
-            ]
-            client.table("notifications").insert(rows).execute()
+            write_in_app(
+                client, user_ids=[r.user_id for r in recipients], kind=FEATURE,
+                title=title, message=body, metadata=metadata, org_id=notice.org_id,
+            )
 
         # Raises on failure: see module docstring (at-least-once retry).
         await asyncio.to_thread(_insert)

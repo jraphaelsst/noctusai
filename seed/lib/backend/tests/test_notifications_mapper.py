@@ -67,3 +67,65 @@ class TestMapNotificationFromPt:
         pt.pop("link", None)  # round-trip doesn't re-synthesize metadata
         back = map_notification_from_pt(pt)
         assert back == original
+
+
+# ── write_in_app — the one product writer (2026-10-10) ───────────────────────
+from pathlib import Path  # noqa: E402
+
+import pytest  # noqa: E402
+
+from noctusai_lib.domain.notifications import (  # noqa: E402
+    PRODUCT_NOTIFICATION_TYPE,
+    in_app_rows,
+    write_in_app,
+)
+from noctusai_lib.testing import MockSupabaseClient  # noqa: E402
+from noctusai_lib.testing.migration_parser import parse_check_files  # noqa: E402
+from noctusai_lib.testing.sql_check import compile_check  # noqa: E402
+
+_CORE_MIGRATIONS = Path(__file__).resolve().parents[4] / "products" / "core" / "backend" / "migrations"
+
+
+class TestWriteInApp:
+    def test_rows_carry_core_type_and_the_product_kind_in_metadata(self):
+        rows = in_app_rows(user_ids=["u2", "u1", "u1", None], kind="lembrete_cliente",
+                           title="T", message="M", metadata={"link": "/x"}, org_id="o1")
+
+        assert [r["user_id"] for r in rows] == ["u1", "u2"]
+        assert all(r["type"] == PRODUCT_NOTIFICATION_TYPE == "system" for r in rows)
+        assert rows[0]["metadata"] == {"link": "/x", "tipo": "lembrete_cliente"}
+        assert rows[0]["org_id"] == "o1"
+
+    def test_a_platform_alert_has_no_org(self):
+        [row] = in_app_rows(user_ids=["admin"], kind="agents.credential_expiry", title="T", message="M")
+
+        assert "org_id" not in row
+
+    def test_every_row_satisfies_cores_real_type_check(self):
+        """The CHECK compiled from core's own migrations — the one igig's
+        own `type` values violated in production."""
+        body = next(
+            checks["notifications_type_check"]
+            for table, checks in parse_check_files(sorted(_CORE_MIGRATIONS.glob("*.sql"))).items()
+            if table.endswith(".notifications") and "notifications_type_check" in checks
+        )
+        check = compile_check(body)
+        for kind in ("automacao", "sla_estourado", "lembrete_cliente", "edicao_fotos.lote_pronto"):
+            [row] = in_app_rows(user_ids=["u"], kind=kind, title="T", message="M")
+            assert check.verdict(row) is True, kind
+
+    def test_write_inserts_one_row_per_recipient_and_returns_the_count(self):
+        db = MockSupabaseClient(validate_schema=False)
+
+        assert write_in_app(db, user_ids=["u1", "u2"], kind="k", title="T", message="M") == 2
+        assert len(db.table("notifications").inserted_payloads) == 2
+
+    def test_zero_recipients_writes_nothing(self):
+        db = MockSupabaseClient(validate_schema=False)
+
+        assert write_in_app(db, user_ids=[], kind="k", title="T", message="M") == 0
+        assert db.table("notifications").inserted_payloads == []
+
+    def test_a_kind_is_required(self):
+        with pytest.raises(ValueError):
+            in_app_rows(user_ids=["u"], kind="", title="T", message="M")

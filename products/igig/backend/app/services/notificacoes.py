@@ -1,19 +1,18 @@
 """In-app notifications for the agency — rows in core's `public.notifications`.
 
 The seed's standard `notificacoes` router (mounted in `app/main.py`) already
-READS this table for the bell; this is the write half. Same row shape as
-social-wiring's `modules/edicao_fotos/services/notifier.py::_write_in_app`.
+READS this table for the bell; the write goes through the seed's one writer,
+`noctusai_lib.domain.notifications.write_in_app` (type='system', igig's kind
+in `metadata.tipo` — core's CHECK refused igig's own kinds in `type`, so
+until 2026-10-10 no igig notification was ever stored in production).
 """
 from __future__ import annotations
-
-# NOC-REMEDIATE[in-app-notification-writer]: second product hand-writing
-# public.notifications rows (social-wiring edicao_fotos is the first; N=2 ->
-# triage); the third lifts a noctusai_lib.domain.notifications writer. — 2026-09-23
 
 import logging
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+from noctusai_lib.domain.notifications import write_in_app
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows, paged_rows
 from noctusai_lib.primitives.roles import ADMIN_ROLES
 
@@ -40,24 +39,13 @@ def notificar(
     failure may fail its operation. Zero recipients is logged at WARNING: an
     event nobody hears about is worth seeing in the logs.
     """
-    destinatarios = sorted({str(u) for u in user_ids if u})
-    if not destinatarios:
+    enviados = write_in_app(
+        core_client, user_ids=user_ids, kind=tipo, title=titulo, message=mensagem,
+        metadata=metadata, org_id=org_id,
+    )
+    if not enviados:
         logger.warning("notificação %s sem destinatários org=%s", tipo, org_id)
-        return 0
-    core_client.table("notifications").insert(
-        [
-            {
-                "user_id": uid,
-                "org_id": org_id,
-                "type": tipo,
-                "title": titulo,
-                "message": mensagem,
-                "metadata": metadata or {},
-            }
-            for uid in destinatarios
-        ]
-    ).execute()
-    return len(destinatarios)
+    return enviados
 
 
 def _usuarios_dos_membros(admin_db: Any, cfg: Any, org_id: str, entity_id: str) -> list[str]:

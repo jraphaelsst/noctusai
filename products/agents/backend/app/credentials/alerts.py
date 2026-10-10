@@ -19,6 +19,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Protocol
 
+from noctusai_lib.domain.notifications import write_in_app
+
 from app.credentials.service import CredentialError, CredentialService, ExpiryAlert
 
 logger = logging.getLogger(__name__)
@@ -105,9 +107,10 @@ class SupabaseNotificationSink:
         return bool(resp.data)
 
     def send(self, user_id: str, *, title: str, message: str, metadata: dict[str, Any]) -> None:
-        self._core().table("notifications").insert(
-            {"user_id": user_id, "type": "system", "title": title, "message": message, "metadata": metadata}
-        ).execute()
+        write_in_app(
+            self._core(), user_ids=[user_id], kind="agents.credential_expiry",
+            title=title, message=message, metadata=metadata,
+        )
 
 
 def get_notification_sink() -> NotificationSink:

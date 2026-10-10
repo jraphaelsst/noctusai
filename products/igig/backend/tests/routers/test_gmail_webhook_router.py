@@ -185,7 +185,9 @@ class TestResposta:
         _push(api)
         notas = core_db.table("notifications").inserted_payloads
         assert [n["user_id"] for n in notas] == ["owner-1"]
-        assert notas[0]["type"] == "orcamento_respondido"
+        # core's CHECK allows only its own types: igig's kind rides in metadata
+        assert notas[0]["type"] == "system"
+        assert notas[0]["metadata"]["tipo"] == "orcamento_respondido"
         assert notas[0]["org_id"] == ORG
         assert notas[0]["metadata"]["link"] == f"/orcamentos?id={cenario['orcamento']['id']}"
         assert len(senders.fake.sent) == 1

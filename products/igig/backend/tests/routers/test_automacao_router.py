@@ -133,7 +133,11 @@ def _execucoes(igig_db, automacao_id=None):
 
 
 def _notificacoes(core_db, tipo):
-    return [n for n in core_db.table("notifications")._data if n["type"] == tipo]
+    """igig's kind rides in `metadata.tipo`; `type` is always core's
+    'system' (`noctusai_lib.domain.notifications.write_in_app`)."""
+    linhas = core_db.table("notifications")._data
+    assert all(n["type"] == "system" for n in linhas)
+    return [n for n in linhas if n["metadata"].get("tipo") == tipo]
 
 
 # ── Auth boundary ────────────────────────────────────────────────────

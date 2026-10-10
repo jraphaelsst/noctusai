@@ -188,6 +188,12 @@ Every product accesses LLMs exclusively through this package. No product code im
 | `AuthClient` | Wraps TestClient with Bearer auth. `.mock_supabase` property, `.raw()` for unauth |
 | `bind_consent_module_to_mock(mock_sb)` | **Per-fixture rewire of the X6 consent module's FastAPI deps to a mock supabase.** Solves the boot-order trap where `TestClient` caches the app + `configure_consent_module(...)` captures the FIRST fixture's `mock_sb` reference permanently. Idempotent. Required in every product's `client` fixture — see `KB § PATTERNS/compliance/testing.md § Consent-guard product conftest pattern` for the full rationale + canonical conftest shape. Default in `templates/product-seed/backend/tests/conftest.py` since 2026-04-27. |
 
+### `domain/notifications.py` — the one in-app (bell) notification writer
+
+`write_in_app(core_client, *, user_ids, kind, title, message, metadata=None, org_id=None) -> int` inserts one `public.notifications` row per distinct recipient. Every product uses it; a product never writes `type` itself.
+
+**The rule it owns (2026-10-10).** Core's `notifications_type_check` allows only core's own platform events (`team_invite`, `subscription_change`, `usage_alert`) plus `system`. A product event is `type='system'`, with the product's own kind in `metadata.tipo`. igig wrote its kinds straight into `type`, so production refused every igig notification. social-wiring and agents had hand-copied `'system'`. `in_app_rows(...)` builds the rows without writing them. Raises on a failed insert: the caller decides whether a notification failure may fail its operation.
+
 ### `integrations/supabase_identity.py` — Bulk auth.users → display-name + email resolver
 
 Shipped 2026-05-03 by `therapy-platform-wiring` Phase 1 to absorb the per-product N+1 `db.auth.admin.get_user_by_id(...)` pattern that admin / list endpoints hit when DTO-mapping rows that need `nome` + `email` from `auth.users` (which lives outside every product schema). Replaces inline `_fetch_user_identity` helpers — first concrete absorber was therapy-platform's `app/services/admin_service.py::_fetch_user_identity` (now retired).
