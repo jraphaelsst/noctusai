@@ -5,16 +5,16 @@
  * Finalizar → synthesis polled until done → editor. Loading: two signals off
  * `data`, never `isLoading`.
  *
- * NOC-REMEDIATE[voice-answers]: the "Prefiro falar ⇄ Prefiro escrever" toggle is
- * built but OFF (VOZ_HABILITADA). Destination: the seed recorder organ
- * (`useAudioRecorder` + `VoiceAnswerInput`, transcription-contract S4) plus the
- * shared transcription product slice (S3, endpoint 13 `/answers/{id}/audio`).
- * No product-local MediaRecorder component — wire the organ here and flip the flag.
+ * Voice answers: per-question "Prefiro falar ⇄ Prefiro escrever" toggle; voice mode
+ * renders the seed `VoiceAnswerInput` organ, uploads on stop (endpoint 13) and the
+ * chip follows `Answer.transcricao` (polled by the hook). The transcript lands in
+ * the textarea for review — never auto-finalised (contract §10).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowLeft, Loader2, RefreshCw } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
+import { VoiceAnswerInput } from "@noctusai/lib";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -29,11 +29,12 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { SugestaoRevisao } from "@/components/cerebro/SugestaoRevisao";
-import { mensagemErro, formatarChars } from "@/components/cerebro/labels";
+import { mensagemErro, formatarChars, statusDe } from "@/components/cerebro/labels";
 import { ConfirmarModal } from "@/components/pesquisa/ConfirmarModal";
 import {
   useCerebroPerguntas,
   useDecidirSugestao,
+  useEnviarAudioResposta,
   useFinalizarRespostas,
   useRevisarRespostas,
   useSalvarResposta,
@@ -43,11 +44,21 @@ import type { Answer, BrainQuestion } from "@/types/cerebro";
 
 const CEREBRO = "/media-creation/cerebro";
 export const AUTOSAVE_MS = 1500;
-/** Voice answers are OFF until the seed recorder organ + shared transcription exist (see header). */
-export const VOZ_HABILITADA = false;
+export const MSG_VOZ_INDISPONIVEL = "Transcrição de voz indisponível no momento — escreva sua resposta.";
 
-function Chip({ answer, texto, salvando }: { answer: Answer | undefined; texto: string; salvando: boolean }) {
+function Chip({
+  answer,
+  texto,
+  salvando,
+  enviando = false,
+}: {
+  answer: Answer | undefined;
+  texto: string;
+  salvando: boolean;
+  enviando?: boolean;
+}) {
   if (salvando) return <Badge variant="outline">Salvando…</Badge>;
+  if (enviando) return <Badge variant="outline">Enviando áudio…</Badge>;
   const t = answer?.transcricao;
   if (t && (t.status === "na_fila" || t.status === "processando")) {
     return (
@@ -68,7 +79,7 @@ function Chip({ answer, texto, salvando }: { answer: Answer | undefined; texto: 
   return texto.trim() ? <Badge variant="secondary">Respondida</Badge> : <Badge variant="outline">Aguardando resposta</Badge>;
 }
 
-export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { vozHabilitada?: boolean } = {}) {
+export default function CerebroPerguntas() {
   const { brainId = null } = useParams<{ brainId: string }>();
   const navigate = useNavigate();
   const brainQ = useCerebroPerguntas(brainId);
@@ -78,6 +89,7 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
   const revisar = useRevisarRespostas(brainId ?? "");
   const decidir = useDecidirSugestao(brainId ?? "");
   const finalizar = useFinalizarRespostas(brainId ?? "");
+  const enviarAudio = useEnviarAudioResposta(brainId ?? "");
 
   const [textos, setTextos] = useState<Record<string, string>>({});
   const textosRef = useRef(textos);
@@ -86,7 +98,9 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
   const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [salvando, setSalvando] = useState<Set<string>>(new Set());
   const [grupos, setGrupos] = useState<number | null>(null);
-  const [falar, setFalar] = useState(false);
+  const [falar, setFalar] = useState<Record<string, boolean>>({});
+  const [vozIndisponivel, setVozIndisponivel] = useState(false);
+  const [enviandoAudio, setEnviandoAudio] = useState<Set<string>>(new Set());
   const [zerarAberto, setZerarAberto] = useState(false);
   const [modoAberto, setModoAberto] = useState(false);
   const [sintetizando, setSintetizando] = useState(false);
@@ -200,7 +214,7 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
     );
   }
 
-  const ocupado = salvando.size > 0 || sujos.current.size > 0;
+  const ocupado = salvando.size > 0 || sujos.current.size > 0 || enviandoAudio.size > 0;
   useEffect(() => {
     if (!ocupado) return;
     const guard = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -223,6 +237,28 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
   }, [sintetizando, brain, navigate]);
 
   const respondidas = perguntas.filter(respondeu).length;
+
+  async function onGravado(qid: string, blob: Blob, mime: string) {
+    setEnviandoAudio((s) => new Set(s).add(qid));
+    try {
+      await enviarAudio.mutateAsync({ questionId: qid, blob, mime });
+    } catch (e) {
+      const code = (e as { code?: string } | null)?.code;
+      if (code === "transcricao_desativada" || statusDe(e) === 503) {
+        setVozIndisponivel(true);
+        setFalar({});
+        toast.error(MSG_VOZ_INDISPONIVEL);
+      } else {
+        toast.error(mensagemErro(e, "Não foi possível enviar o áudio."));
+      }
+    } finally {
+      setEnviandoAudio((s) => {
+        const n = new Set(s);
+        n.delete(qid);
+        return n;
+      });
+    }
+  }
 
   async function onRascunho() {
     await flushTudo();
@@ -338,11 +374,6 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
         <p className="text-sm text-muted-foreground">
           Progresso das respostas {respondidas} de {perguntas.length}
         </p>
-        {vozHabilitada && (
-          <Button variant="outline" size="sm" onClick={() => setFalar((v) => !v)}>
-            {falar ? "Prefiro escrever" : "Prefiro falar"}
-          </Button>
-        )}
       </section>
 
       {sintetizando && (
@@ -364,7 +395,24 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
                 {q.position}. {q.text}
               </p>
               {q.hint && <p className="text-sm italic text-muted-foreground">{q.hint}</p>}
-              {/* NOC-REMEDIATE[voice-answers]: `vozHabilitada && falar` renders the seed VoiceAnswerInput here. */}
+              {!vozIndisponivel && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={bloqueado}
+                  onClick={() => setFalar((p) => ({ ...p, [q.id]: !p[q.id] }))}
+                >
+                  {falar[q.id] ? "Prefiro escrever" : "Prefiro falar"}
+                </Button>
+              )}
+              {!vozIndisponivel && falar[q.id] && (
+                <VoiceAnswerInput
+                  maxSeconds={600}
+                  disabled={bloqueado || enviandoAudio.has(q.id)}
+                  onRecorded={(blob, mime) => void onGravado(q.id, blob, mime)}
+                />
+              )}
               <Textarea
                 aria-label={`Resposta da pergunta ${q.position}`}
                 placeholder="Escreva sua resposta aqui"
@@ -376,7 +424,7 @@ export default function CerebroPerguntas({ vozHabilitada = VOZ_HABILITADA }: { v
                 onBlur={() => void flush(q.id)}
               />
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                <Chip answer={resp} texto={texto} salvando={salvando.has(q.id)} />
+                <Chip answer={resp} texto={texto} salvando={salvando.has(q.id)} enviando={enviandoAudio.has(q.id)} />
                 <span className="text-muted-foreground">{formatarChars(texto.length)}</span>
               </div>
               {mostraSugestao && resp && (

@@ -16,13 +16,22 @@ const m = {
   revisar: vi.fn(),
   decidir: vi.fn(),
   finalizar: vi.fn(),
+  audio: vi.fn(),
 };
+vi.mock("@noctusai/lib", () => ({
+  VoiceAnswerInput: (p: any) => (
+    <button data-testid="fake-rec" disabled={p.disabled} onClick={() => p.onRecorded(new Blob(["x"]), "audio/webm", 3)}>
+      REC{p.maxSeconds}
+    </button>
+  ),
+}));
 vi.mock("@/hooks/useCerebroPerguntas", () => ({
   useCerebroPerguntas: (id: any) => m.brain(id),
   useSalvarResposta: () => ({ mutateAsync: m.salvar, isPending: false }),
   useZerarRespostas: () => ({ mutateAsync: m.zerar, isPending: false }),
   useRevisarRespostas: () => ({ mutateAsync: m.revisar, isPending: false }),
   useDecidirSugestao: () => ({ mutateAsync: m.decidir, isPending: false }),
+  useEnviarAudioResposta: () => ({ mutateAsync: m.audio, isPending: false }),
   useFinalizarRespostas: () => ({ mutateAsync: m.finalizar, isPending: false }),
 }));
 
@@ -251,12 +260,76 @@ describe("CerebroPerguntas", () => {
     expect(area(1).value).toBe("");
   });
 
-  it("keeps the voice toggle hidden by default and shows it behind the flag", () => {
+  it("voice toggle renders the recorder and uploads on record", async () => {
+    m.audio.mockResolvedValue({});
     mount();
+    expect(screen.queryByTestId("fake-rec")).toBeNull();
+    fireEvent.click(screen.getAllByText("Prefiro falar")[0]);
+    expect(screen.getByText("Prefiro escrever")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("fake-rec"));
+    await tick(0);
+    expect(m.audio).toHaveBeenCalledTimes(1);
+    expect(m.audio.mock.calls[0][0]).toMatchObject({ questionId: "q1", mime: "audio/webm" });
+    expect(screen.getByTestId("fake-rec").textContent).toBe("REC600");
+  });
+
+  it("blocks unload while an upload is in flight", async () => {
+    let fim: (v?: unknown) => void = () => {};
+    m.audio.mockReturnValue(new Promise((r) => (fim = r)));
+    mount();
+    fireEvent.click(screen.getAllByText("Prefiro falar")[0]);
+    fireEvent.click(screen.getByTestId("fake-rec"));
+    await tick(0);
+    const ev = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    expect(screen.getByText("Enviando áudio…")).toBeTruthy();
+    fim({});
+    await tick(0);
+    const ev2 = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(ev2);
+    expect(ev2.defaultPrevented).toBe(false);
+  });
+
+  it.each([
+    [{ status: "na_fila", posicao: 2 }, "Na fila (posição 2)"],
+    [{ status: "processando", posicao: null }, "Transcrevendo áudio…"],
+    [{ status: "falhou", posicao: null, erro: { codigo: "x", mensagem: "Áudio ilegível" } }, "Falha na transcrição"],
+  ])("chip reflects transcricao %#", (t, label) => {
+    m.brain.mockReturnValue(q(detail({ answers: [ans("q1", "", {}, { id: "t", duracao_s: 3, texto: null, erro: null, ...t })] })));
+    mount();
+    expect(screen.getByText(label)).toBeTruthy();
+    if (t.status === "falhou") expect(screen.getByText("Áudio ilegível")).toBeTruthy();
+  });
+
+  it("concluded transcript shows in the textarea, nothing auto-finalised", () => {
+    m.brain.mockReturnValue(
+      q(detail({ answers: [ans("q1", "texto falado", {}, { id: "t", status: "concluida", posicao: null, duracao_s: 3, texto: "texto falado", erro: null })] })),
+    );
+    mount();
+    expect(area(1).value).toBe("texto falado");
+    expect(m.finalizar).not.toHaveBeenCalled();
+  });
+
+  it("503 transcricao_desativada disables voice for the session", async () => {
+    m.audio.mockRejectedValue(Object.assign(new Error("indisponível"), { status: 503, code: "transcricao_desativada" }));
+    mount();
+    fireEvent.click(screen.getAllByText("Prefiro falar")[0]);
+    fireEvent.click(screen.getByTestId("fake-rec"));
+    await tick(0);
+    expect(toast.error).toHaveBeenCalledWith("Transcrição de voz indisponível no momento — escreva sua resposta.");
     expect(screen.queryByText("Prefiro falar")).toBeNull();
-    cleanup();
-    mount({ vozHabilitada: true });
-    expect(screen.getByText("Prefiro falar")).toBeTruthy();
+    expect(screen.queryByTestId("fake-rec")).toBeNull();
+  });
+
+  it("429 surfaces the server message and keeps voice available", async () => {
+    m.audio.mockRejectedValue(Object.assign(new Error("Limite diário de transcrição atingido."), { status: 429, code: "cota_diaria_minutos" }));
+    mount();
+    fireEvent.click(screen.getAllByText("Prefiro falar")[0]);
+    fireEvent.click(screen.getByTestId("fake-rec"));
+    await tick(0);
+    expect(toast.error).toHaveBeenCalledWith("Limite diário de transcrição atingido.");
+    expect(screen.getByTestId("fake-rec")).toBeTruthy();
   });
 
   it("redirects custom brains to the editor", async () => {

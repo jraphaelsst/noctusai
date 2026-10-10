@@ -102,7 +102,12 @@ export async function uploadMultipart<T>(path: string, form: FormData): Promise<
   const response = await fetch(apiUrl(path), { method: "POST", headers, body: form });
   if (!response.ok) {
     const detail = await response.json().catch(() => null);
-    throw new Error(detail?.error?.message ?? `Erro HTTP ${response.status}`);
+    // `status` + `code` ride on the Error so callers can branch on the server's
+    // error code (e.g. `transcricao_desativada`) without parsing the message.
+    throw Object.assign(new Error(detail?.error?.message ?? `Erro HTTP ${response.status}`), {
+      status: response.status,
+      code: (detail?.error?.code as string | undefined) ?? null,
+    });
   }
   return (await response.json()) as T;
 }
