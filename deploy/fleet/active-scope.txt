@@ -15,7 +15,7 @@
 # build-scope.txt (the `live` subset) is always ⊆ this file.
 #
 # Last refresh: 2026-10-10
-# Asleep (on disk, ativo=false): adconnect, daily-life, dev-team, erp-imobiliario, knowledge-extractor, p-studio, personal-finance, therapy-platform
+# Asleep (on disk, ativo=false): adconnect, daily-life, dev-team, erp-imobiliario, knowledge-extractor, p-studio, personal-finance, store, therapy-platform
 # Active in catalog but no products/<slug>/ dir: none
 
 academia-de-reciclagem
@@ -26,4 +26,3 @@ igig
 orbity
 seed
 social-wiring
-store
