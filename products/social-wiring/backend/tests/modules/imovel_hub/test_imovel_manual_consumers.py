@@ -249,7 +249,14 @@ class TestIsolamento:
         adapter = FakeVistaAdapter()
         adapter.add_imovel(Imovel(codigo="ONE1000", categoria="Casa"))
         rec = _TocaSo(scoped)
-        report = asyncio.run(ImovelSyncService(rec, adapter).sync(UUID(ORG_ID), with_detalhes=False))
+        # The possível-duplicado step (§8.6) is a separate post-sync step with its
+        # own tests (`test_imovel_duplicatas.py`); this isolation claim is about
+        # the sync + sweep themselves, so it runs with a no-op detector.
+        report = asyncio.run(
+            ImovelSyncService(rec, adapter, duplicate_detector=lambda *_a, **_k: None).sync(
+                UUID(ORG_ID), with_detalhes=False
+            )
+        )
 
         assert report.complete is True and report.upserted == 1
         assert [n for n, _ in rec.rpcs] == ["sweep_imovel_registry"]
@@ -270,7 +277,9 @@ class TestIsolamento:
         only select `ativo_no_vista` rows that are in (or leave) the mirror."""
         from pathlib import Path
 
-        sql = (Path(__file__).resolve().parents[3] / "migrations" / "064_registry_sweep_guard.sql").read_text()
+        from noctusai_lib.testing.migrations import migration_sql
+
+        sql = migration_sql(Path(__file__).resolve().parents[3] / "migrations", "registry_sweep_guard")
         assert "AND r.ativo_no_vista" in sql
         assert "FROM presentes p" in sql  # activation joins on the MIRROR's codigo_norm
 

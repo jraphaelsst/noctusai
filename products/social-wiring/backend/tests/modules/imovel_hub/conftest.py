@@ -20,7 +20,7 @@ from fastapi.testclient import TestClient
 from noctusai_lib.integrations.documents import FakeMatriculaExtractor
 from noctusai_lib.integrations.storage import FakeStorageBackend
 
-from app.dependencies import coerce_org_uuid
+from app.dependencies import coerce_org_uuid, get_admin_client
 from app.modules.imovel_hub.deps import (
     get_imovel_hub_client,
     get_matricula_extractor_factory,
@@ -290,6 +290,63 @@ def manual(scoped, codigo="SW-0001", *, titulo="Casa Reserva do Vianna", **dados
             }
         ],
     )
+
+
+@pytest.fixture
+def espelho_vista(client, scoped):
+    """`GET /{codigo}` reads the Vista mirror through the RAW admin client
+    (`.schema()` per call — a fresh, empty mock each time), so route the mirror
+    to the SAME scoped mock the test seeds."""
+    from app.main import app
+
+    class _Mesmo:
+        def schema(self, _nome):
+            return scoped
+
+    app.dependency_overrides[get_admin_client] = lambda: _Mesmo()
+    yield
+    app.dependency_overrides.pop(get_admin_client, None)
+
+
+def _role_mock(org_role):
+    """A mock whose TRUSTED `noctus_users` row carries `org_role` (the gate
+    `require_org_admin_role` reads) — never the JWT's `user_metadata`."""
+    from noctusai_lib.testing import TEST_USER_ID
+
+    mock_sb = MockSupabaseClient(validate_schema_constraints=True)
+    mock_sb.auth.get_user = MagicMock(
+        return_value=MockUserResponse(MockUser(id=TEST_USER_ID, org_id=ORG_RAW, org_role=org_role))
+    )
+    mock_sb.set_table_data(
+        "noctus_users", [{"id": TEST_USER_ID, "org_id": ORG_RAW, "org_role": org_role}]
+    )
+    return mock_sb
+
+
+def _role_client(org_role):
+    mock_sb = _role_mock(org_role)
+    with (
+        patch("noctusai_seed.database.DatabaseModule.get_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_core_client", return_value=mock_sb),
+        patch("noctusai_seed.database.DatabaseModule.get_admin_client", return_value=mock_sb),
+    ):
+        from app.main import app
+
+        bind_consent_module_to_mock(mock_sb)
+        yield TestClient(app)
+        app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def admin_client():
+    """A TestClient whose caller is an `owner` on the trusted row."""
+    yield from _role_client("owner")
+
+
+@pytest.fixture
+def member_client():
+    """A TestClient whose caller has NO admin role on the trusted row."""
+    yield from _role_client(None)
 
 
 class FakeImovelNotifier:

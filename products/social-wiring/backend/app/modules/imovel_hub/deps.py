@@ -42,6 +42,17 @@ def get_imovel_hub_client() -> Any:
     return get_scoped_admin_client()
 
 
+def get_vinculo_legal() -> Optional[Any]:
+    """FastAPI dependency — the property-level legal-data reconciler
+    (`vinculo_legal`, CONTRACT §8.7), loaded lazily; `None` while that module
+    does not exist (the link routes then REPORT `legal: erro / módulo
+    indisponível`, never pretend). Overridable in tests with a fake exposing
+    `reconciliar` / `limpar`."""
+    from app.modules.imovel_hub.vinculo_service import carregar_vinculo_legal
+
+    return carregar_vinculo_legal()
+
+
 #: Documents live in the SAME bucket as client documents, under a different
 #: path prefix. A second bucket would need its own object-RLS policies and
 #: its own retention wiring for no gain — the separation that matters is the

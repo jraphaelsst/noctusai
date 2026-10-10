@@ -30,7 +30,9 @@ creates it (upsert), so a retry with the returned código
 converges.
 
 NEVER AUTO-MERGED with a later Vista listing: matrícula/address stay on
-`imovel_dados`, so a future "possível duplicado" hint stays buildable.
+`imovel_dados`; after a create/edit the possible-duplicate detector
+(`duplicatas_service`, §8.6) runs for THAT código as a separate step — its
+failure is logged loudly and never fails the write (`detector` is the DI seam).
 """
 from __future__ import annotations
 
@@ -42,6 +44,7 @@ from uuid import UUID
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError, ValidationError_
 
 from app.modules.imovel_hub import dados_service as dados_svc
+from app.modules.imovel_hub import duplicatas_service as dup_svc
 from app.services import table_reads
 
 logger = logging.getLogger(__name__)
@@ -211,6 +214,27 @@ def imovel_manual_out(registry: dict, captacao: Optional[dict], dados: Optional[
     return out
 
 
+#: What a LINKED manual imóvel keeps as its own when it is rendered through the
+#: Vista listing it is linked to (CONTRACT §8.7).
+_PROPRIOS_DO_MANUAL = ("org_id", "codigo", "codigo_norm", "fonte", "referencias", "em_condominio")
+_ENDERECO_PROPRIO = (
+    "empreendimento", "cep", "logradouro", "numero", "complemento", "bairro", "cidade", "uf",
+)
+
+
+def sobrepor_listagem_vista(manual: dict, listagem: dict) -> dict:
+    """A linked manual imóvel's `Imovel`: the Vista listing's catalog data
+    (título, fotos, preço, specs, …) with the manual record's OWN código,
+    `fonte`, deal references, condomínio flag and authored address on top."""
+    out = dict(listagem)
+    for chave in _PROPRIOS_DO_MANUAL:
+        out[chave] = manual.get(chave)
+    for chave in _ENDERECO_PROPRIO:
+        if manual.get(chave):
+            out[chave] = manual[chave]
+    return out
+
+
 def obter_manual(client: Any, org_id: UUID, codigo: str) -> Optional[dict]:
     """The full `Imovel` for a manual código, or `None` when it is not one: a
     manual imóvel is a registry row with `origem_descoberta='manual'` (with or
@@ -288,7 +312,8 @@ def _incompleto(codigo: str, etapa: str, exc: Exception) -> AppException:
 
 
 def registrar_manual(
-    client: Any, org_id: UUID, valores: dict, *, usuario_id: Optional[UUID]
+    client: Any, org_id: UUID, valores: dict, *, usuario_id: Optional[UUID],
+    detector: Optional[dup_svc.Detector] = None,
 ) -> dict:
     """`POST /manuais`: registry (manual) → captação → imovel_dados.
 
@@ -331,6 +356,9 @@ def registrar_manual(
         _escrever_dados(client, org_id, codigo, valores, usuario_id)
     except Exception as exc:  # noqa: BLE001 — surfaced with the código
         raise _incompleto(codigo, "dados", exc) from exc
+    dup_svc.detectar_sem_falhar(
+        client, org_id, [codigo], detector=detector, origem="manual create"
+    )
     return obter_manual(client, org_id, codigo)
 
 
@@ -351,7 +379,8 @@ def _exigir_manual(client: Any, org_id: UUID, codigo: str) -> None:
 
 
 def atualizar_manual(
-    client: Any, org_id: UUID, codigo: str, valores: dict, *, usuario_id: Optional[UUID]
+    client: Any, org_id: UUID, codigo: str, valores: dict, *, usuario_id: Optional[UUID],
+    detector: Optional[dup_svc.Detector] = None,
 ) -> dict:
     """`PATCH /manuais/{codigo}`: partial update (absence = leave alone).
 
@@ -373,4 +402,7 @@ def atualizar_manual(
             "codigo_canonical", canonico
         ).execute()
     _escrever_dados(client, org_id, canonico, valores, usuario_id)
+    dup_svc.detectar_sem_falhar(
+        client, org_id, [canonico], detector=detector, origem="manual edit"
+    )
     return obter_manual(client, org_id, canonico)

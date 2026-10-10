@@ -33,7 +33,6 @@ from postgrest.exceptions import APIError
 from noctusai_lib.primitives.exceptions import AppException
 from noctusai_lib.testing import migration_parser
 
-from app.dependencies import get_admin_client
 from app.modules.imovel_hub import captacao_service as cap
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub.deps import get_imovel_hub_client
@@ -125,22 +124,6 @@ def usar_cliente(client):
 
     yield _usar
     app.dependency_overrides.pop(get_imovel_hub_client, None)
-
-
-@pytest.fixture
-def espelho_vista(client, scoped):
-    """`GET /{codigo}` reads the Vista mirror through the RAW admin client
-    (`.schema()` per call — a fresh, empty mock each time), so route the mirror
-    to the SAME scoped mock the test seeds."""
-    from app.main import app
-
-    class _Mesmo:
-        def schema(self, _nome):
-            return scoped
-
-    app.dependency_overrides[get_admin_client] = lambda: _Mesmo()
-    yield
-    app.dependency_overrides.pop(get_admin_client, None)
 
 
 # ─── código ───────────────────────────────────────────────────────────────
@@ -622,12 +605,12 @@ class TestDetalhe:
 # ─── drift guards ─────────────────────────────────────────────────────────
 
 
-def _sql_sem_comentarios() -> str:
-    return "\n".join(l for l in MIGRATION_CAPTACAO.read_text().splitlines() if not l.strip().startswith("--"))
+def _sql_sem_comentarios(arquivo: Path = MIGRATION_CAPTACAO) -> str:
+    return "\n".join(l for l in arquivo.read_text().splitlines() if not l.strip().startswith("--"))
 
 
-def _bracos_da_view() -> tuple[list[str], list[str]]:
-    sql = _sql_sem_comentarios()
+def _bracos_da_view(arquivo: Path = MIGRATION_CAPTACAO) -> tuple[list[str], list[str]]:
+    sql = _sql_sem_comentarios(arquivo)
     corpo_view = sql[sql.index("CREATE OR REPLACE VIEW social_wiring.imoveis_catalogo"):]
     corpo_view = corpo_view[: corpo_view.index("COMMENT ON VIEW")]
     arm_vista, arm_manual = corpo_view.split("UNION ALL")

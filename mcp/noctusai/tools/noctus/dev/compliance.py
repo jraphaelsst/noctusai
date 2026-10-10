@@ -13336,6 +13336,45 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 226 unapplied — the imovel_dados.drive_folder_url Drive-prefix CHECK has no live "
         "column to probe against yet.",
     ),
+    # Migration 228 (social-wiring, CONTRACT §8.6/§8.7, S6 dup-A) is FILE-ONLY until
+    # the tech-lead applies it via `migrate_product` -- same reasoning as 226 above.
+    # Remove these entries and register real `GuardProbe`s in the SAME change that
+    # applies 228.
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "imovel_duplicata_score_faixa",
+        "Migration 228 unapplied — the imovel_duplicata_candidatos score 0..1 CHECK has no live object to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "imovel_duplicata_status_valido",
+        "Migration 228 unapplied — the imovel_duplicata_candidatos status allowlist CHECK has no live object to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "imovel_duplicata_lados_distintos",
+        "Migration 228 unapplied — the imovel_duplicata_candidatos manual<>vista CHECK has no live object to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "uq_imovel_duplicata_par",
+        "Migration 228 unapplied — the imovel_duplicata_candidatos (org, manual, vista) UNIQUE has no live object to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "imovel_registry_vinculo_nao_a_si_mesmo",
+        "Migration 228 unapplied — the imovel_registry.vinculado_a not-self CHECK has no live object to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "uq_imovel_registry_vinculado_a",
+        "Migration 228 unapplied — the imovel_registry.vinculado_a one-manual-per-Vista partial UNIQUE index has no live object to probe against yet.",
+    ),
+    (
+        "products/social-wiring/backend/migrations/228_imovel_duplicatas.sql",
+        "imovel_vinculo_eventos_acao_valida",
+        "Migration 228 unapplied — the imovel_vinculo_eventos acao allowlist CHECK has no live object to probe against yet.",
+    ),
 )
 
 

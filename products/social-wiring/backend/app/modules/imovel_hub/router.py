@@ -35,7 +35,7 @@ from fastapi import (
     status,
 )
 
-from noctusai_lib.api.auth.session import is_org_admin
+from noctusai_lib.api.auth.session import is_org_admin, require_org_admin_role
 from noctusai_lib.primitives.exceptions import ConflictError, ValidationError_
 
 from app.dependencies import coerce_org_uuid, get_core_client, get_current_user_org
@@ -44,6 +44,8 @@ from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import captacao_service as captacao_svc
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import documentos_service as docs_svc
+from app.modules.imovel_hub import duplicatas_service as duplicatas_svc
+from app.modules.imovel_hub import vinculo_service as vinculo_svc
 from app.modules.imovel_hub import matricula_extracao_service as matricula_svc
 from app.modules.imovel_hub.deps import (
     get_estrutura_seams,
@@ -51,6 +53,7 @@ from app.modules.imovel_hub.deps import (
     get_imovel_notification_service,
     get_matricula_extractor_factory,
     get_storage_backend,
+    get_vinculo_legal,
 )
 from app.modules.imovel_hub.schemas import (
     DecidirConflitoImovelBody,
@@ -142,6 +145,64 @@ async def patch_referencias_route(
     _user, org_id = _auth_parts(auth)
     valores = {k: getattr(body, k) for k in body.model_fields_set}
     return dados_svc.gravar_referencias(client, org_id, codigo.upper(), valores=valores)
+
+
+# ─── Possível duplicado + "É o mesmo imóvel" (migration 228, CONTRACT §8.6/§8.7) ─
+#
+# `GET /duplicatas` (one segment) lives in `routers/imoveis_router.py`, declared
+# before its `GET /{codigo}` — see the note there. These are POSTs on 2-3
+# segments, so no ordering constraint applies.
+
+
+@router.post("/duplicatas/{duplicata_id}/descartar")
+async def descartar_duplicata_route(
+    duplicata_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+) -> dict:
+    """"Não é o mesmo": the pair becomes `descartado` and is never suggested
+    again. `409 duplicata_ja_resolvida` unless it is `pendente`. Any org
+    member may dismiss a suggestion; linking is admin-only."""
+    user, org_id = _auth_parts(auth)
+    return duplicatas_svc.descartar(client, org_id, duplicata_id, getattr(user, "id", None))
+
+
+@router.post("/duplicatas/{duplicata_id}/vincular")
+async def vincular_duplicata_route(
+    duplicata_id: UUID,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+    legal=Depends(get_vinculo_legal),
+) -> dict:
+    """"É o mesmo imóvel": LINK the manual imóvel to the Vista listing (nothing
+    is moved or merged) → `{duplicata, vinculo, legal}`.
+
+    🔴 Admin/owner only — the TRUSTED `public.noctus_users` row, the same gate
+    `DELETE /api/clientes/{id}` uses. `legal` reports the property-level legal
+    data reconciliation (`status: "ok" | "erro"`); a failure there never undoes
+    the link."""
+    user, org_id = _auth_parts(auth)
+    require_org_admin_role(get_core_client(), getattr(user, "id", None), "Vincular imóveis")
+    return vinculo_svc.vincular(
+        client, org_id, duplicata_id, getattr(user, "id", None), legal=legal
+    )
+
+
+@router.post("/{codigo}/desvincular")
+async def desvincular_imovel_route(
+    codigo: str,
+    auth=Depends(get_current_user_org),
+    client=Depends(get_imovel_hub_client),
+    legal=Depends(get_vinculo_legal),
+) -> dict:
+    """Undo a link exactly (either side's código) → `{vinculo, duplicata,
+    legal}`; the pair returns to `pendente`. Admin/owner only; `404
+    imovel_nao_vinculado` when the código takes part in no link."""
+    user, org_id = _auth_parts(auth)
+    require_org_admin_role(get_core_client(), getattr(user, "id", None), "Desvincular imóveis")
+    return vinculo_svc.desvincular(
+        client, org_id, codigo, getattr(user, "id", None), legal=legal
+    )
 
 
 # ─── Cartório data ────────────────────────────────────────────────────────

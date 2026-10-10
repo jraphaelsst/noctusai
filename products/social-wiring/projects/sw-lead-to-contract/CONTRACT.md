@@ -339,10 +339,10 @@ Org-picker RLS plus acting-audit, same as every table in this contract.
 - A "Possível duplicado" badge on list cards and the details header.
 - On the details page, a section listing the candidate pairs (side by side: código, título, endereço, valor, área, the matched signals) with **"Não é o mesmo"**.
 - A "Possíveis duplicados" filter on /imoveis.
-- "É o mesmo imóvel" is NOT shown until §8.7 is approved and built.
+- "É o mesmo imóvel" (§8.7) is shown to admins only.
 
-### 8.7 "É o mesmo imóvel" (PROPOSED, not built; for noc-2's review)
-Proposed action: **LINK, don't move.**
+### 8.7 "É o mesmo imóvel" (APPROVED by noc-2; detection + link built in S6 dup-A, legal-data reconciliation in dup-B)
+Action: **LINK, don't move.**
 
 - **Mechanism.** `imovel_registry` gains `vinculado_a uuid NULL` (FK → registry.id, the Vista row). Confirming a pair:
   - sets `vinculado_a` on the manual registry row;
@@ -356,3 +356,10 @@ Proposed action: **LINK, don't move.**
   - Reports that group by imóvel group by `coalesce(vinculado_a → codigo, codigo)`.
 - **Reversible.** "Desvincular" clears `vinculado_a` and returns the pair to `pendente`. Because nothing was moved, unlinking is exact.
 - **Explicitly not proposed.** Re-pointing FKs from SW-#### to the Vista código is lossy (two rows can collide on per-imóvel uniques like `imovel_dados` PK and `atendimento_imoveis` uniques), not cleanly reversible, and touches every table at once without a transaction.
+
+**Approved amendments (noc-2) and the built surface (migration 228).**
+- **Admin-only.** `vincular` and `desvincular` are restricted to owner/admin by the trusted `require_org_admin_role` (the predicate `DELETE /api/clientes/{id}` uses); a member gets a strict `403`. "Não é o mesmo" (descartar) stays open to any org member.
+- **Audit.** No house timeline exists for imóvel events, so both actions append a row to a dedicated `imovel_vinculo_eventos` table (`acao`, `codigo_manual`, `codigo_vista`, `duplicata_id`, `ator`, `legal` = the legal-data outcome, `criado_em`); read-only for `authenticated`, written by the backend only.
+- **Legal data follows the link.** Property-level legal data (matrícula / CRI / owners) is reconciled by `imovel_hub/vinculo_legal.py` (dup-B): `reconciliar(client, org_id, vinculo)` after a link, `limpar(client, org_id, vinculo)` BEFORE an unlink, loaded lazily. A missing module or an exception is reported in the response (`legal: {status: "erro", mensagem}`) and never undoes the link.
+- **Routes.** `GET /api/imoveis/duplicatas?status=` (declared in `routers/imoveis_router.py` before `GET /{codigo}`, which would otherwise swallow the one-segment path), `POST /duplicatas/{id}/descartar`, `POST /duplicatas/{id}/vincular` (admin), `POST /{codigo}/desvincular` (admin, either side's código).
+- **Wire.** `vincular` -> `{duplicata, vinculo: {manual_codigo, vista_codigo}, legal}`; `desvincular` -> `{vinculo, duplicata|null, legal}`. `Imovel` gains `duplicatas_pendentes: [{id, outro_codigo, score}]` and `vinculo: {manual_codigo, vista_codigo}|null`; a linked manual código renders the Vista listing's catalog data with its own código / address / referências. `ImovelResumo` items (busca, enriquecer) carry `vinculo` on both sides of a link and `vinculado_a_manual` on the Vista side, only when linked; `/busca` hides a linked manual hit and returns the Vista one instead.

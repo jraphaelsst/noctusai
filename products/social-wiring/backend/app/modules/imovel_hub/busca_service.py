@@ -178,7 +178,9 @@ def canonical(codigo: str) -> str:
 # ── enrichment (moved from `card_hub.roteiros_service`) ────────────────────
 
 
-def enriquecer(client: Any, org_id: UUID, codigos: list[str]) -> dict[str, dict]:
+def enriquecer(
+    client: Any, org_id: UUID, codigos: list[str], *, seguir_vinculo: bool = True
+) -> dict[str, dict]:
     """`codigo -> imóvel`, one batched read per source.
 
     Registry first because the FK guarantees it exists — so `imovel` is never
@@ -187,6 +189,13 @@ def enriquecer(client: Any, org_id: UUID, codigos: list[str]) -> dict[str, dict]
     delist-time snapshot answers. There is deliberately NO live Vista call:
     roadmap `social-wiring-imoveis-vista-2026-08` P2.5 rules that a clean miss
     is a real, actionable fact, never a fallback.
+
+    LINKED imóveis (migration 228, CONTRACT §8.7): a manual código linked to a
+    Vista listing renders the Vista listing's catalog data (título, fotos,
+    preço, specs) with `vinculo` set, while its own código, address,
+    captador and origem stay its own; the Vista código carries
+    `vinculado_a_manual`. `seguir_vinculo=False` returns each código's OWN data
+    (the duplicate-pair view, which must show both sides as they are).
     """
     unicos = sorted({canonical(c) for c in codigos if c})
     if not unicos:
@@ -222,13 +231,88 @@ def enriquecer(client: Any, org_id: UUID, codigos: list[str]) -> dict[str, dict]
         {d["captador_user_id"] for d in dados.values() if d.get("captador_user_id")}
     )
 
-    return {
+    out = {
         codigo: _imovel_out(
             codigo, registry.get(codigo), mirror.get(codigo), dados.get(codigo), atores,
             cap=captacao.get(codigo),
         )
         for codigo in unicos
     }
+    _anotar_vinculos(client, org_id, out, registry, seguir_vinculo=seguir_vinculo)
+    return out
+
+
+#: Catalog keys a linked manual código takes from its Vista listing. The
+#: address keys are NOT here: the manual record's authored address stays its own
+#: (falling back to the listing's only where the manual one is blank).
+_CAMPOS_DO_CATALOGO_VISTA = (
+    "titulo", "categoria", "valor_venda", "valor_locacao", "dormitorios", "suites",
+    "vagas", "area_total", "area_privativa", "area_construida", "foto_destaque",
+    "corretores",
+)
+_CAMPOS_ENDERECO = (
+    "empreendimento", "logradouro", "numero", "complemento", "bairro", "cidade", "uf", "cep",
+)
+
+
+def _anotar_vinculos(
+    client: Any, org_id: UUID, out: dict[str, dict], registry: dict[str, dict],
+    *, seguir_vinculo: bool,
+) -> None:
+    """Add `vinculo` (both sides of a link) / `vinculado_a_manual` (the Vista
+    side) to the items that take part in a link — and ONLY those: the
+    `ImovelResumo` key set is pinned by contract §0.1 consumers, so an unlinked
+    imóvel's shape is unchanged. When `seguir_vinculo`, render a linked manual
+    código through its Vista listing."""
+    ids_registry = {str(r["id"]): c for c, r in registry.items() if r.get("id")}
+    manual_da_vista: dict[str, str] = {}
+    if ids_registry:
+        for r in table_reads.in_batched_rows(
+            client, REGISTRY_TABLE, org_id, "vinculado_a", sorted(ids_registry),
+            order_col="id", select="id, codigo_canonical, vinculado_a",
+        ):
+            manual_da_vista[str(r["vinculado_a"])] = str(r["codigo_canonical"])
+
+    alvos_ids = sorted({str(r["vinculado_a"]) for r in registry.values() if r.get("vinculado_a")})
+    vista_por_id = {
+        str(r["id"]): str(r["codigo_canonical"])
+        for r in table_reads.in_batched_rows(
+            client, REGISTRY_TABLE, org_id, "id", alvos_ids, order_col="id",
+            select="id, codigo_canonical",
+        )
+    }
+
+    for codigo, item in out.items():
+        reg = registry.get(codigo) or {}
+        manual_codigo = manual_da_vista.get(str(reg.get("id")))
+        vista_codigo = vista_por_id.get(str(reg.get("vinculado_a"))) if reg.get("vinculado_a") else None
+        if vista_codigo:
+            item["vinculo"] = {"manual_codigo": codigo, "vista_codigo": vista_codigo}
+        elif manual_codigo:
+            item["vinculado_a_manual"] = manual_codigo
+            item["vinculo"] = {"manual_codigo": manual_codigo, "vista_codigo": codigo}
+
+    if not seguir_vinculo:
+        return
+    ligados = {c: i["vinculo"]["vista_codigo"] for c, i in out.items()
+               if i.get("vinculo") and i["vinculo"]["manual_codigo"] == c}
+    if not ligados:
+        return
+    vistas = enriquecer(client, org_id, sorted(set(ligados.values())), seguir_vinculo=False)
+    for codigo, vista_codigo in ligados.items():
+        vista = vistas.get(vista_codigo)
+        # Only a listing still in the mirror has catalog data to lend: a
+        # delisted one is a thin `snap_*` snapshot that would blank the manual
+        # record's own título / specs.
+        if vista is None or vista.get("fonte") != "imoveis":
+            continue
+        item = out[codigo]
+        for chave in _CAMPOS_DO_CATALOGO_VISTA:
+            item[chave] = vista.get(chave)
+        for chave in _CAMPOS_ENDERECO:
+            if not item.get(chave):
+                item[chave] = vista.get(chave)
+        item.update(_derivados(item))
 
 
 def _imovel_out(
@@ -420,11 +504,30 @@ def buscar(
         return {"items": [], "total": 0}
 
     enriquecidos = enriquecer(client, org_id, sorted(codigos))
+    _trocar_manuais_vinculados_pelo_vista(client, org_id, enriquecidos)
     ordenados = sorted(enriquecidos.values(), key=_ranking(canonical(termo)))[:limite]
     # `total` is the length of what is returned, NOT a catalog count. This
     # endpoint has no cursor and never claims one: reporting a larger number
     # next to a truncated list would promise a "next page" that does not exist.
     return {"items": ordenados, "total": len(ordenados)}
+
+
+def _trocar_manuais_vinculados_pelo_vista(
+    client: Any, org_id: UUID, enriquecidos: dict[str, dict]
+) -> None:
+    """New associations go to the Vista código (CONTRACT §8.7): a hit that is a
+    manual código LINKED to a listing is hidden, and the listing is returned in
+    its place (even when the typed term only matched the manual record). Mutates
+    `enriquecidos`."""
+    ocultar = {
+        c: i["vinculo"]["vista_codigo"] for c, i in enriquecidos.items()
+        if i.get("vinculo") and i["vinculo"]["manual_codigo"] == c
+    }
+    for codigo in ocultar:
+        del enriquecidos[codigo]
+    faltam = sorted({v for v in ocultar.values() if v not in enriquecidos})
+    if faltam:
+        enriquecidos.update(enriquecer(client, org_id, faltam, seguir_vinculo=False))
 
 
 def _ilike_rows(

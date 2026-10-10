@@ -4,6 +4,7 @@ Endpoints:
     GET  /api/imoveis                  → paginated rows: Vista mirror ∪ manual (imoveis_catalogo)
     GET  /api/imoveis/busca            → typeahead over the REGISTRY ∪ mirror
     GET  /api/imoveis/filtros          → distinct filter values (derived)
+    GET  /api/imoveis/duplicatas       → possible manual-vs-Vista duplicate pairs (§8.6)
     GET  /api/imoveis/caracteristicas  → amenity slug → count, usage-ordered
     GET  /api/imoveis/{codigo}         → one imóvel (Vista mirror, or manual captação)
     POST /api/imoveis/sync             → full pull from Vista (D1 manual refresh)
@@ -33,6 +34,8 @@ from app.dependencies import (
 from app.modules.imovel_hub import busca_service as busca_svc
 from app.modules.imovel_hub import captacao_service as captacao_svc
 from app.modules.imovel_hub import dados_service as dados_svc
+from app.modules.imovel_hub import duplicatas_service as duplicatas_svc
+from app.modules.imovel_hub import vinculo_service as vinculo_svc
 from app.modules.imovel_hub.deps import get_imovel_hub_client
 from app.services.imoveis_service import (
     build_imoveis_service,
@@ -109,6 +112,9 @@ async def list_imoveis(
     bairro: Optional[str] = None,
     search: Optional[str] = None,
     caracteristicas: Optional[list[str]] = Query(None),
+    possivel_duplicado: Optional[bool] = Query(
+        None, description="true = only imóveis with a pending possible-duplicate pair."
+    ),
     auth=Depends(get_current_user_org),
     db=Depends(get_admin_client),
 ) -> ImovelPageOut:
@@ -124,6 +130,7 @@ async def list_imoveis(
         bairro=bairro,
         search=search,
         caracteristicas=caracteristicas,
+        possivel_duplicado=possivel_duplicado,
     )
     return ImovelPageOut(**result)
 
@@ -180,6 +187,25 @@ async def buscar_possiveis_duplicatas(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     return busca_svc.sugestoes_para_cadastro(db, org_id, termo=q, limite=limit)
+
+
+# 🔴 ROUTE ORDER — lives HERE and not in the `imovel_hub` router: this router is
+# mounted FIRST and its `GET /{codigo}` would read a one-segment `/duplicatas`
+# as an imóvel whose código is "DUPLICATAS" (the same trap `/conflitos` documents
+# in `imovel_hub/router.py`). The mutating routes (`/duplicatas/{id}/descartar`,
+# `/duplicatas/{id}/vincular`, `/{codigo}/desvincular`) are POSTs on 2-3 segments
+# and live in `imovel_hub/router.py`. A test pins both.
+@router.get("/duplicatas")
+async def list_duplicatas(
+    status_: str = Query("pendente", alias="status"),
+    auth=Depends(get_current_user_org),
+    hub=Depends(get_imovel_hub_client),
+) -> list[dict]:
+    """Possible manual-vs-Vista duplicate pairs (CONTRACT §8.6), highest score
+    first: `[{id, score, sinais, status, detectado_em, resolvido_por,
+    resolvido_em, manual: ImovelResumo, vista: ImovelResumo}]`. Bare JSON."""
+    _user, _token, raw_org = auth
+    return duplicatas_svc.listar(hub, coerce_org_uuid(raw_org), status=status_)
 
 
 @router.get("/filtros", response_model=FiltrosOut)
@@ -277,7 +303,8 @@ async def get_imovel(
     _user, _token, raw_org = auth
     org_id = coerce_org_uuid(raw_org)
     canonico = codigo.strip().upper()
-    row = build_imoveis_service(db).get(org_id, canonico)
+    imoveis = build_imoveis_service(db)
+    row = imoveis.get(org_id, canonico)
     if row is not None:
         dados = dados_svc.linha(hub, org_id, canonico)
         row["fonte"] = "vista"
@@ -286,11 +313,26 @@ async def get_imovel(
         # ours (imovel_dados, migration 202) — both on the shape for EVERY
         # imóvel so the edit modal needs no second query.
         row["em_condominio"] = (dados or {}).get("em_condominio")
-        return row
+        return _com_vinculo(hub, org_id, canonico, row)
     manual = captacao_svc.obter_manual(hub, org_id, canonico)
     if manual is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Imóvel {codigo} não encontrado.",
         )
-    return manual
+    vinculo = vinculo_svc.resolver_vinculo(hub, org_id, canonico)
+    if vinculo is not None and vinculo.manual_codigo == canonico:
+        # LINKED (§8.7): the Vista listing's catalog data, the manual record's
+        # own código / address / referências / condomínio.
+        listagem = imoveis.get(org_id, vinculo.vista_codigo)
+        if listagem is not None:
+            manual = captacao_svc.sobrepor_listagem_vista(manual, listagem)
+    return _com_vinculo(hub, org_id, canonico, manual)
+
+
+def _com_vinculo(hub, org_id, canonico: str, imovel: dict) -> dict:
+    """`vinculo` + `duplicatas_pendentes` on the Imovel shape (every imóvel)."""
+    vinculo = vinculo_svc.resolver_vinculo(hub, org_id, canonico)
+    imovel["vinculo"] = vinculo.as_dict() if vinculo else None
+    imovel["duplicatas_pendentes"] = duplicatas_svc.pendentes_do_imovel(hub, org_id, canonico)
+    return imovel

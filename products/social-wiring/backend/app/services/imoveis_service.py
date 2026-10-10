@@ -28,7 +28,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID
 
 from noctusai_lib.domain.real_estate import Imovel, PropertyData, imovel_to_property_data
@@ -371,6 +371,7 @@ class ImoveisService:
         bairro: Optional[str] = None,
         search: Optional[str] = None,
         caracteristicas: Optional[list[str]] = None,
+        possivel_duplicado: Optional[bool] = None,
     ) -> dict:
         query = self._catalogo().select("*", count="exact").eq("org_id", str(org_id))
         if status:
@@ -381,6 +382,9 @@ class ImoveisService:
             query = query.eq("cidade", cidade)
         if bairro:
             query = query.eq("bairro", bairro)
+        if possivel_duplicado is not None:
+            # View column (migration 228): a pending duplicate pair involves it.
+            query = query.eq("possivel_duplicado", possivel_duplicado)
         if caracteristicas:
             # Array containment — the GIN index on `caracteristicas` serves
             # this. Semantics are AND (has ALL of them), which is what a
@@ -542,10 +546,14 @@ class ImovelSyncService:
         adapter: Any,
         *,
         concurrency: int = DEFAULT_SYNC_CONCURRENCY,
+        duplicate_detector: Optional[Callable[..., Any]] = None,
     ):
         self._client = client
         self._adapter = adapter
         self._concurrency = max(1, concurrency)
+        # DI seam for the possível-duplicado step (CONTRACT §8.6); `None` =
+        # `duplicatas_service.detectar`.
+        self._duplicate_detector = duplicate_detector
 
     def _table(self):
         return self._client.schema(_SCHEMA).table(_TABLE)
@@ -615,6 +623,7 @@ class ImovelSyncService:
         # lag; a wrong sweep costs the truth.
         if report.complete:
             self._sweep_registry(org_id, synced_at, report)
+            self._detect_duplicates(org_id)
         else:
             logger.warning(
                 "imoveis sync: skipping registry sweep for org=%s — the run "
@@ -637,6 +646,18 @@ class ImovelSyncService:
                 org_id, report.upserted, report.duration_seconds,
             )
         return report
+
+    def _detect_duplicates(self, org_id: UUID) -> None:
+        """Possível-duplicado detection (manual imóveis vs the fresh catalog) —
+        a SEPARATE step after a COMPLETE sync (an incomplete run has a partial
+        catalog to compare against). Its failure is logged loudly by
+        `detectar_sem_falhar` and NEVER fails the sync."""
+        from app.modules.imovel_hub import duplicatas_service
+
+        duplicatas_service.detectar_sem_falhar(
+            self._client.schema(_SCHEMA), org_id,
+            detector=self._duplicate_detector, origem="vista sync",
+        )
 
     async def _fetch_page(self, page_no: int, page_size: int, report: SyncReport):
         await rate_limit.acquire_async(VISTA_RATE_BUCKET)
