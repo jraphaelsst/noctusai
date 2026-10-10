@@ -5472,6 +5472,101 @@ _SW_218_PROBES: tuple[GuardProbe, ...] = (
     ),
 )
 
+_CEREBRO_MIGRATION = "224_cs_cerebro.sql"
+
+
+def _cerebro_unique_probe(
+    *, probe_id: str, guard_name: str, rationale: str, setup_and_dupes: str, detail: str,
+) -> GuardProbe:
+    """Segundo Cérebro unique-index probe: borrow one real org, fabricate a probe
+    marca (rolled back with everything else), run the duplicate-producing
+    statements in `setup_and_dupes` (v_org / v_marca are in scope), expect the
+    named index to refuse."""
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=(_CEREBRO_MIGRATION,),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid;
+  v_marca uuid;
+  v_brain uuid;
+BEGIN
+  SELECT id INTO v_org FROM public.organizations LIMIT 1;
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
+  VALUES (v_org, 'noc-probe-cerebro', 'noc-probe-cerebro')
+  RETURNING id INTO v_marca;
+  BEGIN
+{setup_and_dupes}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {detail} succeeded — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_CEREBRO_PROBES: tuple[GuardProbe, ...] = (
+    _cerebro_unique_probe(
+        probe_id="cs_brains.marca_sistema.unique",
+        guard_name="cs_brains_marca_sistema_uq",
+        rationale=(
+            "A marca has exactly one Sistema brain per template: the lazy "
+            "`GET /brains` creation is idempotent only because this index turns a "
+            "concurrent double-create into a conflict the service re-reads."
+        ),
+        setup_and_dupes=f"""    INSERT INTO {_SW_SCHEMA}.cs_brains (org_id, marca_id, kind, template_slug, name)
+    VALUES (v_org, v_marca, 'sistema', 'nucleo-de-influencia', 'noc-probe-a');
+    INSERT INTO {_SW_SCHEMA}.cs_brains (org_id, marca_id, kind, template_slug, name)
+    VALUES (v_org, v_marca, 'sistema', 'nucleo-de-influencia', 'noc-probe-b');""",
+        detail="second Sistema brain of the same template",
+    ),
+    _cerebro_unique_probe(
+        probe_id="cs_brains.marca_name.unique",
+        guard_name="cs_brains_marca_name_uq",
+        rationale=(
+            "Brain names are unique per marca, case-insensitively; the API "
+            "pre-checks and answers 409, this index is the backstop under a race."
+        ),
+        setup_and_dupes=f"""    INSERT INTO {_SW_SCHEMA}.cs_brains (org_id, marca_id, kind, name)
+    VALUES (v_org, v_marca, 'custom', 'noc probe brain');
+    INSERT INTO {_SW_SCHEMA}.cs_brains (org_id, marca_id, kind, name)
+    VALUES (v_org, v_marca, 'custom', 'NOC PROBE BRAIN');""",
+        detail="case-variant duplicate brain name",
+    ),
+    _cerebro_unique_probe(
+        probe_id="cs_brain_answers.brain_question.unique",
+        guard_name="cs_brain_answers_brain_question_uq",
+        rationale=(
+            "One answer per (brain, question): autosave upserts by this key, so a "
+            "second row would make 'the answer' ambiguous for review and synthesis."
+        ),
+        setup_and_dupes=f"""    INSERT INTO {_SW_SCHEMA}.cs_brains (org_id, marca_id, kind, template_slug, name)
+    VALUES (v_org, v_marca, 'sistema', 'nucleo-de-influencia', 'noc-probe-a')
+    RETURNING id INTO v_brain;
+    INSERT INTO {_SW_SCHEMA}.cs_brain_answers (org_id, brain_id, question_id, text)
+    VALUES (v_org, v_brain, 'nucleo-de-influencia.01', 'a');
+    INSERT INTO {_SW_SCHEMA}.cs_brain_answers (org_id, brain_id, question_id, text)
+    VALUES (v_org, v_brain, 'nucleo-de-influencia.01', 'b');""",
+        detail="duplicate (brain, question) answer",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -5529,6 +5624,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
+    *_CEREBRO_PROBES,
 )
 
 #: Every `guard_name` the registry proves at least one probe for — the

@@ -129,12 +129,13 @@ def _simulate_product_rpcs(monkeypatch):
     services call to their contract fakes (`tests/support/rpc_fakes.py`, each
     pinned against its migration by a `test_migration_<NNN>_*` file), every
     other name to the mock's own behaviour. Migrations 185 (CPF lookup) and
-    195 (atomic parcela reorder)."""
+    195 (atomic parcela reorder), 224 (cs_brain_append)."""
     from tests.support import rpc_fakes
 
     fakes = {
         "clientes_por_cpf": rpc_fakes.clientes_por_cpf,
         "reordenar_negociacao_parcelas": rpc_fakes.reordenar_negociacao_parcelas,
+        "cs_brain_append": rpc_fakes.cs_brain_append,
     }
     original = MockSupabaseClient.rpc
 
@@ -148,7 +149,7 @@ def _simulate_product_rpcs(monkeypatch):
     # installs the contract fakes of the product's SQL functions on it (pinned
     # by their migration tests); no product logic is neutered. Seed follow-up:
     # a public `register_rpc_simulator` on the mock would make this a registration.
-    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)  # self-patch-ok: test double cannot run SQL; contract fakes of migrations 185/195
+    monkeypatch.setattr(MockSupabaseClient, "rpc", rpc)  # self-patch-ok: test double cannot run SQL; contract fakes of migrations 185/195/224
 
 
 def pytest_configure(config):

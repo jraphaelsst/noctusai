@@ -60,3 +60,27 @@ def reordenar_negociacao_parcelas(client: Any, params: dict) -> MockSelectBuilde
             ).eq("id", pid).execute()
             alterados += 1
     return MockSelectBuilder([alterados])
+
+
+def cs_brain_append(client: Any, params: dict) -> MockSelectBuilder:
+    """Migration 224 `social_wiring.cs_brain_append(p_brain, p_org, p_block)`:
+    one statement appends the block (separated by a rule when the brain already
+    has content), bumps `content_version` and returns the new version; over
+    200 000 chars the table CHECK raises `check_violation` (nothing truncated);
+    an unknown brain / org raises `no_data_found`."""
+    brain, org, block = str(params["p_brain"]), str(params["p_org"]), params["p_block"]
+    rows = [
+        r
+        for r in client.table("cs_brains").select("*").execute().data or []
+        if str(r.get("id")) == brain and str(r.get("org_id")) == org
+    ]
+    if not rows:
+        raise ValueError("P0002: cs_brain_append: brain not found")
+    atual = rows[0]
+    content = atual.get("content") or ""
+    novo = block if not content.strip() else content + "\n\n---\n\n" + block
+    if len(novo) > 200_000:
+        raise ValueError('23514: new row violates check constraint "cs_brains_content_check"')
+    versao = (atual.get("content_version") or 0) + 1
+    client.table("cs_brains").update({"content": novo, "content_version": versao}).eq("id", brain).execute()
+    return MockSelectBuilder([versao])

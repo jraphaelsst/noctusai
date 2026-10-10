@@ -22,7 +22,7 @@ Add it to the app by appending it to ``MODULES``:
 
 What ``register()`` does
 ────────────────────────
-* Imports the routers (brand_kits / branding / references / posts / generation / pesquisa).
+* Imports the routers (brand_kits / branding / references / posts / generation / pesquisa / cerebro).
 * Returns the ``ModuleRegistration`` with no extra standard-router needs
   (the routers all gate via ``Depends(get_current_user_org)``).
 
@@ -77,14 +77,19 @@ def register() -> Any:
         assuntos_virais,
         brand_kits,
         branding,
+        cerebro,
         generation,
         pesquisa,
         pesquisa_extracao,
         posts,
         references,
     )
+    from app.modules.media_creation import cerebro_scheduler
 
     from app.main import ModuleRegistration
+
+    # Import-time registration, BEFORE `start_scheduler()` — the stale-work sweep.
+    cerebro_scheduler.configure()
 
     return ModuleRegistration(
         routers=[
@@ -96,6 +101,7 @@ def register() -> Any:
             pesquisa.router,
             assuntos_virais.router,
             pesquisa_extracao.router,
+            cerebro.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()

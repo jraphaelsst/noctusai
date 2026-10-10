@@ -514,3 +514,7 @@ Authored 2026-10-09 (projects/sw-lead-to-contract/CONTRACT.md §4.1). Creates `a
 ## 219 — visita_feedback (visitas.nao_realizada_motivo/realizada_em, roteiros.feedback_status/feedback_em/hora_visita) — NOT APPLIED
 
 Authored 2026-10-09 (sw-lead-to-contract CONTRACT §3.1). Additive columns + CHECKs + a partial index; no new table. Apply BEFORE deploying the image that reads/writes them.
+
+## 224 — cs_cerebro (Segundo Cérebro: brains, answers, imports, extractions, profile bio) — NOT APPLIED
+
+Authored 2026-10-09 (projects/core-studio/specs/cerebro-contract.md §2 + §10). Creates `cs_brain_templates`/`cs_brain_questions` (seeded from `cerebro_templates.py`), `cs_brains`, `cs_brain_answers`, `cs_brain_imports`, `cs_extractions`, `cs_extraction_targets`, `cs_marca_perfil`, `cs_brain_append()`, the private `social-wiring-cerebro` bucket and `status_pagina('media-creation-cerebro','desenvolvimento')`. `transcricao_id` columns are plain uuids until `social_wiring.transcricoes` exists (`NOC-REMEDIATE[fk-transcricoes]`). Requires 217. Apply BEFORE deploying the image that reads/writes it.
