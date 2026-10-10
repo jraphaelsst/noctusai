@@ -318,6 +318,10 @@ class SocialWiringSettings(ProductSettings):
     # `make_transcriber()`. The LIVE kill switch is the platform setting
     # `transcricao_habilitada` (DB first, then env; default OFF), not a field here.
     # Hard switch: off => the transcription worker is not started in this process.
+    # email_marketing automation step worker (P1b(b)); off => enrollments are never advanced.
+    email_automation_worker_enabled: bool = True
+    email_automation_poll_seconds: float = 5.0
+    email_automation_lease_seconds: float = 120.0
     transcricao_worker_enabled: bool = True
     transcricao_poll_seconds: float = 2.0
     transcricao_lease_seconds: float = 300.0

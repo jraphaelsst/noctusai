@@ -121,20 +121,62 @@ class SendService:
         if not logs:
             return 0
 
-        # Group by campaign for template resolution
-        by_campaign = {}
+        # Group for template resolution: by campaign, or -- an automation send has no
+        # campaign -- by the automation step whose config names the template.
+        groups: dict = {}
         for log in logs:
-            cid = log.get("campaign_id") or "none"
-            by_campaign.setdefault(cid, []).append(log)
+            if log.get("campaign_id"):
+                key = (log["campaign_id"], None)
+            elif log.get("automation_step_id"):
+                key = (None, log["automation_step_id"])
+            else:
+                key = ("none", None)
+            groups.setdefault(key, []).append(log)
 
         total_sent = 0
-        for campaign_id, campaign_logs in by_campaign.items():
-            sent = await self._send_batch(campaign_id, campaign_logs)
+        for (campaign_id, step_id), group_logs in groups.items():
+            sent = await self._send_batch(campaign_id, group_logs, automation_step_id=step_id)
             total_sent += sent
 
         return total_sent
 
-    async def _send_batch(self, campaign_id: str, logs: list) -> int:
+    async def _resolve_template_source(self, campaign_id, automation_step_id, logs):
+        """``(subject, html, from_name, from_email)`` for a batch, or None when unresolvable.
+
+        A campaign batch takes them from the campaign + its template. An automation batch
+        (no campaign) takes the template from its ``send_email`` step's ``config.template_id``,
+        scoped to the logs' org; the sender is the default one. Everything after this -- render,
+        unsubscribe injection, guards, Resend call -- is the same path."""
+        if campaign_id is None:
+            step = await _aexec(self.db.table("automation_steps").select("*").eq("id", automation_step_id))
+            template_id = (step.data[0].get("config") or {}).get("template_id") if step.data else None
+            if not template_id:
+                return None
+            tpl = await _aexec(
+                self.db.table("templates").select("*").eq("id", template_id).eq("org_id", logs[0].get("org_id"))
+            )
+            if not tpl.data:
+                return None
+            template = tpl.data[0]
+            return (template.get("assunto", ""), template.get("corpo_html", ""),
+                    self.settings.default_from_name, self.settings.default_from_email)
+        campaign = await _aexec(
+            self.db.table("campaigns").select("*, templates(*)").eq("id", campaign_id)
+        )
+        if not campaign.data:
+            return None
+        campaign = campaign.data[0]
+        template = campaign.get("templates")
+        if not template:
+            return None
+        return (
+            campaign.get("assunto_override") or template.get("assunto", ""),
+            template.get("corpo_html", ""),
+            campaign.get("remetente_nome") or self.settings.default_from_name,
+            campaign.get("remetente_email") or self.settings.default_from_email,
+        )
+
+    async def _send_batch(self, campaign_id: Optional[str], logs: list, automation_step_id: Optional[str] = None) -> int:
         """Send a batch of emails via Resend Batch API.
 
         No ``RESEND_API_KEY`` ⇒ a LOUD dry-run: WARNING + every row recorded
@@ -151,21 +193,13 @@ class SendService:
             await self._finalize_campaign_if_done(campaign_id)
             return 0
 
-        # Resolve campaign template
-        campaign = await _aexec(
-            self.db.table("campaigns").select("*, templates(*)").eq("id", campaign_id)
-        )
-        if not campaign.data:
+        source = await self._resolve_template_source(campaign_id, automation_step_id, logs)
+        if source is None:
+            if campaign_id is None:  # no campaign row to retry against: record it, never loop on it
+                logger.error("automation step %s: template unresolvable", automation_step_id)
+                await self._mark_failed(logs, "automation template could not be resolved")
             return 0
-        campaign = campaign.data[0]
-        template = campaign.get("templates")
-        if not template:
-            return 0
-
-        subject = campaign.get("assunto_override") or template.get("assunto", "")
-        html_body = template.get("corpo_html", "")
-        from_name = campaign.get("remetente_nome") or self.settings.default_from_name
-        from_email = campaign.get("remetente_email") or self.settings.default_from_email
+        subject, html_body, from_name, from_email = source
 
         # Build batch payload
         # No real send without a per-contact opt-out link (LGPD), by construction:

@@ -5,7 +5,7 @@ scheduler, consolidated into ``social-wiring`` 2026-05-16):
 
   1. Send loop (every 30s) — process queued ``send_logs`` via Resend Batch API
   2. Scheduled campaigns (every 60s) — campaigns with ``scheduled_at <= now``
-  3. Automation processor (every 5min) — process automation enrollments
+  3. Automation processor (every 5min) — enqueue due automation enrollments as jobs
 
 Each job body is email-marketing-specific; the registration + lifecycle is
 the seed-side primitive (``noctusai_lib.api.scheduler``).
@@ -110,37 +110,20 @@ async def scheduled_campaigns_job() -> None:
         logger.error("email_marketing scheduled campaigns job error: %s", e)
 
 
-def _automation_processor_sync() -> None:
-    db = get_admin_client()
-    if db is None:
-        return
-    now = datetime.now(timezone.utc).isoformat()
-    result = (
-        db.table("automation_enrollments")
-        .select("*")
-        .eq("status", "active")
-        .lte("next_action_at", now)
-        .limit(50)
-        .execute()
-    )
-    enrollments = result.data or []
-    if enrollments:
-        logger.info(
-            "email_marketing automation processor: %d enrollments to process",
-            len(enrollments),
-        )
-        # Step-execution parity with mailing: full automation step
-        # execution is intentionally not yet implemented (mailing carried
-        # the same TODO). Enrollment scan only.
-
-
 async def automation_processor_job() -> None:
-    """Process automation enrollments with ``next_action_at <= now``.
-
-    Body runs in a worker thread (see ``scheduled_campaigns_job``).
-    """
+    """Enqueue one ``email_marketing.automation_step`` job per due enrollment (idempotent on
+    ``enrollment_id:step_id``). The step itself runs in the seed ``Worker``
+    (``services/automation_worker.py``), never here."""
     try:
-        await asyncio.to_thread(_automation_processor_sync)
+        db = get_admin_client()
+        if db is None:
+            return
+        from app.modules.email_marketing.services.automation_executor import enqueue_due
+        from app.modules.email_marketing.services.automation_worker import make_jobs_repository
+
+        seen = await enqueue_due(db, make_jobs_repository(db))
+        if seen:
+            logger.info("email_marketing automation processor: %d due enrollment(s) enqueued", seen)
     except Exception as e:
         logger.error("email_marketing automation processor error: %s", e)
 

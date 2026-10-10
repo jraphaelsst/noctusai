@@ -63,7 +63,10 @@ SQLAlchemy class bound to the product's schema.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def register() -> Any:
@@ -101,6 +104,21 @@ def register() -> Any:
 
     from app.main import ModuleRegistration
 
+    async def start_automation_worker_hook() -> None:
+        """The seed Worker for ``email_marketing.automation_step`` (the scheduler scan only enqueues)."""
+        from app.config import settings
+        from app.modules.email_marketing.services.automation_worker import start_worker
+
+        try:
+            await start_worker(settings)
+        except Exception:
+            logger.exception("email_marketing: automation worker NÃO iniciado — as automações não avançam.")
+
+    async def stop_automation_worker_hook() -> None:
+        from app.modules.email_marketing.services.automation_worker import stop_worker
+
+        await stop_worker()
+
     return ModuleRegistration(
         routers=[
             contacts.router,
@@ -119,6 +137,8 @@ def register() -> Any:
         # notificacoes/team — the assembly loop de-dupes, so we only need
         # to add the AI-output surfaces the email-marketing AI features use.
         standard_routers=("ai_outputs", "ai_feedback"),
+        startup=[start_automation_worker_hook],
+        shutdown=[stop_automation_worker_hook],
     )
 
 
