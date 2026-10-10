@@ -434,9 +434,11 @@ def check_standard_routers_audit(product_path: Path) -> list[dict]:
             "issue": (
                 "standard_routers kwarg is present but not a simple list literal "
                 "(likely a variable reference or dynamic). Keeper cannot audit; "
-                "review manually or inline the list."
+                "inline the list as plain string literals. It is also what scopes "
+                "noctus.dev.gate_sweep's seed fan-out per router; unparseable forces "
+                "every seed change to gate the WHOLE fleet."
             ),
-            "severity": "warning",
+            "severity": "high",
         })
         return issues
 

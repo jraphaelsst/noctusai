@@ -611,8 +611,193 @@ def _seed_py_graph(root: Path, mods: dict[str, Path]) -> dict[str, set[str]]:
         except (SyntaxError, UnicodeDecodeError, OSError):
             raise _FallBack(f"unparseable seed module {f.name}")
         own_pkg = name if f.name == "__init__.py" else name.rpartition(".")[0]
+        if name == _ROUTERS_MOD:
+            base, builders = _routers_model(tree, known, own_pkg or None, lazy)
+            graph[name] = base - {name}
+            for b, deps in builders.items():
+                graph[_router_node(b)] = deps - {name}
+            continue
         graph[name] = _file_import_deps(tree, known, own_pkg or None, lazy) - {name}
+    if _ROUTERS_MOD in graph:
+        # Anything but the app factory that imports the routers module may
+        # call any builder, so it depends on all of them. The factory's
+        # per-product narrowing is applied on the product side.
+        every = {_router_node(b) for b in _router_builder_names(graph)}
+        for m, deps in graph.items():
+            if _ROUTERS_MOD in deps and m != _APP_MOD:
+                deps |= every
     return graph
+
+
+_ROUTERS_MOD = "noctusai_seed.routers"
+_APP_MOD = "noctusai_seed.app"
+#: Mounted on EVERY product by `create_product_app` regardless of its list.
+_ALWAYS_MOUNTED_ROUTERS = ("mfa", "me")
+
+
+def _router_node(name: str) -> str:
+    return f"{_ROUTERS_MOD}#{name}"
+
+
+def _router_builder_names(graph: dict[str, set[str]]) -> list[str]:
+    prefix = _ROUTERS_MOD + "#"
+    return [m[len(prefix):] for m in graph if m.startswith(prefix)]
+
+
+def _routers_model(
+    tree: ast.Module, known: set[str], own_pkg: str | None, lazy: dict[str, dict[str, str]]
+) -> tuple[set[str], dict[str, set[str]]]:
+    """Split `noctusai_seed.routers` into (base deps, {router name: deps}).
+
+    Each key of the literal `_STANDARD_ROUTERS` dict maps to a builder; its
+    deps are the imports inside its in-module call closure plus the
+    module-level imports ONLY that closure uses. Anything used by other code,
+    or by nothing visible (a re-export), stays in the base (fail closed). Any
+    structural surprise raises `_FallBack`."""
+    funcs: dict[str, ast.AST] = {
+        n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    registry: ast.Dict | None = None
+    registry_stmt: ast.stmt | None = None
+    for node in tree.body:
+        target = (
+            node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1
+            else node.target if isinstance(node, ast.AnnAssign) else None
+        )
+        if isinstance(target, ast.Name) and target.id == "_STANDARD_ROUTERS":
+            if not isinstance(node.value, ast.Dict):
+                raise _FallBack("routers registry is not a dict literal")
+            registry, registry_stmt = node.value, node
+    if registry is None:
+        raise _FallBack("routers registry not found")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, (ast.Name, ast.Attribute)):
+            fn = node.func.id if isinstance(node.func, ast.Name) else node.func.attr
+            if fn in ("import_module", "__import__"):
+                raise _FallBack("dynamic import in routers module")
+
+    def names_in(n: ast.AST) -> set[str]:
+        return {x.id for x in ast.walk(n) if isinstance(x, ast.Name)}
+
+    def closure(roots: set[str]) -> set[str]:
+        seen: set[str] = set()
+        todo = list(roots)
+        while todo:
+            f = todo.pop()
+            if f in seen or f not in funcs:
+                continue
+            seen.add(f)
+            todo.extend(names_in(funcs[f]) & set(funcs))
+        return seen
+
+    builder_fns: dict[str, set[str]] = {}
+    for k, v in zip(registry.keys, registry.values):
+        if not (isinstance(k, ast.Constant) and isinstance(k.value, str)):
+            raise _FallBack("non-literal router key")
+        roots = names_in(v) & set(funcs)
+        if not roots:
+            raise _FallBack(f"router {k.value!r} has no in-module builder")
+        builder_fns[k.value] = closure(roots)
+
+    in_closure = set().union(*builder_fns.values()) if builder_fns else set()
+    outside_names: set[str] = set()
+    for node in tree.body:
+        if node is registry_stmt or isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in in_closure:
+            continue
+        outside_names |= names_in(node)
+    # A builder function that outside code names directly serves the base too.
+    base_fns = closure(outside_names & set(funcs))
+    outside_names |= set().union(*(names_in(funcs[f]) for f in base_fns)) if base_fns else set()
+
+    def deps_of(nodes: list[ast.stmt]) -> set[str]:
+        return _file_import_deps(ast.Module(body=nodes, type_ignores=[]), known, own_pkg, lazy)
+
+    base: set[str] = set()
+    per_alias: list[tuple[str, ast.stmt]] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                per_alias.append((a.asname or a.name.split(".")[0],
+                                  ast.Import(names=[a])))
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                if a.name == "*":
+                    raise _FallBack("star import in routers module")
+                per_alias.append((a.asname or a.name,
+                                  ast.ImportFrom(module=node.module, names=[a], level=node.level)))
+    for node in tree.body:  # imports hidden in module-level control flow
+        if isinstance(node, (ast.If, ast.Try, ast.With, ast.For, ast.While, ast.ClassDef)):
+            if any(isinstance(x, (ast.Import, ast.ImportFrom)) for x in ast.walk(node)):
+                raise _FallBack("conditional module-level import in routers module")
+
+    builders: dict[str, set[str]] = {}
+    for b, fns in builder_fns.items():
+        builders[b] = deps_of([funcs[f] for f in sorted(fns)])  # type: ignore[misc]
+    for bound, node in per_alias:
+        d = deps_of([node])
+        users = [b for b, fns in builder_fns.items()
+                 if bound in set().union(*(names_in(funcs[f]) for f in fns))]
+        if bound in outside_names or not users:
+            base |= d
+        else:
+            for b in users:
+                builders[b] |= d
+    # Names bound by a module-level import AND shadowed locally still count as
+    # used (over-approximation, safe). Function-local imports in base code:
+    for f in funcs:
+        if f not in in_closure or f in base_fns:
+            base |= deps_of([funcs[f]])  # type: ignore[list-item]
+    return base, builders
+
+
+def _declared_routers(root: Path, slug: str, valid: set[str]) -> set[str] | None:
+    """The product's `standard_routers` as the compliance keeper parses it,
+    ∪ the always-mounted ones. None = the product mounts no standard routers
+    (never calls `create_product_app`). Raises `_FallBack` on anything the
+    keeper cannot read as a plain literal of known names; a product that
+    builds the app/routers anywhere but main.py depends on every builder."""
+    from .compliance import _parse_standard_routers  # lazy: compliance is huge
+
+    backend = root / "products" / slug / "backend"
+    main = backend / "app" / "main.py"
+    widen = False  # another file builds the app/routers with a list we don't model
+    for f in _py_files_under(backend):
+        if f == main:
+            continue
+        try:
+            text = f.read_text(encoding="utf-8")
+            if "create_product_app" not in text and "build_standard_routers" not in text:
+                continue
+            tree = ast.parse(text)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            raise _FallBack(f"unparseable product file {slug}/{f.name}")
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call):
+                fn = n.func
+                nm = fn.id if isinstance(fn, ast.Name) else fn.attr if isinstance(fn, ast.Attribute) else ""
+                if nm in ("create_product_app", "build_standard_routers"):
+                    widen = True
+    if widen:
+        # e.g. a product test calling `create_product_app(...)` itself: it can
+        # exercise any builder, so this product depends on all of them.
+        return set(valid)
+    if not main.is_file():
+        return None
+    try:
+        text = main.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        raise _FallBack(f"unreadable {slug}/main.py")
+    if "create_product_app" not in text and "build_standard_routers" not in text:
+        return None
+    state, names = _parse_standard_routers(text)
+    if state != "found" or names is None:
+        raise _FallBack(f"{slug}: standard_routers is {state}")
+    unknown = names - valid
+    if unknown:
+        raise _FallBack(f"{slug}: unknown standard router(s) {sorted(unknown)}")
+    return names | set(_ALWAYS_MOUNTED_ROUTERS)
 
 
 class _FallBack(Exception):
@@ -713,8 +898,16 @@ def _seed_fanout_plan_inner(root: Path, seed_files: list[str]) -> dict[str, Any]
                     grew = True
         for m in affected:
             py_roots.add(_SEED_PY_PKGS[m.split(".", 1)[0]][1])
+        valid_routers = set(_router_builder_names(graph))
         for slug in _all_product_slugs(root):
-            if _product_py_deps(root, slug, known, lazy) & affected:
+            pdeps = _product_py_deps(root, slug, known, lazy)
+            if _ROUTERS_MOD in graph:
+                if _ROUTERS_MOD in pdeps:  # direct use: any builder
+                    pdeps |= {_router_node(b) for b in valid_routers}
+                declared = _declared_routers(root, slug, valid_routers)
+                if declared:
+                    pdeps |= {_router_node(b) for b in declared}
+            if pdeps & affected:
                 consumers_py.add(slug)
 
     consumers_fe: set[str] = set()
@@ -738,7 +931,7 @@ def _seed_fanout_plan_inner(root: Path, seed_files: list[str]) -> dict[str, Any]
         "fe_roots": sorted(fe_roots),
         "py_products": consumers_py,
         "fe_products": consumers_fe,
-        "python_modules": sorted(affected) if changed_py else [],
+        "python_modules": sorted(m for m in affected if "#" not in m) if changed_py else [],
         "changed_python_modules": sorted(changed_py),
         "frontend_packages": sorted(changed_fe),
     }

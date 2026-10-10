@@ -309,8 +309,8 @@ app = create_product_app(name="X", schema="x", settings=None, standard_routers=R
         product = _mk_product(tmp_path, "unparseable", main_content=main)
         issues = check_standard_routers_audit(product)
         assert len(issues) == 1
-        assert issues[0]["severity"] == "warning"
-        assert "manual" in issues[0]["issue"].lower() or "cannot" in issues[0]["issue"].lower()
+        assert issues[0]["severity"] == "high"
+        assert "cannot audit" in issues[0]["issue"].lower()
 
     def test_missing_main_py_returns_empty(self, tmp_path: Path):
         """No main.py → not in scope for this check. Empty list."""

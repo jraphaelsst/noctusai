@@ -1302,3 +1302,137 @@ def test_unreferenced_hook_script_is_surfaced_untested(tmp_path):
     scope = GS._derive_scope(["scripts/hooks/merge-kb-counts.sh"])
     assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (
         [], ["scripts/hooks/merge-kb-counts.sh"])
+
+# ── routers.py modelled per standard-router builder ────────────────────────
+
+_ROUTERS_SRC = '''\
+from noctusai_lib.team_only import T
+from noctusai_lib.shared_helper import S
+from noctusai_lib.unused_reexport import R
+
+def _health(n):
+    return S
+
+def _team(deps):
+    return T + _helper()
+
+def _helper():
+    return 1
+
+def _build_llm(deps):
+    from noctusai_seed.llm_router import make
+    return make(deps)
+
+def _build_mfa(deps):
+    from noctusai_seed.mfa_router import make
+    return make(deps)
+
+def _build_me(deps):
+    from noctusai_seed.me_router import make
+    return make(deps)
+
+_STANDARD_ROUTERS = {
+    "health": lambda deps, s, n, v: _health(n),
+    "team": lambda deps, s, n, v: _team(deps),
+    "llm": _build_llm,
+    "mfa": _build_mfa,
+    "me": _build_me,
+}
+
+def build_standard_routers(names):
+    return [_STANDARD_ROUTERS[n] for n in names] and S
+'''
+
+
+def _routers_fixture(tmp_path: Path, products: dict[str, str]) -> Path:
+    lib = "seed/lib/backend/noctusai_lib"
+    fw = "seed/framework/backend/noctusai_seed"
+    _w(tmp_path, f"{lib}/__init__.py")
+    for m in ("team_only", "shared_helper", "unused_reexport"):
+        _w(tmp_path, f"{lib}/{m}.py", "T = 1\nS = 1\nR = 1\n")
+    _w(tmp_path, f"{fw}/__init__.py", '_LAZY_ATTRS = {"create_product_app": "noctusai_seed.app"}\n')
+    _w(tmp_path, f"{fw}/app.py", "from noctusai_seed.routers import build_standard_routers\n")
+    _w(tmp_path, f"{fw}/routers.py", _ROUTERS_SRC)
+    for m in ("llm_router", "mfa_router", "me_router"):
+        _w(tmp_path, f"{fw}/{m}.py", "def make(d):\n    return d\n")
+    (tmp_path / "seed/framework/backend/tests").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "seed/lib/backend/tests").mkdir(parents=True, exist_ok=True)
+    for slug, decl in products.items():
+        _make_product(tmp_path, slug)
+        _w(tmp_path, f"products/{slug}/backend/app/main.py",
+           "from noctusai_seed import create_product_app\n"
+           f"app = create_product_app(name='x', schema='x', settings=None, standard_routers={decl})\n")
+    return tmp_path
+
+
+_FW = "seed/framework/backend/noctusai_seed/"
+
+
+def test_fanout_optional_router_module_scopes_to_declaring_products(tmp_path):
+    root = _routers_fixture(tmp_path, {"wants-llm": '["health", "llm"]', "no-llm": '["health"]'})
+    assert _plan(root, _FW + "llm_router.py")["py_products"] == {"wants-llm"}
+
+
+def test_fanout_always_mounted_routers_reach_every_product(tmp_path):
+    root = _routers_fixture(tmp_path, {"a": '["health", "llm"]', "b": "[]"})
+    assert _plan(root, _FW + "mfa_router.py")["py_products"] == {"a", "b"}
+    assert _plan(root, _FW + "me_router.py")["py_products"] == {"a", "b"}
+
+
+def test_fanout_team_only_module_scopes_to_team_products(tmp_path):
+    root = _routers_fixture(tmp_path, {"team": '["team"]', "other": '["health", "llm"]'})
+    assert _plan(root, "seed/lib/backend/noctusai_lib/team_only.py")["py_products"] == {"team"}
+
+
+def test_fanout_module_used_by_two_builders_reaches_both(tmp_path):
+    root = _routers_fixture(tmp_path, {"h": '["health"]', "t": '["team"]', "l": '["llm"]'})
+    # S is used by `_health` AND by build_standard_routers (base) -> everyone.
+    assert _plan(root, "seed/lib/backend/noctusai_lib/shared_helper.py")["py_products"] == {"h", "t", "l"}
+
+
+def test_fanout_unused_reexport_import_is_kept_in_the_base(tmp_path):
+    root = _routers_fixture(tmp_path, {"h": '["health"]', "l": '["llm"]'})
+    assert _plan(root, "seed/lib/backend/noctusai_lib/unused_reexport.py")["py_products"] == {"h", "l"}
+
+
+@pytest.mark.parametrize("decl", ["_ROUTERS", '["health", "nope"]'])
+def test_fanout_unparseable_or_unknown_standard_routers_falls_back_to_fleet(tmp_path, decl):
+    root = _routers_fixture(tmp_path, {"ok": '["health"]', "bad": decl})
+    assert _plan(root, _FW + "llm_router.py") is None
+
+
+def test_fanout_tuple_standard_routers_falls_back_to_fleet(tmp_path):
+    root = _routers_fixture(tmp_path, {"ok": '["health"]', "bad": "('health', 'llm')"})
+    assert _plan(root, _FW + "llm_router.py") is None
+
+
+def test_fanout_non_literal_registry_falls_back_to_fleet(tmp_path):
+    root = _routers_fixture(tmp_path, {"a": '["llm"]', "b": '["health"]'})
+    p = root / (_FW + "routers.py")
+    p.write_text(p.read_text().replace("_STANDARD_ROUTERS = {", "_STANDARD_ROUTERS = dict(**{", 1)
+                 .replace('    "me": _build_me,\n}', '    "me": _build_me,\n})'))
+    assert _plan(root, _FW + "llm_router.py") is None
+
+
+def test_fanout_app_built_outside_main_depends_on_every_builder(tmp_path):
+    root = _routers_fixture(tmp_path, {"a": '["llm"]', "b": '["health"]'})
+    _w(root, "products/b/backend/tests/test_x.py",
+       "from noctusai_seed import create_product_app\napp = create_product_app()\n")
+    assert _plan(root, _FW + "llm_router.py")["py_products"] == {"a", "b"}
+
+
+def test_fanout_direct_routers_importer_depends_on_every_builder(tmp_path):
+    root = _routers_fixture(tmp_path, {"a": '["health"]'})
+    _make_product(root, "direct")
+    _w(root, "products/direct/backend/app/m.py", "import noctusai_seed.routers\n")
+    assert _plan(root, _FW + "llm_router.py")["py_products"] == {"direct"}
+
+
+@pytest.mark.parametrize("rel", ["templates/product-seed/backend/app/main.py", "products/seed/backend/app/main.py"])
+def test_scaffold_emits_a_gate_parseable_standard_routers_literal(rel):
+    """Future products inherit narrowing by construction: the scaffold source
+    must carry the plain literal `check_standard_routers_audit` (and so the
+    fan-out planner) can read."""
+    from tools.noctus.dev.compliance import _parse_standard_routers
+    state, names = _parse_standard_routers((GS.REPO_ROOT / rel).read_text())
+    assert state == "found" and names
