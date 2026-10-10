@@ -99,7 +99,9 @@ class FakeGit:
             return (0, dev_sha if dev_sha and b in ("d", dev_sha) else "", "")
         if sub == "log":         # git log --oneline a..b
             return (0, self.logs.get(cmd[3], ""), "")
-        if sub == "diff":        # git diff --name-only a..b
+        if sub == "diff":        # git diff --name-only a..b [--diff-filter=D]
+            if "--diff-filter=D" in cmd:
+                return (0, getattr(self, "deleted", {}).get(cmd[3], ""), "")
             return (0, self.diffs.get(cmd[3], ""), "")
         if sub == "push":        # git push origin <sha>:refs/heads/<dst>
             src, dst = cmd[3].split(":refs/heads/")
@@ -675,3 +677,29 @@ def test_an_explicit_force_refresh_is_not_overridden():
     env = _run_env(["git", "push", "origin", "x:refs/heads/main"],
                    {"NOCTUS_SKIP_EMBED_REFRESH": ""})
     assert env["NOCTUS_SKIP_EMBED_REFRESH"] == ""
+
+
+def test_bless_refuses_a_green_that_carries_a_migration_dev_later_retracted():
+    """2026-10-10: SW 236/237 were added (never applied), then DELETED on dev;
+    the newest qualifying green still carried them. Blessing it would let
+    `migrate_product sha=<blessed>` apply withdrawn migrations — refuse."""
+    fake = _walk_case(["d2", "d1", "d0"], ci_by_sha={"d0": _GREEN},
+                      logs={"m..d0": "c0 real work"})
+    fake.diffs["d0..d2"] = "products/social-wiring/backend/migrations/236_mailing_schema.sql\n"
+    fake.deleted = {"d0..d2": "products/social-wiring/backend/migrations/236_mailing_schema.sql\n"}
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blocked", out
+    assert out["exit_code"] == 1
+    assert out["retracted_migrations"] == [
+        "products/social-wiring/backend/migrations/236_mailing_schema.sql"]
+    assert out["blessed_sha"] is None
+    assert not any(c[:2] == ["git", "push"] or "push" in c for c in getattr(fake, "calls", [])
+                   if isinstance(c, list)), "must not push main"
+
+
+def test_bless_ignores_deleted_non_migration_files():
+    fake = _walk_case(["d2", "d1", "d0"], ci_by_sha={"d0": _GREEN},
+                      logs={"m..d0": "c0 real work"})
+    fake.deleted = {"d0..d2": "products/core/frontend/src/Old.tsx\n"}
+    out = R.release(stage="bless", confirm=True, run=fake)
+    assert out["status"] == "blessed", out

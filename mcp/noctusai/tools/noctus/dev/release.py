@@ -200,6 +200,13 @@ def _changed_paths(git, a: str, b: str) -> list[str]:
     return [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else []
 
 
+def _deleted_paths(git, a: str, b: str) -> list[str]:
+    """Paths present at ``a`` and DELETED by ``b``. Fail-closed: an
+    unreadable diff returns None so the caller refuses, never "nothing"."""
+    rc, out, _e = git("diff", "--name-only", f"{a}..{b}", "--diff-filter=D")
+    return [ln.strip() for ln in out.splitlines() if ln.strip()] if rc == 0 else None
+
+
 def _is_docs_only(paths: list[str]) -> bool:
     """The ONE sanctioned CI exception (skill `noc-ship` step 0b): a diff that
     ships no executable change. Empty is NOT docs-only — an unreadable diff
@@ -854,6 +861,28 @@ def release(
                 p for p in _changed_paths(git, target_sha, dev)
                 if _MIGRATION_PATH_RE.match(p)
             })
+        # 2026-10-10: a qualifying green can predate the RETRACTION of a
+        # never-applied migration (SW 236/237 were added, then deleted on dev
+        # two commits later; the newest green, cff1362ad, still carried them).
+        # Blessing it would make `migrate_product sha=<blessed>` apply files
+        # dev has explicitly withdrawn. Refuse until a green covers the
+        # retraction — never bless a migration set dev no longer contains.
+        retracted: list[str] = []
+        if target_sha != dev:
+            deleted = _deleted_paths(git, target_sha, dev)
+            if deleted is None:
+                return {**base, "status": "blocked", "exit_code": 1, "blessed_sha": None,
+                        "error": f"could not read {target_sha[:9]}..{dev[:9]} deletions — "
+                                 "refusing rather than risk blessing a retracted migration"}
+            retracted = sorted(p for p in deleted if _MIGRATION_PATH_RE.match(p))
+        if retracted:
+            return {**base, "status": "blocked", "exit_code": 1, "blessed_sha": None,
+                    "candidate_sha": target_sha, "retracted_migrations": retracted,
+                    "message": f"refusing to bless {target_sha[:9]}: it contains "
+                               f"{len(retracted)} migration(s) that {dev_branch} later "
+                               f"DELETED ({', '.join(p.rsplit('/', 1)[-1] for p in retracted)}). "
+                               "migrate_product sha=<blessed> would apply them. Wait for a "
+                               "qualifying green on a commit at or after the retraction."}
         skipped_tail = {
             "count": len(skipped_entries),
             "commits": [e["sha"][:9] for e in skipped_entries],
