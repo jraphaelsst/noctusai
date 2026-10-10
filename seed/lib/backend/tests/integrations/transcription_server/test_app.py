@@ -113,7 +113,7 @@ def test_transcribe_ok(client, engine):
     assert body["modelo"] == "fake-model"
     assert body["duracao_s"] == pytest.approx(5.0)
     assert "rtf" in body
-    # hard cap = min(1800, 3 x dur)
+    # hard cap = min(MAX_HARD_S, 3 x dur)
     assert engine.calls[0]["language"] == "pt"
 
 
@@ -138,11 +138,6 @@ def test_empty_body_422(client):
     assert r.json()["codigo"] == "audio_vazio"
 
 
-def test_oversize_413(client):
-    r = client.post("/v1/transcribe", content=b"x" * (15 * 1024 * 1024 + 2048), headers=H)
-    assert r.status_code == 413
-
-
 def test_engine_timeout_maps_to_504(monkeypatch):
     monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
     with TestClient(create_app(FakeEngine(timeout=True), token=TOKEN, load_in_background=False)) as c:
@@ -151,7 +146,7 @@ def test_engine_timeout_maps_to_504(monkeypatch):
     assert r.json()["codigo"] == "tempo_excedido"
 
 
-def test_deadline_is_min_1800_3x_duration(monkeypatch):
+def test_deadline_is_3x_duration_for_short_audio(monkeypatch):
     monkeypatch.setattr(app_mod, "decode_to_float32", _pcm_decoder(5.0))
     eng = FakeEngine()
     with TestClient(create_app(eng, token=TOKEN, load_in_background=False)) as c:
@@ -210,3 +205,21 @@ def test_probe_corrupt_422(client, monkeypatch):
     r = client.post("/v1/probe", content=b"a", headers=H)
     assert r.status_code == 422
     assert r.json()["codigo"] == "audio_corrompido"
+
+
+def test_hard_cap_allows_the_platform_45_min_max_and_stays_bounded():
+    # Pure function: no 45-min PCM buffer is allocated to test the ceiling.
+    assert app_mod.hard_cap_s(5.0) == 15.0
+    assert app_mod.hard_cap_s(2700.0) == 8100.0
+    assert app_mod.hard_cap_s(10_000.0) == app_mod.MAX_HARD_S
+
+
+def test_upload_cap_admits_platform_size_and_still_refuses_above_it(client):
+    over = b"0" * 16  # body content is irrelevant: Content-Length is checked first
+    r = client.post(
+        "/v1/transcribe", content=over,
+        headers={**H, "Content-Length": str(app_mod.MAX_UPLOAD_BYTES + 1)},
+    )
+    assert r.status_code == 413
+    assert app_mod.MAX_UPLOAD_BYTES > 100 * 1024 * 1024
+

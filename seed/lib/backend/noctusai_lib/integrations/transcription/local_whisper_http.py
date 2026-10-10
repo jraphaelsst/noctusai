@@ -24,11 +24,13 @@ from noctusai_lib.integrations.transcription.types import (
 )
 
 PROBE_TIMEOUT_S = 15.0
-MAX_TIMEOUT_S = 1800.0
+# Matches the worker's MAX_HARD_S (9000 s) — a client that gives up before the
+# worker would abandon a job the worker is still allowed to finish.
+MAX_TIMEOUT_S = 9000.0
 
 
 def transcribe_timeout(duracao_s: float) -> float:
-    """`min(1800, 3*duracao + 60)` seconds."""
+    """`min(MAX_TIMEOUT_S, 3*duracao + 60)` seconds (worker cap + 60 s of slack)."""
     return min(MAX_TIMEOUT_S, 3.0 * duracao_s + 60.0)
 
 

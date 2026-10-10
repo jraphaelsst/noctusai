@@ -161,5 +161,7 @@ def test_http_error_mapping():
 
 def test_timeout_formula():
     assert transcribe_timeout(10) == 90
-    assert transcribe_timeout(600) == 1800
-    assert transcribe_timeout(100000) == 1800
+    assert transcribe_timeout(600) == 1860
+    # 45-min platform max must fit (old 1800 s ceiling abandoned anything > ~10 min)
+    assert transcribe_timeout(2700) == 8160
+    assert transcribe_timeout(100000) == 9000

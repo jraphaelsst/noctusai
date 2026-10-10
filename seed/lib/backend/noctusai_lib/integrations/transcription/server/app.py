@@ -32,12 +32,23 @@ from noctusai_lib.integrations.transcription.server.media import (
 
 log = logging.getLogger("noctus.transcriber")
 
-MAX_HARD_S = 1800.0
+# Wall-clock ceiling for ONE transcription: 3x real time, never more than 2.5 h.
+# 9000 s covers the platform API's 45-min max (3 x 2700 s = 8100 s) with headroom
+# (transcription-api CONTRACT §3, slice E). Products enforce their own lower caps.
+MAX_HARD_S = 9000.0
 DEFAULT_MAX_SECONDS = 600.0
 MIN_SECONDS = 1.0
 DAILY_BACKSTOP_MIN = 600.0
-MAX_UPLOAD_BYTES = 15 * 1024 * 1024 + 1024  # product caps at 15 MB; small slack
+# Platform ceiling, not a product cap: core's transcription API accepts up to 150 MB;
+# each product enforces its own lower limit (social-wiring voice answers: 15 MB)
+# BEFORE calling this internal-only worker. Small slack for multipart framing.
+MAX_UPLOAD_BYTES = 150 * 1024 * 1024 + 1024
 PROBE_CONCURRENCY = 2
+
+
+def hard_cap_s(duracao_s: float) -> float:
+    """In-process kill deadline for one transcription: `min(MAX_HARD_S, 3 * duracao)` s."""
+    return min(MAX_HARD_S, 3.0 * duracao_s)
 PROBE_TIMEOUT_S = 5.0
 RETRY_AFTER_S = "15"
 
@@ -175,7 +186,7 @@ def create_app(
             if daily.would_exceed(minutes):
                 return _err(503, "capacidade_diaria", "capacidade diaria esgotada",
                             {"Retry-After": "3600"})
-            cap = min(MAX_HARD_S, 3.0 * duracao)
+            cap = hard_cap_s(duracao)
             deadline = time.monotonic() + cap
             try:
                 result: Any = await asyncio.to_thread(
