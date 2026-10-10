@@ -15296,6 +15296,8 @@ _DETECTOR_TEST_OVERRIDES: dict[str, str] = {
     # class. KB § PATTERNS/backend/database-rls.md § Storage buckets —
     # never public.
     "check_storage_bucket_public": "tests/test_storage_bucket_public_keeper.py",
+    "check_redis_client_via_seam": "tests/test_check_redis_client_via_seam.py",
+    "check_migration_number_refs_in_tests": "tests/test_check_migration_number_refs_in_tests.py",
 }
 
 
