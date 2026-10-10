@@ -3980,6 +3980,42 @@ END;
     ),
 )
 
+def _anon_sequence_probe(product: str, schema: str, migration: str) -> GuardProbe:
+    """anon holds no privilege on any sequence in ``schema``, now or by default
+    (the template 001's sequence grant to anon, cleared fleet-wide 2026-10-10)."""
+    return GuardProbe(
+        id=f"{schema}.anon_holds_no_sequence_privilege",
+        product=product,
+        schema=schema,
+        guard_name=f"{schema}_anon_sequence_lockdown",
+        kind="state_assertion",
+        migrations=(migration,),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT (SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace"
+                f" WHERE n.nspname = '{schema}' AND c.relkind = 'S' AND c.relacl::text LIKE '%anon=%')"
+                " + (SELECT count(*) FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace"
+                f" WHERE n.nspname = '{schema}' AND d.defaclobjtype = 'S' AND d.defaclacl::text LIKE '%anon=%')"
+                " INTO v_count;"
+            ),
+            clean_message=f"anon holds no sequence privilege in {schema} (existing or default)",
+            violation_message_prefix=f"anon sequence privilege(s) / default ACL entries LIVE in {schema} —",
+        ),
+        rationale=(
+            "anon writes no product table, so it never needs nextval(); a sequence grant "
+            "only lets the public anon key burn values and read last_value."
+        ),
+    )
+
+
+_ANON_SEQUENCE_PROBES: tuple[GuardProbe, ...] = (
+    _anon_sequence_probe("seed", "seed", "011_anon_sequence_lockdown.sql"),
+    _anon_sequence_probe("social-wiring", "social_wiring", "235_anon_sequence_lockdown.sql"),
+    _anon_sequence_probe("agents", "agents", "023_anon_sequence_lockdown.sql"),
+    _anon_sequence_probe("igig", "igig", "041_anon_sequence_lockdown.sql"),
+    _anon_sequence_probe("academia-de-reciclagem", "academia_de_reciclagem", "018_anon_sequence_lockdown.sql"),
+)
+
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
     id="erp.current_org_id_excludes_customer",
     product="social-wiring",
@@ -6246,6 +6282,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SSO_PROMOTION_PROBE,
     *_MFA_POLICY_PROBES,
     *_SEED_ANON_LOCKDOWN_PROBES,
+    *_ANON_SEQUENCE_PROBES,
     _ERP_CURRENT_ORG_ID_PROBE,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,

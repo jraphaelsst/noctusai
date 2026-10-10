@@ -609,6 +609,7 @@ class TestAgentsStudioProbes:
         return [
             p for p in DEFAULT_REGISTRY
             if p.product == "agents" and not p.id.startswith("agents_editorial.")
+            and not p.id.endswith(".anon_holds_no_sequence_privilege")
         ]
 
     def test_every_studio_guard_has_a_probe(self):
@@ -706,7 +707,8 @@ class TestIgigCrmProbes:
 
     @staticmethod
     def _probes():
-        return [p for p in DEFAULT_REGISTRY if p.product == "igig"]
+        return [p for p in DEFAULT_REGISTRY if p.product == "igig"
+                and not p.id.endswith(".anon_holds_no_sequence_privilege")]
 
     def test_every_detected_guard_in_017_to_020_is_registered(self):
         from tools.noctus.dev.compliance import _detect_guard_objects
@@ -807,3 +809,21 @@ class TestEditorialProbes:
         assert run_probe(p, ex)["status"] == "pass"
         ex = _CannedExecutor(ok=False, error="NOC_PROBE:permitted: the author approving ... succeeded")
         assert run_probe(p, ex)["status"] == "finding"
+
+
+class TestAnonSequenceProbes:
+    """The template's 001 granted anon ALL on sequences in every product (cleared
+    2026-10-10 by one forward migration per active product)."""
+
+    _ROOT = Path(__file__).resolve().parents[3]
+
+    def test_one_state_assertion_per_lockdown_migration(self):
+        probes = [p for p in DEFAULT_REGISTRY if p.id.endswith(".anon_holds_no_sequence_privilege")]
+        assert {p.product for p in probes} == {
+            "seed", "social-wiring", "agents", "igig", "academia-de-reciclagem"}
+        for p in probes:
+            assert p.kind == "state_assertion"
+            assert f"n.nspname = '{p.schema}'" in p.sql and "defaclobjtype = 'S'" in p.sql
+            (migration,) = p.migrations
+            assert (self._ROOT / "products" / p.product / "backend" / "migrations" / migration).is_file(), p.id
+

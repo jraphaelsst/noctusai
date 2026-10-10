@@ -54,10 +54,11 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA {{SCHEMA_NAME}} TO 
 ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON TABLES TO service_role;
 ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO authenticated;
 
--- Sequences are out of scope for this lockdown (no data, just nextval/
--- currval) — left as the pre-existing broader grant.
-GRANT ALL ON ALL SEQUENCES IN SCHEMA {{SCHEMA_NAME}} TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
+-- Sequences: never anon (2026-10-10). anon writes no table, so it never needs
+-- nextval(); granting it let the public anon key burn values / read last_value,
+-- and verify_db_guards' anon probes flag it in every product.
+GRANT ALL ON ALL SEQUENCES IN SCHEMA {{SCHEMA_NAME}} TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON SEQUENCES TO authenticated, service_role;
 
 
 -- ============================================================================
