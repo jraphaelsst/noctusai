@@ -1,10 +1,10 @@
-"""SW 239 GuardProbes executed against the REAL social-wiring chain on PGlite.
+"""SW 240 GuardProbes executed against the REAL social-wiring chain on PGlite.
 
 The probes in `verify_db_guards.DEFAULT_REGISTRY` normally only ever run
 against prod; this runs their exact SQL (through `wrap_rollback_only`) on the
-replayed chain after migration 239, so a probe that cannot work (wrong column,
+replayed chain after migration 240, so a probe that cannot work (wrong column,
 an unmodelled trigger) fails HERE, not as a surprise gate-red in prod. A second
-run replaces 239's function with the pre-239 behaviour to prove the probe
+run replaces 240's function with the pre-240 behaviour to prove the probe
 discriminates (the old silent drop is a `violation`).
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ from tools.noctus.dev import migration_replay as mr
 from tools.noctus.dev import verify_db_guards as vdg
 
 _NODE = Path(REPO_ROOT) / mr.NODE_DIR
-_M239 = "products/social-wiring/backend/migrations/240_spawn_funil_card_sem_descarte_silencioso.sql"
+_M240 = "products/social-wiring/backend/migrations/240_spawn_funil_card_sem_descarte_silencioso.sql"
 _IDS = ("social-wiring.atendimentos.org_meta_lead.unique", "social-wiring.spawn_funil_card.no_silent_drop")
 _SENT = re.compile(r"NOC_PROBE:(\w+):")
 
@@ -53,18 +53,18 @@ def _outcomes(overrides: dict[str, str]) -> dict[str, str]:
     return out
 
 
-def test_probes_pass_on_the_real_chain_with_239(pglite):
+def test_probes_pass_on_the_real_chain_with_240(pglite):
     assert _outcomes({}) == {
         "social-wiring.atendimentos.org_meta_lead.unique": "refused",
         "social-wiring.spawn_funil_card.no_silent_drop": "allowed",
     }
 
 
-def test_spawn_probe_flags_the_pre_239_silent_drop(pglite):
+def test_spawn_probe_flags_the_pre_240_silent_drop(pglite):
     root = Path(REPO_ROOT)
-    sql = (root / _M239).read_text(encoding="utf-8")
+    sql = (root / _M240).read_text(encoding="utf-8")
     old_fn = (root / "products/social-wiring/backend/migrations/090_um_card_por_lead.sql").read_text(encoding="utf-8")
     old_fn = old_fn[old_fn.index("CREATE OR REPLACE FUNCTION"):old_fn.index("$function$;") + len("$function$;")]
     start = sql.index("-- ─── 3.")
-    out = _outcomes({_M239: sql[:start] + old_fn + "\n"})
+    out = _outcomes({_M240: sql[:start] + old_fn + "\n"})
     assert out["social-wiring.spawn_funil_card.no_silent_drop"] == "violation", out

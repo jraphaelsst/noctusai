@@ -6307,15 +6307,15 @@ END;
 # APPLIED.md states for schema_drift.
 # ---------------------------------------------------------------------------
 
-_SW_239_MIGRATIONS = ("240_spawn_funil_card_sem_descarte_silencioso.sql",)
+_SW_240_MIGRATIONS = ("240_spawn_funil_card_sem_descarte_silencioso.sql",)
 
-_SW_239_META_UNIQUE_PROBE = GuardProbe(
+_SW_240_META_UNIQUE_PROBE = GuardProbe(
     id="social-wiring.atendimentos.org_meta_lead.unique",
     product="social-wiring",
     schema=_SW_SCHEMA,
     guard_name="uq_sw_atendimentos_org_meta_lead",
     kind="write_refusal",
-    migrations=_SW_239_MIGRATIONS,
+    migrations=_SW_240_MIGRATIONS,
     rationale=(
         "One card per (org, meta lead) — scoped by ORG so a card another org "
         "holds can never block this org's card (the 2026-10-10 loss of 6 real "
@@ -6365,13 +6365,13 @@ END;
 """),
 )
 
-_SW_239_SPAWN_NO_SILENT_DROP_PROBE = GuardProbe(
+_SW_240_SPAWN_NO_SILENT_DROP_PROBE = GuardProbe(
     id="social-wiring.spawn_funil_card.no_silent_drop",
     product="social-wiring",
     schema=_SW_SCHEMA,
     guard_name="spawn_funil_card",
     kind="write_allowed",
-    migrations=_SW_239_MIGRATIONS,
+    migrations=_SW_240_MIGRATIONS,
     rationale=(
         "The same-org collision: the meta lead's card is already linked to "
         "ANOTHER lead, then a new lead claims that meta lead. The lead's card "
@@ -6430,9 +6430,9 @@ END;
 """),
 )
 
-_SW_239_PROBES: tuple[GuardProbe, ...] = (
-    _SW_239_META_UNIQUE_PROBE,
-    _SW_239_SPAWN_NO_SILENT_DROP_PROBE,
+_SW_240_PROBES: tuple[GuardProbe, ...] = (
+    _SW_240_META_UNIQUE_PROBE,
+    _SW_240_SPAWN_NO_SILENT_DROP_PROBE,
 )
 
 
@@ -6498,7 +6498,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_PROPOSTAS_PROBES,
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_231_PROBES,
-    *_SW_239_PROBES,
+    *_SW_240_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
