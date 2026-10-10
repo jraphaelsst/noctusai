@@ -64,33 +64,7 @@ _CUSTOMER_REFUSED = "Área restrita à equipe."
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 
-class _ScopedSSOSessionCache(SSOSessionCache):
-    """SSOSessionCache keyed per (email, org_id, product_slug), flushable per email.
-
-    Why scoped: an email-only key handed the SAME session (same refresh token) to
-    several product origins -- Supabase refresh-token reuse detection can then revoke
-    the whole family -- and replayed a stale org_id/org_role in user_metadata for up
-    to the TTL after an org switch. The cache exists only to dodge GoTrue's ~60s
-    per-email magic-link cooldown, so entries are kept per scope and a flush by email
-    removes every scope of that user.
-    """
-
-    _SEP = "\x1f"
-
-    @classmethod
-    def scoped_key(cls, email: str, org_id: str | None, product_slug: str | None) -> str:
-        return cls._SEP.join((email, org_id or "", product_slug or ""))
-
-    def invalidate(self, email: str) -> bool:
-        prefix = email + self._SEP
-        keys = [k for k in list(self._store) if k == email or k.startswith(prefix)]
-        removed = False
-        for k in keys:
-            removed = super().invalidate(k) or removed
-        return removed
-
-
-_session_cache = _ScopedSSOSessionCache(ttl_seconds=_CACHE_TTL)
+_session_cache = SSOSessionCache(ttl_seconds=_CACHE_TTL)
 
 
 def invalidate_sso_cache_for_user(email: str) -> bool:
@@ -396,21 +370,21 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
     60s rate limit without sharing one session across origins or orgs.
     A per-key lock prevents concurrent duplicate calls.
     """
-    cache_key = _ScopedSSOSessionCache.scoped_key(email, org_id, product_slug)
+    scope = {"org_id": org_id or "", "product_slug": product_slug or ""}
     if not supabase_admin:
         logger.error("supabase_admin não inicializado — verifique SUPABASE_SERVICE_ROLE_KEY")
         raise HTTPException(status_code=500, detail="Configuração do servidor incompleta")
 
     # Fast path: check cache before acquiring lock
-    cached = _session_cache.get(cache_key)
+    cached = _session_cache.get(email, **scope)
     if cached:
         logger.debug("SSO cache hit para email=%s", email)
         return cached
 
-    lock = _session_cache.get_lock(cache_key)
+    lock = _session_cache.get_lock(email, **scope)
     with lock:
         # Double-check after acquiring lock (another thread may have populated)
-        cached = _session_cache.get(cache_key)
+        cached = _session_cache.get(email, **scope)
         if cached:
             logger.debug("SSO cache hit (post-lock) para email=%s", email)
             return cached
@@ -453,7 +427,7 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
                 "email": email,
             }
 
-            _session_cache.set(cache_key, result)
+            _session_cache.set(email, result, **scope)
             logger.info("SSO sessão gerada e cacheada para email=%s", email)
             return result
 
@@ -462,7 +436,7 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
         except Exception as exc:
             if _is_rate_limit_error(exc):
                 # Last resort: maybe cache was populated by a concurrent request
-                cached = _session_cache.get(cache_key)
+                cached = _session_cache.get(email, **scope)
                 if cached:
                     logger.info("Rate limited mas cache disponível para email=%s", email)
                     return cached

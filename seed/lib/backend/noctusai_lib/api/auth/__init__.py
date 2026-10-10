@@ -1100,15 +1100,22 @@ class SSOSessionCache:
     Promoted from `products/core/backend/app/routers/sso.py::_SSOSessionCache`
     so any identity-source product can reuse the same concurrency semantics.
 
-    Shape preserved byte-for-byte: get/set/invalidate/clear + per-key lock
-    acquisition to serialize expensive Supabase session generation per user.
+    Canonical scoping (P2.4, 2026-10-10): entries are keyed
+    (email, org_id, product_slug). An email-only key hands the SAME session
+    (same refresh token) to several product origins -- Supabase refresh-token
+    reuse detection can then revoke the whole family -- and replays a stale
+    org_id/org_role for up to the TTL after an org switch. Pass `org_id` /
+    `product_slug` to get/set/get_lock; `invalidate(email)` flushes EVERY scope
+    of that user (and a legacy raw-email key). Calling with no scope is the
+    legacy email-only entry: still supported (back-compat), but do not use it
+    for a cache that serves more than one product or org.
 
-    TTL is parameterizable. Core uses 300s (5 min) — above Supabase's 60s
+    TTL is parameterizable. Core uses 300s (5 min) -- above Supabase's 60s
     rate limit between magic-link generations but tight enough to let role
-    revocations take effect quickly. Explicit invalidation via `invalidate(email)`
-    or `clear()` flushes on demand (role-change / license-revoke / org-reassign
-    hooks should call invalidate; see core's `invalidate_sso_cache_for_user`).
+    revocations take effect quickly.
     """
+
+    _SEP = "\x1f"
 
     def __init__(self, ttl_seconds: int = 300) -> None:
         self._ttl = ttl_seconds
@@ -1116,31 +1123,64 @@ class SSOSessionCache:
         self._locks: Dict[str, threading.Lock] = {}
         self._global_lock = threading.Lock()
 
-    def get(self, email: str) -> Optional[dict]:
-        """Return cached session for email or None (expired / absent)."""
-        entry = self._store.get(email)
+    @classmethod
+    def scoped_key(
+        cls, email: str, org_id: Optional[str] = None, product_slug: Optional[str] = None
+    ) -> str:
+        """Storage key for an (email, org_id, product_slug) scope."""
+        return cls._SEP.join((email, org_id or "", product_slug or ""))
+
+    @classmethod
+    def _key(cls, email: str, org_id: Optional[str], product_slug: Optional[str]) -> str:
+        # No scope given -> the raw email (legacy / back-compat key); a pre-built
+        # scoped_key() string passed as `email` also works unchanged.
+        if org_id is None and product_slug is None:
+            return email
+        return cls.scoped_key(email, org_id, product_slug)
+
+    def get(
+        self, email: str, *, org_id: Optional[str] = None, product_slug: Optional[str] = None
+    ) -> Optional[dict]:
+        """Return the cached session for the scope or None (expired / absent)."""
+        key = self._key(email, org_id, product_slug)
+        entry = self._store.get(key)
         if entry is None:
             return None
         data, created_at = entry
         if time.monotonic() - created_at > self._ttl:
-            self._store.pop(email, None)
+            self._store.pop(key, None)
             return None
         return data
 
-    def set(self, email: str, data: dict) -> None:
-        """Store session data keyed by email with current timestamp."""
-        self._store[email] = (data, time.monotonic())
+    def set(
+        self,
+        email: str,
+        data: dict,
+        *,
+        org_id: Optional[str] = None,
+        product_slug: Optional[str] = None,
+    ) -> None:
+        """Store session data for the scope with the current timestamp."""
+        self._store[self._key(email, org_id, product_slug)] = (data, time.monotonic())
 
-    def get_lock(self, email: str) -> threading.Lock:
-        """Per-email lock — serializes concurrent SSO session generation."""
+    def get_lock(
+        self, email: str, *, org_id: Optional[str] = None, product_slug: Optional[str] = None
+    ) -> threading.Lock:
+        """Per-scope lock -- serializes concurrent SSO session generation."""
+        key = self._key(email, org_id, product_slug)
         with self._global_lock:
-            if email not in self._locks:
-                self._locks[email] = threading.Lock()
-            return self._locks[email]
+            if key not in self._locks:
+                self._locks[key] = threading.Lock()
+            return self._locks[key]
 
     def invalidate(self, email: str) -> bool:
-        """Remove a single entry. Returns True iff removed."""
-        return self._store.pop(email, None) is not None
+        """Flush every scope of `email` (and a raw-email key). True iff any removed."""
+        prefix = email + self._SEP
+        keys = [k for k in list(self._store) if k == email or k.startswith(prefix)]
+        removed = False
+        for k in keys:
+            removed = self._store.pop(k, None) is not None or removed
+        return removed
 
     def clear(self) -> None:
         """Flush every entry and every per-key lock."""

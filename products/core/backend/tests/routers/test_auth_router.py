@@ -207,7 +207,7 @@ class TestLogout:
         client.mock_supabase.auth.admin.sign_out = admin_sign_out
         sso_module._session_cache.clear()
         sso_module._session_cache.set(
-            sso_module._ScopedSSOSessionCache.scoped_key("test@example.com", "org-1", "p1"),
+            sso_module.SSOSessionCache.scoped_key("test@example.com", "org-1", "p1"),
             {"access_token": "cached"},
         )
 

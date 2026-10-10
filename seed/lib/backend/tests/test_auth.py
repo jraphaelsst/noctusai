@@ -438,6 +438,46 @@ class TestSSOSessionCache:
         # TTL not reached — still present.
         assert cache.get("a@x.com") is not None
 
+    def test_scope_isolates_product_and_org(self):
+        cache = SSOSessionCache()
+        cache.set("a@x.com", {"t": 1}, org_id="o1", product_slug="p1")
+        assert cache.get("a@x.com", org_id="o1", product_slug="p1") == {"t": 1}
+        assert cache.get("a@x.com", org_id="o1", product_slug="p2") is None
+        assert cache.get("a@x.com", org_id="o2", product_slug="p1") is None
+        assert cache.get("a@x.com") is None  # legacy raw key is a separate entry
+
+    def test_scoped_locks_are_per_scope(self):
+        cache = SSOSessionCache()
+        a = cache.get_lock("a@x.com", org_id="o1", product_slug="p1")
+        assert a is cache.get_lock("a@x.com", org_id="o1", product_slug="p1")
+        assert a is not cache.get_lock("a@x.com", org_id="o1", product_slug="p2")
+
+    def test_scoped_ttl_expiry(self):
+        cache = SSOSessionCache(ttl_seconds=60)
+        cache.set("a@x.com", {"t": 1}, org_id="o1", product_slug="p1")
+        now = time.monotonic()
+        with patch("noctusai_lib.api.auth.time.monotonic", return_value=now + 120):
+            assert cache.get("a@x.com", org_id="o1", product_slug="p1") is None
+        assert cache._store == {}
+
+    def test_invalidate_flushes_all_scopes_but_not_prefix_neighbours(self):
+        cache = SSOSessionCache()
+        cache.set("a@x.com", {"t": 1}, org_id="o1", product_slug="p1")
+        cache.set("a@x.com", {"t": 2}, org_id="o2", product_slug="p2")
+        cache.set("a@x.com", {"t": 3})
+        cache.set("ab@x.com", {"t": 4}, org_id="o1", product_slug="p1")
+        assert cache.invalidate("a@x.com") is True
+        assert cache.get("a@x.com", org_id="o1", product_slug="p1") is None
+        assert cache.get("a@x.com", org_id="o2", product_slug="p2") is None
+        assert cache.get("a@x.com") is None
+        assert cache.get("ab@x.com", org_id="o1", product_slug="p1") == {"t": 4}
+        assert cache.invalidate("a@x.com") is False
+
+    def test_scoped_key_matches_kwargs_form(self):
+        cache = SSOSessionCache()
+        cache.set("a@x.com", {"t": 1}, org_id="o1", product_slug="p1")
+        assert cache.get(SSOSessionCache.scoped_key("a@x.com", "o1", "p1")) == {"t": 1}
+
 
 # ---------------------------------------------------------------------------
 # make_require_role — factory pattern matching make_get_current_user

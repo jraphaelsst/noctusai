@@ -83,7 +83,7 @@ class TestScopedSessionCache:
 
     def test_distinct_scopes_are_distinct_entries_and_one_flush_clears_all(self):
         _reset_cache()
-        key = sso_module._ScopedSSOSessionCache.scoped_key
+        key = sso_module.SSOSessionCache.scoped_key
         sso_module._session_cache.set(key("a@example.com", "org-1", "p1"), {"t": 1})
         sso_module._session_cache.set(key("a@example.com", "org-2", "p1"), {"t": 2})
         sso_module._session_cache.set(key("a@example.com", "org-1", "p2"), {"t": 3})
