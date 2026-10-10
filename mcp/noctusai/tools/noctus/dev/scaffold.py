@@ -1324,7 +1324,7 @@ VALUES (
 ON CONFLICT (slug) DO NOTHING;
 
 -- The container HOUSE port is its own column (core 076): url_base is the
--- canonical https prod URL and must never carry a localhost port.
+-- canonical https prod URL and carries no port.
 UPDATE public.products SET house_port = {int(backend_port)}
  WHERE slug = {_sql_text(slug)} AND house_port IS NULL;
 {db_schema_block}{pgrst_block}"""
