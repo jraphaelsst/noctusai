@@ -35,6 +35,7 @@ from app.services import audit_service
 from app.schemas.products import (
     ProductActivation,
     ProductCreate,
+    PRODUCT_PUBLIC_COLUMNS,
     ProductDeployScope,
     ProductUpdate,
 )
@@ -78,7 +79,8 @@ async def listar_products(
         user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    query = db.table("products").select("*")
+    # Admin path keeps the full row; everyone else gets the explicit allowlist.
+    query = db.table("products").select("*" if include_inactive else PRODUCT_PUBLIC_COLUMNS)
     if not include_inactive:
         query = query.eq("ativo", True)
     result = query.order("nome").execute()
@@ -93,7 +95,7 @@ async def deployment_status(
     """Report which catalog products are deployed (container reachable) RIGHT NOW.
 
     "Deployed" = the product's single container answers /api/health on the
-    shared noctus-net (internal port 8000). Environment-accurate by
+    shared noctus-net (on its HOUSE port, `products.house_port`). Environment-accurate by
     construction — core probes whatever fleet it runs alongside (dev OR prod),
     so a product can be deployed in dev but not prod with one catalog. Drives
     the launcher's "dev" badge. Never raises because a product is down.
@@ -120,7 +122,11 @@ async def get_product(product_id: str, authorization: Optional[str] = Header(Non
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("products").select("*").eq("id", product_id).single().execute()
+    # Platform admins read the full row; everyone else the allowlisted columns.
+    profile = db.table("noctus_users").select("role").eq("id", user.id).single().execute()
+    is_admin = bool(profile.data) and profile.data.get("role") == "admin"
+    columns = "*" if is_admin else PRODUCT_PUBLIC_COLUMNS
+    result = db.table("products").select(columns).eq("id", product_id).single().execute()
     if not result.data:
         raise HTTPException(status_code=404, detail="Produto não encontrado")
     return {"data": result.data}

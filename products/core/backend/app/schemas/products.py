@@ -8,6 +8,20 @@ from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 
 
+#: Columns a NON-admin may read from `public.products` (GET /api/products and
+#: GET /api/products/{id}). Explicit allowlist, NOT `select("*")`: operational
+#: columns (`house_port`, `sso_callback_verified_at`, `db_schema`, ...) are
+#: admin-only. Derived from the real consumers: core FE Dashboard / Onboarding
+#: (id nome slug descricao icone url_base cor ativo deploy_scope), AdminDashboard
+#: and AdminLogoutBehavior (+ logout_behavior; both call the non-admin list
+#: path), AdminProducts (+ created_at; its list uses the admin path).
+#: A new field a consumer reads MUST be added here.
+PRODUCT_PUBLIC_COLUMNS = (
+    "id, nome, slug, descricao, icone, url_base, cor, ativo, deploy_scope, "
+    "logout_behavior, created_at"
+)
+
+
 class ProductCreate(StrictHttpModel):
     nome: str
     slug: str
