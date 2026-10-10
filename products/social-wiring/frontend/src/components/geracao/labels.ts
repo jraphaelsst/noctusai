@@ -51,4 +51,4 @@ export const CRIATIVIDADE_ROTULO = {
   explorador: "Explorador",
 } as const;
 
-export const HEADLINE_TEXTO_MAX = 500;
+export const HEADLINE_TEXTO_MAX = 1000;
