@@ -66,6 +66,7 @@ During the SW deal-876 walkthrough the owner logged out of core as `jraphaelsst@
 - **2026-10-09**: Fragment token + required `product_slug` deferred to T1 — deploy-order safety (old SSOCallback reads only `?token` and omits the slug).
 - **2026-10-09**: Account-switch replaces the session only after an explicit interstitial (security advisor: F1 widens login-CSRF to victims with a session; interstitial now, token binding P2.2 later).
 - **2026-10-09**: Phase 1 kept out of noc-4's concurrent prod bless (bless target moved to a pre-SSO commit; prod stayed at 06f5ccc5c) — SSO ships on the owner's own go, with the full predeploy (fleet-wide seed).
+- **2026-10-10**: P2.1 mixed regime smoke-verified in prod, in the owner's Chrome (part 2; part 1's server checks passed 2026-10-09). Strict path: the core card click opened SW at `https://social.noctusai.com/` with the fragment already stripped, a Supabase session stored, and the org picker shown. Legacy path: the orbity card click opened `https://orbity.noctusai.com/` signed in, query string stripped. noctus-core logged exactly one `sso_legacy_redeem` for it (product=orbity, origin=https://orbity.noctusai.com, slug_present=False, 04:35:18Z). The legacy branch is therefore live and observable; its exit criterion (the line reaching zero) is now measurable. The `/validate` follow-up above landed in 1cc72ab73 (gated to platform admins; callers unconfirmed because the n8n API returned 401).
 
 ## Retrospective (filled at first trigger fire)
 
