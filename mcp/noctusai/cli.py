@@ -376,6 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--deploy-image-confirm", action="store_true", help="With --deploy-image: actually perform the image swap (a production action). Without it, plan/dry-run only.")
     parser.add_argument("--deploy-image-source", default="pull", choices=["pull", "local"], help="With --deploy-image: 'pull' (GHCR model, default) compose-pulls the image; 'local' (build-on-VPS model) swaps an already-built local tag.")
     parser.add_argument("--deploy-image-tag", default="latest", help="With --deploy-image: the image tag to swap to (default 'latest').")
+    parser.add_argument("--deploy-image-skip-boot-smoke", action="store_true", help="With --deploy-image: bypass the in-image boot smoke run before the swap — almost always wrong.")
     parser.add_argument("--deploy-image-skip-ancestry-check", action="store_true", help="With --deploy-image: bypass the PROD-PIN ancestry guard (tag='latest'+source='pull' must descend from origin/prod) — almost always wrong.")
     parser.add_argument("--deploy-image-allow-inactive", action="store_true", help="With --deploy-image: bypass the catalog-scope refusal for a deliberate, supervised reactivation — almost always wrong.")
     parser.add_argument("--deploy-image-allow-stale-toolkit", action="store_true", help="With --deploy-image: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; this mirrors the MCP tool's own allow_stale_toolkit escape hatch for a human invoking the CLI directly against a long-lived local checkout). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
@@ -3142,6 +3143,7 @@ def main():
             source=getattr(args, "deploy_image_source", "pull"),
             confirm=bool(getattr(args, "deploy_image_confirm", False)),
             skip_ancestry_check=bool(getattr(args, "deploy_image_skip_ancestry_check", False)),
+            skip_boot_smoke=bool(getattr(args, "deploy_image_skip_boot_smoke", False)),
             allow_inactive=bool(getattr(args, "deploy_image_allow_inactive", False)),
             allow_stale_toolkit=bool(getattr(args, "deploy_image_allow_stale_toolkit", False)),
         )

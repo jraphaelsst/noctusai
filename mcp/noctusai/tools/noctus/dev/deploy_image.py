@@ -74,6 +74,7 @@ import re
 import time as _time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any, Callable
 
 from . import _catalog_scope_guard
@@ -92,7 +93,7 @@ _UA = (
 # curls the in-container /api/health for the active probe); `commit` snapshots
 # the running container into the :previous rollback image (additive, never
 # destructive).
-_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit", "restart"})
+_DOCKER_ALLOWED = frozenset({"inspect", "image", "tag", "ps", "exec", "commit", "restart", "run"})
 # `docker compose` sub-actions the tool may run. Excludes down/rm/kill/stop.
 _COMPOSE_ALLOWED = frozenset({"pull", "up"})
 # Read-only git subcommands the PROD-PIN ancestry guard (below) may run on the
@@ -175,6 +176,45 @@ def _prod_ancestor_check(runner, repo_dir: str, sha: str,
     return is_ancestor, (
         f"{sha[:12]} is {'an ancestor of' if is_ancestor else 'NOT an ancestor of'} {prod_ref}"
     )
+
+
+# The in-image boot smoke build-and-push.sh runs before a GHCR push
+# (scripts/infra/image_boot_smoke.py). deploy_image re-runs it on the VPS
+# against the EXACT image id it is about to swap in, because an image that never
+# went through build-and-push (source='local' build-on-VPS, or an old pinned tag
+# that predates the push-time smoke) was otherwise never boot-checked before it
+# replaced a healthy container.
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+_BOOT_SMOKE_SCRIPT = _REPO_ROOT / "scripts" / "infra" / "image_boot_smoke.py"
+
+
+def _is_product_backend(product: str) -> bool:
+    """A product with a FastAPI backend in this repo (the smoke's precondition).
+    Non-product services (deploy/fleet/services.txt, e.g. `transcriber`) have no
+    `products/<slug>/backend/app/main.py` and are not boot-smoked."""
+    return (_REPO_ROOT / "products" / product / "backend" / "app" / "main.py").is_file()
+
+
+def _boot_smoke(runner, product: str, image_id: str) -> tuple[bool, str]:
+    """Run the in-image boot smoke against `image_id` on the box.
+
+    Same contract as build-and-push.sh's `boot_smoke`: `--network none`,
+    `REDIS_URL=` (no Redis is reachable, say so), product backend as cwd, no
+    lifespan. The payload goes as `python -c` because the SSH runner carries
+    argv, not stdin. Returns (ok, detail)."""
+    try:
+        source = _BOOT_SMOKE_SCRIPT.read_text()
+    except OSError as exc:
+        return False, f"boot smoke payload unreadable ({_BOOT_SMOKE_SCRIPT}): {exc}"
+    rc, out, err = _docker(
+        runner, "run", "--rm", "--network", "none", "-e", "REDIS_URL=",
+        "--entrypoint", "python", "-w", f"/app/products/{product}/backend",
+        image_id, "-c", source,
+    )
+    if rc == 0:
+        return True, out.strip().splitlines()[-1] if out.strip() else "ok"
+    tail = "\n".join((err.strip() or out.strip()).splitlines()[-15:])
+    return False, tail or f"exit {rc}"
 
 
 def _compose(runner, compose_file: str, action: str, *rest) -> tuple[int, str, str]:
@@ -297,6 +337,7 @@ def deploy_image(
     edge_hostname: str | None = None,
     http: Callable | None = None,
     skip_ancestry_check: bool = False,
+    skip_boot_smoke: bool = False,
     allow_inactive: bool = False,
     live_products_fn: Callable[[], list[str]] | None = None,
 ) -> dict[str, Any]:
@@ -337,6 +378,16 @@ def deploy_image(
     `tag=<sha>` deploy never needs it — the tag itself already IS the
     verifiable identity; source='local' also skips it — a build-on-VPS image
     is a deliberate human action taken right there on the box).
+
+    BOOT SMOKE (2026-10-10): before the swap, the new image id runs
+    `scripts/infra/image_boot_smoke.py` on the box (import `app.main` + GET
+    /api/health, `--network none`, no lifespan) — the same check
+    build-and-push.sh runs before a GHCR push. A failure REFUSES (status
+    `error`, container untouched): it closes the gap for images that never
+    went through build-and-push (source='local' build-on-VPS, or a pinned tag
+    older than the push-time smoke). Applies to every product with a backend
+    in this repo; non-product services (services.txt) are skipped and say so.
+    `skip_boot_smoke=True` overrides deliberately (result records it).
 
     SWAP-VERIFY (2026-08-13): a healthy probe alone never proves the swap
     landed — the 2026-08-13 incident was a healthy OLD container that
@@ -519,6 +570,22 @@ def deploy_image(
                     )}
         base["source_revision"] = revision
 
+    # ── BOOT SMOKE the exact image id about to replace the running container ──
+    if skip_boot_smoke:
+        base["boot_smoke"] = {"status": "skipped", "reason": "skip_boot_smoke=True (deliberate override)"}
+    elif not _is_product_backend(product):
+        base["boot_smoke"] = {"status": "not_applicable",
+                              "reason": f"no products/{product}/backend/app/main.py (non-product service)"}
+    else:
+        smoke_ok, smoke_detail = _boot_smoke(runner, product, new_image_id)
+        base["boot_smoke"] = {"status": "passed" if smoke_ok else "failed", "detail": smoke_detail}
+        if not smoke_ok:
+            return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
+                    "reason": (f"BOOT SMOKE: image {new_image_id[:19]} cannot import its app / answer "
+                               f"/api/health in-image — REFUSING the swap. Container untouched. Most "
+                               f"often a runtime dep missing from products/{product}/backend/"
+                               f"requirements.txt. Detail: {smoke_detail}")}
+
     port = _container_port(runner, container)
 
     # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
@@ -643,7 +710,12 @@ def register(server) -> None:
             "container untouched) unless the pulled image's baked git revision is a "
             "verified ancestor of origin/prod — closes the hole where a floating "
             ":latest can carry an un-promoted main tip; pass skip_ancestry_check=True "
-            "to override deliberately. SWAP-VERIFY (2026-08-13): a healthy probe alone "
+            "to override deliberately. BOOT SMOKE (2026-10-10): before the swap the new "
+            "image id runs scripts/infra/image_boot_smoke.py on the box (import app + "
+            "/api/health, --network none) — a failure REFUSES (status='error', container "
+            "untouched); covers source='local' builds and old pinned tags that never went "
+            "through build-and-push's push-time smoke. skip_boot_smoke=True overrides. "
+            "SWAP-VERIFY (2026-08-13): a healthy probe alone "
             "never proves the swap landed — after a healthy probe this re-inspects the "
             "RUNNING container's own image id + revision label (not the pulled tag) and "
             "REFUSES status='deployed' (returns 'swap_unverified' instead, no "
@@ -676,11 +748,13 @@ def register(server) -> None:
         source: str = "pull",
         ssh_host: str = "noctus-vps",
         skip_ancestry_check: bool = False,
+        skip_boot_smoke: bool = False,
         allow_inactive: bool = False,
         allow_stale_toolkit: bool = False,
     ) -> dict:
         return deploy_image(product, ssh_host=ssh_host, tag=tag, source=source, confirm=confirm,
-                            skip_ancestry_check=skip_ancestry_check, allow_inactive=allow_inactive,
+                            skip_ancestry_check=skip_ancestry_check, skip_boot_smoke=skip_boot_smoke,
+                            allow_inactive=allow_inactive,
                             allow_stale_toolkit=allow_stale_toolkit)
 
 

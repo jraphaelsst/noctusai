@@ -422,6 +422,8 @@ def _tool_cli_argv(tool_name: str, kwargs: dict[str, Any]) -> list[str] | None:
             argv.append(f"--deploy-host={ssh_host}")
         if kwargs.get("skip_ancestry_check"):
             argv.append("--deploy-image-skip-ancestry-check")
+        if kwargs.get("skip_boot_smoke"):
+            argv.append("--deploy-image-skip-boot-smoke")
         if kwargs.get("allow_inactive"):
             argv.append("--deploy-image-allow-inactive")
         return argv
@@ -474,7 +476,7 @@ _MAPPED_PARAMS: dict[str, frozenset[str]] = {
     }),
     "deploy_image": frozenset({
         "product", "confirm", "tag", "source", "ssh_host",
-        "skip_ancestry_check", "allow_inactive",
+        "skip_ancestry_check", "skip_boot_smoke", "allow_inactive",
     }),
     "task_branch": frozenset({
         "action", "slug", "confirm", "project", "brief", "paths", "agent",

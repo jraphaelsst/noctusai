@@ -35,7 +35,8 @@ class FakeDocker:
     def __init__(self, running="G0", latest="NEW", health=("up",), snapshot_sticks=True,
                  pull_rc=0, up_rc=0, container_found=True, image_present=True, port="8000",
                  tunnel_restart_rc=0, revision="ABCDEF123456789012", prod_ancestor=True,
-                 fetch_rc=0, prod_ref_rc=0, simulate_silent_noop_recreate=False):
+                 fetch_rc=0, prod_ref_rc=0, simulate_silent_noop_recreate=False,
+                 smoke_rc=0):
         self.running = running
         self.tags = {f"{self.IMG}:latest": latest}
         self.health = list(health)
@@ -59,6 +60,7 @@ class FakeDocker:
         self.prod_ancestor = prod_ancestor  # False => revision NOT an ancestor of origin/prod
         self.fetch_rc = fetch_rc            # non-zero => git fetch fails (unverifiable)
         self.prod_ref_rc = prod_ref_rc      # non-zero => origin/prod unresolvable (unverifiable)
+        self.smoke_rc = smoke_rc            # non-zero => in-image boot smoke fails
         self.calls: list[list[str]] = []
 
     def _id_of(self, ref_or_id):
@@ -88,6 +90,11 @@ class FakeDocker:
             if sub == "merge-base":
                 return (0 if self.prod_ancestor else 1, "", "")
             return (0, "", "")
+        if cmd[:2] == ["docker", "run"]:  # in-image boot smoke
+            if self.smoke_rc == 0:
+                return (0, "IMAGE BOOT SMOKE: ok — app imported, /api/health 200\n", "")
+            return (self.smoke_rc, "", "ModuleNotFoundError: No module named 'multipart'\n"
+                    "IMAGE BOOT SMOKE: FAILED — the app does not import/construct in this image.")
         if cmd[:2] == ["docker", "restart"]:  # tunnel restart
             return (self.tunnel_restart_rc, "", "" if self.tunnel_restart_rc == 0 else "no such container")
         if cmd[:2] == ["docker", "commit"]:  # snapshot: commit container → :previous
@@ -705,3 +712,65 @@ def test_allowlist_does_not_leak_into_migrate_product_guard(tmp_path, monkeypatc
     svc.write_text("transcriber\n")
     monkeypatch.setattr(BS, "SERVICES_PATH", svc)
     assert G.check_catalog_scope("transcriber", lambda: ["orbity"])["in_scope"] is False
+
+
+# ── BOOT SMOKE (2026-10-10): the exact image id is boot-checked before the swap ──
+def _smoke_calls(f):
+    return [c for c in f.calls if c[:2] == ["docker", "run"]]
+
+
+def test_boot_smoke_runs_on_the_new_image_id_before_the_swap():
+    f = FakeDocker(running="G0", latest="NEWID", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed"
+    assert r["boot_smoke"]["status"] == "passed"
+    (smoke,) = _smoke_calls(f)
+    assert smoke[smoke.index("--network") + 1] == "none"
+    assert "REDIS_URL=" in smoke
+    assert smoke[smoke.index("-w") + 1] == "/app/products/core/backend"
+    assert smoke[smoke.index("-c") - 1] == "NEWID"  # the id, not a floating tag
+    assert "def main()" in smoke[smoke.index("-c") + 1]  # the real payload script
+    up_idx = next(i for i, c in enumerate(f.calls) if c[:3] == ["docker", "compose", "-f"] and c[4] == "up")
+    assert f.calls.index(smoke) < up_idx
+
+
+def test_boot_smoke_failure_refuses_and_leaves_container_untouched():
+    f = FakeDocker(running="G0", latest="BROKEN", smoke_rc=1)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["exit_code"] == 1
+    assert "BOOT SMOKE" in r["reason"] and "multipart" in r["reason"]
+    assert r["boot_smoke"]["status"] == "failed"
+    assert f.count("up") == 0 and f.running == "G0"
+
+
+def test_boot_smoke_covers_source_local():
+    f = FakeDocker(running="G0", latest="LOCALBUILT", smoke_rc=1)
+    r = _run(f, confirm=True, source="local")
+    assert r["status"] == "error" and r["boot_smoke"]["status"] == "failed"
+    assert f.count("pull") == 0 and f.count("up") == 0
+
+
+def test_skip_boot_smoke_is_recorded_and_runs_nothing():
+    f = FakeDocker(running="G0", latest="NEWID", smoke_rc=1)
+    r = _run(f, confirm=True, skip_boot_smoke=True)
+    assert r["status"] == "deployed"
+    assert r["boot_smoke"]["status"] == "skipped"
+    assert _smoke_calls(f) == []
+
+
+def test_boot_smoke_not_applicable_without_a_product_backend():
+    class _SvcDocker(FakeDocker):
+        IMG = "ghcr.io/jraphaelsst/noctus-no-such-backend-svc"
+    f = _SvcDocker(running="G0", latest="NEWID", health=("up",))
+    r = DI.deploy_image("no-such-backend-svc", run_remote=f, sleep=lambda s: None, now=_now,
+                        confirm=True, startup_grace=0, live_products_fn=lambda: ["no-such-backend-svc"])
+    assert r["boot_smoke"]["status"] == "not_applicable"
+    assert _smoke_calls(f) == []
+
+
+def test_boot_smoke_not_run_on_dry_run_or_up_to_date():
+    f = FakeDocker(running="SAME", latest="SAME")
+    _run(f, confirm=True)
+    f2 = FakeDocker()
+    _run(f2, confirm=False)
+    assert _smoke_calls(f) == [] and _smoke_calls(f2) == []
