@@ -827,3 +827,42 @@ class TestAnonSequenceProbes:
             (migration,) = p.migrations
             assert (self._ROOT / "products" / p.product / "backend" / "migrations" / migration).is_file(), p.id
 
+
+
+class TestPendingMigration:
+    """A probe written ahead of its migration is `pending_migration` (named,
+    non-blocking), never a failure (2026-10-10: the SW 239 probes made every SW
+    release from the dev tip read `unverified`)."""
+
+    _PROBE = GuardProbe(
+        id="fixture.pending", product="fixture-product", schema="fixture_schema",
+        guard_name="fixture_pending_guard", kind="write_refusal",
+        migrations=("900_fixture.sql",), rationale="fixture", sql=_ANY_PROBE.sql,
+    )
+
+    def _run(self, *, applied, declared=True, error="NOC_PROBE:no_fixture: table missing"):
+        ex = _CannedExecutor(ok=False, error=error)
+        return verify_db_guards(
+            executor=ex, registry=(self._PROBE,),
+            ledger_lookup=lambda product: applied,
+            migration_declared=lambda product, name: declared,
+        ), ex
+
+    def test_unapplied_migration_is_pending_not_failure_and_the_probe_never_runs(self):
+        result, ex = self._run(applied={"001_init.sql"})
+        assert result["status"] == "clean" and result["failures"] == []
+        (p,) = result["pending"]
+        assert p["status"] == "pending_migration" and p["pending_migrations"] == ["900_fixture.sql"]
+        assert ex.executed == []
+
+    def test_once_applied_a_missing_fixture_is_a_failure_again(self):
+        result, _ = self._run(applied={"900_fixture.sql"})
+        assert result["status"] == "unverified" and result["pending"] == []
+
+    def test_unknowable_ledger_runs_the_probe(self):
+        result, _ = self._run(applied=None)
+        assert result["status"] == "unverified"
+
+    def test_an_undeclared_migration_name_never_parks_a_probe(self):
+        result, _ = self._run(applied=set(), declared=False)
+        assert result["status"] == "unverified" and result["pending"] == []

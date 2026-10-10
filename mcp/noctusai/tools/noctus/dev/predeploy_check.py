@@ -1038,6 +1038,9 @@ def _default_run_check(
         return True, (
             f"db_guards ok — {result['checked']} behaviour probe(s) verified "
             f"a genuine refusal for {product} (+ platform-wide)"
+            + (f"; {len(result.get('pending') or [])} pending_migration (guard not in this DB yet): "
+               + ", ".join(p["probe_id"] for p in result["pending"][:5])
+               if result.get("pending") else "")
         )
     if check == "env_fleet_manifest":
         # Platform-wide (product arg unused), opt-in: SKIPs loudly (ok=True)

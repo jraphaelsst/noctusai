@@ -100,11 +100,14 @@ green is not behaviour-green) · KB § PATTERNS/backend/database-rls.md.
 """
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from . import migrate_product as _mp
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PROJECT_REF = "nyplttplcoyiiqjrvtiw"
 
@@ -6374,15 +6377,69 @@ REGISTERED_GUARD_NAMES: frozenset[str] = frozenset(p.guard_name for p in DEFAULT
 # ---------------------------------------------------------------------------
 
 
+def _migration_declared(product: str, filename: str) -> bool:
+    """True when ``filename`` is a real migration file of ``product`` in this tree
+    — only a DECLARED migration can be "pending"; a stale or misspelled name in a
+    probe's ``migrations`` never parks the probe (it runs as usual)."""
+    from settings import PRODUCTS_DIR
+
+    return (PRODUCTS_DIR / product / "backend" / "migrations" / filename).is_file()
+
+
+def _ledger_reader(executor: Any):
+    """``product -> set(applied filenames) | None`` over the product's own
+    ``schema_migrations`` (the ledger ``migrate_product`` writes). ``None`` =
+    unknowable (no ledger / query failed / schema unresolved): the caller then
+    runs the probe normally — an unknown ledger never parks a probe."""
+    cache: dict[str, Any] = {}
+
+    def lookup(product: str):
+        if product in cache:
+            return cache[product]
+        applied = None
+        try:
+            from settings import PRODUCTS_DIR
+
+            schema = _mp._resolve_schema(product, None, PRODUCTS_DIR)[0]
+            q = '"' + schema.replace('"', '""') + '"'
+            r = executor.execute(f"SELECT filename FROM {q}.schema_migrations;")
+            if r.get("ok"):
+                applied = {row.get("filename") for row in (r.get("rows") or []) if isinstance(row, dict)}
+        except Exception as exc:  # noqa: BLE001 — unknowable ledger ⇒ run the probe; never park it
+            logger.debug("verify_db_guards: ledger for %s unreadable (%s)", product, exc)
+        cache[product] = applied
+        return applied
+
+    return lookup
+
+
+def _pending_migrations(probe: GuardProbe, lookup, declared) -> list[str]:
+    candidates = [m for m in probe.migrations if declared(probe.product, m)]
+    if not candidates:
+        return []  # nothing declared to wait for — no ledger round-trip at all
+    applied = lookup(probe.product)
+    if applied is None:
+        return []
+    return [m for m in candidates if m not in applied]
+
+
 def verify_db_guards(
     *,
     executor: "_mp.SqlExecutor | None" = None,
     project_ref: str = DEFAULT_PROJECT_REF,
     registry: tuple[GuardProbe, ...] | None = None,
+    ledger_lookup: Any = None,
+    migration_declared: Any = None,
 ) -> dict[str, Any]:
     """Run every probe in `registry` (default `DEFAULT_REGISTRY`) against
     the live database, inside its own rollback-only transaction. Never
-    raises. `status`: `'clean'` (every probe `pass`) | `'violations_found'`
+    raises. A probe whose declared migration is not yet in its product's
+    ledger is NOT run: it reports `status='pending_migration'` (named,
+    non-blocking — collected under `pending`, never a failure and never a silent
+    skip). Once the ledger shows the migration applied, the probe runs and a
+    missing fixture is a failure again (2026-10-10: probes written ahead of
+    SW 239 blocked every SW release from the dev tip).
+    `status`: `'clean'` (every probe `pass`) | `'violations_found'`
     (>=1 `finding` — a guard did not fire) | `'unverified'` (>=1 `failure`,
     no findings) | `'not_configured'` (no credentials) | `'error'` (empty
     registry / bad input).
@@ -6396,6 +6453,7 @@ def verify_db_guards(
             "results": [],
             "findings": [],
             "failures": [],
+            "pending": [],
             "error": None,
         }
         base.update(overrides)
@@ -6419,10 +6477,27 @@ def verify_db_guards(
             ),
         )
 
+    lookup = ledger_lookup or _ledger_reader(executor)
+    declared = migration_declared or _migration_declared
     results: list[dict[str, Any]] = []
     findings: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
     for probe in reg:
+        waiting = _pending_migrations(probe, lookup, declared)
+        if waiting:
+            r = {
+                "id": probe.id, "probe_id": probe.id, "product": probe.product,
+                "schema": probe.schema, "guard_name": probe.guard_name, "kind": probe.kind,
+                "status": "pending_migration", "outcome": None, "severity": "info",
+                "pending_migrations": waiting,
+                "detail": (f"not run: {', '.join(waiting)} not yet in {probe.product}'s "
+                           "schema_migrations ledger — the guard does not exist in this "
+                           "database yet; it is probed once the migration is applied"),
+            }
+            results.append(r)
+            pending.append(r)
+            continue
         r = run_probe(probe, executor)
         results.append(r)
         if r["status"] == "finding":
@@ -6439,10 +6514,11 @@ def verify_db_guards(
 
     return _result(
         status,
-        checked=len(reg),
+        checked=len(reg) - len(pending),
         results=results,
         findings=findings,
         failures=failures,
+        pending=pending,
     )
 
 
