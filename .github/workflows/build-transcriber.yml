@@ -60,5 +60,9 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
+          # Same label build-and-push.sh stamps on product images: deploy_verify reads
+          # the RUNNING container's revision, and an unlabeled image is "unverifiable".
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=transcriber
           cache-to: type=gha,mode=max,scope=transcriber
