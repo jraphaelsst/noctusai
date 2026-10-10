@@ -8,40 +8,19 @@
  * no `status_pagina` gate). The backend builds the links in the e-mails
  * (`${FRONTEND_BASE_URL}/descadastro/<token>`); the recipient is NOT logged in.
  *
- * accept-with-rationale: direct `api` calls on a public, token-authenticated,
- * single-purpose endpoint — no shared cache state with the authenticated app
- * (same Pattern D as the retired `mailing` Unsubscribe page).
+ * Data hooks live in `@/hooks/useEmailMarketing` (useEmUnsubscribeInfo /
+ * useEmConfirmUnsubscribe) — never inline in a page.
  */
-import { useMutation, useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { AlertCircle, CheckCircle, Loader2, MailX } from "lucide-react";
 
-import { api } from "@/lib/api";
-
-const BASE = "/api/email-marketing/unsubscribe";
-
-interface TokenInfo {
-  email: string;
-  valid: boolean;
-}
+import { useEmConfirmUnsubscribe, useEmUnsubscribeInfo } from "@/hooks/useEmailMarketing";
 
 export default function Descadastro() {
   const { token } = useParams<{ token: string }>();
 
-  const info = useQuery({
-    queryKey: ["sw", "email-marketing", "unsubscribe", token ?? "_none"],
-    enabled: !!token,
-    retry: false,
-    queryFn: () =>
-      api.get<TokenInfo>(`${BASE}/${encodeURIComponent(token!)}`),
-  });
-
-  const confirm = useMutation({
-    mutationFn: () =>
-      api.post<{ ok: boolean; message?: string }>(
-        `${BASE}/${encodeURIComponent(token!)}`,
-      ),
-  });
+  const info = useEmUnsubscribeInfo(token);
+  const confirm = useEmConfirmUnsubscribe(token);
 
   const showSkeleton = info.isPending && !info.data && !!token;
   const invalid = !token || (info.isError && !info.data);

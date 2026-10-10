@@ -97,6 +97,15 @@ def find_duplicated_functions(min_lines=5):
     return [{"function": k, "products": list(set(l["product"] for l in v)), "locations": v} for k, v in func_map.items() if len(set(l["product"] for l in v)) >= 2]
 
 
+def _is_test_file(path) -> bool:
+    """A vitest/playwright file next to a page. Its mocks legitimately build real
+    `useQuery`/`useMutation` (e.g. a mocked hooks module), so the "data hooks
+    belong in hooks/, not in pages" rule does not apply to it (2026-10-10:
+    email/Contatos.test.tsx tripped it)."""
+    name = getattr(path, "name", str(path))
+    return name.endswith((".test.tsx", ".spec.tsx", ".test.ts", ".spec.ts"))
+
+
 def find_inline_hooks():
     products = _list_products()
     issues = []
@@ -105,6 +114,8 @@ def find_inline_hooks():
         if not pages_dir.exists():
             continue
         for tsx in _find_files(pages_dir, "*.tsx"):
+            if _is_test_file(tsx):
+                continue
             content = _read(tsx)
             if content and ("useQuery(" in content or "useMutation(" in content):
                 issues.append({"product": product["name"], "file": str(tsx.relative_to(product["path"])), "severity": "warning"})

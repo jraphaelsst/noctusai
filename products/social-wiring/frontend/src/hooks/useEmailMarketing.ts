@@ -766,3 +766,34 @@ export function useEmDebrief(campaignId: string | null) {
       ),
   });
 }
+
+// ── Public unsubscribe (/descadastro/:token) ──────────────────────────
+// Token-authenticated, no session: the recipient is NOT logged in. Lives here
+// (not inline in the page) per the module's hooks-file pattern.
+
+const EM_UNSUBSCRIBE = "/api/email-marketing/unsubscribe";
+
+export interface EmUnsubscribeInfo {
+  email: string;
+  valid: boolean;
+}
+
+export function useEmUnsubscribeInfo(token: string | undefined) {
+  return useQuery({
+    queryKey: ["sw", "email-marketing", "unsubscribe", token ?? "_none"],
+    enabled: !!token,
+    retry: false,
+    queryFn: () =>
+      api.get<EmUnsubscribeInfo>(`${EM_UNSUBSCRIBE}/${encodeURIComponent(token!)}`),
+  });
+}
+
+export function useEmConfirmUnsubscribe(token: string | undefined) {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; already?: boolean; message?: string }>(
+        `${EM_UNSUBSCRIBE}/${encodeURIComponent(token!)}`,
+      ),
+  });
+}
+

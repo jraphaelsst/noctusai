@@ -25,6 +25,16 @@ class TestPatternFinder:
         hooks = find_inline_hooks()
         assert len(hooks) == 0, f"Found inline hooks: {hooks}"
 
+    def test_page_test_files_are_not_pages(self):
+        """A page's vitest file may build real hooks in its mocks; only pages count."""
+        from pathlib import Path
+
+        from tools.noctus.dev.analyzers import _is_test_file
+
+        assert _is_test_file(Path("pages/email/Contatos.test.tsx"))
+        assert _is_test_file(Path("pages/x/Y.spec.tsx"))
+        assert not _is_test_file(Path("pages/email/Contatos.tsx"))
+
 
 class TestDependencyAudit:
     def test_no_python_mismatches(self):
