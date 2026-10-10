@@ -554,3 +554,60 @@ class TestExibicaoPeloVinculo:
         b = client.get(f"/api/imoveis/{MANUAL}", headers=auth()).json()
         assert b["fonte"] == "manual" and b["titulo"] == "Casa Reserva do Vianna"
         assert b["vinculo"] == {"manual_codigo": MANUAL, "vista_codigo": VISTA}
+
+
+class TestVinculoComOLegalReal:
+    """End to end through the REAL `vinculo_legal` (no FakeVinculoLegal): the
+    seam between dup-A (link) and dup-B (legal data follows it) — each half's
+    own tests stub the other side."""
+
+    def _dados_vista(self, scoped):
+        from app.modules.imovel_hub import dados_service
+
+        return dados_service.obter(scoped, ORG, VISTA)
+
+    def test_vista_vazio_herda_a_matricula_do_cadastro_manual_e_desvincular_restaura(
+        self, client, scoped
+    ):
+        cenario(
+            scoped,
+            pares=[par_row()],
+            manual_dados={"numero_matricula": "12345", "numero_registro_imoveis": "1º CRI de Cotia"},
+        )
+        scoped.set_table_data("imovel_campo_conflitos", [])
+        antes = self._dados_vista(scoped)
+        assert not antes.get("numero_matricula")
+
+        out = vinc.vincular(scoped, ORG, par(scoped)["id"], ATOR)
+        assert out["legal"]["status"] == "ok", out["legal"]
+        depois = self._dados_vista(scoped)
+        assert depois["numero_matricula"] == "12345"
+        assert depois["vinculo_legal"]["fontes"]["numero_matricula"] == MANUAL
+        assert depois["vinculo_legal"]["conflitos"] == []
+
+        vinc.desvincular(scoped, ORG, MANUAL, ATOR)
+        restaurado = self._dados_vista(scoped)
+        assert not restaurado.get("numero_matricula")
+        assert restaurado.get("vinculo_legal") is None
+
+    def test_valores_diferentes_viram_conflito_e_desvincular_o_remove(self, client, scoped):
+        cenario(
+            scoped,
+            pares=[par_row()],
+            manual_dados={"numero_matricula": "12345"},
+            vista_dados={"numero_matricula": "99999"},
+        )
+        scoped.set_table_data("imovel_campo_conflitos", [])
+
+        out = vinc.vincular(scoped, ORG, par(scoped)["id"], ATOR)
+        assert out["legal"]["status"] == "ok", out["legal"]
+        conflitos = scoped.table("imovel_campo_conflitos").select("*").execute().data
+        assert [c.get("fonte_tabela") for c in conflitos] == ["vinculo"]
+        dados = self._dados_vista(scoped)
+        # never silently picks the manual value while the conflict is open
+        assert dados["numero_matricula"] == "99999"
+        assert "numero_matricula" in dados["vinculo_legal"]["conflitos"]
+
+        vinc.desvincular(scoped, ORG, VISTA, ATOR)  # either side's código
+        restantes = scoped.table("imovel_campo_conflitos").select("*").execute().data
+        assert [c for c in restantes if c.get("fonte_tabela") == "vinculo" and not c.get("resolvido_em")] == []
