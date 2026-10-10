@@ -4,7 +4,7 @@ import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
@@ -24,6 +24,14 @@ vi.mock("@/components/geracao/esteira/EquipeDialog", () => ({
 }));
 vi.mock("@/components/geracao/esteira/NovoPostDialog", () => ({
   NovoPostDialog: ({ open, marcaIdInicial }: any) => (open ? <div>novo-post:{marcaIdInicial}</div> : null),
+}));
+vi.mock("@/components/geracao/esteira/PostCardDialog", () => ({
+  PostCardDialog: ({ postId, onClose }: any) => (
+    <div>
+      post-aberto:{postId}
+      <button onClick={onClose}>fechar-post</button>
+    </div>
+  ),
 }));
 vi.mock("@/hooks/useMarcas", () => ({ useMarcas: () => m.marcas() }));
 vi.mock("@/hooks/geracao/useEsteira", () => ({ useEquipe: () => m.equipe() }));
@@ -108,5 +116,46 @@ describe("Esteira page filters", () => {
     expect(screen.getByText("novo-post:m1")).toBeInTheDocument();
     fireEvent.click(screen.getByText("board"));
     expect(onOpen).toHaveBeenCalledWith("p9");
+  });
+});
+
+function Busca() {
+  return <span data-testid="busca-url">{useLocation().search}</span>;
+}
+
+describe("Esteira post dialog (?post=)", () => {
+  function montarComUrl(url: string) {
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <MemoryRouter initialEntries={[url]}>
+          <Esteira />
+          <Busca />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("sem ?post= o dialog não é montado", () => {
+    montarComUrl("/x");
+    expect(screen.queryByText(/post-aberto/)).not.toBeInTheDocument();
+  });
+
+  it("abre a partir de ?post= (deep link)", () => {
+    montarComUrl("/x?post=p7");
+    expect(screen.getByText("post-aberto:p7")).toBeInTheDocument();
+  });
+
+  it("clicar num card do quadro põe ?post= e abre o dialog", () => {
+    montarComUrl("/x");
+    fireEvent.click(screen.getByText("board"));
+    expect(screen.getByTestId("busca-url").textContent).toContain("post=p9");
+    expect(screen.getByText("post-aberto:p9")).toBeInTheDocument();
+  });
+
+  it("fechar remove ?post= e preserva os outros filtros", () => {
+    montarComUrl("/x?marca=m1&post=p7");
+    fireEvent.click(screen.getByText("fechar-post"));
+    expect(screen.getByTestId("busca-url").textContent).toBe("?marca=m1");
+    expect(screen.queryByText(/post-aberto/)).not.toBeInTheDocument();
   });
 });

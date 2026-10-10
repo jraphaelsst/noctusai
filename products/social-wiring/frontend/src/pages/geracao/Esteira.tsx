@@ -5,7 +5,7 @@
  * Filters live in the URL: `?marca=<id|todas>` (first visit with no param falls back to
  * the remembered `sw.pesquisa.marca`, else Todas), `?busca=` (debounced), `?membro=`,
  * `?arquivados=1`. `?post=<id>` is the card deep link: this page only sets/clears it;
- * the post dialog itself is FE-2's and is wired through `onOpenPost` (default: set `?post=`).
+ * `PostCardDialog` (FE-2) is mounted here, driven by `?post=`; closing removes the param.
  */
 import { useEffect, useState } from "react";
 import { Users } from "lucide-react";
@@ -13,6 +13,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { EquipeDialog } from "@/components/geracao/esteira/EquipeDialog";
 import { EsteiraBoard } from "@/components/geracao/esteira/EsteiraBoard";
+import { PostCardDialog } from "@/components/geracao/esteira/PostCardDialog";
 import { NovoPostDialog } from "@/components/geracao/esteira/NovoPostDialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -82,6 +83,8 @@ export default function Esteira({ onOpenPost }: EsteiraPageProps = {}) {
     if (onOpenPost) onOpenPost(id);
     else setParam("post", id);
   }
+
+  const postAberto = params.get("post");
 
   const filtros: EsteiraFiltros = {
     marca_id: marcaId,
@@ -155,6 +158,7 @@ export default function Esteira({ onOpenPost }: EsteiraPageProps = {}) {
         <EsteiraBoard filtros={filtros} onOpenPost={abrirPost} />
       )}
 
+      {postAberto && <PostCardDialog postId={postAberto} onClose={() => setParam("post", null)} />}
       <EquipeDialog open={equipeAberta} onClose={() => setEquipeAberta(false)} />
       <NovoPostDialog
         open={novoAberto}
