@@ -192,6 +192,8 @@ export type {
   RealtimeEventName,
   UseRealtimeStreamOptions,
 } from './realtime';
+export { readSseStream } from './realtime/readSseStream';
+export type { ReadSseStreamOptions } from './realtime/readSseStream';
 export { lazyWithReload } from "./lazyWithReload";
 
 // ─── Edição de Fotos (seed feature) ──────────────────────────────────────────

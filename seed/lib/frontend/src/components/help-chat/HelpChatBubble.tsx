@@ -34,6 +34,7 @@ import { cn } from "../../utils";
 import { useSheetLayout } from "../card-hub/useSheetLayout";
 import { MarkdownRenderer } from "../markdown";
 import { extractErrorMessage } from "../../api";
+import { readSseStream } from "../../realtime/readSseStream";
 import type { CreateApiClientOptions } from "../../api";
 
 export interface HelpChatMessage {
@@ -419,42 +420,21 @@ export function HelpChatBubble({
           return;
         }
 
-        const reader = res.body?.getReader();
-        if (!reader) {
-          throw new Error("Streaming não é suportado neste navegador.");
-        }
-        const decoder = new TextDecoder();
-        let buffer = "";
         let sawError: { code?: string; message: string } | null = null;
         let sawTruncated = false;
         let sawEncerrado = false;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const frames = buffer.split("\n\n");
-          buffer = frames.pop() ?? "";
-          for (const frame of frames) {
-            const line = frame.trim();
-            if (!line.startsWith("data: ")) continue;
-            let payload: any;
-            try {
-              payload = JSON.parse(line.slice("data: ".length));
-            } catch {
-              continue; // a malformed frame is dropped, not fatal to the stream
-            }
-            if (typeof payload?.delta === "string") {
-              applyDelta(payload.delta);
-            } else if (payload?.error) {
-              sawError = payload.error;
-            } else if (payload?.truncated === true) {
-              sawTruncated = true;
-            } else if (payload?.encerrado === true) {
-              sawEncerrado = true;
-            }
-            // `payload.done` needs no handling — the loop's own end is the signal.
+        for await (const payload of readSseStream<any>(res, { signal: controller.signal })) {
+          if (typeof payload?.delta === "string") {
+            applyDelta(payload.delta);
+          } else if (payload?.error) {
+            sawError = payload.error;
+          } else if (payload?.truncated === true) {
+            sawTruncated = true;
+          } else if (payload?.encerrado === true) {
+            sawEncerrado = true;
           }
+          // `payload.done` needs no handling — the loop's own end is the signal.
         }
 
         if (sawError) {
