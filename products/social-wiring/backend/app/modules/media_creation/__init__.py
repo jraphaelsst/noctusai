@@ -78,6 +78,7 @@ def register() -> Any:
     """
     from app.modules.media_creation.routers import (
         assuntos_virais,
+        biblioteca,
         brand_kits,
         branding,
         cerebro,
@@ -112,6 +113,14 @@ def register() -> Any:
 
     geracao_scheduler.configure()
 
+    # Biblioteca: handlers + the `biblioteca_viral` transcription context + daily sync / pending sweep.
+    from app.modules.media_creation import biblioteca_scheduler
+    from app.modules.media_creation.services import biblioteca_ingestao, biblioteca_transcricao
+
+    biblioteca_ingestao.register_handlers()
+    biblioteca_transcricao.register_contexto()
+    biblioteca_scheduler.configure()
+
     async def start_pesquisa_extracao_hook() -> None:
         """Its OWN seed Worker (types ["pesquisa.extrair"]), NOT the fotos one (that one's claim
         gate is the fotos pause). A wiring failure is logged at ERROR and never aborts startup."""
@@ -145,6 +154,7 @@ def register() -> Any:
             dashboard_criacao.router,
             chat.router,
             roteiros.router,
+            biblioteca.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
