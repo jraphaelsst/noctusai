@@ -5875,26 +5875,39 @@ _SSO_PROMOTION_PROBE = GuardProbe(
     sql=_do_block("""
 DECLARE
   v_id uuid;
+  v_path text := 'INSERT';
 BEGIN
   IF to_regprocedure('public.enforce_sso_promotion_probe()') IS NULL THEN
     RAISE EXCEPTION 'NOC_PROBE:no_fixture: enforce_sso_promotion_probe() missing — core 075 not applied';
   END IF;
-  SELECT id INTO v_id FROM public.products WHERE ativo IS TRUE AND deploy_scope = 'dev' LIMIT 1;
-  IF v_id IS NULL THEN
-    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no active dev product to attempt a promotion on';
-  END IF;
+  -- Path 1 (always runs, catalog-independent): INSERT a synthetic live row.
   BEGIN
-    UPDATE public.products SET deploy_scope = 'live', sso_callback_verified_at = NULL WHERE id = v_id;
-    RAISE EXCEPTION 'NOC_PROBE:permitted: promotion to live without a probe verdict succeeded — the guard did not fire';
+    INSERT INTO public.products (nome, slug, url_base, ativo, deploy_scope, sso_callback_verified_at)
+    VALUES ('noc-probe', 'noc-probe-sso-promotion', 'https://noc-probe.invalid', true, 'live', NULL);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: INSERT of a live product without a probe verdict succeeded — the guard did not fire';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
       RAISE;
-    ELSIF SQLERRM LIKE '%without a passing SSO callback probe%' THEN
-      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
-    ELSE
-      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    ELSIF SQLERRM NOT LIKE '%without a passing SSO callback probe%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected INSERT error (not the guard under test): %', SQLERRM;
     END IF;
   END;
+  -- Path 2 (only when a dev product happens to exist): UPDATE transition.
+  SELECT id INTO v_id FROM public.products WHERE ativo IS TRUE AND deploy_scope = 'dev' LIMIT 1;
+  IF v_id IS NOT NULL THEN
+    v_path := 'INSERT+UPDATE';
+    BEGIN
+      UPDATE public.products SET deploy_scope = 'live', sso_callback_verified_at = NULL WHERE id = v_id;
+      RAISE EXCEPTION 'NOC_PROBE:permitted: UPDATE promotion to live without a probe verdict succeeded — the guard did not fire';
+    EXCEPTION WHEN OTHERS THEN
+      IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+        RAISE;
+      ELSIF SQLERRM NOT LIKE '%without a passing SSO callback probe%' THEN
+        RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected UPDATE error (not the guard under test): %', SQLERRM;
+      END IF;
+    END;
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:refused: % path(s) refused by enforce_sso_promotion_probe', v_path;
 END;
 """),
 )
