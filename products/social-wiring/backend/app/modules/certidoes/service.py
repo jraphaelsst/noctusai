@@ -76,7 +76,6 @@ from xhtml2pdf import pisa
 from xhtml2pdf.config.resources import ResourceAccessPolicy
 
 from app.modules.card_hub.contrato_gerador import certidao_pcen
-from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
 from app.modules.certidoes import aprendizado, cost_ledger, feed_parte
 from app.modules.certidoes.cenprot import CenprotEstrutura, estruturar_cenprot
 from app.modules.certidoes.credentials import (
@@ -4291,15 +4290,11 @@ def _aplicar_crednet_a_resultado(
     ).data or []
     resultado = rows[0] if rows else None
     novo_em = leitura.consulta_em.date().isoformat() if leitura.consulta_em else None
-    # A Crednet older than the contract window would land a cell the contract
-    # gate (`derivacao`, `certidao_max_dias`) rejects anyway — leave the cell
-    # pendente so the operator emits a fresh one instead of trusting a stale
-    # reading. An undated Crednet is not skipped: its age is unknowable.
-    if leitura.consulta_em is not None:
-        idade = (datetime.now(timezone.utc).date() - leitura.consulta_em.date()).days
-        if idade >= POLITICA_PADRAO.certidao_max_dias:
-            return False
-
+    # No age gate here: the cell stores exactly what the Crednet prints (its
+    # consulta date). The contract's single age authority (`derivacao`:
+    # `certidao_max_dias`, with the processo-anterior-à-plataforma waiver)
+    # judges it and says "emitida há N dias". Dropping a stale reading here
+    # left the cell silently missing with no explanation.
     # A consulta with NO `serasa` resultado at all is one the automatic
     # emission created (`certidoes_partes_service._criar_consulta_automatica`
     # only fans out the InfoSimples types; `serasa` has no API call). The

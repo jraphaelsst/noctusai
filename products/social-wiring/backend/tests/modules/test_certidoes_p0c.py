@@ -344,8 +344,9 @@ class TestPurgePrefixSafety:
 
 
 class TestCrednetMaisAntigaQueAJanelaDoContrato:
-    """A Crednet older than `politica.certidao_max_dias` would land a cell the
-    contract gate rejects anyway — it must leave the cell `pendente` instead."""
+    """A stale Crednet is never silently dropped: the cell is filled with the
+    reading's real consulta date and the contract's age authority
+    (`derivacao`) judges it (block, or warning under processo-anterior)."""
 
     def _alvo(self):
         cliente_id = str(uuid4())
@@ -356,30 +357,29 @@ class TestCrednetMaisAntigaQueAJanelaDoContrato:
     def _linha(self, client, resultado):
         return client.table(RESULTADOS).select("*").eq("id", resultado["id"]).execute().data[0]
 
-    def test_registrar_ignora_crednet_velha(self):
+    def test_registrar_preenche_com_crednet_velha_e_data_real(self):
         cliente_id, consulta, resultado, client = self._alvo()
         n = service.registrar_serasa_de_crednet(
             client, ORG, cliente_id, _doc(), _Leitura(consulta_em=_ANTIGA),
         )
-        assert n == 0
+        assert n == 1
         row = self._linha(client, resultado)
-        assert row["status"] == "pendente" and row["numero"] is None
+        assert row["status"] == "sucesso"
+        assert row["emitida_em"] == _ANTIGA.date().isoformat()
 
-    def test_exatamente_no_limite_ja_e_velha(self):
-        from app.modules.card_hub.contrato_gerador.politica import POLITICA_PADRAO
+    def test_consulta_automatica_sem_linha_serasa_cria_a_celula_velha(self):
+        cliente_id = str(uuid4())
+        consulta = _consulta(cliente_id=cliente_id, origem="automatica")
+        client = _client(**{CONSULTAS: [consulta], RESULTADOS: []})
+        n = service.registrar_serasa_de_crednet(
+            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=_ANTIGA),
+        )
+        assert n == 1
+        rows = client.table(RESULTADOS).select("*").eq("consulta_id", consulta["id"]).execute().data
+        assert len(rows) == 1 and rows[0]["tipo"] == "serasa"
+        assert rows[0]["emitida_em"] == _ANTIGA.date().isoformat()
 
-        limite = POLITICA_PADRAO.certidao_max_dias
-        agora = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
-        cliente_id, consulta, resultado, client = self._alvo()
-        assert service.registrar_serasa_de_crednet(
-            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=agora - timedelta(days=limite)),
-        ) == 0
-        assert service.registrar_serasa_de_crednet(
-            client, ORG, cliente_id, _doc(),
-            _Leitura(consulta_em=agora - timedelta(days=limite - 1)),
-        ) == 1
-
-    def test_aplicar_pendente_deixa_a_celula_pendente_com_crednet_velha(self):
+    def test_aplicar_pendente_preenche_com_crednet_velha(self):
         cliente_id, consulta, resultado, _ = self._alvo()
         crednet = {
             "id": str(uuid4()), "storage_path": f"{ORG}/clientes/{cliente_id}/crednet-doc",
@@ -395,9 +395,21 @@ class TestCrednetMaisAntigaQueAJanelaDoContrato:
                 "tipo_documento": "serasa_crednet", "extracao_status": "ok", "deleted_at": None,
             }],
         })
-        assert service.aplicar_crednet_pendente(client, ORG, consulta) is False
+        assert service.aplicar_crednet_pendente(client, ORG, consulta) is True
         row = self._linha(client, resultado)
-        assert row["status"] == "pendente" and row["numero"] is None
+        assert row["status"] == "sucesso" and row["emitida_em"] == _ANTIGA.date().isoformat()
+
+    def test_manual_confirmada_continua_protegida_com_crednet_velha(self):
+        cliente_id = str(uuid4())
+        consulta = _consulta(cliente_id=cliente_id)
+        resultado = _resultado(
+            consulta_id=consulta["id"], status="sucesso", resultado_origem="manual",
+            emitida_em="2026-01-01",
+        )
+        client = _client(**{CONSULTAS: [consulta], RESULTADOS: [resultado]})
+        assert service.registrar_serasa_de_crednet(
+            client, ORG, cliente_id, _doc(), _Leitura(consulta_em=_ANTIGA),
+        ) == 0
 
     def test_crednet_sem_data_nao_e_pulada(self):
         cliente_id, consulta, resultado, client = self._alvo()
