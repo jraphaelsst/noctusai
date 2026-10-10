@@ -16160,6 +16160,8 @@ def check_all_products() -> tuple[int, list]:
     # Hand-copied org-admin UX gate (2026-10-09) — the seed's isOrgAdmin /
     # useIsOrgAdmin is the only home. KB § PATTERNS/frontend/org-admin-ux-gate.md.
     all_issues.extend(check_hand_copied_org_admin())
+    # Private unique-violation predicate (2026-10-10) — one canonical home.
+    all_issues.extend(check_private_unique_violation_predicate())
     # status_pagina dev-visibility parity (2026-07-29) — the RLS policy that
     # RETURNS a 'desenvolvimento' row and the FE const that RENDERS it are two
     # halves of one contract in two languages across N+1 files. Divergence is
@@ -22353,6 +22355,57 @@ def check_hand_copied_org_admin(repo_root: Path | None = None) -> list[dict]:
                     ),
                     "severity": "high",
                 })
+    return issues
+
+
+# ─── check_private_unique_violation_predicate ────────────────────────────────
+# `_is_unique_violation` was privately re-implemented ~10x (3 different
+# predicates, one matching a bare "unique") before it was formalized as
+# `noctusai_lib.primitives.postgrest_errors.is_unique_violation` (2026-10-10).
+
+_PUV_NAMES = frozenset({"_is_unique_violation", "is_unique_violation", "_is_duplicate_key", "_is_duplicate_key_error"})
+_PUV_CANONICAL = "seed/lib/backend/noctusai_lib/primitives/postgrest_errors.py"
+
+
+def check_private_unique_violation_predicate(repo_root: Path | None = None) -> list[dict]:
+    """Keeper: no private PostgREST unique-violation (23505) predicate.
+
+    Flags any `def _is_unique_violation` / `is_unique_violation` /
+    `_is_duplicate_key` in seed lib backend or an awake product's backend
+    `app/` (non-test) outside the canonical module. Fix: import
+    `is_unique_violation` from `noctusai_lib.primitives.postgrest_errors`; a
+    site needing one constraint narrows with `and "<constraint>" in str(exc)`.
+    Severity high (blocking). → `KB § PATTERNS/backend/postgrest-row-cap.md`
+    (§ Unique-violation predicate).
+    """
+    import ast as _ast
+
+    root = repo_root or REPO_ROOT
+    roots = [root / "seed" / "lib" / "backend" / "noctusai_lib"]
+    roots += [d / "backend" / "app" for d in _active_product_dirs(root / "products")]
+    issues: list[dict] = []
+    for base in roots:
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.py")):
+            rel = str(f.relative_to(root))
+            if rel == _PUV_CANONICAL or "tests" in f.relative_to(base).parts or "node_modules" in f.parts:
+                continue
+            try:
+                tree = _ast.parse(f.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in _ast.walk(tree):
+                if isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and node.name in _PUV_NAMES:
+                    issues.append({
+                        "product": "<seed>" if "noctusai_lib" in base.parts else base.parts[-3],
+                        "file": f"{rel}:{node.lineno}",
+                        "issue": (
+                            f"private unique-violation predicate `{node.name}` — import "
+                            "`is_unique_violation` from noctusai_lib.primitives.postgrest_errors"
+                        ),
+                        "severity": "high",
+                    })
     return issues
 
 

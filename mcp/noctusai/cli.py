@@ -241,6 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-no-self-monkeypatch", action="store_true", help="Keeper: tests that patch OUR OWN code instead of exercising it (CLAUDE.md §1). Same predicate the PreToolUse `test_seam_guard` denies writes with — one definition, two enforcement points. Exists as a TARGETED flag because the only other way to run it was the ~15-minute compliance suite, and a feedback loop that slow is how 56 findings accumulated unnoticed. Escape hatch: `# self-patch-ok: <reason>` on the patching line. KB § PATTERNS/compliance/testing.md.")
     parser.add_argument("--check-postgrest-schema-qualified-table", action="store_true", help="Keeper: a Supabase/PostgREST client is ALREADY schema-bound, so `.table(name)`/`.from_(name)` resolves RELATIVE to that schema and never parses a dot as a separator. `db.table(f\"{deps._db.schema}.invitations\")` therefore asks for `<schema>.<schema>.<table>` → 500 \"Could not find the table ... in the schema cache\" on EVERY call, phrased so it reads as a missing migration. Invisible to unit tests: MockSupabaseClient keys tables by whatever string it is handed, so a qualified fixture agrees with a qualified caller (fixture-vs-real false-green). Live incident 2026-08-06 — seed team router, all 9 products mounting it, green in CI ~3 months. Scans seed/** + products/*/backend/** *.py for the interpolated + literal shapes. Severity high. Escape hatch: `postgrest-qualified-ok` comment. KB § PATTERNS/backend/postgrest-schema-targeting.md.")
     parser.add_argument("--check-hand-copied-org-admin", action="store_true", help="Keeper: awake product frontends must not hand-copy the org-admin UX gate (`isProductAdmin || org.role owner/admin`) — use useIsOrgAdmin()/isOrgAdmin(ctx) from @noctusai/lib. Severity high; blocking.")
+    parser.add_argument("--check-private-unique-violation-predicate", action="store_true", help="Keeper: no private PostgREST unique-violation predicate outside noctusai_lib.primitives.postgrest_errors. Severity high; blocking.")
     parser.add_argument("--check-no-metadata-authz", action="store_true", help="Keeper: user_metadata org_id/role/org_role is USER-WRITABLE — forbid backend reads of it for authorization/scoping (trusted source: public.noctus_users). Severity high; blocking.")
     parser.add_argument("--check-secdef-migration-revokes-execute", action="store_true", help="Keeper: a migration creating a SECURITY DEFINER function must REVOKE EXECUTE FROM PUBLIC/anon/authenticated in the same file (static twin of the verify_db_guards secdef probe). Legacy files baselined. Severity high; blocking.")
     parser.add_argument("--check-migration-untyped-empty-array", action="store_true", help="Keeper: untyped empty `ARRAY[]` (no ::type) in migration SQL fails on apply with 42P18. Severity high; blocking.")
@@ -1790,6 +1791,17 @@ def main():
             print(f"  {GREEN}✓ hand-copied-org-admin: clean (no inline org-admin gate in awake product frontends).{RESET}")
             sys.exit(0)
         print(f"  {RED}✗ {len(issues)} hand-copied org-admin gate(s) — use useIsOrgAdmin()/isOrgAdmin(ctx) from @noctusai/lib:{RESET}")
+        for i in issues:
+            print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+
+    elif args.check_private_unique_violation_predicate:
+        from tools.noctus.dev.compliance import check_private_unique_violation_predicate
+        issues = check_private_unique_violation_predicate()
+        if not issues:
+            print(f"  {GREEN}✓ private-unique-violation-predicate: clean.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ {len(issues)} private unique-violation predicate(s) — import is_unique_violation from noctusai_lib.primitives.postgrest_errors:{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
         sys.exit(1)

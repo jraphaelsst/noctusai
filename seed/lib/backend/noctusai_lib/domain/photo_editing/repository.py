@@ -63,6 +63,7 @@ from noctusai_lib.domain.photo_editing.types import (
     can_transition,
 )
 from noctusai_lib.domain.photo_editing.prompts.note_writer import ModelMetrics
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 _BATCH_MUTABLE = frozenset(
     {
@@ -1232,11 +1233,6 @@ def _row_of(record: Any, *, drop: tuple[str, ...] = ()) -> dict[str, Any]:
     }
 
 
-def _is_unique_violation(exc: Exception) -> bool:
-    text = f"{getattr(exc, 'code', '')} {exc}"
-    return "23505" in text or "duplicate key" in text.lower()
-
-
 # ---------------------------------------------------------------------------
 # Supabase implementation
 # ---------------------------------------------------------------------------
@@ -1972,7 +1968,7 @@ class SupabasePhotoEditingRepository:
                 },
             )
         except Exception as exc:
-            if not _is_unique_violation(exc):
+            if not is_unique_violation(exc):
                 raise
             # UNIQUE (org_id, sha256): a concurrent submit won the insert.
             raced = await self._find_effective(org_id, sha256)

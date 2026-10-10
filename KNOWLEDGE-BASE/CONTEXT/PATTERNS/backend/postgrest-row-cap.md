@@ -244,3 +244,7 @@ fix for a class that already recurred once, ask whether the test
 infrastructure itself is the reason it recurred. Here it was: the seventh
 fix (`clientes_service.list_review_groups`) named this explicitly in its own
 commit message before the mock fix landed.
+
+## Unique-violation predicate (one home)
+
+"Did I lose a UNIQUE/PK race (23505)?" is `noctusai_lib.primitives.postgrest_errors.is_unique_violation` — code `23505` ∨ `"23505"`/`"duplicate key"` in the message; never a bare `"unique"`. A site needing ONE constraint narrows explicitly on top (`and "<constraint>" in str(exc)`). Private copies (`_is_unique_violation`, `_is_duplicate_key`) are blocked by keeper `check_private_unique_violation_predicate`.

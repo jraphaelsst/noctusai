@@ -64,13 +64,6 @@ def table(client: Any, name: str):
     return client.table(name)
 
 
-def is_unique_violation(exc: Exception) -> bool:
-    """Did this PostgREST error come from a UNIQUE/PK conflict (SQLSTATE
-    23505)? A write that must know it LOST a race (a generated key) asks
-    this instead of string-matching at the call site."""
-    return getattr(exc, "code", None) == "23505" or "duplicate key" in str(exc).lower()
-
-
 def batched(items: list, size: int = IN_FILTER_BATCH) -> Iterator[list]:
     """Yield `items` in chunks of `size` — see `IN_FILTER_BATCH`."""
     for i in range(0, len(items), size):

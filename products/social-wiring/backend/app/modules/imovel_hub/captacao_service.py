@@ -42,6 +42,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import AppException, NotFoundError, ValidationError_
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.imovel_hub import dados_service as dados_svc
 from app.modules.imovel_hub import duplicatas_service as dup_svc
@@ -334,7 +335,7 @@ def registrar_manual(
                 client, org_id, candidato, display=candidato, origem="manual"
             )
         except Exception as exc:  # noqa: BLE001 — re-raised unless it is the unique race
-            if table_reads.is_unique_violation(exc):
+            if is_unique_violation(exc):
                 logger.warning("captacao manual: %s taken concurrently, retrying", candidato)
                 continue
             raise

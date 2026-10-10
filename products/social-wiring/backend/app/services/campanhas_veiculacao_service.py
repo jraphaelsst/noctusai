@@ -24,6 +24,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.imovel_hub import busca_service
 from app.services.campanhas_service import (
@@ -61,13 +62,6 @@ class VeiculacaoEmUso(CampanhaError):
         self.ref_codigo = ref_codigo
         self.campanha_nome = campanha_nome
         super().__init__(f"{nivel}:{ref_codigo}")
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    text = str(exc)
-    return "campanha_veiculacoes_meta_ref_unico" in text or "23505" in text or (
-        "duplicate key" in text.lower()
-    )
 
 
 class CampanhasVeiculacaoService:
@@ -336,7 +330,7 @@ class CampanhasVeiculacaoService:
         self, org_id: UUID, exc: Exception, veics: list[dict], own: Optional[str] = None
     ) -> Exception:
         """A race past the pre-check surfaces as the unique index firing."""
-        if _is_unique_violation(exc) and veics:
+        if is_unique_violation(exc) and veics:
             for v in veics:
                 try:
                     self._check_veiculacoes(org_id, [v], own_campanha_id=own)

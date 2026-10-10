@@ -30,6 +30,7 @@ from noctusai_lib.domain.engagement import (
 from noctusai_lib.integrations.whatsapp.lid_auth import normalize_phone
 from noctusai_lib.integrations.whatsapp.types import WhatsAppInboundMessage
 from noctusai_lib.primitives.tasks import schedule_coro
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.config import settings
 from app.dependencies import get_admin_client, resolve_public_org_id
@@ -47,12 +48,6 @@ _GRUPO_MENSAGENS = "grupo_mensagens"
 _ENGAGEMENT_RULES = RuleSet.from_rules([
     PointRule(source="whatsapp", action="mensagem_grupo", points=1, daily_cap=20),
 ])
-
-_UNIQUE_VIOLATION_CODE = "23505"
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    return getattr(exc, "code", None) == _UNIQUE_VIOLATION_CODE
 
 
 async def handle_inbound(
@@ -120,7 +115,7 @@ async def handle_inbound(
     try:
         result = client.table(_GRUPO_MENSAGENS).insert(mensagem_row).execute()
     except Exception as exc:  # noqa: BLE001 — narrowed below
-        if _is_unique_violation(exc):
+        if is_unique_violation(exc):
             logger.debug(
                 "ingest: duplicate provider_message_id grupo_id=%s — DB backstop no-op",
                 grupo["id"],

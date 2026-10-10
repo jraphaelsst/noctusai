@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
 
 from noctusai_lib.domain.engagement.value_objects import PointAward
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 
 @runtime_checkable
@@ -143,7 +144,7 @@ class RealSupabasePointsLedger:
         try:
             builder.execute()
         except Exception as exc:  # noqa: BLE001 - narrowed below
-            if _is_unique_violation(exc):
+            if is_unique_violation(exc):
                 return False
             raise
         return True
@@ -184,16 +185,6 @@ def _row_to_award(row: dict[str, Any]) -> PointAward:
         occurred_at=occurred_at,
         idempotency_key=row["idempotency_key"],
     )
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    """True iff `exc` is a PostgREST `23505` (unique constraint
-    violation). Duplicated from
-    `payments.event_inbox._is_unique_violation` (not imported) for the
-    same reason that module gives: this is never an HTTP-response path,
-    so it must not import the FastAPI-facing
-    `noctusai_lib.primitives.exceptions.postgrest_exception_handler`."""
-    return getattr(exc, "code", None) == "23505"
 
 
 def make_points_ledger(

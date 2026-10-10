@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any, Protocol, runtime_checkable
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 
 @runtime_checkable
@@ -133,7 +134,7 @@ class RealSupabaseEventInbox:
         try:
             builder.execute()
         except Exception as exc:  # noqa: BLE001 - narrowed below
-            if _is_unique_violation(exc):
+            if is_unique_violation(exc):
                 return False
             raise
         return True
@@ -146,18 +147,6 @@ class RealSupabaseEventInbox:
             .eq("event_id", event_id)
             .execute()
         )
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    """True iff `exc` is a PostgREST `23505` (unique constraint
-    violation). Matches `noctusai_lib.primitives.exceptions.
-    postgrest_exception_handler`'s own `pg_code == "23505"` check —
-    duplicated here (not imported) because that module raises an HTTP
-    response, and this one must never raise HTTP from inside a webhook
-    or job-worker call path (same rationale as `noctusai_lib.
-    integrations.payments.errors.PaymentGatewayError`).
-    """
-    return getattr(exc, "code", None) == "23505"
 
 
 def make_event_inbox(

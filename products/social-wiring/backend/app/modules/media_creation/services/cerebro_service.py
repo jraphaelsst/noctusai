@@ -28,6 +28,7 @@ from typing import Any, Optional
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.persistence.table_reads import PAGE_SIZE, batched
 from noctusai_lib.integrations.storage import StorageBackend
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.media_creation.cerebro_templates import (
     TEMPLATES,
@@ -113,11 +114,6 @@ def block_header(kind: str, label: str, when: Optional[datetime] = None) -> str:
 def _is_over_limit(exc: Exception) -> bool:
     msg = str(exc).lower()
     return "check_violation" in msg or "23514" in msg or "cs_brains_content_check" in msg
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return "23505" in msg or "duplicate key" in msg or "unique" in msg
 
 
 # ── stale sweeps (scheduler + read-time refresh) ────────────────────────────
@@ -337,7 +333,7 @@ class CerebroService:
                     "created_by": self.user_id,
                 }).execute()
             except Exception as exc:  # noqa: BLE001 - lost a creation race? re-read decides
-                if not _is_unique_violation(exc):
+                if not is_unique_violation(exc):
                     raise
                 logger.info("cerebro: sistema brain %s already created concurrently", spec.slug)
         if missing:
@@ -377,7 +373,7 @@ class CerebroService:
                 "created_by": self.user_id,
             }).execute().data
         except Exception as exc:  # noqa: BLE001 - unique backstop under a race
-            if _is_unique_violation(exc):
+            if is_unique_violation(exc):
                 raise CerebroError(409, "Já existe um cérebro com esse nome") from exc
             raise
         return self._summary(res[0])
@@ -419,7 +415,7 @@ class CerebroService:
                 .eq("id", brain_id).eq("org_id", self.org_id).execute().data
             )
         except Exception as exc:  # noqa: BLE001 - unique backstop under a race
-            if _is_unique_violation(exc):
+            if is_unique_violation(exc):
                 raise CerebroError(409, "Já existe um cérebro com esse nome") from exc
             raise
         return self._summary(res[0] if res else {**row, "name": name})
@@ -532,7 +528,7 @@ class CerebroService:
                 }).execute().data
                 return self._answer_out(qid, res[0])
             except Exception as exc:  # noqa: BLE001 - concurrent first autosave: fall through to update
-                if not _is_unique_violation(exc):
+                if not is_unique_violation(exc):
                     raise
                 existing = self._answer_row(brain_id, qid)
                 if existing is None:
@@ -564,7 +560,7 @@ class CerebroService:
                 }).execute().data
                 return self._answer_out(qid, res[0])
             except Exception as exc:  # noqa: BLE001 - concurrent first autosave: fall through to update
-                if not _is_unique_violation(exc):
+                if not is_unique_violation(exc):
                     raise
                 existing = self._answer_row(brain_id, qid)
                 if existing is None:
@@ -825,7 +821,7 @@ class CerebroService:
                     "updated_by": self.user_id, "updated_at": now,
                 }).execute()
             except Exception as exc:  # noqa: BLE001 - concurrent first save: the row exists now, update it
-                if not _is_unique_violation(exc):
+                if not is_unique_violation(exc):
                     raise
                 self.db.table(PERFIL).update({"bio": bio, "updated_by": self.user_id, "updated_at": now}) \
                     .eq("marca_id", marca_id).eq("org_id", self.org_id).execute()

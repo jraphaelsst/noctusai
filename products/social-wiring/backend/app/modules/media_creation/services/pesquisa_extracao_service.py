@@ -36,6 +36,7 @@ from typing import Any, Callable, Optional
 from noctusai_lib.domain.jobs import DeadLetterError, JobRepository
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.integrations.persistence.table_reads import PAGE_SIZE, batched
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.media_creation.pesquisa_fontes import FONTES, InvalidCursor, PostFonte
 from app.modules.media_creation.pesquisa_wave2_constants import (
@@ -93,10 +94,6 @@ def present_job(row: dict[str, Any]) -> dict[str, Any]:
         out[k] = int(row.get(k) or 0)
     out["progress"] = round(100 * done / max(total, 1))
     return out
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    return getattr(exc, "code", None) == "23505" or "duplicate key" in str(exc).lower()
 
 
 def _fonte(db, kind: str, texto_max_chars: int):
@@ -342,7 +339,7 @@ class PesquisaExtracaoService:
                 "created_at": _iso(_now()),
             }).execute().data
         except Exception as exc:  # noqa: BLE001 - unique index = a concurrent active job
-            if _is_unique_violation(exc):
+            if is_unique_violation(exc):
                 raise PesquisaError(409, "Já existe uma extração em andamento") from exc
             raise
         row = inserted[0] if inserted else {

@@ -54,6 +54,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.meta import MetaGraphError
 from noctusai_lib.integrations.meta.leadgen_webhook import LeadgenEvent
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,7 @@ class LeadgenWebhookService:
             # Anything else still must not raise — the caller owes Meta a
             # 200, and an un-inserted row is strictly better than a retry
             # storm that can cost us the subscription.
-            if _is_duplicate_key(exc):
+            if is_unique_violation(exc):
                 logger.info(
                     "meta-leadgen: duplicate delivery for leadgen_id=%s", event.leadgen_id
                 )
@@ -932,18 +933,6 @@ def _event_from_row(row: dict[str, Any]) -> LeadgenEvent:
         created_time=dt,
         raw=row.get("payload") or {},
     )
-
-
-def _is_duplicate_key(exc: Exception) -> bool:
-    """PostgREST surfaces a PK conflict as SQLSTATE 23505 / 'duplicate key'.
-
-    Matched on the message because the Supabase client raises a generic
-    APIError rather than a typed conflict — narrow enough to not swallow a
-    real failure, since anything that is NOT a duplicate falls through to the
-    exception branch and gets logged.
-    """
-    text = str(exc).lower()
-    return "23505" in text or "duplicate key" in text
 
 
 __all__ = [

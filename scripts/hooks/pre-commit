@@ -935,6 +935,19 @@ if [[ -n "$STAGED_ORG_ADMIN_FE" ]] && have_py; then
     }
 fi
 
+# ─── 6f3. Private unique-violation predicate (blocking, only when backend ───
+# Python changed) ────────────────────────────────────────────────────────
+# Keeper `check_private_unique_violation_predicate` + `KB § PATTERNS/backend/
+# postgrest-row-cap.md`. One canonical `is_unique_violation` in the seed lib.
+STAGED_PUV_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(seed/lib/backend/noctusai_lib|products/[^/]+/backend/app)/.*\.py$' || true)
+if [[ -n "$STAGED_PUV_PY" ]] && have_py; then
+    echo "[pre-commit] backend Python staged — checking for private unique-violation predicates..."
+    "$PY" "$CLI" --check-private-unique-violation-predicate --worktree-path "$REPO_ROOT" || {
+        echo "[pre-commit] Import is_unique_violation from noctusai_lib.primitives.postgrest_errors." >&2
+        exit 1
+    }
+fi
+
 # ─── 6g. PostgREST schema-qualified table gate (blocking, only when backend ──
 # Python changed) ────────────────────────────────────────────────────────
 # Keeper `check_postgrest_schema_qualified_table` +

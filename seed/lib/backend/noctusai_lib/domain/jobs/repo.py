@@ -32,6 +32,7 @@ from noctusai_lib.domain.jobs.retry_policy import (
     RetryPolicy,
     next_retry_at,
 )
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 
 class DeadLetterError(RuntimeError):
@@ -475,22 +476,6 @@ def _stats_of(jobs: Any, *, job_types: list[str] | None, now: datetime) -> Queue
     )
 
 
-# ---------------------------------------------------------------------------
-# Real implementation (Supabase-client backed)
-# ---------------------------------------------------------------------------
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    """True when `exc` is Postgres error 23505 (unique_violation) — the
-    `dedupe_key` uniqueness constraint firing on a concurrent duplicate
-    `enqueue`. Duck-typed on `.code` so it recognizes both
-    `postgrest.exceptions.APIError` (the real supabase-py client's
-    error shape) and a lookalike test double, without an import
-    coupling to the `postgrest` package.
-    """
-    return getattr(exc, "code", None) == "23505"
-
-
 class RealSupabaseJobRepository:
     """Supabase-client backed `JobRepository`.
 
@@ -654,7 +639,7 @@ class RealSupabaseJobRepository:
         try:
             result = await self._execute(builder)
         except Exception as exc:
-            if dedupe_key is not None and _is_unique_violation(exc):
+            if dedupe_key is not None and is_unique_violation(exc):
                 # Another enqueue() already claimed this dedupe_key —
                 # the idempotency contract: return the pre-existing job
                 # as the no-op result instead of raising.

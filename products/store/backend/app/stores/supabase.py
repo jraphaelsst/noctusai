@@ -9,14 +9,11 @@ import logging
 from typing import Any, Callable, Optional
 
 from app.stores.protocols import VersionConflict
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 logger = logging.getLogger(__name__)
 
 _MAX_CAS_ATTEMPTS = 5
-
-
-def _is_unique_violation(exc: Exception) -> bool:
-    return getattr(exc, "code", None) == "23505"
 
 
 def _first(result: Any) -> Optional[dict[str, Any]]:
@@ -50,7 +47,7 @@ class SupabaseSettingsStore:
                 .execute()
             )
         except Exception as exc:  # noqa: BLE001 - narrowed immediately
-            if _is_unique_violation(exc):
+            if is_unique_violation(exc):
                 raise VersionConflict(f"version {version} already exists") from exc
             raise
         row = _first(result)
