@@ -212,7 +212,7 @@ CAPACIDADES: dict[str, frozenset[str]] = {
     "ficha_cadastral": frozenset(
         {
             "nome", "cpf", "rg", "rg_orgao", "data_nascimento", "estado_civil",
-            "regime_bens", "nacionalidade", "profissao", "endereco",
+            "regime_bens", "nacionalidade", "profissao", "endereco", "email",
         }
     ),
 }

@@ -206,6 +206,50 @@ class TestIdentityFieldsAreCorroborationOnly:
         assert [c["campo"] for c in _conflitos(scoped)] == ["profissao"]
 
 
+class TestEmailDaFicha:
+    """Migration 238 — the form's e-mail lands on `clientes.email`, exactly as
+    printed, through the same D1 rule as every other field."""
+
+    @pytest.mark.asyncio
+    async def test_empty_email_fills_as_printed_with_provenance(self, client, scoped):
+        cid, did, storage = await _setup(scoped, cliente={"email": None})
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(email="  Ana.Silva@Example.com "),), source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        row = _cliente(scoped, cid)
+        assert row["email"] == "Ana.Silva@Example.com"
+        assert row["email_origem"] == "ficha_cadastral"
+        assert row["email_documento_id"] == did
+        assert row["email_confirmado_em"] is None
+
+    @pytest.mark.asyncio
+    async def test_differing_email_opens_a_conflict_and_is_not_overwritten(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, cliente={"email": "antigo@example.com", "email_origem": "manual"},
+        )
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(email="novo@example.com"),), source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida, FakeNotificationService())
+        assert _cliente(scoped, cid)["email"] == "antigo@example.com"
+        assert [c["campo"] for c in _conflitos(scoped)] == ["email"]
+
+    @pytest.mark.asyncio
+    async def test_equal_email_is_untouched(self, client, scoped):
+        cid, did, storage = await _setup(
+            scoped, cliente={"email": "ana@example.com", "email_origem": "manual"},
+        )
+        lida = FichaCadastralLida(
+            pessoas=(_pessoa(email="ANA@example.com"),), source=TextSource.TEXT_LAYER,
+        )
+        await _extrair(scoped, storage, cid, did, lida)
+        row = _cliente(scoped, cid)
+        assert row["email"] == "ana@example.com"
+        assert row["email_origem"] == "manual"
+        assert _conflitos(scoped) == []
+
+
 class TestEnderecoTier:
     @pytest.mark.asyncio
     async def test_overwrites_a_household_propagated_address_outright(self, client, scoped):

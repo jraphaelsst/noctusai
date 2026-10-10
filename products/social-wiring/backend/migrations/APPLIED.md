@@ -538,3 +538,7 @@ Authored 2026-10-10 (projects/core-studio/specs/geracao-contract.md §2, BE-0). 
 ## 233 — cs_biblioteca_optouts (Biblioteca de virais opt-out / deletion registry) — NOT APPLIED
 
 Authored 2026-10-10 (projects/core-studio/specs/geracao-contract.md §9.3, BE-OPTOUT). Requires 229. Platform-wide `cs_biblioteca_optouts` (UNIQUE normalized handle, `origem` email|dpo|admin), RLS on with a service_role-only policy, `REVOKE ALL` from authenticated/anon. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied.
+
+## 238 — clientes_email_proveniencia (email provenance quintet for the ficha cadastral e-mail) — NOT APPLIED
+
+Authored 2026-10-10. Adds `clientes.email_origem/_documento_id/_em/_confirmado_por/_confirmado_em` (nullable, idempotent). Apply BEFORE deploying the image that writes them; `predeploy_check` `schema_drift` fails until applied.

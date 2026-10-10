@@ -83,15 +83,17 @@ ERRO_SIDE_EFFECTS_FAILED = "side_effects_failed"
 #: The identity-adjacent `CampoExtraido`s a ficha cadastral reading may
 #: write onto `clientes`, PER MATCHED PARTY — every field `PessoaFicha
 #: Cadastral` carries except `endereco` (its own GROUP apply, see
-#: `_aplicar_endereco_ficha`), `telefone`/`email` (no `clientes` column —
-#: contact fields are not part of this product's D1 provenance quintets
-#: today) and `papel` (form-section metadata, not a fact about the person).
+#: `_aplicar_endereco_ficha`), `telefone` (no D1 provenance quintet; `clientes.celular`
+#: is operator/lead-owned) and `papel` (form-section metadata, not a fact about the person).
 CAMPOS_FICHA: tuple = tuple(
     identidade_svc.CAMPO_POR_CHAVE[chave]
     for chave in (
         "nome_oficial", "cpf", "rg", "rg_orgao_expedidor", "data_nascimento",
         "estado_civil", "regime_bens", "nacionalidade", "profissao",
     )
+) + (
+    # Migration 238 — `clientes.email` (+ quintet), exactly as printed.
+    identidade_svc.CAMPO_EMAIL,
 )
 
 
@@ -121,7 +123,16 @@ def _lidos_pessoa(pessoa: PessoaFichaCadastral) -> dict[str, tuple]:
         "regime_bens": item(pessoa.regime_bens, pessoa.regime_bens_confianca),
         "nacionalidade": item(pessoa.nacionalidade, pessoa.nacionalidade_confianca),
         "profissao": item(pessoa.profissao, pessoa.profissao_confianca),
+        "email": item(_email_impresso(pessoa.email), getattr(pessoa, "email_confianca", None)),
     }
+
+
+def _email_impresso(valor: Any) -> Optional[str]:
+    """The e-mail exactly as the form prints it — surrounding whitespace is
+    the only thing dropped; case is kept (owner rule: never alter document
+    data). Empty -> None."""
+    texto = str(valor).strip() if valor else ""
+    return texto or None
 
 
 def linhas_do_atendimento(client: Any, org_id: UUID, cliente_id: UUID) -> list[dict]:
@@ -437,6 +448,7 @@ def _lidos_armazenados(pessoa: dict) -> dict[str, tuple]:
         "regime_bens": item(pessoa.get("regime_bens")),
         "nacionalidade": item(pessoa.get("nacionalidade")),
         "profissao": item(pessoa.get("profissao")),
+        "email": item(_email_impresso(pessoa.get("email"))),
     }
 
 

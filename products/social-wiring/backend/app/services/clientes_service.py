@@ -1720,6 +1720,8 @@ _CAMPOS_COM_ORIGEM: tuple[str, ...] = (
     # Migration 193 — the pacto antenupcial citation (each with its quintet).
     "pacto_antenupcial_data", "pacto_antenupcial_tabelionato",
     "pacto_antenupcial_livro", "pacto_antenupcial_folha",
+    # Migration 238 — the ficha cadastral's e-mail (quintet).
+    "email",
 )
 
 #: Migration 153 — fields whose provenance quintet covers a GROUP of columns.

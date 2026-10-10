@@ -534,6 +534,21 @@ CAMPO_NOME_MAE = CampoExtraido(
 )
 CAMPO_POR_CHAVE["nome_mae"] = CAMPO_NOME_MAE
 
+#: [Migration 238] The party's e-mail as a ficha cadastral prints it
+#: (`clientes.email` + its provenance quintet). Held OUTSIDE `CAMPOS` for the
+#: same reason as `CAMPO_NOME_MAE` (no `IdentityFields` attribute maps to it);
+#: the ficha reader feeds it through `aplicar_campos_ao_cliente` (fill empty,
+#: conflict on a different value, never overwrite). No `cliente_documentos`
+#: column of its own — the reading rides on `extracao_ficha_cadastral`.
+CAMPO_EMAIL = CampoExtraido(
+    item_key="email",
+    coluna_valor="",
+    coluna_confianca="",
+    coluna_rotulo="",
+    sobrescreve=False,
+)
+CAMPO_POR_CHAVE["email"] = CAMPO_EMAIL
+
 #: [Migration 193] The escritura de pacto antenupcial the contract cites in a
 #: married couple's qualification (`clientes.pacto_antenupcial_*`), written by
 #: `pacto_antenupcial_service` through `aplicar_campos_ao_cliente` (D1: fill
@@ -719,6 +734,10 @@ def _mesmo_valor(item_key: str, a: Any, b: Any) -> bool:
         return idf.iguais("orgao_expedidor", a, b) or (
             only_alnum(str(a)) == only_alnum(str(b))
         )
+    if item_key == "email":
+        # Case is not part of an address's identity; the STORED value keeps
+        # the document's own spelling (only this comparison folds case).
+        return str(a).strip().casefold() == str(b).strip().casefold()
     if item_key == "genero":
         ga, gb = canonical_gender(str(a)), canonical_gender(str(b))
         if ga is not None and gb is not None:

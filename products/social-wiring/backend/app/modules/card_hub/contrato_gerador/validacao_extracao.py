@@ -293,6 +293,10 @@ CAMPOS_CLIENTE: tuple[CampoValidavel, ...] = (
     # Migration 153 — the link read off a certidão de casamento.
     _quinteto(ENTIDADE_CLIENTE, "conjuge", ROTULO_QUALIFICACAO["conjuge"],
               valores=("conjuge_cliente_id",), prefixo="conjuge"),
+    # Migration 238 — the e-mail a ficha cadastral prints (signature block);
+    # optional: a missing e-mail is the PARTE_SEM_EMAIL warning, not a block.
+    _quinteto(ENTIDADE_CLIENTE, "email", "E-mail", obrigatorio=False,
+              edicao=_ed_cliente("email")),
     # Migration 193 — the pacto antenupcial citation the qualification
     # prints; optional (only couples whose regime needs a pacto have one).
     _quinteto(ENTIDADE_CLIENTE, "pacto_antenupcial_data", "Data do pacto antenupcial",
