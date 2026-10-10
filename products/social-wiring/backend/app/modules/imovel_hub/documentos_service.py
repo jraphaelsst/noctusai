@@ -76,7 +76,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.card_hub.proveniencia import fontes
-from app.modules.imovel_hub import dados_service
+from app.modules.imovel_hub import dados_service, vinculo_legal
 from app.modules.imovel_hub.deps import BUCKET
 from app.services import documento_retencao, extracao_retentativa, table_reads
 from app.services.documento_store import DocumentoStore, documento_base, now_iso, today
@@ -194,6 +194,10 @@ def _documento_out(row: dict, resolved: dict) -> dict:
     return {
         **documento_base(row, resolved),
         "codigo": row["codigo"],
+        # The código whose record holds this document — differs from the
+        # requested one when it came through a manual<->Vista link; url /
+        # remover / acessos must be called with THIS código.
+        "fonte_codigo": row["codigo"],
         # Extraction state, surfaced so the UI can show "lendo…" / "não
         # encontrei um número" rather than an empty field that looks broken.
         "extracao_status": row.get("extracao_status"),
@@ -217,9 +221,21 @@ def _documento_out(row: dict, resolved: dict) -> dict:
     }
 
 
+def _linhas_do_imovel(client: Any, org_id: UUID, codigo: str) -> list[dict]:
+    """Newest-first documents of the PROPERTY `codigo` names: its own plus,
+    for a Vista código linked to a manual imóvel, the manual one's (union —
+    rows are never copied; each keeps its own `codigo`). See `vinculo_legal`."""
+    rows: list[dict] = []
+    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
+        rows.extend(STORE.listar_linhas(client, org_id, fonte))
+    if len({r["codigo"] for r in rows}) > 1:
+        rows.sort(key=lambda r: str(r.get("created_at") or ""), reverse=True)
+    return rows
+
+
 def listar(client: Any, org_id: UUID, codigo: str) -> dict:
     dados_service.ensure_imovel(client, org_id, codigo)
-    rows = STORE.listar_linhas(client, org_id, codigo)
+    rows = _linhas_do_imovel(client, org_id, codigo)
     resolved = table_reads.resolve_actors(
         {r["enviado_por"] for r in rows if r.get("enviado_por")}
         | {r["confirmado_por"] for r in rows if r.get("confirmado_por")}
@@ -1282,7 +1298,7 @@ def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
     office's 30-day-old rule can be checked without opening each document.
     """
     dados_service.ensure_imovel(client, org_id, codigo)
-    rows = STORE.listar_linhas(client, org_id, codigo)  # already newest-first
+    rows = _linhas_do_imovel(client, org_id, codigo)  # newest-first
 
     por_tipo: dict[str, dict] = {}
     for row in rows:
@@ -1309,6 +1325,7 @@ def certidoes(client: Any, org_id: UUID, codigo: str) -> dict:
         {
             "tipo": tipo,
             "documento_id": row["id"],
+            "fonte_codigo": row["codigo"],
             "numero": row.get("numero"),
             "emitida_em": row.get("emitida_em"),
             "validade_ate": row.get("validade_ate"),

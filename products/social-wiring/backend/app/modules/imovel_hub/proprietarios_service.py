@@ -64,7 +64,7 @@ from noctusai_lib.primitives.exceptions import AppException, ConflictError, NotF
 
 from app.modules.card_hub.services import ensure_cliente
 from app.modules.imovel_hub import _relacionamentos as rel
-from app.modules.imovel_hub import busca_service
+from app.modules.imovel_hub import busca_service, vinculo_legal
 from app.services import table_reads
 
 logger = logging.getLogger(__name__)
@@ -282,13 +282,34 @@ def _nome_dono(row: dict, clientes: dict, empresas: dict) -> tuple[str, str, Opt
     )
 
 
+def _chave_dono(r: dict) -> str:
+    return f"c:{r['cliente_id']}" if r.get("cliente_id") else f"e:{r.get('empresa_id')}"
+
+
+def _donos_do_imovel(client: Any, org_id: UUID, canonico: str) -> list[dict]:
+    """Live owner rows of the PROPERTY `canonico` names: its own, plus — for a
+    Vista código linked to a manual imóvel — the manual one's, deduped by
+    person (own row wins) and labelled `fonte_codigo` (`vinculo_legal`)."""
+    vistos: set[str] = set()
+    saida: list[dict] = []
+    for fonte in vinculo_legal.codigos_leitura(client, org_id, canonico):
+        rows = table_reads.paged_rows(
+            client, TABLE, org_id, eq_filters={"codigo": fonte}, refine=_vivas
+        )
+        rows.sort(key=lambda r: str(r.get("created_at") or ""))
+        for r in rows:
+            chave = _chave_dono(r)
+            if chave in vistos:
+                continue
+            vistos.add(chave)
+            saida.append({**r, "fonte_codigo": fonte})
+    return saida
+
+
 def do_imovel(client: Any, org_id: UUID, codigo: str) -> dict:
     """§4.2 `GET /api/imoveis/{codigo}/proprietarios`."""
     canonico = rel.exigir_imovel_cadastrado(client, org_id, codigo)
-    rows = table_reads.paged_rows(
-        client, TABLE, org_id, eq_filters={"codigo": canonico}, refine=_vivas
-    )
-    rows.sort(key=lambda r: str(r.get("created_at") or ""))
+    rows = _donos_do_imovel(client, org_id, canonico)
     clientes, empresas = _donos_resolvidos(client, org_id, rows)
     itens = []
     for r in rows:
@@ -305,6 +326,7 @@ def do_imovel(client: Any, org_id: UUID, codigo: str) -> dict:
                 "celular": c.get("celular") if r.get("cliente_id") else None,
                 "email": c.get("email") if r.get("cliente_id") else None,
                 "origem": r.get("origem"),
+                "fonte_codigo": r.get("fonte_codigo", canonico),
                 "created_at": r.get("created_at"),
             }
         )
@@ -320,10 +342,12 @@ def por_codigos(
     unicos = sorted({busca_service.canonical(c) for c in codigos if c})
     if not unicos:
         return {}
+    manuais = vinculo_legal.manuais_por_vista(client, org_id, unicos)
+    buscar = sorted(set(unicos) | set(manuais.values()))
     rows = [
         r
         for r in table_reads.in_batched_rows(
-            client, TABLE, org_id, "codigo", unicos, order_col="id"
+            client, TABLE, org_id, "codigo", buscar, order_col="id"
         )
         if r.get("deleted_at") is None
     ]
@@ -335,6 +359,18 @@ def por_codigos(
         saida.setdefault(str(r["codigo"]), []).append(
             {"nome": nome, "documento": documento, "tipo_pessoa": tipo}
         )
+    # A linked Vista código also lists the manual record's owners (deduped
+    # by person, own first); the manual código keeps its own list untouched.
+    for vista, manual in manuais.items():
+        ja = {_chave_dono(r) for r in rows if str(r["codigo"]) == vista}
+        extras = [
+            {"nome": n, "documento": d, "tipo_pessoa": t}
+            for r in rows
+            if str(r["codigo"]) == manual and _chave_dono(r) not in ja
+            for t, n, d in [_nome_dono(r, clientes, empresas)]
+        ]
+        if extras:
+            saida[vista] = saida.get(vista, []) + extras
     return saida
 
 

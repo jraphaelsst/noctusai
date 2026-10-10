@@ -126,7 +126,7 @@ class TestImovelSide:
         assert set(body) == {"items", "total"} and body["total"] == 2
         pf, pj = body["items"]
         keys = {"id", "tipo_pessoa", "cliente_id", "empresa_id", "nome", "documento",
-                "celular", "email", "origem", "created_at"}
+                "celular", "email", "origem", "fonte_codigo", "created_at"}
         assert set(pf) == keys and set(pj) == keys
         assert pf["tipo_pessoa"] == "PF" and pf["nome"] == "Ana Souza Oficial"
         assert pf["documento"] == "12345678909" and pf["celular"] == "+5511999990001"

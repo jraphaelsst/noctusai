@@ -78,7 +78,7 @@ from noctusai_lib.integrations.documents import (
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
-from app.modules.imovel_hub import dados_service
+from app.modules.imovel_hub import dados_service, vinculo_legal
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.services import table_reads
@@ -367,7 +367,7 @@ def obter_titulo(
     operator's confirmed wording."""
     codigo = _codigo(codigo)
     dados_service.ensure_imovel(client, org_id, codigo)
-    linha = dados_service.linha(client, org_id, codigo) or {}
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
 
     ato_saida: Optional[dict] = None
     sugestao: Optional[str] = None
@@ -457,7 +457,7 @@ def obter_endereco_registro(client: Any, org_id: UUID, codigo: str) -> dict:
     """
     codigo = _codigo(codigo)
     dados_service.ensure_imovel(client, org_id, codigo)
-    linha = dados_service.linha(client, org_id, codigo) or {}
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
     valor = linha.get("endereco_registro_texto")
     confirmado = None
     if valor is not None:
@@ -502,7 +502,7 @@ def obter_onus_credor(
     """The creditor(s) read from the confirmed ônus acts + the confirmation."""
     codigo = _codigo(codigo)
     dados_service.ensure_imovel(client, org_id, codigo)
-    linha = dados_service.linha(client, org_id, codigo) or {}
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
 
     atos_saida: list[dict] = []
     credores: list[str] = []
@@ -589,17 +589,22 @@ def _extracao_do_imovel(
         return estrutura_svc.exigir_extracao(
             client, org_id, linha["titulo_aquisitivo_extracao_id"]
         )
-    rows = (
-        _t(client, estrutura_svc.EXTRACOES_TABLE)
-        .select("*")
-        .eq("org_id", str(org_id))
-        .eq("codigo", codigo)
-        .eq("status", estrutura_svc.STATUS_CONCLUIDA)
-        .order("created_at", desc=True)
-        .limit(1)
-        .execute()
-    ).data or []
-    return rows[0] if rows else None
+    # The matrícula is the PROPERTY's: a Vista código linked to a manual
+    # imóvel falls back to the manual one's transcription (`vinculo_legal`).
+    for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo):
+        rows = (
+            _t(client, estrutura_svc.EXTRACOES_TABLE)
+            .select("*")
+            .eq("org_id", str(org_id))
+            .eq("codigo", fonte)
+            .eq("status", estrutura_svc.STATUS_CONCLUIDA)
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        ).data or []
+        if rows:
+            return rows[0]
+    return None
 
 
 def _manual_ultima_transferencia(linha: dict) -> Optional[dict]:
@@ -658,7 +663,7 @@ def antigos_proprietarios(
     """
     codigo = _codigo(codigo)
     dados_service.ensure_imovel(client, org_id, codigo)
-    linha = dados_service.linha(client, org_id, codigo) or {}
+    linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
     hoje = hoje or today()
 
     extracao = _extracao_do_imovel(client, org_id, codigo, linha)

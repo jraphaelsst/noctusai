@@ -632,7 +632,12 @@ def _proveniencia(row: dict, resolved: dict) -> dict:
 
 def obter(client: Any, org_id: UUID, codigo: str) -> dict:
     ensure_imovel(client, org_id, codigo)
-    row = linha(client, org_id, codigo)
+    # READ through the manual<->Vista link (Vista -> manual fallback per field
+    # group, conflicts flagged — see `vinculo_legal`). Writers use `linha`.
+    from app.modules.imovel_hub import vinculo_legal
+
+    efetivo = vinculo_legal.legal_efetivo(client, org_id, codigo)
+    row = efetivo.linha
     ids = {
         (row or {}).get("captador_user_id"),
         (row or {}).get("numero_matricula_confirmado_por"),
@@ -649,7 +654,10 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("prefeitura_cadastro_imobiliario_confirmado_por"),
         (row or {}).get("situacao_onus_confirmado_por"),
     }
-    return _saida(codigo, row, table_reads.resolve_actors(ids))
+    saida = _saida(codigo, row, table_reads.resolve_actors(ids))
+    # None when unlinked / read from the manual side.
+    saida["vinculo_legal"] = efetivo.como_dict()
+    return saida
 
 
 def atualizar(

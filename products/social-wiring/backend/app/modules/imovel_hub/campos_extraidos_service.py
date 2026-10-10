@@ -90,6 +90,10 @@ ORIGEM_MATRICULA = "matricula"
 #: `_substituivel_por_prefeitura`.
 FONTES_PREFEITURA = conflito_resolucao.FONTES_PREFEITURA
 
+#: `fonte_tabela` of a conflict opened by the manual<->Vista link
+#: (`vinculo_legal.reconciliar`): both sides already hold a value. Never
+#: auto-resolved — the owner asked for a human here.
+FONTE_VINCULO = "vinculo"
 FONTE_EXTRACOES = "matricula_extracoes"
 FONTE_DOCUMENTOS = "imovel_documentos"
 
@@ -961,7 +965,11 @@ def backfill_resolver_conflitos_pendentes(
     ignorados: list[dict] = []
     for conflito in sorted(pendentes, key=lambda r: r.get("created_at") or ""):
         campo = CAMPOS.get(conflito.get("campo"))
-        if campo is None or (campos is not None and campo.chave not in campos):
+        if (
+            campo is None
+            or conflito.get("fonte_tabela") == FONTE_VINCULO
+            or (campos is not None and campo.chave not in campos)
+        ):
             ignorados.append(conflito)
             continue
         row = dados_service.linha(client, org_id, conflito["codigo"])
@@ -1165,6 +1173,7 @@ __all__ = [
     "CAMPOS",
     "CAMPOS_QUINTETO_MANUAL",
     "CONFLITOS_TABLE",
+    "FONTE_VINCULO",
     "REAPONTADO",
     "REJEITADO_TIPO",
     "RESOLVIDO_APLICADO",

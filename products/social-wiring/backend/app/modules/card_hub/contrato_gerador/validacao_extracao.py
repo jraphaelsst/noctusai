@@ -88,7 +88,7 @@ from app.modules.card_hub.contrato_gerador.derivacao import ROTULO_QUALIFICACAO
 from app.modules.card_hub.identidade_extracao_service import CAMPOS as CAMPOS_IDENTIDADE
 from app.modules.card_hub.identidade_extracao_service import _mesmo_valor
 from app.modules.certidoes import service as certidoes_svc
-from app.modules.imovel_hub import dados_service
+from app.modules.imovel_hub import vinculo_legal
 from app.modules.imovel_hub import documentos_service as imovel_docs_svc
 from app.modules.matriculas import titulo_service
 from app.services import divergencia_resolucao, table_reads
@@ -665,7 +665,7 @@ def coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Optiona
 
     im = dados.imovel
     if im is not None:
-        linha = dados_service.linha(client, org_id, im.codigo) or {}
+        linha = vinculo_legal.linha_efetiva(client, org_id, im.codigo) or {}
         if linha:
             coleta.alvos.append(Alvo(CAMPOS_IMOVEL, im.codigo, linha, f"Imóvel {im.codigo}"))
         itens = imovel_docs_svc.certidoes(client, org_id, im.codigo)["items"]
@@ -765,7 +765,7 @@ def coletar(client: Any, org_id: UUID, dados: DadosContrato, usuario_id: Optiona
         for codigo in codigos:
             if im is not None and codigo == im.codigo:
                 continue
-            linha = dados_service.linha(client, org_id, codigo) or {}
+            linha = vinculo_legal.linha_efetiva(client, org_id, codigo) or {}
             if linha:
                 coleta.alvos.append(
                     Alvo(CAMPOS_IMOVEL_PERMUTA, codigo, linha, f"Imóvel da permuta {codigo}")

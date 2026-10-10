@@ -321,10 +321,17 @@ def vendedores(client: Any, org_id: UUID, atendimento: dict, codigo: Optional[st
     vistos = {partes_svc._chave(p) for p in out}
 
     if codigo:
-        donos = table_reads.paged_rows(
-            client, PROPRIETARIOS, org,
-            eq_filters={"codigo": codigo}, refine=lambda q: q.is_("deleted_at", "null"),
-        )
+        from app.modules.imovel_hub import vinculo_legal
+
+        # The proprietários belong to the PROPERTY: union through the link.
+        donos = [
+            d
+            for fonte in vinculo_legal.codigos_leitura(client, org, codigo)
+            for d in table_reads.paged_rows(
+                client, PROPRIETARIOS, org,
+                eq_filters={"codigo": fonte}, refine=lambda q: q.is_("deleted_at", "null"),
+            )
+        ]
         ids_pf = [str(d["cliente_id"]) for d in donos if d.get("cliente_id")]
         ids_pj = [str(d["empresa_id"]) for d in donos if d.get("empresa_id")]
         for row in _clientes(client, org, [i for i in ids_pf if f"c:{i}" not in vistos]):
@@ -482,6 +489,7 @@ def _matricula(
     agendador: Agendador,
 ) -> MatriculaPosAceite:
     from app.modules.imovel_hub import documentos_service as docs_svc
+    from app.modules.imovel_hub import vinculo_legal
     from app.modules.matriculas import autopiloto_service
     from app.modules.matriculas import estrutura_service as estrutura
     from app.modules.matriculas.service import check_required_credentials
@@ -489,13 +497,19 @@ def _matricula(
     if not codigo:
         return MatriculaPosAceite(status="faltando", motivo="imovel_ausente")
 
+    # The matrícula describes the PROPERTY: a Vista código linked to a manual
+    # imóvel also sees the manual one's documents/transcriptions.
     docs = [
-        d for d in docs_svc.STORE.listar_linhas(client, org_id, codigo)
+        d for d in docs_svc._linhas_do_imovel(client, org_id, codigo)
         if d.get("tipo_documento") == "matricula"
     ]
-    extracoes = table_reads.paged_rows(
-        client, EXTRACOES, org_id, eq_filters={"codigo": codigo},
-    )
+    extracoes = [
+        e
+        for fonte in vinculo_legal.codigos_leitura(client, org_id, codigo)
+        for e in table_reads.paged_rows(
+            client, EXTRACOES, org_id, eq_filters={"codigo": fonte},
+        )
+    ]
     vivas = [e for e in extracoes if not e.get("substituida_por")]
     vivas.sort(key=lambda e: str(e.get("created_at") or ""), reverse=True)
     pdfs = [d for d in docs if d.get("mime_type") == estrutura.MIME_TRANSCREVIVEL]  # newest first
@@ -526,7 +540,8 @@ def _matricula(
         if check_required_credentials(str(org_id)):
             return MatriculaPosAceite(status="erro", documento_id=str(doc["id"]), motivo="credenciais")
         nova = estrutura.criar_extracao_de_documento(
-            client, org_id, codigo=codigo, imovel_documento_id=_uuid(doc["id"]), usuario_id=ator,
+            client, org_id, codigo=doc.get("codigo") or codigo,
+            imovel_documento_id=_uuid(doc["id"]), usuario_id=ator,
         )
         agendador.extracao(nova["id"], nova["storage_path"])
         return MatriculaPosAceite(status="extraindo", documento_id=str(doc["id"]))
