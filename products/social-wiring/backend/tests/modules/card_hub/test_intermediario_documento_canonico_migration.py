@@ -64,10 +64,15 @@ def test_the_old_bare_shape_is_refused(bare):
     assert not PF.fullmatch(bare) and not PJ.fullmatch(bare) and not REP.fullmatch(bare)
 
 
-def test_existing_bare_rows_are_rewritten_before_the_check_is_replaced():
-    first_update = CODE.index("UPDATE social_wiring.atendimento_intermediarios")
-    first_add = CODE.index("ADD CONSTRAINT atendimento_intermediarios_documento_formato")
-    assert first_update < first_add
+def test_old_checks_are_dropped_before_the_backfill_and_new_ones_added_after():
+    """The first version rewrote rows UNDER 114's digits-only CHECK and its
+    prod apply failed with 23514 (2026-10-10). Order: DROP both → UPDATE →
+    ADD both."""
+    drops = [m.start() for m in re.finditer(r"DROP CONSTRAINT IF EXISTS atendimento_intermediarios_\w+_formato", CODE)]
+    updates = [m.start() for m in re.finditer(r"UPDATE social_wiring\.atendimento_intermediarios", CODE)]
+    adds = [m.start() for m in re.finditer(r"ADD CONSTRAINT atendimento_intermediarios_\w+_formato", CODE)]
+    assert len(drops) == 2 and len(adds) == 2 and updates
+    assert max(drops) < min(updates) and max(updates) < min(adds)
 
 
 @pytest.mark.parametrize("bare,canonical", [

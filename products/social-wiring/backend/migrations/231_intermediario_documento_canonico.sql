@@ -18,16 +18,26 @@
 -- CHECKs (`noctusai_lib.testing.sql_check`) — that is what surfaced this.
 --
 -- THE FIX follows the owner rule (punctuated IS canonical) rather than
--- reverting the service: the 3 existing bare rows are rewritten to the
--- canonical form FIRST, then both CHECKs are replaced by the punctuated
--- shapes. Shape only, as in 114 — check digits stay the service's job.
+-- reverting the service. ORDER (load-bearing): drop the old digits-only
+-- CHECKs → rewrite the 3 bare rows to the canonical form → add the
+-- punctuated CHECKs. The first version rewrote rows UNDER the old CHECK and
+-- failed its prod apply with 23514 (2026-10-10; rolled back, never recorded). Shape only, as in 114 — check digits stay the service's job.
 -- Readers are unaffected: the contract generator reads digits back out
 -- (`frases.documento` → `so_digitos`). Idempotent.
 -- ============================================================================
 
 SET search_path = social_wiring, public;
 
--- 1. Backfill: bare → canonical punctuated (only rows still bare).
+-- 1. Drop 114's digits-only CHECKs FIRST.
+ALTER TABLE social_wiring.atendimento_intermediarios
+    DROP CONSTRAINT IF EXISTS atendimento_intermediarios_documento_formato;
+ALTER TABLE social_wiring.atendimento_intermediarios
+    DROP CONSTRAINT IF EXISTS atendimento_intermediarios_representante_cpf_formato;
+
+-- 2. Backfill: bare → canonical punctuated (only rows still bare). Runs with
+--    NO document CHECK in place — under 114's digits-only CHECK the very
+--    first rewritten row is refused (23514), which is exactly how the first
+--    prod apply of this file failed (2026-10-10, rolled back cleanly).
 UPDATE social_wiring.atendimento_intermediarios
    SET documento = regexp_replace(documento, '^([0-9]{3})([0-9]{3})([0-9]{3})([0-9]{2})$', '\1.\2.\3-\4')
  WHERE pessoa_tipo = 'pf' AND documento ~ '^[0-9]{11}$';
@@ -44,9 +54,8 @@ UPDATE social_wiring.atendimento_intermediarios
            representante_cpf, '^([0-9]{3})([0-9]{3})([0-9]{3})([0-9]{2})$', '\1.\2.\3-\4')
  WHERE representante_cpf ~ '^[0-9]{11}$';
 
--- 2. The CHECKs, now on the canonical shapes.
-ALTER TABLE social_wiring.atendimento_intermediarios
-    DROP CONSTRAINT IF EXISTS atendimento_intermediarios_documento_formato;
+-- 3. The CHECKs, now on the canonical shapes (validated against the
+--    rewritten rows as they are added).
 ALTER TABLE social_wiring.atendimento_intermediarios
     ADD CONSTRAINT atendimento_intermediarios_documento_formato
     CHECK (
@@ -55,8 +64,6 @@ ALTER TABLE social_wiring.atendimento_intermediarios
         OR (pessoa_tipo = 'pj' AND documento ~ '^[0-9A-Z]{2}\.[0-9A-Z]{3}\.[0-9A-Z]{3}/[0-9A-Z]{4}-[0-9]{2}$')
     );
 
-ALTER TABLE social_wiring.atendimento_intermediarios
-    DROP CONSTRAINT IF EXISTS atendimento_intermediarios_representante_cpf_formato;
 ALTER TABLE social_wiring.atendimento_intermediarios
     ADD CONSTRAINT atendimento_intermediarios_representante_cpf_formato
     CHECK (representante_cpf IS NULL OR representante_cpf ~ '^[0-9]{3}\.[0-9]{3}\.[0-9]{3}-[0-9]{2}$');
