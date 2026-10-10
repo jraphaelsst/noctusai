@@ -203,3 +203,25 @@ def test_dangling_vite_temp_enoent_is_harness_suspect():
     out = "error during build:\nError: ENOENT: no such file or directory, mkdir '/x/frontend/node_modules/.vite-temp'"
     hit = HS.harness_suspect(out, 1)
     assert hit and hit["signature"] == "node_modules_dangling_link"
+
+
+_GOTO = "Error: page.goto: Timeout 30000ms exceeded.\n  - navigating to http://localhost:5173/, waiting until \"load\""
+
+
+def test_goto_timeout_under_high_load_is_suspect_with_load_evidence():
+    hit = HS.harness_suspect(_GOTO, 1, load_reader=lambda: (38.0, 10))
+    assert hit and hit["signature"] == "page_goto_load_timeout_under_load"
+    assert hit["condition"]["load_1m"] == 38.0 and hit["condition"]["cpu_cores"] == 10
+
+
+def test_goto_timeout_under_low_load_stays_a_real_red():
+    assert HS.harness_suspect(_GOTO, 1, load_reader=lambda: (2.0, 10)) is None
+
+
+def test_goto_timeout_with_unreadable_load_stays_a_real_red():
+    assert HS.harness_suspect(_GOTO, 1, load_reader=lambda: None) is None
+
+
+def test_unrelated_failure_under_high_load_is_not_suspect():
+    out = "AssertionError: expected 3 to equal 4"
+    assert HS.harness_suspect(out, 1, load_reader=lambda: (80.0, 8)) is None

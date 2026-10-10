@@ -3187,3 +3187,154 @@ def test_task_branch_start_dry_run_reports_wire_scope(tmp_path):
     assert r["wire_scope"] == ["beta"]
     assert _entry_links(r["would_wire"], "alpha") == []
     assert len(_entry_links(r["would_wire"], "beta")) == 1
+
+
+# ── Dev baseline for a red merged tip (2026-10-09) ───────────────────────────
+class TestMergedTipDevBaseline:
+    @staticmethod
+    def _fake():
+        return FakeGit(
+            refs={"origin/dev": "d0", "feat/x": "b0"},
+            anc=_anc_pairs([]),
+            logs={"d0..b0": "c1 x", "b0..d0": ""},
+            head_sha="b0",
+        )
+
+    @staticmethod
+    def _check(abs_wt_path, dev_ref):
+        return {"status": "red", "gates": [
+            {"gate": "e2e:core", "ran": True, "exit_code": 1, "summary": "2 failed"},
+        ], "scope": {"products": ["core"], "seed_fleet_wide": False}}
+
+    @staticmethod
+    def _baseline(outcome):
+        calls = []
+
+        def fn(names, dev_ref):
+            calls.append((list(names), dev_ref))
+            return {"status": "ok", "dev_sha": "d0",
+                    "gates": {n: {"outcome": outcome, "why": "x"} for n in names}}
+        fn.calls = calls
+        return fn
+
+    def test_red_on_branch_green_on_dev_blocks(self):
+        fake, bl = self._fake(), self._baseline("green")
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._check, merged_tip_baseline=bl)
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+        assert bl.calls == [(["e2e:core"], "origin/dev")]
+        assert res["merged_tip_check"]["baseline"]["pre_existing_on_dev"] == []
+
+    def test_red_on_both_does_not_block_and_reports_pre_existing(self):
+        fake, bl = self._fake(), self._baseline("red")
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._check, merged_tip_baseline=bl)
+        assert res["status"] == "integrated", res
+        assert len(fake.pushes()) == 1
+        assert res["merged_tip_check"]["baseline"]["pre_existing_on_dev"] == ["e2e:core"]
+        assert "pre_existing_on_dev" in res["message"]
+
+    def test_dev_inconclusive_keeps_blocking_and_says_so(self):
+        fake, bl = self._fake(), self._baseline("inconclusive")
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._check, merged_tip_baseline=bl)
+        assert res["status"] == "blocked", res
+        assert fake.pushes() == []
+        assert "baseline inconclusive" in res["message"]
+        assert res["merged_tip_check"]["baseline"]["inconclusive"] == ["e2e:core"]
+
+    def test_baseline_exception_keeps_blocking(self):
+        def boom(names, dev_ref):
+            raise RuntimeError("no worktree")
+        fake = self._fake()
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=self._check, merged_tip_baseline=boom)
+        assert res["status"] == "blocked", res
+        assert "baseline inconclusive" in res["message"]
+
+    def test_baseline_not_consulted_when_no_new_red(self):
+        fake, bl = self._fake(), self._baseline("red")
+
+        def green(abs_wt_path, dev_ref):
+            return {"status": "green", "gates": [], "scope": {"products": []}}
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=green, merged_tip_baseline=bl)
+        assert res["status"] == "integrated"
+        assert bl.calls == []
+
+
+class TestDefaultMergedTipBaselineRealGit:
+    """Real git: the ephemeral baseline worktree is created DETACHED at the
+    dev sha, shared by all gates, and removed even when the run raises."""
+
+    @staticmethod
+    def _repo(tmp_path):
+        import subprocess
+
+        def g(*a, cwd=None):
+            return subprocess.run(["git", *a], cwd=str(cwd or r), check=True,
+                                  capture_output=True, text=True).stdout
+        r = tmp_path / "noc"
+        r.mkdir()
+        g("init", "-q", "-b", "dev")
+        g("config", "user.email", "t@t.t")
+        g("config", "user.name", "t")
+        (r / "f").write_text("x\n")
+        g("add", "f")
+        g("commit", "-qm", "base")
+        g("update-ref", "refs/remotes/origin/dev", "HEAD")
+        (r / ".claude" / "worktrees").mkdir(parents=True)
+
+        def run(cmd, cwd=None):
+            p = subprocess.run(cmd, cwd=cwd or str(r), capture_output=True, text=True)
+            return p.returncode, p.stdout, p.stderr
+        return r, g, run
+
+    def test_detached_worktree_created_gates_run_inside_and_removed(self, tmp_path):
+        r, g, run = self._repo(tmp_path)
+        seen = {}
+
+        def run_gates(wt, names, run_gate=None):
+            seen["wt"] = wt
+            seen["names"] = names
+            seen["head"] = g("rev-parse", "HEAD", cwd=wt).strip()
+            seen["detached"] = g("symbolic-ref", "-q", "--short", "HEAD", cwd=wt) if False else \
+                g("branch", "--show-current", cwd=wt).strip()
+            seen["existed"] = os.path.isdir(wt)
+            return {"gates": [
+                {"gate": "e2e:a", "ran": True, "exit_code": 1, "summary": "f"},
+                {"gate": "pytest:b", "ran": True, "exit_code": 0},
+            ], "unknown": []}
+
+        out = T._default_merged_tip_baseline(
+            ["e2e:a", "pytest:b"], "origin/dev", run=run, fs=T.FsOps(),
+            primary_root=str(r), run_gates=run_gates)
+        assert out["status"] == "ok", out
+        assert seen["existed"] and seen["detached"] == ""  # detached HEAD
+        assert seen["head"] == g("rev-parse", "origin/dev").strip()
+        assert os.path.basename(seen["wt"]).startswith("_merged-tip-baseline-")
+        assert out["gates"]["e2e:a"]["outcome"] == "red"
+        assert out["gates"]["pytest:b"]["outcome"] == "green"
+        assert out["worktree_removed"] is True and not os.path.exists(seen["wt"])
+        assert "_merged-tip-baseline-" not in g("worktree", "list")
+
+    def test_worktree_removed_even_when_run_raises(self, tmp_path):
+        r, g, run = self._repo(tmp_path)
+
+        def run_gates(wt, names, run_gate=None):
+            raise RuntimeError("boom")
+
+        out = T._default_merged_tip_baseline(
+            ["e2e:a"], "origin/dev", run=run, fs=T.FsOps(),
+            primary_root=str(r), run_gates=run_gates)
+        assert out["status"] == "error" and "boom" in out["error"]
+        assert out["worktree_removed"] is True
+        assert "_merged-tip-baseline-" not in g("worktree", "list")
+
+    def test_harness_suspect_and_unran_are_inconclusive_not_red(self):
+        assert T._baseline_outcome({"ran": True, "exit_code": 1,
+                                    "harness_suspect": {"signature": "s"}})[0] == "inconclusive"
+        assert T._baseline_outcome({"ran": False})[0] == "inconclusive"
+        assert T._baseline_outcome(None)[0] == "inconclusive"
+        assert T._baseline_outcome({"ran": True, "exit_code": 1})[0] == "red"

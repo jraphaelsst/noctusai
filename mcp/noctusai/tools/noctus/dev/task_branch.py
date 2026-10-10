@@ -1311,9 +1311,19 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str, timeout: int = 90)
     start after the deadline is reported `ran=False` — which `gate_sweep`'s
     own `_verdict` already classifies as `incomplete`, never `red` (never
     a measured failure it never actually ran)."""
+    from .gate_sweep import gate_sweep  # lazy import
+
+    return gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path,
+                      run_gate=_deadline_boxed_run_gate(timeout))
+
+
+def _deadline_boxed_run_gate(timeout: int):
+    """gate_sweep `run_gate` seam sharing ONE wall-clock deadline across all
+    gates it runs: a gate that would start after the deadline reports
+    `exit_code=None` (never ran) instead of silently blowing the time-box."""
     import time as _time
 
-    from .gate_sweep import _default_run_gate, gate_sweep  # lazy import
+    from .gate_sweep import _default_run_gate  # lazy import
 
     deadline = _time.time() + max(1, timeout)
 
@@ -1323,7 +1333,88 @@ def _default_merged_tip_check(abs_wt_path: str, dev_ref: str, timeout: int = 90)
             return (None, "merged-tip verification time-box exceeded before this gate ran", 0.0)
         return _default_run_gate(spec, timeout=max(1, int(remaining)))
 
-    return gate_sweep(base_ref=dev_ref, repo_root=abs_wt_path, run_gate=_boxed_run_gate)
+    return _boxed_run_gate
+
+
+# ── Dev baseline for a red merged tip (2026-10-09, verdict-channel integrity) ──
+# A directly-touched product's red always reads "new" (`_merged_tip_red_is_new`
+# has no baseline). noc-4 measured the failure mode: e2e:social-wiring blocked
+# a branch while plain origin/dev failed the SAME specs (10 vs 5), all
+# `page.goto` load timeouts at load 36-40. Before blocking, the red gates are
+# re-run ONCE against a detached origin/dev checkout. Gate-level granularity:
+# a gate is rerun whole (gate_sweep exposes no failing-test ids to narrow by).
+def _baseline_outcome(entry: dict[str, Any] | None) -> tuple[str, str]:
+    """(outcome, why) for one gate entry from `run_gates_named`:
+    green | red | inconclusive. Only a gate that RAN on a valid harness and
+    exited non-zero without a harness_suspect is a trustworthy `red`."""
+    if not entry:
+        return "inconclusive", "gate has no spec in the baseline tree"
+    if not entry.get("ran"):
+        return "inconclusive", str(entry.get("summary") or "gate did not run")
+    if entry.get("exit_code") == 0:
+        return "green", ""
+    if entry.get("harness_suspect"):
+        return "inconclusive", "harness suspect: " + str(entry["harness_suspect"].get("signature"))
+    return "red", str(entry.get("summary") or "")
+
+
+def _gate_product_slugs(gate_names: list[str]) -> set[str]:
+    return {n.split(":", 1)[1] for n in gate_names
+            if n.startswith(("pytest:", "vite_build:", "e2e:")) and "/" not in n.split(":", 1)[1]}
+
+
+def _default_merged_tip_baseline(
+    gate_names: list[str], dev_ref: str, *, run, fs: "FsOps", primary_root: str,
+    worktrees_dir: str = ".claude/worktrees", timeout: int = 90, run_gates=None,
+) -> dict[str, Any]:
+    """Re-run ONLY `gate_names` against `dev_ref` in ONE ephemeral detached
+    worktree (shared by all gates), env-wired with the scoped wiring
+    (exactly the products of the failing gates — never the fleet), removed in
+    a `finally`. Never raises; `{status, dev_sha, gates{name:{outcome,why}},
+    worktree, worktree_removed, error?}`."""
+    from . import _worktree_staleness as _wts
+
+    out: dict[str, Any] = {"status": "error", "dev_ref": dev_ref, "gates": {},
+                           "worktree": None, "worktree_removed": None}
+
+    def git(*a, cwd=None):
+        return _git(run, *a, cwd=cwd)
+
+    dev_sha = _resolve(git, dev_ref)
+    if not dev_sha:
+        out["error"] = f"cannot resolve {dev_ref}"
+        return out
+    out["dev_sha"] = dev_sha
+    wt = os.path.join(primary_root, worktrees_dir, f"{_wts.BASELINE_WORKTREE_PREFIX}{dev_sha[:9]}")
+    rc, o, e = git("worktree", "add", "--detach", wt, dev_sha)
+    if rc != 0:
+        out["error"] = f"baseline worktree add failed: {(e or o).strip()}"
+        return out
+    out["worktree"] = wt
+    try:
+        would, skipped = _plan_env_wiring(primary_root, wt, fs, _gate_product_slugs(gate_names))
+        created, failed = _apply_env_wiring(would, fs)
+        out["wired"] = len(created)
+        out["wire_skipped"] = len(skipped) + len(failed)
+        if run_gates is None:
+            from .gate_sweep import run_gates_named as run_gates  # lazy import
+        res = run_gates(wt, list(gate_names), run_gate=_deadline_boxed_run_gate(timeout))
+        by_name = {g["gate"]: g for g in res.get("gates", [])}
+        for n in gate_names:
+            outcome, why = _baseline_outcome(by_name.get(n))
+            out["gates"][n] = {"outcome": outcome, "why": why}
+        out["status"] = "ok"
+    except Exception as exc:  # never crash integrate; the caller keeps blocking
+        out["error"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        rrc, ro, re_ = git("worktree", "remove", wt)
+        out["worktree_removed"] = rrc == 0
+        if rrc != 0:
+            out["remove_error"] = (
+                f"baseline worktree NOT removed ({(re_ or ro).strip()}); "
+                f"`git worktree remove {wt}` — the SessionStart sweep also reclaims it")
+            logger.warning("task_branch baseline: %s", out["remove_error"])
+    return out
 
 
 # ── KB-counts regeneration at integrate (mechanism 3) ─────────────────────
@@ -1659,6 +1750,7 @@ def task_branch(
     keep_worktree: bool | None = None,
     merged_tip_check: Callable[[str, str], dict[str, Any]] | None = None,
     merged_tip_timeout: int = 90,
+    merged_tip_baseline: Callable[[list[str], str], dict[str, Any]] | None = None,
     regenerate_kb_counts_at_integrate: bool = True,
     kb_counts_regenerate: "Callable[[str], dict[str, Any]] | None" = None,
     pointer_ops: "PointerOps | None" = None,
@@ -1762,6 +1854,14 @@ def task_branch(
     # an injected `run`.
     merged_tip_check_fn = merged_tip_check if merged_tip_check is not None else (
         (lambda p, d: _default_merged_tip_check(p, d, timeout=merged_tip_timeout))
+        if run is None else None)
+    # Dev baseline for red merged-tip gates — same production-only rule: it
+    # creates a real worktree and runs real gates, never under an injected `run`.
+    merged_tip_baseline_fn = merged_tip_baseline if merged_tip_baseline is not None else (
+        (lambda names, ref: _default_merged_tip_baseline(
+            names, ref, run=runner, fs=fsops,
+            primary_root=_resolve_primary_root(primary_root),
+            worktrees_dir=worktrees_dir, timeout=merged_tip_timeout))
         if run is None else None)
     # Same production-only rule — the real default shells out to the
     # worktree's own `cli.py` and must never fire under an injected `run`.
@@ -2185,6 +2285,7 @@ def task_branch(
             # ── Merged-tip verification — fast, scoped, refuses only on a
             # MEASURED NEW red (see module comment above `_merged_tip_red_is_new`).
             merged_tip_result = None
+            baseline_note = ""
             if verify_merged_tip and merged_tip_check_fn is not None:
                 try:
                     merged_tip_result = merged_tip_check_fn(
@@ -2199,6 +2300,28 @@ def task_branch(
                     and not g.get("harness_suspect")
                     and _merged_tip_red_is_new(g.get("gate", ""), merged_tip_result.get("scope"))
                 ]
+                if new_red_gates and merged_tip_baseline_fn is not None:
+                    names = [g.get("gate", "") for g in new_red_gates]
+                    try:
+                        bl = merged_tip_baseline_fn(names, f"{remote}/{dev_branch}")
+                    except Exception as exc:
+                        bl = {"status": "error", "error": f"{type(exc).__name__}: {exc}", "gates": {}}
+                    dev_gates = bl.get("gates") or {}
+                    pre_existing = [n for n in names
+                                    if (dev_gates.get(n) or {}).get("outcome") == "red"]
+                    inconclusive = [n for n in names if n not in pre_existing
+                                    and (dev_gates.get(n) or {}).get("outcome") != "green"]
+                    bl["pre_existing_on_dev"] = pre_existing
+                    bl["inconclusive"] = inconclusive
+                    if isinstance(merged_tip_result, dict):
+                        merged_tip_result["baseline"] = bl
+                    new_red_gates = [g for g in new_red_gates if g.get("gate") not in pre_existing]
+                    if pre_existing:
+                        baseline_note += (f" pre_existing_on_dev (also red on {remote}/{dev_branch}, "
+                                          f"not blocking): {pre_existing}.")
+                    if inconclusive and new_red_gates:
+                        baseline_note += (f" baseline inconclusive for {inconclusive} — cannot "
+                                          "claim they are pre-existing, so they block.")
                 if new_red_gates:
                     if benign_stashed:
                         _pop_stash(runner, wt_path, benign_stashed, verbose)
@@ -2216,7 +2339,7 @@ def task_branch(
                             "message": (
                                 f"rebase of {branch} onto {remote}/{dev_branch} succeeded, but "
                                 f"{len(new_red_gates)} gate(s) newly fail on the merged tip. "
-                                "Not pushed.")}
+                                "Not pushed." + baseline_note)}
                 elif verbose:
                     logger.debug("task_branch.integrate: merged-tip check status=%s "
                                  "(pushing regardless — no NEW red found)",
@@ -2252,6 +2375,8 @@ def task_branch(
                         "see migration_renumber.")
                 if merged_tip_result is not None:
                     result["merged_tip_check"] = merged_tip_result
+                    if baseline_note:
+                        result["message"] += baseline_note
                 if kb_counts_result is not None:
                     result["kb_counts_regenerate"] = kb_counts_result
                     if kb_counts_result.get("committed"):

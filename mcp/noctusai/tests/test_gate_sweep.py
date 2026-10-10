@@ -1174,3 +1174,18 @@ def test_parallel_deadline_overrun_is_incomplete_never_green(tmp_path):
     assert out["status"] == "incomplete" and out["exit_code"] == 1
     unrun = [g["gate"] for g in out["gates"] if not g["ran"]]
     assert unrun and out["scope"]["seed_fanout"]["mode"] == "scoped"
+
+
+def test_run_gates_named_runs_only_named_gates_and_reports_unknown(tmp_path):
+    (tmp_path / "products" / "p" / "backend" / "tests").mkdir(parents=True)
+    ran = []
+
+    def run_gate(spec):
+        ran.append(spec.gate)
+        return 0, "ok", 0.0
+
+    res = GS.run_gates_named(str(tmp_path), ["pytest:p", "e2e:p", "pytest:nope"],
+                             run_gate=run_gate, max_workers=1)
+    assert ran == ["pytest:p"]
+    assert [g["gate"] for g in res["gates"]] == ["pytest:p"]
+    assert sorted(res["unknown"]) == ["e2e:p", "pytest:nope"]

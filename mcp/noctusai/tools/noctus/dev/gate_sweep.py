@@ -988,6 +988,46 @@ def _run_one_gate(
     return entry
 
 
+def _named_gate_specs(root: Path, gate_names: list[str]) -> tuple[list[GateSpec], list[str]]:
+    """Specs for exactly `gate_names` (product `pytest:/vite_build:/e2e:<slug>`
+    and seed `pytest:/vitest:<rel>` gates) built by the SAME spec builders
+    the sweep uses — no second definition of what a gate runs. Returns
+    (specs, unknown) where `unknown` are names with no spec in `root`."""
+    py = resolve_test_python()
+    wanted = set(gate_names)
+    pool: dict[str, GateSpec] = {sp.gate: sp for sp in _seed_gate_specs(root, py)}
+    for name in wanted:
+        if name in pool or ":" not in name:
+            continue
+        kind, key = name.split(":", 1)
+        if kind in ("pytest", "vite_build", "e2e"):
+            for sp in _product_gate_specs(root, key, py):
+                pool.setdefault(sp.gate, sp)
+    specs = [pool[n] for n in gate_names if n in pool]
+    return specs, [n for n in gate_names if n not in pool]
+
+
+def run_gates_named(
+    repo_root: str,
+    gate_names: list[str],
+    timeout: int = 300,
+    run_gate: Callable[[GateSpec], GateRunResult] | None = None,
+    max_workers: int | None = None,
+) -> dict[str, Any]:
+    """Run ONLY the named gates in `repo_root` (no diff, no scope derivation)
+    and return `{gates, unknown}` with the sweep's own per-gate entry shape
+    (ran / exit_code / harness_invalid / harness_suspect). Gate-level
+    granularity: a gate is rerun whole, not narrowed to failing test ids.
+    Used by task_branch's merged-tip dev baseline."""
+    root = Path(repo_root)
+    specs, unknown = _named_gate_specs(root, gate_names)
+    runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
+    env_residue = dotenv_residue(gate_subprocess_env(root), root)
+    workers = max_workers if max_workers else max(1, (os.cpu_count() or 2) // 2)
+    return {"gates": _run_gates(specs, runner, env_residue, max_workers=workers),
+            "unknown": unknown}
+
+
 def _verdict(gates: list[dict[str, Any]]) -> str:
     """`green` iff every gate ran AND exited 0.
 
@@ -1248,6 +1288,7 @@ __all__ = [
     "_node_preconditions",
     "_HARNESS_SIGNATURES",
     "gate_sweep",
+    "run_gates_named",
     "register",
     "_derive_scope",
     "_changed_files",

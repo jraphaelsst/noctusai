@@ -172,6 +172,34 @@ unmeasurable red is the § 6 mistake at integrate time. Opt out with
 `mcp/noctusai/tools/noctus/dev/task_branch.py`'s module comment above
 `_merged_tip_red_is_new`.
 
+**2026-10-09 — a red on a directly-touched product needs a DEV BASELINE, and
+a load-starved Playwright timeout is a harness fault.** `_merged_tip_red_is_new`
+has no baseline for a product the branch touched, so it always said "new":
+`e2e:social-wiring` blocked a branch while plain `origin/dev` failed the SAME
+specs (10 failures vs 5 on the branch), every one a `page.goto` "waiting until
+load" timeout at load average 36-40 (noc-4). Two fixes. (1) Before blocking,
+`integrate` re-runs ONLY the red gates against `<remote>/<dev>` in ONE
+ephemeral DETACHED worktree (`.claude/worktrees/_merged-tip-baseline-<sha>`,
+shared by all gates, created once per integrate, removed in a `finally`,
+wired with the scoped `wire_products` mechanism for exactly those gates'
+products, bounded by the merged-tip time-box; granularity is the whole gate,
+gate_sweep exposes no failing-test ids to narrow by). Red on branch + green on
+dev ⇒ genuinely new ⇒ block. Red on both ⇒ `pre_existing_on_dev`, reported
+under `merged_tip_check.baseline`, does not block. Dev run inconclusive
+(timeout / harness-invalid / suspect / error) ⇒ never claimed pre-existing:
+still blocks and says "baseline inconclusive". `merged_tip_baseline=` is the
+injectable seam (production default only on the real runner). A crash-orphaned
+baseline is reclaimed by the SessionStart sweep (`cleanup_stale_worktrees`
+recognises `_merged-tip-baseline-*`: HEAD an ancestor of origin/dev, no tracked
+edits, unlocked, outside the never-force-bypassable recent-mtime window). (2)
+`harness_signatures` gains an optional runtime `when` condition and the
+signature `page_goto_load_timeout_under_load`: the Playwright goto-timeout text
+is `harness_suspect` (⇒ `inconclusive`, never `red`) only while the 1-minute
+load average per core is >= `LOAD_PER_CORE_SUSPECT` (1.5: every core saturated
+plus a queue, so a load event starves; 1.0 would fire on a busy-but-healthy
+box). The evidence records load and cores; the same text on an idle machine
+stays a real red.
+
 NOC-REMEDIATE[codify]: the piped-`$?`/pipe-into-filter half shipped as
 `check_piped_exit_code_pattern` (2026-09-17, this row). `gh run watch
 --exit-status` used as a gate remains deferred — a genuinely different

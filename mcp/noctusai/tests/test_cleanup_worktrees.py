@@ -645,3 +645,52 @@ class TestIntegratedLivePointer:
         result = cleanup_stale_worktrees(
             repo_root=repo, force=True, min_age_minutes=0, recent_mtime_minutes=0)
         assert wt.exists() and result["dirty"]
+
+
+class TestEphemeralBaselineWorktree:
+    """task_branch's detached `_merged-tip-baseline-*` checkout: a crash
+    between its add and its `finally` remove must be reclaimable, with the
+    safety guards still on (real git)."""
+
+    @staticmethod
+    def _add(repo, name="_merged-tip-baseline-abc123456"):
+        wt = repo / ".claude" / "worktrees" / name
+        _git(repo, "worktree", "add", "-q", "--detach", str(wt), "origin/dev")
+        return wt
+
+    def test_orphaned_baseline_is_reclaimed_with_named_signal(self, repo):
+        wt = self._add(repo)
+        (wt / "test-results.txt").write_text("untracked residue\n")  # expected residue
+        res = cleanup_stale_worktrees(repo_root=repo, force=True, recent_mtime_minutes=0)
+        assert str(wt) in res["stale"], res
+        assert res["stale_signals"][str(wt)] == "ephemeral_baseline_worktree"
+        assert not wt.exists()
+
+    def test_live_baseline_inside_activity_window_is_protected_even_with_force(self, repo):
+        wt = self._add(repo)
+        res = cleanup_stale_worktrees(repo_root=repo, force=True)  # default 60-min window
+        assert str(wt) not in res["stale"]
+        assert str(wt) in [p["path"] for p in res["recently_active"]]
+        assert wt.exists()
+
+    def test_baseline_with_tracked_edit_is_dirty_not_stale(self, repo):
+        wt = self._add(repo)
+        (wt / "f").write_text("edited\n")
+        res = cleanup_stale_worktrees(repo_root=repo, force=True, recent_mtime_minutes=0)
+        assert str(wt) not in res["stale"]
+        assert str(wt) in [d["path"] for d in res["dirty"]]
+
+    def test_baseline_carrying_unmerged_commit_is_kept(self, repo):
+        wt = self._add(repo)
+        _git(wt, "config", "user.email", "t@t.t")
+        _git(wt, "config", "user.name", "t")
+        (wt / "g").write_text("unique\n")
+        _git(wt, "add", "g")
+        _git(wt, "commit", "-qm", "unique work")
+        res = cleanup_stale_worktrees(repo_root=repo, force=True, recent_mtime_minutes=0)
+        assert str(wt) not in res["stale"] and wt.exists()
+
+    def test_other_detached_worktrees_remain_ignored(self, repo):
+        wt = self._add(repo, name="some-other-detached")
+        res = cleanup_stale_worktrees(repo_root=repo, force=True, recent_mtime_minutes=0)
+        assert str(wt) not in res["stale"] and wt.exists()

@@ -74,6 +74,12 @@ def resolve_merged_base(run: GitRunner) -> str:
     return PREFERRED_BASE if rc == 0 else FALLBACK_BASE
 
 
+#: Name prefix of the ephemeral DETACHED checkout `task_branch integrate`
+#: creates to re-run red merged-tip gates against origin/dev. Shared so the
+#: creator and the sweep (cleanup_worktrees) cannot drift on the name.
+BASELINE_WORKTREE_PREFIX = "_merged-tip-baseline-"
+
+
 def is_ancestor(run: GitRunner, branch: str, base: str) -> bool:
     """``git merge-base --is-ancestor branch base`` — SHA ancestry (true merge)."""
     rc, _o, _e = run(["git", "merge-base", "--is-ancestor", branch, base])
@@ -567,6 +573,7 @@ __all__ = [
     "make_subprocess_runner",
     "resolve_merged_base",
     "is_ancestor",
+    "BASELINE_WORKTREE_PREFIX",
     "all_commits_cherry_picked",
     "is_merged",
     "worktree_age_seconds",

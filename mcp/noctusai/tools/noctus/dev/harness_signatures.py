@@ -39,9 +39,44 @@ reclassification.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
+
+#: 1-minute load average PER CPU CORE at/above which a Playwright navigation
+#: timeout is attributed to the machine, not the code. 1.5 = on average 1.5
+#: runnable tasks per core: every core is saturated AND a queue is waiting, so
+#: a browser's `page.goto` load event (which needs several scheduler slices)
+#: routinely overruns Playwright's 30 s default. Measured 2026-10-09: load
+#: 36-40 on a ~10-core box (3.6-4.0/core) made plain origin/dev fail the same
+#: e2e specs a branch was blocked for. 1.0 would fire on a merely busy-but-
+#: healthy box (a real timeout there is still a real signal); 1.5 keeps a
+#: genuine regression on a normal machine classified `red`.
+LOAD_PER_CORE_SUSPECT = 1.5
+
+LoadReader = Callable[[], "tuple[float, int] | None"]
+
+
+def read_load_per_core() -> "tuple[float, int] | None":
+    """(1-min load average, cpu cores) or None where unavailable."""
+    try:
+        return os.getloadavg()[0], max(1, os.cpu_count() or 1)
+    except (OSError, AttributeError):
+        return None
+
+
+def _load_condition(reader: LoadReader) -> dict[str, Any] | None:
+    """Evidence dict when load/core >= LOAD_PER_CORE_SUSPECT, else None."""
+    got = reader()
+    if got is None:
+        return None
+    load, cores = got
+    if load / cores < LOAD_PER_CORE_SUSPECT:
+        return None
+    return {"load_1m": round(load, 2), "cpu_cores": cores,
+            "load_per_core": round(load / cores, 2),
+            "threshold": LOAD_PER_CORE_SUSPECT}
 
 
 @dataclass(frozen=True)
@@ -72,6 +107,11 @@ class HarnessSignature:
     pattern: str | None
     remedy: str
     exit_codes: tuple[int, ...] | None = None
+    #: Optional RUNTIME condition ANDed with pattern/exit_codes: called with a
+    #: load reader, returns an evidence dict when the condition holds, else
+    #: None (signature does not fire). Used where the same output text is a
+    #: real red on a healthy machine and a harness artifact on a saturated one.
+    when: Callable[[LoadReader], dict[str, Any] | None] | None = None
 
 
 # (signature, regex, remedy[, exit_codes]). See the dataclass docstring for
@@ -205,6 +245,21 @@ HARNESS_SIGNATURES: tuple[HarnessSignature, ...] = (
         "was killed.",
     ),
     HarnessSignature(
+        # 2026-10-09 (noc-4): e2e:social-wiring blocked a branch, yet plain
+        # origin/dev failed the SAME specs, all `page.goto` load timeouts, at
+        # load average 36-40. The text alone is ALSO what a genuinely slow/
+        # broken page prints, so it fires only when the machine is saturated.
+        "page_goto_load_timeout_under_load",
+        r"page\.goto: Timeout \d+ms exceeded"
+        r"|waiting until \"load\"",
+        "Playwright navigation timed out WHILE the machine was saturated "
+        "(1-min load per core >= LOAD_PER_CORE_SUSPECT) — the load event "
+        "starved, not necessarily the app. Re-run when the box is idle; the "
+        "same timeouts on plain origin/dev confirm it is the harness.",
+        None,
+        _load_condition,
+    ),
+    HarnessSignature(
         "no_tests_collected",
         r"collected 0 items|no tests ran",
         "the suite collected/ran ZERO tests — that is neither a pass nor a "
@@ -235,12 +290,16 @@ HARNESS_SIGNATURES: tuple[HarnessSignature, ...] = (
 )
 
 
-def harness_suspect(output: str, exit_code: int | None = None) -> dict[str, Any] | None:
+def harness_suspect(output: str, exit_code: int | None = None,
+                    load_reader: LoadReader | None = None) -> dict[str, Any] | None:
     """Does this failing gate/command's output (and, optionally, its own
     process exit code) carry a known HARNESS-failure signature? Returns the
     matched evidence line so the call is auditable (and refutable) rather
     than an opaque reclassification. `exit_code=None` preserves the
-    original text-only call shape (every pre-2026-09-20 call site)."""
+    original text-only call shape (every pre-2026-09-20 call site).
+    `load_reader` is the injectable load source for load-conditioned
+    signatures (default: the real `os.getloadavg()`)."""
+    reader = load_reader or read_load_per_core
     lines = (output or "").splitlines()
     for sig in HARNESS_SIGNATURES:
         text_hit: str | None = None
@@ -269,7 +328,13 @@ def harness_suspect(output: str, exit_code: int | None = None) -> dict[str, Any]
             matched_line = f"(exit code {exit_code}, no output text required)"
         else:
             continue  # malformed entry: neither axis set — never matches
-        return {"signature": sig.name, "matched_line": matched_line, "remedy": sig.remedy}
+        hit = {"signature": sig.name, "matched_line": matched_line, "remedy": sig.remedy}
+        if sig.when is not None:
+            evidence = sig.when(reader)
+            if evidence is None:
+                continue  # text matched but the runtime condition did not hold
+            hit["condition"] = evidence
+        return hit
     return None
 
 
@@ -349,4 +414,6 @@ __all__ = [
     "HARNESS_SIGNATURES",
     "harness_suspect",
     "bash_advisory",
+    "LOAD_PER_CORE_SUSPECT",
+    "read_load_per_core",
 ]

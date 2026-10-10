@@ -326,6 +326,40 @@ def cleanup_stale_worktrees(
 
     worktrees_root = str(worktree_dir) + os.sep
 
+    def classify_baseline(wt: str, is_locked: bool) -> None:
+        wt_path = Path(wt)
+        if not wt_path.is_dir():
+            stale.append(wt)
+            stale_signals[wt] = "phantom_worktree_dir_gone"
+            return
+        head = _git(wt_path, "rev-parse", "HEAD").stdout.strip()
+        if not head or not wts.is_ancestor(wts_run, head, base):
+            active.append(wt)  # unresolvable / carries something not on base
+            return
+        # untracked output (test-results, wired node_modules links) is the
+        # expected residue of a baseline run — only TRACKED edits are "work".
+        tracked = _git(wt_path, "status", "--porcelain", "--untracked-files=no")
+        n_dirty = len([ln for ln in tracked.stdout.splitlines() if ln.strip()])
+        if n_dirty:
+            dirty.append({"path": wt, "reason": f"{n_dirty} tracked-file edit(s) in a baseline worktree — INVESTIGATE"})
+            return
+        if is_locked:
+            locked.append(wt)
+            return
+        is_active, age, window = wts.is_recently_active(
+            wt_path, window_minutes=recent_mtime_minutes)
+        if is_active:
+            recently_active.append({
+                "path": wt, "branch": None, "age_seconds": age,
+                "window_seconds": window,
+                "reason": "ephemeral merged-tip baseline worktree touched inside the "
+                          "recent-activity window — may be a live baseline run; "
+                          "force=True does NOT override this guard",
+            })
+            return
+        stale.append(wt)
+        stale_signals[wt] = "ephemeral_baseline_worktree"
+
     def classify(wt: str, branch: str | None, is_locked: bool, lock_reason: str) -> None:
         # Main repo or sibling workspace: ignore.
         if wt == str(root):
@@ -339,6 +373,16 @@ def cleanup_stale_worktrees(
         if not wt.startswith(worktrees_root):
             return
         if branch is None:
+            # Detached worktrees are never swept (no branch ⇒ no merge gate)
+            # EXCEPT the ephemeral merged-tip dev-baseline checkout task_branch
+            # creates per integrate (`BASELINE_WORKTREE_PREFIX`): a crash
+            # between its add and its `finally` remove would otherwise leak a
+            # full checkout forever. Guards stay on: HEAD must be an ancestor
+            # of the base (nothing unique to lose), no tracked-file edits, no
+            # stash, unlocked, and the NEVER-force-bypassable recent-mtime
+            # guard keeps a LIVE baseline run safe.
+            if os.path.basename(wt).startswith(wts.BASELINE_WORKTREE_PREFIX):
+                classify_baseline(wt, is_locked)
             return
 
         # Auto-unlock dead-pid locks (THE-P11). "(pid N)" with a dead pid.
