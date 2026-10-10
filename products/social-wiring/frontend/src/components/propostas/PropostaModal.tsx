@@ -28,6 +28,7 @@ import { exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
 import {
   propostaEditavel,
   type AceiteResponse,
+  type PosAceite,
   type Proposta,
   type PropostaPatch,
 } from "@/types/propostas";
@@ -224,8 +225,19 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
   }
   async function handlePosAceite() {
     try {
-      const pos = await m.posAceite.mutateAsync({ id: propostaId });
-      setAceite((a) => (a ? { ...a, pos_aceite: pos } : a));
+      const res = await m.posAceite.mutateAsync({ id: propostaId });
+      const novos = res.passos ?? [];
+      const pos = res.pos_aceite ?? (res.certidoes ? (res as PosAceite) : undefined);
+      setAceite((a) =>
+        a
+          ? {
+              ...a,
+              pos_aceite: pos ?? a.pos_aceite,
+              // Keep the 6-step order; replace the resumed steps.
+              passos: (a.passos ?? []).map((x) => novos.find((n) => n.passo === x.passo) ?? x),
+            }
+          : a,
+      );
     } catch (err) {
       falha(err, "Não foi possível refazer certidões e matrícula.");
     }
@@ -233,6 +245,7 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
 
   const ocupado = m.salvar.isPending || m.enviar.isPending || m.recusar.isPending || m.aceitar.isPending || m.excluir.isPending;
   const completude = proposta?.completude ?? [];
+  const valorVazio = !draft?.valor_proposto || draft.valor_proposto.trim() === "";
   const ids = new Set(draft?.testemunha_ids ?? []);
 
   return (
@@ -263,6 +276,10 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
             passos={aceite.passos}
             posAceite={aceite.pos_aceite}
             tentando={m.aceitar.isPending || m.posAceite.isPending}
+            aceita={
+              aceite.proposta.status === "aceita" ||
+              (aceite.passos ?? []).some((x) => x.passo === "status" && x.status === "ok")
+            }
             onTentarAceiteDeNovo={() => void handleAceitar()}
             onTentarPosAceiteDeNovo={() => void handlePosAceite()}
             onAbrirCertidoes={irPara ? () => { irPara("certidoes"); onClose(); } : undefined}
@@ -419,7 +436,19 @@ export function PropostaModal({ clienteId, propostaId, onClose, irPara, onAbrirC
                   <Button variant="outline" disabled={ocupado} onClick={() => void handleEnviar()} data-testid="proposta-enviar">Enviar</Button>
                 )}
                 <Button variant="outline" disabled={ocupado} onClick={() => setRecusando(true)} data-testid="proposta-recusar">Recusar</Button>
-                <Button disabled={ocupado} onClick={() => setConfirmaAceite(true)} data-testid="proposta-aceitar">Aceitar</Button>
+                <Button
+                  disabled={ocupado || valorVazio}
+                  title={valorVazio ? "Informe o valor proposto para aceitar" : undefined}
+                  onClick={() => setConfirmaAceite(true)}
+                  data-testid="proposta-aceitar"
+                >
+                  Aceitar
+                </Button>
+                {valorVazio && (
+                  <span className="basis-full text-right text-xs text-muted-foreground" data-testid="aceitar-dica-valor">
+                    Informe o valor proposto para aceitar.
+                  </span>
+                )}
               </div>
             )}
           </DialogFooter>

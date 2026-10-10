@@ -158,6 +158,12 @@ export interface AceitePasso {
   mensagem: string | null;
 }
 
+/** `POST …/pos-aceite`: the pós-aceite payload plus the resumed steps. */
+export type PosAceiteResponse = PosAceite & { passos?: AceitePasso[]; pos_aceite?: PosAceite | null };
+
+/** Steps whose retry is `pos-aceite` (an accepted proposta can't be re-accepted: 409). */
+export const PASSOS_POS_ACEITE: readonly AceitePassoNome[] = ["funil", "pos_aceite"];
+
 export interface AceiteResponse {
   proposta: Proposta;
   contrato_id: string | null;
@@ -182,6 +188,8 @@ export const PROPOSTA_ERRO_409: Record<string, string> = {
   imovel_divergente:
     "O imóvel desta proposta é diferente do imóvel já em negociação neste atendimento.",
   visita_nao_realizada: "A visita ainda não foi marcada como realizada.",
+  atendimento_divergente: "Esta proposta pertence a outro atendimento.",
+  valor_obrigatorio: "Informe o valor proposto antes de aceitar.",
   proposta_nao_aceita: "Esta proposta ainda não foi aceita.",
   proposta_nao_rascunho: "Só é possível excluir uma proposta em rascunho.",
   motivo_obrigatorio: "Informe o motivo da recusa.",

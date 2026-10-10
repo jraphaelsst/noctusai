@@ -142,6 +142,8 @@ describe("PropostaModal", () => {
       geracao: { pronto: false, faltando: [], bloqueios: [], avisos: [] },
       passos: [
         { passo: "materializar", status: "ok", mensagem: null },
+        { passo: "status", status: "ok", mensagem: null },
+        { passo: "funil", status: "pulado", mensagem: "bloqueado por falha em passo anterior" },
         { passo: "pos_aceite", status: "erro", mensagem: "InfoSimples fora do ar" },
       ],
       pos_aceite: {
@@ -157,7 +159,17 @@ describe("PropostaModal", () => {
     expect(rtl.screen.getByText("João")).toBeTruthy();
     expect(rtl.screen.getByTestId("pos-aceite-matricula").textContent).toContain("Matrícula não anexada");
     expect(rtl.screen.getByText("InfoSimples fora do ar")).toBeTruthy();
-    expect(rtl.screen.getByTestId("aceite-tentar-de-novo")).toBeTruthy();
+    // accepted proposta: retry resumes via pos-aceite, never aceitar (409 proposta_fechada)
+    expect(rtl.screen.queryByTestId("aceite-tentar-de-novo")).toBeNull();
+    expect(rtl.screen.getByText("bloqueado por falha em passo anterior").getAttribute("data-status")).toBe("pulado");
+    m.posAceite.mockResolvedValue({
+      certidoes: [], matricula: { status: "ok", documento_id: "d", motivo: null },
+      passos: [{ passo: "funil", status: "ok", mensagem: null }, { passo: "pos_aceite", status: "ok", mensagem: null }],
+    });
+    rtl.fireEvent.click(rtl.screen.getByTestId("aceite-retomar-pos-aceite"));
+    await rtl.waitFor(() => expect(m.posAceite).toHaveBeenCalledWith({ id: "p1" }));
+    expect(m.aceitar).toHaveBeenCalledTimes(1);
+    await rtl.waitFor(() => expect(rtl.screen.queryByTestId("aceite-retomar-pos-aceite")).toBeNull());
     expect(m.toast.success).toHaveBeenCalled();
     rtl.fireEvent.click(rtl.screen.getByTestId("ir-contratos"));
     expect(onAbrirContrato).toHaveBeenCalledWith("k1");
@@ -199,6 +211,13 @@ describe("PropostaModal", () => {
     expect(rtl.screen.queryByTestId("proposta-salvar")).toBeNull();
     expect((rtl.screen.getByLabelText("Valor proposto") as HTMLInputElement).disabled).toBe(true);
     expect(rtl.screen.queryByTestId("parcela-add")).toBeNull();
+  });
+
+  it("disables Aceitar with a hint while valor_proposto is empty", async () => {
+    m.one.mockReturnValue(resp(proposta({ valor_proposto: null })));
+    const { rtl } = await abrir();
+    expect((rtl.screen.getByTestId("proposta-aceitar") as HTMLButtonElement).disabled).toBe(true);
+    expect(rtl.screen.getByTestId("aceitar-dica-valor")).toBeTruthy();
   });
 
   it("offers Excluir only for rascunho", async () => {
@@ -257,6 +276,11 @@ describe("lerErroProposta 422", () => {
     const { lerErroProposta } = await import("./erroProposta");
     const e = new ApiError(409, "", { error: { code: "proposta_nao_rascunho" } });
     expect(lerErroProposta(e, "fb").mensagem).toContain("rascunho");
+    for (const code of ["atendimento_divergente", "valor_obrigatorio"]) {
+      expect(lerErroProposta(new ApiError(409, "", { error: { code } }), "fb").mensagem).not.toBe("fb");
+    }
+    const srv = new ApiError(409, "Texto do servidor", { error: { code: "atendimento_divergente", message: "Texto do servidor" } });
+    expect(lerErroProposta(srv, "fb").mensagem).toBe("Texto do servidor");
   });
 });
 

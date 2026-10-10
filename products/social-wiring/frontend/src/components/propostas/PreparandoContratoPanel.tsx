@@ -10,6 +10,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import {
   ACEITE_PASSO_LABELS,
+  PASSOS_POS_ACEITE,
   type AceitePasso,
   type CertidaoPosAceiteStatus,
   type MatriculaPosAceiteStatus,
@@ -39,6 +40,8 @@ export interface PreparandoContratoPanelProps {
   /** Re-run the pos-aceite endpoint. */
   onTentarPosAceiteDeNovo?: () => void;
   tentando?: boolean;
+  /** The proposta is already `aceita`: failed funil/pós-aceite steps resume via pos-aceite, not aceitar. */
+  aceita?: boolean;
   onAbrirCertidoes?: () => void;
   onAbrirContratos?: () => void;
 }
@@ -46,12 +49,19 @@ export interface PreparandoContratoPanelProps {
 function IconePasso({ status }: { status: AceitePasso["status"] }) {
   if (status === "ok") return <CheckCircle2 className="h-4 w-4 text-green-600" />;
   if (status === "erro") return <AlertTriangle className="h-4 w-4 text-destructive" />;
+  // 'pulado' stays neutral/grey (below): not a failure of its own.
   return <MinusCircle className="h-4 w-4 text-muted-foreground" />;
 }
 
 export function PreparandoContratoPanel(p: PreparandoContratoPanelProps) {
-  const erros = (p.passos ?? []).filter((x) => x.status === "erro");
-  const posAceiteComErro = !!p.posAceite && (
+  const passos = p.passos ?? [];
+  const retomaveis = passos.filter(
+    (x) => PASSOS_POS_ACEITE.includes(x.passo) && (x.status === "erro" || x.status === "pulado"),
+  );
+  // Accepted: only funil/pós-aceite can be retried (via pos-aceite). Not accepted: any erro → aceitar.
+  const retomarPosAceite = !!p.aceita && retomaveis.length > 0;
+  const refazerAceite = !p.aceita && passos.some((x) => x.status === "erro");
+  const posAceiteComErro = !retomarPosAceite && !!p.posAceite && (
     p.posAceite.matricula.status === "erro" ||
     p.posAceite.certidoes.some((c) => c.status === "erro" || c.status === "bloqueado")
   );
@@ -65,10 +75,14 @@ export function PreparandoContratoPanel(p: PreparandoContratoPanelProps) {
             <li key={x.passo} className="flex items-start gap-2 text-sm" data-testid={`aceite-passo-${x.passo}`}>
               <IconePasso status={x.status} />
               <div>
-                <span>{ACEITE_PASSO_LABELS[x.passo]}</span>
+                <span className={x.status === "pulado" ? "text-muted-foreground" : undefined}>
+                  {ACEITE_PASSO_LABELS[x.passo]}
+                  {x.status === "pulado" ? " (pulado)" : ""}
+                </span>
                 {x.mensagem && (
                   <p
                     className={x.status === "erro" ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+                    data-status={x.status}
                     role={x.status === "erro" ? "alert" : undefined}
                   >
                     {x.mensagem}
@@ -79,8 +93,13 @@ export function PreparandoContratoPanel(p: PreparandoContratoPanelProps) {
           ))}
         </ul>
       )}
-      {erros.length > 0 && p.onTentarAceiteDeNovo && (
+      {refazerAceite && p.onTentarAceiteDeNovo && (
         <Button size="sm" variant="outline" disabled={p.tentando} onClick={p.onTentarAceiteDeNovo} data-testid="aceite-tentar-de-novo">
+          Tentar de novo
+        </Button>
+      )}
+      {retomarPosAceite && p.onTentarPosAceiteDeNovo && (
+        <Button size="sm" variant="outline" disabled={p.tentando} onClick={p.onTentarPosAceiteDeNovo} data-testid="aceite-retomar-pos-aceite">
           Tentar de novo
         </Button>
       )}

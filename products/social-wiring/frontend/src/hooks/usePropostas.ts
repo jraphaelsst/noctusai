@@ -8,7 +8,7 @@ import { api } from "@noctusai/seed/infra";
 import { contratosQueryKey } from "@/hooks/useContratos";
 import type {
   AceiteResponse,
-  PosAceite,
+  PosAceiteResponse,
   Proposta,
   PropostaCreateBody,
   PropostaPatch,
@@ -89,7 +89,7 @@ export function usePropostaMutations(clienteId: string) {
   });
   const posAceite = useMutation({
     mutationFn: ({ id }: { id: string }) =>
-      api.post<PosAceite>(`${item(clienteId, id)}/pos-aceite`, {}),
+      api.post<PosAceiteResponse>(`${item(clienteId, id)}/pos-aceite`, {}),
     onSuccess: () => {
       invalidar();
       qc.invalidateQueries({ queryKey: ["sw", "clientes", clienteId] });
