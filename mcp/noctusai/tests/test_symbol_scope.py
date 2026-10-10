@@ -442,3 +442,94 @@ class TestGateSweepEndToEnd:
         argv = self._mcp_argv(root)
 
         assert len([a for a in argv if "tests/" in a]) == 11
+
+
+class TestAstIdentical:
+    """A comment/whitespace-only diff (the WHOLE module's AST unchanged) runs
+    only the module's stem tests (2026-10-10: a one-line comment on
+    compliance.py fell back to all 90 importers and timed out)."""
+
+    def test_comment_and_whitespace_only_is_identical(self):
+        assert SS.ast_identical(BIG, BIG.replace("LIMIT = 3\n", "LIMIT = 3  # three\n\n\n"))
+
+    def test_a_docstring_edit_is_not_identical(self):
+        """Docstrings are runtime-readable — not a no-op."""
+        assert not SS.ast_identical(BIG, BIG.replace("Mentions check_alpha", "Mentions alpha"))
+
+    def test_a_one_token_change_is_not_identical(self):
+        assert not SS.ast_identical(BIG, BIG.replace("return 3\n", "return 4\n"))
+
+    def test_new_file_or_unparseable_side_is_not_identical(self):
+        assert not SS.ast_identical(None, BIG)
+        assert not SS.ast_identical(BIG, BIG + "def (\n")
+
+
+class TestAstIdenticalEndToEnd(TestGateSweepEndToEnd):
+    STEM_TEST = (
+        "from tools.noctus.dev.{m} import check_all, check_gamma\n"
+        "def test_gamma_unit():\n    assert check_gamma() == 3\n"
+        "def test_fleet_via_registry():\n    assert check_all()\n"
+    )
+
+    def _with_stem(self, tmp_path, module="big"):
+        root = self._repo(tmp_path, module=module)
+        (root / f"mcp/noctusai/tests/test_{module}.py").write_text(
+            self.STEM_TEST.replace("{m}", module))
+        _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
+        _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "stem")
+        _git(root, "branch", "-f", "base")
+        return root
+
+    def _sweep(self, root):
+        argv_by_gate: dict[str, list[str]] = {}
+
+        def run_gate(spec):
+            argv_by_gate[spec.gate] = list(spec.argv)
+            return 0, "ok", 0.0
+
+        result = GS.gate_sweep(base_ref="base", repo_root=str(root), run_gate=run_gate, allow_stale_tree=True)
+        mcp = next(a for g, a in argv_by_gate.items() if g.startswith("mcp_toolkit_tests"))
+        return result, [a for a in mcp if "tests/" in a]
+
+    def test_comment_only_runs_just_the_stem_tests(self, tmp_path):
+        root = self._with_stem(tmp_path)
+        big = root / "mcp/noctusai/tools/noctus/dev/big.py"
+        big.write_text(BIG.replace("LIMIT = 3\n", "LIMIT = 3  # a note\n"))
+
+        result, tests = self._sweep(root)
+
+        assert tests == ["mcp/noctusai/tests/test_big.py"]
+        assert result["scope"]["ast_identical"] is True
+
+    def test_docstring_only_does_not_narrow_to_the_stem(self, tmp_path):
+        root = self._with_stem(tmp_path)
+        big = root / "mcp/noctusai/tools/noctus/dev/big.py"
+        big.write_text(BIG.replace("Mentions check_alpha", "Mentions alpha"))
+
+        result, tests = self._sweep(root)
+
+        assert len(tests) > 1 and "ast_identical" not in result["scope"]
+
+    def test_a_one_token_change_does_not_narrow_to_the_stem(self, tmp_path):
+        root = self._with_stem(tmp_path)
+        big = root / "mcp/noctusai/tools/noctus/dev/big.py"
+        big.write_text(BIG.replace("    return 3\n", "    return 4\n"))
+
+        result, tests = self._sweep(root)
+
+        assert "ast_identical" not in result["scope"]
+        assert "mcp/noctusai/tests/test_big.py::test_gamma_unit" in tests
+
+    def test_a_stand_in_module_delegates_its_stem_tests_registry_nodes(self, tmp_path):
+        """The general delegation rule, not a module special case: the
+        module is `compliance` only because that's the one registered in
+        `_REGISTRY_STAND_INS` (keeper_delta)."""
+        root = self._with_stem(tmp_path, module="compliance")
+        mod = root / "mcp/noctusai/tools/noctus/dev/compliance.py"
+        mod.write_text(BIG.replace("LIMIT = 3\n", "LIMIT = 3  # a note\n"))
+
+        result, tests = self._sweep(root)
+
+        assert tests == ["mcp/noctusai/tests/test_compliance.py::test_gamma_unit"]
+        kd = next(g for g in result["gates"] if g["gate"] == "keeper_delta")
+        assert kd["delegated_tests"] == ["mcp/noctusai/tests/test_compliance.py::test_fleet_via_registry"]

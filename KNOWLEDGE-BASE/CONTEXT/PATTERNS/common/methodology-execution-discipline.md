@@ -483,6 +483,14 @@ added.
 
   A replay over 14 keeper commits narrowed 13 of them from 83–90 files to
   1–4 test nodes; the other 1 fell back.
+
+  A diff that leaves the module's whole AST unchanged (comments or
+  whitespace only; a docstring edit doesn't count) runs only the module's
+  stem tests, and the result says `ast_identical: true`. Registry-reaching
+  stem nodes go to the module's stand-in gate (`_REGISTRY_STAND_INS`, data
+  — `compliance.py` → `keeper_delta`). A one-line comment on
+  `compliance.py` went from all 90 importers (timeout) to 388 tests in
+  about 14 s.
 - **Signature** (advisory, for what preflight cannot know in advance): a
   non-zero gate whose output carries a known setup-failure fingerprint
   (`Executable doesn't exist at`, `Process from config.webServer was not

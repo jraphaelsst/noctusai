@@ -951,6 +951,11 @@ _MCP_FULL_SUITE_FILES = frozenset({
 #: Docs with no test surface.
 _MCP_NO_TEST_SUFFIXES = (".md",)
 _COMPLIANCE_REL = "mcp/noctusai/tools/noctus/dev/compliance.py"
+#: A module whose registry's fleet run has a STAND-IN gate → that gate. Tests
+#: reaching such a module only through its registry are delegated to the
+#: stand-in (named on its gate entry, its own result decides the verdict, CI
+#: runs them whole). Data, so a second registry joins by one line.
+_REGISTRY_STAND_INS: dict[str, str] = {_COMPLIANCE_REL: "keeper_delta"}
 # Keeper-registration meta-tests: fast, and the ones a new `check_*` breaks.
 _KEEPER_META_TESTS = (
     "mcp/noctusai/tests/test_compliance.py::TestCheckDetectorHasRegressionTest",
@@ -982,7 +987,8 @@ def _imported_names(tree: ast.AST) -> set[str]:
 
 def _mcp_scoped_test_files(
     root: Path, mcp_files: list[str], diffs: dict[str, dict[str, Any]] | None = None,
-    delegated: list[str] | None = None,
+    delegated: dict[str, list[str]] | None = None,
+    ast_identical: list[str] | None = None,
 ) -> tuple[list[str], list[str]] | None:
     """Affected toolkit test files for `mcp_files`, or None = run the full suite.
 
@@ -991,9 +997,11 @@ def _mcp_scoped_test_files(
     never silently passed). `diffs` (``{repo_rel: {"old", "diff"}}``, from
     `_mcp_module_diffs`) lets a module many tests import narrow from "every
     importer" to the tests naming what changed — `symbol_scope`; without it,
-    or whenever that can't tell, import scoping stands. For `compliance.py`,
-    tests reaching the change only through the fleet registry are appended
-    to `delegated` (judged by the `keeper_delta` gate) instead of run."""
+    or whenever that can't tell, import scoping stands. For a module with a
+    registry stand-in (`_REGISTRY_STAND_INS`), tests reaching the change only
+    through its registry land in `delegated[<stand-in gate>]` instead of
+    running. A module whose whole AST is unchanged (comments / whitespace
+    only) runs just its stem tests, and is listed in `ast_identical`."""
     pkg_dir = root / _MCP_PKG
     changed_tests: set[str] = set()
     changed_mods: dict[str, str] = {}
@@ -1059,7 +1067,7 @@ def _mcp_scoped_test_files(
                 importers.setdefault(mod, []).append(rel_test)
             covered.update(hits)
     untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
-    affected |= _narrowed_importers(root, changed_mods, importers, diffs or {}, delegated)
+    affected |= _narrowed_importers(root, changed_mods, importers, diffs or {}, delegated, ast_identical)
     for hook in [*hook_files, *data_files]:
         name = Path(hook).name
         if hook.startswith((".github/", "scripts/")) and not hook.endswith(".py"):
@@ -1128,34 +1136,70 @@ def _test_helper_users(root: Path, helper: str) -> tuple[set[str], dict[str, str
 def _narrowed_importers(
     root: Path, changed_mods: dict[str, str],
     importers: dict[str, list[str]], diffs: dict[str, dict[str, Any]],
-    delegated: list[str] | None = None,
+    delegated: dict[str, list[str]] | None = None,
+    ast_identical: list[str] | None = None,
 ) -> set[str]:
-    """Each changed module's importing tests — narrowed by `symbol_scope`
-    for a module enough tests import, when its diff is known."""
+    """Each changed module's importing tests — narrowed when its diff is
+    known: to its stem tests when the AST is identical, else by
+    `symbol_scope` for a module enough tests import."""
     selected: set[str] = set()
     kit: dict[str, str] | None = None
     for mod, tests in importers.items():
-        info = diffs.get(_MCP_PKG + changed_mods[mod])
+        rel = _MCP_PKG + changed_mods[mod]
+        info = diffs.get(rel)
+        stand_in = _REGISTRY_STAND_INS.get(rel) if delegated is not None else None
         narrowed = None
-        if info is not None and len(tests) >= symbol_scope.MIN_IMPORTING_TESTS:
-            if kit is None:
+        if info is not None:
+            new_source = (root / rel).read_text(encoding="utf-8")
+            if kit is None and (stand_in or len(tests) >= symbol_scope.MIN_IMPORTING_TESTS):
                 kit = _toolkit_sources(root)
-            narrowed = symbol_scope.scope_module(
-                lambda rel: (root / rel).read_text(encoding="utf-8"), mod, tests,
-                info["old"], (root / _MCP_PKG / changed_mods[mod]).read_text(encoding="utf-8"),
-                info["diff"], kit,
-                # keeper_delta is the stand-in for the registry's fleet run —
-                # it exists for compliance.py only, so nothing else delegates.
-                delegate_registry=(_MCP_PKG + changed_mods[mod] == _COMPLIANCE_REL
-                                   and delegated is not None),
-            )
+            if symbol_scope.ast_identical(info["old"], new_source):
+                narrowed = _stem_tests_only(root, mod, tests, new_source, kit, stand_in)
+                if narrowed is not None and ast_identical is not None:
+                    ast_identical.append(rel)
+            elif len(tests) >= symbol_scope.MIN_IMPORTING_TESTS:
+                narrowed = symbol_scope.scope_module(
+                    lambda r: (root / r).read_text(encoding="utf-8"), mod, tests,
+                    info["old"], new_source, info["diff"], kit,
+                    delegate_registry=stand_in is not None,
+                )
         if narrowed is None:
             selected.update(tests)
             continue
         selected.update(narrowed.run)
-        if delegated is not None:
-            delegated.extend(narrowed.delegated)
+        if stand_in and narrowed.delegated:
+            delegated.setdefault(stand_in, []).extend(narrowed.delegated)
     return selected
+
+
+def _stem_tests_only(
+    root: Path, mod: str, tests: list[str], new_source: str,
+    kit: dict[str, str] | None, stand_in: str | None,
+) -> "symbol_scope.Scoped | None":
+    """A comment/whitespace-only change runs just the module's stem tests
+    (`test_<stem>.py`, `test_<stem>_*.py`), with registry-reaching nodes
+    delegated when the module has a stand-in. None (no stem test) = fall
+    back — never zero tests."""
+    stem = mod.rsplit(".", 1)[-1]
+    stems = [t for t in tests
+             if Path(t).stem == f"test_{stem}" or Path(t).stem.startswith(f"test_{stem}_")]
+    if not stems:
+        return None
+    if not stand_in:
+        return symbol_scope.Scoped(sorted(stems), [])
+    always = symbol_scope.registry_reaching(new_source, kit)
+    run: list[str] = []
+    delegated: list[str] = []
+    for rel_test in sorted(stems):
+        split = symbol_scope.split_registry_nodes(
+            rel_test, (root / rel_test).read_text(encoding="utf-8"), mod, always,
+        )
+        if split is None:
+            run.append(rel_test)
+            continue
+        run.extend(split[0])
+        delegated.extend(split[1])
+    return symbol_scope.Scoped(run, delegated) if run or delegated else None
 
 
 def _toolkit_sources(root: Path) -> dict[str, str]:
@@ -1280,10 +1324,16 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
         ]
 
     if scope["mcp"]:
-        delegated: list[str] = []
-        scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []), scope.get("mcp_diffs"), delegated)
+        delegated: dict[str, list[str]] = {}
+        identical: list[str] = []
+        scoped = _mcp_scoped_test_files(
+            root, scope.get("mcp_files", []), scope.get("mcp_diffs"), delegated, identical,
+        )
         if delegated:
-            scope["mcp_delegated_tests"] = sorted(set(delegated))
+            scope["mcp_delegated_tests"] = {gate: sorted(set(t)) for gate, t in delegated.items()}
+        if identical:
+            scope["ast_identical"] = True
+            scope["mcp_ast_identical_modules"] = sorted(identical)
         if scoped is None:
             specs.append(
                 GateSpec("mcp_toolkit_tests", [py, "-m", "pytest", "mcp/noctusai/tests/", "-q"], root)
@@ -1493,23 +1543,23 @@ def run_gates_named(
             "unknown": unknown}
 
 
-def _attach_delegation(gates: list[dict[str, Any]], tests: list[str]) -> None:
+def _attach_delegation(gates: list[dict[str, Any]], tests: list[str], stand_in: str) -> None:
     """Name the registry-reaching tests the scoped mcp gate did NOT run on the
-    gate that judges them instead (`keeper_delta`, the merged-tip stand-in
-    for `test_all_products_compliant` / `test_real_products_pass_validate`;
-    CI still runs them whole). keeper_delta's own ran/exit decide the
-    verdict: green only if it ran and passed. Missing entirely (cannot
-    happen while delegation requires compliance.py in the diff) ⇒ a not-run
-    entry, so a delegation can never read as a pass."""
-    kd = next((g for g in gates if g["gate"] == "keeper_delta"), None)
-    if kd is None:
+    stand-in gate that judges them instead (`_REGISTRY_STAND_INS` — e.g.
+    `keeper_delta` for `test_all_products_compliant` /
+    `test_real_products_pass_validate`; CI still runs them whole). The
+    stand-in's own ran/exit decide the verdict: green only if it ran and
+    passed. Missing entirely ⇒ a not-run entry, so a delegation can never
+    read as a pass."""
+    gate = next((g for g in gates if g["gate"] == stand_in), None)
+    if gate is None:
         gates.append({
-            "gate": "keeper_delta", "ran": False, "exit_code": None, "duration_s": 0.0,
-            "summary": f"{len(tests)} test(s) delegated to keeper_delta, which was not scheduled",
+            "gate": stand_in, "ran": False, "exit_code": None, "duration_s": 0.0,
+            "summary": f"{len(tests)} test(s) delegated to {stand_in}, which was not scheduled",
             "delegated_tests": tests,
         })
         return
-    kd["delegated_tests"] = tests
+    gate["delegated_tests"] = tests
 
 
 def _verdict(gates: list[dict[str, Any]]) -> str:
@@ -1683,8 +1733,8 @@ def gate_sweep(
             "duration_s": 0.0,
         })
 
-    if scope.get("mcp_delegated_tests"):
-        _attach_delegation(gates, scope["mcp_delegated_tests"])
+    for gate_name, tests in (scope.get("mcp_delegated_tests") or {}).items():
+        _attach_delegation(gates, tests, gate_name)
 
     status = _verdict(gates)
     harness = {

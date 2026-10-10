@@ -54,6 +54,13 @@ Historical replay (2026-10-10, the last 14 compliance.py commits): 13
 narrowed from 83-90 importing test files to 1-4 test nodes (plus up to 3
 delegated), 1 fell back (an import edit).
 
+AST-IDENTICAL (2026-10-10). A diff that leaves the WHOLE module's AST
+unchanged (`ast_identical`: comments / whitespace only; a docstring edit is
+NOT identical) runs only the module's stem tests, with registry-reaching
+nodes delegated to the module's stand-in gate when it has one
+(`split_registry_nodes`). A one-line comment on compliance.py: all 90
+importers (timeout) → 388 tests in ~14 s.
+
 CI still runs the full suite; this narrows only the merged-tip time-box.
 """
 from __future__ import annotations
@@ -457,6 +464,52 @@ def select_in_test(
         elif _node_names(node) is None:  # any other module-level statement: whole file
             return ([], [rel_test], named) if to_delegate else ([rel_test], [], named)
     return run, delegated, named
+
+
+def ast_identical(old_source: str | None, new_source: str) -> bool:
+    """True iff the WHOLE module's AST is unchanged (`ast.dump`, no line /
+    column attributes): the diff touched only comments or whitespace. A
+    docstring edit changes the AST (docstrings are runtime-readable), so it
+    is NOT identical. A new file or an unparseable side is never identical."""
+    if old_source is None:
+        return False
+    try:
+        return ast.dump(ast.parse(old_source)) == ast.dump(ast.parse(new_source))
+    except SyntaxError:
+        return False
+
+
+def registry_reaching(source: str, toolkit_sources: Mapping[str, str] | None = None) -> set[str]:
+    """Every name through which a test reaches this module's registries:
+    the registries, their in-module users, and their one-hop toolkit
+    callers (see `registry_reach`)."""
+    syms = _symbols(source)
+    if syms is None:
+        return set()
+    reg = registry(syms)
+    if not reg:
+        return set()
+    return closure(set(reg), syms) | registry_reach(toolkit_sources or {}, reg)
+
+
+def split_registry_nodes(
+    rel_test: str, source: str, module: str, always: set[str],
+) -> tuple[list[str], list[str]] | None:
+    """(run, delegated) selectors that together cover the WHOLE test file:
+    nodes reaching the module only through its registry (`always`) are
+    delegated, every other test node runs. A module-level statement naming
+    a registry name delegates nothing it can't split — the file runs whole.
+    None = can't parse."""
+    picked = select_in_test(rel_test, source, module, set(), always, delegate=True)
+    if picked is None:
+        return None
+    _run, delegated, _named = picked
+    if delegated == [rel_test]:
+        return [rel_test], []  # can't split a module-level use: run it all
+    tree = ast.parse(source)
+    nodes = [f"{rel_test}::{n.name}" for n in tree.body if _is_test_node(n)]  # type: ignore[attr-defined]
+    gone = set(delegated)
+    return [n for n in nodes if n not in gone], [n for n in nodes if n in gone]
 
 
 def scope_module(
