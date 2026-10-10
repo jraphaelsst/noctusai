@@ -522,3 +522,38 @@ class TestHumanPatchStampsManual:
         row = _dados(scoped)
         assert row["situacao_onus_origem"] == "matricula"
         assert r.json()["proveniencia"]["situacao_onus"]["pendente"] is True
+
+
+class TestCndSupersedeLeituraVisualPendente:
+    """Live e2e 2026-10-10: a vision-read guia (wrong digits) left a
+    `baixa` conflict pending; the CND's exact text reading then filled the
+    field. The stale conflict must not sit pending without signal."""
+
+    def test_cnd_fill_closes_the_pending_vision_conflict(self, scoped):
+        seed(scoped)
+        r1 = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "3225-53-55-0304-00-000", origem="guia_iptu", documento_id=str(uuid4()),
+            confianca="baixa", exige_corroboracao=True,
+        )
+        assert r1.status == campos_svc.CONFLITO
+        r2 = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23252.53.55.0304.00.000", origem="cnd_iptu", documento_id=str(uuid4()),
+        )
+        assert r2.status == campos_svc.PREENCHIDO
+        assert [c["status"] for c in _conflitos(scoped)] == ["rejeitado"]
+        assert _dados(scoped)["prefeitura_cadastro_imobiliario"] == "23252.53.55.0304.00.000"
+
+    def test_punctuation_alone_is_not_a_conflict(self, scoped):
+        seed(scoped, dados=[dados_row(
+            prefeitura_cadastro_imobiliario="23252.53.55.0304.00.000",
+            prefeitura_cadastro_imobiliario_origem="cnd_iptu",
+        )])
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario",
+            "23252-53-55-0304-00-000", origem="guia_iptu", documento_id=str(uuid4()),
+            confianca="baixa", exige_corroboracao=True,
+        )
+        assert r.status == campos_svc.IGUAL
+        assert _conflitos(scoped) == []

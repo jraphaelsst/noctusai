@@ -803,3 +803,10 @@ class TestMultilingualAndGarbledNameGloss:
     def test_ocr_garbled_gloss(self) -> None:
         texto = "CARTEIRA NACIONAL DE HABILITAÇÃO\n2. NOME / SOBRENOMEL: FULANO DE TAL SANTOS\n"
         assert find_name(texto)[0] == "FULANO DE TAL SANTOS"
+
+
+def test_nomes_compativeis_ignora_marcacao_markdown_da_visao():
+    from noctusai_lib.integrations.documents.name import nomes_compativeis
+
+    assert nomes_compativeis("**MARIA APARECIDA SOUZA**", "Maria Aparecida Souza")
+    assert nomes_compativeis("<u>MARIA APARECIDA SOUZA</u>", "MARIA APARECIDA SOUZA")

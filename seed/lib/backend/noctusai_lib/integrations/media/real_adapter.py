@@ -403,7 +403,16 @@ class RealMediaResolver:
             model=self._model_for_provider(),
             org_id=self._org_id,
         )
-        return ResolvedMedia(kind=kind, text=f"[descrição da imagem] {described.strip()}")
+        # Boundary strip: a vision reply may wrap values in `**bold**` /
+        # `<u>` even when never asked (live prod 2026-10-10: a comprovante
+        # holder stored as "**NAME**"). The document-transcriber path strips
+        # it via `parse_markup`; this image path did not. Stripped HERE so
+        # every downstream field parser (name, address, CPF…) sees the text
+        # the document prints — never per-field patches.
+        from noctusai_lib.integrations.documents.transcription import parse_markup
+
+        limpo, _ = parse_markup(described, descartar_desemparelhados=True)
+        return ResolvedMedia(kind=kind, text=f"[descrição da imagem] {limpo.strip()}")
 
     # ------------------------------------------------------------------
     # Video → ffmpeg keyframes + audio track, vision + Whisper in parallel

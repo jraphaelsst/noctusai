@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
@@ -675,7 +676,55 @@ async def _analisar_estrutura(
         logger.error("extracao estrutura: chamada de IA falhou: %s", e)
         raise EstruturaFalhou("chat_failed", str(e)) from e
 
-    return _parse_json_estrutura(raw, campos)
+    return _ancorar_inscricao(_parse_json_estrutura(raw, campos), texto)
+
+
+#: The inscrição as a prefeitura prints it: digit groups joined by `.`/`-`/
+#: `/`/space (`23252-53-55-0304-00-000`, `23231.42.11.0377.00.000-1`).
+_INSCRICAO_IMPRESSA = r"\d[\d.\-/ ]{5,}\d"
+_ROTULO_INSCRICAO = re.compile(
+    r"(?:inscri[cç][aã]o|cadastro|sql|contribuinte)[^\n\d]{0,40}?(" + _INSCRICAO_IMPRESSA + ")",
+    re.IGNORECASE,
+)
+
+
+def _so_digitos(valor: str) -> str:
+    return "".join(c for c in valor if c.isdigit())
+
+
+def _ancorar_inscricao(parsed: Optional[dict], texto: str) -> Optional[dict]:
+    """Owner rule (2026-10-10): store exactly what the document prints — an
+    LLM answer is a RE-TYPING of the page and may drop or reorder digits
+    (`23252-53-55-0304-00-000` came back `3225-53-55-0304-00-000`). The
+    inscrição is therefore GROUNDED in the page text: the model's value must
+    appear in the text digit-for-digit (any punctuation); else the value
+    printed after the inscrição/cadastro label is used verbatim; else the
+    field is dropped (never a re-typed guess)."""
+    if not parsed or not parsed.get("inscricao_imobiliaria"):
+        return parsed
+    valor = parsed["inscricao_imobiliaria"]
+    alvo = _so_digitos(valor)
+    candidatos = [m.group(1).strip() for m in _ROTULO_INSCRICAO.finditer(texto)]
+    if any(_so_digitos(c) == alvo for c in candidatos):
+        # Keep the printed punctuation, not the model's.
+        parsed["inscricao_imobiliaria"] = next(
+            c for c in candidatos if _so_digitos(c) == alvo
+        )
+        return parsed
+    if alvo and re.search(r"(?<!\d)" + r"\D{0,3}".join(alvo) + r"(?!\d)", texto):
+        return parsed
+    if candidatos:
+        logger.warning(
+            "extracao estrutura: inscricao da IA %r nao consta no texto; "
+            "usando a impressa %r", valor, candidatos[0],
+        )
+        parsed["inscricao_imobiliaria"] = candidatos[0]
+        return parsed
+    logger.warning(
+        "extracao estrutura: inscricao da IA %r nao consta no texto — descartada", valor
+    )
+    parsed.pop("inscricao_imobiliaria")
+    return parsed or None
 
 
 #: Severity order for `resultado` when two pages of the SAME document

@@ -582,6 +582,8 @@ def aplicar(
             )
         patch = _patch_preenchimento(campo, valor, origem=origem, documento_id=documento_id)
         dados_service.gravar_extraido(client, org_id, codigo, row, patch)
+        if chave == "prefeitura_cadastro_imobiliario" and origem in FONTES_PREFEITURA:
+            _encerrar_leituras_visuais_superadas(client, org_id, codigo, chave)
         return Resultado(PREENCHIDO)
 
     if iguais(campo, atual, valor) or (
@@ -702,6 +704,30 @@ def aplicar(
         codigo, chave, origem_anterior, origem,
     )
     return Resultado(CONFLITO, conflito=linha)
+
+
+def _encerrar_leituras_visuais_superadas(
+    client: Any, org_id: UUID, codigo: str, chave: str
+) -> int:
+    """A prefeitura document just filled the field (the corroborated-or-text
+    path). Any still-pending low-confidence conflict (a vision-read guia
+    asking for corroboration, `confianca_proposta='baixa'`) is superseded —
+    it now agrees (nothing to ask) or is the approximate reading
+    disagreeing with an exact one. Closed as a system rejection, never
+    deleted (audit trail kept)."""
+    fechados = 0
+    for p in _conflitos(client, org_id, codigo, chave, "pendente"):
+        if p.get("confianca_proposta") != "baixa":
+            continue
+        _t(client, CONFLITOS_TABLE).update(
+            {"status": "rejeitado", "decidido_por": None, "decidido_em": _now()}
+        ).eq("id", p["id"]).execute()
+        fechados += 1
+        logger.info(
+            "imovel %s: %s — pending low-confidence conflict %s closed, superseded "
+            "by a prefeitura reading", codigo, chave, p.get("id"),
+        )
+    return fechados
 
 
 def _reapontar_atos(

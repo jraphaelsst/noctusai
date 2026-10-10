@@ -364,3 +364,26 @@ class TestDocumentPromptReachesTheDelegatedTranscriber:
         resolver = extractor._ladder._get_resolver()
         transcriber = resolver._get_document_transcriber()
         assert transcriber._ocr_prompt == _IDENTITY_DOCUMENT_PROMPT
+
+
+class TestImageVisionReplyIsStrippedOfMarkup:
+    """A vision reply over a PHOTO may wrap values in `**bold**` unasked
+    (live prod 2026-10-10: a comprovante holder stored as `**NAME**`, so the
+    titular-vs-party check failed). The strip happens at this boundary, for
+    every downstream field parser — and the printed address still parses."""
+
+    @pytest.mark.asyncio
+    async def test_bold_markers_never_reach_the_text(self) -> None:
+        async def analyze(*_a, **_k) -> str:
+            return "CONTA DE LUZ\nTitular: **MARIA APARECIDA SOUZA**\nEnd: RUA X 12\nCEP: 06700-000"
+
+        resolver = RealMediaResolver(org_id="org-1", analyze=analyze)
+        out = await resolver.resolve(
+            InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg")
+        )
+        assert "**" not in out.text
+        assert "MARIA APARECIDA SOUZA" in out.text
+
+        from noctusai_lib.integrations.documents.address import find_endereco
+
+        assert find_endereco(out.text).titular == "MARIA APARECIDA SOUZA"

@@ -902,9 +902,15 @@ def find_name_conflitos(text: str) -> Optional[list[str]]:
     return distinct if len(distinct) > 1 else None
 
 
+_RUIDO_MARCACAO_RE = re.compile(r"\*+|</?u>", re.IGNORECASE)
+
+
 def chave_nome(valor: Optional[str]) -> str:
-    """Accent-stripped, upper-cased, whitespace-collapsed — for MATCHING."""
-    return " ".join(strip_accents_upper(valor).split())
+    """Accent-stripped, upper-cased, whitespace-collapsed — for MATCHING.
+
+    Vision-markup residue (`**NAME**`, `<u>`) is never part of a name: a
+    row stored before the boundary strip existed must still match."""
+    return " ".join(strip_accents_upper(_RUIDO_MARCACAO_RE.sub(" ", valor or "")).split())
 
 
 def nomes_compativeis(a: Optional[str], b: Optional[str]) -> bool:
