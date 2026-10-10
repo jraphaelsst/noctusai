@@ -157,6 +157,28 @@ def read_ingestao_habilitada(resolver: Optional[Callable[[str], Optional[str]]] 
     return str(value or "").strip().lower() in _TRUTHY
 
 
+OPTOUT_CONTATO_KEY = "biblioteca_optout_contato"
+
+
+def read_optout_contato(resolver: Optional[Callable[[str], Optional[str]]] = None) -> str:
+    """``biblioteca_optout_contato``: platform_settings first, then env
+    ``BIBLIOTECA_OPTOUT_CONTATO``, then ``settings.biblioteca_optout_contato``.
+
+    The e-mail where a third-party creator asks not to be monitored (LGPD data-subject channel).
+    An unreadable chain falls back to the configured default -- a creator must always have a
+    contact to write to. The privacy policy carries a static copy of the default."""
+    from app.config import settings
+
+    if resolver is None:
+        from noctusai_lib.config.credentials import resolve_credential as resolver
+    try:
+        value = resolver(OPTOUT_CONTATO_KEY)
+    except Exception:  # noqa: BLE001 - fall back to the configured default, never to "no contact"
+        logger.exception("geracao: could not read %s; using the configured default", OPTOUT_CONTATO_KEY)
+        value = None
+    return str(value or "").strip() or settings.biblioteca_optout_contato
+
+
 class _CachedSwitch:
     """A short TTL around a blocking switch read (the claim gate runs on every poll)."""
 

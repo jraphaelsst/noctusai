@@ -333,6 +333,9 @@ class SocialWiringSettings(ProductSettings):
     # as costing 0 and silently disarms the budget.
     geracao_llm_model: str = "claude-opus-5"
     biblioteca_llm_model: str = "claude-haiku-4-5"
+    # LGPD data-subject channel for creators who ask not to be monitored (LIA 6). Swappable via
+    # platform_settings / env BIBLIOTECA_OPTOUT_CONTATO; the privacy policy mirrors this default.
+    biblioteca_optout_contato: str = "joaoraphaelsst@gmail.com"
     headline_lotes_dia_usuario: int = 30
     headline_estruturas_por_lote: int = 5
     # 5 batches of 2 headlines per marca per day.

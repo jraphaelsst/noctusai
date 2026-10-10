@@ -59,6 +59,7 @@ const perfil = (over: Partial<any> = {}) => ({
   ultima_sync_em: null,
   virais: 0,
   ingestao_ativa: false,
+  optout_contato: "joaoraphaelsst@gmail.com",
   ...over,
 });
 
@@ -193,13 +194,20 @@ describe("Solicitar Perfil live check", () => {
 });
 
 describe("Opt-out (LGPD)", () => {
-  it("shows the transparency note next to Solicitar Perfil, without inventing a contact", async () => {
+  it("names the opt-out e-mail in the transparency note (default when no profile yet)", async () => {
     renderPage();
     await abrirSolicitar();
     const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
     expect(nota).toContain("Somente perfis públicos de empresa/criador podem ser monitorados.");
-    expect(nota).toContain("indicado na Política de Privacidade.");
-    expect(nota).not.toMatch(/@|mailto|\d{4}/);
+    expect(nota).toContain("pelo e-mail joaoraphaelsst@gmail.com.");
+  });
+
+  it("uses the configurable contact served by the profiles list", async () => {
+    m.perfis.mockReturnValue(ok([perfil({ optout_contato: "privacidade@exemplo.com" })]));
+    renderPage();
+    await abrirSolicitar();
+    const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
+    expect(nota).toContain("pelo e-mail privacidade@exemplo.com.");
   });
 
   it("perfil_optout on the live check is a clear inline message, not a generic error", async () => {

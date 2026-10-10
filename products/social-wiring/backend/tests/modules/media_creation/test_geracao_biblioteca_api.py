@@ -224,7 +224,7 @@ class TestPerfis:
         d = client.get(f"{BASE}/perfis").json()["data"]
         assert [p["handle"] for p in d] == ["alvo1", "alvo2"]
         p1 = d[0]
-        assert (p1["virais"], p1["posts"]) == (1, 1) and p1["ingestao_ativa"] is True
+        assert (p1["virais"], p1["posts"]) == (1, 1) and p1["ingestao_ativa"] is True and p1["optout_contato"]
         assert p1["metrica_base"] == "engajamento" and p1["mediana_metrica"] == 100.0
         assert [p["handle"] for p in client.get(f"{BASE}/perfis?q=ALVO2").json()["data"]] == ["alvo2"]
 

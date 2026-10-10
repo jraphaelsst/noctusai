@@ -70,9 +70,9 @@ Not processed: private accounts, stories, comments' authors, DMs, follower lists
 
 ## 6. Owner actions before the switch goes ON
 
-- [ ] **Opt-out contact:** the e-mail or DPO channel creators use (shown in Minha Biblioteca and the privacy notice).
-- [ ] **Privacy notice:** add the Biblioteca section (what, why, basis, retention, opt-out, Anthropic as sub-processor).
-- [ ] **ROPA:** add this processing activity and the Anthropic sub-processor entry.
+- [x] (2026-10-10) **Opt-out contact:** the e-mail or DPO channel creators use (shown in Minha Biblioteca and the privacy notice). Done: `joaoraphaelsst@gmail.com`, configurable via `biblioteca_optout_contato`.
+- [x] (2026-10-10) **Privacy notice:** add the Biblioteca section (what, why, basis, retention, opt-out, Anthropic as sub-processor). Done: privacy policy section 18, version 1.1.
+- [x] (2026-10-10) **ROPA:** add this processing activity and the Anthropic sub-processor entry. Done: `ROPA-biblioteca.md`.
 
 ## 7. Review
 

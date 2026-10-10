@@ -26,8 +26,8 @@ export const CONSENT_META = {
   email: "joaoraphaelsst@gmail.com",
   phone: "+55 (11) 97469-3365",
   canonicalBase: "https://noctusai.com/consent",
-  lastUpdated: "01/06/2026",
-  version: "1.0",
+  lastUpdated: "10/10/2026",
+  version: "1.1",
 } as const;
 
 /** A content block: a paragraph (`p`) or an unordered list (`ul`). */
@@ -351,8 +351,39 @@ export const PRIVACY_POLICY: ConsentDoc = {
         },
       ],
     },
+    // The opt-out e-mail below is a static copy of the Social Wiring default
+    // `settings.biblioteca_optout_contato` (products/social-wiring/backend/app/config.py); keep in sync.
     {
       n: "18",
+      title: "Biblioteca de virais do Social Wiring (criadores de terceiros)",
+      blocks: [
+        {
+          p:
+            "O produto Social Wiring oferece a \"Biblioteca de virais\": a organização cliente " +
+            "cadastra perfis públicos de empresa ou criador do Instagram (contas business/creator) " +
+            "para estudar a estrutura de conteúdos que performam bem. Esta seção descreve o " +
+            "tratamento de dados dos criadores desses perfis, que não são usuários da plataforma.",
+        },
+        {
+          ul: [
+            "Dados tratados: dados públicos das publicações do perfil cadastrado (legenda, métricas de desempenho, miniatura) e a transcrição da fala dos Reels, obtidos pela API oficial do Instagram (Graph API, Business Discovery).",
+            "Finalidade: estudar a estrutura do conteúdo. Não republicamos o material e não construímos perfis dos criadores.",
+            "Base legal: legítimo interesse (LGPD, art. 7º, IX), com avaliação de impacto documentada e salvaguardas de minimização.",
+            "Retenção: os dados são eliminados 90 dias após o perfil ser pausado ou deixar de ser usado; em caso de oposição do criador, a eliminação é imediata.",
+            "Sub-processador: Anthropic (Estados Unidos), para classificação e análise das transcrições, com transferência internacional nos termos da seção 11. A hospedagem é feita pela Supabase.",
+          ],
+        },
+        {
+          p:
+            "Se você é criador de um perfil monitorado e não deseja que ele seja usado, solicite a " +
+            "exclusão por e-mail a joaoraphaelsst@gmail.com; o perfil é removido da biblioteca, os " +
+            "dados são eliminados e novos cadastros do mesmo perfil são bloqueados. Você também pode " +
+            "exercer os demais direitos da seção 14.",
+        },
+      ],
+    },
+    {
+      n: "19",
       title: "Atualizações desta Política",
       blocks: [
         {

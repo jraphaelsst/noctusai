@@ -8,5 +8,10 @@ export function ehPerfilOptout(e: unknown): boolean {
   return x.code === CODIGO_PERFIL_OPTOUT || x.body?.code === CODIGO_PERFIL_OPTOUT;
 }
 
-export const TEXTO_TRANSPARENCIA =
-  "Somente perfis públicos de empresa/criador podem ser monitorados. Usamos as publicações apenas para estudar a estrutura do conteúdo, nunca para republicar. O criador pode pedir para não ser monitorado pelo contato indicado na Política de Privacidade.";
+/** Mirrors the backend default (`settings.biblioteca_optout_contato`); used until a profile row
+ * (which carries the live, configurable value) is available -- the list can be empty. */
+export const CONTATO_OPTOUT_PADRAO = "joaoraphaelsst@gmail.com";
+
+export function textoTransparencia(contato: string = CONTATO_OPTOUT_PADRAO): string {
+  return `Somente perfis públicos de empresa/criador podem ser monitorados. Usamos as publicações apenas para estudar a estrutura do conteúdo, nunca para republicar. O criador pode pedir para não ser monitorado pelo e-mail ${contato}.`;
+}

@@ -149,6 +149,28 @@ class TestBibliotecaGate:
         assert keys == ["biblioteca_ingestao_habilitada"]
 
 
+class TestOptoutContato:
+    DEFAULT = "joaoraphaelsst@gmail.com"
+
+    def test_reads_the_documented_key(self):
+        keys: list = []
+        gj.read_optout_contato(lambda k: keys.append(k))
+        assert keys == ["biblioteca_optout_contato"]
+
+    def test_configured_value_wins_and_is_trimmed(self):
+        assert gj.read_optout_contato(lambda k: "  privacidade@exemplo.com ") == "privacidade@exemplo.com"
+
+    @pytest.mark.parametrize("value", [None, "", "   "])
+    def test_unset_falls_back_to_the_configured_default(self, value):
+        assert gj.read_optout_contato(lambda k: value) == self.DEFAULT
+
+    def test_an_unreadable_chain_still_gives_a_contact(self):
+        def boom(key):
+            raise RuntimeError("platform_settings unreachable")
+
+        assert gj.read_optout_contato(boom) == self.DEFAULT
+
+
 class TestLifecycle:
     def test_geracao_disabled_does_not_start_and_submit_guard_503s(self):
         off = SimpleNamespace(**{**CFG.__dict__, "geracao_worker_enabled": False})

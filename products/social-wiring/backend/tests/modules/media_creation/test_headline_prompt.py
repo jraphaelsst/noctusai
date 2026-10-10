@@ -29,7 +29,7 @@ ITENS = [
 
 class TestVersion:
     def test_prompt_is_a_marked_draft(self):
-        assert hg.PROMPT_VERSAO == "headline-v1-draft"
+        assert hg.PROMPT_VERSAO == "headline-v2-draft"
         assert "DRAFT" in (hg.__doc__ or "")
 
     def test_temperature_map_is_the_contract_one(self):
@@ -140,6 +140,18 @@ class TestParseOutput:
         out = hg.parse_output(self.good(headline_1={"texto": "   "}))
         assert [o.angulo for o in out] == [2]
 
+    def test_a_multi_sentence_headline_at_the_limit_is_kept_and_one_char_over_is_rejected_not_truncated(self):
+        ok = "x" * hg.MAX_TEXTO
+        out = hg.parse_output(self.good(headline_1={"texto": ok}, headline_2={"texto": ok + "y"}))
+        assert [h.texto for h in out] == [ok]
+
+    def test_prompt_demands_one_short_line_with_length_references(self):
+        p = hg.build_system_prompt()
+        assert f"no máximo {hg.MAX_TEXTO} caracteres" in p
+        assert "UMA ÚNICA FRASE" in p
+        assert all(r in p for r in hg.REFERENCIAS_TAMANHO)
+        assert all(len(r) <= hg.MAX_TEXTO for r in hg.REFERENCIAS_TAMANHO)
+
     def test_over_long_text_is_dropped(self):
-        out = hg.parse_output(self.good(headline_2={"texto": "x" * 1001}))
+        out = hg.parse_output(self.good(headline_2={"texto": "x" * (hg.MAX_TEXTO + 1)}))
         assert [o.angulo for o in out] == [1]

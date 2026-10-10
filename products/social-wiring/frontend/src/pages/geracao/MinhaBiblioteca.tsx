@@ -203,7 +203,7 @@ export default function MinhaBiblioteca() {
 
           <TabsContent value="solicitar" className="mt-4">
             {marcaId ? (
-              <SolicitarPerfil marcaId={marcaId} />
+              <SolicitarPerfil marcaId={marcaId} contato={perfis.find((p) => p.optout_contato)?.optout_contato} />
             ) : (
               <p className="text-sm text-muted-foreground">Cadastre uma marca primeiro.</p>
             )}

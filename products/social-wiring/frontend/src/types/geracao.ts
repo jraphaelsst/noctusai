@@ -20,7 +20,9 @@ export type PerfilMonitorado = { id: string; handle: string; nome: string | null
                           metrica_base: 'views' | 'engajamento' | null; mediana_metrica: number | null;
                           virais: number; posts: number;
                           /** Kill-switch state of the library ingestion (false => monitoring not activated yet). */
-                          ingestao_ativa: boolean }
+                          ingestao_ativa: boolean
+                          /** LGPD opt-out e-mail for third-party creators (configurable server-side). */
+                          optout_contato: string }
 export type TranscricaoViralStatus = 'nao_aplicavel'|'pendente'|'na_fila'|'concluida'|'falhou'|'grande_demais'|'longa_demais'|'sem_orcamento'
 export type ViralCard = { id: string; codigo: number; perfil: { id: string; handle: string }; thumbnail_url: string | null;
                    permalink: string; publicado_em: string; views: number | null; likes: number | null; comments: number | null;

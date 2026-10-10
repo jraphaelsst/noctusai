@@ -16,7 +16,7 @@ import {
 } from "@/hooks/geracao/useBiblioteca";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { normalizarHandle } from "./handle";
-import { ehPerfilOptout, MSG_PERFIL_OPTOUT, TEXTO_TRANSPARENCIA } from "./optout";
+import { ehPerfilOptout, MSG_PERFIL_OPTOUT, textoTransparencia } from "./optout";
 
 export const MSG_VERIFICACAO: Record<VerificacaoPerfil["status"], string> = {
   disponivel: "✓ Username válido",
@@ -26,7 +26,7 @@ export const MSG_VERIFICACAO: Record<VerificacaoPerfil["status"], string> = {
     "✗ Nenhuma conta Meta (Facebook Login) conectada — conecte em Conexões › Marcas para monitorar perfis.",
 };
 
-export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
+export function SolicitarPerfil({ marcaId, contato }: { marcaId: string; contato?: string }) {
   const [texto, setTexto] = useState("");
   const [contaId, setContaId] = useState("");
   const [optout, setOptout] = useState(false);
@@ -127,7 +127,7 @@ export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
         </div>
       )}
       <p className="text-xs text-muted-foreground" data-testid="nota-transparencia">
-        {TEXTO_TRANSPARENCIA}
+        {textoTransparencia(contato)}
       </p>
       <Button type="submit" className="w-fit" disabled={!podeEnviar}>
         {solicitar.isPending ? "Enviando..." : "Enviar"}

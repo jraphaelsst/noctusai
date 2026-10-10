@@ -304,6 +304,7 @@ class BibliotecaService:
         storage: StorageBackend,
         jobs: JobRepository,
         switch: Callable[[], bool],
+        contato: Optional[Callable[[], str]] = None,
         max_perfis_org: int = 30,
         sync_manual_dia_org: int = 20,
     ) -> None:
@@ -313,6 +314,7 @@ class BibliotecaService:
         self.storage = storage
         self.jobs = jobs
         self._switch = switch
+        self._contato = contato
         self.max_perfis_org = max_perfis_org
         self.sync_manual_dia_org = sync_manual_dia_org
 
@@ -320,6 +322,13 @@ class BibliotecaService:
 
     def ingestao_ativa(self) -> bool:
         return bool(self._switch())
+
+    def optout_contato(self) -> str:
+        if self._contato is not None:
+            return self._contato()
+        from app.modules.media_creation.services.geracao_jobs import read_optout_contato
+
+        return read_optout_contato()
 
     def assert_marca(self, marca_id: str) -> None:
         rows = (
@@ -388,6 +397,7 @@ class BibliotecaService:
             "virais": counts[0],
             "posts": counts[1],
             "ingestao_ativa": ativa,
+            "optout_contato": self.optout_contato(),
         }
 
     async def perfis_out(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
