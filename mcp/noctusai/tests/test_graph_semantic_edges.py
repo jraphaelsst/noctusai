@@ -251,3 +251,71 @@ class TestComputeSemanticNeighbors:
         g = _make_graph_with_nodes(["kb:x", "kb:y"])
         pairs = _compute_semantic_neighbors(g, tmp_path)
         assert pairs == []
+
+
+# ── vectorized SEMANTIC_NEIGHBOR equals the original Python loop (2026-10-09) ──
+def _reference_ranked(vectored):
+    """The original O(N²) pure-Python pass, kept here as the oracle."""
+    from tools.noctus.dev._embedding_corpus import cosine
+    from tools.noctus.graph import build as B
+
+    out = []
+    for i, (id_a, vec_a) in enumerate(vectored):
+        scored = []
+        for j, (id_b, vec_b) in enumerate(vectored):
+            if i == j:
+                continue
+            s = cosine(vec_a, vec_b)
+            if s >= B._COSINE_THRESHOLD:
+                scored.append((s, id_b))
+        scored.sort(reverse=True)
+        out.append((id_a, scored))
+    return out
+
+
+def _fixture(n_clusters=6, per=9, dim=64, seed=7):
+    import random
+
+    rnd = random.Random(seed)
+    vectored = []
+    for c in range(n_clusters):
+        centre = [rnd.gauss(0, 1) for _ in range(dim)]
+        for k in range(per):
+            vec = [x + rnd.gauss(0, 0.25) for x in centre]
+            vectored.append((f"code:c{c}/n{k}", vec))
+    vectored.append(("kb:zero", [0.0] * dim))           # zero vector scores 0.0
+    vectored.append(("kb:dupA", vectored[0][1][:]))     # exact ties with c0/n0
+    vectored.append(("kb:dupB", vectored[0][1][:]))
+    return vectored
+
+
+def test_vectorized_neighbors_match_the_python_oracle(monkeypatch):
+    from tools.noctus.graph import build as B
+
+    monkeypatch.setattr(B, "_NEIGHBOR_BLOCK_ROWS", 7)  # exercise several blocks
+    vectored = _fixture()
+    got = B._ranked_neighbors(vectored)
+    want = _reference_ranked(vectored)
+
+    assert [i for i, _ in got] == [i for i, _ in want]
+    for (ida, g), (_, w) in zip(got, want):
+        assert [b for _, b in g[: B._TOP_K]] == [b for _, b in w[: B._TOP_K]] or \
+            sorted(round(s, 9) for s, _ in g[: B._TOP_K]) == sorted(round(s, 9) for s, _ in w[: B._TOP_K]), ida
+        assert {b for _, b in g} == {b for _, b in w}, ida  # identical neighbour sets
+        for (sg, _), (sw, _) in zip(g, w):
+            assert abs(sg - sw) < 1e-9
+
+
+def test_vectorized_neighbors_zero_vector_has_none():
+    from tools.noctus.graph import build as B
+
+    got = dict(B._ranked_neighbors(_fixture()))
+    assert got["kb:zero"] == []
+
+
+def test_mixed_dimensions_fall_back_to_python():
+    from tools.noctus.graph import build as B
+
+    vectored = [("a", [1.0, 0.0, 0.0]), ("b", [1.0, 0.0]), ("c", [1.0, 0.0, 0.0])]
+    got = dict(B._ranked_neighbors(vectored))
+    assert [b for _, b in got["a"]] == ["c", "b"] or [b for _, b in got["a"]] == ["b", "c"]

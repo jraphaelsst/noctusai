@@ -118,6 +118,52 @@ def _resolve_node_id(cache_name: str, path: str, node_index: dict) -> str | None
     return None
 
 
+_NEIGHBOR_BLOCK_ROWS = 512  # rows per similarity block: peak ≈ 512 × N float64
+
+
+def _ranked_neighbors(
+    vectored: list[tuple[str, list[float]]],
+) -> list[tuple[str, list[tuple[float, str]]]]:
+    """For each (id, vec): every OTHER node with cosine ≥ threshold, sorted
+    (score, id) descending — the exact contract of the original Python loop
+    (`_embedding_corpus.cosine`: a zero vector scores 0.0).
+
+    numpy over row-normalised float64 vectors, computed in blocks of
+    `_NEIGHBOR_BLOCK_ROWS` rows so peak memory is ~block × N, never a full
+    N × N matrix. Mixed vector dimensions (the pure-Python `zip` truncated
+    them) fall back to the original per-pair loop rather than guessing."""
+    if len({len(v) for _, v in vectored}) != 1:
+        from tools.noctus.dev._embedding_corpus import cosine as _cosine
+        logger.warning("graph.build: mixed embedding dimensions — pure-Python cosine fallback")
+        out = []
+        for i, (id_a, vec_a) in enumerate(vectored):
+            scored = [(s, id_b) for j, (id_b, vec_b) in enumerate(vectored)
+                      if i != j and (s := _cosine(vec_a, vec_b)) >= _COSINE_THRESHOLD]
+            scored.sort(reverse=True)
+            out.append((id_a, scored))
+        return out
+
+    import numpy as np
+
+    ids = [nid for nid, _ in vectored]
+    mat = np.asarray([v for _, v in vectored], dtype=np.float64)
+    norms = np.linalg.norm(mat, axis=1, keepdims=True)
+    unit = np.divide(mat, norms, out=np.zeros_like(mat), where=norms > 0)
+    n = len(ids)
+    out: list[tuple[str, list[tuple[float, str]]]] = []
+    for start in range(0, n, _NEIGHBOR_BLOCK_ROWS):
+        block = unit[start:start + _NEIGHBOR_BLOCK_ROWS] @ unit.T
+        for r in range(block.shape[0]):
+            i = start + r
+            row = block[r]
+            row[i] = -np.inf  # never a self-neighbour
+            hits = np.nonzero(row >= _COSINE_THRESHOLD)[0]
+            scored = [(float(row[j]), ids[j]) for j in hits]
+            scored.sort(reverse=True)
+            out.append((ids[i], scored))
+    return out
+
+
 def _compute_semantic_neighbors(
     graph,
     repo_root: Path,
@@ -128,8 +174,6 @@ def _compute_semantic_neighbors(
     (lower-string-id first) so the caller emits both directed edges.
     Zero OpenAI calls — pure SQLite reads.
     """
-    from tools.noctus.dev._embedding_corpus import cosine as _cosine
-
     node_index = {n.id: n for n in graph.nodes}
     raw = _load_all_embeddings(repo_root)
 
@@ -152,19 +196,16 @@ def _compute_semantic_neighbors(
         len(vectored), _COSINE_THRESHOLD, _TOP_K,
     )
 
-    # O(N²) cosine — acceptable for N≤5000 at ~10ms per 1536-D pair.
+    # Per node: neighbours at/above the threshold, ordered exactly like the
+    # original pure-Python pass — (score, id) DESCENDING, top-k — so the edge
+    # set and emission order are unchanged. 2026-10-09: that pass was an O(N²)
+    # Python loop over 1536-D vectors (the whole settle sampled 100% in
+    # zip/float/math; 1026-2202 s per settle). Now numpy, blockwise.
+    ranked = _ranked_neighbors(vectored)
+
     pairs_seen: set[tuple[str, str]] = set()
     result: list[tuple[str, str, float]] = []
-
-    for i, (id_a, vec_a) in enumerate(vectored):
-        scored: list[tuple[float, str]] = []
-        for j, (id_b, vec_b) in enumerate(vectored):
-            if i == j:
-                continue
-            score = _cosine(vec_a, vec_b)
-            if score >= _COSINE_THRESHOLD:
-                scored.append((score, id_b))
-        scored.sort(reverse=True)
+    for id_a, scored in ranked:
         for score, id_b in scored[:_TOP_K]:
             # Canonical pair key: lower-string first.
             key = (min(id_a, id_b), max(id_a, id_b))
