@@ -3338,3 +3338,43 @@ class TestDefaultMergedTipBaselineRealGit:
         assert T._baseline_outcome({"ran": False})[0] == "inconclusive"
         assert T._baseline_outcome(None)[0] == "inconclusive"
         assert T._baseline_outcome({"ran": True, "exit_code": 1})[0] == "red"
+
+
+# -- renumber rewrites the branch's OWN references (2026-10-09) -----------------
+def test_renumber_rewrites_old_stem_in_branch_files_only(tmp_path):
+    import subprocess as _sp
+
+    def g(*a):
+        return _sp.run(["git", *a], cwd=tmp_path, check=True, capture_output=True, text=True).stdout
+
+    g("init", "-q", "-b", "dev")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    mig = tmp_path / "products/x/backend/migrations"
+    mig.mkdir(parents=True)
+    tests = tmp_path / "products/x/backend/tests"
+    tests.mkdir(parents=True)
+    (mig / "217_foo.sql").write_text("-- Migration 217_foo\ncreate table foo();\n")
+    (mig / "217_foobar_other.sql").write_text("-- unrelated\n")
+    (tests / "test_foo.py").write_text('MIG = "217_foo.sql"\nOTHER = "217_foobar_other.sql"\n')
+    (tests / "test_old.py").write_text('MIG = "217_foo.sql"  # not in this branch\n')
+    g("add", ".")
+    g("commit", "-q", "-m", "base")
+
+    def runner(cmd, cwd=None):
+        p = _sp.run(cmd, cwd=cwd, capture_output=True, text=True)
+        return p.returncode, p.stdout, p.stderr
+
+    r = T._renumber_one_migration(
+        runner, T.FsOps(), str(tmp_path), str(tmp_path),
+        "products/x/backend/migrations", "217_foo.sql", "218", False,
+        branch_files=["products/x/backend/migrations/217_foo.sql",
+                      "products/x/backend/tests/test_foo.py"])
+
+    assert r["ok"] is True
+    assert r["references_rewritten"] == ["products/x/backend/tests/test_foo.py"]
+    assert (tests / "test_foo.py").read_text() == 'MIG = "218_foo.sql"\nOTHER = "217_foobar_other.sql"\n'
+    assert (tests / "test_old.py").read_text() == 'MIG = "217_foo.sql"  # not in this branch\n'
+    assert (mig / "218_foo.sql").exists() and not (mig / "217_foo.sql").exists()
+    assert g("status", "--porcelain") == ""  # rewrite committed in the renumber commit
+    assert "renumber 217→218" in g("log", "-1", "--format=%s")

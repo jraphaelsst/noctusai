@@ -1121,9 +1121,40 @@ def _rewrite_migration_self_references(
         fs.write_text(abs_path, new_content)
 
 
+_BRANCH_REF_TEXT_SUFFIXES = (".py", ".ts", ".tsx", ".js", ".sql", ".md", ".json",
+                             ".yaml", ".yml", ".toml", ".txt", ".ini", ".cfg")
+
+
+def _rewrite_branch_references(
+    fs: "FsOps", abs_wt_path: str, branch_files: list[str], skip_rel: str,
+    old_stem: str, new_stem: str,
+) -> list[str]:
+    """Rewrite the renumbered migration's OLD filename stem (`217_x`) to the
+    new one (`218_x`) — whole-word, exact — in the text files THIS BRANCH
+    changed (its own tests, verify_db_guards entries, docs). 2026-10-09: the
+    renumber left a branch's own test still naming `217_x.sql`, so the slice
+    went red right after a "successful" auto-renumber (N≥3 in one day).
+    Only the stem (never the bare number — too ambiguous across files), only
+    files in this branch's own diff (never another slice's code). Returns the
+    rewritten repo-relative paths."""
+    pat = re.compile(rf"\b{re.escape(old_stem)}\b")
+    touched: list[str] = []
+    for rel in branch_files:
+        if rel == skip_rel or not rel.endswith(_BRANCH_REF_TEXT_SUFFIXES):
+            continue
+        abs_path = os.path.join(abs_wt_path, rel)
+        content = fs.read_text(abs_path)
+        if content is None or not pat.search(content):
+            continue
+        fs.write_text(abs_path, pat.sub(new_stem, content))
+        touched.append(rel)
+    return touched
+
+
 def _renumber_one_migration(
     runner, fs: "FsOps", wt_path: str, abs_wt_path: str, directory: str,
     old_name: str, new_number: str, verbose: bool,
+    branch_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """`git mv` + in-file self-reference rewrite + a scoped commit — the
     mechanical half of one renumber. `_git(runner, ..., cwd=wt_path)` is
@@ -1145,19 +1176,25 @@ def _renumber_one_migration(
                 "error": f"git mv failed: {(err or out).strip()}"}
     _rewrite_migration_self_references(
         fs, os.path.join(abs_wt_path, new_rel), old_stem, new_stem, old_number, new_number)
-    rc, out, err = _git(runner, "add", "--", new_rel, cwd=wt_path)
+    refs = _rewrite_branch_references(
+        fs, abs_wt_path, branch_files or [], old_rel, old_stem, new_stem)
+    rc, out, err = _git(runner, "add", "--", new_rel, *refs, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "old": old_rel, "new": new_rel,
                 "error": f"git add failed: {(err or out).strip()}"}
     msg = f"chore(migration): renumber {old_number}→{new_number} after rebase [auto]"
-    rc, out, err = _git(runner, "commit", "-m", msg, "--", new_rel, cwd=wt_path)
+    # `old_rel` MUST be in the pathspec: `git mv` staged its deletion, and a
+    # pathspec-limited commit naming only `new_rel` leaves that deletion staged
+    # but uncommitted — the pushed branch then carries BOTH numbers.
+    rc, out, err = _git(runner, "commit", "-m", msg, "--", old_rel, new_rel, *refs, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "old": old_rel, "new": new_rel,
                 "error": f"git commit failed: {(err or out).strip()}"}
     if verbose:
         logger.debug("task_branch.integrate: renumbered %s -> %s (auto)", old_rel, new_rel)
     return {"ok": True, "old": old_rel, "new": new_rel,
-            "old_number": old_number, "new_number": new_number}
+            "old_number": old_number, "new_number": new_number,
+            "references_rewritten": refs}
 
 
 def _default_migration_applied_check(product: str, filename: str, abs_wt_path: str) -> str:
@@ -1190,6 +1227,7 @@ def _attempt_migration_renumber(
     *, runner, fs: "FsOps", wt_path: str, abs_wt_path: str,
     introduced_migrations: list[str], relevant: list[dict],
     applied_check_fn: "Callable[[str, str, str], str] | None", verbose: bool,
+    branch_files: list[str] | None = None,
 ) -> dict[str, Any]:
     """Best-effort collision resolver for `action='integrate'`. For each
     deterministic renumberable collision (`_migration_collision_candidates`)
@@ -1246,7 +1284,7 @@ def _attempt_migration_renumber(
         new_number = _next_free_migration_number(cand["all_entries"], width)
         result = _renumber_one_migration(
             runner, fs, wt_path, abs_wt_path, cand["directory"], cand["old_name"],
-            new_number, verbose)
+            new_number, verbose, branch_files=branch_files)
         if result["ok"]:
             renumbered.append({**cand, **result})
         else:
@@ -2243,10 +2281,14 @@ def task_branch(
                     # the deterministic, verified-not-yet-applied shape is
                     # auto-resolved; everything else still blocks below,
                     # unchanged from before this existed.
+                    _rc_bf, _bf_out, _bf_err = git(
+                        "diff", "--name-only", f"{remote}/{dev_branch}...HEAD", cwd=wt_path)
+                    branch_files = [ln.strip() for ln in (_bf_out or "").splitlines() if ln.strip()]
                     renumber_result = _attempt_migration_renumber(
                         runner=runner, fs=fsops, wt_path=wt_path, abs_wt_path=abs_wt_path,
                         introduced_migrations=introduced_migrations, relevant=relevant,
-                        applied_check_fn=migration_applied_check_fn, verbose=verbose)
+                        applied_check_fn=migration_applied_check_fn, verbose=verbose,
+                        branch_files=branch_files)
                     for done in renumber_result["renumbered"]:
                         old_full = f"{done['directory']}/{done['old_name']}"
                         new_full = done["new"]
