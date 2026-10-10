@@ -11,6 +11,10 @@ import { MemoryRouter } from "react-router-dom";
 afterEach(cleanup);
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+vi.mock("@/hooks/geracao/useEsteira", () => ({
+  useCriarPost: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useVincularRoteiro: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 
 vi.mock("@/components/geracao/biblioteca/VideoPicker", () => ({
   VideoPicker: (p: { marcaId: string; value: string | null; onChange: (v: string | null) => void }) => (

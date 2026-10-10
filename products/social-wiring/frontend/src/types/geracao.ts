@@ -47,7 +47,7 @@ export type HeadlineLote = { id: string; marca_id: string; origem: LoteOrigem; s
 export type HeadlineLoteDetalhe = HeadlineLote & { parametros: Record<string, unknown>; headlines: Headline[] }
 export type RoteiroPergunta = { id: string; pergunta: string; resposta: string | null }
 export type RoteiroResumo = { id: string; nome: string; headline_texto: string; headline_id: string | null;
-                       status: RoteiroStatus; created_at: string }
+                       status: RoteiroStatus; created_at: string; post?: PostRef | null }
 export type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' | 'link'; duracao: 'auto'|'1'|'2'|'3';
                  brain_id: string | null; viral: ViralCard | null; perguntas: RoteiroPergunta[]; etapa: string | null;
                  conteudo: string | null; fontes: string | null; versao: number; feedback: 'gostei'|'nao_gostei'|null;

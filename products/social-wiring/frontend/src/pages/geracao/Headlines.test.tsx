@@ -13,6 +13,10 @@ vi.setConfig({ testTimeout: 40_000 });
 afterEach(() => rtl.cleanup());
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock("@/hooks/geracao/useEsteira", () => ({
+  useCriarPost: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useVincularRoteiro: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 
 const m = vi.hoisted(() => ({
   lotes: vi.fn(),

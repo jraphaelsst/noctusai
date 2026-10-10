@@ -23,6 +23,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CriarPostButton, NoPostBadge } from "@/components/geracao/PostEsteira";
 import { useFavoritarHeadline } from "@/hooks/geracao/useHeadlineMutations";
 import { useLote, useReprocessarLote } from "@/hooks/geracao/useHeadlines";
 import { cn } from "@/lib/utils";
@@ -118,6 +119,7 @@ export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onR
                 {lote.headlines.map((h) => (
                   <li key={h.id} className="space-y-2 rounded-md border p-3" data-testid={`headline-${h.id}`}>
                     <p className="whitespace-pre-wrap text-sm">{h.texto}</p>
+                    <NoPostBadge post={h.post} />
                     <div className="flex flex-wrap items-center gap-2 text-xs">
                       {h.viral && (
                         <>
@@ -165,6 +167,7 @@ export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onR
                       <Button size="sm" variant="outline" onClick={() => setRoteiroDe(h)}>
                         <Sparkles className="mr-1 h-4 w-4" /> Criar roteiro
                       </Button>
+                      <CriarPostButton marcaId={marcaId} headlineId={h.id} post={h.post} />
                     </div>
                   </li>
                 ))}

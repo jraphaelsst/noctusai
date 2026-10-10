@@ -10,6 +10,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { MetricaPill } from "@/components/geracao/MetricaPill";
+import { CriarPostButton, NoPostBadge } from "@/components/geracao/PostEsteira";
 import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { dataPtBr } from "@/components/pesquisa/format";
@@ -165,6 +166,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
               </Badge>
             </Link>
           )}
+          <NoPostBadge post={h.post} className="mt-1 block w-fit" />
         </td>
         {lista === "sugeridas" && (
           <>
@@ -179,6 +181,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
             <Button size="sm" variant="outline" onClick={() => setRoteiroDe(h)}>
               <Sparkles className="mr-1 h-4 w-4" /> Criar roteiro
             </Button>
+            <CriarPostButton marcaId={marcaId} headlineId={h.id} post={h.post} />
             <Button size="icon" variant="ghost" aria-label="Editar headline" onClick={() => setEditando(h)}>
               <Pencil className="h-4 w-4" />
             </Button>

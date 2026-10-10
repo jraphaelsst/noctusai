@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { EditarRoteiroModal } from "@/components/geracao/roteiro/EditarRoteiroModal";
 import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
+import { CriarPostButton, NoPostBadge } from "@/components/geracao/PostEsteira";
 import { StatusBadge } from "@/components/geracao/StatusBadge";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import {
@@ -175,6 +176,7 @@ export default function Roteiros() {
                 <th className="p-2">Nome</th>
                 <th className="p-2">H. Origem</th>
                 <th className="p-2">Status</th>
+                <th className="p-2">Post</th>
                 <th className="w-24 p-2" />
               </tr>
             </thead>
@@ -203,6 +205,21 @@ export default function Roteiros() {
                   </td>
                   <td className="p-2">
                     <StatusBadge status={r.status} />
+                  </td>
+                  <td className="p-2">
+                    {r.post ? (
+                      <NoPostBadge post={r.post} />
+                    ) : r.status === "completo" ? (
+                      <CriarPostButton
+                        marcaId={marcaId}
+                        headlineId={r.headline_id}
+                        roteiroId={r.id}
+                        titulo={r.nome}
+                        ariaLabel={`Criar post de ${r.nome}`}
+                      />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
                   </td>
                   <td className="p-2">
                     <div className="flex justify-end gap-1">
