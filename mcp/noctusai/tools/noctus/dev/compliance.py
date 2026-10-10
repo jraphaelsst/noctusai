@@ -13983,48 +13983,6 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
         "Migration 017 unapplied — the agent_learnings write-once-content trigger has no live object to probe "
         "against yet.",
     ),
-    (
-        "products/social-wiring/backend/migrations/229_cs_geracao.sql",
-        "cs_perfis_monitorados_org_handle_uq",
-        "Migration 229 (Geracao BE-0) is authored, NOT applied (migrations/APPLIED.md) -- the one monitored profile per (org, rede, handle) guard has no live table "
-        "to probe against yet. Remove these entries and register GuardProbes in verify_db_guards.DEFAULT_REGISTRY in the SAME "
-        "change that applies 229.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/229_cs_geracao.sql",
-        "cs_virais_perfil_media_uq",
-        "Migration 229 (Geracao BE-0) is authored, NOT applied (migrations/APPLIED.md) -- the one viral row per (perfil, ig_media_id) guard has no live table "
-        "to probe against yet. Remove these entries and register GuardProbes in verify_db_guards.DEFAULT_REGISTRY in the SAME "
-        "change that applies 229.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/229_cs_geracao.sql",
-        "cs_biblioteca_referencias_modo_alvo",
-        "Migration 229 (Geracao BE-0) is authored, NOT applied (migrations/APPLIED.md) -- the modo=perfil XOR modo=video target CHECK guard has no live table "
-        "to probe against yet. Remove these entries and register GuardProbes in verify_db_guards.DEFAULT_REGISTRY in the SAME "
-        "change that applies 229.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/229_cs_geracao.sql",
-        "cs_biblioteca_referencias_perfil_uq",
-        "Migration 229 (Geracao BE-0) is authored, NOT applied (migrations/APPLIED.md) -- the one perfil reference per (marca, perfil) guard has no live table "
-        "to probe against yet. Remove these entries and register GuardProbes in verify_db_guards.DEFAULT_REGISTRY in the SAME "
-        "change that applies 229.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/229_cs_geracao.sql",
-        "cs_biblioteca_referencias_video_uq",
-        "Migration 229 (Geracao BE-0) is authored, NOT applied (migrations/APPLIED.md) -- the one video reference per (marca, viral) guard has no live table "
-        "to probe against yet. Remove these entries and register GuardProbes in verify_db_guards.DEFAULT_REGISTRY in the SAME "
-        "change that applies 229.",
-    ),
-    (
-        "products/social-wiring/backend/migrations/229_cs_geracao.sql",
-        "cs_headline_lotes_um_ativo_por_usuario_uq",
-        "Migration 229 (Geracao BE-0) is authored, NOT applied (migrations/APPLIED.md) -- the one active manual headline batch per user guard has no live table "
-        "to probe against yet. Remove these entries and register GuardProbes in verify_db_guards.DEFAULT_REGISTRY in the SAME "
-        "change that applies 229.",
-    ),
 )
 
 

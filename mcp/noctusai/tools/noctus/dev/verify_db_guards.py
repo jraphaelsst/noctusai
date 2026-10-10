@@ -1463,6 +1463,140 @@ _CS_WAVE2_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — social_wiring CoreStudio Geracao guards (migration 229).
+# ---------------------------------------------------------------------------
+
+_CS_GERACAO_MIGRATION = "229_cs_geracao.sql"
+_CS_G_PERFIL_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_perfis_monitorados (org_id, handle) "
+    "VALUES (v_org_id, '{h}')"
+)
+_CS_G_VIRAL_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_virais (org_id, perfil_id, ig_media_id) "
+    "VALUES (v_org_id, v_perfil_id, '{m}')"
+)
+_CS_G_REF_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_biblioteca_referencias (org_id, marca_id, modo, perfil_id, viral_id) "
+    "VALUES (v_org_id, v_marca_id, {vals})"
+)
+_CS_G_LOTE_INS = (
+    f"INSERT INTO {_SW_SCHEMA}.cs_headline_lotes (org_id, marca_id, created_by, origem, status) "
+    "VALUES (v_org_id, v_marca_id, '00000000-0000-0000-0000-00000000f0b1', '{o}', '{st}')"
+)
+
+
+def _twice(stmt: str) -> str:
+    """The same write twice, indented for the probe's inner block."""
+    return f"    {stmt};\n    {stmt};"
+
+
+def _cs_geracao_probe(*, probe_id: str, guard_name: str, setup: str, statements: str, permitted_msg: str, rationale: str) -> GuardProbe:
+    """Refusal probe for a migration-229 guard (rolled back). `statements`
+    run inside the inner block; the LAST one must be the refused write."""
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=(_CS_GERACAO_MIGRATION,),
+        rationale=rationale,
+        sql=_do_block(f"""
+DECLARE
+  v_org_id uuid;
+  v_marca_id uuid;
+  v_perfil_id uuid;
+  v_viral_id uuid;
+BEGIN
+  SELECT id INTO v_org_id FROM public.organizations LIMIT 1;
+  IF v_org_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
+  VALUES (v_org_id, 'noc-probe-geracao', 'noc-probe-geracao')
+  RETURNING id INTO v_marca_id;
+{setup}
+  BEGIN
+{statements}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {permitted_msg} - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+_CS_G_SETUP_PERFIL = "  " + _CS_G_PERFIL_INS.format(h="noc.probe.geracao") + "\n  RETURNING id INTO v_perfil_id;"
+_CS_G_SETUP_VIRAL = (
+    _CS_G_SETUP_PERFIL + "\n  " + _CS_G_VIRAL_INS.format(m="noc-probe-media") + "\n  RETURNING id INTO v_viral_id;"
+)
+
+_CS_GERACAO_PROBES: tuple[GuardProbe, ...] = (
+    _cs_geracao_probe(
+        probe_id="cs_perfis_monitorados.org_rede_handle.unique",
+        guard_name="cs_perfis_monitorados_org_handle_uq",
+        setup="",
+        statements=_twice(_CS_G_PERFIL_INS.format(h="noc.probe.dup")),
+        permitted_msg="duplicate (org, rede, handle) profile insert succeeded",
+        rationale="One monitored profile per (org, rede, handle): a re-add is a no-op, never a second sync target.",
+    ),
+    _cs_geracao_probe(
+        probe_id="cs_virais.perfil_media.unique",
+        guard_name="cs_virais_perfil_media_uq",
+        setup=_CS_G_SETUP_PERFIL,
+        statements=_twice(_CS_G_VIRAL_INS.format(m="noc-probe-dup")),
+        permitted_msg="duplicate (perfil, ig_media_id) viral insert succeeded",
+        rationale="One viral row per (perfil, ig_media_id): a re-sync upserts instead of duplicating a post.",
+    ),
+    _cs_geracao_probe(
+        probe_id="cs_biblioteca_referencias.modo_alvo.check",
+        guard_name="cs_biblioteca_referencias_modo_alvo",
+        setup=_CS_G_SETUP_PERFIL,
+        statements="    " + _CS_G_REF_INS.format(vals="'perfil', NULL, NULL") + ";",
+        permitted_msg="modo=perfil reference with no perfil_id succeeded",
+        rationale="modo=perfil XOR modo=video: a reference must name exactly the target its mode implies.",
+    ),
+    _cs_geracao_probe(
+        probe_id="cs_biblioteca_referencias.marca_perfil.unique",
+        guard_name="cs_biblioteca_referencias_perfil_uq",
+        setup=_CS_G_SETUP_PERFIL,
+        statements=_twice(_CS_G_REF_INS.format(vals="'perfil', v_perfil_id, NULL")),
+        permitted_msg="duplicate (marca, perfil) reference insert succeeded",
+        rationale="One perfil reference per (marca, perfil) in the per-marca allow-list.",
+    ),
+    _cs_geracao_probe(
+        probe_id="cs_biblioteca_referencias.marca_video.unique",
+        guard_name="cs_biblioteca_referencias_video_uq",
+        setup=_CS_G_SETUP_VIRAL,
+        statements=_twice(_CS_G_REF_INS.format(vals="'video', NULL, v_viral_id")),
+        permitted_msg="duplicate (marca, viral) reference insert succeeded",
+        rationale="One video reference per (marca, viral) in the per-marca allow-list.",
+    ),
+    _cs_geracao_probe(
+        probe_id="cs_headline_lotes.one_active_per_user.unique",
+        guard_name="cs_headline_lotes_um_ativo_por_usuario_uq",
+        setup="",
+        statements=(
+            "    " + _CS_G_LOTE_INS.format(o="form_me", st="criando") + ";\n"
+            "    " + _CS_G_LOTE_INS.format(o="form_me", st="processando") + ";"
+        ),
+        permitted_msg="second active manual headline batch for one user succeeded",
+        rationale=(
+            "At most one criando/processando manual headline batch per user, enforced in the database "
+            "so two concurrent submits cannot both pass (sugestao_auto batches are exempt)."
+        ),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — social_wiring.imovel_dados_endereco_registro_confirmado CHECK
 # (migration 139).
 # ---------------------------------------------------------------------------
@@ -5926,6 +6060,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _CLIENTE_ORIGEM_EXCLUIDA_UNIQUE_PROBE,
     _CS_RESEARCH_ITEM_UNIQUE_PROBE,
     *_CS_WAVE2_PROBES,
+    *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
