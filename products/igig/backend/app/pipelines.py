@@ -34,8 +34,6 @@ stage row to backfill ``etapa_id`` against — `tests/test_pipelines.py` pins th
 the SQL list and :data:`ESTEIRA_PADRAO` below stay identical.
 """
 from __future__ import annotations
-
-import logging
 from typing import Any
 
 from fastapi import Depends, HTTPException
@@ -55,8 +53,6 @@ from app.dependencies import (
     get_user_role,
     resolve_platform_role,
 )
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "PAPEL_FECHADO",
