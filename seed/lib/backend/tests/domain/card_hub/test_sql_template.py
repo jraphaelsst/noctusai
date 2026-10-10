@@ -120,3 +120,21 @@ class TestConventions:
     def test_empty_schema_is_refused(self):
         with pytest.raises(ValueError):
             card_hub_migration(lead_config(_noop), " ")
+
+
+class TestOrgIdExpr:
+    """`org_id_expr` swaps the table-level own-org resolver; default is unchanged."""
+
+    def test_default_is_the_home_only_helper(self):
+        sql = card_hub_migration(lead_config(_noop), "crm")
+        assert "org_id = (SELECT public.current_org_id())" in sql
+        assert "current_org_id_for" not in sql
+
+    def test_custom_expr_replaces_every_table_policy_and_leaves_storage_alone(self):
+        expr = "public.current_org_id_for('crm')"
+        sql = card_hub_migration(lead_config(_noop), "crm", org_id_expr=expr)
+        assert "org_id = (SELECT public.current_org_id())" not in sql
+        selects = re.findall(r'CREATE POLICY "\w+_select_own_org"', sql)
+        assert selects and sql.count(f"org_id = (SELECT {expr})") == len(selects)
+        # storage.objects folder policies compare a path segment, not org_id: untouched
+        assert "(storage.foldername(name))[1] = (SELECT public.current_org_id())::text" in sql

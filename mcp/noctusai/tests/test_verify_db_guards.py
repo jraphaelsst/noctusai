@@ -829,6 +829,55 @@ class TestAnonSequenceProbes:
 
 
 
+class TestSw241EsteiraProbes:
+    """Migration 241 (Esteira de reels): the 13 contract probes (esteira-contract.md 2.6) + one per remaining declared guard."""
+
+    _IDS = {
+        "sw241_post_headline_outra_marca", "sw241_post_roteiro_outra_marca",
+        "sw241_headline_unico_por_post", "sw241_roteiro_unico_por_post",
+        "sw241_post_formato", "sw241_post_titulo_vazio", "sw241_post_hashtags_max",
+        "sw241_post_permalink", "sw241_stage_esteira_ok", "sw241_stage_pipeline_invalido",
+        "sw241_equipe_nome_unico", "sw241_headline_delete_nulls_only_fk", "sw241_status_pagina",
+    }
+    _EXTRA = {
+        "sw241_movimento_pipeline_invalido", "sw241_post_legenda_max", "sw241_post_primeiro_comentario_max",
+        "sw241_post_links_producao_array", "sw241_post_motivo_bloqueio_max", "sw241_post_nota_descricao_unica",
+        "sw241_post_tag_nome_unico",
+    }
+    _KINDS = {
+        "sw241_stage_esteira_ok": "write_allowed",
+        "sw241_headline_delete_nulls_only_fk": "state_assertion",
+        "sw241_status_pagina": "state_assertion",
+    }
+
+    def _probes(self):
+        return {p.id: p for p in DEFAULT_REGISTRY if p.id.startswith("sw241_")}
+
+    def test_all_thirteen_registered_with_the_contract_kind(self):
+        probes = self._probes()
+        assert self._IDS <= set(probes) and set(probes) == self._IDS | self._EXTRA
+        for pid, p in probes.items():
+            assert p.kind == self._KINDS.get(pid, "write_refusal"), pid
+            assert p.product == "social-wiring" and p.migrations == ("241_cs_esteira.sql",), pid
+
+    def test_each_names_a_constraint_the_migration_declares(self):
+        sql = (REPO_ROOT / "products" / "social-wiring" / "backend" / "migrations" / "241_cs_esteira.sql").read_text(encoding="utf-8")
+        for p in self._probes().values():
+            if p.id == "sw241_status_pagina":
+                continue
+            assert p.guard_name in sql, p.id
+
+    def test_refusal_probes_can_only_pass_on_the_named_guard(self):
+        for p in self._probes().values():
+            if p.kind == "write_refusal":
+                assert f"LIKE '%{p.guard_name}%'" in p.sql and "NOC_PROBE:ambiguous" in p.sql, p.id
+
+    def test_a_refused_scripted_outcome_passes(self):
+        probe = self._probes()["sw241_post_formato"]
+        ex = _CannedExecutor(ok=False, error='NOC_PROBE:refused: violates check constraint "cs_posts_formato_check"')
+        assert run_probe(probe, ex)["status"] == "pass"
+
+
 class TestPendingMigration:
     """A probe written ahead of its migration is `pending_migration` (named,
     non-blocking), never a failure (2026-10-10: the SW 239 probes made every SW

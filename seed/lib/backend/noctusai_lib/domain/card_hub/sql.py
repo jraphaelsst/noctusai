@@ -55,7 +55,10 @@ DEFAULT_DOCUMENTO_TIPOS: tuple[tuple, ...] = (
     ("cpf", "identidade", 1825, True, False, "CPF (retenção pendente de intake LGPD)"),
 )
 
-_ORG_PREDICATE = "org_id = (SELECT public.current_org_id())"
+#: The home-org helper the seed has always emitted; a consumer whose migrations must use a
+#: different resolver (social-wiring: the org-picker-aware `current_org_id_for`) passes
+#: `org_id_expr=` to `card_hub_migration` instead of rewriting the generated text.
+DEFAULT_ORG_ID_EXPR = "public.current_org_id()"
 
 
 def _sql_literal(value) -> str:
@@ -68,14 +71,14 @@ def _sql_literal(value) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _org_rls(schema: str, table: str) -> str:
+def _org_rls(schema: str, table: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     """RLS on + own-org SELECT for `authenticated` + `service_role_bypass`."""
     select_name = f"{table}_select_own_org"
     return "\n".join(
         [
             f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
             f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
-            rls_subquery_policy(schema, table, select_name, "SELECT", using=_ORG_PREDICATE),
+            rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
             f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
             service_role_bypass(table, schema=schema),
         ]
@@ -86,7 +89,7 @@ def _entity_fk(cfg: CardHubConfig, schema: str) -> str:
     return f"{cfg.entity_fk} UUID NOT NULL REFERENCES {schema}.{cfg.entity_table}(id) ON DELETE CASCADE"
 
 
-def _notas(cfg: CardHubConfig, schema: str) -> str:
+def _notas(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t = cfg.tables.notas
     return f"""-- Notes: one `descricao` per card (partial unique index) + many `comentario`.
 -- Soft-delete only: a deleted note leaves a tombstone.
@@ -106,10 +109,10 @@ CREATE INDEX IF NOT EXISTS idx_{t}_org ON {schema}.{t} (org_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{t}_one_descricao
     ON {schema}.{t} ({cfg.entity_fk})
     WHERE tipo = 'descricao' AND deleted_at IS NULL;
-{_org_rls(schema, t)}"""
+{_org_rls(schema, t, org_id_expr)}"""
 
 
-def _tags(cfg: CardHubConfig, schema: str) -> str:
+def _tags(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t, links = cfg.tables.tags, cfg.tables.tag_links
     return f"""-- ONE org tag catalogue (case-insensitive unique name) + per-card links.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
@@ -120,7 +123,7 @@ CREATE TABLE IF NOT EXISTS {schema}.{t} (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{t}_org_nome ON {schema}.{t} (org_id, lower(nome));
-{_org_rls(schema, t)}
+{_org_rls(schema, t, org_id_expr)}
 
 CREATE TABLE IF NOT EXISTS {schema}.{links} (
     {_entity_fk(cfg, schema)},
@@ -132,10 +135,10 @@ CREATE TABLE IF NOT EXISTS {schema}.{links} (
 );
 CREATE INDEX IF NOT EXISTS idx_{links}_tag ON {schema}.{links} (tag_id);
 CREATE INDEX IF NOT EXISTS idx_{links}_org ON {schema}.{links} (org_id);
-{_org_rls(schema, links)}"""
+{_org_rls(schema, links, org_id_expr)}"""
 
 
-def _membros(cfg: CardHubConfig, schema: str) -> str:
+def _membros(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t, src = cfg.tables.membros, cfg.member_source
     return f"""-- Assignment: points at the member source's id, NEVER at a name.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
@@ -147,7 +150,7 @@ CREATE TABLE IF NOT EXISTS {schema}.{t} (
 );
 CREATE INDEX IF NOT EXISTS idx_{t}_member ON {schema}.{t} ({src.fk});
 CREATE INDEX IF NOT EXISTS idx_{t}_org ON {schema}.{t} (org_id);
-{_org_rls(schema, t)}"""
+{_org_rls(schema, t, org_id_expr)}"""
 
 
 def _datas(cfg: CardHubConfig, schema: str) -> str:
@@ -170,7 +173,7 @@ BEGIN
 END $$;"""
 
 
-def _lembretes(cfg: CardHubConfig, schema: str) -> str:
+def _lembretes(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t = cfg.tables.lembretes
     # `lembretes_crud` opt-in (default False — social-wiring's real 056 table
     # has neither column; `test_template_columns_equal_sw_056_057_083` pins
@@ -194,10 +197,10 @@ CREATE TABLE IF NOT EXISTS {schema}.{t} (
 CREATE INDEX IF NOT EXISTS idx_{t}_pending ON {schema}.{t} (dispara_em)
     WHERE enviado_em IS NULL AND cancelado_em IS NULL;
 CREATE INDEX IF NOT EXISTS idx_{t}_entity ON {schema}.{t} ({cfg.entity_fk}, created_at DESC);
-{_org_rls(schema, t)}"""
+{_org_rls(schema, t, org_id_expr)}"""
 
 
-def _checklists(cfg: CardHubConfig, schema: str) -> str:
+def _checklists(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t, itens = cfg.tables.checklists, cfg.tables.checklist_itens
     etapa_ref = (
         f" REFERENCES {schema}.{cfg.stage_table}(id) ON DELETE SET NULL" if cfg.stage_table else ""
@@ -214,7 +217,7 @@ CREATE TABLE IF NOT EXISTS {schema}.{t} (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_{t}_entity ON {schema}.{t} ({cfg.entity_fk}, posicao);
-{_org_rls(schema, t)}
+{_org_rls(schema, t, org_id_expr)}
 
 CREATE TABLE IF NOT EXISTS {schema}.{itens} (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -228,7 +231,7 @@ CREATE TABLE IF NOT EXISTS {schema}.{itens} (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_{itens}_checklist ON {schema}.{itens} (checklist_id, posicao);
-{_org_rls(schema, itens)}"""
+{_org_rls(schema, itens, org_id_expr)}"""
 
 
 def _documento_tipos(cfg: CardHubConfig, schema: str, tipos: Sequence[tuple]) -> str:
@@ -264,7 +267,7 @@ DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{t};
 {service_role_bypass(t, schema=schema)}{seed}"""
 
 
-def _documentos(cfg: CardHubConfig, schema: str) -> str:
+def _documentos(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t, tipos, acessos = cfg.tables.documentos, cfg.tables.documento_tipos, cfg.tables.documento_acessos
     return f"""-- Documents (soft delete with reason) + the append-only access log.
 CREATE TABLE IF NOT EXISTS {schema}.{t} (
@@ -288,7 +291,7 @@ CREATE INDEX IF NOT EXISTS idx_{t}_entity ON {schema}.{t} ({cfg.entity_fk}, crea
 CREATE INDEX IF NOT EXISTS idx_{t}_org ON {schema}.{t} (org_id);
 CREATE INDEX IF NOT EXISTS idx_{t}_retencao ON {schema}.{t} (retencao_ate)
     WHERE deleted_at IS NULL AND retencao_ate IS NOT NULL;
-{_org_rls(schema, t)}
+{_org_rls(schema, t, org_id_expr)}
 
 CREATE TABLE IF NOT EXISTS {schema}.{acessos} (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -300,7 +303,7 @@ CREATE TABLE IF NOT EXISTS {schema}.{acessos} (
 );
 CREATE INDEX IF NOT EXISTS idx_{acessos}_documento ON {schema}.{acessos} (documento_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_{acessos}_org ON {schema}.{acessos} (org_id);
-{_org_rls(schema, acessos)}"""
+{_org_rls(schema, acessos, org_id_expr)}"""
 
 
 def _bucket(cfg: CardHubConfig) -> str:
@@ -341,7 +344,7 @@ def _bucket(cfg: CardHubConfig) -> str:
     return "-- Private document bucket; object RLS keys on the org_id first path segment.\n" + "\n".join(parts)
 
 
-def _checklist_extras(cfg: CardHubConfig, schema: str) -> str:
+def _checklist_extras(cfg: CardHubConfig, schema: str, org_id_expr: str = DEFAULT_ORG_ID_EXPR) -> str:
     t, docs = cfg.tables.checklist_extras, cfg.tables.documentos
     return f"""-- Operator-authored checklist lines. NO `concluido` column: completion is
 -- DERIVED (valor_texto / a live documento_id). Deleting the file keeps the line.
@@ -363,7 +366,7 @@ CREATE INDEX IF NOT EXISTS idx_{t}_entity ON {schema}.{t} ({cfg.entity_fk}, orde
 CREATE INDEX IF NOT EXISTS idx_{t}_org ON {schema}.{t} (org_id);
 CREATE INDEX IF NOT EXISTS idx_{t}_documento ON {schema}.{t} (documento_id)
     WHERE documento_id IS NOT NULL;
-{_org_rls(schema, t)}"""
+{_org_rls(schema, t, org_id_expr)}"""
 
 
 def card_hub_migration(
@@ -371,6 +374,7 @@ def card_hub_migration(
     schema: str,
     *,
     documento_tipos: Optional[Sequence[tuple]] = None,
+    org_id_expr: str = DEFAULT_ORG_ID_EXPR,
 ) -> str:
     """The whole card-hub DDL for `schema`, as one migration body.
 
@@ -380,6 +384,10 @@ def card_hub_migration(
 
     `documento_tipos` overrides the seeded catalogue rows
     (`DEFAULT_DOCUMENTO_TIPOS`); pass `()` to seed none.
+
+    `org_id_expr` is the SQL expression the table-level own-org SELECT policies compare
+    `org_id` against (default `public.current_org_id()`, unchanged for every existing
+    consumer). The `storage.objects` folder policies are not parameterised.
     """
     if not schema or not schema.strip():
         raise ValueError("card_hub_migration requires a non-empty schema")
@@ -387,19 +395,19 @@ def card_hub_migration(
     sections = [
         f"-- Card hub ({cfg.entity_kind}) -- generated by noctusai_lib.domain.card_hub.sql",
         f"{set_search_path(schema)};",
-        _notas(cfg, schema),
-        _tags(cfg, schema),
-        _membros(cfg, schema),
+        _notas(cfg, schema, org_id_expr),
+        _tags(cfg, schema, org_id_expr),
+        _membros(cfg, schema, org_id_expr),
     ]
     if cfg.entity_datas:
         sections.append(_datas(cfg, schema))
     sections += [
-        _lembretes(cfg, schema),
-        _checklists(cfg, schema),
+        _lembretes(cfg, schema, org_id_expr),
+        _checklists(cfg, schema, org_id_expr),
         _documento_tipos(cfg, schema, tipos),
-        _documentos(cfg, schema),
+        _documentos(cfg, schema, org_id_expr),
         _bucket(cfg),
-        _checklist_extras(cfg, schema),
+        _checklist_extras(cfg, schema, org_id_expr),
     ]
     return "\n\n".join(sections) + "\n"
 

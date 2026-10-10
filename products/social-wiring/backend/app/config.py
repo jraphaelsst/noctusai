@@ -341,6 +341,8 @@ class SocialWiringSettings(ProductSettings):
     # 5 batches of 2 headlines per marca per day.
     headlines_sugeridas_por_dia_marca: int = 5
     roteiros_dia_usuario: int = 20
+    # Esteira (esteira-contract.md section 9): reel caption generations per user per day.
+    legendas_dia_usuario: int = 40
     chat_mensagens_dia_usuario: int = 100
     chat_mensagens_dia_org: int = 400
     chat_contexto_max_chars: int = 60_000

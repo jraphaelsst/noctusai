@@ -6436,6 +6436,374 @@ _SW_240_PROBES: tuple[GuardProbe, ...] = (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social_wiring Esteira de reels guards (migration 241,
+# esteira-contract.md 2.6). Every probe self-provisions its own fixture (two
+# marcas, a headline + roteiro on marca B, a stage) inside the probe
+# transaction and rolls back; nothing is borrowed from existing rows except
+# the owning org id.
+# ---------------------------------------------------------------------------
+
+_SW_241_MIGRATION = "241_cs_esteira.sql"
+
+_SW_241_DECLARE = """
+DECLARE
+  v_org uuid;
+  v_marca_a uuid;
+  v_marca_b uuid;
+  v_etapa uuid;
+  v_head_b uuid;
+  v_rot_b uuid;
+  v_post uuid;
+  v_n bigint;
+  v_marca_after uuid;
+  v_head_after uuid;
+"""
+
+_SW_241_FIXTURE = f"""
+  SELECT id INTO v_org FROM public.organizations LIMIT 1;
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe marca';
+  END IF;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
+  VALUES (v_org, 'noc-probe-esteira-a', 'noc-probe-esteira-a') RETURNING id INTO v_marca_a;
+  INSERT INTO {_SW_SCHEMA}.marcas (org_id, slug, name)
+  VALUES (v_org, 'noc-probe-esteira-b', 'noc-probe-esteira-b') RETURNING id INTO v_marca_b;
+  INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
+  VALUES (v_org, 'esteira', 'noc_probe_esteira', 'noc probe', 9999) RETURNING id INTO v_etapa;
+  INSERT INTO {_SW_SCHEMA}.cs_headlines (org_id, marca_id, texto)
+  VALUES (v_org, v_marca_b, 'noc probe headline') RETURNING id INTO v_head_b;
+  INSERT INTO {_SW_SCHEMA}.cs_roteiros (org_id, marca_id, nome, headline_texto)
+  VALUES (v_org, v_marca_b, 'noc probe roteiro', 'noc probe headline') RETURNING id INTO v_rot_b;
+"""
+
+
+def _sw241_post_ins(marca: str = "v_marca_a", *, cols: str = "", vals: str = "", titulo: str = "'noc probe post'") -> str:
+    """One `cs_posts` insert (statement text, no trailing `;`) on the fixture stage."""
+    return (
+        f"INSERT INTO {_SW_SCHEMA}.cs_posts (org_id, marca_id, titulo, etapa_id{cols}) "
+        f"VALUES (v_org, {marca}, {titulo}, v_etapa{vals})"
+    )
+
+
+def _sw241_refusal_probe(
+    *, probe_id: str, guard_name: str, statements: str, permitted_msg: str, rationale: str
+) -> GuardProbe:
+    """Refusal probe for a migration-241 guard. `statements` run in the inner block;
+    the LAST one must be the refused write. Anything other than the named guard's
+    error is `ambiguous`, never a silent pass."""
+    return GuardProbe(
+        id=probe_id,
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name=guard_name,
+        kind="write_refusal",
+        migrations=(_SW_241_MIGRATION,),
+        rationale=rationale,
+        sql=_do_block(f"""
+{_SW_241_DECLARE}
+BEGIN
+{_SW_241_FIXTURE}
+  BEGIN
+{statements}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(permitted_msg)} - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{guard_name}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    )
+
+
+def _sw241_stmt(sql: str) -> str:
+    return f"    {sql};"
+
+
+_SW_241_PROBES: tuple[GuardProbe, ...] = (
+    _sw241_refusal_probe(
+        probe_id="sw241_post_headline_outra_marca",
+        guard_name="cs_posts_headline_marca_fk",
+        statements=_sw241_stmt(_sw241_post_ins("v_marca_a", cols=", headline_id", vals=", v_head_b")),
+        permitted_msg="post on marca A bound to a headline of marca B",
+        rationale="The post->headline FK is composite on (id, marca_id): a post can never bind another marca's headline, even through a service-role bug.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_roteiro_outra_marca",
+        guard_name="cs_posts_roteiro_marca_fk",
+        statements=_sw241_stmt(_sw241_post_ins("v_marca_a", cols=", roteiro_id", vals=", v_rot_b")),
+        permitted_msg="post on marca A bound to a roteiro of marca B",
+        rationale="The post->roteiro FK is composite on (id, marca_id): a post can never bind another marca's roteiro.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_headline_unico_por_post",
+        guard_name="cs_posts_headline_uq",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_b", cols=", headline_id", vals=", v_head_b"))
+            + "\n"
+            + _sw241_stmt(_sw241_post_ins("v_marca_b", cols=", headline_id", vals=", v_head_b", titulo="'noc probe post 2'"))
+        ),
+        permitted_msg="second post bound to the same headline",
+        rationale="A headline belongs to at most one post.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_roteiro_unico_por_post",
+        guard_name="cs_posts_roteiro_uq",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_b", cols=", roteiro_id", vals=", v_rot_b"))
+            + "\n"
+            + _sw241_stmt(_sw241_post_ins("v_marca_b", cols=", roteiro_id", vals=", v_rot_b", titulo="'noc probe post 2'"))
+        ),
+        permitted_msg="second post bound to the same roteiro",
+        rationale="A roteiro belongs to at most one post.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_formato",
+        guard_name="cs_posts_formato_check",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", formato", vals=", 'story'")),
+        permitted_msg="post with formato=story",
+        rationale="v1 of the Esteira is reels only; a new format is a deliberate migration, not a free-text value.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_titulo_vazio",
+        guard_name="cs_posts_titulo_check",
+        statements=_sw241_stmt(_sw241_post_ins(titulo="'  '")),
+        permitted_msg="post with a blank titulo",
+        rationale="A post needs a trimmed, non-empty working title (1..200).",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_hashtags_max",
+        guard_name="cs_posts_hashtags_max",
+        statements=_sw241_stmt(
+            _sw241_post_ins(cols=", hashtags", vals=", ARRAY(SELECT 'h' || g FROM generate_series(1, 31) g)")
+        ),
+        permitted_msg="post with 31 hashtags",
+        rationale="Instagram allows at most 30 hashtags; the database refuses the 31st.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_permalink",
+        guard_name="cs_posts_permalink_check",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", permalink", vals=", 'http://evil'")),
+        permitted_msg="post with a non-instagram http permalink",
+        rationale="The permalink is rendered as a link: https instagram.com only (no SSRF / open-redirect surface).",
+    ),
+    GuardProbe(
+        id="sw241_stage_esteira_ok",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="pipeline_stages_papel_check",
+        kind="write_allowed",
+        migrations=(_SW_241_MIGRATION,),
+        rationale=(
+            "The widened pipeline/papel CHECKs must accept the Esteira board: a stage with "
+            "pipeline='esteira' and papel='postado' (a fabricated org, so no real board collides)."
+        ),
+        sql=_do_block(f"""
+BEGIN
+  -- no_fixture: none needed (a fabricated org id owns the stage; nothing real is borrowed)
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao, papel)
+    VALUES (gen_random_uuid(), 'esteira', 'noc_probe_postado', 'noc probe', 0, 'postado');
+    RAISE EXCEPTION 'NOC_PROBE:allowed: esteira/postado stage insert succeeded - the widened CHECKs accept the board';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:allowed:%' THEN
+      RAISE;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:blocked: esteira/postado stage insert was refused: %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    ),
+    GuardProbe(
+        id="sw241_stage_pipeline_invalido",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="pipeline_stages_pipeline_check",
+        kind="write_refusal",
+        migrations=(_SW_241_MIGRATION,),
+        rationale="Widening the pipeline CHECK must not open it: an unknown pipeline key is still refused.",
+        sql=_do_block(f"""
+BEGIN
+  -- no_fixture: none needed (a fabricated org id owns the stage; nothing real is borrowed)
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.pipeline_stages (org_id, pipeline, slug, label, posicao)
+    VALUES (gen_random_uuid(), 'xyz', 'noc_probe_xyz', 'noc probe', 0);
+    RAISE EXCEPTION 'NOC_PROBE:permitted: stage with pipeline=xyz inserted - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%pipeline_stages_pipeline_check%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    ),
+    GuardProbe(
+        id="sw241_equipe_nome_unico",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="cs_equipe_nome_uq",
+        kind="write_refusal",
+        migrations=(_SW_241_MIGRATION,),
+        rationale="One team member per (org, lower(nome)): a case-variant re-add is refused, never a second person.",
+        sql=_do_block(f"""
+DECLARE
+  v_org uuid;
+BEGIN
+  SELECT id INTO v_org FROM public.organizations LIMIT 1;
+  IF v_org IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no public.organizations row to own a probe team member';
+  END IF;
+  BEGIN
+    INSERT INTO {_SW_SCHEMA}.cs_equipe (org_id, nome) VALUES (v_org, 'noc probe equipe');
+    INSERT INTO {_SW_SCHEMA}.cs_equipe (org_id, nome) VALUES (v_org, 'NOC PROBE EQUIPE');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: case-variant duplicate team member inserted - the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%cs_equipe_nome_uq%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+    ),
+    GuardProbe(
+        id="sw241_headline_delete_nulls_only_fk",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="cs_posts_headline_marca_fk",
+        kind="state_assertion",
+        migrations=(_SW_241_MIGRATION,),
+        rationale=(
+            "Deleting a bound headline must null ONLY cs_posts.headline_id (column-list SET NULL): "
+            "marca_id is NOT NULL, so a plain SET NULL would make the delete fail or orphan the post."
+        ),
+        sql=_do_block(f"""
+{_SW_241_DECLARE}
+BEGIN
+{_SW_241_FIXTURE}
+  {_sw241_post_ins("v_marca_b", cols=", headline_id", vals=", v_head_b")} RETURNING id INTO v_post;
+  BEGIN
+    DELETE FROM {_SW_SCHEMA}.cs_headlines WHERE id = v_head_b;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: deleting a bound headline failed instead of nulling the FK: %', SQLERRM;
+  END;
+  SELECT marca_id, headline_id INTO v_marca_after, v_head_after
+    FROM {_SW_SCHEMA}.cs_posts WHERE id = v_post;
+  IF v_marca_after IS DISTINCT FROM v_marca_b OR v_head_after IS NOT NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: after the headline delete marca_id=% headline_id=% (want marca intact, headline NULL)', v_marca_after, v_head_after;
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:clean: headline delete nulled headline_id and left marca_id intact';
+END;
+"""),
+    ),
+    GuardProbe(
+        id="sw241_status_pagina",
+        product="social-wiring",
+        schema=_SW_SCHEMA,
+        guard_name="status_pagina_241",
+        kind="state_assertion",
+        migrations=(_SW_241_MIGRATION,),
+        rationale=(
+            "The nav rows 241 owns: branding/carrosseis are producao and the Esteira is desenvolvimento "
+            "-- or producao once the owner promotes it (a promotion must not turn this probe red)."
+        ),
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                f"SELECT (SELECT count(*) FROM (VALUES ('media-creation-branding'), ('media-creation-carrosseis')) AS e(n) "
+                f"WHERE NOT EXISTS (SELECT 1 FROM {_SW_SCHEMA}.status_pagina p WHERE p.nome_pagina = e.n AND p.status = 'producao')) "
+                f"+ (SELECT CASE WHEN EXISTS (SELECT 1 FROM {_SW_SCHEMA}.status_pagina WHERE nome_pagina = 'media-creation-esteira' "
+                f"AND status IN ('desenvolvimento', 'producao')) THEN 0 ELSE 1 END) "
+                "INTO v_count;"
+            ),
+            clean_message="status_pagina rows match migration 241",
+            violation_message_prefix="status_pagina rows diverge from migration 241:",
+        ),
+    ),
+    # --- remaining declared guards of 241 (the migration-guard-has-probe keeper wants every one) ---
+    _sw241_refusal_probe(
+        probe_id="sw241_movimento_pipeline_invalido",
+        guard_name="pipeline_movimentos_pipeline_check",
+        statements=_sw241_stmt(
+            f"INSERT INTO {_SW_SCHEMA}.pipeline_movimentos (org_id, pipeline, entidade_id, para_etapa_id, responsavel_id) "
+            "VALUES (v_org, 'xyz', gen_random_uuid(), v_etapa, gen_random_uuid())"
+        ),
+        permitted_msg="stage move recorded for pipeline=xyz",
+        rationale="Widening the history table's pipeline CHECK for 'esteira' must not open it: an unknown pipeline key is still refused.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_legenda_max",
+        guard_name="cs_posts_legenda_check",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", legenda", vals=", repeat('x', 2201)")),
+        permitted_msg="post with a 2201-char legenda",
+        rationale="Instagram captions are capped at 2 200 characters.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_primeiro_comentario_max",
+        guard_name="cs_posts_primeiro_comentario_check",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", primeiro_comentario", vals=", repeat('x', 2201)")),
+        permitted_msg="post with a 2201-char primeiro_comentario",
+        rationale="The first comment is an Instagram comment: capped at 2 200 characters.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_links_producao_array",
+        guard_name="cs_posts_links_producao_check",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", links_producao", vals=", '{}'::jsonb")),
+        permitted_msg="post whose links_producao is a JSON object",
+        rationale="links_producao is a list of {rotulo, url}; a non-array would break every reader.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_motivo_bloqueio_max",
+        guard_name="cs_posts_motivo_bloqueio_check",
+        statements=_sw241_stmt(_sw241_post_ins(cols=", motivo_bloqueio", vals=", repeat('x', 1001)")),
+        permitted_msg="post with a 1001-char motivo_bloqueio",
+        rationale="The block/cancel reason is capped at 1 000 characters.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_nota_descricao_unica",
+        guard_name="uq_cs_post_notas_one_descricao",
+        statements=(
+            _sw241_stmt(_sw241_post_ins("v_marca_a") + " RETURNING id INTO v_post")
+            + "\n"
+            + _sw241_stmt(
+                f"INSERT INTO {_SW_SCHEMA}.cs_post_notas (org_id, post_id, tipo, corpo) "
+                "VALUES (v_org, v_post, 'descricao', 'noc probe a')"
+            )
+            + "\n"
+            + _sw241_stmt(
+                f"INSERT INTO {_SW_SCHEMA}.cs_post_notas (org_id, post_id, tipo, corpo) "
+                "VALUES (v_org, v_post, 'descricao', 'noc probe b')"
+            )
+        ),
+        permitted_msg="second live descricao note on one post",
+        rationale="One live `descricao` note per post: the card has a single description.",
+    ),
+    _sw241_refusal_probe(
+        probe_id="sw241_post_tag_nome_unico",
+        guard_name="uq_cs_post_tags_org_nome",
+        statements=(
+            _sw241_stmt(f"INSERT INTO {_SW_SCHEMA}.cs_post_tags (org_id, nome, cor) VALUES (v_org, 'noc probe tag', '#aabbcc')")
+            + "\n"
+            + _sw241_stmt(f"INSERT INTO {_SW_SCHEMA}.cs_post_tags (org_id, nome, cor) VALUES (v_org, 'NOC PROBE TAG', '#aabbcc')")
+        ),
+        permitted_msg="case-variant duplicate post tag",
+        rationale="One label per (org, lower(nome)): a case-variant re-add is refused, never a second tag.",
+    ),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -6499,6 +6867,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_231_PROBES,
     *_SW_240_PROBES,
+    *_SW_241_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
