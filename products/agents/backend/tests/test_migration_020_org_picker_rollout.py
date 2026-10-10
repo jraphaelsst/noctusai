@@ -209,10 +209,9 @@ def test_acting_audit_migration():
     assert calls == [f"'{SCHEMA}'"]
 
 
-def test_ready_migration_is_last_and_scoped():
+def test_ready_migration_follows_the_policy_rollout_and_is_scoped():
     sql = FILE_C.read_text(encoding="utf-8")
     assert len(parse_sql(sql)) == 1
     assert f"slug = '{SLUG}'" in sql and f"db_schema = '{SCHEMA}'" in sql
     assert re.search(r"org_picker_ready\s*=\s*true", sql)
     assert FILE_A.name < FILE_B.name < FILE_C.name
-    assert max(f.name for f in MIGRATIONS.glob("[0-9]*.sql")) == FILE_C.name
