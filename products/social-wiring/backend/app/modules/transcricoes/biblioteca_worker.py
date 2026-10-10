@@ -142,6 +142,9 @@ def _com_saude(handler: Callable[[Job], Any], health: TranscriberHealth) -> Call
         try:
             await handler(job)
         except Exception as exc:  # re-raised: the Worker owns retry / dead-letter / reschedule
+            # Only TranscriberUnavailable counts as a failure. Anything else (503 busy ->
+            # RescheduleLater, TranscriptionRejected, ...) means the worker answered, so it is
+            # alive and the count resets: core holding the worker must never trip this breaker.
             health.record(unavailable=_is_unavailable(exc))
             raise
         health.record(unavailable=False)
