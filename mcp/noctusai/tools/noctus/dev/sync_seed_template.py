@@ -47,7 +47,9 @@ _BACKUP_EXCLUDES = {
     "dist",
     ".pytest_cache",
 }
-_TEMPLATE_EXTRA_EXCLUDES = _BACKUP_EXCLUDES | {"package-lock.json"}
+# migration-checksum-ack.json pins THIS product's prod ledger state (ledger_checksums.py);
+# a freshly scaffolded product has no applied history to acknowledge.
+_TEMPLATE_EXTRA_EXCLUDES = _BACKUP_EXCLUDES | {"package-lock.json", "migration-checksum-ack.json"}
 
 # Text-file extensions processed by the placeholder pass (mirrors the
 # `find ... \( -name "*.py" -o ... \)` filter; ``.env.example`` matched

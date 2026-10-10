@@ -1,0 +1,19 @@
+{
+  "_doc": "Acknowledged ledger-checksum drift: applied migrations whose committed file no longer hashes to the ledger. Each entry pins the EXACT state (file, ledger_checksum, file_checksum) — editing the file again re-refuses. Fix drift with a NEW migration, never by editing back or rewriting the ledger. Read by noctus.dev.ledger_checksums (migrate_product sha= / predeploy_check). KB § PATTERNS/backend/migrate-product-mcp-tool.md § Ledger checksum verification.",
+  "acknowledged": [
+    {
+      "file": "001_igig.sql",
+      "ledger_checksum": "2d7057f0fd23432d1413cc32e0ba85ad6c7f4c038be061cf83539082e0a6d8cf",
+      "file_checksum": "d6c5e589d8494b10558cc905e0a47eb44099c53b7d6d4cdd591286fd482cb96c",
+      "remediate": "migration-chain-rebaseline",
+      "note": "Rewritten in place by the 2026-09-28 customer-role sweep (516203777); prod got the intent via the product's *_customer_role_isolation forward migration — catalog-verified 2026-10-10."
+    },
+    {
+      "file": "019_card_hub.sql",
+      "ledger_checksum": "abd8692639e32049f0d560a3af8c8a34bac9952d7d7ac949de839eef92d9371f",
+      "file_checksum": "8ba63a58aff63f336c3a6d4feb6167c84a3c72250bc9a9466b44d2741e813126",
+      "remediate": "post-apply-edit-audit",
+      "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    }
+  ]
+}

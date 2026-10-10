@@ -1,0 +1,12 @@
+{
+  "_doc": "Acknowledged ledger-checksum drift: applied migrations whose committed file no longer hashes to the ledger. Each entry pins the EXACT state (file, ledger_checksum, file_checksum) — editing the file again re-refuses. Fix drift with a NEW migration, never by editing back or rewriting the ledger. Read by noctus.dev.ledger_checksums (migrate_product sha= / predeploy_check). KB § PATTERNS/backend/migrate-product-mcp-tool.md § Ledger checksum verification.",
+  "acknowledged": [
+    {
+      "file": "001_academia-de-reciclagem.sql",
+      "ledger_checksum": "6bf1ec616a3c1892cc65c7b70beb0fcc78c703b73de34d6f8b633f596884fb44",
+      "file_checksum": "14188a342b14a179cbc1b7ab8b2c2ac3c1bb0fd7506fba2912808c52b66e7066",
+      "remediate": "migration-chain-rebaseline",
+      "note": "Rewritten in place by the 2026-09-28 customer-role sweep (516203777); prod got the intent via the product's *_customer_role_isolation forward migration — catalog-verified 2026-10-10."
+    }
+  ]
+}

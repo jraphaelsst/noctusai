@@ -127,7 +127,13 @@ def _last_meaningful_line(output: str) -> str:
     for line in lines:
         if "error" in line.lower():
             return line
-    # Fallback: last non-empty line.
+    # Fallback: last non-empty line that is not toolkit-CLI decoration — the
+    # CLI's banner box and log lines go to stderr, which a gate runner appends
+    # AFTER stdout, so they would otherwise always be "the last line".
+    for line in reversed(lines):
+        if line[0] in "╔║╚═" or " | INFO " in line or " | DEBUG " in line:
+            continue
+        return line
     return lines[-1]
 
 

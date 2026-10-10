@@ -23,6 +23,7 @@ Test seam design:
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -2005,3 +2006,57 @@ class TestRegistration:
         register(server)
 
         assert "noctus.dev.repair_migration_ledger" in server._tool_manager._tools
+
+
+class TestLedgerChecksumVerification:
+    """sha mode compares every applied file's ledger checksum with the blessed blob
+    (ledger_checksums.py): unacknowledged drift refuses BEFORE any DDL."""
+
+    SHA = "c0ffee00" * 5
+
+    def _runner(self, applied_sql: str, ack: dict | None = None):
+        sha = self.SHA
+        extra = {
+            ("ls-tree", "--name-only", "-r", sha, "--", "products/orbity/backend/migrations"):
+                "products/orbity/backend/migrations/001_first.sql\n"
+                "products/orbity/backend/migrations/002_new.sql\n",
+            ("show", f"{sha}:products/orbity/backend/migrations/001_first.sql"): applied_sql,
+            ("show", f"{sha}:products/orbity/backend/migrations/002_new.sql"): "CREATE TABLE orbity.n (id int);",
+            ("show", f"{sha}:products/orbity/backend/app/main.py"):
+                'app = create_product_app(name="Orbity", schema="orbity")\n',
+        }
+        if ack is not None:
+            extra[("show", f"{sha}:products/orbity/backend/migration-checksum-ack.json")] = json.dumps(ack)
+        return _sha_git_runner(sha, extra)
+
+    def _executor(self, ledger_sql: str):
+        from tools.noctus.dev.ledger_checksums import sha256_text
+
+        return FakeSqlExecutor(preset_rows={
+            "checksum AS ledger_checksum": [{"filename": "001_first.sql", "ledger_checksum": sha256_text(ledger_sql)}],
+            "SELECT filename FROM": [{"filename": "001_first.sql"}],
+        })
+
+    def _run(self, tmp_path, runner, fake):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [])
+        return migrate_product("orbity", confirm=True, sha=self.SHA, executor=fake, products_dir=products,
+                               git_runner=runner, live_products_fn=_live_catalog_fn("orbity"))
+
+    def test_edited_applied_file_refuses_before_any_ddl(self, tmp_path):
+        fake = self._executor("CREATE TABLE orbity.first (id int);")
+        result = self._run(tmp_path, self._runner("CREATE TABLE orbity.first (id int, x int);"), fake)
+        assert result["status"] == "checksum_drift" and result["exit_code"] == 1
+        assert "001_first.sql" in result["error"]
+        assert not any("orbity.n" in s for s in fake.executed)
+
+    def test_acknowledged_exact_state_applies_pending(self, tmp_path):
+        from tools.noctus.dev.ledger_checksums import sha256_text
+
+        ran, now = "CREATE TABLE orbity.first (id int);", "CREATE TABLE orbity.first (id int); -- note"
+        ack = {"acknowledged": [{"file": "001_first.sql", "ledger_checksum": sha256_text(ran),
+                                 "file_checksum": sha256_text(now), "remediate": "post-apply-edit-audit"}]}
+        result = self._run(tmp_path, self._runner(now, ack), self._executor(ran))
+        assert result["status"] == "applied", result
+        assert result["applied"] == ["002_new.sql"]
+        assert result["checksum_verification"]["acknowledged"] == ["001_first.sql"]

@@ -216,6 +216,7 @@ from settings import PRODUCTS_DIR, REPO_ROOT
 from workspace import resolve_caller_root
 
 from . import _catalog_scope_guard
+from . import ledger_checksums as _ledger_checksums
 from . import toolkit_freshness as _toolkit_freshness
 
 logger = logging.getLogger(__name__)
@@ -1080,6 +1081,7 @@ def _schema_migrations_exists_sql(schema: str) -> str:
 
 _ERROR_STATUSES = frozenset({
     "error", "not_configured", "refused_stale_tree", _catalog_scope_guard.REFUSED_STATUS,
+    "checksum_drift", "checksum_inconclusive",
 })
 
 
@@ -1379,6 +1381,7 @@ def migrate_product(
 
     if not all_files:
         return _result("up_to_date")
+    chain_files = list(all_files)  # the whole chain — checksum verification spans every applied file
 
     # ── Apply optional target filter ──────────────────────────────────────────
     if target is not None:
@@ -1426,6 +1429,41 @@ def migrate_product(
             if fn:
                 already_applied.add(fn)
 
+    # ── Ledger checksum verification (2026-10-10) ────────────────────────────
+    # Every applied file must still be the file that ran: compare each ledger
+    # row with sha256 of the BLESSED blob (sha mode only — never the working
+    # tree). Unacknowledged drift refuses; an unreadable ledger is
+    # inconclusive, never a pass. ledger_checksums.py has the why.
+    if sha:
+        try:
+            chain_blobs = {f.name: f.read_text(encoding="utf-8") for f in chain_files}
+        except (OSError, GitQueryError, UnicodeDecodeError) as exc:
+            return _result(
+                "error",
+                error=(f"migrate_product: cannot read the migration chain at {sha} "
+                       f"(refused before applying any DDL): {exc}"),
+            )
+        ack_rel = f"products/{product}/backend/{_ledger_checksums.ACK_NAME}"
+        try:
+            ack_raw = (git_runner or _DEFAULT_GIT_RUNNER).run_raw(git_root, ["show", f"{sha}:{ack_rel}"])
+        except GitQueryError:
+            ack_raw = None  # no ack file at this sha — nothing acknowledged
+        checksum_verification = _ledger_checksums.verify(
+            slug=product, schema=derived_schema, sha=sha, files=chain_blobs,
+            executor=executor, root=Path(git_root), ack_raw=ack_raw,
+        )
+        if checksum_verification["status"] == "inconclusive":
+            return _result("checksum_inconclusive", error=checksum_verification["error"],
+                           checksum_verification=checksum_verification)
+        if checksum_verification["status"] == "drift":
+            return _result("checksum_drift", error=_ledger_checksums.format_drift(checksum_verification),
+                           checksum_verification=checksum_verification)
+    else:
+        checksum_verification = {
+            "status": "skipped",
+            "reason": "no sha= — checksums are verified against the blessed sha's blobs, never the working tree",
+        }
+
     # ── Classify: pending vs. skipped ────────────────────────────────────────
     skipped: list[str] = []
     pending: list[Path] = []
@@ -1442,11 +1480,13 @@ def migrate_product(
             "dry_run",
             skipped_already_applied=skipped,
             pending=pending_names,
+            checksum_verification=checksum_verification,
         )
 
     # ── Apply pending files in order ──────────────────────────────────────────
     if not pending:
-        return _result("up_to_date", skipped_already_applied=skipped)
+        return _result("up_to_date", skipped_already_applied=skipped,
+                       checksum_verification=checksum_verification)
 
     # F8(c) (compliance review, 2026-09-24): read EVERY pending file's
     # content BEFORE running any DDL. In sha= mode each read is its own
@@ -1518,6 +1558,7 @@ def migrate_product(
         "applied",
         applied=newly_applied,
         skipped_already_applied=skipped,
+        checksum_verification=checksum_verification,
     )
 
 

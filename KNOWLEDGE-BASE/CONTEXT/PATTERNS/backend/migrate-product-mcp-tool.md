@@ -333,6 +333,46 @@ generic "not resolved", so a genuine no-credentials-anywhere state (fresh
 clone, CI without secrets) is still honestly distinguishable from this class
 of bootstrap gap.
 
+## Ledger checksum verification (2026-10-10)
+
+`schema_migrations.checksum` (sha256 of the file as applied) was written on every
+apply and never read back. Measured 2026-10-10: **15 of 375** applied files no longer
+hashed to their ledger. 8 had been rewritten in place by the 2026-09-28 customer-role
+sweep, and 7 were edited after they ran. One more row held a sentinel string
+(`applied-via-mcp-connector`). Auditing each one (applied blob found by its hash →
+diff → prod catalog check) found **two intents prod never got**, so editing an applied
+file ships that change NOWHERE:
+
+- seed's anon grant lockdown → forward migration seed 010;
+- `erp.current_org_id()`'s customer exclusion → SW 234.
+
+The rule is now a gate (`tools/noctus/dev/ledger_checksums.py`):
+
+- **`migrate_product sha=`** compares every ledger row with sha256 of
+  `git show <sha>:<file>` (the blessed blob, never the working tree) BEFORE any DDL.
+  - Unacknowledged drift → `status=checksum_drift`.
+  - An unreadable ledger → `checksum_inconclusive`.
+  - Both refuse (exit 1).
+  - Without `sha=` the result says `checksum_verification.status=skipped`; bare mode is
+    discouraged anyway.
+- **`predeploy_check` leg `ledger_checksums`**: the same comparison at HEAD's committed
+  blobs. Drift or inconclusive blocks.
+- **Acknowledgement**: `products/<slug>/backend/migration-checksum-ack.json`.
+  - Each entry pins `(file, ledger_checksum, file_checksum)`, so editing the file again
+    re-refuses. It is not a file-name allowlist.
+  - Every entry names a declared NOC-REMEDIATE class: `migration-chain-rebaseline`,
+    `post-apply-edit-audit` or `ledger-sentinel-checksum`.
+  - A sentinel is acknowledged by its value. The ledger is never rewritten; history
+    stays as it ran.
+
+**To fix drift:**
+
+1. Put the intent in a NEW migration (gated by `migration_replay`).
+2. Confirm prod holds it (catalog check / a `verify_db_guards` probe).
+3. Acknowledge the exact state.
+
+Never edit the file back, and never rewrite the ledger.
+
 ## Usage flow
 
 ```

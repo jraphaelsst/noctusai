@@ -61,6 +61,7 @@ DEFAULT_CHECKS: list[str] = [
     "schema_drift",  # does the live schema actually contain what migrations/ORM declare? (2026-09-17 class)
     "storage_bucket_public",  # zero public storage.buckets, platform-wide, no exception — owner directive 2026-09-17
     "db_guards",  # a declared DB guard (trigger/CHECK/UNIQUE) actually REFUSES what it claims — structure-green is not behaviour-green (2026-09-18)
+    "ledger_checksums",  # every applied migration still hashes to its schema_migrations checksum at HEAD's committed blobs (2026-10-10)
     "env_fleet_manifest",  # every deploy/fleet/env.fleet.keys name has a non-empty value in a fed .env.fleet snapshot
 ]
 
@@ -960,6 +961,33 @@ def _default_run_check(
         if result["status"] != "clean":
             return False, f"storage_bucket_public BLOCKED ({result['status']}) — {result['error']}"
         return True, "storage_bucket_public ok — no public bucket in storage.buckets"
+    if check == "ledger_checksums":
+        # An applied migration edited afterwards ships NOWHERE (2026-10-10: 15/375
+        # drifted, two carrying intent prod never got). Compares every ledger row
+        # with sha256 of HEAD's COMMITTED blob — never the working tree; drift not
+        # pinned in migration-checksum-ack.json blocks; "couldn't read the ledger"
+        # blocks too (inconclusive is never a pass). ledger_checksums.py has the why.
+        from . import ledger_checksums as _lc
+        from . import migrate_product as _mp
+
+        executor = _mp.make_sql_executor()
+        if executor is None:
+            return False, "ledger_checksums BLOCKED (not_configured) — no Supabase access token resolved"
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True).stdout.strip()
+        try:
+            schema = _mp._resolve_schema(product, None, root / "products", sha=head, git_root=root)[0]
+        except Exception as exc:  # noqa: BLE001 — surfaced as a block, never swallowed
+            return False, f"ledger_checksums BLOCKED (inconclusive) — cannot resolve {product}'s schema at {head}: {exc}"
+        result = _lc.verify(slug=product, schema=schema, sha=head,
+                            files=_lc.chain_at(root, product, head), executor=executor, root=root)
+        if result["status"] == "inconclusive":
+            return False, f"ledger_checksums BLOCKED (inconclusive) — {result['error']}"
+        if result["status"] == "drift":
+            return False, f"ledger_checksums DRIFT — {_lc.format_drift(result)}"
+        return True, (
+            f"ledger_checksums ok — {result['checked']} applied file(s) match their ledger at "
+            f"{head[:9]} ({len(result['acknowledged'])} acknowledged)"
+        )
     if check == "db_guards":
         # THE structure-green-is-not-behaviour-green gate (owner directive
         # 2026-09-18, KB § PATTERNS/common/methodology-execution-discipline.md

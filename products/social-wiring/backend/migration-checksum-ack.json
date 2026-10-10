@@ -1,0 +1,61 @@
+{
+  "_doc": "Acknowledged ledger-checksum drift: applied migrations whose committed file no longer hashes to the ledger. Each entry pins the EXACT state (file, ledger_checksum, file_checksum) — editing the file again re-refuses. Fix drift with a NEW migration, never by editing back or rewriting the ledger. Read by noctus.dev.ledger_checksums (migrate_product sha= / predeploy_check). KB § PATTERNS/backend/migrate-product-mcp-tool.md § Ledger checksum verification.",
+  "acknowledged": [
+    {
+      "file": "001_social-wiring.sql",
+      "ledger_checksum": "8c8af43343ffe2bb5c34af5195e9a3b02216ae6f5dbff052f3a9247c953ad7c6",
+      "file_checksum": "832aca3ae2629cf642431436c46bc29ad087d62e6c0eb8902d3fbc9a45323fa7",
+      "remediate": "migration-chain-rebaseline",
+      "note": "Rewritten in place by the 2026-09-28 customer-role sweep (516203777); prod got the intent via the product's *_customer_role_isolation forward migration — catalog-verified 2026-10-10."
+    },
+    {
+      "file": "011_rls_current_org_id.sql",
+      "ledger_checksum": "5108f3fdfc783dc19f55ba1ed0f57ac708e325168f19d76ede1fbf7cf27530f3",
+      "file_checksum": "228abc0ee1a0d853ead7aaf64b1956082d428a4abec1207afbfb54e9b384f510",
+      "remediate": "migration-chain-rebaseline",
+      "note": "Rewritten in place by the 2026-09-28 customer-role sweep (516203777); prod got the intent via the product's *_customer_role_isolation forward migration — catalog-verified 2026-10-10."
+    },
+    {
+      "file": "060_negociacoes_venda_to_atendimentos.sql",
+      "ledger_checksum": "27742e4604ec84284dfe2440b359848a85f701d1ff162083ac256420f31d0f9f",
+      "file_checksum": "72e6d19226e4cd100095b6a6a226870e52a3a486a425365f7d4cc8a3767aee0e",
+      "remediate": "post-apply-edit-audit",
+      "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    },
+    {
+      "file": "074_cliente_vinculo.sql",
+      "ledger_checksum": "applied-via-mcp-connector",
+      "file_checksum": "c27ba0b51c837207f22ad227a0b2c69c856239139839c3dd93fe6f21405bd6c9",
+      "remediate": "ledger-sentinel-checksum",
+      "note": "Ledger row holds a sentinel ('applied-via-mcp-connector'), not a sha256 — applied through the Supabase connector; objects catalog-verified 2026-10-10. History stays as it ran."
+    },
+    {
+      "file": "101_permutas_matching.sql",
+      "ledger_checksum": "70555c9aac0758c84ad232a9a97fe82debce99ea2f0ca1c079a4d59f75ede949",
+      "file_checksum": "c95c9cb975f627060dd5717d517f1db887fd2ad1be13778d118af2547e780ee9",
+      "remediate": "post-apply-edit-audit",
+      "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    },
+    {
+      "file": "123_fotos_core.sql",
+      "ledger_checksum": "f9f824955fc032ec1df2c771fbde2450fc6a216bb237042f628a15558efbba5f",
+      "file_checksum": "df5f0d9fd08b094de3614f2227c93169dd9f5d14dafe41087a664c535b8e739c",
+      "remediate": "post-apply-edit-audit",
+      "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    },
+    {
+      "file": "164_cin_documento_tipo.sql",
+      "ledger_checksum": "a8e8857f6b95e398cfffc8c5019d7e1c0c0178c439e6e3c454079adb9fe9b1cb",
+      "file_checksum": "acd4247664328753da8d3c9c31f3c413e59d1c6d2a5dcbe7f206d18934c347ca",
+      "remediate": "post-apply-edit-audit",
+      "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    },
+    {
+      "file": "224_cs_cerebro.sql",
+      "ledger_checksum": "9880290068a3ee36fb343d125b31e34752f29f1948a2f8677adf22157c197a50",
+      "file_checksum": "7401e681d0c3d49f4e3381bf38284c2e0cca54a80bef77103101c78ccb0da447",
+      "remediate": "post-apply-edit-audit",
+      "note": "Edited after it ran; audited 2026-10-10: applied blob found by its ledger hash, current intent catalog-verified live in prod (comment-only or carried by a later forward migration)."
+    }
+  ]
+}

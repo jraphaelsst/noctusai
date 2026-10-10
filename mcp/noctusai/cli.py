@@ -3258,6 +3258,8 @@ def main():
             slugs = read_active_scope(Path(_MR_ROOT))
         r = migration_replay(slugs, paths, source=args.migration_replay_source)
         print(format_report(r))
+        # the verdict again as the LAST line: gate runners summarise by last line
+        print(f"migration_replay: {r['status'].upper()} ({len(r['products'])} product chain(s))")
         sys.exit({"green": 0, "red": 1}.get(r["status"], 2))
 
     elif args.migrate_product:

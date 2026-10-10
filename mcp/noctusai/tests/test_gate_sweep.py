@@ -1495,3 +1495,14 @@ def test_scaffold_emits_a_gate_parseable_standard_routers_literal(rel):
     from tools.noctus.dev.compliance import _parse_standard_routers
     state, names = _parse_standard_routers((GS.REPO_ROOT / rel).read_text())
     assert state == "found" and names
+
+
+def test_gate_summary_skips_toolkit_cli_decoration():
+    """stderr (banner + log lines) is appended after stdout, so the CLI's banner
+    box used to be every toolkit gate's "summary" (migration_replay, 2026-10-10)."""
+    from tools.noctus.dev.build import _last_meaningful_line
+
+    out = ("migration_replay: GREEN\n  core: green\nmigration_replay: GREEN (1 product chain(s))\n"
+           "2026-10-10 10:00:00 | INFO     | [cli] env_bootstrap | loaded\n"
+           "╔════╗\n║  NoctusAI Dev Toolkit  ║\n╚════╝\n")
+    assert _last_meaningful_line(out) == "migration_replay: GREEN (1 product chain(s))"
