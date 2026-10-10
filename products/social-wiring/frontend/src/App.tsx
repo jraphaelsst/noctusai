@@ -72,6 +72,7 @@ import {
   Search,
   Lightbulb,
   Sparkles,
+  Brain,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -130,6 +131,10 @@ const AgentesFinanceiros = lazyWithReload(
 const Testemunhas = lazyWithReload(() => import("@/pages/Testemunhas"));
 const Pesquisa = lazyWithReload(() => import("@/pages/Pesquisa"));
 const ExtrairPesquisa = lazyWithReload(() => import("@/pages/ExtrairPesquisa"));
+const CerebroLista = lazyWithReload(() => import("@/pages/cerebro/CerebroLista"));
+const CerebroEditor = lazyWithReload(() => import("@/pages/cerebro/CerebroEditor"));
+const CerebroPerguntas = lazyWithReload(() => import("@/pages/cerebro/CerebroPerguntas"));
+const MinhasExtracoes = lazyWithReload(() => import("@/pages/cerebro/MinhasExtracoes"));
 const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
 // W6; Regras — W7; Curadores — notify slice; Painel — W9; Modelos +
@@ -236,6 +241,15 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
         items: [
           { name: "Minha Pesquisa", href: "/media-creation/pesquisa", icon: Lightbulb, route: "media-creation-pesquisa" },
           { name: "Extrair Pesquisa", href: "/media-creation/pesquisa/extrair", icon: Sparkles, route: "media-creation-pesquisa-extrair" },
+        ],
+      },
+      {
+        key: "media-creation-cerebro",
+        label: "Segundo Cérebro",
+        icon: Brain,
+        items: [
+          { name: "Cérebros", href: "/media-creation/cerebro", icon: Brain, route: "media-creation-cerebro" },
+          { name: "Minhas extrações", href: "/media-creation/cerebro/extracoes", icon: Brain, route: "media-creation-cerebro" },
         ],
       },
     ],
@@ -403,6 +417,15 @@ const NAV_FALLBACK: NavGroup[] = [
           { name: "Extrair Pesquisa", href: "/media-creation/pesquisa/extrair", icon: Sparkles },
         ],
       },
+      {
+        key: "media-creation-cerebro",
+        label: "Segundo Cérebro",
+        icon: Brain,
+        items: [
+          { name: "Cérebros", href: "/media-creation/cerebro", icon: Brain },
+          { name: "Minhas extrações", href: "/media-creation/cerebro/extracoes", icon: Brain },
+        ],
+      },
     ],
   },
   {
@@ -493,6 +516,10 @@ export default createProductApp({
     { path: "/media-creation", component: MediaCreation },
     { path: "/media-creation/pesquisa", component: Pesquisa },
     { path: "/media-creation/pesquisa/extrair", component: ExtrairPesquisa },
+    { path: "/media-creation/cerebro", component: CerebroLista },
+    { path: "/media-creation/cerebro/extracoes", component: MinhasExtracoes },
+    { path: "/media-creation/cerebro/:brainId", component: CerebroEditor },
+    { path: "/media-creation/cerebro/:brainId/perguntas", component: CerebroPerguntas },
     // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
