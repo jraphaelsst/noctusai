@@ -6,7 +6,9 @@
  *   DELETE     /api/email-marketing/settings/domains/{id}
  *
  * Verification is a GET that mutates remote state, so it is a button here
- * rather than a query — the UI must not fire it on render.
+ * rather than a query — the UI must not fire it on render. The DNS records
+ * Resend returns on create are stored on the row (`dns_records`) and shown
+ * as a table until the domain is verified (toggle "DNS" afterwards).
  *
  * Route: /email/dominios (`email_dominios_noc` status_pagina, migration 085).
  */
@@ -21,7 +23,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 
-import { useEmDomainMutations, useEmDomains } from "@/hooks/useEmailMarketing";
+import {
+  useEmDomainMutations,
+  useEmDomains,
+  type EmDnsRecord,
+} from "@/hooks/useEmailMarketing";
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "Pendente",
@@ -29,14 +35,51 @@ const STATUS_LABEL: Record<string, string> = {
   failed: "Falhou",
 };
 
+function errorMessage(err: unknown): string | undefined {
+  return err instanceof Error ? err.message : undefined;
+}
+
+function DnsRecordsTable({ id, records }: { id: string; records: EmDnsRecord[] }) {
+  return (
+    <div className="w-full overflow-x-auto" data-testid={`dominio-dns-${id}`}>
+      <p className="mb-1 text-xs text-muted-foreground">
+        Publique estes registros no DNS do domínio e clique em Verificar.
+      </p>
+      <table className="w-full text-left text-xs">
+        <thead className="text-muted-foreground">
+          <tr>
+            <th className="py-1 pr-3 font-medium">Tipo</th>
+            <th className="py-1 pr-3 font-medium">Nome</th>
+            <th className="py-1 pr-3 font-medium">Valor</th>
+            <th className="py-1 font-medium">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((r, i) => (
+            <tr key={`${r.type}-${r.name}-${i}`} className="border-t align-top">
+              <td className="py-1 pr-3 font-mono">
+                {r.type}
+                {r.record ? ` (${r.record})` : ""}
+              </td>
+              <td className="break-all py-1 pr-3 font-mono">{r.name}</td>
+              <td className="break-all py-1 pr-3 font-mono">{r.value}</td>
+              <td className="py-1">{r.status ?? "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function EmailDominios() {
-  const { data, isPending, isFetching, isError } = useEmDomains();
+  const { data, isPending, isError } = useEmDomains();
   const { add, verify, remove } = useEmDomainMutations();
   const [domain, setDomain] = useState("");
-  const [dns, setDns] = useState<{ id: string; records: unknown } | null>(null);
+  const [openDns, setOpenDns] = useState<string | null>(null);
 
   const rows = data ?? [];
-  const showSkeleton = isPending || (isFetching && rows.length === 0);
+  const showSkeleton = isPending && !data;
 
   function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,7 +92,7 @@ export default function EmailDominios() {
       },
       onError: (err: unknown) =>
         toast.error("Erro ao adicionar domínio.", {
-          description: err instanceof Error ? err.message : undefined,
+          description: errorMessage(err),
         }),
     });
   }
@@ -118,7 +161,11 @@ export default function EmailDominios() {
         </div>
       ) : (
         <ul className="divide-y rounded-md border" data-testid="dominios-rows">
-          {rows.map((d) => (
+          {rows.map((d) => {
+            const records = Array.isArray(d.dns_records) ? d.dns_records : [];
+            const showDns =
+              records.length > 0 && (d.status !== "verified" || openDns === d.id);
+            return (
             <li
               key={d.id}
               className="flex flex-wrap items-center justify-between gap-2 px-3 py-3"
@@ -127,7 +174,10 @@ export default function EmailDominios() {
               <span className="flex items-center gap-2 text-sm">
                 <Globe className="h-4 w-4 text-muted-foreground" />
                 {d.domain}
-                <Badge variant="secondary">
+                <Badge
+                  variant={d.status === "verified" ? "default" : "secondary"}
+                  data-testid={`dominio-status-${d.id}`}
+                >
                   {STATUS_LABEL[d.status] ?? d.status}
                 </Badge>
               </span>
@@ -139,18 +189,33 @@ export default function EmailDominios() {
                   data-testid={`dominio-verify-${d.id}`}
                   onClick={() =>
                     verify.mutate(d.id, {
-                      onSuccess: (res: any) => {
-                        const row = res?.data ?? res;
-                        setDns({ id: d.id, records: row?.dns_records ?? null });
-                        toast.success("Verificação solicitada.");
+                      onSuccess: (res) => {
+                        const status = res?.data?.status;
+                        if (status === "verified") toast.success("Domínio verificado.");
+                        else if (status === "failed")
+                          toast.error("DNS ainda não confere. Revise os registros e tente de novo.");
+                        else toast.info("Verificação em andamento no Resend.");
                       },
-                      onError: () => toast.error("Erro ao verificar domínio."),
+                      onError: (err: unknown) =>
+                        toast.error("Erro ao verificar domínio.", {
+                          description: errorMessage(err),
+                        }),
                     })
                   }
                 >
                   <RefreshCw className="mr-1 h-3.5 w-3.5" />
                   Verificar
                 </Button>
+                {d.status === "verified" && records.length > 0 ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    data-testid={`dominio-dns-toggle-${d.id}`}
+                    onClick={() => setOpenDns(openDns === d.id ? null : d.id)}
+                  >
+                    DNS
+                  </Button>
+                ) : null}
                 <Button
                   size="sm"
                   variant="ghost"
@@ -167,16 +232,10 @@ export default function EmailDominios() {
                 </Button>
               </span>
 
-              {dns?.id === d.id && dns.records ? (
-                <pre
-                  className="w-full overflow-auto rounded bg-muted p-3 text-xs"
-                  data-testid={`dominio-dns-${d.id}`}
-                >
-                  {JSON.stringify(dns.records, null, 2)}
-                </pre>
-              ) : null}
+              {showDns ? <DnsRecordsTable id={d.id} records={records} /> : null}
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
     </div>

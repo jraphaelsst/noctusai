@@ -45,7 +45,17 @@ def test_email_marketing_contact_created_in_trusted_org(spoofed):
 
 
 def test_email_marketing_settings_domain_scoped_to_trusted_org(spoofed):
-    resp = spoofed.post("/api/email-marketing/settings/domains", json={"domain": "a.com"})
+    # Domain creation registers at Resend first (P1b(c)); the adapter's DI seam
+    # takes the seed Fake so this test stays about org scoping.
+    from noctusai_lib.integrations.resend import FakeResendDomains
+    from app.modules.email_marketing.routers.settings import get_resend_domains
+
+    app = spoofed.raw().app
+    app.dependency_overrides[get_resend_domains] = lambda: FakeResendDomains()
+    try:
+        resp = spoofed.post("/api/email-marketing/settings/domains", json={"domain": "a.com"})
+    finally:
+        app.dependency_overrides.pop(get_resend_domains, None)
     assert resp.status_code == 200, resp.text
     rows = spoofed.mock_supabase.table("sender_domains").inserted_payloads
     assert [r["org_id"] for r in rows] == [TRUSTED_ORG]

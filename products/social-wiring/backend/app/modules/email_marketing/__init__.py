@@ -92,6 +92,7 @@ def register() -> Any:
         lists,
         settings as em_settings,
         templates,
+        tracking,
         unsubscribe,
         webhooks,
     )
@@ -129,6 +130,7 @@ def register() -> Any:
             analytics.router,
             em_settings.router,
             unsubscribe.router,
+            tracking.router,
             webhooks.router,
             ai.router,
         ],

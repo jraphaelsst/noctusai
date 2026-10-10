@@ -151,13 +151,24 @@ export interface EmEnrollment {
   completed_at: string | null;
 }
 
+/** One DNS record Resend asks the owner to publish (SPF / DKIM / DMARC / MX). */
+export interface EmDnsRecord {
+  record?: string;
+  type: string;
+  name: string;
+  value: string;
+  ttl?: string | number;
+  priority?: number;
+  status?: string;
+}
+
 export interface EmDomain {
   id: string;
   org_id: string;
   domain: string;
   resend_domain_id: string | null;
   status: DomainStatus;
-  dns_records: unknown;
+  dns_records: EmDnsRecord[] | null;
   verified_at: string | null;
   created_at: string;
 }

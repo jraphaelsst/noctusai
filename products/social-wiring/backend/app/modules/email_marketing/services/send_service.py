@@ -12,6 +12,7 @@ from typing import Optional
 
 import httpx
 
+from .click_tracking import rewrite_links
 from .unsubscribe_links import (
     UNSUBSCRIBE_VARIABLE,
     one_click_headers,
@@ -223,6 +224,16 @@ class SendService:
                 await self._mark_failed(logs, UNSUBSCRIBE_REFUSAL)
                 await self._finalize_campaign_if_done(campaign_id)
                 return 0
+            # P1b(c) click tracking: per-recipient (this send_log's id is in every
+            # token); the unsubscribe link stays verbatim. The guard above already
+            # proved FRONTEND_BASE_URL + JWT_SECRET are set (the link was built).
+            rendered_body = rewrite_links(
+                rendered_body,
+                base=self.settings.frontend_base_url,
+                secret=self.settings.jwt_secret,
+                send_log_id=str(log["id"]),
+                keep={link},
+            )
 
             emails.append({
                 "from": f"{from_name} <{from_email}>",
