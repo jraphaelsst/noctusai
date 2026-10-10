@@ -8,6 +8,7 @@ rate limiting. Otherwise, falls back to in-memory storage.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Optional
 
 from slowapi import Limiter
@@ -26,6 +27,10 @@ logger = logging.getLogger(__name__)
 # the client sent — so, unlike X-Forwarded-For, it cannot be spoofed from
 # outside. Prod containers are reachable only through the Cloudflare tunnel.
 _CF_CONNECTING_IP = "cf-connecting-ip"
+
+
+MEMORY_ONLY_VAR = "NOCTUS_RATE_LIMIT_MEMORY_ONLY"
+"""Truthy ⇒ never a Redis-backed limiter (hermetic test sessions)."""
 
 
 def client_ip_key(request) -> str:
@@ -52,6 +57,13 @@ def resolve_limiter_storage_uri(
     is never swallowed (fail-closed).
     """
     if not redis_url:
+        return None
+    if os.environ.get(MEMORY_ONLY_VAR, "").strip().lower() in {"1", "true", "yes", "on"}:
+        # Declared seam, set by the seed pytest plugin for every test session:
+        # counters must be per-process. A reachable developer Redis made every
+        # test process share (and `limiter.reset()` wipe) one counter store —
+        # a parallel run's reset erased another's 30/minute burst (2026-10-10).
+        logger.debug("Rate limiter: %s set — in-memory storage", MEMORY_ONLY_VAR)
         return None
     try:
         candidate_uri = redis_connection_url(redis_url)

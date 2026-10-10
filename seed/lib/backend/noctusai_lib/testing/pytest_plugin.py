@@ -61,9 +61,12 @@ def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
     """
     import os
 
+    from noctusai_lib.api.rate_limit import MEMORY_ONLY_VAR
     from noctusai_lib.config.settings import NO_ENV_FILE_VAR
 
     os.environ[NO_ENV_FILE_VAR] = "1"
+    # Per-process rate-limit counters: never a shared (developer) Redis.
+    os.environ[MEMORY_ONLY_VAR] = "1"
     try:
         importlib.import_module("app.main")
     except ModuleNotFoundError:

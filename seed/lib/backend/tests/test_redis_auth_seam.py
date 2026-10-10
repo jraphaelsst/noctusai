@@ -17,7 +17,10 @@ from noctusai_lib.integrations.redis import (
     redis_connection_url,
 )
 
-_ENV = ("REDIS_URL", "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_REQUIRE_AUTH")
+# NOCTUS_RATE_LIMIT_MEMORY_ONLY: the seed pytest plugin sets it for every test
+# session; these tests exercise the Redis-backed path, so they switch it off.
+_ENV = ("REDIS_URL", "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_REQUIRE_AUTH",
+        "NOCTUS_RATE_LIMIT_MEMORY_ONLY")
 
 
 @pytest.fixture(autouse=True)
@@ -132,3 +135,19 @@ class TestLimiterStorageUri:
         monkeypatch.setenv("REDIS_REQUIRE_AUTH", "1")
         with pytest.raises(RedisAuthRequired):
             create_limiter(redis_url="redis://127.0.0.1:1")
+
+
+def test_hermetic_seam_forces_in_memory_even_when_redis_is_reachable(monkeypatch):
+    """The seed pytest plugin's seam: per-process counters, never a shared Redis
+    (2026-10-10 — a reachable developer Redis let parallel test processes reset
+    each other's rate-limit windows)."""
+    from noctusai_lib.api.rate_limit import MEMORY_ONLY_VAR
+
+    monkeypatch.setenv(MEMORY_ONLY_VAR, "1")
+
+    class _Reachable:
+        def ping(self):
+            return True
+
+    assert resolve_limiter_storage_uri("redis://127.0.0.1:6379", probe_client=_Reachable()) is None
+
