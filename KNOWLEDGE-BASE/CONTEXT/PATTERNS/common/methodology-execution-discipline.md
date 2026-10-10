@@ -457,8 +457,12 @@ added.
   toolkit integrate was `incomplete` — a verdict nobody could act on. The
   merged-tip mcp gate is now `mcp_toolkit_tests:scoped`: changed test
   files + tests importing a changed module (ast) + `test_<module>.py`;
-  the full suite runs only when shared test infra changed, and CI always
-  runs it whole. The name says "scoped" so a partial run is never read as
+  the full suite runs only when shared test infra changed (`conftest.py`,
+  a test package `__init__`, a test helper another helper imports), and CI
+  always runs it whole. A test helper module (2026-10-10,
+  `refresh_compliance_baseline.py`) maps to the tests importing it or
+  loading it by a path-shaped string, plus the importers of toolkit modules
+  that do the same. The name says "scoped" so a partial run is never read as
   the full one, and a changed module no test imports surfaces as
   `mcp_untested_change` (`incomplete`), never a silent pass.
 

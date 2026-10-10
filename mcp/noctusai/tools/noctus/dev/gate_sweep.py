@@ -999,6 +999,7 @@ def _mcp_scoped_test_files(
     changed_mods: dict[str, str] = {}
     hook_files: list[str] = []
     data_files: list[str] = []
+    helper_files: list[str] = []
     for f in mcp_files:
         if f.startswith(("scripts/hooks/", "scripts/infra/", ".github/workflows/")):
             hook_files.append(f)  # tested from the toolkit suite, loaded by path
@@ -1014,12 +1015,25 @@ def _mcp_scoped_test_files(
         if rel in _MCP_FULL_SUITE_FILES or not rel.endswith(".py"):
             return None
         if rel.startswith("tests/"):
+            if Path(rel).name == "__init__.py":
+                return None  # a test package's init — anything below may depend on it
             if not Path(rel).name.startswith("test_"):
-                return None  # a shared test helper — anything may use it
+                helper_files.append(f)  # a test helper: the tests using it
+                continue
             if (root / f).exists():  # a deleted test has nothing to run
                 changed_tests.add(f)
             continue
         changed_mods[_mcp_module_name(rel)] = rel
+
+    for helper in helper_files:
+        users = _test_helper_users(root, helper)
+        if users is None:
+            return None
+        tests, modules = users
+        changed_tests.update(tests)
+        changed_mods.update(modules)  # their own importers run too
+        if not tests and not modules:
+            data_files.append(helper)  # falls through to "untested" below
 
     affected = set(changed_tests)
     covered: set[str] = set()
@@ -1060,6 +1074,55 @@ def _mcp_scoped_test_files(
             untested.append(hook)
     whole = {a for a in affected if "::" not in a}
     return sorted(a for a in affected if a.split("::")[0] not in whole or a in whole), sorted(untested)
+
+
+def _test_helper_users(root: Path, helper: str) -> tuple[set[str], dict[str, str]] | None:
+    """Who uses a non-test module under `tests/` (2026-10-10; until then any
+    edit to one forced the ~21 min full suite, so an integrate touching
+    `refresh_compliance_baseline.py` read `incomplete`). Returns (test files
+    importing it or naming `<stem>.py` — the importlib-by-path load — ,
+    toolkit modules that do the same, as `{module: rel}` so THEIR importers
+    run too). None = full suite: another test helper uses it, so the chain
+    is not followed here."""
+    stem = Path(helper).stem
+    pkg = root / _MCP_PKG
+    by_path = f"{stem}.py"
+
+    def uses(path: Path) -> bool:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if by_path not in text and stem not in text:
+            return False
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            return True  # can't tell — count it
+        if any(n == stem or n.endswith("." + stem) for n in _imported_names(tree)):
+            return True
+        # A by-path load names the file as a PATH-SHAPED string
+        # (`"refresh_compliance_baseline.py"`, `".../tests/x.py"`); a message
+        # that mentions it in prose ("run `.../x.py` to refresh") is not a use.
+        return any(
+            isinstance(n, ast.Constant) and isinstance(n.value, str)
+            and (n.value == by_path or n.value.endswith("/" + by_path)) and " " not in n.value
+            for n in ast.walk(tree)
+        )
+
+    tests: set[str] = set()
+    modules: dict[str, str] = {}
+    for path in sorted(pkg.rglob("*.py")):
+        rel_pkg = path.relative_to(pkg)
+        if {".venv", "node_modules", "__pycache__"} & set(rel_pkg.parts):
+            continue
+        rel_repo = str(path.relative_to(root))
+        if rel_repo == helper or not uses(path):
+            continue
+        if rel_pkg.parts[0] == "tests":
+            if not path.name.startswith("test_"):
+                return None
+            tests.add(rel_repo)
+        else:
+            modules[_mcp_module_name(str(rel_pkg))] = str(rel_pkg)
+    return tests, modules
 
 
 def _narrowed_importers(

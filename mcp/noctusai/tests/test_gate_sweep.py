@@ -937,13 +937,50 @@ class TestMcpScopedTests:
 
     @pytest.mark.parametrize("changed", [
         "mcp/noctusai/tests/conftest.py", "mcp/noctusai/settings.py",
-        "mcp/noctusai/requirements.txt", "mcp/noctusai/tests/helpers_shared.py",
+        "mcp/noctusai/requirements.txt", "mcp/noctusai/tests/sub/__init__.py",
         "mcp/noctusai/node/scan.mjs",
     ])
     def test_shared_infra_falls_back_to_full_suite(self, tmp_path, changed):
         self._pkg(tmp_path)
 
         assert GS._mcp_scoped_test_files(tmp_path, [changed]) is None
+
+    def test_test_helper_maps_to_its_users_not_the_full_suite(self, tmp_path):
+        """2026-10-10: a refresh_compliance_baseline.py edit forced the ~21 min
+        suite and the merged-tip check read `incomplete`."""
+        tests = self._pkg(tmp_path)
+        (tests / "baseline_helper.py").write_text("def fp():\n    return 1\n")
+        (tests / "test_imports_it.py").write_text("from baseline_helper import fp\n")
+        (tests / "test_loads_by_path.py").write_text(
+            'spec = spec_from_file_location("h", str(HERE / "baseline_helper.py"))\n')
+        (tests / "test_prose_only.py").write_text(
+            'MSG = "run tests/baseline_helper.py to refresh the baseline"\n')
+        dev = tmp_path / "mcp/noctusai/tools/noctus/dev"
+        (dev / "loader.py").write_text('P = ROOT / "tests" / "baseline_helper.py"\n')
+        (tests / "test_loader.py").write_text("from tools.noctus.dev import loader\n")
+
+        tests_run, untested = GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/baseline_helper.py"])
+
+        assert tests_run == [
+            "mcp/noctusai/tests/test_imports_it.py",
+            "mcp/noctusai/tests/test_loader.py",  # importer of a module that loads it
+            "mcp/noctusai/tests/test_loads_by_path.py",
+        ]
+        assert untested == []
+
+    def test_test_helper_used_by_another_helper_falls_back_to_full_suite(self, tmp_path):
+        tests = self._pkg(tmp_path)
+        (tests / "base_helper.py").write_text("X = 1\n")
+        (tests / "other_helper.py").write_text("from base_helper import X\n")
+
+        assert GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/base_helper.py"]) is None
+
+    def test_unused_test_helper_is_surfaced_untested(self, tmp_path):
+        tests = self._pkg(tmp_path)
+        (tests / "orphan_helper.py").write_text("X = 1\n")
+
+        assert GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/orphan_helper.py"]) == (
+            [], ["mcp/noctusai/tests/orphan_helper.py"])
 
     def test_docs_have_no_test_surface(self, tmp_path):
         self._pkg(tmp_path)
