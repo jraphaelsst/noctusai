@@ -1,4 +1,4 @@
-"""Structural tests for `177_contrato_revisao_juridica.sql`.
+"""Structural tests for `*_contrato_revisao_juridica.sql`.
 
 Parse-based, like the sibling contract migrations (120/134/157) — the
 migration is a FILE, not an applied change. These pin: the version-level
@@ -9,10 +9,11 @@ the file is forward-only/idempotent and reloads PostgREST.
 from __future__ import annotations
 
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "177_contrato_revisao_juridica.sql"
+MIGRATION = migration_path(Path(__file__).resolve().parents[1], "contrato_revisao_juridica")
 
 
 @pytest.fixture(scope="module")

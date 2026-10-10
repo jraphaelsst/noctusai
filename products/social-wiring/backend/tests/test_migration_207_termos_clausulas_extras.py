@@ -1,4 +1,4 @@
-"""Structural tests for `207_termos_clausulas_extras.sql` — parse-based like
+"""Structural tests for `*_termos_clausulas_extras.sql` — parse-based like
 `test_migration_114_termos_negocio.py` (the migration is a FILE; nothing here
 applies it). Pins what the service and the generator rely on: both columns
 exist with the declared shape, the object/positive CHECKs are named exactly as
@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
 from app.modules.card_hub.negociacao_estruturada_service import TERMOS_CAMPOS
 
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "207_termos_clausulas_extras.sql"
+MIGRATION = migration_path(Path(__file__).resolve().parents[1], "termos_clausulas_extras")
 
 
 @pytest.fixture(scope="module")

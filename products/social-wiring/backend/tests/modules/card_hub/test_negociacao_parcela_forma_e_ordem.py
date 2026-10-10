@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 from noctusai_lib.integrations.docx_render import get_docx_render_adapter
@@ -170,7 +171,7 @@ class TestReordenarParcelas:
         assert r.status_code == 422
 
 
-MIGRATION = Path(__file__).resolve().parents[3] / "migrations" / "195_reordenar_negociacao_parcelas.sql"
+MIGRATION = migration_path(Path(__file__).resolve().parents[3], "reordenar_negociacao_parcelas")
 
 
 class TestMigration195:

@@ -1,5 +1,5 @@
-"""Structural tests for `204_branding_model.sql` (schema) and
-`205_branding_marcas_data.sql` (the owner's marca data).
+"""Structural tests for `*_branding_model.sql` (schema) and
+`*_branding_marcas_data.sql` (the owner's marca data).
 
 Parse-based like the other migration tests: the migrations are FILES, not
 applied changes. They pin the safety shape the owner asked for — forward-only,
@@ -8,6 +8,7 @@ idempotent, private bucket, the data step org-guarded and separate.
 from __future__ import annotations
 
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
@@ -16,8 +17,7 @@ OWNER_ORG = "6dd73140-74a4-41c6-aeff-bc94b5312b53"
 
 
 def _load(name: str) -> tuple[str, str, str]:
-    path = MIGRATIONS / name
-    assert path.is_file(), path
+    path = migration_path(MIGRATIONS, name)
     sql = path.read_text(encoding="utf-8")
     code = "\n".join(l for l in sql.splitlines() if not l.strip().startswith("--"))
     return sql, code, " ".join(code.split())
@@ -25,18 +25,18 @@ def _load(name: str) -> tuple[str, str, str]:
 
 @pytest.fixture(scope="module")
 def schema():
-    return _load("204_branding_model.sql")
+    return _load("branding_model.sql")
 
 
 @pytest.fixture(scope="module")
 def data():
-    return _load("205_branding_marcas_data.sql")
+    return _load("branding_marcas_data.sql")
 
 
-@pytest.mark.parametrize("name", ["204_branding_model.sql", "205_branding_marcas_data.sql"])
+@pytest.mark.parametrize("name", ["branding_model.sql", "branding_marcas_data.sql"])
 def test_migrations_parse(name):
     pglast = pytest.importorskip("pglast", reason="pglast not installed in this env")
-    assert len(pglast.parse_sql((MIGRATIONS / name).read_text(encoding="utf-8"))) > 0
+    assert len(pglast.parse_sql(migration_path(MIGRATIONS, name).read_text(encoding="utf-8"))) > 0
 
 
 class TestSchema:

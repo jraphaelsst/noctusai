@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -26,7 +27,7 @@ BASE = "/api/media-creation/pesquisa"
 ORG = "test-org-123"
 MARCA = str(uuid.uuid4())
 OTHER_ORG_MARCA = str(uuid.uuid4())
-_MIG = Path(__file__).resolve().parents[3] / "migrations" / "217_cs_research.sql"
+_MIG = migration_path(Path(__file__).resolve().parents[3], "cs_research")
 
 
 @pytest.fixture

@@ -1,4 +1,4 @@
-"""Structural tests for `178_empresas_consulta_publica_cnpj_origem.sql`.
+"""Structural tests for `*_empresas_consulta_publica_cnpj_origem.sql`.
 
 Parse-based, like the sibling small migrations (157/177) — the migration is
 a FILE, not an applied change. This one is COMMENT-only (no DDL touching
@@ -10,14 +10,11 @@ no other table/column.
 from __future__ import annotations
 
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
-MIGRATION = (
-    Path(__file__).resolve().parents[1]
-    / "migrations"
-    / "178_empresas_consulta_publica_cnpj_origem.sql"
-)
+MIGRATION = migration_path(Path(__file__).resolve().parents[1], "empresas_consulta_publica_cnpj_origem")
 
 
 @pytest.fixture(scope="module")

@@ -1,4 +1,4 @@
-"""Structural tests for `187_identificadores_canonicos.sql`.
+"""Structural tests for `*_identificadores_canonicos.sql`.
 
 Parse-based like the sibling migration tests: the file is a FILE, not an
 applied change. 🔴 NO Postgres is available to the test suite, so what is
@@ -14,14 +14,15 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
 from app.services import identificadores as idf
 
 HERE = Path(__file__).resolve()
-MIGRATION = HERE.parents[1] / "migrations" / "187_identificadores_canonicos.sql"
-MIGRATION_188 = HERE.parents[1] / "migrations" / "188_identificador_funcoes_search_path.sql"
+MIGRATION = migration_path(HERE.parents[1], "identificadores_canonicos")
+MIGRATION_188 = migration_path(HERE.parents[1], "identificador_funcoes_search_path")
 SEED_TWIN = HERE.parents[4] / "seed" / "lib" / "sql" / "identificador.sql"
 CASES = HERE.parents[4] / "seed" / "lib" / "shared" / "identificador.cases.json"
 

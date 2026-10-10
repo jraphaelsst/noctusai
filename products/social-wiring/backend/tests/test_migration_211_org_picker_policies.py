@@ -1,4 +1,4 @@
-"""Structural tests for ``migrations/211_org_picker_policies.sql`` (org picker, pilot).
+"""Structural tests for ``migrations/*_org_picker_policies.sql`` (org picker, pilot).
 
 Every social_wiring RLS policy that resolves the caller's org by an identity
 form (current_org_id(), current_user_org_id(), an inline noctus_users
@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
@@ -29,7 +30,7 @@ from pglast import ast, enums, parse_sql  # noqa: E402
 from pglast.stream import RawStream  # noqa: E402
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
-FILE_211 = MIGRATIONS / "211_org_picker_policies.sql"
+FILE_211 = migration_path(MIGRATIONS, "org_picker_policies")
 SCHEMA = "social_wiring"
 IDENTITY_FUNCS = {"current_org_id", "current_user_org_id"}
 

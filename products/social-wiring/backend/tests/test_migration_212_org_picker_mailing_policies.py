@@ -1,4 +1,4 @@
-"""Structural tests for ``migrations/212_org_picker_mailing_policies.sql``.
+"""Structural tests for ``migrations/*_org_picker_mailing_policies.sql``.
 
 Same contract as 211 for social-wiring's own ``mailing`` schema: every identity-form
 policy there resolves the org through ``(SELECT public.current_org_id_for('social_wiring'))``
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
@@ -22,7 +23,7 @@ from tests.test_migration_211_org_picker_policies import (  # noqa: E402
 )
 
 SCHEMA = "mailing"
-FILE_212 = MIGRATIONS / "212_org_picker_mailing_policies.sql"
+FILE_212 = migration_path(MIGRATIONS, "org_picker_mailing_policies")
 
 
 def _alters():

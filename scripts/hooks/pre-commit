@@ -845,6 +845,20 @@ if [[ -n "$STAGED_UPLOAD_ROUTES" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-quinquies-bis. Migration-by-number refs in tests (blocking, ratchet) ─
+# Keeper `check_migration_number_refs_in_tests` + `KB § PATTERNS/compliance/
+# testing.md`. A test naming a migration by NUMBER breaks when task_branch
+# integrate renumbers it. Baselined offenders pass; only NEW refs block.
+STAGED_MNR=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/tests/.*\.py$' || true)
+if [[ -n "$STAGED_MNR" ]] && have_py; then
+    echo "[pre-commit] backend tests staged — checking for migration-by-number references..."
+    if ! "$PY" "$CLI" --check-migration-number-refs-in-tests --paths "$(echo "$STAGED_MNR" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] MIGRATION-NUMBER-REFS check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Resolve by name: noctusai_lib.testing.migrations.migration_path(root, '<name_suffix>'). KB § PATTERNS/compliance/testing.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-sexies. Contract field provenance map gate (blocking, only when the ─
 # F5 generator or its map doc changed) ────────────────────────────────────
 # Keeper `check_contract_field_provenance_map` + `KB § CONTEXT/PRODUCTS/

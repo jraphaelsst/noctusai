@@ -1,13 +1,14 @@
-"""Structural tests for ``208_instagram_insights.sql`` (parse-based — the
+"""Structural tests for ``*_instagram_insights.sql`` (parse-based — the
 migration is a FILE, not an applied change)."""
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "208_instagram_insights.sql"
+MIGRATION = migration_path(Path(__file__).resolve().parents[1], "instagram_insights")
 TABLES = ("ig_media", "ig_media_snapshots", "ig_profile_snapshots")
 
 

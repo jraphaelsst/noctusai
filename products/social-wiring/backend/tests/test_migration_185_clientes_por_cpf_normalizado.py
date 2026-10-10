@@ -1,4 +1,4 @@
-"""Structural tests for `185_clientes_por_cpf_normalizado.sql` + the contract
+"""Structural tests for `*_clientes_por_cpf_normalizado.sql` + the contract
 fake the unit tests route `clientes_por_cpf` through.
 
 Parse-based like the sibling migration tests: the file is a FILE, not an
@@ -9,14 +9,13 @@ org-scoped, SECURITY INVOKER, normalised on BOTH sides (the indexed
 from __future__ import annotations
 
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
 from tests.support.rpc_fakes import clientes_por_cpf as fake_rpc
 
-MIGRATION = (
-    Path(__file__).resolve().parents[1] / "migrations" / "185_clientes_por_cpf_normalizado.sql"
-)
+MIGRATION = migration_path(Path(__file__).resolve().parents[1], "clientes_por_cpf_normalizado")
 
 
 @pytest.fixture(scope="module")

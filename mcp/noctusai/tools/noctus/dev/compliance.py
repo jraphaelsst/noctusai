@@ -7600,6 +7600,108 @@ def _upload_route_is_covered(pattern_key: str, override_keys: set) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# `check_migration_number_refs_in_tests` — ratchet keeper (2026-10-10).
+#
+# A test that names a migration by NUMBER (`"217_x.sql"`, `migrations/217_x`)
+# breaks whenever `task_branch integrate` renumbers a colliding migration —
+# N>=3 on 2026-10-09 with ~5 concurrent social-wiring sessions. The fix BY
+# CONSTRUCTION is `noctusai_lib.testing.migrations.migration_path(root,
+# "<name_suffix>")`; this keeper is the backstop. RATCHET: pre-existing
+# references live in `mcp/noctusai/tests/migration_number_refs_baseline.json`
+# ({"files": {relpath: count}}); only a NEW file or a GROWN count blocks, and
+# the baseline can only shrink (`--refresh-migration-number-refs-baseline`
+# never adds). KB § PATTERNS/compliance/testing.md (migration references).
+# ---------------------------------------------------------------------------
+
+_MNR_RE = re.compile(
+    r"(?<![A-Za-z0-9])\d{3,}_[a-z0-9_]+\.sql|migrations/\d{3,}_"
+)
+_MNR_BASELINE_REL = ("mcp", "noctusai", "tests", "migration_number_refs_baseline.json")
+
+
+def _mnr_scan(root: Path) -> dict[str, int]:
+    """``{repo-relative test path: number-reference count}`` over AWAKE products'
+    ``backend/tests/**/*.py`` (files with zero references omitted)."""
+    out: dict[str, int] = {}
+    products_dir = root / "products"
+    if not products_dir.is_dir():
+        return out
+    for product_dir in _active_product_dirs(products_dir):
+        tests = product_dir / "backend" / "tests"
+        if not tests.is_dir():
+            continue
+        for py in sorted(tests.rglob("*.py")):
+            if "__pycache__" in py.parts:
+                continue
+            try:
+                n = len(_MNR_RE.findall(py.read_text(encoding="utf-8")))
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("check_migration_number_refs_in_tests: cannot read %s: %s", py, exc)
+                continue
+            if n:
+                out[py.relative_to(root).as_posix()] = n
+    return out
+
+
+def _mnr_load_baseline(root: Path) -> dict[str, int]:
+    try:
+        data = json.loads(root.joinpath(*_MNR_BASELINE_REL).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(k): int(v) for k, v in dict(data.get("files", {})).items()}
+
+
+def refresh_migration_number_refs_baseline(repo_root: Path | None = None) -> dict[str, int]:
+    """Write the baseline. First run records the current offenders; afterwards it
+    only SHRINKS (min(current, recorded); fixed/deleted files drop out) — a new
+    reference can never be ratified through this function. Returns the baseline."""
+    root = repo_root or REPO_ROOT
+    current = _mnr_scan(root)
+    path = root.joinpath(*_MNR_BASELINE_REL)
+    if path.exists():
+        old = _mnr_load_baseline(root)
+        new = {p: min(c, old[p]) for p, c in current.items() if p in old}
+    else:
+        new = current
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"files": dict(sorted(new.items()))}, indent=2) + "\n", encoding="utf-8"
+    )
+    return new
+
+
+def check_migration_number_refs_in_tests(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """A backend test under an awake product must not reference a migration by
+    number — resolve it by name suffix with
+    ``noctusai_lib.testing.migrations.migration_path``. Baselined offenders are
+    tolerated until their count grows. ``paths`` (pre-commit) narrows REPORTING to
+    those files. Severity ``high``."""
+    root = repo_root or REPO_ROOT
+    baseline = _mnr_load_baseline(root)
+    scope = {p.replace("\\", "/") for p in paths} if paths else None
+    issues: list[dict] = []
+    for rel, count in _mnr_scan(root).items():
+        if scope is not None and rel not in scope:
+            continue
+        allowed = baseline.get(rel, 0)
+        if count <= allowed:
+            continue
+        issues.append({
+            "severity": "high",
+            "product": rel.split("/")[1] if rel.startswith("products/") else "?",
+            "file": rel,
+            "issue": (
+                f"{count} migration-by-NUMBER reference(s) (baseline {allowed}) — a renumber on integrate "
+                "breaks this test. Use noctusai_lib.testing.migrations.migration_path(root, '<name_suffix>') "
+                "/ migration_sql(...). KB § PATTERNS/compliance/testing.md (migration references)."
+            ),
+        })
+    return issues
+
+
 def check_upload_route_body_override(repo_root: Path | None = None) -> list[dict]:
     """Every `UploadFile`-declaring route under `products/<slug>/backend/app/`
     must have a matching entry in that product's `max_body_path_overrides`
@@ -15801,6 +15903,8 @@ def check_all_products() -> tuple[int, list]:
     # runtime refusal in `create_product_app` /
     # `noctusai_seed.upload_route_overrides`.
     all_issues.extend(check_upload_route_body_override())
+    # 2026-10-10: migration referenced by NUMBER in a test breaks on integrate-renumber (ratchet).
+    all_issues.extend(check_migration_number_refs_in_tests())
     # 2026-08-11 (N=3: postcss, ws, react-router) — an EXACT npm `overrides`
     # entry is a fleet-wide freeze that buys nothing the lockfile does not.
     all_issues.extend(check_override_is_range())

@@ -1,4 +1,4 @@
-"""Structural tests for `190_contrato_aditivos.sql` (aditivos).
+"""Structural tests for `*_contrato_aditivos.sql` (aditivos).
 
 Parse-based, like the sibling contract migrations (106/120/177). These pin:
 the four tables exist schema-qualified and idempotently, RLS + the two
@@ -9,10 +9,11 @@ vocabulary WITHOUT permuta, and that the file is forward-only.
 from __future__ import annotations
 
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path
 
 import pytest
 
-MIGRATION = Path(__file__).resolve().parents[1] / "migrations" / "190_contrato_aditivos.sql"
+MIGRATION = migration_path(Path(__file__).resolve().parents[1], "contrato_aditivos")
 TABELAS = (
     "atendimento_contrato_aditivos",
     "atendimento_contrato_aditivo_parcelas",

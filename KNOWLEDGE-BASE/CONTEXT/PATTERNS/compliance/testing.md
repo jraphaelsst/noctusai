@@ -1078,3 +1078,19 @@ root-level receipt fallback, and the storage key-vs-URL branch had never
 executed. Test count went 197 → 199 and the assertions became behavioural
 ("a 2-minute-old row must survive the sweep") rather than call-routing
 ("was this function name invoked").
+
+## Reference a migration by NAME, never by number (2026-10-10)
+
+`task_branch integrate` renumbers a colliding `NNN_x.sql` to `MMM_x.sql`. With ~5 sessions writing
+social-wiring migrations concurrently (N>=3 on 2026-10-09) a test that hardcodes `"217_x.sql"` or
+`migrations/217_x.sql` breaks on a rebase that changed nothing else.
+
+- **By construction:** `from noctusai_lib.testing.migrations import migration_path, migration_sql` —
+  `migration_path(<migrations dir | backend dir | product root>, "x")` resolves the ONE
+  `<digits>_x.sql` (zero or several matches raise `MigrationLookupError` naming candidates; never a guess).
+  Order assertions compare resolved names, not literals.
+- **Backstop (ratchet):** keeper `check_migration_number_refs_in_tests` (`--check-migration-number-refs-in-tests`,
+  pre-commit on staged `products/*/backend/tests/**`, awake products only). Pre-existing offenders are in
+  `mcp/noctusai/tests/migration_number_refs_baseline.json` (`{files: {path: count}}`); only a new file or a grown
+  count blocks. `--refresh-migration-number-refs-baseline` is shrink-only — touching a legacy test? migrate it to
+  the helper (docstrings too: the keeper counts raw text) and refresh.

@@ -1,8 +1,9 @@
-"""Static tests for ``migrations/214_acting_audit_triggers.sql`` (org picker: PostgREST audit)."""
+"""Static tests for ``migrations/*_acting_audit_triggers.sql`` (org picker: PostgREST audit)."""
 from __future__ import annotations
 
 import re
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_path, migration_sql
 
 import pytest
 
@@ -10,7 +11,7 @@ pglast = pytest.importorskip("pglast")
 from pglast import parse_sql  # noqa: E402
 
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
-SQL = (MIGRATIONS / "214_acting_audit_triggers.sql").read_text(encoding="utf-8")
+SQL = migration_sql(MIGRATIONS, "acting_audit_triggers")
 
 
 def test_parses_with_core_072_guard():
@@ -24,4 +25,4 @@ def test_attaches_both_schemas_keyed_by_the_product_schema():
 
 
 def test_runs_after_the_ready_flip():
-    assert "213_org_picker_ready.sql" < "214_acting_audit_triggers.sql"
+    assert migration_path(MIGRATIONS, "org_picker_ready").name < migration_path(MIGRATIONS, "acting_audit_triggers").name

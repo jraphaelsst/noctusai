@@ -3,6 +3,7 @@ resolution rule (`imobiliarias_service.resolver`) — migration 215."""
 from __future__ import annotations
 
 from pathlib import Path
+from noctusai_lib.testing.migrations import migration_sql
 from uuid import uuid4
 
 from tests.modules.card_hub.conftest import ORG_ID, cliente_row
@@ -116,7 +117,7 @@ class TestPut:
 
 
 class TestMigrationText:
-    SQL = (Path(__file__).resolve().parents[3] / "migrations" / "215_org_imobiliarias.sql").read_text()
+    SQL = migration_sql(Path(__file__).resolve().parents[3], "org_imobiliarias")
 
     def test_backfill_is_guarded_for_idempotence(self):
         assert "WHERE NOT EXISTS" in self.SQL
