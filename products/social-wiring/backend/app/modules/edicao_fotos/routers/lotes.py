@@ -21,11 +21,11 @@ in `seed/lib/frontend/src/photo-editing/hooks.ts`).
 from __future__ import annotations
 
 from pathlib import PurePath
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
 from fastapi.responses import Response
+from noctusai_lib.primitives.content_disposition import attachment_disposition
 
 from noctusai_lib.domain.photo_editing import (
     Actor,
@@ -270,15 +270,11 @@ async def zip_lote_route(
         data = await build_batch_zip(ports, batch.id)
     except ENGINE_ERRORS as exc:
         raise engine_error(exc) from exc
-    filename = zip_file_name(batch.nome)
-    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace("?", "_")
     return Response(
         content=data,
         media_type="application/zip",
         headers={
-            "Content-Disposition": (
-                f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(filename)}'
-            ),
+            "Content-Disposition": attachment_disposition(zip_file_name(batch.nome), fallback="lote.zip"),
             "Cache-Control": "no-store",
         },
     )

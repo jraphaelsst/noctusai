@@ -276,7 +276,7 @@ def test_full_run_review_decide_and_zip(edicao) -> None:
     edicao.configure_org()
     edicao.activate_guide()
     edicao.as_user("corretor")
-    lote = _create(edicao, nome="Casa/Azul").json()["id"]
+    lote = _create(edicao, nome="Casa/Azul Ipê").json()["id"]
     assert edicao.upload(lote, 2).status_code == 201
     submitted = edicao.http.post(f"/api/edicao-fotos/lotes/{lote}/submeter")
     assert submitted.status_code == 200 and submitted.json()["status"] == "submetido"
@@ -321,7 +321,11 @@ def test_full_run_review_decide_and_zip(edicao) -> None:
     zipped = edicao.http.get(f"/api/edicao-fotos/lotes/{lote}/zip")
     assert zipped.status_code == 200, zipped.text
     assert zipped.headers["content-type"] == "application/zip"
-    assert "Casa-Azul.zip" in zipped.headers["content-disposition"]
+    # seed attachment_disposition: accents FOLDED in the ASCII fallback (not
+    # "_"), the exact UTF-8 name in filename*, separators neutralized upstream
+    assert zipped.headers["content-disposition"] == (
+        "attachment; filename=\"Casa-Azul Ipe.zip\"; filename*=UTF-8''Casa-Azul%20Ip%C3%AA.zip"
+    )
     names = zipfile.ZipFile(io.BytesIO(zipped.content)).namelist()
     assert len(names) == 1 and names[0].startswith("01")
 
