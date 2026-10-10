@@ -49,7 +49,7 @@ PRODUCTS_DIR = REPO_ROOT / "products"
 # Regression-gate helpers (Option A — `projects/platform-compliance-baseline`
 # §7(A), locked 2026-05-18). The 2 platform-health gate tests assert "no NEW
 # high/critical vs the committed baseline"; the absolute score is informational.
-# `fingerprint` / `is_env_artifact` / `live_high_critical_fingerprints` are
+# `fingerprint` / `is_env_artifact` / `high_critical_fingerprints` are
 # imported from the colocated regenerator so the gate and the baseline-refresh
 # compute the live set identically (single source of truth — no drift).
 # ---------------------------------------------------------------------------
@@ -70,7 +70,7 @@ _BASELINE_PATH = _rcb.BASELINE_PATH
 fingerprint = _rcb.fingerprint
 is_env_artifact = _rcb.is_env_artifact
 is_env_artifact_issue = _rcb.is_env_artifact_issue
-live_high_critical_fingerprints = _rcb.live_high_critical_fingerprints
+high_critical_fingerprints = _rcb.high_critical_fingerprints
 
 
 def _load_baseline_fingerprints() -> set[str]:
@@ -86,7 +86,7 @@ def _real_product_names() -> list[str]:
     Active products only (2026-09-22, `product_scope.filter_active`) — mirrors
     `check_all_products()`'s own `_active_product_dirs` choke point, so this
     parametrization never lists a test node for a product the underlying scan
-    (`live_high_critical_fingerprints` → `check_all_products`) cannot ever
+    (`_fleet_scan` → `check_all_products`) cannot ever
     produce a fingerprint for."""
     on_disk = sorted(
         d.name for d in PRODUCTS_DIR.iterdir()  # product-scope: active (filtered below)
@@ -107,13 +107,23 @@ _COMPLIANCE_PARAM_IDS = _REAL_PRODUCT_NAMES + [_PLATFORM_GLOBAL_ID]
 
 
 @pytest.fixture(scope="module")
-def _compliance_snapshot():
-    """Run the (expensive) platform-wide scan exactly ONCE per test-module
-    run and cache it — `test_all_products_compliant` is parametrized per
-    product below purely for FAILURE ATTRIBUTION (one red node instead of
-    one red node listing every product's fingerprints together); it must
-    NOT re-run `check_all_products()` once per product."""
-    score, live_fps = live_high_critical_fingerprints()
+def _fleet_scan():
+    """`check_all_products()` — every keeper over every active product,
+    ~4.5 min — exactly ONCE per test-module run, shared by BOTH platform
+    regression gates (`test_all_products_compliant`,
+    `test_real_products_pass_validate`). Until 2026-10-10 each ran its own
+    scan, so the full suite (CI included) paid for it twice."""
+    return check_all_products()
+
+
+@pytest.fixture(scope="module")
+def _compliance_snapshot(_fleet_scan):
+    """The fleet scan's regressions vs the baseline, bucketed per product —
+    `test_all_products_compliant` is parametrized per product purely for
+    FAILURE ATTRIBUTION (one red node per product instead of one node
+    listing every product's fingerprints together)."""
+    score, issues = _fleet_scan
+    live_fps = high_critical_fingerprints(issues)
     baseline = _load_baseline_fingerprints()
     new_high_critical = sorted(set(live_fps) - baseline)
     # Informational only — the absolute score is NOT a gate under Option A
@@ -549,7 +559,7 @@ class TestAIFeatureCompleteness:
         )
         issues = check_ai_feature_completeness(product)
         assert [i for i in issues if "ai_service.py" in i["file"]] == []
-    def test_real_products_pass_validate(self):
+    def test_real_products_pass_validate(self, _fleet_scan):
         """All live products pass the AI-feature-completeness detector, AND
         no NEW high/critical compliance regression vs the committed baseline.
 
@@ -559,7 +569,7 @@ class TestAIFeatureCompleteness:
         ``tests/compliance_baseline.json``); the absolute score is
         informational. The narrow AI-feature intent is unchanged.
         """
-        score, issues = check_all_products()
+        score, issues = _fleet_scan  # the module's one scan — not a second one
         # Narrow intent (unchanged): AI-feature-completeness detector finds
         # no issues in shipped Tier 1 features.
         ai_feature_issues = [
@@ -571,11 +581,7 @@ class TestAIFeatureCompleteness:
             f"AI feature completeness issues: {ai_feature_issues}"
         )
         # Broad intent (re-spec): regression semantics, not score==100.
-        live_fps = sorted({
-            fingerprint(i) for i in issues
-            if i.get("severity") in ("high", "critical")
-            and not is_env_artifact_issue(i)
-        })
+        live_fps = high_critical_fingerprints(issues)
         baseline = _load_baseline_fingerprints()
         new_high_critical = sorted(set(live_fps) - baseline)
         print(

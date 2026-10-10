@@ -120,18 +120,22 @@ def fingerprint(issue: dict) -> str:
     )
 
 
+def high_critical_fingerprints(issues: list[dict]) -> list[str]:
+    """Sorted unique high/critical fingerprints of `issues`, minus env
+    artifacts — the ONE derivation the baseline, both regression gates in
+    `test_compliance.py` and `keeper_delta` judge by."""
+    return sorted({
+        fingerprint(i) for i in issues
+        if i.get("severity") in ("high", "critical") and not is_env_artifact_issue(i)
+    })
+
+
 def live_high_critical_fingerprints() -> tuple[int, list[str]]:
     """(absolute_score, sorted unique high/critical fingerprints minus env artifacts)."""
     from tools.noctus.dev.compliance import check_all_products
 
     score, issues = check_all_products()
-    hc = [
-        i
-        for i in issues
-        if i.get("severity") in ("high", "critical")
-        and not is_env_artifact_issue(i)
-    ]
-    return score, sorted({fingerprint(i) for i in hc})
+    return score, high_critical_fingerprints(issues)
 
 
 def main() -> int:
