@@ -6,7 +6,7 @@
 
 - **Lib roots scanned**: `noctusai_lib` (seed/lib/backend/noctusai_lib), `noctusai_seed` (seed/framework/backend/noctusai_seed)
 - **Products scanned**: `academia-de-reciclagem`, `adconnect`, `agents`, `community`, `core`, `daily-life`, `dev-team`, `erp-imobiliario`, `igig`, `knowledge-extractor`, `orbity`, `p-studio`, `personal-finance`, `seed`, `social-wiring`, `therapy-platform`
-- **Totals**: 1760 symbols · 465 orphans · 769 single-consumer · 100 duplicate candidates
+- **Totals**: 1768 symbols · 466 orphans · 774 single-consumer · 100 duplicate candidates
 
 ## Symbols
 
@@ -157,7 +157,7 @@
 
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
-| `AuthContext` | class | `` | Canonical caller identity, independent of the credential shape. | academia-de-reciclagem, agents, core, erp-imobiliario, lib:noctusai_lib, lib:noctusai_seed, social-wiring | 48 |
+| `AuthContext` | class | `` | Canonical caller identity, independent of the credential shape. | academia-de-reciclagem, agents, core, erp-imobiliario, lib:noctusai_lib, lib:noctusai_seed, social-wiring | 50 |
 | `ExpiredSessionError` | class | `` | Raised by ``SessionStore.lookup`` (or callers polling the | lib:noctusai_lib | 2 |
 | `InvalidCredentialsError` | class | `` | Raised by stores/resolvers when a credential is malformed or | lib:noctusai_lib | 3 |
 | `RevokedApiTokenError` | class | `` | Raised by ``ApiTokenResolver.resolve`` when a token's row is | lib:noctusai_lib | 2 |
@@ -186,6 +186,7 @@
 
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
+| `client_ip_key` | def | `(request) -> str` | Rate-limit key = the real visitor IP behind the Cloudflare tunnel. | academia-de-reciclagem | 1 |
 | `create_limiter` | def | `(redis_url: Optional[str]=None, default_limits: Optional[lis…` | Create a slowapi Limiter with optional Redis backing. | lib:noctusai_seed | 1 |
 
 ### `noctusai_lib.api.scheduler`
@@ -203,7 +204,7 @@
 
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
-| `StrictHttpModel` | class | `` | Pydantic base for HTTP-boundary schemas. Rejects unknown keys (422). | academia-de-reciclagem, adconnect, agents, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, lib:noctusai_seed, orbity, personal-finance, social-wiring, therapy-platform | 177 |
+| `StrictHttpModel` | class | `` | Pydantic base for HTTP-boundary schemas. Rejects unknown keys (422). | academia-de-reciclagem, adconnect, agents, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, lib:noctusai_seed, orbity, personal-finance, social-wiring, therapy-platform | 179 |
 
 ### `noctusai_lib.components.validation_signal`
 
@@ -1307,10 +1308,11 @@
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
 | `find_cpf` | def | `(text: str) -> tuple[Optional[str], str, Optional[str]]` | Extract the holder's CPF. | lib:noctusai_lib | 2 |
-| `format_cpf` | def | `(value: str) -> Optional[str]` | `41295423898` → `412.954.238-98`. None when it is not eleven digits. | lib:noctusai_lib, social-wiring | 3 |
+| `find_cpf_conflitos` | def | `(text: str) -> Optional[list[str]]` | The NAMED reason `find_cpf` returned `nenhuma`, when the reason is | lib:noctusai_lib | 1 |
+| `format_cpf` | def | `(value: str) -> Optional[str]` | `41295423898` → `412.954.238-98`. None when it is not eleven digits. | lib:noctusai_lib, social-wiring | 2 |
 | `is_valid` | def | `(value: str) -> bool` | Do this CPF's two check digits verify? | lib:noctusai_lib, social-wiring | 4 |
 | `normalize` | def | `(text: str) -> str` | Upper-case, accent-stripped, whitespace-collapsed. | — | 0 |
-| `only_digits` | def | `(value: str) -> str` | The eleven digits, whatever punctuation they arrived in. | lib:noctusai_lib | 1 |
+| `only_digits` | def | `(value: str) -> str` | The eleven digits, whatever punctuation they arrived in. | lib:noctusai_lib | 2 |
 
 ### `noctusai_lib.integrations.documents.factory`
 
@@ -1322,7 +1324,7 @@
 
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
-| `FakeIdentityExtractor` | class | `` | Returns a canned result, honouring the Protocol exactly. | lib:noctusai_lib, social-wiring | 4 |
+| `FakeIdentityExtractor` | class | `` | Returns a canned result, honouring the Protocol exactly. | lib:noctusai_lib, social-wiring | 6 |
 | `classify_kind` | def | `(mimetype: Optional[str]=None, filename: Optional[str]=None)…` | Best-effort document kind from the filename. | lib:noctusai_lib | 2 |
 
 ### `noctusai_lib.integrations.documents.formatting`
@@ -1350,9 +1352,9 @@
 
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
-| `Achado` | class | `` | The label bound to one value, and what it means for confidence. | lib:noctusai_lib | 4 |
+| `Achado` | class | `` | The label bound to one value, and what it means for confidence. | lib:noctusai_lib | 5 |
 | `LABEL_WINDOW` | const | `` |  | — | 0 |
-| `label_before` | def | `(haystack: str, at: int, *, labels: Sequence[str], blocos: S…` | Classify the value found at `at` by the labels preceding it. | lib:noctusai_lib | 4 |
+| `label_before` | def | `(haystack: str, at: int, *, labels: Sequence[str], blocos: S…` | Classify the value found at `at` by the labels preceding it. | lib:noctusai_lib | 5 |
 
 ### `noctusai_lib.integrations.documents.ladder`
 
@@ -1435,6 +1437,15 @@
 | `detectar_ruido` | def | `(pages: Sequence[TranscribedPage]) -> tuple[RuidoSpan, ...]` | Running header/footer spans as offsets into the same joined text | lib:noctusai_lib, social-wiring | 3 |
 | `subtrair_ruido` | def | `(start: int, end: int, ruido: Sequence[RuidoSpan]) -> tuple[…` | `[start, end)` minus every noise span — ordered, disjoint sub-spans. | lib:noctusai_lib, social-wiring | 2 |
 
+### `noctusai_lib.integrations.documents.nacionalidade`
+
+| Symbol | Kind | Signature | Doc | Used by | Imports |
+|---|---|---|---|---|---|
+| `canonico` | def | `(bruto: str) -> Optional[str]` | The canonical (masculine) gentílico a raw word/phrase names, | social-wiring | 1 |
+| `feminino` | def | `(nacionalidade_canonica: str) -> Optional[str]` | The feminine spelling of a CANONICAL (masculine) gentílico, or | social-wiring | 1 |
+| `find_nacionalidade` | def | `(text: str) -> tuple[Optional[str], str, Optional[str]]` | Extract the holder's nationality. | lib:noctusai_lib | 2 |
+| `normalize` | def | `(text: str) -> str` | Upper-case, accent-stripped, whitespace-collapsed. As every sibling | — | 0 |
+
 ### `noctusai_lib.integrations.documents.name`
 
 | Symbol | Kind | Signature | Doc | Used by | Imports |
@@ -1444,6 +1455,7 @@
 | `MIN_NAME_LEN` | const | `` |  | — | 0 |
 | `MIN_WORDS` | const | `` |  | — | 0 |
 | `find_name` | def | `(text: str) -> tuple[Optional[str], str, Optional[str]]` | Extract the document holder's full name. | lib:noctusai_lib | 2 |
+| `find_name_conflitos` | def | `(text: str) -> Optional[list[str]]` | The NAMED reason `find_name` returned `nenhuma`, when the reason is | lib:noctusai_lib | 1 |
 | `looks_like_a_name` | def | `(candidate: str) -> bool` | Structural plausibility for a Brazilian personal name. | lib:noctusai_lib, social-wiring | 2 |
 
 ### `noctusai_lib.integrations.documents.real`
@@ -1457,7 +1469,7 @@
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
 | `find_rg` | def | `(text: str) -> tuple[Optional[str], str, Optional[str]]` | Extract the holder's RG number. | lib:noctusai_lib | 2 |
-| `find_rg_orgao` | def | `(text: str) -> tuple[Optional[str], str]` | Extract the issuing body and UF — `SSP/SP`. | lib:noctusai_lib | 2 |
+| `find_rg_orgao` | def | `(text: str, rg: Optional[str]=None) -> tuple[Optional[str], …` | Extract the issuing body and UF — `SSP/SP`. | lib:noctusai_lib | 2 |
 | `is_same_as_cpf` | def | `(rg: Optional[str], cpf: Optional[str]) -> bool` | Does this RG collapse onto this CPF once punctuation is dropped? | lib:noctusai_lib, social-wiring | 4 |
 | `normalize` | def | `(text: str) -> str` | Upper-case, accent-stripped, whitespace-collapsed. As the siblings do. | — | 0 |
 | `only_alnum` | def | `(value: str) -> str` | Digits and letters, punctuation dropped, upper-cased. | — | 0 |
@@ -1496,6 +1508,7 @@
 | `IdentityExtractor` | class | `` | Bytes + mimetype → typed identity fields. | lib:noctusai_lib, social-wiring | 3 |
 | `IdentityFields` | class | `` | Typed fields lifted from one identity document. | lib:noctusai_lib, social-wiring | 6 |
 | `TextSource` | class | `` | Which rung of the extraction ladder produced the text. | erp-imobiliario, lib:noctusai_lib, social-wiring | 13 |
+| `TitularEsperado` | class | `` | Who the caller already knows this document belongs to. | lib:noctusai_lib, social-wiring | 4 |
 
 ### `noctusai_lib.integrations.docx_render.docxtpl_adapter`
 
@@ -3307,7 +3320,7 @@
 | `DEFAULT_COUNTRY_CODE` | const | `` |  | — | 0 |
 | `format_phone` | def | `(raw: str | None, *, fallback: str | None=None) -> str | Non…` | THE display seam. Every phone rendered anywhere goes through here. | — | 0 |
 | `is_valid_phone` | def | `(raw: str | None) -> bool` | ``True`` when ``raw`` canonicalizes. Use to flag rows, not to reject | — | 0 |
-| `normalize_phone` | def | `(raw: str | None, *, default_country_code: str=DEFAULT_COUNT…` | Canonicalize any phone spelling to E.164, or ``None`` if it isn't one. | social-wiring | 3 |
+| `normalize_phone` | def | `(raw: str | None, *, default_country_code: str=DEFAULT_COUNT…` | Canonicalize any phone spelling to E.164, or ``None`` if it isn't one. | academia-de-reciclagem, social-wiring | 4 |
 | `phone_digits` | def | `(raw: str | None) -> str | None` | Digits of a canonical number, no ``+``. | erp-imobiliario | 1 |
 | `phone_search_digits` | def | `(raw: str | None) -> str | None` | The digit-run to COMPARE when searching for a phone. | social-wiring | 2 |
 
@@ -3565,8 +3578,8 @@
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
 | `AuthClient` | class | `` | Wraps FastAPI TestClient with automatic Authorization header. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 19 |
-| `MockUser` | class | `` | Simulates a Supabase auth user object. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 39 |
-| `MockUserResponse` | class | `` | Wraps MockUser to simulate supabase.auth.get_user() response. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 38 |
+| `MockUser` | class | `` | Simulates a Supabase auth user object. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 40 |
+| `MockUserResponse` | class | `` | Wraps MockUser to simulate supabase.auth.get_user() response. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 39 |
 | `TEST_ORG_ID` | const | `` |  | lib:noctusai_lib | 2 |
 | `TEST_USER_ID` | const | `` |  | agents, lib:noctusai_lib | 3 |
 | `bind_user_metadata` | def | `(mock_sb_or_client: Any, *, user: Optional[MockUser]=None, r…` | Re-bind ``mock_sb.auth.get_user`` to return a fresh ``MockUser``. | adconnect, lib:noctusai_lib | 2 |
@@ -3643,7 +3656,7 @@
 | `MockQueryBuilder` | class | `` | Mirrors SyncQueryRequestBuilder. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, erp-imobiliario, igig, lib:noctusai_lib, orbity, personal-finance, seed, social-wiring, therapy-platform | 14 |
 | `MockRequestBuilder` | class | `` | Mirrors SyncRequestBuilder — the object returned by .table(name). | academia-de-reciclagem, adconnect, agents, community, core, daily-life, erp-imobiliario, igig, lib:noctusai_lib, orbity, personal-finance, seed, social-wiring, therapy-platform | 16 |
 | `MockSelectBuilder` | class | `` | Mirrors SyncSelectRequestBuilder. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, erp-imobiliario, igig, lib:noctusai_lib, orbity, personal-finance, seed, social-wiring, therapy-platform | 15 |
-| `MockSupabaseClient` | class | `` | Mocked Supabase client with per-table data control and response queues. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 93 |
+| `MockSupabaseClient` | class | `` | Mocked Supabase client with per-table data control and response queues. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, lib:noctusai_lib, orbity, p-studio, personal-finance, seed, social-wiring, therapy-platform | 95 |
 | `MockSupabaseResponse` | class | `` | Simulates a Supabase PostgREST response. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, erp-imobiliario, igig, lib:noctusai_lib, orbity, personal-finance, seed, social-wiring, therapy-platform | 38 |
 
 ### `noctusai_lib.testing.pytest_plugin`
@@ -3735,7 +3748,7 @@
 | Symbol | Kind | Signature | Doc | Used by | Imports |
 |---|---|---|---|---|---|
 | `DatabaseModule` | class | `` | Encapsulates database client factories for a product schema. | — | 0 |
-| `create_database_module` | def | `(settings, schema: str) -> DatabaseModule` | Factory to create database module for a product. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, knowledge-extractor, lib:noctusai_seed, orbity, personal-finance, seed, social-wiring, therapy-platform | 30 |
+| `create_database_module` | def | `(settings, schema: str) -> DatabaseModule` | Factory to create database module for a product. | academia-de-reciclagem, adconnect, agents, community, core, daily-life, dev-team, erp-imobiliario, igig, knowledge-extractor, lib:noctusai_seed, orbity, personal-finance, seed, social-wiring, therapy-platform | 31 |
 
 ### `noctusai_seed.dependencies`
 
@@ -3992,7 +4005,7 @@ or intentionally-public for future consumers).
 | `noctusai_lib.integrations.database.force_postgrest_http1` | def | `seed/lib/backend/noctusai_lib/integrations/database.py:26` |
 | `noctusai_lib.integrations.documents.birthdate.MAX_AGE` | const | `seed/lib/backend/noctusai_lib/integrations/documents/birthdate.py:49` |
 | `noctusai_lib.integrations.documents.birthdate.MIN_AGE` | const | `seed/lib/backend/noctusai_lib/integrations/documents/birthdate.py:48` |
-| `noctusai_lib.integrations.documents.civil_status.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/civil_status.py:206` |
+| `noctusai_lib.integrations.documents.civil_status.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/civil_status.py:222` |
 | `noctusai_lib.integrations.documents.cnpj.format_cnpj` | def | `seed/lib/backend/noctusai_lib/integrations/documents/cnpj.py:60` |
 | `noctusai_lib.integrations.documents.cnpj.is_valid` | def | `seed/lib/backend/noctusai_lib/integrations/documents/cnpj.py:44` |
 | `noctusai_lib.integrations.documents.cnpj.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/cnpj.py:28` |
@@ -4002,12 +4015,13 @@ or intentionally-public for future consumers).
 | `noctusai_lib.integrations.documents.gender.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/gender.py:94` |
 | `noctusai_lib.integrations.documents.labels.LABEL_WINDOW` | const | `seed/lib/backend/noctusai_lib/integrations/documents/labels.py:53` |
 | `noctusai_lib.integrations.documents.matricula_extractor.LadderMatriculaExtractor` | class | `seed/lib/backend/noctusai_lib/integrations/documents/matricula_extractor.py:159` |
+| `noctusai_lib.integrations.documents.nacionalidade.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/nacionalidade.py:188` |
 | `noctusai_lib.integrations.documents.name.MAX_NAME_LEN` | const | `seed/lib/backend/noctusai_lib/integrations/documents/name.py:56` |
 | `noctusai_lib.integrations.documents.name.MAX_WORDS` | const | `seed/lib/backend/noctusai_lib/integrations/documents/name.py:58` |
 | `noctusai_lib.integrations.documents.name.MIN_NAME_LEN` | const | `seed/lib/backend/noctusai_lib/integrations/documents/name.py:55` |
 | `noctusai_lib.integrations.documents.name.MIN_WORDS` | const | `seed/lib/backend/noctusai_lib/integrations/documents/name.py:57` |
-| `noctusai_lib.integrations.documents.rg.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/rg.py:130` |
-| `noctusai_lib.integrations.documents.rg.only_alnum` | def | `seed/lib/backend/noctusai_lib/integrations/documents/rg.py:139` |
+| `noctusai_lib.integrations.documents.rg.normalize` | def | `seed/lib/backend/noctusai_lib/integrations/documents/rg.py:141` |
+| `noctusai_lib.integrations.documents.rg.only_alnum` | def | `seed/lib/backend/noctusai_lib/integrations/documents/rg.py:150` |
 | `noctusai_lib.integrations.documents.transcription.DEFAULT_VISION_PROVIDER` | const | `seed/lib/backend/noctusai_lib/integrations/documents/transcription.py:72` |
 | `noctusai_lib.integrations.documents.transcription.LadderDocumentTranscriber` | class | `seed/lib/backend/noctusai_lib/integrations/documents/transcription.py:309` |
 | `noctusai_lib.integrations.documents.transcription.OCR_MODEL` | const | `seed/lib/backend/noctusai_lib/integrations/documents/transcription.py:102` |
@@ -4334,6 +4348,7 @@ policy, even if currently only one product exercises it.
 | `noctusai_lib.api.middleware.RequestLoggingMiddleware` | lib:noctusai_lib | 1 |
 | `noctusai_lib.api.middleware.path_is_covered_by_overrides` | lib:noctusai_seed | 1 |
 | `noctusai_lib.api.middleware.to_wildcard_pattern` | lib:noctusai_seed | 1 |
+| `noctusai_lib.api.rate_limit.client_ip_key` | academia-de-reciclagem | 1 |
 | `noctusai_lib.api.rate_limit.create_limiter` | lib:noctusai_seed | 1 |
 | `noctusai_lib.config.cors_registry.derive_cors_origins` | lib:noctusai_lib | 1 |
 | `noctusai_lib.config.credentials.configure_credentials` | lib:noctusai_seed | 1 |
@@ -4608,11 +4623,12 @@ policy, even if currently only one product exercises it.
 | `noctusai_lib.integrations.documents.civil_status.find_estado_civil` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.civil_status.find_regime_bens` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.cpf.find_cpf` | lib:noctusai_lib | 2 |
-| `noctusai_lib.integrations.documents.cpf.only_digits` | lib:noctusai_lib | 1 |
+| `noctusai_lib.integrations.documents.cpf.find_cpf_conflitos` | lib:noctusai_lib | 1 |
+| `noctusai_lib.integrations.documents.cpf.only_digits` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.fake.classify_kind` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.gender.find_gender` | lib:noctusai_lib | 2 |
-| `noctusai_lib.integrations.documents.labels.Achado` | lib:noctusai_lib | 4 |
-| `noctusai_lib.integrations.documents.labels.label_before` | lib:noctusai_lib | 4 |
+| `noctusai_lib.integrations.documents.labels.Achado` | lib:noctusai_lib | 5 |
+| `noctusai_lib.integrations.documents.labels.label_before` | lib:noctusai_lib | 5 |
 | `noctusai_lib.integrations.documents.ladder.DocumentTextLadder` | lib:noctusai_lib | 3 |
 | `noctusai_lib.integrations.documents.ladder.looks_like_pdf` | lib:noctusai_lib | 1 |
 | `noctusai_lib.integrations.documents.matricula.find_matricula` | lib:noctusai_lib | 2 |
@@ -4625,7 +4641,11 @@ policy, even if currently only one product exercises it.
 | `noctusai_lib.integrations.documents.matricula_ato_detalhes.parse_detalhes_json` | lib:noctusai_lib | 1 |
 | `noctusai_lib.integrations.documents.matricula_atos.normalized_with_offsets` | lib:noctusai_lib | 3 |
 | `noctusai_lib.integrations.documents.matricula_endereco.EnderecoMatricula` | lib:noctusai_lib | 1 |
+| `noctusai_lib.integrations.documents.nacionalidade.canonico` | social-wiring | 1 |
+| `noctusai_lib.integrations.documents.nacionalidade.feminino` | social-wiring | 1 |
+| `noctusai_lib.integrations.documents.nacionalidade.find_nacionalidade` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.name.find_name` | lib:noctusai_lib | 2 |
+| `noctusai_lib.integrations.documents.name.find_name_conflitos` | lib:noctusai_lib | 1 |
 | `noctusai_lib.integrations.documents.rg.find_rg` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.rg.find_rg_orgao` | lib:noctusai_lib | 2 |
 | `noctusai_lib.integrations.documents.text.normalize_lines` | lib:noctusai_lib | 2 |
@@ -4998,7 +5018,6 @@ policy, even if currently only one product exercises it.
 | `noctusai_lib.primitives.exceptions.postgrest_exception_handler` | lib:noctusai_lib | 1 |
 | `noctusai_lib.primitives.exceptions.validation_exception_handler` | lib:noctusai_lib | 1 |
 | `noctusai_lib.primitives.image_sizing.compute_edit_size` | lib:noctusai_lib | 1 |
-| `noctusai_lib.primitives.phone.normalize_phone` | social-wiring | 3 |
 | `noctusai_lib.primitives.phone.phone_digits` | erp-imobiliario | 1 |
 | `noctusai_lib.primitives.phone.phone_search_digits` | social-wiring | 2 |
 | `noctusai_lib.primitives.responses.calculate_pagination` | core | 1 |
@@ -5205,7 +5224,7 @@ review occurrences before absorbing.
 
 ### `coerce_org_uuid` (def)
 
-- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:125`
+- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:126`
 - `agents` — `products/agents/backend/app/dependencies.py:95`
 - `community` — `products/community/backend/app/dependencies.py:229`
 - `daily-life` — `products/daily-life/backend/app/dependencies.py:66`
@@ -5314,7 +5333,7 @@ review occurrences before absorbing.
 
 ### `get_admin_client` (def)
 
-- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:109`
+- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:110`
 - `agents` — `products/agents/backend/app/dependencies.py:75`
 - `community` — `products/community/backend/app/dependencies.py:78`
 - `core` — `products/core/backend/app/database.py:32`
@@ -5342,7 +5361,7 @@ review occurrences before absorbing.
 
 ### `get_core_client` (def)
 
-- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:113`
+- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:114`
 - `agents` — `products/agents/backend/app/dependencies.py:79`
 - `social-wiring` — `products/social-wiring/backend/app/database.py:23`
 - `social-wiring` — `products/social-wiring/backend/app/dependencies.py:209`
@@ -5403,7 +5422,7 @@ review occurrences before absorbing.
 
 ### `get_user_client` (def)
 
-- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:105`
+- `academia-de-reciclagem` — `products/academia-de-reciclagem/backend/app/dependencies.py:106`
 - `adconnect` — `products/adconnect/backend/app/dependencies.py:132`
 - `agents` — `products/agents/backend/app/dependencies.py:71`
 - `community` — `products/community/backend/app/dependencies.py:74`
