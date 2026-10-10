@@ -28,7 +28,7 @@ export function Login() {
   // `mfa_required` — holds the pending aal1 token, which is NOT stored yet.
   const [mfaPending, setMfaPending] = useState<string | null>(null);
   const navigate = useNavigate();
-  const { refresh } = useAuth();
+  const { refresh, logout, user: liveUser } = useAuth();
   const mfaTransport = useMemo(
     () => (mfaPending ? createLoginMfaTransport(mfaPending) : null),
     [mfaPending],
@@ -41,12 +41,28 @@ export function Login() {
       .catch(() => {});
   }, []);
 
+  // P2.5 (sso-identity-hardening): a live core session must not survive a sign-in
+  // as someone else -- its product (SSO) sessions would keep acting as the old user.
+  // Runs the SAME global logout the header uses, in strict mode: if revocation fails
+  // we surface the error and stop (neither signing out locally nor proceeding).
+  async function endLiveSession() {
+    try {
+      await logout({ strict: true });
+    } catch {
+      throw new Error('Não foi possível encerrar a sessão anterior. Verifique a conexão e tente novamente.');
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
+      // Same user re-signing in: nothing to revoke. Anything else (incl. signup): end it first.
+      if (liveUser && liveUser.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
+        await endLiveSession();
+      }
       if (isSignup) {
         await api.post('/api/auth/signup', { nome, email, password, empresa });
         // After signup, auto-login
@@ -85,9 +101,20 @@ export function Login() {
     navigate('/');
   }
 
-  function handleOAuth(provider: OAuthProvider) {
+  async function handleOAuth(provider: OAuthProvider) {
+    setError('');
     setOauthLoading(true);
-    // Redirect to Supabase OAuth URL
+    // The identity is unknown until after the redirect, so a live session is ended
+    // BEFORE leaving this page (the callback lands on a fresh origin state).
+    if (liveUser) {
+      try {
+        await endLiveSession();
+      } catch (err: any) {
+        setError(err.message);
+        setOauthLoading(false);
+        return;
+      }
+    }
     window.location.href = provider.auth_url;
   }
 

@@ -13,6 +13,8 @@ const h = vi.hoisted(() => ({
   createLoginMfaTransport: vi.fn(),
   refresh: vi.fn(),
   navigate: vi.fn(),
+  logout: vi.fn(),
+  liveUser: null as null | { email: string },
 }));
 
 vi.mock('../lib/api', () => ({
@@ -22,7 +24,7 @@ vi.mock('../lib/api', () => ({
   storeMfaTokens: h.storeMfaTokens,
   createLoginMfaTransport: h.createLoginMfaTransport,
 }));
-vi.mock('../lib/auth-context', () => ({ useAuth: () => ({ refresh: h.refresh }) }));
+vi.mock('../lib/auth-context', () => ({ useAuth: () => ({ refresh: h.refresh, logout: h.logout, user: h.liveUser }) }));
 vi.mock('react-router-dom', async (orig) => ({
   ...(await orig<typeof import('react-router-dom')>()),
   useNavigate: () => h.navigate,
@@ -41,6 +43,7 @@ const submitLogin = async () => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  h.liveUser = null;
   h.apiGet.mockResolvedValue({ data: [] });
   h.createLoginMfaTransport.mockReturnValue(h.transport);
   h.transport.get.mockResolvedValue({

@@ -40,7 +40,7 @@ During the SW deal-876 walkthrough the owner logged out of core as `jraphaelsst@
 | P2.2 | Browser-bind the SSO token: launch sets HttpOnly/Secure/SameSite=Strict nonce cookie on core; token carries `bnd` = hash(nonce); redeem (`credentials:'include'`, CORS allow_credentials for product origins) requires the match | core `sso.py` + launch, seed `SSOCallback` redeem fetch | **T2** | Prod: a token minted in browser X fails to redeem in browser Y (401) — login-CSRF link no longer swaps the victim's session; normal card click still works |
 | P2.3 | ~~Flush the SSO session cache wherever the effective org changes~~ | — | **CLOSED 2026-10-09 — not needed** (see decision log) | — |
 | P2.4 | Promote the (email, org_id, product)-scoped cache into the lib `SSOSessionCache`; drop the core subclass | `seed/lib/backend/.../auth` SSOSessionCache, core `sso.py` | **T4** | Unit: lib cache keyed by scope; prod: core SSO still redeems, no 429 regression on two-product launch |
-| P2.5 | Core `/login` ends an existing live session (revoke via the logout path) before signing in a different user | core FE login page + auth-context | **T5** | Prod: logged in as A, visit /login and sign in as B without logging out → A's product sessions are revoked (SW returns to login on focus) |
+| P2.5 | Core `/login` ends an existing live session (revoke via the logout path) before signing in a different user | core FE login page + auth-context | **T5** — built on `feat/sso-p25-login-ends-session`, awaiting integrate+deploy | Prod: logged in as A, visit /login and sign in as B without logging out → A's product sessions are revoked (SW returns to login on focus) |
 
 ## Anti-goals (explicit non-goals)
 
@@ -82,3 +82,4 @@ During the SW deal-876 walkthrough the owner logged out of core as `jraphaelsst@
 
 - Phase 1 commits: 313b4cae0, 29745f284, 7e308e43a, a8f4d8d7d, a8301b78f (dev).
 - This doc.
+- **2026-10-10**: P2.5 built (core FE only; no seed/lib touched). `logout({strict:true})` added to core auth-context (same global-revoke path as the header; strict = rethrow, keep local state). Login.tsx: password/signup submit with a live session whose email differs from the typed one ⇒ strict logout BEFORE the login call; same email ⇒ no revoke; OAuth (identity unknown until the redirect) ⇒ strict logout before leaving the page whenever a live session exists. Revoke failure ⇒ visible error, nothing proceeds, session kept (anti-goal: no sign-out on auth-server outage). Trade-off: a wrong password for a different email still ends A's session (explicit switch intent; revoking after B's success would need A's bearer across the MFA step). Products' own /login not examined here (SSOCallback interstitial covers product-side switch).

@@ -35,7 +35,13 @@ interface AuthState {
 }
 
 interface AuthContextType extends AuthState {
-  logout: () => Promise<void>;
+  /**
+   * Ends the session everywhere. Default: local state is cleared even if the
+   * server revocation fails. `{ strict: true }` (used by /login before signing
+   * in a different identity): a failed revocation THROWS and local state is kept
+   * -- never sign out on an auth-server outage, never proceed on a half-revoked one.
+   */
+  logout: (opts?: { strict?: boolean }) => Promise<void>;
   refresh: () => Promise<void>;
 }
 
@@ -113,10 +119,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Core logout ends the user's sessions EVERYWHERE (owner decision 2026-10-09):
   // the server revokes first (it needs the bearer), then local state is cleared
   // regardless of the outcome -- a network error must never leave the user logged in.
-  async function logout() {
+  async function logout(opts?: { strict?: boolean }) {
     try {
       if (isAuthenticated()) await api.post('/api/auth/logout', {});
     } catch (err) {
+      if (opts?.strict) throw err;
       console.error('core logout: server-side revocation failed; clearing local session anyway', err);
     }
     clearToken();

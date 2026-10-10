@@ -50,4 +50,14 @@ describe('core logout ordering', () => {
     await act(async () => { await captured.logout(); });
     expect(order.slice(0, 2)).toEqual(['post:/api/auth/logout', 'clear']);
   });
+
+  it('strict mode: a failed server call rethrows and does NOT clear local state', async () => {
+    post.mockImplementation(async (path: string) => { order.push(`post:${path}`); throw new Error('network'); });
+    await act(async () => { render(<AuthProvider><Probe /></AuthProvider>); });
+    order.length = 0; // mount-time profile fetch (mocked to fail) has settled
+    await act(async () => {
+      await expect(captured.logout({ strict: true })).rejects.toThrow('network');
+    });
+    expect(order).toEqual(['post:/api/auth/logout']);
+  });
 });
