@@ -31,15 +31,20 @@ class TestEmailMarketingAIRateLimit:
             mock_chat.return_value = (
                 '[{"text": "subj-1", "tone": "neutral"}]'
             )
+            # Fixed one-minute windows: a burst that straddles a minute
+            # boundary splits its count, so stop at the FIRST 429 (at most
+            # 61 calls ⇒ a full window is always exhausted) instead of
+            # assuming the 31st call lands in the same window as the 1st.
             statuses = []
-            for _ in range(31):
+            for _ in range(61):
                 resp = client.post(
                     "/api/email-marketing/ai/subjects", json={"campaign_summary": "test"}
                 )
                 statuses.append(resp.status_code)
+                if resp.status_code == 429:
+                    break
 
-        # First 30 should succeed; 31st should be rate-limited.
-        assert statuses[:30] == [200] * 30, (
-            f"first 30 expected 200, got distribution {set(statuses[:30])}"
-        )
-        assert statuses[30] == 429, f"31st call expected 429, got {statuses[30]}"
+        assert statuses[-1] == 429, f"no 429 within 61 calls: {set(statuses)}"
+        allowed = statuses[:-1]
+        assert set(allowed) == {200}, f"non-200 before the limit: {set(allowed)}"
+        assert len(allowed) >= 30, f"limit tripped after only {len(allowed)} calls (expected 30/minute)"
