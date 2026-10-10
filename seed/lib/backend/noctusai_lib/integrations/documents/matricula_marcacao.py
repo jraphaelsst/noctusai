@@ -120,14 +120,16 @@ def remover_boilerplate(texto: str) -> MarcacaoRemovida:
 def remover_marcacao(texto: str) -> MarcacaoRemovida:
     """`texto` with every well-formed marker removed — see module docstring."""
     texto = texto or ""
-    tokens, literais, _descartados = _classificar_marcacao(texto)
+    tokens, literais, _descartados = _classificar_marcacao(
+        texto, descartar_desemparelhados=True
+    )
 
     removidos = tuple(
         (s, e)
         for i, (kind, s, e) in enumerate(tokens)
         if kind != "text" and i not in literais
     )
-    limpo, formatacao = parse_markup(texto)
+    limpo, formatacao = parse_markup(texto, descartar_desemparelhados=True)
 
     reconstruido = []
     cursor = 0

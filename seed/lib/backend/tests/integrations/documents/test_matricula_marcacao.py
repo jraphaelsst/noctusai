@@ -73,10 +73,13 @@ def test_offset_inside_a_marker_lands_on_its_start():
     assert r.mapear(8) == 4  # end of text
 
 
-def test_unbalanced_marker_is_kept_literal_like_parse_markup():
+def test_unbalanced_marker_is_dropped_like_matricula_parse_markup():
     r = remover_marcacao("a **b** c **d")
-    assert r.texto == "a b c **d"
-    assert has_raw_markup(r.texto)
+    assert r.texto == "a b c d"
+    assert not has_raw_markup(r.texto)
+    r = remover_marcacao("x <u>y e </u> z </u> w")
+    assert r.texto == "x y e  z  w"
+    assert not has_raw_markup(r.texto)
 
 
 def test_clean_text_is_a_noop():

@@ -737,7 +737,7 @@ class LadderDocumentTranscriber:
             # per `OCR_PROMPT` — `textos[numero]` is the STRIPPED text (the
             # page's `text`, same as every other rung), and the ranges are
             # kept alongside it, exactly like rung 1.
-            texto, ranges = parse_markup(marcado)
+            texto, ranges = parse_markup(marcado, descartar_desemparelhados=True)
             textos[numero] = texto
             formatacao_visao[numero] = ranges
             logger.info("transcription: page %d/%d done", numero, num_paginas)
@@ -1533,6 +1533,8 @@ def _unmatched_pair_indices(
 
 def _classificar_marcacao(
     markup: str,
+    *,
+    descartar_desemparelhados: bool = False,
 ) -> tuple[list[tuple[str, int, int]], set[int], set[int]]:
     """`(tokens, literais, descartados)` — the ONE marker classification
     `parse_markup` and `matricula_marcacao.remover_marcacao` both apply, so
@@ -1563,19 +1565,34 @@ def _classificar_marcacao(
     literais = bold_invalido - descartados
     if literais:
         logger.warning(
-            "transcription: unbalanced ** marker in vision reply — kept literal"
+            "transcription: unbalanced ** marker in vision reply"
         )
     u_abertos_invalidos, u_fechamentos_invalidos = _unmatched_pair_indices(
         tokens, "u_open", "u_close"
     )
     if u_abertos_invalidos or u_fechamentos_invalidos:
         logger.warning(
-            "transcription: unbalanced <u>/</u> marker in vision reply — kept literal"
+            "transcription: unbalanced <u>/</u> marker in vision reply"
         )
-    return tokens, literais | u_abertos_invalidos | u_fechamentos_invalidos, descartados
+    desemparelhados = literais | u_abertos_invalidos | u_fechamentos_invalidos
+    if descartar_desemparelhados:
+        # 🔴 Matrícula mode: an unbalanced marker is DISCARDED, not kept
+        # literal. `**`/`<u>` is never document text (a masked identifier's
+        # asterisks are excluded upstream by `_tokens_de_marcacao`) and it
+        # formats nothing we can honestly pair; kept literal it made
+        # `has_raw_markup` refuse the whole matrícula for the contract (live
+        # prod, deal 876, 2026-10-10) with no repair path — `matricula_
+        # marcacao.remover_marcacao` strips with this SAME classification,
+        # so a literal could never be normalised away. Dropping invents no
+        # range and loses no document character. Template mode (docx_render,
+        # default) keeps them literal so an author SEES the typo.
+        return tokens, set(), descartados | desemparelhados
+    return tokens, desemparelhados, descartados
 
 
-def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
+def parse_markup(
+    markup: str, *, descartar_desemparelhados: bool = False
+) -> tuple[str, tuple[FormatRange, ...]]:
     """OCR markup (`**bold**`, `<u>underline</u>`, combined/nested freely) →
     `(plain text, format ranges)`.
 
@@ -1586,14 +1603,19 @@ def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
     any other bracketed marker the model was not asked for is kept as
     LITERAL text (and logged) rather than guessed at — a malformed vision
     reply must still produce a document, and a formatting range built from a
-    guess would be worse than none.
+    guess would be worse than none. `descartar_desemparelhados=True`
+    (matrícula transcription) instead DROPS the unbalanced `**`/`<u>`
+    markers (still logged): no range is guessed, no document character is
+    lost, and the text stays contract-usable.
     """
     for m in _UNKNOWN_TAG_RE.finditer(markup):
         logger.warning(
             "transcription: unrecognised markup tag %r in vision reply — kept literal",
             m.group(),
         )
-    tokens, literais, descartados = _classificar_marcacao(markup)
+    tokens, literais, descartados = _classificar_marcacao(
+        markup, descartar_desemparelhados=descartar_desemparelhados
+    )
 
     saida: list[str] = []
     comprimento = 0
@@ -1627,6 +1649,8 @@ def parse_markup(markup: str) -> tuple[str, tuple[FormatRange, ...]]:
             fechar_trecho(comprimento)
             negrito = not negrito
             trecho_negrito, trecho_sublinhado = negrito, profundidade_sublinhado > 0
+            continue
+        if i in descartados:
             continue
         if kind == "u_open" and i not in literais:
             fechar_trecho(comprimento)

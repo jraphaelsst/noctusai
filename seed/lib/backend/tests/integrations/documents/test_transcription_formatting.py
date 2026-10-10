@@ -510,6 +510,24 @@ class TestParseMarkupNeverRaisesOnMalformedInput:
         assert texto == "primeiro fechado mas **nunca fecha"
         assert ranges == (FormatRange(start=9, end=16, bold=True),)
 
+    def test_matricula_mode_drops_unbalanced_markers_instead_of_keeping_them(self) -> None:
+        """Deal 876 (prod, 2026-10-10): a literal stray marker made
+        `has_raw_markup` block the contract with no repair path."""
+        texto, ranges = parse_markup(
+            "primeiro **fechado** mas **nunca fecha", descartar_desemparelhados=True
+        )
+        assert texto == "primeiro fechado mas nunca fecha"
+        assert ranges == (FormatRange(start=9, end=16, bold=True),)
+        assert has_raw_markup(texto) is False
+        for bruto, esperado in (
+            ("fecha </u> sem abrir", "fecha  sem abrir"),
+            ("abre <u> mas nunca fecha", "abre  mas nunca fecha"),
+            ("<u>a</u> e <u>b e **c** </u></u>", "a e b e c "),
+        ):
+            texto, _ = parse_markup(bruto, descartar_desemparelhados=True)
+            assert texto == esperado
+            assert has_raw_markup(texto) is False
+
     def test_a_dangling_bold_marker_at_the_page_end_is_dropped(self) -> None:
         """Live prod 2026-10-01: 4/6 re-transcribed matrículas ended a page
         with one stray `**` after a footer timestamp. It formats nothing —
@@ -693,7 +711,8 @@ class TestVisionRungEndToEnd:
         )
 
         assert out.ok, out.error_message
-        assert out.pages[0].text == "Texto com marcador **sem fechar corretamente"
+        assert out.pages[0].text == "Texto com marcador sem fechar corretamente"
+        assert not has_raw_markup(out.pages[0].text)
         assert out.pages[0].formatting == ()
 
     @pytest.mark.asyncio

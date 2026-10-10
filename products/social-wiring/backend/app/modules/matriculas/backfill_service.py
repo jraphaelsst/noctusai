@@ -314,9 +314,9 @@ def normalizar_extracao(client: Any, org_id: Any, extracao_id: Any) -> dict:
         # means, and boilerplate removal can neither cause nor cure one.
         extra_update={"possui_marcacao_bruta": has_raw_markup(r1.texto)},
     )
-    # Re-read above when the text changed, so this is the stored flag. Still
-    # true only for an UNBALANCED marker `parse_markup` keeps literal — a
-    # human's call, reported rather than guessed at.
+    # Re-read above when the text changed, so this is the stored flag. Since
+    # 2026-10-10 an unbalanced marker is dropped (matrícula mode), so this is
+    # False after any run; kept as the report's honest read-back.
     relatorio["possui_marcacao_bruta"] = bool(extracao.get("possui_marcacao_bruta"))
 
     r2 = remover_boilerplate(extracao.get("texto_extraido") or "")
