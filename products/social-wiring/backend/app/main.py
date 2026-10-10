@@ -134,6 +134,9 @@ def _register_media_wiring() -> ModuleRegistration:
     from app.routers.campanhas_router import (
         router as campanhas_router,
     )
+    from app.routers.campanhas_crud_router import (
+        router as campanhas_crud_router,
+    )
     from app.routers.portal_roi_router import (
         router as portal_roi_router,
     )
@@ -233,6 +236,7 @@ def _register_media_wiring() -> ModuleRegistration:
             marcas_router,
             imoveis_router,
             campanhas_router,
+            campanhas_crud_router,
             portal_roi_router,
             clientes_router,
             painel_router,

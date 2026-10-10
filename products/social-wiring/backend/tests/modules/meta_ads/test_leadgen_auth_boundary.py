@@ -33,6 +33,8 @@ _AUTHED_ROUTES = [
     # lead's PII, so an unauthenticated caller flipping it is a routing hole,
     # not a cosmetic change.
     ("put", "/api/meta/leadgen/pages/page-1/client", {"json": {"marca_id": None}}),
+    # Staff-only lead rehearsal (CONTRACT sw-lead-to-contract §1.4).
+    ("post", "/api/meta/leadgen/simular", {"json": {"nome": "Fulano"}}),
 ]
 
 APP_SECRET = "test-app-secret"

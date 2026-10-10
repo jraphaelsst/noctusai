@@ -80,6 +80,7 @@ def test_registered_tool_name_set_is_pinned():
         "meta.ads.create_ad",
         "meta.ads.update_campaign_status",
         "meta.ads.update_ad_set_budget",
+        "meta.leadgen.simulate",
     }
 
 

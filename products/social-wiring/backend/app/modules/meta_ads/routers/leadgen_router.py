@@ -38,6 +38,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.background import BackgroundTasks as StarletteBackgroundTasks
 
 from noctusai_lib.api import StrictHttpModel
+from noctusai_lib.api.auth.effective_org import is_platform_staff
 from noctusai_lib.integrations.meta import MetaGraphError
 from noctusai_lib.integrations.meta.leadgen_webhook import (
     leadgen_challenge_response,
@@ -52,7 +53,12 @@ from noctusai_lib.security.webhook_signatures import (
 )
 
 from app.config import settings
-from app.dependencies import coerce_org_uuid, get_admin_client, get_current_user_org
+from app.dependencies import (
+    coerce_org_uuid,
+    get_admin_client,
+    get_core_client,
+    get_current_user_org,
+)
 from app.modules.meta_ads.services.leadgen_webhook_service import (
     PENDING_STATUSES,
     STATUS_IGNORED,
@@ -285,6 +291,52 @@ async def leadgen_receive(
         },
         background=announce if announce.tasks else None,
     )
+
+
+# ─── authed (platform staff): simulate a lead ────────────────────────────
+class SimularLeadIn(StrictHttpModel):
+    """CONTRACT sw-lead-to-contract §1.4. At least a ``nome``; the Meta object
+    ids pick the campanha (ad → adset → campaign → form), ``respostas.REF`` is
+    the fallback imóvel."""
+
+    ad_id: str | None = None
+    adset_id: str | None = None
+    campaign_id: str | None = None
+    form_id: str | None = None
+    nome: str
+    telefone: str | None = None
+    email: str | None = None
+    respostas: dict[str, str] | None = None
+
+
+@router.post("/simular")
+def simular_lead(
+    body: SimularLeadIn,
+    auth: tuple = Depends(get_current_user_org),
+    core_client: Any = Depends(get_core_client),
+    svc: LeadgenWebhookService = Depends(get_leadgen_service),
+) -> JSONResponse:
+    """Run a lead through the SAME ``upsert_lead`` → ``ingest_meta_lead`` path
+    the webhook uses, minus the Graph fetch, for the live test.
+
+    Platform staff only (trusted ``noctus_users`` row, never metadata): a
+    simulated lead writes PII-shaped rows and spawns a CRM card in the org, so
+    it is a staff rehearsal tool, not a customer feature. The org is the
+    caller's EFFECTIVE org (``get_current_user_org`` is org-picker aware), so
+    staff acting in a customer org rehearse inside that org.
+    """
+    user, _token, raw_org = auth
+    if not is_platform_staff(core_client, getattr(user, "id", None)):
+        return JSONResponse(
+            {
+                "detail": "Apenas a equipe da plataforma pode simular leads.",
+                "code": "not_platform_staff",
+            },
+            status_code=status.HTTP_403_FORBIDDEN,
+        )
+    org_id = coerce_org_uuid(raw_org)
+    result = svc.process_simulated(org_id=org_id, body=body.model_dump())
+    return JSONResponse({"data": result})
 
 
 # ─── authed: subscription management ─────────────────────────────────────

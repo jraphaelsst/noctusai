@@ -58,8 +58,32 @@ def _answer_value(values: list[str]) -> Any:
 class LeadsSyncService:
     """Per-call lead ingest worker."""
 
-    def __init__(self, *, admin_supabase: Any) -> None:
+    def __init__(self, *, admin_supabase: Any, ingest_fn: Any = None) -> None:
         self._admin = admin_supabase
+        # DI seam (same shape as `LeadgenWebhookService`): the normalize step
+        # into the canonical `leads` base. Defaults to the real
+        # `ingest_meta_lead`; tests inject a recorder.
+        self._ingest_fn = ingest_fn
+
+    def ingest_row(
+        self, *, org_id: UUID, lead_row: dict[str, Any], key_types: dict[str, str]
+    ) -> Any:
+        """Normalize one just-upserted ``meta_ads_leads`` row into ``leads``
+        (+ cliente + imóvel links). Idempotent: ``ingest_meta_lead`` keys on
+        ``(org_id, meta_lead_id)`` and returns the existing row on a re-run,
+        so the 06:00 sync can offer every row it upserted — which is what
+        closes the "card without a leads row" gap for rows whose earlier
+        ingest never happened or failed."""
+        ingest = self._ingest_fn
+        if ingest is None:
+            from app.modules.leads.services.meta_ingest_service import (
+                ingest_meta_lead,
+            )
+
+            ingest = ingest_meta_lead
+        return ingest(
+            self._admin, org_id, lead_row, question_types=key_types or None
+        )
 
     # ─── forms ─────────────────────────────────────────────────────────
     def sync_forms(
@@ -129,6 +153,8 @@ class LeadsSyncService:
         never a faked-empty success, never a hard failure that loses the
         forms already synced."""
         upserted = 0
+        ingested = 0
+        ingest_errors = 0
         gated = False
         forms_with_leads = [f for f in forms if int(f.leads_count or 0) > 0]
         for form in forms_with_leads:
@@ -147,14 +173,40 @@ class LeadsSyncService:
                 raise
             key_types = key_type_by_form.get(form.id, {})
             for lead in leads:
-                self.upsert_lead(
+                row = self.upsert_lead(
                     lead, org_id=org_id, form=form, key_types=key_types
                 )
                 upserted += 1
-        return {"leads_upserted": upserted, "records_gated": gated}
+                # One bad lead (unparseable created_time, a transient DB error)
+                # must not abort the other 499 — but it is COUNTED and logged,
+                # never swallowed: the next run offers the row again.
+                try:
+                    result = self.ingest_row(
+                        org_id=org_id, lead_row=row, key_types=key_types
+                    )
+                except Exception:  # noqa: BLE001
+                    ingest_errors += 1
+                    logger.exception(
+                        "meta ads leads: ingest into leads failed for %s", row.get("id")
+                    )
+                    continue
+                if (result or {}).get("created"):
+                    ingested += 1
+        return {
+            "leads_upserted": upserted,
+            "leads_ingested": ingested,
+            "ingest_errors": ingest_errors,
+            "records_gated": gated,
+        }
 
     def upsert_lead(
-        self, lead: Any, *, org_id: UUID, form: Any, key_types: dict[str, str]
+        self,
+        lead: Any,
+        *,
+        org_id: UUID,
+        form: Any,
+        key_types: dict[str, str],
+        simulado: bool = False,
     ) -> dict[str, Any]:
         answers: dict[str, Any] = {}
         promoted: dict[str, str] = {}
@@ -195,6 +247,10 @@ class LeadsSyncService:
             ],
             "synced_at": datetime.now(timezone.utc).isoformat(),
         }
+        if simulado:
+            # Only stamped when true: the column defaults to false (migration
+            # 218), and a real sync must never need it to exist.
+            row["simulado"] = True
         (
             self._admin.schema(_SCHEMA)
             .table("meta_ads_leads")

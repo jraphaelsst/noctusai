@@ -49,6 +49,7 @@ import {
   ArrowLeftRight,
   Building2,
   Target,
+  Megaphone,
   KanbanSquare,
   Workflow,
   TrendingUp,
@@ -105,6 +106,7 @@ const Imoveis = lazyWithReload(() => import("@/pages/Imoveis"));
 const ImovelDetalhes = lazyWithReload(() => import("@/pages/ImovelDetalhes"));
 const MetaDashboard = lazyWithReload(() => import("@/pages/MetaDashboard"));
 const Leads = lazyWithReload(() => import("@/pages/leads/Leads"));
+const Campanhas = lazyWithReload(() => import("@/pages/campanhas/Campanhas"));
 const FunilVendas = lazyWithReload(() => import("@/pages/funil/FunilVendas"));
 const ProcessosVenda = lazyWithReload(() => import("@/pages/funil/ProcessosVenda"));
 const PortalRoi = lazyWithReload(() => import("@/pages/PortalRoi"));
@@ -169,6 +171,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Target,
     items: [
       { name: "Leads", href: "/leads", icon: Target, route: "leads" },
+      { name: "Campanhas", href: "/campanhas", icon: Megaphone, route: "campanhas" },
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare, route: "funil" },
       { name: "Processos de Venda", href: "/processos-venda", icon: Workflow, route: "processos_venda" },
       { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp, route: "portal_roi" },
@@ -332,6 +335,7 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Target,
     items: [
       { name: "Leads", href: "/leads", icon: Target },
+      { name: "Campanhas", href: "/campanhas", icon: Megaphone },
       { name: "Funil de Vendas", href: "/funil", icon: KanbanSquare },
       { name: "Processos de Venda", href: "/processos-venda", icon: Workflow },
       { name: "ROI por Portal", href: "/portal-roi", icon: TrendingUp },
@@ -488,6 +492,7 @@ export default createProductApp({
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
     { path: "/leads", component: Leads },
+    { path: "/campanhas", component: Campanhas },
     { path: "/funil", component: FunilVendas },
     { path: "/processos-venda", component: ProcessosVenda },
     { path: "/portal-roi", component: PortalRoi },

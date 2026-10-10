@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.meta import MetaGraphError
 from noctusai_lib.integrations.meta.leadgen_webhook import LeadgenEvent
@@ -140,6 +140,7 @@ class LeadgenWebhookService:
         notifier_factory: Any = None,
         publisher: Any = None,
         sweep_fn: Any = None,
+        sim_id_factory: Any = None,
     ) -> None:
         self._admin = admin_supabase
         self._adapter_factory = adapter_factory
@@ -152,6 +153,8 @@ class LeadgenWebhookService:
         # DI seam, same shape as `ingest_fn`: tests assert the sweep is
         # scheduled without running a real org-wide pass.
         self._sweep_fn = sweep_fn
+        # DI seam: the synthetic id of a simulated lead (default `sim-<uuid4>`).
+        self._sim_id_factory = sim_id_factory
 
     # ─── inbox ─────────────────────────────────────────────────────────
     def record_event(self, event: LeadgenEvent) -> bool:
@@ -634,7 +637,7 @@ class LeadgenWebhookService:
     def _ingest(
         self, *, org_id: UUID, lead_row: dict[str, Any] | None,
         key_types: dict[str, str], defer_sweep: bool = False,
-    ) -> None:
+    ) -> Any:
         """Normalize one raw lead into the canonical ``leads`` base.
 
         ``key_types`` is the form's question→type map the enrich step already
@@ -642,7 +645,7 @@ class LeadgenWebhookService:
         the form to render ``observacoes``.
         """
         if not lead_row:
-            return
+            return None
         ingest = self._ingest_fn
         if ingest is None:
             from app.modules.leads.services.meta_ingest_service import (
@@ -650,7 +653,7 @@ class LeadgenWebhookService:
             )
 
             ingest = ingest_meta_lead
-        ingest(
+        result = ingest(
             self._admin,
             org_id,
             lead_row,
@@ -658,6 +661,76 @@ class LeadgenWebhookService:
         )
         if not defer_sweep:
             self.sweep_person_layer()
+        return result
+
+    def process_simulated(
+        self, *, org_id: UUID, body: dict[str, Any]
+    ) -> dict[str, Any]:
+        """``POST /api/meta/leadgen/simular`` (CONTRACT sw-lead-to-contract §1.4).
+
+        The SAME ``upsert_lead`` → ``_ingest`` → ``ingest_meta_lead`` path
+        :meth:`process_event` runs after the signature check, minus the Graph
+        fetch: the lead is synthesized from ``body`` instead of read from
+        ``GET /{leadgen_id}``. The stored ``meta_ads_leads`` row is stamped
+        ``simulado=true`` and gets a ``sim-<uuid>`` id that can never collide
+        with a real Meta id. No operator alert / realtime push: a rehearsal
+        must not page anyone. The person-layer sweep is not run either —
+        ``ingest_meta_lead`` attaches the cliente synchronously (§1.3).
+
+        Returns ``{meta_lead_id, lead_id, atendimento_id, cliente_id, imoveis}``.
+        """
+        meta_lead_id = (
+            self._sim_id_factory() if self._sim_id_factory else f"sim-{uuid4()}"
+        )
+        respostas = {
+            k: v for k, v in (body.get("respostas") or {}).items() if v not in (None, "")
+        }
+        # Field names double as question keys; the TYPE map is what promotes
+        # them onto full_name/email/phone exactly like a real form's schema.
+        key_types: dict[str, str] = {}
+        field_data: list[Any] = []
+
+        def _field(name: str, value: Any, type_: str | None = None) -> None:
+            if value in (None, ""):
+                return
+            if type_:
+                key_types[name] = type_
+            field_data.append(SimpleNamespace(name=name, values=[str(value)]))
+
+        _field("full_name", body.get("nome"), "FULL_NAME")
+        _field("phone_number", body.get("telefone"), "PHONE")
+        _field("email", body.get("email"), "EMAIL")
+        for name, value in respostas.items():
+            _field(name, value)
+
+        form_id = body.get("form_id") or None
+        form = SimpleNamespace(id=form_id, name=None, page_id=None)
+        lead = SimpleNamespace(
+            id=meta_lead_id,
+            form_id=form_id,
+            ad_id=body.get("ad_id") or None,
+            adset_id=body.get("adset_id") or None,
+            campaign_id=body.get("campaign_id") or None,
+            campaign_name=None,
+            platform=None,
+            is_organic=False,
+            created_time=datetime.now(timezone.utc),
+            field_data=field_data,
+        )
+        lead_row = self._build_leads_sync().upsert_lead(
+            lead, org_id=org_id, form=form, key_types=key_types, simulado=True
+        )
+        outcome = self._ingest(
+            org_id=org_id, lead_row=lead_row, key_types=key_types, defer_sweep=True
+        ) or {}
+        created = outcome.get("lead") or {}
+        return {
+            "meta_lead_id": meta_lead_id,
+            "lead_id": created.get("id"),
+            "atendimento_id": outcome.get("atendimento_id"),
+            "cliente_id": outcome.get("cliente_id"),
+            "imoveis": outcome.get("imoveis") or [],
+        }
 
     def sweep_person_layer(self) -> None:
         """Run the person-layer sweep right after a campaign lead lands.

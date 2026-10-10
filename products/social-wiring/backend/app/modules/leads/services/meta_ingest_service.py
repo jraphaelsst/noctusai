@@ -64,10 +64,12 @@ from uuid import UUID
 
 from noctusai_lib.integrations.persistence import iter_paged_rows
 
-from app.modules.imovel_hub import atendimento_imoveis_service
+from app.modules.imovel_hub import atendimento_imoveis_service, busca_service, interesses_service
 from app.modules.leads.importer.resolvers import resolve_corretor
+from app.modules.meta_ads.services.campanha_resolucao import resolver_campanha
 from app.modules.leads.services import dimensions_service, leads_service
 from app.modules.leads.services.query import backfill_generated_columns
+from app.services import clientes_service
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +189,19 @@ def _codigo_do_meta_lead(meta_lead: dict[str, Any]) -> Optional[str]:
     return None
 
 
+#: Shown on the card's timeline (the touch's ``origem_rotulo`` is ``leads.origem_raw``)
+#: for a row created by ``POST /api/meta/leadgen/simular`` — a rehearsal is never
+#: mistaken for a real Meta lead (CONTRACT sw-lead-to-contract §1.4).
+SIMULADO_ROTULO = "Lead simulado"
+
+
+def _origem_raw(meta_lead: dict[str, Any]) -> Optional[str]:
+    campanha = meta_lead.get("campaign_name")
+    if meta_lead.get("simulado"):
+        return f"{SIMULADO_ROTULO} · {campanha}" if campanha else SIMULADO_ROTULO
+    return campanha
+
+
 def map_meta_lead_to_lead_payload(
     meta_lead: dict[str, Any],
     *,
@@ -226,7 +241,7 @@ def map_meta_lead_to_lead_payload(
         "codigo_imovel": _codigo_do_meta_lead(meta_lead),
         "data_entrada": data_entrada,
         "origem_id": origem_source_id,
-        "origem_raw": meta_lead.get("campaign_name"),
+        "origem_raw": _origem_raw(meta_lead),
         # A Meta Lead-Ads submission is definitionally a first contact —
         # unlike the spreadsheet import, there's no "retorno" signal to
         # detect, so this is an explicit `novo`, not the default
@@ -343,12 +358,112 @@ def ingest_meta_lead(
         question_labels=question_labels,
     )
     lead = leads_service.create_lead(client, org_id, payload)
-    # Link the lead's imóvel to the card(s) it spawned (and the cliente's
-    # interesses once one is attached — the sweep completes that half).
-    atendimento_imoveis_service.vincular_lead_seguro(
-        client, org_id, lead_id=lead["id"], contexto="meta_ingest"
-    )
-    return {"lead": lead, "created": True}
+    # §1.3 — the card's titular exists before this returns (the same synchronous
+    # attach the manual "Novo lead" uses). Never raises; the sweep is the net.
+    cliente_id = clientes_service.attach_lead_now(client, org_id, lead)
+
+    # §1.2 — the imóvel comes from the CAMPAIGN first; the form's REF answer is
+    # the fallback; neither ⇒ imovel_pendente. Never a guess.
+    campanha = resolver_campanha(client, org_id, meta_lead)
+    if campanha is not None:
+        imoveis = _vincular_campanha(
+            client, org_id, lead, meta_lead, campanha, cliente_id=cliente_id
+        )
+        # The lead's own REF answer: the campanha link wins when REF is one of
+        # the campanha's imóveis (one link per (atendimento, código), never a
+        # second origem='lead' row — and `reconcile` is pair-idempotent, so the
+        # sweep adds none either). A REF OUTSIDE the campanha is real info the
+        # lead gave: link it too, origem='lead'.
+        ref = busca_service.canonical(_codigo_do_meta_lead(meta_lead) or "")
+        if ref and ref not in campanha["codigos"]:
+            ligado = atendimento_imoveis_service.vincular_lead_seguro(
+                client, org_id, lead_id=lead["id"], contexto="meta_ingest"
+            )
+            if (ligado or {}).get("codigo") and (ligado or {}).get("atendimentos"):
+                imoveis.append({"codigo": ligado["codigo"], "origem": "lead"})
+    else:
+        # Links the lead's REF imóvel to the card(s) it spawned (origem='lead')
+        # and the cliente's interesses now that the cliente is attached.
+        ligado = atendimento_imoveis_service.vincular_lead_seguro(
+            client, org_id, lead_id=lead["id"], contexto="meta_ingest"
+        )
+        codigo = (ligado or {}).get("codigo")
+        imoveis = (
+            [{"codigo": codigo, "origem": "lead"}]
+            if codigo and (ligado or {}).get("atendimentos")
+            else []
+        )
+    return {
+        "lead": lead,
+        "created": True,
+        "cliente_id": cliente_id,
+        "atendimento_id": _atendimento_do_lead(client, org_id, lead, meta_lead),
+        "campanha": campanha,
+        "imoveis": imoveis,
+    }
+
+
+def _atendimentos_do_lead(
+    client: Any, org_id: UUID, lead: dict, meta_lead: dict[str, Any]
+) -> list[dict]:
+    # Reuses the junction service's own lookup (the cards the lead spawned).
+    return atendimento_imoveis_service._atendimentos_do_lead(client, org_id, lead, meta_lead)
+
+
+def _atendimento_do_lead(
+    client: Any, org_id: UUID, lead: dict, meta_lead: dict[str, Any]
+) -> Optional[str]:
+    """The card of the canonical ``leads`` row (the one ``attach_lead_now``
+    attaches the titular to), else any card the lead spawned."""
+    cards = _atendimentos_do_lead(client, org_id, lead, meta_lead)
+    proprios = [a for a in cards if str(a.get("lead_id") or "") == str(lead["id"])]
+    escolhido = (proprios or cards or [None])[0]
+    return str(escolhido["id"]) if escolhido else None
+
+
+def _vincular_campanha(
+    client: Any,
+    org_id: UUID,
+    lead: dict,
+    meta_lead: dict[str, Any],
+    campanha: dict[str, Any],
+    *,
+    cliente_id: Optional[str] = None,
+) -> list[dict[str, str]]:
+    """Link EVERY imóvel of the campanha to each card the lead spawned,
+    ``origem='campanha'``. Never raises (the lead is already committed; a
+    failure is logged and left for a retry, same posture as
+    ``vincular_lead_seguro``). ``garantir_vinculo`` is idempotent, so a
+    re-drive cannot duplicate."""
+    ligados: list[dict[str, str]] = []
+    try:
+        cards = _atendimentos_do_lead(client, org_id, lead, meta_lead)
+        for codigo in campanha["codigos"]:
+            for card in cards:
+                atendimento_imoveis_service.garantir_vinculo(
+                    client, org_id, card["id"], codigo, origem="campanha"
+                )
+            if cards:
+                ligados.append({"codigo": codigo, "origem": "campanha"})
+            # Same mechanism as the REF path: the cliente's interesse (needs
+            # the cliente `attach_lead_now` just attached; else `reconcile`
+            # completes it from the lead's own código only — campanha
+            # interesses exist only when written here).
+            if cliente_id and meta_lead.get("id"):
+                interesses_service.registrar_de_lead(
+                    client,
+                    org_id,
+                    UUID(str(cliente_id)),
+                    codigo,
+                    meta_ads_lead_id=str(meta_lead["id"]),
+                    criado_em=meta_lead.get("created_time") or meta_lead.get("created_at"),
+                )
+    except Exception:
+        logger.error(
+            "meta_ingest: linking campanha %s imóveis failed for lead %s org=%s",
+            campanha.get("campanha_id"), lead.get("id"), org_id, exc_info=True,
+        )
+    return ligados
 
 
 def backfill_meta_ads_leads(

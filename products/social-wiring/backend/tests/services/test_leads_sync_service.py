@@ -54,6 +54,20 @@ class _RecAdmin:
         return _RecTable(self.rows.setdefault(name, []))
 
 
+class _RecIngest:
+    """DI seam for the normalize step (`ingest_meta_lead`'s signature)."""
+
+    def __init__(self, *, fail_on: str | None = None) -> None:
+        self.calls: list[tuple] = []
+        self._fail_on = fail_on
+
+    def __call__(self, client, org_id, meta_lead, **kw):
+        self.calls.append((org_id, dict(meta_lead), kw))
+        if meta_lead["id"] == self._fail_on:
+            raise ValueError("unparseable created_time")
+        return {"created": True}
+
+
 def _adapter() -> FakeMetaAdapter:
     a = FakeMetaAdapter()
     a.seed(
@@ -96,10 +110,14 @@ def _adapter() -> FakeMetaAdapter:
 
 def test_sync_all_promotes_contacts_and_keeps_full_answers():
     admin = _RecAdmin()
-    svc = LeadsSyncService(admin_supabase=admin)
+    ingest = _RecIngest()
+    svc = LeadsSyncService(admin_supabase=admin, ingest_fn=ingest)
     res = svc.sync_all(org_id=ORG, adapter=_adapter())
 
-    assert res == {"forms_upserted": 1, "leads_upserted": 1, "records_gated": False}
+    assert res == {
+        "forms_upserted": 1, "leads_upserted": 1, "leads_ingested": 1,
+        "ingest_errors": 0, "records_gated": False,
+    }
 
     form = admin.rows["meta_ads_lead_forms"][0]
     assert form["id"] == "f1"
@@ -130,7 +148,11 @@ def test_records_gate_is_surfaced_not_fatal():
         },
     )
     admin = _RecAdmin()
-    res = LeadsSyncService(admin_supabase=admin).sync_all(org_id=ORG, adapter=a)
+    ingest = _RecIngest()
+    res = LeadsSyncService(admin_supabase=admin, ingest_fn=ingest).sync_all(
+        org_id=ORG, adapter=a
+    )
+    assert ingest.calls == []  # nothing fetched, nothing to ingest
 
     assert res["forms_upserted"] == 1        # forms still synced
     assert res["leads_upserted"] == 0
@@ -152,5 +174,51 @@ def test_multivalue_answer_kept_as_list():
         },
     )
     admin = _RecAdmin()
-    LeadsSyncService(admin_supabase=admin).sync_all(org_id=ORG, adapter=a)
+    LeadsSyncService(admin_supabase=admin, ingest_fn=_RecIngest()).sync_all(
+        org_id=ORG, adapter=a
+    )
     assert admin.rows["meta_ads_leads"][0]["answers"]["multi"] == ["a", "b"]
+
+
+def test_sync_all_ingests_every_upserted_lead_into_the_leads_base():
+    """The 'card without a leads row' gap: the 06:00 sync must offer each row
+    it upserts to `ingest_meta_lead` (idempotent), with the form's type map."""
+    admin = _RecAdmin()
+    ingest = _RecIngest()
+    LeadsSyncService(admin_supabase=admin, ingest_fn=ingest).sync_all(
+        org_id=ORG, adapter=_adapter()
+    )
+    ((org, row, kw),) = ingest.calls
+    assert org == ORG and row["id"] == "l1" and row["org_id"] == str(ORG)
+    assert row["answers"]["REF"] == "ONE10023"
+    assert kw["question_types"]["Telefone"] == "PHONE"
+
+
+def test_one_failing_ingest_is_counted_and_does_not_stop_the_run():
+    a = _adapter()
+    a.seed(
+        leads_by_form={
+            "f1": [
+                Lead(id="bad", form_id="f1", field_data=[]),
+                Lead(id="good", form_id="f1", field_data=[]),
+            ]
+        }
+    )
+    ingest = _RecIngest(fail_on="bad")
+    res = LeadsSyncService(admin_supabase=_RecAdmin(), ingest_fn=ingest).sync_all(
+        org_id=ORG, adapter=a
+    )
+    assert [c[1]["id"] for c in ingest.calls] == ["bad", "good"]
+    assert res["leads_upserted"] == 2 and res["leads_ingested"] == 1
+    assert res["ingest_errors"] == 1
+
+
+def test_a_simulated_row_is_stamped_and_a_real_one_is_not():
+    admin = _RecAdmin()
+    svc = LeadsSyncService(admin_supabase=admin)
+    form = SimpleNamespace(id="f1", name="F")
+    lead = Lead(id="sim-1", form_id="f1", field_data=[])
+    sim = svc.upsert_lead(lead, org_id=ORG, form=form, key_types={}, simulado=True)
+    real = svc.upsert_lead(lead, org_id=ORG, form=form, key_types={})
+    assert sim["simulado"] is True
+    assert "simulado" not in real

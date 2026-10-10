@@ -53,6 +53,17 @@ class MetaConnectorSettings(ConnectorSettings):
     waha_api_key: Optional[str] = None
     waha_external_base_url: Optional[str] = None
 
+    # --- social-wiring product API (meta.leadgen.simulate)
+    # The lead rehearsal endpoint is platform-staff only, so the token is a
+    # staff operator's bearer token — never a Meta credential.
+    social_wiring_url: Optional[str] = None
+    social_wiring_operator_token: Optional[str] = None
+
+    @property
+    def leadgen_simulate_configured(self) -> bool:
+        """True when `meta.leadgen.simulate` can reach the product API."""
+        return bool(self.social_wiring_url and self.social_wiring_operator_token)
+
     @property
     def configured(self) -> bool:
         """True when the WhatsApp slice can talk to a real WAHA server.
@@ -77,6 +88,8 @@ get_settings = make_get_settings(
         "waha_base_url": "WAHA_BASE_URL",
         "waha_api_key": "WAHA_API_KEY",
         "waha_external_base_url": "WAHA_EXTERNAL_BASE_URL",
+        "social_wiring_url": "SOCIAL_WIRING_URL",
+        "social_wiring_operator_token": "SOCIAL_WIRING_OPERATOR_TOKEN",
     },
 )
 

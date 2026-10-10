@@ -4,7 +4,8 @@ Aggregation trio built once by `_kit.registry.build_registry` (shared
 across every connector MCP). Tool naming follows the dotted convention
 `meta.<service>.<action>`.
 
-LEAF_MODULES aggregates four leaves: `whatsapp` (WAHA outbound +
+LEAF_MODULES aggregates five leaves (`leadgen` = the staff-only lead
+rehearsal against the social-wiring product API): `whatsapp` (WAHA outbound +
 inbound parse), `facebook` / `instagram` (Graph read-only Page + IG
 surface), `diagnostics` (adapter introspection + OAuth scope
 resolution). The Graph leaves wrap `noctusai_lib.integrations.meta`
@@ -14,9 +15,9 @@ from __future__ import annotations
 
 from _kit.registry import build_registry
 
-from . import ads, diagnostics, facebook, instagram, whatsapp
+from . import ads, diagnostics, facebook, instagram, leadgen, whatsapp
 
-LEAF_MODULES = (ads, diagnostics, facebook, instagram, whatsapp)
+LEAF_MODULES = (ads, diagnostics, facebook, instagram, leadgen, whatsapp)
 
 all_handlers, all_descriptors, register_all = build_registry(LEAF_MODULES)
 

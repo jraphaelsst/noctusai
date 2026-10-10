@@ -110,6 +110,16 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
     "mc_brand_kits": [
         ("is_primary", True, {"marca_id": True}),
     ],
+    # Migration 218's `campanha_veiculacoes_nivel_valido`: a Meta veiculação
+    # names WHICH object `ref_codigo` is (nivel required); every other canal
+    # has no levels (nivel NULL).
+    "campanha_veiculacoes": [
+        ("canal", "meta_ads", {"nivel": True}),
+        *(
+            ("canal", canal, {"nivel": False})
+            for canal in ("email", "organico", "youtube", "portal")
+        ),
+    ],
 }
 
 
