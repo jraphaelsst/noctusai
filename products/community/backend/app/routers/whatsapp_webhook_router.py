@@ -68,9 +68,9 @@ async def _rate_limit_whatsapp_webhook(request: Request) -> None:
 def _build_redis_client():
     if not getattr(settings, "redis_url", None):
         return None
-    import redis as _redis
+    from noctusai_lib.integrations.redis import make_redis_client
 
-    return _redis.from_url(settings.redis_url)
+    return make_redis_client(settings.redis_url, decode_responses=False)
 
 
 def _build_inner_router() -> APIRouter:

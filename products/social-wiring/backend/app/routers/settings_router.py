@@ -563,8 +563,8 @@ async def send_waha_test(
     # Capture lid + persist outbound to memory (best-effort — never block
     # the response on these auxiliary writes).
     try:
-        import redis as _redis_mod
-        redis_client = _redis_mod.from_url(settings.redis_url, decode_responses=True)
+        from noctusai_lib.integrations.redis import make_redis_client
+        redis_client = make_redis_client(settings.redis_url, decode_responses=True)
         # The WAHA response's `_data.id.remote` is the recipient's LID.
         lid = None
         if isinstance(result, dict):

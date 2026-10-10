@@ -81,7 +81,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
-import redis
+from noctusai_lib.integrations.redis import make_redis_client
 from fastapi import APIRouter, Depends, Request, Response, status
 
 from noctusai_lib.domain.chatbot import QueuedConversationMessage
@@ -287,7 +287,7 @@ def _build_intake_service(*, connection=None, cfg=None) -> WhatsAppIntakeService
 
     # Redis for conversation state
     try:
-        redis_client = redis.from_url(cfg.redis_url, decode_responses=True)
+        redis_client = make_redis_client(cfg.redis_url, decode_responses=True)
         redis_client.ping()
     except Exception as exc:
         logger.error("Redis unavailable for WhatsApp state: %s", exc)
@@ -411,7 +411,7 @@ async def _handle_session_status(envelope: WAHAMessagePayload, *, connection, cf
 
     key = f"whatsapp:session_status:{connection.id if connection is not None else envelope.session}"
     try:
-        _status_redis = redis.from_url(cfg.redis_url, decode_responses=True)
+        _status_redis = make_redis_client(cfg.redis_url, decode_responses=True)
         _status_redis.set(key, status_value, ex=24 * 3600)
     except Exception:
         logger.exception("failed to persist WAHA session status (key=%s)", key)
@@ -587,7 +587,7 @@ async def _process_waha_body(
     provider_message_id = (payload.id or "").strip()
     if provider_message_id:
         try:
-            _setnx_client = redis.from_url(cfg.redis_url, decode_responses=True)
+            _setnx_client = make_redis_client(cfg.redis_url, decode_responses=True)
             seen_key = f"whatsapp:msg_seen:{provider_message_id}"
             won = _setnx_client.set(seen_key, "1", ex=5 * 60, nx=True)
             if not won:

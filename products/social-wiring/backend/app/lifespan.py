@@ -83,10 +83,10 @@ async def on_startup() -> None:
     # waste a roundtrip on stale entries — also surfaces a friendly
     # eviction count in logs for visibility.
     try:
-        import redis as _redis
+        from noctusai_lib.integrations.redis import make_redis_client
         from app.modules.youtube.services.download_cache import DownloadCache
 
-        cache_redis = _redis.from_url(settings.redis_url, decode_responses=True)
+        cache_redis = make_redis_client(settings.redis_url, decode_responses=True)
         cache = DownloadCache(
             cache_redis, ttl_hours=settings.download_cache_ttl_hours
         )

@@ -31,7 +31,7 @@ import json
 import logging
 from uuid import UUID
 
-import redis
+from noctusai_lib.integrations.redis import make_redis_client
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.config import SocialWiringSettings
@@ -68,7 +68,7 @@ def get_redis_client(cfg: SocialWiringSettings = Depends(get_settings)):
     of ``monkeypatch.setattr(mod, "_redis_client", ...)`` — which patched
     our own module symbol. Per ``KB § PATTERNS/di-test-seam.md`` (Class-D
     — Redis-via-Depends)."""
-    return redis.from_url(cfg.redis_url, decode_responses=True)
+    return make_redis_client(cfg.redis_url, decode_responses=True)
 
 
 def _session_id_from_key(key: str) -> str:

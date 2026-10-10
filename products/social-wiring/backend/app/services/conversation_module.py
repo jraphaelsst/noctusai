@@ -237,7 +237,7 @@ def _build_redis_client() -> Any:
         try:
             return make_redis_client(redis_url)
         except Exception:
-            logger.exception("Real Redis unavailable at %s; falling back to FakeRedis.", redis_url)
+            logger.exception("Real Redis unavailable; falling back to FakeRedis.")
     logger.info("ConversationBuffer using in-memory FakeRedis (no persistence across restarts).")
     return make_fake_redis_client()
 

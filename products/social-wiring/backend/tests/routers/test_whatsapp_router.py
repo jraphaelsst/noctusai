@@ -200,7 +200,7 @@ def _hermetic_redis(monkeypatch):
 
     shared = fakeredis.FakeRedis(decode_responses=True)
     monkeypatch.setattr(
-        "app.routers.whatsapp_router.redis.from_url",
+        "redis.Redis.from_url",
         lambda *_a, **_kw: shared,
     )
     yield shared

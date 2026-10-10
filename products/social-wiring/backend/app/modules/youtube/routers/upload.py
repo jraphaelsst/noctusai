@@ -122,17 +122,17 @@ def _build_upload_service(token: str, cfg: SocialWiringSettings) -> UploadServic
     # "queue disabled") rather than blocking the request.
     redis_client = None
     try:
-        import redis as _redis
+        from noctusai_lib.integrations.redis import make_redis_client
 
-        redis_client = _redis.from_url(cfg.redis_url, decode_responses=True)
+        redis_client = make_redis_client(cfg.redis_url, decode_responses=True)
         redis_client.ping()
-    except Exception:
+    except Exception as exc:
         # Logged at warn so the gap is visible without spamming.
         import logging
 
         logging.getLogger(__name__).warning(
-            "upload_router: Redis unreachable at %s — uploads will bypass the queue.",
-            cfg.redis_url,
+            "upload_router: Redis unavailable (%s) — uploads will bypass the queue.",
+            type(exc).__name__,
         )
         redis_client = None
 

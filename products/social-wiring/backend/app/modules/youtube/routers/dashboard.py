@@ -155,11 +155,11 @@ cfg: SocialWiringSettings = Depends(get_settings)) -> QueueState:
     # request-scoped + Redis is sync; no constructor injection needed.
     try:
         import json as _json
-        import redis as _redis
+        from noctusai_lib.integrations.redis import make_redis_client
 
         from app.modules.youtube.services.upload_queue import UploadQueue, _QUEUE_KEY  # type: ignore
 
-        redis_client = _redis.from_url(cfg.redis_url, decode_responses=True)
+        redis_client = make_redis_client(cfg.redis_url, decode_responses=True)
         redis_client.ping()
         raw_entries = redis_client.lrange(_QUEUE_KEY, 0, -1) or []
     except Exception:

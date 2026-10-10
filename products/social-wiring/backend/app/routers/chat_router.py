@@ -22,6 +22,7 @@ from typing import Any
 from uuid import UUID
 
 import redis
+from noctusai_lib.integrations.redis import make_redis_client
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 
@@ -73,7 +74,7 @@ class FileStaged(BaseModel):
 
 # ─── Wiring helpers ────────────────────────────────────────────────────
 def _make_redis() -> redis.Redis:
-    return redis.from_url(settings.redis_url, decode_responses=True)
+    return make_redis_client(settings.redis_url, decode_responses=True)
 
 
 def _build_intake() -> WhatsAppIntakeService:

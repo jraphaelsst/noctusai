@@ -491,8 +491,8 @@ def _yt_pkce_redis_client():
     """Lazy Redis client for PKCE verifier. Returns None if unavailable
     (same fallback-tolerant approach as the YouTube settings OAuth)."""
     try:
-        import redis
-        client = redis.from_url(settings.redis_url, decode_responses=True)
+        from noctusai_lib.integrations.redis import make_redis_client
+        client = make_redis_client(settings.redis_url, decode_responses=True)
         client.ping()
         return client
     except Exception as exc:

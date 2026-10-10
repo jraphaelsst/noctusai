@@ -121,9 +121,9 @@ def _pkce_redis_client():
     but we don't want to 500 the auth-url request just because Redis
     blipped."""
     try:
-        import redis
+        from noctusai_lib.integrations.redis import make_redis_client
 
-        client = redis.from_url(settings.redis_url, decode_responses=True)
+        client = make_redis_client(settings.redis_url, decode_responses=True)
         client.ping()
         return client
     except Exception as exc:  # pragma: no cover — exercised in container only
