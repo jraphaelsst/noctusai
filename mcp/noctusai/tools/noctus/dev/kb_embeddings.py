@@ -193,6 +193,7 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
             text = md.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
             errors.append({"path": rel, "error": f"read: {e}"})
+            _ec.restore_file_rows(conn)  # keep the last good rows
             continue
         chunks = _chunk_markdown(text)
         if not chunks:
@@ -263,13 +264,10 @@ def refresh(force: bool = False, paths: list[str] | None = None) -> dict:
                         (row_id, json.dumps(vec)),
                     )
                 total_rows += 1
-        if not per_doc_ok and per_doc_rowids:
-            # all-or-nothing per doc — roll back the partial inserts.
-            _ec.delete_embedding_rows(
-                conn, vec_table="kb_vec", json_table="kb_embeddings_json",
-                rowids=per_doc_rowids,
-            )
-            conn.execute("DELETE FROM kb_chunks WHERE path=?", (rel,))
+        if not per_doc_ok:
+            # all-or-nothing per file: back to the checkpoint — the file keeps
+            # its LAST GOOD rows (never left empty by a transient failure).
+            _ec.restore_file_rows(conn)
             total_rows -= len(per_doc_rowids)
             continue
         refreshed.append(rel)

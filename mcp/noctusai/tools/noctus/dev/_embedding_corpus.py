@@ -238,6 +238,20 @@ def _quota_exc() -> type[BaseException]:
 
 
 # ── Quota-exhausted abort (shared by every refresh loop) ────────────────────
+def restore_file_rows(conn: sqlite3.Connection) -> None:
+    """Undo EVERYTHING done to the cache for the in-flight file: its old rows
+    come back and any partial new rows vanish.
+
+    Every refresh loop commits a checkpoint right before it deletes a file's
+    old rows, so a rollback returns the cache to exactly that checkpoint. Used
+    by EVERY failure path (quota, provider error, bad vector count/dim, read
+    error) — 2026-10-09: the non-quota paths only deleted the partial NEW rows
+    after the old ones were already gone, so a single transient batch failure
+    left the file with NO cached rows (silent search data loss). The old rows
+    stay until the new ones are fully written."""
+    conn.rollback()
+
+
 def abort_on_quota(
     conn: sqlite3.Connection,
     restore_usage: Callable[[], None],
@@ -259,7 +273,7 @@ def abort_on_quota(
     this file started — and returns `status: "quota_exhausted"`, never a
     "rebuilt 0 chunks" lookalike. Pruning and cost logging are skipped.
     """
-    conn.rollback()
+    restore_file_rows(conn)
     conn.close()
     restore_usage()
     msg = str(getattr(exc, "message", None) or exc)[:200]
@@ -847,6 +861,7 @@ def refresh_markdown_corpus(
             text = abs_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
             errors.append({"path": rel, "error": f"read: {e}"})
+            restore_file_rows(conn)  # keep the last good rows
             continue
 
         chunks = chunk_markdown(text)
@@ -929,16 +944,11 @@ def refresh_markdown_corpus(
                     )
                 total_rows += 1
 
-        if not per_doc_ok and per_doc_rowids:
-            delete_embedding_rows(
-                conn,
-                vec_table=corpus.vec_table,
-                json_table=corpus.json_table,
-                rowids=per_doc_rowids,
-            )
-            conn.execute(
-                f"DELETE FROM {corpus.chunks_table} WHERE path=?", (rel,)
-            )
+        if not per_doc_ok:
+            # all-or-nothing per doc: back to the checkpoint — the doc keeps
+            # its LAST GOOD rows (never left empty by a transient failure).
+            restore_file_rows(conn)
+            total_rows -= len(per_doc_rowids)
         if per_doc_ok:
             refreshed.append(rel)
 

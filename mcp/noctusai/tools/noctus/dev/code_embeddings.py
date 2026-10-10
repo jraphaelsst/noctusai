@@ -282,6 +282,7 @@ def refresh(
             text = src_path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
             errors.append({"path": rel, "error": f"read: {e}"})
+            _ec.restore_file_rows(conn)  # keep the last good rows
             continue
         if src_path.suffix in _PY_EXTS:
             chunks = _chunk_python(text, text.splitlines())
@@ -354,12 +355,10 @@ def refresh(
                         (row_id, json.dumps(vec)),
                     )
                 total_rows += 1
-        if not per_file_ok and per_file_rowids:
-            _ec.delete_embedding_rows(
-                conn, vec_table="code_vec", json_table="code_embeddings_json",
-                rowids=per_file_rowids,
-            )
-            conn.execute("DELETE FROM code_chunks WHERE path=?", (rel,))
+        if not per_file_ok:
+            # all-or-nothing per file: back to the checkpoint — the file keeps
+            # its LAST GOOD rows (never left empty by a transient failure).
+            _ec.restore_file_rows(conn)
             total_rows -= len(per_file_rowids)
             continue
         refreshed.append(rel)
