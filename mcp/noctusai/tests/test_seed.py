@@ -2328,3 +2328,34 @@ class TestSearchCapabilitiesLiveTree:
         result = search_capabilities(query="", surface="all", limit=5)
         assert result["returned"] == 5
         assert result["dropped"] == result["total_matched"] - 5
+
+
+class TestImplFunctionForTool:
+    """2026-10-09: 'first public def in the file' picked a helper defined
+    above the impl (`run_post_integrate` for `noctus.dev.task_branch`)."""
+
+    def _tree(self, src: str):
+        import ast
+        return ast.parse(src)
+
+    def test_named_after_the_tool_wins_over_an_earlier_helper(self):
+        from tools.noctus.seed.search_capabilities import _impl_function_for_tool
+
+        tree = self._tree(
+            "def run_post_integrate():\n    '''helper'''\n\n"
+            "def task_branch(action='status'):\n    '''the tool'''\n\n"
+            "def register(server):\n"
+            "    @server.tool(name='noctus.dev.task_branch')\n"
+            "    def _tb(action='status'):\n        return task_branch(action)\n")
+        assert _impl_function_for_tool(tree, "noctus.dev.task_branch").name == "task_branch"
+
+    def test_falls_back_to_the_function_the_shim_calls(self):
+        from tools.noctus.seed.search_capabilities import _impl_function_for_tool
+
+        tree = self._tree(
+            "def helper():\n    '''helper'''\n\n"
+            "def do_work(x):\n    '''impl'''\n\n"
+            "def register(server):\n"
+            "    @server.tool(name='noctus.dev.something_else')\n"
+            "    def _shim(x):\n        return do_work(x)\n")
+        assert _impl_function_for_tool(tree, "noctus.dev.something_else").name == "do_work"

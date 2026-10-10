@@ -342,6 +342,48 @@ def _detail_for_lib(query: str, *, repo_root: Path) -> dict | None:
     return None
 
 
+def _impl_function_for_tool(tree: ast.Module, tool_name: str):
+    """The top-level function an MCP tool's `@server.tool` shim delegates to.
+
+    Resolution order (2026-10-09 — "the first public def in the file" picked
+    `run_post_integrate` for `noctus.dev.task_branch` once a helper was added
+    above the impl, and CI went red):
+      1. a top-level public function named after the tool's last segment
+         (`noctus.dev.task_branch` -> `task_branch`);
+      2. the top-level function the shim CALLS (its body's first call that
+         names a top-level def — `task_branch(...)` or `mod.task_branch(...)`);
+      3. the first public non-shim, non-`register` top-level function (the
+         historical rule — kept as the last resort only).
+    """
+    top = {n.name: n for n in tree.body
+           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    last = tool_name.rsplit(".", 1)[-1]
+    if last in top and _is_public(last):
+        return top[last]
+    shims = [
+        n for n in ast.walk(tree)
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
+                and d.func.attr == "tool" for d in n.decorator_list)
+    ]
+    for shim in shims:
+        for call in ast.walk(shim):
+            if not isinstance(call, ast.Call):
+                continue
+            fn = call.func
+            name = fn.id if isinstance(fn, ast.Name) else (
+                fn.attr if isinstance(fn, ast.Attribute) else None)
+            if name in top and top[name] is not shim:
+                return top[name]
+    shim_names = {s.name for s in shims}
+    for n in tree.body:
+        if (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and _is_public(n.name) and n.name not in shim_names
+                and n.name != "register"):
+            return n
+    return None
+
+
 def _detail_for_mcp(query: str, *, tools_root: Path) -> dict | None:
     """Resolve exact tool_name → full detail: reads the source file for the
     implementation function's full docstring and reconstructs signature from AST.
@@ -363,32 +405,9 @@ def _detail_for_mcp(query: str, *, tools_root: Path) -> dict | None:
                 # Find the impl function (the function the shim delegates to,
                 # not the shim itself). It's usually the non-decorated function
                 # whose name doesn't start with `_`.
-                shim_names: set[str] = set()
-                impl_doc = ""
-                impl_sig = ""
-                for node in ast.walk(tree):
-                    if not isinstance(node, ast.FunctionDef):
-                        continue
-                    # Shims are decorated with @server.tool(...)
-                    is_shim = any(
-                        isinstance(d, ast.Call)
-                        and isinstance(d.func, ast.Attribute)
-                        and d.func.attr == "tool"
-                        for d in node.decorator_list
-                    )
-                    if is_shim:
-                        shim_names.add(node.name)
-                # Find the first public non-shim, non-register function
-                for node in tree.body:
-                    if (
-                        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and _is_public(node.name)
-                        and node.name not in shim_names
-                        and node.name != "register"
-                    ):
-                        impl_doc = _full_docstring(node)
-                        impl_sig = _func_signature(node)
-                        break
+                impl = _impl_function_for_tool(tree, query)
+                impl_doc = _full_docstring(impl) if impl is not None else ""
+                impl_sig = _func_signature(impl) if impl is not None else ""
                 full_doc = impl_doc or meta.description
                 signature = impl_sig or f"{query}({', '.join(sorted(meta.params))})"
 
