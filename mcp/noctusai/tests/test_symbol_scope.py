@@ -146,7 +146,7 @@ class TestSelectInTest:
             "class TestBeta:\n    def test_b(self):\n        assert check_beta()\n"
         )
 
-        sel, named = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+        sel, _, named = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
 
         assert sel == ["t.py::TestAlpha"] and named == {"check_alpha"}
 
@@ -158,16 +158,36 @@ class TestSelectInTest:
             "def test_other():\n    assert True\n"
         )
 
-        sel, _ = SS.select_in_test("t.py", src, MOD, set(), {"check_all"})
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, set(), {"check_all"})
 
         assert sel == ["t.py::test_uses"]
 
-    def test_module_level_statement_takes_the_whole_file(self):
-        src = "VALUES = [check_alpha]\ndef test_x():\n    assert VALUES\n"
+    def test_module_level_reexport_selects_its_users(self):
+        """`x = _mod.x` re-binding (test_compliance does this for the
+        fleet-scan helper) is a helper, not a reason to run the file."""
+        src = (
+            "check_alpha = _loaded.check_alpha\nVALUES = [check_alpha]\n"
+            "def test_x():\n    assert VALUES\n"
+            "def test_y():\n    assert True\n"
+        )
 
-        sel, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+
+        assert sel == ["t.py::test_x"]
+
+    def test_other_module_level_statement_takes_the_whole_file(self):
+        src = "for f in [check_alpha]:\n    register(f)\ndef test_x():\n    assert True\n"
+
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
 
         assert sel == ["t.py"]
+
+    def test_module_docstring_is_prose(self):
+        src = '"""Covers check_alpha."""\ndef test_x():\n    assert True\n'
+
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+
+        assert sel == []
 
     def test_reflection_over_the_module_takes_the_whole_file(self):
         src = (
@@ -176,21 +196,21 @@ class TestSelectInTest:
             "    for name in dir(big):\n        assert name\n"
         )
 
-        sel, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
 
         assert sel == ["t.py"]
 
     def test_cli_flag_names_the_snake_case_symbol(self):
         src = "def test_cli():\n    run(['cli.py', '--check-alpha'])\n"
 
-        sel, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
 
         assert sel == ["t.py::test_cli"]
 
     def test_prose_in_a_string_is_not_a_reference(self):
         src = "def test_msg():\n    assert True, 'the keeper said so'\n"
 
-        sel, _ = SS.select_in_test("t.py", src, MOD, {"keeper"}, set())
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"keeper"}, set())
 
         assert sel == []
 
@@ -214,11 +234,28 @@ def _tests(n_extra: int = 9) -> dict[str, str]:
     return files
 
 
-def _scope(files: dict[str, str], new: str, diff: str, kit: dict[str, str] | None = None):
-    return SS.scope_module(files.__getitem__, MOD, sorted(files), BIG, new, diff, kit)
+def _scope(files: dict[str, str], new: str, diff: str, kit: dict[str, str] | None = None,
+           delegate: bool = False):
+    out = SS.scope_module(files.__getitem__, MOD, sorted(files), BIG, new, diff, kit, delegate)
+    return None if out is None else (out.run if not delegate else out)
 
 
 class TestScopeModule:
+    def test_a_registry_the_change_does_not_reach_is_not_run(self):
+        src = BIG.replace("def check_all():", "def check_other_registry():\n    return [check_beta(), check_gamma(), check_delta(), check_epsilon(), check_decorated()]\n\n\ndef check_all():")
+        files = _tests()
+        files["tests/test_other_registry.py"] = (
+            f"from {MOD} import check_other_registry\n"
+            "def test_other_registry():\n    assert check_other_registry()\n"
+        )
+        files["tests/test_alpha.py"] = f"from {MOD} import check_alpha\ndef test_alpha():\n    assert check_alpha()\n"
+        new, diff = _edit(src, "    return _helper(1)\n", "    return _helper(2)\n")  # check_alpha
+
+        sel = SS.scope_module(files.__getitem__, MOD, sorted(files), src, new, diff).run
+
+        assert "tests/test_fleet.py::test_fleet" in sel
+        assert not any("other_registry" in s for s in sel)
+
     def test_narrows_to_the_namer_plus_the_registry_runner(self):
         new, diff = _edit(BIG, "    return 3\n", "    return 33\n")
 
@@ -257,6 +294,40 @@ class TestScopeModule:
         assert _scope(few, new, diff) is None
 
 
+class TestRegistryDelegation:
+    """compliance.py only: a test reaching the change ONLY through the
+    registry is handed to keeper_delta (named, not run); CI runs it whole."""
+
+    def test_registry_only_tests_are_delegated_not_run(self):
+        new, diff = _edit(BIG, "    return 3\n", "    return 33\n")
+
+        out = _scope(_tests(), new, diff, delegate=True)
+
+        assert out.run == ["tests/test_gamma.py::test_gamma"]
+        assert out.delegated == ["tests/test_fleet.py::test_fleet"]
+
+    def test_a_test_naming_the_change_runs_even_if_it_also_names_the_registry(self):
+        files = _tests()
+        files["tests/test_fleet.py"] = (
+            f"from {MOD} import check_all, check_gamma\n"
+            "def test_fleet():\n    assert check_gamma() in check_all()\n"
+        )
+        new, diff = _edit(BIG, "    return 3\n", "    return 33\n")
+
+        out = _scope(files, new, diff, delegate=True)
+
+        assert "tests/test_fleet.py::test_fleet" in out.run and out.delegated == []
+
+    def test_a_changed_registry_is_never_delegated(self):
+        new, diff = _edit(BIG, "    return [check_alpha(),", "    return [check_alpha(), None,")
+        files = _tests()
+        files["tests/test_alpha.py"] = f"from {MOD} import check_alpha\ndef test_alpha():\n    assert check_alpha()\n"
+
+        out = _scope(files, new, diff, delegate=True)
+
+        assert out.run == ["tests/test_fleet.py::test_fleet"] and out.delegated == []
+
+
 def _git(root: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(root), *args], check=True,
                           capture_output=True, text=True).stdout
@@ -266,13 +337,13 @@ class TestGateSweepEndToEnd:
     """The real wiring: `gate_sweep` diffs the module against the merge-base
     and the mcp gate's argv carries node ids, not all eleven importers."""
 
-    def _repo(self, tmp_path: Path) -> Path:
+    def _repo(self, tmp_path: Path, module: str = "big") -> Path:
         pkg = tmp_path / "mcp/noctusai"
         (pkg / "tools/noctus/dev").mkdir(parents=True)
-        (pkg / "tools/noctus/dev/big.py").write_text(BIG)
+        (pkg / f"tools/noctus/dev/{module}.py").write_text(BIG)
         for rel, src in _tests().items():
             (pkg / rel).parent.mkdir(parents=True, exist_ok=True)
-            (pkg / rel).write_text(src)
+            (pkg / rel).write_text(src.replace(MOD, f"tools.noctus.dev.{module}"))
         _git(tmp_path, "init", "-q", "-b", "dev")
         _git(tmp_path, "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A")
         _git(tmp_path, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
@@ -300,6 +371,31 @@ class TestGateSweepEndToEnd:
             "mcp/noctusai/tests/test_fleet.py::test_fleet",
             "mcp/noctusai/tests/test_gamma.py::test_gamma",
         ]
+
+    def test_compliance_delegation_rides_on_the_keeper_delta_gate(self, tmp_path):
+        root = self._repo(tmp_path, module="compliance")
+        big = root / "mcp/noctusai/tools/noctus/dev/compliance.py"
+        big.write_text(BIG.replace("    return 3\n", "    return 33\n"))
+        outcomes = {"keeper_delta": (0, "ok", 0.0)}
+
+        result = GS.gate_sweep(base_ref="base", repo_root=str(root), allow_stale_tree=True,
+                               run_gate=lambda spec: outcomes.get(spec.gate, (0, "ok", 0.0)))
+
+        kd = next(g for g in result["gates"] if g["gate"] == "keeper_delta")
+        assert kd["delegated_tests"] == ["mcp/noctusai/tests/test_fleet.py::test_fleet"]
+        assert result["status"] == "green"
+
+    def test_delegation_is_not_green_when_keeper_delta_did_not_run(self, tmp_path):
+        root = self._repo(tmp_path, module="compliance")
+        big = root / "mcp/noctusai/tools/noctus/dev/compliance.py"
+        big.write_text(BIG.replace("    return 3\n", "    return 33\n"))
+
+        result = GS.gate_sweep(
+            base_ref="base", repo_root=str(root), allow_stale_tree=True,
+            run_gate=lambda spec: (None, "timeout", 90.0) if spec.gate == "keeper_delta" else (0, "ok", 0.0),
+        )
+
+        assert result["status"] != "green" and result["exit_code"] == 1
 
     def test_import_edit_keeps_every_importer(self, tmp_path):
         root = self._repo(tmp_path)

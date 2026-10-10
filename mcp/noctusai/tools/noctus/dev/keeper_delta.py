@@ -36,6 +36,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from . import symbol_scope
+
 COMPLIANCE_REL = "mcp/noctusai/tools/noctus/dev/compliance.py"
 _AGGREGATOR = "check_all_products"
 
@@ -45,32 +47,29 @@ def _top_level_functions(src: str) -> dict[str, ast.FunctionDef]:
     return {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
 
 
-def _called_names(fn: ast.FunctionDef) -> set[str]:
-    return {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
-
-
 def changed_keepers(base_src: str | None, head_src: str) -> list[str]:
     """`check_*` functions (excluding the aggregator) the diff can have
-    affected: changed/new keepers + keepers that transitively reference a
-    changed/new/removed module-level function. `base_src=None` (file is new)
-    ⇒ every keeper."""
-    head = _top_level_functions(head_src)
-    base = _top_level_functions(base_src) if base_src is not None else {}
-    changed = {
-        name for name, fn in head.items()
-        if name not in base or ast.dump(fn) != ast.dump(base[name])
-    } | (set(base) - set(head))
-    refs = {name: _called_names(fn) for name, fn in head.items()}
-    affected = set(changed)
-    grew = True
-    while grew:  # transitive closure over intra-module references
-        grew = False
-        for name, names in refs.items():
-            if name not in affected and names & affected:
-                affected.add(name)
-                grew = True
+    affected: every keeper that is, or transitively references, a top-level
+    symbol whose AST changed — a function, a class, or a named constant (an
+    allowlist edit changes what the keepers reading it report). Uses
+    `symbol_scope`, the one "what did this diff change" mechanism the
+    merged-tip mcp gate also scopes by.
+
+    Falls back to EVERY keeper — never zero — when the change can't be
+    attributed: the file is new (`base_src=None`), a side doesn't parse, a
+    differing statement binds no name (an import, an `if` block), or the
+    module reads its own names dynamically (`globals()`)."""
+    head_fns = _top_level_functions(head_src)
+    every = sorted(n for n in head_fns if n.startswith("check_") and n != _AGGREGATOR)
+    if base_src is None:
+        return every
+    changed = symbol_scope.changed_by_ast(base_src, head_src)
+    syms = symbol_scope._symbols(head_src)
+    if changed is None or syms is None:
+        return every
+    affected = symbol_scope.closure(changed, syms)
     return sorted(n for n in affected
-                  if n in head and n.startswith("check_") and n != _AGGREGATOR)
+                  if n in head_fns and n.startswith("check_") and n != _AGGREGATOR)
 
 
 def aggregator_call_shapes(head_src: str) -> dict[str, str]:

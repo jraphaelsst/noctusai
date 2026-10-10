@@ -24,7 +24,7 @@ uncertainty returns ``None`` = "fall back to import scoping for this module"
     caller in the closure;
   * an empty selection.
 Tests that reach detectors by REGISTRY or dispatch rather than by name are
-ALWAYS selected: the registry is DERIVED (a top-level def that references
+ALWAYS selected when the change reaches the registry: it is DERIVED (a top-level def that references
 at least `REGISTRY_MIN_FANOUT` of the module's own PUBLIC functions, e.g.
 `check_all_products`), extended ONE hop to the toolkit defs that call it
 (`refresh_compliance_baseline.live_high_critical_fingerprints` is how
@@ -70,6 +70,21 @@ class _Symbols:
     decorators: list[tuple[int, int]]  # decorator line ranges
     refs: dict[str, set[str]]  # name -> identifiers it references
     functions: frozenset[str]
+    dynamic: bool  # the module looks its own names up at runtime
+
+
+def _dynamic_lookup(tree: ast.AST) -> bool:
+    """`globals()` / `vars()` / `sys.modules[__name__]`: a module that reads
+    its own names by string at runtime defeats any static reference graph."""
+    for n in ast.walk(tree):
+        if (isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id in ("globals", "vars") and not n.args):
+            return True
+        if (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Attribute)
+                and n.value.attr == "modules" and isinstance(n.slice, ast.Name)
+                and n.slice.id == "__name__"):
+            return True
+    return False
 
 
 def _node_names(node: ast.stmt) -> list[str] | None:
@@ -133,7 +148,7 @@ def _symbols(source: str) -> _Symbols | None:
         for name in names:
             spans[name] = (node.lineno, node.end_lineno or node.lineno)
             refs[name] = ids - {name}
-    return _Symbols(spans, decorators, refs, frozenset(functions))
+    return _Symbols(spans, decorators, refs, frozenset(functions), _dynamic_lookup(tree))
 
 
 def _changed_lines(diff: str) -> tuple[list[int], list[int]]:
@@ -181,6 +196,8 @@ def changed_symbols(old_source: str | None, new_source: str, diff: str) -> set[s
     old_syms = _symbols(old_source) if old_source is not None else None
     if new_syms is None or (old_source is not None and old_syms is None):
         return None
+    if new_syms.dynamic:
+        return None
     old_lines, new_lines = _changed_lines(diff)
     if old_lines and old_syms is None:
         return None
@@ -189,6 +206,40 @@ def changed_symbols(old_source: str | None, new_source: str, diff: str) -> set[s
     if from_new is None or from_old is None:
         return None
     return from_new | from_old
+
+
+def changed_by_ast(base_source: str, head_source: str) -> set[str] | None:
+    """Top-level symbols whose AST differs between two whole sources (new,
+    edited or removed), or None when it can't tell: a side that doesn't
+    parse, a differing statement that binds no name (an import, an `if`
+    block, a bare call), or a module that looks its names up dynamically.
+    Line moves and comments don't count — `ast.dump` carries neither."""
+    def dumps(src: str):
+        tree = ast.parse(src)
+        named: dict[str, str] = {}
+        unnamed: list[str] = []
+        for node in tree.body:
+            names = _node_names(node)
+            dumped = ast.dump(node)
+            if names is None:
+                if not _is_prose(node):
+                    unnamed.append(dumped)
+                continue
+            for name in names:
+                named[name] = dumped
+        return named, sorted(unnamed), _dynamic_lookup(tree)
+
+    try:
+        base, base_unnamed, base_dyn = dumps(base_source)
+        head, head_unnamed, head_dyn = dumps(head_source)
+    except SyntaxError:
+        return None
+    if base_unnamed != head_unnamed:
+        return None
+    changed = {n for n in head if base.get(n) != head[n]} | (base.keys() - head.keys())
+    if changed and (base_dyn or head_dyn):
+        return None
+    return changed
 
 
 def registry(syms: _Symbols) -> set[str]:
@@ -228,15 +279,20 @@ def registry_reach(sources: Mapping[str, str], reg: set[str]) -> set[str]:
     return set(reg) | {n for n in reaching if defined.get(n, 0) == 1}
 
 
-def closure(changed: set[str], syms: _Symbols) -> set[str]:
-    """`changed` plus every symbol that transitively references one."""
+def closure(changed: set[str], syms: _Symbols, stop: frozenset[str] = frozenset()) -> set[str]:
+    """`changed` plus every symbol that transitively references one. A
+    symbol in `stop` (a registry) joins the result but its own users are not
+    followed, unless it is itself in `changed`."""
     users: dict[str, set[str]] = {}
     for name, ids in syms.refs.items():
-        for ref in ids & syms.spans.keys():
+        for ref in ids:  # a removed name's former users are users too
             users.setdefault(ref, set()).add(name)
     out, todo = set(changed), list(changed)
     while todo:
-        for user in users.get(todo.pop(), ()):
+        name = todo.pop()
+        if name in stop and name not in changed:
+            continue
+        for user in users.get(name, ()):
             if user not in out:
                 out.add(user)
                 todo.append(user)
@@ -266,87 +322,127 @@ def _reflects(tree: ast.AST, aliases: set[str]) -> bool:
     return False
 
 
+def _is_prose(node: ast.stmt) -> bool:
+    """A bare string statement (the module docstring, a section note)."""
+    return (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str))
+
+
 def _is_test_node(node: ast.stmt) -> bool:
     if isinstance(node, ast.ClassDef):
         return node.name.startswith("Test")
     return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test")
 
 
+@dataclass(frozen=True)
+class Scoped:
+    """`run`: selectors the gate runs. `delegated`: selectors that reach the
+    change ONLY through the registry — handed to the stand-in gate that
+    judges the registry run (`keeper_delta` for `compliance.py`), named in
+    the result, and still run whole by CI."""
+    run: list[str]
+    delegated: list[str]
+
+
 def select_in_test(
-    rel_test: str, source: str, module: str, targets: set[str], always: set[str]
-) -> tuple[list[str], set[str]] | None:
-    """(selectors, target symbols this file names) for one importing test
-    file. A selector is the file itself or `file::Node`. None = can't parse."""
+    rel_test: str, source: str, module: str, targets: set[str], always: set[str],
+    delegate: bool = False,
+) -> tuple[list[str], list[str], set[str]] | None:
+    """(run selectors, delegated selectors, target symbols the file names)
+    for one importing test file. A selector is the file itself or
+    `file::Node`. Nodes reaching only `always` (registry) names are delegated
+    when `delegate`, else run. None = can't parse."""
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return None
     if _reflects(tree, _module_aliases(tree, module)):
-        return [rel_test], set(targets)
-    body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom))]
-    ids = {id(n): _identifiers(n) for n in body}
-    wanted = targets | always
+        return [rel_test], [], set(targets)
+    body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom)) and not _is_prose(n)]
+    # What each statement REFERENCES — minus the names it binds itself, so
+    # `x = _mod.x` (a module-level re-export) is a helper, not a use.
+    ids = {id(n): _identifiers(n) - set(_node_names(n) or ()) for n in body}
+    want_run, want_reg = set(targets), set(always)
     named: set[str] = set()
-    # A module-level helper or fixture that names a target becomes a target
-    # itself, so the tests that call it (or request it by parameter) are
-    # selected; repeat until no new helper joins.
+    # A module-level helper, fixture or re-export that names a target becomes
+    # a target itself (of the same tier), so the tests that call it or
+    # request it by parameter are selected; repeat until nothing joins.
     grew = True
     while grew:
         grew = False
         for node in body:
-            if _is_test_node(node) or not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            bound = _node_names(node)
+            if _is_test_node(node) or bound is None:
                 continue
-            if node.name not in wanted and ids[id(node)] & wanted:
-                named |= ids[id(node)] & wanted
-                wanted.add(node.name)
+            refs = ids[id(node)]
+            if refs & want_run and not set(bound) <= want_run:
+                named |= refs & want_run
+                want_run.update(bound)
                 grew = True
-    nodes: list[str] = []
+            elif refs & want_reg and not set(bound) <= want_reg | want_run:
+                want_reg.update(bound)
+                grew = True
+    run: list[str] = []
+    delegated: list[str] = []
     for node in body:
-        hit = ids[id(node)] & wanted
-        if not hit:
+        refs = ids[id(node)]
+        hit_run, hit_reg = refs & want_run, refs & want_reg
+        if not (hit_run or hit_reg):
             continue
-        named |= hit
+        named |= hit_run
+        to_delegate = delegate and not hit_run
         if _is_test_node(node):
-            nodes.append(f"{rel_test}::{node.name}")  # type: ignore[attr-defined]
-        elif not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return [rel_test], named  # a module-level statement uses it: whole file
-    return nodes, named
+            (delegated if to_delegate else run).append(f"{rel_test}::{node.name}")  # type: ignore[attr-defined]
+        elif _node_names(node) is None:  # any other module-level statement: whole file
+            return ([], [rel_test], named) if to_delegate else ([rel_test], [], named)
+    return run, delegated, named
 
 
 def scope_module(
     read_test: Callable[[str], str], module: str, importing_tests: list[str],
     old_source: str | None, new_source: str, diff: str,
     toolkit_sources: Mapping[str, str] | None = None,
-) -> list[str] | None:
+    delegate_registry: bool = False,
+) -> Scoped | None:
     """Selectors for one big changed module, or None = import scoping.
     `read_test(rel_path)` returns a test file's source (the tree under test,
-    or a historical commit when replaying)."""
+    or a historical commit when replaying). `delegate_registry` only when a
+    stand-in gate judges the registry run for this module."""
     if len(importing_tests) < MIN_IMPORTING_TESTS:
         return None
     changed = changed_symbols(old_source, new_source, diff)
     syms = _symbols(new_source)
     if not changed or syms is None:
         return None
-    reg = registry(syms)
-    always = registry_reach(toolkit_sources or {}, reg)
-    targets = closure(changed & syms.spans.keys(), syms) | (changed - syms.spans.keys())
-    selectors: list[str] = []
+    reg = frozenset(registry(syms) - changed)  # a CHANGED registry is a plain target
+    reached_all = closure(changed, syms, stop=reg)
+    # Only the registries that actually dispatch to the change: a cache-
+    # freshness aggregator has nothing to say about a detector's allowlist.
+    reached = reached_all & reg
+    targets = reached_all - reached
+    always: set[str] = set()
+    if reached:
+        always = closure(set(reached), syms) | registry_reach(toolkit_sources or {}, set(reached))
+    run: list[str] = []
+    delegated: list[str] = []
     named: set[str] = set()
     for rel_test in importing_tests:
         picked = select_in_test(
-            rel_test, read_test(rel_test), module, targets, always,
+            rel_test, read_test(rel_test), module, targets, always, delegate_registry,
         )
         if picked is None:
             return None
-        sel, hit = picked
-        selectors.extend(sel)
+        r, d, hit = picked
+        run.extend(r)
+        delegated.extend(d)
         named |= hit
     # Every changed symbol must be NAMED by a test, directly or through a
     # non-registry symbol that uses it — reaching it only via the registry's
     # fleet run is not coverage of this change. A deleted symbol has no
     # behaviour left to test (its callers changed too and are checked here).
-    covering = named - always
     for sym in changed & syms.spans.keys():
-        if not (closure({sym}, syms) - always) & covering:
+        if not closure({sym}, syms, stop=reg) - reg & named:
             return None
-    return selectors or None
+    if not run:
+        return None
+    return Scoped(run, delegated)

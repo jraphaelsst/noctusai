@@ -982,6 +982,7 @@ def _imported_names(tree: ast.AST) -> set[str]:
 
 def _mcp_scoped_test_files(
     root: Path, mcp_files: list[str], diffs: dict[str, dict[str, Any]] | None = None,
+    delegated: list[str] | None = None,
 ) -> tuple[list[str], list[str]] | None:
     """Affected toolkit test files for `mcp_files`, or None = run the full suite.
 
@@ -990,7 +991,9 @@ def _mcp_scoped_test_files(
     never silently passed). `diffs` (``{repo_rel: {"old", "diff"}}``, from
     `_mcp_module_diffs`) lets a module many tests import narrow from "every
     importer" to the tests naming what changed — `symbol_scope`; without it,
-    or whenever that can't tell, import scoping stands."""
+    or whenever that can't tell, import scoping stands. For `compliance.py`,
+    tests reaching the change only through the fleet registry are appended
+    to `delegated` (judged by the `keeper_delta` gate) instead of run."""
     pkg_dir = root / _MCP_PKG
     changed_tests: set[str] = set()
     changed_mods: dict[str, str] = {}
@@ -1042,7 +1045,7 @@ def _mcp_scoped_test_files(
                 importers.setdefault(mod, []).append(rel_test)
             covered.update(hits)
     untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
-    affected |= _narrowed_importers(root, changed_mods, importers, diffs or {})
+    affected |= _narrowed_importers(root, changed_mods, importers, diffs or {}, delegated)
     for hook in [*hook_files, *data_files]:
         name = Path(hook).name
         if hook.startswith((".github/", "scripts/")) and not hook.endswith(".py"):
@@ -1062,6 +1065,7 @@ def _mcp_scoped_test_files(
 def _narrowed_importers(
     root: Path, changed_mods: dict[str, str],
     importers: dict[str, list[str]], diffs: dict[str, dict[str, Any]],
+    delegated: list[str] | None = None,
 ) -> set[str]:
     """Each changed module's importing tests — narrowed by `symbol_scope`
     for a module enough tests import, when its diff is known."""
@@ -1077,8 +1081,17 @@ def _narrowed_importers(
                 lambda rel: (root / rel).read_text(encoding="utf-8"), mod, tests,
                 info["old"], (root / _MCP_PKG / changed_mods[mod]).read_text(encoding="utf-8"),
                 info["diff"], kit,
+                # keeper_delta is the stand-in for the registry's fleet run —
+                # it exists for compliance.py only, so nothing else delegates.
+                delegate_registry=(_MCP_PKG + changed_mods[mod] == _COMPLIANCE_REL
+                                   and delegated is not None),
             )
-        selected.update(narrowed if narrowed is not None else tests)
+        if narrowed is None:
+            selected.update(tests)
+            continue
+        selected.update(narrowed.run)
+        if delegated is not None:
+            delegated.extend(narrowed.delegated)
     return selected
 
 
@@ -1204,7 +1217,10 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
         ]
 
     if scope["mcp"]:
-        scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []), scope.get("mcp_diffs"))
+        delegated: list[str] = []
+        scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []), scope.get("mcp_diffs"), delegated)
+        if delegated:
+            scope["mcp_delegated_tests"] = sorted(set(delegated))
         if scoped is None:
             specs.append(
                 GateSpec("mcp_toolkit_tests", [py, "-m", "pytest", "mcp/noctusai/tests/", "-q"], root)
@@ -1414,6 +1430,25 @@ def run_gates_named(
             "unknown": unknown}
 
 
+def _attach_delegation(gates: list[dict[str, Any]], tests: list[str]) -> None:
+    """Name the registry-reaching tests the scoped mcp gate did NOT run on the
+    gate that judges them instead (`keeper_delta`, the merged-tip stand-in
+    for `test_all_products_compliant` / `test_real_products_pass_validate`;
+    CI still runs them whole). keeper_delta's own ran/exit decide the
+    verdict: green only if it ran and passed. Missing entirely (cannot
+    happen while delegation requires compliance.py in the diff) ⇒ a not-run
+    entry, so a delegation can never read as a pass."""
+    kd = next((g for g in gates if g["gate"] == "keeper_delta"), None)
+    if kd is None:
+        gates.append({
+            "gate": "keeper_delta", "ran": False, "exit_code": None, "duration_s": 0.0,
+            "summary": f"{len(tests)} test(s) delegated to keeper_delta, which was not scheduled",
+            "delegated_tests": tests,
+        })
+        return
+    kd["delegated_tests"] = tests
+
+
 def _verdict(gates: list[dict[str, Any]]) -> str:
     """`green` iff every gate ran AND exited 0.
 
@@ -1584,6 +1619,9 @@ def gate_sweep(
             ),
             "duration_s": 0.0,
         })
+
+    if scope.get("mcp_delegated_tests"):
+        _attach_delegation(gates, scope["mcp_delegated_tests"])
 
     status = _verdict(gates)
     harness = {
