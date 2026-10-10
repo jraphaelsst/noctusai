@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Protocol
+from typing import Any, Protocol, Sequence
 
 
 @dataclass(frozen=True)
@@ -717,6 +717,55 @@ class DirectMessage:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class BusinessDiscoveryMedia:
+    """One public media item of ANOTHER Instagram professional account, read
+    through ``business_discovery`` (Facebook-Login connection only).
+
+    Documented field set (Meta, "Business Discovery"): ``id``, ``caption``,
+    ``comments_count``, ``like_count``, ``media_product_type``,
+    ``media_type``, ``media_url``, ``permalink``, ``thumbnail_url``,
+    ``timestamp``, ``username``. **Views / plays / reach are NOT served** --
+    ``views`` therefore exists on the type only so a consumer's metric code
+    reads one honest ``None`` instead of guessing; the adapter never fills it.
+
+    ``like_count`` / ``comments_count`` are ``None`` (never 0) when Graph omits
+    them (the owner hid the like count, or comments are off): a consumer that
+    computes engagement must treat ``None`` as "unknown", not "zero"."""
+
+    id: str
+    caption: str | None = None
+    media_type: str | None = None  # IMAGE | VIDEO | CAROUSEL_ALBUM
+    media_product_type: str | None = None  # FEED | REELS | ...
+    media_url: str | None = None
+    permalink: str | None = None
+    thumbnail_url: str | None = None
+    timestamp: datetime | None = None
+    like_count: int | None = None
+    comments_count: int | None = None
+    views: int | None = None  # never served by Business Discovery
+
+
+@dataclass(frozen=True)
+class BusinessDiscoveryPage:
+    """One page of ``business_discovery.username(<handle>)``: the target
+    profile's public header plus a page of its media.
+
+    ``next_cursor`` is the ``paging.cursors.after`` of the media edge (pass it
+    back as ``after=`` for the next page); ``None`` on the last page."""
+
+    username: str
+    ig_user_id: str | None = None
+    name: str | None = None
+    biography: str | None = None
+    followers_count: int | None = None
+    follows_count: int | None = None
+    media_count: int | None = None
+    profile_picture_url: str | None = None
+    media: list[BusinessDiscoveryMedia] = field(default_factory=list)
+    next_cursor: str | None = None
+
+
 class MetaAdapter(Protocol):
     """Meta Graph read-only adapter contract. Concrete implementations:
     `FakeMetaAdapter` (deterministic in-memory; dev/test default),
@@ -776,6 +825,16 @@ class MetaAdapter(Protocol):
     ) -> list[InstagramMedia]: ...
 
     def get_instagram_media_insights(self, media_id: str) -> PostInsights: ...
+
+    def get_business_discovery(
+        self,
+        ig_user_id: str,
+        username: str,
+        *,
+        fields: Sequence[str],
+        after: str | None = None,
+        limit: int = 25,
+    ) -> BusinessDiscoveryPage: ...
 
     def get_instagram_account_insights(
         self,

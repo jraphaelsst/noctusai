@@ -1783,6 +1783,7 @@ class TestReadPathRegression:
             "list_instagram_accounts",
             "list_instagram_media",
             "get_instagram_media_insights",
+            "get_business_discovery",
             "get_instagram_account_insights",
             "publish_facebook_post",
             "publish_instagram_media",

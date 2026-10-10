@@ -110,6 +110,13 @@ _PERMISSION_ERROR_CODES = {10, 200}
 # never a transient error and never a code defect — so consumers surface
 # it as its own structured "needs setup" state rather than a raw 502.
 _CAPABILITY_ERROR_CODES = {3}
+# Business Discovery "no such target" -- code 110 ("Invalid user id") and
+# code 100 ("Invalid parameter": the handle is not an Instagram business /
+# creator account, or does not exist). Used only by
+# `MetaOAuthAdapter.get_business_discovery`, which re-raises as
+# `BusinessDiscoveryNotFound`; deliberately NOT a generic MetaGraphError
+# property because code 100 elsewhere means a plain bad parameter.
+_BUSINESS_DISCOVERY_NOT_FOUND_CODES = {100, 110}
 
 # Kitchen-sink scope catalog. Versioned with the adapter, NOT in env
 # (env-var scope lists drift across workspaces — session-notes §A.1
@@ -210,6 +217,26 @@ class MetaGraphError(Exception):
             f"MetaGraphError(code={self.code}, subcode={self.error_subcode}, "
             f"type={self.error_type!r}, msg={self.message!r})"
         )
+
+
+class BusinessDiscoveryNotFound(MetaGraphError):
+    """The username passed to ``business_discovery`` is unknown, private, or not
+    an Instagram professional (business / creator) account."""
+
+    @classmethod
+    def from_graph_error(cls, exc: MetaGraphError) -> "BusinessDiscoveryNotFound":
+        return cls(
+            exc.message,
+            code=exc.code,
+            error_subcode=exc.error_subcode,
+            error_type=exc.error_type,
+            fbtrace_id=exc.fbtrace_id,
+            http_status=exc.http_status,
+        )
+
+
+def is_business_discovery_not_found(exc: MetaGraphError) -> bool:
+    return exc.code in _BUSINESS_DISCOVERY_NOT_FOUND_CODES
 
 
 def _raise_for_graph_error(

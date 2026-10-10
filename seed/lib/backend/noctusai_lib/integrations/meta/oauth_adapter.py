@@ -44,12 +44,15 @@ from __future__ import annotations
 import logging
 import time
 from datetime import date
-from typing import Any
+from typing import Any, Sequence
 
 from noctusai_lib.integrations.meta import _meta_api
 from noctusai_lib.integrations.meta._meta_api import MetaGraphError
 from noctusai_lib.integrations.meta.credentials import MetaCredentialResolver
 from noctusai_lib.integrations.meta.mappers import (
+    business_discovery_fields_param,
+    business_discovery_page_from_body,
+    normalize_ig_handle,
     FB_COMMENT_FIELDS,
     IG_ACCOUNT_FIELDS,
     IG_ACCOUNT_INSIGHT_METRICS,
@@ -85,6 +88,7 @@ from noctusai_lib.integrations.meta.mappers import (
     post_from_body,
 )
 from noctusai_lib.integrations.meta.types import (
+    BusinessDiscoveryPage,
     Ad,
     AdAccount,
     AdActivity,
@@ -430,6 +434,53 @@ class MetaOAuthAdapter:
             limit=limit,
         )
         return [ig_media_from_body(r) for r in rows]
+
+    def get_business_discovery(
+        self,
+        ig_user_id: str,
+        username: str,
+        *,
+        fields: Sequence[str],
+        after: str | None = None,
+        limit: int = 25,
+    ) -> BusinessDiscoveryPage:
+        """Read another professional account's PUBLIC profile + a page of its
+        media -- ``GET /{ig_user_id}?fields=business_discovery.username(..)``.
+
+        Facebook-Login connection only (``graph.facebook.com``); the
+        Instagram-Login host has no Business Discovery. ``ig_user_id`` is the
+        CALLER's own connected IG business account. ``fields`` are the media
+        sub-fields to request (``mappers.BUSINESS_DISCOVERY_MEDIA_FIELDS`` is
+        the standard set); views/plays are not served by this edge.
+
+        Errors: unknown / private / non-professional handle (Graph 100/110) ->
+        ``BusinessDiscoveryNotFound``; rate limit (4/17/32/613) ->
+        ``MetaGraphError`` with ``is_rate_limited``; missing scope / app review
+        -> ``is_permission`` / ``is_auth_error``. Never an empty page for an
+        error."""
+
+        param = business_discovery_fields_param(
+            username, fields, after=after, limit=limit
+        )
+        try:
+            body = _meta_api.graph_get(
+                str(ig_user_id),
+                access_token=self._user_token(),
+                params={"fields": param},
+                version=self._version,
+            )
+        except MetaGraphError as exc:
+            if _meta_api.is_business_discovery_not_found(exc):
+                raise _meta_api.BusinessDiscoveryNotFound.from_graph_error(exc) from exc
+            raise
+        try:
+            return business_discovery_page_from_body(
+                body, requested_username=normalize_ig_handle(username)
+            )
+        except ValueError as exc:
+            raise MetaGraphError(
+                f"Business Discovery: {exc}", http_status=200
+            ) from exc
 
     def get_instagram_media_insights(self, media_id: str) -> PostInsights:
         body = _meta_api.graph_get(

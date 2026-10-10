@@ -49,6 +49,15 @@ from noctusai_lib.integrations.media.pdf_text import (
     pdf_text_tooling_available,
     strip_provenance_stamps,
 )
+from noctusai_lib.integrations.media.safe_fetch import (
+    FakeSafeFetcher,
+    FetchResult,
+    RealSafeFetcher,
+    SafeFetchError,
+    SafeFetcher,
+    make_safe_fetcher,
+    safe_fetch,
+)
 from noctusai_lib.integrations.media.types import (
     InboundMedia,
     MediaKind,
@@ -147,4 +156,11 @@ __all__ = [
     "get_media_resolver",
     "pdf_text_tooling_available",
     "strip_provenance_stamps",
+    "FakeSafeFetcher",
+    "FetchResult",
+    "RealSafeFetcher",
+    "SafeFetchError",
+    "SafeFetcher",
+    "make_safe_fetcher",
+    "safe_fetch",
 ]

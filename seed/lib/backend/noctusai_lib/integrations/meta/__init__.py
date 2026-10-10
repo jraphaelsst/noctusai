@@ -88,6 +88,7 @@ dance; it ships only the read-only introspection seam).
 """
 
 from noctusai_lib.integrations.meta._meta_api import (
+    BusinessDiscoveryNotFound,
     IG_AUTHORIZE_BASE,
     IG_CODE_EXCHANGE_BASE,
     IG_GRAPH_BASE,
@@ -138,6 +139,7 @@ from noctusai_lib.integrations.meta.leadgen_webhook import (
     parse_leadgen_webhook,
 )
 from noctusai_lib.integrations.meta.mappers import (
+    BUSINESS_DISCOVERY_MEDIA_FIELDS,
     ad_account_from_body,
     ad_activity_from_body,
     ad_from_body,
@@ -157,6 +159,8 @@ from noctusai_lib.integrations.meta.mappers import (
 )
 from noctusai_lib.integrations.meta.router import make_meta_router
 from noctusai_lib.integrations.meta.types import (
+    BusinessDiscoveryMedia,
+    BusinessDiscoveryPage,
     Ad,
     AdAccount,
     AdActivity,
@@ -245,6 +249,10 @@ def get_meta_adapter(
 
 
 __all__ = [
+    "BUSINESS_DISCOVERY_MEDIA_FIELDS",
+    "BusinessDiscoveryMedia",
+    "BusinessDiscoveryNotFound",
+    "BusinessDiscoveryPage",
     "Ad",
     "AdAccount",
     "AdActivity",

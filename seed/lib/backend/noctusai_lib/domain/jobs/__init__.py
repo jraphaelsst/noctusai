@@ -80,6 +80,7 @@ from noctusai_lib.domain.jobs.retry_policy import (
     RetryPolicy,
     next_retry_at,
 )
+from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 from noctusai_lib.domain.jobs.worker import (
     JobHandler,
     Worker,
@@ -99,6 +100,7 @@ __all__ = [
     "RealSupabaseJobRepository",
     "RetryPolicy",
     "Worker",
+    "WorkerHandle",
     "make_job_repository",
     "next_retry_at",
     "next_status",

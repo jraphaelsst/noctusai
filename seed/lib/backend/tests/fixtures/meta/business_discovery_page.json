@@ -1,0 +1,44 @@
+{
+  "_provenance": "Hand-recorded from the DOCUMENTED response shape (Meta, Instagram Platform > Instagram API with Facebook Login > Business Discovery: developers.facebook.com/docs/instagram-platform/instagram-api-with-facebook-login/business-discovery). NOT captured from a live call (no live calls were made, 2026-10-10). Values are synthetic. Note what is ABSENT: no views / plays / reach / impressions on any media item -- Business Discovery does not serve them. like_count is omitted on the second item (owner hid likes), as Graph does.",
+  "business_discovery": {
+    "id": "17841400000000001",
+    "username": "marca_exemplo",
+    "name": "Marca Exemplo",
+    "biography": "Imoveis de alto padrao",
+    "followers_count": 12345,
+    "follows_count": 321,
+    "media_count": 87,
+    "profile_picture_url": "https://scontent.cdninstagram.com/v/t51/profile.jpg",
+    "media": {
+      "data": [
+        {
+          "id": "17900000000000011",
+          "caption": "Tour pela cobertura #imoveis",
+          "media_type": "VIDEO",
+          "media_product_type": "REELS",
+          "media_url": "https://scontent.cdninstagram.com/v/t50/reel.mp4",
+          "permalink": "https://www.instagram.com/reel/AbCdEf1/",
+          "thumbnail_url": "https://scontent.cdninstagram.com/v/t51/reel_thumb.jpg",
+          "timestamp": "2026-10-01T12:00:00+0000",
+          "like_count": 1500,
+          "comments_count": 42
+        },
+        {
+          "id": "17900000000000012",
+          "caption": "Planta nova",
+          "media_type": "IMAGE",
+          "media_product_type": "FEED",
+          "media_url": "https://scontent.cdninstagram.com/v/t51/img.jpg",
+          "permalink": "https://www.instagram.com/p/GhIjKl2/",
+          "timestamp": "2026-09-28T09:30:00+0000",
+          "comments_count": 3
+        }
+      ],
+      "paging": {
+        "cursors": {"before": "QVFIUmJlZm9yZQ", "after": "QVFIUmFmdGVy"},
+        "next": "https://graph.facebook.com/v21.0/17841400000000099?fields=business_discovery..."
+      }
+    }
+  },
+  "id": "17841400000000099"
+}

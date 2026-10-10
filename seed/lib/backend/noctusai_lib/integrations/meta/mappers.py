@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from typing import Any
+import re
+from typing import Any, Sequence
 
 from noctusai_lib.integrations.meta.types import (
     Ad,
@@ -20,6 +21,8 @@ from noctusai_lib.integrations.meta.types import (
     AdCampaign,
     AdInsightsRow,
     AdSet,
+    BusinessDiscoveryMedia,
+    BusinessDiscoveryPage,
     Conversation,
     DirectMessage,
     FacebookComment,
@@ -761,7 +764,142 @@ def ad_activity_from_body(body: dict[str, Any]) -> AdActivity:
     )
 
 
+# ─── Business Discovery (Facebook-Login connection only) ──────────────────
+#
+# Source: Meta, "Instagram Platform > Instagram API with Facebook Login >
+# Business Discovery" (developers.facebook.com/docs/instagram-platform/
+# instagram-api-with-facebook-login/business-discovery). Request:
+#   GET /{caller-ig-user-id}?fields=business_discovery.username({handle})
+#       {username,id,followers_count,media_count,
+#        media.limit(25).after({cursor}){<media fields>}}
+# Documented media fields: caption, comments_count, id, ig_id, like_count,
+# media_product_type, media_type, media_url, owner, permalink, shortcode,
+# thumbnail_url, timestamp, username, children, video_title. NO views / plays
+# / reach / impressions: those live behind /{media-id}/insights, which only the
+# media's OWNER can read.
+BUSINESS_DISCOVERY_PROFILE_FIELDS = (
+    "id,username,name,biography,followers_count,follows_count,media_count,"
+    "profile_picture_url"
+)
+BUSINESS_DISCOVERY_MEDIA_FIELDS = (
+    "id",
+    "caption",
+    "media_type",
+    "media_product_type",
+    "media_url",
+    "permalink",
+    "thumbnail_url",
+    "timestamp",
+    "like_count",
+    "comments_count",
+)
+# A username is interpolated INTO the Graph field expression, so it is
+# validated, never escaped: Instagram handles are [A-Za-z0-9._], 1..30.
+_IG_HANDLE_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
+_GRAPH_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
+_GRAPH_CURSOR_RE = re.compile(r"^[A-Za-z0-9_\-=+/.]{1,512}$")
+BUSINESS_DISCOVERY_MAX_PAGE_SIZE = 100
+
+
+def normalize_ig_handle(username: str) -> str:
+    handle = (username or "").strip().lstrip("@")
+    if not _IG_HANDLE_RE.match(handle):
+        raise ValueError("invalid Instagram username")
+    return handle
+
+
+def business_discovery_fields_param(
+    username: str,
+    media_fields: Sequence[str],
+    *,
+    after: str | None = None,
+    limit: int = 25,
+) -> str:
+    """Build the ``fields=`` value for a Business Discovery call. Every
+    interpolated piece is validated against a strict whitelist regex."""
+
+    handle = normalize_ig_handle(username)
+    names = list(media_fields)
+    if not names or any(not _GRAPH_FIELD_RE.match(n) for n in names):
+        raise ValueError("invalid Business Discovery media field")
+    if not 1 <= int(limit) <= BUSINESS_DISCOVERY_MAX_PAGE_SIZE:
+        raise ValueError("limit out of range")
+    page = f"media.limit({int(limit)})"
+    if after is not None:
+        if not _GRAPH_CURSOR_RE.match(after):
+            raise ValueError("invalid cursor")
+        page += f".after({after})"
+    return (
+        f"business_discovery.username({handle})"
+        f"{{{BUSINESS_DISCOVERY_PROFILE_FIELDS},{page}{{{','.join(names)}}}}}"
+    )
+
+
+def _opt_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def business_discovery_media_from_body(body: dict[str, Any]) -> BusinessDiscoveryMedia:
+    return BusinessDiscoveryMedia(
+        id=str(body["id"]),
+        caption=body.get("caption"),
+        media_type=body.get("media_type"),
+        media_product_type=body.get("media_product_type"),
+        media_url=body.get("media_url"),
+        permalink=body.get("permalink"),
+        thumbnail_url=body.get("thumbnail_url"),
+        timestamp=parse_graph_datetime(body.get("timestamp")),
+        like_count=_opt_int(body.get("like_count")),
+        comments_count=_opt_int(body.get("comments_count")),
+        views=None,
+    )
+
+
+def business_discovery_page_from_body(
+    body: dict[str, Any], *, requested_username: str
+) -> BusinessDiscoveryPage:
+    """Map the full ``GET /{ig-user-id}?fields=business_discovery...`` body.
+    A body without the ``business_discovery`` object is an error the caller
+    surfaces, never an empty page."""
+
+    bd = body.get("business_discovery")
+    if not isinstance(bd, dict):
+        raise ValueError("response has no business_discovery object")
+    media_edge = bd.get("media") if isinstance(bd.get("media"), dict) else {}
+    paging = media_edge.get("paging") if isinstance(media_edge.get("paging"), dict) else {}
+    cursors = paging.get("cursors") if isinstance(paging.get("cursors"), dict) else {}
+    next_cursor = cursors.get("after") if paging.get("next") else None
+    return BusinessDiscoveryPage(
+        username=str(bd.get("username") or requested_username),
+        ig_user_id=str(bd["id"]) if bd.get("id") else None,
+        name=bd.get("name"),
+        biography=bd.get("biography"),
+        followers_count=_opt_int(bd.get("followers_count")),
+        follows_count=_opt_int(bd.get("follows_count")),
+        media_count=_opt_int(bd.get("media_count")),
+        profile_picture_url=bd.get("profile_picture_url"),
+        media=[
+            business_discovery_media_from_body(m)
+            for m in (media_edge.get("data") or [])
+            if isinstance(m, dict) and m.get("id")
+        ],
+        next_cursor=str(next_cursor) if next_cursor else None,
+    )
+
+
 __all__ = [
+    "BUSINESS_DISCOVERY_MAX_PAGE_SIZE",
+    "BUSINESS_DISCOVERY_MEDIA_FIELDS",
+    "BUSINESS_DISCOVERY_PROFILE_FIELDS",
+    "business_discovery_fields_param",
+    "business_discovery_media_from_body",
+    "business_discovery_page_from_body",
+    "normalize_ig_handle",
     "FB_COMMENT_FIELDS",
     "IG_ACCOUNT_FIELDS",
     "IG_ACCOUNT_INSIGHT_METRICS",

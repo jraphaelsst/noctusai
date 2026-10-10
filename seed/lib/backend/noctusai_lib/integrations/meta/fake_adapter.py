@@ -16,8 +16,19 @@ is the "scope already approved" path."""
 
 from __future__ import annotations
 
-from noctusai_lib.integrations.meta._meta_api import MetaGraphError
+from dataclasses import replace
+from typing import Any, Sequence
+
+from noctusai_lib.integrations.meta._meta_api import (
+    BusinessDiscoveryNotFound,
+    MetaGraphError,
+)
+from noctusai_lib.integrations.meta.mappers import (
+    business_discovery_fields_param,
+    normalize_ig_handle,
+)
 from noctusai_lib.integrations.meta.types import (
+    BusinessDiscoveryPage,
     Ad,
     AdAccount,
     AdActivity,
@@ -58,6 +69,9 @@ class FakeMetaAdapter:
         self._posts_by_page: dict[str, list[FacebookPost]] = {}
         self._ig_accounts: list[InstagramAccount] = []
         self._media_by_ig_user: dict[str, list[InstagramMedia]] = {}
+        self._business_discovery: dict[str, BusinessDiscoveryPage] = {}
+        self._business_discovery_errors: dict[str, MetaGraphError] = {}
+        self.business_discovery_calls: list[dict[str, Any]] = []
         self._post_insights: dict[str, PostInsights] = {}
         self._page_insights: dict[str, PostInsights] = {}
         self._media_insights: dict[str, PostInsights] = {}
@@ -135,6 +149,8 @@ class FakeMetaAdapter:
         posts_by_page: dict[str, list[FacebookPost]] | None = None,
         ig_accounts: list[InstagramAccount] | None = None,
         media_by_ig_user: dict[str, list[InstagramMedia]] | None = None,
+        business_discovery: dict[str, BusinessDiscoveryPage] | None = None,
+        business_discovery_errors: dict[str, MetaGraphError] | None = None,
         post_insights: dict[str, PostInsights] | None = None,
         page_insights: dict[str, PostInsights] | None = None,
         media_insights: dict[str, PostInsights] | None = None,
@@ -165,6 +181,15 @@ class FakeMetaAdapter:
         if media_by_ig_user is not None:
             self._media_by_ig_user = {
                 k: list(v) for k, v in media_by_ig_user.items()
+            }
+        if business_discovery is not None:
+            self._business_discovery = {
+                normalize_ig_handle(k).lower(): v for k, v in business_discovery.items()
+            }
+        if business_discovery_errors is not None:
+            self._business_discovery_errors = {
+                normalize_ig_handle(k).lower(): v
+                for k, v in business_discovery_errors.items()
             }
         if post_insights is not None:
             self._post_insights = dict(post_insights)
@@ -296,6 +321,47 @@ class FakeMetaAdapter:
         self, ig_user_id: str, limit: int = 25
     ) -> list[InstagramMedia]:
         return list(self._media_by_ig_user.get(ig_user_id, []))[:limit]
+
+    def get_business_discovery(
+        self,
+        ig_user_id: str,
+        username: str,
+        *,
+        fields: Sequence[str],
+        after: str | None = None,
+        limit: int = 25,
+    ) -> BusinessDiscoveryPage:
+        """Serve a seeded profile (``seed(business_discovery=...)``), paged by
+        an opaque offset cursor. Same input validation as the live adapter; an
+        unseeded handle raises ``BusinessDiscoveryNotFound`` and
+        ``seed(business_discovery_errors=...)`` raises a seeded error, so the
+        consumer's error branches are exercised without a network."""
+
+        # Validates handle / fields / cursor / limit exactly like the Real.
+        business_discovery_fields_param(username, fields, after=after, limit=limit)
+        handle = normalize_ig_handle(username).lower()
+        self.business_discovery_calls.append(
+            {"ig_user_id": ig_user_id, "username": handle, "after": after, "limit": limit}
+        )
+        error = self._business_discovery_errors.get(handle)
+        if error is not None:
+            raise error
+        page = self._business_discovery.get(handle)
+        if page is None:
+            raise BusinessDiscoveryNotFound(
+                "Invalid user id", code=110, http_status=400
+            )
+        start = 0
+        if after is not None:
+            if not after.isdigit():
+                raise MetaGraphError("Invalid cursor", code=100, http_status=400)
+            start = int(after)
+        end = start + limit
+        return replace(
+            page,
+            media=list(page.media[start:end]),
+            next_cursor=str(end) if end < len(page.media) else None,
+        )
 
     def get_instagram_media_insights(self, media_id: str) -> PostInsights:
         return self._media_insights.get(
