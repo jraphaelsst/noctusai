@@ -34,8 +34,29 @@ from app.routers import billing_admin as billing_admin_router
 from app.routers import website_public as website_public_router
 from app.routers import website_admin as website_admin_router
 from app.routers.website_html import website_html_middleware
+from app.routers import transcriptions as transcriptions_router
+from app.services.transcription_api.errors import TranscricaoErro, transcricao_erro_handler
+from app.services.transcription_api.wiring import (
+    start_transcription_worker,
+    stop_transcription_worker,
+)
 
 configure_scheduler()
+
+
+async def _lifespan_startup() -> None:
+    try:
+        start_scheduler()
+    finally:  # one failing hook must not keep the other from starting
+        await start_transcription_worker()
+
+
+async def _lifespan_shutdown() -> None:
+    try:
+        await stop_transcription_worker()
+    finally:
+        stop_scheduler()
+
 
 app = create_product_app(
     name="Core",
@@ -43,8 +64,11 @@ app = create_product_app(
     settings=settings,
     version="1.0.0",
     limiter=limiter,
-    lifespan_startup=start_scheduler,
-    lifespan_shutdown=stop_scheduler,
+    lifespan_startup=_lifespan_startup,
+    lifespan_shutdown=_lifespan_shutdown,
+    max_body_path_overrides={
+        "/api/transcriptions": transcriptions_router.BODY_LIMIT_BYTES,  # file cap + multipart slack
+    },
     standard_routers=["health", "notificacoes", "ai_feedback", "status_paginas"],
     consent_features="app.services.ai_consent_features",
     routers=[
@@ -80,8 +104,11 @@ app = create_product_app(
         billing_admin_router.router,
         website_public_router.router,
         website_admin_router.router,
+        transcriptions_router.router,
     ],
 )
+
+app.add_exception_handler(TranscricaoErro, transcricao_erro_handler)
 
 # Website host-split serving (contract §5) — registered as `http` middleware
 # AFTER `create_product_app` returns, so it becomes the OUTERMOST layer of

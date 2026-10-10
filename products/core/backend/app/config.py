@@ -112,5 +112,17 @@ class Settings(ProductSettings):
     waha_api_key: str = ""
     waha_session: str = "default"
 
+    # ─── Platform transcription API (projects/transcription-api) ──────────
+    # Backend behind the seed `make_transcriber()`: local_whisper | openai |
+    # fake. `local_whisper` WITHOUT url+token raises at first use — it never
+    # falls back to OpenAI. Empty → the seam raises (transcription 503s).
+    transcription_backend: str = ""
+    transcriber_url: str = ""
+    transcriber_token: str = ""
+    # Effective per-file duration ceiling (seconds). The contract cap is 45 min
+    # but the worker's in-process cap is lower until slice E lands, so this
+    # defaults to 10 min (CONTRACT §3 "Worker cap dependency").
+    transcription_api_max_s: float = 600.0
+
 
 settings = Settings()
