@@ -14,6 +14,11 @@ pytest-asyncio>=0.21.0
 # Pydantic EmailStr requires this — runtime ImportError otherwise
 email-validator>=2.0.0
 
+# FastAPI Form/File/UploadFile (routers/transcriptions.py) require this AT
+# IMPORT — without it the app fails to boot. The shared dev venv carries it
+# transitively, so only the slim prod image exposed the gap (2026-10-10).
+python-multipart>=0.0.9
+
 # APScheduler — core uses for background jobs; was previously
 # inherited from root requirements.txt in native dev mode
 APScheduler>=3.10.0
