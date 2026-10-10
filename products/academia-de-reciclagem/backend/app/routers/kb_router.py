@@ -9,7 +9,6 @@ for non-`human_personal` product-token callers).
 from __future__ import annotations
 
 import re
-import unicodedata
 from datetime import datetime
 from typing import Literal
 
@@ -18,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.api.auth.session.types import AuthContext
+from noctusai_lib.primitives.accents import fold_accents_ascii
 
 from app.auth.provenance import build_write_provenance
 from app.dependencies import get_approval_assertion_keys, get_store, require_kb_write, require_read
@@ -42,8 +42,7 @@ def _slugify_kebab(label: str) -> str:
     when omitted"). Accent-folds so "Domínio Regulatório" -> "dominio-
     regulatorio", matching the sibling's own slug shape (§0's example:
     `dominio-regulatorio-pnrs`)."""
-    folded = unicodedata.normalize("NFKD", label or "")
-    ascii_only = folded.encode("ascii", "ignore").decode("ascii")
+    ascii_only = fold_accents_ascii(label)
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", ascii_only).strip("-").lower()
     return slug or "entrada"
 

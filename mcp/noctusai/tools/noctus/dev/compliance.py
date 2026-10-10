@@ -22580,8 +22580,6 @@ _PAF_ALLOWED: dict[str, str] = {
         "NFD form-field matching — owner-scoped, not migrated 2026-10-10",
     "products/social-wiring/backend/app/modules/leads/services/dimensions_service.py":
         "NFD slug — stored slugs must not change (noc-2, 2026-10-10)",
-    "products/academia-de-reciclagem/backend/app/routers/kb_router.py":
-        "NOC-REMEDIATE[dry-accent-fold]: exact-parity swap pending owner ack (2026-10-10)",
 }
 
 
