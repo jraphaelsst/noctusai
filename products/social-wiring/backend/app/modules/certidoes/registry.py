@@ -400,27 +400,35 @@ def _parse_date_br(value: Any) -> Optional[str]:
         return None
     # Some endpoints print the emission as a datetime ("dd/mm/yyyy HH:MM:SS");
     # the date part is the emission date, the time is dropped.
-    m = _DATA_BR_RE.match(value.strip())
-    if not m:
-        return None
+    texto = value.strip()
     try:
-        return datetime.strptime(m.group(1), "%d/%m/%Y").date().isoformat()
+        m = _DATA_BR_RE.match(texto)
+        if m:
+            return datetime.strptime(m.group(1), "%d/%m/%Y").date().isoformat()
+        m = _DATA_ISO_RE.match(texto)
+        if m:
+            return datetime.strptime(m.group(1), "%Y-%m-%d").date().isoformat()
     except ValueError:
         return None
+    return None
 
 
 _DATA_BR_RE = re.compile(r"^(\d{2}/\d{2}/\d{4})(?:[\sT,].*)?$")
+#: ISO date or datetime ("2026-10-10T08:16:49.000-03:00"): the leading date is
+#: already the local date of the offset it carries.
+_DATA_ISO_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})(?:[T ].*)?$")
 
 #: Field names InfoSimples uses for the certidão's own number / emission /
 #: validity across the endpoints, most specific first.
 _NUMERO_KEYS = (
     "numero_controle", "codigo_controle", "numero_certidao", "certidao_numero",
-    "numero", "numero_documento", "codigo_validacao", "codigo_verificacao",
-    "codigo_autenticidade",
+    "certidao_codigo", "numero", "numero_documento", "codigo_autenticidade",
+    "codigo_validacao", "codigo_verificacao",
 )
 _EMISSAO_KEYS = (
     "emissao_data", "data_emissao", "emissao", "data_emissao_certidao",
-    "emitida_em", "emissao_datahora", "data_hora_emissao", "data_consulta",
+    "emitida_em", "emissao_datahora", "expedicao_datahora", "data_hora_emissao",
+    "data_consulta",
 )
 _VALIDADE_KEYS = ("validade_data", "data_validade", "validade", "validade_prorrogada")
 
@@ -482,6 +490,17 @@ def _parse_resultado_padrao(raw_response: dict) -> dict:
     if validade:
         out["validade_ate"] = validade
     return out
+
+
+def emissao_pela_consulta(raw_response: Optional[dict]) -> Optional[str]:
+    """ISO date the live consulta ran (`header.requested_at`, local date) — the
+    emission date of a certidão issued AT QUERY TIME whose response names no
+    emission key at all (TRF3). Last deterministic fallback, live results only
+    (a manual upload has no `api_response`); `None` when absent/unparseable."""
+    header = (raw_response or {}).get("header")
+    if not isinstance(header, dict):
+        return None
+    return _parse_date_br(header.get("requested_at"))
 
 
 def _cenprot_protocolo_date(protocolo: Any) -> Optional[str]:

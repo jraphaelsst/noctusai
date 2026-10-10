@@ -96,6 +96,7 @@ from app.modules.certidoes.registry import (
     TJSP_TIPO,
     config_for,
     e_pendencia_de_credencial,
+    emissao_pela_consulta,
     parse_resultado,
     pendencia_de_credencial,
 )
@@ -1481,8 +1482,10 @@ async def _analisar_resumo_sem_truncar(
 def _data_tipo_do_raw(raw: Any) -> Optional[str]:
     data = raw.get("data") if isinstance(raw, dict) else None
     if isinstance(data, list) and data and isinstance(data[0], dict):
-        tipo = data[0].get("tipo")
-        return tipo if isinstance(tipo, str) else None
+        for chave in ("tipo", "situacao"):
+            valor = data[0].get(chave)
+            if isinstance(valor, str) and valor.strip():
+                return valor
     return None
 
 
@@ -1556,6 +1559,12 @@ async def _derive_estrutura(
             emitida = _data_emissao_do_texto(paginas_texto)
             if emitida:
                 patch["emitida_em"] = emitida
+    # Last deterministic source for a live-emitted certidão that prints/returns
+    # no emission date (TRF3): the day the consulta ran.
+    if result and not patch.get("emitida_em"):
+        emitida = emissao_pela_consulta(result.get("raw_response"))
+        if emitida:
+            patch["emitida_em"] = emitida
     if patch:
         patch["resultado_origem"] = origem
     return patch
@@ -3260,6 +3269,27 @@ async def executar_releitura(
     )
 
 
+def _estrutura_do_api_response(tipo: Optional[str], api_response: Any) -> dict:
+    """`numero`/`emitida_em`/`validade_ate`/`resultado` re-derived from a
+    STORED `api_response` — the deterministic leg of `_derive_estrutura`
+    without a network call. `{}` for a manual row (no response) or an unknown
+    tipo. `emitida_em` includes the consulta-day fallback."""
+    config = config_for(tipo) if tipo else None
+    if not config or not isinstance(api_response, dict):
+        return {}
+    out = dict(parse_resultado(config, {"raw_response": api_response}))
+    if (
+        config.get("tipo") == "cnd_federal" and "resultado" not in out
+        and aprendizado.e_data_tipo_pcen(_data_tipo_do_raw(api_response))
+    ):
+        out["resultado"] = "positiva_com_efeito_de_negativa"
+    if not out.get("emitida_em"):
+        emitida = emissao_pela_consulta(api_response)
+        if emitida:
+            out["emitida_em"] = emitida
+    return out
+
+
 async def _reler_emissao(
     *,
     pdf_bytes: bytes,
@@ -3292,7 +3322,10 @@ async def _reler_emissao(
     try:
         atual_rows = (
             db.table(RESULTADOS)
-            .select("numero, emitida_em, validade_ate, resultado, resultado_origem, confirmado_por")
+            .select(
+                "numero, emitida_em, validade_ate, resultado, resultado_origem, "
+                "confirmado_por, api_response"
+            )
             .eq("id", resultado_id)
             .execute()
         ).data or []
@@ -3346,6 +3379,14 @@ async def _reler_emissao(
             "falhou: %s", nome_display, resultado_id, exc, exc_info=True,
         )
 
+    # The stored API response is the emission's own record: re-derive from it
+    # (no API call, no billing). It beats the PDF/AI read; the consulta day is
+    # only the last fallback for the emission date.
+    da_api = _estrutura_do_api_response(tipo, atual.get("api_response"))
+    lido.update({k: v for k, v in da_api.items() if k != "emitida_em"})
+    if da_api.get("emitida_em") and not lido.get("emitida_em"):
+        lido["emitida_em"] = da_api["emitida_em"]
+
     patch: dict = {}
     divergencias: list[dict] = []
     for item in divergencias_da_releitura(atual, lido):
@@ -3355,7 +3396,7 @@ async def _reler_emissao(
             divergencias.append(item)
     if "resultado" in patch:
         # `resultado_origem` tracks the VERDICT (see `_derive_estrutura`).
-        patch["resultado_origem"] = "ia"
+        patch["resultado_origem"] = "api" if "resultado" in da_api else "ia"
     patch["releitura"] = estado_releitura_concluida(divergencias)
 
     persist = dict(patch)
