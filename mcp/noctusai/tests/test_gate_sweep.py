@@ -1236,3 +1236,41 @@ def test_runtime_nodes_skips_type_checking_body_keeps_else():
         "if TYPE_CHECKING:\n    import a\nelse:\n    import b\n")
     imported = {n.names[0].name for n in GS._runtime_nodes(tree) if isinstance(n, ast.Import)}
     assert imported == {"b"}
+
+
+# -- keeper gates scheduled first when compliance.py changes (2026-10-10) -------
+def test_compliance_change_schedules_keeper_gates_first(tmp_path):
+    (tmp_path / "mcp/noctusai/tests").mkdir(parents=True)
+    _make_product(tmp_path, "core", frontend=False)
+    scope = GS._derive_scope([GS._COMPLIANCE_REL, "products/core/backend/app/main.py"])
+    scope["base_ref"] = "origin/feature-base"
+    names = [s.gate for s in GS._build_gate_specs(tmp_path, scope)]
+    assert names[:2] == ["keeper_meta", "keeper_delta"]
+    delta = GS._build_gate_specs(tmp_path, scope)[1]
+    assert delta.argv[delta.argv.index("--keeper-delta-base-ref") + 1] == "origin/feature-base"
+
+
+def test_no_keeper_gates_without_compliance_change(tmp_path):
+    (tmp_path / "mcp/noctusai/tests").mkdir(parents=True)
+    (tmp_path / "mcp/noctusai/tools").mkdir(parents=True)
+    (tmp_path / "mcp/noctusai/tools/other.py").write_text("X = 1\n")
+    scope = GS._derive_scope(["mcp/noctusai/tools/other.py"])
+    assert not {"keeper_meta", "keeper_delta"} & {s.gate for s in GS._build_gate_specs(tmp_path, scope)}
+
+
+def test_tests_data_file_maps_to_tests_naming_it_not_full_suite(tmp_path):
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    (tests / "x_baseline.json").write_text("{}")
+    (tests / "test_uses.py").write_text('B = "x_baseline.json"\n')
+    (tests / "test_other.py").write_text("X = 1\n")
+    out = GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/x_baseline.json"])
+    assert out == (["mcp/noctusai/tests/test_uses.py"], [])
+
+
+def test_unreferenced_tests_data_file_is_surfaced_untested(tmp_path):
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    (tests / "orphan.json").write_text("{}")
+    assert GS._mcp_scoped_test_files(tmp_path, ["mcp/noctusai/tests/orphan.json"]) == (
+        [], ["mcp/noctusai/tests/orphan.json"])

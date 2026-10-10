@@ -736,6 +736,11 @@ _MCP_FULL_SUITE_FILES = frozenset({
 })
 #: Docs with no test surface.
 _MCP_NO_TEST_SUFFIXES = (".md",)
+_COMPLIANCE_REL = "mcp/noctusai/tools/noctus/dev/compliance.py"
+# Keeper-registration meta-tests: fast, and the ones a new `check_*` breaks.
+_KEEPER_META_TESTS = (
+    "mcp/noctusai/tests/test_compliance.py::TestCheckDetectorHasRegressionTest",
+)
 
 
 def _mcp_module_name(rel: str) -> str:
@@ -772,6 +777,7 @@ def _mcp_scoped_test_files(
     changed_tests: set[str] = set()
     changed_mods: dict[str, str] = {}
     hook_files: list[str] = []
+    data_files: list[str] = []
     for f in mcp_files:
         if f.startswith("scripts/hooks/"):
             hook_files.append(f)  # tested from the toolkit suite, loaded by path
@@ -780,6 +786,9 @@ def _mcp_scoped_test_files(
             return None
         rel = f[len(_MCP_PKG):]
         if rel.endswith(_MCP_NO_TEST_SUFFIXES):
+            continue
+        if rel.startswith("tests/") and not rel.endswith(".py"):
+            data_files.append(f)  # a fixture/baseline: the tests that name it
             continue
         if rel in _MCP_FULL_SUITE_FILES or not rel.endswith(".py"):
             return None
@@ -814,7 +823,7 @@ def _mcp_scoped_test_files(
                 affected.add(rel_test)
                 covered.update(hits)
     untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
-    for hook in hook_files:
+    for hook in [*hook_files, *data_files]:
         name = Path(hook).name
         hits = [str(t.relative_to(root)) for t in sorted((pkg_dir / "tests").rglob("test_*.py"))
                 if name in t.read_text(encoding="utf-8", errors="replace")]
@@ -889,6 +898,19 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
             scope["asleep_requested"] = asleep_requested
         for slug in scope["products"]:
             specs.extend(_product_gate_specs(root, slug, py))
+
+    if scope["mcp"] and _COMPLIANCE_REL in scope.get("mcp_files", []):
+        # Keeper gates go FIRST: they are seconds-scale, and a shared
+        # wall-clock budget (integrate's merged-tip check) must measure them
+        # before any long suite can starve them. 2026-10-10: a new keeper
+        # landed whose detector-registration meta-test and fleet baseline
+        # were both only inside suites that timed out unmeasured.
+        specs[:0] = [
+            GateSpec("keeper_meta", [py, "-m", "pytest", *_KEEPER_META_TESTS, "-q"], root),
+            GateSpec("keeper_delta", [py, "mcp/noctusai/cli.py", "--check-keeper-delta",
+                                      "--keeper-delta-base-ref", scope.get("base_ref", "origin/dev"),
+                                      "--worktree-path", str(root)], root),
+        ]
 
     if scope["mcp"]:
         scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []))
@@ -1222,6 +1244,7 @@ def gate_sweep(
 
     changed_files, warnings = _changed_files(root, runner_git, base_ref)
     scope = _derive_scope(changed_files)
+    scope["base_ref"] = base_ref
     specs = _build_gate_specs(root, scope)
     runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
 

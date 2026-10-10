@@ -137,3 +137,20 @@ shrink) are formalized separately:
 `§ CONTEXT/PATTERNS/backend/di-test-seam.md` (the `test_patch_target` /
 self-monkeypatch class) and `§ CONTEXT/PATTERNS/backend/logging-at-except.md` (the
 silent-except class).
+
+## Keeper-delta gate — the integrate-budget slice of this baseline (2026-10-10)
+
+`test_all_products_compliant` runs `check_all_products()`: every keeper over every product, ~4.5 min. No integrate merged-tip budget (~90s) fits that, so a NEW keeper that went red on EXISTING files elsewhere in the tree timed out unmeasured and landed. The case: `check_migration_number_refs_in_tests` vs a social-wiring test, plus its unregistered regression tests.
+
+When `compliance.py` is in a diff, `gate_sweep` now schedules two seconds-scale gates FIRST, ahead of any long suite:
+
+- **`keeper_meta`**: `TestCheckDetectorHasRegressionTest` (~5s). A new `check_*` must ship a `class TestCheck<Name>`.
+- **`keeper_delta`** (`--check-keeper-delta`, `tools/noctus/dev/keeper_delta.py`, ~1s): this baseline's judgement, restricted to the keepers the diff can have affected.
+  - Which keepers: those whose AST differs from the merge-base, plus keepers that call a changed helper.
+  - How each is called: derived from `check_all_products()`'s own body (per-product vs global).
+  - What fails: any high/critical, non-env-artifact fingerprint not in `compliance_baseline.json`. It uses the regenerator's own `fingerprint` / `is_env_artifact`.
+  - A changed keeper that the aggregator never calls is reported as `not_aggregated`; it is never silently passed.
+
+The full `test_all_products_compliant` still runs in CI and the full toolkit suite. `keeper_delta` is the early, budget-fitting proof, not a replacement.
+
+Related: a non-`.py` file under `mcp/noctusai/tests/` (a fixture or a baseline .json) now maps to the test files that name it. It no longer forces the full toolkit suite, which was what pushed that integrate into its timeout.

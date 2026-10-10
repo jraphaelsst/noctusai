@@ -272,6 +272,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-stale-branch-pointers", action="store_true", help="Safety net (pre-push) behind the task_branch pointer lifecycle: on_going/integrated-worktree-live pointers whose branch landed on origin/dev and whose worktree is gone. Blocks only on pointers owned by this session (CLAUDE_CODE_SESSION_ID); others are warnings. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §3.")
     parser.add_argument("--check-branch-tree-mirror", metavar="BRANCH", nargs="?", const="__all__", help="Keeper (pre-push HARD-BLOCK): for the given branch (or all non-terminal branches when omitted) verify the branch-tree mirror — pointer exists + non-stale + git↔claude mirror intact + valid status + no shipped-but-ahead contradiction. Severity high. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md §5.")
     parser.add_argument("--check-dangling-remote-branches", action="store_true", help="Keeper: flag origin/* branches with unique content older than 7 days. Squash-aware (git-cherry + subject-on-dev). Advisory-only (severity warning); never a commit-blocker. Surfaces in review + session-end sweep. KB § CONTEXT/PATTERNS/common/learn-before-archive.md.")
+    parser.add_argument("--check-keeper-delta", action="store_true", help="Gate: run ONLY the compliance.py keepers this branch added/changed (AST diff vs the merge-base of --keeper-delta-base-ref, plus keepers calling a changed helper) over every active product, and fail on any high/critical fingerprint not in tests/compliance_baseline.json. The seconds-scale slice of TestSeedCompliance::test_all_products_compliant that an integrate budget can fit. tools/noctus/dev/keeper_delta.py.")
+    parser.add_argument("--keeper-delta-base-ref", default="origin/dev", help="With --check-keeper-delta: the ref the branch diff is measured against (default origin/dev).")
     parser.add_argument("--check-eight-way-sync", action="store_true", help="Keeper: the 8-way methodology surface sync (CLAUDE.md / MEMORY.md / .claude/agents/ / KB / CONTEXTUALIZE.md / .claude/skills/ / .claude/commands/ / .claude/cache/). Composition gate — re-runs kb_sync + contextualize + agent_kb + skills_listed + commands_listed + memory_md_index + all_cache_freshness sub-keepers. Severity high. KB § PATTERNS/common/eight-way-sync.md.")
     parser.add_argument("--check-seven-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync. Prints a one-line deprecation warning and dispatches to the new flag. Target removal: ~1 cycle.")
     parser.add_argument("--check-six-way-sync", action="store_true", help="DEPRECATED: back-compat alias for --check-eight-way-sync (two promotions back). Will be removed once external callers migrate.")
@@ -1035,6 +1037,22 @@ def main():
         print(f"  {RED}✗ {len(issues)} contextualize-alignment issue(s):{RESET}")
         for i in issues:
             print(f"    {RED}[{i['severity']}]{RESET} {i['file']} — {i['issue']}")
+        sys.exit(1)
+    elif args.check_keeper_delta:
+        from settings import REPO_ROOT
+        from tools.noctus.dev.keeper_delta import keeper_delta
+        r = keeper_delta(Path(REPO_ROOT), args.keeper_delta_base_ref)
+        if r["not_aggregated"]:
+            print(f"  {YELLOW}⚠ changed keeper(s) not called by check_all_products (no baseline gate): "
+                  f"{', '.join(r['not_aggregated'])}{RESET}")
+        if r["ok"]:
+            print(f"  {GREEN}✓ keeper-delta: {len(r['ran'])} changed keeper(s) "
+                  f"({', '.join(r['ran']) or 'none'}) add no high/critical fingerprint vs the baseline.{RESET}")
+            sys.exit(0)
+        print(f"  {RED}✗ keeper-delta: {len(r['new_fingerprints'])} NEW high/critical fingerprint(s) from "
+              f"{', '.join(r['ran'])} vs tests/compliance_baseline.json:{RESET}")
+        for fp in r["new_fingerprints"]:
+            print(f"    {RED}{fp}{RESET}")
         sys.exit(1)
     elif args.check_eight_way_sync or args.check_seven_way_sync or args.check_six_way_sync:
         # --check-seven-way-sync and --check-six-way-sync are back-compat
