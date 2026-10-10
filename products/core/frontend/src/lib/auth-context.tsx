@@ -32,6 +32,13 @@ interface AuthState {
    */
   isMarketing: boolean;
   loading: boolean;
+  /**
+   * `/api/auth/me` could not be reached (deploy restart, 5xx, Cloudflare 52x,
+   * network) while the stored session is still held. The session is KEPT —
+   * consumers show a retry state, never redirect to /login (2026-10-10: a
+   * core redeploy logged every user out through a bare `catch → logout`).
+   */
+  unavailable: boolean;
 }
 
 interface AuthContextType extends AuthState {
@@ -51,9 +58,14 @@ const AuthContext = createContext<AuthContextType>({
   isAdmin: false,
   isMarketing: false,
   loading: true,
+  unavailable: false,
   logout: async () => {},
   refresh: async () => {},
 });
+
+/** Backoff while `/api/auth/me` is unreachable (~30 s covers a redeploy). */
+export const PROFILE_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
@@ -62,26 +74,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isAdmin: false,
     isMarketing: false,
     loading: true,
+    unavailable: false,
   });
 
   async function fetchProfile() {
     if (!isAuthenticated()) {
-      setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
+      setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false, unavailable: false });
       return;
     }
 
-    try {
-      const data = await api.get('/api/auth/me');
-      setState({
-        user: data.user,
-        organization: data.organization,
-        isAdmin: data.user?.role === 'admin',
-        isMarketing: data.user?.role === 'marketing',
-        loading: false,
-      });
-    } catch {
-      clearToken();
-      setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const data = await api.get('/api/auth/me');
+        setState({
+          user: data.user,
+          organization: data.organization,
+          isAdmin: data.user?.role === 'admin',
+          isMarketing: data.user?.role === 'marketing',
+          loading: false,
+          unavailable: false,
+        });
+        return;
+      } catch {
+        // An authoritative 401 already went through the api client's
+        // `onUnauthenticated` seam (lib/api.ts), which cleared the tokens and
+        // redirected. A token STILL held here means the failure was transient
+        // (deploy restart, 5xx, 52x, network): keep the session and retry.
+        if (!isAuthenticated()) {
+          setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false, unavailable: false });
+          return;
+        }
+        if (attempt >= PROFILE_RETRY_DELAYS_MS.length) {
+          setState((s) => ({ ...s, loading: false, unavailable: true }));
+          return;
+        }
+        await sleep(PROFILE_RETRY_DELAYS_MS[attempt]);
+      }
     }
   }
 
@@ -127,7 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('core logout: server-side revocation failed; clearing local session anyway', err);
     }
     clearToken();
-    setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false });
+    setState({ user: null, organization: null, isAdmin: false, isMarketing: false, loading: false, unavailable: false });
   }
 
   // Proactive token refresh while user is active (every 5 min)

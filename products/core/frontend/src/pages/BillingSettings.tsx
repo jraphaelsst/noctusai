@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../lib/auth-context';
+import { ServiceUnavailable } from '../components/ServiceUnavailable';
 import { api } from '../lib/api';
 import { formatCurrency, formatDate } from '../lib/utils';
 import { CoreHeader } from '../components/layout/CoreHeader';
@@ -57,7 +58,7 @@ interface Invoice {
 }
 
 export function BillingSettings() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, unavailable, refresh } = useAuth();
   const [billing, setBilling] = useState<BillingStatus | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +67,7 @@ export function BillingSettings() {
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user) { navigate('/login'); return; }
+    if (!user) { if (!unavailable) navigate('/login'); return; }
 
     async function fetchBilling() {
       // product-internal-wiring §4: status + invoices each degrade independently
@@ -142,6 +143,10 @@ export function BillingSettings() {
         return 'bg-red-100 text-red-800';
       default: return 'bg-muted text-muted-foreground';
     }
+  }
+
+  if (!authLoading && !user && unavailable) {
+    return <ServiceUnavailable onRetry={refresh} />;
   }
 
   if (authLoading || loading) {

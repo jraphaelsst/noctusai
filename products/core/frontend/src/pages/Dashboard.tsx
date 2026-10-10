@@ -11,6 +11,7 @@ import {
   type DeployScope,
 } from '../components/ProductStateControls';
 import { useProductStateActions } from '../hooks/useProductStateActions';
+import { ServiceUnavailable } from '../components/ServiceUnavailable';
 
 interface Product {
   id: string;
@@ -34,35 +35,42 @@ interface Subscription {
 }
 
 export function Dashboard() {
-  const { user, organization, isAdmin, loading: authLoading, logout } = useAuth();
+  const { user, organization, isAdmin, loading: authLoading, unavailable, refresh } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   // slug -> is the product's container deployed (reachable) in THIS env.
   // Undefined while loading; a slug mapped to `false` shows a "dev" badge.
   const [deployed, setDeployed] = useState<Record<string, boolean>>({});
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [launching, setLaunching] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     if (authLoading) return;
-    if (!user) { navigate('/login'); return; }
+    if (!user) {
+      if (unavailable) setLoading(false); else navigate('/login');
+      return;
+    }
 
     async function fetchData() {
-      // `/api/auth/me` is the auth-critical call: its failure means the session
-      // is invalid, so it (and only it) drives logout. The auxiliary calls
-      // (subscription, deployment-status) each degrade independently via their
-      // own `.catch()` — a failure there must never log the user out or zero
-      // the dashboard (product-internal-wiring §4: no fast-fail aggregation).
+      // `/api/auth/me` is the auth-critical call. A dead session (401) is
+      // already handled by the api client's `onUnauthenticated` seam
+      // (lib/api.ts: clears tokens, redirects to /login). ANY other failure
+      // (deploy restart, 5xx, 52x, network) keeps the session and shows a
+      // retry state: never the global logout, which revokes every product
+      // session and the acting org (2026-10-10 redeploy incident). The
+      // auxiliary calls (subscription, deployment-status) degrade on their own.
       let meRes: any;
       try {
         meRes = await api.get('/api/auth/me');
       } catch {
-        await logout();
-        navigate('/login');
+        setLoadFailed(true);
         setLoading(false);
         return;
       }
+      setLoadFailed(false);
       const [subRes, deployRes] = await Promise.all([
         api.get('/api/subscriptions/me').catch(() => ({ data: null })),
         // Deployment status is best-effort: a failure must never block the
@@ -75,7 +83,7 @@ export function Dashboard() {
       setLoading(false);
     }
     fetchData();
-  }, [authLoading, user]);
+  }, [authLoading, user, unavailable, reloadKey]);
 
   /** Re-read `/api/auth/me` after a working-guide mutation so the grid
    *  reflects what the server actually persisted (a deactivation also
@@ -125,6 +133,18 @@ export function Dashboard() {
   }
 
   const trialDays = getTrialDaysRemaining();
+
+  if (!authLoading && !loading && (unavailable || loadFailed)) {
+    return (
+      <ServiceUnavailable
+        onRetry={async () => {
+          setLoading(true);
+          if (unavailable) await refresh();
+          setReloadKey((k) => k + 1);
+        }}
+      />
+    );
+  }
 
   if (authLoading || loading) {
     return (
