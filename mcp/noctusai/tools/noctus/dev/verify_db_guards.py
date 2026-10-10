@@ -4020,9 +4020,12 @@ _ANON_SEQUENCE_PROBES: tuple[GuardProbe, ...] = (
 )
 
 def _ai_tables_probe(product: str, schema: str, migration: str, guard: str, table: str,
-                     insert_sql: str, sqlstate: str) -> GuardProbe:
-    """Self-provisioning write-refusal probe for the canonical seed AI tables
-    (``sql_templates.ai_outputs_table_sql`` / ``ai_feedback_table_sql``)."""
+                     insert_sql: str, sqlstate: str, rationale: str | None = None) -> GuardProbe:
+    """Self-provisioning write-refusal probe: ``insert_sql`` (which may use the
+    throwaway ``v_org`` / ``v_user`` uuids) must be refused by ``guard`` with
+    ``sqlstate``. Born for the canonical seed AI tables
+    (``sql_templates.ai_outputs_table_sql`` / ``ai_feedback_table_sql``); any
+    single-row CHECK / UNIQUE guard reuses it."""
     return GuardProbe(
         id=f"{schema}.{guard}",
         product=product,
@@ -4052,7 +4055,7 @@ BEGIN
   END;
 END;
 """),
-        rationale=f"{schema}.{table}: {guard} keeps an out-of-contract AI output / feedback row out.",
+        rationale=rationale or f"{schema}.{table}: {guard} keeps an out-of-contract AI output / feedback row out.",
     )
 
 
@@ -4071,6 +4074,18 @@ def _ai_tables_probes(product: str, schema: str, migration: str) -> tuple[GuardP
 
 
 _SW_AI_TABLES_PROBES = _ai_tables_probes("social-wiring", "social_wiring", "239_ai_outputs_ai_feedback.sql")
+
+# Migration 244 (email-marketing P1b(d), double opt-in): an out-of-contract
+# opt-in state would bypass the send gate (only 'not_required' / 'confirmed'
+# receive marketing email). Same self-provisioning write-refusal shape.
+_SW_CONTACTS_EMAIL_OPTIN_PROBE = _ai_tables_probe(
+    "social-wiring", "social_wiring", "244_contacts_email_optin.sql",
+    "contacts_email_optin_check", "contacts",
+    "INSERT INTO social_wiring.contacts (org_id, email, email_optin) "
+    "VALUES (v_org, 'noc-probe@example.invalid', 'bogus')",
+    "23514",
+    rationale="social_wiring.contacts: an email_optin outside not_required|pending|confirmed would slip past the double opt-in send gate.",
+)
 
 
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
@@ -6850,6 +6865,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_ANON_SEQUENCE_PROBES,
     _ERP_CURRENT_ORG_ID_PROBE,
     *_SW_AI_TABLES_PROBES,
+    _SW_CONTACTS_EMAIL_OPTIN_PROBE,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,

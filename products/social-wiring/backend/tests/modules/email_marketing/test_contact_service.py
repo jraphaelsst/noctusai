@@ -206,4 +206,4 @@ class TestImportContacts:
         svc = ContactService(db, ORG)
         result = svc.import_contacts([])
 
-        assert result == {"imported": 0, "total": 0}
+        assert result == {"imported": 0, "total": 0, "pending": []}

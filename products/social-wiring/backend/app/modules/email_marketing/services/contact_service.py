@@ -4,7 +4,11 @@ from __future__ import annotations
 import logging
 import re
 
+from datetime import datetime, timezone
+
 from noctusai_lib.api.crud_safety import delete_or_404
+
+from .email_optin import OPTIN_CONFIRMED, OPTIN_PENDING, initial_optin
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +84,10 @@ class ContactService:
         return result.data[0] if result.data else None
 
     def create_contact(self, data: dict):
+        """Insert a contact. Its ``email_optin`` is decided here, never by the
+        caller: ``source in ('form','api')`` starts ``pending`` (double opt-in)."""
         data["org_id"] = self.org_id
+        data["email_optin"] = initial_optin(data.get("source"))
         result = self.db.table("contacts").insert(data).execute()
         return result.data[0] if result.data else None
 
@@ -105,11 +112,25 @@ class ContactService:
         )
         return True
 
-    def import_contacts(self, contacts: list[dict]):
-        """Batch import contacts. Skips duplicates (org_id + email unique constraint)."""
+    def import_contacts(self, contacts: list[dict], double_opt_in: bool = False):
+        """Batch import contacts (upsert on org_id + email).
+
+        ``double_opt_in=True`` starts every NEW address ``pending``; an address
+        already in the org keeps its opt-in state (re-importing a confirmed
+        contact must never demote it). Returns the counts plus ``pending`` —
+        the rows that still need a confirmation email."""
+        existing: set[str] = set()
+        if double_opt_in:
+            emails = [c.get("email") for c in contacts if c.get("email")]
+            if emails:
+                found = (self.db.table("contacts").select("email")
+                         .eq("org_id", self.org_id).in_("email", emails).execute())
+                existing = {r.get("email") for r in (found.data or [])}
         for c in contacts:
             c["org_id"] = self.org_id
             c["source"] = "import"
+            if c.get("email") not in existing:
+                c["email_optin"] = initial_optin("import", double_opt_in)
         rows = []
         for c in contacts:
             try:
@@ -120,7 +141,25 @@ class ContactService:
                     rows.extend(result.data)
             except Exception as e:
                 logger.warning("Import skip: %s — %s", c.get("email"), e)
-        return {"imported": len(rows), "total": len(contacts)}
+        pending = [r for r in rows if double_opt_in and r.get("email_optin") == OPTIN_PENDING]
+        return {"imported": len(rows), "total": len(contacts), "pending": pending}
+
+    def confirm_email(self, contact_id: str, email: str) -> str:
+        """Mark the contact's address confirmed. Returns ``"confirmed"``,
+        ``"already"`` (idempotent replay), ``"not_found"``, or ``"mismatch"``
+        (the address changed since the link was minted — it confirms nothing)."""
+        contact = self.get_contact(contact_id)
+        if contact is None:
+            return "not_found"
+        if (contact.get("email") or "").lower() != (email or "").lower():
+            return "mismatch"
+        if contact.get("email_optin") == OPTIN_CONFIRMED:
+            return "already"
+        now = datetime.now(timezone.utc).isoformat()
+        (self.db.table("contacts")
+         .update({"email_optin": OPTIN_CONFIRMED, "email_confirmed_at": now, "updated_at": now})
+         .eq("id", contact_id).eq("org_id", self.org_id).execute())
+        return "confirmed"
 
     def get_by_whatsapp_phone(self, phone: str) -> dict | None:
         """Return the contact for (org_id, whatsapp_phone=phone), or None.

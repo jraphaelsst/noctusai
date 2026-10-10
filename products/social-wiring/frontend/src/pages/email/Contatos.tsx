@@ -5,21 +5,28 @@
  *   PATCH|DELETE /api/email-marketing/contacts/{id}
  *   POST         /api/email-marketing/contacts/import
  *
+ *   POST         /api/email-marketing/contacts/{id}/resend-confirmation
+ *
  * CRUD is the canonical `<ResourceManager/>` organ; the CSV bulk import is the
  * one thing the organ cannot express, so it lives beside it as a dialog.
+ * Double opt-in (P1b(d)): an "Opt-in" column badges contacts awaiting
+ * confirmation, with a per-row "Reenviar confirmação" action; the import
+ * dialog can require confirmation for every new address.
  *
  * Route: /email/contatos (`email_contatos_noc` status_pagina, migration 085).
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { Sparkles, Upload } from "lucide-react";
+import { MailCheck, Sparkles, Upload } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { ResourceManager } from "@noctusai/lib/components";
 import { AIIndicator } from "@noctusai/lib/design-system";
 import { api } from "@/lib/api";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -42,6 +49,60 @@ const STATUS_LABEL: Record<string, string> = {
   bounced: "Bounce",
   complained: "Reclamou",
 };
+
+/** Opt-in state badge. `not_required` shows nothing — no confirmation was asked. */
+export function OptinBadge({ optin }: { optin: EmContact["email_optin"] | undefined }) {
+  if (optin === "pending") {
+    return (
+      <Badge variant="outline" className="border-amber-500/50 text-amber-600" data-testid="optin-pending">
+        Aguardando confirmação
+      </Badge>
+    );
+  }
+  if (optin === "confirmed") {
+    return (
+      <Badge variant="outline" className="border-green-500/50 text-green-600" data-testid="optin-confirmed">
+        Confirmado
+      </Badge>
+    );
+  }
+  return <span className="text-muted-foreground">—</span>;
+}
+
+/** "Reenviar confirmação" for a contact still awaiting double opt-in. A
+ * not-sent outcome (no Resend key, no FRONTEND_BASE_URL…) is shown as an
+ * error with the backend's reason — never as success. */
+export function ResendConfirmationAction({ contact }: { contact: EmContact }) {
+  const { resendConfirmation } = useEmContactMutations();
+  if (contact.email_optin !== "pending") return null;
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={resendConfirmation.isPending}
+      data-testid="contatos-resend-confirmation"
+      onClick={() =>
+        resendConfirmation.mutate(contact.id, {
+          onSuccess: (res) => {
+            const outcome = res?.data?.confirmation;
+            if (outcome?.sent) toast.success(`Confirmação reenviada para ${contact.email}.`);
+            else
+              toast.error("Confirmação não enviada.", {
+                description: outcome?.reason ?? undefined,
+              });
+          },
+          onError: (err: unknown) =>
+            toast.error("Erro ao reenviar confirmação.", {
+              description: err instanceof Error ? err.message : undefined,
+            }),
+        })
+      }
+    >
+      <MailCheck className="mr-1 h-4 w-4" />
+      {resendConfirmation.isPending ? "Reenviando…" : "Reenviar confirmação"}
+    </Button>
+  );
+}
 
 /**
  * Parse a pasted CSV/one-per-line block into contact payloads.
@@ -78,6 +139,7 @@ export function parseContactsBlock(raw: string): {
 function ImportDialog() {
   const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState("");
+  const [doubleOptIn, setDoubleOptIn] = useState(false);
   const { importMany } = useEmContactMutations();
 
   function submit() {
@@ -86,15 +148,23 @@ function ImportDialog() {
       toast.error("Nenhum e-mail válido encontrado.");
       return;
     }
-    importMany.mutate(contacts, {
-      onSuccess: () => {
+    importMany.mutate({ contacts, doubleOptIn }, {
+      onSuccess: (res) => {
         toast.success(`${contacts.length} contato(s) importado(s).`, {
           description: rejected.length
             ? `Linhas ignoradas: ${rejected.join(", ")}`
             : undefined,
         });
+        const confirmation = res?.data?.confirmation;
+        if (confirmation && confirmation.failed > 0) {
+          toast.error(
+            `${confirmation.failed} e-mail(s) de confirmação não enviado(s).`,
+            { description: confirmation.reason ?? undefined },
+          );
+        }
         setOpen(false);
         setRaw("");
+        setDoubleOptIn(false);
       },
       onError: (err: unknown) =>
         toast.error("Erro ao importar contatos.", {
@@ -131,6 +201,21 @@ function ImportDialog() {
               placeholder={"ana@exemplo.com,Ana Lima,Acme\nbruno@exemplo.com"}
               data-testid="contatos-import-textarea"
             />
+          </div>
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="import-double-optin"
+              checked={doubleOptIn}
+              onCheckedChange={(v) => setDoubleOptIn(v === true)}
+              data-testid="contatos-import-double-optin"
+            />
+            <div className="space-y-0.5">
+              <Label htmlFor="import-double-optin">Exigir confirmação (double opt-in)</Label>
+              <p className="text-xs text-muted-foreground">
+                Cada novo contato recebe um e-mail de confirmação e só entra nos envios
+                depois de confirmar.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button
@@ -276,7 +361,13 @@ export default function EmailContatos() {
             header: "Status",
             render: (r) => STATUS_LABEL[r.status] ?? r.status,
           },
+          {
+            key: "email_optin",
+            header: "Opt-in",
+            render: (r) => <OptinBadge optin={r.email_optin} />,
+          },
         ]}
+        rowActions={(r) => <ResendConfirmationAction contact={r} />}
         fields={[
           { name: "email", label: "E-mail", type: "email", required: true },
           { name: "nome", label: "Nome" },

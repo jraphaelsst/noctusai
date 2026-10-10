@@ -131,6 +131,7 @@ const EmailTemplatesNoc = lazyWithReload(() => import("@/pages/email/Templates")
 const EmailAutomacoes = lazyWithReload(() => import("@/pages/email/Automacoes"));
 const EmailDominios = lazyWithReload(() => import("@/pages/email/Dominios"));
 const EmailDescadastro = lazyWithReload(() => import("@/pages/email/Descadastro"));
+const EmailConfirmarEmail = lazyWithReload(() => import("@/pages/email/ConfirmarEmail"));
 const Certidoes = lazyWithReload(() => import("@/pages/Certidoes"));
 const Matriculas = lazyWithReload(() => import("@/pages/Matriculas"));
 const AgentesFinanceiros = lazyWithReload(
@@ -674,6 +675,8 @@ export default createProductApp({
     { path: "/chat", component: Chat },
     // Public e-mail unsubscribe link target (token-authenticated, no login).
     { path: "/descadastro/:token", component: EmailDescadastro },
+    // Public double opt-in confirmation link target (token-authenticated, no login).
+    { path: "/confirmar-email/:token", component: EmailConfirmarEmail },
   ],
   Layout,
   ...infra.appConfig,

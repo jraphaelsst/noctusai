@@ -38,6 +38,8 @@ export type CampaignStatus =
   | "cancelada";
 
 export type ContactStatus = "active" | "unsubscribed" | "bounced" | "complained";
+/** Double opt-in (migration 244). `pending` receives no marketing e-mail. */
+export type EmailOptin = "not_required" | "pending" | "confirmed";
 export type TemplateCategoria =
   | "marketing"
   | "transactional"
@@ -58,8 +60,23 @@ export interface EmContact {
   source: string;
   status: ContactStatus;
   unsubscribed_at: string | null;
+  email_optin: EmailOptin;
+  email_confirmed_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+/** Outcome of one double opt-in confirmation e-mail — never faked: when it
+ * could not be sent, `reason` says why (no Resend key, no FRONTEND_BASE_URL…). */
+export interface EmConfirmationOutcome {
+  sent: boolean;
+  reason: string | null;
+}
+
+export interface EmImportResult {
+  imported: number;
+  total: number;
+  confirmation?: { requested: number; sent: number; failed: number; reason: string | null };
 }
 
 export interface EmList {
@@ -384,9 +401,18 @@ export function useEmContactMutations() {
       onSuccess: invalidate,
     }),
     importMany: useMutation({
-      mutationFn: (contacts: EmContactInput[]) =>
-        api.post<Envelope<unknown>>(`${BASE}/contacts/import`, { contacts }),
+      mutationFn: ({ contacts, doubleOptIn }: { contacts: EmContactInput[]; doubleOptIn: boolean }) =>
+        api.post<Envelope<EmImportResult>>(`${BASE}/contacts/import`, {
+          contacts,
+          double_opt_in: doubleOptIn,
+        }),
       onSuccess: invalidate,
+    }),
+    resendConfirmation: useMutation({
+      mutationFn: (id: string) =>
+        api.post<Envelope<{ confirmation: EmConfirmationOutcome }>>(
+          `${BASE}/contacts/${encodeURIComponent(id)}/resend-confirmation`,
+        ),
     }),
   };
 }
@@ -811,3 +837,31 @@ export function useEmConfirmUnsubscribe(token: string | undefined) {
   });
 }
 
+
+// ── Public double opt-in confirmation (/confirmar-email/:token) ───────
+// Token-authenticated, no session: the recipient is NOT logged in.
+
+const EM_CONFIRM = "/api/email-marketing/confirm";
+
+export interface EmConfirmInfo {
+  email: string;
+  valid: boolean;
+}
+
+export function useEmConfirmEmailInfo(token: string | undefined) {
+  return useQuery({
+    queryKey: ["sw", "email-marketing", "confirm-email", token ?? "_none"],
+    enabled: !!token,
+    retry: false,
+    queryFn: () => api.get<EmConfirmInfo>(`${EM_CONFIRM}/${encodeURIComponent(token!)}`),
+  });
+}
+
+export function useEmConfirmEmail(token: string | undefined) {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ ok: boolean; already?: boolean; email?: string; message?: string }>(
+        `${EM_CONFIRM}/${encodeURIComponent(token!)}`,
+      ),
+  });
+}

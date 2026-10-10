@@ -7,6 +7,8 @@ executes the enrollment's CURRENT step and moves it forward:
 =================  ==========================================================================
 ``send_email``     queues ONE ``send_logs`` row; the ordinary ``SendService`` pipeline sends it,
                    so dry-run / unsubscribe / link guards all apply. Advances immediately.
+                   A contact awaiting double opt-in (``email_optin='pending'``) is skipped
+                   (``email_optin.receives_marketing_email``): no row, the flow continues.
 ``wait``           ``next_action_at = now + delay``; ``current_step_id`` = next step; the job
                    ENDS (no ``RescheduleLater``: the scan re-enqueues once due, and the next
                    step has a different dedupe key, so nothing is held in the queue).
@@ -32,6 +34,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
+
+from .email_optin import receives_marketing_email
 
 logger = logging.getLogger(__name__)
 
@@ -189,6 +193,12 @@ def _queue_send(db: Any, org_id: str, automation_id: str, step: dict, contact: d
     template = _rows(db, "templates", id=template_id, org_id=org_id)
     if not template:
         raise ValueError(f"send_email template {template_id} does not exist in this org")
+    if not receives_marketing_email(contact):
+        # Double opt-in send gate (P1b(d)): a contact awaiting confirmation gets
+        # no marketing email; the step is skipped (no send_logs row), not retried.
+        logger.info("automation %s step %s: contact %s not sendable (email_optin=%s) — send skipped",
+                    automation_id, step["id"], contact["id"], contact.get("email_optin"))
+        return
     already = _rows(db, "send_logs", org_id=org_id, contact_id=contact["id"], automation_step_id=step["id"])
     if already:  # a retry after a crash between queueing and advancing must not mail twice
         return

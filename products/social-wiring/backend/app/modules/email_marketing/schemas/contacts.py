@@ -37,3 +37,6 @@ class ContactUpdate(StrictHttpModel):
 class ContactImport(StrictHttpModel):
     """CSV import — expects a list of contacts."""
     contacts: list[ContactCreate]
+    # Double opt-in: every NEW imported address starts pending and receives a
+    # confirmation email; no marketing email reaches it until confirmed.
+    double_opt_in: bool = False

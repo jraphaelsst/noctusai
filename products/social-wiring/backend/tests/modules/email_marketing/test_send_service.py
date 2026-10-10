@@ -28,8 +28,8 @@ class TestQueueCampaignSends:
         db = MockSupabaseClient()
         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
         db.set_table_data("contact_list_members", [
-            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
-            {"list_id": "list1", "contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "active"}},
+            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active", "email_optin": "not_required"}},
+            {"list_id": "list1", "contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "active", "email_optin": "not_required"}},
         ])
         db.set_table_data("send_logs", [])
 
@@ -45,9 +45,9 @@ class TestQueueCampaignSends:
         db = MockSupabaseClient()
         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
         db.set_table_data("contact_list_members", [
-            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
-            {"list_id": "list1", "contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "unsubscribed"}},
-            {"list_id": "list1", "contact_id": "ct3", "contacts": {"id": "ct3", "email": "c@test.com", "nome": "C", "empresa": "Z", "status": "bounced"}},
+            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active", "email_optin": "not_required"}},
+            {"list_id": "list1", "contact_id": "ct2", "contacts": {"id": "ct2", "email": "b@test.com", "nome": "B", "empresa": "Y", "status": "unsubscribed", "email_optin": "not_required"}},
+            {"list_id": "list1", "contact_id": "ct3", "contacts": {"id": "ct3", "email": "c@test.com", "nome": "C", "empresa": "Z", "status": "bounced", "email_optin": "not_required"}},
         ])
         db.set_table_data("send_logs", [])
 
@@ -62,7 +62,7 @@ class TestQueueCampaignSends:
         db = MockSupabaseClient()
         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
         db.set_table_data("contact_list_members", [
-            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active"}},
+            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "active", "email_optin": "not_required"}},
         ])
         db.set_table_data("send_logs", [])
 
@@ -91,7 +91,7 @@ class TestQueueCampaignSends:
         db = MockSupabaseClient()
         db.set_table_data("campaigns", [{"id": "c1", "list_id": "list1"}])
         db.set_table_data("contact_list_members", [
-            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "bounced"}},
+            {"list_id": "list1", "contact_id": "ct1", "contacts": {"id": "ct1", "email": "a@test.com", "nome": "A", "empresa": "X", "status": "bounced", "email_optin": "not_required"}},
         ])
 
         svc = SendService(db, _make_settings())

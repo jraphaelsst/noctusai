@@ -97,7 +97,7 @@ class FakeDb:
                  "status": "active", "next_action_at": iso, "completed_at": None}
             ],
             "contacts": [{"id": CONTACT, "org_id": ORG, "email": "ana@example.com", "nome": "Ana",
-                          "status": "active", "tags": []}],
+                          "status": "active", "email_optin": "not_required", "tags": []}],
             "templates": [{"id": TPL, "org_id": ORG, "assunto": "Oi {{nome}}", "corpo_html": "<p>Oi {{nome}}</p>"}],
             "contact_lists": [{"id": LIST, "org_id": ORG}],
             "contact_list_members": [], "send_logs": [],

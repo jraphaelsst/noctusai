@@ -13,6 +13,7 @@ from typing import Optional
 import httpx
 
 from .click_tracking import rewrite_links
+from .email_optin import receives_marketing_email
 from .unsubscribe_links import (
     UNSUBSCRIBE_VARIABLE,
     one_click_headers,
@@ -68,21 +69,28 @@ class SendService:
             return 0
         campaign = campaign.data[0]
 
-        # Get list contacts (only active, not unsubscribed/bounced)
         list_id = campaign.get("list_id")
         if not list_id:
             return 0
 
-        # Resolve contacts from list members
+        # Resolve contacts from list members. The send gate is
+        # `receives_marketing_email`: active (not unsubscribed/bounced) AND not
+        # awaiting double opt-in confirmation.
         members = (self.db.table("contact_list_members")
-                   .select("contact_id, contacts(id, email, nome, empresa, status)")
+                   .select("contact_id, contacts(id, email, nome, empresa, status, email_optin)")
                    .eq("list_id", list_id).execute())
 
         contacts = []
+        held = 0
         for m in (members.data or []):
             c = m.get("contacts")
-            if c and c.get("status") == "active":
+            if receives_marketing_email(c):
                 contacts.append(c)
+            elif c and c.get("status") == "active":
+                held += 1
+        if held:
+            logger.info("campaign %s: %d contact(s) awaiting double opt-in confirmation excluded",
+                        campaign_id, held)
 
         if not contacts:
             return 0

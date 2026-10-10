@@ -554,3 +554,7 @@ Authored 2026-10-10 (projects/core-studio/specs/esteira-contract.md §2, BE-0). 
 ## 242 — cs_legenda_geracoes (durable counter for the Esteira AI-caption daily cap `legendas_dia_usuario`) — NOT APPLIED
 
 Authored 2026-10-10 (esteira-contract.md §5.3, BE-2). One row per caption generation (model reached), `post_id` ON DELETE SET NULL (deleting a post does not refund quota), index `(org_id, user_id, created_at DESC)` for the rolling-24h count, RLS: own-org SELECT + service_role ALL. No CHECK/UNIQUE/trigger, so no GuardProbe. Requires 241. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied.
+
+## 244 — contacts.email_optin + email_confirmed_at (email-marketing P1b(d) double opt-in) — NOT APPLIED
+
+Authored 2026-10-10 (`projects/email-marketing-p1b-CONTRACT.md` § (d)). Additive + idempotent: `email_optin TEXT NOT NULL DEFAULT 'not_required'` with the named `contacts_email_optin_check` (`not_required|pending|confirmed`, added only if absent) and `email_confirmed_at TIMESTAMPTZ`. Existing rows (incl. WhatsApp contacts — `contacts.status` is untouched) become `not_required`. Apply BEFORE deploying the image that reads/writes it (the campaign/automation send gate selects `email_optin`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.contacts_email_optin_check`.
