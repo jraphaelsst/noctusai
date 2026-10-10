@@ -189,11 +189,25 @@ class TestSelectInTest:
 
         assert sel == []
 
-    def test_reflection_over_the_module_takes_the_whole_file(self):
+    def test_a_test_reflecting_over_the_module_is_selected(self):
+        """`dir(mod)` / `getattr(mod, name)` can reach ANY symbol."""
         src = (
             "from tools.noctus.dev import big\n"
             "def test_every_detector():\n"
             "    for name in dir(big):\n        assert name\n"
+            "def test_unrelated():\n    assert True\n"
+        )
+
+        sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
+
+        assert sel == ["t.py::test_every_detector"]
+
+    def test_module_level_reflection_takes_the_whole_file(self):
+        src = (
+            "from tools.noctus.dev import big\n"
+            "NAMES = [n for n in dir(big) if n.startswith('check_')]\n"
+            "for n in NAMES:\n    pass\n"
+            "def test_unrelated():\n    assert True\n"
         )
 
         sel, _, _ = SS.select_in_test("t.py", src, MOD, {"check_alpha"}, set())
@@ -317,6 +331,29 @@ class TestRegistryDelegation:
         out = _scope(files, new, diff, delegate=True)
 
         assert "tests/test_fleet.py::test_fleet" in out.run and out.delegated == []
+
+    def test_registering_a_new_keeper_still_delegates_the_registry_run(self):
+        """Every new keeper adds one line to the registry; that alone must
+        not drag the fleet run back into the merged-tip box."""
+        base = BIG.replace("check_epsilon()]", "check_epsilon()]\n\n\ndef check_new():\n    return 7")
+        head = base.replace(
+            "    return [check_alpha(), check_beta(), check_gamma(), check_delta(), check_epsilon()]",
+            "    out = [check_alpha(), check_beta(), check_gamma(), check_delta(), check_epsilon()]\n"
+            "    out.append(check_new())\n    return out",
+        )
+        assert SS.registration_only("check_all", base, head) is False  # restructured, not just registered
+        head = base.replace(
+            "def check_all():\n    return [",
+            "def check_all():\n    check_new()\n    return [",
+        ).replace("    return 7", "    return 8")
+        assert SS.registration_only("check_all", base, head) is True
+        files = _tests()
+        files["tests/test_new.py"] = f"from {MOD} import check_new\ndef test_new():\n    assert check_new()\n"
+
+        out = SS.scope_module(files.__getitem__, MOD, sorted(files), base, head, _diff(base, head), None, True)
+
+        assert out.run == ["tests/test_new.py::test_new"]
+        assert out.delegated == ["tests/test_fleet.py::test_fleet"]
 
     def test_a_changed_registry_is_never_delegated(self):
         new, diff = _edit(BIG, "    return [check_alpha(),", "    return [check_alpha(), None,")

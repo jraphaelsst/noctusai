@@ -22,25 +22,37 @@ uncertainty returns ``None`` = "fall back to import scoping for this module"
   * a file that does not parse on either side of the diff;
   * a changed symbol no test names, directly or through a non-registry
     caller in the closure;
+  * a module that reads its own names dynamically (`globals()`, `vars()`,
+    `sys.modules[__name__]`);
   * an empty selection.
-Tests that reach detectors by REGISTRY or dispatch rather than by name are
-ALWAYS selected when the change reaches the registry: it is DERIVED (a top-level def that references
-at least `REGISTRY_MIN_FANOUT` of the module's own PUBLIC functions, e.g.
-`check_all_products`), extended ONE hop to the toolkit defs that call it
-(`refresh_compliance_baseline.live_high_critical_fingerprints` is how
-`test_all_products_compliant` gets there; a name defined in several modules,
-like `main` or `register`, is too ambiguous to count). A test fixture or
-helper naming a target selects the tests that request or call it; any other
-module-level statement naming one takes the whole file, and so does a test
-that reflects over the module object (`getattr`/`vars`/`dir`/
-`inspect.getmembers` on it). CLI dispatch tests name the detector as a
-`--kebab-flag`, which matches its snake_case symbol. Inside string
-constants only code-shaped words (containing `_`) count, and docstrings
-not at all: prose is not a reference.
 
-Historical replay (2026-10-10, 14 compliance.py commits): 12 narrowed from
-83-90 importing test files to 5-7, 2 fell back (an import edit; a changed
-helper no test names).
+REGISTRY. A registry is DERIVED: a top-level def referencing at least
+`REGISTRY_MIN_FANOUT` of the module's own PUBLIC functions
+(`check_all_products` references 114 detectors). The closure stops at an
+unchanged registry, so only registries that dispatch to the change count.
+Tests reaching the change ONLY through such a registry, or through a
+one-hop toolkit def calling it (`refresh_compliance_baseline.
+live_high_critical_fingerprints` is how `test_all_products_compliant` gets
+there; a name defined in several modules, like `main`, is too ambiguous to
+count), run when nothing stands in for them. For `compliance.py`, the
+`keeper_delta` gate is the stand-in: such tests are DELEGATED (`Scoped.
+delegated`), named on that gate, and not run in the box. A CHANGED registry
+is a plain target and its tests run, unless the change only (de)registers
+keepers (`registration_only`), which is how every new keeper lands.
+
+SELECTION. A fixture, helper or module-level re-export (`x = _mod.x`)
+naming a target becomes a target, so the tests that request or call it are
+selected; any other module-level statement naming one takes the whole
+file. A test that reflects over the module object (`dir`/`getattr`/`vars`/
+`inspect.getmembers` on it) is selected: it can reach any symbol. CLI
+dispatch tests name the detector as a `--kebab-flag`, which matches its
+snake_case symbol. Inside string constants only code-shaped words
+(containing `_`) count, and docstrings and bare strings not at all: prose
+is not a reference.
+
+Historical replay (2026-10-10, the last 14 compliance.py commits): 13
+narrowed from 83-90 importing test files to 1-4 test nodes (plus up to 3
+delegated), 1 fell back (an import edit).
 
 CI still runs the full suite; this narrows only the merged-tip time-box.
 """
@@ -242,6 +254,51 @@ def changed_by_ast(base_source: str, head_source: str) -> set[str] | None:
     return changed
 
 
+class _DropRegistrations(ast.NodeTransformer):
+    """Remove simple statements that call exactly one of `public` — the
+    `all_issues.extend(check_x(...))` lines a registry is made of."""
+
+    def __init__(self, public: frozenset[str]):
+        self.public = public
+
+    def _registration(self, node: ast.stmt) -> bool:
+        if not isinstance(node, (ast.Expr, ast.Assign, ast.AugAssign)):
+            return False
+        called = {c.func.id for c in ast.walk(node)
+                  if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+        return len(called & self.public) == 1
+
+    def generic_visit(self, node: ast.AST) -> ast.AST:
+        super().generic_visit(node)
+        for field in ("body", "orelse", "finalbody"):
+            stmts = getattr(node, field, None)
+            if isinstance(stmts, list):
+                kept = [n for n in stmts if not (isinstance(n, ast.stmt) and self._registration(n))]
+                setattr(node, field, kept or [ast.Pass()])
+        return node
+
+
+def registration_only(name: str, base_source: str, head_source: str) -> bool:
+    """True iff registry `name` changed ONLY by adding/removing registration
+    lines (one call to one public function each). Such a change is what
+    every new keeper does to `check_all_products`; the newly registered
+    keeper is itself a changed symbol, so the registry needs no run of its
+    own for it."""
+    def fn(src: str):
+        tree = ast.parse(src)
+        public = frozenset(n.name for n in tree.body
+                           if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+                           and not n.name.startswith("_"))
+        node = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name), None)
+        return None if node is None else ast.dump(_DropRegistrations(public).visit(node))
+
+    try:
+        base, head = fn(base_source), fn(head_source)
+    except SyntaxError:
+        return False
+    return base is not None and base == head
+
+
 def registry(syms: _Symbols) -> set[str]:
     """Dispatchers: defs fanning out to >= REGISTRY_MIN_FANOUT of the module's
     PUBLIC functions. Private helpers don't count — a detector calling five
@@ -356,13 +413,17 @@ def select_in_test(
         tree = ast.parse(source)
     except SyntaxError:
         return None
-    if _reflects(tree, _module_aliases(tree, module)):
-        return [rel_test], [], set(targets)
+    aliases = _module_aliases(tree, module)
     body = [n for n in tree.body if not isinstance(n, (ast.Import, ast.ImportFrom)) and not _is_prose(n)]
     # What each statement REFERENCES — minus the names it binds itself, so
-    # `x = _mod.x` (a module-level re-export) is a helper, not a use.
-    ids = {id(n): _identifiers(n) - set(_node_names(n) or ()) for n in body}
-    want_run, want_reg = set(targets), set(always)
+    # `x = _mod.x` (a module-level re-export) is a helper, not a use. A
+    # statement that reflects over the module object (`dir(mod)`,
+    # `getattr(mod, name)`) can reach ANY symbol: it names them all.
+    reach_all = "\0reflects"
+    ids = {id(n): (_identifiers(n) - set(_node_names(n) or ()))
+                  | ({reach_all} if aliases and _reflects(n, aliases) else set())
+           for n in body}
+    want_run, want_reg = set(targets) | {reach_all}, set(always)
     named: set[str] = set()
     # A module-level helper, fixture or re-export that names a target becomes
     # a target itself (of the same tier), so the tests that call it or
@@ -376,7 +437,7 @@ def select_in_test(
                 continue
             refs = ids[id(node)]
             if refs & want_run and not set(bound) <= want_run:
-                named |= refs & want_run
+                named |= refs & want_run - {reach_all}
                 want_run.update(bound)
                 grew = True
             elif refs & want_reg and not set(bound) <= want_reg | want_run:
@@ -389,7 +450,7 @@ def select_in_test(
         hit_run, hit_reg = refs & want_run, refs & want_reg
         if not (hit_run or hit_reg):
             continue
-        named |= hit_run
+        named |= hit_run - {reach_all}
         to_delegate = delegate and not hit_run
         if _is_test_node(node):
             (delegated if to_delegate else run).append(f"{rel_test}::{node.name}")  # type: ignore[attr-defined]
@@ -414,7 +475,15 @@ def scope_module(
     syms = _symbols(new_source)
     if not changed or syms is None:
         return None
-    reg = frozenset(registry(syms) - changed)  # a CHANGED registry is a plain target
+    # A CHANGED registry is a plain target — unless the change only
+    # (de)registers keepers, which is how every new keeper lands.
+    registries = registry(syms)
+    relisted = {r for r in registries & changed
+                if old_source is not None and registration_only(r, old_source, new_source)}
+    changed = changed - relisted
+    if not changed:
+        return None
+    reg = frozenset(registries - changed)
     reached_all = closure(changed, syms, stop=reg)
     # Only the registries that actually dispatch to the change: a cache-
     # freshness aggregator has nothing to say about a detector's allowlist.

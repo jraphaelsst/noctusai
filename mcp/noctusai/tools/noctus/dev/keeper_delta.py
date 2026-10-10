@@ -11,9 +11,12 @@ integrate budget fits, so it timed out unmeasured and integrate pushed.
 This runs the SAME judgement on the SAME baseline, restricted to the keepers the
 diff can have affected:
 
-- **changed keepers** = top-level `check_*` functions in `compliance.py` whose
-  AST differs from the merge-base version (or is new), plus every `check_*`
-  that transitively calls a changed module-level helper.
+- **changed keepers** = every `check_*` that is, or transitively references,
+  a top-level symbol of `compliance.py` whose AST differs from the merge-base
+  — functions, classes AND named constants (an allowlist edit changes what
+  the keepers reading it report; until 2026-10-10 only functions counted, so
+  a removed allowlist entry read "0 changed keeper(s)"). Attribution is
+  `symbol_scope`'s; anything it can't attribute judges EVERY keeper.
 - **how to call them** = DERIVED from `check_all_products()`'s own body: a call
   with the per-product loop variable is run once per ACTIVE product dir, a
   no-arg call once. A changed keeper the aggregator never calls is not part of
@@ -24,7 +27,11 @@ diff can have affected:
   `test_compliance.py`).
 
 Gate: `gate_sweep`'s `keeper_delta` (scheduled FIRST when `compliance.py` is in
-the diff). CLI: `--check-keeper-delta [--base-ref origin/dev]`.
+the diff). It is the MERGED-TIP STAND-IN for `test_all_products_compliant` and
+`test_real_products_pass_validate` (two fleet scans, ~4.5 min each): tests
+reaching a change only through the registry are not run in the box but named
+as `delegated_tests` on this gate, whose result decides the verdict. CI runs
+them whole. CLI: `--check-keeper-delta [--base-ref origin/dev]`.
 KB § PATTERNS/compliance/compliance-regression-baseline.md.
 """
 from __future__ import annotations

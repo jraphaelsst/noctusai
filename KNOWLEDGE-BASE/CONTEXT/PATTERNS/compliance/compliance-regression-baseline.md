@@ -146,12 +146,21 @@ When `compliance.py` is in a diff, `gate_sweep` now schedules two seconds-scale 
 
 - **`keeper_meta`**: `TestCheckDetectorHasRegressionTest` (~5s). A new `check_*` must ship a `class TestCheck<Name>`.
 - **`keeper_delta`** (`--check-keeper-delta`, `tools/noctus/dev/keeper_delta.py`, ~1s): this baseline's judgement, restricted to the keepers the diff can have affected.
-  - Which keepers: those whose AST differs from the merge-base, plus keepers that call a changed helper.
+  - Which keepers: every keeper that is, or transitively references, a top-level symbol whose AST changed since the merge-base. That covers functions, classes and **named constants** — an allowlist edit (`_PAF_ALLOWED`, `_GUARD_PROBE_ALLOWLIST`) changes what its keepers report. Until 2026-10-10 only functions counted, and a removed allowlist entry read "0 changed keepers". Attribution is `symbol_scope.changed_by_ast` + `closure`, the same mechanism the merged-tip mcp gate scopes by.
+  - When it can't attribute (new file, unparseable side, an import / `if` / bare-call statement, a module reading its own names via `globals()` / `vars()` / `sys.modules[__name__]`): **every** keeper, never zero.
   - How each is called: derived from `check_all_products()`'s own body (per-product vs global).
   - What fails: any high/critical, non-env-artifact fingerprint not in `compliance_baseline.json`. It uses the regenerator's own `fingerprint` / `is_env_artifact`.
   - A changed keeper that the aggregator never calls is reported as `not_aggregated`; it is never silently passed.
 
-The full `test_all_products_compliant` still runs in CI and the full toolkit suite. `keeper_delta` is the early, budget-fitting proof, not a replacement.
+**`keeper_delta` is the merged-tip stand-in for the registry's fleet tests (2026-10-10).** `test_all_products_compliant` and `test_real_products_pass_validate` each run a full fleet scan: 257s and 288s, measured at load ~10–18. With them in the box, every keeper integrate read `incomplete`. In the merged-tip gate, a test that reaches the change only through the registry (`check_all_products` and its one-hop callers) is therefore not run. It is listed as `delegated_tests` on the `keeper_delta` gate entry, and that gate's own result decides the verdict:
+- green only if `keeper_delta` ran and passed;
+- a `keeper_delta` that never ran leaves the sweep non-green.
+
+Two cases are never delegated:
+- a test that names the changed symbol itself;
+- a **changed** registry, unless the change only (de)registers keepers (one `all_issues.extend(check_x(...))` line each). That is how every new keeper lands, and the new keeper is itself a changed keeper.
+
+CI still runs both tests whole, so they remain the backstop before bless. Mutation proof (one allowlist entry removed): `_PAF_ALLOWED` went from ✓ "0 changed keepers" to ✗ 1 new high fingerprint from `check_private_accent_fold`.
 
 Related: a non-`.py` file under `mcp/noctusai/tests/` (a fixture or a baseline .json) now maps to the test files that name it. It no longer forces the full toolkit suite, which was what pushed that integrate into its timeout.
 
