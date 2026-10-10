@@ -157,6 +157,16 @@ export function EmpresasSection({ clienteId }: EmpresasSectionProps) {
     );
   }
 
+  // A failed first load is an ERROR, not "no empresas" (that would lie).
+  if (empresas.isError && !empresas.data) {
+    return (
+      <div className="space-y-2 text-sm" data-testid="empresas-section-error">
+        <p className="text-destructive">Não foi possível carregar as empresas.</p>
+        <Button size="sm" variant="outline" onClick={() => void empresas.refetch()}>Tentar novamente</Button>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3" data-testid="empresas-section">
       {isRefreshing && (

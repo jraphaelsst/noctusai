@@ -336,6 +336,9 @@ export async function refreshWithBackoff(
 // Factory
 // ---------------------------------------------------------------------------
 
+/** Upper bound for one multipart upload round-trip (see `upload`). */
+export const UPLOAD_TIMEOUT_MS = 120_000;
+
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
   const { getBaseUrl, getAuthToken, onTokenExpired, onUnauthenticated, onMfaVerified, onOrgSemLicenca } = options;
 
@@ -389,8 +392,11 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
   async function safeFetch(url: string, init: RequestInit): Promise<Response> {
     try {
       return await fetch(url, init);
-    } catch {
+    } catch (err) {
       const path = new URL(url).pathname;
+      if (err instanceof DOMException && (err.name === 'AbortError' || err.name === 'TimeoutError')) {
+        throw new ApiError(null, `A requisicao demorou demais (${path}). Tente novamente.`);
+      }
       throw new ApiError(null, `Servidor indisponivel (${path}). Verifique se o backend esta rodando.`);
     }
   }
@@ -531,12 +537,23 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
       const headers = await buildHeaders();
       delete headers['Content-Type'];
       const base = getBaseUrl();
-      const response = await fetcher(`${base}${path}`, {
-        method: 'POST',
-        headers,
-        body: form,
-      });
-      return handleResponse<T>(response);
+      // A POST that never answers (backend restart, edge 530 with a held
+      // socket) would pin the caller's `isPending` — "Enviando…" — forever.
+      // Abort after UPLOAD_TIMEOUT_MS so the mutation REJECTS (onError +
+      // button re-enabled). The timer covers the body read too.
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+      try {
+        const response = await fetcher(`${base}${path}`, {
+          method: 'POST',
+          headers,
+          body: form,
+          signal: controller.signal,
+        });
+        return await handleResponse<T>(response);
+      } finally {
+        clearTimeout(timer);
+      }
     },
 
     async patch<T = any>(path: string, body?: unknown): Promise<T> {

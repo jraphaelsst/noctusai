@@ -124,6 +124,13 @@ export function ConversaDocumentosPanel({ clienteId }: ConversaDocumentosPanelPr
 
       {showSkeleton ? (
         <div className="h-10 animate-pulse rounded bg-muted" data-testid="conversa-skeleton" />
+      ) : conversa.isError && !conversa.data ? (
+        <div className="flex items-center gap-2 text-xs text-destructive" data-testid="conversa-error">
+          <span>Não foi possível carregar a conversa.</span>
+          <Button size="sm" variant="ghost" className="h-6 px-2 text-xs" onClick={() => void conversa.refetch()}>
+            Tentar novamente
+          </Button>
+        </div>
       ) : ultimas.length > 0 ? (
         <ul className="space-y-1" data-testid="conversa-mensagens">
           {ultimas.map((m) => (

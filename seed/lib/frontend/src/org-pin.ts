@@ -7,6 +7,8 @@
  * only ever NARROWS on it (409 / falls back to home), it never grants anything.
  * Memory-only on purpose: a reload re-reads `/api/me/access` and re-pins.
  */
+import { useSyncExternalStore } from 'react';
+
 export const ORG_PIN_HEADER = 'X-Noctus-Acting-Org';
 
 let pin: string | null = null;
@@ -57,4 +59,33 @@ export function orgPinFetch(input: RequestInfo | URL, init?: RequestInit): Promi
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   headers.set(ORG_PIN_HEADER, current);
   return fetch(input, { ...init, headers });
+}
+
+// ---------------------------------------------------------------------------
+// Picker-open flag — mirrored by `OrgPickerModal` so a Radix modal (the card
+// hub) can yield. A Radix modal makes everything outside its content inert and
+// aria-hidden, which buried the picker a 409 just reopened under the card
+// (2026-10-10). Zero-dependency (no QueryClient needed to read it).
+// ---------------------------------------------------------------------------
+let pickerOpen = false;
+const pickerOpenListeners = new Set<() => void>();
+
+export function setOrgPickerOpen(open: boolean): void {
+  if (pickerOpen === open) return;
+  pickerOpen = open;
+  pickerOpenListeners.forEach((l) => l());
+}
+
+export function getOrgPickerOpen(): boolean {
+  return pickerOpen;
+}
+
+export function subscribeOrgPickerOpen(listener: () => void): () => void {
+  pickerOpenListeners.add(listener);
+  return () => { pickerOpenListeners.delete(listener); };
+}
+
+/** True while the org picker modal is on screen. */
+export function useOrgPickerOpen(): boolean {
+  return useSyncExternalStore(subscribeOrgPickerOpen, getOrgPickerOpen, getOrgPickerOpen);
 }

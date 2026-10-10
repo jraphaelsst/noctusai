@@ -180,6 +180,22 @@ describe("EmpresasSection", () => {
     expect(screen.getByTestId("empresas-section-skeleton")).toBeTruthy();
   });
 
+  it("a failed first load (500) renders an error with retry — not 'Nenhuma empresa'", async () => {
+    mockRoutes(empresasResponse([]));
+    const ok = mockGet.getMockImplementation()!;
+    mockGet.mockImplementation((path: string) =>
+      path.endsWith("/empresas")
+        ? Promise.reject(Object.assign(new Error("boom"), { status: 500 }))
+        : ok(path));
+    render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });
+    await screen.findByTestId("empresas-section-error");
+    expect(screen.queryByTestId("empresas-section-skeleton")).toBeNull();
+    expect(screen.queryByTestId("empresas-section-empty")).toBeNull();
+    mockRoutes(empresasResponse([empresaItem()]));
+    fireEvent.click(screen.getByText("Tentar novamente"));
+    await screen.findByTestId("empresa-row-emp-1");
+  });
+
   it("🔴 never unmounts existing rows during a background refetch — no skeleton, no empty flash", async () => {
     mockRoutes(empresasResponse([empresaItem()]));
     render(<EmpresasSection clienteId="cli-1" />, { wrapper: makeWrapper(qc) });

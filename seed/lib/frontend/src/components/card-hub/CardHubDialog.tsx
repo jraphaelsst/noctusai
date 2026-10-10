@@ -47,6 +47,7 @@ import {
   DialogTitle,
 } from "../../design-system/ui/radix-dialog";
 import { ScrollArea } from "../../design-system/ui/scroll-area";
+import { useOrgPickerOpen } from "../../org-pin";
 import { cn } from "../../utils";
 
 import { CardSidebarNav } from "./CardSidebarNav";
@@ -125,6 +126,11 @@ export function CardHubDialog<K extends string>({
     () => defaultSubpage ?? (subpages[0]?.key as K),
   );
   const isSheet = useSheetLayout();
+  // 🔴 The org picker (a 409 org_selection_changed reopens it) is a sibling
+  // modal; this Radix dialog makes everything outside it inert, so the card
+  // must yield while the picker is up. Caller-owned `open` is untouched — the
+  // card returns when the picker closes.
+  const pickerOpen = useOrgPickerOpen();
 
   // 🔴 Reported upward so the owner can fetch a tab's data WHEN IT IS OPENED.
   function selecionar(key: K) {
@@ -136,7 +142,7 @@ export function CardHubDialog<K extends string>({
   const emptyKeys = subpages.filter((s) => s.isEmpty).map((s) => s.key);
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+    <Dialog open={open && !pickerOpen} onOpenChange={(next) => !next && onClose()}>
       {/*
         90vh × 90vw. The card carries three panes; the rail's column is the
         rail's COLLAPSED width and stays that width while it is open — see

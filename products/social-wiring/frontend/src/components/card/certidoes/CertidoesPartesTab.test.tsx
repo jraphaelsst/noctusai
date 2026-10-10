@@ -79,6 +79,25 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
+describe("CertidoesPartesTab — failed first load is an error, never a skeleton", () => {
+  // 409 = the stale/missing acting-org refusal; 500 = a server fault. Both must
+  // end in the error state with retry once the query settles.
+  it.each([[409, "A organização selecionada mudou."], [500, "Erro interno"]])(
+    "HTTP %i -> error state with retry (no skeleton)",
+    async (status, message) => {
+      const err = Object.assign(new Error(message), { status });
+      mockGet.mockRejectedValueOnce(err);
+      render(<CertidoesPartesTab clienteId="cli-1" />, { wrapper: wrap });
+      expect(screen.getByTestId("certidoes-partes-skeleton")).toBeTruthy();
+      await screen.findByTestId("certidoes-partes-error");
+      expect(screen.queryByTestId("certidoes-partes-skeleton")).toBeNull();
+      mockGet.mockResolvedValueOnce(resp([parte()]));
+      fireEvent.click(screen.getByText("Tentar novamente"));
+      await screen.findByTestId("parte-secao-c:cli-1");
+    },
+  );
+});
+
 describe("CertidoesPartesTab", () => {
   it("renders one section per party, all collapsed by default", async () => {
     mockGet.mockResolvedValue(resp([parte(), parte({ chave: "c:cli-2", rotulo: "VEND 1", lado: "vendedor", titular: false, nome: "João", parte_id: "p-2", cliente_id: "cli-2" })]));

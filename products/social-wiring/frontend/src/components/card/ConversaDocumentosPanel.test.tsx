@@ -35,6 +35,17 @@ beforeEach(() => {
 });
 
 describe("ConversaDocumentosPanel", () => {
+  it("a failed first load renders an error with retry, not 'Nenhuma conversa'", () => {
+    const refetch = vi.fn();
+    m.conversa.mockReturnValue({ data: undefined, isPending: false, isFetching: false, isError: true, refetch });
+    render(<ConversaDocumentosPanel clienteId="c1" />);
+    expect(screen.getByTestId("conversa-error")).toBeTruthy();
+    expect(screen.queryByTestId("conversa-skeleton")).toBeNull();
+    expect(screen.queryByText("Nenhuma conversa ainda.")).toBeNull();
+    fireEvent.click(screen.getByText("Tentar novamente"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
   it("skeletons only while there is no data", () => {
     m.conversa.mockReturnValue(q(undefined));
     render(<ConversaDocumentosPanel clienteId="c1" />);

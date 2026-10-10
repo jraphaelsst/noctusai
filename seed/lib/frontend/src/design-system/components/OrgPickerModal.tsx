@@ -12,12 +12,13 @@
  * `OrgPickerModalView` is the pure presentational half; `OrgPickerModal`
  * binds it to `useOrgSelection()`.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 
 import type { OrgChoice } from '../../access';
 import { env } from '../../env';
 import { useOrgSelection } from '../../org-selection';
+import { setOrgPickerOpen } from '../../org-pin';
 import { Button } from '../ui/Button';
 import { Dialog, DialogBody, DialogHeader } from '../ui/Dialog';
 
@@ -140,6 +141,11 @@ export function OrgPickerModal({ onSignOut }: { onSignOut?: () => void | Promise
   const [chooseErr, setChooseErr] = useState<string | null>(null);
 
   const open = sel.selection.available && (sel.pickerRequired || sel.pickerForced);
+  // Let Radix modals (the card hub) yield while the picker is up — see org-pin.
+  useEffect(() => {
+    setOrgPickerOpen(open);
+    return () => setOrgPickerOpen(false);
+  }, [open]);
   const onChoose = (orgId: string) => {
     setChooseErr(null);
     setChoosingId(orgId);

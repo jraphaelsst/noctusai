@@ -15,6 +15,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ClipboardList, Megaphone, Route, User } from "lucide-react";
 
+import { act } from "@testing-library/react";
+import { setOrgPickerOpen } from "../../org-pin";
 import { CardHubDialog, type CardHubDialogProps, type CardSubpage } from "./CardHubDialog";
 import { GeralActions, GeralSubpage, type GeralSubpageProps } from "./GeralSubpage";
 import type { Checklist, Tag } from "./types";
@@ -139,6 +141,18 @@ function stubViewport(width: number) {
       }) as unknown as MediaQueryList,
   );
 }
+
+describe("CardHubDialog — yields to the org picker", () => {
+  afterEach(() => act(() => setOrgPickerOpen(false)));
+  it("unmounts while the picker is open (Radix would bury it) and returns after", () => {
+    renderDialog(baseProps());
+    expect(screen.getByTestId("cliente-card-dialog")).toBeTruthy();
+    act(() => setOrgPickerOpen(true));
+    expect(screen.queryByTestId("cliente-card-dialog")).toBeNull();
+    act(() => setOrgPickerOpen(false));
+    expect(screen.getByTestId("cliente-card-dialog")).toBeTruthy();
+  });
+});
 
 describe("CardHubDialog — four states", () => {
   it("shows a loading skeleton, never the content, while loading", () => {
