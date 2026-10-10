@@ -362,7 +362,31 @@ def build_reexport_map(
                 for alias in node.names:
                     exposed_as = alias.asname or alias.name
                     rmap[f"{init_module}.{exposed_as}"] = f"{src_module}.{alias.name}"
+            # PEP 562 lazy packages (noctusai_seed, 2026-10-09) declare their re-exports as a
+            # literal `_LAZY_ATTRS = {"name": "providing.module"}` resolved by __getattr__ —
+            # the runtime source of truth, so credit it like an eager `from module import name`.
+            for name, module in _lazy_attrs_literal(tree).items():
+                rmap.setdefault(f"{init_module}.{name}", f"{module}.{name}")
     return rmap
+
+
+def _lazy_attrs_literal(tree: ast.Module) -> dict[str, str]:
+    """The top-level `_LAZY_ATTRS` str→str dict literal of a lazy package, or {}."""
+    for node in tree.body:
+        target = node.target if isinstance(node, ast.AnnAssign) else (
+            node.targets[0] if isinstance(node, ast.Assign) and len(node.targets) == 1 else None)
+        if not (isinstance(target, ast.Name) and target.id == "_LAZY_ATTRS"):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Dict):
+            return {}
+        out: dict[str, str] = {}
+        for k, v in zip(value.keys, value.values):
+            if (isinstance(k, ast.Constant) and isinstance(k.value, str)
+                    and isinstance(v, ast.Constant) and isinstance(v.value, str)):
+                out[k.value] = v.value
+        return out
+    return {}
 
 
 # ── Demand side: scan products + lib roots for lib-symbol imports ────

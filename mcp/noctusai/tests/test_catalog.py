@@ -91,6 +91,18 @@ class TestImportScanner:
         product_consumers = {c for c in consumers if not c.startswith("lib:")}
         assert len(product_consumers) >= 5
 
+    def test_lazy_package_literal_is_a_reexport(self, tmp_path):
+        """A PEP 562 package's `_LAZY_ATTRS` literal credits the providing module."""
+        from tools.noctus.dev.catalog import build_reexport_map as brm
+        pkg = tmp_path / "pkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text(
+            '_LAZY_ATTRS: dict[str, str] = {"make_app": "pkg.app", "X": "pkg.sub.mod"}\n'
+        )
+        rmap = brm(lib_roots={"pkg": pkg})
+        assert rmap["pkg.make_app"] == "pkg.app.make_app"
+        assert rmap["pkg.X"] == "pkg.sub.mod.X"
+
     def test_reexport_credits_source(self):
         """A `from noctusai_lib.testing import MockSupabaseClient` import
         must credit the source definition, not a reexport alias."""
