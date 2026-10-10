@@ -91,6 +91,7 @@ def register() -> Any:
         posts,
         references,
         treinamentos,
+        roteiros,
     )
     from app.modules.media_creation import cerebro_scheduler
     from app.modules.media_creation.services import cerebro_transcricao
@@ -143,6 +144,7 @@ def register() -> Any:
             treinamentos.router,
             dashboard_criacao.router,
             chat.router,
+            roteiros.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
