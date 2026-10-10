@@ -1490,7 +1490,10 @@ def _twice(stmt: str) -> str:
     return f"    {stmt};\n    {stmt};"
 
 
-def _cs_geracao_probe(*, probe_id: str, guard_name: str, setup: str, statements: str, permitted_msg: str, rationale: str) -> GuardProbe:
+def _cs_geracao_probe(
+    *, probe_id: str, guard_name: str, setup: str, statements: str, permitted_msg: str, rationale: str,
+    migration: str = _CS_GERACAO_MIGRATION,
+) -> GuardProbe:
     """Refusal probe for a migration-229 guard (rolled back). `statements`
     run inside the inner block; the LAST one must be the refused write."""
     return GuardProbe(
@@ -1499,7 +1502,7 @@ def _cs_geracao_probe(*, probe_id: str, guard_name: str, setup: str, statements:
         schema=_SW_SCHEMA,
         guard_name=guard_name,
         kind="write_refusal",
-        migrations=(_CS_GERACAO_MIGRATION,),
+        migrations=(migration,),
         rationale=rationale,
         sql=_do_block(f"""
 DECLARE
@@ -1538,7 +1541,20 @@ _CS_G_SETUP_VIRAL = (
     _CS_G_SETUP_PERFIL + "\n  " + _CS_G_VIRAL_INS.format(m="noc-probe-media") + "\n  RETURNING id INTO v_viral_id;"
 )
 
+_CS_BIBLIOTECA_OPTOUTS_MIGRATION = "233_cs_biblioteca_optouts.sql"
+
 _CS_GERACAO_PROBES: tuple[GuardProbe, ...] = (
+    _cs_geracao_probe(
+        probe_id="cs_biblioteca_optouts.handle.unique",
+        guard_name="cs_biblioteca_optouts_handle_uq",
+        setup="",
+        statements=_twice(
+            f"INSERT INTO {_SW_SCHEMA}.cs_biblioteca_optouts (handle, origem) VALUES ('noc.probe.optout', 'admin')"
+        ),
+        permitted_msg="duplicate platform-wide opt-out handle insert succeeded",
+        rationale="One opt-out per handle platform-wide: a creator's opt-out binds every org and a re-add is a no-op.",
+        migration=_CS_BIBLIOTECA_OPTOUTS_MIGRATION,
+    ),
     _cs_geracao_probe(
         probe_id="cs_perfis_monitorados.org_rede_handle.unique",
         guard_name="cs_perfis_monitorados_org_handle_uq",

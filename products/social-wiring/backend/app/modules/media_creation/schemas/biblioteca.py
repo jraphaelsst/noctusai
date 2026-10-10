@@ -69,6 +69,20 @@ class PerfilCreate(StrictHttpModel):
             raise ValueError(str(exc)) from None
 
 
+class OptoutCreate(StrictHttpModel):
+    handle: str = Field(min_length=1, max_length=200)
+    motivo: Optional[str] = Field(default=None, max_length=1000)
+    origem: Literal["email", "dpo", "admin"]
+
+    @field_validator("handle")
+    @classmethod
+    def _handle(cls, v: str) -> str:
+        try:
+            return normalizar_handle(v)
+        except HandleInvalido as exc:
+            raise ValueError(str(exc)) from None
+
+
 class PerfilPatch(StrictHttpModel):
     status: Optional[Literal["ativo", "pausado"]] = None
     conta_descoberta_id: Optional[uuid.UUID] = None

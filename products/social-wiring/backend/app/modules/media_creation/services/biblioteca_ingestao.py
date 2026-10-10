@@ -55,12 +55,13 @@ from app.modules.media_creation.prompts.biblioteca_classificador import (
     build_user_message,
     parse_classificador_output,
 )
-from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services import biblioteca_optout, geracao_jobs
 from app.modules.media_creation.services.biblioteca_service import (
     BUCKET,
     PERFIS,
     SYNC_MIN_INTERVAL,
     VIRAIS,
+    purgar_perfil,
 )
 from app.services.integration_account_service import IntegrationAccountNotFound
 
@@ -328,6 +329,12 @@ def _is_video(m: Any) -> bool:
 async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     perfil = _load_perfil(ports, (job.payload or {}).get("perfil_id"))
     pid, org_id = str(perfil["id"]), str(perfil["org_id"])
+    if biblioteca_optout.esta_bloqueado(ports.db, str(perfil["handle"])):
+        # Belt and braces: the opt-out endpoint already purged this handle, so a surviving row means a
+        # registration raced the opt-out. Erase it instead of syncing a creator who asked not to be monitored.
+        logger.info("biblioteca: perfil=%s em opt-out; apagado sem sincronizar", pid)
+        await purgar_perfil(ports.db, ports.storage, org_id, perfil)
+        return
     if perfil["status"] == "pausado":
         return
     now = ports.clock()

@@ -19,9 +19,15 @@ from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
 from app.config import settings
-from app.dependencies import get_admin_client, get_current_user_org, get_platform_admin_check
+from app.dependencies import (
+    get_admin_client,
+    get_current_user_org,
+    get_platform_admin_check,
+    require_platform_admin,
+)
 from app.modules.certidoes.deps import storage_for
 from app.modules.media_creation.schemas.biblioteca import (
+    OptoutCreate,
     PerfilCreate,
     PerfilPatch,
     ReferenciaPatch,
@@ -29,10 +35,12 @@ from app.modules.media_creation.schemas.biblioteca import (
     ReferenciasPerfil,
 )
 from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services import biblioteca_optout
 from app.modules.media_creation.services.biblioteca_service import (
     BibliotecaError,
     BibliotecaService,
     ViralFiltros,
+    purgar_handle,
 )
 from app.rate_limit import limiter
 
@@ -68,7 +76,8 @@ def _svc(auth, storage: StorageBackend, jobs: JobRepository, switch: Callable[[]
 
 def _raise(exc: BibliotecaError):
     headers = {"Retry-After": str(exc.retry_after_s)} if exc.retry_after_s else None
-    raise HTTPException(status_code=exc.status, detail=exc.detail, headers=headers) from exc
+    detail = {"detail": exc.detail, "code": exc.code} if exc.code else exc.detail
+    raise HTTPException(status_code=exc.status, detail=detail, headers=headers) from exc
 
 
 # ── virais ──────────────────────────────────────────────────────────────────
@@ -318,4 +327,44 @@ async def delete_referencia(
         _svc(auth, storage, jobs, switch).delete_referencia(str(ref_id))
     except BibliotecaError as exc:
         _raise(exc)
+    return Response(status_code=204)
+
+
+# ── opt-out admin (platform admins only; LGPD Art. 7 IX + Meta deletion-on-request) ─────────────────────
+# Every write below is a mutating request, so the platform AuditMiddleware records it in public.audit_logs
+# with the acting admin (resolved by get_current_user_org); nothing personal beyond the handle is logged.
+
+
+def _optout_out(row: dict) -> dict:
+    return {k: row.get(k) for k in ("id", "handle", "motivo", "origem", "solicitado_em", "registrado_por", "created_at")}
+
+
+@router.get("/admin/optouts")
+async def list_optouts(auth=Depends(require_platform_admin)):
+    return success_response([_optout_out(r) for r in biblioteca_optout.listar(get_admin_client())])
+
+
+@router.post("/admin/optouts")
+async def criar_optout(
+    body: OptoutCreate,
+    auth=Depends(require_platform_admin),
+    storage: StorageBackend = Depends(get_biblioteca_storage),
+):
+    """Register the opt-out and synchronously purge the handle across ALL orgs. Idempotent: a repeat keeps
+    the first row (``criado=false``) and re-runs the purge (a no-op once nothing is left)."""
+    db = get_admin_client()
+    user_id = str(getattr(auth[0], "id", "") or "") or None
+    row, criado = biblioteca_optout.registrar(db, body.handle, body.motivo, body.origem, user_id)
+    purgados = await purgar_handle(db, storage, body.handle)
+    logger.info(
+        "biblioteca opt-out: criado=%s origem=%s perfis=%d virais=%d blobs_falhos=%d",
+        criado, body.origem, purgados["perfis"], purgados["virais"], purgados["blobs_falhos"],
+    )
+    return success_response({"optout": _optout_out(row), "criado": criado, "purgados": purgados})
+
+
+@router.delete("/admin/optouts/{optout_id}", status_code=204)
+async def remover_optout(optout_id: uuid.UUID, auth=Depends(require_platform_admin)):
+    if not biblioteca_optout.remover(get_admin_client(), str(optout_id)):
+        raise HTTPException(status_code=404, detail="Opt-out não encontrado")
     return Response(status_code=204)

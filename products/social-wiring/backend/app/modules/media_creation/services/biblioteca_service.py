@@ -27,6 +27,7 @@ from noctusai_lib.integrations.persistence.table_reads import batched
 from noctusai_lib.integrations.storage import StorageBackend
 
 from app.modules.media_creation.geracao_taxonomias import FORMATOS_VIDEO, NICHOS, PROFISSOES
+from app.modules.media_creation.services import biblioteca_optout
 from app.modules.media_creation.schemas.biblioteca import (
     MAX_REFERENCIAS_MARCA,
     PAGE_SIZE,
@@ -76,10 +77,11 @@ MSG_SEM_CONTA = (
 
 
 class BibliotecaError(Exception):
-    def __init__(self, status: int, detail: str, *, retry_after_s: Optional[int] = None):
+    def __init__(self, status: int, detail: str, *, retry_after_s: Optional[int] = None, code: Optional[str] = None):
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        self.code = code
         self.retry_after_s = retry_after_s
 
 
@@ -259,6 +261,37 @@ async def purgar_perfil(db: Any, storage: StorageBackend, org_id: str, perfil: d
             "contexto_ref", chunk).neq("status", "processando").execute()
     db.table(PERFIS).delete().eq("id", pid).eq("org_id", org_id).execute()
     return falhas
+
+
+async def purgar_handle(db: Any, storage: StorageBackend, handle: str) -> dict[str, int]:
+    """Erase EVERY org's monitored profile for ``handle`` (an opt-out is platform-wide): each profile's
+    references (profile- and video-mode), virais, transcripts and blobs via :func:`purgar_perfil`.
+    Idempotent -- no rows left is a ``{0, 0, 0}`` no-op. Returns ``{perfis, virais, blobs_falhos}``."""
+    out = {"perfis": 0, "virais": 0, "blobs_falhos": 0}
+    perfis = list(
+        iter_paged_rows(
+            lambda s, e: db.table(PERFIS).select("id,org_id,foto_path").eq("handle", handle)
+            .order("id").range(s, e).execute().data
+        )
+    )
+    for p in perfis:
+        pid, org_id = str(p["id"]), str(p["org_id"])
+        viral_ids = [
+            str(v["id"]) for v in iter_paged_rows(
+                lambda s, e: db.table(VIRAIS).select("id").eq("org_id", org_id).eq("perfil_id", pid)
+                .order("id").range(s, e).execute().data
+            )
+        ]
+        # The FKs cascade in Postgres; deleting the references explicitly keeps the purge complete on
+        # any backend and does not depend on the cascade for the "references die with the profile" rule.
+        db.table(REFS).delete().eq("org_id", org_id).eq("perfil_id", pid).execute()
+        for chunk in batched(viral_ids):
+            db.table(REFS).delete().eq("org_id", org_id).in_("viral_id", chunk).execute()
+        out["blobs_falhos"] += await purgar_perfil(db, storage, org_id, p)
+        db.table(VIRAIS).delete().eq("org_id", org_id).eq("perfil_id", pid).execute()
+        out["perfis"] += 1
+        out["virais"] += len(viral_ids)
+    return out
 
 
 class BibliotecaService:
@@ -535,6 +568,7 @@ class BibliotecaService:
             handle = normalizar_handle(handle_bruto)
         except HandleInvalido as exc:
             raise BibliotecaError(422, str(exc)) from None
+        self._assert_sem_optout(handle)
         if marca_id:
             self.assert_marca(marca_id)
         row = self._find_perfil(handle)
@@ -572,8 +606,13 @@ class BibliotecaService:
         if have + adding > MAX_REFERENCIAS_MARCA:
             raise BibliotecaError(409, f"Limite de {MAX_REFERENCIAS_MARCA} itens na Minha Biblioteca atingido.")
 
+    def _assert_sem_optout(self, handle: str) -> None:
+        if biblioteca_optout.esta_bloqueado(self.db, handle):
+            raise BibliotecaError(422, biblioteca_optout.MSG_OPTOUT, code=biblioteca_optout.CODIGO_OPTOUT)
+
     async def criar_perfil(self, marca_id: str, handle: str, conta_descoberta_id: Optional[str]) -> dict[str, Any]:
         self.assert_marca(marca_id)
+        self._assert_sem_optout(handle)
         existing = self._find_perfil(handle)
         if existing is not None:
             self._add_ref_perfil(marca_id, str(existing["id"]), True)
