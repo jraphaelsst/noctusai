@@ -180,6 +180,17 @@ def load_repo_env(
     attempted = _candidate_roots(repo_root)
     loaded_from: list[Path] = []
 
+    from noctusai_lib.config.settings import NO_ENV_FILE_VAR
+
+    if os.environ.get(NO_ENV_FILE_VAR, "").strip().lower() in {"1", "true", "yes", "on"}:
+        # The seed pytest plugin declares this seam for every test session: a
+        # hermetic test must never inherit the platform .env. Without it, a test
+        # module that imports `server` at collection pulled the primary .env's
+        # prod SUPABASE_URL into the session and the live-DB guard refused all
+        # 6162 toolkit tests (2026-10-10).
+        log.info("env_bootstrap: %s set — not loading any .env (hermetic test session).", NO_ENV_FILE_VAR)
+        dotenv_installed = False
+
     if dotenv_installed:
         for candidate in attempted:
             env_path = candidate / _DOTENV_FILENAME

@@ -32,6 +32,16 @@ import server  # noqa: E402,F401
 
 
 @pytest.fixture(autouse=True)
+def _loader_seam_off(monkeypatch):
+    """These tests exercise the loader itself (against tmp roots), so they
+    switch OFF the hermetic-session seam the seed pytest plugin declares —
+    with it on, `load_repo_env` loads nothing by design."""
+    from noctusai_lib.config.settings import NO_ENV_FILE_VAR
+
+    monkeypatch.delenv(NO_ENV_FILE_VAR, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _restore_environ():
     """The loader writes loaded keys into the real `os.environ`, and
     `monkeypatch.delenv(..., raising=False)` records nothing for a key that
