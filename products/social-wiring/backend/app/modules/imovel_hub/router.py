@@ -173,6 +173,7 @@ async def vincular_duplicata_route(
     auth=Depends(get_current_user_org),
     client=Depends(get_imovel_hub_client),
     legal=Depends(get_vinculo_legal),
+    notificador=Depends(get_imovel_notification_service),
 ) -> dict:
     """"É o mesmo imóvel": LINK the manual imóvel to the Vista listing (nothing
     is moved or merged) → `{duplicata, vinculo, legal}`.
@@ -183,9 +184,16 @@ async def vincular_duplicata_route(
     the link."""
     user, org_id = _auth_parts(auth)
     require_org_admin_role(get_core_client(), getattr(user, "id", None), "Vincular imóveis")
-    return vinculo_svc.vincular(
+    resultado = vinculo_svc.vincular(
         client, org_id, duplicata_id, getattr(user, "id", None), legal=legal
     )
+    # Conflicts the reconciliation opened are announced to the humans (best
+    # effort inside `notificar`); the rows themselves are not part of the wire.
+    novos = resultado.pop("novos_conflitos", [])
+    await campos_svc.notificar(
+        client, org_id, resultado["vinculo"]["vista_codigo"], novos, notificador
+    )
+    return resultado
 
 
 @router.post("/{codigo}/desvincular")

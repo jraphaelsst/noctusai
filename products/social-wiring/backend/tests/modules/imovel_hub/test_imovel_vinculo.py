@@ -92,6 +92,14 @@ class TestResolver:
         registro(scoped, MANUAL)["vinculado_a"] = reg["vista"]["id"]
         assert vinc.resolver_vinculo(scoped, UUID("00000000-0000-4000-8000-000000000099"), MANUAL) is None
 
+    def test_linhas_sem_id_nao_quebram(self, client, scoped):
+        """Legacy fixtures seed registry rows with no `id`: None, never a KeyError."""
+        cenario(scoped)
+        for r in scoped.table("imovel_registry")._data:
+            r.pop("id", None)
+        assert vinc.resolver_vinculo(scoped, ORG, VISTA) is None
+        assert vinc.resolver_vinculo(scoped, ORG, MANUAL) is None
+
     def test_vinculo_e_imutavel_e_serializavel(self):
         assert V.as_dict() == {"manual_codigo": MANUAL, "vista_codigo": VISTA}
         with pytest.raises(Exception):
@@ -123,12 +131,24 @@ class TestVincular:
         assert chamada[0] == "reconciliar" and chamada[1] == ORG and chamada[2] == V
         assert chamada[3][MANUAL] == reg["vista"]["id"]
         # wire shape
-        assert set(out) == {"duplicata", "vinculo", "legal"}
+        assert set(out) == {"duplicata", "vinculo", "legal", "novos_conflitos"}
         assert out["vinculo"] == {"manual_codigo": MANUAL, "vista_codigo": VISTA}
         assert out["legal"] == {"status": "ok", "matricula": "copiada"}
         assert out["duplicata"]["status"] == "confirmado" and out["duplicata"]["id"] == p["id"]
         # and the outcome is recorded on the audit event
         assert ev["legal"] == out["legal"]
+
+    def test_legal_devolve_novos_e_ja_em_conflito_sem_as_linhas(self, client, scoped):
+        cenario(scoped, pares=[par_row()])
+        legal = FakeVinculoLegal(retorno={
+            "novos": ["numero_matricula"], "fechados": [], "ja_em_conflito": ["x"],
+            "novos_conflitos": [{"campo": "numero_matricula"}],
+        })
+        out = vinc.vincular(scoped, ORG, par(scoped)["id"], ATOR, legal=legal)
+        assert out["legal"] == {"status": "ok", "novos": ["numero_matricula"], "fechados": [],
+                                "ja_em_conflito": ["x"]}
+        assert out["novos_conflitos"] == [{"campo": "numero_matricula"}]
+        assert "novos_conflitos" not in eventos(scoped)[0]["legal"]
 
     def test_retorno_nao_dict_do_legal_vira_status_ok(self, client, scoped):
         cenario(scoped, pares=[par_row()])
@@ -377,6 +397,30 @@ class TestRotasAdmin:
         assert set(r.json()) == {"vinculo", "duplicata", "legal"}
         assert registro(scoped, MANUAL).get("vinculado_a") is None and par(scoped)["status"] == "pendente"
         assert [c[0] for c in legal_injetado.chamadas] == ["reconciliar", "limpar"]
+
+    def test_rota_anuncia_os_novos_conflitos_e_nao_os_expoe(self, admin_client):
+        from app.main import app
+        from app.modules.imovel_hub.deps import get_imovel_notification_service
+        from tests.modules.imovel_hub.conftest import FakeImovelNotifier
+
+        notif = FakeImovelNotifier()
+        legal = FakeVinculoLegal(retorno={
+            "novos": ["numero_matricula"], "fechados": [], "ja_em_conflito": [],
+            "novos_conflitos": [{"campo": "numero_matricula", "id": "c1"}],
+        })
+        app.dependency_overrides[get_vinculo_legal] = lambda: legal
+        app.dependency_overrides[get_imovel_notification_service] = lambda: notif
+        try:
+            scoped = _scoped_do_cliente()
+            cenario(scoped, pares=[par_row()])
+            r = admin_client.post(f"{BASE}/duplicatas/{par(scoped)['id']}/vincular", headers=auth())
+        finally:
+            app.dependency_overrides.pop(get_vinculo_legal, None)
+            app.dependency_overrides.pop(get_imovel_notification_service, None)
+        assert r.status_code == 200, r.text
+        assert set(r.json()) == {"duplicata", "vinculo", "legal"}
+        assert r.json()["legal"]["novos"] == ["numero_matricula"]
+        assert [(n["codigo"], n["conflito"]["campo"]) for n in notif.conflitos] == [(VISTA, "numero_matricula")]
 
     def test_rota_sem_modulo_legal_reporta_erro_no_corpo(self, admin_client):
         from app.main import app

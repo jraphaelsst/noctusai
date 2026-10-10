@@ -105,9 +105,12 @@ def resolver_vinculo(client: Any, org_id: UUID, codigo: str) -> Optional[Vinculo
         return None
     if row.get("vinculado_a"):
         alvo = _registro(client, org_id, id_=row["vinculado_a"])
-        if alvo is None:
+        if alvo is None or not alvo.get("codigo_canonical"):
             return None
         return Vinculo(manual_codigo=canonico, vista_codigo=str(alvo["codigo_canonical"]))
+    if not row.get("id"):
+        # a row without an id (legacy fixtures) cannot be the target of a link
+        return None
     manuais = (
         _t(client, REGISTRY_TABLE).select("codigo_canonical, vinculado_a")
         .eq("org_id", str(org_id)).eq("vinculado_a", str(row["id"])).limit(1).execute()
@@ -144,7 +147,15 @@ def _chamar_legal(legal: Any, funcao: str, client: Any, org_id: UUID, vinculo: V
         return {"status": "erro", "mensagem": f"{type(exc).__name__}: {exc}"}
     if isinstance(resultado, dict):
         return {"status": "ok", **resultado}
+    if isinstance(resultado, int) and not isinstance(resultado, bool):
+        return {"status": "ok", "removidos": resultado}
     return {"status": "ok"}
+
+
+def _publico(legal: dict) -> dict:
+    """The `legal` outcome as the wire/audit shape: `novos_conflitos` (the full
+    conflict rows, for the caller to announce) is internal."""
+    return {k: v for k, v in legal.items() if k != "novos_conflitos"}
 
 
 # ─── audit ────────────────────────────────────────────────────────────────
@@ -205,7 +216,8 @@ def vincular(
 
     `409 duplicata_ja_resolvida` unless the pair is `pendente`;
     `409 imovel_ja_vinculado` / `vista_ja_vinculada` when either side already
-    takes part in a link. Returns `{duplicata, vinculo, legal}`.
+    takes part in a link. Returns `{duplicata, vinculo, legal, novos_conflitos}` (the route strips
+    `novos_conflitos` after announcing them).
     """
     linha = dup_svc.obter_linha(client, org_id, duplicata_id)
     if linha["status"] != "pendente":
@@ -269,11 +281,14 @@ def vincular(
         raise _sem_auditoria(vinculo, "vincular", exc) from exc
 
     resultado_legal = _chamar_legal(legal, "reconciliar", client, org_id, vinculo)
-    _registrar_legal_no_evento(client, org_id, evento_id, resultado_legal)
+    _registrar_legal_no_evento(client, org_id, evento_id, _publico(resultado_legal))
     return {
         "duplicata": dup_svc.obter_par(client, org_id, duplicata_id),
         "vinculo": vinculo.as_dict(),
-        "legal": resultado_legal,
+        "legal": _publico(resultado_legal),
+        # internal: the conflict rows `reconciliar` opened, for the ROUTE to
+        # announce (`campos_extraidos_service.notificar`, async) and strip.
+        "novos_conflitos": list(resultado_legal.get("novos_conflitos") or []),
     }
 
 
@@ -325,7 +340,7 @@ def desvincular(
     return {
         "vinculo": vinculo.as_dict(),
         "duplicata": dup_svc.obter_par(client, org_id, duplicata_id) if duplicata_id else None,
-        "legal": resultado_legal,
+        "legal": _publico(resultado_legal),
     }
 
 
