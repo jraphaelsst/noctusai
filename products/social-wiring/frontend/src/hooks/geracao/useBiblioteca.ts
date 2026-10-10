@@ -39,7 +39,7 @@ export interface ViraisPage {
   filtro_automatico: boolean;
 }
 
-function viraisParams(marcaId: string, f: FiltrosViral): string {
+export function viraisParams(marcaId: string, f: FiltrosViral): string {
   const p = new URLSearchParams({ marca_id: marcaId, ordem: f.ordem, page: String(f.page) });
   f.nichos.forEach((n) => p.append("nichos", String(n)));
   f.profissoes.forEach((n) => p.append("profissoes", String(n)));
