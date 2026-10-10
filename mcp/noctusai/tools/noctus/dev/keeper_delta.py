@@ -20,7 +20,7 @@ diff can have affected:
   the baseline gate — reported in `not_aggregated`, never silently passed.
 - **verdict** = the high/critical, non-env-artifact fingerprints those keepers
   produce, minus `tests/compliance_baseline.json` — computed with the
-  regenerator's own `fingerprint` / `is_env_artifact` (one source of truth with
+  regenerator's own `fingerprint` / `is_env_artifact_issue` (one source of truth with
   `test_compliance.py`).
 
 Gate: `gate_sweep`'s `keeper_delta` (scheduled FIRST when `compliance.py` is in
@@ -145,7 +145,7 @@ def keeper_delta(root: Path, base_ref: str = "origin/dev") -> dict[str, Any]:
         ran.append(name)
     live = {rcb.fingerprint(i) for i in issues
             if i.get("severity") in ("high", "critical")
-            and not rcb.is_env_artifact(i.get("issue", ""))}
+            and not rcb.is_env_artifact_issue(i)}
     new = sorted(live - baseline)
     return {"ok": not new, "keepers_changed": keepers, "ran": ran,
             "not_aggregated": not_aggregated, "new_fingerprints": new}
