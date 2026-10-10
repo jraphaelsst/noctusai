@@ -21,9 +21,9 @@ class TestModuleRegistrationHooks:
 
     def test_the_workers_are_hooked_through_modules(self):
         names = {h.__qualname__.split(".")[-1] for h in app_main.STARTUP_HOOKS}
-        assert {"start_worker_hook", "start_pesquisa_extracao_hook", "startup_hook"} <= names
-        # edicao_fotos + transcricoes + pesquisa_extracao + geracao_jobs (both its workers)
-        assert len(app_main.STARTUP_HOOKS) == 4 and len(app_main.SHUTDOWN_HOOKS) == 4
+        assert {"start_worker_hook", "start_pesquisa_extracao_hook", "startup_hook", "start_automation_worker_hook"} <= names
+        # edicao_fotos + transcricoes + pesquisa_extracao + geracao_jobs (both its workers) + email_marketing automation
+        assert len(app_main.STARTUP_HOOKS) == 5 and len(app_main.SHUTDOWN_HOOKS) == 5
 
 
 class TestRunHooks:
