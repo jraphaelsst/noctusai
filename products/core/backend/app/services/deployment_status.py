@@ -36,9 +36,9 @@ logger = logging.getLogger(__name__)
 # single-container house model serves API + SPA on the product's HOUSE port
 # (uvicorn `--port <house>` — e.g. 8004 for seed, 8011 for social-wiring, NOT
 # a uniform 8000). The compose service name == the product slug. The house
-# port is parsed from each product's `url_base` (always `http://localhost:
-# <house>` in the stored row; the prod tile-URL override is applied at resolve
-# time, not in the row), so the probe is correct in dev AND prod.
+# port is read from `products.house_port` (core 076); `url_base` is the
+# canonical https prod URL and carries no port, so it is only a legacy
+# fallback for rows that predate the column.
 _DEFAULT_PORT = 8000  # fallback only (url_base absent / portless)
 _HEALTH_PATH = "/api/health"
 _PROBE_TIMEOUT_SECONDS = 1.5
@@ -47,6 +47,14 @@ _CACHE_TTL_SECONDS = 60.0
 # {slug: house_port} -> {slug: is_deployed}. Injected so tests can supply a
 # fake fleet without reaching the network.
 FleetProber = Callable[[dict[str, int]], Awaitable[dict[str, bool]]]
+
+
+def house_port_for_row(row: dict) -> int:
+    """`products.house_port` when set, else the legacy `url_base` port parse."""
+    port = row.get("house_port")
+    if isinstance(port, int) and port > 0:
+        return port
+    return house_port_from_url_base(row.get("url_base"))
 
 
 def house_port_from_url_base(url_base: str | None) -> int:

@@ -30,10 +30,11 @@ Resolution order (first non-empty wins):
    One pattern covers a fleet of products with a uniform host scheme;
    per-product env vars override it for the rare exception.
 3. **``db_url_base`` fallback** — the value that ``public.products.url_base``
-   holds. Typically ``http://localhost:<port>`` for dev (set by
-   ``noctus.dev.scaffold_product``'s seed-row migration). For prod, leave
-   the column populated with the localhost default and override via env:
-   the column is then a "dev local default" rather than authoritative.
+   holds. The canonical prod URL
+   (``https://<slug>.noctusai.com``, set by ``noctus.dev.scaffold_product``'s
+   seed-row migration; NEVER localhost -- the column is what prod falls back
+   to when an env override is absent). Local dev sets ``PRODUCT_URL_<SLUG>``
+   in its own env; the container HOUSE port lives in ``products.house_port``.
 
 When all three sources are absent, raises :class:`ValueError`. Silent-error
 shape (returning a hardcoded ``http://localhost:8000`` or ``""``) is
@@ -45,6 +46,20 @@ without caching.
 from __future__ import annotations
 
 import os
+
+#: The canonical PROD host scheme for a product. Single derivation shared by the
+#: VPS roster (``PRODUCT_URL_PATTERN`` in ``.env``), ``noctus.dev.scaffold_product``
+#: (the ``public.products.url_base`` it seeds) and the catalog-url-base backstop
+#: test. Short-name exceptions (erp, social, core) are explicit per-product env
+#: overrides on the VPS, never the pattern.
+CANONICAL_PROD_URL_PATTERN = "https://{slug}.noctusai.com"
+
+
+def canonical_prod_url(slug: str) -> str:
+    """``https://<slug>.noctusai.com`` — what a new product's catalog row carries."""
+    if not slug:
+        raise ValueError("canonical_prod_url: slug must be non-empty")
+    return CANONICAL_PROD_URL_PATTERN.replace("{slug}", slug)
 
 
 def resolve_product_url(slug: str, *, db_url_base: str | None = None) -> str:

@@ -49,6 +49,7 @@ import subprocess
 from pathlib import Path
 
 from workspace import get_noctusai_home, get_workspace_root, resolve_caller_root
+from noctusai_lib.config.product_urls import canonical_prod_url
 from noctusai_lib.sql import prelude
 
 from .check_framework_deps import ensure_framework_deps_for_product
@@ -1256,12 +1257,12 @@ def _emit_products_seed_row_migration(
 ) -> dict:
     """Emit a numbered migration that seeds the new product into `public.products`.
 
-    `url_base` MUST be the single-container HOUSE port — `backend_port` (the
-    FIRST port in the start.sh `slug:Name:HOUSE:OLD_FRONTEND` row, the one the
-    container publishes). The SECOND ("frontend") port is vestigial from the
-    pre-house 2-container era; using it produces a dead dev `url_base` (the
-    launcher tile → connection-refused). Bit 2026-05-25 on social-wiring (8160
-    vs 8011). In prod the `PRODUCT_URL_<SLUG>` env overrides this anyway.
+    `url_base` is the canonical prod URL `https://<slug>.noctusai.com`
+    (`canonical_prod_url`, the same scheme as the VPS `PRODUCT_URL_PATTERN`) --
+    NEVER `http://localhost:<port>` (2026-10-10: five live-catalog rows carried
+    localhost and prod was only saved by env overrides). The single-container
+    HOUSE port -- `backend_port`, the FIRST port in the start.sh
+    `slug:Name:HOUSE:OLD_FRONTEND` row -- goes to `products.house_port`.
 
     Lives at `products/core/backend/migrations/NNN_seed_<slug>_product.sql` where
     NNN is `max(existing) + 1`. Returns `{path, number}` on success, or
@@ -1316,11 +1317,16 @@ VALUES (
     {_sql_text(slug)},
     {desc_sql},
     {_sql_text(icon)},
-    {_sql_text(f"http://localhost:{backend_port}")},
+    {_sql_text(canonical_prod_url(slug))},
     {_sql_text(color)},
     true
 )
 ON CONFLICT (slug) DO NOTHING;
+
+-- The container HOUSE port is its own column (core 076): url_base is the
+-- canonical https prod URL and must never carry a localhost port.
+UPDATE public.products SET house_port = {int(backend_port)}
+ WHERE slug = {_sql_text(slug)} AND house_port IS NULL;
 {db_schema_block}{pgrst_block}"""
     try:
         path.write_text(body, encoding="utf-8")

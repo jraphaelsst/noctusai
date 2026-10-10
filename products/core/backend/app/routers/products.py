@@ -42,7 +42,7 @@ from app.services.sso_callback_probe import SSOCallbackProber, probe_sso_callbac
 from app.services.deployment_status import (
     FleetProber,
     get_deployment_status,
-    house_port_from_url_base,
+    house_port_for_row,
     probe_fleet,
 )
 
@@ -104,11 +104,11 @@ async def deployment_status(
     user, token = await get_current_user(authorization)
     db = get_admin_client()
 
-    result = db.table("products").select("slug, url_base").eq("ativo", True).execute()
-    # Probe each container on its HOUSE port (parsed from url_base) — every
+    result = db.table("products").select("*").eq("ativo", True).execute()
+    # Probe each container on its HOUSE port (products.house_port) — every
     # product serves on uvicorn `--port <house>`, NOT a uniform 8000.
     targets = {
-        row["slug"]: house_port_from_url_base(row.get("url_base"))
+        row["slug"]: house_port_for_row(row)
         for row in (result.data or []) if row.get("slug")
     }
     deployed = await get_deployment_status(targets, prober=prober)

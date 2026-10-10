@@ -133,6 +133,16 @@ class TestHousePortFromUrlBase:
         assert ds.house_port_from_url_base("https://seed.noctusai.com") == 8000
 
 
+class TestHousePortForRow:
+    def test_prefers_house_port_column_over_url_base(self):
+        row = {"house_port": 8013, "url_base": "https://igig.noctusai.com"}
+        assert ds.house_port_for_row(row) == 8013
+
+    def test_falls_back_to_legacy_url_base_port(self):
+        assert ds.house_port_for_row({"url_base": "http://localhost:8004"}) == 8004
+        assert ds.house_port_for_row({"house_port": None, "url_base": "https://x.noctusai.com"}) == 8000
+
+
 class TestProbeLogic:
     def test_healthy_2xx_is_deployed(self):
         result = asyncio.run(
