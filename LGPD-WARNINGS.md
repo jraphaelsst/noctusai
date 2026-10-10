@@ -12,6 +12,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/lgpd.md`.
 
+- [ ] **Platform transcription API (core) stores voice audio and transcript text from any caller (pk_* tokens or users): voice is personal data, and callers may submit third parties' speech (calls, interviews, videos).** at `products/core/backend/app/services/transcription_api/ (+ products/core/backend/migrations/074_transcription_api.sql, bucket core-transcricoes)` — CONTRACT products/core/projects/transcription-api/CONTRACT.md §5 defines retention, but purpose limitation and the legal basis for third-party voices submitted by machine callers are not yet documented, and the API is callable by tokens outside the voice-answer UX where consent is captured.
+  - *Mitigation*: Implemented: private bucket core-transcricoes (public=false), audio deleted immediately after success and after 72 h on failure/cancel, text purged 30 days after completion or on DELETE, no text or storage paths in logs, service-role-only RLS, kill switch OFF. Open: document purpose + legal basis per caller/token (scope the pk_* token minting to declared purposes), and add a consent/notice requirement to the client contract before enabling transcricao_api_habilitada.
+  - *Flagged*: 2026-10-10
 - [ ] **Uploaded brain source files (pdf/docx/txt/md/csv) may contain personal data and the original is retained in the private bucket social-wiring-cerebro.** at `products/social-wiring/backend/app/modules/media_creation/services/cerebro_fontes_service.py` — Retention is until the brain is deleted (delete_brain removes the storage objects and surfaces failures); no per-file delete endpoint and no TTL in v1. Owner to confirm this retention is acceptable.
   - *Mitigation*: Private bucket, backend-only, org/marca/brain-scoped paths, signed URLs only; deletion cascades with the brain.
   - *Flagged*: 2026-10-10
