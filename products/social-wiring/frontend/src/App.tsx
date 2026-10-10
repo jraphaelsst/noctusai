@@ -73,6 +73,13 @@ import {
   Lightbulb,
   Sparkles,
   Brain,
+  MessagesSquare,
+  Library,
+  GraduationCap,
+  Heading,
+  Star,
+  Clapperboard,
+  Bookmark,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -134,6 +141,17 @@ const ExtrairPesquisa = lazyWithReload(() => import("@/pages/ExtrairPesquisa"));
 const CerebroLista = lazyWithReload(() => import("@/pages/cerebro/CerebroLista"));
 const CerebroEditor = lazyWithReload(() => import("@/pages/cerebro/CerebroEditor"));
 const CerebroPerguntas = lazyWithReload(() => import("@/pages/cerebro/CerebroPerguntas"));
+const GeracaoDashboard = lazyWithReload(() => import("@/pages/geracao/Dashboard"));
+const GeracaoChat = lazyWithReload(() => import("@/pages/geracao/Chat"));
+const GeracaoBiblioteca = lazyWithReload(() => import("@/pages/geracao/Biblioteca"));
+const GeracaoMeuPerfil = lazyWithReload(() => import("@/pages/geracao/MeuPerfil"));
+const GeracaoMinhaBiblioteca = lazyWithReload(() => import("@/pages/geracao/MinhaBiblioteca"));
+const GeracaoTreinamentos = lazyWithReload(() => import("@/pages/geracao/Treinamentos"));
+const GeracaoHeadlinesGerar = lazyWithReload(() => import("@/pages/geracao/HeadlinesGerar"));
+const GeracaoHeadlines = lazyWithReload(() => import("@/pages/geracao/Headlines"));
+const GeracaoHeadlinesFavoritas = lazyWithReload(() => import("@/pages/geracao/HeadlinesFavoritas"));
+const GeracaoHeadlinesSugeridas = lazyWithReload(() => import("@/pages/geracao/HeadlinesSugeridas"));
+const GeracaoRoteiros = lazyWithReload(() => import("@/pages/geracao/Roteiros"));
 const MinhasExtracoes = lazyWithReload(() => import("@/pages/cerebro/MinhasExtracoes"));
 const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
@@ -232,6 +250,9 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     icon: Wand2,
     items: [
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
+      { name: "Dashboard", href: "/media-creation/dashboard", icon: LayoutDashboard, route: "media-creation-dashboard" },
+      { name: "Criar Headlines e Roteiros", href: "/media-creation/chat", icon: MessagesSquare, route: "media-creation-chat" },
+      { name: "Biblioteca", href: "/media-creation/biblioteca", icon: Library, route: "media-creation-biblioteca" },
     ],
     groups: [
       {
@@ -250,6 +271,29 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
         items: [
           { name: "Cérebros", href: "/media-creation/cerebro", icon: Brain, route: "media-creation-cerebro" },
           { name: "Minhas extrações", href: "/media-creation/cerebro/extracoes", icon: Brain, route: "media-creation-cerebro" },
+        ],
+      },
+      {
+        key: "media-creation-configuracoes",
+        label: "Configurações",
+        icon: Settings2,
+        items: [
+          { name: "Meu Perfil", href: "/media-creation/perfil", icon: UserCog, route: "media-creation-perfil" },
+          { name: "Minha Biblioteca", href: "/media-creation/minha-biblioteca", icon: Bookmark, route: "media-creation-minha-biblioteca" },
+          { name: "Treinamentos", href: "/media-creation/treinamentos", icon: GraduationCap, route: "media-creation-treinamentos" },
+          { name: "Roteiros", href: "/media-creation/roteiros", icon: Clapperboard, route: "media-creation-roteiros" },
+        ],
+        groups: [
+          {
+            key: "media-creation-headlines",
+            label: "Headlines",
+            icon: Heading,
+            items: [
+              { name: "Gerar Headlines", href: "/media-creation/headlines/gerar", icon: Sparkles, route: "media-creation-headlines-gerar" },
+              { name: "Headlines Favoritas", href: "/media-creation/headlines/favoritas", icon: Star, route: "media-creation-headlines-favoritas" },
+              { name: "Headlines sugeridas", href: "/media-creation/headlines/sugeridas", icon: Lightbulb, route: "media-creation-headlines-sugeridas" },
+            ],
+          },
         ],
       },
     ],
@@ -406,6 +450,9 @@ const NAV_FALLBACK: NavGroup[] = [
     icon: Wand2,
     items: [
       { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
+      { name: "Dashboard", href: "/media-creation/dashboard", icon: LayoutDashboard },
+      { name: "Criar Headlines e Roteiros", href: "/media-creation/chat", icon: MessagesSquare },
+      { name: "Biblioteca", href: "/media-creation/biblioteca", icon: Library },
     ],
     groups: [
       {
@@ -424,6 +471,29 @@ const NAV_FALLBACK: NavGroup[] = [
         items: [
           { name: "Cérebros", href: "/media-creation/cerebro", icon: Brain },
           { name: "Minhas extrações", href: "/media-creation/cerebro/extracoes", icon: Brain },
+        ],
+      },
+      {
+        key: "media-creation-configuracoes",
+        label: "Configurações",
+        icon: Settings2,
+        items: [
+          { name: "Meu Perfil", href: "/media-creation/perfil", icon: UserCog },
+          { name: "Minha Biblioteca", href: "/media-creation/minha-biblioteca", icon: Bookmark },
+          { name: "Treinamentos", href: "/media-creation/treinamentos", icon: GraduationCap },
+          { name: "Roteiros", href: "/media-creation/roteiros", icon: Clapperboard },
+        ],
+        groups: [
+          {
+            key: "media-creation-headlines",
+            label: "Headlines",
+            icon: Heading,
+            items: [
+              { name: "Gerar Headlines", href: "/media-creation/headlines/gerar", icon: Sparkles },
+              { name: "Headlines Favoritas", href: "/media-creation/headlines/favoritas", icon: Star },
+              { name: "Headlines sugeridas", href: "/media-creation/headlines/sugeridas", icon: Lightbulb },
+            ],
+          },
         ],
       },
     ],
@@ -520,6 +590,17 @@ export default createProductApp({
     { path: "/media-creation/cerebro/extracoes", component: MinhasExtracoes },
     { path: "/media-creation/cerebro/:brainId", component: CerebroEditor },
     { path: "/media-creation/cerebro/:brainId/perguntas", component: CerebroPerguntas },
+    { path: "/media-creation/dashboard", component: GeracaoDashboard },
+    { path: "/media-creation/chat", component: GeracaoChat },
+    { path: "/media-creation/biblioteca", component: GeracaoBiblioteca },
+    { path: "/media-creation/perfil", component: GeracaoMeuPerfil },
+    { path: "/media-creation/minha-biblioteca", component: GeracaoMinhaBiblioteca },
+    { path: "/media-creation/treinamentos", component: GeracaoTreinamentos },
+    { path: "/media-creation/headlines/gerar", component: GeracaoHeadlinesGerar },
+    { path: "/media-creation/headlines", component: GeracaoHeadlines },
+    { path: "/media-creation/headlines/favoritas", component: GeracaoHeadlinesFavoritas },
+    { path: "/media-creation/headlines/sugeridas", component: GeracaoHeadlinesSugeridas },
+    { path: "/media-creation/roteiros", component: GeracaoRoteiros },
     // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
