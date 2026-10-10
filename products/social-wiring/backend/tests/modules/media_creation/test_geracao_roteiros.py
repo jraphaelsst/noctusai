@@ -199,7 +199,7 @@ class TestCriar:
 
     def test_ia_nao_configurada_e_503_com_codigo(self, rc):
         def sem_chave(org_id):
-            raise RoteiroError(503, {"code": "ia_nao_configurada", "message": "x"})
+            raise RoteiroError(503, {"code": "ia_nao_configurada", "detail": "x"})
 
         rc._tc.app.dependency_overrides[get_roteiro_ia_check] = lambda: sem_chave
         r = _criar(rc)

@@ -40,7 +40,7 @@ class TestErrorKeys:
         with pytest.raises(HTTPException) as exc:
             geracao_jobs.assert_geracao_disponivel(Off())
         assert exc.value.status_code == 503
-        assert set(exc.value.detail) == {"code", "message"} and exc.value.detail["code"] == "geracao_indisponivel"
+        assert set(exc.value.detail) == {"code", "detail"} and exc.value.detail["code"] == "geracao_indisponivel"
 
 
 class TestViralCardPresenter:
@@ -77,7 +77,7 @@ class TestOrcamentoNoSubmit:
         with pytest.raises(HTTPException) as exc:
             anyio.run(lambda: geracao_jobs.assert_orcamento_ia(ORG, enforce=hard_stop))
         assert exc.value.status_code == 503
-        assert exc.value.detail["code"] == "orcamento_ia_excedido" and exc.value.detail["message"]
+        assert exc.value.detail["code"] == "orcamento_ia_excedido" and exc.value.detail["detail"]
 
     def test_within_budget_passes(self):
         async def ok(org_id):

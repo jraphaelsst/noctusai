@@ -351,7 +351,7 @@ def assert_geracao_disponivel(cfg: Any = None) -> None:
     if not cfg.geracao_worker_enabled:
         raise HTTPException(
             status_code=503,
-            detail={"code": "geracao_indisponivel", "message": "A geração está indisponível no momento."},
+            detail={"code": "geracao_indisponivel", "detail": "A geração está indisponível no momento."},
         )
 
 
@@ -368,7 +368,7 @@ async def assert_orcamento_ia(
         await enforce(org_id)
     except LLMBudgetExceeded as exc:
         raise HTTPException(
-            status_code=503, detail={"code": "orcamento_ia_excedido", "message": MSG_ORCAMENTO_IA}
+            status_code=503, detail={"code": "orcamento_ia_excedido", "detail": MSG_ORCAMENTO_IA}
         ) from exc
 
 

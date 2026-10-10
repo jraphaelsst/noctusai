@@ -82,7 +82,7 @@ def _assert_ia(auth, check) -> None:
     except LLMNotConfigured as exc:
         raise HTTPException(
             status_code=503,
-            detail={"code": "ia_nao_configurada", "message": "A IA não está configurada para esta organização."},
+            detail={"code": "ia_nao_configurada", "detail": "A IA não está configurada para esta organização."},
         ) from exc
 
 

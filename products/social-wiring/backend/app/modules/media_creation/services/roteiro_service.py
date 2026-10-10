@@ -142,7 +142,7 @@ def check_ia_configurada(org_id: Optional[str]) -> None:
     try:
         resolve_api_key("anthropic", org_id)
     except LLMNotConfigured as exc:
-        raise RoteiroError(503, {"code": "ia_nao_configurada", "message": MSG_IA_NAO_CONFIGURADA}) from exc
+        raise RoteiroError(503, {"code": "ia_nao_configurada", "detail": MSG_IA_NAO_CONFIGURADA}) from exc
 
 
 def get_roteiro_ia_check() -> IaCheck:
@@ -286,7 +286,7 @@ class RoteiroService:
 
     async def _enqueue(self, roteiro_id: str, job_type: str) -> str:
         if self.jobs is None:
-            raise RoteiroError(503, {"code": "geracao_indisponivel", "message": "A geração está indisponível no momento."})
+            raise RoteiroError(503, {"code": "geracao_indisponivel", "detail": "A geração está indisponível no momento."})
         try:
             queued = await self.jobs.enqueue(
                 type=job_type, payload={"roteiro_id": roteiro_id},
@@ -298,7 +298,7 @@ class RoteiroService:
                 "status": "falha", "erro": "Falha ao iniciar a geração", "etapa": None, "finished_at": _iso(_now()),
             }).eq("id", roteiro_id).eq("org_id", self.org_id).execute()
             raise RoteiroError(
-                503, {"code": "geracao_indisponivel", "message": "Falha ao iniciar a geração. Tente novamente."}
+                503, {"code": "geracao_indisponivel", "detail": "Falha ao iniciar a geração. Tente novamente."}
             ) from exc
         return queued.id
 
