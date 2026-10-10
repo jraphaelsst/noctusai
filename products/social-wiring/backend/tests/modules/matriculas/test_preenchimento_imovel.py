@@ -144,6 +144,34 @@ class TestFillFromATranscription:
         assert _conflitos(scoped) == []
 
     @pytest.mark.asyncio
+    async def test_the_current_owner_of_the_last_transfer_becomes_a_proprietario(
+        self, client, scoped
+    ):
+        """Deal 876 (2026-10-10): R-4 parsed, `imovel_proprietarios` empty."""
+        cliente_id = str(uuid4())
+        texto = TEXTO.replace(
+            "adquirente: Cicrana Amostra.", "adquirente: Cicrana Amostra, CPF 529.982.247-25."
+        )
+        eid = str(uuid4())
+        seed(
+            scoped,
+            registry=[registry_row()],
+            extracoes=[extracao_row(eid, texto=texto)],
+            clientes=[{"id": cliente_id, "org_id": ORG_ID, "cpf": "529.982.247-25",
+                       "nome": "Cicrana Amostra", "deleted_at": None}],
+        )
+        scoped.set_table_data("imovel_proprietarios", [])
+
+        resumo = await preench.preencher_imovel(scoped, ORG_ID, eid)
+
+        assert resumo["proprietarios"]["status"] == "ok"
+        assert resumo["proprietarios"]["adquirentes"] == 1
+        rows = scoped.table("imovel_proprietarios").select("*").execute().data
+        assert resumo["proprietarios"]["criados"] == 1 and len(rows) == 1
+        assert rows[0]["cliente_id"] == cliente_id
+        assert all(r["origem"] == "matricula" and r["codigo"] == CODIGO.upper() for r in rows)
+
+    @pytest.mark.asyncio
     async def test_a_second_run_changes_nothing(self, client, scoped):
         eid = str(uuid4())
         seed(scoped, registry=[registry_row()], extracoes=[extracao_row(eid, texto=TEXTO)])
@@ -152,7 +180,7 @@ class TestFillFromATranscription:
 
         resumo = await preench.preencher_imovel(scoped, ORG_ID, eid)
 
-        assert {v for k, v in resumo.items() if k not in ("status", "conflitos_abertos")} == {
+        assert {v for k, v in resumo.items() if k not in ("status", "conflitos_abertos", "proprietarios")} == {
             "igual"
         }
         assert _dados(scoped) == antes

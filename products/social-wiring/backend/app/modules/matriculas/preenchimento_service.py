@@ -12,6 +12,7 @@ WHAT IS READ, AND FROM WHERE
 | titulo_aquisitivo_texto          | seed `frase_titulo_aquisitivo` over that act's instrumento |
 | onus_fonte (act pointers)        | `sugerir` — encumbrance acts not cited by a cancelamento |
 | onus_credor                      | the `credor` of those acts' typed details               |
+| imovel_proprietarios (origem=matricula) | adquirentes of the last transferring act, matched by CPF/CNPJ (`proprietarios_service.sincronizar_da_extracao`) |
 | situacao_onus                    | the acts: an unreleased hipoteca / alienação fiduciária / penhora / usufruto / indisponibilidade, else `livre` |
 
 Every value goes through `campos_extraidos_service.aplicar` — fill an empty
@@ -58,6 +59,7 @@ from noctusai_lib.integrations.documents.matricula_cabecalho import (
 
 from app.modules.imovel_hub import campos_extraidos_service as campos_svc
 from app.modules.imovel_hub import dados_service
+from app.modules.imovel_hub import proprietarios_service as proprietarios_svc
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
 from app.modules.matriculas import estrutura_service as estrutura_svc
 from app.services import table_reads
@@ -413,6 +415,21 @@ def preencher_sincrono(
         # A named destination, not a silent skip: at least one act could not
         # be classified as encumbering or not — see `derivar_situacao_onus`.
         resumo["situacao_onus"] = "indeterminado"
+
+    # The CURRENT owners (adquirentes of the last transferring act) →
+    # `imovel_proprietarios` (origem='matricula'). Same rule as the corpus
+    # backfill (`proprietarios_service.run_backfill_matricula`), per
+    # extraction. Isolated: the imovel_dados fill above already landed.
+    try:
+        resumo["proprietarios"] = proprietarios_svc.sincronizar_da_extracao(
+            client, org_id, eid
+        )
+    except Exception as exc:  # noqa: BLE001 - per-step isolation; logged loudly
+        logger.error(
+            "matricula %s: could not sync proprietarios of imovel %s: %s",
+            eid, codigo, exc, exc_info=True,
+        )
+        resumo["proprietarios"] = {"status": "erro"}
 
     # Re-consult the automatic resolver over this imóvel's conflicts that
     # were ALREADY pending before this fill (2026-10-03): a fresh, current

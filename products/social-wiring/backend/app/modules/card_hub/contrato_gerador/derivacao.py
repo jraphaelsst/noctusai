@@ -1859,7 +1859,8 @@ def _imovel(av: Avaliacao, d: DadosContrato, sw: dict[str, bool], politica: Poli
     ) and (im.endereco_registro_texto or (d.matricula.texto or "").strip()):
         av.falta(
             "imovel.endereco_registro_texto",
-            "Endereço do imóvel confirmado a partir do registro (nunca o endereço "
+            "Endereço do imóvel conforme o registro: a matrícula não traz logradouro "
+            "e número identificáveis — informe o endereço do registro (nunca o endereço "
             "público do CRM)",
             "imovel",
         )

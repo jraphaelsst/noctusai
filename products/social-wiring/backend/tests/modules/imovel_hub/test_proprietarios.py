@@ -260,6 +260,48 @@ class TestMatriculaBackfill:
         out = self._run(cenario)
         assert out["criados"] == 0 and out["sem_correspondencia"] == 1
 
+    def _sync(self, cenario, eid):
+        from app.modules.imovel_hub import proprietarios_service as svc
+
+        return svc.sincronizar_da_extracao(cenario["scoped"], UUID(ORG_ID), eid)
+
+    def test_sync_one_extraction_populates_current_owner_and_spouse(self, client, cenario):
+        conjuge = cliente_row(nome="Cônjuge", cpf="529.982.247-25")
+        cenario["scoped"].set_table_data("clientes", [cenario["cliente"], conjuge])
+        eid = self._seed(cenario, adquirentes=[
+            {"nome": "Ana", "cpf_cnpj": "123.456.789-09"},
+            {"nome": "Cônjuge", "cpf_cnpj": "529.982.247-25"},
+        ])
+        out = self._sync(cenario, eid)
+        assert out["status"] == "ok" and out["criados"] == 2
+        rows = cenario["scoped"].table("imovel_proprietarios").select("*").execute().data
+        assert sorted(r["cliente_id"] for r in rows) == sorted(
+            [cenario["cliente"]["id"], conjuge["id"]]
+        )
+        assert {r["origem"] for r in rows} == {"matricula"}
+        assert {r["codigo"] for r in rows} == {"ONE1"}
+
+    def test_sync_one_extraction_is_idempotent_and_respects_removals(self, client, cenario):
+        eid = self._seed(cenario, adquirentes=[{"nome": "Ana", "cpf_cnpj": self.CPF}])
+        self._sync(cenario, eid)
+        assert self._sync(cenario, eid)["criados"] == 0
+        assert len(cenario["scoped"].table("imovel_proprietarios").select("*").execute().data) == 1
+
+    def test_sync_one_extraction_counts_unmatched_never_guesses(self, client, cenario):
+        eid = self._seed(cenario, adquirentes=[{"nome": "Ninguém", "cpf_cnpj": "52998224725"}])
+        out = self._sync(cenario, eid)
+        assert out["criados"] == 0 and out["sem_correspondencia"] == 1
+
+    def test_sync_one_extraction_without_transfer_does_nothing(self, client, cenario):
+        eid = self._seed(cenario, adquirentes=[], natureza="hipoteca")
+        cenario["scoped"].set_table_data("matricula_ato_detalhes", [])
+        out = self._sync(cenario, eid)
+        assert out["status"] == "sem_transferencia"
+
+    def test_sync_one_extraction_unknown_or_not_concluded(self, client, cenario):
+        self._seed(cenario, adquirentes=[])
+        assert self._sync(cenario, str(uuid4()))["status"] == "nao_encontrada"
+
     def test_cli_main_dry_run_prints_counts_only(self, client, cenario, capsys):
         """The documented entrypoint; asserts NO personal data in its output."""
         from app.modules.imovel_hub import proprietarios_service as svc

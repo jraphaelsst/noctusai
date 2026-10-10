@@ -503,6 +503,39 @@ def _clientes_por_cpf(
     return _impl(client, org_id, chaves)
 
 
+def _resolver_adquirente(
+    eid: str,
+    digitos: str,
+    chave_cnpj: str,
+    vinculadas: dict[tuple[str, str], str],
+    por_cpf: dict[str, list[str]],
+    empresas_por_cnpj: dict[str, list[str]],
+) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """ONE adquirente's document → `(coluna, dono, None)`, or `(None, None,
+    motivo)` with `motivo` ∈ `ambiguos` | `sem_correspondencia` (the report
+    keys). Shared by the corpus backfill and the per-extraction sync so the
+    two can never resolve an owner differently."""
+    coluna = dono = None
+    if len(digitos) == 11:
+        dono = vinculadas.get((eid, digitos))
+        if dono is None:
+            candidatos = por_cpf.get(digitos) or []
+            if len(candidatos) == 1:
+                dono = str(candidatos[0])
+            elif len(candidatos) > 1:
+                return None, None, "ambiguos"
+        coluna = "cliente_id"
+    elif len(chave_cnpj) == 14:
+        candidatos = empresas_por_cnpj.get(chave_cnpj) or []
+        if len(candidatos) == 1:
+            dono, coluna = candidatos[0], "empresa_id"
+        elif len(candidatos) > 1:
+            return None, None, "ambiguos"
+    if dono is None or coluna is None:
+        return None, None, "sem_correspondencia"
+    return coluna, dono, None
+
+
 def run_backfill_matricula(
     client: Any, org_id: UUID, *, dry_run: bool = False
 ) -> dict:
@@ -627,26 +660,11 @@ def run_backfill_matricula(
                 continue
             relatorio["adquirentes"] += 1
 
-            coluna = dono = None
-            if len(digitos) == 11:
-                dono = vinculadas.get((eid, digitos))
-                if dono is None:
-                    candidatos = por_cpf.get(digitos) or []
-                    if len(candidatos) == 1:
-                        dono = str(candidatos[0])
-                    elif len(candidatos) > 1:
-                        relatorio["ambiguos"] += 1
-                        continue
-                coluna = "cliente_id"
-            elif len(chave_cnpj) == 14:
-                candidatos = empresas_por_cnpj.get(chave_cnpj) or []
-                if len(candidatos) == 1:
-                    dono, coluna = candidatos[0], "empresa_id"
-                elif len(candidatos) > 1:
-                    relatorio["ambiguos"] += 1
-                    continue
-            if dono is None or coluna is None:
-                relatorio["sem_correspondencia"] += 1
+            coluna, dono, motivo = _resolver_adquirente(
+                eid, digitos, chave_cnpj, vinculadas, por_cpf, empresas_por_cnpj
+            )
+            if motivo is not None:
+                relatorio[motivo] += 1
                 continue
 
             if (codigo, coluna, dono) in existentes:
@@ -667,6 +685,106 @@ def run_backfill_matricula(
                 existentes=existentes,
             )
     logger.info("proprietarios.backfill_matricula org=%s %s", org_id, relatorio)
+    return relatorio
+
+
+def sincronizar_da_extracao(client: Any, org_id: UUID, extracao_id: Any) -> dict:
+    """`origem="matricula"` owners of ONE concluded extraction's imóvel —
+    the per-extraction twin of `run_backfill_matricula` (same rule, same
+    `_resolver_adquirente`): the adquirentes (spouse included when the act
+    names them as a party) of the LAST ownership-transferring act, matched to
+    `clientes`/`empresas` by CPF/CNPJ. Called by the matrícula fill
+    (`preenchimento_service`) so a freshly extracted matrícula populates the
+    owners without waiting for a corpus backfill (live prod deal 876,
+    2026-10-10: R-4 parsed, `imovel_proprietarios` empty).
+
+    Idempotent; a pair with ANY row (a human's removal included) is left
+    alone. Ambiguous/unmatched owners are counted, never guessed. Counts only
+    (LGPD). `status` says why nothing ran when that is the case."""
+    extracao = (
+        table_reads.table(client, "matricula_extracoes")
+        .select("id,codigo,status,substituida_por")
+        .eq("org_id", str(org_id))
+        .eq("id", str(extracao_id))
+        .limit(1)
+        .execute()
+    ).data or []
+    if not extracao:
+        return {"status": "nao_encontrada"}
+    extracao = extracao[0]
+    codigo = busca_service.canonical(extracao.get("codigo") or "")
+    if extracao.get("status") != "concluida" or not codigo:
+        return {"status": "sem_imovel_ou_texto"}
+    if extracao.get("substituida_por"):
+        return {"status": "substituida"}
+    eid = str(extracao["id"])
+    relatorio = {
+        "status": "ok", "adquirentes": 0, "ambiguos": 0, "sem_correspondencia": 0,
+        "ja_existentes": 0, "criados": 0,
+    }
+    registrado = table_reads.in_batched_rows(
+        client, busca_service.REGISTRY_TABLE, org_id, "codigo_canonical", [codigo],
+        select="codigo_canonical", order_col="codigo_canonical",
+    )
+    if not registrado:
+        return {**relatorio, "status": "sem_registry"}
+
+    atos = {
+        str(a["id"]): a
+        for a in table_reads.in_batched_rows(
+            client, "matricula_atos", org_id, "extracao_id", [eid],
+            select="id,extracao_id,ordem,kind",
+        )
+    }
+    transferencias = [
+        d
+        for d in table_reads.in_batched_rows(
+            client, "matricula_ato_detalhes", org_id, "extracao_id", [eid],
+            select="id,extracao_id,ato_id,natureza,adquirentes",
+        )
+        if d.get("natureza") in NATUREZAS_TRANSFERENCIA
+        and str(d.get("ato_id")) in atos
+        and atos[str(d["ato_id"])].get("kind") != "abertura"
+    ]
+    if not transferencias:
+        return {**relatorio, "status": "sem_transferencia"}
+    ultima = max(transferencias, key=lambda d: atos[str(d["ato_id"])].get("ordem") or 0)
+    adquirentes = [a for a in (ultima.get("adquirentes") or []) if a]
+
+    vinculadas: dict[tuple[str, str], str] = {}
+    for q in table_reads.in_batched_rows(
+        client, "matricula_qualificacoes", org_id, "extracao_id", [eid],
+        select="id,extracao_id,cpf_cnpj_normalizado,cliente_id,vinculo_status",
+    ):
+        if q.get("vinculo_status") == "vinculado" and q.get("cliente_id"):
+            vinculadas[(eid, str(q["cpf_cnpj_normalizado"]))] = str(q["cliente_id"])
+    por_cpf = _clientes_por_cpf(client, org_id, [a.get("cpf_cnpj") for a in adquirentes])
+    empresas_por_cnpj: dict[str, list[str]] = {}
+    for e in table_reads.paged_rows(client, EMPRESAS_TABLE, org_id, select="id,cnpj"):
+        chave = _cnpj_chave(e.get("cnpj"))
+        if chave:
+            empresas_por_cnpj.setdefault(chave, []).append(str(e["id"]))
+
+    existentes = _pares_existentes(client, org_id)
+    for adq in adquirentes:
+        documento = adq.get("cpf_cnpj")
+        digitos, chave_cnpj = _digitos(documento), _cnpj_chave(documento)
+        if not digitos and not chave_cnpj:
+            continue
+        relatorio["adquirentes"] += 1
+        coluna, dono, motivo = _resolver_adquirente(
+            eid, digitos, chave_cnpj, vinculadas, por_cpf, empresas_por_cnpj
+        )
+        if motivo is not None:
+            relatorio[motivo] += 1
+            continue
+        if _inserir_derivado(
+            client, org_id, codigo=codigo, coluna=coluna, valor=dono,
+            origem=ORIGEM_MATRICULA, existentes=existentes,
+        ):
+            relatorio["criados"] += 1
+        else:
+            relatorio["ja_existentes"] += 1
     return relatorio
 
 
