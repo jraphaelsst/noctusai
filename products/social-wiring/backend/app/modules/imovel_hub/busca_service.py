@@ -27,8 +27,8 @@ project-execution.md`, the DRY recurrence rule). They now live here, next to
 `dados_service.ensure_imovel`, which is the registry's other canonical
 question; `roteiros_service` imports them and is otherwise untouched.
 
-🔴 WHY THE SEARCH IS SIX QUERIES AND NOT ONE `.or_()`
------------------------------------------------------
+🔴 WHY THE SEARCH IS ONE QUERY PER (TABLE, COLUMN) AND NOT ONE `.or_()`
+----------------------------------------------------------------------
 PostgREST would express this as one `or=(codigo.ilike.*,titulo.ilike.*,...)`
 per table. It is deliberately NOT written that way: `MockRequestBuilder.or_()`
 records a synthetic **match-all** predicate (see
@@ -37,7 +37,9 @@ row in a test and the filtered subset in production. Every assertion about
 "typing ONE9 finds ONE9001" would pass for the wrong reason, and the first
 honest signal would be a user telling us the picker offers the whole catalog.
 
-Per-field `ilike` queries evaluate identically in both worlds, and each one is
+The count is not fixed: it grows with the mirror, registry, captação and
+dados column lists below plus one `documentos_chave` query per identifier key
+the term yields. Per-field `ilike` queries evaluate identically in both worlds, and each one is
 a predicate PostgREST can serve on its own. The cost is round trips on a
 debounced typeahead, which is the cheap side of that trade.
 """
