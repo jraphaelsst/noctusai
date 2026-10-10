@@ -130,7 +130,21 @@ _SEED_FLEET_RE = re.compile(r"^seed/")
 # `scripts/infra/*.{py,sh}` (2026-10-10): build/deploy tooling whose tests live
 # in the toolkit suite and name the script (e.g. test_image_boot_smoke.py);
 # previously unmapped ⇒ every integrate touching it read `incomplete`.
-_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$|scripts/infra/[^/]+\.(py|sh)$)")
+# Extensionless git hooks (`pre-commit`, `commit-msg`, `post-merge`, ...) and
+# `scripts/hooks/*.sh` join too (2026-10-10) — previously `unmapped_diff`, so
+# every hook edit read `incomplete`. Their bare names are common words
+# ("pre-commit" sits in hundreds of docstrings), so they match tests by PATH
+# form (`_script_path_ref_re`), not by basename.
+_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$|scripts/hooks/[^/.]+$|scripts/hooks/[^/]+\.sh$|scripts/infra/[^/]+\.(py|sh)$)")
+
+
+def _script_path_ref_re(script: str) -> "re.Pattern[str]":
+    """A test's PATH-form reference to `scripts/<dir>/<name>`: the slash path
+    (`hooks/pre-commit`) or a pathlib join (`"hooks" / "pre-commit"`,
+    `("hooks", "pre-commit")`)."""
+    parent, name = Path(script).parent.name, Path(script).name
+    p, n = re.escape(parent), re.escape(name)
+    return re.compile(rf"{p}/{n}\b|[\"']{p}[\"']\s*[/,]\s*[\"']{n}[\"']")
 _KB_DOC_RE = re.compile(
     r"^(KNOWLEDGE-BASE/|CLAUDE\.md$|CLAUDE/|\.claude/(agents|skills|commands)/|project-history/roadmaps/)"
 )
@@ -828,8 +842,13 @@ def _mcp_scoped_test_files(
     untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
     for hook in [*hook_files, *data_files]:
         name = Path(hook).name
+        if hook.startswith("scripts/") and not hook.endswith(".py"):
+            path_ref = _script_path_ref_re(hook)  # extensionless / .sh: path form
+            matches = lambda text: bool(path_ref.search(text))  # noqa: E731
+        else:
+            matches = lambda text: name in text  # noqa: E731
         hits = [str(t.relative_to(root)) for t in sorted((pkg_dir / "tests").rglob("test_*.py"))
-                if name in t.read_text(encoding="utf-8", errors="replace")]
+                if matches(t.read_text(encoding="utf-8", errors="replace"))]
         affected.update(hits)
         if not hits:
             untested.append(hook)

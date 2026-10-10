@@ -1283,3 +1283,22 @@ def test_scripts_infra_maps_to_tests_naming_it(tmp_path):
     scope = GS._derive_scope(["scripts/infra/image_boot_smoke.py"])
     assert scope["mcp"] and not scope.get("unmapped_files")
     assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (["mcp/noctusai/tests/test_smoke.py"], [])
+
+
+def test_extensionless_hook_maps_by_path_form_not_bare_word(tmp_path):
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    (tests / "test_by_slash.py").write_text('H = ROOT / "scripts/hooks/pre-commit"\n')
+    (tests / "test_by_join.py").write_text('H = ROOT / "scripts" / "hooks" / "pre-commit"\n')
+    (tests / "test_mentions_word.py").write_text('"""Runs in the pre-commit hook."""\n')
+    scope = GS._derive_scope(["scripts/hooks/pre-commit"])
+    assert scope["mcp"] and not scope.get("unmapped_files")
+    assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (
+        ["mcp/noctusai/tests/test_by_join.py", "mcp/noctusai/tests/test_by_slash.py"], [])
+
+
+def test_unreferenced_hook_script_is_surfaced_untested(tmp_path):
+    (tmp_path / "mcp/noctusai/tests").mkdir(parents=True)
+    scope = GS._derive_scope(["scripts/hooks/merge-kb-counts.sh"])
+    assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (
+        [], ["scripts/hooks/merge-kb-counts.sh"])
