@@ -123,6 +123,23 @@ services:
     container_name: noctus-core
     expose:
       - "8000"
+    # Core owns the ONE platform transcription queue (transcription-api CONTRACT §0),
+    # so it joins the internal, no-egress transcribe-net like social-wiring does.
+    networks:
+      - noctus-net
+      - transcribe-net
+    # Merge the FULL prod env, then add the transcription seam's env (read by the seed
+    # `make_transcriber()`). The API stays OFF until `transcricao_api_habilitada`.
+    environment:
+      <<: *prod-env
+      TRANSCRIPTION_BACKEND: local_whisper
+      TRANSCRIBER_URL: http://noctus-transcriber:9000
+      # env-fleet-empty-ok — REVIEWED 2026-10-10: the token IS set in .env.fleet on the
+      # VPS; empty = the factory raises (503 transcricao_indisponivel), never falls back.
+      TRANSCRIBER_TOKEN: ${TRANSCRIBER_TOKEN:-}
+      # Measured limit (§6, 2026-10-10: 10-min file touched the 2 GB cap, no OOM).
+      # Raise only after a 45-min run is measured on the VPS.
+      TRANSCRIPTION_API_MAX_S: "600"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/health"]
       interval: 30s
@@ -593,13 +610,14 @@ services:
   # its own token), no noctus-net (reachable only over the internal transcribe-net,
   # which has no egress), no cache env, not in the tunnel ingress.
   transcriber:
-    # Opt-in profile: a fleet-wide `docker compose up -d` never starts it; it runs only
-    # when started explicitly (deploy_image transcriber / `up transcriber`), after the
-    # VPS measurement (transcription-contract §6) passes.
-    profiles: ["transcriber"]
+    # Always-on (owner requirement 2026-10-09: a 24/7 live transcription API). The opt-in
+    # profile was lifted after the §6 VPS measurement passed (2026-10-10: RTF 0.83 on
+    # 10 min, product health +1-4 ms). `unless-stopped` (not `on-failure:5`, which gave
+    # up for good after 5 crashes): Docker backs off between restarts, and mem_limit +
+    # oom_score_adj=1000 keep a crash-looping worker from hurting the products.
     image: ghcr.io/jraphaelsst/noctus-transcriber:${TRANSCRIBER_IMAGE_TAG:-latest}
     container_name: noctus-transcriber
-    restart: on-failure:5
+    restart: unless-stopped
     expose:
       - "9000"
     networks:
