@@ -14034,6 +14034,7 @@ def _detect_guard_objects(sql_text: str) -> list[dict]:
     return guards
 
 
+# NOC-REMEDIATE[migration-guard-probes]: burn down the pre-existing guards with no GuardProbe, batched per product by the release lane; this keeper is the tracker (212 on 2026-10-10 — social-wiring 147, core 17, academia 4, agents 4, igig 3; asleep: erp-imobiliario 22, orbity 7, community 3, personal-finance 3, daily-life 2) — 2026-10-10
 def check_migration_guard_has_probe(
     repo_root: Path | None = None, paths: list[str] | None = None
 ) -> list[dict]:
