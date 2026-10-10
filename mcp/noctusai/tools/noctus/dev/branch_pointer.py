@@ -387,10 +387,18 @@ def append(
     return result
 
 
+# Fields only `append` can set. `update` refuses them rather than silently
+# dropping them: a caller that passes `role=` to update believes the row
+# changed when it did not (2026-10-09 — `--bp-base` on the CLI update path
+# was accepted and ignored, which left a typo'd base unfixable).
+APPEND_ONLY_FIELDS = ("role", "agent", "parent", "worktree", "session")
+
+
 def update(
     *,
     branch: str,
     status: str | None = None,
+    base: str | None = None,
     commit: str | None = None,
     paths: list[str] | None = None,
     brief: str | None = None,
@@ -406,7 +414,14 @@ def update(
     Reads the latest row from dev (from_dev=True, default) to carry forward
     unchanged fields, then merges in the supplied overrides.  Because the
     ledger is append-only, this writes a NEW row — not an in-place edit.
+
+    `base` corrects a mis-recorded base. The branch-tree mirror keeper
+    prescribes exactly this fix (`action=update base=<real-base>`) when a
+    pointer's base does not resolve or an orchestrator's base is not
+    origin/dev — without it a wrong base was unrecoverable for that branch.
     """
+    if base is not None and not str(base).strip():
+        return {"ok": False, "error": "base, when given, must be a non-empty ref"}
     rows = _read_dev_ledger(runner=runner) if from_dev else _read_local_ledger()
     best = _latest_per_branch(rows)
     prev = best.get(branch)
@@ -438,7 +453,7 @@ def update(
     row: dict[str, Any] = {
         "ts": _now_iso(),
         "branch": branch,
-        "base": prev.get("base", ""),
+        "base": str(base).strip() if base is not None else prev.get("base", ""),
         "commit": commit if commit is not None else prev.get("commit", ""),
         "worktree": prev.get("worktree"),
         "role": prev.get("role", ""),
@@ -538,8 +553,10 @@ def register(server) -> None:  # noqa: ANN001
             "            `project` = the ship-consent approval unit (noctus.dev.ship_consent);\n"
             "            omitted ⇒ inherited from parent's pointer; unmapped ⇒ branch name.\n"
             "  update  — append a delta row for an existing branch (latest-by-ts wins).\n"
-            "            Required: branch. Optional: status, commit, paths, brief, notes, project,\n"
-            "            push_dev (default True), from_dev (default True).\n"
+            "            Required: branch. Optional: status, base, commit, paths, brief, notes,\n"
+            "            project, push_dev (default True), from_dev (default True).\n"
+            "            `base` corrects a mis-recorded base (the mirror keeper's prescribed fix).\n"
+            "            role/agent/parent/worktree/session are append-only: REFUSED here.\n"
             "  query   — resolve latest-per-branch from dev's copy.\n"
             "            Optional: status, branch, agent, project, paths_overlap, from_dev (default True).\n"
             "            `paths_overlap=[...]` returns branches whose collision zone intersects\n"
@@ -591,8 +608,15 @@ def register(server) -> None:  # noqa: ANN001
         elif action == "update":
             if not branch:
                 return {"ok": False, "error": "update requires: branch"}
+            given = {"role": role, "agent": agent, "parent": parent,
+                     "worktree": worktree, "session": session}
+            refused = [f for f in APPEND_ONLY_FIELDS if given[f] is not None]
+            if refused:
+                return {"ok": False, "error": (
+                    f"update cannot change {', '.join(refused)} (append-only fields); "
+                    "these were refused rather than silently ignored")}
             return update(
-                branch=branch, status=status, commit=commit, paths=paths,
+                branch=branch, status=status, base=base, commit=commit, paths=paths,
                 brief=brief, notes=notes, project=project, push_dev=push_dev,
                 from_dev=from_dev,
             )

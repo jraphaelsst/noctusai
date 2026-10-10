@@ -456,7 +456,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--group-by", metavar="GRANULARITY", default="day", choices=["day", "week", "month"], help="With --vector-costs-report: aggregation granularity (default: day).")
     # ── branch_pointer flags ─────────────────────────────────────────────────
     parser.add_argument("--branch-pointer-append", action="store_true", dest="branch_pointer_append", help="Append a new pointer row for a branch (pre-self-branch claim). Requires --bp-branch, --bp-base, --bp-commit, --bp-role, --bp-agent, --bp-parent, --bp-paths, --bp-status, --bp-brief. Optional: --bp-notes, --bp-worktree, --bp-session, --bp-no-push. MCP: noctus.dev.branch_pointer action=append. KB § CONTEXT/PATTERNS/architect/branch-tree-tracking.md.")
-    parser.add_argument("--branch-pointer-update", action="store_true", dest="branch_pointer_update", help="Append a delta row for an existing branch (latest-by-ts wins). Requires --bp-branch. Optional: --bp-status, --bp-commit, --bp-paths, --bp-brief, --bp-notes, --bp-no-push, --bp-local. MCP: noctus.dev.branch_pointer action=update.")
+    parser.add_argument("--branch-pointer-update", action="store_true", dest="branch_pointer_update", help="Append a delta row for an existing branch (latest-by-ts wins). Requires --bp-branch. Optional: --bp-status, --bp-base, --bp-commit, --bp-paths, --bp-brief, --bp-notes, --bp-no-push, --bp-local. Append-only flags (--bp-role/--bp-agent/--bp-parent/--bp-worktree/--bp-session) are refused. MCP: noctus.dev.branch_pointer action=update.")
     parser.add_argument("--branch-pointer-query", action="store_true", dest="branch_pointer_query", help="Resolve latest-per-branch from dev's copy. Optional: --bp-status, --bp-branch, --bp-agent, --bp-paths (collision-zone filter). MCP: noctus.dev.branch_pointer action=query.")
     parser.add_argument("--branch-pointer-list", action="store_true", dest="branch_pointer_list", help="Live map of all non-terminal pointers (pass --bp-terminal to include shipped/canceled/stale). MCP: noctus.dev.branch_pointer action=list.")
     parser.add_argument("--branch-pointer-cache-exempt", action="store_true", dest="branch_pointer_cache_exempt", help="Exit 0 if ALL paths in --bp-paths are cache-exempt (only branch-tree.ndjson changed → skip cache refresh). Exit 1 otherwise. Used by the pre-push hook. MCP: noctus.dev.should_skip_cache_refresh.")
@@ -3394,9 +3394,18 @@ def main():
         if not getattr(args, "bp_branch", None):
             print(f"  {RED}Error:{RESET} --branch-pointer-update requires --bp-branch")
             sys.exit(2)
+        # Refuse append-only flags instead of silently ignoring them (an
+        # ignored flag reads as a successful change that never happened).
+        from tools.noctus.dev.branch_pointer import APPEND_ONLY_FIELDS as _bp_append_only
+        _bp_refused = [f"--bp-{f}" for f in _bp_append_only if getattr(args, f"bp_{f}", None)]
+        if _bp_refused:
+            print(f"  {RED}Error:{RESET} --branch-pointer-update cannot change "
+                  f"{', '.join(_bp_refused)} (append-only); refused rather than ignored")
+            sys.exit(2)
         result = _bp_update(
             branch=args.bp_branch,
             status=getattr(args, "bp_status", None),
+            base=getattr(args, "bp_base", None),
             commit=getattr(args, "bp_commit", None),
             paths=getattr(args, "bp_paths", None),
             brief=getattr(args, "bp_brief", None),

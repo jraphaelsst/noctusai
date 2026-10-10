@@ -614,3 +614,67 @@ class TestLedgerStoreRealMode:
         ls.default_store().append("branch-tree.ndjson", [json.dumps(row)], message="seed")
         runner = FakeRunner(dev_content=_ndjson([row]))
         assert len(BP._read_dev_ledger(runner=runner)) == 1
+
+
+# ── update base= + append-only refusal (2026-10-09) ───────────────────────────
+# A typo'd base made the mirror keeper hard-block the branch's push, and its
+# prescribed fix (`action=update base=...`) did not exist: update had no
+# `base`, and the CLI accepted --bp-base on update and silently dropped it.
+class TestUpdateBase:
+    def _seed(self, tmp_path, monkeypatch, branch="salvage/x", base="2bb44cd"):
+        prev = _row(branch, "2026-06-01T10:00:00+00:00", status="on_going")
+        prev["base"] = base
+        ledger = _ledger_at(tmp_path, monkeypatch, [prev])
+        return ledger, FakeRunner(dev_content=_ndjson([prev])), prev
+
+    def _latest(self, ledger):
+        rows = [json.loads(l) for l in ledger.read_text().splitlines() if l.strip()]
+        return max(rows, key=lambda r: r["ts"])
+
+    def test_update_base_corrects_the_recorded_base(self, tmp_path, monkeypatch):
+        ledger, runner, prev = self._seed(tmp_path, monkeypatch)
+        r = BP.update(branch="salvage/x", base="origin/dev", push_dev=False, runner=runner)
+        assert r["ok"] is True
+        latest = self._latest(ledger)
+        assert latest["base"] == "origin/dev"
+        assert latest["agent"] == prev["agent"]  # everything else carried forward
+
+    def test_update_without_base_carries_it_forward(self, tmp_path, monkeypatch):
+        ledger, runner, _ = self._seed(tmp_path, monkeypatch)
+        assert BP.update(branch="salvage/x", notes="n", push_dev=False, runner=runner)["ok"]
+        assert self._latest(ledger)["base"] == "2bb44cd"
+
+    def test_update_blank_base_refused(self, tmp_path, monkeypatch):
+        _ledger, runner, _ = self._seed(tmp_path, monkeypatch)
+        r = BP.update(branch="salvage/x", base="  ", push_dev=False, runner=runner)
+        assert r["ok"] is False and "non-empty" in r["error"]
+
+
+class TestUpdateRefusesAppendOnlyFields:
+    def _tool(self):
+        captured = {}
+
+        class _Server:
+            def tool(self, **_kw):
+                def deco(fn):
+                    captured["fn"] = fn
+                    return fn
+                return deco
+
+        BP.register(_Server())
+        return captured["fn"]
+
+    @pytest.mark.parametrize("field", list(BP.APPEND_ONLY_FIELDS))
+    def test_mcp_update_refuses_append_only_field(self, field):
+        r = self._tool()(action="update", branch="feat/x", **{field: "v"})
+        assert r["ok"] is False
+        assert field in r["error"] and "refused" in r["error"]
+
+    def test_cli_update_refuses_append_only_flag(self):
+        import subprocess, sys as _sys
+        cli = Path(BP.__file__).resolve().parents[3] / "cli.py"
+        p = subprocess.run([_sys.executable, str(cli), "--branch-pointer-update",
+                            "--bp-branch", "feat/x", "--bp-role", "engineer"],
+                           capture_output=True, text=True, timeout=120)
+        assert p.returncode == 2, p.stdout + p.stderr
+        assert "--bp-role" in p.stdout and "refused" in p.stdout
