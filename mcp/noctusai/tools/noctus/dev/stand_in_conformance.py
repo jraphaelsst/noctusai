@@ -112,6 +112,23 @@ _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS: dict[str, str] = {
     "social-wiring/atendimento_parcela_favorecidos/atendimento_parcela_favorecidos_valor_ou_percentual": (
         "no discriminant column; refused by request schema + service + gate, DB guard probed"
     ),
+    # Reviewed 2026-10-10 (migrations 226/228, sw-lead-to-contract S6). None is
+    # a conditional-presence shape (no discriminant column): each is a range or
+    # an inequality between two columns of the same row. Each is refused above
+    # the DB, and the DB refusal itself is proven by its `verify_db_guards`
+    # probe (`_SW_IMOVEL_MANUAL_PROBES`).
+    "social-wiring/imovel_captacao/imovel_captacao_valores_positivos": (
+        "per-column `> 0` ranges; refused by ImovelCaptacao schema (gt=0), DB guard probed"
+    ),
+    "social-wiring/imovel_captacao/imovel_captacao_comodos_nao_negativos": (
+        "per-column `>= 0` ranges; refused by ImovelCaptacao schema (ge=0), DB guard probed"
+    ),
+    "social-wiring/imovel_duplicata_candidatos/imovel_duplicata_lados_distintos": (
+        "manual side is origem='manual', Vista side the mirror — disjoint by construction; DB guard probed"
+    ),
+    "social-wiring/imovel_registry/imovel_registry_vinculo_nao_a_si_mesmo": (
+        "vincular() links a manual row to a Vista row only (imovel_nao_manual refusal); DB guard probed"
+    ),
 }
 
 
@@ -633,8 +650,12 @@ def _leg_b_iii_mock_write_validator_wired(root: Path) -> list[dict]:
 # explicitly named as unenforceable. An unlisted one is a finding.
 # ---------------------------------------------------------------------------
 
+# `ADD CONSTRAINT x CHECK (` (ALTER TABLE) AND the table-level
+# `CONSTRAINT x CHECK (` inside CREATE TABLE — the latter used to fall through
+# to `<inline>`, so a named CHECK could never match its
+# `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS` key.
 _CHECK_CONSTRAINT_NAME_RE = re.compile(
-    r"ADD\s+CONSTRAINT\s+(?P<name>\w+)\s+CHECK\s*\(", re.IGNORECASE,
+    r"\bCONSTRAINT\s+(?P<name>\w+)\s+CHECK\s*\(", re.IGNORECASE,
 )
 _ALTER_TABLE_RE = re.compile(
     r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:\w+\.)?(?P<table>\w+)", re.IGNORECASE,
