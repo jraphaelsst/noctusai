@@ -18,7 +18,7 @@ import { useLeadSources } from "@/hooks/useLeadsSources";
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import { useLeadsFacets } from "@/hooks/useLeadsAnalytics";
 import { useLeadsFilters, type LeadsMultiKey } from "@/hooks/useLeadsFilters";
-import { MultiSelectPopover, type MultiSelectOption } from "@/components/ui/multi-select-popover";
+import { MultiSelectPopover, type MultiSelectOption } from "@noctusai/lib/design-system";
 
 // One-shot at module-eval time (mirrors `defaultCollapsed`'s own contract —
 // it only seeds INITIAL state, never reacts to a later resize). Guards SSR /

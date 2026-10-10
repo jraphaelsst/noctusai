@@ -1,22 +1,22 @@
 /**
  * MultiSelectPopover — the product's ONE searchable multi-select. Backs the
  * Leads filter bar, the Biblioteca / Minha Biblioteca filters and Meu Perfil's
- * nichos/profissões (with the optional `max` cap). Lives in `components/ui`
- * (promoted from pages/leads, N=3 consumers). A candidate seed organ.
+ * nichos/profissões (with the optional `max` cap). Canonical seed organ
+ * (promoted from social-wiring, N=4 consumers).
  *
  *   <MultiSelectPopover label="Origem" options={sourceOptions}
  *     selected={filters.origem_id} onToggle={(v) => toggleMulti("origem_id", v)} />
  */
 import { useState } from "react";
 import { Check, ChevronDown, Search } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { CardHubButton as Button } from "./card-hub-button";
+import { CardHubInput as Input } from "./card-hub-input";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-} from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+} from "./popover";
+import { cn } from "../../utils";
 
 export interface MultiSelectOption {
   value: string;

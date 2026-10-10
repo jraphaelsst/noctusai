@@ -105,3 +105,6 @@ export {
   DialogTitle as CardHubDialogTitle,
   DialogDescription as CardHubDialogDescription,
 } from "./radix-dialog";
+
+export { MultiSelectPopover } from "./MultiSelectPopover";
+export type { MultiSelectPopoverProps, MultiSelectOption } from "./MultiSelectPopover";

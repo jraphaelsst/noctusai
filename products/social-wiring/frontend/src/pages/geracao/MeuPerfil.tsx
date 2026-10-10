@@ -23,7 +23,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { mensagemErro } from "@/components/cerebro/labels";
-import { MultiSelectPopover } from "@/components/ui/multi-select-popover";
+import { MultiSelectPopover } from "@noctusai/lib/design-system";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { usePerfilCriacao, useSalvarPerfilCriacao } from "@/hooks/geracao/usePerfilCriacao";
 import { useTaxonomias } from "@/hooks/geracao/useTaxonomias";

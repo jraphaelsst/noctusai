@@ -91,6 +91,8 @@ export type { CardProps, TextareaProps, SelectProps } from "./ui/FormControls";
 // API) — the Radix-shape siblings here are re-exported under the
 // `CardHub*` prefix to avoid the name collision.
 export { Popover, PopoverTrigger, PopoverAnchor, PopoverContent } from "./ui/popover";
+export { MultiSelectPopover } from "./ui/MultiSelectPopover";
+export type { MultiSelectPopoverProps, MultiSelectOption } from "./ui/MultiSelectPopover";
 
 export { Checkbox } from "./ui/checkbox";
 

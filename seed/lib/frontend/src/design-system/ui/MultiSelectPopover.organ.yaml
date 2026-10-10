@@ -1,0 +1,29 @@
+name: MultiSelectPopover
+path: seed/lib/frontend/src/design-system/ui/MultiSelectPopover.tsx
+phase: seed-multiselect-promotion
+registered_at: "2026-10-10"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Searchable multi-select popover. Promoted from social-wiring `components/ui/multi-select-popover.tsx` at N=4 consumers (Leads filter bar, Biblioteca filters, Minha Biblioteca, Meu Perfil nichos/profissoes) per the recurrence rule."
+  - "Props: `{ label, options[{value,label,color?}], selected, onToggle, emptyMessage?, testId?, max?, maxMessage?, showChips?, triggerLabel? }`. Controlled: the caller owns `selected`; the organ only emits `onToggle(value)`."
+  - "`max` is a hard cap: at the cap unchecked options are disabled and `maxMessage` renders as role=alert; options switch to role=checkbox/aria-checked when `max` is set."
+  - "Search input appears only when options.length > 6; it resets on popover close."
+  - "Composes the seed Popover plus CardHubButton/CardHubInput (SW shadcn-parity) so the swap from the product-local file is visually identical."
+
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+  - "Extending the Radix `Select` primitive: rejected - single-value, no search, no chips/cap."
+
+manual_validation_log: []
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
