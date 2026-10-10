@@ -74,6 +74,18 @@ def _t(client: Any, table: str):
     return table_reads.table(client, table)
 
 
+def _codigo_do_imovel(client: Any, org_id: UUID, atendimento_id: str) -> Optional[str]:
+    rows = (
+        _t(client, "atendimento_negociacao")
+        .select("imovel_codigo")
+        .eq("org_id", str(org_id))
+        .eq("atendimento_id", atendimento_id)
+        .limit(1)
+        .execute()
+    ).data or []
+    return (rows[0].get("imovel_codigo") if rows else None) or None
+
+
 def pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]:
     """Every "who might own a PJ" person on this atendimento — see the
     module docstring's "WHO COUNTS" section. Returns
@@ -126,6 +138,25 @@ def pessoas_do_card(client: Any, org_id: UUID, atendimento: dict) -> list[dict]:
                 "certificando": True if lado == "vendedor" else tem_permuta,
             }
         )
+
+    # The imóvel's REGISTERED owners (`imovel_proprietarios`) who are not parties
+    # of this atendimento — they sell too (CONTRACT sw-lead-to-contract §7.1),
+    # and their spouses are picked up by the loop below. A PJ owner is a company
+    # already (no pessoa to walk); it is certified as a party, not derived here.
+    codigo = _codigo_do_imovel(client, org_id, str(atendimento["id"]))
+    if codigo:
+        donos = table_reads.paged_rows(
+            client, "imovel_proprietarios", org_id,
+            eq_filters={"codigo": codigo}, refine=lambda q: q.is_("deleted_at", "null"),
+        )
+        for dono in donos:
+            cid = str(dono["cliente_id"]) if dono.get("cliente_id") else None
+            if not cid or cid in vistos:
+                continue
+            vistos.add(cid)
+            pessoas.append(
+                {"cliente_id": cid, "lado": "vendedor", "papel": "proprietario", "certificando": True}
+            )
 
     # Every vendedor-side pessoa's registered spouse, even when that spouse
     # never got its own `atendimento_partes` row (a comprador's spouse
@@ -187,16 +218,23 @@ def _motivo_e_exigencia(empresa: dict, *, referencia: date) -> tuple[bool, str]:
     return motivo_publico(codigo, situacao)
 
 
-def listar(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
+def listar(
+    client: Any, org_id: UUID, cliente_id: UUID, *, atendimento_id: Optional[UUID] = None
+) -> dict:
     """§D1's `GET`. Empty (`items: []`) — never a 409 — when the person has
     no open atendimento the resolver can name, or it is ambiguous: the card
     asks this on every open and has nothing to show either way, same
     posture `compradores_service.listar` takes."""
     ensure_cliente(client, org_id, cliente_id)
-    try:
-        atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
-    except AmbiguousAtendimento:
-        return {"atendimento_id": None, "referencia": date.today().isoformat(), "items": []}
+    if atendimento_id is not None:
+        # Explicit: the caller already knows WHICH deal (post-aceite) — never
+        # fall into the "ambiguous ⇒ empty" path below.
+        atendimento_id = str(atendimento_id)
+    else:
+        try:
+            atendimento_id = resolve_atendimento_id_incluindo_partes(client, org_id, cliente_id)
+        except AmbiguousAtendimento:
+            return {"atendimento_id": None, "referencia": date.today().isoformat(), "items": []}
 
     rows = (
         _t(client, ATENDIMENTOS_TABLE)

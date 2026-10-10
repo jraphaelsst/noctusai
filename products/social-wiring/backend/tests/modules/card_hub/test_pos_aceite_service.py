@@ -345,3 +345,109 @@ class TestConjugeTardio:
         assert rows[ids["c"]]["conjuge_cliente_id"] == novo
         assert rows[novo]["conjuge_cliente_id"] == ids["c"]
         assert _consultas(scoped) == []
+
+
+class TestEmpresasDerivadas:
+    def test_empresa_de_dono_so_do_imovel_e_derivada(self, scoped):
+        ids = _deal(scoped)
+        emp = str(uuid4())
+        scoped.set_table_data("empresas", [_empresa(emp)])
+        scoped.set_table_data("cliente_empresa_participacoes", [_participacao(ids["c"], emp)])
+        out, _ = _rodar(scoped, ids)
+        assert _por_alvo(out)[emp].status == "emitindo"
+
+    def test_empresa_do_conjuge_so_do_imovel_tambem(self, scoped):
+        ids = _deal(scoped)
+        emp = str(uuid4())
+        cj = str(uuid4())
+        _cliente(scoped, cliente_row(cj, nome="Conj C", cpf="77777777777", conjuge_cliente_id=ids["c"]))
+        scoped.set_table_data("clientes", [
+            r | {"conjuge_cliente_id": cj} if r["id"] == ids["c"] else r
+            for r in scoped.table("clientes").select("*").execute().data
+        ])
+        scoped.set_table_data("empresas", [_empresa(emp)])
+        scoped.set_table_data("cliente_empresa_participacoes", [_participacao(cj, emp)])
+        out, _ = _rodar(scoped, ids)
+        assert _por_alvo(out)[emp].status == "emitindo"
+
+    def test_titular_com_dois_atendimentos_nao_perde_as_empresas(self, scoped):
+        ids = _deal(scoped)
+        scoped.set_table_data("atendimentos", [
+            *scoped.table("atendimentos").select("*").execute().data,
+            _atendimento(str(uuid4()), ids["cid"]),
+        ])
+        emp = str(uuid4())
+        scoped.set_table_data("empresas", [_empresa(emp)])
+        scoped.set_table_data("cliente_empresa_participacoes", [_participacao(ids["a"], emp)])
+        out, _ = _rodar(scoped, ids)
+        assert _por_alvo(out)[emp].status == "emitindo"
+
+
+class TestUmUnicoPontoDeVinculo:
+    """Every writer of `clientes.conjuge_cliente_id` reaches the late-spouse
+    consequence through `services.conjuge_vinculo`. The consequence itself is
+    pinned above; here a recorder stands in for it to prove each path REACHES it."""
+
+    @pytest.fixture
+    def chamadas(self, monkeypatch):
+        registro: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            svc, "ao_vincular_conjuge",
+            lambda client, org, a, b, **kw: registro.append((str(a), str(b))) or [],
+        )
+        return registro
+
+    def _par(self, scoped):
+        _seed_tables(scoped)
+        a, b = str(uuid4()), str(uuid4())
+        scoped.set_table_data("clientes", [
+            cliente_row(a, nome="A", cpf="11111111111"), cliente_row(b, nome="B", cpf="22222222222"),
+        ])
+        return a, b
+
+    def test_casar(self, scoped, chamadas):
+        from app.modules.card_hub import compradores_service as comp
+
+        a, b = self._par(scoped)
+        comp._casar(scoped, ORG_ID, a, b)
+        assert set(chamadas) == {(a, b), (b, a)}
+
+    def test_vinculo_por_documento(self, scoped, chamadas):
+        from app.modules.card_hub import identidade_extracao_service as ide
+
+        a, b = self._par(scoped)
+        ide.vincular_conjuges(scoped, ORG_ID, a, b, origem="ia")
+        assert set(chamadas) == {(a, b), (b, a)}
+
+    def test_patch_do_cliente(self, scoped, chamadas):
+        from uuid import UUID
+
+        from app.services import clientes_service
+
+        a, b = self._par(scoped)
+        clientes_service.update_cliente(scoped, UUID(ORG_ID), UUID(a), conjuge_cliente_id=b)
+        assert chamadas == [(a, b)]
+
+    def test_patch_sem_conjuge_nao_dispara(self, scoped, chamadas):
+        from uuid import UUID
+
+        from app.services import clientes_service
+
+        a, _ = self._par(scoped)
+        clientes_service.update_cliente(scoped, UUID(ORG_ID), UUID(a), nome="Outro Nome")
+        assert chamadas == []
+
+    def test_conflito_de_conjuge_aceito_pelo_admin(self, scoped, chamadas):
+        from uuid import UUID
+
+        from app.modules.card_hub import identidade_extracao_service as ide
+
+        a, b = self._par(scoped)
+        cid = str(uuid4())
+        scoped.set_table_data("cliente_campo_conflitos", [{
+            "id": cid, "org_id": ORG_ID, "cliente_id": a, "campo": "conjuge_cliente_id",
+            "valor_anterior": None, "origem_anterior": None, "valor_proposto": b,
+            "origem_proposto": "ia", "status": "pendente", "fonte_tabela": None, "fonte_id": None,
+        }])
+        ide.resolver_conflito(scoped, UUID(ORG_ID), UUID(cid), aceitar=True, decidido_por=uuid4())
+        assert chamadas == [(a, b)]

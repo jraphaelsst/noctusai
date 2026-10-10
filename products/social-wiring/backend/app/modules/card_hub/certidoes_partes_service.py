@@ -165,14 +165,21 @@ PAPEL_ANTIGO_PROPRIETARIO = comp_svc.PAPEL_ANTIGO_PROPRIETARIO
 
 
 def _empresas_derivadas(
-    client: Any, org_id: UUID, cliente_id: UUID, partes: list[dict]
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    partes: list[dict],
+    atendimento_id: Optional[str] = None,
 ) -> list[dict]:
     """The `EMP n` columns: the empresas the matriz already derives
     (`empresas_service.listar`, `exige_certidoes=True`) that are NOT already a
     PJ party — same filter as `certidoes_matriz_service.resolver_colunas`."""
     ja_parte = {p["empresa_id"] for p in partes if p.get("empresa_id")}
     out: list[dict] = []
-    itens = listar_empresas(client, org_id, cliente_id).get("items", [])
+    itens = listar_empresas(
+        client, org_id, cliente_id,
+        atendimento_id=UUID(str(atendimento_id)) if atendimento_id else None,
+    ).get("items", [])
     for item in itens:
         if not item.get("exige_certidoes"):
             continue
@@ -446,7 +453,9 @@ def _todas_as_partes(
         p["grupo"] = p["lado"]
     for p in antigos:
         p["grupo"] = GRUPO_ANTIGO
-    derivadas = _empresas_derivadas(client, org_id, cliente_id, partes + antigos)
+    derivadas = _empresas_derivadas(
+        client, org_id, cliente_id, partes + antigos, atendimento_id=atendimento_id
+    )
     # Buyers, sellers, the sellers' companies; THEN the previous owners and
     # their companies — each group its own subtab in the UI.
     return (

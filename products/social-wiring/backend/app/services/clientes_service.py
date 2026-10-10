@@ -2106,6 +2106,13 @@ def update_cliente(
         raise ClienteNotFound(f"cliente {cliente_id} not found for org {org_id}")
     resultado = rows[0]
 
+    if payload.get("conjuge_cliente_id"):
+        # The cônjuge link is written by this PATCH too — same consequence as
+        # every other writer (`services.conjuge_vinculo`).
+        from app.services.conjuge_vinculo import apos_vincular_conjuge
+
+        apos_vincular_conjuge(client, org_id, cliente_id, payload["conjuge_cliente_id"])
+
     for campo in pendentes:
         assert atual is not None
         _abrir_conflito_edicao_manual(

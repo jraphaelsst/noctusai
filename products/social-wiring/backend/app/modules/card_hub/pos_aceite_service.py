@@ -612,6 +612,7 @@ def ao_vincular_conjuge(
     cliente_a: Any,
     cliente_b: Any,
     *,
+    actor: Any = None,
     agendador: Optional[Agendador] = None,
     check_credentials: Optional[Callable[[str], list[str]]] = None,
 ) -> list[dict]:
@@ -632,7 +633,7 @@ def ao_vincular_conjuge(
             continue
         try:
             pos = disparar(
-                client, org, atendimento_id, None,
+                client, org, atendimento_id, actor,
                 agendador=agendador, check_credentials=check_credentials,
             )
             afetados.append({"atendimento_id": atendimento_id, "pos_aceite": pos})

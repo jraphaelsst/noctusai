@@ -2500,7 +2500,6 @@ def vincular_conjuges(
         return []
     conflitos: list[dict] = []
     now = _now()
-    vinculou = False
     for eu, outro in ((cliente_a, cliente_b), (cliente_b, cliente_a)):
         rows = (
             _t(client, CLIENTES_TABLE)
@@ -2531,23 +2530,19 @@ def vincular_conjuges(
             continue
         if atual.get("conjuge_origem") == "manual":
             continue
-        _t(client, CLIENTES_TABLE).update(
-            {
-                "conjuge_cliente_id": str(outro),
+        from app.services.conjuge_vinculo import vincular_conjuge
+
+        vincular_conjuge(
+            client, org_id, eu, outro,
+            campos={
                 "conjuge_origem": origem,
                 "conjuge_documento_id": str(documento_id) if documento_id else None,
                 "conjuge_em": now,
                 "conjuge_confirmado_por": None,
                 "conjuge_confirmado_em": None,
                 "updated_at": now,
-            }
-        ).eq("id", str(eu)).execute()
-        vinculou = True
-    if vinculou:
-        # CONTRACT sw-lead-to-contract §7.1 — same hook as `compradores_service._casar`.
-        from app.modules.card_hub import pos_aceite_service
-
-        pos_aceite_service.ao_vincular_conjuge(client, org_id, cliente_a, cliente_b)
+            },
+        )
     return conflitos
 
 
@@ -3548,6 +3543,15 @@ def resolver_conflito(
         _t(client, CLIENTES_TABLE).update(updates).eq(
             "id", str(conflito["cliente_id"])
         ).execute()
+        if item_key == CAMPO_CONJUGE and conflito.get("valor_proposto"):
+            # A fourth writer of the link (an admin accepting a spouse
+            # conflict): same consequence as every other path.
+            from app.services.conjuge_vinculo import apos_vincular_conjuge
+
+            apos_vincular_conjuge(
+                client, org_id, conflito["cliente_id"], conflito["valor_proposto"],
+                actor=decidido_por,
+            )
         if item_key == "cpf" and conflito.get("valor_proposto"):
             cpf_conhecido(client, org_id, conflito["cliente_id"], conflito["valor_proposto"])
 
