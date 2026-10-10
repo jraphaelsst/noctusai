@@ -54,7 +54,7 @@ DEFAULT_TIMEOUT_S = 900
 # here is refused (a deferral without a destination is a silent error).
 #
 # NOC-REMEDIATE[migration-chain-rebaseline]: core 001 / SW 001 were rewritten to the current state while the later deltas stayed (core 002 re-creates 001's policies, core 027 renames columns 001 already renamed, SW 001 forward-references 005+ tables and re-creates its youtube policies); applied files are immutable (ledger checksum), so the fix is a chain rebaseline, not an edit — 2026-10-10
-# NOC-REMEDIATE[mailing-schema-migration]: the legacy `mailing` schema exists in prod with no migration creating it (drift); SW 012/212/214 alter it — the fix is a social-wiring migration that creates it — 2026-10-10
+# NOC-REMEDIATE[mailing-schema-migration]: the legacy `mailing` schema existed in prod with no migration creating it; SW 236 (2026-10-10) now declares it, so fresh chains have it — but SW 012/212/214 run BEFORE 236 and still fail on a fresh chain, so these residue entries resolve only with a chain rebaseline — 2026-10-10
 # NOC-REMEDIATE[erp-asleep-owner]: SW 011 alters the `erp` schema owned by erp-imobiliario, which is asleep (not in the active scope), so its chain is never replayed before SW — resolves when erp wakes or SW 011's erp leg is guarded — 2026-10-10
 REMEDIATE_CLASSES = frozenset({
     "migration-chain-rebaseline",
