@@ -33,6 +33,7 @@ default runner wraps ``subprocess.run`` at a given root.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -445,6 +446,57 @@ def integrated_live_pointer_confirms_dead(
     return status == "integrated-worktree-live" and is_ancestor(run, branch, base)
 
 
+#: Worktrees the Claude Code harness creates for an ``Agent`` dispatch
+#: (``isolation="worktree"``): ``.claude/worktrees/agent-<hex>``. They are
+#: never created through ``task_branch``, so they NEVER get a branch-tree
+#: pointer, and their work reaches ``dev`` re-based (new SHA, same patch).
+HARNESS_AGENT_WORKTREE_RE = re.compile(r"^agent-[0-9a-f]{8,}$")
+
+
+def harness_agent_patch_merged_confirms_dead(
+    run: GitRunner, wt_path: str | Path, branch: str, base: str,
+) -> bool:
+    """Fourth liveness signal (2026-10-10): a POINTERLESS harness agent
+    worktree whose every commit is already on ``base`` by patch-id.
+
+    2026-10-10 incident: 25 ``agent-<hex>`` worktrees piled up in ~5 h of
+    agent dispatches — every one clean, unlocked, hours old, its work on
+    ``dev`` — yet ``pointer_blocked`` forever: no pointer (the harness, not
+    ``task_branch``, made them) and no SHA ancestry (integrate re-based their
+    commits), so :func:`merged_into_base_confirms_dead` could never fire.
+
+    Patch-id equivalence is accepted HERE ONLY, scoped to the harness name
+    shape: the harness LOCKS an agent worktree while its agent runs (the lock
+    guard keeps those), the work is provably on ``base`` (≥1 commit, zero
+    ``+`` in ``git cherry``), and the dirty / stash / lock / recent-mtime /
+    min-age guards still run after this. A pointerless NON-agent worktree
+    keeps the stricter SHA-ancestry rule.
+    """
+    if not HARNESS_AGENT_WORKTREE_RE.match(Path(wt_path).name):
+        return False
+    return all_commits_cherry_picked(run, branch, base)
+
+
+def pointer_override_signal(
+    run: GitRunner, wt_path: str | Path, branch: str, base: str,
+    status: str | None,
+) -> str | None:
+    """The ONE place deciding whether a pointer block is overridden — shared
+    by ``cleanup_worktrees`` and ``mole`` (they had drifted: mole consulted
+    only the integrated-live signal). Returns the removal-signal name, or
+    ``None`` when the block stands. A LIVE non-terminal pointer other than
+    ``integrated-worktree-live`` is never overridden."""
+    if status is None:
+        if merged_into_base_confirms_dead(run, branch, base):
+            return "merged_into_base"
+        if harness_agent_patch_merged_confirms_dead(run, wt_path, branch, base):
+            return "harness_agent_patch_merged"
+        return None
+    if integrated_live_pointer_confirms_dead(run, branch, base, status):
+        return "integrated_live_merged"
+    return None
+
+
 def pointer_block_reason(status: str | None) -> str:
     """Human-readable reason string for a pointer-blocked removal — shared by
     both consumers (``cleanup_worktrees.py``, ``mole.py``) so the wording
@@ -583,4 +635,6 @@ __all__ = [
     "pointer_blocks_removal",
     "pointer_block_reason",
     "merged_into_base_confirms_dead",
+    "harness_agent_patch_merged_confirms_dead",
+    "pointer_override_signal",
 ]

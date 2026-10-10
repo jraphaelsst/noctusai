@@ -244,6 +244,48 @@ class TestMergedIntoBaseFallback:
         assert result["stale_signals"][str(wt)] == "merged_into_base"
         assert wt.exists(), "dry-run must never remove"
 
+    def test_harness_agent_worktree_patch_merged_with_no_pointer_is_removed(self, repo):
+        # 2026-10-10: 25 harness `agent-<hex>` worktrees piled up — no
+        # pointer (the harness made them, not task_branch) and integrate
+        # re-based their commits (no SHA ancestry). Patch-id equivalence is
+        # accepted for THAT name shape only (see the non-agent twin below).
+        wt = _add_worktree(
+            repo, "agent-a0326507f6113dca2", "worktree-agent-a0326507f6113dca2",
+            publish_shipped_pointer=False,
+        )
+        (wt / "h.txt").write_text("agent work\n")
+        _git(wt, "add", "h.txt")
+        _git(wt, "commit", "-qm", "feat: agent work, landed re-based")
+        sha = _git(wt, "rev-parse", "HEAD").strip()
+        # dev moved on meanwhile, so integrate re-bases: NEW sha, SAME patch.
+        (repo / "peer.txt").write_text("a peer's integrate\n")
+        _git(repo, "add", "peer.txt")
+        _git(repo, "commit", "-qm", "chore: peer work landed first")
+        _git(repo, "cherry-pick", sha)
+        _git(repo, "update-ref", "refs/remotes/origin/dev", "HEAD")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+            recent_mtime_minutes=0,
+        )
+        assert str(wt) in result["stale"]
+        assert result["stale_signals"][str(wt)] == "harness_agent_patch_merged"
+        assert not wt.exists()
+
+    def test_harness_agent_worktree_with_unlanded_work_stays_blocked(self, repo):
+        wt = _add_worktree(
+            repo, "agent-a155a2d1e9e06ecb6", "worktree-agent-a155a2d1e9e06ecb6",
+            publish_shipped_pointer=False,
+        )
+        (wt / "u.txt").write_text("not on dev\n")
+        _git(wt, "add", "u.txt")
+        _git(wt, "commit", "-qm", "feat: never integrated")
+        result = cleanup_stale_worktrees(
+            repo_root=repo, force=True, min_age_minutes=0,
+            recent_mtime_minutes=0,
+        )
+        assert str(wt) not in result["stale"]
+        assert wt.exists(), "an agent worktree whose work is NOT on dev must never be removed"
+
     def test_cherry_picked_landing_with_no_pointer_is_NOT_authorized(self, repo):
         # is_merged() (the FIRST gate, checked before ever reaching the
         # pointer step) accepts patch-id/cherry-pick equivalence — a

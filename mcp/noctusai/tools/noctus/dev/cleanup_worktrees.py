@@ -447,14 +447,12 @@ def cleanup_stale_worktrees(
             # signal is consulted for. A LIVE non-terminal pointer
             # (`on_going`, `integrated-worktree-live`, ...) is an explicit
             # peer claim and is NEVER overridden by this fallback.
-            if blocks and pointer_status is None:
-                if wts.merged_into_base_confirms_dead(wts_run, branch, base):
+            if blocks:
+                override = wts.pointer_override_signal(
+                    wts_run, wt, branch, base, pointer_status)
+                if override:
                     blocks = False
-                    removal_signal = "merged_into_base"
-            if blocks and wts.integrated_live_pointer_confirms_dead(
-                    wts_run, branch, base, pointer_status):
-                blocks = False
-                removal_signal = "integrated_live_merged"
+                    removal_signal = override
             if blocks:
                 pointer_blocked.append({
                     "path": wt,

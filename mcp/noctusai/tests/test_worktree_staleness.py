@@ -446,3 +446,44 @@ class TestRecentMtimeGuard:
         empty.mkdir()
         active, age, _window = wts.is_recently_active(empty)
         assert active is True and age is None
+
+
+class TestPointerOverrideSignal:
+    """One shared override decision for cleanup_worktrees + mole (2026-10-10)."""
+
+    def _runner(self, *, ancestor: bool, cherry_plus: int, ahead: int):
+        def run(args):
+            if args[:3] == ["git", "rev-parse", "--verify"] or args[:2] == ["git", "rev-parse"]:
+                return 0, ("aaa" if "br" in args[-1] else "bbb") + "\n", ""
+            if args[:3] == ["git", "merge-base", "--is-ancestor"]:
+                return (0 if ancestor else 1), "", ""
+            if args[:2] == ["git", "cherry"]:
+                return 0, "".join(f"+ c{i}\n" for i in range(cherry_plus)) + "- x\n", ""
+            if args[:2] == ["git", "log"]:
+                return 0, "".join(f"c{i} msg\n" for i in range(ahead)), ""
+            return 0, "", ""
+        return run
+
+    def test_agent_name_patch_merged_overrides_missing_pointer(self):
+        run = self._runner(ancestor=False, cherry_plus=0, ahead=1)
+        assert wts.pointer_override_signal(
+            run, "/x/.claude/worktrees/agent-a0326507f6113dca2", "br", "base", None,
+        ) == "harness_agent_patch_merged"
+
+    def test_non_agent_name_patch_merged_does_not_override(self):
+        run = self._runner(ancestor=False, cherry_plus=0, ahead=1)
+        assert wts.pointer_override_signal(
+            run, "/x/.claude/worktrees/my-feature", "br", "base", None,
+        ) is None
+
+    def test_agent_name_with_unlanded_commit_does_not_override(self):
+        run = self._runner(ancestor=False, cherry_plus=1, ahead=2)
+        assert wts.pointer_override_signal(
+            run, "/x/.claude/worktrees/agent-a0326507f6113dca2", "br", "base", None,
+        ) is None
+
+    def test_live_on_going_pointer_is_never_overridden(self):
+        run = self._runner(ancestor=True, cherry_plus=0, ahead=1)
+        assert wts.pointer_override_signal(
+            run, "/x/.claude/worktrees/agent-a0326507f6113dca2", "br", "base", "on_going",
+        ) is None

@@ -487,8 +487,8 @@ def _classify_emit_registered(
         # remove right now". Guards 1 (live/unresolvable pointer) and 2
         # (recent mtime) are NEVER force-bypassable; guard 3 (min age) is.
         blocks, pointer_status = wts.pointer_blocks_removal(branch, wts_run)
-        if blocks and wts.integrated_live_pointer_confirms_dead(
-                wts_run, branch, base, pointer_status):
+        if blocks and wts.pointer_override_signal(
+                wts_run, wt, branch, base, pointer_status):
             blocks = False
         if blocks:
             records.append(
