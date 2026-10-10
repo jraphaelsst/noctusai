@@ -393,6 +393,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--release-mode", default="ff", choices=["ff", "cut", "refuse"], help="With --release stage=bless: 'ff' (default) fast-forwards to the newest qualifying-green descendant; 'cut' builds a release/<stamp> of approved commits only; 'refuse' blocks on any unapproved work.")
     parser.add_argument("--release-branch", default=None, help="With --release stage=bless mode=cut (2nd call): the release/<stamp> branch to bless once its own CI is green.")
     parser.add_argument("--release-allow-stale-toolkit", action="store_true", help="With --release: bypass the toolkit-staleness refusal for THIS CLI process (rarely needed here — a freshly-launched cli.py process is never stale against itself; mirrors the MCP tool's own escape hatch). Never set automatically by the R4 fresh-subprocess fallback — the child never needs it. See toolkit_freshness.refuse_gate.")
+    parser.add_argument("--migration-replay", nargs="*", metavar="PATH", help="Replay product migration chains on a fresh PGlite (core first, versioned Supabase stubs) and judge them against products/<slug>/backend/migration-replay.json (known residue, each with a NOC-REMEDIATE destination). PATHs = new/changed migrations: applied as a whole file, then a second time (idempotency). Exit 0 green · 1 red · 2 inconclusive (the harness could not measure — never green). MCP: noctus.dev.migration_replay. KB § PATTERNS/backend/migration-chain-replay.md.")
+    parser.add_argument("--migration-replay-products", default=None, help="Comma-separated product slugs to replay (default: the products the PATHs touch; with neither, every active product).")
+    parser.add_argument("--migration-replay-source", default="worktree", help="Where migration files are read from: worktree (default) | index (pre-commit: the staged blobs) | <git sha>.")
+    parser.add_argument("--migration-replay-base", default=None, help="CI: add every migration/config path changed in BASE..HEAD to the PATHs.")
     parser.add_argument("--migrate-product", metavar="PRODUCT", help="Apply a product's SQL migrations to the shared Supabase project. DRY-RUN unless --migrate-product-confirm. MCP: noctus.dev.migrate_product. Also an R4 fresh-subprocess target.")
     parser.add_argument("--migrate-product-confirm", action="store_true", help="With --migrate-product: actually apply pending migrations (a production action). Without it, dry-run only.")
     parser.add_argument("--migrate-product-target", default=None, help="With --migrate-product: filename filter — apply/list only this one file.")
@@ -3229,6 +3233,20 @@ def main():
         )
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 0)))
+
+    elif args.migration_replay is not None:
+        from tools.noctus.dev.migration_replay import changed_migration_paths, format_report, migration_replay
+        from tools.noctus.dev.product_scope import read_active_scope
+        from settings import REPO_ROOT as _MR_ROOT
+        paths = list(args.migration_replay)
+        if args.migration_replay_base:
+            paths += changed_migration_paths(Path(_MR_ROOT), args.migration_replay_base)
+        slugs = [s for s in (args.migration_replay_products or "").split(",") if s] or None
+        if slugs is None and not paths and not args.migration_replay_base:
+            slugs = read_active_scope(Path(_MR_ROOT))
+        r = migration_replay(slugs, paths, source=args.migration_replay_source)
+        print(format_report(r))
+        sys.exit({"green": 0, "red": 1}.get(r["status"], 2))
 
     elif args.migrate_product:
         from tools.noctus.dev.migrate_product import migrate_product

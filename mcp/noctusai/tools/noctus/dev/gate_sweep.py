@@ -112,6 +112,7 @@ from workspace import resolve_caller_root
 from .build import _last_meaningful_line
 from .harness_signatures import HARNESS_SIGNATURES as _HARNESS_SIGNATURES
 from .harness_signatures import harness_suspect as _harness_suspect
+from .migration_replay import products_for_paths
 from .migrate_product import (
     FakeGitRunner,  # noqa: F401  (re-exported for test convenience)
     GitQueryError,
@@ -219,6 +220,7 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
     mcp_files: list[str] = []
     doc_files: list[str] = []
     other_files: list[str] = []
+    migration_files = [f for f in files if products_for_paths([f])]
     for f in files:
         m = _PRODUCT_RE.match(f)
         if m:
@@ -250,6 +252,9 @@ def _derive_scope(files: list[str]) -> dict[str, Any]:
         "doc_files": sorted(doc_files),
         "unmapped_files": sorted(other_files),
         "claude_md_touched": "CLAUDE.md" in files,
+        # Migrations / migration-replay.json — replayed on PGlite (core first)
+        # by `migration_replay`, the changed files applied twice.
+        "migration_files": sorted(migration_files),
         # Populated by `_build_gate_specs` — ASLEEP products dropped from a
         # `seed_fleet_wide` fan-out (never silently; see `product_scope.py`).
         "skipped_asleep": [],
@@ -1309,6 +1314,15 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
             scope["asleep_requested"] = asleep_requested
         for slug in scope["products"]:
             specs.extend(_product_gate_specs(root, slug, py))
+
+    if scope.get("migration_files"):
+        specs.append(
+            GateSpec(
+                "migration_replay",
+                [py, "mcp/noctusai/cli.py", "--migration-replay", *scope["migration_files"]],
+                root,
+            )
+        )
 
     if scope["mcp"] and _COMPLIANCE_REL in scope.get("mcp_files", []):
         # Keeper gates go FIRST: they are seconds-scale, and a shared

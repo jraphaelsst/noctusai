@@ -167,6 +167,15 @@ def test_build_gate_specs_product_backend_only_no_frontend_gate(tmp_path):
     # never a listed-but-structurally-impossible entry
 
 
+def test_build_gate_specs_migration_adds_the_replay_gate(tmp_path):
+    _make_product(tmp_path, "core", frontend=False)
+    migration = "products/core/backend/migrations/070_x.sql"
+    scope = GS._derive_scope([migration, "products/core/backend/migration-replay.json"])
+    assert scope["migration_files"] == ["products/core/backend/migration-replay.json", migration]
+    replay = [s for s in GS._build_gate_specs(tmp_path, scope) if s.gate == "migration_replay"]
+    assert len(replay) == 1 and replay[0].argv[-3:] == ["--migration-replay", *scope["migration_files"]]
+
+
 def test_build_gate_specs_mcp_scope(tmp_path):
     # Shared test infra → the FULL toolkit suite (module changes are scoped;
     # see TestMcpScopedTests).

@@ -1,0 +1,73 @@
+{
+  "_doc": "Known residue of this product's chain under noctus.dev.migration_replay (PGlite + versioned Supabase stubs, core first, statement-level in order). The gate is red only on a failure NOT listed here. Every entry names its NOC-REMEDIATE class (declared in mcp/noctusai/tools/noctus/dev/migration_replay.py). Prune an entry the moment the tool reports it as no longer seen. Fixtures insert prod-shaped rows just before the named file. KB § PATTERNS/backend/migration-chain-replay.md.",
+  "stubs_version": 1,
+  "residue": [
+    {
+      "file": "001_social-wiring.sql",
+      "error": "relation \"social_wiring.integration_accounts\" does not exist",
+      "count": 5,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "001_social-wiring.sql",
+      "error": "relation \"social_wiring.snapshot_runs\" does not exist",
+      "count": 2,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "001_social-wiring.sql",
+      "error": "relation \"social_wiring.youtube_channel_snapshots\" does not exist",
+      "count": 3,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "001_social-wiring.sql",
+      "error": "relation \"social_wiring.youtube_shorts\" does not exist",
+      "count": 4,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "001_social-wiring.sql",
+      "error": "relation \"social_wiring.youtube_video_snapshots\" does not exist",
+      "count": 4,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "001_social-wiring.sql",
+      "error": "relation \"social_wiring.youtube_videos\" does not exist",
+      "count": 4,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "011_rls_current_org_id.sql",
+      "error": "schema \"erp\" does not exist",
+      "count": 1,
+      "remediate": "erp-asleep-owner"
+    },
+    {
+      "file": "012_rls_mailing_current_org_id.sql",
+      "error": "schema \"mailing\" does not exist",
+      "count": 15,
+      "remediate": "mailing-schema-migration"
+    },
+    {
+      "file": "212_org_picker_mailing_policies.sql",
+      "error": "schema \"mailing\" does not exist",
+      "count": 15,
+      "remediate": "mailing-schema-migration"
+    },
+    {
+      "file": "214_acting_audit_triggers.sql",
+      "error": "attach_acting_audit_triggers: schema mailing does not exist",
+      "count": 1,
+      "remediate": "mailing-schema-migration"
+    }
+  ],
+  "fixtures": [
+    {
+      "before": "231_intermediario_documento_canonico.sql",
+      "why": "prod held bare-digit documento / representante_cpf rows (the 114 shape) when 231 ran; 231 v1 refused its own backfill with 23514 against exactly these. The parent atendimento is real (231 updates a row twice in one transaction, which makes Postgres re-check its FK); only the parent's own references (org, etapa) are left dangling via session_replication_role=replica, which never disables a CHECK.",
+      "sql": "SET session_replication_role = replica;\nINSERT INTO social_wiring.atendimentos (id, org_id, etapa_id) VALUES\n  ('00000000-0000-4000-8000-000000000231', '00000000-0000-4000-8000-0000000000a1', gen_random_uuid());\nINSERT INTO social_wiring.atendimento_intermediarios (org_id, atendimento_id, nome, pessoa_tipo, documento, representante_cpf) VALUES\n  ('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000231', 'fixture pf', 'pf', '11144477735', NULL),\n  ('00000000-0000-4000-8000-0000000000a1', '00000000-0000-4000-8000-000000000231', 'fixture pj', 'pj', '11222333000181', '11144477735');\nSET session_replication_role = origin;"
+    }
+  ]
+}

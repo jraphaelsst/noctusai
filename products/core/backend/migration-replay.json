@@ -1,0 +1,91 @@
+{
+  "_doc": "Known residue of this product's chain under noctus.dev.migration_replay (PGlite + versioned Supabase stubs, core first, statement-level in order). The gate is red only on a failure NOT listed here. Every entry names its NOC-REMEDIATE class (declared in mcp/noctusai/tools/noctus/dev/migration_replay.py). Prune an entry the moment the tool reports it as no longer seen. Fixtures insert prod-shaped rows just before the named file. KB § PATTERNS/backend/migration-chain-replay.md.",
+  "stubs_version": 1,
+  "residue": [
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"audit_logs_org_read\" for table \"audit_logs\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"audit_logs_service\" for table \"audit_logs\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"notifications_own\" for table \"notifications\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"notifications_service\" for table \"notifications\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"org_settings_org_members\" for table \"org_settings\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"org_settings_service\" for table \"org_settings\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"platform_settings_service\" for table \"platform_settings\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"webhook_deliveries_service\" for table \"webhook_deliveries\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"webhook_deliveries_via_endpoint\" for table \"webhook_deliveries\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"webhook_endpoints_org\" for table \"webhook_endpoints\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "002_missing_tables.sql",
+      "error": "policy \"webhook_endpoints_service\" for table \"webhook_endpoints\" already exists",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "027_rename_plans_to_pt_br.sql",
+      "error": "column \"description\" does not exist",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "027_rename_plans_to_pt_br.sql",
+      "error": "column \"is_active\" does not exist",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    },
+    {
+      "file": "027_rename_plans_to_pt_br.sql",
+      "error": "column \"name\" does not exist",
+      "count": 1,
+      "remediate": "migration-chain-rebaseline"
+    }
+  ],
+  "fixtures": []
+}

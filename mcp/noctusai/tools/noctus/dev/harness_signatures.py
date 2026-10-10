@@ -120,6 +120,14 @@ class HarnessSignature:
 # line (see `python_env_missing` before `python_module_missing`).
 HARNESS_SIGNATURES: tuple[HarnessSignature, ...] = (
     HarnessSignature(
+        "migration_replay_inconclusive",
+        r"migration_replay: INCONCLUSIVE",
+        "noctus.dev.migration_replay could not MEASURE (node / the pinned "
+        "PGlite missing, stubs not loading, a harness crash) — provision with "
+        "`npm ci --prefix mcp/noctusai/node` and re-run; exit 2 is never a "
+        "verdict on the migration.",
+    ),
+    HarnessSignature(
         "playwright_browser_missing",
         r"Executable doesn't exist at"
         r"|Please run the following command to download new browsers"

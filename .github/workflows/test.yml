@@ -1213,9 +1213,15 @@ jobs:
     #   - check_product_guide_cochange: a product behaviour change ships with its
     #     help-chat guide or a `Guide-Unaffected: <reason>` trailer.
     #     KB § PATTERNS/common/live-state-alignment.md
+    #   - noctus.dev.migration_replay: every product whose migrations (or
+    #     migration-replay.json) changed in the range replays its chain on a fresh
+    #     PGlite, core first; the changed files apply twice. The pre-commit leg
+    #     passes INCONCLUSIVE when a machine lacks node/PGlite — this leg is where
+    #     it gets measured, so here exit 2 (inconclusive) FAILS like red.
+    #     KB § PATTERNS/backend/migration-chain-replay.md
     # The range is resolved ONCE (one step) and shared by every keeper below.
     # Cheap and scope-independent: runs on every push/PR (no `changes` dependency).
-    name: Commit-range keepers (LGPD entries, product guides)
+    name: Commit-range keepers (LGPD entries, product guides, migration replay)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1261,6 +1267,23 @@ jobs:
       - name: Keeper check_product_guide_cochange (range)
         if: ${{ !cancelled() }} # report BOTH keepers even when the first is red
         run: python mcp/noctusai/cli.py --check-product-guide-cochange --guide-range "${{ steps.range.outputs.range }}"
+
+      - name: Set up Node (migration replay — the toolkit's pinned PGlite)
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      - name: Install MCP toolkit node deps (PGlite)
+        if: ${{ !cancelled() }}
+        working-directory: mcp/noctusai/node
+        run: npm ci --no-audit --no-fund
+
+      - name: Migration chain replay (range)
+        if: ${{ !cancelled() }}
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+        run: python mcp/noctusai/cli.py --migration-replay --migration-replay-base "${RANGE%%..*}"
 
   tooling-tests:
     # The TOOLING half of the repo — everything with a real suite that is

@@ -8,6 +8,7 @@ owns_kb:
   - CONTEXT/PATTERNS/backend/database-rls.md
   - CONTEXT/PATTERNS/backend/no-metadata-authz.md
   - CONTEXT/PATTERNS/backend/migration-sql-security-gates.md
+  - CONTEXT/PATTERNS/backend/migration-chain-replay.md
   - CONTEXT/PATTERNS/backend/tenancy-license-gate.md
   - CONTEXT/PATTERNS/backend/postgrest-schema-targeting.md
   - CONTEXT/PATTERNS/backend/postgrest-row-cap.md
@@ -85,6 +86,7 @@ Implement server-side slices to the architect's contracts — routers → servic
 - **An endpoint whose job is a side effect must be tested on its WRITES, not its status code.** Accepting an invitation is three writes (identity → `noctus_users` membership → invitation status); the seed shipped only the third for 3 months, returning 200 the whole time. Mounting a standard router is also a schema commitment — verify its tables exist in that product's schema. → `KB § PATTERNS/backend/invitation-acceptance.md`
 - **`user_metadata` org/role is user-writable — never an authz/scoping source.** Org = the trusted `noctus_users` row via `make_get_current_user_org` (use the tuple's `org_id`), legacy JWT → seed `make_trusted_legacy_jwt_resolver`; keeper `check_no_metadata_authz`. → `KB § PATTERNS/backend/no-metadata-authz.md`
 - **Migration SQL: a `SECURITY DEFINER` function REVOKEs EXECUTE from PUBLIC/anon/authenticated in the same file; no untyped `ARRAY[]`.** Keepers `check_secdef_migration_revokes_execute` + `check_migration_untyped_empty_array`. → `KB § PATTERNS/backend/migration-sql-security-gates.md`
+- **A migration must run on a real Postgres, and run twice.** pre-commit replays the chain on PGlite (core first); a new/changed file applies whole, then again — fix the migration, never add residue for new work. → `KB § PATTERNS/backend/migration-chain-replay.md`
 - **The license gate is by construction — never per-product, never an admin bypass.** The seed trusted auth deps resolve the caller's home org and enforce `org_sem_licenca`; pass `product_slug=` only when slug ≠ schema; no `role=='admin'`/org-id license branch (the platform org is licensed for every product by core 068); keeper `check_license_gate_by_construction`. → `KB § PATTERNS/backend/tenancy-license-gate.md`
 - **PostgREST table names are BARE.** The client already carries its schema, so `.table(f"{schema}.x")` resolves as `<schema>.<schema>.x` → a 500 that reads like a missing migration; mocks key by the string you hand them, so a qualified fixture agrees with a qualified caller and stays green. Keeper `check_postgrest_schema_qualified_table`. → `KB § PATTERNS/backend/postgrest-schema-targeting.md`
 - **`client.schema(other)` mutates the SHARED client, it does not scope it.** `DatabaseModule.get_admin_client()` caches ONE client per process; a deliberate cross-schema call (token mint/lookup into another product's schema) permanently repoints it, so the NEXT bare `.table()` call — trusting ambient schema — silently hits the wrong one. `_SchemaPinnedAdminClient` re-pins to its own schema on every `.table()`/`.rpc()`/`.from_()` call, closing it once at `get_admin_client()`. → `KB § PATTERNS/backend/admin-client-schema-pinning.md`

@@ -1105,6 +1105,29 @@ if { [[ -n "$STAGED_BACKEND_PY" ]] || [[ -n "$STAGED_STAND_IN_MIGRATIONS" ]]; } 
     "$PY" "$CLI" --check-stand-in-conformance --worktree-path "$REPO_ROOT" || true
 fi
 
+# ─── 6i. Migration chain replay (blocking on RED, only when a migration ──
+# or a product's migration-replay.json is staged) ────────────────────────
+# `noctus.dev.migration_replay`: the touched product's chain — core first — runs
+# on a fresh PGlite from the STAGED blobs; the staged migrations apply as whole
+# files, twice (idempotency). Red = a failure not in the product's known residue.
+# Exit 2 = INCONCLUSIVE (node/PGlite missing here): never a pass, but a local
+# toolchain gap must not block a commit — CI's migration-replay job (which
+# `npm ci`s the pinned PGlite) is the backstop. KB § PATTERNS/backend/migration-chain-replay.md.
+STAGED_REPLAY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^products/[^/]+/backend/(migrations/[^/]+\.sql|migration-replay\.json)$' || true)
+if [[ -n "$STAGED_REPLAY" ]] && have_py; then
+    echo "[pre-commit] migrations staged — replaying the chain on PGlite..."
+    # shellcheck disable=SC2086
+    "$PY" "$CLI" --migration-replay $STAGED_REPLAY --migration-replay-source index
+    MR_RC=$?
+    if [[ $MR_RC -eq 1 ]]; then
+        echo "[pre-commit] MIGRATION REPLAY is RED. Commit aborted." >&2
+        echo "[pre-commit] A staged migration fails on a real Postgres (or cannot be re-applied), or the chain gained a failure that is not known residue. Fix the migration — never add residue for new work. See KB § PATTERNS/backend/migration-chain-replay.md." >&2
+        exit 1
+    elif [[ $MR_RC -ne 0 ]]; then
+        echo "[pre-commit] ⚠ MIGRATION REPLAY INCONCLUSIVE (exit $MR_RC) — NOT verified locally; CI's migration-replay job will judge it. Provision: npm ci --prefix mcp/noctusai/node" >&2
+    fi
+fi
+
 # ─── 7. CLAUDE.md router discipline (blocking, only when CLAUDE.md staged) ──
 # Keeper `check_claude_md_router` + `KB § PATTERNS/claude-md-router-discipline.md`.
 # CLAUDE.md is the always-on router: §1 rules stay one-line (rule + `→` pointer),

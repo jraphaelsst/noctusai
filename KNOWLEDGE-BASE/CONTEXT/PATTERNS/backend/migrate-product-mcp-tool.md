@@ -358,6 +358,9 @@ produces). Files without a leading numeric prefix are silently skipped (logged a
 
 ## Composed-with
 
+- `KB § PATTERNS/backend/migration-chain-replay.md` — the pre-prod leg: every
+  chain replays on PGlite (core first, Supabase stubs), and changed files apply
+  as a whole file twice, before this tool ever sends them to prod
 - `KB § PATTERNS/backend/database-rls.md` — migration conventions + RLS
 - `KB § PATTERNS/backend/seed-fake-real-adapter.md` — IO seam shape
   (`SqlExecutor` AND `GitRunner` both follow it)
