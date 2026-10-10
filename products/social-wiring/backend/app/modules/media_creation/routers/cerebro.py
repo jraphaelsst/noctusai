@@ -29,7 +29,9 @@ from app.modules.media_creation.schemas.cerebro import (
     SynthesizeRequest,
 )
 from app.modules.media_creation.services.cerebro_ai import CerebroLlm, get_cerebro_llm
+from app.modules.media_creation.routers.perfil_criacao import perfil_service, raise_http
 from app.modules.media_creation.services.cerebro_service import CerebroError, CerebroService
+from app.modules.media_creation.services.perfil_service import PerfilError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(
@@ -184,15 +186,18 @@ async def list_imports(
 
 @router.get("/perfil")
 async def get_perfil(marca_id: uuid.UUID, auth=Depends(get_current_user_org)):
+    # Delegates to the Meu Perfil service: the bio is ONE column (cs_marca_perfil.bio), two callers.
     try:
-        return success_response(_svc(auth).get_perfil(str(marca_id)))
-    except CerebroError as exc:
-        _raise(exc)
+        p = perfil_service(auth).get(str(marca_id))
+        return success_response({k: p[k] for k in ("marca_id", "bio", "updated_at")})
+    except PerfilError as exc:
+        raise_http(exc)
 
 
 @router.put("/perfil")
 async def put_perfil(body: PerfilUpdate, auth=Depends(get_current_user_org)):
     try:
-        return success_response(_svc(auth).put_perfil(str(body.marca_id), body.bio))
-    except CerebroError as exc:
-        _raise(exc)
+        p = perfil_service(auth).save(str(body.marca_id), bio=body.bio)
+        return success_response({k: p[k] for k in ("marca_id", "bio", "updated_at")})
+    except PerfilError as exc:
+        raise_http(exc)

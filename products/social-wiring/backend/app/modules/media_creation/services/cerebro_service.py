@@ -52,7 +52,6 @@ logger = logging.getLogger(__name__)
 BRAINS = "cs_brains"
 ANSWERS = "cs_brain_answers"
 IMPORTS = "cs_brain_imports"
-PERFIL = "cs_marca_perfil"
 APPEND_RPC = "cs_brain_append"
 
 BRAIN_COLS = (
@@ -790,39 +789,3 @@ class CerebroService:
         ) or []
         rows = sorted(rows, key=lambda r: str(r.get("created_at") or ""), reverse=True)
         return [import_dict(r) for r in rows]
-
-    # ── profile bio (endpoints 17, 18) ──────────────────────────────────
-
-    def get_perfil(self, marca_id: str) -> dict[str, Any]:
-        self.assert_marca(marca_id)
-        rows = (
-            self.db.table(PERFIL).select("marca_id,bio,updated_at")
-            .eq("marca_id", marca_id).eq("org_id", self.org_id).execute().data
-        )
-        if not rows:
-            return {"marca_id": marca_id, "bio": "", "updated_at": None}
-        r = rows[0]
-        return {"marca_id": marca_id, "bio": r.get("bio") or "", "updated_at": r.get("updated_at")}
-
-    def put_perfil(self, marca_id: str, bio: str) -> dict[str, Any]:
-        self.assert_marca(marca_id)
-        now = _iso()
-        existing = (
-            self.db.table(PERFIL).select("marca_id")
-            .eq("marca_id", marca_id).eq("org_id", self.org_id).execute().data
-        )
-        if existing:
-            self.db.table(PERFIL).update({"bio": bio, "updated_by": self.user_id, "updated_at": now}) \
-                .eq("marca_id", marca_id).eq("org_id", self.org_id).execute()
-        else:
-            try:
-                self.db.table(PERFIL).insert({
-                    "marca_id": marca_id, "org_id": self.org_id, "bio": bio,
-                    "updated_by": self.user_id, "updated_at": now,
-                }).execute()
-            except Exception as exc:  # noqa: BLE001 - concurrent first save: the row exists now, update it
-                if not is_unique_violation(exc):
-                    raise
-                self.db.table(PERFIL).update({"bio": bio, "updated_by": self.user_id, "updated_at": now}) \
-                    .eq("marca_id", marca_id).eq("org_id", self.org_id).execute()
-        return {"marca_id": marca_id, "bio": bio, "updated_at": now}
