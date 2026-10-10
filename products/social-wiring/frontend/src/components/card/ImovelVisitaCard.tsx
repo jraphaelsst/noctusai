@@ -15,6 +15,7 @@
  * Presentational only (S3, same contract as the rest of `card/**`): props in,
  * callbacks out, zero data fetching and zero `@/pages/**` imports.
  */
+import ImovelManualBadge, { ehImovelManual } from "@/components/imovel/ImovelManualBadge";
 import { GripVertical, Handshake, ImageOff, X } from "lucide-react";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
@@ -141,7 +142,8 @@ export function ImovelVisitaCard({
               proposta enviada
             </span>
           )}
-          {!imovel.ativo_no_vista && (
+          {ehImovelManual(imovel) && <ImovelManualBadge />}
+          {!imovel.ativo_no_vista && !ehImovelManual(imovel) && (
             // A corretor about to drive there needs to know the listing is
             // gone. `fonte: "registry"` rows also legitimately carry no
             // street, so this explains the blanks below rather than leaving

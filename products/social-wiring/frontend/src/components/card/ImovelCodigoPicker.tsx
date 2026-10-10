@@ -30,7 +30,11 @@ import { AlertTriangle, Check, Loader2, Plus, Search, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import ImovelEnderecoFields, {
+  ENDERECO_VAZIO,
+  type EnderecoDraft,
+} from "@/components/imovel/ImovelEnderecoFields";
+import ImovelManualBadge, { ehImovelManual } from "@/components/imovel/ImovelManualBadge";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { useImoveisBusca } from "@/hooks/useCardHub";
 import {
@@ -41,28 +45,8 @@ import {
 import { cn } from "@/lib/utils";
 import type { ImovelBusca } from "@/types/cardHub";
 
-/** `RegistrarImovelManualBody`'s draft shape while the operator types it —
- *  every field is a controlled string; `complemento` blank means "not sent"
- *  (the only optional one). */
-interface EnderecoNovoDraft {
-  logradouro: string;
-  numero: string;
-  complemento: string;
-  bairro: string;
-  cidade: string;
-  uf: string;
-  cep: string;
-}
-
-const ENDERECO_NOVO_VAZIO: EnderecoNovoDraft = {
-  logradouro: "",
-  numero: "",
-  complemento: "",
-  bairro: "",
-  cidade: "",
-  uf: "",
-  cep: "",
-};
+type EnderecoNovoDraft = EnderecoDraft;
+const ENDERECO_NOVO_VAZIO = ENDERECO_VAZIO;
 
 /** The 6 REQUIRED fields — `complemento` is the one field a house/lot has no
  *  use for, so it alone stays optional (matches `RegistrarImovelBody` on
@@ -280,110 +264,17 @@ export function ImovelCodigoPicker({
 
               {/* Mobile-first: one field per row, no grid — this popover is
                   narrow on the phone form-factor `NegociacaoContainer` runs
-                  on more than a desktop layout would suggest. */}
-              <div className="space-y-1.5">
-                <div className="space-y-1">
-                  <Label htmlFor={`${id ?? testId}-novo-logradouro`} className="text-xs">
-                    Logradouro *
-                  </Label>
-                  <Input
-                    id={`${id ?? testId}-novo-logradouro`}
-                    value={endereco.logradouro}
-                    onChange={(e) => setEndereco((d) => ({ ...d, logradouro: e.target.value }))}
-                    placeholder="Ex.: Alameda Alemanha"
-                    disabled={disabled || registrar.isPending}
-                    data-testid={`${testId}-novo-logradouro`}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <div className="space-y-1">
-                    <Label htmlFor={`${id ?? testId}-novo-numero`} className="text-xs">
-                      Número *
-                    </Label>
-                    <Input
-                      id={`${id ?? testId}-novo-numero`}
-                      value={endereco.numero}
-                      onChange={(e) => setEndereco((d) => ({ ...d, numero: e.target.value }))}
-                      placeholder="Ex.: 535"
-                      disabled={disabled || registrar.isPending}
-                      data-testid={`${testId}-novo-numero`}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor={`${id ?? testId}-novo-complemento`} className="text-xs">
-                      Complemento
-                    </Label>
-                    <Input
-                      id={`${id ?? testId}-novo-complemento`}
-                      value={endereco.complemento}
-                      onChange={(e) =>
-                        setEndereco((d) => ({ ...d, complemento: e.target.value }))
-                      }
-                      placeholder="Ex.: Apto 535"
-                      disabled={disabled || registrar.isPending}
-                      data-testid={`${testId}-novo-complemento`}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor={`${id ?? testId}-novo-bairro`} className="text-xs">
-                    Bairro *
-                  </Label>
-                  <Input
-                    id={`${id ?? testId}-novo-bairro`}
-                    value={endereco.bairro}
-                    onChange={(e) => setEndereco((d) => ({ ...d, bairro: e.target.value }))}
-                    placeholder="Ex.: Euroville - Km 23"
-                    disabled={disabled || registrar.isPending}
-                    data-testid={`${testId}-novo-bairro`}
-                  />
-                </div>
-                <div className="grid grid-cols-[1fr_auto] gap-1.5">
-                  <div className="space-y-1">
-                    <Label htmlFor={`${id ?? testId}-novo-cidade`} className="text-xs">
-                      Cidade *
-                    </Label>
-                    <Input
-                      id={`${id ?? testId}-novo-cidade`}
-                      value={endereco.cidade}
-                      onChange={(e) => setEndereco((d) => ({ ...d, cidade: e.target.value }))}
-                      placeholder="Ex.: São Paulo"
-                      disabled={disabled || registrar.isPending}
-                      data-testid={`${testId}-novo-cidade`}
-                    />
-                  </div>
-                  <div className="w-16 space-y-1">
-                    <Label htmlFor={`${id ?? testId}-novo-uf`} className="text-xs">
-                      UF *
-                    </Label>
-                    <Input
-                      id={`${id ?? testId}-novo-uf`}
-                      value={endereco.uf}
-                      onChange={(e) =>
-                        setEndereco((d) => ({ ...d, uf: e.target.value.toUpperCase() }))
-                      }
-                      maxLength={2}
-                      placeholder="SP"
-                      disabled={disabled || registrar.isPending}
-                      data-testid={`${testId}-novo-uf`}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor={`${id ?? testId}-novo-cep`} className="text-xs">
-                    CEP *
-                  </Label>
-                  <Input
-                    id={`${id ?? testId}-novo-cep`}
-                    value={endereco.cep}
-                    onChange={(e) => setEndereco((d) => ({ ...d, cep: e.target.value }))}
-                    maxLength={9}
-                    placeholder="Ex.: 06355-465"
-                    disabled={disabled || registrar.isPending}
-                    data-testid={`${testId}-novo-cep`}
-                  />
-                </div>
-              </div>
+                  on more than a desktop layout would suggest. The inputs are
+                  the shared `ImovelEnderecoFields` (same ones the manual
+                  imóvel modal uses). */}
+              <ImovelEnderecoFields
+                value={endereco}
+                onChange={setEndereco}
+                disabled={disabled || registrar.isPending}
+                idPrefix={`${id ?? testId}-novo`}
+                testIdPrefix={`${testId}-novo`}
+                cepObrigatorio
+              />
 
               {registrar.isError && (
                 <p className="text-xs text-destructive" data-testid={`${testId}-erro`}>
@@ -442,18 +333,11 @@ export function ImovelCodigoPicker({
                 <span className="min-w-0 flex-1 truncate">
                   {rotuloDoImovel(imovel)}
                 </span>
-                {imovel.origem === "manual" ? (
+                {ehImovelManual(imovel) ? (
                   // 🔴 A hand-registered código was NEVER in the catálogo —
                   // "fora do catálogo" would claim it left one it never
                   // entered. Distinct badge, distinct fact.
-                  <span
-                    className={cn(
-                      "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium",
-                      "bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200",
-                    )}
-                  >
-                    cadastrado manualmente
-                  </span>
+                  <ImovelManualBadge label="cadastrado manualmente" />
                 ) : (
                   !imovel.ativo_no_vista && (
                     // 🔴 Labelled, never filtered out. A sold imóvel is the

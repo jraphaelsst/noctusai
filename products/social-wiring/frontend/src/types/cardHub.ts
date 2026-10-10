@@ -323,7 +323,7 @@ export type StatusVisita = "pendente" | "realizada" | "nao_realizada";
 
 /** Which side answered the enrichment. `registry` means the imóvel has left
  *  the Vista catalog and is rendering from its delist-time snapshot. */
-export type FonteImovel = "imoveis" | "registry";
+export type FonteImovel = "imoveis" | "registry" | "manual";
 
 export interface CorretorImovel {
   nome: string;

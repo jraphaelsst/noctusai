@@ -36,6 +36,7 @@ import {
   ArrowLeft,
   Megaphone,
   Mail,
+  Pencil,
   Star,
   Sparkles,
 } from "lucide-react";
@@ -61,6 +62,9 @@ import ImovelDocumentosCard from "@/components/imovel/ImovelDocumentosCard";
 import { ImovelInteressadosCard } from "@/components/imovel/ImovelInteressadosCard";
 import { ImovelProprietariosCard } from "@/components/imovel/ImovelProprietariosCard";
 import { ImovelSimilaresCard } from "@/components/imovel/ImovelSimilaresCard";
+import ImovelManualBadge from "@/components/imovel/ImovelManualBadge";
+import ImovelManualModal from "@/components/imovel/ImovelManualModal";
+import ImovelReferenciasCard from "@/components/imovel/ImovelReferenciasCard";
 import ImovelEnderecoCard from "@/components/imovel/ImovelEnderecoCard";
 import ImovelLocalizacaoSection from "@/components/imovel/ImovelLocalizacaoSection";
 import ImovelMetadadosSection from "@/components/imovel/ImovelMetadadosSection";
@@ -93,6 +97,7 @@ export default function ImovelDetalhes() {
   const solicitacao = useSolicitacaoDoImovel(codigo ?? null);
   const solicitar = useSolicitarCampanha(codigo ?? null);
   const [erroSolicitacao, setErroSolicitacao] = useState<string | null>(null);
+  const [editando, setEditando] = useState(false);
 
   // Cartório data + documents (migration 075). Hooks are unconditional and
   // gated on `codigo` internally — an early `return` for the loading/error
@@ -183,6 +188,7 @@ export default function ImovelDetalhes() {
   const endereco = [imovel.logradouro, imovel.numero, imovel.complemento]
     .filter(Boolean)
     .join(", ");
+  const manual = imovel.fonte === "manual";
   const jaSolicitado = Boolean(solicitacao.data?.id);
   const carregandoSolicitacao =
     solicitacao.isPending || solicitacao.isFetching;
@@ -217,7 +223,21 @@ export default function ImovelDetalhes() {
               </Badge>
             )}
             {imovel.tour_360 && <Badge variant="outline">Tour 360°</Badge>}
-            <EditPlaceholderButton label="Editar cabeçalho" />
+            {manual && <ImovelManualBadge />}
+            {manual ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => setEditando(true)}
+                data-testid="imovel-editar"
+              >
+                <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                Editar
+              </Button>
+            ) : (
+              <EditPlaceholderButton label="Editar cabeçalho" />
+            )}
           </div>
           <h1 className="max-w-3xl text-2xl font-semibold tracking-tight">
             {imovel.titulo ?? imovel.categoria ?? imovel.codigo}
@@ -364,6 +384,11 @@ export default function ImovelDetalhes() {
 
         {/* ── Sidebar ── */}
         <div className="space-y-6">
+          {/* S6 — deal refs (processo + Drive), on every imóvel. */}
+          {codigo && (
+            <ImovelReferenciasCard codigo={codigo} referencias={imovel.referencias} />
+          )}
+
           {/* § 5.10 Localização */}
           <ImovelLocalizacaoSection
             endereco={endereco}
@@ -507,6 +532,15 @@ export default function ImovelDetalhes() {
           />
         </div>
       </div>
+
+      {manual && editando && (
+        <ImovelManualModal
+          open
+          onOpenChange={setEditando}
+          imovel={imovel}
+          emCondominio={dadosQuery.data?.em_condominio ?? null}
+        />
+      )}
     </div>
   );
 }

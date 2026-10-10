@@ -114,6 +114,21 @@ vi.mock("@/hooks/useImovelContrato", async (importOriginal) => {
   };
 });
 
+// Referências card + manual modal own their mutations (real `useMutation` needs a
+// QueryClientProvider this harness does not render) — inert here, covered by
+// `ImovelReferenciasCard.test.tsx` / `ImovelManualModal.test.tsx`.
+const mockAtualizarReferencias = vi.fn();
+const mockAtualizarManual = vi.fn();
+vi.mock("@/hooks/useImovelManual", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useImovelManual")>();
+  return {
+    ...actual,
+    useAtualizarReferencias: () => ({ mutateAsync: mockAtualizarReferencias, isPending: false }),
+    useAtualizarImovelManual: () => ({ mutateAsync: mockAtualizarManual, isPending: false }),
+    useCriarImovelManual: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  };
+});
+
 const mockToastInfo = vi.fn();
 vi.mock("sonner", () => ({
   toast: { info: (...a: unknown[]) => mockToastInfo(...a), success: vi.fn(), error: vi.fn() },
@@ -414,5 +429,79 @@ describe("ImovelDetalhes — manually-registered código (mirror 404, registry 2
 
     expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
     expect(queryByTestId("imovel-manual-layout")).toBeNull();
+  });
+});
+
+
+describe("ImovelDetalhes — S6 referências + manual imóvel", () => {
+  const refs = {
+    processo_atual_numero: "876",
+    drive_folder_url: "https://drive.google.com/drive/folders/1vfD3HHF7jN8EiMwhcHkKYrvuxz5GDlEK",
+    drive_folder_id: "1vfD3HHF7jN8EiMwhcHkKYrvuxz5GDlEK",
+  };
+
+  it("🔴 a manual imóvel (no foto, no preço, no flags) renders the FULL layout with Manual badge + Editar", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({
+        codigo: "SW-0001",
+        fonte: "manual",
+        titulo: "Al. Liverpool 81",
+        foto_destaque: null,
+        fotos: [],
+        valor_venda: null,
+        valor_locacao: null,
+        referencias: refs,
+      }),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, getByText, queryByTestId } = await renderDetalhes("SW-0001");
+
+    expect(getByText("Al. Liverpool 81")).toBeTruthy();
+    expect(getByText("Sob consulta")).toBeTruthy();
+    expect(getByTestId("imovel-manual-badge").textContent).toBe("Manual");
+    expect(getByTestId("imovel-editar")).toBeTruthy();
+    // Full layout, not the reduced registry-only one.
+    expect(queryByTestId("imovel-manual-layout")).toBeNull();
+    expect(getByTestId("imovel-referencias")).toBeTruthy();
+  });
+
+  it("a Vista imóvel stays read-only (no Editar, no Manual badge) but still has the referências card", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({ fonte: "vista", referencias: refs }),
+      isPending: false,
+      isError: false,
+    });
+    const { queryByTestId, getByTestId } = await renderDetalhes();
+
+    expect(queryByTestId("imovel-editar")).toBeNull();
+    expect(queryByTestId("imovel-manual-badge")).toBeNull();
+    expect(getByTestId("imovel-referencias-processo-valor").textContent).toBe("876");
+  });
+
+  it("Editar opens the modal prefilled from the imóvel", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({
+        codigo: "SW-0001",
+        fonte: "manual",
+        titulo: "Al. Liverpool 81",
+        logradouro: "Alameda Liverpool",
+        numero: "81",
+        bairro: "Reserva do Vianna",
+        cidade: "Cotia",
+        uf: "SP",
+        referencias: refs,
+      }),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, fireEvent } = await renderDetalhes("SW-0001");
+    fireEvent.click(getByTestId("imovel-editar"));
+
+    expect((getByTestId("imovel-manual-titulo") as HTMLInputElement).value).toBe("Al. Liverpool 81");
+    expect((getByTestId("imovel-manual-end-logradouro") as HTMLInputElement).value).toBe(
+      "Alameda Liverpool",
+    );
+    expect((getByTestId("imovel-manual-processo") as HTMLInputElement).value).toBe("876");
   });
 });

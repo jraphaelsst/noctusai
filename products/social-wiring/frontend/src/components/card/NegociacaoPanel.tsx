@@ -40,6 +40,7 @@
  * With no origin código, nothing renders there — an empty affordance would be
  * a control that does nothing.
  */
+import { ehImovelManual } from "@/components/imovel/ImovelManualBadge";
 import { useEffect, useState } from "react";
 
 import { preverCalculo } from "@/lib/negociacaoPreview";
@@ -634,7 +635,7 @@ function ImovelDeOrigem({
           {origem.codigo}
         </span>
         {descricao && ` — ${descricao}`}
-        {!origem.ativo_no_vista && " (fora do catálogo)"}
+        {!origem.ativo_no_vista && !ehImovelManual(origem) && " (fora do catálogo)"}
       </span>
       {mesmoImovel ? (
         <span data-testid="negociacao-imovel-origem-em-uso">

@@ -27,7 +27,19 @@ export interface Corretor {
   fone: string | null;
 }
 
+/** `referencias` on every imóvel (S6): the deal pointers authored on
+ *  `imovel_dados`, valid for Vista and manual imóveis alike. */
+export interface ImovelReferencias {
+  processo_atual_numero: string | null;
+  drive_folder_url: string | null;
+  drive_folder_id: string | null;
+}
+
 export interface Imovel {
+  /** "manual" = registered on the platform (no Vista row, no photos, often no
+   *  price). Absent on an older backend, so treat undefined as "vista". */
+  fonte?: "vista" | "manual";
+  referencias?: ImovelReferencias;
   codigo: string;
   codigo_imobiliaria: string | null;
   titulo: string | null;
@@ -194,6 +206,38 @@ function buildQuery(f: ImovelFilters): string {
   return qs ? `?${qs}` : "";
 }
 
+/** Money/area come back as numbers or decimal strings; the UI formats numbers. */
+const NUMERIC_FIELDS = [
+  "valor_venda",
+  "valor_locacao",
+  "valor_condominio",
+  "valor_iptu",
+  "area_total",
+  "area_privativa",
+  "area_construida",
+  "area_terreno",
+  "dormitorios",
+  "suites",
+  "vagas",
+] as const;
+
+/**
+ * Tolerates the manual-imóvel shape (no photos, no price, no Vista flags):
+ * decimal strings become numbers, missing arrays become [] so every consumer
+ * can `.length`/`.map` without a guard.
+ */
+export function normalizarImovel<T extends Partial<Imovel>>(raw: T): T {
+  const out: Record<string, unknown> = { ...raw };
+  for (const k of NUMERIC_FIELDS) {
+    const v = out[k];
+    if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) out[k] = Number(v);
+  }
+  for (const k of ["fotos", "corretores", "caracteristicas", "orientacao_solar", "finalidades"]) {
+    if (!Array.isArray(out[k])) out[k] = [];
+  }
+  return out as T;
+}
+
 // ─── Queries ────────────────────────────────────────────────────────────────
 
 export function useImoveis(filters: ImovelFilters = {}) {
@@ -201,7 +245,9 @@ export function useImoveis(filters: ImovelFilters = {}) {
     queryKey: IMOVEIS_KEY(filters),
     queryFn: async () => {
       const res = await api.get<ImovelPage>(`/api/imoveis${buildQuery(filters)}`);
-      return res ?? { items: [], total: 0, page: 1, pages: 1 };
+      return res
+        ? { ...res, items: (res.items ?? []).map((i) => normalizarImovel(i)) }
+        : { items: [], total: 0, page: 1, pages: 1 };
     },
     // Keeps the previous page on screen while the next one loads, so
     // paginating doesn't flash an empty grid.
@@ -212,7 +258,10 @@ export function useImoveis(filters: ImovelFilters = {}) {
 export function useImovel(codigo: string | null) {
   return useQuery({
     queryKey: IMOVEL_KEY(codigo ?? ""),
-    queryFn: async () => api.get<Imovel>(`/api/imoveis/${codigo}`),
+    queryFn: async () => {
+      const res = await api.get<Imovel>(`/api/imoveis/${codigo}`);
+      return res ? normalizarImovel(res) : res;
+    },
     enabled: Boolean(codigo),
     // A 404 here means "this código was never synced from Vista" — a
     // manually-registered imóvel (`useRegistrarImovelManual`) is the common

@@ -9,6 +9,7 @@
 import { ImageOff } from "lucide-react";
 import type { ReactNode } from "react";
 
+import ImovelManualBadge, { ehImovelManual } from "@/components/imovel/ImovelManualBadge";
 import { formatValor } from "@/hooks/useImoveis";
 import type { ImovelResumo } from "@/types/interesses";
 
@@ -73,6 +74,7 @@ export function ImovelLinhaInfo({
           <span className="text-sm font-semibold" data-testid="imovel-codigo">
             {imovel.codigo}
           </span>
+          {ehImovelManual(imovel) && <ImovelManualBadge />}
           <span className="text-sm font-medium text-foreground/80" data-testid="imovel-valor">
             {valorDoImovel(imovel)}
           </span>

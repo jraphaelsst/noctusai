@@ -31,6 +31,17 @@ vi.mock("@/hooks/useImoveis", async (importOriginal) => {
   };
 });
 
+// The "Cadastrar imóvel" modal owns real mutations (QueryClient) — inert here;
+// its behaviour lives in `ImovelManualModal.test.tsx`.
+vi.mock("@/hooks/useImovelManual", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useImovelManual")>();
+  return {
+    ...actual,
+    useCriarImovelManual: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useAtualizarImovelManual: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  };
+});
+
 const mockToastInfo = vi.fn();
 vi.mock("sonner", () => ({
   toast: {
@@ -206,5 +217,57 @@ describe("Imoveis — card Pencil placeholder (CONTRACT § 4)", () => {
     // The sync mutation is the ONLY mutation this page wires — asserting it
     // was never called is the "no mutation" half of the CONTRACT § 4 rule.
     expect(mockUseSyncImoveis().mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("Imoveis — S6 cadastrar imóvel + manual imóvel on the list", () => {
+  it("🔴 a manual imóvel (no foto, no preço, no flags) renders a card with a Manual badge and no Vista edit placeholder", async () => {
+    mockUseImoveis.mockReturnValue({
+      data: makePage([
+        makeImovel({
+          codigo: "SW-0001",
+          fonte: "manual",
+          titulo: "Al. Liverpool 81",
+          foto_destaque: null,
+          fotos: [],
+          valor_venda: null,
+          valor_locacao: null,
+          dormitorios: null,
+          vagas: null,
+        }),
+      ]),
+      isPending: false,
+      isError: false,
+    });
+    const { getByText, getByTestId, queryByLabelText } = await renderImoveis();
+
+    expect(getByText("Al. Liverpool 81")).toBeTruthy();
+    expect(getByText("Sob consulta")).toBeTruthy();
+    expect(getByTestId("imovel-manual-badge").textContent).toBe("Manual");
+    expect(queryByLabelText("Editar SW-0001")).toBeNull();
+  });
+
+  it("a Vista card has no Manual badge", async () => {
+    mockUseImoveis.mockReturnValue({
+      data: makePage([makeImovel({ fonte: "vista" })]),
+      isPending: false,
+      isError: false,
+    });
+    const { queryByTestId } = await renderImoveis();
+    expect(queryByTestId("imovel-manual-badge")).toBeNull();
+  });
+
+  it("'Cadastrar imóvel' opens the modal", async () => {
+    mockUseImoveis.mockReturnValue({
+      data: makePage([makeImovel()]),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, queryByTestId, fireEvent } = await renderImoveis();
+
+    expect(queryByTestId("imovel-manual-modal")).toBeNull();
+    fireEvent.click(getByTestId("imoveis-cadastrar"));
+    expect(getByTestId("imovel-manual-modal")).toBeTruthy();
   });
 });

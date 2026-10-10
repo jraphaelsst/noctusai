@@ -158,6 +158,27 @@ describe("ImovelCodigoPicker", () => {
     expect(opcao.textContent).not.toContain("fora do catálogo");
   });
 
+  it("🔴 a manual imóvel (fonte manual, no foto, no preço) is listed with a Manual label, not 'fora do catálogo'", async () => {
+    mockUseImoveisBusca.mockReturnValue(
+      busca([
+        hit("SW-0001", {
+          titulo: "Al. Liverpool 81",
+          ativo_no_vista: false,
+          fonte: "manual",
+          foto_destaque: null,
+        }),
+      ]),
+    );
+    const { screen } = await render();
+
+    await digitar("SW-0001");
+
+    const opcao = screen.getByTestId("imovel-picker-opcao-SW-0001");
+    expect(opcao.textContent).toContain("SW-0001 — Al. Liverpool 81");
+    expect(screen.getByTestId("imovel-manual-badge")).toBeTruthy();
+    expect(opcao.textContent).not.toContain("fora do catálogo");
+  });
+
   it("does not badge a listed imóvel", async () => {
     mockUseImoveisBusca.mockReturnValue(busca([hit("ONE9001")]));
     const { screen } = await render();

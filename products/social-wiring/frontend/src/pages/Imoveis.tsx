@@ -14,7 +14,7 @@
  * filterNavByPageStatus gate hides the link with no error anywhere.
  */
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -24,6 +24,7 @@ import {
   Car,
   Loader2,
   MapPin,
+  Plus,
   RefreshCw,
   Repeat,
   Ruler,
@@ -48,6 +49,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 
 import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
+import ImovelManualBadge from "@/components/imovel/ImovelManualBadge";
+import ImovelManualModal from "@/components/imovel/ImovelManualModal";
 import {
   caracteristicaLabel,
   formatArea,
@@ -73,6 +76,8 @@ export default function Imoveis() {
     page_size: PAGE_SIZE,
   });
   const [searchDraft, setSearchDraft] = useState("");
+  const [cadastrando, setCadastrando] = useState(false);
+  const navigate = useNavigate();
 
   const imoveis = useImoveis(filters);
   const filtros = useImovelFiltros();
@@ -161,6 +166,11 @@ export default function Imoveis() {
               : ""}
           </p>
         </div>
+        <div className="flex flex-wrap gap-2">
+        <Button onClick={() => setCadastrando(true)} data-testid="imoveis-cadastrar">
+          <Plus className="mr-2 h-4 w-4" />
+          Cadastrar imóvel
+        </Button>
         <Button onClick={handleSync} disabled={sync.isPending} variant="outline">
           {sync.isPending ? (
             <>
@@ -174,7 +184,18 @@ export default function Imoveis() {
             </>
           )}
         </Button>
+        </div>
       </div>
+
+      {/* Mounted only while open: the modal owns its mutations (a fresh draft
+          per open, no query client needed until the user asks for it). */}
+      {cadastrando && (
+        <ImovelManualModal
+          open
+          onOpenChange={setCadastrando}
+          onSaved={(codigo) => navigate(`/imoveis/${encodeURIComponent(codigo)}`)}
+        />
+      )}
 
       {/* ── Filters ── */}
       <Card>
@@ -380,6 +401,11 @@ function ImovelCard({ imovel }: { imovel: Imovel }) {
           <Badge className="absolute left-2 top-2" variant="secondary">
             {imovel.codigo}
           </Badge>
+          {imovel.fonte === "manual" && (
+            <span className="absolute bottom-2 left-2">
+              <ImovelManualBadge />
+            </span>
+          )}
           {imovel.status && (
             <Badge className="absolute right-2 top-2">{imovel.status}</Badge>
           )}
@@ -393,7 +419,9 @@ function ImovelCard({ imovel }: { imovel: Imovel }) {
               {imovel.titulo ?? imovel.categoria ?? imovel.codigo}
             </p>
           </Link>
-          <EditPlaceholderButton label={`Editar ${imovel.codigo}`} />
+          {imovel.fonte === "manual" ? null : (
+            <EditPlaceholderButton label={`Editar ${imovel.codigo}`} />
+          )}
         </div>
 
         <Link to={`/imoveis/${imovel.codigo}`} className="block space-y-2">
