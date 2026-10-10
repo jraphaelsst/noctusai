@@ -65,9 +65,21 @@ class TestMigration:
             assert f'"{t}_select_own_org"' not in SQL
 
     def test_org_scoped_tables_use_the_217_policy_shape(self):
-        for t in ("cs_perfis_monitorados", "cs_virais", "cs_biblioteca_referencias",
-                  "cs_headline_lotes", "cs_headlines", "cs_roteiros"):
+        for t in ("cs_headline_lotes", "cs_headlines", "cs_roteiros"):
             assert f'"{t}_select_own_org"' in SQL and f'"{t}_write_own_org"' in SQL, t
+
+    def test_library_tables_are_read_only_for_the_browser_role(self):
+        """M3: 001's `GRANT ALL ... TO authenticated` must not leave the library writable from PostgREST."""
+        tables = ("cs_perfis_monitorados", "cs_virais", "cs_biblioteca_referencias")
+        for t in tables:
+            assert f'"{t}_select_own_org"' in SQL and f'CREATE POLICY "{t}_write_own_org"' not in SQL, t
+        revoke = re.search(r"REVOKE INSERT, UPDATE, DELETE[^;]*;", SQL)
+        grant = re.search(r"GRANT SELECT\s+ON ([^;]*?)\s+TO authenticated;", SQL)
+        assert revoke and grant
+        for t in tables:
+            assert f"social_wiring.{t}" in revoke.group(0) and f"social_wiring.{t}" in grant.group(1), t
+        assert "FROM authenticated" in revoke.group(0)
+        assert "inativo_desde" in SQL.split("CREATE TABLE IF NOT EXISTS social_wiring.cs_virais")[0]
 
     def test_bucket_is_private_and_the_ten_pages_are_registered(self):
         assert "VALUES ('sw-biblioteca', 'sw-biblioteca', false)" in SQL

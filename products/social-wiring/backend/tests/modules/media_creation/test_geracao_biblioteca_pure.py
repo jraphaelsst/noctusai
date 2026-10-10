@@ -13,7 +13,7 @@ from app.modules.media_creation.prompts.biblioteca_classificador import (
     ClassificadorParseError,
     blueprint_overlap,
     build_user_message,
-    parse_classificador_output,
+    parse_classificador_output as _parse,
 )
 from app.modules.media_creation.schemas.biblioteca import HandleInvalido, normalizar_handle
 from app.modules.media_creation.services.biblioteca_ingestao import (
@@ -146,6 +146,14 @@ def _reply(**over):
     return json.dumps(base)
 
 
+GANCHO = "Eu perdi 8 quilos em 3 meses sem passar fome"
+
+
+def parse_classificador_output(reply, *, caption=GANCHO, transcript=None):
+    """The parser needs the SOURCE text the model was shown; by default the post's caption IS the gancho."""
+    return _parse(reply, caption=caption, transcript=transcript)
+
+
 class TestClassifierParser:
     def test_happy_path_assembles_the_document(self):
         out = parse_classificador_output(_reply())
@@ -153,7 +161,7 @@ class TestClassifierParser:
         assert out.blueprint_slots == ["DESEJOS-ALCANCADOS-PELO-ESPECIALISTA"]
         assert out.blueprint.startswith("**HEADLINE ORIGINAL:**\nEu perdi 8 quilos")
         assert "**BLUEPRINT (ENGENHARIA REVERSA):**" in out.blueprint
-        assert "* {{DESEJOS-ALCANCADOS-PELO-ESPECIALISTA}} → Substitua por uma conquista do especialista" in out.blueprint
+        assert "* {{DESEJOS-ALCANCADOS-PELO-ESPECIALISTA}} → Substitua por desejos e conquistas que o especialista" in out.blueprint
         assert out.gatilho == "recompensa"
 
     def test_unknown_ids_are_dropped_and_capped_and_deduped(self):
@@ -211,7 +219,9 @@ class TestClassifierParser:
             {"slug": "OUTRO", "definicao": "x"},
             {"slug": "DESEJOS-ALCANCADOS-PELO-ESPECIALISTA", "definicao": "boa"},
         ]))
-        assert "OUTRO" not in out.blueprint and "boa" in out.blueprint
+        # H1: the model's wording is never stored for a research variable -- the canonical text is
+        assert "OUTRO" not in out.blueprint and "boa" not in out.blueprint
+        assert "desejos e conquistas que o especialista" in out.blueprint
 
 
 class TestPromptHardening:

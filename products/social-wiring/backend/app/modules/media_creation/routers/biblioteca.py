@@ -62,6 +62,7 @@ def _svc(auth, storage: StorageBackend, jobs: JobRepository, switch: Callable[[]
     return BibliotecaService(
         get_admin_client(), str(org_id), str(getattr(user, "id", "") or "") or None,
         storage=storage, jobs=jobs, switch=switch, max_perfis_org=int(settings.biblioteca_max_perfis_org),
+        sync_manual_dia_org=int(settings.biblioteca_sync_manual_dia_org),
     )
 
 

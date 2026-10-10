@@ -141,6 +141,9 @@ CREATE TABLE IF NOT EXISTS social_wiring.cs_perfis_monitorados (
     metrica_base         TEXT NOT NULL DEFAULT 'engajamento' CHECK (metrica_base IN ('views', 'engajamento')),
     -- NULL = fewer than 10 posts ("dados insuficientes")
     mediana_metrica      NUMERIC,
+    -- LGPD retention (contract 9.3): first moment the retention sweep saw the profile unused (paused, or
+    -- referenced by no marca); cleared when it is used again. biblioteca_retencao_dias later it is purged.
+    inativo_desde        TIMESTAMPTZ,
     created_by           UUID,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -706,13 +709,6 @@ CREATE POLICY "cs_perfis_monitorados_select_own_org"
     FOR SELECT TO authenticated
     USING (org_id = (SELECT public.current_org_id_for('social_wiring')));
 
-DROP POLICY IF EXISTS "cs_perfis_monitorados_write_own_org" ON social_wiring.cs_perfis_monitorados;
-CREATE POLICY "cs_perfis_monitorados_write_own_org"
-    ON social_wiring.cs_perfis_monitorados
-    FOR ALL TO authenticated
-    USING (org_id = (SELECT public.current_org_id_for('social_wiring')))
-    WITH CHECK (org_id = (SELECT public.current_org_id_for('social_wiring')));
-
 DROP POLICY IF EXISTS "cs_perfis_monitorados_service_role" ON social_wiring.cs_perfis_monitorados;
 CREATE POLICY "cs_perfis_monitorados_service_role"
     ON social_wiring.cs_perfis_monitorados
@@ -725,13 +721,6 @@ CREATE POLICY "cs_virais_select_own_org"
     ON social_wiring.cs_virais
     FOR SELECT TO authenticated
     USING (org_id = (SELECT public.current_org_id_for('social_wiring')));
-
-DROP POLICY IF EXISTS "cs_virais_write_own_org" ON social_wiring.cs_virais;
-CREATE POLICY "cs_virais_write_own_org"
-    ON social_wiring.cs_virais
-    FOR ALL TO authenticated
-    USING (org_id = (SELECT public.current_org_id_for('social_wiring')))
-    WITH CHECK (org_id = (SELECT public.current_org_id_for('social_wiring')));
 
 DROP POLICY IF EXISTS "cs_virais_service_role" ON social_wiring.cs_virais;
 CREATE POLICY "cs_virais_service_role"
@@ -746,17 +735,23 @@ CREATE POLICY "cs_biblioteca_referencias_select_own_org"
     FOR SELECT TO authenticated
     USING (org_id = (SELECT public.current_org_id_for('social_wiring')));
 
-DROP POLICY IF EXISTS "cs_biblioteca_referencias_write_own_org" ON social_wiring.cs_biblioteca_referencias;
-CREATE POLICY "cs_biblioteca_referencias_write_own_org"
-    ON social_wiring.cs_biblioteca_referencias
-    FOR ALL TO authenticated
-    USING (org_id = (SELECT public.current_org_id_for('social_wiring')))
-    WITH CHECK (org_id = (SELECT public.current_org_id_for('social_wiring')));
-
 DROP POLICY IF EXISTS "cs_biblioteca_referencias_service_role" ON social_wiring.cs_biblioteca_referencias;
 CREATE POLICY "cs_biblioteca_referencias_service_role"
     ON social_wiring.cs_biblioteca_referencias
     FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- Library tables are READ-ONLY for the browser role (security review M3). Migration 001's blanket
+-- `GRANT ALL ON ALL TABLES ... TO authenticated` and its ALTER DEFAULT PRIVILEGES gave `authenticated`
+-- INSERT/UPDATE/DELETE on these three tables, and a user could have rewritten their org's virais
+-- (caption, blueprint -- which feed generation prompts) or repointed a profile straight through
+-- PostgREST. Every write goes through the backend with the service role (BibliotecaService, the
+-- ingestion handlers), so the policies above are SELECT-only too.
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+    ON social_wiring.cs_perfis_monitorados, social_wiring.cs_virais, social_wiring.cs_biblioteca_referencias
+    FROM authenticated, anon;
+GRANT SELECT
+    ON social_wiring.cs_perfis_monitorados, social_wiring.cs_virais, social_wiring.cs_biblioteca_referencias
+    TO authenticated;
 
 ALTER TABLE social_wiring.cs_headline_lotes ENABLE ROW LEVEL SECURITY;
 

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -53,13 +54,25 @@ MAX_TRANSCRIPT_PROMPT_CHARS = 12_000
 MAX_GANCHO_CHARS = 1_000
 MAX_BLUEPRINT_CHARS = 10_000
 MAX_DEFINICAO_CHARS = 300
+#: A model-written definition for a slot with no canonical description (only ``GPT``) is capped here.
+MAX_DEFINICAO_LIVRE_CHARS = 120
+#: The gancho must be quoted from the first characters of the source text (H1: stored prompt injection).
+GANCHO_JANELA_CHARS = 600
 MAX_IDS = 3
 #: Share of the blueprint's non-slot words that must come from the gancho.
 MIN_BLUEPRINT_OVERLAP = 0.8
 
 _SLOT_RE = re.compile(r"\{\{\s*([A-Z0-9][A-Z0-9-]*)\s*\}\}")
 _ANY_SLOT_RE = re.compile(r"\{\{[^{}]*\}\}")
-_TAG_RE = re.compile(r"</?\s*(legenda|transcricao)\s*>", re.IGNORECASE)
+#: Any tag-shaped run naming one of OUR delimiters, with whitespace, attributes or a stray slash.
+_TAG_RE = re.compile(r"<\s*/?\s*(legenda|transcricao|material)\b[^>]{0,200}>?", re.IGNORECASE)
+#: Zero-width / bidi / soft-hyphen characters used to split a delimiter past a regex.
+_INVISIVEIS_RE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\u00ad\u180e\ufeff]")
+#: Every angle-bracket look-alike (NFKC already folds the full-width pair): none survives into a prompt.
+_ANGULOS_RE = re.compile("[<>\u2039\u203a\u2329\u232a\u27e8\u27e9\u3008\u3009\u276c-\u2771\u2c3e\ufe64\ufe65]")
+_SPACES_RE = re.compile(r"\s+")
+_CHAVES_RE = re.compile(r"[{}]")
+_VARIAVEL_DESCRICAO = {v.slug: v.description for v in VARIABLES}
 _FENCE_RE = re.compile(r"^```[a-zA-Z]*\s*|\s*```$")
 _WORD_RE = re.compile(r"\w+", re.UNICODE)
 
@@ -116,9 +129,28 @@ SAÍDA: APENAS um objeto JSON, sem markdown, sem comentários, exatamente com es
 """
 
 
+def normalizar_nfkc(texto: str) -> str:
+    """NFKC + invisible characters removed: the form untrusted text must take BEFORE any delimiter or
+    substring check (``< /tag>`` with a zero-width space, full-width ``＜`` and compatibility forms
+    all collapse to what the regex then sees)."""
+    return _INVISIVEIS_RE.sub("", unicodedata.normalize("NFKC", texto or ""))
+
+
+def limpar_texto(texto: str) -> str:
+    """Untrusted text made safe to embed: normalised, our delimiters (any shape) replaced, and every
+    remaining angle-bracket look-alike dropped -- so no homoglyph of a tag can exist in the output."""
+    t = _TAG_RE.sub("[marcação removida]", normalizar_nfkc(texto))
+    return _ANGULOS_RE.sub("", t)
+
+
 def _neutralizar(texto: str) -> str:
     """Remove our own delimiter tags from untrusted text so it cannot close the data block."""
-    return _TAG_RE.sub("[marcação removida]", texto or "")
+    return limpar_texto(texto)
+
+
+def _comparavel(texto: str) -> str:
+    """Accent-folded, lower-cased, whitespace-collapsed -- the form two spans are compared in."""
+    return _SPACES_RE.sub(" ", fold_accents(_CHAVES_RE.sub("", limpar_texto(texto))).lower()).strip()
 
 
 def build_user_message(caption: Optional[str], transcript: Optional[str]) -> str:
@@ -176,10 +208,22 @@ def _clean_ids(raw: Any, valid: frozenset[int]) -> list[int]:
     return out
 
 
-def _default_definicao(slug: str) -> str:
-    by_slug = {v.slug: v.description for v in VARIABLES}
-    base = by_slug.get(slug, "trecho livre")
-    return f"Substitua por {base[:1].lower() + base[1:]}; use apenas conteúdos literais fornecidos pelo extrator."
+def _lower_first(texto: str) -> str:
+    return texto[:1].lower() + texto[1:]
+
+
+def definicao_do_slot(slug: str, modelo: Optional[str]) -> str:
+    """The text that will describe ``slug`` in the stored blueprint document. A research variable
+    ALWAYS gets its canonical description from ``pesquisa_variables`` -- the model's wording is
+    dropped, because the stored document is later pasted into generation prompts (H1). Only a slug with
+    no canonical description (``GPT``) keeps the model's text, capped, with ``<>{}`` and newlines out."""
+    canonica = _VARIAVEL_DESCRICAO.get(slug)
+    if canonica:
+        return _lower_first(canonica)[:MAX_DEFINICAO_CHARS]
+    livre = limpar_texto(modelo or "")
+    livre = re.sub(r"[<>{}\r\n]", " ", livre)
+    livre = _SPACES_RE.sub(" ", livre).strip()[:MAX_DEFINICAO_LIVRE_CHARS].strip()
+    return livre or "trecho livre"
 
 
 def montar_documento(gancho: str, blueprint: str, slots: list[str], definicoes: dict[str, str]) -> str:
@@ -198,8 +242,31 @@ def montar_documento(gancho: str, blueprint: str, slots: list[str], definicoes: 
     )[:MAX_BLUEPRINT_CHARS]
 
 
-def parse_classificador_output(reply: str) -> Classificacao:
-    """Parse + validate. Raises :class:`ClassificadorParseError` only when there is no JSON object."""
+def _gancho_citado(gancho: str, *fontes: Optional[str]) -> bool:
+    """True when ``gancho`` (accent-folded, whitespace-normalised) is a substring of the first
+    ``GANCHO_JANELA_CHARS`` characters of the transcript or of the caption."""
+    alvo = _comparavel(gancho)
+    if not alvo:
+        return False
+    return any(f and alvo in _comparavel(f[:GANCHO_JANELA_CHARS]) for f in fontes)
+
+
+def _trechos_fixos_fieis(blueprint: str, gancho: str) -> bool:
+    """Every run of text OUTSIDE the slots must itself be a span of the gancho (in order): the model
+    may replace spans with slots, never add words of its own."""
+    alvo = _comparavel(gancho)
+    return all(
+        not (seg := _comparavel(trecho)) or seg in alvo
+        for trecho in _ANY_SLOT_RE.split(blueprint)
+    )
+
+
+def parse_classificador_output(
+    reply: str, *, caption: Optional[str], transcript: Optional[str]
+) -> Classificacao:
+    """Parse + validate against the SOURCE text the model was shown (``caption`` / ``transcript`` are
+    required, never defaulted: a parser that cannot see the source cannot vouch for the gancho).
+    Raises :class:`ClassificadorParseError` only when there is no JSON object."""
     text = _FENCE_RE.sub("", (reply or "").strip()).strip()
     try:
         data = json.loads(text)
@@ -216,8 +283,12 @@ def parse_classificador_output(reply: str) -> Classificacao:
 
     out = Classificacao()
     gancho = data.get("gancho")
+    gancho_ok = False
     if isinstance(gancho, str) and gancho.strip():
-        out.gancho = gancho.strip()[:MAX_GANCHO_CHARS]
+        candidato = _SPACES_RE.sub(" ", _CHAVES_RE.sub("", limpar_texto(gancho))).strip()[:MAX_GANCHO_CHARS]
+        # H1: a gancho the post does not literally contain is the model's text, not the post's.
+        if candidato and _gancho_citado(candidato, transcript, caption):
+            out.gancho, gancho_ok = candidato, True
     out.formato_ids = _clean_ids(data.get("formato_ids"), FORMATO_IDS)
     out.nicho_ids = _clean_ids(data.get("nicho_ids"), NICHO_IDS)
     out.profissao_ids = _clean_ids(data.get("profissao_ids"), PROFISSAO_IDS)
@@ -228,8 +299,8 @@ def parse_classificador_output(reply: str) -> Classificacao:
     if not isinstance(blueprint, str) or not blueprint.strip():
         out.blueprint_erro = "blueprint ausente"
         return out
-    if out.gancho is None:
-        out.blueprint_erro = "gancho ausente"
+    if not gancho_ok or out.gancho is None:
+        out.blueprint_erro = "gancho ausente ou não citado no post"
         return out
     blueprint = blueprint.strip()
     if len(blueprint) > MAX_BLUEPRINT_CHARS // 2:
@@ -247,20 +318,17 @@ def parse_classificador_output(reply: str) -> Classificacao:
         out.blueprint_erro = "slot malformado"
         return out
     overlap = blueprint_overlap(blueprint, out.gancho)
-    if overlap < MIN_BLUEPRINT_OVERLAP:
+    if overlap < MIN_BLUEPRINT_OVERLAP or not _trechos_fixos_fieis(blueprint, out.gancho):
         out.blueprint_erro = f"blueprint não reproduz o gancho (sobreposição {overlap:.2f})"
         return out
 
-    definicoes: dict[str, str] = {}
+    modelo: dict[str, str] = {}
     raw_sub = data.get("substituicoes")
     if isinstance(raw_sub, list):
         for item in raw_sub:
             if isinstance(item, dict) and item.get("slug") in slots and isinstance(item.get("definicao"), str):
-                d = item["definicao"].strip()
-                if d and item["slug"] not in definicoes:
-                    definicoes[item["slug"]] = d[:MAX_DEFINICAO_CHARS]
-    for slug in slots:
-        definicoes.setdefault(slug, _default_definicao(slug)[:MAX_DEFINICAO_CHARS])
+                modelo.setdefault(item["slug"], item["definicao"])
+    definicoes = {slug: definicao_do_slot(slug, modelo.get(slug)) for slug in slots}
 
     out.blueprint_slots = slots
     out.blueprint = montar_documento(out.gancho, blueprint, slots, definicoes)
@@ -274,7 +342,10 @@ __all__ = [
     "MIN_BLUEPRINT_OVERLAP",
     "PROMPT_VERSAO",
     "blueprint_overlap",
+    "normalizar_nfkc",
     "build_user_message",
+    "definicao_do_slot",
+    "limpar_texto",
     "montar_documento",
     "parse_classificador_output",
 ]

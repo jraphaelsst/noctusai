@@ -340,6 +340,14 @@ class SocialWiringSettings(ProductSettings):
     biblioteca_transcricao_min_dia_org: int = 30
     biblioteca_transcricao_max_s_por_reel: int = 180
     biblioteca_transcricao_max_fila: int = 5
+    # At most this many of an org's library transcriptions queued at once (L2): one org cannot fill
+    # every slot of the shared lane. Enforced by the ingestion handler, not the RPC.
+    biblioteca_transcricao_max_fila_org: int = 2
+    # "Atualizar agora" (manual sync): per-org requests per UTC day (spend/abuse cap, section 9.4).
+    biblioteca_sync_manual_dia_org: int = 20
+    # LGPD retention (section 9.3, NOC-REMEDIATE closed 2026-10-10; the owner validates the number):
+    # virais of a profile that is paused, or that no marca references, for this many days are purged.
+    biblioteca_retencao_dias: int = 90
     # Hard switch of the `geracao` worker: off => not started AND submit returns 503
     # `geracao_indisponivel`. (The `biblioteca` worker's switch is the platform setting
     # `biblioteca_ingestao_habilitada`, DB first then env, default OFF -- not a field here.)

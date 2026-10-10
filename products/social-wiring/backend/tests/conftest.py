@@ -120,6 +120,13 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
             for canal in ("email", "organico", "youtube", "portal")
         ),
     ],
+    # Migration 229's `cs_biblioteca_referencias_modo_alvo`: a Minha Biblioteca
+    # reference targets exactly one thing -- a profile (modo='perfil') XOR one
+    # viral (modo='video'); the other target column must be NULL.
+    "cs_biblioteca_referencias": [
+        ("modo", "perfil", {"perfil_id": True, "viral_id": False}),
+        ("modo", "video", {"viral_id": True, "perfil_id": False}),
+    ],
 }
 
 

@@ -26,7 +26,13 @@ from noctusai_lib.integrations.persistence.table_reads import batched
 
 from app.modules.media_creation.geracao_taxonomias import NICHOS, PROFISSOES
 from app.modules.media_creation.pesquisa_variables import VARIABLES
+from app.modules.media_creation.prompts.biblioteca_classificador import normalizar_nfkc
 from app.modules.media_creation.prompts.cerebro_synthesis import ELEMENTOS_HEADING
+from app.modules.media_creation.services.headline_pipeline import (
+    carregar_candidatos,
+    pool_de_estruturas,
+    referencias_da_marca,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +85,7 @@ def eh_uuid(valor: str) -> bool:
 
 def cerca(texto: str) -> str:
     """Neutralise any ``<material`` / ``</material`` inside untrusted text so it cannot close the fence."""
-    return _FENCE_RE.sub(lambda m: f"&lt;{m.group(1)}material", texto or "")
+    return _FENCE_RE.sub(lambda m: f"&lt;{m.group(1)}material", normalizar_nfkc(texto))
 
 
 def bloco(tipo: str, conteudo: str, **attrs: str) -> str:
@@ -368,50 +374,25 @@ class ChatContexto:
         return bloco("estruturas_virais", "\n".join(linhas), origem="perfis de terceiros") if linhas else ""
 
     def _pool_estruturas(self, marca_id: str, perfis_foco: set[str]) -> list[dict[str, Any]]:
-        """Section 5.1 pool, ranked by ``score_viral``: allow-list -> niche overlap -> all org virais."""
-        cols = "id,codigo,blueprint,score_viral,perfil_id,publicado_em,nicho_ids"
-
-        def base():
-            return (
-                self.db.table(VIRAIS).select(cols)
-                .eq("org_id", self.org_id).eq("classificacao_status", "concluida")
-            )
-
-        def util(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            return [r for r in rows if r.get("blueprint")]
-
-        achados: dict[str, dict[str, Any]] = {}
-        allow = self._allowlist(marca_id)
-        for r in allow:
-            if r["modo"] == "perfil":
-                if perfis_foco and r["perfil_id"] not in perfis_foco:
-                    continue
-                q = base().eq("perfil_id", r["perfil_id"])
-                if r.get("posts_ate"):
-                    q = q.gte("publicado_em", r["posts_ate"])
-                rows = q.order("score_viral", desc=True).limit(MAX_ESTRUTURAS).execute().data or []
-            elif not perfis_foco:
-                rows = base().eq("id", r["viral_id"]).execute().data or []
-            else:
-                rows = []
-            for v in util(rows):
-                achados[v["id"]] = v
-        if not achados and not perfis_foco:
-            perfil = (
-                self.db.table(PERFIL).select("nichos").eq("marca_id", marca_id).eq("org_id", self.org_id)
-                .execute().data
-            )
-            nichos = (perfil[0].get("nichos") if perfil else None) or []
-            if nichos:
-                for v in util(base().overlaps("nicho_ids", nichos)
-                              .order("score_viral", desc=True).limit(MAX_ESTRUTURAS).execute().data or []):
-                    if set(v.get("nicho_ids") or []) & set(nichos):  # belt and braces over the SQL overlap
-                        achados[v["id"]] = v
-            if not achados:
-                for v in util(base().order("score_viral", desc=True).limit(MAX_ESTRUTURAS).execute().data or []):
-                    achados[v["id"]] = v
-        ordenado = sorted(achados.values(), key=lambda v: (v.get("score_viral") is None, -(v.get("score_viral") or 0)))
-        return ordenado[:MAX_ESTRUTURAS]
+        """Section 5.1 pool, ranked by ``score_viral``: THE canonical ``headline_pipeline`` pool
+        (Minha Biblioteca -> niche overlap -> whole org) over the org's classified virais. Only rows the
+        classifier parser validated carry a ``blueprint`` (``carregar_candidatos`` keeps nothing else),
+        so unvalidated model output never reaches the prompt (H1). ``perfis_foco`` (an ``@`` reference
+        to a profile) narrows it to those profiles."""
+        perfil = (
+            self.db.table(PERFIL).select("nichos").eq("marca_id", marca_id).eq("org_id", self.org_id)
+            .execute().data
+        )
+        nichos = (perfil[0].get("nichos") if perfil else None) or []
+        pool = pool_de_estruturas(
+            carregar_candidatos(self.db, self.org_id),
+            referencias_da_marca(self.db, self.org_id, marca_id),
+            nichos,
+        )
+        if perfis_foco:
+            pool = [v for v in pool if str(v.get("perfil_id")) in {str(p) for p in perfis_foco}]
+        pool.sort(key=lambda v: (v.get("score_viral") is None, -(v.get("score_viral") or 0)))
+        return pool[:MAX_ESTRUTURAS]
 
     def _secao_pesquisa(self, marca_id: str) -> str:
         itens = (

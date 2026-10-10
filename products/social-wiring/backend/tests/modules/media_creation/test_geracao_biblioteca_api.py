@@ -307,6 +307,34 @@ class TestPerfis:
         assert again.status_code == 429 and int(again.headers["Retry-After"]) > 0
         assert len(bib.queued("biblioteca.sync_perfil")) == 1
 
+    def test_sincronizar_has_a_daily_cap_per_org(self, bib, client):
+        from app.config import settings
+
+        hoje = NOW.strftime("%Y%m%d")
+        for i in range(settings.biblioteca_sync_manual_dia_org):
+            bib.db.from_("jobs").insert({
+                "id": str(uuid.uuid4()), "type": "biblioteca.sync_perfil", "status": "completed",
+                "dedupe_key": f"sync:{P2}:{hoje}:manual:{i:02d}:{ORG}",
+            }).execute()
+        r = client.post(f"{BASE}/perfis/{P1}/sincronizar")
+        assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0
+        assert bib.queued("biblioteca.sync_perfil") == []
+
+    def test_sincronizar_cap_ignores_other_orgs_and_other_days(self, bib, client):
+        from app.config import settings
+
+        hoje = NOW.strftime("%Y%m%d")
+        for i in range(settings.biblioteca_sync_manual_dia_org):
+            bib.db.from_("jobs").insert({
+                "id": str(uuid.uuid4()), "type": "biblioteca.sync_perfil", "status": "completed",
+                "dedupe_key": f"sync:{FOREIGN_PERFIL}:{hoje}:manual:{i:02d}:other-org",
+            }).execute()
+            bib.db.from_("jobs").insert({
+                "id": str(uuid.uuid4()), "type": "biblioteca.sync_perfil", "status": "completed",
+                "dedupe_key": f"sync:{P2}:20200101:manual:{i:02d}:{ORG}",
+            }).execute()
+        assert client.post(f"{BASE}/perfis/{P1}/sincronizar").status_code == 202
+
     def test_sincronizar_refused_right_after_a_sync(self, bib, client):
         bib.db.from_("cs_perfis_monitorados").update({"ultima_sync_em": (NOW - timedelta(minutes=10)).isoformat()}).eq("id", P2).execute()
         r = client.post(f"{BASE}/perfis/{P2}/sincronizar")

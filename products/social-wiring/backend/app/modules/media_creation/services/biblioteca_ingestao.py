@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import statistics
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -55,7 +56,12 @@ from app.modules.media_creation.prompts.biblioteca_classificador import (
     parse_classificador_output,
 )
 from app.modules.media_creation.services import geracao_jobs
-from app.modules.media_creation.services.biblioteca_service import BUCKET, PERFIS, VIRAIS
+from app.modules.media_creation.services.biblioteca_service import (
+    BUCKET,
+    PERFIS,
+    SYNC_MIN_INTERVAL,
+    VIRAIS,
+)
 from app.services.integration_account_service import IntegrationAccountNotFound
 
 logger = logging.getLogger(__name__)
@@ -301,6 +307,17 @@ def _day(ports: IngestaoPorts) -> str:
     return ports.clock().strftime("%Y%m%d")
 
 
+class _PerfilRemovido(Exception):
+    """The monitored profile was deleted while its sync was running (L1)."""
+
+
+def _assert_perfil_vivo(ports: IngestaoPorts, pid: str) -> None:
+    """Re-check, right before a write that creates a row or a blob, that the profile still exists:
+    deleting a profile (LGPD erasure) must not be followed by the in-flight sync re-creating its data."""
+    if not ports.db.table(PERFIS).select("id").eq("id", str(pid)).execute().data:
+        raise _PerfilRemovido(pid)
+
+
 # ── biblioteca.sync_perfil ──────────────────────────────────────────────────
 
 
@@ -314,6 +331,12 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     if perfil["status"] == "pausado":
         return
     now = ports.clock()
+    # L4: jobs that piled up while the kill switch was OFF all wake at once; every one after the first
+    # finds a profile synced moments ago. The same 1 h floor the manual endpoint enforces.
+    ultima = _parse_dt(perfil.get("ultima_sync_em"))
+    if ultima is not None and now - ultima < SYNC_MIN_INTERVAL:
+        logger.info("biblioteca: perfil=%s sincronizado há menos de 1 h; ignorado", pid)
+        return
 
     conta = perfil.get("conta_descoberta_id") or _default_conta(ports, org_id)
     if not conta:
@@ -351,16 +374,26 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
     header = None
     media: list[Any] = []
     after: Optional[str] = None
+    # M1: Business Discovery paginates by an opaque cursor the (third-party) server controls. A server
+    # that keeps answering empty pages, or hands the same cursor back, must not hold the worker.
+    max_pages = math.ceil(cap / PAGE_LIMIT) + 1
+    cursores: set[str] = set()
+    paginas = 0
     try:
         while True:
+            paginas += 1
             page = await asyncio.to_thread(
                 adapter.get_business_discovery, caller_ig, perfil["handle"],
                 fields=BUSINESS_DISCOVERY_MEDIA_FIELDS, after=after, limit=PAGE_LIMIT,
             )
             header = header or page
             media.extend(page.media)
-            if len(media) >= cap or not page.next_cursor:
+            if len(media) >= cap or not page.next_cursor or not page.media or paginas >= max_pages:
                 break
+            if page.next_cursor in cursores or page.next_cursor == after:
+                logger.warning("biblioteca: cursor repetido perfil=%s; paginação interrompida", pid)
+                break
+            cursores.add(page.next_cursor)
             if not first and page.media:
                 times = [t for t in (_parse_dt(m.timestamp) for m in page.media) if t]
                 if any(str(m.id) in by_media for m in page.media) and times and min(times) < cutoff:
@@ -376,38 +409,44 @@ async def sync_perfil(ports: IngestaoPorts, job: Job) -> None:
         raise
     media = media[:cap]
 
-    header_patch: dict[str, Any] = {}
-    if header is not None:
-        header_patch = {
-            "ig_user_id": header.ig_user_id, "nome": header.name, "seguidores": header.followers_count,
-            "media_count": header.media_count,
-        }
-        if header.profile_picture_url and not perfil.get("foto_path"):
-            foto = await _put_image(ports, header.profile_picture_url, f"{org_id}/{pid}/foto")
-            if foto:
-                header_patch["foto_path"] = foto
+    try:
+        header_patch: dict[str, Any] = {}
+        if header is not None:
+            header_patch = {
+                "ig_user_id": header.ig_user_id, "nome": header.name, "seguidores": header.followers_count,
+                "media_count": header.media_count,
+            }
+            if header.profile_picture_url and not perfil.get("foto_path"):
+                _assert_perfil_vivo(ports, pid)
+                foto = await _put_image(ports, header.profile_picture_url, f"{org_id}/{pid}/foto")
+                if foto:
+                    header_patch["foto_path"] = foto
 
-    stamp = _iso(now)
-    for m in media:
-        base = {
-            "permalink": m.permalink, "media_type": m.media_type, "media_product_type": m.media_product_type,
-            "caption": (m.caption or "")[:5000] or None,
-            "publicado_em": _iso(m.timestamp) if m.timestamp else None,
-            "likes": m.like_count, "comments": m.comments_count, "views": m.views, "metricas_em": stamp,
-        }
-        existing = by_media.get(str(m.id))
-        if existing is None:
-            row = ports.db.table(VIRAIS).insert({
-                **base, "org_id": org_id, "perfil_id": pid, "ig_media_id": str(m.id),
-                "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
-            }).execute().data[0]
-            thumb = m.thumbnail_url or (m.media_url if not _is_video(m) else None)
-            if thumb:
-                path = await _put_image(ports, thumb, f"{org_id}/{pid}/{row['id']}")
-                if path:
-                    _set_viral(ports, row["id"], thumbnail_path=path)
-        else:
-            _set_viral(ports, existing["id"], **base)
+        stamp = _iso(now)
+        for m in media:
+            base = {
+                "permalink": m.permalink, "media_type": m.media_type, "media_product_type": m.media_product_type,
+                "caption": (m.caption or "")[:5000] or None,
+                "publicado_em": _iso(m.timestamp) if m.timestamp else None,
+                "likes": m.like_count, "comments": m.comments_count, "views": m.views, "metricas_em": stamp,
+            }
+            existing = by_media.get(str(m.id))
+            if existing is None:
+                _assert_perfil_vivo(ports, pid)
+                row = ports.db.table(VIRAIS).insert({
+                    **base, "org_id": org_id, "perfil_id": pid, "ig_media_id": str(m.id),
+                    "transcricao_status": "nao_aplicavel", "classificacao_status": "pendente", "e_viral": False,
+                }).execute().data[0]
+                thumb = m.thumbnail_url or (m.media_url if not _is_video(m) else None)
+                if thumb:
+                    path = await _put_image(ports, thumb, f"{org_id}/{pid}/{row['id']}")
+                    if path:
+                        _set_viral(ports, row["id"], thumbnail_path=path)
+            else:
+                _set_viral(ports, existing["id"], **base)
+    except _PerfilRemovido:
+        logger.info("biblioteca: perfil=%s removido durante a sincronização; nada mais é gravado", pid)
+        return
     media_urls = {str(m.id): m.media_url for m in media if _is_video(m)}
 
     # Recompute the viral metric over EVERYTHING stored for the profile.
@@ -486,6 +525,15 @@ async def transcrever(ports: IngestaoPorts, job: Job) -> None:
     if viral["transcricao_status"] != "pendente":
         return  # already settled (a retried / duplicated job)
     day = _day(ports)
+    # L2: one org must not fill every slot of the shared library lane. Enforced here, before the
+    # download, so a busy org costs no bandwidth; the lane's own RPC still caps the platform.
+    ocupadas = (
+        ports.db.table(VIRAIS).select("id", count="exact").eq("org_id", org_id)
+        .eq("transcricao_status", "na_fila").limit(1).execute()
+    )
+    na_fila = ocupadas.count if getattr(ocupadas, "count", None) is not None else len(ocupadas.data or [])
+    if na_fila >= int(ports.cfg.biblioteca_transcricao_max_fila_org):
+        raise RescheduleLater(600, "fila de transcrição da organização cheia")
 
     async def terminal(status: str) -> None:
         _set_viral(ports, vid, transcricao_status=status)
@@ -563,7 +611,9 @@ async def classificar(ports: IngestaoPorts, job: Job) -> None:
         org_id,
     )
     try:
-        parsed = parse_classificador_output(reply)
+        parsed = parse_classificador_output(
+            reply, caption=viral.get("caption"), transcript=viral.get("transcricao_texto")
+        )
     except ClassificadorParseError as exc:
         _set_viral(ports, vid, classificacao_status="falhou", classificacao_erro=str(exc)[:300])
         return

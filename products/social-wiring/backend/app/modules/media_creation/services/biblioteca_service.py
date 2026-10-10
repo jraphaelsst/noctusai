@@ -223,6 +223,44 @@ def pool_expression(refs: list[dict[str, Any]]) -> Optional[str]:
     return ",".join(parts) or None
 
 
+async def purgar_perfil(db: Any, storage: StorageBackend, org_id: str, perfil: dict[str, Any]) -> int:
+    """Erase a monitored profile and EVERYTHING derived from it (LGPD, contract 9.3): the thumbnails
+    and the profile picture (by row path AND by the profile's whole ``{org}/{perfil}/`` prefix), the
+    library ``transcricoes`` rows, then the profile row (its virais and video references cascade).
+
+    A blob that cannot be deleted never keeps the row alive -- it is logged and counted (the return
+    value) and the orphan-prefix sweep (``biblioteca_scheduler.varrer_blobs_orfaos``) retries it: once
+    the row is gone the prefix has no owner, which is exactly what that sweep deletes. Used by the
+    endpoint (user delete) and by the retention purge, so both erase the same set."""
+    pid = str(perfil["id"])
+    org_id = str(org_id)
+    virais = list(
+        iter_paged_rows(
+            lambda s, e: db.table(VIRAIS).select("id,thumbnail_path").eq("org_id", org_id)
+            .eq("perfil_id", pid).order("id").range(s, e).execute().data
+        )
+    )
+    keys = {v["thumbnail_path"] for v in virais if v.get("thumbnail_path")}
+    if perfil.get("foto_path"):
+        keys.add(perfil["foto_path"])
+    try:
+        keys.update(await storage.list_keys(bucket=BUCKET, prefix=f"{org_id}/{pid}/", limit=1000))
+    except Exception:  # noqa: BLE001 - the row-path keys above still go; the sweep covers the rest
+        logger.warning("biblioteca: list_keys falhou perfil=%s", pid, exc_info=True)
+    falhas = 0
+    for key in sorted(keys):
+        try:
+            await storage.delete(bucket=BUCKET, key=key)
+        except Exception:  # noqa: BLE001 - never leave the row alive because a blob delete failed
+            falhas += 1
+            logger.warning("biblioteca: blob delete failed key=%s (a varredura de órfãos repete)", key, exc_info=True)
+    for chunk in batched([str(v["id"]) for v in virais]):
+        db.table(TRANSCRICOES).delete().eq("org_id", org_id).eq("contexto_tipo", CONTEXTO_TIPO).in_(
+            "contexto_ref", chunk).neq("status", "processando").execute()
+    db.table(PERFIS).delete().eq("id", pid).eq("org_id", org_id).execute()
+    return falhas
+
+
 class BibliotecaService:
     def __init__(
         self,
@@ -234,6 +272,7 @@ class BibliotecaService:
         jobs: JobRepository,
         switch: Callable[[], bool],
         max_perfis_org: int = 30,
+        sync_manual_dia_org: int = 20,
     ) -> None:
         self.db = db
         self.org_id = str(org_id)
@@ -242,6 +281,7 @@ class BibliotecaService:
         self.jobs = jobs
         self._switch = switch
         self.max_perfis_org = max_perfis_org
+        self.sync_manual_dia_org = sync_manual_dia_org
 
     # ── guards ──────────────────────────────────────────────────────────
 
@@ -571,7 +611,21 @@ class BibliotecaService:
         ):
             wait = int((SYNC_MIN_INTERVAL - (now - requested)).total_seconds()) + 1
             raise BibliotecaError(429, "Já há uma atualização solicitada para este perfil.", retry_after_s=wait)
-        await self._enqueue_sync(str(row["id"]), suffix=f":manual:{now.strftime('%H')}")
+        # Spend/abuse cap: manual syncs per org per day. The org rides in the dedupe key so the count
+        # needs no join (`sync:{perfil}:{YYYYMMDD}:manual:{HH}:{org}`).
+        hoje = now.strftime("%Y%m%d")
+        feitos = (
+            self.db.table("jobs").select("id", count="exact")
+            .eq("type", "biblioteca.sync_perfil").like("dedupe_key", f"sync:%:{hoje}:manual:%:{self.org_id}")
+            .limit(1).execute()
+        )
+        n = feitos.count if getattr(feitos, "count", None) is not None else len(feitos.data or [])
+        if n >= self.sync_manual_dia_org:
+            raise BibliotecaError(
+                429, "Limite diário de atualizações manuais da organização atingido. Tente amanhã.",
+                retry_after_s=3600,
+            )
+        await self._enqueue_sync(str(row["id"]), suffix=f":manual:{now.strftime('%H')}:{self.org_id}")
         self.db.table(PERFIS).update({"proxima_sync_em": now.isoformat()}).eq("id", row["id"]).eq(
             "org_id", self.org_id).execute()
         if row["status"] in ("sem_conta", "erro", "nao_encontrado"):
@@ -627,17 +681,7 @@ class BibliotecaService:
         if (marca_id and outras) or (not marca_id and len(marcas) > 1):
             raise BibliotecaError(409, "Perfil em uso por outra marca")
         # LGPD (contract 9.3): the profile's thumbnails, picture and transcripts go with it.
-        for key in [v["thumbnail_path"] for v in virais if v.get("thumbnail_path")] + (
-            [row["foto_path"]] if row.get("foto_path") else []
-        ):
-            try:
-                await self.storage.delete(bucket=BUCKET, key=key)
-            except Exception:  # noqa: BLE001 - never leave the row alive because a blob delete failed
-                logger.warning("biblioteca: blob delete failed key=%s", key, exc_info=True)
-        for chunk in batched(viral_ids):
-            self.db.table(TRANSCRICOES).delete().eq("org_id", self.org_id).eq("contexto_tipo", CONTEXTO_TIPO).in_(
-                "contexto_ref", chunk).neq("status", "processando").execute()
-        self.db.table(PERFIS).delete().eq("id", pid).eq("org_id", self.org_id).execute()
+        await purgar_perfil(self.db, self.storage, self.org_id, row)
 
     # ── Minha Biblioteca ────────────────────────────────────────────────
 
@@ -757,6 +801,7 @@ class BibliotecaService:
 
 __all__ = [
     "BUCKET",
+    "purgar_perfil",
     "BibliotecaError",
     "BibliotecaService",
     "CONTEXTO_TIPO",

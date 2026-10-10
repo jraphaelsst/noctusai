@@ -36,7 +36,8 @@ JPEG = b"\xff\xd8\xff\xe0" + b"0" * 64
 MP4 = b"\x00\x00\x00\x18ftypmp42" + b"0" * 64
 CDN = "https://scontent.cdninstagram.com"
 PID = "perfil-1"
-CFG = SimpleNamespace(biblioteca_viral_ratio=3.0, biblioteca_classificacoes_dia_org=300, biblioteca_llm_model="claude-haiku-4-5")
+CFG = SimpleNamespace(biblioteca_viral_ratio=3.0, biblioteca_classificacoes_dia_org=300, biblioteca_llm_model="claude-haiku-4-5",
+               biblioteca_transcricao_max_fila_org=2)
 
 
 class FakeTranscricao:
@@ -130,6 +131,12 @@ def _rows(db, table="cs_virais"):
     return db.from_(table).select("*").execute().data
 
 
+def _envelhecer(db, horas=2):
+    """The profile was last synced ``horas`` ago (L4: a sync inside the hour is a no-op)."""
+    db.from_("cs_perfis_monitorados").update({"ultima_sync_em": (NOW - timedelta(hours=horas)).isoformat()}).eq(
+        "id", PID).execute()
+
+
 def _perfil(db):
     return db.from_("cs_perfis_monitorados").select("*").eq("id", PID).execute().data[0]
 
@@ -180,6 +187,7 @@ class TestSync:
         _sync(ports)
         first_n = len(_queued(ports, "biblioteca.classificar"))
         medias2 = [_media(i) for i in range(11)] + [_media(21, likes=900)]
+        _envelhecer(db)
         ports2 = _ports(db, adapter=_adapter(_page(medias2)), fetcher=_fetcher(medias2), jobs=ports.jobs)
         _sync(ports2)
         rows = _rows(db)
@@ -285,6 +293,7 @@ class TestSync:
         _sync(ports)
         vid = next(r["id"] for r in _rows(db) if r["ig_media_id"] == "m20")
         db.from_("cs_virais").update({"transcricao_status": "sem_orcamento"}).eq("id", vid).execute()
+        _envelhecer(db)
         ports2 = _ports(db, adapter=_adapter(_page(medias)), fetcher=_fetcher(medias), jobs=FakeJobRepository())
         _sync(ports2)
         assert next(r for r in _rows(db) if r["id"] == vid)["transcricao_status"] == "pendente"
@@ -422,7 +431,7 @@ class TestClassificar:
 
     def test_success_writes_the_structure(self):
         db = _db()
-        _viral(db, status="concluida", transcricao_texto="fala do video")
+        _viral(db, status="concluida", transcricao_texto="Eu perdi 8 quilos sem passar fome, fala do video")
         seen: list = []
         _classificar(_ports(db, llm=self._llm(_reply(), seen)))
         v = _vstatus(db)
@@ -434,7 +443,7 @@ class TestClassificar:
 
     def test_rejected_blueprint_keeps_taxonomy_and_records_why(self):
         db = _db()
-        _viral(db, status="nao_aplicavel")
+        _viral(db, status="nao_aplicavel", caption="Eu perdi 8 quilos sem passar fome")
         _classificar(_ports(db, llm=self._llm(_reply(blueprint="Eu {{INVENTADO}} sem passar fome"))))
         v = _vstatus(db)
         assert v["classificacao_status"] == "concluida" and v["blueprint"] is None
