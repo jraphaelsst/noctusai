@@ -40,13 +40,17 @@ from noctusai_lib.testing.clients import (
 )
 from noctusai_lib.testing.schema_errors import (
     MockCheckViolation,
+    MockRowCheckViolation,
     MockSchemaError,
     MockUnknownTableError,
 )
 from noctusai_lib.testing._schema_cache import (
+    get_check_map,
+    get_default_map,
     get_schema_map,
     reset_cache,
     set_cache_for_tests,
+    set_checks_for_tests,
 )
 from noctusai_lib.testing.consent import bind_consent_module_to_mock
 from noctusai_lib.testing.credentials import patch_credentials_to_mock
@@ -88,11 +92,15 @@ __all__ = [
     "AuthClient",
     "bind_user_metadata",
     "MockCheckViolation",
+    "MockRowCheckViolation",
     "MockSchemaError",
     "MockUnknownTableError",
+    "get_check_map",
+    "get_default_map",
     "get_schema_map",
     "reset_cache",
     "set_cache_for_tests",
+    "set_checks_for_tests",
     "bind_consent_module_to_mock",
     "patch_credentials_to_mock",
     "assert_error_contains",

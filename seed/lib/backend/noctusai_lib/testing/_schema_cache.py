@@ -16,11 +16,21 @@ import os
 from pathlib import Path
 from typing import Iterable
 
-from noctusai_lib.testing.migration_parser import parse_files
+from noctusai_lib.testing.migration_parser import parse_check_files, parse_default_files, parse_files
+from noctusai_lib.testing.sql_check import CompiledCheck, compile_cross_column_checks
 
 logger = logging.getLogger(__name__)
 
 _CACHE: dict[str, set[str]] | None = None
+#: `{qualified_table: [CompiledCheck, ...]}` — the CROSS-COLUMN CHECKs the
+#: mock enforces (2026-10-10). Single-column CHECKs stay with the opt-in
+#: `CheckManifest`; a CHECK `sql_check` can't compile is left out here and
+#: reported by `stand_in_conformance` leg B(iv), never silently passed there.
+_CHECK_CACHE: dict[str, list[CompiledCheck]] | None = None
+#: `{qualified_table: {columns with a DEFAULT}}` — an INSERT omitting one of
+#: these gets a value the mock doesn't know, so a CHECK reading it is not
+#: judged; any OTHER omitted column is NULL, exactly as in Postgres.
+_DEFAULTS_CACHE: dict[str, set[str]] | None = None
 
 
 def _discover_migration_files(repo_root: Path) -> list[Path]:
@@ -171,11 +181,55 @@ def get_schema_map() -> dict[str, set[str]]:
     return _CACHE
 
 
+def get_default_map() -> dict[str, set[str]]:
+    """Return the cached `{qualified_table: {columns with a DEFAULT}}` map."""
+    global _DEFAULTS_CACHE
+    if _DEFAULTS_CACHE is None:
+        try:
+            _DEFAULTS_CACHE = parse_default_files(_discover_migration_files(_find_repo_root()))
+        except Exception as exc:  # pragma: no cover — defensive, mirrors get_schema_map
+            logger.warning("mock-defaults: cache build failed (%s) — omitted columns never judged", exc)
+            _DEFAULTS_CACHE = {}
+    return _DEFAULTS_CACHE
+
+
+def get_check_map() -> dict[str, list[CompiledCheck]]:
+    """Return the cached `{qualified_table: [CompiledCheck]}` map of
+    migration-declared CROSS-COLUMN CHECKs. Builds on first call."""
+    global _CHECK_CACHE
+    if _CHECK_CACHE is None:
+        try:
+            files = _discover_migration_files(_find_repo_root())
+            _CHECK_CACHE, unsupported = compile_cross_column_checks(parse_check_files(files))
+            logger.debug(
+                "mock-checks: %d tables carry cross-column CHECKs; %d CHECK(s) not modelled",
+                len(_CHECK_CACHE), len(unsupported),
+            )
+        except Exception as exc:  # pragma: no cover — defensive, mirrors get_schema_map
+            logger.warning("mock-checks: cache build failed (%s) — CHECK enforcement disabled", exc)
+            _CHECK_CACHE = {}
+    return _CHECK_CACHE
+
+
 def reset_cache() -> None:
-    """Force the next get_schema_map() call to rebuild. Used by tests that
-    assert parsing behavior."""
-    global _CACHE
+    """Force the next get_schema_map() / get_check_map() call to rebuild.
+    Used by tests that assert parsing behavior."""
+    global _CACHE, _CHECK_CACHE, _DEFAULTS_CACHE
     _CACHE = None
+    _CHECK_CACHE = None
+    _DEFAULTS_CACHE = None
+
+
+def set_checks_for_tests(
+    mapping: dict[str, dict[str, str]],
+    defaults: dict[str, Iterable[str]] | None = None,
+) -> None:
+    """Inject `{qualified_table: {constraint_name: check_body}}` (and the
+    tables' DEFAULTed columns) directly — the CHECK twin of
+    `set_cache_for_tests`."""
+    global _CHECK_CACHE, _DEFAULTS_CACHE
+    _CHECK_CACHE, _unsupported = compile_cross_column_checks(mapping)
+    _DEFAULTS_CACHE = {table: set(cols) for table, cols in (defaults or {}).items()}
 
 
 def set_cache_for_tests(mapping: dict[str, set[str]] | dict[str, Iterable[str]]) -> None:
@@ -185,4 +239,7 @@ def set_cache_for_tests(mapping: dict[str, set[str]] | dict[str, Iterable[str]])
     _CACHE = {table: set(cols) for table, cols in mapping.items()}
 
 
-__all__ = ["get_schema_map", "reset_cache", "set_cache_for_tests"]
+__all__ = [
+    "get_check_map", "get_default_map", "get_schema_map",
+    "reset_cache", "set_cache_for_tests", "set_checks_for_tests",
+]

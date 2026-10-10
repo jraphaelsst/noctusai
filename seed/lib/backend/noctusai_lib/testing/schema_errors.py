@@ -90,6 +90,37 @@ class MockCheckViolation(AssertionError):
         super().__init__(message)
 
 
+class MockRowCheckViolation(MockCheckViolation):
+    """A mock INSERT/UPDATE/UPSERT wrote a row that violates a migration-
+    declared CROSS-COLUMN CHECK constraint (`sql_check`, 2026-10-10) — the
+    real database would refuse it with `new row for relation "<table>"
+    violates check constraint "<name>"` (SQLSTATE 23514).
+
+    Default-ON with schema validation: the CHECK comes from the migrations,
+    so there is no mirror to keep in sync. A `MockCheckViolation` (and so an
+    `AssertionError`): it IS a CHECK violation, and a test written against
+    the manifest validators' type keeps catching it."""
+
+    def __init__(self, *, schema: str | None, table: str, constraint: str,
+                 body: str, values: dict, operation: str = "insert"):
+        self.schema = schema
+        self.table = table
+        self.constraint = constraint
+        self.body = body
+        self.values = values
+        self.operation = operation
+        self.column = ", ".join(sorted(values))
+        self.invalid_value = values
+        self.allowed_values = (f"<CHECK {constraint}>",)
+        qualified = f"{schema}.{table}" if schema else table
+        shown = ", ".join(f"{k}={v!r}" for k, v in sorted(values.items()))
+        AssertionError.__init__(self, 
+            f'{qualified}: row violates check constraint "{constraint}" '
+            f"(called via {operation}). CHECK ({' '.join(body.split())}) is FALSE for "
+            f"{shown}. The real database would reject this write (SQLSTATE 23514)."
+        )
+
+
 class MockUnknownTableError(MockSchemaError):
     """Raised when a mock call references a table that does not appear in any
     migration file, AND the client was constructed with

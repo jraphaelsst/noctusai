@@ -194,6 +194,25 @@ mock = MockSupabaseClient(validate_schema=False, schema="erp")
 mock = MockSupabaseClient(validate_schema=True, strict_unknown_tables=True, schema="<product>")
 ```
 
+### Cross-column CHECK constraints (default-on since 2026-10-10)
+
+The same default-on validation now also enforces every **cross-column CHECK constraint** the migrations declare. Examples: `ends_at > starts_at`, `pct_a + pct_b + pct_c = 100`, `num_nonnulls(lead_id, meta_ads_lead_id) = 1`, `(origem = 'gerado' AND docx_path IS NOT NULL) OR origem = 'upload'`. A write the real table would refuse raises `MockRowCheckViolation` at the write. No manifest is needed, and a new migration's CHECK is enforced the day it lands.
+
+```
+MockRowCheckViolation: igig.negocio: row violates check constraint "negocio_perdido_com_motivo"
+(called via insert). CHECK (status <> 'perdido' OR (motivo_perda IS NOT NULL AND perdido_em IS NOT NULL))
+is FALSE for motivo_perda=None, perdido_em=None, status='perdido'. The real database would reject this write (SQLSTATE 23514).
+```
+
+How it works:
+- **Parsing.** `migration_parser.parse_check_files` reads the CHECKs as they stand after the migrations apply in order (`DROP CONSTRAINT`, re-add, `RENAME COLUMN`, `DROP COLUMN`, `RENAME TO`). `parse_default_files` reads which columns carry a DEFAULT.
+- **Translation.** `sql_check.compile_check` turns each body into a predicate with Postgres three-valued logic: NULL passes, and only FALSE fails.
+- **Omitted columns.** On INSERT, a column the row omits is NULL, as in Postgres, unless it has a DEFAULT; then it isn't guessed. That NULL rule catches the original `atendimento_contrato_versoes` incident: an INSERT that left out the columns its `_por_origem` CHECK required. On UPDATE or UPSERT, omitted columns keep their old values, so a CHECK that reads one isn't judged.
+- **What the mock can't judge** (incomparable types, a naive vs a timezone-aware timestamp, a date vs a timestamp) counts as unknown and passes. The mock may miss a violation; it never fails a test on a guess.
+- **Unsupported SQL.** SQL outside the modelled subset (a user-defined function, `LIKE`, a subquery, `CASE`) doesn't compile. `check_stand_in_conformance` leg B(iv) reports a cross-column CHECK like that as a finding unless a `ConditionalPresenceManifest` covers it or it's named, with its reason, in `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS`. The gate and the mock share one compile path (`sql_check.compile_cross_column_checks`), so what the gate calls covered is exactly what the mock enforces.
+
+At rollout (2026-10-10): 89 cross-column CHECKs on 58 tables were enforced, the 75-finding B(iv) backlog closed, and no active product test wrote a violating row. Single-column CHECKs still use the opt-in `CheckManifest`.
+
 **A `validate_schema=False` mock is a test double that hides the contract it doubles — the same false-green family as the auth-boundary `assert status in (401, 404)` rule (`KB § PATTERNS/compliance/auth-boundary-false-green.md`).** There, the non-401 branch masks a route that doesn't exist or fails before auth runs; here, an un-validated mock masks a column/table the code writes that the *live* database doesn't have. Three real bugs shipped invisibly through exactly this hole (`erp.assinaturas.external_id` / `erp.tool_call_audits` / `erp.llm_preferences`, 2026-09-17 — see `KB § PATTERNS/backend/database-rls.md § Migrations mirror the code`): the product's tests ran `validate_schema=False`, so a missing column/table was invisible to them right up until a real request hit it.
 
 **Opt-out guardrail.** The keeper `check_mock_schema_validation` detector flags any `validate_schema=False` site that has no rationale keyword (`schema-drift`, `reconciliation`, `follow-up`, `TODO`) IN THE SAME FILE. Put the rationale inside the module docstring or in a `#` comment above the line. Widened 2026-09-18 to scan the FULL `backend/tests/` tree (was `conftest.py`-only) — see `KB § PATTERNS/compliance/compliance-regression-baseline.md` § Baselined debt must carry a reason for the codified rule + the per-product remediation shape.

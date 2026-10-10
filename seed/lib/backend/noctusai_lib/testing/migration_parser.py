@@ -635,4 +635,223 @@ def parse_files(
     return merged
 
 
-__all__ = ["parse_sql", "parse_files"]
+# ---------------------------------------------------------------------------
+# CHECK constraints (2026-10-10) — the same ordered walk, a second map.
+#
+# `{qualified_table: {constraint_name: check_body}}`, the CHECKs as they
+# stand after every migration applied in order: an `ADD CONSTRAINT` adds,
+# `DROP CONSTRAINT` removes (the drop-then-re-add idiom replaces), `DROP
+# TABLE` / `DROP COLUMN` take their CHECKs with them (Postgres drops a
+# constraint whose column goes), `RENAME COLUMN` rewrites the bodies that
+# name it, `RENAME TO` moves the table's CHECKs. `noctusai_lib.testing.
+# sql_check` compiles the bodies; `MockSupabaseClient` enforces them.
+# Unnamed CHECKs get Postgres' default name shape (`<table>_<col>_check`,
+# `<table>_check`) so a message can be read against the real error.
+# ---------------------------------------------------------------------------
+
+_CHECK_OPEN_RE = re.compile(r"\bCHECK\s*\(", re.IGNORECASE)
+_CONSTRAINT_NAME_BEFORE_RE = re.compile(rf"\bCONSTRAINT\s+(?P<name>{_IDENT})\s*$", re.IGNORECASE)
+_ALTER_CHECK_EVENT_RE = re.compile(
+    rf"\bADD\s+(?:CONSTRAINT\s+(?P<add_name>{_IDENT})\s+)?CHECK\s*\("
+    rf"|\bDROP\s+CONSTRAINT(?:\s+IF\s+EXISTS)?\s+(?P<drop_name>{_IDENT})\b"
+    rf"|\bDROP\s+COLUMN(?:\s+IF\s+EXISTS)?\s+(?P<drop_col>{_IDENT})\b"
+    rf"|\bRENAME\s+COLUMN\s+(?P<old>{_IDENT})\s+TO\s+(?P<new>{_IDENT})\b"
+    rf"|\bRENAME\s+TO\s+(?P<new_table>{_IDENT})\b",
+    re.IGNORECASE,
+)
+
+
+def _mentions(body: str, column: str) -> bool:
+    return re.search(rf"\b{re.escape(column)}\b", body, re.IGNORECASE) is not None
+
+
+def _unique_name(existing: dict[str, str], base: str) -> str:
+    name, n = base, 0
+    while name in existing:
+        n += 1
+        name = f"{base}{n}"
+    return name
+
+
+def _create_table_checks(table: str, body: str) -> list[tuple[str, str]]:
+    """`[(name, check_body)]` for every CHECK in a CREATE TABLE body —
+    table-level (`[CONSTRAINT x] CHECK (...)`) and inline on a column."""
+    found: list[tuple[str, str]] = []
+    taken: dict[str, str] = {}
+    for part in _split_top_level_commas(body):
+        head = _COLUMN_HEAD_RE.match(part)
+        column = head.group("name") if head and not _is_constraint_line(part) else None
+        for m in _CHECK_OPEN_RE.finditer(part):
+            inner = _extract_table_body(part, m.end() - 1)
+            if inner is None:
+                continue
+            named = _CONSTRAINT_NAME_BEFORE_RE.search(part[:m.start()])
+            if named:
+                name = named.group("name")
+            else:
+                name = _unique_name(taken, f"{table}_{column}_check" if column else f"{table}_check")
+            taken[name] = inner
+            found.append((name, inner.strip()))
+    return found
+
+
+def parse_check_sql(
+    sql: str,
+    *,
+    into: dict[str, dict[str, str]] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Parse a blob of SQL into `{qualified_table: {constraint_name: body}}`,
+    applying it on top of `into` (migrations apply in order — see the
+    section comment above)."""
+    sql_clean = _strip_block_comments(_strip_line_comments(sql))
+    checks: dict[str, dict[str, str]] = {} if into is None else into
+    for stmt in _walk_statements(sql_clean):
+        upper = stmt.upper()
+        if re.search(r"\bCREATE(\s+OR\s+REPLACE)?\s+FUNCTION\b", upper):
+            continue
+        if "CREATE TABLE" in upper:
+            m = _CREATE_TABLE_HEAD_RE.search(stmt)
+            if m:
+                body = _extract_table_body(stmt, stmt.find("(", m.end() - 1))
+                if body is not None:
+                    qualified = _qualify(m.group("schema"), m.group("table"))
+                    table_checks = checks.setdefault(qualified, {})
+                    for name, check_body in _create_table_checks(m.group("table").lower(), body):
+                        table_checks[name] = check_body
+        if "DROP TABLE" in upper:
+            for m in _DROP_TABLE_RE.finditer(stmt):
+                for name in m.group("names").split(","):
+                    qm = _QUALIFIED_NAME_RE.match(name.strip())
+                    if qm:
+                        checks.pop(_qualify(qm.group("schema"), qm.group("table")), None)
+        if "ALTER TABLE" not in upper:
+            continue
+        for schema, table, body in _alter_table_segments(stmt):
+            qualified = _qualify(schema, table)
+            for ev in _ALTER_CHECK_EVENT_RE.finditer(body):
+                table_checks = checks.setdefault(qualified, {})
+                if ev.group(0).upper().startswith("ADD"):
+                    inner = _extract_table_body(body, ev.end() - 1)
+                    if inner is not None:
+                        name = ev.group("add_name") or _unique_name(table_checks, f"{table.lower()}_check")
+                        table_checks[name] = inner.strip()
+                elif ev.group("drop_name"):
+                    table_checks.pop(ev.group("drop_name"), None)
+                elif ev.group("drop_col"):
+                    for name in [n for n, b in table_checks.items() if _mentions(b, ev.group("drop_col"))]:
+                        del table_checks[name]
+                elif ev.group("old"):
+                    old, new = ev.group("old"), ev.group("new")
+                    for name, b in list(table_checks.items()):
+                        table_checks[name] = re.sub(rf"\b{re.escape(old)}\b", new, b, flags=re.IGNORECASE)
+                elif ev.group("new_table"):
+                    moved = checks.pop(qualified, {})
+                    qualified = _qualify(schema, ev.group("new_table"))
+                    checks.setdefault(qualified, {}).update(moved)
+    return checks
+
+
+def parse_check_files(paths: Iterable[Path]) -> dict[str, dict[str, str]]:
+    """`parse_check_sql` over migration files in order, one accumulating map."""
+    merged: dict[str, dict[str, str]] = {}
+    for path in paths:
+        try:
+            sql = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("mock-checks: could not read %s: %s — skipping", path, exc)
+            continue
+        parse_check_sql(sql, into=merged)
+    return {table: named for table, named in merged.items() if named}
+
+# ---------------------------------------------------------------------------
+# Column DEFAULTs (2026-10-10) — which columns an INSERT may omit and still
+# get a value. A cross-column CHECK judges an omitted column as NULL, exactly
+# like Postgres does, UNLESS the column has a DEFAULT (or is serial /
+# generated): then the mock can't know the value and doesn't guess.
+# `{qualified_table: {columns_with_a_default}}`.
+# ---------------------------------------------------------------------------
+
+_HAS_DEFAULT_RE = re.compile(r"\b(?:DEFAULT|GENERATED|SMALLSERIAL|BIGSERIAL|SERIAL)\b", re.IGNORECASE)
+_ALTER_DEFAULT_EVENT_RE = re.compile(
+    rf"\bADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+(?P<add>{_IDENT})\b"
+    rf"|\bALTER\s+(?:COLUMN\s+)?(?P<alter>{_IDENT})\s+(?P<verb>SET|DROP)\s+DEFAULT\b"
+    rf"|\bDROP\s+COLUMN(?:\s+IF\s+EXISTS)?\s+(?P<drop>{_IDENT})\b"
+    rf"|\bRENAME\s+COLUMN\s+(?P<old>{_IDENT})\s+TO\s+(?P<new>{_IDENT})\b"
+    rf"|\bRENAME\s+TO\s+(?P<new_table>{_IDENT})\b",
+    re.IGNORECASE,
+)
+
+
+def parse_default_sql(
+    sql: str,
+    *,
+    into: dict[str, set[str]] | None = None,
+) -> dict[str, set[str]]:
+    """`{qualified_table: {columns with a DEFAULT}}` after `sql` applies on
+    top of `into` (same ordered-walk semantics as `parse_check_sql`)."""
+    sql_clean = _strip_block_comments(_strip_line_comments(sql))
+    defaults: dict[str, set[str]] = {} if into is None else into
+    for stmt in _walk_statements(sql_clean):
+        upper = stmt.upper()
+        if re.search(r"\bCREATE(\s+OR\s+REPLACE)?\s+FUNCTION\b", upper):
+            continue
+        if "CREATE TABLE" in upper:
+            m = _CREATE_TABLE_HEAD_RE.search(stmt)
+            if m:
+                body = _extract_table_body(stmt, stmt.find("(", m.end() - 1))
+                if body is not None:
+                    cols = defaults.setdefault(_qualify(m.group("schema"), m.group("table")), set())
+                    for part in _split_top_level_commas(body):
+                        head = _COLUMN_HEAD_RE.match(part)
+                        if head and not _is_constraint_line(part) and _HAS_DEFAULT_RE.search(part):
+                            cols.add(head.group("name"))
+        if "DROP TABLE" in upper:
+            for m in _DROP_TABLE_RE.finditer(stmt):
+                for name in m.group("names").split(","):
+                    qm = _QUALIFIED_NAME_RE.match(name.strip())
+                    if qm:
+                        defaults.pop(_qualify(qm.group("schema"), qm.group("table")), None)
+        if "ALTER TABLE" not in upper:
+            continue
+        for schema, table, body in _alter_table_segments(stmt):
+            qualified = _qualify(schema, table)
+            clauses = _split_top_level_commas(body)
+            for clause in clauses:
+                for ev in _ALTER_DEFAULT_EVENT_RE.finditer(clause):
+                    cols = defaults.setdefault(qualified, set())
+                    if ev.group("add"):
+                        if _HAS_DEFAULT_RE.search(clause[ev.end():]):
+                            cols.add(ev.group("add"))
+                    elif ev.group("alter"):
+                        (cols.add if ev.group("verb").upper() == "SET" else cols.discard)(ev.group("alter"))
+                    elif ev.group("drop"):
+                        cols.discard(ev.group("drop"))
+                    elif ev.group("old"):
+                        if ev.group("old") in cols:
+                            cols.discard(ev.group("old"))
+                            cols.add(ev.group("new"))
+                    elif ev.group("new_table"):
+                        moved = defaults.pop(qualified, set())
+                        qualified = _qualify(schema, ev.group("new_table"))
+                        defaults.setdefault(qualified, set()).update(moved)
+                    break  # one event per clause
+    return defaults
+
+
+def parse_default_files(paths: Iterable[Path]) -> dict[str, set[str]]:
+    """`parse_default_sql` over migration files in order."""
+    merged: dict[str, set[str]] = {}
+    for path in paths:
+        try:
+            sql = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            logger.warning("mock-defaults: could not read %s: %s — skipping", path, exc)
+            continue
+        parse_default_sql(sql, into=merged)
+    return merged
+
+
+__all__ = [
+    "parse_sql", "parse_files", "parse_check_sql", "parse_check_files",
+    "parse_default_sql", "parse_default_files",
+]

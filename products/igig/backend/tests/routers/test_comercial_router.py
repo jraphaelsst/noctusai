@@ -313,6 +313,8 @@ class TestReabrirNegocio:
         outro = igig_db.table("negocio").insert({
             "org_id": "outra-org", "lead_id": None, "titulo": "De outra org",
             "etapa_id": comercial["leads"]["id"], "kanban_pos": "0", "status": "perdido",
+            # a lost negócio carries its reason + date (`negocio_perdido_com_motivo`)
+            "motivo_perda": "sem orçamento", "perdido_em": "2026-10-01T12:00:00+00:00",
         }).execute().data[0]
         assert crm_api.post(
             f"/api/comercial/negocios/{outro['id']}/reabrir"

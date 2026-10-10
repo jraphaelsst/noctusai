@@ -70,9 +70,10 @@ from unittest.mock import Base as _MockBase  # noqa: F401
 
 from postgrest.exceptions import APIError as _PostgrestAPIError
 
-from noctusai_lib.testing._schema_cache import get_schema_map
+from noctusai_lib.testing._schema_cache import get_check_map, get_default_map, get_schema_map
 from noctusai_lib.testing.schema_errors import (
     MockCheckViolation,
+    MockRowCheckViolation,
     MockSchemaError,
     MockUnknownTableError,
 )
@@ -321,6 +322,52 @@ def _validate_payload_keys(
                 schema, table, str(key), operation=operation,
                 strict_unknown_tables=strict_unknown_tables,
             )
+
+
+def _validate_row_checks(
+    schema: Optional[str],
+    table: Optional[str],
+    payload,
+    operation: str,
+) -> None:
+    """Raise `MockRowCheckViolation` when a written row violates a migration-
+    declared CROSS-COLUMN CHECK (`_schema_cache.get_check_map`, 2026-10-10).
+
+    Runs with schema validation (default ON): like the column map, the CHECKs
+    are derived from the migrations, so a product needs no manifest and a new
+    migration is enforced the day it lands. Only FALSE fails.
+
+    Omitted columns: an INSERT row is born with NULL in every column it omits
+    — unless the column has a DEFAULT (`get_default_map`), whose value the
+    mock doesn't know, so a CHECK reading it is not judged. That NULL rule
+    is what catches the original incident (an INSERT omitting the columns a
+    `_por_origem` CHECK requires). An UPDATE / UPSERT payload leaves the
+    columns it omits as they were, so a CHECK reading one is not judged.
+    """
+    if not table or payload is None:
+        return
+    qualified = f"{(schema or 'public').lower()}.{table.lower()}"
+    checks = get_check_map().get(qualified)
+    if not checks:
+        return
+    defaulted = get_default_map().get(qualified, set()) if operation == "insert" else None
+    if isinstance(payload, Mapping):
+        rows = [payload]
+    elif isinstance(payload, (list, tuple)):
+        rows = [r for r in payload if isinstance(r, Mapping)]
+    else:
+        return
+    for row in rows:
+        for check in checks:
+            view = row
+            if defaulted is not None:
+                born_null = {c: None for c in check.columns - row.keys() if c not in defaulted}
+                view = {**born_null, **row} if born_null else row
+            if check.verdict(view) is False:
+                raise MockRowCheckViolation(
+                    schema=schema, table=table, constraint=check.name, body=check.body,
+                    values={c: view[c] for c in check.columns}, operation=operation,
+                )
 
 
 # ---------------------------------------------------------------------------
@@ -1470,6 +1517,7 @@ class MockRequestBuilder:
                 self._schema, self._table, data, operation="insert",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+            _validate_row_checks(self._schema, self._table, data, operation="insert")
         if self._validate_constraints:
             _validate_check_constraints(
                 self._constraint_manifest,
@@ -1538,6 +1586,7 @@ class MockRequestBuilder:
                 self._schema, self._table, data, operation="update",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+            _validate_row_checks(self._schema, self._table, data, operation="update")
         if self._validate_constraints:
             _validate_check_constraints(
                 self._constraint_manifest,
@@ -1610,6 +1659,7 @@ class MockRequestBuilder:
                 self._schema, self._table, data, operation="upsert",
                 strict_unknown_tables=self._strict_unknown_tables,
             )
+            _validate_row_checks(self._schema, self._table, data, operation="upsert")
         if self._validate_constraints:
             _validate_check_constraints(
                 self._constraint_manifest,

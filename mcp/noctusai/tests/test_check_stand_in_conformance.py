@@ -107,9 +107,12 @@ class TestCheckStandInConformanceLegBiii:
 
 
 # ---------------------------------------------------------------------------
-# LEG B(iv) — a cross-column CHECK constraint must be covered by a
-# `ConditionalPresenceManifest` entry, or explicitly named as
-# unenforceable. Reproduces failure #3 (`atendimento_contrato_versoes`).
+# LEG B(iv) — since 2026-10-10 the mock ENFORCES every migration-declared
+# cross-column CHECK `noctusai_lib.testing.sql_check` can compile, so those
+# are covered by construction. A finding is a cross-column CHECK the mock
+# CANNOT model that no `ConditionalPresenceManifest` covers and nobody named
+# in `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS`. Failure #3
+# (`atendimento_contrato_versoes`) is the class.
 # ---------------------------------------------------------------------------
 
 _MIGRATION_WITH_CROSS_COLUMN_CHECK = """\
@@ -128,36 +131,44 @@ ALTER TABLE widget.contrato_versoes
     ) NOT VALID;
 """
 
+#: Same table, a CHECK the mock can't model (`LIKE`).
+_MIGRATION_WITH_UNMODELLED_CHECK = _MIGRATION_WITH_CROSS_COLUMN_CHECK.replace(
+    "docx_storage_path IS NOT NULL AND docx_tamanho_bytes IS NOT NULL",
+    "docx_storage_path LIKE 'contratos/%' AND docx_tamanho_bytes IS NOT NULL",
+)
+
 _SINGLE_COLUMN_CHECK_MIGRATION = (
     "ALTER TABLE widget.x ADD COLUMN y BIGINT CHECK (y IS NULL OR y >= 0);\n"
 )
 
 
-class TestCheckStandInConformanceLegBiv:
-    def test_flags_an_uncovered_cross_column_check(self, tmp_path):
-        """BEFORE — the migration ships the cross-column CHECK; no test
-        tree at all declares a `ConditionalPresenceManifest` for it (the
-        `atendimento_contrato_versoes` shape before its fix)."""
-        _write(
-            tmp_path,
-            "products/widget/backend/migrations/001_contrato.sql",
-            _MIGRATION_WITH_CROSS_COLUMN_CHECK,
-        )
-        issues = _leg_b_iv_check_constraint_coverage(
-            tmp_path, [tmp_path / "products" / "widget"],
-        )
-        assert len(issues) == 1, issues
-        assert issues[0]["leg"] == "B(iv)"
-        assert issues[0]["severity"] == "high"
-        assert "contrato_versoes_docx_por_origem" in issues[0]["file"]
+def _b_iv(tmp_path):
+    return _leg_b_iv_check_constraint_coverage(tmp_path, [tmp_path / "products" / "widget"])
 
-    def test_clean_when_a_presence_manifest_covers_the_table(self, tmp_path):
-        """AFTER — a `*_PRESENCE_MANIFEST` naming the table is present."""
-        _write(
-            tmp_path,
-            "products/widget/backend/migrations/001_contrato.sql",
-            _MIGRATION_WITH_CROSS_COLUMN_CHECK,
-        )
+
+class TestCheckStandInConformanceLegBiv:
+    def test_a_compilable_cross_column_check_is_covered_by_construction(self, tmp_path):
+        """The `atendimento_contrato_versoes` shape: the mock now enforces it
+        straight from the migration — no manifest, no finding."""
+        _write(tmp_path, "products/widget/backend/migrations/001_contrato.sql",
+               _MIGRATION_WITH_CROSS_COLUMN_CHECK)
+
+        assert _b_iv(tmp_path) == []
+
+    def test_flags_a_cross_column_check_the_mock_cannot_model(self, tmp_path):
+        _write(tmp_path, "products/widget/backend/migrations/001_contrato.sql",
+               _MIGRATION_WITH_UNMODELLED_CHECK)
+
+        issues = _b_iv(tmp_path)
+
+        assert len(issues) == 1, issues
+        assert issues[0]["leg"] == "B(iv)" and issues[0]["severity"] == "high"
+        assert "contrato_versoes_docx_por_origem" in issues[0]["file"]
+        assert "LIKE" in issues[0]["issue"]
+
+    def test_an_unmodelled_check_covered_by_a_presence_manifest_is_clean(self, tmp_path):
+        _write(tmp_path, "products/widget/backend/migrations/001_contrato.sql",
+               _MIGRATION_WITH_UNMODELLED_CHECK)
         _write(
             tmp_path,
             "products/widget/backend/tests/conftest.py",
@@ -165,42 +176,33 @@ class TestCheckStandInConformanceLegBiv:
             '    "contrato_versoes": [("origem", "gerado", {"docx_storage_path": True})],\n'
             "}\n",
         )
-        issues = _leg_b_iv_check_constraint_coverage(
-            tmp_path, [tmp_path / "products" / "widget"],
-        )
-        assert issues == []
+
+        assert _b_iv(tmp_path) == []
+
+    def test_a_dropped_check_is_not_reported(self, tmp_path):
+        _write(tmp_path, "products/widget/backend/migrations/001_contrato.sql",
+               _MIGRATION_WITH_UNMODELLED_CHECK)
+        _write(tmp_path, "products/widget/backend/migrations/002_drop.sql",
+               "ALTER TABLE widget.contrato_versoes DROP CONSTRAINT contrato_versoes_docx_por_origem;\n")
+
+        assert _b_iv(tmp_path) == []
 
     def test_single_column_check_is_not_flagged(self, tmp_path):
-        """`CheckManifest`'s existing single-column shape already covers
-        this class — the cross-column-only heuristic must not fire on it."""
-        _write(
-            tmp_path,
-            "products/widget/backend/migrations/001_x.sql",
-            _SINGLE_COLUMN_CHECK_MIGRATION,
-        )
-        issues = _leg_b_iv_check_constraint_coverage(
-            tmp_path, [tmp_path / "products" / "widget"],
-        )
-        assert issues == []
+        """`CheckManifest`'s single-column shape — not this leg's."""
+        _write(tmp_path, "products/widget/backend/migrations/001_x.sql",
+               _SINGLE_COLUMN_CHECK_MIGRATION.replace("y >= 0", "y::text LIKE '1%'"))
 
-    def test_the_real_atendimento_contrato_versoes_check_is_currently_covered(self):
-        """AFTER — the shipped fix for failure #3: migrations 112/120/134's
-        `atendimento_contrato_versoes_*_por_origem` CHECKs ARE covered by
-        `_ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST` in
-        `tests/conftest.py`. Scoped to that one table's findings — the real
-        social-wiring migration tree carries OTHER, pre-existing
-        cross-column CHECKs this detector correctly surfaces as genuine
-        (out-of-scope-for-this-task) gaps; asserting the WHOLE product
-        clean would be a false claim this fix never made."""
+        assert _b_iv(tmp_path) == []
+
+    def test_the_real_fleet_is_clean(self):
+        """The 75-finding backlog (2026-10-10) closed by construction: every
+        cross-column CHECK in an active product either compiles (the mock
+        enforces it) or is covered/named."""
         from settings import REPO_ROOT
 
-        issues = _leg_b_iv_check_constraint_coverage(
-            REPO_ROOT, [REPO_ROOT / "products" / "social-wiring"],
-        )
-        contrato_versoes_issues = [
-            i for i in issues if "atendimento_contrato_versoes" in i["file"]
-        ]
-        assert contrato_versoes_issues == [], contrato_versoes_issues
+        from tools.noctus.dev.stand_in_conformance import _active_product_dirs
+
+        assert _leg_b_iv_check_constraint_coverage(REPO_ROOT, _active_product_dirs(REPO_ROOT)) == []
 
 
 # ---------------------------------------------------------------------------
@@ -338,22 +340,13 @@ class TestCheckStandInConformance:
         """Composition smoke test: legs A/B(i)/B(ii)/B(iii) against the
         real (already-fixed) tree must report zero findings.
 
-        Leg B(iv) is DELIBERATELY excluded from this assertion: the
-        fleet-wide migration scan correctly surfaces a substantial number
-        of PRE-EXISTING cross-column CHECK constraints (unrelated to the
-        `atendimento_contrato_versoes` fix this task shipped) that the
-        mock genuinely cannot express and nobody has reviewed yet — see
-        `TestCheckStandInConformanceLegBiv.
-        test_the_real_atendimento_contrato_versoes_check_is_currently_covered`
-        for the scoped assertion this task's own fix satisfies. Asserting
-        the whole fleet clean on B(iv) here would be a false claim; wiring
-        (pre-commit / CLI) treats B(iv) as advisory for exactly this
-        reason — see `scripts/hooks/pre-commit`."""
+        Leg B(iv) is included since 2026-10-10: the mock enforces every
+        cross-column CHECK it can compile, which closed the pre-existing
+        backlog that used to be excluded here."""
         from settings import REPO_ROOT
 
         issues = check_stand_in_conformance(REPO_ROOT)
-        scoped = [i for i in issues if i.get("leg") != "B(iv)"]
-        findings = [i for i in scoped if i.get("status") == "finding"]
+        findings = [i for i in issues if i.get("status") == "finding"]
         assert findings == [], findings
 
 

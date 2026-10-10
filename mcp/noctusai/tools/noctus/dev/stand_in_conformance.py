@@ -677,39 +677,11 @@ def _leg_b_iii_mock_write_validator_wired(root: Path) -> list[dict]:
 # explicitly named as unenforceable. An unlisted one is a finding.
 # ---------------------------------------------------------------------------
 
-# `ADD CONSTRAINT x CHECK (` (ALTER TABLE) AND the table-level
-# `CONSTRAINT x CHECK (` inside CREATE TABLE — the latter used to fall through
-# to `<inline>`, so a named CHECK could never match its
-# `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS` key.
-_CHECK_CONSTRAINT_NAME_RE = re.compile(
-    r"\bCONSTRAINT\s+(?P<name>\w+)\s+CHECK\s*\(", re.IGNORECASE,
-)
-_ALTER_TABLE_RE = re.compile(
-    r"ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:\w+\.)?(?P<table>\w+)", re.IGNORECASE,
-)
-_CREATE_TABLE_RE = re.compile(
-    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:\w+\.)?(?P<table>\w+)", re.IGNORECASE,
-)
-_BARE_CHECK_RE = re.compile(r"\bCHECK\s*\(", re.IGNORECASE)
 _SQL_STOPWORDS = {
     "and", "or", "not", "null", "is", "in", "true", "false", "exists",
     "between", "like", "ilike", "any", "all", "select", "from", "where",
     "distinct", "case", "when", "then", "else", "end", "now",
 }
-
-
-def _extract_balanced_parens(text: str, open_paren_index: int) -> str:
-    """`text[open_paren_index]` must be `'('`. Returns the substring
-    strictly INSIDE the matching balanced parens."""
-    depth = 0
-    for i in range(open_paren_index, len(text)):
-        if text[i] == "(":
-            depth += 1
-        elif text[i] == ")":
-            depth -= 1
-            if depth == 0:
-                return text[open_paren_index + 1:i]
-    return text[open_paren_index + 1:]  # unbalanced — best effort
 
 
 def _check_body_column_count(body: str) -> int:
@@ -725,66 +697,12 @@ def _check_body_column_count(body: str) -> int:
     # A function CALL's name is not a column reference (`current_org_id()`,
     # `now()`, `length(x)`) — strip the identifier immediately preceding an
     # opening paren, keeping the paren so its ARGUMENTS still get scanned.
-    no_calls = re.sub(r"\b[A-Za-z_][A-Za-z0-9_]*\s*\(", "(", no_strings)
+    no_calls = re.sub(r"\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?[A-Za-z_][A-Za-z0-9_]*\s*\(", "(", no_strings)
     idents = {
         tok.lower() for tok in re.findall(r"\b[A-Za-z_][A-Za-z0-9_]*\b", no_calls)
     }
     idents -= _SQL_STOPWORDS
     return len(idents)
-
-
-#: `WITH CHECK (...)` on a `CREATE POLICY` is an RLS predicate, not a table
-#: CHECK CONSTRAINT — `CheckManifest`/`ConditionalPresenceManifest` are about
-#: the latter only. `re.subn` cannot use a variable-length lookbehind on
-#: whitespace, so this is applied as a POST-MATCH filter instead of baking
-#: it into `_BARE_CHECK_RE`.
-_PRECEDED_BY_WITH_RE = re.compile(r"\bWITH\s*$", re.IGNORECASE)
-
-
-def _find_cross_column_checks(sql_path: Path) -> list[tuple[str, str, str]]:
-    """Return `[(table, constraint_name_or_'<inline>', check_body), ...]`
-    for every table CHECK CONSTRAINT in this migration file referencing
-    2+ distinct identifiers. RLS `WITH CHECK (...)` predicates and SQL
-    line-comments are excluded — neither is the CHECK CONSTRAINT shape
-    `CheckManifest`/`ConditionalPresenceManifest` model."""
-    try:
-        raw_text = sql_path.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return []
-    # Strip `-- ...` line comments (a comment quoting `CHECK (...)` in
-    # prose must never be mistaken for a live constraint) while preserving
-    # every other character's OFFSET, so match positions above stay valid.
-    text = re.sub(r"--[^\n]*", lambda m: " " * len(m.group(0)), raw_text)
-
-    events: list[tuple[int, str, object]] = []
-    for m in _CREATE_TABLE_RE.finditer(text):
-        events.append((m.start(), "table", m.group("table")))
-    for m in _ALTER_TABLE_RE.finditer(text):
-        events.append((m.start(), "table", m.group("table")))
-    for m in _CHECK_CONSTRAINT_NAME_RE.finditer(text):
-        events.append((m.start(), "named_check", m))
-    for m in _BARE_CHECK_RE.finditer(text):
-        events.append((m.start(), "check", m))
-    events.sort(key=lambda e: e[0])
-
-    findings: list[tuple[str, str, str]] = []
-    current_table = "<unknown>"
-    pending_name = None
-    for _pos, kind, payload in events:
-        if kind == "table":
-            current_table = payload  # type: ignore[assignment]
-        elif kind == "named_check":
-            pending_name = payload.group("name")  # type: ignore[union-attr]
-        elif kind == "check":
-            check_kw_start = payload.start()  # type: ignore[union-attr]
-            if _PRECEDED_BY_WITH_RE.search(text[max(0, check_kw_start - 12):check_kw_start]):
-                continue  # RLS `WITH CHECK (...)`, not a table CHECK CONSTRAINT
-            open_idx = payload.end() - 1  # type: ignore[union-attr]
-            body = _extract_balanced_parens(text, open_idx)
-            if _check_body_column_count(body) >= 2:
-                findings.append((current_table, pending_name or "<inline>", body.strip()))
-            pending_name = None
-    return findings
 
 
 def _has_conditional_presence_coverage(tests_dir: Path, table: str) -> bool:
@@ -809,7 +727,42 @@ def _has_conditional_presence_coverage(tests_dir: Path, table: str) -> bool:
     return False
 
 
+def _seed_check_modules(root: Path):
+    """`(migration_parser, sql_check)` loaded BY PATH from the tree under
+    analysis — the exact code its `MockSupabaseClient` runs, never whatever
+    `noctusai_lib` this interpreter happens to have installed (a worktree's
+    seed can differ from the primary's). Both are stdlib-only."""
+    import importlib.util
+    import sys
+
+    from settings import REPO_ROOT
+
+    testing = Path("seed") / "lib" / "backend" / "noctusai_lib" / "testing"
+    base = root if (root / testing / "sql_check.py").is_file() else Path(REPO_ROOT)  # scratch trees carry no seed
+    loaded = []
+    for name in ("migration_parser", "sql_check"):
+        path = base / testing / f"{name}.py"
+        mod_name = f"_stand_in_b_iv_{name}_{abs(hash(str(path)))}"
+        module = sys.modules.get(mod_name)
+        if module is None:
+            spec = importlib.util.spec_from_file_location(mod_name, path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[mod_name] = module  # dataclasses resolve annotations through it
+            spec.loader.exec_module(module)
+        loaded.append(module)
+    return tuple(loaded)
+
+
 def _leg_b_iv_check_constraint_coverage(root: Path, active_dirs: list[Path]) -> list[dict]:
+    """Since 2026-10-10 the mock ENFORCES every migration-declared cross-
+    column CHECK `sql_check` can compile (`_schema_cache.get_check_map`) —
+    covered by construction, no manifest. What remains a finding is a
+    cross-column CHECK it CANNOT model (a user-defined function, `LIKE`, a
+    subquery, …) that no `ConditionalPresenceManifest` covers and nobody
+    named in `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS`. The CHECKs are read
+    as they stand after the migrations apply in order (a dropped one is not
+    reported)."""
+    migration_parser, sql_check = _seed_check_modules(root)
     issues: list[dict] = []
     for product_dir in active_dirs:
         slug = product_dir.name
@@ -817,37 +770,35 @@ def _leg_b_iv_check_constraint_coverage(root: Path, active_dirs: list[Path]) -> 
         if not migrations_dir.is_dir():
             continue
         tests_dir = product_dir / "backend" / "tests"
-        for sql_path in sorted(migrations_dir.glob("*.sql")):
-            for table, constraint_name, body in _find_cross_column_checks(sql_path):
-                key = f"{slug}/{table}/{constraint_name}"
-                if key in _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS:
-                    continue
-                if _has_conditional_presence_coverage(tests_dir, table):
-                    continue
-                rel = sql_path.relative_to(root)
-                issues.append({
-                    "product": slug,
-                    "file": f"{rel}::{constraint_name}",
-                    "issue": (
-                        f"CHECK constraint `{constraint_name}` on `{table}` "
-                        f"references 2+ columns ({body[:160]!r}) — "
-                        "`CheckManifest`'s single-column allowed-value shape "
-                        "cannot express it, and no `ConditionalPresenceManifest` "
-                        f"entry for `{table}` was found under "
-                        f"{slug}/backend/tests/. Either add a "
-                        "`ConditionalPresenceManifest` entry mirroring this "
-                        "CHECK (never weaken the SQL), or name this constraint "
-                        "in `_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS` "
-                        "(`mcp/noctusai/tools/noctus/dev/stand_in_conformance.py`) "
-                        "with the reason it's pinned elsewhere. An unlisted "
-                        "cross-column CHECK is exactly the "
-                        "`atendimento_contrato_versoes` failure class "
-                        "(2026-09-22): the double can't fail on a constraint "
-                        "it doesn't know about, so the suite stays green "
-                        "while the real INSERT 500s."
-                    ),
-                    "severity": "high", "leg": "B(iv)", "status": "finding",
-                })
+        raw = migration_parser.parse_check_files(sorted(migrations_dir.glob("*.sql")))
+        _enforced, unsupported = sql_check.compile_cross_column_checks(raw)
+        for qualified, constraint_name, reason in unsupported:
+            body = raw[qualified][constraint_name]
+            if _check_body_column_count(body) < 2:
+                continue  # single-column: `CheckManifest`'s shape, not this leg's
+            table = qualified.split(".", 1)[-1]
+            if f"{slug}/{table}/{constraint_name}" in _KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS:
+                continue
+            if _has_conditional_presence_coverage(tests_dir, table):
+                continue
+            issues.append({
+                "product": slug,
+                "file": f"{migrations_dir.relative_to(root)}::{table}.{constraint_name}",
+                "issue": (
+                    f"CHECK constraint `{constraint_name}` on `{table}` "
+                    f"({' '.join(body.split())[:160]!r}) reads 2+ columns and the "
+                    f"mock cannot enforce it: {reason}. Either extend "
+                    "`noctusai_lib.testing.sql_check` to model it, add a "
+                    "`ConditionalPresenceManifest` entry mirroring it (never "
+                    "weaken the SQL), or name it in "
+                    "`_KNOWN_UNENFORCEABLE_CROSS_COLUMN_CHECKS` "
+                    "(`mcp/noctusai/tools/noctus/dev/stand_in_conformance.py`) "
+                    "with where it is pinned instead. An unenforced cross-column "
+                    "CHECK is the `atendimento_contrato_versoes` class "
+                    "(2026-09-22): the suite stays green while the real INSERT 500s."
+                ),
+                "severity": "high", "leg": "B(iv)", "status": "finding",
+            })
     return issues
 
 
