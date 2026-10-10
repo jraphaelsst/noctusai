@@ -1,5 +1,5 @@
 -- ============================================================================
--- Migration 239 — spawn_funil_card never drops a card silently
+-- Migration 240 — spawn_funil_card never drops a card silently
 --
 -- INCIDENT (prod, 2026-10-10): 6 real funil cards were lost with no signal.
 --
@@ -194,7 +194,7 @@ $function$;
 
 COMMENT ON FUNCTION social_wiring.spawn_funil_card() IS
   'Spawns the funil card for an arriving lead (fires on `leads` and `meta_ads_leads`). '
-  'First arrival creates, second attaches (090). No silent ON CONFLICT DO NOTHING (239): '
+  'First arrival creates, second attaches (090). No silent ON CONFLICT DO NOTHING (240): '
   'a same-org collision on the meta lead is recorded in funil_card_anomalias + WARNING; '
   'any other violation raises.';
 

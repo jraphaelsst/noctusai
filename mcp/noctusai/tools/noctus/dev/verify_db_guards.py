@@ -6307,7 +6307,7 @@ END;
 # APPLIED.md states for schema_drift.
 # ---------------------------------------------------------------------------
 
-_SW_239_MIGRATIONS = ("239_spawn_funil_card_sem_descarte_silencioso.sql",)
+_SW_239_MIGRATIONS = ("240_spawn_funil_card_sem_descarte_silencioso.sql",)
 
 _SW_239_META_UNIQUE_PROBE = GuardProbe(
     id="social-wiring.atendimentos.org_meta_lead.unique",

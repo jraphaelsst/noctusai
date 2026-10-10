@@ -21,7 +21,7 @@ from tools.noctus.dev import migration_replay as mr
 from tools.noctus.dev import verify_db_guards as vdg
 
 _NODE = Path(REPO_ROOT) / mr.NODE_DIR
-_M239 = "products/social-wiring/backend/migrations/239_spawn_funil_card_sem_descarte_silencioso.sql"
+_M239 = "products/social-wiring/backend/migrations/240_spawn_funil_card_sem_descarte_silencioso.sql"
 _IDS = ("social-wiring.atendimentos.org_meta_lead.unique", "social-wiring.spawn_funil_card.no_silent_drop")
 _SENT = re.compile(r"NOC_PROBE:(\w+):")
 
