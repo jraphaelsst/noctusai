@@ -16,7 +16,7 @@ mirror to keep in sync, and a new migration is enforced the day it lands.
 
 SCOPE. The SQL subset the corpus actually uses: AND / OR / NOT, comparisons,
 `IS [NOT] NULL`, `IS [NOT] TRUE|FALSE`, `IS [NOT] DISTINCT FROM`, `[NOT] IN`,
-`[NOT] BETWEEN`, `+ - * / % ||`, casts (`::type`), parentheses, literals
+`[NOT] BETWEEN`, `op ANY|SOME|ALL (array)`, `+ - * / % ||`, casts (`::type`), parentheses, literals
 (incl. `E'...'`), `ARRAY[...]`, array containment (`<@` / `@>`), regex match
 against a literal pattern (`~ ~* !~ !~*`, refusing POSIX-only syntax), and
 the functions in `_FUNCTIONS`. Anything else — subqueries, `CASE`, `LIKE`,
@@ -178,7 +178,17 @@ class _Parser:
             kind, value = self.peek()
             if kind == "op" and value in _COMPARISONS:
                 self.take()
-                left = ("cmp", "<>" if value == "!=" else value, left, self.additive())
+                op = "<>" if value == "!=" else value
+                if (self.kw("any") or self.kw("some") or self.kw("all")) and self.peek(1) == ("op", "("):
+                    quantifier = "all" if self.take()[1].lower() == "all" else "any"
+                    self.take()
+                    if self.kw("select"):
+                        raise UnsupportedCheck(f"subquery in {quantifier.upper()} (...)")
+                    array = self.additive()
+                    self.expect_op(")")
+                    left = ("quant", op, quantifier, left, array)
+                    continue
+                left = ("cmp", op, left, self.additive())
                 continue
             if self.kw("is"):
                 self.take()
@@ -611,6 +621,17 @@ def _eval(node, row: Mapping[str, Any]):
         if node[3]:
             return None if result is None else not result
         return result
+    if tag == "quant":  # `x op ANY|ALL (array)` — pg_get_constraintdef's form of IN / NOT IN
+        _, op, quantifier, left_node, array_node = node
+        left, values = _eval(left_node, row), _eval(array_node, row)
+        if values is None:
+            return None
+        if not isinstance(values, list):
+            raise _Unknown
+        results = [None if left is None or v is None else _compare(op, left, v) for v in values]
+        if quantifier == "any":
+            return True if True in results else (None if None in results else False)
+        return False if False in results else (None if None in results else True)
     if tag == "between":
         value, low, high = (_eval(n, row) for n in node[1:4])
         lo, hi = _compare(">=", value, low), _compare("<=", value, high)

@@ -50,6 +50,14 @@ class TestSqlCheck:
         ("(origem = 'gerado' AND sha ~ '^[0-9a-f]{4}$') OR (origem = 'upload' AND sha IS NULL)",
          {"origem": "gerado", "sha": "ABCD"}, False),
         ("vinculado_a IS NULL OR vinculado_a <> id", {"vinculado_a": "u1", "id": "u1"}, False),
+        # pg_get_constraintdef renders IN as `= ANY (ARRAY[...])` — catalog-generated DDL (SW 236)
+        ("(status = ANY (ARRAY['ativa'::text, 'pausada'::text]))", {"status": "pausada"}, True),
+        ("(status = ANY (ARRAY['ativa'::text, 'pausada'::text]))", {"status": "bogus"}, False),
+        ("(rating = ANY (ARRAY['-1'::integer, 1]))", {"rating": -1}, True),
+        ("(rating = ANY (ARRAY['-1'::integer, 1]))", {"rating": 5}, False),
+        ("COALESCE(org_role, '') <> ALL (ARRAY['membro'])", {"org_role": "membro"}, False),
+        ("COALESCE(org_role, '') <> ALL (ARRAY['membro'])", {"org_role": "owner"}, True),
+        ("n > SOME (ARRAY[3, 7])", {"n": 5}, True),
     ])
     def test_verdicts(self, body, row, expected):
         assert _v(body, **row) is expected
@@ -78,6 +86,13 @@ class TestSqlCheck:
     def test_sql_outside_the_modelled_subset_is_refused_at_compile(self, body):
         with pytest.raises(UnsupportedCheck):
             compile_check(body)
+
+    def test_quantified_comparison_keeps_sql_null_semantics(self):
+        assert _v("status = ANY (ARRAY['a', NULL])", status="b") is None  # no match, a NULL element
+        assert _v("status = ANY (ARRAY['a', NULL])", status="a") is True
+        assert _v("status <> ALL (ARRAY['a', NULL])", status="b") is None
+        assert _v("status = ANY (ARRAY['a'])", status=None) is None
+        assert compile_check("(rating = ANY (ARRAY['-1'::integer, 1]))").columns == {"rating"}
 
     def test_columns_are_what_the_check_reads(self):
         assert compile_check("t.a + coalesce(b, 0) > c::int").columns == {"a", "b", "c"}
