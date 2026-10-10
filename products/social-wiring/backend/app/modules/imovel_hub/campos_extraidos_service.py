@@ -59,13 +59,13 @@ from __future__ import annotations
 
 import logging
 import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 from uuid import UUID
 
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
+from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.imovel_hub import conflito_resolucao, dados_service
 from app.services import campo_conflitos, table_reads
@@ -257,8 +257,7 @@ _WS = re.compile(r"\s+")
 
 
 def _norm_texto(valor: Any) -> str:
-    texto = unicodedata.normalize("NFKD", str(valor))
-    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = fold_accents(str(valor))
     return _WS.sub(" ", texto).strip().casefold().rstrip(".")
 
 

@@ -34,12 +34,12 @@ decimals.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional, Sequence
 
 from app.modules.card_hub.contrato_gerador.politica import AVERBACOES_CITADAS, AVERBACOES_NAO_CITADAS
 
 from noctusai_lib.integrations.documents.formatting import FormatRange
+from noctusai_lib.primitives.accents import fold_accents_ascii
 
 _DATA_DO_ATO = r"(?:\d{1,2}\s+de\s+\w+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})"
 #: The register header, in every shape seen: `AV-4/12.345 - Em 5 de maio de
@@ -118,7 +118,7 @@ def sem_inscricao_da_matricula(texto: str, ranges: Sequence[FormatRange] = ()):
 
 
 def _dobrar(texto: str) -> str:
-    sem = unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode()
+    sem = fold_accents_ascii(texto)
     return re.sub(r"\s+", " ", sem.lower()).strip()
 
 

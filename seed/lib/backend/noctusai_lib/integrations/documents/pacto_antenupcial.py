@@ -42,7 +42,6 @@ Nothing here is inferred: an absent fact stays `None`.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional, Protocol, runtime_checkable
@@ -56,6 +55,7 @@ from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
+from noctusai_lib.primitives.accents import fold_accents
 
 
 @dataclass(frozen=True)
@@ -108,9 +108,7 @@ def _dobrar(texto: str) -> str:
     of the original (accents and case intact)."""
     saida = []
     for c in texto:
-        base = "".join(
-            ch for ch in unicodedata.normalize("NFKD", c) if not unicodedata.combining(ch)
-        )
+        base = fold_accents(c)
         saida.append(base.upper() if len(base) == 1 else c.upper()[:1] or " ")
     return "".join(saida)
 

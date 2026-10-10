@@ -42,6 +42,7 @@ from noctusai_lib.integrations.documents.cnpj import normalize as normalize_cnpj
 from .errors import CnpjNotFoundError, CnpjRegistryError, CnpjRegistryUpstreamError
 from .mappers import parse_brasilapi_response, parse_receitaws_response
 from .types import CnpjRegistryFields
+from noctusai_lib.primitives.accents import fold_accents
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +71,7 @@ def _sem_acento(texto: str) -> str:
     earlier draft of this function used `str.maketrans` with two
     same-length literals and got the alignment wrong; this is the
     boring-and-correct version)."""
-    import unicodedata
-
-    decomposto = unicodedata.normalize("NFKD", texto)
-    return "".join(c for c in decomposto if not unicodedata.combining(c))
+    return fold_accents(texto)
 
 
 def _mensagem_indica_nao_encontrado(mensagem: str) -> bool:

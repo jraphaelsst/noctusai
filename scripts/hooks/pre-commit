@@ -948,6 +948,17 @@ if [[ -n "$STAGED_PUV_PY" ]] && have_py; then
     }
 fi
 
+# ─── 6f4. Private accent fold (blocking, only when backend Python changed) ──
+# Keeper `check_private_accent_fold` + `KB § 04-SHARED-LIBRARY.md`. One
+# canonical NFKD fold: noctusai_lib.primitives.accents. Reuses 6f3's file list.
+if [[ -n "$STAGED_PUV_PY" ]] && have_py; then
+    echo "[pre-commit] backend Python staged — checking for private accent folds..."
+    "$PY" "$CLI" --check-private-accent-fold --worktree-path "$REPO_ROOT" || {
+        echo "[pre-commit] Import fold_accents / fold_accents_ascii from noctusai_lib.primitives.accents." >&2
+        exit 1
+    }
+fi
+
 # ─── 6g. PostgREST schema-qualified table gate (blocking, only when backend ──
 # Python changed) ────────────────────────────────────────────────────────
 # Keeper `check_postgrest_schema_qualified_table` +

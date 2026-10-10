@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import hashlib
 import re
-import unicodedata
 from typing import Any, Optional
 
 from .types import Classificacao, LabelSet, indeterminado
+from noctusai_lib.primitives.accents import fold_accents
 
 FAKE_MODEL = "fake-risk-classifier"
 FAKE_PROMPT_VERSION = "fake-v1"
@@ -18,8 +18,7 @@ FAKE_PROMPT_VERSION = "fake-v1"
 
 def normalized_text_hash(text: str) -> str:
     """sha256 of the text lower-cased, accent-stripped, whitespace-collapsed."""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    stripped = fold_accents(text)
     norm = re.sub(r"\s+", " ", stripped.lower()).strip()
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 

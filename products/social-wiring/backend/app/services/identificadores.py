@@ -27,12 +27,12 @@ a value that does not fit is data to show, not an error to throw.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from typing import Any, Optional
 
 from noctusai_lib.primitives import identificador as ident
 from noctusai_lib.primitives.identificador import CHAVE_BUSCA_MIN
+from noctusai_lib.primitives.accents import fold_accents
 
 # ─── campo → registry type ──────────────────────────────────────────────────
 
@@ -308,8 +308,7 @@ def cartorio_normalizado(valor: Any) -> str:
         return ""
     texto = _LIVRO_CABECALHO.sub(" ", texto)
     texto = _CNS_FRAGMENTO.sub(" ", texto)
-    decomposto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(c for c in decomposto if not unicodedata.combining(c)).upper()
+    texto = fold_accents(texto).upper()
     texto = texto.replace("|", " ")
     texto = re.sub(r"\s+", " ", texto).strip(" -–—,.")
     return texto

@@ -28,13 +28,13 @@ LGPD: no token, no birthdate, no name and no full CPF/CNPJ is ever stored —
 `params` is an allowlist, the document is an HMAC key (`documento_hash`).
 """
 from __future__ import annotations
+from noctusai_lib.primitives.accents import fold_accents
 
 import hashlib
 import hmac
 import logging
 import os
 import re
-import unicodedata
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -73,9 +73,7 @@ _MAX_ASSINATURA = 300
 
 
 def _sem_acento(texto: str) -> str:
-    return "".join(
-        ch for ch in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(ch)
-    )
+    return fold_accents(texto)
 
 
 def normalizar_assinatura(code: Any, code_message: Any, errors: Any) -> str:

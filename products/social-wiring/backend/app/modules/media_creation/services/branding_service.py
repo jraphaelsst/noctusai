@@ -23,11 +23,11 @@ import base64
 import binascii
 import logging
 import re
-import unicodedata
 import uuid
 from typing import Any, Optional
 
 from noctusai_lib.integrations.storage import StorageBackend
+from noctusai_lib.primitives.accents import fold_accents_ascii
 
 from app.modules.media_creation.branding.bundle import (
     COMPONENT_NAME,
@@ -69,7 +69,7 @@ class BrandingNotFound(BrandingError):
 
 
 def slugify(text: str) -> str:
-    norm = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    norm = fold_accents_ascii(text)
     slug = re.sub(r"[^a-z0-9]+", "-", norm.lower()).strip("-")
     return slug or "branding"
 

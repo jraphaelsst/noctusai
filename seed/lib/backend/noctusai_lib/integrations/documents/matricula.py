@@ -76,8 +76,8 @@ registry number to this sale.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 #: How far back from a number to look for its label.
 _LABEL_WINDOW = 40
@@ -183,11 +183,7 @@ _CITACAO_PREFIXO = re.compile(r"(?:R\.\d+\s*/\s*)?M-\s*$")
 
 def normalize(text: str) -> str:
     """Upper-case, accent-stripped, whitespace-collapsed."""
-    if not text:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper())
+    return fold_upper_collapsed(text)
 
 
 def _limpar(numero: str) -> str:

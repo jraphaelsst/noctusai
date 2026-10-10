@@ -16162,6 +16162,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_hand_copied_org_admin())
     # Private unique-violation predicate (2026-10-10) — one canonical home.
     all_issues.extend(check_private_unique_violation_predicate())
+    all_issues.extend(check_private_accent_fold())
     # status_pagina dev-visibility parity (2026-07-29) — the RLS policy that
     # RETURNS a 'desenvolvimento' row and the FE const that RENDERS it are two
     # halves of one contract in two languages across N+1 files. Divergence is
@@ -22403,6 +22404,78 @@ def check_private_unique_violation_predicate(repo_root: Path | None = None) -> l
                         "issue": (
                             f"private unique-violation predicate `{node.name}` — import "
                             "`is_unique_violation` from noctusai_lib.primitives.postgrest_errors"
+                        ),
+                        "severity": "high",
+                    })
+    return issues
+
+
+# ─── check_private_accent_fold ───────────────────────────────────────────────
+# The NFKD accent fold was privately re-implemented ~25x (`_sem_acento`,
+# `_deaccent_upper`, six identical document-parser `normalize`s, ...) before it
+# was formalized as `noctusai_lib.primitives.accents` (2026-10-10).
+
+_PAF_CANONICAL = "seed/lib/backend/noctusai_lib/primitives/accents.py"
+# NFD + category-Mn folds keep `º`/`ª`/`ﬁ` that NFKD folds — migrating them
+# would re-key stored slugs / match keys, so each is a named, deliberate
+# exception rather than an unmigrated copy.
+_PAF_ALLOWED: dict[str, str] = {
+    "seed/lib/backend/noctusai_lib/domain/real_estate/imovel.py":
+        "NFD address fold — `nº` must survive (exported as imovel.fold_accents)",
+    "seed/lib/backend/noctusai_lib/integrations/media/pdf_text.py":
+        "NFD + casefold stamp-match key; patterns written against NFD output",
+    "products/orbity/backend/app/services/lead_scoring.py":
+        "NFD form-field matching — owner-scoped, not migrated 2026-10-10",
+    "products/social-wiring/backend/app/modules/leads/services/dimensions_service.py":
+        "NFD slug — stored slugs must not change (noc-2, 2026-10-10)",
+    "products/academia-de-reciclagem/backend/app/routers/kb_router.py":
+        "NOC-REMEDIATE[dry-accent-fold]: exact-parity swap pending owner ack (2026-10-10)",
+}
+
+
+def check_private_accent_fold(repo_root: Path | None = None) -> list[dict]:
+    """Keeper: no private accent fold outside `noctusai_lib.primitives.accents`.
+
+    Flags any `unicodedata.normalize("NFKD"|"NFD", ...)` call in seed lib
+    backend or an awake product's backend `app/` (non-test) outside the
+    canonical module and the named `_PAF_ALLOWED` exceptions. Fix: import
+    `fold_accents` (or `fold_accents_ascii` for the `.encode("ascii",
+    "ignore")` shape) and compose case/whitespace on top. Severity high
+    (blocking). → `KB § 04-SHARED-LIBRARY.md` (§ primitives/accents.py).
+    """
+    import ast as _ast
+
+    root = repo_root or REPO_ROOT
+    roots = [root / "seed" / "lib" / "backend" / "noctusai_lib"]
+    roots += [d / "backend" / "app" for d in _active_product_dirs(root / "products")]
+    issues: list[dict] = []
+    for base in roots:
+        if not base.is_dir():
+            continue
+        for f in sorted(base.rglob("*.py")):
+            rel = str(f.relative_to(root))
+            if rel == _PAF_CANONICAL or rel in _PAF_ALLOWED:
+                continue
+            if "tests" in f.relative_to(base).parts or "node_modules" in f.parts:
+                continue
+            try:
+                tree = _ast.parse(f.read_text(encoding="utf-8"))
+            except (SyntaxError, UnicodeDecodeError):
+                continue
+            for node in _ast.walk(tree):
+                if not (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute)):
+                    continue
+                if node.func.attr != "normalize" or not node.args:
+                    continue
+                form = node.args[0]
+                if isinstance(form, _ast.Constant) and form.value in ("NFKD", "NFD"):
+                    issues.append({
+                        "product": "<seed>" if "noctusai_lib" in base.parts else base.parts[-3],
+                        "file": f"{rel}:{node.lineno}",
+                        "issue": (
+                            f"private accent fold (`unicodedata.normalize({form.value!r}, ...)`) — "
+                            "import `fold_accents` / `fold_accents_ascii` from "
+                            "noctusai_lib.primitives.accents"
                         ),
                         "severity": "high",
                     })

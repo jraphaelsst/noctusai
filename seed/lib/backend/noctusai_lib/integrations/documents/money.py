@@ -35,13 +35,13 @@ kept there again here rather than threaded through this module's signature.
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Optional
 
 from noctusai_lib.domain.texto_ptbr import parse_brl, reais_por_extenso
 from noctusai_lib.integrations.documents.types import ExtractionConfidence
+from noctusai_lib.primitives.accents import fold_accents
 
 #: A `R$`-prefixed (optional) money run — digits, dots and commas — the ONLY
 #: shape `parse_brl` accepts once whitespace noise is collapsed out of it.
@@ -76,9 +76,7 @@ def _chave_extenso(txt: str) -> str:
     typography (capitalisation, an extra space, a line-wrap) must never
     register as a disagreement `reais_por_extenso` itself would never
     produce either."""
-    decomposed = unicodedata.normalize("NFKD", txt or "")
-    sem_acento = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", sem_acento.strip().lower())
+    return re.sub(r"\s+", " ", fold_accents(txt).strip().lower())
 
 
 @dataclass(frozen=True)

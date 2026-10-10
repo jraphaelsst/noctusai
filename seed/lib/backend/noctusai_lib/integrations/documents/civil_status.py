@@ -95,11 +95,11 @@ in the low thousands), not a general-purpose number-to-words module.
 from __future__ import annotations
 
 import re
-import unicodedata
 from datetime import date
 from typing import Optional, Sequence
 
 from noctusai_lib.integrations.documents.labels import Achado, label_before
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 #: Same window every sibling parser uses — these are the same document
 #: layouts.
@@ -313,11 +313,7 @@ _AVERBACAO_EVENTOS: tuple[tuple["re.Pattern[str]", str], ...] = (
 def normalize(text: str) -> str:
     """Upper-case, accent-stripped, whitespace-collapsed. As every sibling
     parser in this package does."""
-    if not text:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper())
+    return fold_upper_collapsed(text)
 
 
 def _label_before(haystack: str, at: int) -> Achado:

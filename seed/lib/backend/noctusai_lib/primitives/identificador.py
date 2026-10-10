@@ -35,9 +35,9 @@ Public API: `ler`, `canonico`, `equivalentes`, `detectar_tipo`, `chave_busca`,
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, replace
 from typing import Callable, Optional
+from noctusai_lib.primitives.accents import fold_accents
 
 #: Floor callers should apply to a search needle: a 2-3 char needle matching
 #: canonical keys returns every row.
@@ -91,8 +91,7 @@ def _texto(valor: object) -> str:
 
 
 def _deaccent_upper(s: str) -> str:
-    dec = unicodedata.normalize("NFKD", s)
-    return "".join(c for c in dec if not unicodedata.combining(c)).upper()
+    return fold_accents(s).upper()
 
 
 def _alnum(s: str) -> str:

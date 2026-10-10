@@ -45,13 +45,13 @@ downstream caller, and a value filtered out here never reaches it.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_is_valid
 from noctusai_lib.integrations.documents.cpf import only_digits as _cpf_only_digits
 from noctusai_lib.integrations.documents.labels import Achado, label_before
 from noctusai_lib.primitives import identificador as _identificador
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 #: Same window as every sibling — these are the same document layouts.
 _LABEL_WINDOW = 48
@@ -260,11 +260,7 @@ _JURISDICAO_WINDOW = 40
 
 def normalize(text: str) -> str:
     """Upper-case, accent-stripped, whitespace-collapsed. As the siblings do."""
-    if not text:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper())
+    return fold_upper_collapsed(text)
 
 
 def only_alnum(value: str) -> str:

@@ -40,12 +40,12 @@ here means no consumer has to.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.labels import Achado, label_before
 from noctusai_lib.primitives.identificador import cpf_dv_valido as _cpf_dv_valido
 from noctusai_lib.primitives.identificador import mascara_cpf as _mascara_cpf
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 #: How far back from a value to look for its label. Matches the window the
 #: sibling parsers use — these are the same document layouts.
@@ -105,11 +105,7 @@ def normalize(text: str) -> str:
     Same normalisation the sibling parsers apply, for the same reason: an OCR
     pass produces `C.P.F.` and `Cpf` in equal measure.
     """
-    if not text:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper())
+    return fold_upper_collapsed(text)
 
 
 def only_digits(value: str) -> str:

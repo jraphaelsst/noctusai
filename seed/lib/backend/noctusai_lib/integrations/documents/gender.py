@@ -31,10 +31,10 @@ store a letter where the rest of the product expects a word.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.labels import Achado, label_before
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 MASCULINO = "Masculino"
 FEMININO = "Feminino"
@@ -98,11 +98,7 @@ def normalize(text: str) -> str:
     pass over a photographed card produces `SÉXO` and `Masculino` in equal
     measure, and matching against every casing/accent variant is a losing game.
     """
-    if not text:
-        return ""
-    decomposed = unicodedata.normalize("NFKD", text)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper())
+    return fold_upper_collapsed(text)
 
 
 def _label_before(haystack: str, at: int) -> Achado:

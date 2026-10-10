@@ -66,7 +66,6 @@ absence rather than guessed — see `find_name`.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
 
 from noctusai_lib.integrations.documents.mrz import line2_indices as _mrz_line2_indices
@@ -905,9 +904,7 @@ def find_name_conflitos(text: str) -> Optional[list[str]]:
 
 def chave_nome(valor: Optional[str]) -> str:
     """Accent-stripped, upper-cased, whitespace-collapsed — for MATCHING."""
-    decomposto = unicodedata.normalize("NFKD", valor or "")
-    sem_acento = "".join(c for c in decomposto if not unicodedata.combining(c))
-    return " ".join(sem_acento.upper().split())
+    return " ".join(strip_accents_upper(valor).split())
 
 
 def nomes_compativeis(a: Optional[str], b: Optional[str]) -> bool:

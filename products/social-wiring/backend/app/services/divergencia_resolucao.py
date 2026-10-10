@@ -153,7 +153,6 @@ never grow) a `leitura_comprometida` parameter of its own. See
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from typing import Any, Callable, Optional, Sequence
@@ -166,6 +165,7 @@ from noctusai_lib.integrations.documents.address import (
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.rg import rg_shape_valido
 from noctusai_lib.primitives import identificador as _ident
+from noctusai_lib.primitives.accents import fold_accents
 
 from app.services import identificadores as _ids
 
@@ -399,9 +399,7 @@ _TIPOS_LOGRADOURO = frozenset(_LOGRADOURO_CANONICO.values())
 
 
 def _sem_acento_upper(valor: str) -> str:
-    decomposed = unicodedata.normalize("NFKD", valor)
-    sem_acento = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", sem_acento.upper()).strip()
+    return re.sub(r"\s+", " ", fold_accents(valor).upper()).strip()
 
 
 def normalizar_logradouro(valor: Optional[str]) -> str:

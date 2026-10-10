@@ -80,6 +80,24 @@ def test_period_at_utc_midnight():
 
 **Migration boundary.** `datetime.utcnow()` is deprecated in Python 3.12+ — every site that used it has been migrated to `now_utc()`. New code uses `now_utc()` directly; legacy `datetime.now(timezone.utc)` calls keep working but are tidier when swapped.
 
+### `primitives/accents.py` — Accent folding
+
+The ONE accent fold (2026-10-10; replaced ~25 private `_sem_acento` / `_deaccent_upper` / parser `normalize` copies). Case-neutral by design — callers compose `.upper()` / `.casefold()` / whitespace collapsing on top.
+
+| Symbol | Purpose |
+|---|---|
+| `fold_accents(text) -> str` | NFKD-decompose, drop combining marks. `None` → `""`. |
+| `fold_accents_ascii(text) -> str` | `fold_accents`, then any remaining non-ASCII dropped — filenames, slugs. Byte-identical to the `normalize("NFKD", s).encode("ascii", "ignore").decode()` idiom. |
+| `integrations.documents.text.strip_accents_upper` / `fold_upper_collapsed` | Built on `fold_accents`: + upper; + upper + whitespace runs → one space (the document parsers' shared `normalize`). |
+
+**NFKD, not NFD.** NFKD also folds compatibility forms (`º`→`o`, `ª`→`a`, `ﬁ`→`fi`, full-width digits). The few NFD + `category == "Mn"` sites keep those characters, so migrating them would re-key stored slugs / match keys — they are named exceptions in the keeper, never migrated blind. Every migrated site carries a frozen-copy parity test (`seed/lib/backend/tests/test_accents_parity.py`, `products/social-wiring/backend/tests/test_accents_parity.py`).
+
+Keeper `check_private_accent_fold` (pre-commit, blocking): no `unicodedata.normalize("NFKD"|"NFD", …)` in seed lib or an awake product's backend `app/` outside this module and the named exceptions.
+
+### `primitives/content_disposition.py` — Download filenames
+
+`attachment_disposition(filename, *, fallback="download")` — the RFC 6266 `Content-Disposition: attachment` value: ASCII-folded `filename=` (quotes stripped; an all-non-ASCII name falls back) plus percent-encoded UTF-8 `filename*=`. A raw accented `filename="João.zip"` is not latin-1-safe and 500s the response inside Starlette. Formalized at N=3 (SW certidões + matrículas).
+
 ### `middleware.py`
 
 `CorrelationIdMiddleware` (unique request ID), `RequestLoggingMiddleware` (timing).

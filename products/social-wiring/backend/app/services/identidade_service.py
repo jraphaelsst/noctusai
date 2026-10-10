@@ -87,8 +87,8 @@ cannot both hold `+5511974781330` as their canonical key simultaneously,
 so until an operator decides who (if anyone) keeps it, neither does.
 """
 from __future__ import annotations
+from noctusai_lib.primitives.accents import fold_accents
 
-import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -320,8 +320,7 @@ def normalize_name(raw: Optional[str]) -> str:
     if "|" in raw and raw.split("|", 1)[0].strip():
         raw = raw.split("|", 1)[0]
     collapsed = " ".join(raw.split())
-    decomposed = unicodedata.normalize("NFKD", collapsed)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
+    stripped = fold_accents(collapsed)
     # Punctuation to whitespace, not to nothing: `nei_nunes` must become two
     # tokens, matching `nei nunes`, rather than one glued `neinunes`.
     folded = "".join(c if (c.isalnum() or c.isspace()) else " " for c in stripped)

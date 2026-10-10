@@ -64,10 +64,8 @@ import asyncio
 import io
 import logging
 import time
-import unicodedata
 import zipfile
 from typing import Optional
-from urllib.parse import quote
 from uuid import UUID
 
 import httpx
@@ -83,6 +81,7 @@ from fastapi import (
 from fastapi.responses import Response, StreamingResponse
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
 from noctusai_lib.integrations.storage import StorageBackend
+from noctusai_lib.primitives.content_disposition import attachment_disposition
 
 from app.dependencies import coerce_org_uuid, get_current_user_org
 from app.modules.certidoes import service
@@ -162,37 +161,6 @@ def _maybe_recover(
     _last_stale_check = now
     svc.recover_stale_processando(db, storage)
     svc.schedule_tjsp_for_org(str(org_id), db, storage)
-
-
-def _content_disposition(filename: str) -> str:
-    """An attachment header that survives an accented filename.
-
-    🔴 NOT COSMETIC, AND NOT HYPOTHETICAL. HTTP header values are latin-1 on
-    the wire, so returning `filename="certidoes_João_da_Silva_...zip"` raises
-    inside Starlette and the whole response 500s. The download therefore failed
-    for anyone whose name carries an accent — which in a Brazilian real-estate
-    product is most people. The ERP original built the header the same way and
-    had the same latent defect; it is fixed here rather than ported.
-
-    RFC 6266: an ASCII-folded `filename=` that any client understands, PLUS a
-    percent-encoded UTF-8 `filename*=` that every current browser prefers — so
-    the accented name is what the user actually sees, and nothing breaks if it
-    is not understood.
-    """
-    folded = (
-        unicodedata.normalize("NFKD", filename)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-        .replace('"', "")
-        .strip()
-    )
-    # An all-non-ASCII name folds to "" — a header with an empty filename is
-    # worse than a generic one, because some clients save it as the URL path.
-    ascii_name = folded or "download"
-    return (
-        f'attachment; filename="{ascii_name}"; '
-        f"filename*=UTF-8''{quote(filename, safe='')}"
-    )
 
 
 def _get_consulta_or_404(db, consulta_id: str, org_id: UUID, select: str = "*") -> dict:
@@ -963,7 +931,7 @@ async def download_certidao(
     return Response(
         content=content,
         media_type="application/pdf",
-        headers={"Content-Disposition": _content_disposition(filename)},
+        headers={"Content-Disposition": attachment_disposition(filename)},
     )
 
 
@@ -1057,7 +1025,7 @@ async def download_consulta_zip(
     return StreamingResponse(
         buf,
         media_type="application/zip",
-        headers={"Content-Disposition": _content_disposition(zip_filename)},
+        headers={"Content-Disposition": attachment_disposition(zip_filename)},
     )
 
 
@@ -1599,7 +1567,7 @@ async def obter_transcricao_pdf(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": _content_disposition(filename)},
+        headers={"Content-Disposition": attachment_disposition(filename)},
     )
 
 

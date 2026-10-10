@@ -65,8 +65,8 @@ any other `nacionalidade` suggestion).
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Optional
+from noctusai_lib.integrations.documents.text import fold_upper_collapsed
 
 #: The value this module ever derives. A gentílico OTHER than "brasileiro"
 #: is never inferred — issuance by a state civil authority only tells us
@@ -114,9 +114,7 @@ _ORGAOS_ESTRANGEIROS_RE = re.compile(
 def _normalize(value: str) -> str:
     """Upper-case, accent-stripped, whitespace-collapsed — same shape every
     sibling parser in this package uses."""
-    decomposed = unicodedata.normalize("NFKD", value)
-    stripped = "".join(c for c in decomposed if not unicodedata.combining(c))
-    return re.sub(r"\s+", " ", stripped.upper()).strip()
+    return fold_upper_collapsed(value).strip()
 
 
 def _acronimo(rg_orgao_normalizado: str) -> str:

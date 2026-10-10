@@ -66,7 +66,6 @@ substitute for it either.
 from __future__ import annotations
 
 import re
-import unicodedata
 from datetime import date
 from typing import Any, Optional
 from uuid import UUID
@@ -77,6 +76,7 @@ from noctusai_lib.integrations.documents import (
     frase_titulo_aquisitivo,
 )
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
+from noctusai_lib.primitives.accents import fold_accents_ascii
 
 from app.modules.imovel_hub import dados_service, vinculo_legal
 from app.modules.matriculas import ato_detalhes_service as detalhes_svc
@@ -181,7 +181,7 @@ FATOS_TITULO: tuple[str, ...] = (
 
 
 def _sem_acento(texto: str) -> str:
-    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+    return fold_accents_ascii(texto).lower()
 
 
 def _num_canonico(valor: str) -> str:

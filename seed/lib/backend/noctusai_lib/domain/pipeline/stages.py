@@ -24,7 +24,6 @@ Both therefore live in code, and both return a message that says what to do.
 from __future__ import annotations
 
 import re
-import unicodedata
 from typing import Any
 
 from noctusai_lib.primitives.exceptions import (
@@ -34,6 +33,7 @@ from noctusai_lib.primitives.exceptions import (
 )
 
 from .config import DEFAULT_STAGE_ROLES, PipelineConfig
+from noctusai_lib.primitives.accents import fold_accents_ascii
 
 # Mirrors the `cor` CHECK constraint in erp migration 042. Duplicated
 # deliberately and kept small: the API should reject a bad token with a usable
@@ -67,8 +67,7 @@ def slugify(label: str) -> str:
     `qualifica_o`, because the seeded defaults use the unaccented forms and a
     consumer re-creating a deleted stage should land on the same slug.
     """
-    folded = unicodedata.normalize("NFKD", label or "")
-    ascii_only = folded.encode("ascii", "ignore").decode("ascii")
+    ascii_only = fold_accents_ascii(label)
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", ascii_only).strip("_").lower()
     return slug or "etapa"
 

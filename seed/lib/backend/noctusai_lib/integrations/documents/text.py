@@ -15,7 +15,7 @@ silently gets the other's rules.
 from __future__ import annotations
 
 import re
-import unicodedata
+from noctusai_lib.primitives.accents import fold_accents
 
 _WS = re.compile(r"[ \t\f\v ]+")
 
@@ -27,8 +27,14 @@ def strip_accents_upper(text: str) -> str:
     `FILIAÇÃO` must match `FILIACAO`. Uppercasing follows because Brazilian
     ID layouts are already uppercase and case carries no signal here.
     """
-    decomposed = unicodedata.normalize("NFKD", text or "")
-    return "".join(c for c in decomposed if not unicodedata.combining(c)).upper()
+    return fold_accents(text).upper()
+
+
+def fold_upper_collapsed(text: str | None) -> str:
+    """`strip_accents_upper`, then every whitespace run (newlines included)
+    collapsed to one space — the field parsers' shared `normalize`. Not
+    stripped: a leading/trailing space survives as one space, as it always did."""
+    return re.sub(r"\s+", " ", strip_accents_upper(text))
 
 
 def normalize_lines(text: str) -> list[str]:

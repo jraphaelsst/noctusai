@@ -101,6 +101,7 @@ def _detect(
         check_lying_loading_state,                     # lying-loading-state 2026-07-22
         check_hand_copied_org_admin,                   # org-admin-ux-gate 2026-10-09
         check_private_unique_violation_predicate,      # postgrest-errors 2026-10-10
+        check_private_accent_fold,                     # accents 2026-10-10
     )
 
     base = products_dir if products_dir is not None else PRODUCTS_DIR
@@ -142,6 +143,7 @@ def _detect(
         issues.extend(check_lying_loading_state())           # lying-loading-state 2026-07-22
         issues.extend(check_hand_copied_org_admin())         # org-admin-ux-gate 2026-10-09
         issues.extend(check_private_unique_violation_predicate())  # postgrest-errors 2026-10-10
+        issues.extend(check_private_accent_fold())  # accents 2026-10-10
     return products, issues
 
 

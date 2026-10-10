@@ -71,10 +71,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import unicodedata
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -92,6 +90,7 @@ from fastapi.responses import Response
 from noctusai_lib.api.auth.session import is_org_admin
 from noctusai_lib.api.crud_safety import delete_or_404
 from noctusai_lib.integrations.documents.abnt import UnsupportedGlyphError
+from noctusai_lib.primitives.content_disposition import attachment_disposition
 
 from app.dependencies import (
     coerce_org_uuid,
@@ -184,31 +183,6 @@ def _auth_parts(auth) -> tuple[object, str, str]:
     """
     user, token, raw_org = auth
     return user, token, str(coerce_org_uuid(raw_org))
-
-
-def _content_disposition(filename: str) -> str:
-    """An attachment header that survives an accented filename.
-
-    Copied from `certidoes/routers/certidoes.py::_content_disposition`
-    (identical bug, identical fix — an unescaped accented `filename=` raises
-    inside Starlette and 500s the whole download) rather than imported: the
-    two modules share no common parent this platform lets them both import
-    from within THIS slice's scope. Flagged as `scoped-improvement:` in
-    S3's delivery note — a third caller makes this N=3, the DRY recurrence
-    rule's MUST-formalize threshold.
-    """
-    folded = (
-        unicodedata.normalize("NFKD", filename)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-        .replace('"', "")
-        .strip()
-    )
-    ascii_name = folded or "download"
-    return (
-        f'attachment; filename="{ascii_name}"; '
-        f"filename*=UTF-8''{quote(filename, safe='')}"
-    )
 
 
 def _rodar_autopiloto(client, org_id: str, extracao_id: str) -> None:
@@ -602,7 +576,7 @@ async def baixar_extracao_pdf(
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": _content_disposition(filename)},
+        headers={"Content-Disposition": attachment_disposition(filename)},
     )
 
 

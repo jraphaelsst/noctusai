@@ -35,7 +35,6 @@ wording for either. `ja_quitado`, `obrigacoes_vendedor` and
 from __future__ import annotations
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import ROUND_HALF_UP, Decimal
@@ -58,6 +57,7 @@ from noctusai_lib.integrations.documents.matricula_certidao import (
 )
 from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
+from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.card_hub.contrato_gerador import certidao_pcen, frases
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
@@ -234,10 +234,7 @@ def _dobra_acentos(texto: str) -> str:
     """Upper-case, accent-stripped — same fold `parse_brl`'s BRL grammar
     does not need but this module's free-text matching does (comparing a
     CRM street name / hunting an "área ... m²" phrase inside prose)."""
-    sem_acento = "".join(
-        ch for ch in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(ch)
-    )
-    return sem_acento.upper()
+    return fold_accents(texto).upper()
 
 
 def _area_da_matricula(texto: str) -> Optional[Decimal]:
