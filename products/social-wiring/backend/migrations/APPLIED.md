@@ -558,3 +558,7 @@ Authored 2026-10-10 (esteira-contract.md §5.3, BE-2). One row per caption gener
 ## 244 — contacts.email_optin + email_confirmed_at (email-marketing P1b(d) double opt-in) — NOT APPLIED
 
 Authored 2026-10-10 (`projects/email-marketing-p1b-CONTRACT.md` § (d)). Additive + idempotent: `email_optin TEXT NOT NULL DEFAULT 'not_required'` with the named `contacts_email_optin_check` (`not_required|pending|confirmed`, added only if absent) and `email_confirmed_at TIMESTAMPTZ`. Existing rows (incl. WhatsApp contacts — `contacts.status` is untouched) become `not_required`. Apply BEFORE deploying the image that reads/writes it (the campaign/automation send gate selects `email_optin`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.contacts_email_optin_check`.
+
+## 246 — status_pagina_media_creation_desativado (retire the legacy Criação de mídia page, A-3) — NOT APPLIED
+
+Authored 2026-10-10 (esteira-contract.md §A, A-3, FE-Z). Sets `status_pagina.media_creation` to `desativado`; no data touched (legacy posts/brand-kit tables + routers stay). Requires 241. Apply together with the image that ships the `/media-creation` → Carrosséis/Branding redirect.

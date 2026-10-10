@@ -7,7 +7,7 @@
  *
  * Nav (nested groups, regrouped 2026-10-05 per core-studio/MENUS.md; items/routes unchanged):
  *   Principal · Imóveis · Leads · Clientes
- *   Edição de Fotos (Operação / Configuração) · Criação de mídia
+ *   Edição de Fotos (Operação / Configuração) · CoreStudio
  *   Marketing (Email / Mailchimp) · Emissões
  *   Conexões (Marcas, Monitor, YouTube, Meta, WhatsApp, n8n) · Configuração
  *
@@ -80,6 +80,8 @@ import {
   Star,
   Clapperboard,
   Bookmark,
+  Palette,
+  GalleryHorizontal,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -100,7 +102,6 @@ const N8n = lazyWithReload(() => import("@/pages/N8n"));
 const RedirectToMarcas = lazyWithReload(() => import("@/pages/RedirectToMarcas"));
 const RedirectToMeta = lazyWithReload(() => import("@/pages/RedirectToMeta"));
 const Monitor = lazyWithReload(() => import("@/pages/Monitor"));
-const MediaCreation = lazyWithReload(() => import("@/pages/MediaCreation"));
 const EmailMarketing = lazyWithReload(() => import("@/pages/EmailMarketing"));
 const Contatos = lazyWithReload(() => import("@/pages/Contatos"));
 const EmailListas = lazyWithReload(() => import("@/pages/EmailListas"));
@@ -154,6 +155,10 @@ const GeracaoHeadlines = lazyWithReload(() => import("@/pages/geracao/Headlines"
 const GeracaoHeadlinesFavoritas = lazyWithReload(() => import("@/pages/geracao/HeadlinesFavoritas"));
 const GeracaoHeadlinesSugeridas = lazyWithReload(() => import("@/pages/geracao/HeadlinesSugeridas"));
 const GeracaoRoteiros = lazyWithReload(() => import("@/pages/geracao/Roteiros"));
+const GeracaoEsteira = lazyWithReload(() => import("@/pages/geracao/Esteira"));
+const GeracaoBranding = lazyWithReload(() => import("@/pages/geracao/Branding"));
+const GeracaoCarrosseis = lazyWithReload(() => import("@/pages/geracao/Carrosseis"));
+const RedirectMediaCreation = lazyWithReload(() => import("@/pages/RedirectMediaCreation"));
 const MinhasExtracoes = lazyWithReload(() => import("@/pages/cerebro/MinhasExtracoes"));
 const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
@@ -248,12 +253,13 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
   },
   {
     key: "media-creation",
-    label: "Criação de mídia",
+    label: "CoreStudio",
     icon: Wand2,
     items: [
-      { name: "Criação de mídia", href: "/media-creation", icon: Wand2, route: "media_creation" },
       { name: "Dashboard", href: "/media-creation/dashboard", icon: LayoutDashboard, route: "media-creation-dashboard" },
       { name: "Criar Headlines e Roteiros", href: "/media-creation/chat", icon: MessagesSquare, route: "media-creation-chat" },
+      { name: "Esteira", href: "/media-creation/esteira", icon: KanbanSquare, route: "media-creation-esteira" },
+      { name: "Carrosséis", href: "/media-creation/carrosseis", icon: GalleryHorizontal, route: "media-creation-carrosseis" },
       { name: "Biblioteca", href: "/media-creation/biblioteca", icon: Library, route: "media-creation-biblioteca" },
     ],
     groups: [
@@ -281,6 +287,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
         icon: Settings2,
         items: [
           { name: "Meu Perfil", href: "/media-creation/perfil", icon: UserCog, route: "media-creation-perfil" },
+          { name: "Branding", href: "/media-creation/branding", icon: Palette, route: "media-creation-branding" },
           { name: "Minha Biblioteca", href: "/media-creation/minha-biblioteca", icon: Bookmark, route: "media-creation-minha-biblioteca" },
           { name: "Treinamentos", href: "/media-creation/treinamentos", icon: GraduationCap, route: "media-creation-treinamentos" },
           { name: "Roteiros", href: "/media-creation/roteiros", icon: Clapperboard, route: "media-creation-roteiros" },
@@ -448,12 +455,13 @@ const NAV_FALLBACK: NavGroup[] = [
   },
   {
     key: "media-creation",
-    label: "Criação de mídia",
+    label: "CoreStudio",
     icon: Wand2,
     items: [
-      { name: "Criação de mídia", href: "/media-creation", icon: Wand2 },
       { name: "Dashboard", href: "/media-creation/dashboard", icon: LayoutDashboard },
       { name: "Criar Headlines e Roteiros", href: "/media-creation/chat", icon: MessagesSquare },
+      { name: "Esteira", href: "/media-creation/esteira", icon: KanbanSquare },
+      { name: "Carrosséis", href: "/media-creation/carrosseis", icon: GalleryHorizontal },
       { name: "Biblioteca", href: "/media-creation/biblioteca", icon: Library },
     ],
     groups: [
@@ -481,6 +489,7 @@ const NAV_FALLBACK: NavGroup[] = [
         icon: Settings2,
         items: [
           { name: "Meu Perfil", href: "/media-creation/perfil", icon: UserCog },
+          { name: "Branding", href: "/media-creation/branding", icon: Palette },
           { name: "Minha Biblioteca", href: "/media-creation/minha-biblioteca", icon: Bookmark },
           { name: "Treinamentos", href: "/media-creation/treinamentos", icon: GraduationCap },
           { name: "Roteiros", href: "/media-creation/roteiros", icon: Clapperboard },
@@ -585,7 +594,7 @@ const Layout = createProductLayout({
 export default createProductApp({
   routes: [
     { path: "/", component: Dashboard },
-    { path: "/media-creation", component: MediaCreation },
+    { path: "/media-creation", component: RedirectMediaCreation },
     { path: "/media-creation/pesquisa", component: Pesquisa },
     { path: "/media-creation/pesquisa/extrair", component: ExtrairPesquisa },
     { path: "/media-creation/cerebro", component: CerebroLista },
@@ -603,6 +612,9 @@ export default createProductApp({
     { path: "/media-creation/headlines/favoritas", component: GeracaoHeadlinesFavoritas },
     { path: "/media-creation/headlines/sugeridas", component: GeracaoHeadlinesSugeridas },
     { path: "/media-creation/roteiros", component: GeracaoRoteiros },
+    { path: "/media-creation/esteira", component: GeracaoEsteira },
+    { path: "/media-creation/carrosseis", component: GeracaoCarrosseis },
+    { path: "/media-creation/branding", component: GeracaoBranding },
     // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },

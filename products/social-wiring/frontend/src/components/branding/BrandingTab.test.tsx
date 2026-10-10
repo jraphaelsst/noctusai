@@ -258,25 +258,3 @@ describe("BrandingView", () => {
     expect(view.queryByTestId("branding-delete")).toBeNull();
   });
 });
-
-describe("MediaCreation page", () => {
-  it("renames the tab to Branding and drops the catalog loader", async () => {
-    overview.mockReturnValue({ data: { template: null, marcas: [], unassigned: [] }, error: null, showSkeleton: false, isRefreshing: false });
-    vi.doMock("@/hooks/useMediaCreation", () => ({
-      useBrandKits: () => ({ items: [], loading: false, error: null, refresh: vi.fn() }),
-      usePosts: () => ({ items: [], loading: false, error: null, refresh: vi.fn() }),
-      usePost: () => ({ post: null, loading: false, refresh: vi.fn() }),
-      usePostGeneration: () => ({}),
-    }));
-    const React = (await import("react")).default;
-    const rtl = await import("@testing-library/react");
-    const { default: MediaCreation } = await import("@/pages/MediaCreation");
-    const view = rtl.render(React.createElement(MediaCreation));
-    expect(view.getByRole("tab", { name: "Biblioteca" })).toBeTruthy();
-    expect(view.getByRole("tab", { name: "Novo post" })).toBeTruthy();
-    expect(view.getByRole("tab", { name: "Branding" })).toBeTruthy();
-    expect(view.queryByText(/Kits de marca/)).toBeNull();
-    expect(view.queryByText(/Carregar catálogo/)).toBeNull();
-    vi.doUnmock("@/hooks/useMediaCreation");
-  });
-});
