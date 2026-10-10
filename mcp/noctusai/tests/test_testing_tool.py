@@ -18,6 +18,8 @@ scoped to the (monkeypatched) primary — the established
 """
 from __future__ import annotations
 
+import subprocess
+
 import sys
 from pathlib import Path
 
@@ -26,6 +28,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import pytest  # noqa: E402
 
 from tools.noctus.dev import testing as T  # noqa: E402
+
+
+_REAL_RUN = subprocess.run
+
+
+def _git_passthrough(fake):
+    """The tool builds its pytest env with `env_bootstrap.gate_subprocess_env`,
+    which itself asks `git` where the primary `.env` lives — that call goes to
+    the real `subprocess.run`; only the pytest/vite call reaches the fake."""
+    def run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "git":
+            return _REAL_RUN(cmd, *args, **kwargs)
+        return fake(cmd, *args, **kwargs)
+    return run
 
 
 def _make_fake_worktree(tmp_path, name, *, slug="alpha"):
@@ -62,7 +78,7 @@ class TestPytestWorktreeScoping:
             captured["env"] = env
             return _FakeCompletedProcess()
 
-        monkeypatch.setattr(T.subprocess, "run", fake_run)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(fake_run))
         r = T.run_product_tests("alpha", worktree_path=str(wt))
 
         assert captured["cwd"] == str(wt / "products" / "alpha" / "backend")
@@ -86,7 +102,7 @@ class TestPytestWorktreeScoping:
             captured["cwd"] = cwd
             return _FakeCompletedProcess()
 
-        monkeypatch.setattr(T.subprocess, "run", fake_run)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(fake_run))
         r = T.run_product_tests("alpha")
 
         assert captured["cwd"] == str(primary / "products" / "alpha" / "backend")
@@ -106,7 +122,7 @@ class TestPytestWorktreeScoping:
         def fake_run(cmd, cwd, capture_output, text, timeout, env):
             return _FakeCompletedProcess(stdout="2 passed")
 
-        monkeypatch.setattr(T.subprocess, "run", fake_run)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(fake_run))
         r = T.run_all_tests(worktree_path=str(wt))
 
         assert [p["product"] for p in r["products"]] == ["alpha"]
@@ -127,7 +143,7 @@ class TestViteBuildWorktreeScoping:
             captured["cwd"] = cwd
             return _FakeCompletedProcess(stdout="built in 100ms")
 
-        monkeypatch.setattr(T.subprocess, "run", fake_run)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(fake_run))
         r = T.build_product_frontend("alpha", worktree_path=str(wt))
 
         assert captured["cwd"] == str(wt / "products" / "alpha" / "frontend")
@@ -156,7 +172,7 @@ class TestAsleepProductSkip:
         (wt / "products" / "asleep-one" / "backend" / "tests").mkdir(parents=True)
         _write_active_scope(wt, ["awake-one"])
 
-        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(self._fake_run_pytest))
         r = T.run_all_tests(worktree_path=str(wt))
 
         assert [p["product"] for p in r["products"]] == ["awake-one"]
@@ -168,7 +184,7 @@ class TestAsleepProductSkip:
         wt = _make_fake_worktree(tmp_path, "wt", slug="alpha")
         (wt / "products" / "beta" / "backend" / "tests").mkdir(parents=True)
 
-        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(self._fake_run_pytest))
         r = T.run_all_tests(worktree_path=str(wt))
 
         assert {p["product"] for p in r["products"]} == {"alpha", "beta"}
@@ -178,7 +194,7 @@ class TestAsleepProductSkip:
         wt = _make_fake_worktree(tmp_path, "wt", slug="asleep-one")
         _write_active_scope(wt, ["core"])  # asleep-one not active
 
-        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(self._fake_run_pytest))
         r = T.run_product_tests("asleep-one", worktree_path=str(wt))
 
         assert r["passed"] == 1
@@ -188,7 +204,7 @@ class TestAsleepProductSkip:
         wt = _make_fake_worktree(tmp_path, "wt", slug="awake-one")
         _write_active_scope(wt, ["awake-one"])
 
-        monkeypatch.setattr(T.subprocess, "run", self._fake_run_pytest)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(self._fake_run_pytest))
         r = T.run_product_tests("awake-one", worktree_path=str(wt))
 
         assert "asleep" not in r
@@ -204,7 +220,7 @@ class TestAsleepProductSkip:
             (fe / "vite.config.ts").write_text("export default {}")
         _write_active_scope(wt, ["awake-one"])
 
-        monkeypatch.setattr(T.subprocess, "run", self._fake_run_vite)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(self._fake_run_vite))
         r = T.build_all_frontends(worktree_path=str(wt))
 
         assert [p["product"] for p in r["products"]] == ["awake-one"]
@@ -218,7 +234,7 @@ class TestAsleepProductSkip:
         (wt / "products" / "asleep-one" / "frontend").mkdir(parents=True)
         _write_active_scope(wt, ["core"])
 
-        monkeypatch.setattr(T.subprocess, "run", self._fake_run_vite)
+        monkeypatch.setattr(T.subprocess, "run", _git_passthrough(self._fake_run_vite))
         r = T.build_product_frontend("asleep-one", worktree_path=str(wt))
 
         assert r["success"] is True
