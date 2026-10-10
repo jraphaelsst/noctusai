@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Optional
 
-from noctusai_lib.integrations.llm.audio import transcribe_audio
 from noctusai_lib.integrations.transcription.types import (
     AudioProbe,
     ProbeNotSupported,
@@ -28,6 +27,12 @@ class OpenAIWhisperTranscriber:
     async def transcribe(
         self, audio: bytes, *, language: str = "pt", max_seconds: float
     ) -> TranscriptResult:
+        # Imported here, not at module top: the LLM stack pulls every provider SDK
+        # (anthropic, openai, …). The self-hosted transcriber image imports this
+        # package (server/ lives under it) with only its own deps, so the package
+        # must import without the LLM stack (build-transcriber import smoke).
+        from noctusai_lib.integrations.llm.audio import transcribe_audio
+
         container = sniff_container(audio) or "webm"
         text = await transcribe_audio(
             audio,
