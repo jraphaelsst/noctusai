@@ -43,6 +43,9 @@ vi.mock("@/hooks/useExtracoes", () => ({
 
 const q = (data: any, over: Partial<any> = {}) => ({
   data,
+  hasNextPage: !!data?.items && data.items.length < data.total,
+  isFetchingNextPage: false,
+  fetchNextPage: vi.fn(),
   showSkeleton: false,
   isRefreshing: false,
   isError: false,
@@ -135,13 +138,14 @@ describe("MinhasExtracoes", () => {
     expect(rtl.screen.queryByTestId("extracoes-skeleton")).toBeNull();
   });
 
-  it("search and Carregar mais feed the list hook", async () => {
-    m.lista.mockReturnValue(q({ items: [ext()], total: 5 }));
+  it("search feeds the list hook and Carregar mais fetches the next page", async () => {
+    const fetchNextPage = vi.fn();
+    m.lista.mockReturnValue(q({ items: [ext()], total: 5 }, { fetchNextPage }));
     const { rtl, user } = await render();
     await user.type(rtl.screen.getByPlaceholderText("Pesquisar..."), "abc");
-    expect(m.lista).toHaveBeenLastCalledWith("m1", "abc", 20);
+    expect(m.lista).toHaveBeenLastCalledWith("m1", "abc");
     await user.click(rtl.screen.getByText("Carregar mais"));
-    expect(m.lista).toHaveBeenLastCalledWith("m1", "abc", 40);
+    expect(fetchNextPage).toHaveBeenCalled();
   });
 
   it("creates an extraction from pasted text (no Url toggle)", async () => {

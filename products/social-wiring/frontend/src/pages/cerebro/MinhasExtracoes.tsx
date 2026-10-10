@@ -28,7 +28,6 @@ import { ConfirmarModal } from "@/components/pesquisa/ConfirmarModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import {
-  PAGE_SIZE,
   useAplicarExtracao,
   useAtualizarExtracao,
   useExcluirExtracao,
@@ -53,12 +52,8 @@ export default function MinhasExtracoes() {
 
   const [busca, setBusca] = useState("");
   const q = useDebouncedValue(busca, 300);
-  const [limit, setLimit] = useState(PAGE_SIZE);
-  useEffect(() => setLimit(PAGE_SIZE), [marcaId, q]);
-
-  const listQ = useExtracoes(marcaId, q, limit);
+  const listQ = useExtracoes(marcaId, q);
   const itens = listQ.data?.items ?? [];
-  const total = listQ.data?.total ?? 0;
 
   const [novaAberta, setNovaAberta] = useState(false);
   const [verId, setVerId] = useState<string | null>(null);
@@ -173,9 +168,9 @@ export default function MinhasExtracoes() {
                   </tbody>
                 </table>
               </div>
-              {itens.length < total && (
+              {listQ.hasNextPage && (
                 <div className="flex justify-center">
-                  <Button variant="outline" onClick={() => setLimit((l) => l + PAGE_SIZE)} disabled={listQ.isRefreshing}>
+                  <Button variant="outline" onClick={() => void listQ.fetchNextPage()} disabled={listQ.isFetchingNextPage}>
                     Carregar mais
                   </Button>
                 </div>

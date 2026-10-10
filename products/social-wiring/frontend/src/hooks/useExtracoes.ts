@@ -3,12 +3,12 @@
  * (contract cerebro-contract.md §4 endpoints 19-24). v1 is pasted-text only (§10).
  *
  * Loading rule (lying-loading-state.md): `showSkeleton = isPending && !data`,
- * `isRefreshing = isFetching && !!data`, never `isLoading`. "Carregar mais" grows
- * `limit` (server page size 1-100) and keeps the previous page on screen via
- * `placeholderData`. Mutations invalidate the whole `["sw","cerebro"]` family
+ * `isRefreshing = isFetching && !!data`, never `isLoading`. "Carregar mais" is offset
+ * paging (`useInfiniteQuery`, fixed limit 20 <= server cap 100); previous rows stay
+ * on screen on marca/search change via `placeholderData`. Mutations invalidate the whole `["sw","cerebro"]` family
  * (an apply changes brain content/size too).
  */
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 
 import { CEREBRO_KEY, POLL_MS } from "@/hooks/useCerebro";
@@ -28,28 +28,43 @@ export interface ExtracoesPage {
   total: number;
 }
 
-const listKey = (marcaId: string | null, q: string, limit: number) =>
-  [...CEREBRO_KEY, marcaId, "extracoes", { q, limit }] as const;
+const listKey = (marcaId: string | null, q: string) =>
+  [...CEREBRO_KEY, marcaId, "extracoes", { q }] as const;
 const detailKey = (id: string | null) => [...CEREBRO_KEY, "extracao", id] as const;
 
 export const extracaoEmAndamento = (e: { status: string } | undefined | null) => e?.status === "transcribing";
 
-export function useExtracoes(marcaId: string | null, q: string, limit: number = PAGE_SIZE) {
-  const query = useQuery({
-    queryKey: listKey(marcaId, q, limit),
+export function useExtracoes(marcaId: string | null, q: string) {
+  const query = useInfiniteQuery({
+    queryKey: listKey(marcaId, q),
     enabled: !!marcaId,
-    queryFn: async () => {
-      const p = new URLSearchParams({ marca_id: marcaId as string, limit: String(limit), offset: "0" });
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const p = new URLSearchParams({
+        marca_id: marcaId as string,
+        limit: String(PAGE_SIZE),
+        offset: String(pageParam),
+      });
       if (q.trim()) p.set("q", q.trim());
       return unwrap(await api.get<Envelope<ExtracoesPage>>(`${BASE}?${p.toString()}`));
     },
-    refetchInterval: (s) => (s.state.data?.items.some(extracaoEmAndamento) ? POLL_MS : false),
+    // offset paging: next offset = rows loaded so far; stop once loaded >= total
+    getNextPageParam: (last, all) => {
+      const loaded = all.reduce((n, pg) => n + pg.items.length, 0);
+      return last.items.length > 0 && loaded < last.total ? loaded : undefined;
+    },
+    select: (d): ExtracoesPage => ({
+      items: d.pages.flatMap((pg) => pg.items),
+      total: d.pages[d.pages.length - 1]?.total ?? 0,
+    }),
+    refetchInterval: (s) =>
+      s.state.data?.pages.some((pg) => pg.items.some(extracaoEmAndamento)) ? POLL_MS : false,
     placeholderData: keepPreviousData,
   });
   return {
     ...query,
     showSkeleton: !!marcaId && query.isPending && !query.data,
-    isRefreshing: query.isFetching && !!query.data,
+    isRefreshing: query.isFetching && !query.isFetchingNextPage && !!query.data,
   };
 }
 
