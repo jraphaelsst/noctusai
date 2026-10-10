@@ -224,3 +224,30 @@ Rolling 24h means `SUM(duracao_s) WHERE created_at > now()-'24h' AND status <> '
 - **Fallback ladder** in §6 is pre-approved in order 1→3; step 4 (OpenAI) needs the owner's go, since the owner chose self-hosted for cost.
 - **Migration number:** scaffolded at integrate time (≥219 band; other sessions hold 218–220).
 
+
+## 8 · §6 measurement results (prod VPS, 2026-10-10)
+
+Setup: `noctus-transcriber` on the prod VPS (2 vCPU AMD EPYC, 8 GB, no swap), compose caps
+`cpus: 1.0`, `mem_limit: 2g`, `cpu_shares: 256`; model large-v3-turbo, int8, `beam_size=5`,
+`vad_filter`, `language=pt`. Clips: synthetic pt-BR TTS (macOS "Flo"), Opus/WebM 32 kbps, sent
+from inside `noctus-social-wiring` over `transcribe-net` (no user traffic; kill switches OFF).
+
+| Audio | Wall | RTF | Transcriber memory | Host MemAvailable (min) | sw / core health p95 |
+|---|---:|---:|---|---:|---|
+| baseline (idle, model loaded) | — | — | 1.46 GB anon | 2,930 MB | 2.6 / 2.4 ms |
+| 30 s | 39 s | 1.31 | peak 1,989 MB (load) | 2,464 MB | 3.6 / 4.7 ms |
+| 3 min | 184 s | 1.02 | peak 1,989 MB | 2,231 MB | 5.2 / 6.1 ms |
+| 10 min | 499 s | 0.83 | peak 2,048 MB (= cap, incl. page cache; no OOM) | 1,986 MB | 4.8 / 5.3 ms |
+
+Verdict against §6 pass criteria:
+- RTF ≤ 1.5 — **pass** (fixed overhead dominates short clips; long files ≈ 0.8× duration).
+- Peak ≤ 1.6 GB — **not met as written**: 1.46 GB anon is resident at idle and the cgroup touched
+  the 2 GB cap on the 10-min clip (anon + reclaimable cache). No OOM, no restart; host never
+  went below 1.98 GB available.
+- Product p95 within +20% — **not met relatively, negligible absolutely**: +1–4 ms on a 2–3 ms
+  baseline.
+- Zero OOM — **pass**. Fleet after the run: 16 healthy / 0 unhealthy.
+
+Transcript quality on synthetic speech is usable with first-word/function-word errors
+("Eu comecei" → "O comecei"); real-voice quality is the owner's evaluation (next step).
+Capacity: one worker ≈ 1,700 audio-minutes/day at 100 % duty — keep platform caps well below.
