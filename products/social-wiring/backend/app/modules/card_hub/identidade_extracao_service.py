@@ -4050,8 +4050,9 @@ async def extrair_identidade(
         )
 
         # F4 — a certidão de nascimento with no averbação read and no
-        # marriage evidence anywhere proves "solteiro" (see
-        # `ESTADO_CIVIL_SOLTEIRO`). Same D1 path as every other field below.
+        # marriage evidence anywhere SUGGESTS "solteiro" (see
+        # `ESTADO_CIVIL_SOLTEIRO`): recorded on the document row only,
+        # `pode_persistir=False` — never written to the cliente.
         if (
             tipo == "certidao_nascimento"
             and not fields.leitura_comprometida
@@ -4516,25 +4517,39 @@ def _casamento_evidenciado(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
 
 def _solteiro_inferido() -> tuple[Any, str, Optional[str], bool]:
     """The `lidos` entry F4 contributes — `baixa`, labelled as an inference
-    so a human reading the document row knows it was not printed."""
-    return (ESTADO_CIVIL_SOLTEIRO, "baixa", ROTULO_SOLTEIRO_INFERIDO, True)
+    so a human reading the document row knows it was not printed.
+
+    🔴 OWNER RULE 2026-10-10 (no inferred value is ever written onto a
+    cliente; an inference is a suggestion a human confirms):
+    `pode_persistir=False`. The value stays on the document row
+    (`extracao_estado_civil` + `ROTULO_SOLTEIRO_INFERIDO`), which
+    `sugestoes_pendentes` offers for confirmation while the cliente's
+    estado civil is empty. It used to be True and wrote `solteiro` onto
+    `clientes` (machine-pending)."""
+    return (ESTADO_CIVIL_SOLTEIRO, "baixa", ROTULO_SOLTEIRO_INFERIDO, False)
 
 
 def inferir_solteiro_por_certidao_nascimento(
     client: Any, org_id: UUID, cliente_id: UUID,
 ) -> list[dict]:
-    """F4 for certidões ALREADY read before the inference existed (and
+    """F4 for certidões ALREADY read before the suggestion existed (and
     re-checked whenever the deal moves — `revalidar_negociacao`): the
     newest live, successfully read certidão de nascimento with no
-    estado-civil reading and no compromised transcription proposes
-    `solteiro` through the SAME `aplicar_campos_ao_cliente` D1 write (fill
-    empty machine-pending, conflict when different, never overwrite).
-    Fills an EMPTY field only: a DIFFERENT value already on file is the
-    live read's job to conflict (`_processar`, once, when the certidão is
-    read/re-read) — re-proposing it from here on every revalidation would
-    re-run the resolver and stack audit rows. Idempotent — a no-op once the
-    field holds any value. Returns the newly opened conflicts (none today,
-    kept for the caller's notify contract)."""
+    estado-civil reading and no compromised transcription gets the
+    `solteiro` SUGGESTION recorded on its document row.
+
+    🔴 OWNER RULE 2026-10-10: this NEVER writes `clientes` — an inference is
+    offered for a human to confirm (`sugestoes_pendentes`), not applied.
+    Idempotent. Returns `[]` always (no conflict can open; kept for the
+    caller's contract)."""
+    _sugerir_solteiro_no_documento(client, org_id, cliente_id)
+    return []
+
+
+def _sugerir_solteiro_no_documento(client: Any, org_id: UUID, cliente_id: UUID) -> bool:
+    """Records the F4 suggestion on the newest eligible certidão de
+    nascimento row. `True` iff a suggestion is (now) on a document row for
+    a cliente whose estado civil is still empty."""
     atual = (
         _t(client, CLIENTES_TABLE)
         .select("id,estado_civil,estado_civil_origem")
@@ -4544,11 +4559,11 @@ def inferir_solteiro_por_certidao_nascimento(
         .execute()
     ).data or []
     if not atual or not _vazio(atual[0].get("estado_civil")):
-        return []
+        return False
     if _limpo_por_humano(atual[0].get("estado_civil"), atual[0].get("estado_civil_origem")):
-        return []
+        return False
     if _casamento_evidenciado(client, org_id, cliente_id):
-        return []
+        return False
     docs = (
         _t(client, DOCUMENTOS_TABLE)
         .select("id,extracao_status,extracao_estado_civil,extracao_aviso,created_at")
@@ -4566,7 +4581,7 @@ def inferir_solteiro_por_certidao_nascimento(
         and AVISO_LEITURA_COMPROMETIDA not in str(d.get("extracao_aviso") or "")
     ]
     if not candidatos:
-        return []
+        return False
     doc = max(candidatos, key=lambda d: str(d.get("created_at") or ""))
     if _vazio(doc.get("extracao_estado_civil")):
         valor, confianca, rotulo, _ = _solteiro_inferido()
@@ -4576,22 +4591,15 @@ def inferir_solteiro_por_certidao_nascimento(
             extracao_estado_civil_confianca=confianca,
             extracao_estado_civil_rotulo=rotulo,
         )
-    lidos = _lidos_vazios()
-    lidos["estado_civil"] = _solteiro_inferido()
-    _, conflitos = aplicar_campos_ao_cliente(
-        client, org_id, cliente_id, "certidao_nascimento", lidos,
-        documento_id=UUID(str(doc["id"])),
-        fonte_tabela=DOCUMENTOS_TABLE,
-        fonte_id=UUID(str(doc["id"])),
-    )
-    return conflitos
+    return True
 
 
 def backfill_solteiro_por_certidao_nascimento(client: Any, org_id: UUID) -> int:
-    """Org-wide F4 one-shot (the "Resolver conflitos" button): every cliente
-    with a successfully read certidão de nascimento gets
-    `inferir_solteiro_por_certidao_nascimento`. Best-effort per cliente,
-    logged. Returns how many clientes now hold an inferred `solteiro`."""
+    """Org-wide F4 one-shot (the "Resolver conflitos" button): records the
+    `solteiro` SUGGESTION on the document row of every cliente with a read
+    certidão de nascimento. Writes NOTHING to `clientes` (owner rule
+    2026-10-10). Best-effort per cliente, logged. Returns how many clientes
+    now carry a pending suggestion."""
     ids = sorted({
         str(r["cliente_id"])
         for r in table_reads.paged_rows(
@@ -4602,26 +4610,14 @@ def backfill_solteiro_por_certidao_nascimento(client: Any, org_id: UUID) -> int:
         )
         if r.get("cliente_id")
     })
-    preenchidos = 0
+    sugeridos = 0
     for cid in ids:
         try:
-            inferir_solteiro_por_certidao_nascimento(client, org_id, UUID(cid))
+            if _sugerir_solteiro_no_documento(client, org_id, UUID(cid)):
+                sugeridos += 1
         except Exception:  # noqa: BLE001 — one cliente must not stop the org-wide pass
             logger.exception("backfill_solteiro: cliente %s falhou", cid)
-            continue
-        row = (
-            _t(client, CLIENTES_TABLE)
-            .select("estado_civil,estado_civil_origem")
-            .eq("org_id", str(org_id))
-            .eq("id", cid)
-            .limit(1)
-            .execute()
-        ).data or []
-        if row and row[0].get("estado_civil") == ESTADO_CIVIL_SOLTEIRO and row[0].get(
-            "estado_civil_origem"
-        ) == "certidao_nascimento":
-            preenchidos += 1
-    return preenchidos
+    return sugeridos
 
 
 def _pessoas_dos_cards(client: Any, org_id: UUID, cliente_id: UUID) -> list[str]:

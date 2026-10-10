@@ -295,14 +295,16 @@ def _certidao_nascimento() -> IdentityFields:
 
 class TestF4CertidaoNascimentoProvesSolteiro:
     @pytest.mark.asyncio
-    async def test_no_averbacao_and_no_marriage_evidence_fills_solteiro(self, client, scoped):
+    async def test_no_averbacao_suggests_solteiro_but_never_writes_the_cliente(self, client, scoped):
         cid, did, storage = await _setup(scoped, tipo="certidao_nascimento")
         await _extrair(scoped, storage, cid, did, _certidao_nascimento())
         row = _cliente(scoped, cid)
-        assert row["estado_civil"] == svc.ESTADO_CIVIL_SOLTEIRO
-        assert row["estado_civil_origem"] == "certidao_nascimento"
-        assert row["estado_civil_documento_id"] == did
-        assert row.get("estado_civil_confirmado_em") is None
+        assert row.get("estado_civil") is None
+        assert row.get("estado_civil_origem") is None
+        assert row.get("estado_civil_documento_id") is None
+        sug = svc.sugestoes_pendentes(scoped, ORG_UUID, UUID(cid))
+        assert sug["estado_civil"]["valor"] == svc.ESTADO_CIVIL_SOLTEIRO
+        assert sug["estado_civil"]["rotulo"] == svc.ROTULO_SOLTEIRO_INFERIDO
         doc = _documento(scoped, did)
         assert doc["extracao_estado_civil"] == svc.ESTADO_CIVIL_SOLTEIRO
         assert doc["extracao_estado_civil_rotulo"] == svc.ROTULO_SOLTEIRO_INFERIDO
@@ -328,25 +330,30 @@ class TestF4CertidaoNascimentoProvesSolteiro:
         assert _cliente(scoped, cid).get("estado_civil") is None
 
     @pytest.mark.asyncio
-    async def test_a_different_value_on_file_is_never_overwritten(self, client, scoped):
+    async def test_a_different_value_on_file_is_never_overwritten_nor_contested(self, client, scoped):
         cid, did, storage = await _setup(
             scoped, tipo="certidao_nascimento",
             cliente={"estado_civil": "casado", "estado_civil_origem": "manual"},
         )
         await _extrair(scoped, storage, cid, did, _certidao_nascimento())
         assert _cliente(scoped, cid)["estado_civil"] == "casado"
-        assert [c["campo"] for c in _conflitos(scoped)] == ["estado_civil"]
+        # An inference never opens a conflict either (owner rule 2026-10-10).
+        assert _conflitos(scoped) == []
 
     @pytest.mark.asyncio
-    async def test_a_certidao_read_before_the_rule_is_backfilled(self, client, scoped):
+    async def test_backfill_records_suggestion_only_and_never_writes_the_cliente(self, client, scoped):
         cid, did, storage = await _setup(scoped, tipo="certidao_nascimento")
         scoped.table("cliente_documentos").update({
             "extracao_status": "ok", "extracao_estado_civil": None, "extracao_aviso": None,
         }).eq("id", did).execute()
         assert svc.backfill_solteiro_por_certidao_nascimento(scoped, ORG_UUID) == 1
         row = _cliente(scoped, cid)
-        assert row["estado_civil"] == svc.ESTADO_CIVIL_SOLTEIRO
-        assert row["estado_civil_documento_id"] == did
+        assert row.get("estado_civil") is None
+        assert row.get("estado_civil_documento_id") is None
+        doc = _documento(scoped, did)
+        assert doc["extracao_estado_civil"] == svc.ESTADO_CIVIL_SOLTEIRO
+        assert doc["extracao_estado_civil_rotulo"] == svc.ROTULO_SOLTEIRO_INFERIDO
         # Idempotent — a second pass changes nothing and opens nothing.
         svc.inferir_solteiro_por_certidao_nascimento(scoped, ORG_UUID, UUID(cid))
+        assert _cliente(scoped, cid).get("estado_civil") is None
         assert _conflitos(scoped) == []

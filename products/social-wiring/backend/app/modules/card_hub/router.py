@@ -893,8 +893,10 @@ async def backfill_resolver_conflitos_route(
     # readings re-applied (zero model calls) and every conflict against an
     # EMPTY deal field settled by filling it. Additive key.
     resultado["negociacao"] = negociacao_extracao_svc.backfill_negociacao(client, org_id)
-    # F4 — a read certidão de nascimento with no marriage evidence fills an
-    # empty estado civil with `solteiro` (machine-pending). Additive key.
+    # F4 — a read certidão de nascimento with no marriage evidence records a
+    # `solteiro` SUGGESTION on the document row (never written to the
+    # cliente — owner rule 2026-10-10). Additive key = clientes with a
+    # pending suggestion.
     resultado["solteiro_inferido"] = identidade_svc.backfill_solteiro_por_certidao_nascimento(
         client, org_id,
     )
