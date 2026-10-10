@@ -21,15 +21,12 @@ from pydantic import Field
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.domain.pipeline import (
-    STAGE_ROLE_ACCEPT,
     get_stage,
     group_into_colunas,
     list_stages,
     move_card,
     position_for_index,
     position_of,
-    resolve_initial_stage,
-    stage_by_role,
 )
 from noctusai_lib.integrations.persistence import iter_paged_rows
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
@@ -51,6 +48,7 @@ from app.modules.pipeline.configs import (
     search_atendimentos,
     search_processos,
 )
+from app.modules.pipeline.aceite import aceitar_proposta as aceitar_proposta_pipeline
 from app.modules.pipeline.deps import pipeline_context
 
 funil_router = APIRouter(prefix="/api/funil", tags=["funil"])
@@ -423,104 +421,9 @@ def aceitar_proposta(
     genuinely concurrent one loses the insert race and is caught below.
     """
     ctx = pipeline_context(auth)
-
-    current = (
-        ctx.db.table("atendimentos")
-        .select("id, etapa_id, status, valor_estimado")
-        .eq("id", atendimento_id)
-        .eq("org_id", ctx.org_id)
-        .execute()
-        .data
-        or []
+    return success_response(
+        aceitar_proposta_pipeline(ctx.db, ctx.org_id, atendimento_id, ctx.user_id)
     )
-    if not current:
-        raise NotFoundError("Atendimento", atendimento_id)
-    atendimento = current[0]
-
-    existing = (
-        ctx.db.table("processos_venda")
-        .select(PROCESSO_SELECT)
-        .eq("atendimento_id", atendimento_id)
-        .execute()
-        .data
-        or []
-    )
-    if existing:
-        return success_response({
-            "atendimento": atendimento_to_dto(atendimento),
-            "processo": processo_to_dto(existing[0]),
-            "already_accepted": True,
-        })
-
-    if atendimento["status"] != STATUS_ABERTA:
-        raise ValidationError_(
-            f"Atendimento não está aberta (status: {atendimento['status']})."
-        )
-
-    stage_aceite = stage_by_role(ctx.db, PIPELINE_FUNIL, STAGE_ROLE_ACCEPT, org_id=ctx.org_id)
-    if not stage_aceite:
-        raise ValidationError_(
-            "Nenhuma etapa do funil está marcada como etapa de aceite de proposta. "
-            "Defina o papel 'proposta_aceite' em uma etapa nas configurações do funil."
-        )
-    if atendimento.get("etapa_id") != stage_aceite["id"]:
-        raise ValidationError_(
-            f"Só é possível aceitar a proposta de uma negociação na etapa "
-            f"'{stage_aceite['label']}'."
-        )
-
-    etapa_inicial = resolve_initial_stage(ctx.db, PIPELINE_PROCESSOS, org_id=ctx.org_id)
-
-    try:
-        created = (
-            ctx.db.table("processos_venda")
-            .insert({
-                "org_id": ctx.org_id,
-                "atendimento_id": atendimento_id,
-                "etapa_id": etapa_inicial["id"],
-                "valor": atendimento.get("valor_estimado") or 0,
-            })
-            .execute()
-            .data
-            or []
-        )
-    except Exception:
-        # Lost the race against a concurrent accept — the UNIQUE constraint is
-        # the real guarantee; re-read and return the winner's row rather than
-        # surfacing a 500 for a request whose intent was already satisfied.
-        existing = (
-            ctx.db.table("processos_venda")
-            .select(PROCESSO_SELECT)
-            .eq("atendimento_id", atendimento_id)
-            .execute()
-            .data
-            or []
-        )
-        if not existing:
-            raise
-        return success_response({
-            "atendimento": atendimento_to_dto(atendimento),
-            "processo": processo_to_dto(existing[0]),
-            "already_accepted": True,
-        })
-
-    # The deal leaves the Funil entirely. `closed_at` is what makes cycle-time
-    # measurable — the CHECK in 034 refuses a closed status without it.
-    fechada = (
-        ctx.db.table("atendimentos")
-        .update({"status": "aceita", "closed_at": "now()"})
-        .eq("id", atendimento_id)
-        .eq("org_id", ctx.org_id)
-        .execute()
-        .data
-        or []
-    )
-
-    return success_response({
-        "atendimento": atendimento_to_dto(fechada[0] if fechada else atendimento),
-        "processo": processo_to_dto(created[0]),
-        "already_accepted": False,
-    })
 
 
 @atendimentos_router.post("/{atendimento_id}/perder")
