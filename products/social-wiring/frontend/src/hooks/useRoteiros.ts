@@ -19,6 +19,8 @@ export function useCriarRoteiro(clienteId: string) {
   async function criar(body: RoteiroCreateBody): Promise<Roteiro> {
     const roteiro = await create.mutateAsync(body);
     void qc.invalidateQueries({ queryKey: pessoaKey(clienteId) });
+    // The card may have moved stage (`roteiro_criado`): the funnel board is stale.
+    void qc.invalidateQueries({ queryKey: ["sw-funil"] });
     return roteiro;
   }
 

@@ -425,21 +425,24 @@ def _pct_comissao_padrao(client: Any, org_id: UUID, atendimento_id: UUID) -> Opt
     return negociacao_service.resolver_defaults(client, org_id).get("pct_comissao")
 
 
-def _emitir_funil(client: Any, org_id: UUID, atendimento_id: UUID, actor: Any) -> None:
+def _emitir_funil(client: Any, org_id: UUID, atendimento_id: UUID, actor: Any) -> dict:
     """`proposta_criada` -> funnel (CONTRACT §6). Owned by another session and
-    may not exist yet; a failure here never fails the create."""
+    may not exist yet; a failure here never fails the create. Returns the
+    `{moveu, de, para, motivo}` outcome so the caller can surface a refusal."""
     try:
         from app.modules.pipeline.funil_eventos import mover_por_evento
     except ImportError:
         logger.warning("funil_eventos indisponível: evento %s não emitido", EVENTO_PROPOSTA_CRIADA)
-        return
+        return {"moveu": False, "de": None, "para": None, "motivo": "funil_indisponivel"}
     try:
         res = mover_por_evento(client, org_id, atendimento_id, EVENTO_PROPOSTA_CRIADA, actor)
     except Exception:  # noqa: BLE001 — the proposta is already saved; report, don't fail
         logger.warning("funil: %s falhou", EVENTO_PROPOSTA_CRIADA, exc_info=True)
-        return
-    if not (res or {}).get("moveu"):
-        logger.warning("funil: %s não moveu (%s)", EVENTO_PROPOSTA_CRIADA, (res or {}).get("motivo"))
+        return {"moveu": False, "de": None, "para": None, "motivo": "erro_funil"}
+    res = res or {}
+    if not res.get("moveu"):
+        logger.warning("funil: %s não moveu (%s)", EVENTO_PROPOSTA_CRIADA, res.get("motivo"))
+    return res
 
 
 def criar(client: Any, org_id: UUID, cliente_id: UUID, body: PropostaCreateBody, *, usuario_id: Any) -> dict:
@@ -500,8 +503,10 @@ def criar(client: Any, org_id: UUID, cliente_id: UUID, body: PropostaCreateBody,
             "org_id", str(org_id)
         ).eq("id", str(visita["id"])).execute()
 
-    _emitir_funil(client, org_id, atendimento_id, usuario_id)
-    return proposta_out(client, org_id, obter_linha(client, org_id, atendimento_id, UUID(linha["id"])))
+    funil = _emitir_funil(client, org_id, atendimento_id, usuario_id)
+    out = proposta_out(client, org_id, obter_linha(client, org_id, atendimento_id, UUID(linha["id"])))
+    # Only on the create response (like roteiro.funil): the caller surfaces a refusal.
+    return {**out, "funil": funil}
 
 
 # ─── patch ──────────────────────────────────────────────────────────────────

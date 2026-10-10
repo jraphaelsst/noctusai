@@ -41,3 +41,14 @@ def test_raises_the_same_errors_as_the_route(http_client):
     with pytest.raises(NotFoundError):
         aceitar_proposta(db, ORG, "nope", None)
     assert db.table("processos_venda").inserted_payloads == []
+
+
+def test_processo_valor_is_the_negotiated_price(http_client):
+    db = http_client.scoped
+    db.set_table_data("atendimentos", [atendimento("neg-1", "proposta")])
+    db.set_table_data(
+        "atendimento_negociacao",
+        [{"org_id": ORG, "atendimento_id": "neg-1", "valor_negociado": "2960000.00"}],
+    )
+    aceitar_proposta(db, ORG, "neg-1", None)
+    assert float(db.table("processos_venda").inserted_payloads[0]["valor"]) == 2960000.0

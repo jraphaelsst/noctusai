@@ -654,6 +654,7 @@ def _gravar_linha(
         linha = {**base, **patch}
         _validar_split(linha)
         _t(client, TABLE).insert(linha).execute()
+        _sincronizar_valor_processo(client, org_id, atendimento_id, patch)
         return
 
     _validar_split({**atual, **patch})
@@ -665,6 +666,26 @@ def _gravar_linha(
     _t(client, TABLE).update(patch).eq("org_id", str(org_id)).eq(
         "atendimento_id", str(atendimento_id)
     ).execute()
+    _sincronizar_valor_processo(client, org_id, atendimento_id, patch)
+
+
+def _sincronizar_valor_processo(
+    client: Any, org_id: UUID, atendimento_id: UUID, patch: dict
+) -> None:
+    """Keep `processos_venda.valor` equal to `valor_negociado`.
+
+    The processo card (and the Processos board totals) read `valor`; it is
+    seeded at accept time (`pipeline.aceite`), and this keeps it in step when
+    the negotiated value changes afterwards. A no-op until a processo exists
+    and while `valor_negociado` is not part of the write. A cleared value
+    (None) maps to 0 — the column is NOT NULL.
+    """
+    if "valor_negociado" not in patch:
+        return
+    novo = _dec(patch["valor_negociado"]) or Decimal("0")
+    _t(client, "processos_venda").update({"valor": str(novo)}).eq(
+        "org_id", str(org_id)
+    ).eq("atendimento_id", str(atendimento_id)).execute()
 
 
 def imovel_do_atendimento(

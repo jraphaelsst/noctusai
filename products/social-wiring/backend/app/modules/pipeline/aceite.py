@@ -30,6 +30,25 @@ from app.modules.pipeline.configs import (
 STATUS_ABERTA = "aberta"
 
 
+def _valor_negociado(client: Any, org_id: str, atendimento_id: str) -> Any:
+    """The deal's agreed price (`atendimento_negociacao.valor_negociado`), or None.
+
+    The processo's `valor` is the closed deal's value — the negotiated price,
+    not the lead's early `valor_estimado` guess.
+    """
+    rows = (
+        client.table("atendimento_negociacao")
+        .select("valor_negociado")
+        .eq("org_id", org_id)
+        .eq("atendimento_id", atendimento_id)
+        .execute()
+        .data
+        or []
+    )
+    valor = rows[0].get("valor_negociado") if rows else None
+    return valor if valor not in (None, "") and float(valor) > 0 else None
+
+
 def aceitar_proposta(
     client: Any, org_id: Any, atendimento_id: Any, actor_id: Optional[Any] = None
 ) -> dict:
@@ -86,6 +105,9 @@ def aceitar_proposta(
         )
 
     etapa_inicial = resolve_initial_stage(client, PIPELINE_PROCESSOS, org_id=org_id)
+    valor = _valor_negociado(client, org_id, atendimento_id) or (
+        atendimento.get("valor_estimado") or 0
+    )
 
     try:
         created = (
@@ -94,7 +116,7 @@ def aceitar_proposta(
                 "org_id": org_id,
                 "atendimento_id": atendimento_id,
                 "etapa_id": etapa_inicial["id"],
-                "valor": atendimento.get("valor_estimado") or 0,
+                "valor": valor,
             })
             .execute()
             .data

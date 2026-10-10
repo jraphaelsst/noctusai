@@ -27,7 +27,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { baixarRoteiroPdf, useCriarRoteiro } from "@/hooks/useRoteiros";
 import { useInteresseMutations, useInteresses } from "@/hooks/useInteresses";
 import { usePessoaResumo } from "@/hooks/usePessoa";
-import type { RoteiroCreateBody } from "@/types/cardHub";
+import { avisarFunilRecusado } from "@/lib/funilAviso";
+import type { Roteiro, RoteiroCreateBody } from "@/types/cardHub";
 import type { InteresseItem, ImovelResumo } from "@/types/interesses";
 
 import { AdicionarInteresseDialog } from "./AdicionarInteresseDialog";
@@ -115,8 +116,11 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
     const comAtendimento: RoteiroCreateBody =
       atendimentoId && !body.atendimento_id ? { ...body, atendimento_id: atendimentoId } : body;
     let roteiroId: string;
+    let funil: Roteiro["funil"];
     try {
-      roteiroId = (await criar(comAtendimento)).id;
+      const criado = await criar(comAtendimento);
+      roteiroId = criado.id;
+      funil = criado.funil;
     } catch (err) {
       toast.error(mensagemDe(err, "Não foi possível criar o roteiro."));
       return;
@@ -124,6 +128,7 @@ export function ImovelInteressesList({ clienteId, atendimentoId }: ImovelInteres
     setOrdenando(false);
     setMarcados(new Set());
     toast.success("Roteiro criado.");
+    avisarFunilRecusado(funil);
     setGerandoPdf(true);
     try {
       await baixarRoteiroPdf(clienteId, roteiroId);

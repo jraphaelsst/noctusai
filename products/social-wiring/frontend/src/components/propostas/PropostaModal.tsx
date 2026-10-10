@@ -24,7 +24,7 @@ import type { CardSubpageKey } from "@/components/card/cardSubpages";
 import { useImobiliarias } from "@/hooks/useImobiliarias";
 import { useProposta, usePropostaMutations } from "@/hooks/usePropostas";
 import { useTestemunhas } from "@/hooks/useTestemunhas";
-import { exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
+import { exibirMoeda, formatarValorEditavel, lerValorDigitado } from "@/lib/moedaDecimal";
 import {
   propostaEditavel,
   type AceiteResponse,
@@ -44,7 +44,9 @@ type Draft = Required<PropostaPatch>;
 
 function draftDe(p: Proposta): Draft {
   return {
-    valor_proposto: p.valor_proposto ?? "",
+    // Wire decimal ("2960000.0") -> what a Brazilian reads ("2.960.000,00");
+    // the save path parses it back with `lerValorDigitado`.
+    valor_proposto: p.valor_proposto ? formatarValorEditavel(p.valor_proposto) : "",
     pct_comissao: p.pct_comissao ?? "",
     financiamento: p.financiamento,
     fgts: p.fgts,

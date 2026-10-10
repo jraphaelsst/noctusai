@@ -376,6 +376,8 @@ class TestHappyPath:
                    if n["atendimento_id"] == ids["atendimento"])
         assert float(neg["valor_negociado"]) == 500000.0 and float(neg["pct_comissao"]) == 5.0
         assert neg["imovel_codigo"] == CODIGO and neg["fgts"] is True
+        # the intermediário split is read back as the tab's parceria
+        assert neg["tem_parceria"] is True and float(neg["pct_parceria"]) == 3.0
 
         visita = _rows(scoped_db, "visitas")[0]
         assert visita["proposta_aceita_em"] and visita["proposta_em"]  # migration 104's CHECK
@@ -626,3 +628,21 @@ class TestValorObrigatorio:
         assert exc.value.status_code == 400 and exc.value.code == "valor_obrigatorio"
         assert _estado(scoped_db) == antes
 
+
+
+class TestParceriaDerivada:
+    def test_valor_fixo_shares_become_a_pct_of_the_commission(self):
+        snap = aceite._Snapshot(
+            [], [({"tipo": "valor_fixo", "valor": "69000"}, None),
+                 ({"tipo": "valor_fixo", "valor": "69000"}, None)], [], {}, {},
+        )
+        out = aceite._parceria_derivada(snap, {"valor_proposto": "2760000", "pct_comissao": "5"})
+        assert out == {"tem_parceria": True, "pct_parceria": __import__("decimal").Decimal("100.00")}
+
+    def test_no_intermediarios_means_no_parceria(self):
+        snap = aceite._Snapshot([], [], [], {}, {})
+        assert aceite._parceria_derivada(snap, {}) == {"tem_parceria": False}
+
+    def test_without_a_computable_commission_pct_is_not_invented(self):
+        snap = aceite._Snapshot([], [({"tipo": "valor_fixo", "valor": "10"}, None)], [], {}, {})
+        assert aceite._parceria_derivada(snap, {"valor_proposto": "100"}) == {"tem_parceria": True}

@@ -33,6 +33,7 @@ from __future__ import annotations
 import importlib
 import logging
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
@@ -512,7 +513,35 @@ def _materializar(
     for campo in ("pct_comissao", "financiamento", "fgts"):
         if proposta.get(campo) is not None:
             escalares[campo] = proposta[campo]
+    escalares.update(_parceria_derivada(snap, proposta))
     negociacao_service.atualizar(client, org_id, cliente_id, valores=escalares, usuario_id=actor_id)
+
+
+def _parceria_derivada(snap: _Snapshot, proposta: dict) -> dict[str, Any]:
+    """`tem_parceria` / `pct_parceria` as the Negociação tab reads them.
+
+    The tab models the split with `pct_parceria` = the partners' share of the
+    TOTAL commission. The proposta carries that split as intermediários
+    (`percentual` = % of the commission, `valor_fixo` = an amount), so the
+    materialized set must say the same thing: parceria on iff there is a
+    split, `pct_parceria` = Σ shares ÷ comissão total. Without a computable
+    comissão total, `pct_parceria` is left to the row's default (never
+    invented); `tem_parceria` still follows the intermediários.
+    """
+    partes = [(v.get("tipo") or "percentual", v.get("valor")) for v, _ in snap.intermediarios]
+    partes = [(t, Decimal(str(v))) for t, v in partes if v is not None and Decimal(str(v)) > 0]
+    if not partes:
+        return {"tem_parceria": False}
+    out: dict[str, Any] = {"tem_parceria": True}
+    valor, pct = proposta.get("valor_proposto"), proposta.get("pct_comissao")
+    if valor is None or pct is None or Decimal(str(pct)) <= 0:
+        return out
+    comissao = Decimal(str(valor)) * Decimal(str(pct)) / 100
+    soma = sum(
+        (v * comissao / 100 if t == "percentual" else v) for t, v in partes
+    )
+    out["pct_parceria"] = min(Decimal("100"), (soma / comissao * 100).quantize(Decimal("0.01")))
+    return out
 
 
 # ─── steps 2-3 — visita, contrato ─────────────────────────────────────────
