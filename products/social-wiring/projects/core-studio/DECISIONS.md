@@ -103,6 +103,16 @@ Rule for this project: the owner is interviewed for every specification; nothing
   - **D18** dropped features (workspaces/agency, Headlines na Box, credits/twin, dead UI)
   - **D19** library retention
 
+## Decided — 2026-10-10, round 10
+
+- **Biblioteca de virais legal basis: (a) legitimate interest** (LGPD Art. 7 IX), chosen over (b) contract. The balancing test is in `specs/biblioteca-lia.md`. The basis holds only with the safeguards listed there:
+  - a creator opt-out that purges the handle across all orgs and blocks it from coming back;
+  - 90-day retention;
+  - transparency;
+  - the security review fixes;
+  - the kill switch.
+- Before `biblioteca_ingestao_habilitada` is turned on, the owner provides the opt-out contact, adds the Biblioteca section to the privacy notice, and records the processing plus Anthropic (US) as sub-processor in the ROPA (LIA §6).
+
 ## Open — to ask before building
 
 - ~~Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items?~~ Tech-lead default D2 (round 9, `specs/geracao-contract.md` §5.3, with a worked example). The owner validates it while testing.
