@@ -331,7 +331,8 @@ def _validate_row_checks(
     operation: str,
 ) -> None:
     """Raise `MockRowCheckViolation` when a written row violates a migration-
-    declared CROSS-COLUMN CHECK (`_schema_cache.get_check_map`, 2026-10-10).
+    declared CHECK constraint (`_schema_cache.get_check_map`, 2026-10-10 —
+    cross-column and single-column alike).
 
     Runs with schema validation (default ON): like the column map, the CHECKs
     are derived from the migrations, so a product needs no manifest and a new

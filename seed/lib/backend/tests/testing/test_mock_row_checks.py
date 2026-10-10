@@ -182,6 +182,20 @@ class TestMockEnforces:
         finally:
             reset_cache()
 
+    def test_a_single_column_check_is_enforced_too(self):
+        """The igig notifications case (2026-10-10): `type IN (...)` refused
+        every product kind in production while the suite stayed green."""
+        set_cache_for_tests({"public.notifications": {"id", "type"}})
+        set_checks_for_tests({"public.notifications": {
+            "notifications_type_check": "type IN ('team_invite', 'system')",
+        }})
+        try:
+            with pytest.raises(MockRowCheckViolation, match="notifications_type_check"):
+                MockSupabaseClient().table("notifications").insert({"id": "1", "type": "automacao"}).execute()
+            MockSupabaseClient().table("notifications").insert({"id": "2", "type": "system"}).execute()
+        finally:
+            reset_cache()
+
     def test_a_patch_without_every_column_is_not_judged(self, window_table):
         window_table.table("slots").update({"ends_at": "2000-01-01T00:00:00Z"}).eq("id", "1").execute()
 

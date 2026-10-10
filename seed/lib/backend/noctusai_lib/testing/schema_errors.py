@@ -92,7 +92,7 @@ class MockCheckViolation(AssertionError):
 
 class MockRowCheckViolation(MockCheckViolation):
     """A mock INSERT/UPDATE/UPSERT wrote a row that violates a migration-
-    declared CROSS-COLUMN CHECK constraint (`sql_check`, 2026-10-10) — the
+    declared CHECK constraint (`sql_check`, 2026-10-10) — the
     real database would refuse it with `new row for relation "<table>"
     violates check constraint "<name>"` (SQLSTATE 23514).
 

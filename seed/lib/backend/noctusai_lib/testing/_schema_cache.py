@@ -17,14 +17,15 @@ from pathlib import Path
 from typing import Iterable
 
 from noctusai_lib.testing.migration_parser import parse_check_files, parse_default_files, parse_files
-from noctusai_lib.testing.sql_check import CompiledCheck, compile_cross_column_checks
+from noctusai_lib.testing.sql_check import CompiledCheck, compile_checks
 
 logger = logging.getLogger(__name__)
 
 _CACHE: dict[str, set[str]] | None = None
-#: `{qualified_table: [CompiledCheck, ...]}` — the CROSS-COLUMN CHECKs the
-#: mock enforces (2026-10-10). Single-column CHECKs stay with the opt-in
-#: `CheckManifest`; a CHECK `sql_check` can't compile is left out here and
+#: `{qualified_table: [CompiledCheck, ...]}` — every migration-declared CHECK
+#: the mock enforces (cross-column since 2026-10-10, single-column too since
+#: the same day — the measurement found one, and it was a production bug). A
+#: CHECK `sql_check` can't compile is left out here; a cross-column one is
 #: reported by `stand_in_conformance` leg B(iv), never silently passed there.
 _CHECK_CACHE: dict[str, list[CompiledCheck]] | None = None
 #: `{qualified_table: {columns with a DEFAULT}}` — an INSERT omitting one of
@@ -194,15 +195,15 @@ def get_default_map() -> dict[str, set[str]]:
 
 
 def get_check_map() -> dict[str, list[CompiledCheck]]:
-    """Return the cached `{qualified_table: [CompiledCheck]}` map of
-    migration-declared CROSS-COLUMN CHECKs. Builds on first call."""
+    """Return the cached `{qualified_table: [CompiledCheck]}` map of every
+    migration-declared CHECK the mock enforces. Builds on first call."""
     global _CHECK_CACHE
     if _CHECK_CACHE is None:
         try:
             files = _discover_migration_files(_find_repo_root())
-            _CHECK_CACHE, unsupported = compile_cross_column_checks(parse_check_files(files))
+            _CHECK_CACHE, unsupported = compile_checks(parse_check_files(files))
             logger.debug(
-                "mock-checks: %d tables carry cross-column CHECKs; %d CHECK(s) not modelled",
+                "mock-checks: %d tables carry CHECKs; %d CHECK(s) not modelled",
                 len(_CHECK_CACHE), len(unsupported),
             )
         except Exception as exc:  # pragma: no cover — defensive, mirrors get_schema_map
@@ -228,7 +229,7 @@ def set_checks_for_tests(
     tables' DEFAULTed columns) directly — the CHECK twin of
     `set_cache_for_tests`."""
     global _CHECK_CACHE, _DEFAULTS_CACHE
-    _CHECK_CACHE, _unsupported = compile_cross_column_checks(mapping)
+    _CHECK_CACHE, _unsupported = compile_checks(mapping)
     _DEFAULTS_CACHE = {table: set(cols) for table, cols in (defaults or {}).items()}
 
 

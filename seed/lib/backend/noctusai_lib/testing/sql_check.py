@@ -693,15 +693,18 @@ def compile_check(body: str, name: str = "<check>") -> CompiledCheck:
     return CompiledCheck(name=name, body=body, columns=frozenset(parser.columns), _ast=tree)
 
 
-def compile_cross_column_checks(
+def compile_checks(
     raw: Mapping[str, Mapping[str, str]],
+    *,
+    min_columns: int = 1,
 ) -> tuple[dict[str, list[CompiledCheck]], list[tuple[str, str, str]]]:
     """From `{table: {constraint_name: body}}` (`migration_parser.
-    parse_check_files`): (`{table: [compiled CROSS-COLUMN CHECKs]}`,
-    `[(table, name, reason)]` for every CHECK this module can't model).
-    The one compile path for the mock (`_schema_cache.get_check_map`) and
-    for `stand_in_conformance` leg B(iv) — what the gate calls covered is
-    exactly what the mock enforces."""
+    parse_check_files`): (`{table: [compiled CHECKs reading >= min_columns
+    columns]}`, `[(table, name, reason)]` for every CHECK this module can't
+    model). The one compile path for the mock (`_schema_cache.get_check_map`,
+    every CHECK since 2026-10-10) and for `stand_in_conformance` leg B(iv)
+    (cross-column ones) — what the gate calls covered is exactly what the
+    mock enforces."""
     compiled: dict[str, list[CompiledCheck]] = {}
     unsupported: list[tuple[str, str, str]] = []
     for table, named in raw.items():
@@ -711,9 +714,19 @@ def compile_cross_column_checks(
             except UnsupportedCheck as exc:
                 unsupported.append((table, name, str(exc)))
                 continue
-            if len(check.columns) >= 2:
+            if len(check.columns) >= min_columns:
                 compiled.setdefault(table, []).append(check)
     return compiled, unsupported
 
 
-__all__ = ["CompiledCheck", "UnsupportedCheck", "compile_check", "compile_cross_column_checks"]
+def compile_cross_column_checks(
+    raw: Mapping[str, Mapping[str, str]],
+) -> tuple[dict[str, list[CompiledCheck]], list[tuple[str, str, str]]]:
+    """`compile_checks` restricted to CHECKs reading 2+ columns — leg B(iv)'s view."""
+    return compile_checks(raw, min_columns=2)
+
+
+__all__ = [
+    "CompiledCheck", "UnsupportedCheck", "compile_check", "compile_checks",
+    "compile_cross_column_checks",
+]
