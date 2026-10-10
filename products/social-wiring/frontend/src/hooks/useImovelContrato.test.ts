@@ -190,6 +190,17 @@ describe("useConfirmarDocumentoExtracao", () => {
     );
   });
 
+  it("🔴 uses the document's OWN código in the path (linked imóvel)", async () => {
+    mockPatch.mockResolvedValue({});
+    (useConfirmarDocumentoExtracao("ONE1234") as any).mutate({
+      documentoId: "doc-m",
+      patch: {},
+      codigo: "SW-0001",
+    });
+    await vi.waitFor(() => expect(mockPatch).toHaveBeenCalled());
+    expect(mockPatch).toHaveBeenCalledWith("/api/imoveis/SW-0001/documentos/doc-m/extracao", {});
+  });
+
   it("PATCHes a correction and invalidates the certidões + dados caches", async () => {
     mockPatch.mockResolvedValue({});
     (useConfirmarDocumentoExtracao("AP1234") as any).mutate({

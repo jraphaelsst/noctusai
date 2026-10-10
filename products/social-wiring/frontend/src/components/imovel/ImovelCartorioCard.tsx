@@ -408,6 +408,10 @@ export default function ImovelCartorioCard({
             the confirm/choose-other flow live on `/matriculas`. */}
         <div className="space-y-1.5 border-t pt-4">
           <Label>Fontes da matrícula</Label>
+          <div className="flex flex-wrap gap-3">
+            <VinculoLegalMarca vinculoLegal={dados?.vinculo_legal} campo="titulo_aquisitivo" />
+            <VinculoLegalMarca vinculoLegal={dados?.vinculo_legal} campo="onus_fonte" />
+          </div>
           <div className="flex flex-wrap gap-2">
             {dados?.titulo_aquisitivo_fonte ? (
               <Link

@@ -232,14 +232,16 @@ describe("ImovelCartorioCard — vinculo_legal markers", () => {
     const { screen } = await render({
       vinculo_legal: {
         manual_codigo: "SW-0001",
-        fontes: { numero_matricula: "SW-0001" },
+        fontes: { numero_matricula: "SW-0001", onus_fonte: "SW-0001" },
         conflitos: ["numero_registro_imoveis"],
+        // pointer groups too
       },
     });
     expect(screen.getByTestId("vinculo-legal-numero_matricula").textContent).toBe("do cadastro manual");
     const c = screen.getByTestId("vinculo-legal-numero_registro_imoveis");
     expect(c.textContent).toBe("em conflito — revise");
     expect(c.getAttribute("href")).toBe("#imovel-conflitos");
+    expect(screen.getByTestId("vinculo-legal-onus_fonte").textContent).toBe("do cadastro manual");
     expect(screen.queryByTestId("vinculo-legal-situacao_onus")).toBeNull();
   });
 

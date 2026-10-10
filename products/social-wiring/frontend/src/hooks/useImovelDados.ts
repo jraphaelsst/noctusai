@@ -54,12 +54,15 @@ export interface ImovelFonteOnus {
 }
 
 /** `GET /dados` after a manual↔Vista link (CONTRACT §8.7). `fontes` maps a
- *  field → the código it was filled from; `conflitos` lists fields in conflict
- *  (names, or objects carrying `campo`). Both tolerated in either shape. */
+ *  group key → the manual código it was filled from; `conflitos` is the sorted
+ *  list of group keys in conflict. Keys: numero_matricula,
+ *  numero_registro_imoveis, prefeitura_cadastro_imobiliario, situacao_onus,
+ *  titulo_aquisitivo_texto, onus_credor, titulo_aquisitivo, onus_fonte, plus
+ *  fallback-only endereco_registro_texto / ultima_transferencia_manual. */
 export interface VinculoLegal {
   manual_codigo: string;
-  fontes?: Record<string, string> | string[] | null;
-  conflitos?: (string | { campo?: string })[] | number | null;
+  fontes?: Record<string, string> | null;
+  conflitos?: string[] | null;
 }
 
 export interface ImovelDados {

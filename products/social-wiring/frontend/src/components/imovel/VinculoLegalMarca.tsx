@@ -8,25 +8,13 @@ import type { VinculoLegal } from "@/hooks/useImovelDados";
 
 export type MarcaVinculo = "conflito" | "manual" | null;
 
-function conflitoCampos(vl: VinculoLegal): string[] {
-  return Array.isArray(vl.conflitos)
-    ? vl.conflitos.map((c) => (typeof c === "string" ? c : (c.campo ?? "")))
-    : [];
-}
-
 export function marcaDoCampo(
   vl: VinculoLegal | null | undefined,
   campo: string,
 ): MarcaVinculo {
   if (!vl) return null;
-  if (conflitoCampos(vl).includes(campo)) return "conflito";
-  const f = vl.fontes;
-  if (Array.isArray(f)) return f.includes(campo) ? "manual" : null;
-  if (f && typeof f === "object") {
-    const origem = f[campo];
-    return origem && origem === vl.manual_codigo ? "manual" : null;
-  }
-  return null;
+  if (vl.conflitos?.includes(campo)) return "conflito";
+  return vl.fontes?.[campo] ? "manual" : null;
 }
 
 export default function VinculoLegalMarca({

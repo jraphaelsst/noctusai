@@ -44,6 +44,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import VinculoLegalMarca from "@/components/imovel/VinculoLegalMarca";
+import type { VinculoLegal } from "@/hooks/useImovelDados";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -61,6 +63,8 @@ import {
 
 export interface ImovelContratoCardProps {
   codigo: string;
+  /** `GET /dados` → `vinculo_legal` (linked imóvel): field provenance markers. */
+  vinculoLegal?: VinculoLegal | null;
 
   titulo: TituloAquisitivoResponse | undefined;
   tituloShowSkeleton: boolean;
@@ -158,6 +162,7 @@ function Confirmacao({
 
 export default function ImovelContratoCard({
   codigo,
+  vinculoLegal,
   titulo,
   tituloShowSkeleton,
   tituloIsRefreshing,
@@ -243,6 +248,7 @@ export default function ImovelContratoCard({
         {/* ─── Título aquisitivo ────────────────────────────────────────── */}
         <section className="space-y-2" id="imovel-titulo-aquisitivo" tabIndex={-1} data-testid="imovel-titulo-aquisitivo">
           <Label className="text-sm font-semibold">Título aquisitivo</Label>
+          <VinculoLegalMarca vinculoLegal={vinculoLegal} campo="titulo_aquisitivo_texto" />
 
           {tituloShowSkeleton ? (
             // Testid on a wrapper, not on `Skeleton` — it is a re-exported
@@ -351,6 +357,7 @@ export default function ImovelContratoCard({
             texto`'s column comment). Only a confirm/clear textarea. */}
         <section className="space-y-2 border-t pt-4" id="imovel-endereco-registro" tabIndex={-1} data-testid="imovel-endereco-registro">
           <Label className="text-sm font-semibold">Endereço do registro</Label>
+          <VinculoLegalMarca vinculoLegal={vinculoLegal} campo="endereco_registro_texto" />
           <p className="text-xs text-muted-foreground">
             O endereço confirmado a partir da matrícula — nunca o endereço público
             do CRM, que pode ser o da portaria em vez do imóvel.
@@ -418,6 +425,7 @@ export default function ImovelContratoCard({
         {/* ─── Ônus: credor ─────────────────────────────────────────────── */}
         <section className="space-y-2 border-t pt-4" id="imovel-onus-credor" tabIndex={-1} data-testid="imovel-onus-credor">
           <Label className="text-sm font-semibold">Credor do ônus</Label>
+          <VinculoLegalMarca vinculoLegal={vinculoLegal} campo="onus_credor" />
 
           {onusShowSkeleton ? (
             <div data-testid="imovel-onus-credor-skeleton">
@@ -530,6 +538,7 @@ export default function ImovelContratoCard({
             <Users className="h-3.5 w-3.5" />
             Antigos proprietários
           </Label>
+          <VinculoLegalMarca vinculoLegal={vinculoLegal} campo="ultima_transferencia_manual" />
 
           {antigosShowSkeleton ? (
             <div data-testid="imovel-antigos-skeleton">

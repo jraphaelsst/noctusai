@@ -482,3 +482,28 @@ describe("ImovelContratoCard — última transferência (manual override, migrat
     expect(getByTestId("imovel-ultima-transferencia-confirmado").textContent).toContain("Ana");
   });
 });
+
+describe("ImovelContratoCard — vinculo_legal markers", () => {
+  it("marks título / endereço / ônus / última transferência from the manual record and conflicts", async () => {
+    const { getByTestId } = await render({
+      vinculoLegal: {
+        manual_codigo: "SW-0001",
+        fontes: {
+          titulo_aquisitivo_texto: "SW-0001",
+          endereco_registro_texto: "SW-0001",
+          ultima_transferencia_manual: "SW-0001",
+        },
+        conflitos: ["onus_credor"],
+      },
+    });
+    expect(getByTestId("vinculo-legal-titulo_aquisitivo_texto").textContent).toBe("do cadastro manual");
+    expect(getByTestId("vinculo-legal-endereco_registro_texto").textContent).toBe("do cadastro manual");
+    expect(getByTestId("vinculo-legal-ultima_transferencia_manual").textContent).toBe("do cadastro manual");
+    expect(getByTestId("vinculo-legal-onus_credor").textContent).toBe("em conflito — revise");
+  });
+
+  it("no markers without a vínculo", async () => {
+    const { queryByTestId } = await render();
+    expect(queryByTestId("vinculo-legal-titulo_aquisitivo_texto")).toBeNull();
+  });
+});

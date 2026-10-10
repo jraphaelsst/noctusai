@@ -509,9 +509,15 @@ export function useConfirmarUltimaTransferenciaManual(codigo: string) {
 export function useConfirmarDocumentoExtracao(codigo: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { documentoId: string; patch: DocumentoExtracaoPatch }) =>
+    // `codigo` = the document's OWN código (a linked imóvel lists the manual
+    // record's certidões; the route is per-imóvel).
+    mutationFn: (input: {
+      documentoId: string;
+      patch: DocumentoExtracaoPatch;
+      codigo?: string | null;
+    }) =>
       api.patch(
-        `${imoveisBase(codigo)}/documentos/${encodeURIComponent(input.documentoId)}/extracao`,
+        `${imoveisBase(input.codigo || codigo)}/documentos/${encodeURIComponent(input.documentoId)}/extracao`,
         input.patch,
       ),
     onSuccess: () => {

@@ -27,7 +27,12 @@ import {
   useOnusCredor,
   useTituloAquisitivo,
 } from "@/hooks/useImovelContrato";
-import { useImovelDocumentoMutations } from "@/hooks/useImovelDados";
+import {
+  codigoDoDocumento,
+  useImovelDados,
+  useImovelDocumentoMutations,
+  useImovelDocumentos,
+} from "@/hooks/useImovelDados";
 
 export function ImovelContratoContainer({ codigo }: { codigo: string }) {
   const tituloQuery = useTituloAquisitivo(codigo);
@@ -42,6 +47,9 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
   const confirmarUltimaTransferencia = useConfirmarUltimaTransferenciaManual(codigo);
   const confirmarExtracao = useConfirmarDocumentoExtracao(codigo);
   const documentoMutations = useImovelDocumentoMutations(codigo);
+  // Shared cache entries with the page's own cards — no extra requests.
+  const dadosQuery = useImovelDados(codigo);
+  const documentosQuery = useImovelDocumentos(codigo);
 
   // 🔴 Two signals off `data`, never `isLoading`: it is false mid-refetch, so
   // a skeleton/empty branch keyed off it would lie over data still good to
@@ -51,6 +59,7 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
     <>
       <ImovelContratoCard
         codigo={codigo}
+        vinculoLegal={dadosQuery.data?.vinculo_legal}
         titulo={tituloQuery.data}
         tituloShowSkeleton={tituloQuery.isPending && !tituloQuery.data}
         tituloIsRefreshing={tituloQuery.isFetching && !!tituloQuery.data}
@@ -99,9 +108,16 @@ export function ImovelContratoContainer({ codigo }: { codigo: string }) {
         onUpload={(file, tipoDocumento) =>
           documentoMutations.upload.mutate({ file, tipoDocumento })
         }
-        onConfirmar={(documentoId, _tipo, patch) =>
-          confirmarExtracao.mutate({ documentoId, patch })
-        }
+        onConfirmar={(documentoId, _tipo, patch) => {
+          // The certidão may belong to the linked manual record: the PATCH
+          // path needs the document's OWN código.
+          const doc = documentosQuery.data?.find((d) => d.id === documentoId);
+          confirmarExtracao.mutate({
+            documentoId,
+            patch,
+            codigo: doc ? codigoDoDocumento(doc, codigo) : codigo,
+          });
+        }}
       />
     </>
   );
