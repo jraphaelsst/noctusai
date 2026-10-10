@@ -542,3 +542,7 @@ Authored 2026-10-10 (projects/core-studio/specs/geracao-contract.md §9.3, BE-OP
 ## 238 — clientes_email_proveniencia (email provenance quintet for the ficha cadastral e-mail) — NOT APPLIED
 
 Authored 2026-10-10. Adds `clientes.email_origem/_documento_id/_em/_confirmado_por/_confirmado_em` (nullable, idempotent). Apply BEFORE deploying the image that writes them; `predeploy_check` `schema_drift` fails until applied.
+
+## 239 — spawn_funil_card_sem_descarte_silencioso (org-scoped meta-lead unique + no silent card drop + funil_card_anomalias) — NOT APPLIED
+
+Authored 2026-10-10 (prod incident: 6 funil cards silently dropped by `ON CONFLICT DO NOTHING` against the GLOBAL `uq_sw_atendimentos_meta_lead`). Replaces that index with `uq_sw_atendimentos_org_meta_lead (org_id, meta_ads_lead_id)`, creates `funil_card_anomalias` (RLS: org select, service_role all), and redefines `spawn_funil_card()` without DO NOTHING (same-org collision handled + recorded; other violations raise). Apply BEFORE deploying; `predeploy_check` `schema_drift` fails until applied. After apply: backfill the 6 lost cards.

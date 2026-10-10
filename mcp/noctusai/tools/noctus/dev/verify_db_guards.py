@@ -6296,6 +6296,146 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — social-wiring migration 239 (spawn_funil_card no silent drop).
+# Incident 2026-10-10: the funil card was silently dropped by ON CONFLICT DO
+# NOTHING against a GLOBAL unique on atendimentos.meta_ads_lead_id. Both probes
+# are fully self-provisioning (fabricated orgs, a fabricated meta lead whose
+# INSERT fires the real spawn trigger) inside the rolled-back transaction; the
+# only `no_fixture` path is "migration 239 is not applied" — until then
+# predeploy's db_guards leg is blocked, the same apply-before-deploy contract
+# APPLIED.md states for schema_drift.
+# ---------------------------------------------------------------------------
+
+_SW_239_MIGRATIONS = ("239_spawn_funil_card_sem_descarte_silencioso.sql",)
+
+_SW_239_META_UNIQUE_PROBE = GuardProbe(
+    id="social-wiring.atendimentos.org_meta_lead.unique",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="uq_sw_atendimentos_org_meta_lead",
+    kind="write_refusal",
+    migrations=_SW_239_MIGRATIONS,
+    rationale=(
+        "One card per (org, meta lead) — scoped by ORG so a card another org "
+        "holds can never block this org's card (the 2026-10-10 loss of 6 real "
+        "cards). Proves both halves: a second card for the same meta lead in "
+        "the same org is refused (23505 on this index), and the same meta "
+        "lead in a DIFFERENT org is accepted (the old global unique refused "
+        "that and is reported as `blocked`)."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_a     uuid := gen_random_uuid();
+  v_b     uuid := gen_random_uuid();
+  v_m     text := 'noc_probe_' || gen_random_uuid()::text;
+  v_stage uuid;
+  v_phase text := 'setup';
+BEGIN
+  IF to_regclass('social_wiring.uq_sw_atendimentos_org_meta_lead') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: uq_sw_atendimentos_org_meta_lead does not exist (migration 239 not applied)';
+  END IF;
+  BEGIN
+    -- The real spawn trigger creates the first card for (v_a, v_m).
+    INSERT INTO social_wiring.meta_ads_leads (id, org_id) VALUES (v_m, v_a);
+    SELECT id INTO v_stage FROM social_wiring.pipeline_stages
+     WHERE org_id = v_a AND pipeline = 'funil' LIMIT 1;
+    IF v_stage IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: spawn trigger did not provision a funil stage/card for the fabricated org';
+    END IF;
+    v_phase := 'cross_org';
+    INSERT INTO social_wiring.atendimentos (org_id, meta_ads_lead_id, etapa_id, titulo)
+    VALUES (v_b, v_m, v_stage, 'noc_probe_other_org');
+    v_phase := 'same_org';
+    INSERT INTO social_wiring.atendimentos (org_id, meta_ads_lead_id, etapa_id, titulo)
+    VALUES (v_a, v_m, v_stage, 'noc_probe_same_org_dup');
+    RAISE EXCEPTION 'NOC_PROBE:permitted: a second card for the same (org, meta lead) was accepted — the unique guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:%' THEN
+      RAISE;
+    ELSIF v_phase = 'same_org' AND SQLERRM LIKE '%uq_sw_atendimentos_org_meta_lead%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSIF v_phase = 'cross_org' THEN
+      RAISE EXCEPTION 'NOC_PROBE:blocked: the same meta lead in a DIFFERENT org was refused (global unique?): %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error in phase %: %', v_phase, SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+_SW_239_SPAWN_NO_SILENT_DROP_PROBE = GuardProbe(
+    id="social-wiring.spawn_funil_card.no_silent_drop",
+    product="social-wiring",
+    schema=_SW_SCHEMA,
+    guard_name="spawn_funil_card",
+    kind="write_allowed",
+    migrations=_SW_239_MIGRATIONS,
+    rationale=(
+        "The same-org collision: the meta lead's card is already linked to "
+        "ANOTHER lead, then a new lead claims that meta lead. The lead's card "
+        "must still exist (no silent drop) and the collision must be visible "
+        "as a funil_card_anomalias row. A missing card or missing anomaly is "
+        "reported as `violation`. Scope: the same-org shape only — the "
+        "cross-org shape is proven by the org-scoped unique probe above "
+        "(the card is created because no other org's row can conflict)."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_a     uuid := gen_random_uuid();
+  v_m     text := 'noc_probe_' || gen_random_uuid()::text;
+  v_l0    uuid := gen_random_uuid();
+  v_l2    uuid := gen_random_uuid();
+  v_card  uuid;
+  v_n_card int;
+  v_n_anom int;
+  v_phase text := 'setup';
+BEGIN
+  IF to_regclass('social_wiring.funil_card_anomalias') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: social_wiring.funil_card_anomalias does not exist (migration 239 not applied)';
+  END IF;
+  BEGIN
+    -- Card C1 for the meta lead (made by the real trigger), then hand it to
+    -- another lead L0 so the "lead_id IS NULL" merge lookup cannot find it.
+    INSERT INTO social_wiring.meta_ads_leads (id, org_id) VALUES (v_m, v_a);
+    INSERT INTO social_wiring.leads (id, org_id, data_entrada) VALUES (v_l0, v_a, CURRENT_DATE);
+    DELETE FROM social_wiring.atendimentos WHERE lead_id = v_l0;
+    UPDATE social_wiring.atendimentos SET lead_id = v_l0
+     WHERE org_id = v_a AND meta_ads_lead_id = v_m
+     RETURNING id INTO v_card;
+    IF v_card IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: spawn trigger did not create the meta lead card for the fabricated org';
+    END IF;
+    v_phase := 'collision';
+    INSERT INTO social_wiring.leads (id, org_id, data_entrada, meta_lead_id)
+    VALUES (v_l2, v_a, CURRENT_DATE, v_m);
+    SELECT count(*) INTO v_n_card FROM social_wiring.atendimentos WHERE lead_id = v_l2;
+    SELECT count(*) INTO v_n_anom FROM social_wiring.funil_card_anomalias
+     WHERE org_id = v_a AND lead_id = v_l2 AND atendimento_existente_id = v_card;
+    IF v_n_card = 1 AND v_n_anom = 1 THEN
+      RAISE EXCEPTION 'NOC_PROBE:allowed: card kept for the colliding lead and the collision recorded (cards=%, anomalias=%)', v_n_card, v_n_anom;
+    END IF;
+    RAISE EXCEPTION 'NOC_PROBE:violation: silent drop — cards for the lead=% (want 1), anomaly rows=% (want 1)', v_n_card, v_n_anom;
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:%' THEN
+      RAISE;
+    ELSIF v_phase = 'collision' THEN
+      RAISE EXCEPTION 'NOC_PROBE:blocked: lead insert with a colliding meta lead was refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error in phase %: %', v_phase, SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+_SW_239_PROBES: tuple[GuardProbe, ...] = (
+    _SW_239_META_UNIQUE_PROBE,
+    _SW_239_SPAWN_NO_SILENT_DROP_PROBE,
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -6358,6 +6498,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_PROPOSTAS_PROBES,
     *_SW_IMOVEL_MANUAL_PROBES,
     *_SW_231_PROBES,
+    *_SW_239_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
