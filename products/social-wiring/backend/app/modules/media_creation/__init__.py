@@ -81,6 +81,7 @@ def register() -> Any:
         brand_kits,
         branding,
         cerebro,
+        chat,
         cerebro_fontes,
         dashboard_criacao,
         generation,
@@ -100,6 +101,10 @@ def register() -> Any:
     cerebro_scheduler.configure()
     # Voice answers: the `cerebro_resposta` context of the shared transcription layer.
     cerebro_transcricao.register_contexto()
+    # Chat voice dictation: the `chat_ditado` context of the shared transcription layer.
+    from app.modules.media_creation.services import chat_transcricao
+
+    chat_transcricao.register_contexto()
     # Geração: stale + dead-letter sweep (import-time, BEFORE `start_scheduler()`).
     from app.modules.media_creation import geracao_scheduler
     from app.modules.media_creation.services import geracao_jobs
@@ -137,6 +142,7 @@ def register() -> Any:
             perfil_criacao.router,
             treinamentos.router,
             dashboard_criacao.router,
+            chat.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
