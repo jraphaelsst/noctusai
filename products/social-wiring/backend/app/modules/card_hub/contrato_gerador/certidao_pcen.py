@@ -59,6 +59,30 @@ def br(d: Optional[date]) -> str:
     return d.strftime("%d/%m/%Y") if d else "—"
 
 
+def nota_segunda_via_antiga(*, segunda_via: bool, validade_ate: Optional[date],
+                            assinatura: date) -> str:
+    """Suffix for the "emission too old" block when the certidão is a 2ª via:
+    the date is the ORIGINAL emission (the source refuses a new one while the
+    old is valid), so the operator must see the printed validity to decide.
+    Empty for a certidão that is not a 2ª via. Informational — never changes
+    the rule."""
+    if not segunda_via:
+        return ""
+    if validade_ate is None:
+        return (
+            " Esta certidão é uma 2ª via da original (a fonte não emite nova enquanto a "
+            "anterior é válida); a validade impressa não foi lida — confira no PDF."
+        )
+    situacao = (
+        "ainda vigente na data da assinatura" if validade_ate >= assinatura
+        else "já vencida na data da assinatura"
+    )
+    return (
+        " Esta certidão é uma 2ª via da original (a fonte não emite nova enquanto a anterior é "
+        f"válida); validade impressa até {br(validade_ate)}, {situacao}."
+    )
+
+
 def aviso(emitida_em: Optional[date], validade_ate: date) -> str:
     return (
         "Receita: certidão positiva com efeitos de negativa — 2ª via emitida em "

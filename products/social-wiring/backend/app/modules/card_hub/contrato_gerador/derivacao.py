@@ -2716,7 +2716,10 @@ def _certidoes(
                 tempo(
                     "CERTIDAO_EMISSAO_ANTIGA",
                     f"{rotulo} de {nome_grupo} foi emitida há {(assinatura - c.emitida_em).days} dias; "
-                    f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura.",
+                    f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura."
+                    + certidao_pcen.nota_segunda_via_antiga(
+                        segunda_via=c.segunda_via, validade_ate=c.validade_ate, assinatura=assinatura,
+                    ),
                 )
             if c.validade_ate is not None and c.validade_ate < assinatura:
                 tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")

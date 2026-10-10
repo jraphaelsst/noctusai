@@ -610,6 +610,10 @@ def _criar_consulta_automatica(
         }
         for c in configs
     ]).execute().data or []
+    # A Serasa Crednet uploaded BEFORE this consulta existed has nobody to
+    # apply it: fill the `serasa` cell now (`aplicar_crednet_pendente` is a
+    # no-op for a CNPJ consulta or when no reading is on file).
+    certidoes_svc.aplicar_crednet_pendente(client, org_id, consulta)
     return {
         "consulta_id": consulta["id"],
         "resultados": [

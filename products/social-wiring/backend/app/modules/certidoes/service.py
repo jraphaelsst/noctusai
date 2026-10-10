@@ -88,6 +88,7 @@ from app.modules.certidoes.deps import BUCKET, PREFIXO
 from app.modules.certidoes.registry import (
     CERTIDOES_CONFIG,
     INFOSIMPLES_BASE_URL,
+    MANUAL_CONFIG_BY_TIPO,
     PARAM_BUILDERS,
     RESULTADO_VALUES,
     SEGREDOS_DE_PARAMS,
@@ -1094,6 +1095,35 @@ def _numero_via_codigo_controle(texto: Optional[str]) -> Optional[str]:
     return m.group(1) if m else None
 
 
+#: A certidão's own printed identifier, by label: "Certidão nº X", "Número da
+#: certidão: X", "Nº da certidão X", "Número do documento X", and the
+#: validation/verification code TRF3/TRT2 print. The value must carry a digit
+#: (a label followed by prose is not a number). Tried in this order.
+_NUMERO_ROTULADO_RES = tuple(
+    re.compile(padrao, re.IGNORECASE)
+    for padrao in (
+        r"n[úu]mero\s+d[ao]\s+certid[ãa]o\s*[:\-]?\s*(?:n[ºo°.]\s*)?([A-Z0-9][A-Z0-9./\-]{3,})",
+        r"certid[ãa]o\s+(?:n[ºo°.]|n[úu]mero)\s*[:\-]?\s*([A-Z0-9][A-Z0-9./\-]{3,})",
+        r"n[ºo°.]\s+d[ao]\s+certid[ãa]o\s*[:\-]?\s*([A-Z0-9][A-Z0-9./\-]{3,})",
+        r"n[úu]mero\s+d[ao]\s+documento\s*[:\-]?\s*([A-Z0-9][A-Z0-9./\-]{3,})",
+        r"c[óo]digo\s+de\s+(?:valida[çc][ãa]o|verifica[çc][ãa]o|autenticidade)\s*[:\-]?\s*([A-Z0-9][A-Z0-9./\-]{3,})",
+    )
+)
+
+
+def _numero_rotulado_do_texto(texto: Optional[str]) -> Optional[str]:
+    """The certidão's printed number off a label match, or `None`. Pure; a
+    candidate with no digit is skipped, never guessed."""
+    if not texto:
+        return None
+    for padrao in _NUMERO_ROTULADO_RES:
+        for m in padrao.finditer(texto):
+            valor = m.group(1).rstrip(".-/")
+            if any(c.isdigit() for c in valor):
+                return valor
+    return None
+
+
 def _completar_numero_com_ano(numero: Optional[str], texto: Optional[str]) -> Optional[str]:
     """G15 (P1/883, 2026-09-25): a TRT2 físico certidão prints its número
     as "NNNNNN / AAAA" (number / year), and the contract prints it whole —
@@ -1140,6 +1170,10 @@ def _aplicar_overrides_numero(
         completado = _completar_numero_com_ano(resultado["numero"], texto_fonte)
         if completado != resultado["numero"]:
             return {**resultado, "numero": completado}
+        return resultado
+    rotulado = _numero_rotulado_do_texto(texto_fonte)
+    if rotulado:
+        return {**(resultado or {}), "numero": rotulado}
     return resultado
 
 
@@ -1300,7 +1334,8 @@ def _mesclar_resultados_estruturados(
 #: emission, which is what `stale_para_contrato` is measured against.
 _EMISSAO_LINHA_RE = re.compile(
     r"(?:data\s+e\s+hora\s+d[ae]\s+emiss[ãa]o|data\s+d[ae]\s+emiss[ãa]o"
-    r"|emitid[ao]\s+em|expedid[ao]\s+em)"
+    r"|emitid[ao]\s+(?:(?:via|pela)\s+internet\s+)?em|expedid[ao]\s+em|gerad[ao]\s+em"
+    r"|emiss[ãa]o)"
     r"\s*[:\-]?\s*(?:[^\d\n]{1,40}?,\s*)?(\d{2})/(\d{2})/(\d{4})",
     re.IGNORECASE,
 )
@@ -1460,6 +1495,7 @@ async def _derive_estrutura(
     org_id: Optional[str],
     travado: bool,
     analyze_estrutura: Callable[..., Any],
+    paginas_texto: Sequence[str] = (),
 ) -> dict:
     """The structured-field patch (`numero`/`emitida_em`/`validade_ate`/
     `resultado`, plus `resultado_origem`) for one resultado: the raw API
@@ -1507,6 +1543,19 @@ async def _derive_estrutura(
             for k, v in via_ia.items():
                 patch.setdefault(k, v)
             origem = "ia"
+    # The stored document's own text is the last deterministic source: an API
+    # response that names neither number nor emission (TRF3/TRT2 receipts) still
+    # prints both on the certidão. Fill-missing only — never overrides the API.
+    if paginas_texto:
+        completo = "\n".join(paginas_texto)
+        if not patch.get("numero"):
+            numero = _numero_rotulado_do_texto(completo)
+            if numero:
+                patch["numero"] = numero
+        if not patch.get("emitida_em"):
+            emitida = _data_emissao_do_texto(paginas_texto)
+            if emitida:
+                patch["emitida_em"] = emitida
     if patch:
         patch["resultado_origem"] = origem
     return patch
@@ -1958,6 +2007,7 @@ async def _process_single_certidao(
             config=config, result=result, texto_para_ia=None,
             nome_display=nome_display, org_id=org_id, travado=travado,
             analyze_estrutura=analyze_estrutura,
+            paginas_texto=extracted_doc.paginas_texto,
         ))
         db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
         feed_parte.alimentar_parte(
@@ -1998,6 +2048,7 @@ async def _process_single_certidao(
         config=config, result=result, texto_para_ia=text_for_analysis,
         nome_display=nome_display, org_id=org_id, travado=travado,
         analyze_estrutura=analyze_estrutura,
+        paginas_texto=extracted_doc.paginas_texto,
     ))
     db.table(RESULTADOS).update(update_data).eq("id", resultado_id).execute()
     # CONTRACT §1.7: the certidão also tells us who this CPF/CNPJ is — offer it
@@ -4197,9 +4248,7 @@ def _aplicar_crednet_a_resultado(
         .limit(1)
         .execute()
     ).data or []
-    if not rows:
-        return False
-    resultado = rows[0]
+    resultado = rows[0] if rows else None
     novo_em = leitura.consulta_em.date().isoformat() if leitura.consulta_em else None
     # A Crednet older than the contract window would land a cell the contract
     # gate (`derivacao`, `certidao_max_dias`) rejects anyway — leave the cell
@@ -4210,18 +4259,24 @@ def _aplicar_crednet_a_resultado(
         if idade >= POLITICA_PADRAO.certidao_max_dias:
             return False
 
-    vazio = resultado.get("status") == "pendente" and resultado.get("resultado_origem") is None
-    if not vazio:
-        if resultado.get("confirmado_em") or resultado.get("resultado_origem") == "manual":
-            return False
-        if (
-            resultado.get("resultado_origem") != "ia"
-            or not resultado.get("fonte_cliente_documento_id")
-        ):
-            return False
-        anterior_em = resultado.get("emitida_em")
-        if not novo_em or (anterior_em and anterior_em >= novo_em):
-            return False
+    # A consulta with NO `serasa` resultado at all is one the automatic
+    # emission created (`certidoes_partes_service._criar_consulta_automatica`
+    # only fans out the InfoSimples types; `serasa` has no API call). The
+    # reading is the cell's only source, so the row is created already filled
+    # rather than waiting for a placeholder nothing else will ever add.
+    if resultado is not None:
+        vazio = resultado.get("status") == "pendente" and resultado.get("resultado_origem") is None
+        if not vazio:
+            if resultado.get("confirmado_em") or resultado.get("resultado_origem") == "manual":
+                return False
+            if (
+                resultado.get("resultado_origem") != "ia"
+                or not resultado.get("fonte_cliente_documento_id")
+            ):
+                return False
+            anterior_em = resultado.get("emitida_em")
+            if not novo_em or (anterior_em and anterior_em >= novo_em):
+                return False
 
     constam = leitura.ocorrencias_constam()
     patch = {
@@ -4237,6 +4292,17 @@ def _aplicar_crednet_a_resultado(
         "fonte_cliente_documento_id": str(doc["id"]),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+    if resultado is None:
+        config = MANUAL_CONFIG_BY_TIPO["serasa"]
+        db.table(RESULTADOS).insert({
+            **patch,
+            "consulta_id": consulta_id,
+            "org_id": str(org_id),
+            "tipo": "serasa",
+            "nome_display": config["nome"],
+            "ordem": config["ordem"],
+        }).execute()
+        return True
     db.table(RESULTADOS).update(patch).eq("id", resultado["id"]).execute()
     return True
 

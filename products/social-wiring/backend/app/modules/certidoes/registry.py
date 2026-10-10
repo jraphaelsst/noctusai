@@ -17,6 +17,7 @@ pipeline: they change for entirely different reasons.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -397,10 +398,53 @@ def _parse_date_br(value: Any) -> Optional[str]:
     """
     if not isinstance(value, str) or not value.strip():
         return None
+    # Some endpoints print the emission as a datetime ("dd/mm/yyyy HH:MM:SS");
+    # the date part is the emission date, the time is dropped.
+    m = _DATA_BR_RE.match(value.strip())
+    if not m:
+        return None
     try:
-        return datetime.strptime(value.strip(), "%d/%m/%Y").date().isoformat()
+        return datetime.strptime(m.group(1), "%d/%m/%Y").date().isoformat()
     except ValueError:
         return None
+
+
+_DATA_BR_RE = re.compile(r"^(\d{2}/\d{2}/\d{4})(?:[\sT,].*)?$")
+
+#: Field names InfoSimples uses for the certidão's own number / emission /
+#: validity across the endpoints, most specific first.
+_NUMERO_KEYS = (
+    "numero_controle", "codigo_controle", "numero_certidao", "certidao_numero",
+    "numero", "numero_documento", "codigo_validacao", "codigo_verificacao",
+    "codigo_autenticidade",
+)
+_EMISSAO_KEYS = (
+    "emissao_data", "data_emissao", "emissao", "data_emissao_certidao",
+    "emitida_em", "emissao_datahora", "data_hora_emissao", "data_consulta",
+)
+_VALIDADE_KEYS = ("validade_data", "data_validade", "validade", "validade_prorrogada")
+
+
+def _primeiro_numero(item: dict) -> Optional[str]:
+    """First non-empty number-like value; an int (a bare certidão number) is
+    stringified rather than dropped."""
+    for chave in _NUMERO_KEYS:
+        valor = item.get(chave)
+        if isinstance(valor, bool):
+            continue
+        if isinstance(valor, int):
+            valor = str(valor)
+        if isinstance(valor, str) and valor.strip():
+            return valor.strip()
+    return None
+
+
+def _primeira_data(item: dict, chaves: tuple[str, ...]) -> Optional[str]:
+    for chave in chaves:
+        iso = _parse_date_br(item.get(chave))
+        if iso:
+            return iso
+    return None
 
 
 def _parse_resultado_padrao(raw_response: dict) -> dict:
@@ -426,21 +470,15 @@ def _parse_resultado_padrao(raw_response: dict) -> dict:
         return {}
     item = data[0]
     out: dict = {}
-    numero = (
-        item.get("numero_controle") or item.get("codigo_controle")
-        or item.get("numero_certidao") or item.get("numero")
-    )
-    if isinstance(numero, str) and numero.strip():
-        out["numero"] = numero.strip()
+    numero = _primeiro_numero(item)
+    if numero:
+        out["numero"] = numero
     # `emissao_data` is what Receita/PGFN actually returns (prod 2026-10);
-    # the other two cover the remaining endpoints.
-    emitida = _parse_date_br(
-        item.get("emissao_data") or item.get("data_emissao")
-        or item.get("data_consulta")
-    )
+    # the other names cover the remaining endpoints.
+    emitida = _primeira_data(item, _EMISSAO_KEYS)
     if emitida:
         out["emitida_em"] = emitida
-    validade = _parse_date_br(item.get("data_validade") or item.get("validade"))
+    validade = _primeira_data(item, _VALIDADE_KEYS)
     if validade:
         out["validade_ate"] = validade
     return out
