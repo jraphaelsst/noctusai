@@ -177,6 +177,10 @@ _GENTILICOS: tuple[tuple["re.Pattern[str]", str], ...] = (
     (re.compile(r"\bVENEZUELAN[OA]S?\b"), "venezuelano"),
     (re.compile(r"\bANGOLAN[OA]S?\b"), "angolano"),
     (re.compile(r"\bLIBANES(?:ES|AS|A)?\b"), "libanês"),
+    # A CNH of a foreign national prints "ESTRANGEIRO(A)" without naming the
+    # country. Stored as printed (canonical masculine); NOT a Brazilian, and
+    # no country is guessed. The optional "(A)" is the printed gender suffix.
+    (re.compile(r"\bESTRANGEIR[OA]S?(?:\s*\(\s*A\s*\))?(?![\w(])"), "estrangeiro"),
 )
 
 #: Every canonical (masculine) token this module can return, in the order
@@ -213,6 +217,7 @@ _FEMININO: dict[str, str] = {
     "venezuelano": "venezuelana",
     "angolano": "angolana",
     "libanês": "libanesa",
+    "estrangeiro": "estrangeira",
 }
 
 

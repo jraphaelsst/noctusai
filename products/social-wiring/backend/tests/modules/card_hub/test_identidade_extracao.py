@@ -1049,16 +1049,40 @@ class TestNacionalidadeCivilDerivation:
             scoped, storage, ORG_UUID, UUID(cid), UUID(did),
             extractor=FakeIdentityExtractor(self._com_rg_orgao("SSP/SP")),
         )
-        assert out["aplicado_ao_cliente"]["nacionalidade"] is True
+        # Owner rule 2026-10-10: an INFERRED value is a suggestion on the
+        # document row only — never written onto the cliente.
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is False
 
         row = _cliente(scoped, cid)
-        assert row["nacionalidade"] == "brasileiro"
-        assert row.get("nacionalidade_confirmado_em") is None
+        assert row.get("nacionalidade") is None
 
         doc = _documento(scoped, did)
         assert doc["extracao_nacionalidade"] == "brasileiro"
         assert doc["extracao_nacionalidade_confianca"] == "baixa"
         assert doc["extracao_nacionalidade_rotulo"] == "inferida: RG civil estadual (SSP)"
+
+    @pytest.mark.asyncio
+    async def test_a_foreign_rne_never_infers_even_with_an_issuer(self, client, scoped):
+        """A foreign national's RNE (`identidade_tipo` set) is no evidence of
+        a Brazilian civil RG; the number and its type land as printed."""
+        cid, did, storage = await _setup(scoped, tipo="cnh")
+        campos = IdentityFields(
+            rg="W123456Z",
+            rg_confianca=ExtractionConfidence.ALTA,
+            rg_orgao="DETRAN/SP",
+            identidade_tipo="rne",
+            source=TextSource.TEXT_LAYER,
+        )
+        out = await svc.extrair_identidade(
+            scoped, storage, ORG_UUID, UUID(cid), UUID(did),
+            extractor=FakeIdentityExtractor(campos),
+        )
+        assert out["aplicado_ao_cliente"]["nacionalidade"] is False
+        row = _cliente(scoped, cid)
+        assert row.get("nacionalidade") is None
+        assert _documento(scoped, did).get("extracao_nacionalidade") is None
+        assert row["rg"] == "W123456Z"
+        assert row["identidade_tipo"] == "rne"
 
     @pytest.mark.asyncio
     async def test_a_federal_foreign_document_issuer_infers_nothing(

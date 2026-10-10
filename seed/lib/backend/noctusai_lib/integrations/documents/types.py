@@ -276,6 +276,12 @@ class IdentityFields:
     rg_orgao: Optional[str] = None
     rg_orgao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
 
+    #: `"rne"` / `"rnm"` when the identity-document field printed a foreign
+    #: national's number (`W573678Z`) — then `rg` holds THAT number exactly as
+    #: printed and `rg_orgao` only an issuer printed beside it. `None` is "an
+    #: ordinary RG, or the document does not say" — never a claim of RG.
+    identidade_tipo: Optional[str] = None
+
     # ─── Estado civil (marital status) ─────────────────────────────────
     #: Normalised to a closed snake_case vocabulary (`civil_status.
     #: ESTADO_CIVIL_VALORES`) rather than to the document's own wording —

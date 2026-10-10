@@ -4060,6 +4060,10 @@ async def extrair_identidade(
             and not fields.leitura_comprometida
             and lidos["nacionalidade"][0] is None
             and fields.rg_orgao
+            # The issuer travels with a READ number: no `rg`, or a foreign
+            # national's RNE/RNM, is no evidence of a Brazilian civil RG.
+            and fields.rg
+            and not fields.identidade_tipo
         ):
             ja_confirmada = _nacionalidade_atual_confirmada(client, org_id, cliente_id)
             derivado = derivar_nacionalidade_civil(
@@ -4068,7 +4072,15 @@ async def extrair_identidade(
                 nacionalidade_atual_confirmada=ja_confirmada,
             )
             if derivado[0] is not None:
-                lidos["nacionalidade"] = (*derivado, True)
+                # 🔴 OWNER RULE 2026-10-10 (store what the document prints,
+                # never derive a value onto the cliente): an INFERRED
+                # nationality is recorded on the document row as a
+                # suggestion a human must confirm (`sugestoes_pendentes`
+                # reads those columns) and is NEVER written to `clientes`
+                # — `pode_persistir=False`. It used to be True: an
+                # órgão misread on a foreign national's CNH wrote
+                # "brasileiro" onto an Italian's record.
+                lidos["nacionalidade"] = (*derivado, False)
 
         # 🔴 MISFILE DETECTION — FLAGS, NEVER RETYPES (2026-09-23, owner
         # directive). Two independent signals, both content-only, both never
@@ -4188,6 +4200,28 @@ async def extrair_identidade(
             leituras_anteriores=leituras_anteriores,
         )
         conflitos += abertos
+
+        # The document type the number was PRINTED as (`rne`/`rnm`) rides
+        # with the `rg` write: fill-empty only, and only when the number
+        # itself was applied — a foreign national's RNE must not stay typed
+        # as an RG ("RG (brasileiro)" in the contract, 2026-10-10).
+        if (
+            fields.identidade_tipo
+            and not fields.leitura_comprometida
+            and aplicados.get("rg")
+        ):
+            _atual_tipo = (
+                _t(client, CLIENTES_TABLE)
+                .select("id,identidade_tipo")
+                .eq("org_id", str(org_id))
+                .eq("id", str(cliente_id))
+                .limit(1)
+                .execute()
+            ).data or []
+            if _atual_tipo and _vazio(_atual_tipo[0].get("identidade_tipo")):
+                _t(client, CLIENTES_TABLE).update(
+                    {"identidade_tipo": fields.identidade_tipo}
+                ).eq("org_id", str(org_id)).eq("id", str(cliente_id)).execute()
 
         def _sinalizar(codigo: str, mensagem: Optional[str] = None) -> None:
             """Flag what the APPLY step found on the document row. The

@@ -323,7 +323,7 @@ def parece_data(valor: Optional[str]) -> bool:
     )
 
 
-_RNE_RE = re.compile(r"^[A-Z](?:\d{6,7}-?[\dX]|-?\d{3}\.?\d{3}-?[\dX])$")
+_RNE_RE = re.compile(r"^[A-Z](?:\d{6,7}-?[\dA-Z]|-?\d{3}\.?\d{3}-?[\dA-Z])$")
 _RG_SHAPE_RE = re.compile(r"^\d{1,3}(?:\.\d{3})+-?[\dX]?$|^\d{5,10}-?[\dX]$|^\d{5,11}$")
 
 
@@ -338,6 +338,72 @@ def rg_shape_valido(valor: Optional[str]) -> bool:
     if not bruto or parece_data(bruto):
         return False
     return bool(_RNE_RE.match(bruto) or _RG_SHAPE_RE.match(bruto))
+
+
+#: An RNE/RNM/CRNM number as printed: one letter, six-seven digits, one check
+#: character (letter OR digit) — `W573678Z`, `V123456-7`, `W-573.678-Z`. The
+#: letter prefix is part of the number and the check character is PRINTED (it
+#: is stored as read, never derived). The lookbehind keeps it from biting
+#: into a longer alphanumeric run.
+_RNE_TOKEN_RE = re.compile(
+    r"(?<![A-Z0-9])([A-Z])-?(\d{3}\.?\d{3,4})-?([0-9A-Z])(?![0-9])"
+)
+
+#: Issuers that print on a foreign national's document (Polícia Federal
+#: Diretoria de Estrangeiros and siblings). Matched ONLY immediately after
+#: the number's check character, and returned only when actually printed.
+_ORGAOS_ESTRANGEIROS = ("DELEMIG", "DIREX", "CGPI", "DPF", "PF", "MRE")
+_RNM_MARCADORES = ("CRNM", "RNM", "REGISTRO NACIONAL MIGRATORIO")
+_RNE_MARCADORES = ("RNE", "REGISTRO NACIONAL DE ESTRANGEIROS")
+
+
+def find_rne(text: str) -> tuple[Optional[str], str, Optional[str], Optional[str], Optional[str]]:
+    """The holder's RNE/RNM/CRNM number, if the identity-document field
+    carries one: `(valor, confianca, rotulo, orgao, tipo)`.
+
+    🔴 STORED EXACTLY AS PRINTED (owner rule 2026-10-10: never infer or
+    derive a document value). `W573678ZDIREXEX` yields `W573678Z`: the
+    letter prefix and the printed check letter stay; nothing is added.
+    `orgao` is a federal issuer ONLY when it is printed right after the
+    number (`DIREX`); otherwise `None` — never a state RG issuer defaulted
+    from elsewhere on the document (a CNH header's `DETRAN/SP` is the CNH's
+    issuer, not the identity document's). `tipo` is `"rnm"`/`"rne"` when the
+    text names the document or its issuer is a federal-police body, else
+    `None` (shape alone does not decide RNE vs RNM).
+
+    Label-anchored like `find_rg` (alta only), because a letter+digits run
+    is otherwise too common (plates, protocols).
+    """
+    norm = normalize(text or "")
+    if not norm:
+        return (None, "nenhuma", None, None, None)
+    achados: list[tuple[str, str, str]] = []
+    for m in _RNE_TOKEN_RE.finditer(norm):
+        achado = _label_before(norm, m.start())
+        if achado.rejeitado or achado.rebaixado or not achado.rotulo:
+            continue
+        valor = m.group(0).replace(" ", "")
+        resto = norm[m.end() : m.end() + 12].lstrip(" /-")
+        orgao = next((o for o in _ORGAOS_ESTRANGEIROS if resto.startswith(o)), None)
+        achados.append((valor, achado.rotulo, orgao or ""))
+    if not achados or len({only_alnum(v) for v, _, _ in achados}) != 1:
+        return (None, "nenhuma", None, None, None)
+    valor, rotulo, orgao = achados[0]
+    if any(mk in norm for mk in _RNM_MARCADORES):
+        tipo: Optional[str] = "rnm"
+    elif orgao or any(re.search(rf"\b{mk}\b", norm) for mk in _RNE_MARCADORES):
+        tipo = "rne"
+    else:
+        tipo = None
+    return (valor, "alta", rotulo, orgao or None, tipo)
+
+
+def _dentro_de_token_rne(norm: str, inicio: int, fim: int) -> bool:
+    """Is the digit run at `[inicio, fim)` the middle of an RNE-shaped
+    letter+digits+check token? Then it is NOT a plain RG number."""
+    return any(
+        t.start() <= inicio and fim <= t.end() for t in _RNE_TOKEN_RE.finditer(norm)
+    )
 
 
 def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
@@ -378,6 +444,10 @@ def find_rg(text: str) -> tuple[Optional[str], str, Optional[str]]:
         # stay untouched (that punctuation choice IS the document's own).
         bruto = re.sub(r"\s*-\s*", "-", m.group(1))
         if parece_data(bruto):
+            continue
+        # `W573678Z` is an RNE/RNM, not RG `573678` with its letters dropped
+        # (`find_rne` reads it whole).
+        if _dentro_de_token_rne(norm, m.start(1), m.end(1)):
             continue
 
         achado = _label_before(norm, m.start())
@@ -613,6 +683,15 @@ def find_rg_orgao(text: str, rg: Optional[str] = None) -> tuple[Optional[str], s
 
     achados: list[str] = []
     for m in _ORGAO_RE.finditer(norm):
+        # 🔴 `DETRAN/UF` found by SHAPE alone is the CNH's OWN issuer (the
+        # header / field 5 of the licence), not the identity document's: it
+        # was written onto a foreign holder's record as `rg_orgao` though the
+        # 4c field printed a federal issuer (2026-10-10). DETRAN is accepted
+        # where an RG number was read only when it sits next to that number
+        # (`_orgao_adjacente`) or under the explicit issuer label
+        # (`_orgao_rotulado`).
+        if rg and m.group(1) == "DETRAN":
+            continue
         valido = _orgao_valido(norm, m)
         if valido is not None:
             achados.append(valido)
@@ -699,6 +778,7 @@ __all__ = [
     "formatar_rg_como_impresso",
     "find_rg",
     "find_rg_orgao",
+    "find_rne",
     "is_same_as_cpf",
     "mesmo_rg",
     "normalize",

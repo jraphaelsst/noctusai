@@ -885,6 +885,18 @@ _ADOCAO_GENERICA_RE = re.compile(
 )
 
 
+#: Words that introduce a DIFFERENT person after an anchored spouse's own
+#: qualification ("casada com <ex-marido>, nascido em ...", an averbação de
+#: divórcio naming the former husband). Every per-person fact PAST the first
+#: of these describes that other person, never the anchor — real, measured
+#: (2026-10-10): a lone anchor's open-ended segment read the ex-husband's
+#: gênero + birth date onto the titular's entry.
+_OUTRA_PESSOA_RE = re.compile(
+    r"\b(?:CASAD[OA]S?\s+COM|DIVORCI(?:OU|ADO|ADA|O)\b|SEPARAD[OA]\s+(?:DE|JUDICIALMENTE)|"
+    r"VIUV[OA]\s+DE|EX[- ]?(?:MARIDO|ESPOSO|CONJUGE|CONSORTE)|MARIDO|ESPOSO|CONSORTE|"
+    r"DIVORCIAD)"
+)
+
 #: How many words `_ancora_nome`'s tier-2 scan may consume before giving up
 #: on a single candidate run — `name.MAX_WORDS`'s own ceiling (a Brazilian
 #: full name never runs longer), kept local per this module's own
@@ -1049,6 +1061,13 @@ def _ler_ancorada(text: str, esperados: tuple[str, ...]) -> tuple[ConjugeLido, .
             fim_sentenca = norm.find(".", a_fim)
             if 0 <= fim_sentenca < limite_campos:
                 limite_campos = fim_sentenca + 1
+
+        # Nothing PAST the first marker of another person is this spouse's.
+        if not adiante:
+            m_outra = _OUTRA_PESSOA_RE.search(norm, a_fim, limite_campos)
+            if m_outra is not None:
+                limite_campos = m_outra.start()
+                limite_cpf = min(limite_cpf, m_outra.start())
 
         cpf = None
         for pos, val in cpfs:

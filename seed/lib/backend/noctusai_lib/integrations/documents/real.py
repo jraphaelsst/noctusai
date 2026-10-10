@@ -79,7 +79,7 @@ from noctusai_lib.integrations.documents.name import (
     nomes_compativeis,
 )
 from noctusai_lib.integrations.documents.profession import find_profissao
-from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao
+from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao, find_rne
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
     ExtractionConfidence,
@@ -426,6 +426,22 @@ class LadderIdentityExtractor:
         rg_conf = self._temper_name_confidence(rg_conf, source)
         rg_orgao, rg_orgao_conf = find_rg_orgao(text, rg)
         rg_orgao_conf = self._temper_name_confidence(rg_orgao_conf, source)
+        identidade_tipo: Optional[str] = None
+        # 🔴 A foreign national's RNE/RNM/CRNM in the identity-document field
+        # (`W573678ZDIREXEX`) is recorded AS THAT DOCUMENT, exactly as
+        # printed — never as an RG with the letters dropped, and never with
+        # an issuer the document does not print next to the number (the
+        # shape scan above would otherwise lift a CNH header's `DETRAN/SP`).
+        rne, rne_conf, rne_label, rne_orgao, rne_tipo = find_rne(text)
+        if rne is not None:
+            rg, rg_label = rne, rne_label
+            rg_conf = self._temper_name_confidence(rne_conf, source)
+            rg_orgao = rne_orgao
+            rg_orgao_conf = (
+                self._temper_name_confidence("alta", source)
+                if rne_orgao else ExtractionConfidence.NENHUMA.value
+            )
+            identidade_tipo = rne_tipo
         if not rg:
             # 🔴 AN ISSUING BODY WITH NO RG NUMBER BESIDE IT IDENTIFIES
             # NOTHING. `find_rg_orgao` finds its match by SHAPE alone (an
@@ -553,6 +569,10 @@ class LadderIdentityExtractor:
         conjuges = find_conjuges(text, esperados=esperados)
         if conjuges:
             escolhido_idx = _conjuge_do_titular(conjuges, nome, cpf)
+            if escolhido_idx is None and titular is not None and titular.nome:
+                # The caller's own hinted name (exact, unique) — covers a
+                # document whose whole-text `nome` read did not resolve.
+                escolhido_idx = _conjuge_do_titular(conjuges, titular.nome, None)
             if escolhido_idx is not None:
                 marcados = []
                 for i, c in enumerate(conjuges):
@@ -711,6 +731,7 @@ class LadderIdentityExtractor:
             rg_rotulo=rg_label,
             rg_orgao=rg_orgao,
             rg_orgao_confianca=ExtractionConfidence(rg_orgao_conf),
+            identidade_tipo=identidade_tipo,
             estado_civil=estado_civil,
             estado_civil_confianca=ExtractionConfidence(estado_civil_conf),
             estado_civil_rotulo=estado_civil_label,
@@ -814,6 +835,16 @@ def _conjuge_do_titular(
         achados = [i for i, c in enumerate(conjuges) if _chave_nome(c.nome) == alvo]
         if len(achados) == 1:
             idx = achados[0]
+        if idx is None:
+            # The titular may be known by the name she held BEFORE adopting
+            # her married name (`nome` then holds the adopted form). Unique
+            # exact match only.
+            achados = [
+                i for i, c in enumerate(conjuges)
+                if c.nome_anterior and _chave_nome(c.nome_anterior) == alvo
+            ]
+            if len(achados) == 1:
+                idx = achados[0]
     if idx is None and cpf:
         alvo_cpf = only_digits(cpf)
         achados = [i for i, c in enumerate(conjuges) if c.cpf and only_digits(c.cpf) == alvo_cpf]
