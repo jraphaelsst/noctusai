@@ -14,8 +14,9 @@ import httpx
 
 from .unsubscribe_links import (
     UNSUBSCRIBE_VARIABLE,
-    template_carries_unsubscribe,
+    one_click_headers,
     unsubscribe_url,
+    with_unsubscribe,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,8 @@ VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
 
 DRY_RUN_REASON = "dry-run: RESEND_API_KEY not configured — email NOT delivered"
 UNSUBSCRIBE_REFUSAL = (
-    "refused: no unsubscribe link in the rendered email — add {{unsubscribe_url}} "
-    "to the template and set FRONTEND_BASE_URL (LGPD opt-out precondition)"
+    "refused: no unsubscribe link in the rendered email — FRONTEND_BASE_URL (and "
+    "JWT_SECRET) must be set so each contact's link can be built (LGPD opt-out precondition)"
 )
 
 
@@ -139,7 +140,8 @@ class SendService:
         No ``RESEND_API_KEY`` ⇒ a LOUD dry-run: WARNING + every row recorded
         ``failed`` with ``DRY_RUN_REASON`` (never "sent"). A live batch is
         refused unless each rendered email carries the contact's unsubscribe
-        link (``unsubscribe_links``)."""
+        link — injected as a footer when the template has no
+        ``{{unsubscribe_url}}`` (``unsubscribe_links``)."""
         api_key = self.settings.resend_api_key
         if not api_key:
             # LOUD, and recorded as NOT delivered — until 2026-10-10 this path
@@ -167,13 +169,9 @@ class SendService:
 
         # Build batch payload
         # No real send without a per-contact opt-out link (LGPD), by construction:
-        # the template must carry {{unsubscribe_url}} and every rendered body must
-        # contain that contact's own URL — else the whole batch is refused.
-        if not template_carries_unsubscribe(html_body):
-            logger.error("%s (campaign %s)", UNSUBSCRIBE_REFUSAL, campaign_id)
-            await self._mark_failed(logs, UNSUBSCRIBE_REFUSAL)
-            await self._finalize_campaign_if_done(campaign_id)
-            return 0
+        # a template without {{unsubscribe_url}} gets the footer appended, and every
+        # rendered body must contain that contact's own URL — else the batch is refused.
+        html_body = with_unsubscribe(html_body)
         emails = []
         for log in logs:
             contact = log.get("contacts", {})
@@ -197,7 +195,7 @@ class SendService:
                 "to": [log["email"]],
                 "subject": rendered_subject,
                 "html": rendered_body,
-                "headers": {"List-Unsubscribe": f"<{link}>"},
+                "headers": one_click_headers(link),
             })
 
         # Call Resend Batch API

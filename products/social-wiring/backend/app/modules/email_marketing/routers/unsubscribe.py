@@ -7,20 +7,21 @@ import logging
 from fastapi import APIRouter, HTTPException
 from app.dependencies import get_admin_client
 from app.config import settings
+from noctusai_lib.security import signed_tokens
+from app.modules.email_marketing.services.unsubscribe_links import TOKEN_PURPOSE, make_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix='/api/email-marketing/unsubscribe', tags=["Unsubscribe"])
 
 
 def generate_token(org_id: str, contact_id: str, email: str) -> str:
-    """Generate HMAC-signed unsubscribe token."""
-    payload = f"{org_id}:{contact_id}:{email}"
-    sig = hmac.new(settings.jwt_secret.encode(), payload.encode(), hashlib.sha256).hexdigest()[:16]
-    return base64.urlsafe_b64encode(f"{payload}:{sig}".encode()).decode()
+    """Signed unsubscribe token for this app's secret (``unsubscribe_links.make_token``)."""
+    return make_token(settings.jwt_secret, org_id, contact_id, email)
 
 
-def verify_token(token: str) -> dict:
-    """Verify and decode an unsubscribe token."""
+def _verify_legacy_token(token: str) -> dict | None:
+    """The pre-2026-10-10 hand-rolled format (base64 of ``org:contact:email:sig16``).
+    Links already in sent emails must keep working; never minted again."""
     try:
         decoded = base64.urlsafe_b64decode(token.encode()).decode()
         parts = decoded.rsplit(":", 1)
@@ -33,12 +34,19 @@ def verify_token(token: str) -> dict:
         org_id, contact_id, email = payload.split(":", 2)
         return {"org_id": org_id, "contact_id": contact_id, "email": email}
     except Exception as exc:
-        # Token verification can fail for many reasons (malformed base64,
-        # bad signature, payload missing fields). Caller treats None as
-        # "invalid token" and returns 400 — but we log so spikes in failures
-        # signal either a token-format change or an attacker probing.
-        logger.warning("unsubscribe: token verification failed (%s); rejecting", exc)
+        # Caller treats None as "invalid token" and returns 400; logged so a
+        # spike signals a format change or an attacker probing.
+        logger.warning("unsubscribe: legacy token verification failed (%s); rejecting", exc)
         return None
+
+
+def verify_token(token: str) -> dict | None:
+    """Payload of a valid unsubscribe token, else None (signed format first,
+    then the legacy format)."""
+    data = signed_tokens.verify(TOKEN_PURPOSE, token, settings.jwt_secret)
+    if data and all(data.get(k) for k in ("org_id", "contact_id", "email")):
+        return data
+    return _verify_legacy_token(token)
 
 
 @router.get("/{token}")
@@ -52,7 +60,11 @@ async def unsubscribe_page(token: str):
 
 @router.post("/{token}")
 async def process_unsubscribe(token: str):
-    """Process the unsubscribe — mark contact as unsubscribed, create audit record."""
+    """Process the unsubscribe — mark contact as unsubscribed, create audit record.
+
+    Also the RFC 8058 one-click target: mail clients POST
+    ``List-Unsubscribe=One-Click`` (form body, ignored) to the List-Unsubscribe
+    URL with no page interaction."""
     data = verify_token(token)
     if not data:
         raise HTTPException(status_code=400, detail="Link de descadastro invalido")
@@ -60,6 +72,12 @@ async def process_unsubscribe(token: str):
     db = get_admin_client()
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
+
+    current = (db.table("contacts").select("status")
+               .eq("id", data["contact_id"]).eq("org_id", data["org_id"]).execute())
+    if current.data and current.data[0].get("status") == "unsubscribed":
+        # Idempotent: mail clients replay one-click POSTs (RFC 8058).
+        return {"ok": True, "already": True, "email": data["email"]}
 
     # Update contact status
     db.table("contacts").update({
@@ -77,4 +95,4 @@ async def process_unsubscribe(token: str):
     }).execute()
 
     logger.info("Unsubscribe processed: %s (org=%s)", data["email"], data["org_id"])
-    return {"ok": True, "message": "Descadastro realizado com sucesso"}
+    return {"ok": True, "email": data["email"], "message": "Descadastro realizado com sucesso"}

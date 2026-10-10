@@ -114,8 +114,20 @@ def test_dry_run_is_loud_and_recorded_as_not_delivered(caplog):
     assert ss.delivery_mode(svc.settings) == {"mode": "dry_run", "reason": ss.DRY_RUN_REASON}
 
 
-def test_live_send_without_the_link_in_the_template_is_refused():
-    svc, db = _svc("<p>Oi {{nome}}</p>", resend_api_key="re_key", frontend_base_url="https://sw.example")
+def test_a_template_without_the_tag_gets_the_footer_injected():
+    """P1b(a): the link is present by construction, never left to the template."""
+    svc, db = _svc("<html><body><p>Oi {{nome}}</p></body></html>", resend_api_key="re_key",
+                   frontend_base_url="https://sw.example")
+    assert _send(svc, db) == 1
+    (email,) = _Http.calls[0]["json"]
+    link = email["headers"]["List-Unsubscribe"].strip("<>")
+    assert link in email["html"] and email["html"].index(link) < email["html"].index("</body>")
+    assert "Descadastrar" in email["html"]
+    assert email["headers"]["List-Unsubscribe-Post"] == "List-Unsubscribe=One-Click"
+
+
+def test_no_signing_secret_refuses_the_live_send():
+    svc, db = _svc("<p>x</p>", resend_api_key="re_key", frontend_base_url="https://sw.example", jwt_secret="")
     assert _send(svc, db) == 0
     assert db.rows["send_logs"][0]["error_message"] == ss.UNSUBSCRIBE_REFUSAL
     assert _Http.calls == []

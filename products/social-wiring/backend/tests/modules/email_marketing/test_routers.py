@@ -163,6 +163,42 @@ class TestUnsubscribeRouter:
         assert resp.json()["email"] == email
 
 
+class TestUnsubscribeOneClick:
+    """P1b(a): signed (purpose-bound) tokens, RFC 8058 one-click POST, idempotent."""
+
+    def _token(self, purpose="unsubscribe"):
+        from noctusai_lib.security import signed_tokens
+
+        return signed_tokens.sign(
+            purpose, {"org_id": "org-1", "contact_id": "contact-1", "email": "p@example.com"},
+            settings.jwt_secret,
+        )
+
+    def test_signed_token_round_trips(self, client):
+        from app.modules.email_marketing.routers.unsubscribe import generate_token
+
+        token = generate_token("org-1", "contact-1", "p@example.com")
+        resp = client.raw().get(f"/api/email-marketing/unsubscribe/{token}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["email"] == "p@example.com"
+
+    def test_a_token_for_another_purpose_is_refused(self, client):
+        resp = client.raw().get(f"/api/email-marketing/unsubscribe/{self._token('click')}")
+        assert resp.status_code == 400, resp.text
+
+    def test_one_click_post_unsubscribes_then_is_idempotent(self, client):
+        client.mock_supabase.set_table_data("contacts", [
+            {"id": "contact-1", "org_id": "org-1", "email": "p@example.com", "status": "active"}])
+        url = f"/api/email-marketing/unsubscribe/{self._token()}"
+        first = client.raw().post(url, data={"List-Unsubscribe": "One-Click"})
+        assert first.status_code == 200, first.text
+        assert first.json()["ok"] is True and "already" not in first.json()
+        client.mock_supabase.set_table_data("contacts", [
+            {"id": "contact-1", "org_id": "org-1", "email": "p@example.com", "status": "unsubscribed"}])
+        again = client.raw().post(url, data={"List-Unsubscribe": "One-Click"})
+        assert again.status_code == 200 and again.json()["already"] is True
+
+
 class TestWebhooksRouter:
     """Fail-closed (2026-10-10): the Resend webhook flips contacts to bounced /
     complained / unsubscribed, so an unauthenticated POST must never get past
