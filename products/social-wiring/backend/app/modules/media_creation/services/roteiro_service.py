@@ -654,8 +654,13 @@ async def _handle_gerar(job: Job) -> None:
     await executar_geracao(job, db=_admin_db(), llm=get_roteiro_llm())
 
 
-geracao_jobs.register_handler(JOB_PERGUNTAS, _handle_perguntas, on_dead_letter=reconcile_dead_letter)
-geracao_jobs.register_handler(JOB_GERAR, _handle_gerar, on_dead_letter=reconcile_dead_letter)
+def register_handlers() -> None:
+    """Register both handlers (+ reconciler) with the ``geracao`` worker. Idempotent; runs at import."""
+    geracao_jobs.register_handler(JOB_PERGUNTAS, _handle_perguntas, on_dead_letter=reconcile_dead_letter)
+    geracao_jobs.register_handler(JOB_GERAR, _handle_gerar, on_dead_letter=reconcile_dead_letter)
+
+
+register_handlers()
 
 __all__ = [
     "RoteiroError",

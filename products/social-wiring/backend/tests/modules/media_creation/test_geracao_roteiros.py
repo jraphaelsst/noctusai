@@ -436,6 +436,8 @@ class TestGeracaoFalhas:
     def test_handlers_registrados_no_worker_geracao_com_reconciler(self):
         from app.modules.media_creation.services import roteiro_service as svc
 
+        geracao_jobs.clear_handlers()  # the registry is process-global; other suites clear it
+        svc.register_handlers()
         for t, fn in (("roteiro.perguntas", svc._handle_perguntas), ("roteiro.gerar", svc._handle_gerar)):
             assert geracao_jobs.get_handler(t) is fn
             assert geracao_jobs.get_reconciler(t) is svc.reconcile_dead_letter
