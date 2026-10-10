@@ -4830,6 +4830,181 @@ _SW_PROPOSTAS_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — sw-lead-to-contract S6 (CONTRACT §8 / §8.6 / §8.7): manual
+# captação (226) and possível duplicado + the manual<->Vista link (228).
+# Each probe borrows one existing `imovel_registry` row for (org, código) and
+# lists a table its OWN migration creates in `tabelas`, so a not-yet-applied
+# migration is `no_fixture` (never `ambiguous`) — including the two registry
+# probes, whose `vinculado_a` column ships in 228 alongside
+# `imovel_vinculo_eventos`. CHECKs fire before the statement-end FK checks;
+# the two UNIQUE probes self-provision registry rows so their FKs hold.
+# ---------------------------------------------------------------------------
+
+_M_CAPTACAO = "226_imovel_captacao_manual.sql"
+_M_DUPLICATAS = "228_imovel_duplicatas.sql"
+_T_CAPTACAO = f"{_S}.imovel_captacao"
+_T_DUPLICATAS = f"{_S}.imovel_duplicata_candidatos"
+_T_VINCULO_EVENTOS = f"{_S}.imovel_vinculo_eventos"
+
+
+def _captacao_ins(col: str, val: str) -> str:
+    return (
+        f"    INSERT INTO {_S}.imovel_captacao (org_id, codigo_canonical, {col})\n"
+        f"    VALUES (v_org, v_codigo, {val});"
+    )
+
+
+def _duplicata_ins(cols: str, vals: str) -> str:
+    return (
+        f"    INSERT INTO {_S}.imovel_duplicata_candidatos (org_id, codigo_manual, {cols})\n"
+        f"    VALUES (v_org, v_codigo, {vals});"
+    )
+
+
+def _registry_ins(codigo: str, vinculado_a_sql: str = "NULL") -> str:
+    return (
+        f"    INSERT INTO {_S}.imovel_registry (org_id, codigo_canonical, vinculado_a)\n"
+        f"    VALUES (v_org, '{codigo}', {vinculado_a_sql});"
+    )
+
+
+_REG_PROBE_TARGET = (
+    f"(SELECT id FROM {_S}.imovel_registry "
+    "WHERE org_id = v_org AND codigo_canonical = 'NOC_PROBE_T')"
+)
+
+_SW_IMOVEL_MANUAL_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="imovel_captacao.valores_positivos",
+        guard_name="imovel_captacao_valores_positivos",
+        migration=_M_CAPTACAO,
+        rationale="A manual listing priced at zero or less would print and filter as a real price.",
+        fixtures=("registry",),
+        ops_sql=_captacao_ins("valor_venda", "0"),
+        sqlstate_condition=_CHECK,
+        what="an imovel_captacao row with valor_venda = 0",
+        tabelas=(_T_CAPTACAO,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_captacao.comodos_nao_negativos",
+        guard_name="imovel_captacao_comodos_nao_negativos",
+        migration=_M_CAPTACAO,
+        rationale="A negative room count is a typing error that would corrupt the catalog's filters.",
+        fixtures=("registry",),
+        ops_sql=_captacao_ins("dormitorios", "-1"),
+        sqlstate_condition=_CHECK,
+        what="an imovel_captacao row with dormitorios = -1",
+        tabelas=(_T_CAPTACAO,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_dados.drive_folder_url_drive",
+        guard_name="imovel_dados_drive_folder_url_drive",
+        migration=_M_CAPTACAO,
+        rationale="The deal's Drive link is opened by agents; only a Google Drive URL may be stored there.",
+        fixtures=("registry",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.imovel_dados (org_id, codigo, drive_folder_url)\n"
+            "    VALUES (v_org, v_codigo, 'http://example.com/not-drive');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="an imovel_dados row with a non-Drive drive_folder_url",
+        tabelas=(_T_CAPTACAO,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_duplicata_candidatos.score_faixa",
+        guard_name="imovel_duplicata_score_faixa",
+        migration=_M_DUPLICATAS,
+        rationale="The duplicate score is a 0..1 confidence; outside it the review ordering is meaningless.",
+        fixtures=("registry",),
+        ops_sql=_duplicata_ins("codigo_vista, score", "'NOC_PROBE_V', 2"),
+        sqlstate_condition=_CHECK,
+        what="a duplicate candidate with score 2",
+        tabelas=(_T_DUPLICATAS,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_duplicata_candidatos.status_valido",
+        guard_name="imovel_duplicata_status_valido",
+        migration=_M_DUPLICATAS,
+        rationale="Only pendente/descartado/confirmado exist; another value would be neither shown nor resolved.",
+        fixtures=("registry",),
+        ops_sql=_duplicata_ins("codigo_vista, score, status", "'NOC_PROBE_V', 0.5, 'noc_probe_bogus'"),
+        sqlstate_condition=_CHECK,
+        what="a duplicate candidate with an out-of-vocabulary status",
+        tabelas=(_T_DUPLICATAS,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_duplicata_candidatos.lados_distintos",
+        guard_name="imovel_duplicata_lados_distintos",
+        migration=_M_DUPLICATAS,
+        rationale="An imóvel cannot be its own duplicate; such a pair could only be confirmed into a self-link.",
+        fixtures=("registry",),
+        ops_sql=_duplicata_ins("codigo_vista, score", "v_codigo, 0.5"),
+        sqlstate_condition=_CHECK,
+        what="a duplicate candidate pairing a código with itself",
+        tabelas=(_T_DUPLICATAS,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_duplicata_candidatos.par_unico",
+        guard_name="uq_imovel_duplicata_par",
+        migration=_M_DUPLICATAS,
+        rationale="One row per (manual, Vista) pair is what makes 'Não é o mesmo' permanent — a second row would re-suggest a dismissed pair.",
+        fixtures=("registry",),
+        ops_sql=(
+            _registry_ins("NOC_PROBE_V") + "\n"
+            + _duplicata_ins("codigo_vista, score", "'NOC_PROBE_V', 0.5") + "\n"
+            + _duplicata_ins("codigo_vista, score", "'NOC_PROBE_V', 0.6")
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two candidate rows for the same (manual, Vista) pair",
+        tabelas=(_T_DUPLICATAS,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_registry.vinculo_nao_a_si_mesmo",
+        guard_name="imovel_registry_vinculo_nao_a_si_mesmo",
+        migration=_M_DUPLICATAS,
+        rationale="A registry row linked to itself would make the link resolver loop or resolve an imóvel to itself.",
+        fixtures=("registry",),
+        ops_sql=(
+            f"    UPDATE {_S}.imovel_registry SET vinculado_a = id\n"
+            "    WHERE org_id = v_org AND codigo_canonical = v_codigo;"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a registry row linked to itself",
+        tabelas=(_T_VINCULO_EVENTOS,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_registry.um_manual_por_vista",
+        guard_name="uq_imovel_registry_vinculado_a",
+        migration=_M_DUPLICATAS,
+        rationale="One manual record per Vista listing: two would make property-level legal data follow two sources at once.",
+        fixtures=("registry",),
+        ops_sql=(
+            _registry_ins("NOC_PROBE_T") + "\n"
+            + _registry_ins("NOC_PROBE_A", _REG_PROBE_TARGET) + "\n"
+            + _registry_ins("NOC_PROBE_B", _REG_PROBE_TARGET)
+        ),
+        sqlstate_condition=_UNIQ,
+        what="two manual registry rows linked to the same Vista row",
+        tabelas=(_T_VINCULO_EVENTOS,),
+    ),
+    _sw_junction_probe(
+        probe_id="imovel_vinculo_eventos.acao_valida",
+        guard_name="imovel_vinculo_eventos_acao_valida",
+        migration=_M_DUPLICATAS,
+        rationale="The link audit trail only knows vincular/desvincular; any other action is an unreadable audit row.",
+        fixtures=("registry",),
+        ops_sql=(
+            f"    INSERT INTO {_S}.imovel_vinculo_eventos (org_id, codigo_manual, codigo_vista, acao)\n"
+            "    VALUES (v_org, v_codigo, 'NOC_PROBE_V', 'noc_probe_bogus');"
+        ),
+        sqlstate_condition=_CHECK,
+        what="a link audit event with an unknown acao",
+        tabelas=(_T_VINCULO_EVENTOS,),
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — seed editorial workflow (`noctusai_lib.domain.sql_templates.
 # editorial_tables`; project `seed-editorial-workflow`, slice E2).
 #
@@ -5732,6 +5907,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_207_PROBES,
     *_SW_218_PROBES,
     *_SW_PROPOSTAS_PROBES,
+    *_SW_IMOVEL_MANUAL_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
