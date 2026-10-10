@@ -461,6 +461,22 @@ added.
   runs it whole. The name says "scoped" so a partial run is never read as
   the full one, and a changed module no test imports surfaces as
   `mcp_untested_change` (`incomplete`), never a silent pass.
+
+  **Import scoping is not enough for a module everyone imports
+  (2026-10-10).** Any `compliance.py` edit, which is every keeper slice,
+  still selected 90 of 295 test files, and the gate ran past 600s against
+  the 90s box. For a module at least 10 test files import, `symbol_scope`
+  now maps the diff to the module's top-level symbols, closes over their
+  in-module users, and runs only the test nodes that name one. Tests that
+  reach detectors through the registry (`check_all_products` and the
+  one-hop toolkit defs calling it) always run. Every doubt falls back to
+  import scoping and never selects zero tests:
+  - an import, decorator or other unattributable edit;
+  - a changed symbol that no test names;
+  - an empty pick.
+
+  A replay over 14 keeper commits narrowed 12 of them to 5–7 files; the
+  other 2 fell back.
 - **Signature** (advisory, for what preflight cannot know in advance): a
   non-zero gate whose output carries a known setup-failure fingerprint
   (`Executable doesn't exist at`, `Process from config.webServer was not

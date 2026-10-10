@@ -1297,6 +1297,19 @@ def test_extensionless_hook_maps_by_path_form_not_bare_word(tmp_path):
         ["mcp/noctusai/tests/test_by_join.py", "mcp/noctusai/tests/test_by_slash.py"], [])
 
 
+def test_workflow_file_maps_by_path_form(tmp_path):
+    """2026-10-10: a test.yml edit read `unmapped_diff` ⇒ `incomplete`."""
+    tests = tmp_path / "mcp/noctusai/tests"
+    tests.mkdir(parents=True)
+    (tests / "test_ci_scope.py").write_text('W = ROOT / ".github/workflows/test.yml"\n')
+    (tests / "test_join.py").write_text('W = ROOT / ".github" / "workflows" / "test.yml"\n')
+    (tests / "test_other_wf.py").write_text('W = ROOT / ".github/workflows/deploy.yml"\n')
+    scope = GS._derive_scope([".github/workflows/test.yml"])
+    assert scope["mcp"] and not scope.get("unmapped_files")
+    assert GS._mcp_scoped_test_files(tmp_path, scope["mcp_files"]) == (
+        ["mcp/noctusai/tests/test_ci_scope.py", "mcp/noctusai/tests/test_join.py"], [])
+
+
 def test_unreferenced_hook_script_is_surfaced_untested(tmp_path):
     (tmp_path / "mcp/noctusai/tests").mkdir(parents=True)
     scope = GS._derive_scope(["scripts/hooks/merge-kb-counts.sh"])

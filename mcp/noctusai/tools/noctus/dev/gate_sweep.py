@@ -119,6 +119,7 @@ from .migrate_product import (
     SubprocessGitRunner,
     _check_tree_staleness,
 )
+from . import symbol_scope
 from .product_scope import filter_active
 
 # ---------------------------------------------------------------------------
@@ -135,7 +136,10 @@ _SEED_FLEET_RE = re.compile(r"^seed/")
 # every hook edit read `incomplete`. Their bare names are common words
 # ("pre-commit" sits in hundreds of docstrings), so they match tests by PATH
 # form (`_script_path_ref_re`), not by basename.
-_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$|scripts/hooks/[^/.]+$|scripts/hooks/[^/]+\.sh$|scripts/infra/[^/]+\.(py|sh)$)")
+# `.github/workflows/*.yml` join the same way (2026-10-10): a test.yml edit
+# was `unmapped_diff` ⇒ `incomplete`, though the CI-scope/matrix-sync tests
+# parse it by path (`workflows/test.yml`).
+_MCP_RE = re.compile(r"^(mcp/|scripts/hooks/[^/]+\.py$|scripts/hooks/[^/.]+$|scripts/hooks/[^/]+\.sh$|scripts/infra/[^/]+\.(py|sh)$|\.github/workflows/[^/]+\.ya?ml$)")
 
 
 def _script_path_ref_re(script: str) -> "re.Pattern[str]":
@@ -977,19 +981,23 @@ def _imported_names(tree: ast.AST) -> set[str]:
 
 
 def _mcp_scoped_test_files(
-    root: Path, mcp_files: list[str]
+    root: Path, mcp_files: list[str], diffs: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]] | None:
     """Affected toolkit test files for `mcp_files`, or None = run the full suite.
 
-    Returns ``(tests, untested_modules)``: repo-relative test paths, and the
-    changed modules no test imports (surfaced, never silently passed)."""
+    Returns ``(tests, untested_modules)``: repo-relative test paths (or
+    `path::Node` ids), and the changed modules no test imports (surfaced,
+    never silently passed). `diffs` (``{repo_rel: {"old", "diff"}}``, from
+    `_mcp_module_diffs`) lets a module many tests import narrow from "every
+    importer" to the tests naming what changed — `symbol_scope`; without it,
+    or whenever that can't tell, import scoping stands."""
     pkg_dir = root / _MCP_PKG
     changed_tests: set[str] = set()
     changed_mods: dict[str, str] = {}
     hook_files: list[str] = []
     data_files: list[str] = []
     for f in mcp_files:
-        if f.startswith(("scripts/hooks/", "scripts/infra/")):
+        if f.startswith(("scripts/hooks/", "scripts/infra/", ".github/workflows/")):
             hook_files.append(f)  # tested from the toolkit suite, loaded by path
             continue
         if not f.startswith(_MCP_PKG):
@@ -1012,6 +1020,7 @@ def _mcp_scoped_test_files(
 
     affected = set(changed_tests)
     covered: set[str] = set()
+    importers: dict[str, list[str]] = {}
     if changed_mods:
         stems = {Path(rel).stem: mod for mod, rel in changed_mods.items()}
         for test in sorted((pkg_dir / "tests").rglob("test_*.py")):
@@ -1029,14 +1038,15 @@ def _mcp_scoped_test_files(
             hits = [m for m in changed_mods if m in imported]
             if stem_hit:
                 hits.append(stem_hit)
-            if hits:
-                affected.add(rel_test)
-                covered.update(hits)
+            for mod in hits:
+                importers.setdefault(mod, []).append(rel_test)
+            covered.update(hits)
     untested = sorted(changed_mods[m] for m in changed_mods if m not in covered)
+    affected |= _narrowed_importers(root, changed_mods, importers, diffs or {})
     for hook in [*hook_files, *data_files]:
         name = Path(hook).name
-        if hook.startswith("scripts/") and not hook.endswith(".py"):
-            path_ref = _script_path_ref_re(hook)  # extensionless / .sh: path form
+        if hook.startswith((".github/", "scripts/")) and not hook.endswith(".py"):
+            path_ref = _script_path_ref_re(hook)  # extensionless / .sh / .yml: path form
             matches = lambda text: bool(path_ref.search(text))  # noqa: E731
         else:
             matches = lambda text: name in text  # noqa: E731
@@ -1045,7 +1055,73 @@ def _mcp_scoped_test_files(
         affected.update(hits)
         if not hits:
             untested.append(hook)
-    return sorted(affected), sorted(untested)
+    whole = {a for a in affected if "::" not in a}
+    return sorted(a for a in affected if a.split("::")[0] not in whole or a in whole), sorted(untested)
+
+
+def _narrowed_importers(
+    root: Path, changed_mods: dict[str, str],
+    importers: dict[str, list[str]], diffs: dict[str, dict[str, Any]],
+) -> set[str]:
+    """Each changed module's importing tests — narrowed by `symbol_scope`
+    for a module enough tests import, when its diff is known."""
+    selected: set[str] = set()
+    kit: dict[str, str] | None = None
+    for mod, tests in importers.items():
+        info = diffs.get(_MCP_PKG + changed_mods[mod])
+        narrowed = None
+        if info is not None and len(tests) >= symbol_scope.MIN_IMPORTING_TESTS:
+            if kit is None:
+                kit = _toolkit_sources(root)
+            narrowed = symbol_scope.scope_module(
+                lambda rel: (root / rel).read_text(encoding="utf-8"), mod, tests,
+                info["old"], (root / _MCP_PKG / changed_mods[mod]).read_text(encoding="utf-8"),
+                info["diff"], kit,
+            )
+        selected.update(narrowed if narrowed is not None else tests)
+    return selected
+
+
+def _toolkit_sources(root: Path) -> dict[str, str]:
+    """Non-test toolkit modules + test helpers, for `symbol_scope`'s
+    registry reach (how a test reaches detectors without naming them)."""
+    pkg = root / _MCP_PKG
+    return {
+        str(p.relative_to(root)): p.read_text(encoding="utf-8", errors="replace")
+        for p in pkg.rglob("*.py")
+        if not p.name.startswith("test_")
+        and not {".venv", "node_modules", "__pycache__"} & set(p.relative_to(pkg).parts)
+    }
+
+
+def _mcp_module_diffs(
+    root: Path, git_runner: GitRunner, base_ref: str, mcp_files: list[str],
+) -> dict[str, dict[str, Any]]:
+    """`{repo_rel: {"old": base source | None, "diff": -U0 diff}}` for the
+    changed toolkit modules, measured from the merge-base to the WORKING
+    tree (the same committed+uncommitted union `_changed_files` scopes).
+    Any git failure leaves the module out — `_mcp_scoped_test_files` then
+    keeps import scoping for it, never a narrower guess."""
+    out: dict[str, dict[str, Any]] = {}
+    mods = [f for f in mcp_files if f.startswith(_MCP_PKG) and f.endswith(".py")
+            and not f[len(_MCP_PKG):].startswith("tests/") and (root / f).exists()]
+    if not mods:
+        return out
+    try:
+        base = git_runner.run(root, ["merge-base", base_ref, "HEAD"]).strip()
+    except GitQueryError:
+        return out
+    for f in mods:
+        try:
+            diff = git_runner.run(root, ["diff", "-U0", base, "--", f])
+        except GitQueryError:
+            continue
+        try:
+            old = git_runner.run(root, ["show", f"{base}:{f}"])
+        except GitQueryError:
+            old = None  # new in this branch
+        out[f] = {"old": old, "diff": diff}
+    return out
 
 
 def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
@@ -1128,7 +1204,7 @@ def _build_gate_specs(root: Path, scope: dict[str, Any]) -> list[GateSpec]:
         ]
 
     if scope["mcp"]:
-        scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []))
+        scoped = _mcp_scoped_test_files(root, scope.get("mcp_files", []), scope.get("mcp_diffs"))
         if scoped is None:
             specs.append(
                 GateSpec("mcp_toolkit_tests", [py, "-m", "pytest", "mcp/noctusai/tests/", "-q"], root)
@@ -1460,7 +1536,10 @@ def gate_sweep(
     changed_files, warnings = _changed_files(root, runner_git, base_ref)
     scope = _derive_scope(changed_files)
     scope["base_ref"] = base_ref
+    if scope["mcp"]:
+        scope["mcp_diffs"] = _mcp_module_diffs(root, runner_git, base_ref, scope["mcp_files"])
     specs = _build_gate_specs(root, scope)
+    scope.pop("mcp_diffs", None)  # whole module sources — never in the result
     runner = run_gate or functools.partial(_default_run_gate, timeout=timeout)
 
     # Measured against what `_default_run_gate` actually hands its subprocess
