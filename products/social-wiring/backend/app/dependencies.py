@@ -424,6 +424,34 @@ async def get_current_user_org_unified(
     return auth_context_to_legacy_tuple(ctx)
 
 
+# ─── Platform-admin gate (shared by transcricoes + treinamentos admin) ───
+#
+# ``user_id -> is platform admin`` is a SEAM (``get_platform_admin_check``) so a
+# test can override it; the trusted source is the ``public.noctus_users`` row
+# (never ``user_metadata``).
+def _is_platform_admin(user_id: str) -> bool:
+    from noctusai_lib.api.auth.platform import resolve_platform_admin_role
+
+    return resolve_platform_admin_role(get_core_client(), user_id) == "admin"
+
+
+def get_platform_admin_check():
+    """Seam: ``user_id -> is platform admin`` (trusted ``public.noctus_users`` read)."""
+    return _is_platform_admin
+
+
+def require_platform_admin(
+    auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check),
+):
+    """403 unless the caller is a NoctusAI platform admin. Returns the auth tuple."""
+    from fastapi import HTTPException
+
+    user_id = str(getattr(auth[0], "id", "") or "")
+    if not user_id or not is_admin(user_id):
+        raise HTTPException(status_code=403, detail="Restrito a administradores da plataforma NoctusAI.")
+    return auth
+
+
 __all__ = [
     "AuthContext",
     "auth_context_to_legacy_tuple",
@@ -437,10 +465,12 @@ __all__ = [
     "get_current_user_org",
     "get_current_user_org_unified",
     "get_org_id",
+    "get_platform_admin_check",
     "get_scoped_user_client",
     "get_settings",
     "get_social_wiring_client",
     "get_user_client",
     "get_user_role",
+    "require_platform_admin",
     "resolve_sso_role",
 ]

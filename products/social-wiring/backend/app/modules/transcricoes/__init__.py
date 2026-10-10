@@ -14,7 +14,10 @@ Spec: ``projects/core-studio/specs/transcription-contract.md``.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def register() -> Any:
@@ -26,7 +29,30 @@ def register() -> Any:
 
     # Import-time registration, BEFORE `start_scheduler()` — the retention sweep.
     scheduler.configure()
-    return ModuleRegistration(routers=[router], standard_routers=())
+
+    async def start_worker_hook() -> None:
+        """Its OWN seed Worker (type "transcricao", concurrency 1, lease 300 s, heartbeat). Its
+        claim gate is the kill switch `transcricao_habilitada` (default OFF): while off, jobs
+        stay pending."""
+        from app.config import settings
+        from app.modules.transcricoes.worker import start_worker
+
+        try:
+            await start_worker(settings)
+        except Exception:
+            logger.exception("transcricoes: worker NÃO iniciado — as transcrições ficam na fila.")
+
+    async def stop_worker_hook() -> None:
+        from app.modules.transcricoes.worker import stop_worker
+
+        await stop_worker()
+
+    return ModuleRegistration(
+        routers=[router],
+        standard_routers=(),
+        startup=[start_worker_hook],
+        shutdown=[stop_worker_hook],
+    )
 
 
 __all__ = ["register"]

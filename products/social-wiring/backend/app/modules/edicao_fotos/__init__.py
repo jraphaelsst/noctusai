@@ -92,7 +92,10 @@ photos, reference pairs) → two ``_MAX_BODY_PATH_OVERRIDES`` entries. The worke
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def register() -> Any:
@@ -117,6 +120,22 @@ def register() -> Any:
     # W8: daily model notes (00:05) + PTAX backfill, on the seed scheduler.
     fotos_scheduler.configure()
 
+    async def start_worker_hook() -> None:
+        """Started unless EDICAO_FOTOS_WORKER_ENABLED is false (the kill switch); it claims
+        nothing while the platform setting `processamento_ativo` is off (the live pause, W8)."""
+        from app.config import settings
+        from app.modules.edicao_fotos.services.worker import start_worker
+
+        try:
+            await start_worker(settings)
+        except Exception:
+            logger.exception("edicao_fotos: worker NÃO iniciado — os lotes ficam na fila.")
+
+    async def stop_worker_hook() -> None:
+        from app.modules.edicao_fotos.services.worker import stop_worker
+
+        await stop_worker()
+
     return ModuleRegistration(
         routers=[
             capacidades.router,
@@ -133,6 +152,8 @@ def register() -> Any:
             processamento.router,
         ],
         standard_routers=(),
+        startup=[start_worker_hook],
+        shutdown=[stop_worker_hook],
     )
 
 

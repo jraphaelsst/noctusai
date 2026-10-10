@@ -530,3 +530,7 @@ Authored 2026-10-10 (fix-forward of 218, caught post-deploy by `verify_db_guards
 ## 225 — transcricoes (shared voice transcription: table, reservar_transcricao quota RPC, private sw-transcricoes bucket, cs_* transcricao_id FKs) — NOT APPLIED
 
 Authored 2026-10-09 (projects/core-studio/specs/transcription-contract.md S3). Requires 224. Apply BEFORE deploying the image that reads/writes it. The kill switch `transcricao_habilitada` ships OFF.
+
+## 229 — cs_geracao (Geração: Meu Perfil columns, taxonomies, Biblioteca, Headlines, Roteiros, Chat, Treinamentos, library transcription lane) — NOT APPLIED
+
+Authored 2026-10-10 (projects/core-studio/specs/geracao-contract.md §2, BE-0). Adds `cs_marca_perfil.nichos/profissoes/apresentacao_magnetica/ctas`; creates `cs_nichos`/`cs_profissoes`/`cs_formatos_video`/`cs_treinamentos` (seeded from `geracao_taxonomias.py`), `cs_perfis_monitorados`, `cs_virais`, `cs_biblioteca_referencias`, `cs_headline_lotes`, `cs_headlines`, `cs_roteiros`, `cs_chat_conversas`/`cs_chat_mensagens`, `cs_memorias`, the private `sw-biblioteca` bucket and 10 `status_pagina(media-creation-*, desenvolvimento)` rows. Adds `transcricoes.origem` and `reservar_transcricao_biblioteca()`, and REDEFINES `reservar_transcricao()` so every voice counter sees only `origem=usuario`. Requires 217, 221, 224 and 225. Apply BEFORE deploying the image that reads/writes it; `predeploy_check` `schema_drift` fails until applied. Library ingestion stays OFF (`biblioteca_ingestao_habilitada`, default OFF) until the security review is recorded.

@@ -21,12 +21,11 @@ from noctusai_lib.domain.jobs import JobRepository
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.primitives.responses import success_response
 
-from app.dependencies import get_admin_client, get_current_user_org
+from app.dependencies import get_admin_client, get_current_user_org, require_platform_admin
 from app.modules.transcricoes.deps import (
     KillSwitch,
     TranscriberFactory,
     get_kill_switch,
-    get_platform_admin_check,
     get_transcricao_jobs,
     get_transcricao_storage,
     get_transcriber_factory,
@@ -57,15 +56,6 @@ def build_service(
         get_admin_client(), str(org_id), user_id,
         storage=storage, jobs=jobs, transcriber_factory=factory, kill_switch=kill_switch,
     )
-
-
-def require_platform_admin(
-    auth=Depends(get_current_user_org), is_admin=Depends(get_platform_admin_check),
-):
-    user_id = str(getattr(auth[0], "id", "") or "")
-    if not user_id or not is_admin(user_id):
-        raise HTTPException(status_code=403, detail="Restrito a administradores da plataforma NoctusAI.")
-    return auth
 
 
 @router.post("", status_code=202)

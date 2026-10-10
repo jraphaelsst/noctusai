@@ -39,6 +39,9 @@ unchanged.
     ``_STANDARD_ROUTERS`` registry this module needs (health /
     notificacoes / team / llm / ai_outputs / ai_feedback / scheduler);
     de-duplicated across modules.
+  - ``startup`` / ``shutdown``: list of zero-arg async hooks (job workers);
+    collected into ``STARTUP_HOOKS`` / ``SHUTDOWN_HOOKS`` below and run by
+    ``app/lifespan.py``.
 """
 from __future__ import annotations
 
@@ -68,6 +71,13 @@ class ModuleRegistration:
 
     routers: list = field(default_factory=list)
     standard_routers: tuple[str, ...] = ()
+    #: Zero-argument ``async def`` hooks run by ``app/lifespan.py`` after the base wiring
+    #: (``startup``, in ``MODULES`` order) and before it winds down (``shutdown``, reverse
+    #: order). A job worker a module owns starts and stops here. Each hook is isolated: one
+    #: that raises is logged at ERROR and never aborts startup / the other hooks -- a worker
+    #: is a side effect, not a precondition for serving.
+    startup: list = field(default_factory=list)
+    shutdown: list = field(default_factory=list)
 
 
 def _register_media_wiring() -> ModuleRegistration:
@@ -354,9 +364,15 @@ MODULES = [
 
 _routers: list = []
 _standard: list[str] = []
+#: Lifespan hooks contributed by modules (see ``ModuleRegistration.startup``); read by
+#: ``app.lifespan`` at request time (late import -- ``app.main`` imports ``app.lifespan``).
+STARTUP_HOOKS: list = []
+SHUTDOWN_HOOKS: list = []
 for _register in MODULES:
     _reg = _register()
     _routers.extend(_reg.routers)
+    STARTUP_HOOKS.extend(_reg.startup)
+    SHUTDOWN_HOOKS.extend(_reg.shutdown)
     for _name in _reg.standard_routers:
         if _name not in _standard:
             _standard.append(_name)

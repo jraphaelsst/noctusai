@@ -64,7 +64,10 @@ marker in ``products/social-wiring/backend/migrations/001_social-wiring.sql``.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def register() -> Any:
@@ -94,6 +97,27 @@ def register() -> Any:
     cerebro_scheduler.configure()
     # Voice answers: the `cerebro_resposta` context of the shared transcription layer.
     cerebro_transcricao.register_contexto()
+    # Geração: stale + dead-letter sweep (import-time, BEFORE `start_scheduler()`).
+    from app.modules.media_creation import geracao_scheduler
+    from app.modules.media_creation.services import geracao_jobs
+
+    geracao_scheduler.configure()
+
+    async def start_pesquisa_extracao_hook() -> None:
+        """Its OWN seed Worker (types ["pesquisa.extrair"]), NOT the fotos one (that one's claim
+        gate is the fotos pause). A wiring failure is logged at ERROR and never aborts startup."""
+        from app.config import settings
+        from app.modules.media_creation.services.pesquisa_extracao_worker import start_worker
+
+        try:
+            await start_worker(settings)
+        except Exception:
+            logger.exception("pesquisa_extracao: worker NÃO iniciado — as extrações ficam na fila.")
+
+    async def stop_pesquisa_extracao_hook() -> None:
+        from app.modules.media_creation.services.pesquisa_extracao_worker import stop_worker
+
+        await stop_worker()
 
     return ModuleRegistration(
         routers=[
@@ -112,6 +136,9 @@ def register() -> Any:
         # create_product_app(); this module talks to chat_completion()
         # directly without needing the /api/llm standard router exposed.
         standard_routers=(),
+        # The `geracao` + `biblioteca` workers (geracao_jobs) own their isolation per worker.
+        startup=[start_pesquisa_extracao_hook, geracao_jobs.startup_hook],
+        shutdown=[stop_pesquisa_extracao_hook, geracao_jobs.shutdown_hook],
     )
 
 

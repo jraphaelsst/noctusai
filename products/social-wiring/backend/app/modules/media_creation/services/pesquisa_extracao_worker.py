@@ -5,22 +5,21 @@ A SECOND worker, deliberately separate from the edicao_fotos one: that worker's
 Pesquisa. This one claims only ``pesquisa.extrair`` and has no gate; its single
 switch is ``PESQUISA_EXTRACAO_WORKER_ENABLED`` (also read by submit -> 503).
 
-Started from ``app/lifespan.py`` (second case of the lifespan-worker pattern
-after edicao_fotos; at the third, ``ModuleRegistration`` should grow startup/
-shutdown hooks). "When the process allows it": no Supabase service role (the
+Started/stopped through the ``ModuleRegistration`` startup/shutdown hooks
+(``media_creation.register()``), over the seed ``WorkerHandle``. "When the process allows it": no Supabase service role (the
 SQLite dev backend) logs why and keeps serving -- the worker is a side effect,
 never a precondition for serving. The queue row lease keeps several processes
 from running the same job.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import socket
 from typing import Any, Callable, Optional
 
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository, RetryPolicy, Worker, make_job_repository
+from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 
 from app.modules.media_creation.services.pesquisa_extracao_service import JOB_TYPE, executar_extracao
 from app.modules.media_creation.services.pesquisa_service import PesquisaLlm, chat_pesquisa_llm
@@ -32,8 +31,7 @@ STOP_TIMEOUT_SECONDS = 10.0
 #: 2 retries (contract 2.4), a few seconds apart: an infra blip, not a storm.
 RETRY_POLICY = RetryPolicy(max_retries=2, backoff_seconds=5.0)
 
-_task: Optional[asyncio.Task] = None
-_stop: Optional[asyncio.Event] = None
+_handle: Optional[WorkerHandle] = None
 
 
 def worker_id() -> str:
@@ -71,11 +69,11 @@ def build_worker(repo: JobRepository, db, cfg: Any, llm: PesquisaLlm = chat_pesq
 
 async def start_worker(cfg: Any, *, db: Any = None, repo: Optional[JobRepository] = None) -> bool:
     """Start the worker. Returns whether it is running."""
-    global _task, _stop
+    global _handle
     if not cfg.pesquisa_extracao_worker_enabled:
         logger.info("pesquisa_extracao: worker DESLIGADO (PESQUISA_EXTRACAO_WORKER_ENABLED=false).")
         return False
-    if _task is not None and not _task.done():
+    if is_running():
         return True
     if db is None:
         from app.dependencies import _use_sqlite, get_admin_client
@@ -88,28 +86,21 @@ async def start_worker(cfg: Any, *, db: Any = None, repo: Optional[JobRepository
         logger.warning("pesquisa_extracao: worker não iniciado — sem cliente admin do Supabase.")
         return False
     worker = build_worker(repo or make_jobs_repository(db), db, cfg)
-    _stop = asyncio.Event()
-    _task = asyncio.create_task(worker.run_forever(stop_event=_stop), name="pesquisa-extracao-worker")
+    _handle = WorkerHandle(worker, name="pesquisa-extracao-worker", stop_timeout=STOP_TIMEOUT_SECONDS)
+    _handle.start()
     logger.info("pesquisa_extracao: worker iniciado (%s).", worker_id())
     return True
 
 
 async def stop_worker() -> None:
-    global _task, _stop
-    if _task is None:
-        return
-    assert _stop is not None
-    _stop.set()
-    try:
-        await asyncio.wait_for(_task, timeout=STOP_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        logger.warning("pesquisa_extracao: worker não parou em %.0fs — cancelando", STOP_TIMEOUT_SECONDS)
-        _task.cancel()
-    _task = _stop = None
+    global _handle
+    handle, _handle = _handle, None
+    if handle is not None:
+        await handle.stop()
 
 
 def is_running() -> bool:
-    return _task is not None and not _task.done()
+    return _handle is not None and _handle.is_running()
 
 
 __all__ = ["build_handler", "build_worker", "is_running", "make_jobs_repository", "start_worker", "stop_worker"]

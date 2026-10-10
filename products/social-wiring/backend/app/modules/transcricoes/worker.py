@@ -1,7 +1,7 @@
 """The transcription job worker (seed ``domain.jobs.Worker``) and its handler.
 
-Its OWN worker (concurrency 1, lease 300 s with heartbeat), started/stopped from
-``app/lifespan.py`` like the Pesquisa extraction one. The kill switch
+Its OWN worker (concurrency 1, lease 300 s with heartbeat), started/stopped through the
+``ModuleRegistration`` startup/shutdown hooks (``transcricoes.register()``). The kill switch
 ``transcricao_habilitada`` is the worker's ``claim_gate``: while off, jobs stay
 ``pending`` untouched.
 
@@ -32,6 +32,7 @@ from noctusai_lib.domain.jobs import (
     RetryPolicy,
     Worker,
 )
+from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 from noctusai_lib.domain.jobs.repo import RescheduleLater
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.transcription import (
@@ -62,8 +63,7 @@ RETRY_POLICY = RetryPolicy(max_retries=2, backoff_seconds=30.0)
 # The per-job hard cap (min(1800, 3 x duracao) + 60 s) is the Real transcriber
 # client's timeout (``LocalWhisperTranscriber``); the lease heartbeat covers the wait.
 
-_task: Optional[asyncio.Task] = None
-_stop: Optional[asyncio.Event] = None
+_handle: Optional[WorkerHandle] = None
 
 
 def worker_id() -> str:
@@ -201,11 +201,11 @@ async def start_worker(
     storage: Optional[StorageBackend] = None, transcriber_factory: Optional[TranscriberFactory] = None,
 ) -> bool:
     """Start the worker. Returns whether it is running."""
-    global _task, _stop
+    global _handle
     if not cfg.transcricao_worker_enabled:
         logger.info("transcricoes: worker DESLIGADO (TRANSCRICAO_WORKER_ENABLED=false).")
         return False
-    if _task is not None and not _task.done():
+    if is_running():
         return True
     if db is None:
         from app.dependencies import _use_sqlite, get_admin_client
@@ -226,28 +226,21 @@ async def start_worker(
 
         transcriber_factory = make_transcriber
     worker = build_worker(repo or make_jobs_repository(db), db, storage, cfg, transcriber_factory)
-    _stop = asyncio.Event()
-    _task = asyncio.create_task(worker.run_forever(stop_event=_stop), name="transcricao-worker")
+    _handle = WorkerHandle(worker, name="transcricao-worker", stop_timeout=STOP_TIMEOUT_SECONDS)
+    _handle.start()
     logger.info("transcricoes: worker iniciado (%s).", worker_id())
     return True
 
 
 async def stop_worker() -> None:
-    global _task, _stop
-    if _task is None:
-        return
-    assert _stop is not None
-    _stop.set()
-    try:
-        await asyncio.wait_for(_task, timeout=STOP_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError:
-        logger.warning("transcricoes: worker não parou em %.0fs — cancelando", STOP_TIMEOUT_SECONDS)
-        _task.cancel()
-    _task = _stop = None
+    global _handle
+    handle, _handle = _handle, None
+    if handle is not None:
+        await handle.stop()
 
 
 def is_running() -> bool:
-    return _task is not None and not _task.done()
+    return _handle is not None and _handle.is_running()
 
 
 __all__ = ["build_handler", "build_worker", "is_running", "run_hook", "start_worker", "stop_worker"]

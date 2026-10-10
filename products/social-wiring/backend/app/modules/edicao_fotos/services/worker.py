@@ -34,6 +34,7 @@ from typing import Any, Callable, Optional
 
 from noctusai_lib.domain.photo_editing import ProcessingGate, build_worker
 from noctusai_lib.domain.jobs import Worker
+from noctusai_lib.domain.jobs.lifecycle import WorkerHandle
 from noctusai_lib.integrations.llm import ModelCatalogStore, refresh_model_overrides
 
 from app.modules.edicao_fotos.services import ports as ports_service
@@ -59,9 +60,9 @@ class WorkerStatus:
     erro_catalogo: Optional[str] = None
 
 
-_task: Optional[asyncio.Task] = None
+_handle: Optional[WorkerHandle] = None
 _refresher: Optional[asyncio.Task] = None
-_stop: Optional[asyncio.Event] = None
+_refresher_stop: Optional[asyncio.Event] = None
 _worker: Optional[Worker] = None
 _gate: Optional[ProcessingGate] = None
 _status = WorkerStatus(motivo_parado="Worker ainda não iniciado neste processo.")
@@ -112,7 +113,7 @@ async def start_worker(
 ) -> bool:
     """Start the worker (paused by the platform setting until turned on).
     Returns whether it is running."""
-    global _task, _refresher, _stop, _worker, _gate
+    global _handle, _refresher, _refresher_stop, _worker, _gate
     if not cfg.edicao_fotos_worker_enabled:
         _set_status(
             kill_switch_ativo=False,
@@ -121,7 +122,7 @@ async def start_worker(
         )
         logger.info("edicao_fotos: worker DESLIGADO (EDICAO_FOTOS_WORKER_ENABLED=false).")
         return False
-    if _task is not None and not _task.done():
+    if is_running():
         return True
     try:
         ports = (ports_factory or ports_service.get_ports)(cfg)
@@ -140,10 +141,11 @@ async def start_worker(
         poll_interval_seconds=float(cfg.edicao_fotos_worker_poll_seconds),
         claim_gate=_gate,
     )
-    _stop = asyncio.Event()
-    _task = asyncio.create_task(_worker.run_forever(stop_event=_stop), name="edicao-fotos-worker")
+    _handle = WorkerHandle(_worker, name="edicao-fotos-worker", stop_timeout=STOP_TIMEOUT_SECONDS)
+    _handle.start()
+    _refresher_stop = asyncio.Event()
     _refresher = asyncio.create_task(
-        _refresh_loop(store, float(cfg.edicao_fotos_catalog_refresh_seconds), _stop),
+        _refresh_loop(store, float(cfg.edicao_fotos_catalog_refresh_seconds), _refresher_stop),
         name="edicao-fotos-catalog-refresh",
     )
     _set_status(
@@ -161,26 +163,27 @@ async def start_worker(
 
 
 async def stop_worker() -> None:
-    global _task, _refresher, _stop, _worker, _gate
-    if _task is None:
+    global _handle, _refresher, _refresher_stop, _worker, _gate
+    handle, refresher, refresher_stop = _handle, _refresher, _refresher_stop
+    if handle is None and refresher is None:
         return
-    assert _stop is not None
-    _stop.set()
-    for task in (_task, _refresher):
-        if task is None:
-            continue
+    if handle is not None:
+        await handle.stop()  # signals, waits, cancels on timeout
+    if refresher_stop is not None:
+        refresher_stop.set()
+    if refresher is not None:
         try:
-            await asyncio.wait_for(task, timeout=STOP_TIMEOUT_SECONDS)
+            await asyncio.wait_for(refresher, timeout=STOP_TIMEOUT_SECONDS)
         except asyncio.TimeoutError:
             logger.warning("edicao_fotos: tarefa %s não parou em %.0fs — cancelando",
-                           task.get_name(), STOP_TIMEOUT_SECONDS)
-            task.cancel()
-    _task = _refresher = _stop = _worker = _gate = None
+                           refresher.get_name(), STOP_TIMEOUT_SECONDS)
+            refresher.cancel()
+    _handle = _refresher = _refresher_stop = _worker = _gate = None
     _set_status(rodando=False, motivo_parado="Worker parado (desligamento do processo).")
 
 
 def is_running() -> bool:
-    return _task is not None and not _task.done()
+    return _handle is not None and _handle.is_running()
 
 
 def invalidate_gate() -> None:

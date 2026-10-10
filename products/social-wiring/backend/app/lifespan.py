@@ -135,42 +135,16 @@ async def on_startup() -> None:
 
     schedule_clientes_catch_up()
 
-    # Edição de Fotos job worker — started unless EDICAO_FOTOS_WORKER_ENABLED
-    # is false (the kill switch); it claims nothing while the platform
-    # setting `processamento_ativo` is off (the live pause, W8).
-    # Isolated so a wiring failure here (it builds Supabase/Redis/storage
-    # adapters) is logged at ERROR and never skips the steps above or aborts
-    # startup: the worker is a side effect, not a precondition for serving.
+    # Module-owned startup hooks (``ModuleRegistration.startup``): the job workers --
+    # edicao_fotos, pesquisa_extracao, transcricoes, geracao, biblioteca. Each is isolated:
+    # a wiring failure (they build Supabase/Redis/storage adapters) is logged at ERROR and
+    # never skips the steps around it or aborts startup -- a worker is a side effect, not a
+    # precondition for serving.
+    await run_hooks(_hooks("STARTUP_HOOKS"), "startup")
     from app.modules.edicao_fotos.services.scheduler import (
         schedule_catch_up as schedule_fotos_catch_up,
     )
-    from app.modules.edicao_fotos.services.worker import start_worker as start_fotos_worker
 
-    try:
-        await start_fotos_worker(settings)
-    except Exception:
-        logger.exception("edicao_fotos: worker NÃO iniciado — os lotes ficam na fila.")
-    # Pesquisa extraction worker — its OWN seed Worker (types
-    # ["pesquisa.extrair"]), NOT the fotos one (that one's claim gate is the
-    # fotos pause). Same isolation: a wiring failure is logged at ERROR and
-    # never aborts startup.
-    from app.modules.media_creation.services.pesquisa_extracao_worker import (
-        start_worker as start_pesquisa_extracao_worker,
-    )
-
-    try:
-        await start_pesquisa_extracao_worker(settings)
-    except Exception:
-        logger.exception("pesquisa_extracao: worker NÃO iniciado — as extrações ficam na fila.")
-    # Transcription worker — its OWN seed Worker (type "transcricao", concurrency 1,
-    # lease 300 s, heartbeat). Its claim gate is the kill switch
-    # `transcricao_habilitada` (default OFF): while off, jobs stay pending.
-    from app.modules.transcricoes.worker import start_worker as start_transcricao_worker
-
-    try:
-        await start_transcricao_worker(settings)
-    except Exception:
-        logger.exception("transcricoes: worker NÃO iniciado — as transcrições ficam na fila.")
     # Daily model-notes catch-up — same reason and shape as the Vista one.
     schedule_fotos_catch_up()
 
@@ -181,21 +155,35 @@ async def on_startup() -> None:
 
 
 async def on_shutdown() -> None:
-    """Stop the worker. Safe to call when startup short-circuited."""
-    from app.modules.edicao_fotos.services.worker import stop_worker as stop_fotos_worker
-
-    from app.modules.media_creation.services.pesquisa_extracao_worker import (
-        stop_worker as stop_pesquisa_extracao_worker,
-    )
-
-    from app.modules.transcricoes.worker import stop_worker as stop_transcricao_worker
-
-    await stop_fotos_worker()
-    await stop_pesquisa_extracao_worker()
-    await stop_transcricao_worker()
+    """Stop the workers (module shutdown hooks, reverse order) and the conversation worker.
+    Safe to call when startup short-circuited."""
+    await run_shutdown_hooks(_hooks("SHUTDOWN_HOOKS"))
     await stop_worker()
     stop_scheduler()
     logger.info("Social Wiring lifespan shutdown complete.")
+
+
+def _hooks(name: str) -> list:
+    """The module-contributed hook list. Late import: ``app.main`` imports this module."""
+    from app import main
+
+    return list(getattr(main, name))
+
+
+async def run_hooks(hooks: list, phase: str) -> None:
+    """Run each zero-arg async hook, isolated: one that raises is logged at ERROR with its
+    name and the rest still run."""
+    for hook in hooks:
+        name = getattr(hook, "__qualname__", repr(hook))
+        try:
+            await hook()
+        except Exception:
+            logger.exception("lifespan %s hook %s failed — continuing.", phase, name)
+
+
+async def run_shutdown_hooks(hooks: list) -> None:
+    """Shutdown hooks run in REVERSE registration order (last started, first stopped)."""
+    await run_hooks(list(reversed(hooks)), "shutdown")
 
 
 def _resolve_default_org(admin_supabase) -> UUID | None:
@@ -223,4 +211,4 @@ def _resolve_default_org(admin_supabase) -> UUID | None:
     return None
 
 
-__all__ = ["on_shutdown", "on_startup"]
+__all__ = ["on_shutdown", "on_startup", "run_hooks", "run_shutdown_hooks"]

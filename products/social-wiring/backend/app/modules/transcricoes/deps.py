@@ -9,12 +9,11 @@ import logging
 import time
 from typing import Any, Callable, Optional
 
-from noctusai_lib.api.auth.platform import resolve_platform_admin_role
 from noctusai_lib.domain.jobs import JobRepository, make_job_repository
 from noctusai_lib.integrations.storage import StorageBackend
 from noctusai_lib.integrations.transcription import Transcriber, make_transcriber
 
-from app.dependencies import get_admin_client, get_core_client
+from app.dependencies import get_admin_client, get_platform_admin_check  # noqa: F401 — re-export (tests override it here)
 from app.modules.certidoes.deps import storage_for
 
 logger = logging.getLogger(__name__)
@@ -90,15 +89,6 @@ class CachedSwitch:
             self._value = bool(self._reader())
             self._at = now
         return self._value
-
-
-def _is_platform_admin(user_id: str) -> bool:
-    return resolve_platform_admin_role(get_core_client(), user_id) == "admin"
-
-
-def get_platform_admin_check() -> Callable[[str], bool]:
-    """Seam: ``user_id -> is platform admin`` (trusted ``public.noctus_users`` read)."""
-    return _is_platform_admin
 
 
 __all__ = [

@@ -313,6 +313,44 @@ class SocialWiringSettings(ProductSettings):
     # How long a process trusts its last read of `transcricao_habilitada`.
     transcricao_gate_ttl_seconds: float = 10.0
 
+    # ─── Geração (app/modules/media_creation) ────────────────────────────
+    # Dashboard / Chat / Biblioteca / Headlines / Roteiros. Contract:
+    # projects/core-studio/specs/geracao-contract.md section 9.4. Every cap is
+    # finite, never "unlimited by omission". The seed org LLM budget
+    # (`enforce_budget`) applies on top. Only models registered in the seed
+    # catalog (llm/models.py) may be pinned: an unregistered model is recorded
+    # as costing 0 and silently disarms the budget.
+    geracao_llm_model: str = "claude-opus-5"
+    biblioteca_llm_model: str = "claude-haiku-4-5"
+    headline_lotes_dia_usuario: int = 30
+    headline_estruturas_por_lote: int = 5
+    # 5 batches of 2 headlines per marca per day.
+    headlines_sugeridas_por_dia_marca: int = 5
+    roteiros_dia_usuario: int = 20
+    chat_mensagens_dia_usuario: int = 100
+    chat_mensagens_dia_org: int = 400
+    chat_contexto_max_chars: int = 60_000
+    biblioteca_max_perfis_org: int = 30
+    biblioteca_classificacoes_dia_org: int = 300
+    # A post is "viral" when its metric >= this x the profile median.
+    biblioteca_viral_ratio: float = 3.0
+    # Library transcription lane (own budget; the enforcing copy is the
+    # `reservar_transcricao_biblioteca` RPC of migration 229, geracao-contract 3.4).
+    biblioteca_transcricao_min_dia_global: int = 60
+    biblioteca_transcricao_min_dia_org: int = 30
+    biblioteca_transcricao_max_s_por_reel: int = 180
+    biblioteca_transcricao_max_fila: int = 5
+    # Hard switch of the `geracao` worker: off => not started AND submit returns 503
+    # `geracao_indisponivel`. (The `biblioteca` worker's switch is the platform setting
+    # `biblioteca_ingestao_habilitada`, DB first then env, default OFF -- not a field here.)
+    geracao_worker_enabled: bool = True
+    geracao_poll_seconds: float = 2.0
+    geracao_lease_seconds: float = 600.0
+    biblioteca_poll_seconds: float = 5.0
+    biblioteca_lease_seconds: float = 600.0
+    # How long a process trusts its last read of `biblioteca_ingestao_habilitada`.
+    biblioteca_gate_ttl_seconds: float = 10.0
+
     # ─── WhatsApp inbound (Phase 5) ────────────────────────────────────
     # Comma-separated E.164 phone numbers authorized to trigger uploads
     whatsapp_authorized_numbers: str = "+5511974693365"
