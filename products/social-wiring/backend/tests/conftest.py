@@ -130,6 +130,37 @@ _ATENDIMENTO_CONTRATO_VERSOES_PRESENCE_MANIFEST = {
 }
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_call(item):
+    """Re-applies the reset right before each test BODY. Function-scoped fixtures
+    that build the app (``create_product_app``) re-run ``configure_credentials``
+    after the autouse fixture below, so a fixture alone is not enough."""
+    from noctusai_lib.config import credentials as seed_credentials
+
+    seed_credentials._reset_for_testing()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_credential_tiers():
+    """Tests never read the live ``platform_settings`` / ``org_settings`` tiers.
+
+    ``create_product_app`` wires ``configure_credentials`` with whatever
+    ``.env`` holds. CI has no ``.env``, so there the DB tiers simply miss. A
+    developer or predeploy worktree symlinks the real ``.env``, so a bare
+    ``resolve_credential`` then read PRODUCTION rows. On 2026-10-10 that made
+    the transcription kill-switch tests fail as soon as prod's
+    ``transcricao_habilitada`` was switched on. The seed's own reset hook
+    drops the configured client, so every test sees CI's shape: tiers 1-2
+    miss and the env tier answers. A test that needs a DB tier injects a
+    resolver or calls ``configure_credentials`` itself.
+    """
+    from noctusai_lib.config import credentials as seed_credentials
+
+    seed_credentials._reset_for_testing()
+    yield
+    seed_credentials._reset_for_testing()
+
+
 @pytest.fixture(autouse=True)
 def _simulate_product_rpcs(monkeypatch):
     """`MockSupabaseClient.rpc` cannot execute SQL; route the product RPCs the
