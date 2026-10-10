@@ -14,7 +14,7 @@ import pytest
 
 from app.modules.imovel_hub import documentos_service as ds
 from tests.modules.imovel_hub.conftest import (
-    CODIGO, ORG_ID, documento_row, seed,
+    CODIGO, ORG_ID, documento_row, imovel_row, seed,
 )
 from tests.modules.imovel_hub.test_imovel_certidoes_estruturadas import (
     _analise_por_pagina, _paginas, _seed_storage,
@@ -40,14 +40,17 @@ def _reler(chamadas, texto, via_visao=True):
     return _fn
 
 
-async def _ler(scoped, fake_storage, *, analise, reler, municipio="Cotia", monkeypatch=None):
+async def _ler(scoped, fake_storage, *, analise, reler, municipio="Cotia"):
     did = str(uuid4())
     path = f"{ORG_ID}/imoveis/{CODIGO}/g"
-    seed(scoped, documentos=[documento_row(did, tipo_documento="guia_iptu", storage_path=path)])
-    await _seed_storage(fake_storage, path)
-    monkeypatch.setattr(
-        ds.dados_service, "municipio_do_imovel", lambda c, o, codigo: municipio
+    # municipio_do_imovel runs for real, reading the imóvel's cidade (the
+    # registry carries no snap_cidade, so a None município is truly unknown).
+    seed(
+        scoped,
+        imoveis=[imovel_row(cidade=municipio)],
+        documentos=[documento_row(did, tipo_documento="guia_iptu", storage_path=path)],
     )
+    await _seed_storage(fake_storage, path)
     out = await ds.extrair_estrutura(
         scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
         extract_text=_paginas(("foto", True)),
@@ -63,7 +66,7 @@ def _conflitos(scoped):
 
 
 @pytest.mark.asyncio
-async def test_17_digitos_nao_grava_escala_e_avisa(scoped, fake_storage, monkeypatch):
+async def test_17_digitos_nao_grava_escala_e_avisa(scoped, fake_storage):
     chamadas = []
     # The stronger model still returns the wrong 17 digits.
     analise = _analise_por_pagina({
@@ -72,7 +75,7 @@ async def test_17_digitos_nao_grava_escala_e_avisa(scoped, fake_storage, monkeyp
     })
     out, row = await _ler(
         scoped, fake_storage, analise=analise,
-        reler=_reler(chamadas, f"INSCRICAO {ERRADA}"), monkeypatch=monkeypatch,
+        reler=_reler(chamadas, f"INSCRICAO {ERRADA}"),
     )
     assert chamadas == [1]
     assert row["inscricao_imobiliaria"] is None
@@ -83,7 +86,7 @@ async def test_17_digitos_nao_grava_escala_e_avisa(scoped, fake_storage, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_releitura_forte_corrige_e_grava(scoped, fake_storage, monkeypatch):
+async def test_releitura_forte_corrige_e_grava(scoped, fake_storage):
     chamadas = []
     analise = _analise_por_pagina({
         "foto": {"inscricao_imobiliaria": ERRADA},
@@ -92,7 +95,6 @@ async def test_releitura_forte_corrige_e_grava(scoped, fake_storage, monkeypatch
     out, row = await _ler(
         scoped, fake_storage, analise=analise,
         reler=_reler(chamadas, f"INSCRICAO CADASTRAL {IMPRESSA}"),
-        monkeypatch=monkeypatch,
     )
     assert chamadas == [1]
     assert row["inscricao_imobiliaria"] == IMPRESSA
@@ -100,24 +102,24 @@ async def test_releitura_forte_corrige_e_grava(scoped, fake_storage, monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_18_digitos_valido_nao_escala(scoped, fake_storage, monkeypatch):
+async def test_18_digitos_valido_nao_escala(scoped, fake_storage):
     chamadas = []
     analise = _analise_por_pagina({"foto": {"inscricao_imobiliaria": IMPRESSA}})
     _, row = await _ler(
         scoped, fake_storage, analise=analise,
-        reler=_reler(chamadas, "x"), monkeypatch=monkeypatch,
+        reler=_reler(chamadas, "x"),
     )
     assert chamadas == []
     assert row["inscricao_imobiliaria"] == IMPRESSA
 
 
 @pytest.mark.asyncio
-async def test_municipio_desconhecido_comportamento_existente(scoped, fake_storage, monkeypatch):
+async def test_municipio_desconhecido_comportamento_existente(scoped, fake_storage):
     chamadas = []
     analise = _analise_por_pagina({"foto": {"inscricao_imobiliaria": ERRADA}})
     _, row = await _ler(
         scoped, fake_storage, analise=analise, municipio=None,
-        reler=_reler(chamadas, "x"), monkeypatch=monkeypatch,
+        reler=_reler(chamadas, "x"),
     )
     assert chamadas == []
     assert row["inscricao_imobiliaria"] == ERRADA
