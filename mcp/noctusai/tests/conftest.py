@@ -258,3 +258,15 @@ def _release_studio_app_package():
     apb = sys.modules.get("tools.noctus.dev.agent_package_build")
     if apb is not None:
         apb.reset_studio()
+
+
+@pytest.fixture
+def pglite():
+    """Gate for PGlite-backed tests: skip locally, FAIL in CI (a self-skipping gate is zero coverage)."""
+    import shutil
+
+    node_dir = _MCP_ROOT / "node"
+    if shutil.which("node") is None or not (node_dir / "node_modules" / "@electric-sql" / "pglite").is_dir():
+        if os.environ.get("CI"):
+            pytest.fail("PGlite not installed in CI - the mcp job's `npm ci` in mcp/noctusai/node must provide it")
+        pytest.skip("node + PGlite not installed (run `npm ci` in mcp/noctusai/node)")

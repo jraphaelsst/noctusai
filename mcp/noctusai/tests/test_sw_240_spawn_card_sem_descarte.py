@@ -6,23 +6,23 @@ silently dropping 6 real cards. Two shapes: (A) another ORG holds the meta
 lead; (B) the SAME org's card for the meta lead is linked to another lead.
 
 Runs the OLD function (the um_card_por_lead function + the old global index) and asserts the
-card is lost, then the NEW one and asserts it is not. Skips locally when
-node/PGlite is absent; FAILS in CI (a self-skipping gate is zero coverage).
+card is lost, then the NEW one and asserts it is not. Lives in the toolkit suite (the leg that installs PGlite via
+`npm ci` in mcp/noctusai/node); the shared `pglite` fixture skips locally when
+PGlite is absent and FAILS in CI (a self-skipping gate is zero coverage).
 """
 from __future__ import annotations
 
 import json
-import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 from noctusai_lib.testing.migrations import migration_path
+from settings import REPO_ROOT
 
-ROOT = Path(__file__).resolve().parents[4]
-BACKEND = Path(__file__).resolve().parents[1]
+ROOT = Path(REPO_ROOT)
+BACKEND = ROOT / "products" / "social-wiring" / "backend"
 M_NEW = migration_path(BACKEND, "spawn_funil_card_sem_descarte_silencioso")
 M_OLD = migration_path(BACKEND, "um_card_por_lead")
 NODE_DIR = ROOT / "mcp" / "noctusai" / "node"
@@ -76,10 +76,6 @@ def _function_sql(path: Path) -> str:
 
 
 def _run(steps: list[str]) -> list[dict]:
-    if shutil.which("node") is None or not (NODE_DIR / "node_modules" / "@electric-sql" / "pglite").is_dir():
-        if os.environ.get("CI"):
-            pytest.fail("PGlite not installed in CI (npm ci in mcp/noctusai/node)")
-        pytest.skip("node + PGlite not installed (npm ci in mcp/noctusai/node)")
     p = subprocess.run(["node", "--input-type=module", "-e", _JS], cwd=NODE_DIR, input=json.dumps({"steps": steps}),
                        capture_output=True, text=True, check=True, timeout=120)
     return json.loads(p.stdout)
@@ -109,25 +105,25 @@ def _scenario(new: bool, shape: str) -> list[dict]:
     return res[base:]
 
 
-def test_old_function_drops_the_card_cross_org():
+def test_old_function_drops_the_card_cross_org(pglite):
     res = _scenario(False, "cross_org")
     cards = res[-1]["rows"]
     assert not any(c["lead_id"] == L1 for c in cards), "old function was expected to lose the real org's card"
 
 
-def test_new_function_keeps_the_card_cross_org():
+def test_new_function_keeps_the_card_cross_org(pglite):
     res = _scenario(True, "cross_org")
     assert all(r["ok"] for r in res), res
     assert any(c["lead_id"] == L1 and c["org_id"] == REAL for c in res[-1]["rows"])
 
 
-def test_old_function_drops_the_card_same_org():
+def test_old_function_drops_the_card_same_org(pglite):
     res = _scenario(False, "same_org")
     cards = res[-1]["rows"]
     assert not any(c["lead_id"] == L2 for c in cards), "old function was expected to lose the second lead's card"
 
 
-def test_new_function_keeps_card_and_records_anomaly_same_org():
+def test_new_function_keeps_card_and_records_anomaly_same_org(pglite):
     steps_res = _scenario(True, "same_org")
     assert all(r["ok"] for r in steps_res), steps_res
     cards = steps_res[-1]["rows"]
@@ -144,7 +140,7 @@ def test_new_function_keeps_card_and_records_anomaly_same_org():
     assert res[-1]["rows"] == [{"tipo": "meta_lead_ja_ligado_a_outro_lead", "lead_id": L2}], res[-1]
 
 
-def test_migration_is_idempotent():
+def test_migration_is_idempotent(pglite):
     steps = [SCHEMA, _function_sql(M_OLD), TRIGGERS]
     body = M_NEW.read_text(encoding="utf-8")
     res = _run(steps + [body, body])

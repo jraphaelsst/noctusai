@@ -9,9 +9,7 @@ discriminates (the old silent drop is a `violation`).
 """
 from __future__ import annotations
 
-import os
 import re
-import shutil
 from pathlib import Path
 
 import pytest
@@ -20,18 +18,9 @@ from settings import REPO_ROOT
 from tools.noctus.dev import migration_replay as mr
 from tools.noctus.dev import verify_db_guards as vdg
 
-_NODE = Path(REPO_ROOT) / mr.NODE_DIR
 _M240 = "products/social-wiring/backend/migrations/240_spawn_funil_card_sem_descarte_silencioso.sql"
 _IDS = ("social-wiring.atendimentos.org_meta_lead.unique", "social-wiring.spawn_funil_card.no_silent_drop")
 _SENT = re.compile(r"NOC_PROBE:(\w+):")
-
-
-@pytest.fixture
-def pglite():
-    if shutil.which("node") is None or not (_NODE / "node_modules" / "@electric-sql" / "pglite").is_dir():
-        if os.environ.get("CI"):
-            pytest.fail("PGlite not installed in CI (npm ci in mcp/noctusai/node)")
-        pytest.skip("node + PGlite not installed")
 
 
 def _outcomes(overrides: dict[str, str]) -> dict[str, str]:

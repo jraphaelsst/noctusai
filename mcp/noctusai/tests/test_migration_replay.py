@@ -8,7 +8,6 @@ coverage that reads as green.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -21,18 +20,6 @@ from tools.noctus.dev import migration_replay as mr
 _NODE_DIR = Path(REPO_ROOT) / mr.NODE_DIR
 _FIXTURES = Path(__file__).parent / "fixtures" / "migration_replay"
 _SW_231 = "products/social-wiring/backend/migrations/231_intermediario_documento_canonico.sql"
-
-
-def _pglite_ready() -> bool:
-    return shutil.which("node") is not None and (_NODE_DIR / "node_modules" / "@electric-sql" / "pglite").is_dir()
-
-
-@pytest.fixture
-def pglite():
-    if not _pglite_ready():
-        if os.environ.get("CI"):
-            pytest.fail("PGlite not installed in CI — the mcp job's `npm ci` in mcp/noctusai/node must provide it")
-        pytest.skip("node + PGlite not installed (run `npm ci` in mcp/noctusai/node)")
 
 
 def _node_eval(js: str) -> str:
