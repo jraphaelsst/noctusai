@@ -624,3 +624,64 @@ def test_defer_sweep_skips_the_inline_sweep_and_flags_it_pending():
 
     svc.sweep_person_layer()
     assert ran == [True]
+
+
+# ─── resolve_org: ghost + ambiguous page→org mappings ─────────────────────
+
+
+class _OrgAdmin:
+    """Answers the forms lookup and the public.organizations existence check."""
+
+    def __init__(self, form_orgs: list[str], existing: list[str]) -> None:
+        self._form_orgs, self._existing = form_orgs, existing
+        self._table = None
+
+    def schema(self, _n):
+        return self
+
+    def table(self, name):
+        self._table = name
+        return self
+
+    def __getattr__(self, _name):
+        return lambda *_a, **_k: self
+
+    def execute(self):
+        if self._table == "organizations":
+            return SimpleNamespace(data=[{"id": o} for o in self._existing])
+        return SimpleNamespace(data=[{"org_id": o} for o in self._form_orgs])
+
+
+def _real_resolver(admin):
+    return LeadgenWebhookService(admin_supabase=admin)
+
+
+def test_resolve_org_ignores_ghost_org_not_in_organizations(monkeypatch):
+    ghost = "00000000-0000-4000-8000-0000000000aa"
+    monkeypatch.setattr(
+        "app.services.app_config_store.resolve_meta_ads_config", lambda: (None, None, None)
+    )
+    svc = _real_resolver(_OrgAdmin([ghost], existing=[]))
+    assert svc.resolve_org(_event()) is None
+
+
+def test_resolve_org_prefers_the_existing_org_over_the_ghost():
+    ghost = "00000000-0000-4000-8000-0000000000aa"
+    svc = _real_resolver(_OrgAdmin([ghost, str(ORG_ID)], existing=[str(ORG_ID)]))
+    assert svc.resolve_org(_event()) == ORG_ID
+
+
+def test_resolve_org_refuses_when_page_maps_to_two_existing_orgs(caplog):
+    other = "22222222-2222-4222-8222-222222222222"
+    svc = _real_resolver(_OrgAdmin([str(ORG_ID), other], existing=[str(ORG_ID), other]))
+    with caplog.at_level("ERROR"):
+        assert svc.resolve_org(_event()) is None
+    assert "AMBIGUOUS" in caplog.text
+
+
+def test_resolve_org_lookup_failure_fails_closed():
+    class _Boom(_OrgAdmin):
+        def execute(self):
+            raise RuntimeError("db down")
+
+    assert _real_resolver(_Boom([], [])).resolve_org(_event()) is None

@@ -35,6 +35,20 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def pytest_collection_finish(session) -> None:  # noqa: D401 — pytest hook
+    """Fail loud, before any test body runs, if a live Supabase env meets
+    hermetic tests (see ``live_db_guard``). Runs after every conftest has
+    applied its env, so ``own_test_env`` scrubs are honoured."""
+    import pytest
+
+    from noctusai_lib.testing.live_db_guard import assert_hermetic
+
+    try:
+        assert_hermetic(session.items)
+    except RuntimeError as exc:
+        raise pytest.UsageError(str(exc)) from exc
+
+
 def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
     """Probe for `app.main` and import it to load the consent catalog.
 

@@ -87,6 +87,7 @@ from uuid import UUID, uuid4
 
 from noctusai_lib.primitives.exceptions import ValidationError_
 from noctusai_lib.primitives.phone import normalize_phone
+from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.services import chat_cliente_link
 from app.services import identidade_service as ident
@@ -908,10 +909,71 @@ def _insert_touches(
         }
         for r in members
     ]
-    report.touches_created += len(payload)
     if dry_run or not payload:
+        report.touches_created += len(payload)
         return
-    _t(client, "cliente_touches").insert(payload).execute()
+    payload = _drop_foreign_touches(client, org_id, cliente_id, payload)
+    if not payload:
+        return
+    try:
+        _t(client, "cliente_touches").insert(payload).execute()
+    except Exception as exc:
+        if not is_unique_violation(exc):
+            raise
+        # Lost a race on the GLOBAL (origem_tabela, origem_id) unique: settle
+        # row by row, skipping exactly the rows that collide.
+        for row in payload:
+            try:
+                _t(client, "cliente_touches").insert(row).execute()
+            except Exception as row_exc:
+                if not is_unique_violation(row_exc):
+                    raise
+                logger.warning(
+                    "clientes: touch (%s, %s) already exists (race) — skipped for cliente %s org %s",
+                    row["origem_tabela"], row["origem_id"], cliente_id, org_id,
+                )
+                continue
+            report.touches_created += 1
+        return
+    report.touches_created += len(payload)
+
+
+def _drop_foreign_touches(
+    client: Any, org_id: UUID, cliente_id: str, payload: list[dict]
+) -> list[dict]:
+    """``cliente_touches`` is unique on (origem_tabela, origem_id) GLOBALLY.
+    A touch that already exists is not ours to insert again: skip it (backfill
+    is idempotent). When it belongs to ANOTHER org/cliente — a ghost-org copy
+    of the same source row (2026-10-09) — warn with both ids; never raise."""
+    por_tabela: dict[str, list[str]] = {}
+    for r in payload:
+        por_tabela.setdefault(r["origem_tabela"], []).append(str(r["origem_id"]))
+    existentes: dict[tuple[str, str], dict] = {}
+    for tabela, ids in por_tabela.items():
+        for lote in _batched(ids, 200):
+            rows = (
+                _t(client, "cliente_touches")
+                .select("origem_tabela,origem_id,org_id,cliente_id")
+                .eq("origem_tabela", tabela)
+                .in_("origem_id", lote)
+                .execute()
+            ).data or []
+            for e in rows:
+                existentes[(e["origem_tabela"], str(e["origem_id"]))] = e
+    keep: list[dict] = []
+    for r in payload:
+        e = existentes.get((r["origem_tabela"], str(r["origem_id"])))
+        if e is None:
+            keep.append(r)
+            continue
+        if str(e.get("org_id")) != str(org_id) or str(e.get("cliente_id")) != str(cliente_id):
+            logger.warning(
+                "clientes: touch (%s, %s) already owned by org %s / cliente %s — "
+                "not re-inserted for org %s / cliente %s",
+                r["origem_tabela"], r["origem_id"], e.get("org_id"), e.get("cliente_id"),
+                org_id, cliente_id,
+            )
+    return keep
 
 
 def _attach_touches(

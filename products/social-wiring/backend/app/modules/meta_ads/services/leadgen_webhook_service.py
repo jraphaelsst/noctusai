@@ -232,32 +232,76 @@ class LeadgenWebhookService:
             return 0
 
     # ─── org resolution ────────────────────────────────────────────────
+    def _existing_org_ids(self, candidates: set[str]) -> set[str]:
+        """The subset of ``candidates`` present in ``public.organizations``.
+
+        A ghost org id (fixture rows that leaked into prod, 2026-10-09) must
+        never receive a real lead: the id is in ``meta_ads_lead_forms`` but
+        there is no organization behind it."""
+        if not candidates:
+            return set()
+        resp = (
+            self._admin.schema("public").table("organizations")
+            .select("id").in_("id", sorted(candidates)).execute()
+        )
+        return {str(r["id"]) for r in (resp.data or []) if r.get("id")}
+
     def resolve_org(self, event: LeadgenEvent) -> UUID | None:
         """page_id → org_id via the persisted forms table, else the single
-        configured org. ``None`` ⇒ park as ``unresolved``, never guess."""
+        configured org. ``None`` ⇒ park as ``unresolved``, never guess.
+
+        Refuses (``None`` + loud log) when the page maps to MORE than one
+        existing org, and skips any mapped org that does not exist in
+        ``public.organizations``."""
         if self._org_resolver is not None:
             return self._org_resolver(event)
         if event.page_id:
             try:
                 resp = (
                     self._admin.schema(_SCHEMA).table(_FORMS)
-                    .select("org_id").eq("page_id", event.page_id).limit(1).execute()
+                    .select("org_id").eq("page_id", event.page_id).execute()
                 )
-                rows = resp.data or []
-                if rows and rows[0].get("org_id"):
-                    return UUID(str(rows[0]["org_id"]))
-            except Exception:  # noqa: BLE001
+                mapped = {str(r["org_id"]) for r in (resp.data or []) if r.get("org_id")}
+                existing = self._existing_org_ids(mapped)
+            except Exception:  # noqa: BLE001 — fail closed: park, never guess an org
                 logger.exception("meta-leadgen: page→org lookup failed for %s", event.page_id)
+                return None
+            for ghost in sorted(mapped - existing):
+                logger.error(
+                    "meta-leadgen: page_id=%s maps to org %s which does not exist in "
+                    "public.organizations — ignored (orphan meta_ads_lead_forms row)",
+                    event.page_id, ghost,
+                )
+            if len(existing) > 1:
+                logger.error(
+                    "meta-leadgen: page_id=%s maps to %d orgs (%s) — AMBIGUOUS, refusing "
+                    "to pick one; parked as unresolved for the operator",
+                    event.page_id, len(existing), ", ".join(sorted(existing)),
+                )
+                return None
+            if existing:
+                return UUID(next(iter(existing)))
         from app.services.app_config_store import resolve_meta_ads_config
 
         _token, _account, raw_org = resolve_meta_ads_config()
         if not raw_org:
             return None
         try:
-            return UUID(str(raw_org))
+            configured = UUID(str(raw_org))
         except ValueError:
             logger.warning("meta-leadgen: META_ADS_ORG_ID=%r is not a valid UUID", raw_org)
             return None
+        try:
+            if str(configured) not in self._existing_org_ids({str(configured)}):
+                logger.error(
+                    "meta-leadgen: META_ADS_ORG_ID=%s does not exist in public.organizations",
+                    configured,
+                )
+                return None
+        except Exception:  # noqa: BLE001 — fail closed
+            logger.exception("meta-leadgen: org existence check failed for configured org")
+            return None
+        return configured
 
     # ─── form schema (with cold-form fallback) ─────────────────────────
     def resolve_form(self, form_id: str | None, *, page_id: str | None, adapter: Any):

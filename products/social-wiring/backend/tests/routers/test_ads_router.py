@@ -513,7 +513,7 @@ class TestBudgetPacingEndpoint:
 
 
 # ─── GET /leads/forms · GET /leads/records ────────────────────────────
-_PAGE_ID = "204862512706377"
+_PAGE_ID = "test-page-0000001"
 
 
 def _lead_forms_adapter() -> FakeMetaAdapter:
