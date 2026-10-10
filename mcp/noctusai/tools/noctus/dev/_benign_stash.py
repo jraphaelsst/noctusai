@@ -445,15 +445,22 @@ def pop_stash(
                        log_prefix, ref, (err or "").strip(), ref)
         return
 
+    drop_stash_entry(run_git, ref, log_prefix=log_prefix)
+
+
+def drop_stash_entry(run_git: RunGit, ref: str, *, log_prefix: str = "benign_stash") -> bool:
+    """Drop exactly the stash entry whose commit SHA is ``ref`` — never a
+    positional guess (the stack is shared with every worktree). Returns True
+    when dropped. Best-effort: failures are logged, never raised."""
     # Drop needs the POSITIONAL name, which is why we resolve it fresh here
     # instead of remembering one: a peer push may have shifted our entry down
     # the stack between the stash and this call.
     rc, out, _err = run_git("stash", "list", "--format=%H %gd")
     if rc != 0:
-        logger.warning("%s: applied %s but could not list the stash to drop it; "
+        logger.warning("%s: could not list the stash to drop %s; "
                        "a stale entry remains (harmless, but `git stash drop` it)",
                        log_prefix, ref)
-        return
+        return False
     positional = next(
         (
             line.split(None, 1)[1].strip()
@@ -463,13 +470,41 @@ def pop_stash(
         None,
     )
     if positional is None:
-        logger.warning("%s: applied %s but it is no longer in the stash list; "
+        logger.warning("%s: %s is no longer in the stash list; "
                        "not dropping anything", log_prefix, ref)
-        return
+        return False
     rc, _out, err = run_git("stash", "drop", positional)
     if rc != 0:
-        logger.warning("%s: applied %s but could not drop %s (%s); a stale "
-                       "entry remains", log_prefix, ref, positional, (err or "").strip())
+        logger.warning("%s: could not drop %s (%s); a stale "
+                       "entry remains", log_prefix, positional, (err or "").strip())
+        return False
+    return True
+
+
+def discard_derived(run_git: RunGit, paths: list[str], *,
+                    log_prefix: str = "benign_stash") -> dict[str, Any]:
+    """Return DERIVED, regenerable paths (the KB-count docs) to HEAD — staged
+    and unstaged — so a rebase is not refused by them. Only for paths whose
+    content is regenerated from the tree on every integrate
+    (`_kb_counts_regenerated_rel_paths`); anything else is refused, never
+    discarded. Mechanism: the SHA-addressed stash + targeted drop (no
+    reset/checkout/restore — those stay banned in task_branch).
+
+    2026-10-09: a failed KB-counts commit left 02-LANDSCAPE.md STAGED; the
+    next retry's rebase was refused ("Your index contains uncommitted
+    changes") and reported `Dirty files: []` — it blocked every session's
+    integrate once dev moved under it."""
+    derived = set(_kb_counts_regenerated_rel_paths())
+    refused = [p for p in paths if p not in derived]
+    take = [p for p in paths if p in derived]
+    if refused:
+        logger.error("%s: refusing to discard non-derived paths %s", log_prefix, refused)
+    if not take:
+        return {"discarded": [], "refused": refused}
+    ref = stash_benign(run_git, take, log_prefix=log_prefix, label_hint="discard-derived")
+    dropped = bool(ref) and drop_stash_entry(run_git, ref, log_prefix=log_prefix)
+    return {"discarded": take if ref else [], "dropped": dropped, "refused": refused,
+            **({} if ref else {"error": "stash of derived paths failed"})}
 
 
 def dirty_blocked_result(real: list[str], dev_ref: str) -> dict[str, Any]:
@@ -498,5 +533,6 @@ __all__ = [
     "is_benign", "is_ledger_ndjson", "partition_ledger",
     "strip_status_code", "classify_porcelain", "classify_dirty",
     "stash_message", "stash_benign", "pop_stash", "commit_ledger_rows",
+    "drop_stash_entry", "discard_derived",
     "dirty_blocked_result",
 ]

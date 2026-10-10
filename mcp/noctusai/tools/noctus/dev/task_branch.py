@@ -85,6 +85,7 @@ from tools.noctus.dev._benign_stash import (
     BENIGN_REFRESH_PATTERNS,
     classify_dirty as _shared_classify_dirty,
     commit_ledger_rows as _shared_commit_ledger_rows,
+    discard_derived as _shared_discard_derived,
     partition_ledger as _shared_partition_ledger,
     pop_stash as _shared_pop_stash,
     stash_benign as _shared_stash_benign,
@@ -142,6 +143,10 @@ _BANNED_TOKENS = (
 # identical bug and never got this fix. Re-exported here under the historical
 # private name so this module's public surface is unchanged.
 _BENIGN_REFRESH_PATTERNS = BENIGN_REFRESH_PATTERNS
+# The KB-count docs integrate regenerates on every rebased tip (derived ⇒ safe
+# to discard before a retried rebase; see `_shared_discard_derived`).
+from tools.noctus.dev._benign_stash import _kb_counts_regenerated_rel_paths as _kbc_paths  # noqa: E402
+_KB_COUNTS_DERIVED = frozenset(_kbc_paths())
 
 
 def _default_run_local(cmd: list[str], cwd: str | None = None) -> tuple[int, str, str]:
@@ -1387,15 +1392,25 @@ def _regenerate_and_commit_kb_counts(
         paths.append(path)
     if not paths:
         return {"ok": True, "committed": False, "paths": [], "regenerate": regen}
+    def _discard() -> dict[str, Any]:
+        # 2026-10-09: a failed add/commit used to leave these DERIVED paths
+        # staged, so the next retry's rebase was refused ("Your index contains
+        # uncommitted changes") — they are regenerated on the rebased tip anyway.
+        return _shared_discard_derived(
+            lambda *a: runner(["git", *a], cwd=wt_path), paths,
+            log_prefix="task_branch.integrate")
+
     rc, out, err = _git(runner, "add", "--", *paths, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "error": f"git add failed: {(err or out).strip()}",
-                "committed": False, "paths": paths, "regenerate": regen}
+                "committed": False, "paths": paths, "regenerate": regen,
+                "discard": _discard()}
     msg = "chore(kb-counts): regenerate derived counts at integrate [auto]"
     rc, out, err = _git(runner, "commit", "-m", msg, "--", *paths, cwd=wt_path)
     if rc != 0:
         return {"ok": False, "error": f"git commit failed: {(err or out).strip()}",
-                "committed": False, "paths": paths, "regenerate": regen}
+                "committed": False, "paths": paths, "regenerate": regen,
+                "discard": _discard()}
     if verbose:
         logger.debug("task_branch.integrate: committed KB-counts regen (%d file(s)): %s",
                      len(paths), paths)
@@ -1998,6 +2013,16 @@ def task_branch(
                 logger.debug("task_branch.integrate: attempt %d/%d — fetch + rebase",
                              attempt, max_retries)
             git("fetch", remote, "--quiet")
+            if attempt > 1:
+                # Safety net: a previous attempt's KB-count regen may have left
+                # its DERIVED docs dirty/staged; they are regenerated after this
+                # rebase anyway, so never let them refuse it.
+                _b, _r = _classify_dirty_files(runner, wt_path)
+                _derived = [f for f in _b if f in _KB_COUNTS_DERIVED]
+                if _derived:
+                    _shared_discard_derived(
+                        lambda *a: runner(["git", *a], cwd=wt_path), _derived,
+                        log_prefix="task_branch.integrate")
             rc, out, err = git("rebase", f"{remote}/{dev_branch}", cwd=wt_path)
             if rc != 0:
                 # Rebase failed — distinguish "refused" (worktree still dirty after
@@ -2021,7 +2046,9 @@ def task_branch(
                     _pop_stash(runner, wt_path, benign_stashed, verbose)
                     benign_stashed = False
                 # Re-classify after the abort (or refused) to give accurate diagnostics.
-                _, real_after = _classify_dirty_files(runner, wt_path)
+                benign_after, real_after = _classify_dirty_files(runner, wt_path)
+                _rc3, staged_out, _e3 = git("diff", "--cached", "--name-only", cwd=wt_path)
+                staged_after = [ln.strip() for ln in (staged_out or "").splitlines() if ln.strip()]
                 if not rebase_in_progress and not conflicted:
                     # Rebase was REFUSED (never started) — hook chatter re-dirtied the
                     # worktree after we stashed. Surface as a dirty-block, not a conflict,
@@ -2035,12 +2062,15 @@ def task_branch(
                     return {**plan, "status": "dirty_blocked", "exit_code": 1,
                             "conflicted_files": [],
                             "blocked_by_dirty": real_after,
+                            "dirty_benign": benign_after,
+                            "staged": staged_after,
                             "rebase_refused": True,
                             "message": (
                                 f"rebase of {branch} onto {remote}/{dev_branch} was REFUSED "
                                 f"(the worktree is dirty after auto-stash — likely post-checkout "
                                 f"hook chatter re-dirtied files). No conflict markers present. "
-                                f"Dirty files: {real_after}. "
+                                f"Dirty files: real={real_after} benign={benign_after} "
+                                f"staged={staged_after}. "
                                 f"git output: {refused_msg or '(none)'}. "
                                 f"Run `git status` in the worktree, resolve the dirty files "
                                 f"(commit or stash), then re-run integrate.").strip()}
