@@ -384,70 +384,120 @@ class TestEmpresasDerivadas:
 
 
 class TestUmUnicoPontoDeVinculo:
-    """Every writer of `clientes.conjuge_cliente_id` reaches the late-spouse
-    consequence through `services.conjuge_vinculo`. The consequence itself is
-    pinned above; here a recorder stands in for it to prove each path REACHES it."""
+    """Every writer of `clientes.conjuge_cliente_id` reaches the REAL late-spouse
+    consequence: on a deal whose proposta is `aceita`, linking a new cônjuge to
+    a seller queues the new spouse's certidões through the `Agendador` (the
+    external-boundary recorder, installed via `pos_aceite_service.configurar`)."""
 
     @pytest.fixture
-    def chamadas(self, monkeypatch):
-        registro: list[tuple[str, str]] = []
-        monkeypatch.setattr(
-            svc, "ao_vincular_conjuge",
-            lambda client, org, a, b, **kw: registro.append((str(a), str(b))) or [],
-        )
-        return registro
+    def grav(self):
+        g = Gravador()
+        svc.configurar(agendador_factory=lambda client, org: g.agendador, check_credentials=_sem_falta)
+        yield g
+        svc.configurar()
 
-    def _par(self, scoped):
-        _seed_tables(scoped)
-        a, b = str(uuid4()), str(uuid4())
-        scoped.set_table_data("clientes", [
-            cliente_row(a, nome="A", cpf="11111111111"), cliente_row(b, nome="B", cpf="22222222222"),
-        ])
-        return a, b
+    def _cenario(self, scoped):
+        ids = _deal(scoped)
+        novo = str(uuid4())
+        _cliente(scoped, cliente_row(novo, nome="Conjuge Novo", cpf="66666666666"))
+        scoped.set_table_data("atendimento_propostas", [{
+            "id": str(uuid4()), "org_id": ORG_ID, "atendimento_id": ids["aid"],
+            "status": "aceita", "aceita_por": str(uuid4()), "imovel_codigo": CODIGO,
+        }])
+        return ids, novo
 
-    def test_casar(self, scoped, chamadas):
+    def _certificou(self, scoped, grav, novo) -> bool:
+        consultas = {c["id"]: c for c in _consultas(scoped)}
+        return any(consultas[c]["cliente_id"] == novo for c in grav.consultas)
+
+    def test_casar(self, scoped, grav):
         from app.modules.card_hub import compradores_service as comp
 
-        a, b = self._par(scoped)
-        comp._casar(scoped, ORG_ID, a, b)
-        assert set(chamadas) == {(a, b), (b, a)}
+        ids, novo = self._cenario(scoped)
+        comp._casar(scoped, ORG_ID, ids["c"], novo)
+        assert self._certificou(scoped, grav, novo)
 
-    def test_vinculo_por_documento(self, scoped, chamadas):
+    def test_vinculo_por_documento(self, scoped, grav):
         from app.modules.card_hub import identidade_extracao_service as ide
 
-        a, b = self._par(scoped)
-        ide.vincular_conjuges(scoped, ORG_ID, a, b, origem="ia")
-        assert set(chamadas) == {(a, b), (b, a)}
+        ids, novo = self._cenario(scoped)
+        ide.vincular_conjuges(scoped, ORG_ID, ids["c"], novo, origem="ia")
+        assert self._certificou(scoped, grav, novo)
 
-    def test_patch_do_cliente(self, scoped, chamadas):
+    def test_patch_do_cliente(self, scoped, grav):
         from uuid import UUID
 
         from app.services import clientes_service
 
-        a, b = self._par(scoped)
-        clientes_service.update_cliente(scoped, UUID(ORG_ID), UUID(a), conjuge_cliente_id=b)
-        assert chamadas == [(a, b)]
+        ids, novo = self._cenario(scoped)
+        clientes_service.update_cliente(
+            scoped, UUID(ORG_ID), UUID(ids["c"]), conjuge_cliente_id=novo
+        )
+        assert self._certificou(scoped, grav, novo)
 
-    def test_patch_sem_conjuge_nao_dispara(self, scoped, chamadas):
+    def test_patch_sem_conjuge_nao_dispara(self, scoped, grav):
         from uuid import UUID
 
         from app.services import clientes_service
 
-        a, _ = self._par(scoped)
-        clientes_service.update_cliente(scoped, UUID(ORG_ID), UUID(a), nome="Outro Nome")
-        assert chamadas == []
+        ids, _ = self._cenario(scoped)
+        clientes_service.update_cliente(scoped, UUID(ORG_ID), UUID(ids["c"]), nome="Outro Nome")
+        assert grav.consultas == [] and _consultas(scoped) == []
 
-    def test_conflito_de_conjuge_aceito_pelo_admin(self, scoped, chamadas):
+    def test_conflito_de_conjuge_aceito_pelo_admin(self, scoped, grav):
         from uuid import UUID
 
         from app.modules.card_hub import identidade_extracao_service as ide
 
-        a, b = self._par(scoped)
+        ids, novo = self._cenario(scoped)
         cid = str(uuid4())
         scoped.set_table_data("cliente_campo_conflitos", [{
-            "id": cid, "org_id": ORG_ID, "cliente_id": a, "campo": "conjuge_cliente_id",
-            "valor_anterior": None, "origem_anterior": None, "valor_proposto": b,
+            "id": cid, "org_id": ORG_ID, "cliente_id": ids["c"], "campo": "conjuge_cliente_id",
+            "valor_anterior": None, "origem_anterior": None, "valor_proposto": novo,
             "origem_proposto": "ia", "status": "pendente", "fonte_tabela": None, "fonte_id": None,
         }])
         ide.resolver_conflito(scoped, UUID(ORG_ID), UUID(cid), aceitar=True, decidido_por=uuid4())
-        assert chamadas == [(a, b)]
+        assert self._certificou(scoped, grav, novo)
+
+    def test_sem_proposta_aceita_o_vinculo_nao_certifica(self, scoped, grav):
+        from app.modules.card_hub import compradores_service as comp
+
+        ids, novo = self._cenario(scoped)
+        scoped.set_table_data("atendimento_propostas", [])
+        comp._casar(scoped, ORG_ID, ids["c"], novo)
+        assert grav.consultas == []
+
+
+class _SemTabelaPropostas:
+    """A database where `atendimento_propostas` was not migrated yet: every
+    other table is the real mock, that one raises like PostgREST does."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def table(self, nome):
+        if nome == "atendimento_propostas":
+            raise RuntimeError("PGRST205: Could not find the table 'atendimento_propostas'")
+        return self._inner.table(nome)
+
+    def __getattr__(self, nome):
+        return getattr(self._inner, nome)
+
+
+class TestTabelaDePropostasAusente:
+    def test_hook_e_no_op_e_loga_uma_unica_vez(self, scoped, caplog):
+        import logging
+
+        ids = _deal(scoped)
+        svc._propostas_ausente_logado = False
+        grav = Gravador()
+        db = _SemTabelaPropostas(scoped)
+        with caplog.at_level(logging.WARNING, logger=svc.logger.name):
+            for _ in range(2):
+                assert svc.ao_vincular_conjuge(
+                    db, ORG_ID, ids["a"], ids["sa"],
+                    agendador=grav.agendador, check_credentials=_sem_falta,
+                ) == []
+        avisos = [r for r in caplog.records if "atendimento_propostas" in r.getMessage()]
+        assert len(avisos) == 1
+        assert grav.consultas == [] and _consultas(scoped) == []

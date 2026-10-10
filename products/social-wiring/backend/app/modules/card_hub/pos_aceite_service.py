@@ -183,6 +183,26 @@ def agendador_padrao(client: Any, org_id: Any) -> Agendador:
     return Agendador(consulta=_consulta, extracao=_extracao)
 
 
+# Process-wide seams for callers with no request (the late-spouse hook), filled
+# by `configurar` — same module-slot pattern as the other `configure_*` DI
+# seams. Unset ⇒ the real thing (`agendador_padrao` / the InfoSimples key check).
+_agendador_factory: Optional[Callable[[Any, Any], Agendador]] = None
+_check_credentials_padrao: Optional[Callable[[str], list[str]]] = None
+
+
+def configurar(
+    *,
+    agendador_factory: Optional[Callable[[Any, Any], Agendador]] = None,
+    check_credentials: Optional[Callable[[str], list[str]]] = None,
+) -> None:
+    """Install (or, with no args, clear) the scheduling / credentials seams used
+    when `disparar` is called without explicit ones. Tests install a recording
+    `Agendador` here — the external boundary — and clear it afterwards."""
+    global _agendador_factory, _check_credentials_padrao
+    _agendador_factory = agendador_factory
+    _check_credentials_padrao = check_credentials
+
+
 # ─── helpers ────────────────────────────────────────────────────────────────
 
 
@@ -553,7 +573,9 @@ def disparar(
     if ator is None:
         aceita = _proposta_aceita(client, org, str(atendimento_id)) or {}
         ator = str(aceita["aceita_por"]) if aceita.get("aceita_por") else None
-    agendador = agendador or agendador_padrao(client, org)
+    agendador = agendador or (_agendador_factory or agendador_padrao)(client, org)
+    if check_credentials is None:
+        check_credentials = _check_credentials_padrao
     if check_credentials is None:
         from app.modules.certidoes.deps import get_certidoes_service
 
@@ -645,6 +667,6 @@ def ao_vincular_conjuge(
 
 __all__ = [
     "Agendador", "CertidaoPosAceite", "MatriculaPosAceite", "PosAceite",
-    "agendador_em_background", "agendador_padrao", "ao_vincular_conjuge", "disparar",
+    "agendador_em_background", "agendador_padrao", "ao_vincular_conjuge", "configurar", "disparar",
     "vendedores",
 ]
