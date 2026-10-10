@@ -532,3 +532,21 @@ def test_roster_includes_sanctioned_services_and_missing_container_is_a_finding(
     assert r["missing"] == ["transcriber"] and r["status"] == "missing"
     t = next(p for p in r["products"] if p["product"] == "transcriber")
     assert t["actionable"] is True and t["container"] == "noctus-transcriber"
+
+
+def test_sanctioned_service_uses_docker_healthcheck_not_api_health(tmp_path, monkeypatch):
+    """2026-10-10: the transcriber has no /api/health (and no curl); the curl probe
+    read 'unreachable' and degraded a healthy service. Its docker HEALTHCHECK is the
+    signal: healthy => ok, unhealthy => degraded."""
+    svc = tmp_path / "services.txt"
+    svc.write_text("transcriber\n")
+    monkeypatch.setattr(BS, "SERVICES_PATH", svc)
+    kw = _with_compose(tmp_path)
+    base = {s: {"revision": _SHA} for s in
+            ("erp-imobiliario", "igig", "orbity", "seed", "social-wiring", "core")}
+    r, vps, git = _run(containers={**base, "transcriber": {"revision": _SHA, "probe_ok": False}}, **kw)
+    t = next(p for p in r["products"] if p["product"] == "transcriber")
+    assert t["health_probe"] == "docker_healthcheck" and t["verdict"] == "ok"
+    r2, _v, _g = _run(containers={**base, "transcriber": {"revision": _SHA, "health": "unhealthy"}}, **kw)
+    t2 = next(p for p in r2["products"] if p["product"] == "transcriber")
+    assert t2["verdict"] == "degraded"

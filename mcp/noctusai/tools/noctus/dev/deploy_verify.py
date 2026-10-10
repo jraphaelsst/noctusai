@@ -419,7 +419,12 @@ def _verify_one(
 
     # ── active health probe (in-container /api/health) — reuses the SAME
     #    exec_cmd allowlist noc-ship step 6 already calls by hand. ──
-    if port:
+    if entry.get("service"):
+        # A sanctioned non-product service (e.g. the transcriber) has no
+        # /api/health and may not ship curl: its own docker HEALTHCHECK, already
+        # read into out["health"], is the health signal (2026-10-10).
+        out["health_probe"] = "docker_healthcheck"
+    elif port:
         r_health = _vps_exec.exec_cmd(
             f"curl -fsS -m 3 http://localhost:{port}/api/health",
             container=container, ssh_host=ssh_host, run_remote=run_remote,
@@ -527,7 +532,8 @@ def deploy_verify(
         compose_by_slug = {r["slug"]: r for r in compose_roster}
         # Sanctioned non-product services (deploy/fleet/services.txt) are
         # actionable too: a missing container is a real `missing` finding.
-        live_set = live_set | set(_build_scope.read_sanctioned_services())
+        services = set(_build_scope.read_sanctioned_services())
+        live_set = live_set | services
         # UNION, not the compose set alone — a catalog-live product absent
         # from the fleet entirely (p-studio, 2026-08-17) must still surface
         # as 'missing', which a compose-driven loop could never see.
@@ -540,6 +546,7 @@ def deploy_verify(
                 "container": comp["container"] if comp else f"noctus-{slug}",
                 "port": comp["port"] if comp else None,
                 "actionable": slug in live_set,
+                "service": slug in services,
             })
 
     results = [_verify_one(e, expected_sha, ssh_host, run_remote, local_runner) for e in entries]
