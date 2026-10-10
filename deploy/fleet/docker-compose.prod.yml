@@ -258,6 +258,9 @@ services:
     container_name: noctus-social-wiring
     expose:
       - "8011"
+    networks:
+      - noctus-net
+      - transcribe-net
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8011/api/health"]
       interval: 30s
@@ -574,8 +577,57 @@ services:
       - /tmp:mode=1777,size=96m
     mem_limit: 512m
 
+  # ── transcriber 9000 — self-hosted faster-whisper worker (infra, NOT a product) ─
+  # Contract: products/social-wiring/projects/core-studio/specs/transcription-contract.md §2.
+  # Deliberately NOT <<: *prod-defaults: no env_file (holds no credentials besides
+  # its own token), no noctus-net (reachable only over the internal transcribe-net,
+  # which has no egress), no cache env, not in the tunnel ingress.
+  transcriber:
+    # Opt-in profile: a fleet-wide `docker compose up -d` never starts it; it runs only
+    # when started explicitly (deploy_image transcriber / `up transcriber`), after the
+    # VPS measurement (transcription-contract §6) passes.
+    profiles: ["transcriber"]
+    image: ghcr.io/jraphaelsst/noctus-transcriber:${TRANSCRIBER_IMAGE_TAG:-latest}
+    container_name: noctus-transcriber
+    restart: on-failure:5
+    expose:
+      - "9000"
+    networks:
+      - transcribe-net
+    environment:
+      # Empty/missing token => the server refuses EVERY request (fail-closed) instead of
+      # breaking compose parsing for the whole fleet. env-fleet-empty-ok (reviewed
+      # 2026-10-09: the token IS set in .env.fleet on the VPS; empty = refuse-all, never open).
+      TRANSCRIBER_TOKEN: ${TRANSCRIBER_TOKEN:-}
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    healthcheck:
+      # slim image has no curl; /healthz is 200 only once the model is loaded.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:9000/healthz', timeout=4).status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 180s
+    # Hard caps: 1 core, 2 GB, products win CPU contention 4:1, first OOM victim.
+    cpus: "1.0"
+    cpu_shares: 256
+    mem_limit: 2g
+    memswap_limit: 2g
+    pids_limit: 64
+    oom_score_adj: 1000
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777,size=64m
 
 networks:
   noctus-net:
     name: noctus-net
     external: true
+  # Internal-only (no egress) link between social-wiring and the transcriber.
+  transcribe-net:
+    name: transcribe-net
+    internal: true

@@ -216,6 +216,8 @@ Rolling 24h means `SUM(duracao_s) WHERE created_at > now()-'24h' AND status <> '
 
 ## 7 · Tech-lead decisions (2026-10-09)
 
+- ✅ 7 · Owner authorized prod exposure of `transcriber` (2026-10-09, typed phrase; record `deploy/consent/transcriber.prod.yml`). Ships with the opt-in compose profile and the kill switch OFF; enabled only after the §6 measurement and the owner's evaluation.
+
 - **Deploy path:** formalize a sanctioned **non-product service allowlist** in `noctus.dev.deploy_image` / `deploy_verify` (the transcriber is infrastructure, not a product; folding it into core would couple unrelated release cycles). No manual `docker compose up`. This is its own toolkit slice, shipped with its tests, before the transcriber's first prod deploy.
 - **Enable order:** S5 measurement on the VPS (pass criteria in §6) gates S6. The kill switch `transcricao_habilitada` ships **off**.
 - **Fallback ladder** in §6 is pre-approved in order 1→3; step 4 (OpenAI) needs the owner's go, since the owner chose self-hosted for cost.
