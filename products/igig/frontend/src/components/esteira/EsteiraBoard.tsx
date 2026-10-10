@@ -204,7 +204,7 @@ export function EsteiraBoard({
           <TarefaCardFace tarefa={tarefa} isDragging={isDragging} />
         )}
         onCardClick={(tarefa) => setAbertaId(tarefa.id)}
-        formatValue={() => ""}
+        showValue={false}
         emptyColumnLabel="Nenhuma tarefa"
         editableHeaders
         reorderableColumns

@@ -38,6 +38,7 @@ from .config import (
     STAGE_ROLE_FINAL,
     PipelineConfig,
 )
+from .defaults import StageDefault, ensure_default_stages
 from .moves import move_card, resolve_initial_stage
 from .ordering import (
     POSITION_FIELD,
@@ -69,9 +70,11 @@ __all__ = [
     "STAGE_ROLES",
     "STAGE_ROLE_ACCEPT",
     "STAGE_ROLE_FINAL",
+    "StageDefault",
     "count_cards_in_stage",
     "create_stage",
     "delete_stage",
+    "ensure_default_stages",
     "get_stage",
     "group_into_colunas",
     "list_stages",

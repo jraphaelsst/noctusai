@@ -94,6 +94,9 @@ export interface PipelineBoardProps<TCard> {
   filtros?: Record<string, any>;
   /** Format a column's monetary total. Defaults to a plain number. */
   formatValue?: (value: number) => string;
+  /** Render the per-column value line. Set `false` for boards with no money
+   *  (it would otherwise leave an empty `<p>` under every header). */
+  showValue?: boolean;
   /** Text for an empty column. */
   emptyColumnLabel?: string;
   /** Show the "Configurar etapas" control. Default: true when editable. */
@@ -163,6 +166,7 @@ export function PipelineBoard<TCard>({
   onCardClick,
   filtros,
   formatValue = (v) => String(v),
+  showValue = true,
   emptyColumnLabel = 'Nenhuma carta nesta etapa',
   allowStageEditing,
   loadingState,
@@ -460,7 +464,9 @@ export function PipelineBoard<TCard>({
                     : (coluna?.total ?? 0)}
                 </span>
               </div>
-              <p className="text-sm font-medium">{formatValue(coluna?.valorTotal ?? 0)}</p>
+              {showValue && (
+                <p className="text-sm font-medium">{formatValue(coluna?.valorTotal ?? 0)}</p>
+              )}
             </div>
           );
         }}

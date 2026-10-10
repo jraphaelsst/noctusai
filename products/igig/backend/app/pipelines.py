@@ -36,11 +36,16 @@ the SQL list and :data:`ESTEIRA_PADRAO` below stay identical.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
 
 from fastapi import Depends, HTTPException
-from noctusai_lib.domain.pipeline import PipelineConfig, PipelineContext, list_stages
+from noctusai_lib.domain.pipeline import (
+    PipelineConfig,
+    PipelineContext,
+    StageDefault,
+    ensure_default_stages,
+    list_stages,
+)
 from noctusai_lib.primitives.roles import ADMIN_ROLES
 
 from app import database
@@ -113,12 +118,8 @@ PIPELINE_ESTEIRA = PipelineConfig(
 )
 
 
-@dataclass(frozen=True)
-class StagePadrao:
-    slug: str
-    label: str
-    cor: str
-    papel: str | None = None
+#: igig's historical name for the seed's `StageDefault`.
+StagePadrao = StageDefault
 
 
 #: Roadmap R2: Leads (entry) → Qualificação → Negociação → Agendar briefing →
@@ -248,31 +249,9 @@ def pipeline_context(pipeline_auth: tuple[tuple, Any], cfg: PipelineConfig) -> P
 
 # ── Default stages ───────────────────────────────────────────────────
 def garantir_etapas_padrao(db: Any, cfg: PipelineConfig, org_id: str) -> None:
-    """Seed the org's default stages for `cfg` when it has none at all.
-
-    "None at all" includes inactive rows: an org that deactivated or deleted
-    stages made a choice, and re-seeding would undo it. Only a pipeline the
-    org has never configured gets the defaults.
-    """
-    if list_stages(db, cfg, incluir_inativas=True, org_id=org_id):
-        return
-    linhas = [
-        {
-            "org_id": org_id,
-            "pipeline": cfg.pipeline,
-            "slug": s.slug,
-            "label": s.label,
-            "cor": s.cor,
-            "posicao": posicao,
-            "papel": s.papel,
-            "ativo": True,
-        }
-        for posicao, s in enumerate(_PADROES[cfg.pipeline])
-    ]
-    db.table(cfg.stages_table).upsert(
-        linhas, on_conflict="org_id,pipeline,slug", ignore_duplicates=True
-    ).execute()
-    logger.info("etapas padrão criadas org=%s pipeline=%s", org_id, cfg.pipeline)
+    """Seed the org's default stages for `cfg` when it has none at all (the
+    seed's `ensure_default_stages`, with igig's per-pipeline default sets)."""
+    ensure_default_stages(db, cfg, _PADROES[cfg.pipeline], org_id=org_id)
 
 
 def etapas(db: Any, cfg: PipelineConfig, org_id: str) -> list[dict]:
