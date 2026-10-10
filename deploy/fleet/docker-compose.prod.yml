@@ -595,6 +595,13 @@ services:
     networks:
       - transcribe-net
     environment:
+      # NOT `<<: *prod-env`: that anchor merges *cache-env, which carries the cache
+      # DB DSN + password — the transcriber is credential-free by design (it parses
+      # untrusted media). The two fleet invariants are pinned literally instead
+      # (test_prod_compose_env_invariants). It runs no noctusai_lib scheduler, so
+      # NOCTUS_SCHEDULERS_ENABLED is inert here; DEBUG=false keeps the invariant.
+      NOCTUS_SCHEDULERS_ENABLED: "1"
+      DEBUG: "false"
       # Empty/missing token => the server refuses EVERY request (fail-closed) instead of
       # breaking compose parsing for the whole fleet. env-fleet-empty-ok (reviewed
       # 2026-10-09: the token IS set in .env.fleet on the VPS; empty = refuse-all, never open).
