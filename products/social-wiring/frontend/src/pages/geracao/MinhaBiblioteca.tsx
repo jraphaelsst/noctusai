@@ -21,6 +21,7 @@ import { compactoPtBr, dataPtBr } from "@/components/pesquisa/format";
 import { ConfirmarModal } from "@/components/pesquisa/ConfirmarModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { SolicitarPerfil } from "@/components/geracao/biblioteca/SolicitarPerfil";
+import { OptoutsAdmin } from "@/components/geracao/biblioteca/OptoutsAdmin";
 import { MultiSelectPopover } from "@noctusai/lib/design-system";
 import {
   useAtualizarPerfil,
@@ -359,6 +360,8 @@ export default function MinhaBiblioteca() {
           </div>
         )}
       </section>
+
+      <OptoutsAdmin />
 
       <ConfirmarModal
         open={!!refRemover}

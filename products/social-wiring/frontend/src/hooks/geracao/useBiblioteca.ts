@@ -273,3 +273,56 @@ export function useGerarHeadlineViral() {
 }
 
 export type { ViralCard };
+
+/* ---- Opt-out registry (platform admin; spec biblioteca-lia §5) ---- */
+
+export type OptoutOrigem = "email" | "dpo" | "admin";
+
+export interface PerfilOptout {
+  id: string;
+  handle: string;
+  motivo: string | null;
+  origem: OptoutOrigem;
+  solicitado_em: string | null;
+  registrado_por: string | null;
+  created_at: string;
+}
+
+export interface RegistrarOptoutResultado {
+  optout: PerfilOptout;
+  criado: boolean;
+  purgados: { perfis: number; virais: number; blobs_falhos: number };
+}
+
+/** Opt-out list (admin-only; the caller gates with `useTreinamentosAdmin`). */
+export function useOptoutsAdmin(enabled = true) {
+  const query = useQuery({
+    queryKey: [...BIB_KEY, "optouts"],
+    enabled,
+    queryFn: async () => unwrap(await api.get<Envelope<PerfilOptout[]>>(`${BASE}/admin/optouts`)),
+    placeholderData: (prev) => prev,
+  });
+  return {
+    ...query,
+    showSkeleton: query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
+/** Register an opt-out: purges the handle's data in every org NOW. */
+export function useRegistrarOptout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { handle: string; motivo?: string; origem: OptoutOrigem }) =>
+      unwrap(await api.post<Envelope<RegistrarOptoutResultado>>(`${BASE}/admin/optouts`, v)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: GERACAO_KEY }),
+  });
+}
+
+export function useRemoverOptout() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => api.delete(`${BASE}/admin/optouts/${encodeURIComponent(id)}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: [...BIB_KEY, "optouts"] }),
+  });
+}

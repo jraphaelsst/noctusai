@@ -21,6 +21,10 @@ const m = vi.hoisted(() => ({
   solicitar: vi.fn(),
   removerRef: vi.fn(),
   criar: vi.fn(),
+  admin: vi.fn(),
+  optouts: vi.fn(),
+  registrarOptout: vi.fn(),
+  removerOptout: vi.fn(),
 }));
 
 vi.mock("@/hooks/useMarcas", () => ({
@@ -37,6 +41,12 @@ vi.mock("@/hooks/geracao/useBiblioteca", () => ({
   useAtualizarPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRemoverPerfil: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRemoverReferencia: () => ({ mutateAsync: m.removerRef, isPending: false }),
+  useOptoutsAdmin: () => m.optouts(),
+  useRegistrarOptout: () => ({ mutateAsync: m.registrarOptout, isPending: false }),
+  useRemoverOptout: () => ({ mutateAsync: m.removerOptout, isPending: false }),
+}));
+vi.mock("@/hooks/geracao/useTreinamentos", () => ({
+  useTreinamentosAdmin: () => m.admin(),
 }));
 
 const ok = <T,>(data: T) => ({ data, showSkeleton: false, isRefreshing: false, isError: false, refetch: vi.fn() });
@@ -84,6 +94,14 @@ beforeEach(() => {
   m.contas.mockReturnValue({ data: [] });
   m.solicitar.mockResolvedValue(perfil());
   m.removerRef.mockResolvedValue(undefined);
+  m.admin.mockReturnValue({ data: false });
+  m.optouts.mockReturnValue(ok([]));
+  m.registrarOptout.mockResolvedValue({
+    optout: { id: "o9" },
+    criado: true,
+    purgados: { perfis: 2, virais: 17, blobs_falhos: 0 },
+  });
+  m.removerOptout.mockResolvedValue(undefined);
 });
 
 describe("Minha Biblioteca", () => {
@@ -171,5 +189,77 @@ describe("Solicitar Perfil live check", () => {
     renderPage();
     await abrirSolicitar();
     expect(rtl.screen.getByLabelText("Conta usada para monitorar")).toBeTruthy();
+  });
+});
+
+describe("Opt-out (LGPD)", () => {
+  it("shows the transparency note next to Solicitar Perfil, without inventing a contact", async () => {
+    renderPage();
+    await abrirSolicitar();
+    const nota = rtl.screen.getByTestId("nota-transparencia").textContent ?? "";
+    expect(nota).toContain("Somente perfis públicos de empresa/criador podem ser monitorados.");
+    expect(nota).toContain("indicado na Política de Privacidade.");
+    expect(nota).not.toMatch(/@|mailto|\d{4}/);
+  });
+
+  it("perfil_optout on the live check is a clear inline message, not a generic error", async () => {
+    m.verificar.mockImplementation((h: string) => ({
+      data: undefined,
+      isFetching: false,
+      isError: !!h,
+      error: h ? Object.assign(new Error("[422] x"), { code: "perfil_optout" }) : null,
+    }));
+    renderPage();
+    await abrirSolicitar();
+    await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@pediu");
+    expect(await rtl.screen.findByText("Este perfil pediu para não ser monitorado.")).toBeTruthy();
+    expect(rtl.screen.queryByText(/Não foi possível verificar/)).toBeNull();
+  });
+
+  it("perfil_optout on submit shows the inline message", async () => {
+    m.verificar.mockImplementation((h: string) => ({ data: h ? { status: "disponivel" } : undefined, isFetching: false, isError: false }));
+    m.solicitar.mockRejectedValue(Object.assign(new Error("[422] x"), { code: "perfil_optout" }));
+    renderPage();
+    await abrirSolicitar();
+    await userEvent.type(rtl.screen.getByLabelText(/Perfil do Instagram/), "@pediu");
+    await rtl.screen.findByText("✓ Username válido");
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Enviar" }));
+    expect(await rtl.screen.findByText("Este perfil pediu para não ser monitorado.")).toBeTruthy();
+  });
+
+  it("hides the admin panel from non-admins", () => {
+    renderPage();
+    expect(rtl.screen.queryByText("Pedidos de exclusão (opt-out)")).toBeNull();
+  });
+
+  it("admin: lists, registers behind a confirm and reports the purge counts", async () => {
+    m.admin.mockReturnValue({ data: true });
+    m.optouts.mockReturnValue(
+      ok([{ id: "o1", handle: "velho", motivo: "pediu", origem: "dpo", solicitado_em: null, registrado_por: null, created_at: "2026-10-01T00:00:00Z" }]),
+    );
+    renderPage();
+    const painel = rtl.screen.getByTestId("optouts-admin");
+    expect(rtl.within(painel).getByText("@velho")).toBeTruthy();
+    await userEvent.type(rtl.within(painel).getByLabelText(/Perfil \(@handle/), "@novo");
+    await userEvent.selectOptions(rtl.within(painel).getByLabelText("Origem"), "dpo");
+    await userEvent.click(rtl.within(painel).getByRole("button", { name: "Registrar opt-out" }));
+    expect(await rtl.screen.findByText(/apaga AGORA todos os dados deste perfil em todas as organizações/)).toBeTruthy();
+    expect(m.registrarOptout).not.toHaveBeenCalled();
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Apagar e registrar" }));
+    await rtl.waitFor(() => expect(m.registrarOptout).toHaveBeenCalledWith({ handle: "@novo", origem: "dpo" }));
+    const { toast } = await import("sonner");
+    await rtl.waitFor(() => expect((toast.success as any).mock.calls.flat().join(" ")).toMatch(/2 perfil.*17 viral/));
+  });
+
+  it("admin: removing an opt-out needs the confirm", async () => {
+    m.admin.mockReturnValue({ data: true });
+    m.optouts.mockReturnValue(
+      ok([{ id: "o1", handle: "velho", motivo: null, origem: "email", solicitado_em: null, registrado_por: null, created_at: "2026-10-01T00:00:00Z" }]),
+    );
+    renderPage();
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Remover opt-out de @velho" }));
+    expect(m.removerOptout).not.toHaveBeenCalled();
+    await userEvent.click(await rtl.screen.findByRole("button", { name: "Remover opt-out" }));
+    await rtl.waitFor(() => expect(m.removerOptout).toHaveBeenCalledWith("o1"));
   });
 });

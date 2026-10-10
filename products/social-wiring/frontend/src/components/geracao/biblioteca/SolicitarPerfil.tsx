@@ -16,6 +16,7 @@ import {
 } from "@/hooks/geracao/useBiblioteca";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { normalizarHandle } from "./handle";
+import { ehPerfilOptout, MSG_PERFIL_OPTOUT, TEXTO_TRANSPARENCIA } from "./optout";
 
 export const MSG_VERIFICACAO: Record<VerificacaoPerfil["status"], string> = {
   disponivel: "✓ Username válido",
@@ -28,6 +29,7 @@ export const MSG_VERIFICACAO: Record<VerificacaoPerfil["status"], string> = {
 export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
   const [texto, setTexto] = useState("");
   const [contaId, setContaId] = useState("");
+  const [optout, setOptout] = useState(false);
   const norm = normalizarHandle(texto);
   const handleDebounced = useDebouncedValue(norm.ok ? norm.handle : "", 500);
 
@@ -55,12 +57,17 @@ export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
       );
       setTexto("");
     } catch (e) {
+      if (ehPerfilOptout(e)) {
+        setOptout(true);
+        return;
+      }
       toast.error(e instanceof Error && e.message ? e.message : "Não foi possível solicitar o perfil.");
     }
   }
 
   let mensagem: string | null = null;
-  if (texto.trim() && norm.ok === false) mensagem = norm.erro;
+  if (ehPerfilOptout(verificar.error) || optout) mensagem = MSG_PERFIL_OPTOUT;
+  else if (texto.trim() && norm.ok === false) mensagem = norm.erro;
   else if (status) mensagem = MSG_VERIFICACAO[status];
   else if (norm.ok && (aguardando || verificar.isFetching)) mensagem = "Verificando...";
   else if (norm.ok && verificar.isError) mensagem = "Não foi possível verificar o perfil agora.";
@@ -79,11 +86,21 @@ export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
           id="sp-handle"
           placeholder="@perfil"
           value={texto}
-          onChange={(e) => setTexto(e.target.value)}
+          onChange={(e) => {
+            setTexto(e.target.value);
+            setOptout(false);
+          }}
           autoComplete="off"
         />
         {mensagem && (
-          <p role="status" className="text-xs text-muted-foreground">
+          <p
+            role="status"
+            className={
+              mensagem === MSG_PERFIL_OPTOUT
+                ? "text-sm font-medium text-destructive"
+                : "text-xs text-muted-foreground"
+            }
+          >
             {mensagem}
           </p>
         )}
@@ -106,6 +123,9 @@ export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
           </select>
         </div>
       )}
+      <p className="text-xs text-muted-foreground" data-testid="nota-transparencia">
+        {TEXTO_TRANSPARENCIA}
+      </p>
       <Button type="submit" className="w-fit" disabled={!podeEnviar}>
         {solicitar.isPending ? "Enviando..." : "Enviar"}
       </Button>
