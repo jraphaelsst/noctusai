@@ -575,7 +575,9 @@ class TestReexecutarPosAceite:
                 scoped_db, ORG, UUID(ids["atendimento"]), uuid4(), ACTOR, ports=Modulos().ports()
             )
 
-    def test_reruns_only_step_6_after_a_failed_first_run(self, scoped_db):
+    def test_retomar_refires_funil_then_pos_aceite_after_a_failed_first_run(self, scoped_db):
+        # noc-2 ruling 2026-10-09: one endpoint resumes EVERYTHING after the
+        # accept — the forward-only funnel event, then step 6.
         ids = _seed(scoped_db)
         _run(scoped_db, ids, ports=_sem_modulos())
         antes = _estado(scoped_db)
@@ -584,8 +586,43 @@ class TestReexecutarPosAceite:
             scoped_db, ORG, UUID(ids["atendimento"]), UUID(ids["proposta"]), ACTOR,
             ports=modulos.ports(),
         )
-        assert [p["passo"] for p in r["passos"]] == ["pos_aceite"]
-        assert r["passos"][0]["status"] == "ok" and r["pos_aceite"]["matricula"]
-        assert modulos.chamadas == [("pos_aceite", ids["atendimento"])]
+        assert [p["passo"] for p in r["passos"]] == ["funil", "pos_aceite"]
+        assert all(p["status"] == "ok" for p in r["passos"])
+        assert r["pos_aceite"]["matricula"]
+        assert r["contrato_id"] and r["geracao"] is None
+        assert modulos.chamadas == [
+            ("funil", ids["atendimento"], "proposta_aceita"),
+            ("pos_aceite", ids["atendimento"]),
+        ]
+        # Neither step writes the negotiation, the contract or the proposta.
+        assert _estado(scoped_db) == antes
+
+    def test_retomar_reports_a_funil_refusal_and_still_runs_pos_aceite(self, scoped_db):
+        ids = _seed(scoped_db)
+        _run(scoped_db, ids)
+        modulos = Modulos(moveu=False, motivo="ja_adiante")
+        r = reexecutar_pos_aceite(
+            scoped_db, ORG, UUID(ids["atendimento"]), UUID(ids["proposta"]), ACTOR,
+            ports=modulos.ports(),
+        )
+        funil, pos = r["passos"]
+        assert funil["status"] == "pulado" and "ja_adiante" in (funil["mensagem"] or "")
+        assert pos["status"] == "ok"
+
+
+class TestValorObrigatorio:
+    """noc-2 ruling 2026-10-09: no price, no accept — never NULL the live
+    valor_negociado (a contract cannot be generated without a price)."""
+
+    @pytest.mark.parametrize("valor", [None, ""])
+    def test_aceitar_without_valor_is_400_before_any_write(self, scoped_db, valor):
+        ids = _seed(scoped_db)
+        scoped_db.table("atendimento_propostas").update({"valor_proposto": valor}).eq(
+            "id", ids["proposta"]
+        ).execute()
+        antes = _estado(scoped_db)
+        with pytest.raises(AppException) as exc:
+            _run(scoped_db, ids)
+        assert exc.value.status_code == 400 and exc.value.code == "valor_obrigatorio"
         assert _estado(scoped_db) == antes
 

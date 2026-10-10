@@ -56,6 +56,28 @@ def test_pos_aceite_route_refuses_a_proposta_not_aceita(client, scoped):
     assert resp.json()["error"]["code"] == "proposta_nao_aceita"
 
 
+def test_retomar_route_has_the_aceitar_shape(client, scoped):
+    ids = _seed(scoped)
+    assert client.post(_url(ids, "/aceitar"), json={}, headers=_auth()).status_code == 200
+    resp = client.post(_url(ids, "/pos-aceite"), json={}, headers=_auth())
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body) >= {"proposta", "contrato_id", "geracao", "pos_aceite", "passos"}
+    assert "proposta_row" not in body  # the seam's internal row never leaks
+    assert body["proposta"]["status"] == "aceita" and body["geracao"] is None
+    assert [p["passo"] for p in body["passos"]] == ["funil", "pos_aceite"]
+
+
+def test_aceitar_without_valor_is_400_valor_obrigatorio(client, scoped):
+    ids = _seed(scoped)
+    scoped.table("atendimento_propostas").update({"valor_proposto": None}).eq(
+        "id", ids["proposta"]
+    ).execute()
+    resp = client.post(_url(ids, "/aceitar"), json={}, headers=_auth())
+    assert resp.status_code == 400
+    assert resp.json()["error"]["code"] == "valor_obrigatorio"
+
+
 def test_aceitar_unknown_proposta_is_404(client, scoped):
     ids = _seed(scoped)
     ids = {**ids, "proposta": "00000000-0000-0000-0000-000000000001"}

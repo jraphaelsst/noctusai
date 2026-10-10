@@ -180,11 +180,12 @@ async def reexecutar_pos_aceite_route(
     user, org_id = auth_parts(auth)
     aceite = _aceite()
     atendimento_id = service.contexto_atendimento(client, org_id, cliente_id)
-    # Bare `PosAceite` (the seam's return value as is).
-    return aceite.reexecutar_pos_aceite(
+    # "Retomar após aceite": same shape as aceitar (passos = funil + pos_aceite).
+    resultado = aceite.reexecutar_pos_aceite(
         client, org_id, atendimento_id, proposta_id, getattr(user, "id", None),
         agendador=_agendador(background_tasks, client, storage, org_id),
     )
+    return _resultado_aceite(client, org_id, resultado)
 
 
 @router.delete("/{cliente_id}/propostas/{proposta_id}", status_code=204)

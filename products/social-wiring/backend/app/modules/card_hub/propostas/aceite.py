@@ -123,6 +123,20 @@ class PropostaNaoAceita(AppException):
         )
 
 
+class ValorObrigatorio(AppException):
+    """No price, no accept (noc-2 ruling 2026-10-09): materializing a proposta
+    without `valor_proposto` would NULL the live `valor_negociado`, and a
+    contract cannot be generated without a price — a silent loss."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            code="valor_obrigatorio",
+            message="Informe o valor proposto antes de aceitar a proposta.",
+            status_code=400,
+            details={"motivo": "valor_obrigatorio"},
+        )
+
+
 class AtendimentoDivergente(AppException):
     """The cliente's single open atendimento is not the proposta's: the live-set
     writers resolve the atendimento FROM the cliente, so writing would land in
@@ -382,6 +396,8 @@ def _recusas(
     """Everything that can refuse, in one place, BEFORE any write."""
     if proposta.get("status") not in STATUS_ABERTOS:
         raise PropostaFechada(str(proposta.get("status")))
+    if proposta.get("valor_proposto") in (None, ""):
+        raise ValorObrigatorio()
 
     outras = (
         _t(client, TABLE)
@@ -735,16 +751,29 @@ def reexecutar_pos_aceite(
     agendador: Any = None,
     ports: Optional[AceitePorts] = None,
 ) -> dict:
-    """Re-run step 6 for an ALREADY accepted proposta (409 otherwise). Idempotent
-    by `pos_aceite_service.disparar`'s own contract (§7.1)."""
+    """"Retomar após aceite" (noc-2 ruling 2026-10-09): for an ALREADY accepted
+    proposta (409 otherwise), re-fire everything AFTER the accept — step 5, the
+    forward-only `proposta_aceita` funnel event (a stage already reached or
+    passed is a no-op), then step 6. One endpoint resumes whatever failed after
+    the accept; `aceitar` itself refuses an aceita proposta. Both steps are
+    idempotent by their own contracts (§6, §7.1). Same result shape as
+    `aceitar`, `geracao` None (no contract step runs here)."""
     ports = ports or AceitePorts()
     proposta = obter_proposta(client, org_id, atendimento_id, proposta_id)
     if proposta.get("status") != STATUS_ACEITA:
         raise PropostaNaoAceita(str(proposta.get("status")))
-    passo, pos_aceite = _passo_pos_aceite(
-        ports, client, org_id, atendimento_id, _ator(actor_id), agendador
+    actor = _ator(actor_id)
+    passo_funil = _passo_funil(ports, client, org_id, atendimento_id, actor)
+    passo_pos, pos_aceite = _passo_pos_aceite(
+        ports, client, org_id, atendimento_id, actor, agendador
     )
-    return {"proposta_row": proposta, "pos_aceite": pos_aceite, "passos": [passo]}
+    return {
+        "proposta_row": proposta,
+        "contrato_id": proposta.get("contrato_id"),
+        "geracao": None,
+        "pos_aceite": pos_aceite,
+        "passos": [passo_funil, passo_pos],
+    }
 
 
 def _reler(client: Any, org_id: UUID, proposta_id: UUID) -> dict:
@@ -762,6 +791,7 @@ __all__ = [
     "PropostaJaAceita",
     "PropostaNaoAceita",
     "PropostaSnapshotInvalido",
+    "ValorObrigatorio",
     "aceitar",
     "obter_proposta",
     "reexecutar_pos_aceite",
