@@ -25,6 +25,8 @@ from app.modules.media_creation.pesquisa_variables import (
 )
 
 _VARIABLES_TABLE = "\n".join(f"{{{{{v.slug}}}}} | {v.description}" for v in CLASSIFIABLE)
+#: Public handle: the extractor prompt renders the SAME table (never a copy).
+VARIABLES_TABLE = _VARIABLES_TABLE
 
 PESQUISA_CLASSIFIER_SYSTEM_PROMPT = f"""Você é um classificador automático de variáveis de pesquisa de avatar para copywriting.
 Sua função: receber um ou mais itens (um por linha) e retornar APENAS a classificação no formato padronizado. Nada mais.
