@@ -164,14 +164,46 @@ class TestUnsubscribeRouter:
 
 
 class TestWebhooksRouter:
-    def test_resend_webhook_mounted(self, client):
-        # bypass_when_unset=True → unsigned payload accepted (early-dev),
-        # unknown event type skipped. Asserts the route exists + the 5-pin
-        # webhook_endpoint dependency wired without 404/405.
-        resp = client.raw().post(
-            "/api/email-marketing/webhooks/resend",
-            json={"type": "email.unknown", "data": {}},
-        )
+    """Fail-closed (2026-10-10): the Resend webhook flips contacts to bounced /
+    complained / unsubscribed, so an unauthenticated POST must never get past
+    the signature check — not even when no secret is configured."""
+
+    _URL = "/api/email-marketing/webhooks/resend"
+    _SECRET = "whsec_" + __import__("base64").b64encode(b"resend-test-secret").decode()
+
+    def _signed(self, body: bytes, secret: str = _SECRET):
+        import base64
+        import time
+
+        sid, ts = "msg_test", str(int(time.time()))
+        raw = base64.b64decode(secret[len("whsec_"):])
+        sig = base64.b64encode(
+            hmac.new(raw, f"{sid}.{ts}.{body.decode()}".encode(), hashlib.sha256).digest()
+        ).decode()
+        return {"svix-id": sid, "svix-timestamp": ts, "svix-signature": f"v1,{sig}",
+                "content-type": "application/json"}
+
+    def test_no_secret_configured_refuses_every_payload(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "resend_webhook_secret", "")  # self-patch-ok: config value under test, not a guard
+        resp = client.raw().post(self._URL, json={"type": "email.bounced", "data": {"email_id": "m1"}})
+        assert resp.status_code == 401, resp.text
+
+    def test_unsigned_payload_is_refused(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "resend_webhook_secret", self._SECRET)  # self-patch-ok: config value under test, not a guard
+        resp = client.raw().post(self._URL, json={"type": "email.bounced", "data": {"email_id": "m1"}})
+        assert resp.status_code == 401, resp.text
+
+    def test_wrong_signature_is_refused(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "resend_webhook_secret", self._SECRET)  # self-patch-ok: config value under test, not a guard
+        body = b'{"type": "email.bounced", "data": {"email_id": "m1"}}'
+        other = "whsec_" + __import__("base64").b64encode(b"someone-else").decode()
+        resp = client.raw().post(self._URL, content=body, headers=self._signed(body, other))
+        assert resp.status_code == 401, resp.text
+
+    def test_valid_signature_is_processed(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "resend_webhook_secret", self._SECRET)  # self-patch-ok: config value under test, not a guard
+        body = b'{"type": "email.unknown", "data": {}}'
+        resp = client.raw().post(self._URL, content=body, headers=self._signed(body))
         assert resp.status_code == 200, resp.text
         assert resp.json().get("skipped") is True
 

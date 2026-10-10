@@ -60,6 +60,17 @@ class SocialWiringSettings(ProductSettings):
     oauth_redirect_base_url: str = ""
     frontend_base_url: str = ""
 
+    # ─── Email marketing (Resend) ──────────────────────────────────────
+    # Read via getattr(...) until 2026-10-10 and never declared — and the
+    # seed settings are extra="ignore", so RESEND_* in .env was DROPPED:
+    # every send silently dry-ran and the Resend webhook accepted unsigned
+    # payloads. Declared now; the webhook is fail-closed (no secret ⇒ 401) and
+    # a missing api key is a LOUD dry-run (send_service.DRY_RUN_REASON).
+    resend_api_key: str = ""
+    resend_webhook_secret: str = ""
+    default_from_name: str = "NoctusAI"
+    default_from_email: str = "noreply@noctusai.com"
+
     # ─── OpenAI chatbot orchestration ─────────────────────────────────
     openai_api_key: str = ""
     openai_chat_model: str = "gpt-4o-mini"

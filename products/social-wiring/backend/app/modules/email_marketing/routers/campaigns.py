@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Depends
 from app.dependencies import get_current_user_org, get_admin_client
 from app.modules.email_marketing.schemas.campaigns import CampaignCreate, CampaignUpdate, CampaignSchedule
 from app.modules.email_marketing.services.campaign_service import CampaignService
-from app.modules.email_marketing.services.send_service import SendService
+from app.modules.email_marketing.services.send_service import SendService, delivery_mode
 from app.config import settings
 from noctusai_lib.primitives.responses import success_response
 
@@ -94,7 +94,9 @@ async def send_campaign(campaign_id: str, auth = Depends(get_current_user_org)):
     send_svc = SendService(get_admin_client(), settings)
     queued = send_svc.queue_campaign_sends(campaign_id, org_id)
 
-    return success_response({"campaign_id": campaign_id, "queued": queued})
+    # Never a silent dry-run: the caller is told what will actually happen.
+    return success_response({"campaign_id": campaign_id, "queued": queued,
+                             "delivery": delivery_mode(settings)})
 
 
 @router.post("/{campaign_id}/pause")

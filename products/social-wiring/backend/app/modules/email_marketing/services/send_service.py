@@ -12,9 +12,29 @@ from typing import Optional
 
 import httpx
 
+from .unsubscribe_links import (
+    UNSUBSCRIBE_VARIABLE,
+    template_carries_unsubscribe,
+    unsubscribe_url,
+)
+
 logger = logging.getLogger(__name__)
 
 VARIABLE_PATTERN = re.compile(r"\{\{(\w+)\}\}")
+
+DRY_RUN_REASON = "dry-run: RESEND_API_KEY not configured — email NOT delivered"
+UNSUBSCRIBE_REFUSAL = (
+    "refused: no unsubscribe link in the rendered email — add {{unsubscribe_url}} "
+    "to the template and set FRONTEND_BASE_URL (LGPD opt-out precondition)"
+)
+
+
+def delivery_mode(settings) -> dict:
+    """What a send will actually do right now — returned to the caller so a
+    dry-run is never silent."""
+    if getattr(settings, "resend_api_key", ""):
+        return {"mode": "live", "reason": None}
+    return {"mode": "dry_run", "reason": DRY_RUN_REASON}
 
 
 async def _aexec(query):
@@ -30,9 +50,11 @@ async def _aexec(query):
 
 
 class SendService:
-    def __init__(self, db, settings):
+    def __init__(self, db, settings, http_client_factory=httpx.AsyncClient):
         self.db = db
         self.settings = settings
+        # Seam for tests (the Resend HTTP boundary), never for production code.
+        self._http_client_factory = http_client_factory
 
     def queue_campaign_sends(self, campaign_id: str, org_id: str):
         """Resolve campaign recipients and create queued send_logs.
@@ -114,20 +136,18 @@ class SendService:
     async def _send_batch(self, campaign_id: str, logs: list) -> int:
         """Send a batch of emails via Resend Batch API.
 
-        ``resend_api_key`` / ``default_from_name`` / ``default_from_email``
-        are mailing-era settings not (yet) declared on
-        ``SocialWiringSettings`` (seed ``ProductSettings`` is
-        ``extra="ignore"``). ``getattr(..., default)`` keeps the existing
-        dry-run-when-unconfigured behaviour instead of raising
-        ``AttributeError`` from the scheduler thread. Add these fields to
-        SocialWiringSettings to enable real sending (recommended config
-        delta in the return)."""
-        api_key = getattr(self.settings, "resend_api_key", "")
+        No ``RESEND_API_KEY`` ⇒ a LOUD dry-run: WARNING + every row recorded
+        ``failed`` with ``DRY_RUN_REASON`` (never "sent"). A live batch is
+        refused unless each rendered email carries the contact's unsubscribe
+        link (``unsubscribe_links``)."""
+        api_key = self.settings.resend_api_key
         if not api_key:
-            logger.info("No RESEND_API_KEY — logging %d emails (dry run)", len(logs))
-            await self._mark_sent(logs, dry_run=True)
+            # LOUD, and recorded as NOT delivered — until 2026-10-10 this path
+            # logged at INFO and marked every row "sent".
+            logger.warning("%s — %d email(s) for campaign %s", DRY_RUN_REASON, len(logs), campaign_id)
+            await self._mark_failed(logs, DRY_RUN_REASON)
             await self._finalize_campaign_if_done(campaign_id)
-            return len(logs)
+            return 0
 
         # Resolve campaign template
         campaign = await _aexec(
@@ -142,35 +162,47 @@ class SendService:
 
         subject = campaign.get("assunto_override") or template.get("assunto", "")
         html_body = template.get("corpo_html", "")
-        from_name = campaign.get("remetente_nome") or getattr(
-            self.settings, "default_from_name", "NoctusAI"
-        )
-        from_email = campaign.get("remetente_email") or getattr(
-            self.settings, "default_from_email", "noreply@noctusai.com"
-        )
+        from_name = campaign.get("remetente_nome") or self.settings.default_from_name
+        from_email = campaign.get("remetente_email") or self.settings.default_from_email
 
         # Build batch payload
+        # No real send without a per-contact opt-out link (LGPD), by construction:
+        # the template must carry {{unsubscribe_url}} and every rendered body must
+        # contain that contact's own URL — else the whole batch is refused.
+        if not template_carries_unsubscribe(html_body):
+            logger.error("%s (campaign %s)", UNSUBSCRIBE_REFUSAL, campaign_id)
+            await self._mark_failed(logs, UNSUBSCRIBE_REFUSAL)
+            await self._finalize_campaign_if_done(campaign_id)
+            return 0
         emails = []
         for log in logs:
             contact = log.get("contacts", {})
+            link = unsubscribe_url(self.settings, log.get("org_id", ""), log.get("contact_id", ""), log.get("email", ""))
             variables = {
                 "nome": contact.get("nome", ""),
                 "email": log.get("email", ""),
                 "empresa": contact.get("empresa", ""),
+                UNSUBSCRIBE_VARIABLE: link or "",
             }
             rendered_subject = self._render(subject, variables)
             rendered_body = self._render(html_body, variables)
+            if not link or link not in rendered_body:
+                logger.error("%s (campaign %s)", UNSUBSCRIBE_REFUSAL, campaign_id)
+                await self._mark_failed(logs, UNSUBSCRIBE_REFUSAL)
+                await self._finalize_campaign_if_done(campaign_id)
+                return 0
 
             emails.append({
                 "from": f"{from_name} <{from_email}>",
                 "to": [log["email"]],
                 "subject": rendered_subject,
                 "html": rendered_body,
+                "headers": {"List-Unsubscribe": f"<{link}>"},
             })
 
         # Call Resend Batch API
         try:
-            async with httpx.AsyncClient() as client:
+            async with self._http_client_factory() as client:
                 resp = await client.post(
                     "https://api.resend.com/emails/batch",
                     json=emails,

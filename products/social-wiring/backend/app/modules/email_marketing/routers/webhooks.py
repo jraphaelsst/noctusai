@@ -20,18 +20,11 @@ router = APIRouter(prefix='/api/email-marketing/webhooks', tags=["Webhooks"])
 
 
 async def _resolve_resend_secret(request, body):
-    """Per-request lookup of `RESEND_WEBHOOK_SECRET` so test-time monkeypatches
-    on the settings module are honored (bypasses the import-time-capture trap).
-
-    ``SocialWiringSettings`` does not (yet) declare ``resend_webhook_secret``
-    and the seed ``ProductSettings`` uses ``extra="ignore"`` — a bare
-    attribute access would raise ``AttributeError``. ``getattr(..., "")``
-    keeps the seed webhook contract's ``bypass_when_unset=True`` semantic:
-    absent secret → unsigned payloads accepted with a WARNING (early-dev).
-    Add ``resend_webhook_secret`` to SocialWiringSettings to enforce
-    signature verification (recommended config delta in the return)."""
-    secret = getattr(settings, "resend_webhook_secret", "") or None
-    return ResolvedSecret(secret=secret)
+    """Per-request read of ``RESEND_WEBHOOK_SECRET`` (honours test-time settings
+    patches). Empty ⇒ ``ResolvedSecret(None)`` ⇒ 401: fail-closed. Until
+    2026-10-10 the field was undeclared and ``bypass_when_unset=True`` let any
+    unsigned POST flip contacts to bounced/complained/unsubscribed."""
+    return ResolvedSecret(secret=settings.resend_webhook_secret or None)
 
 # Map Resend event types to send_log status + timestamp field
 EVENT_MAP = {
@@ -50,7 +43,7 @@ async def resend_webhook(
     verified: VerifiedWebhook = webhook_endpoint(
         secret_resolver=_resolve_resend_secret,
         scheme="svix",
-        bypass_when_unset=True,
+        bypass_when_unset=False,
         log_prefix="resend-webhook",
     ),
 ):
@@ -61,8 +54,8 @@ async def resend_webhook(
     `f"{svix-id}.{svix-timestamp}.{body}"` with the webhook secret
     (`RESEND_WEBHOOK_SECRET`). Mismatch → 401, no DB writes.
 
-    Bypass: when `resend_webhook_secret` is unset (early-dev), the seed-lib
-    helper accepts unsigned payloads with a WARNING. → KB §
+    Fail-closed: no `resend_webhook_secret` configured ⇒ 401 for every
+    payload (never an unsigned pass-through). → KB §
     PATTERNS/webhook-signatures.md.
     """
     body = verified.body
