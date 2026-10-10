@@ -21,9 +21,9 @@ class TestInvalidateSSOCacheForUser:
 
     def test_invalidate_existing_returns_true(self):
         _reset_cache()
-        sso_module._session_cache.set("a@example.com", {"access_token": "x"})
+        sso_module._session_cache.set("a@example.com", {"access_token": "x"}, org_id="org-1", product_slug="p1")
         assert sso_module.invalidate_sso_cache_for_user("a@example.com") is True
-        assert sso_module._session_cache.get("a@example.com") is None
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p1") is None
 
     def test_empty_email_returns_false(self):
         _reset_cache()
@@ -38,9 +38,9 @@ class TestInvalidateSSOCacheForOrg:
 
     def test_invalidate_all_users_in_org(self):
         _reset_cache()
-        sso_module._session_cache.set("a@example.com", {"t": 1})
-        sso_module._session_cache.set("b@example.com", {"t": 2})
-        sso_module._session_cache.set("c@example.com", {"t": 3})  # different org
+        sso_module._session_cache.set("a@example.com", {"t": 1}, org_id="org-1", product_slug="p1")
+        sso_module._session_cache.set("b@example.com", {"t": 2}, org_id="org-1", product_slug="p1")
+        sso_module._session_cache.set("c@example.com", {"t": 3}, org_id="org-1", product_slug="p1")  # different org
 
         db = MagicMock()
         table = MagicMock()
@@ -54,14 +54,14 @@ class TestInvalidateSSOCacheForOrg:
 
         invalidated = sso_module.invalidate_sso_cache_for_org(db, "org-1")
         assert invalidated == 2
-        assert sso_module._session_cache.get("a@example.com") is None
-        assert sso_module._session_cache.get("b@example.com") is None
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p1") is None
+        assert sso_module._session_cache.get("b@example.com", org_id="org-1", product_slug="p1") is None
         # Other-org user kept
-        assert sso_module._session_cache.get("c@example.com") is not None
+        assert sso_module._session_cache.get("c@example.com", org_id="org-1", product_slug="p1") is not None
 
     def test_invalidate_silently_handles_db_error(self):
         _reset_cache()
-        sso_module._session_cache.set("a@example.com", {"t": 1})
+        sso_module._session_cache.set("a@example.com", {"t": 1}, org_id="org-1", product_slug="p1")
 
         db = MagicMock()
         db.table.side_effect = RuntimeError("db unavailable")
@@ -69,7 +69,7 @@ class TestInvalidateSSOCacheForOrg:
         invalidated = sso_module.invalidate_sso_cache_for_org(db, "org-1")
         assert invalidated == 0
         # Cache entry should still exist since nothing was invalidated
-        assert sso_module._session_cache.get("a@example.com") is not None
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p1") is not None
 
 
 class TestCacheTTL:
@@ -83,19 +83,18 @@ class TestScopedSessionCache:
 
     def test_distinct_scopes_are_distinct_entries_and_one_flush_clears_all(self):
         _reset_cache()
-        key = sso_module.SSOSessionCache.scoped_key
-        sso_module._session_cache.set(key("a@example.com", "org-1", "p1"), {"t": 1})
-        sso_module._session_cache.set(key("a@example.com", "org-2", "p1"), {"t": 2})
-        sso_module._session_cache.set(key("a@example.com", "org-1", "p2"), {"t": 3})
-        sso_module._session_cache.set(key("ab@example.com", "org-1", "p1"), {"t": 4})
+        sso_module._session_cache.set("a@example.com", {"t": 1}, org_id="org-1", product_slug="p1")
+        sso_module._session_cache.set("a@example.com", {"t": 2}, org_id="org-2", product_slug="p1")
+        sso_module._session_cache.set("a@example.com", {"t": 3}, org_id="org-1", product_slug="p2")
+        sso_module._session_cache.set("ab@example.com", {"t": 4}, org_id="org-1", product_slug="p1")
 
-        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p1")) == {"t": 1}
-        assert sso_module._session_cache.get(key("a@example.com", "org-2", "p1")) == {"t": 2}
-        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p2")) == {"t": 3}
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p1") == {"t": 1}
+        assert sso_module._session_cache.get("a@example.com", org_id="org-2", product_slug="p1") == {"t": 2}
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p2") == {"t": 3}
 
         assert sso_module.invalidate_sso_cache_for_user("a@example.com") is True
-        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p1")) is None
-        assert sso_module._session_cache.get(key("a@example.com", "org-2", "p1")) is None
-        assert sso_module._session_cache.get(key("a@example.com", "org-1", "p2")) is None
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p1") is None
+        assert sso_module._session_cache.get("a@example.com", org_id="org-2", product_slug="p1") is None
+        assert sso_module._session_cache.get("a@example.com", org_id="org-1", product_slug="p2") is None
         # A different user whose email merely starts with the same text survives.
-        assert sso_module._session_cache.get(key("ab@example.com", "org-1", "p1")) == {"t": 4}
+        assert sso_module._session_cache.get("ab@example.com", org_id="org-1", product_slug="p1") == {"t": 4}

@@ -1104,11 +1104,10 @@ class SSOSessionCache:
     (email, org_id, product_slug). An email-only key hands the SAME session
     (same refresh token) to several product origins -- Supabase refresh-token
     reuse detection can then revoke the whole family -- and replays a stale
-    org_id/org_role for up to the TTL after an org switch. Pass `org_id` /
-    `product_slug` to get/set/get_lock; `invalidate(email)` flushes EVERY scope
-    of that user (and a legacy raw-email key). Calling with no scope is the
-    legacy email-only entry: still supported (back-compat), but do not use it
-    for a cache that serves more than one product or org.
+    org_id/org_role for up to the TTL after an org switch. Pass `org_id`
+    (None = no org, but explicit) and a non-empty `product_slug` to
+    get/set/get_lock -- both keyword-only and REQUIRED, there is no email-only
+    entry. `invalidate(email)` flushes EVERY scope of that user.
 
     TTL is parameterizable. Core uses 300s (5 min) -- above Supabase's 60s
     rate limit between magic-link generations but tight enough to let role
@@ -1124,25 +1123,20 @@ class SSOSessionCache:
         self._global_lock = threading.Lock()
 
     @classmethod
-    def scoped_key(
-        cls, email: str, org_id: Optional[str] = None, product_slug: Optional[str] = None
-    ) -> str:
-        """Storage key for an (email, org_id, product_slug) scope."""
-        return cls._SEP.join((email, org_id or "", product_slug or ""))
+    def scoped_key(cls, email: str, org_id: Optional[str], product_slug: str) -> str:
+        """Storage key for an (email, org_id, product_slug) scope.
 
-    @classmethod
-    def _key(cls, email: str, org_id: Optional[str], product_slug: Optional[str]) -> str:
-        # No scope given -> the raw email (legacy / back-compat key); a pre-built
-        # scoped_key() string passed as `email` also works unchanged.
-        if org_id is None and product_slug is None:
-            return email
-        return cls.scoped_key(email, org_id, product_slug)
+        `org_id=None` means "no org" and must be passed explicitly;
+        `product_slug` must be non-empty (ValueError) -- an empty slug would
+        collapse every product into one shared entry.
+        """
+        if not product_slug:
+            raise ValueError("SSOSessionCache requires a non-empty product_slug")
+        return cls._SEP.join((email, org_id or "", product_slug))
 
-    def get(
-        self, email: str, *, org_id: Optional[str] = None, product_slug: Optional[str] = None
-    ) -> Optional[dict]:
+    def get(self, email: str, *, org_id: Optional[str], product_slug: str) -> Optional[dict]:
         """Return the cached session for the scope or None (expired / absent)."""
-        key = self._key(email, org_id, product_slug)
+        key = self.scoped_key(email, org_id, product_slug)
         entry = self._store.get(key)
         if entry is None:
             return None
@@ -1152,31 +1146,24 @@ class SSOSessionCache:
             return None
         return data
 
-    def set(
-        self,
-        email: str,
-        data: dict,
-        *,
-        org_id: Optional[str] = None,
-        product_slug: Optional[str] = None,
-    ) -> None:
+    def set(self, email: str, data: dict, *, org_id: Optional[str], product_slug: str) -> None:
         """Store session data for the scope with the current timestamp."""
-        self._store[self._key(email, org_id, product_slug)] = (data, time.monotonic())
+        self._store[self.scoped_key(email, org_id, product_slug)] = (data, time.monotonic())
 
     def get_lock(
-        self, email: str, *, org_id: Optional[str] = None, product_slug: Optional[str] = None
+        self, email: str, *, org_id: Optional[str], product_slug: str
     ) -> threading.Lock:
         """Per-scope lock -- serializes concurrent SSO session generation."""
-        key = self._key(email, org_id, product_slug)
+        key = self.scoped_key(email, org_id, product_slug)
         with self._global_lock:
             if key not in self._locks:
                 self._locks[key] = threading.Lock()
             return self._locks[key]
 
     def invalidate(self, email: str) -> bool:
-        """Flush every scope of `email` (and a raw-email key). True iff any removed."""
+        """Flush every scope of `email`. True iff any removed."""
         prefix = email + self._SEP
-        keys = [k for k in list(self._store) if k == email or k.startswith(prefix)]
+        keys = [k for k in list(self._store) if k.startswith(prefix)]
         removed = False
         for k in keys:
             removed = self._store.pop(k, None) is not None or removed

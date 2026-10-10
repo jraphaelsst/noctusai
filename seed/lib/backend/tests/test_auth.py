@@ -360,29 +360,29 @@ class TestSSOTokenHardening:
 class TestSSOSessionCache:
     def test_get_on_empty_returns_none(self):
         cache = SSOSessionCache()
-        assert cache.get("alice@example.com") is None
+        assert cache.get("alice@example.com", org_id=None, product_slug="p") is None
 
     def test_set_then_get_returns_data(self):
         cache = SSOSessionCache()
-        cache.set("alice@example.com", {"token": "abc", "org": "o1"})
-        assert cache.get("alice@example.com") == {"token": "abc", "org": "o1"}
+        cache.set("alice@example.com", {"token": "abc", "org": "o1"}, org_id=None, product_slug="p")
+        assert cache.get("alice@example.com", org_id=None, product_slug="p") == {"token": "abc", "org": "o1"}
 
     def test_ttl_expiry_removes_entry(self):
         cache = SSOSessionCache(ttl_seconds=60)
-        cache.set("alice@example.com", {"token": "abc"})
+        cache.set("alice@example.com", {"token": "abc"}, org_id=None, product_slug="p")
 
         # Capture the pre-set time BEFORE patching, then advance past TTL.
         now = time.monotonic()
         with patch("noctusai_lib.api.auth.time.monotonic", return_value=now + 120):
-            assert cache.get("alice@example.com") is None
+            assert cache.get("alice@example.com", org_id=None, product_slug="p") is None
             # Entry is also purged from the store on get.
-            assert "alice@example.com" not in cache._store
+            assert cache._store == {}
 
     def test_invalidate_removes_returns_true(self):
         cache = SSOSessionCache()
-        cache.set("alice@example.com", {"token": "abc"})
+        cache.set("alice@example.com", {"token": "abc"}, org_id=None, product_slug="p")
         assert cache.invalidate("alice@example.com") is True
-        assert cache.get("alice@example.com") is None
+        assert cache.get("alice@example.com", org_id=None, product_slug="p") is None
 
     def test_invalidate_missing_returns_false(self):
         cache = SSOSessionCache()
@@ -390,19 +390,19 @@ class TestSSOSessionCache:
 
     def test_clear_flushes_all(self):
         cache = SSOSessionCache()
-        cache.set("a@x.com", {"token": "a"})
-        cache.set("b@x.com", {"token": "b"})
-        cache.get_lock("a@x.com")  # force lock creation
+        cache.set("a@x.com", {"token": "a"}, org_id=None, product_slug="p")
+        cache.set("b@x.com", {"token": "b"}, org_id=None, product_slug="p")
+        cache.get_lock("a@x.com", org_id=None, product_slug="p")  # force lock creation
         cache.clear()
-        assert cache.get("a@x.com") is None
-        assert cache.get("b@x.com") is None
+        assert cache.get("a@x.com", org_id=None, product_slug="p") is None
+        assert cache.get("b@x.com", org_id=None, product_slug="p") is None
         assert cache._locks == {}
 
     def test_get_lock_returns_per_email_instance(self):
         cache = SSOSessionCache()
-        lock_a1 = cache.get_lock("a@x.com")
-        lock_a2 = cache.get_lock("a@x.com")
-        lock_b = cache.get_lock("b@x.com")
+        lock_a1 = cache.get_lock("a@x.com", org_id=None, product_slug="p")
+        lock_a2 = cache.get_lock("a@x.com", org_id=None, product_slug="p")
+        lock_b = cache.get_lock("b@x.com", org_id=None, product_slug="p")
         assert lock_a1 is lock_a2  # same email → same lock
         assert lock_a1 is not lock_b  # different emails → different locks
 
@@ -415,7 +415,7 @@ class TestSSOSessionCache:
         max_concurrent = [0]
 
         def worker():
-            lock = cache.get_lock("alice@example.com")
+            lock = cache.get_lock("alice@example.com", org_id=None, product_slug="p")
             with lock:
                 active[0] += 1
                 max_concurrent[0] = max(max_concurrent[0], active[0])
@@ -434,9 +434,9 @@ class TestSSOSessionCache:
 
     def test_custom_ttl_is_honored(self):
         cache = SSOSessionCache(ttl_seconds=600)
-        cache.set("a@x.com", {"token": "a"})
+        cache.set("a@x.com", {"token": "a"}, org_id=None, product_slug="p")
         # TTL not reached — still present.
-        assert cache.get("a@x.com") is not None
+        assert cache.get("a@x.com", org_id=None, product_slug="p") is not None
 
     def test_scope_isolates_product_and_org(self):
         cache = SSOSessionCache()
@@ -444,7 +444,6 @@ class TestSSOSessionCache:
         assert cache.get("a@x.com", org_id="o1", product_slug="p1") == {"t": 1}
         assert cache.get("a@x.com", org_id="o1", product_slug="p2") is None
         assert cache.get("a@x.com", org_id="o2", product_slug="p1") is None
-        assert cache.get("a@x.com") is None  # legacy raw key is a separate entry
 
     def test_scoped_locks_are_per_scope(self):
         cache = SSOSessionCache()
@@ -464,19 +463,34 @@ class TestSSOSessionCache:
         cache = SSOSessionCache()
         cache.set("a@x.com", {"t": 1}, org_id="o1", product_slug="p1")
         cache.set("a@x.com", {"t": 2}, org_id="o2", product_slug="p2")
-        cache.set("a@x.com", {"t": 3})
+        cache.set("a@x.com", {"t": 3}, org_id=None, product_slug="p")
         cache.set("ab@x.com", {"t": 4}, org_id="o1", product_slug="p1")
         assert cache.invalidate("a@x.com") is True
         assert cache.get("a@x.com", org_id="o1", product_slug="p1") is None
         assert cache.get("a@x.com", org_id="o2", product_slug="p2") is None
-        assert cache.get("a@x.com") is None
+        assert cache.get("a@x.com", org_id=None, product_slug="p") is None
         assert cache.get("ab@x.com", org_id="o1", product_slug="p1") == {"t": 4}
         assert cache.invalidate("a@x.com") is False
 
-    def test_scoped_key_matches_kwargs_form(self):
+    def test_scoped_key_requires_non_empty_slug(self):
+        assert SSOSessionCache.scoped_key("a@x.com", "o1", "p1") != SSOSessionCache.scoped_key("a@x.com", "o1", "p2")
+        with pytest.raises(ValueError):
+            SSOSessionCache.scoped_key("a@x.com", "o1", "")
+
+    def test_scope_is_required_and_slug_non_empty(self):
         cache = SSOSessionCache()
-        cache.set("a@x.com", {"t": 1}, org_id="o1", product_slug="p1")
-        assert cache.get(SSOSessionCache.scoped_key("a@x.com", "o1", "p1")) == {"t": 1}
+        with pytest.raises(TypeError):
+            cache.get("a@x.com")  # type: ignore[call-arg]
+        with pytest.raises(TypeError):
+            cache.set("a@x.com", {})  # type: ignore[call-arg]
+        with pytest.raises(ValueError):
+            cache.set("a@x.com", {}, org_id="o1", product_slug="")
+
+    def test_no_org_is_explicit_none_and_distinct_from_an_org(self):
+        cache = SSOSessionCache()
+        cache.set("a@x.com", {"t": 1}, org_id=None, product_slug="p1")
+        assert cache.get("a@x.com", org_id=None, product_slug="p1") == {"t": 1}
+        assert cache.get("a@x.com", org_id="o1", product_slug="p1") is None
 
 
 # ---------------------------------------------------------------------------

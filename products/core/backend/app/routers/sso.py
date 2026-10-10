@@ -64,6 +64,7 @@ _CUSTOMER_REFUSED = "Área restrita à equipe."
 
 _CACHE_TTL = 300  # 5 min — above 60s Supabase rate limit, tight on staleness
 
+_NO_PRODUCT_SCOPE = "_no-product"
 _session_cache = SSOSessionCache(ttl_seconds=_CACHE_TTL)
 
 
@@ -370,7 +371,8 @@ def _generate_session(email: str, org_id: str | None = None, product_slug: str |
     60s rate limit without sharing one session across origins or orgs.
     A per-key lock prevents concurrent duplicate calls.
     """
-    scope = {"org_id": org_id or "", "product_slug": product_slug or ""}
+    # Legacy tokens (old callback) carry no product; they get their own scope.
+    scope = {"org_id": org_id, "product_slug": product_slug or _NO_PRODUCT_SCOPE}
     if not supabase_admin:
         logger.error("supabase_admin não inicializado — verifique SUPABASE_SERVICE_ROLE_KEY")
         raise HTTPException(status_code=500, detail="Configuração do servidor incompleta")

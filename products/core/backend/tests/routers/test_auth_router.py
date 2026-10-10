@@ -207,8 +207,10 @@ class TestLogout:
         client.mock_supabase.auth.admin.sign_out = admin_sign_out
         sso_module._session_cache.clear()
         sso_module._session_cache.set(
-            sso_module.SSOSessionCache.scoped_key("test@example.com", "org-1", "p1"),
+            "test@example.com",
             {"access_token": "cached"},
+            org_id="org-1",
+            product_slug="p1",
         )
 
         resp = client.post("/api/auth/logout", headers={"Authorization": "Bearer t"})
