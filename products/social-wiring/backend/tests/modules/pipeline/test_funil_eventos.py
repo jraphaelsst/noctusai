@@ -1,9 +1,6 @@
 """`pipeline.funil_eventos.mover_por_evento` — CONTRACT sw-lead-to-contract §6."""
 from __future__ import annotations
 
-import sys
-import types
-
 import pytest
 from noctusai_lib.testing.mocks import MockSupabaseClient
 
@@ -11,6 +8,8 @@ from app.modules.pipeline import funil_eventos
 from tests.modules.pipeline.conftest import (
     FUNIL_STAGES,
     ORG_A,
+    PROC_STAGES,
+    PROC_STAGE_ID,
     STAGE_ID,
     atendimento,
     seed_titular,
@@ -91,34 +90,34 @@ def test_lead_criado_is_a_noop():
 
 
 class TestPropostaAceita:
-    def _stub(self, monkeypatch, fn):
-        modulo = types.ModuleType("app.modules.pipeline.aceite")
-        modulo.aceitar_proposta = fn
-        monkeypatch.setitem(sys.modules, "app.modules.pipeline.aceite", modulo)
+    """Drives the REAL `pipeline.aceite.aceitar_proposta` (no stand-in for our
+    own module): the move lands on the `proposta_aceite` stage, then the
+    acceptance opens the processo de venda on the processos_venda pipeline."""
 
-    def test_moves_then_calls_the_acceptance_boundary(self, monkeypatch):
-        chamadas = []
+    def _db(self, etapa, *, apto=True):
+        mock = _db(etapa, apto=apto, estagios=ESTAGIOS + PROC_STAGES)
+        mock.set_table_data("processos_venda", [])
+        return mock
 
-        def aceitar(client, org_id, atendimento_id, actor_id):
-            chamadas.append((str(org_id), atendimento_id, actor_id))
-            return {"processo": {"id": "p1"}, "already_accepted": False}
-
-        self._stub(monkeypatch, aceitar)
-        mock = _db("proposta_recebida")
+    def test_moves_then_runs_the_real_acceptance(self):
+        mock = self._db("proposta_recebida")
         r = funil_eventos.mover_por_evento(mock, ORG_A, "neg-1", "proposta_aceita", "user-1")
         assert r["moveu"] is True and r["para"] == "proposta_decisao"
         assert r["aceite"]["already_accepted"] is False
-        assert chamadas == [(ORG_A, "neg-1", "user-1")]
+        criados = mock.table("processos_venda").inserted_payloads
+        assert len(criados) == 1 and criados[0]["etapa_id"] == PROC_STAGE_ID["contrato"]
 
-    def test_gate_refusal_skips_acceptance(self, monkeypatch):
-        def aceitar(*a, **k):  # pragma: no cover - must not run
-            raise AssertionError("aceite must not run when the move was refused")
+    def test_second_event_is_idempotent(self):
+        mock = self._db("proposta_recebida")
+        funil_eventos.mover_por_evento(mock, ORG_A, "neg-1", "proposta_aceita", "user-1")
+        r = funil_eventos.mover_por_evento(mock, ORG_A, "neg-1", "proposta_aceita", "user-1")
+        # The acceptance closed the atendimento: re-firing (the pos-aceite
+        # "retomar" path) is a no-op, never a second processo de venda.
+        assert r["moveu"] is False and r["motivo"] == "atendimento_aceita"
+        assert len(mock.table("processos_venda").inserted_payloads) == 1
 
-        self._stub(monkeypatch, aceitar)
-        r = funil_eventos.mover_por_evento(_db("proposta_recebida", apto=False), ORG_A, "neg-1", "proposta_aceita", "u")
+    def test_gate_refusal_skips_acceptance(self):
+        mock = self._db("proposta_recebida", apto=False)
+        r = funil_eventos.mover_por_evento(mock, ORG_A, "neg-1", "proposta_aceita", "u")
         assert r["moveu"] is False and "aceite" not in r
-
-    def test_missing_acceptance_module_is_reported_not_skipped(self, monkeypatch):
-        monkeypatch.setitem(sys.modules, "app.modules.pipeline.aceite", None)  # import -> ImportError
-        r = funil_eventos.mover_por_evento(_db("proposta_recebida"), ORG_A, "neg-1", "proposta_aceita", "u")
-        assert r["moveu"] is True and r["motivo"] == "aceite_indisponivel"
+        assert mock.table("processos_venda").inserted_payloads == []

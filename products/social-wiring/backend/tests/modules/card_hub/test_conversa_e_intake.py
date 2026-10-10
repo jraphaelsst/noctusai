@@ -165,7 +165,9 @@ def test_texto_is_built_from_the_pending_checklist(client, scoped):
     assert itens[0] in texto
 
 
-def test_sem_conversa_is_a_409_when_there_is_no_chat_and_no_phone(client, scoped):
+def test_sem_conversa_is_a_409_when_there_is_no_chat_and_no_phone(client, scoped, wa_fakes):
+    # wa_fakes: the route resolves the WhatsApp seams before the 409 check; the
+    # fakes keep the test independent of the ENCRYPTION_KEY a clean CI env lacks.
     cid = _cliente(scoped, chave_canonica=None, chave_tipo=None, celular=None)
     r = client.post(f"/api/clientes/{cid}/conversa/pedir-documentos", json={}, headers=_auth())
     assert r.status_code == 409, r.text

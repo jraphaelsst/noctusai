@@ -20,9 +20,8 @@ Rules (all from the contract):
   `etapa_auto` timeline event). No second history table.
 * `proposta_aceita` moves to `proposta_decisao` and then calls
   `app.modules.pipeline.aceite.aceitar_proposta` (the one acceptance path,
-  contract §5.4). That module is built by the proposta slice and imported LAZILY
-  here: when it is not importable the result carries
-  `motivo='aceite_indisponivel'`, never a silent skip.
+  contract §5.4). It is imported directly: both modules ship together, and
+  `aceite` does not import this module, so there is no cycle to defer.
 """
 from __future__ import annotations
 
@@ -33,6 +32,7 @@ from noctusai_lib.domain.pipeline import list_stages, move_card
 from noctusai_lib.primitives.exceptions import NotFoundError, ValidationError_
 
 from app.modules.pipeline import stage_gate
+from app.modules.pipeline.aceite import aceitar_proposta
 from app.modules.pipeline.configs import PIPELINE_FUNIL
 
 logger = logging.getLogger(__name__)
@@ -140,11 +140,6 @@ def mover_por_evento(
 
 def _aceitar(client: Any, org: str, aid: str, actor: Any, resultado: dict) -> dict:
     """Run the one acceptance path after the stage move (contract §5.4)."""
-    try:
-        from app.modules.pipeline.aceite import aceitar_proposta
-    except ImportError:
-        logger.warning("funil_eventos: pipeline.aceite not importable; aceite skipped (atendimento %s)", aid)
-        return {**resultado, "motivo": "aceite_indisponivel"}
     try:
         aceite = aceitar_proposta(client, org, aid, _actor_id(actor))
     except (ValidationError_, NotFoundError) as exc:
