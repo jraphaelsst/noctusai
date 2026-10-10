@@ -48,6 +48,7 @@ class LoteForm(StrictHttpModel):
     """``form_me`` / ``form_public``: headlines from the marca's research (Minha Pesquisa)."""
 
     marca_id: uuid.UUID
+    post_id: Optional[uuid.UUID] = None
     origem: Literal["form_me", "form_public"]
     variaveis: list[str] = Field(min_length=1, max_length=MAX_VARIAVEIS)
     valores: Optional[dict[str, list[uuid.UUID]]] = None
@@ -61,6 +62,7 @@ class LoteViral(StrictHttpModel):
     """``form_viral``: headlines from approved viral topics (Assuntos Virais)."""
 
     marca_id: uuid.UUID
+    post_id: Optional[uuid.UUID] = None
     origem: Literal["form_viral"]
     assunto_ids: Optional[list[uuid.UUID]] = Field(default=None, max_length=5)
     assunto_livre: Optional[str] = Field(default=None, max_length=MAX_ASSUNTO_CHARS)
@@ -98,6 +100,7 @@ class LoteBiblioteca(StrictHttpModel):
     """``biblioteca``: one chosen viral from the Biblioteca wizard."""
 
     marca_id: uuid.UUID
+    post_id: Optional[uuid.UUID] = None
     origem: Literal["biblioteca"]
     viral_id: uuid.UUID
     assunto_ids: Optional[list[uuid.UUID]] = Field(default=None, max_length=5)

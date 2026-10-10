@@ -50,6 +50,7 @@ from app.modules.media_creation.prompts.roteiro_perguntas import (
 )
 from app.modules.media_creation.schemas.roteiros import MAX_CONTEUDO, MAX_INSTRUCOES, MAX_NOME
 from app.modules.media_creation.services import geracao_jobs
+from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.viral_card import viral_cards
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,8 @@ BRAINS = "cs_brains"
 VIRAIS = "cs_virais"
 PERFIS = "cs_perfis_monitorados"
 MARCA_PERFIL = "cs_marca_perfil"
+POSTS = "cs_posts"
+REBIND_RPC = "cs_rebind_roteiro"
 JOB_PERGUNTAS = "roteiro.perguntas"
 JOB_GERAR = "roteiro.gerar"
 WINDOW = timedelta(hours=24)
@@ -150,14 +153,15 @@ def get_roteiro_ia_check() -> IaCheck:
 # ── presenters ────────────────────────────────────────────────────────────────
 
 
-def present_resumo(row: dict[str, Any]) -> dict[str, Any]:
-    """``RoteiroResumo`` (contract 4.8)."""
+def present_resumo(row: dict[str, Any], post: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """``RoteiroResumo`` (contract 4.8); ``post`` = the bound Esteira post ref, if any (contract 5.3)."""
     return {
         "id": row["id"],
         "nome": row["nome"],
         "headline_texto": row["headline_texto"],
         "headline_id": row.get("headline_id"),
         "status": row["status"],
+        "post": post,
         "created_at": row.get("created_at"),
     }
 
@@ -174,10 +178,12 @@ def present_perguntas(raw: Any) -> list[dict[str, Any]]:
     return out
 
 
-def present_roteiro(row: dict[str, Any], viral: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+def present_roteiro(
+    row: dict[str, Any], viral: Optional[dict[str, Any]] = None, post: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     """``Roteiro`` (contract 4.8)."""
     return {
-        **present_resumo(row),
+        **present_resumo(row, post),
         "instrucoes": row.get("instrucoes") or "",
         "fonte": row.get("fonte") or "ia",
         "duracao": row.get("duracao") or "auto",
@@ -255,7 +261,8 @@ class RoteiroService:
         return (await viral_cards(self.db, self.org_id, self.storage, [viral_id])).get(str(viral_id))
 
     async def _present(self, row: dict[str, Any]) -> dict[str, Any]:
-        return present_roteiro(row, await self._viral_for(row.get("viral_id")))
+        post = post_refs(self.db, self.org_id, "roteiro_id", [row["id"]]).get(str(row["id"]))
+        return present_roteiro(row, await self._viral_for(row.get("viral_id")), post)
 
     def _usage_hoje(self) -> int:
         """Roteiros this user created in the rolling window (capped read: never needs more than the cap)."""
@@ -304,6 +311,56 @@ class RoteiroService:
             raise RoteiroError(409, "O roteiro mudou; recarregue a página")
         return rows[0]
 
+    # Esteira binding (contract 3.5)
+
+    def _post_para_vinculo(self, body: Any, marca_id: str) -> Optional[dict[str, Any]]:
+        """The post a new roteiro will bind to, validated BEFORE anything is written or spent."""
+        if not body.post_id:
+            return None
+        rows = (
+            self.db.table(POSTS).select("id,marca_id,headline_id,roteiro_id")
+            .eq("id", str(body.post_id)).eq("org_id", self.org_id).execute().data
+        )
+        if not rows:
+            raise RoteiroError(404, "Post não encontrado")
+        post = rows[0]
+        if str(post["marca_id"]) != marca_id:
+            raise RoteiroError(422, {"code": "post_de_outra_marca", "detail": "O post pertence a outra marca"})
+        if post.get("roteiro_id") and not body.substituir:
+            raise RoteiroError(
+                409,
+                {"code": "post_ja_tem_roteiro", "detail": "Este post já tem um roteiro", "roteiro_id": str(post["roteiro_id"])},
+            )
+        return post
+
+    def _vincular_novo(self, post: dict[str, Any], roteiro_id: str) -> None:
+        """Bind the new row to the post. The write only lands if the post still holds the roteiro we
+        read (or none): a post that moved on in between is a 409 and the orphan row is dropped."""
+        atual = post.get("roteiro_id")
+        q = (
+            self.db.table(POSTS).update({"roteiro_id": roteiro_id, "updated_at": _iso(_now())})
+            .eq("id", str(post["id"])).eq("org_id", self.org_id)
+        )
+        q = q.eq("roteiro_id", str(atual)) if atual else q.is_("roteiro_id", "null")
+        if not q.execute().data:
+            self._table().delete().eq("id", roteiro_id).eq("org_id", self.org_id).execute()
+            raise RoteiroError(409, {"code": "post_mudou", "detail": "O post mudou; recarregue a página"})
+
+    def _post_do_roteiro(self, roteiro_id: str) -> Optional[str]:
+        rows = self.db.table(POSTS).select("id").eq("roteiro_id", roteiro_id).eq("org_id", self.org_id).execute().data
+        return str(rows[0]["id"]) if rows else None
+
+    def _transferir_vinculo(self, post_id: str, antigo: str, novo: str) -> None:
+        """``cs_rebind_roteiro``: row-locked take-over; false = the post's roteiro changed meanwhile."""
+        data = self.db.rpc(
+            REBIND_RPC, {"p_org": self.org_id, "p_post": post_id, "p_old": antigo, "p_new": novo},
+        ).execute().data
+        if isinstance(data, list):
+            data = data[0] if data else None
+        if data is not True:
+            self._table().delete().eq("id", novo).eq("org_id", self.org_id).execute()
+            raise RoteiroError(409, {"code": "post_mudou", "detail": "O post mudou; recarregue a página"})
+
     # reads
 
     def list(self, marca_id: str, *, q: Optional[str], limit: int, offset: int) -> dict[str, Any]:
@@ -320,7 +377,8 @@ class RoteiroService:
         res = query.order("created_at", desc=True).order("id").range(offset, offset + limit - 1).execute()
         rows = res.data or []
         total = res.count if getattr(res, "count", None) is not None else len(rows)
-        return {"items": [present_resumo(r) for r in rows], "total": total}
+        posts = post_refs(self.db, self.org_id, "roteiro_id", [r["id"] for r in rows])
+        return {"items": [present_resumo(r, posts.get(str(r["id"]))) for r in rows], "total": total}
 
     async def get(self, roteiro_id: str) -> dict[str, Any]:
         return await self._present(self._get_row(roteiro_id))
@@ -342,13 +400,16 @@ class RoteiroService:
         headline = body.headline_texto.strip()
         if not headline:
             raise RoteiroError(422, "Informe a headline")
+        post = self._post_para_vinculo(body, marca_id)
         await self._assert_pode_gerar()
 
         roteiro_id = str(uuid.uuid4())
+        # Inside a post the roteiro is written for the post's own headline (contract 3.5).
+        headline_id = str((post or {}).get("headline_id") or body.headline_id or "") or None
         pergunta_primeiro = bool(body.gerar_perguntas)
         row = {
             "id": roteiro_id, "org_id": self.org_id, "marca_id": marca_id, "created_by": self.user_id,
-            "nome": _default_nome(headline), "headline_id": str(body.headline_id) if body.headline_id else None,
+            "nome": _default_nome(headline), "headline_id": headline_id,
             "headline_texto": headline, "instrucoes": body.instrucoes.strip(), "fonte": "ia",
             "duracao": body.duracao, "brain_id": str(body.brain_id) if body.brain_id else None,
             "viral_id": str(body.viral_id) if body.viral_id else None, "perguntas": [],
@@ -359,6 +420,8 @@ class RoteiroService:
         }
         inserted = self._table().insert(row).execute().data
         saved = inserted[0] if inserted else row
+        if post is not None:
+            self._vincular_novo(post, roteiro_id)
         queue_id = await self._enqueue(roteiro_id, JOB_PERGUNTAS if pergunta_primeiro else JOB_GERAR)
         upd = self._table().update({"queue_job_id": queue_id}).eq("id", roteiro_id).eq("org_id", self.org_id).execute().data
         return await self._present(upd[0] if upd else {**saved, "queue_job_id": queue_id})
@@ -448,6 +511,9 @@ class RoteiroService:
         }
         inserted = self._table().insert(row).execute().data
         saved = inserted[0] if inserted else row
+        post_id = self._post_do_roteiro(roteiro_id)
+        if post_id:
+            self._transferir_vinculo(post_id, roteiro_id, novo_id)
         queue_id = await self._enqueue(novo_id, JOB_GERAR)
         upd = self._table().update({"queue_job_id": queue_id}).eq("id", novo_id).eq("org_id", self.org_id).execute().data
         return await self._present(upd[0] if upd else {**saved, "queue_job_id": queue_id})

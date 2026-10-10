@@ -232,7 +232,7 @@ class TestLeitura:
         }).execute()
         d = rc.get(BASE, params={"marca_id": MARCA, "limit": 1}).json()["data"]
         assert d["total"] == 2 and len(d["items"]) == 1
-        assert set(d["items"][0]) == {"id", "nome", "headline_texto", "headline_id", "status", "created_at"}
+        assert set(d["items"][0]) == {"id", "nome", "headline_texto", "headline_id", "status", "post", "created_at"}
         all_ids = {i["id"] for i in rc.get(BASE, params={"marca_id": MARCA}).json()["data"]["items"]}
         assert all_ids == {a, b}
 
@@ -248,7 +248,7 @@ class TestLeitura:
         rid = _criar(rc, viral_id=VIRAL).json()["data"]["id"]
         d = rc.get(f"{BASE}/{rid}").json()["data"]
         assert set(d) == {
-            "id", "nome", "headline_texto", "headline_id", "status", "created_at", "instrucoes", "fonte", "duracao",
+            "id", "nome", "headline_texto", "headline_id", "status", "post", "created_at", "instrucoes", "fonte", "duracao",
             "brain_id", "viral", "perguntas", "etapa", "conteudo", "fontes", "versao", "feedback", "feedback_motivo", "erro",
         }
         assert d["fontes"] is None

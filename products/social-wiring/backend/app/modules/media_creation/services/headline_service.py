@@ -28,6 +28,7 @@ from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 from app.modules.media_creation.geracao_taxonomias import FORMATO_IDS
 from app.modules.media_creation.pesquisa_variables import VARIABLE_SLUGS
 from app.modules.media_creation.services import headline_pipeline as pipe
+from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.viral_card import viral_cards
 
 logger = logging.getLogger(__name__)
@@ -50,7 +51,7 @@ RESUMO_LABEL = {
 
 LOTE_COLS = (
     "id,marca_id,created_by,origem,parametros,status,etapa,estruturas_total,estruturas_processadas,"
-    "estruturas_com_erro,aviso_poucas_estruturas,fallback_metodo,erro,created_at,finished_at"
+    "estruturas_com_erro,aviso_poucas_estruturas,fallback_metodo,erro,post_id,created_at,finished_at"
 )
 HEADLINE_COLS = (
     "id,marca_id,lote_id,viral_id,template_metodo,texto,texto_original,angulo,itens_usados,favorita,"
@@ -142,6 +143,7 @@ class HeadlineService:
     async def present_headlines(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         cards = await self._viral_cards([str(r["viral_id"]) for r in rows if r.get("viral_id")])
         roteiros = self._roteiros_por_headline([str(r["id"]) for r in rows])
+        posts = post_refs(self.db, self.org_id, "headline_id", [r["id"] for r in rows])
         return [
             {
                 "id": str(r["id"]), "marca_id": str(r["marca_id"]),
@@ -150,7 +152,8 @@ class HeadlineService:
                 "angulo": r.get("angulo"), "viral": cards.get(str(r["viral_id"])) if r.get("viral_id") else None,
                 "template_metodo": r.get("template_metodo"), "itens_usados": r.get("itens_usados") or [],
                 "favorita": bool(r.get("favorita")), "modo": r.get("modo"),
-                "roteiro_id": roteiros.get(str(r["id"])), "created_at": r["created_at"],
+                "roteiro_id": roteiros.get(str(r["id"])), "post": posts.get(str(r["id"])),
+                "created_at": r["created_at"],
             }
             for r in rows
         ]
@@ -253,14 +256,26 @@ class HeadlineService:
         if n >= int(self.cfg.headline_lotes_dia_usuario):
             raise HeadlineError(429, "Limite diário de gerações de headlines atingido", retry_after=RETRY_AFTER_SECONDS)
 
-    async def _insert_and_enqueue(self, marca_id: str, origem: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _assert_post(self, marca_id: str, post_id: Optional[str]) -> None:
+        """A batch generated from an Esteira card: the post must be this org's AND this marca's."""
+        if not post_id:
+            return
+        rows = self.db.table("cs_posts").select("id,marca_id").eq("id", post_id).eq("org_id", self.org_id).execute().data
+        if not rows:
+            raise HeadlineError(404, "Post não encontrado")
+        if str(rows[0]["marca_id"]) != marca_id:
+            raise HeadlineError(422, {"code": "post_de_outra_marca", "detail": "O post pertence a outra marca"})
+
+    async def _insert_and_enqueue(
+        self, marca_id: str, origem: str, params: dict[str, Any], post_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         if self.jobs is None:
             raise HeadlineError(503, {"codigo": "geracao_indisponivel", "mensagem": "A geração está indisponível no momento."})
         lote_id = str(uuid.uuid4())
         try:
             inserted = self.db.table(pipe.LOTES).insert({
                 "id": lote_id, "org_id": self.org_id, "marca_id": marca_id, "created_by": self.user_id,
-                "origem": origem, "parametros": params, "status": "criando",
+                "origem": origem, "parametros": params, "status": "criando", "post_id": post_id,
                 "etapa": "Na fila", "created_at": _iso(),
             }).execute().data
         except Exception as exc:  # noqa: BLE001 - the unique index = a concurrent active batch
@@ -291,13 +306,16 @@ class HeadlineService:
     async def create_lote(self, params: dict[str, Any]) -> dict[str, Any]:
         """``params`` = the validated ``LoteCreate`` dumped with ``mode='json'``."""
         marca_id = str(params["marca_id"])
+        post_id = str(params["post_id"]) if params.get("post_id") else None
+        params = {k: v for k, v in params.items() if k != "post_id"}  # a column, not a parameter
         self.assert_marca(marca_id)
+        self._assert_post(marca_id, post_id)
         self._validate_params(marca_id, params)
         perfil = self._perfil(marca_id)
         if not ((perfil or {}).get("bio") or "").strip():
             raise HeadlineError(422, "Preencha a bio em Meu Perfil antes de gerar headlines")
         self._check_user_limits()
-        return await self._insert_and_enqueue(marca_id, params["origem"], params)
+        return await self._insert_and_enqueue(marca_id, params["origem"], params, post_id)
 
     async def reprocessar(self, lote_id: str) -> dict[str, Any]:
         row = self._get_lote_row(lote_id)
@@ -308,7 +326,8 @@ class HeadlineService:
         if not ((perfil or {}).get("bio") or "").strip():
             raise HeadlineError(422, "Preencha a bio em Meu Perfil antes de gerar headlines")
         self._check_user_limits()
-        return await self._insert_and_enqueue(str(row["marca_id"]), row["origem"], params)
+        post_id = str(row["post_id"]) if row.get("post_id") else None
+        return await self._insert_and_enqueue(str(row["marca_id"]), row["origem"], params, post_id)
 
     # ── batches: reads ──────────────────────────────────────────────────
 
@@ -320,6 +339,7 @@ class HeadlineService:
 
     def list_lotes(
         self, marca_id: str, *, origem_in: Optional[list[str]], q: Optional[str], limit: int, offset: int,
+        post_id: Optional[str] = None,
     ) -> dict[str, Any]:
         self.assert_marca(marca_id)
         origens = origem_in or list(FORM_ORIGENS)
@@ -327,10 +347,11 @@ class HeadlineService:
             raise HeadlineError(422, "Origem inválida")
 
         def base(sel: str, **kw):
-            return (
+            qy = (
                 self.db.table(pipe.LOTES).select(sel, **kw)
                 .eq("org_id", self.org_id).eq("marca_id", marca_id).in_("origem", origens)
             )
+            return qy.eq("post_id", post_id) if post_id else qy
 
         if q and q.strip():
             needle = q.strip().casefold()

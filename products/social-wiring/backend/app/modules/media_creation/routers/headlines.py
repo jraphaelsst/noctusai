@@ -111,6 +111,7 @@ async def create_lote(
 @router.get("/lotes")
 async def list_lotes(
     marca_id: uuid.UUID,
+    post_id: Optional[uuid.UUID] = None,
     origem_in: Optional[list[str]] = Query(None),
     q: Optional[str] = Query(None, max_length=200),
     limit: int = Query(20, ge=1, le=50),
@@ -120,7 +121,10 @@ async def list_lotes(
 ):
     try:
         return success_response(
-            _svc(auth, cfg).list_lotes(str(marca_id), origem_in=origem_in, q=q, limit=limit, offset=offset)
+            _svc(auth, cfg).list_lotes(
+                str(marca_id), origem_in=origem_in, q=q, limit=limit, offset=offset,
+                post_id=str(post_id) if post_id else None,
+            )
         )
     except HeadlineError as exc:
         _raise(exc)

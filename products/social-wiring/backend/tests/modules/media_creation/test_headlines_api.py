@@ -119,7 +119,7 @@ LOTE_KEYS = {
 }
 HEADLINE_KEYS = {
     "id", "marca_id", "lote_id", "texto", "texto_original", "angulo", "viral", "template_metodo",
-    "itens_usados", "favorita", "modo", "roteiro_id", "created_at",
+    "itens_usados", "favorita", "modo", "roteiro_id", "post", "created_at",
 }
 
 

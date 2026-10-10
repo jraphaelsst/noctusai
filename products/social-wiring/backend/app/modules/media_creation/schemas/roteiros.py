@@ -35,6 +35,10 @@ class RoteiroCreate(StrictHttpModel):
     brain_id: Optional[uuid.UUID] = None
     viral_id: Optional[uuid.UUID] = None
     gerar_perguntas: bool = True
+    #: Created inside an Esteira card: the roteiro binds to this post (contract 3.5).
+    post_id: Optional[uuid.UUID] = None
+    #: With ``post_id``: replace the post's current roteiro (it stays in Meus roteiros, unbound).
+    substituir: bool = False
 
 
 class Resposta(StrictHttpModel):
