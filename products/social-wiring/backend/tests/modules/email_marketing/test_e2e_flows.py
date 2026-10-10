@@ -175,9 +175,11 @@ class TestCampaignLifecycle:
         data = resp.json()["data"]
         assert "stats" in data
 
-        # SCHEDULE step intentionally absent: POST .../schedule currently 500s
-        # against a datetime-strict client — pinned as xfail(strict) in
-        # test_r_campaigns.py::TestCampaignActions::test_schedule.
+        # SCHEDULE CAMPAIGN (500'd before scheduled_at was sent as ISO text)
+        client.mock_supabase.set_table_data("campaigns", [{**MOCK_CAMPAIGN, "status": "agendada"}])
+        resp = client.post(f"/api/email-marketing/campaigns/{campaign_id}/schedule",
+                           json={"scheduled_at": "2026-12-25T09:00:00Z"})
+        assert resp.status_code == 200
 
         # CANCEL CAMPAIGN
         cancelled = {**MOCK_CAMPAIGN, "status": "cancelada"}

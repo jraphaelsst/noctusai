@@ -1,8 +1,6 @@
 """Unit tests for CampaignService."""
 from datetime import datetime, timezone
 
-import pytest
-
 from noctusai_lib.testing import MockSupabaseClient, MockSupabaseResponse
 
 from app.modules.email_marketing.services.campaign_service import CampaignService
@@ -122,12 +120,6 @@ class TestDeleteCampaign:
 # ---------------------------------------------------------------------------
 
 class TestScheduleCampaign:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: schedule_campaign passes the raw datetime to the PostgREST "
-        "update (campaign_service.py:56 -> _set_status:86); the real client cannot "
-        "JSON-encode it. Needs scheduled_at.isoformat().",
-    )
     def test_sets_status_to_agendada(self):
         db = MockSupabaseClient()
         scheduled = {"id": "c1", "status": "agendada", "org_id": ORG}

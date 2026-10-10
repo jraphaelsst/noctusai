@@ -1,6 +1,4 @@
 """Tests for campaigns router."""
-import pytest
-
 MOCK_CAMPAIGN = {
     "id": "camp-1",
     "org_id": "test-org-123",
@@ -75,12 +73,6 @@ class TestGetCampaign:
 
 
 class TestCampaignActions:
-    @pytest.mark.xfail(
-        strict=True,
-        reason="BUG: CampaignService.schedule_campaign writes the raw datetime "
-        "(campaign_service.py:56 -> _set_status) to PostgREST, which cannot "
-        "JSON-encode it: POST /campaigns/{id}/schedule 500s against a real client",
-    )
     def test_schedule(self, client):
         client.mock_supabase.set_table_data("campaigns", [{**MOCK_CAMPAIGN, "status": "agendada"}])
         resp = client.post("/api/email-marketing/campaigns/camp-1/schedule", json={

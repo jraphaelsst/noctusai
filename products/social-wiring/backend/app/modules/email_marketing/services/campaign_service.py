@@ -53,7 +53,9 @@ class CampaignService:
         return True
 
     def schedule_campaign(self, campaign_id: str, scheduled_at: datetime):
-        return self._set_status(campaign_id, "agendada", scheduled_at=scheduled_at)
+        # ISO string, never the datetime: PostgREST's JSON body cannot encode it
+        # (POST /campaigns/{id}/schedule 500'd — found by the legacy-test port).
+        return self._set_status(campaign_id, "agendada", scheduled_at=scheduled_at.isoformat())
 
     def start_send(self, campaign_id: str):
         return self._set_status(campaign_id, "enviando",
