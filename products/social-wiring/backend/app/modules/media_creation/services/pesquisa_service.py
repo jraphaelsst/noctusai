@@ -147,9 +147,14 @@ class PesquisaService:
 
     def _save(
         self, marca_id: str, pairs: list[tuple[str, str]], *, origin: str, status: str,
+        provenance: Optional[dict[tuple[str, str], dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         """Insert ``(slug, content)`` pairs; duplicates are skipped. A *manual*
-        add of a previously rejected duplicate flips it to approved."""
+        add of a previously rejected duplicate flips it to approved.
+
+        ``provenance`` maps a pair to ``{"source_ref": {...}, "plays": int|None}``
+        and is persisted on the NEW row only (the first source wins; a skipped
+        duplicate keeps the source it already has)."""
         existing = self._existing(marca_id, {s for s, _ in pairs})
         saved: list[dict[str, Any]] = []
         skipped = 0
@@ -172,15 +177,31 @@ class PesquisaService:
                         continue
                 skipped += 1
                 continue
-            res = self._items().insert({
+            prov = (provenance or {}).get((slug, content)) or {}
+            row = {
                 "id": str(uuid.uuid4()), "org_id": self.org_id, "marca_id": marca_id,
                 "variable_slug": slug,
                 "content": content, "status": status, "origin": origin,
                 "created_by": self.user_id,
-            }).execute().data
+            }
+            if prov:
+                row["source_ref"] = prov.get("source_ref")
+                row["plays"] = prov.get("plays")
+            res = self._items().insert(row).execute().data
             if res:
                 saved.append(res[0])
         return {"saved": len(saved), "skipped": skipped, "items": saved}
+
+    def save_extracted(
+        self, marca_id: str, pairs: list[tuple[str, str]],
+        provenance: dict[tuple[str, str], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Persist extraction output: ``pending`` + ``origin='extraction'``,
+        each new row carrying its ``source_ref`` and ``plays``."""
+        self.assert_marca(marca_id)
+        return self._save(
+            marca_id, pairs, origin="extraction", status="pending", provenance=provenance
+        )
 
     def add_manual(self, marca_id: str, variable_slug: str, lines: list[str]) -> dict[str, Any]:
         self.assert_marca(marca_id)

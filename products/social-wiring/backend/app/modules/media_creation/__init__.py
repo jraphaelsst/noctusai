@@ -79,6 +79,7 @@ def register() -> Any:
         branding,
         generation,
         pesquisa,
+        pesquisa_extracao,
         posts,
         references,
     )
@@ -94,6 +95,7 @@ def register() -> Any:
             generation.router,
             pesquisa.router,
             assuntos_virais.router,
+            pesquisa_extracao.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()

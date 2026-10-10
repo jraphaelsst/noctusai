@@ -150,6 +150,18 @@ async def on_startup() -> None:
         await start_fotos_worker(settings)
     except Exception:
         logger.exception("edicao_fotos: worker NÃO iniciado — os lotes ficam na fila.")
+    # Pesquisa extraction worker — its OWN seed Worker (types
+    # ["pesquisa.extrair"]), NOT the fotos one (that one's claim gate is the
+    # fotos pause). Same isolation: a wiring failure is logged at ERROR and
+    # never aborts startup.
+    from app.modules.media_creation.services.pesquisa_extracao_worker import (
+        start_worker as start_pesquisa_extracao_worker,
+    )
+
+    try:
+        await start_pesquisa_extracao_worker(settings)
+    except Exception:
+        logger.exception("pesquisa_extracao: worker NÃO iniciado — as extrações ficam na fila.")
     # Daily model-notes catch-up — same reason and shape as the Vista one.
     schedule_fotos_catch_up()
 
@@ -163,7 +175,12 @@ async def on_shutdown() -> None:
     """Stop the worker. Safe to call when startup short-circuited."""
     from app.modules.edicao_fotos.services.worker import stop_worker as stop_fotos_worker
 
+    from app.modules.media_creation.services.pesquisa_extracao_worker import (
+        stop_worker as stop_pesquisa_extracao_worker,
+    )
+
     await stop_fotos_worker()
+    await stop_pesquisa_extracao_worker()
     await stop_worker()
     stop_scheduler()
     logger.info("Social Wiring lifespan shutdown complete.")

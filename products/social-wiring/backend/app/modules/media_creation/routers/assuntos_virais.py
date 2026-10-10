@@ -3,13 +3,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Literal
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from noctusai_lib.primitives.responses import success_response
 
+from app.config import settings
 from app.dependencies import get_admin_client, get_current_user_org
+from app.modules.media_creation.pesquisa_fontes import FONTES
 from app.modules.media_creation.schemas.assuntos_virais import (
     AssuntosBulk,
     AssuntosCreate,
@@ -27,9 +29,40 @@ router = APIRouter(
 )
 
 
+def refresh_source_rows(db, org_id: str, marca_id: str, rows: list[dict]) -> list[dict]:
+    """``source_refresher`` backed by ``FONTES``: IG CDN urls/thumbnails expire,
+    so re-read each source post from its live row. A post that no longer
+    exists keeps its stored snapshot; metrics always stay the snapshot."""
+    by_kind: dict[str, list[tuple[Optional[str], str]]] = {}
+    for r in rows:
+        by_kind.setdefault(r["source_kind"], []).append((r.get("account_id"), r["source_id"]))
+    live: dict[tuple[str, Optional[str], str], object] = {}
+    for kind, refs in by_kind.items():
+        factory = FONTES.get(kind)
+        if factory is None:
+            continue
+        got = factory(db, texto_max_chars=settings.pesquisa_extracao_texto_max_chars).obter(
+            org_id, marca_id, refs
+        )
+        for (account_id, sid), post in got.items():
+            live[(kind, account_id, sid)] = post
+    out = []
+    for r in rows:
+        post = live.get((r["source_kind"], r.get("account_id"), r["source_id"]))
+        if post is not None:
+            r = {**r, "url": post.url or r.get("url"),
+                 "thumbnail_url": post.thumbnail_url or r.get("thumbnail_url")}
+        out.append(r)
+    return out
+
+
 def _svc(auth) -> AssuntosViraisService:
     user, _, org_id = auth
-    return AssuntosViraisService(get_admin_client(), org_id, str(user.id))
+    db = get_admin_client()
+    return AssuntosViraisService(
+        db, org_id, str(user.id),
+        source_refresher=lambda org, marca, rows: refresh_source_rows(db, org, marca, rows),
+    )
 
 
 def _raise(exc: PesquisaError):

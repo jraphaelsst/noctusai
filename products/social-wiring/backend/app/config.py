@@ -284,6 +284,21 @@ class SocialWiringSettings(ProductSettings):
     # A finite default, never "unlimited by omission"; 0 blocks every edit.
     edicao_fotos_edicoes_por_dia: int = 300
 
+    # ─── Minha Pesquisa — Extrair (app/modules/media_creation) ───────────
+    # Async extraction job (LLM reads one of OUR posts, proposes research
+    # items / viral topics). Contract: projects/core-studio/specs/
+    # pesquisa-wave2-contract.md section 2.3. All caps are finite, never
+    # "unlimited by omission".
+    # Hard switch: off => the worker is not started AND submit returns 503.
+    pesquisa_extracao_worker_enabled: bool = True
+    pesquisa_extracao_max_posts_por_job: int = 30
+    pesquisa_extracao_jobs_por_dia_usuario: int = 10
+    # Counts posts x tipos per org in a rolling 24h window.
+    pesquisa_extracao_posts_por_dia_org: int = 300
+    pesquisa_extracao_texto_max_chars: int = 6000
+    pesquisa_extracao_poll_seconds: float = 2.0
+    pesquisa_extracao_lease_seconds: float = 600.0
+
     # ─── WhatsApp inbound (Phase 5) ────────────────────────────────────
     # Comma-separated E.164 phone numbers authorized to trigger uploads
     whatsapp_authorized_numbers: str = "+5511974693365"

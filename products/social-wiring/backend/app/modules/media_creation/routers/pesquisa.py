@@ -1,15 +1,18 @@
 """Minha Pesquisa endpoints — per-marca research items (pesquisa-contract.md §3)."""
-from __future__ import annotations
-
+# NOTE: no `from __future__ import annotations` here -- slowapi's @limiter.limit wrapper
+# makes FastAPI resolve string annotations in slowapi's globals, turning body models
+# into query params (422 "body: Field required").
 import logging
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 
+from noctusai_lib.api.rate_limit_policies import DEFAULT_AI_RL
 from noctusai_lib.primitives.responses import success_response
 
 from app.dependencies import get_admin_client, get_current_user_org
+from app.rate_limit import limiter
 from app.modules.media_creation.schemas.pesquisa import (
     ItemsBulk,
     ItemsClassify,
@@ -88,7 +91,9 @@ async def create_items(body: ItemsCreate, auth=Depends(get_current_user_org)):
 
 
 @router.post("/items/classify")
+@limiter.limit(DEFAULT_AI_RL)
 async def classify_items(
+    request: Request,
     body: ItemsClassify,
     auth=Depends(get_current_user_org),
     llm: PesquisaLlm = Depends(get_pesquisa_llm),
