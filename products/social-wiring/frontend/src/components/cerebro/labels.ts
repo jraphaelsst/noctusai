@@ -1,5 +1,5 @@
 /** Shared pt-BR labels and limits for the Segundo Cérebro surfaces (contract §6). */
-import type { BrainDisplayStatus, ImportStatus } from "@/types/cerebro";
+import type { BrainDisplayStatus, ExtractionStatus, ImportStatus } from "@/types/cerebro";
 
 export const STATUS_CEREBRO_ROTULO: Record<BrainDisplayStatus, string> = {
   vazio: "Vazio",
@@ -10,6 +10,13 @@ export const STATUS_CEREBRO_ROTULO: Record<BrainDisplayStatus, string> = {
 export const STATUS_IMPORT_ROTULO: Record<ImportStatus, string> = {
   processing: "Processando",
   appended: "Anexado",
+  error: "Falha",
+};
+
+export const STATUS_EXTRACAO_ROTULO: Record<ExtractionStatus, string> = {
+  transcribing: "Transcrevendo",
+  ready: "Pronta",
+  applied: "Aplicada",
   error: "Falha",
 };
 
