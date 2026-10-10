@@ -20,7 +20,7 @@ vi.mock('@noctusai/seed/infra', () => ({
 import { ActingAsBanner } from './ActingAsBanner';
 import { OrgPickerModal, OrgPickerModalView } from './OrgPickerModal';
 import { OrgSelectionGate } from './OrgSelectionGate';
-import { endOrgSelectionBestEffort, setOrgPickerForced } from '../../org-selection';
+import { endOrgSelectionBestEffort, resetOrgSelectionPage, setOrgPickerForced } from '../../org-selection';
 import { getOrgPin, setOrgPin } from '../../org-pin';
 
 const HOME = { id: 'h', nome: 'NoctusAI' };
@@ -50,6 +50,7 @@ describe('OrgPickerModal', () => {
   beforeEach(() => {
     [apiGet, apiPut, apiDelete, reload, removeAllChannels].forEach((m) => m.mockReset());
     setOrgPin(null);
+    resetOrgSelectionPage();
     Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
   });
   afterEach(() => {
@@ -144,7 +145,7 @@ describe('OrgPickerModal', () => {
 });
 
 describe('ActingAsBanner / OrgSelectionGate', () => {
-  beforeEach(() => { [apiGet, apiPut, apiDelete].forEach((m) => m.mockReset()); setOrgPin(null); setOrgPickerForced(false); });
+  beforeEach(() => { [apiGet, apiPut, apiDelete].forEach((m) => m.mockReset()); setOrgPin(null); resetOrgSelectionPage(); setOrgPickerForced(false); });
   afterEach(() => cleanup());
 
   it('hidden for non-staff', async () => {

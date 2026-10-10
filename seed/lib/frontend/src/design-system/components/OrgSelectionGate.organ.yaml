@@ -9,7 +9,10 @@ known_facts:
   - "Composition mounted once by createProductLayout: ActingAsBanner + OrgPickerModal. Non-staff render nothing."
   - "useOrgSelection() owns the access/choices queries, the X-Noctus-Acting-Org pin (api.ts + Supabase client fetch) and the 409 org_selection_changed refetch/reopen."
 
-errors_encountered: []
+  - "Pin is adopted silently only on the FIRST access of a page load. A later /api/me/access reporting a different org (or an ended selection) under that page's cache is an org swap (other tab / 409): teardownRealtime + hard reload, never a silent re-pin. Same-org refetch restores a 409-cleared pin."
+
+errors_encountered:
+  - "2026-10-10 social-wiring prod: pin effect overwrote tab A's org-X pin with org Y chosen in tab B -> X cache on screen, requests resolved under Y (404s / cross-org writes). Fixed by pageOrg guard in useOrgSelection."
 drifts_surfaced: []
 alternatives_considered: []
 manual_validation_log: []

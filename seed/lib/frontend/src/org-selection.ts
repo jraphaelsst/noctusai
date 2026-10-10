@@ -81,7 +81,14 @@ function subscribeForced(l: () => void) {
   return () => { forcedListeners.delete(l); };
 }
 
-export function useOrgSelection(): UseOrgSelectionResult {
+// Org this page load's cache belongs to (first pin). Module-level so a 409
+// pin-clear can't make the next access refetch look like a first pin.
+let pageOrg: string | null = null;
+let swapping = false;
+/** Tests / logout reset. */
+export function resetOrgSelectionPage() { pageOrg = null; swapping = false; }
+
+export function useOrgSelection():UseOrgSelectionResult {
   const qc = useQueryClient();
   const pin = useSyncExternalStore(subscribeOrgPin, getOrgPin, getOrgPin);
   const pickerForced = useSyncExternalStore(subscribeForced, () => forced, () => forced);
@@ -95,11 +102,25 @@ export function useOrgSelection(): UseOrgSelectionResult {
   });
   const selection = orgSelectionOf(accessQ.data);
 
-  // Pin whatever org the server says we are in (staff with a live selection).
+  // Pin the org the server says we are in. The FIRST pin of a page load is
+  // adopted silently; after that `pageOrg` (the org this page's React-Query
+  // cache belongs to) is authoritative and survives a 409 pin-clear, so a
+  // different org / ended selection reported by a later access refetch is an
+  // org swap (another tab, 409) -> hard reload, never a silent re-pin.
+  const accessOrgId = selection.available && selection.selection_id && selection.org
+    ? selection.org.id : null;
   useEffect(() => {
-    if (selection.available && selection.selection_id && selection.org) setOrgPin(selection.org.id);
-    else if (!selection.available) setOrgPin(null);
-  }, [selection.available, selection.selection_id, selection.org]);
+    if (pageOrg === null) {
+      if (accessOrgId) { pageOrg = accessOrgId; setOrgPin(accessOrgId); }
+      else if (!selection.available) setOrgPin(null);
+      return;
+    }
+    if (accessOrgId === pageOrg) { setOrgPin(pageOrg); return; } // same org: restore after a 409 clear
+    if (swapping) return;
+    swapping = true;
+    setForced(false);
+    void teardownRealtime().finally(reloadPage);
+  }, [accessOrgId, selection.available, pin]);
 
   // Stale pin (409 org_selection_changed): refetch access + reopen the picker.
   useEffect(() => {
@@ -125,6 +146,7 @@ export function useOrgSelection(): UseOrgSelectionResult {
   });
   const choose = useCallback(async (orgId: string) => {
     await chooseM.mutateAsync(orgId);
+    swapping = true; // the reload below IS the swap; the pin effect must not double-fire
     setOrgPin(orgId);
     setForced(false);
     await teardownRealtime();
@@ -133,6 +155,7 @@ export function useOrgSelection(): UseOrgSelectionResult {
 
   const end = useCallback(async () => {
     await api.delete('/api/me/org-choice');
+    pageOrg = null; // user-initiated end: not a foreign swap
     setOrgPin(null);
   }, []);
 
@@ -170,6 +193,7 @@ export async function endOrgSelectionBestEffort(): Promise<void> {
   } catch {
     /* best-effort by design: signOut proceeds; core logout ends all selections */
   } finally {
+    pageOrg = null;
     setOrgPin(null);
   }
 }
