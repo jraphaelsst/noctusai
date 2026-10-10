@@ -188,6 +188,14 @@ def _uuid_ou_none(valor: Any) -> Optional[UUID]:
     return UUID(str(valor)) if valor else None
 
 
+def _ator(valor: Any) -> Optional[str]:
+    """The acting user as the house passes it (`getattr(user, "id", None)`) —
+    carried as a string, never coerced to UUID: every other card_hub writer
+    stores `str(usuario_id)`, and a coercion here 500'd the route for any id
+    that is not UUID-shaped before a single refusal could run."""
+    return str(valor) if valor else None
+
+
 def obter_proposta(client: Any, org_id: UUID, atendimento_id: UUID, proposta_id: UUID) -> dict:
     """404 for unknown, other-org and other-atendimento alike (non-distinguishing)."""
     rows = (
@@ -630,7 +638,7 @@ def aceitar(
     or whatever step 1 itself raises. Returns
     `{proposta_row, contrato_id, geracao, pos_aceite, passos}`."""
     ports = ports or AceitePorts()
-    actor = _uuid_ou_none(actor_id)
+    actor = _ator(actor_id)
     proposta = obter_proposta(client, org_id, atendimento_id, proposta_id)
     snap = _recusas(client, org_id, atendimento_id, proposta)
 
@@ -734,7 +742,7 @@ def reexecutar_pos_aceite(
     if proposta.get("status") != STATUS_ACEITA:
         raise PropostaNaoAceita(str(proposta.get("status")))
     passo, pos_aceite = _passo_pos_aceite(
-        ports, client, org_id, atendimento_id, _uuid_ou_none(actor_id), agendador
+        ports, client, org_id, atendimento_id, _ator(actor_id), agendador
     )
     return {"proposta_row": proposta, "pos_aceite": pos_aceite, "passos": [passo]}
 
