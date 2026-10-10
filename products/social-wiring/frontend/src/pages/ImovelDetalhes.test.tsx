@@ -15,13 +15,11 @@ afterEach(async () => {
 });
 
 const mockUseImovel = vi.fn();
-const mockUseImovelRegistro = vi.fn();
 vi.mock("@/hooks/useImoveis", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/hooks/useImoveis")>();
   return {
     ...actual,
     useImovel: mockUseImovel,
-    useImovelRegistro: mockUseImovelRegistro,
   };
 });
 
@@ -220,10 +218,6 @@ beforeEach(() => {
   });
   mockUseImovelDocumentos.mockReturnValue({ data: undefined, isPending: false });
   mockUseTeamMembers.mockReturnValue({ data: [] });
-  // Default: not registered — every existing test's `mockUseImovel` already
-  // returns a real imóvel, so this branch is never reached by them; only
-  // the manual-layout tests below override it.
-  mockUseImovelRegistro.mockReturnValue({ data: undefined, isPending: false, isError: false });
 });
 
 async function renderDetalhes(codigo = "AP1234") {
@@ -337,8 +331,8 @@ describe("ImovelDetalhes — section-hidden-when-empty", () => {
   });
 });
 
-describe("ImovelDetalhes — manually-registered código (mirror 404, registry 200)", () => {
-  it("🔴 renders the not-found card when BOTH the mirror and the registry 404", async () => {
+describe("ImovelDetalhes — not found", () => {
+  it("renders the not-found card when the GET 404s", async () => {
     const { ApiError } = await import("@noctusai/lib");
     mockUseImovel.mockReturnValue({
       data: undefined,
@@ -346,92 +340,10 @@ describe("ImovelDetalhes — manually-registered código (mirror 404, registry 2
       isError: true,
       error: new ApiError(404, "Imóvel não encontrado"),
     });
-    mockUseImovelRegistro.mockReturnValue({
-      data: undefined,
-      isPending: false,
-      isError: true,
-    });
-    const { getByText, queryByTestId } = await renderDetalhes();
-
+    const { getByText } = await renderDetalhes();
     expect(getByText("Imóvel AP1234 não encontrado.")).toBeTruthy();
-    expect(queryByTestId("imovel-manual-layout")).toBeNull();
-  });
-
-  it("🔴 renders the manual layout when the mirror 404s but the registry says manual", async () => {
-    const { ApiError } = await import("@noctusai/lib");
-    mockUseImovel.mockReturnValue({
-      data: undefined,
-      isPending: false,
-      isError: true,
-      error: new ApiError(404, "Imóvel não encontrado"),
-    });
-    mockUseImovelRegistro.mockReturnValue({
-      data: {
-        codigo: "AP1234",
-        registrado: true,
-        origem: "manual",
-        criado_em: "2026-09-01T00:00:00Z",
-      },
-      isPending: false,
-      isError: false,
-    });
-    const { getByTestId, queryByText, getByText } = await renderDetalhes();
-
-    expect(getByTestId("imovel-manual-layout")).toBeTruthy();
-    expect(getByTestId("imovel-manual-badge").textContent).toContain(
-      "Cadastrado manualmente",
-    );
-    // The same cartório card the full page renders — codigo-scoped, no fork.
-    expect(getByText("Cartório e registro")).toBeTruthy();
-    expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
-  });
-
-  it("🔴 also renders 'Para o contrato' — título/endereço do registro/ônus have no OTHER reachable input for a manually registered property", async () => {
-    const { ApiError } = await import("@noctusai/lib");
-    mockUseImovel.mockReturnValue({
-      data: undefined,
-      isPending: false,
-      isError: true,
-      error: new ApiError(404, "Imóvel não encontrado"),
-    });
-    mockUseImovelRegistro.mockReturnValue({
-      data: {
-        codigo: "AP1234",
-        registrado: true,
-        origem: "manual",
-        criado_em: "2026-09-01T00:00:00Z",
-      },
-      isPending: false,
-      isError: false,
-    });
-    const { getByText, getByTestId } = await renderDetalhes();
-
-    expect(getByTestId("imovel-manual-layout")).toBeTruthy();
-    // All three cards the manual layout owes a manually-registered código:
-    // cartório/registro, documentos, AND the contract's título/endereço/ônus.
-    expect(getByText("Cartório e registro")).toBeTruthy();
-    expect(getByText("Documentos do imóvel")).toBeTruthy();
-    expect(getByText("Para o contrato")).toBeTruthy();
-  });
-
-  it("shows the skeleton while either the mirror or the registry is still resolving", async () => {
-    const { ApiError } = await import("@noctusai/lib");
-    mockUseImovel.mockReturnValue({
-      data: undefined,
-      isPending: false,
-      isError: true,
-      error: new ApiError(404, "Imóvel não encontrado"),
-    });
-    // Mirror already 404'd, but the registry hasn't answered yet — must not
-    // flash "não encontrado" before the registry check settles.
-    mockUseImovelRegistro.mockReturnValue({ data: undefined, isPending: true, isError: false });
-    const { queryByText, queryByTestId } = await renderDetalhes();
-
-    expect(queryByText("Imóvel AP1234 não encontrado.")).toBeNull();
-    expect(queryByTestId("imovel-manual-layout")).toBeNull();
   });
 });
-
 
 describe("ImovelDetalhes — S6 referências + manual imóvel", () => {
   const refs = {
@@ -455,14 +367,32 @@ describe("ImovelDetalhes — S6 referências + manual imóvel", () => {
       isPending: false,
       isError: false,
     });
-    const { getByTestId, getByText, queryByTestId } = await renderDetalhes("SW-0001");
+    const { getByTestId, getByText } = await renderDetalhes("SW-0001");
 
     expect(getByText("Al. Liverpool 81")).toBeTruthy();
     expect(getByText("Sob consulta")).toBeTruthy();
     expect(getByTestId("imovel-manual-badge").textContent).toBe("Manual");
     expect(getByTestId("imovel-editar")).toBeTruthy();
-    // Full layout, not the reduced registry-only one.
-    expect(queryByTestId("imovel-manual-layout")).toBeNull();
+    expect(getByTestId("imovel-referencias")).toBeTruthy();
+  });
+
+  it("🔴 a registry-only manual imóvel (minimal GET: titulo null, all listing fields empty) renders the full layout with 'Sem título' and Editar", async () => {
+    mockUseImovel.mockReturnValue({
+      data: makeImovel({
+        codigo: "EUROVILLE-535",
+        fonte: "manual",
+        titulo: null,
+        categoria: null,
+        status: null,
+        valor_venda: null,
+        referencias: { processo_atual_numero: null, drive_folder_url: null, drive_folder_id: null },
+      }),
+      isPending: false,
+      isError: false,
+    });
+    const { getByTestId, getByText } = await renderDetalhes("EUROVILLE-535");
+    expect(getByText("Sem título")).toBeTruthy();
+    expect(getByTestId("imovel-editar")).toBeTruthy();
     expect(getByTestId("imovel-referencias")).toBeTruthy();
   });
 

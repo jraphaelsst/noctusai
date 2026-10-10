@@ -97,6 +97,7 @@ describe("ImovelManualModal — create", () => {
     expect(body).toMatchObject({
       titulo: "Al. Liverpool 81",
       status: "Venda",
+      finalidades: ["venda"],
       valor_venda: 1250000.5,
       valor_locacao: null,
       dormitorios: 3,
@@ -155,6 +156,7 @@ describe("ImovelManualModal — edit", () => {
     uf: "SP",
     cep: "06700-000",
     empreendimento: "Reserva do Vianna",
+    em_condominio: true,
     valor_venda: 1250000,
     valor_locacao: null,
     dormitorios: 3,
@@ -171,7 +173,6 @@ describe("ImovelManualModal — edit", () => {
         open
         onOpenChange={vi.fn()}
         imovel={imovel}
-        emCondominio
       />,
     );
     expect(

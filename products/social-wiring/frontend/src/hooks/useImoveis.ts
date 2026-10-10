@@ -40,6 +40,8 @@ export interface Imovel {
    *  price). Absent on an older backend, so treat undefined as "vista". */
   fonte?: "vista" | "manual";
   referencias?: ImovelReferencias;
+  /** Both returned for every imóvel (S6). */
+  em_condominio?: boolean | null;
   codigo: string;
   codigo_imobiliaria: string | null;
   titulo: string | null;

@@ -85,7 +85,6 @@ export interface ImovelDraft extends Record<NumKey, string> {
   titulo: string;
   categoria: string;
   status: string;
-  finalidades: string;
   descricao_web: string;
   observacoes: string;
   empreendimento: string;
@@ -99,7 +98,6 @@ const VAZIO: ImovelDraft = {
   titulo: "",
   categoria: "",
   status: "",
-  finalidades: "",
   valor_venda: "",
   valor_locacao: "",
   valor_condominio: "",
@@ -121,16 +119,12 @@ const VAZIO: ImovelDraft = {
 
 const s = (v: unknown) => (v === null || v === undefined ? "" : String(v));
 
-export function draftDoImovel(
-  i?: Imovel | null,
-  emCondominio?: boolean | null,
-): ImovelDraft {
+export function draftDoImovel(i?: Imovel | null): ImovelDraft {
   if (!i) return VAZIO;
   return {
     titulo: s(i.titulo),
     categoria: s(i.categoria),
     status: s(i.status),
-    finalidades: (i.finalidades ?? []).join(", "),
     valor_venda: s(i.valor_venda),
     valor_locacao: s(i.valor_locacao),
     valor_condominio: s(i.valor_condominio),
@@ -144,7 +138,7 @@ export function draftDoImovel(
     descricao_web: s(i.descricao_web),
     observacoes: s(i.observacoes),
     empreendimento: s(i.empreendimento),
-    em_condominio: emCondominio === true,
+    em_condominio: i.em_condominio === true,
     processo_atual_numero: s(i.referencias?.processo_atual_numero),
     drive_folder_url: s(i.referencias?.drive_folder_url),
     endereco: {
@@ -196,11 +190,13 @@ const temErro = (e: Erros) =>
   );
 
 const txt = (v: string) => v.trim() || null;
-const lista = (v: string) =>
-  v
-    .split(",")
-    .map((x) => x.trim())
-    .filter(Boolean);
+/** Canonical catalog values, derived from the status select. */
+export function finalidadesDoStatus(status: string): string[] {
+  if (status === "Venda") return ["venda"];
+  if (status === "Aluguel") return ["aluguel"];
+  if (status === "Venda e Aluguel") return ["venda", "aluguel"];
+  return [];
+}
 const enderecoBody = (e: EnderecoDraft) => ({
   cep: txt(e.cep),
   logradouro: e.logradouro.trim(),
@@ -217,7 +213,7 @@ export function corpoCriacao(d: ImovelDraft): ImovelManualBody {
     titulo: d.titulo.trim(),
     categoria: txt(d.categoria),
     status: txt(d.status),
-    finalidades: lista(d.finalidades),
+    finalidades: finalidadesDoStatus(d.status),
     descricao_web: txt(d.descricao_web),
     observacoes: txt(d.observacoes),
     empreendimento: txt(d.empreendimento),
@@ -291,8 +287,6 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   /** Present = edit mode, prefilled. */
   imovel?: Imovel | null;
-  /** `imovel_dados.em_condominio` (not on the Imovel shape) for the edit prefill. */
-  emCondominio?: boolean | null;
   /** Called with the saved imóvel's código (create → caller navigates). */
   onSaved?: (codigo: string) => void;
 }
@@ -301,11 +295,10 @@ export default function ImovelManualModal({
   open,
   onOpenChange,
   imovel,
-  emCondominio,
   onSaved,
 }: Props) {
   const edicao = Boolean(imovel);
-  const inicial = draftDoImovel(imovel, emCondominio);
+  const inicial = draftDoImovel(imovel);
   const [draft, setDraft] = useState<ImovelDraft>(inicial);
   const [mostrarErros, setMostrarErros] = useState(false);
   const [erroServidor, setErroServidor] = useState<string | null>(null);
@@ -316,12 +309,12 @@ export default function ImovelManualModal({
   // Re-seed whenever the modal (re)opens or a different imóvel is loaded.
   useEffect(() => {
     if (open) {
-      setDraft(draftDoImovel(imovel, emCondominio));
+      setDraft(draftDoImovel(imovel));
       setMostrarErros(false);
       setErroServidor(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, imovel?.codigo, emCondominio]);
+  }, [open, imovel?.codigo]);
 
   const erros = validar(draft);
   const set = <K extends keyof ImovelDraft>(k: K, v: ImovelDraft[K]) =>
@@ -411,7 +404,7 @@ export default function ImovelManualModal({
                 data-testid="imovel-manual-titulo"
               />
             </Campo>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <Campo id="imovel-manual-categoria" label="Categoria">
                 <Input
                   id="imovel-manual-categoria"
@@ -438,18 +431,6 @@ export default function ImovelManualModal({
                     </option>
                   ))}
                 </select>
-              </Campo>
-              <Campo
-                id="imovel-manual-finalidades"
-                label="Finalidades (vírgula)"
-              >
-                <Input
-                  id="imovel-manual-finalidades"
-                  value={draft.finalidades}
-                  onChange={(e) => set("finalidades", e.target.value)}
-                  disabled={salvando}
-                  data-testid="imovel-manual-finalidades"
-                />
               </Campo>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
