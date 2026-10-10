@@ -117,3 +117,17 @@ def test_paths_ignore_is_scoped_to_the_push_trigger_only():
     on = yaml.safe_load(_text()).get(True) or yaml.safe_load(_text()).get("on")
     pr = (on or {}).get("pull_request", {})
     assert "paths-ignore" not in pr and "paths" not in pr
+
+
+def test_push_runs_are_never_cancelled_in_progress():
+    """2026-10-10 bless starvation: with `cancel-in-progress: true` every dev
+    push cancelled the run before it, so 20+ consecutive runs after ce57358b7
+    never finished and `release stage='bless'` had no qualifying green in
+    main..dev. Push runs (dev/main/release/**) must complete; only PR runs may
+    cancel a superseded in-flight run."""
+    conc = yaml.safe_load(_text()).get("concurrency") or {}
+    cancel = str(conc.get("cancel-in-progress", "")).replace(" ", "")
+    assert cancel == "${{github.event_name=='pull_request'}}", (
+        f"test.yml concurrency.cancel-in-progress={conc.get('cancel-in-progress')!r} "
+        "— push runs must not cancel in-progress (bless needs a finished green)"
+    )

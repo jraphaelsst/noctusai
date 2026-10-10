@@ -47,9 +47,20 @@ on:
 # loss (every job still runs on the latest commit); this is strictly waste removal.
 # `build-and-push.yml` + `embedding-cache-gate.yml` already carry this; `test.yml`
 # (the heaviest, every-push workflow) was the one missing it.
+#
+# 2026-10-10 — PUSH branches no longer cancel an IN-PROGRESS run. With several
+# peer sessions integrating to `dev` every few minutes, every run was cancelled
+# by the next push before finishing: 20+ consecutive cancelled runs after
+# ce57358b7, so `release stage='bless'` had NO qualifying green anywhere in
+# main..dev and the release lane starved. Without cancel-in-progress GitHub
+# still keeps at most ONE pending run per group (a newer push replaces the
+# queued one), so a running suite always completes and the next run batches
+# every push that landed meanwhile — cost stays bounded at ~1 run per suite
+# duration, and bless always has a recent green ancestor. PRs keep cancelling
+# (only the newest PR head matters; nothing is blessed from a PR ref).
 concurrency:
   group: tests-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
