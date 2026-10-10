@@ -5,7 +5,7 @@ LGPD Art. 37 record. Companion to the balancing test in `specs/biblioteca-lia.md
 | Field | Entry |
 |---|---|
 | Activity | Biblioteca de virais (Social Wiring, Criação de Mídia): monitoring public Instagram profiles registered by a client org, to study the structure of content that performs well |
-| Controller | João Raphael (pessoa física), operator of the Noctus platform; defines purposes and means (platform privacy policy, sections 1 and 18). Identity and DPO as published in `seed/framework/frontend/src/content/consent.ts` (`CONSENT_META`) |
+| Controller | **PENDING OWNER CONFIRMATION (2026-10-10)**: drafted as João Raphael (pessoa física), operator of the Noctus platform; defines purposes and means (platform privacy policy, section 1; the Biblioteca section 18 is HELD unpublished until the owner approves its wording, revert 9a39ca04f). Identity and DPO as published in `seed/framework/frontend/src/content/consent.ts` (`CONSENT_META`) |
 | Operators / processors | Client org (registers the profiles and uses the library under the platform's purposes); Supabase (database and storage hosting); Anthropic (US), LLM sub-processor; self-hosted transcriber (no egress, no third party) |
 | Purpose | Study the structure (hook, format, attention trigger) of high-performing content to write the org's own original content. Excluded: profiling the creator, republishing, contacting the creator, model training, sharing across orgs |
 | Legal basis | Legitimate interest, LGPD Art. 7, IX (with Art. 10); balancing test in `specs/biblioteca-lia.md` |
