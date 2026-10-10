@@ -144,6 +144,7 @@ append their own section as they ship.
 - [ ] 5 lessons in order (Como preencher a Bio … Como gerar roteiros com Headlines Próprias), each with its description.
 - [ ] Each lesson shows "Vídeo em produção — em breve." (no broken player).
 - [ ] As platform admin: edit a lesson, paste a YouTube/Vimeo/Bunny embed URL, save, and the video plays. A URL from another site is refused.
+- [ ] As platform admin: deactivate a lesson. You still see it (marked inactive) and can reactivate it; a member no longer sees it.
 
 ### Minha Biblioteca (`/media-creation/minha-biblioteca`)
 - [ ] **Solicitar Perfil**: typing `instagram.com/<user>` becomes `@<user>`; a reel link is refused ("Isso é um link de vídeo…"); spaces and invalid characters show the right message; the live check shows "✓ Username válido".
@@ -152,6 +153,8 @@ append their own section as they ship.
 - [ ] "Atualizar agora" works once; a second click within the hour is refused.
 - [ ] **Perfil completo**: add a monitored profile to this marca with Atualização automática on. It appears in **Minhas referências** as Perfil + Auto. Removing it asks to confirm and is gone after reload.
 - [ ] Removing a monitored profile that another marca still uses is refused with a clear message.
+- [ ] While ingestion is OFF, both Biblioteca pages say "Monitoramento ainda não ativado" (not an empty library).
+- [ ] More than 20 manual "Atualizar agora" in one day across the org are refused (daily cap).
 
 ### Biblioteca (`/media-creation/biblioteca`)
 - [ ] The grid shows virais of the monitored profiles, 24 per page. Each card shows @handle, thumbnail, metrics ("—" when unknown, never 0), duration, date and **Ver post**.
@@ -164,6 +167,7 @@ append their own section as they ship.
 - [ ] A long or large reel shows the honest status (e.g. "longa demais") and is still classified from its caption.
 - [ ] **Gerar headline** wizard: pick approved assuntos virais and/or type one → Revisar → Criar Headline → "Headline enviada para criação!" → **Ver Headlines Sugeridas** shows 2 new Manual headlines within about 2 minutes.
 - [ ] "Citar no Chat" / "Citar perfil no Chat" open the chat with the reference attached.
+- [ ] In Roteiro Avançado, the library video picker searches only your Minha Biblioteca by default; "Buscar em toda a biblioteca" widens it.
 - [ ] While you record a Cérebro voice answer, a library transcription never delays it by more than one reel (voice answers come first).
 
 ### Gerar Headlines (`/media-creation/headlines/gerar` → `?who=…`)
@@ -178,10 +182,12 @@ append their own section as they ship.
 - [ ] A second Gerar while one is running is refused.
 - [ ] History: search, view (👁), Reprocessar (creates a new batch), excluir one / Excluir Selecionados.
 - [ ] Structure link "#N" opens that viral. With an empty library, the warning "usando templates do Método Audience" shows.
+- [ ] **Criatividade** (Essencial / Equilibrado / Explorador): generate the same request at the two extremes. Do they feel different? Our AI provider rejects the temperature setting, so the level only works through an instruction in the prompt.
 
 ### Headlines Favoritas / sugeridas
 - [ ] ♥ a headline in the result modal: it appears in **Headlines Favoritas**. Desfavoritar removes it.
 - [ ] Editar a headline: the new text persists. Excluir and Excluir Selecionados work.
+- [ ] On a headline that already has a roteiro, Editar opens **Editar Headline e Roteiro**. Changing both saves both. Leaving the roteiro blank keeps it unchanged.
 - [ ] **Headlines sugeridas**: Modo Automático/Manual, source metric, Abrir link opens the original post.
 - [ ] **Gerar sugestões agora** creates today's automatic suggestions (about 10) within a few minutes. A second click the same day is refused.
 - [ ] Next day: new automatic suggestions arrived on their own (daily job), with no repeats of yesterday's virais.
@@ -216,11 +222,13 @@ append their own section as they ship.
 - [ ] First load shows a skeleton, never an empty-state flash. Switching marca keeps the old data until the new arrives.
 - [ ] Each page shows "Tentar novamente" on a failed load.
 - [ ] With the AI key missing (or the budget exceeded), generation shows a clear "IA indisponível" message, never a spinner forever.
+- [ ] When the monthly AI budget is exceeded, Gerar (headlines, roteiros) is refused at once with "orçamento de IA excedido", not after a background failure.
 
 ### Owner decisions to take while testing (contract §12)
 - [ ] D1 headline prompt · D2 slot filling · D7 classifier · D9 roteiro prompt: OK or list corrections.
 - [ ] D3/D4: is "monitored profiles + 3× median" the right viral source and definition?
 - [ ] D5/D6/D19: transcription budget for the library (60 / 30 min/day), retention (90 days), LGPD basis.
+- [ ] **LGPD legal basis for the Biblioteca (blocks turning ingestion on):** (a) legitimate interest with a documented balancing test and an opt-out/deletion path for creators, or (b) contract, with each client org as controller and NoctusAI as processor. Also confirm 90-day retention for idle profiles. Security review proposal: `LGPD-WARNINGS.md` (Biblioteca de virais).
 - [ ] D8: memory per marca (not global) OK?
 - [ ] D10/D12: daily suggestion count (10) and the per-user caps.
 - [ ] D13: who records the Treinamentos videos?
