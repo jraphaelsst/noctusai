@@ -31,7 +31,7 @@ export function SolicitarPerfil({ marcaId }: { marcaId: string }) {
   const norm = normalizarHandle(texto);
   const handleDebounced = useDebouncedValue(norm.ok ? norm.handle : "", 500);
 
-  const verificar = useVerificarPerfil(handleDebounced);
+  const verificar = useVerificarPerfil(handleDebounced, marcaId);
   const contasQ = useContasDescoberta();
   const solicitar = useSolicitarPerfil();
   const contas = contasQ.data ?? [];

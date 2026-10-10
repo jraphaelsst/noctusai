@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { MultiSelectPopover } from "@/pages/leads/components/MultiSelectPopover";
+import { MultiSelectPopover } from "@/components/ui/multi-select-popover";
 import { usePerfisMonitorados } from "@/hooks/geracao/useBiblioteca";
 import { useTaxonomias } from "@/hooks/geracao/useTaxonomias";
 import { FILTROS_VAZIOS, type BuscarEm, type FiltrosViral } from "./filtros";

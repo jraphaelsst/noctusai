@@ -112,13 +112,14 @@ export default function Chat() {
     if (!citePerfil || !perfisQ.data) return;
     const handle = perfisQ.data.find((p) => p.id === citePerfil)?.handle;
     setReferencias((r) =>
-      r.some((x) => x.tipo === "biblioteca" && x.id === citePerfil)
+      r.some((x) => x.tipo === "biblioteca" && x.id === `perfil:${citePerfil}`)
         ? r
         : [
             ...r,
             {
               tipo: "biblioteca",
-              id: citePerfil,
+              // BE-6 convention: a whole-profile reference is `perfil:<uuid>` (chat_contexto.py).
+              id: `perfil:${citePerfil}`,
               rotulo: `${handle ? `@${handle}` : "@perfil"} — Todos os vídeos`,
               detalhe: null,
             },

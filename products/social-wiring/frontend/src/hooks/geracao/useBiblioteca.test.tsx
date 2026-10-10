@@ -11,6 +11,8 @@ import { FILTROS_VAZIOS } from "@/components/geracao/biblioteca/filtros";
 import {
   useCriarReferencias,
   useGerarHeadlineViral,
+  useRemoverPerfil,
+  useVerificarPerfil,
   useViraisBiblioteca,
 } from "./useBiblioteca";
 
@@ -79,5 +81,32 @@ describe("mutations", () => {
       assunto_livre: "x",
       origem: "biblioteca",
     });
+  });
+});
+
+describe("marca-aware profile calls", () => {
+  it("pool=minha_biblioteca replaces ver_todos", async () => {
+    api.get.mockResolvedValue({ data: { items: [], total: 0, page: 1, filtro_automatico: false, ingestao_ativa: true } });
+    renderHook(() => useViraisBiblioteca("m1", { ...FILTROS_VAZIOS, pool: "minha_biblioteca" }), { wrapper });
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    const url = new URL(api.get.mock.calls[0][0], "http://x");
+    expect(url.searchParams.get("pool")).toBe("minha_biblioteca");
+    expect(url.searchParams.get("ver_todos")).toBeNull();
+  });
+
+  it("verificar sends marca_id", async () => {
+    api.get.mockResolvedValue({ data: { status: "disponivel" } });
+    renderHook(() => useVerificarPerfil("fulano", "m1"), { wrapper });
+    await waitFor(() => expect(api.get).toHaveBeenCalled());
+    const url = new URL(api.get.mock.calls[0][0], "http://x");
+    expect(url.pathname).toBe("/api/media-creation/biblioteca/perfis/verificar");
+    expect(url.searchParams.get("marca_id")).toBe("m1");
+  });
+
+  it("delete sends marca_id", async () => {
+    api.delete.mockResolvedValue(undefined);
+    const r = renderHook(() => useRemoverPerfil(), { wrapper });
+    await r.result.current.mutateAsync({ id: "p1", marca_id: "m1" });
+    expect(api.delete).toHaveBeenCalledWith("/api/media-creation/biblioteca/perfis/p1?marca_id=m1");
   });
 });

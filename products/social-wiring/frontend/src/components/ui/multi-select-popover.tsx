@@ -1,9 +1,8 @@
 /**
- * MultiSelectPopover — small local control backing every multi-value
- * dimension in `LeadsFilterBar` (ano/mes/origem/corretor/tipo/tier/
- * empreendimento/regiao — §5.1). Not a design-system organ: this is a
- * page-local presentational primitive, one level below the seed `FilterBar`
- * shell (which is itself presentational-only and takes generic `children`).
+ * MultiSelectPopover — the product's ONE searchable multi-select. Backs the
+ * Leads filter bar, the Biblioteca / Minha Biblioteca filters and Meu Perfil's
+ * nichos/profissões (with the optional `max` cap). Lives in `components/ui`
+ * (promoted from pages/leads, N=3 consumers). A candidate seed organ.
  *
  *   <MultiSelectPopover label="Origem" options={sourceOptions}
  *     selected={filters.origem_id} onToggle={(v) => toggleMulti("origem_id", v)} />
@@ -33,6 +32,13 @@ export interface MultiSelectPopoverProps {
   onToggle: (value: string) => void;
   emptyMessage?: string;
   testId?: string;
+  /** Hard selection cap: at the cap the unchecked options are disabled and `maxMessage` is shown. */
+  max?: number;
+  maxMessage?: string;
+  /** Show the selected options as chips under the trigger. */
+  showChips?: boolean;
+  /** Text shown on the trigger instead of the label-only default (e.g. "Selecionar nichos"). */
+  triggerLabel?: string;
 }
 
 export function MultiSelectPopover({
@@ -42,15 +48,20 @@ export function MultiSelectPopover({
   onToggle,
   emptyMessage = "Nenhuma opção disponível.",
   testId,
+  max,
+  maxMessage,
+  showChips = false,
+  triggerLabel,
 }: MultiSelectPopoverProps) {
   const count = selected.length;
+  const noLimite = max != null && count >= max;
   const [search, setSearch] = useState("");
 
   const filteredOptions = search.trim()
     ? options.filter((o) => o.label.toLowerCase().includes(search.trim().toLowerCase()))
     : options;
 
-  return (
+  const popover = (
     <Popover onOpenChange={(open) => !open && setSearch("")}>
       <PopoverTrigger asChild>
         <Button
@@ -59,7 +70,7 @@ export function MultiSelectPopover({
           className="gap-1.5"
           data-testid={testId}
         >
-          {label}
+          {triggerLabel ?? label}
           {count > 0 && (
             <span className="rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground">
               {count}
@@ -97,10 +108,14 @@ export function MultiSelectPopover({
                 <button
                   key={option.value}
                   type="button"
+                  role={max != null ? "checkbox" : undefined}
+                  aria-checked={max != null ? isSelected : undefined}
+                  disabled={!isSelected && noLimite}
                   onClick={() => onToggle(option.value)}
                   className={cn(
                     "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted",
                     isSelected && "bg-muted/60",
+                    !isSelected && noLimite && "opacity-50",
                   )}
                   data-testid={testId ? `${testId}-option-${option.value}` : undefined}
                 >
@@ -124,7 +139,28 @@ export function MultiSelectPopover({
             })
           )}
         </div>
+        {noLimite && maxMessage && (
+          <p role="alert" className="px-2 pt-1.5 text-xs text-destructive">
+            {maxMessage}
+          </p>
+        )}
       </PopoverContent>
     </Popover>
+  );
+  if (!showChips) return popover;
+  const nomes = new Map(options.map((o) => [o.value, o.label]));
+  return (
+    <div className="space-y-2">
+      {popover}
+      {count > 0 && (
+        <ul className="flex flex-wrap gap-1.5" aria-label={`${label} selecionados`}>
+          {selected.map((v) => (
+            <li key={v} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs">
+              {nomes.get(v) ?? `#${v}`}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

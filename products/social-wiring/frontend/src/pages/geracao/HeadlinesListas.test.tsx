@@ -22,6 +22,9 @@ const m = vi.hoisted(() => ({
   agora: vi.fn(),
   roteiroProps: vi.fn(),
   listaArgs: vi.fn(),
+  editar: vi.fn(),
+  roteiro: vi.fn(),
+  salvarRoteiro: vi.fn(),
 }));
 
 vi.mock("@/hooks/useMarcas", () => ({
@@ -39,7 +42,11 @@ vi.mock("@/hooks/geracao/useHeadlines", () => ({
 vi.mock("@/hooks/geracao/useHeadlineMutations", () => ({
   useFavoritarHeadline: () => ({ mutateAsync: m.favoritar, isPending: false }),
   useExcluirHeadlines: () => ({ mutateAsync: m.excluir, isPending: false }),
-  useEditarHeadline: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useEditarHeadline: () => ({ mutateAsync: m.editar, isPending: false }),
+}));
+vi.mock("@/hooks/geracao/useRoteiros", () => ({
+  useRoteiro: (id: string | null) => m.roteiro(id),
+  useSalvarRoteiro: () => ({ mutateAsync: m.salvarRoteiro, isPending: false }),
 }));
 vi.mock("@/components/geracao/roteiro/RoteiroAvancadoModal", () => ({
   RoteiroAvancadoModal: (p: any) => {
@@ -71,6 +78,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   m.lista.mockReturnValue(ok({ items: [hl()], total: 1 }));
   m.um.mockReturnValue(ok(undefined));
+  m.roteiro.mockReturnValue(ok(undefined));
 });
 
 describe("Favoritas", () => {
@@ -102,6 +110,56 @@ describe("Favoritas", () => {
     renderPage(<HeadlinesFavoritas />, "/x?hid=h77");
     expect(rtl.screen.getByText("Fora da página")).toBeTruthy();
     expect(rtl.screen.getByTestId("headline-h77").getAttribute("data-destacada")).toBe("true");
+  });
+
+  const roteiroPronto = (over: Partial<any> = {}) => ({
+    id: "r9",
+    nome: "Roteiro",
+    status: "completo",
+    conteudo: "Texto do roteiro",
+    versao: 3,
+    fontes: null,
+    ...over,
+  });
+
+  it("Editar com roteiro: edita headline e roteiro; roteiro em branco não é enviado", async () => {
+    m.lista.mockReturnValue(ok({ items: [hl({ roteiro_id: "r9" })], total: 1 }));
+    m.roteiro.mockReturnValue(ok(roteiroPronto()));
+    m.editar.mockResolvedValue({ id: "h1", texto: "Nova" });
+    m.salvarRoteiro.mockResolvedValue(roteiroPronto({ versao: 4 }));
+    renderPage(<HeadlinesFavoritas />);
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Editar headline" }));
+    expect(await rtl.screen.findByText("Editar Headline e Roteiro")).toBeTruthy();
+    const rot = rtl.screen.getByLabelText("Roteiro") as HTMLTextAreaElement;
+    expect(rot.value).toBe("Texto do roteiro");
+    // blank roteiro = unchanged: only the headline is saved
+    rtl.fireEvent.change(rot, { target: { value: "" } });
+    rtl.fireEvent.change(rtl.screen.getByLabelText("Headline"), { target: { value: "Nova" } });
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Salvar" }));
+    await rtl.waitFor(() => expect(m.editar).toHaveBeenCalledWith({ id: "h1", texto: "Nova" }));
+    expect(m.salvarRoteiro).not.toHaveBeenCalled();
+  });
+
+  it("Editar com roteiro: salva o roteiro com expected_versao e mostra o 409", async () => {
+    m.lista.mockReturnValue(ok({ items: [hl({ roteiro_id: "r9" })], total: 1 }));
+    m.roteiro.mockReturnValue(ok(roteiroPronto()));
+    m.salvarRoteiro.mockRejectedValue(Object.assign(new Error("[409] conflito"), { status: 409 }));
+    renderPage(<HeadlinesFavoritas />);
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Editar headline" }));
+    rtl.fireEvent.change(await rtl.screen.findByLabelText("Roteiro"), { target: { value: "Roteiro novo" } });
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Salvar" }));
+    await rtl.waitFor(() =>
+      expect(m.salvarRoteiro).toHaveBeenCalledWith({ id: "r9", nome: undefined, conteudo: "Roteiro novo", expected_versao: 3 }),
+    );
+    expect(m.editar).not.toHaveBeenCalled();
+    expect((await rtl.screen.findByRole("alert")).textContent).toContain("O roteiro mudou; recarregue");
+  });
+
+  it("Editar sem roteiro mantém o modal só de headline", async () => {
+    renderPage(<HeadlinesFavoritas />);
+    await userEvent.click(rtl.screen.getByRole("button", { name: "Editar headline" }));
+    expect(await rtl.screen.findByText("Editar headline", { selector: "h2" })).toBeTruthy();
+    expect(rtl.screen.queryByLabelText("Roteiro")).toBeNull();
   });
 
   it("desfavoritar chama a mutação com favoritar=false", async () => {

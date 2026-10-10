@@ -157,15 +157,15 @@ describe("Biblioteca page", () => {
     expect(rtl.screen.getByText(/Sua biblioteca ainda está vazia/)).toBeTruthy();
   });
 
-  it("empty state with never-synced profiles says monitoring is not active", () => {
+  it("empty state with ingestion off says monitoring is not activated", () => {
     m.virais.mockReturnValue(pageState([]));
     m.perfis.mockReturnValue({
-      data: [{ id: "p1", handle: "fulano", ultima_sync_em: null, virais: 0 }],
+      data: [{ id: "p1", handle: "fulano", ultima_sync_em: null, virais: 0, ingestao_ativa: false }],
       showSkeleton: false,
       isError: false,
     });
     renderPage();
-    expect(rtl.screen.getByText(/monitoração dos perfis ainda não está ativa/)).toBeTruthy();
+    expect(rtl.screen.getByText(/Monitoramento ainda não ativado/)).toBeTruthy();
   });
 
   it("error state offers Tentar novamente", async () => {
@@ -304,6 +304,12 @@ describe("VideoPicker (FE-3 contract)", () => {
     await userEvent.selectOptions(await rtl.screen.findByLabelText("Views mínimas"), "1000000");
     const last = m.virais.mock.calls[m.virais.mock.calls.length - 1];
     expect(last[1].viewsMin).toBe(1_000_000);
-    expect(last[1].verTodos).toBe(true);
+    // default pool = the marca's own library (BE `pool=minha_biblioteca`)
+    expect(last[1].pool).toBe("minha_biblioteca");
+    expect(last[1].verTodos).toBe(false);
+    await userEvent.click(rtl.screen.getByLabelText("Buscar em toda a biblioteca"));
+    const wide = m.virais.mock.calls[m.virais.mock.calls.length - 1];
+    expect(wide[1].pool).toBeUndefined();
+    expect(wide[1].verTodos).toBe(true);
   });
 });

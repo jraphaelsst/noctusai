@@ -46,7 +46,8 @@ export interface VideoPickerProps {
 const VIEWS_MIN = [100_000, 500_000, 1_000_000, 5_000_000];
 const LIKES_MIN = [10_000, 50_000, 100_000, 500_000];
 
-const FILTROS_PICKER: FiltrosViral = { ...FILTROS_VAZIOS, verTodos: true };
+// Default pool = the marca's own library; the toggle widens to the whole library.
+const FILTROS_PICKER: FiltrosViral = { ...FILTROS_VAZIOS, pool: "minha_biblioteca" };
 
 const selectCls = "h-9 rounded-md border border-input bg-background px-2 text-sm";
 
@@ -112,6 +113,21 @@ export function VideoPicker({ marcaId, value, onChange, disabled, className }: V
           </DialogHeader>
 
           <div className="flex flex-wrap items-end gap-2">
+            <label className="flex items-center gap-1.5 text-sm">
+              <input
+                type="checkbox"
+                checked={!filtros.pool}
+                onChange={(e) =>
+                  setFiltros((f) => ({
+                    ...f,
+                    pool: e.target.checked ? undefined : "minha_biblioteca",
+                    verTodos: e.target.checked,
+                    page: 1,
+                  }))
+                }
+              />
+              Buscar em toda a biblioteca
+            </label>
             <Input
               aria-label="Buscar por texto"
               placeholder="Buscar por texto"

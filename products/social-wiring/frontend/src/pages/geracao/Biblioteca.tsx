@@ -110,7 +110,8 @@ export default function Biblioteca() {
   const ativos = contarFiltrosAtivos(filtros);
   const perfis = perfisQ.data ?? [];
   const semPerfis = !perfisQ.showSkeleton && !perfisQ.isError && perfis.length === 0;
-  const semSincronia = perfis.length > 0 && perfis.every((p) => p.ultima_sync_em == null);
+  const monitoramentoOff =
+    data?.ingestao_ativa === false || perfis.some((p) => p.ingestao_ativa === false);
   const filtroAuto = !!data?.filtro_automatico && !filtros.perfilId;
 
   return (
@@ -220,7 +221,7 @@ export default function Biblioteca() {
               </Button>
             </div>
           ) : total === 0 ? (
-            <EstadoVazio semPerfis={semPerfis} semSincronia={semSincronia} filtrado={ativos > 0 || filtroAuto} />
+            <EstadoVazio semPerfis={semPerfis} monitoramentoOff={monitoramentoOff} filtrado={ativos > 0 || filtroAuto} />
           ) : (
             <>
               <div
@@ -279,11 +280,11 @@ export default function Biblioteca() {
 
 function EstadoVazio({
   semPerfis,
-  semSincronia,
+  monitoramentoOff,
   filtrado,
 }: {
   semPerfis: boolean;
-  semSincronia: boolean;
+  monitoramentoOff: boolean;
   filtrado: boolean;
 }) {
   return (
@@ -297,10 +298,10 @@ function EstadoVazio({
           </Link>
           .
         </p>
-      ) : semSincronia ? (
+      ) : monitoramentoOff ? (
         <p className="mt-1 text-muted-foreground">
-          A monitoração dos perfis ainda não está ativa: nenhum perfil foi sincronizado até agora. A
-          ingestão da biblioteca pode estar desligada (aguardando revisão de segurança).
+          Monitoramento ainda não ativado: os perfis só são sincronizados depois que a ingestão da
+          biblioteca for ligada.
         </p>
       ) : filtrado ? (
         <p className="mt-1 text-muted-foreground">

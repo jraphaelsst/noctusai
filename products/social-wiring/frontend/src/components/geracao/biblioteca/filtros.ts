@@ -21,6 +21,8 @@ export interface FiltrosViral {
   formatoId: number | null;
   codigo: number | null;
   somenteVirais: boolean;
+  /** Restrict to the marca's own library (Minha Biblioteca). Not in the URL. */
+  pool?: "minha_biblioteca";
   page: number;
 }
 

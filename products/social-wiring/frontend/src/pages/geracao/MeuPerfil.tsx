@@ -23,16 +23,59 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { mensagemErro } from "@/components/cerebro/labels";
-import { TaxonSelect } from "@/components/geracao/perfil/TaxonSelect";
+import { MultiSelectPopover } from "@/components/ui/multi-select-popover";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { usePerfilCriacao, useSalvarPerfilCriacao } from "@/hooks/geracao/usePerfilCriacao";
 import { useTaxonomias } from "@/hooks/geracao/useTaxonomias";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
 import { useMarcaPesquisa } from "@/hooks/useMarcaPesquisa";
 import { useMarcas } from "@/hooks/useMarcas";
-import type { PerfilCriacao, Taxonomias } from "@/types/geracao";
+import type { PerfilCriacao, Taxon, Taxonomias } from "@/types/geracao";
 
 export const MAX_TAXONS = 3;
+
+interface CampoTaxonProps {
+  id: string;
+  label: string;
+  ajuda: string;
+  dica: string;
+  erroMax: string;
+  opcoes: Taxon[];
+  valor: number[];
+  max: number;
+  onChange: (ids: number[]) => void;
+}
+
+/** Nichos / profissões picker: the shared MultiSelectPopover with a hard cap + CoreStudio's copy. */
+function CampoTaxon({ id, label, ajuda, dica, erroMax, opcoes, valor, max, onChange }: CampoTaxonProps) {
+  const noLimite = valor.length >= max;
+  return (
+    <div className="space-y-2" id={id}>
+      <div>
+        <p className="text-sm font-medium" title={ajuda}>{label}</p>
+        <p className="text-xs text-muted-foreground">{ajuda}</p>
+      </div>
+      <MultiSelectPopover
+        label={label}
+        triggerLabel={`Selecionar ${label.toLowerCase()}`}
+        options={opcoes.map((o) => ({ value: String(o.id), label: o.nome }))}
+        selected={valor.map(String)}
+        onToggle={(v) => {
+          const n = Number(v);
+          onChange(valor.includes(n) ? valor.filter((x) => x !== n) : noLimite ? valor : [...valor, n]);
+        }}
+        max={max}
+        showChips
+        testId={`taxon-${id}`}
+      />
+      {noLimite ? (
+        <p role="alert" className="text-xs text-destructive">{erroMax}</p>
+      ) : (
+        <p className="text-xs text-muted-foreground">{dica}</p>
+      )}
+    </div>
+  );
+}
 export const MAX_BIO = 5000;
 export const MAX_TEXTO_LONGO = 3000;
 
@@ -154,7 +197,7 @@ function PerfilForm({
   return (
     <form onSubmit={onSubmit} className="max-w-3xl space-y-6" aria-label="Meu Perfil">
       <fieldset disabled={desatualizado} className="space-y-6">
-        <TaxonSelect
+        <CampoTaxon
           id="nichos"
           label="Nichos"
           ajuda="Preencha com os nichos que você deseja gerar Headlines"
@@ -165,7 +208,7 @@ function PerfilForm({
           max={MAX_TAXONS}
           onChange={setNichos}
         />
-        <TaxonSelect
+        <CampoTaxon
           id="profissoes"
           label="Profissões"
           ajuda="Preencha com as profissões que você deseja gerar Headlines"

@@ -37,6 +37,8 @@ export interface ViraisPage {
   total: number;
   page: number;
   filtro_automatico: boolean;
+  /** Kill-switch state of the library ingestion. */
+  ingestao_ativa: boolean;
 }
 
 export function viraisParams(marcaId: string, f: FiltrosViral): string {
@@ -44,7 +46,8 @@ export function viraisParams(marcaId: string, f: FiltrosViral): string {
   f.nichos.forEach((n) => p.append("nichos", String(n)));
   f.profissoes.forEach((n) => p.append("profissoes", String(n)));
   // A profile view never auto-filters (page-map-v2 §10.4).
-  if (f.verTodos || f.perfilId) p.set("ver_todos", "true");
+  if (f.pool) p.set("pool", f.pool);
+  else if (f.verTodos || f.perfilId) p.set("ver_todos", "true");
   if (f.q.trim()) {
     p.set("q", f.q.trim());
     p.set("buscar_em", f.buscarEm);
@@ -126,14 +129,14 @@ export type VerificacaoPerfil = {
 };
 
 /** Live handle check (#10); the caller debounces and passes a normalized handle or "". */
-export function useVerificarPerfil(handle: string) {
+export function useVerificarPerfil(handle: string, marcaId?: string | null) {
   return useQuery({
-    queryKey: [...BIB_KEY, "verificar", handle],
+    queryKey: [...BIB_KEY, "verificar", handle, marcaId ?? null],
     enabled: handle.length > 0,
     queryFn: async () =>
       unwrap(
         await api.get<Envelope<VerificacaoPerfil>>(
-          `${BASE}/perfis/verificar?handle=${encodeURIComponent(handle)}`,
+          `${BASE}/perfis/verificar?handle=${encodeURIComponent(handle)}${marcaId ? `&marca_id=${encodeURIComponent(marcaId)}` : ""}`,
         ),
       ),
     placeholderData: (prev) => prev,
@@ -194,7 +197,11 @@ export function useAtualizarPerfil() {
 export function useRemoverPerfil() {
   const invalidar = useInvalidar();
   return useMutation({
-    mutationFn: async (id: string) => api.delete(`${BASE}/perfis/${encodeURIComponent(id)}`),
+    // marca_id resolves the 409 "used by another marca" (BE: delete_perfil).
+    mutationFn: async (v: { id: string; marca_id: string | null }) =>
+      api.delete(
+        `${BASE}/perfis/${encodeURIComponent(v.id)}${v.marca_id ? `?marca_id=${encodeURIComponent(v.marca_id)}` : ""}`,
+      ),
     onSuccess: invalidar,
   });
 }

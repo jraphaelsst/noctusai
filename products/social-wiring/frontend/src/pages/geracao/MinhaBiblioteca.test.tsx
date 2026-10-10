@@ -48,6 +48,7 @@ const perfil = (over: Partial<any> = {}) => ({
   erro_mensagem: null,
   ultima_sync_em: null,
   virais: 0,
+  ingestao_ativa: false,
   ...over,
 });
 
@@ -86,16 +87,16 @@ beforeEach(() => {
 });
 
 describe("Minha Biblioteca", () => {
-  it("says monitoring is not active when no profile has synced", () => {
+  it("says monitoring is not activated when ingestion is off", () => {
     renderPage();
-    expect(rtl.screen.getByText(/monitoração ainda não está ativa/)).toBeTruthy();
+    expect(rtl.screen.getByText(/Monitoramento ainda não ativado/)).toBeTruthy();
     expect(rtl.screen.getAllByText("Aguardando").length).toBeGreaterThan(0);
   });
 
-  it("no banner once a profile has synced", () => {
-    m.perfis.mockReturnValue(ok([perfil({ status: "ativo", ultima_sync_em: "2026-10-01T00:00:00Z", virais: 5 })]));
+  it("no banner once ingestion is active", () => {
+    m.perfis.mockReturnValue(ok([perfil({ status: "ativo", ultima_sync_em: "2026-10-01T00:00:00Z", virais: 5, ingestao_ativa: true })]));
     renderPage();
-    expect(rtl.screen.queryByText(/monitoração ainda não está ativa/)).toBeNull();
+    expect(rtl.screen.queryByText(/Monitoramento ainda não ativado/)).toBeNull();
   });
 
   it("shows the references table with Auto badge and 'Todos'", () => {

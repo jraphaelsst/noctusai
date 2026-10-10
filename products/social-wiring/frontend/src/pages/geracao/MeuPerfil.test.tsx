@@ -98,7 +98,8 @@ describe("MeuPerfil", () => {
 
   it("limits nichos to 3 and shows the CoreStudio error", async () => {
     const { user } = renderPage();
-    const box = (n: string) => rtl.screen.getByLabelText(n) as HTMLInputElement;
+    await user.click(rtl.screen.getByTestId("taxon-nichos"));
+    const box = (n: string) => rtl.screen.getByRole("checkbox", { name: n }) as HTMLButtonElement;
     expect(rtl.screen.getByText("Selecione até 3 nichos")).toBeTruthy();
     await user.click(box("Nicho 1"));
     await user.click(box("Nicho 2"));
@@ -111,17 +112,22 @@ describe("MeuPerfil", () => {
 
   it("limits profissões to 3", async () => {
     const { user } = renderPage();
+    await user.click(rtl.screen.getByTestId("taxon-profissoes"));
     for (const n of ["Profissão 10", "Profissão 11", "Profissão 12"]) {
-      await user.click(rtl.screen.getByLabelText(n));
+      await user.click(rtl.screen.getByRole("checkbox", { name: n }));
     }
     expect(rtl.screen.getByText("Máximo de 3 profissões permitidos")).toBeTruthy();
-    expect((rtl.screen.getByLabelText("Profissão 13") as HTMLInputElement).disabled).toBe(true);
+    expect((rtl.screen.getByRole("checkbox", { name: "Profissão 13" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("saves a complete profile straight away with the full payload", async () => {
     const { user } = renderPage();
-    await user.click(rtl.screen.getByLabelText("Nicho 2"));
-    await user.click(rtl.screen.getByLabelText("Profissão 11"));
+    await user.click(rtl.screen.getByTestId("taxon-nichos"));
+    await user.click(rtl.screen.getByRole("checkbox", { name: "Nicho 2" }));
+    await user.keyboard("{Escape}");
+    await user.click(rtl.screen.getByTestId("taxon-profissoes"));
+    await user.click(rtl.screen.getByRole("checkbox", { name: "Profissão 11" }));
+    await user.keyboard("{Escape}");
     await user.type(rtl.screen.getByLabelText("Bio"), "Minha bio");
     await user.type(rtl.screen.getByLabelText("CTAs"), "Siga");
     await user.click(rtl.screen.getByRole("button", { name: "Atualizar" }));

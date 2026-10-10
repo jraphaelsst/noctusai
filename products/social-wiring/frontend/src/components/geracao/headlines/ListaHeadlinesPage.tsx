@@ -42,7 +42,7 @@ import { useMarcas } from "@/hooks/useMarcas";
 import { cn } from "@/lib/utils";
 import type { Headline } from "@/types/geracao";
 import { MODO_ROTULO } from "../labels";
-import { EditarHeadlineModal } from "./EditarHeadlineModal";
+import { EditarHeadlineRoteiroModal } from "./EditarHeadlineRoteiroModal";
 import { mensagemErro } from "./lote";
 
 const ROTEIROS = "/media-creation/roteiros";
@@ -335,7 +335,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
         </div>
       )}
 
-      <EditarHeadlineModal open={!!editando} onOpenChange={(o) => !o && setEditando(null)} headline={editando} />
+      <EditarHeadlineRoteiroModal open={!!editando} onOpenChange={(o) => !o && setEditando(null)} headline={editando} />
       <RoteiroAvancadoModal
         open={!!roteiroDe}
         onOpenChange={(o) => !o && setRoteiroDe(null)}

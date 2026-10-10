@@ -21,7 +21,7 @@ import { compactoPtBr, dataPtBr } from "@/components/pesquisa/format";
 import { ConfirmarModal } from "@/components/pesquisa/ConfirmarModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { SolicitarPerfil } from "@/components/geracao/biblioteca/SolicitarPerfil";
-import { MultiSelectPopover } from "@/pages/leads/components/MultiSelectPopover";
+import { MultiSelectPopover } from "@/components/ui/multi-select-popover";
 import {
   useAtualizarPerfil,
   useCriarReferencias,
@@ -73,7 +73,7 @@ export default function MinhaBiblioteca() {
   const refs = refsQ.data ?? [];
   const jaRef = new Set(refs.filter((r) => r.modo === "perfil" && r.perfil).map((r) => r.perfil!.id));
   const disponiveis = perfis.filter((p) => !jaRef.has(p.id));
-  const nenhumSincronizado = perfis.length > 0 && perfis.every((p) => p.ultima_sync_em == null);
+  const monitoramentoOff = perfis.some((p) => p.ingestao_ativa === false);
 
   async function salvarPerfis() {
     if (!marcaId || perfisSel.length === 0) return;
@@ -122,7 +122,7 @@ export default function MinhaBiblioteca() {
   async function confirmarRemoverPerfil() {
     if (!perfilRemover) return;
     try {
-      await removerPerfil.mutateAsync(perfilRemover.id);
+      await removerPerfil.mutateAsync({ id: perfilRemover.id, marca_id: marcaId });
       toast.success("Perfil removido.");
       setPerfilRemover(null);
     } catch (e) {
@@ -143,11 +143,10 @@ export default function MinhaBiblioteca() {
         <MarcaSwitcher marcas={marcas} marcaId={marcaId} onChange={escolherMarca} />
       </header>
 
-      {nenhumSincronizado && (
+      {monitoramentoOff && (
         <div role="status" className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          A monitoração ainda não está ativa: nenhum perfil foi sincronizado até agora (a ingestão
-          da biblioteca pode estar desligada, aguardando revisão de segurança). As solicitações
-          ficam em "Aguardando".
+          Monitoramento ainda não ativado: as solicitações ficam em "Aguardando" até a ingestão
+          da biblioteca ser ligada.
         </div>
       )}
 
