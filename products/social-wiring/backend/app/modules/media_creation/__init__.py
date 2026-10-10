@@ -87,6 +87,7 @@ def register() -> Any:
         dashboard_criacao,
         generation,
         perfil_criacao,
+        headlines,
         pesquisa,
         pesquisa_extracao,
         posts,
@@ -112,6 +113,11 @@ def register() -> Any:
     from app.modules.media_creation.services import geracao_jobs
 
     geracao_scheduler.configure()
+    # Headlines (BE-4): the daily suggestions cron + the `headline.gerar` handler (registered at
+    # import of `headline_pipeline`, pulled in by the router import above).
+    from app.modules.media_creation import headline_scheduler
+
+    headline_scheduler.configure()
 
     # Biblioteca: handlers + the `biblioteca_viral` transcription context + daily sync / pending sweep.
     from app.modules.media_creation import biblioteca_scheduler
@@ -155,6 +161,7 @@ def register() -> Any:
             chat.router,
             roteiros.router,
             biblioteca.router,
+            headlines.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
