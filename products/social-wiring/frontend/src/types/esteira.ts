@@ -21,7 +21,19 @@ export interface PostDetalhe extends PostCard {
   created_at: string; updated_at: string;
 }
 export interface PostCreate { marca_id: string; titulo?: string; headline_id?: string; etapa_id?: string; conta_id?: string; gravacao_em?: string; data_entrega?: string }
-export type PostUpdate = Partial<Pick<PostDetalhe, "titulo"|"legenda"|"hashtags"|"primeiro_comentario"|"links_producao"|"permalink"|"ig_media_id"|"gravacao_em"|"arquivado">> & { conta_id?: string | null };
+export type RecorrenciaPost = "diaria" | "semanal" | "mensal" | "anual";
+/**
+ * `PATCH /posts/{id}` (§5.1 #5). An explicit `null` clears a nullable field; `entrega_concluida`
+ * is NOT NULL server-side, so `null` is ignored. `lembrete_minutos_antes` is 0..525600.
+ * `gravacao_em` is a DATE (`YYYY-MM-DD`), `data_inicio`/`data_entrega` are datetimes with offset.
+ */
+export type PostUpdate = Partial<Pick<PostDetalhe, "titulo"|"legenda"|"hashtags"|"primeiro_comentario"|"links_producao"|"permalink"|"ig_media_id"|"gravacao_em"|"arquivado"|"entrega_concluida">> & {
+  conta_id?: string | null;
+  data_inicio?: string | null;
+  data_entrega?: string | null;
+  lembrete_minutos_antes?: number | null;
+  recorrencia?: RecorrenciaPost | null;
+};
 export interface MembroEquipe { id: string; nome: string; funcao: string | null; cor: string | null; user_id: string | null; ativo: boolean }
 export interface LegendaGerada { legenda: string; hashtags: string[]; primeiro_comentario: string }
 export interface PendenciasErro { code: "pendencias"; faltando: ("headline"|"roteiro"|"roteiro_incompleto")[] }

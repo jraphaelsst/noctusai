@@ -23,6 +23,7 @@ const m = vi.hoisted(() => ({
   headlineCompleta: vi.fn(),
   lotes: vi.fn(),
   stages: vi.fn(),
+  resumo: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: m.toastErr } }));
@@ -58,7 +59,7 @@ const q = (data: unknown) => ({ data, isPending: false, isFetching: false, isErr
 vi.mock("@/hooks/geracao/usePostHub", () => ({
   flattenTimeline: () => [],
   postHub: {
-    useCardResumo: () => q({ descricao: null }),
+    useCardResumo: () => m.resumo(),
     useNotaMutations: () => ({ create: idle }),
     useChecklists: () => q([]),
     useChecklistMutations: () => ({ removeChecklist: idle, addItem: idle, toggleItem: idle, removeItem: idle }),
@@ -170,6 +171,7 @@ const montar = (onClose = vi.fn()) => {
 beforeEach(() => {
   m.post.mockReturnValue(ok(postBase()));
   m.headlineCompleta.mockReturnValue({ data: undefined });
+  m.resumo.mockReturnValue(q({ descricao: null, datas: { lembrete_minutos_antes: null, recorrencia: null } }));
   m.lotes.mockReturnValue({ data: { items: [] }, showSkeleton: false, isError: false });
   m.stages.mockReturnValue({
     data: [
@@ -560,5 +562,99 @@ describe("Roteiro: reprocessar", () => {
     fireEvent.click(screen.getByText("Reprocessar"));
     fireEvent.click(within(screen.getByTestId("reprocessar-roteiro")).getByText("Reprocessar"));
     expect(m.toastErr).toHaveBeenCalledWith("cota");
+  });
+});
+
+describe("Datas do post (PATCH /posts/{id})", () => {
+  it("Gravação agendada envia só a data (coluna date), e limpar envia null", () => {
+    m.post.mockReturnValue(ok(postBase({ gravacao_em: "2026-10-20" })));
+    montar();
+    const campo = screen.getByLabelText("Gravação agendada");
+    expect(campo).toHaveValue("2026-10-20");
+    fireEvent.change(campo, { target: { value: "2026-10-25" } });
+    fireEvent.blur(campo);
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { gravacao_em: "2026-10-25" } }, expect.any(Object));
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.blur(campo);
+    expect(m.atualizar).toHaveBeenLastCalledWith({ id: "p1", patch: { gravacao_em: null } }, expect.any(Object));
+  });
+
+  it("Postagem prevista mostra a hora de São Paulo e salva com offset -03:00", () => {
+    m.post.mockReturnValue(ok(postBase({ data_entrega: "2026-10-20T15:00:00+00:00" })));
+    montar();
+    const campo = screen.getByLabelText("Postagem prevista");
+    expect(campo).toHaveValue("2026-10-20T12:00");
+    fireEvent.change(campo, { target: { value: "2026-10-21T09:30" } });
+    fireEvent.blur(campo);
+    expect(m.atualizar).toHaveBeenCalledWith(
+      { id: "p1", patch: { data_entrega: "2026-10-21T09:30:00-03:00" } },
+      expect.any(Object),
+    );
+  });
+
+  it("sem alteração não dispara PATCH; limpar envia null", () => {
+    m.post.mockReturnValue(ok(postBase({ data_entrega: "2026-10-20T15:00:00+00:00" })));
+    montar();
+    const campo = screen.getByLabelText("Postagem prevista");
+    fireEvent.blur(campo);
+    expect(m.atualizar).not.toHaveBeenCalled();
+    fireEvent.change(campo, { target: { value: "" } });
+    fireEvent.blur(campo);
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { data_entrega: null } }, expect.any(Object));
+  });
+
+  it("entrega concluída alterna via PATCH", () => {
+    montar();
+    fireEvent.click(screen.getByLabelText("Entrega concluída"));
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { entrega_concluida: true } }, expect.any(Object));
+  });
+
+  it("lembrete: escolhe os minutos, 'Sem lembrete' envia null; a cópia não promete notificação", () => {
+    m.resumo.mockReturnValue(q({ descricao: null, datas: { lembrete_minutos_antes: 60, recorrencia: null } }));
+    montar();
+    const sel = screen.getByLabelText("Antecedência do lembrete");
+    expect(sel).toHaveValue("60");
+    fireEvent.change(sel, { target: { value: "1440" } });
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { lembrete_minutos_antes: 1440 } }, expect.any(Object));
+    fireEvent.change(sel, { target: { value: "" } });
+    expect(m.atualizar).toHaveBeenLastCalledWith({ id: "p1", patch: { lembrete_minutos_antes: null } }, expect.any(Object));
+    expect(screen.getByTestId("datas-post")).toHaveTextContent("Apenas registrada no post por enquanto.");
+    expect(screen.getByTestId("datas-post").textContent).not.toMatch(/notific|avis(ar|aremos)|enviad/i);
+  });
+
+  it("um lembrete fora dos presets continua visível", () => {
+    m.resumo.mockReturnValue(q({ descricao: null, datas: { lembrete_minutos_antes: 90, recorrencia: null } }));
+    montar();
+    expect(screen.getByLabelText("Antecedência do lembrete")).toHaveValue("90");
+  });
+
+  it("recorrência: define e limpa", () => {
+    m.resumo.mockReturnValue(q({ descricao: null, datas: { lembrete_minutos_antes: null, recorrencia: "semanal" } }));
+    montar();
+    const sel = screen.getByLabelText("Recorrência");
+    expect(sel).toHaveValue("semanal");
+    fireEvent.change(sel, { target: { value: "mensal" } });
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { recorrencia: "mensal" } }, expect.any(Object));
+    fireEvent.change(sel, { target: { value: "" } });
+    expect(m.atualizar).toHaveBeenLastCalledWith({ id: "p1", patch: { recorrencia: null } }, expect.any(Object));
+  });
+
+  it("falha ao salvar mostra o erro do servidor", () => {
+    m.atualizar.mockImplementation((_v: unknown, o: any) => o.onError(new Error("lembrete fora do intervalo")));
+    montar();
+    fireEvent.click(screen.getByLabelText("Entrega concluída"));
+    expect(m.toastErr).toHaveBeenCalledWith("lembrete fora do intervalo");
+  });
+
+  it("resumo carregando e em erro têm estado próprio; o resto das datas segue editável", () => {
+    m.resumo.mockReturnValue({ data: undefined, isPending: true, isFetching: true, isError: false });
+    montar();
+    expect(screen.getByTestId("datas-loading")).toBeInTheDocument();
+    expect(screen.getByLabelText("Postagem prevista")).toBeInTheDocument();
+    cleanup();
+    m.resumo.mockReturnValue({ data: undefined, isPending: false, isFetching: false, isError: true });
+    montar();
+    expect(screen.getByTestId("datas-erro")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Recorrência")).not.toBeInTheDocument();
   });
 });

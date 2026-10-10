@@ -16,8 +16,8 @@ import {
   DescricaoSection,
   LembretesSubpage,
   dataHoraLocalParaIsoSP,
-  formatarDataHoraSP,
   isoParaDataHoraLocalSP,
+  type CardDatas,
   type CardSubpage,
 } from "@noctusai/lib/components";
 import { Bell, FileText, Film, Lightbulb, Megaphone, MessageSquareText, ScrollText } from "lucide-react";
@@ -29,7 +29,7 @@ import { useAtualizarPost, usePost } from "@/hooks/geracao/useEsteira";
 import { flattenTimeline, postHub } from "@/hooks/geracao/usePostHub";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
 import { mensagemErroServidor } from "@/lib/erroServidor";
-import type { PostDetalhe } from "@/types/esteira";
+import type { PostDetalhe, PostUpdate, RecorrenciaPost } from "@/types/esteira";
 import { PostHeaderAcoes } from "./PostHeaderAcoes";
 import { HeadlineSecao } from "./secoes/HeadlineSecao";
 import { ProducaoSecao } from "./secoes/ProducaoSecao";
@@ -54,6 +54,132 @@ function Campo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   );
 }
 
+type PatchFn = (p: PostUpdate, falha: string) => void;
+
+const LEMBRETES: { rotulo: string; minutos: number }[] = [
+  { rotulo: "No horário", minutos: 0 },
+  { rotulo: "15 minutos antes", minutos: 15 },
+  { rotulo: "1 hora antes", minutos: 60 },
+  { rotulo: "1 dia antes", minutos: 1440 },
+  { rotulo: "2 dias antes", minutos: 2880 },
+];
+const RECORRENCIAS: { rotulo: string; valor: RecorrenciaPost }[] = [
+  { rotulo: "Diária", valor: "diaria" },
+  { rotulo: "Semanal", valor: "semanal" },
+  { rotulo: "Mensal", valor: "mensal" },
+  { rotulo: "Anual", valor: "anual" },
+];
+const SELECT = "h-9 w-full rounded-md border border-input bg-background px-3 text-sm";
+
+/**
+ * Datas of the card hub, written through `PATCH /posts/{id}` (the seed hub's `/card` is read-only).
+ * `data_entrega` / `entrega_concluida` come with the post; the reminder lead time and the
+ * recurrence are only served by the hub resumo (`datas`).
+ *
+ * The lead time is only RECORDED: no reminder is created from it yet
+ * (NOC-REMEDIATE[esteira-datas-lembrete]), so the copy never promises a notification.
+ */
+function DatasPost({
+  post,
+  resumo,
+  onPatch,
+}: {
+  post: PostDetalhe;
+  resumo: { data?: { datas?: CardDatas } | undefined; isPending: boolean; isError: boolean };
+  onPatch: PatchFn;
+}) {
+  const datas = resumo.data?.datas;
+  const entregaLocal = post.data_entrega ? isoParaDataHoraLocalSP(post.data_entrega) : "";
+  const lembrete = datas?.lembrete_minutos_antes ?? null;
+  const opcoesLembrete =
+    lembrete !== null && !LEMBRETES.some((l) => l.minutos === lembrete)
+      ? [...LEMBRETES, { rotulo: `${lembrete} min antes`, minutos: lembrete }]
+      : LEMBRETES;
+  const carregando = resumo.isPending && !resumo.data;
+  const falhou = resumo.isError && !resumo.data;
+
+  return (
+    <fieldset className="space-y-3 rounded border p-3" data-testid="datas-post">
+      <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Datas</legend>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Campo rotulo="Postagem prevista">
+          <Input
+            type="datetime-local"
+            aria-label="Postagem prevista"
+            defaultValue={entregaLocal}
+            onBlur={(e) => {
+              if (e.target.value === entregaLocal) return;
+              // Explicit -03:00 (São Paulo has no DST): a naive datetime would be read in the DB zone.
+              const iso = e.target.value ? `${dataHoraLocalParaIsoSP(e.target.value)}-03:00` : null;
+              onPatch({ data_entrega: iso }, "Não foi possível salvar a data de postagem.");
+            }}
+          />
+        </Campo>
+        <label className="flex items-end gap-2 pb-2 text-sm">
+          <input
+            type="checkbox"
+            aria-label="Entrega concluída"
+            checked={post.entrega_concluida}
+            onChange={(e) => onPatch({ entrega_concluida: e.target.checked }, "Não foi possível atualizar a entrega.")}
+          />
+          Entrega concluída
+        </label>
+      </div>
+      {carregando ? (
+        <div className="h-9 animate-pulse rounded bg-muted" data-testid="datas-loading" />
+      ) : falhou ? (
+        <p className="text-sm text-destructive" role="alert" data-testid="datas-erro">
+          Não foi possível carregar o lembrete e a recorrência.
+        </p>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Campo rotulo="Antecedência do lembrete">
+            <select
+              aria-label="Antecedência do lembrete"
+              className={SELECT}
+              value={lembrete === null ? "" : String(lembrete)}
+              onChange={(e) =>
+                onPatch(
+                  { lembrete_minutos_antes: e.target.value === "" ? null : Number(e.target.value) },
+                  "Não foi possível salvar o lembrete.",
+                )
+              }
+            >
+              <option value="">Sem lembrete</option>
+              {opcoesLembrete.map((l) => (
+                <option key={l.minutos} value={l.minutos}>
+                  {l.rotulo}
+                </option>
+              ))}
+            </select>
+            <span className="text-xs text-muted-foreground">Apenas registrada no post por enquanto.</span>
+          </Campo>
+          <Campo rotulo="Recorrência">
+            <select
+              aria-label="Recorrência"
+              className={SELECT}
+              value={datas?.recorrencia ?? ""}
+              onChange={(e) =>
+                onPatch(
+                  { recorrencia: (e.target.value || null) as RecorrenciaPost | null },
+                  "Não foi possível salvar a recorrência.",
+                )
+              }
+            >
+              <option value="">Não repete</option>
+              {RECORRENCIAS.map((r) => (
+                <option key={r.valor} value={r.valor}>
+                  {r.rotulo}
+                </option>
+              ))}
+            </select>
+          </Campo>
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 function GeralSecao({ post }: { post: PostDetalhe }) {
   const atualizar = useAtualizarPost();
   const resumoQ = postHub.useCardResumo(post.id);
@@ -64,7 +190,7 @@ function GeralSecao({ post }: { post: PostDetalhe }) {
   const contas = contasQ.data ?? [];
 
   const erro = (fallback: string) => (e: unknown) => toast.error(mensagemErroServidor(e, fallback));
-  const patch = (p: Parameters<typeof atualizar.mutate>[0]["patch"], falha: string) =>
+  const patch: PatchFn = (p, falha) =>
     atualizar.mutate({ id: post.id, patch: p }, { onError: erro(falha) });
 
   return (
@@ -93,22 +219,21 @@ function GeralSecao({ post }: { post: PostDetalhe }) {
         </Campo>
         <Campo rotulo="Gravação agendada">
           <Input
-            type="datetime-local"
+            type="date"
             aria-label="Gravação agendada"
-            defaultValue={isoParaDataHoraLocalSP(post.gravacao_em)}
+            defaultValue={post.gravacao_em ? post.gravacao_em.slice(0, 10) : ""}
             onBlur={(e) => {
-              const iso = e.target.value ? dataHoraLocalParaIsoSP(e.target.value) : null;
-              if (iso !== post.gravacao_em) patch({ gravacao_em: iso }, "Não foi possível salvar a gravação.");
+              // `gravacao_em` is a DATE column: send `YYYY-MM-DD`, never a datetime.
+              const dia = e.target.value || null;
+              if (dia !== (post.gravacao_em ? post.gravacao_em.slice(0, 10) : null)) {
+                patch({ gravacao_em: dia }, "Não foi possível salvar a gravação.");
+              }
             }}
           />
         </Campo>
-        {/* Read-only: no Datas WRITE route exists yet for posts (see the delivery report). */}
-        <Campo rotulo="Postagem prevista">
-          <p className="flex h-9 items-center text-sm" data-testid="postagem-prevista">
-            {post.data_entrega ? formatarDataHoraSP(post.data_entrega) : "Não definida"}
-          </p>
-        </Campo>
       </div>
+
+      <DatasPost post={post} resumo={resumoQ} onPatch={patch} />
 
       <DescricaoSection
         corpo={resumoQ.data?.descricao?.corpo ?? ""}
