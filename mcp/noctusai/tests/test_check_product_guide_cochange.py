@@ -8,6 +8,7 @@ message, Supabase executor and prod-tip resolver are all injected).
 """
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev import migrate_product as mp  # noqa: E402
 from tools.noctus.dev.compliance import (  # noqa: E402
     check_product_guide_cochange,
+    check_product_guide_cochange_range,
     derive_help_chat_guides,
 )
 from tools.noctus.dev.scan_live_state_claims import scan_live_state_claims  # noqa: E402
@@ -108,6 +110,68 @@ class TestProductGuideCochange:
 
 ORG = "df6c3ace-1111-2222-3333-444455556666"
 OTHER = "aaaa1111-1111-2222-3333-444455556666"
+
+
+def _git(root: Path, *args: str) -> str:
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args],
+                          cwd=root, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _commit(root: Path, files: dict[str, str], msg: str) -> str:
+    for rel, body in files.items():
+        _w(root, rel, body)
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", msg)
+    return _git(root, "rev-parse", "HEAD")
+
+
+def _repo(tmp: Path) -> tuple[Path, str]:
+    root = _tree(tmp)
+    _git(root, "init", "-q")
+    return root, _commit(root, {}, "base")
+
+
+class TestProductGuideCochangeRange:
+    """CI leg: each commit of a range judged on its own diff + message (real git)."""
+
+    def test_behaviour_commit_without_guide_flags_and_names_commit(self, tmp_path):
+        root, base = _repo(tmp_path)
+        bad = _commit(root, {"products/igig/backend/app/services/x.py": "y = 2\n"}, "feat: change")
+        out = check_product_guide_cochange_range(f"{base}..HEAD", repo_root=root)
+        assert len(out) == 1 and out[0]["severity"] == "high"
+        assert bad[:9] in out[0]["issue"] and GUIDE in out[0]["issue"]
+
+    def test_commit_with_guide_or_trailer_passes(self, tmp_path):
+        root, base = _repo(tmp_path)
+        _commit(root, {"products/igig/backend/app/services/x.py": "y = 2\n", GUIDE: "# guia v2\n"},
+                "feat: change + guide")
+        _commit(root, {"products/igig/backend/app/services/z.py": "z = 1\n"},
+                "refactor: rename\n\nGuide-Unaffected: internal rename, no behaviour change")
+        assert check_product_guide_cochange_range(f"{base}..HEAD", repo_root=root) == []
+
+    def test_each_commit_is_judged_alone_not_the_squashed_range(self, tmp_path):
+        # The guide landing in a LATER commit does not excuse the earlier one —
+        # the commit-msg hook would have refused that earlier commit too.
+        root, base = _repo(tmp_path)
+        bad = _commit(root, {"products/igig/frontend/src/pages/A.tsx": "x\n"}, "feat: ui")
+        _commit(root, {GUIDE: "# guia v2\n"}, "docs: guide")
+        out = check_product_guide_cochange_range(f"{base}..HEAD", repo_root=root)
+        assert [bad[:9] in i["issue"] for i in out] == [True]
+
+    def test_accepted_historical_commit_is_skipped(self, tmp_path):
+        root, base = _repo(tmp_path)
+        bad = _commit(root, {"products/igig/backend/app/services/x.py": "y = 2\n"}, "feat")
+        assert check_product_guide_cochange_range(
+            f"{base}..HEAD", repo_root=root, accepted={bad: "predates the CI leg"}) == []
+
+    def test_unresolvable_range_fails_closed(self, tmp_path):
+        root, _ = _repo(tmp_path)
+        out = check_product_guide_cochange_range("nope..HEAD", repo_root=root)
+        assert len(out) == 1 and out[0]["severity"] == "high" and "fail-closed" in out[0]["issue"]
+
+    def test_malformed_range_refused(self, tmp_path):
+        root, _ = _repo(tmp_path)
+        assert check_product_guide_cochange_range("HEAD", repo_root=root)[0]["severity"] == "high"
 
 
 def _scan(tmp_path: Path, doc: str, tip="abc1234def", rows=None):

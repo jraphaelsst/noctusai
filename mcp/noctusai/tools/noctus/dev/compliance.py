@@ -11305,7 +11305,7 @@ def check_product_guide_cochange(
 # Two legs, same rule: COMMIT-TIME (scripts/hooks/commit-msg — the only hook
 # that can read the message; staged index vs HEAD, merge-aware) and CI (each
 # commit of the pushed/PR range vs its parent with its OWN message — job
-# `lgpd-entry-removal` in .github/workflows/test.yml). A range-mode removal is
+# `commit-range-keepers` in .github/workflows/test.yml). A range-mode removal is
 # forgiven when the range TIP still carries the identity (removed then
 # re-filed), so a dev->main fast-forward that carries an already-healed
 # incident does not wedge the release. KB § PATTERNS/common/lgpd-entry-keeper.md.
@@ -11506,6 +11506,54 @@ def check_lgpd_entry_removal_range(
                     lost.append(ident)
         lost = [i for i in lost if i not in tip_idents]
         issues.extend(_lgpd_removal_issues(lost, msg_r.stdout, f"Commit {sha[:9]}"))
+    return issues
+
+
+# Commits that predate this CI leg and would fail it (none known at
+# introduction, 2026-10-10). Full sha -> rationale; commits are immutable, so a
+# historical miss can only be accepted here, never fixed with a trailer.
+_GUIDE_COCHANGE_ACCEPTED_HISTORICAL: dict[str, str] = {}
+
+
+def check_product_guide_cochange_range(
+    rev_range: str,
+    repo_root: Path | None = None,
+    max_commits: int = 500,
+    accepted: dict[str, str] | None = None,
+) -> list[dict]:
+    """CI leg of ``check_product_guide_cochange``: every NON-merge commit in
+    ``<base>..<tip>`` is judged on its OWN diff and its OWN message (the
+    ``Guide-Unaffected:`` trailer), exactly as the commit-msg hook would have
+    judged it. Closes the gap where a hook-less clone (no install-hooks) could
+    push a behaviour change without its guide. Merges are skipped: integration
+    is rebase + fast-forward, and a merge's combined diff is not one author's
+    change. The guide set is derived from the range TIP's tree (the working
+    checkout CI runs in). An unreadable range fails closed."""
+    root = repo_root or REPO_ROOT
+    if ".." not in rev_range or "..." in rev_range:
+        return [{"product": "<guide>", "file": rev_range, "severity": "high",
+                 "issue": f"check_product_guide_cochange_range needs a `<base>..<tip>` range, got {rev_range!r}."}]
+    listed = _lgpd_git(root, "rev-list", "--no-merges", f"--max-count={max_commits}", rev_range)
+    if listed is None or listed.returncode != 0:
+        return [{"product": "<guide>", "file": rev_range, "severity": "high",
+                 "issue": f"cannot resolve range {rev_range!r} "
+                          f"({(listed.stderr if listed else 'git unavailable').strip()}); fail-closed."}]
+    accepted = _GUIDE_COCHANGE_ACCEPTED_HISTORICAL if accepted is None else accepted
+    issues: list[dict] = []
+    for sha in listed.stdout.split():
+        if sha in accepted:
+            continue
+        files_r = _lgpd_git(root, "diff-tree", "--no-commit-id", "--name-only", "-r",
+                            "--diff-filter=ACMRD", "--root", sha)
+        msg_r = _lgpd_git(root, "log", "-1", "--format=%B", sha)
+        if files_r is None or msg_r is None or files_r.returncode or msg_r.returncode:
+            issues.append({"product": "<guide>", "file": sha[:9], "severity": "high",
+                           "issue": f"cannot read commit {sha[:9]}; fail-closed."})
+            continue
+        files = [f for f in files_r.stdout.splitlines() if f.strip()]
+        for issue in check_product_guide_cochange(repo_root=root, staged=files,
+                                                  commit_message=msg_r.stdout):
+            issues.append({**issue, "issue": f"Commit {sha[:9]}: {issue['issue']}"})
     return issues
 
 
