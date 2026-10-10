@@ -7,6 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+from env_bootstrap import gate_subprocess_env
 from settings import REPO_ROOT, PRODUCTS_DIR, resolve_test_python  # noqa: E402  (path constants)
 from workspace import resolve_caller_root  # noqa: E402
 
@@ -72,7 +73,10 @@ def run_product_tests(slug: str, timeout: int = 120, worktree_path: str | None =
             result["asleep"] = True
         return result
 
-    env = {**os.environ, "PYTHONPATH": _worktree_pythonpath(root)}
+    # The same scrub gate_sweep / predeploy_check use: the toolkit's repo-.env
+    # values (SUPABASE_* included) never reach a product test — the seed
+    # live-DB guard would refuse the whole hermetic suite (2026-10-10).
+    env = {**gate_subprocess_env(root), "PYTHONPATH": _worktree_pythonpath(root)}
     try:
         result = subprocess.run(
             [resolve_test_python(), "-m", "pytest", "tests/", "-q", "--tb=short"],

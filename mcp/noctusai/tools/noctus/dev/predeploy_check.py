@@ -39,6 +39,7 @@ from typing import Any, Callable
 
 from deploy_state import DEPLOY_LOCAL_FILES
 from node_env import node_deps_ready, prune_dangling_node_modules_links
+from env_bootstrap import gate_subprocess_env
 from settings import REPO_ROOT, resolve_test_python
 from workspace import resolve_caller_root
 
@@ -689,6 +690,18 @@ def load_product_required_prod_config(root: pathlib.Path, product: str) -> list[
     return []
 
 
+def backend_test_env(root: pathlib.Path) -> dict[str, str]:
+    """The env the `backend_tests` leg's pytest runs with — the SAME scrub
+    `gate_sweep` uses (`env_bootstrap.gate_subprocess_env`): every key the
+    toolkit loaded from the repo `.env`, and any value identical to it,
+    removed. Without it the primary `.env`'s SUPABASE_* reached pytest and the
+    seed live-DB guard (`noctusai_lib.testing.live_db_guard`) refused every
+    hermetic suite — each predeploy read `blocked`, a red that judged the
+    harness, not the product (noc6, 2026-10-10). CI runs these suites with
+    no `.env` at all."""
+    return gate_subprocess_env(root)
+
+
 def _default_run_check(
     check: str,
     product: str,
@@ -745,7 +758,8 @@ def _default_run_check(
         be = root / "products" / product / "backend"
         if not be.exists():
             return True, f"no backend dir for {product} (skipped)"
-        r = subprocess.run([resolve_test_python(), "-m", "pytest", "-q"], cwd=be, capture_output=True, text=True)
+        r = subprocess.run([resolve_test_python(), "-m", "pytest", "-q"], cwd=be,
+                           capture_output=True, text=True, env=backend_test_env(root))
         return r.returncode == 0, (r.stdout + r.stderr)
     if check == "deploy_local_gitignored":
         # Platform-wide invariant (product arg unused): D3 manifest assertion.

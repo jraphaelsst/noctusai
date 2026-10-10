@@ -1275,3 +1275,26 @@ def test_schema_legs_read_products_from_the_given_root(tmp_path):
         assert ok
     assert seen["drift"] == tmp_path / "products"
     assert seen["exposure"] == tmp_path / "products"
+
+
+# ── backend_tests leg: the pytest env (2026-10-10, noc6) ─────────────────────
+def test_backend_test_env_scrubs_the_repo_dotenv_values(tmp_path, monkeypatch):
+    """The primary `.env`'s SUPABASE_* reached the predeploy pytest and the
+    seed live-DB guard refused every hermetic suite (`blocked`, a harness red).
+    The leg now runs with the same scrub gate_sweep uses."""
+    import inspect
+
+    from noctusai_lib.testing.live_db_guard import live_supabase_env_keys
+    from tools.noctus.dev import predeploy_check as pc
+
+    (tmp_path / ".env").write_text(
+        'SUPABASE_URL="https://abcdefghijklmnop.supabase.co"\nSUPABASE_SERVICE_ROLE_KEY="eyJ.service.role.key"\n')
+    monkeypatch.setenv("SUPABASE_URL", "https://abcdefghijklmnop.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "eyJ.service.role.key")
+
+    env = pc.backend_test_env(tmp_path)
+
+    assert "SUPABASE_URL" not in env and "SUPABASE_SERVICE_ROLE_KEY" not in env
+    assert live_supabase_env_keys(env) == []
+    # and the leg actually uses it
+    assert "env=backend_test_env(root)" in inspect.getsource(pc._default_run_check)
