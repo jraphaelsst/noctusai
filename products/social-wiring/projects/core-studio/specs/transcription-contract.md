@@ -11,6 +11,7 @@
 - `seed/lib/backend/noctusai_lib/domain/jobs/` already has `Job`, `JobRepository` (Fake + Supabase Real + factory) and a `Worker` with lease and heartbeat. `claim_next_job` uses `FOR UPDATE SKIP LOCKED` and reclaims expired leases.
 - social-wiring already has the queue table (`migrations/121_jobs.sql`) and a running worker precedent (`app/modules/edicao_fotos/services/worker.py`). No new queue table is needed.
 - **There is no Redis in prod.** `deploy/fleet/docker-compose.prod.yml` has no redis service, so the seed `RedisQuotaTracker` cannot be used. The in-memory tracker is lost on restart. Quotas therefore have to live in Postgres.
+  - **Correction (2026-10-10):** prod Redis DOES exist — `noctus-redis` (redis:7-alpine) runs from `deploy/fleet/compose.infra.prod.yml`, not the fleet compose this check read, and `REDIS_URL` is set in prod `.env`. Durable minute quotas still belong in Postgres (auditable, tied to the rows, refundable); short-window request rate limits may use Redis. See `products/core/projects/transcription-api/CONTRACT.md` §3.
 - No browser audio recorder exists anywhere: no `MediaRecorder` in `seed/lib/frontend/src` or any product. The recorder is a new seed organ, not a product-local component.
 - Prod services share `x-prod-defaults` (`restart: unless-stopped`, `noctus-net`). Only 4 services set `mem_limit`, and none set `cpus`.
 
