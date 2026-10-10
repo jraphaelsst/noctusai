@@ -74,6 +74,7 @@ def register() -> Any:
     this, so importing ``ModuleRegistration`` from there is not circular.
     """
     from app.modules.media_creation.routers import (
+        assuntos_virais,
         brand_kits,
         branding,
         generation,
@@ -92,6 +93,7 @@ def register() -> Any:
             posts.router,
             generation.router,
             pesquisa.router,
+            assuntos_virais.router,
         ],
         # No extra standard routers — the LLM seam is auto-wired by
         # create_product_app(); this module talks to chat_completion()
