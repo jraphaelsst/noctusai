@@ -129,14 +129,11 @@ def _pdf_producer(path: Path) -> Optional[str]:
 
 
 def _extract_docx(path: Path) -> dict[str, Any]:
-    import docx  # python-docx, in the MCP venv
+    if str(_SEED_BACKEND) not in sys.path:
+        sys.path.insert(0, str(_SEED_BACKEND))
+    from noctusai_lib.integrations.documents.plain_text import docx_to_text
 
-    doc = docx.Document(str(path))
-    paras = [p.text for p in doc.paragraphs]
-    for table in doc.tables:
-        for row in table.rows:
-            paras.append(" | ".join(c.text for c in row.cells))
-    return {"text_source": "docx", "text": "\n".join(paras), "pages": None, "producer": None}
+    return {"text_source": "docx", "text": docx_to_text(path.read_bytes()), "pages": None, "producer": None}
 
 
 def _extract_pdf(path: Path) -> dict[str, Any]:
