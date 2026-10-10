@@ -32,7 +32,42 @@ from __future__ import annotations
 import importlib
 import logging
 
+import pytest
+
 logger = logging.getLogger(__name__)
+
+
+def declare_hermetic_seams() -> None:
+    """The env seams every hermetic test session declares — idempotent.
+
+    - NOCTUS_SETTINGS_NO_ENV_FILE=1: seed settings never read a tree-root
+      .env (prod credentials) under pytest.
+    - NOCTUS_RATE_LIMIT_MEMORY_ONLY=1: rate-limit counters are per-process,
+      never a shared developer Redis.
+
+    Both must hold BEFORE the first app.* import, because settings and the
+    limiter are built at import time — and pytest imports the *initial*
+    conftests (every directory on the command line) before any
+    pytest_configure. Eight social-wiring module conftests import
+    app.* at module level, so a seam set only in pytest_configure
+    arrived too late for whichever shard collected them first (2026-10-10:
+    the rate limiter came up Redis-backed and parallel runs reset each
+    other's windows).
+    """
+    import os
+
+    from noctusai_lib.api.rate_limit import MEMORY_ONLY_VAR
+    from noctusai_lib.config.settings import NO_ENV_FILE_VAR
+
+    os.environ[NO_ENV_FILE_VAR] = "1"
+    os.environ[MEMORY_ONLY_VAR] = "1"
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_load_initial_conftests(early_config, parser, args) -> None:  # noqa: D401 — pytest hook
+    """Earliest hook a setuptools plugin gets: declare the hermetic seams
+    before any conftest (and therefore any app.* module) is imported."""
+    declare_hermetic_seams()
 
 
 def pytest_collection_finish(session) -> None:  # noqa: D401 — pytest hook
@@ -59,14 +94,9 @@ def pytest_configure(config) -> None:  # noqa: D401 — pytest hook
     no-op when `app.main` is not on the import path (seed-lib own tests,
     MCP tests, ad-hoc scripts).
     """
-    import os
-
-    from noctusai_lib.api.rate_limit import MEMORY_ONLY_VAR
-    from noctusai_lib.config.settings import NO_ENV_FILE_VAR
-
-    os.environ[NO_ENV_FILE_VAR] = "1"
-    # Per-process rate-limit counters: never a shared (developer) Redis.
-    os.environ[MEMORY_ONLY_VAR] = "1"
+    # Idempotent re-declaration: a session started without the early hook
+    # (e.g. -p plugin loading) still gets the seams before app.main.
+    declare_hermetic_seams()
     try:
         importlib.import_module("app.main")
     except ModuleNotFoundError:
