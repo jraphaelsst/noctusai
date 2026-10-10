@@ -510,6 +510,29 @@ def test_active_probe_unhealthy_past_grace():
     assert status == "unhealthy"  # past grace + still failing → fast rollback
 
 
+def test_health_probe_path_comes_from_the_service_healthcheck():
+    """2026-10-10: a hardcoded /api/health 404'd the healthy transcriber (/healthz)
+    into a failed rollback. The probe path and grace come from its own HEALTHCHECK."""
+    hc = ('{"Test":["CMD","curl","-fsS","http://localhost:9000/healthz"],'
+          '"Interval":30000000000,"StartPeriod":120000000000}')
+    runner = lambda cmd: (0, hc + "\n", "")
+    assert DI._container_health_probe(runner, "noctus-transcriber") == ("/healthz", 120)
+
+
+def test_health_probe_defaults_to_api_health_for_products():
+    hc = '{"Test":["CMD","curl","-fsS","http://localhost:8000/api/health"]}'
+    assert DI._container_health_probe(lambda cmd: (0, hc, ""), "noctus-core") == ("/api/health", 0)
+    assert DI._container_health_probe(lambda cmd: (0, "", ""), "x") == ("/api/health", 0)
+
+
+def test_active_probe_curls_the_given_path():
+    f = FakeDocker(health=("up",))
+    status, _ = DI._poll_health(f, lambda s: None, "noctus-transcriber",
+                                timeout=30, interval=5, port="9000", path="/healthz")
+    execs = [c for c in f.calls if c[:2] == ["docker", "exec"]]
+    assert status == "healthy" and execs[-1][-1] == "http://localhost:9000/healthz"
+
+
 def test_tool_registers_with_dotted_name():
     captured = {}
 

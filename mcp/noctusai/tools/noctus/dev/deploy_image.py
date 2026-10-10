@@ -240,8 +240,25 @@ def _container_port(runner, container: str) -> str | None:
     return m2.group(1) if m2 else None
 
 
+def _container_health_probe(runner, container: str) -> tuple[str, int]:
+    """(path, start_period_s) for the active probe, read from the container's OWN
+    healthcheck test — never assumed. Products answer /api/health; a sanctioned
+    non-product service (deploy/fleet/services.txt, e.g. `transcriber`) answers
+    on its own path (/healthz). A hardcoded /api/health 404'd a healthy
+    transcriber into a rollback (2026-10-10). Falls back to /api/health when the
+    test carries no localhost URL; start_period is 0 when unset."""
+    _rc, out, _e = _docker(runner, "inspect", "-f",
+                           "{{if .Config.Healthcheck}}{{json .Config.Healthcheck}}{{end}}", container)
+    m = re.search(r"localhost:\d+(/[^\s\"',\]]*)", out or "")
+    path = m.group(1) if m else "/api/health"
+    sp = re.search(r'"StartPeriod":\s*(\d+)', out or "")
+    start_period_s = int(sp.group(1)) // 1_000_000_000 if sp else 0
+    return path, start_period_s
+
+
 def _poll_health(runner, sleep, container: str, timeout: int, interval: int,
-                 port: str | None = None, startup_grace: int = 30) -> tuple[str, list[str]]:
+                 port: str | None = None, startup_grace: int = 30,
+                 path: str = "/api/health") -> tuple[str, list[str]]:
     """Poll → 'healthy' | 'unhealthy' | 'timeout'. With a port: ACTIVE probe
     (`exec curl /api/health`) — fast healthy detection, and a curl that still
     fails *past startup_grace* ⇒ unhealthy (so a broken image rolls back in
@@ -256,7 +273,7 @@ def _poll_health(runner, sleep, container: str, timeout: int, interval: int,
             return "unhealthy", states + [f"state={st}@{waited}s"]
         if port:
             rc_c, _o, _ec = _docker(runner, "exec", container, "curl", "-fsS", "-m", "3",
-                                    f"http://localhost:{port}/api/health")
+                                    f"http://localhost:{port}{path}")
             if rc_c == 0:
                 return "healthy", states + [f"up@{waited}s"]
             states.append(f"down@{waited}s")
@@ -472,7 +489,8 @@ def deploy_image(
         _docker(runner, "tag", prev, f"{image}:{tag}")  # retag :latest from the committed snapshot
         _compose(runner, cf, "up", "-d", "--force-recreate", product)
         rb_health, rb_states = _poll_health(runner, napper, container, health_timeout,
-                                            poll_interval, port=port, startup_grace=startup_grace)
+                                            poll_interval, port=port, startup_grace=probe_grace,
+                                            path=health_path)
         _rcv, running_now, _ev = _docker(runner, "inspect", "-f", "{{.Image}}", container)
         running_now = running_now.strip()
         # Verify by HEALTH (robust): containerd digest forms make id-equality
@@ -587,6 +605,8 @@ def deploy_image(
                                f"requirements.txt. Detail: {smoke_detail}")}
 
     port = _container_port(runner, container)
+    health_path, start_period_s = _container_health_probe(runner, container)
+    probe_grace = max(startup_grace, start_period_s)
 
     # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
     #    recreation when only the tag target changed) ──
@@ -597,7 +617,7 @@ def deploy_image(
 
     # ── HEALTH-PROBE (active /api/health when the port is known) ──
     health, states = _poll_health(runner, napper, container, health_timeout, poll_interval,
-                                  port=port, startup_grace=startup_grace)
+                                  port=port, startup_grace=probe_grace, path=health_path)
     if health == "healthy":
         # ── SWAP-VERIFY (2026-08-13 phantom-deploy guard) — a HEALTHY probe
         #    only proves *some* container answers on that port; it does NOT
