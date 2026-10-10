@@ -131,6 +131,31 @@ def _ensure_llm_configured() -> bool:
         return False
 
 
+def paths_aware_keeper_flags() -> list[str]:
+    """The `--check-*` flags whose dispatch branch reads `args.paths` —
+    DERIVED from this file's own AST, never a hand list (a hand list in the
+    `--paths` help drifted the day a keeper gained `--paths`). A branch counts
+    when its `elif` test names `args.check_<x>` and its body reads `args.paths`."""
+    import ast
+    tree = ast.parse(Path(__file__).read_text(encoding="utf-8"))
+    flags: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        tested = [n.attr for n in ast.walk(node.test)
+                  if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+                  and n.value.id == "args" and n.attr.startswith("check_")]
+        if not tested:
+            continue
+        reads_paths = any(
+            isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name)
+            and n.value.id == "args" and n.attr == "paths"
+            for stmt in node.body for n in ast.walk(stmt))
+        if reads_paths:
+            flags.update("--" + a.replace("_", "-") for a in tested)
+    return sorted(flags)
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Construct the full `argparse.ArgumentParser` — split out from `main()`
     (2026-09-24, F3 compliance review of release-no-freeze) so the R4
@@ -202,7 +227,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-storage-bucket-public", action="store_true", help="Keeper (severity critical, NO allowlist / suppression marker / accept-with-rationale escape hatch — owner directive 2026-09-17): flags any path to a public Supabase Storage bucket. Leg A — a migration's `INSERT INTO storage.buckets` / `UPDATE storage.buckets SET public = true`. Leg B — any `get_public_url(` / `getPublicUrl(` call site (only makes sense against a public bucket; must be zero platform-wide). Leg C — a runtime `create_bucket(...)` passing `public=True`. THE INCIDENT: erp-certidoes (102 CPF-bearing objects) + erp-geral were public, and the /object/public/{bucket}/{path} route bypasses storage.objects RLS entirely — 17 policies gave zero protection. The sanctioned alternative (named in every finding) is a short-TTL signed URL minted at read time — StorageService.get_signed_url / noctusai_lib.integrations.storage. MCP keeper check_storage_bucket_public. KB § PATTERNS/backend/database-rls.md § Storage buckets — never public.")
     parser.add_argument("--check-migration-guard-has-probe", action="store_true", help="Keeper (gate↔methodology-sync backstop for noctus.dev.verify_db_guards, 2026-09-18): a migration that defines a genuine guard (a trigger function that RAISE EXCEPTIONs, a named CHECK/UNIQUE constraint) must have a corresponding GuardProbe registered — otherwise the guard is 'structurally verified' only, the exact class of bug verify_db_guards exists to catch. Statement-scoped detection (noctusai_lib.testing.migration_parser's dollar-quote/string-aware statement walker, not a naive grep) — ignores comments/string literals and a passive updated_at-style trigger (no RAISE, refuses nothing). `--paths` (staged-files idiom, same as --check-storage-bucket-public) scopes to migrations actually touched in this commit — diff-scoped, never a full-corpus retroactive sweep, so it is forward-looking only. Co-located allowlist `_GUARD_PROBE_ALLOWLIST` in compliance.py for a guard that genuinely cannot be probed (e.g. RLS, which this tool's Management-API SqlExecutor structurally bypasses). Severity high. MCP keeper check_migration_guard_has_probe.")
     parser.add_argument("--check-schema-wide-anon-grant", action="store_true", help="Keeper (severity critical, NO allowlist / suppression marker — same posture as --check-storage-bucket-public): flags a schema-wide table GRANT or default-privilege GRANT naming `anon`. Leg A — `GRANT ... ON ALL TABLES IN SCHEMA <s> TO ...anon...`. Leg B — `ALTER DEFAULT PRIVILEGES IN SCHEMA <s> GRANT ... ON TABLES TO ...anon...`. Sequence grants are deliberately exempt (no row data). THE INCIDENT (2026-09-20): the seed's own `001_seed.sql` used to grant `ALL` on every current+future table to `anon`, propagated into 9 product schemas; in the live `social_wiring` schema this let `anon` read+write 4 out-of-band backup tables (21,567 rows of names/emails/birthdates) that never got an RLS policy. Comments are stripped before matching (noctusai_lib.testing.migration_parser), so a migration's own prose citing the historical shape never trips it. `--paths` (staged-files idiom) scopes to files touched in this commit — diff-scoped, same reasoning as --check-storage-bucket-public (immutable pre-fix `001_*.sql` history stays on disk forever and would otherwise permanently redden a full-tree sweep). MCP keeper check_schema_wide_anon_grant. KB § PATTERNS/backend/database-rls.md.")
-    parser.add_argument("--paths", default="", help="Comma-separated repo-relative paths to narrow a keeper's sweep (currently --check-conflict-markers, --check-org-identity-function-parity, --check-git-hooks-bypass, --check-git-hook-file-tampering, --check-storage-bucket-public, --check-migration-guard-has-probe, --check-schema-wide-anon-grant, --check-piped-exit-code-pattern, --check-migration-number-refs-in-tests). Omitted, the keeper scans its full default scope.")
+    # The accepting-keeper list is derived (paths_aware_keeper_flags), and only
+    # when help is actually being rendered — normal invocations skip the AST parse.
+    _paths_keepers = (", ".join(paths_aware_keeper_flags())
+                      if any(a in ("-h", "--help") for a in sys.argv[1:]) else "see --help")
+    parser.add_argument("--paths", default="", help=f"Comma-separated repo-relative paths to narrow a keeper's sweep (accepted by: {_paths_keepers}). Omitted, the keeper scans its full default scope.")
     parser.add_argument("--check-primary-checkout-commit", action="store_true", help="Keeper: refuse a WORK commit on a shared branch (dev/main/prod) in the PRIMARY checkout — the self-branching rule that CLAUDE.md has mandated since inception and that was violated in essentially every session, because nothing fails at commit time and the cost lands later as a non-fast-forward at integrate/deploy. Ledger-only commits (project-history/) pass; escape hatch NOCTUS_ALLOW_PRIMARY_COMMIT=1. Severity high. MCP keeper check_primary_checkout_commit.")
     parser.add_argument("--check-git-hooks-bypass", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that hardcodes a git hooks bypass (`-c core.hooksPath=…`, `--config`/`--config-env` targeting core.hooksPath, a persistent `git config core.hooksPath <value>` SET, a `GIT_CONFIG_KEY_*=core.hooksPath` env-injection, or `--no-verify`/`-n` on commit/push). Static backstop for the PreToolUse `decide_git_bypass` gate (`primary_write_guard.py`) — born from a `-c core.hooksPath=<relative>` override that silently skipped every hook, exit 0, no warning, because git resolves a relative hooksPath against the cwd and a linked worktree's `.git` is a FILE. `.md` prose is out of scope (cannot execute); co-located allowlist for the one genuine non-bypass SET (bootstrap-seed-workspace.sh provisioning a separate sibling repo). Severity high. MCP keeper check_git_hooks_bypass.")
     parser.add_argument("--check-git-hook-file-tampering", action="store_true", help="Keeper: a tracked script/Makefile/CI-workflow/subprocess-call that removes, truncates, `chmod -x`'s, or overwrites a file under `.git/hooks/`, or writes `.git/config` directly (`rm`/`> `/`chmod`/`cp`/`mv`/`tee`/`echo … >>`). Sibling of check_git_hooks_bypass: that one is git-ARGV-shaped and cannot see a plain filesystem op that disables a hook exactly as effectively, with the same silent exit-0-no-error result. `chmod` is mode-aware (`+x` is a repair, not a violation). Static backstop for the PreToolUse `decide_hook_integrity` gate (`primary_write_guard.py`). Co-located allowlist for `scripts/hooks/install-hooks.sh`'s sanctioned remove-then-recreate-symlink reinstall flow. Severity high. MCP keeper check_git_hook_file_tampering.")
@@ -372,6 +401,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task-branch-parent", default=None, help="With --task-branch action=start: the branch-tree pointer's parent branch.")
     parser.add_argument("--task-branch-no-wire-env", action="store_true", help="With --task-branch action=start: skip the §5a verification-env auto-wiring (default is to wire it).")
     parser.add_argument("--task-branch-wire-products", default=None, help="With --task-branch action=start: comma-separated product slugs whose node_modules wire_env overlays (overrides the scope derived from --task-branch-paths; '*' = every product).")
+    parser.add_argument("--verbose", action="store_true", help="Keepers that collapse advisory output (e.g. --check-eight-way-sync's cache-staleness warnings) print every line instead of a one-line summary. Env NOCTUS_HOOK_VERBOSE=1 does the same from a git hook.")
     parser.add_argument("--task-branch-verbose", action="store_true", help="With --task-branch action=start: full inline wire_env would_wire/wired/skipped lists instead of the compact {count, sample} shape.")
     parser.add_argument("--cleanup-respect-min-age", action="store_true", help="With --cleanup-stale-worktrees --force: keep the min-age guard (never take a brand-new worktree). Used by the SessionStart sweep.")
     parser.add_argument("--task-branch-post-integrate", action="store_true", help="Run task_branch integrate's slow best-effort tail (structural cache settle, then the primary ledger drain). Spawned DETACHED by integrate on the real runner; prints the JSON result.")
@@ -1026,10 +1056,32 @@ def main():
         any_high = any(i.get("severity") == "high" for i in issues)
         prefix_char = "✗" if any_high else "⚠"
         prefix_color = RED if any_high else YELLOW
-        print(f"  {prefix_color}{prefix_char} {len(issues)} eight-way-sync issue(s):{RESET}")
+        # Advisory cache-staleness warnings (one per stale FILE — 150+ after a
+        # busy day) collapse to ONE summary line unless --verbose /
+        # NOCTUS_HOOK_VERBOSE=1: a wall of advisory lines buries the blocker.
+        import os
+        # `_run_composed_keeper` prefixes: eight-way-sync → cache-freshness →
+        # all-cache-freshness → <sub-cache>.
+        cache_prefix = "eight-way-sync-cache-freshness::all-cache-freshness-"
+        verbose = args.verbose or os.environ.get("NOCTUS_HOOK_VERBOSE") == "1"
+        collapsed: dict[str, int] = {}
+        detail: list[str] = []
         for i in issues:
+            sym = i.get("symbol", "?")
+            if (not verbose and i.get("severity") != "high"
+                    and sym.startswith(cache_prefix)):
+                sub = sym[len(cache_prefix):].split("::", 1)[0]
+                collapsed[sub] = collapsed.get(sub, 0) + 1
+                continue
             sev_color = RED if i.get("severity") == "high" else YELLOW
-            print(f"    {sev_color}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({i.get('symbol', '?')})")
+            detail.append(f"    {sev_color}[{i['severity']}]{RESET} {i.get('file', '?')} — {i['issue']} ({sym})")
+        if detail:
+            print(f"  {prefix_color}{prefix_char} {len(issues)} eight-way-sync issue(s):{RESET}")
+            print("\n".join(detail))
+        if collapsed:
+            parts = ", ".join(f"{k} {v}" for k, v in sorted(collapsed.items(), key=lambda kv: -kv[1]))
+            print(f"  {YELLOW}⚠ {sum(collapsed.values())} stale cache entr(ies), advisory — NOT blocking — {parts}; "
+                  f"refreshed at push (or /refresh-caches). Per-file detail: --verbose / NOCTUS_HOOK_VERBOSE=1.{RESET}")
         # Make blocking-vs-advisory unmistakable: the commit aborts ONLY on the
         # high-severity issue(s). Embedding-cache staleness is severity=warning
         # (the pre-push hook batch-refreshes them) — it never blocks, so do NOT
@@ -1042,7 +1094,7 @@ def main():
             print(f"  {RED}✗ BLOCKED by {n_high} high-severity issue(s):{RESET} {blockers}")
             if n_warn:
                 print(f"  {YELLOW}  ({n_warn} advisory warning(s) — NOT blocking; embeddings refresh at push, don't manually refresh){RESET}")
-        else:
+        elif detail:  # all-collapsed ⇒ the summary line above already said it
             print(f"  {YELLOW}⚠ {n_warn} advisory warning(s) — NOT blocking (commit proceeds); embeddings refresh at push.{RESET}")
         sys.exit(1 if any_high else 0)
     elif args.settle_structural_caches:

@@ -124,3 +124,8 @@ Each promotion has been a methodology evolution, captured here so future surface
 - **Why.** 2026-09-23: a pointer-only commit in the primary checkout ran `--check-eight-way-sync` at 100% CPU for >6.5 min holding `.git/index.lock`, blocking every other session's pointer pushes.
 - **Timeout.** The 8-way step in the normal path runs under `bounded_run` (portable, kills the process group). Default 300s, override `NOCTUS_EIGHT_WAY_TIMEOUT`. Timeout = exit 1 with an actionable message, never a pass.
 - **Tests.** `mcp/noctusai/tests/test_pre_commit_ledger_fastpath.py`.
+
+## Quiet advisory output + memoized noc-graph source sha (2026-10-10)
+
+- **One summary line, not one per stale file.** Embedding-cache staleness is advisory (refreshed at push). `--check-eight-way-sync` used to print one `[warning]` per stale file — 159 on 2026-10-09 — burying any real blocker. It now collapses every `eight-way-sync-cache-freshness::all-cache-freshness-*` warning into a single per-cache count line. High-severity issues and other warnings still print in full. Per-file detail: `--verbose`, or `NOCTUS_HOOK_VERBOSE=1` from a hook.
+- **The freshness check no longer re-reads the tree.** `noc_graph_cache.compute_source_sha` ran twice per check (settle + keeper) and read ~7.4k files each time (18s cold in the profile). It is now memoized on the inputs' stat signature (path, size, mtime_ns, inode — git's index heuristic) in the per-tree `noc-graph-source-sha.memo.json`. The value is byte-identical to the uncached computation, so no cache is invalidated. A memo hit costs ~0.4s (the stat walk).

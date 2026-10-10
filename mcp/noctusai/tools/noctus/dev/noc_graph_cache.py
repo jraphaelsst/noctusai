@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import subprocess
 import sys
 import sqlite3
@@ -215,11 +216,71 @@ def _ai_history_source(repo_root: Path) -> Path:
     return out
 
 
-def compute_source_sha(repo_root: Optional[Path] = None) -> str:
-    """Aggregate sha256 over (repo-relative-path, content) for all source files."""
-    root = repo_root or REPO_ROOT
+# Stat-signature memo for `compute_source_sha` (2026-10-10). Reading ~7.4k
+# source files costs ~6-9s per call and the freshness composition calls it
+# twice per pre-commit (settle + keeper). The memo maps a digest of every input
+# file's (rel-path, size, mtime_ns, inode) — git's own index heuristic — plus
+# the store-only auto-improvement rows to the content sha computed for exactly
+# that state, so an unchanged tree pays only the stat walk. The RETURNED value
+# is byte-identical to the uncached computation (no cache is invalidated).
+# Racy-write caveat (same as git): a same-size rewrite inside one mtime tick
+# keeps the old sha until the next touch; APFS/ext4 mtimes are ns-resolution.
+_SOURCE_SHA_MEMO_NAME = "noc-graph-source-sha.memo.json"
+_SOURCE_SHA_MEMO_MAX = 16
+
+
+def _source_sha_memo_path(root: Path) -> Path:
+    from .cache_backend import tree_cache_dir
+    return tree_cache_dir(root) / _SOURCE_SHA_MEMO_NAME
+
+
+def _stat_signature(root: Path, files: list[Path], extra: str) -> str:
     h = hashlib.sha256()
+    for p in files:
+        try:
+            st = p.stat()
+            sig = f"{p.as_posix()}\0{st.st_size}\0{st.st_mtime_ns}\0{st.st_ino}\n"
+        except OSError:
+            sig = f"{p.as_posix()}\0<unreadable>\n"
+        h.update(sig.encode("utf-8"))
+    h.update(b"extra\0" + extra.encode("utf-8"))
+    return h.hexdigest()
+
+
+def _read_source_sha_memo(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # corrupt memo ⇒ recompute, logged
+        logger.warning("noc_graph_cache: source-sha memo unreadable (%s) — recomputing", exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_source_sha_memo(path: Path, memo: dict[str, str]) -> None:
+    items = list(memo.items())[-_SOURCE_SHA_MEMO_MAX:]
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(json.dumps(dict(items)), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:  # memo is an optimization; the sha itself is returned
+        logger.warning("noc_graph_cache: source-sha memo not written (%s)", exc)
+
+
+def compute_source_sha(repo_root: Optional[Path] = None) -> str:
+    """Aggregate sha256 over (repo-relative-path, content) for all source files.
+
+    Memoized on the inputs' stat signature (see `_SOURCE_SHA_MEMO_NAME`)."""
+    root = repo_root or REPO_ROOT
     files = sorted(_source_files(root), key=lambda p: p.as_posix())
+    extra = _ai_store_extra(root)
+    memo_path = _source_sha_memo_path(root)
+    memo = _read_source_sha_memo(memo_path)
+    sig = _stat_signature(root, files, extra)
+    if sig in memo:
+        return memo[sig]
+    h = hashlib.sha256()
     for p in files:
         try:
             rel = p.relative_to(root).as_posix()
@@ -231,10 +292,13 @@ def compute_source_sha(repo_root: Optional[Path] = None) -> str:
             h.update(p.read_bytes())
         except OSError:
             h.update(b"<unreadable>")
-    extra = _ai_store_extra(root)
     if extra:  # rows only on origin/ledgers still bust the cache (dual-read)
         h.update(b"origin/ledgers:auto-improvement.ndjson\0" + extra.encode("utf-8"))
-    return h.hexdigest()[:12]
+    sha = h.hexdigest()[:12]
+    memo.pop(sig, None)
+    memo[sig] = sha
+    _write_source_sha_memo(memo_path, memo)
+    return sha
 
 
 # ── Per-bucket sub-sha (for incremental rebuilds) ──────────────────────────
