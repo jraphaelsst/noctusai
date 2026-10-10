@@ -127,6 +127,12 @@ export type {
   TeamInviteBody,
 } from './components/index';
 
+// Audio recording (voice answers)
+export { useAudioRecorder, formatElapsed, pickAudioMime, AUDIO_MIME_CANDIDATES } from './hooks/useAudioRecorder';
+export type { AudioRecorderState, AudioRecorderError, UseAudioRecorderOptions, UseAudioRecorderResult } from './hooks/useAudioRecorder';
+export { VoiceAnswerInput, VOICE_ANSWER_MESSAGES } from './components/index';
+export type { VoiceAnswerInputProps } from './components/index';
+
 // Env-mode hook (drives FakeModeBadge; exposed for products that want to
 // branch on backend-adapter mode without rendering the badge directly).
 export { useEnvMode } from './hooks/useEnvMode';

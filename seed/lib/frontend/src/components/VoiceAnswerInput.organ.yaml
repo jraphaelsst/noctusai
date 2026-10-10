@@ -1,0 +1,22 @@
+name: VoiceAnswerInput
+path: seed/lib/frontend/src/components/VoiceAnswerInput.tsx
+phase: pilot-seed
+registered_at: '2026-10-09'
+validation_status: emerging
+known_facts:
+- Record/stop voice-answer control built on the useAudioRecorder hook (getUserMedia + MediaRecorder). Calls onRecorded(blob, mime, seconds); never uploads - the product does.
+- 'Mime fallback order: audio/webm;codecs=opus, audio/webm, audio/mp4, audio/mpeg. Auto-stop at maxSeconds (default 600); maxBytes guard (default 15 MB) stops and raises too_large.'
+- 'Typed errors unsupported / permission_denied / too_large map to pt-BR messages (VOICE_ANSWER_MESSAGES). Mic tracks and the level-meter AudioContext are released on stop/unmount.'
+- Import path - import { VoiceAnswerInput, useAudioRecorder } from '@noctusai/lib'.
+errors_encountered: []
+drifts_surfaced: []
+alternatives_considered:
+- 'Per-product recorder - rejected (transcription-contract S4: one seed organ for Questionnaire voice and cerebro).'
+manual_validation_log: []
+integration_test_status: unknown
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+bugs_fixed_during_dev: []
