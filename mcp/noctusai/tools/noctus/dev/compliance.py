@@ -6499,11 +6499,10 @@ def check_dependabot_product_coverage(repo_root: Path | None = None) -> list[dic
             "file": rel,
             "issue": (
                 f"{rel} still carries an npm block for `{slug}`, which is "
-                f"asleep (absent from deploy/fleet/active-scope.txt). Not "
-                f"wrong — Dependabot coverage for a dormant product is "
-                f"harmless — but a human may want to remove the block at "
-                f"sleep time; reactivating the product re-adds it "
-                f"automatically via `noctus.dev.refresh_dependabot_coverage`."
+                f"asleep (absent from deploy/fleet/active-scope.txt). Derived "
+                f"drift: `noctus.dev.refresh_dependabot_coverage` (run by "
+                f"`settle_scope_artifacts` in the scope bot's own commit) "
+                f"prunes it; reactivating the product re-adds it the same way."
             ),
             "severity": "warning",
         })

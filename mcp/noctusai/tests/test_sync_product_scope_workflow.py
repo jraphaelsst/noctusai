@@ -30,7 +30,10 @@ def test_triggered_only_by_the_catalog_dispatch():
 
 def test_uses_the_shared_generators():
     t = _text()
-    assert "refresh_build_scope(_live=" in t and "refresh_active_scope(_active=" in t
+    assert "settle_scope_artifacts(live=" in t and "active=" in t
+    # derived artifacts ride in the SAME commit as the scope files
+    for f in (".github/dependabot.yml", ".github/workflows/test.yml"):
+        assert f in t
 
 
 def test_payload_is_validated_as_slugs():

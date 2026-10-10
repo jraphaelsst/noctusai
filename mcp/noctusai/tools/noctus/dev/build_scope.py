@@ -151,7 +151,8 @@ def _active_catalog_rows() -> list[tuple[str, str]]:
     return sorted((row["slug"], row["deploy_scope"]) for row in (resp.data or []))
 
 
-def refresh_build_scope(write: bool = True, _live: list[str] | None = None) -> dict:
+def refresh_build_scope(write: bool = True, _live: list[str] | None = None,
+                        root: Path | None = None) -> dict:
     """Regenerate `build-scope.txt` from the catalog.
 
     `_live` is a test seam (skip the network). Returns
@@ -163,7 +164,9 @@ def refresh_build_scope(write: bool = True, _live: list[str] | None = None) -> d
     except RuntimeError as exc:
         return {"ok": False, "status": "error", "error": str(exc)}
 
-    fleet = fleet_slugs()
+    # `root` re-points the two files at another tree (the settle test seam).
+    scope_path = (root / "deploy" / "fleet" / "build-scope.txt") if root is not None else SCOPE_PATH
+    fleet = fleet_slugs((root / "deploy" / "fleet" / "docker-compose.prod.yml") if root is not None else None)
     slugs = sorted(set(live) | set(ALWAYS_BUILD))
 
     # A live product with no fleet service can never be built — surface, don't drop.
@@ -190,22 +193,22 @@ def refresh_build_scope(write: bool = True, _live: list[str] | None = None) -> d
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     rendered = _render(slugs, live_count=len(live), excluded=excluded, stamp=stamp)
 
-    existing = SCOPE_PATH.read_text(encoding="utf-8") if SCOPE_PATH.exists() else ""
+    existing = scope_path.read_text(encoding="utf-8") if scope_path.exists() else ""
     # Compare the SLUGS, not the bytes — the header carries a refresh date, so a
     # byte-compare would rewrite the file (and dirty the tree) on every run.
     changed = _parse_slugs(existing) != slugs
 
     if not write:
         return {"ok": True, "status": "would-write" if changed else "in-sync",
-                "slugs": slugs, "excluded": excluded, "path": str(SCOPE_PATH), "changed": changed}
+                "slugs": slugs, "excluded": excluded, "path": str(scope_path), "changed": changed}
     if not changed:
         return {"ok": True, "status": "in-sync", "slugs": slugs, "excluded": excluded,
-                "path": str(SCOPE_PATH), "changed": False}
+                "path": str(scope_path), "changed": False}
 
-    SCOPE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SCOPE_PATH.write_text(rendered, encoding="utf-8")
+    scope_path.parent.mkdir(parents=True, exist_ok=True)
+    scope_path.write_text(rendered, encoding="utf-8")
     return {"ok": True, "status": "written", "slugs": slugs, "excluded": excluded,
-            "path": str(SCOPE_PATH), "changed": True}
+            "path": str(scope_path), "changed": True}
 
 
 def _parse_slugs(text: str) -> list[str]:
@@ -249,11 +252,10 @@ def register(server) -> None:
         ),
     )
     def _refresh_build_scope(write: bool = True) -> dict:
-        from .product_scope import refresh_active_scope
-        result = refresh_build_scope(write=write)
-        result["active_scope"] = refresh_active_scope(write=write)
-        result["ok"] = bool(result.get("ok")) and bool(result["active_scope"].get("ok"))
-        return result
+        from .scope_settle import settle_scope_artifacts
+        # Scope files + every artifact derived from them (dependabot, CI matrices,
+        # composes/Dockerfiles) — see scope_settle.py. write=False previews scope only.
+        return settle_scope_artifacts(write=write)
 
 
 __all__ = [

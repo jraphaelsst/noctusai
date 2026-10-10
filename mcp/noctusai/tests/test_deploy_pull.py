@@ -367,7 +367,10 @@ def test_real_build_scope_file_drives_the_set():
     from tools.noctus.dev.build_scope import read_build_scope
 
     d = DP._rebuild_decision(["seed/lib/backend/noctusai_lib/api/cors.py"])
-    assert d["rebuild_set"] == read_build_scope() and "store" in d["rebuild_set"]
+    # Expectation derived from the scope file itself — never a named product
+    # (a hardcoded slug here reddened CI on every owner deactivation).
+    assert d["rebuild_set"] == read_build_scope() and d["rebuild_set"]
+    assert "core" in d["rebuild_set"]
     assert d["build_set_warning"] is None
 
 

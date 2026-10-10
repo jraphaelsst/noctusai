@@ -232,6 +232,28 @@ def _render_missing_block(slug: str, stamp: str) -> list[str]:
     return lines
 
 
+def _prune_ranges(lines: list[str], blocks: list[_Block], slugs: set[str]) -> list[tuple[int, int]]:
+    """`[lo, hi)` line ranges of the npm blocks for `slugs`, INCLUDING the
+    comment run that introduces each block and its trailing blank line, but
+    NOT the next block's leading comment run (which sits inside this block's
+    parsed `end`). Dormant products leave the file the way they were added."""
+    def _is_comment(i: int) -> bool:
+        return lines[i].startswith("  #")
+
+    out: list[tuple[int, int]] = []
+    for slug, b in _npm_product_blocks(blocks).items():
+        if slug not in slugs:
+            continue
+        lo = b.start
+        while lo > 0 and _is_comment(lo - 1):
+            lo -= 1
+        hi = b.end
+        while hi > b.start and _is_comment(hi - 1):
+            hi -= 1
+        out.append((lo, hi))
+    return out
+
+
 def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> dict:
     """Repair `.github/dependabot.yml` in place. Returns
     `{ok, status, path, changed, added, guard_fixed, stale}`; `status` is
@@ -249,6 +271,24 @@ def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> di
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines(keepends=True)
     blocks = _parse_blocks(lines)
+
+    # Asleep products are out of every check, Dependabot included (2026-09-22):
+    # a block for one is derived-state drift, removed here so a sleep leaves the
+    # file clean (the scope bot calls this in the same commit as the sleep).
+    from .product_scope import dormant_slugs
+
+    dormant = set(dormant_slugs(root))
+    pruned = sorted(set(_npm_product_blocks(blocks)) & dormant)
+    if pruned:
+        if write:
+            for lo, hi in sorted(_prune_ranges(lines, blocks, set(pruned)), reverse=True):
+                del lines[lo:hi]
+            path.write_text("".join(lines), encoding="utf-8")
+            blocks = _parse_blocks(lines)
+        else:
+            blocks = [b for b in blocks if not (
+                b.ecosystem == "npm" and b.directory
+                and (m := _PRODUCT_DIR_RE.match(b.directory)) and m.group(1) in pruned)]
 
     npm_by_slug = _npm_product_blocks(blocks)
     on_disk = _on_disk_product_slugs(root)
@@ -269,14 +309,15 @@ def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> di
 
     if not changed:
         return {
-            "ok": True, "status": "in-sync", "path": str(path), "changed": False,
-            "added": [], "guard_fixed": {}, "stale": stale,
+            "ok": True, "status": "written" if pruned and write else ("would-write" if pruned else "in-sync"),
+            "path": str(path), "changed": bool(pruned),
+            "added": [], "guard_fixed": {}, "stale": stale, "pruned": pruned,
         }
 
     if not write:
         return {
             "ok": True, "status": "would-write", "path": str(path), "changed": True,
-            "added": missing, "guard_fixed": guard_gaps, "stale": stale,
+            "added": missing, "guard_fixed": guard_gaps, "stale": stale, "pruned": pruned,
         }
 
     inserts: list[tuple[int, list[str]]] = []
@@ -322,7 +363,7 @@ def sync_dependabot_coverage(root: Path | None = None, write: bool = True) -> di
     path.write_text("".join(lines), encoding="utf-8")
     return {
         "ok": True, "status": "written", "path": str(path), "changed": True,
-        "added": missing, "guard_fixed": guard_gaps, "stale": stale,
+        "added": missing, "guard_fixed": guard_gaps, "stale": stale, "pruned": pruned,
     }
 
 

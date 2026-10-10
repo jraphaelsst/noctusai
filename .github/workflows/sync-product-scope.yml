@@ -88,18 +88,16 @@ jobs:
           python3 - <<'PY'
           import os, sys
           sys.path.insert(0, ".")
-          from tools.noctus.dev.build_scope import refresh_build_scope
-          from tools.noctus.dev.product_scope import read_active_scope, refresh_active_scope
+          from tools.noctus.dev.scope_settle import settle_scope_artifacts
           split = lambda v: [s for s in v.split(",") if s]
-          before = read_active_scope() or []
-          b = refresh_build_scope(_live=split(os.environ["LIVE"]))
-          if not b.get("ok"):
-              print(f"::error::build-scope: {b.get('error')}"); sys.exit(1)
-          a = refresh_active_scope(_active=split(os.environ["ACTIVE"]))
-          if not a.get("ok"):
-              print(f"::error::active-scope: {a.get('error')}"); sys.exit(1)
-          woke = sorted(set(a["slugs"]) - set(before))
-          slept = sorted(set(before) - set(a["slugs"]))
+          # ONE composed step: scope files AND every artifact derived from them
+          # (dependabot, CI matrices, propagated composes/Dockerfiles) land in the
+          # same bot commit — a sleep must never leave dev CI red.
+          r = settle_scope_artifacts(live=split(os.environ["LIVE"]), active=split(os.environ["ACTIVE"]))
+          if not r.get("ok"):
+              print(f"::error::scope settle failed at {r.get('failed')}: {r.get('error')}"); sys.exit(1)
+          a = {"slugs": r["slugs"]}
+          woke, slept = r["woke"], r["slept"]
           print(f"active: {a['slugs']}\nwoke: {woke}\nslept: {slept}")
           with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
               fh.write(f"woke={' '.join(woke)}\nslept={' '.join(slept)}\n")
@@ -112,14 +110,16 @@ jobs:
           SLEPT: ${{ steps.regen.outputs.slept }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- deploy/fleet/active-scope.txt deploy/fleet/build-scope.txt; then
-            echo "scope files already match the catalog — nothing to commit"
+          FILES="deploy/fleet/active-scope.txt deploy/fleet/build-scope.txt .github/dependabot.yml .github/workflows/test.yml"
+          GLOBS=":(glob)products/*/docker-compose.yml :(glob)products/*/backend/Dockerfile"
+          if git diff --quiet -- $FILES $GLOBS; then
+            echo "scope files and derived artifacts already match the catalog — nothing to commit"
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           git config user.name "noctus-scope-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/fleet/active-scope.txt deploy/fleet/build-scope.txt
+          git add -- $FILES $GLOBS
           git commit -q -m "chore(scope): sync product scope from catalog — woke: ${WOKE:-none}; slept: ${SLEPT:-none}" \
             -m "Automated by sync-product-scope.yml (catalog trigger, migration 051)."
           for attempt in 1 2 3 4 5; do
