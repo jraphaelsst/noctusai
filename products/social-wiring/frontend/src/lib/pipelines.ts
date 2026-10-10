@@ -10,6 +10,8 @@
 import { api } from "@/lib/api";
 import { createPipelineHooks } from "@noctusai/lib/components";
 
+import { ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
+import type { PostCard } from "@/types/esteira";
 import type { Atendimento, ProcessoVenda } from "@/types/pipeline";
 
 /**
@@ -44,6 +46,33 @@ export const processosPipeline = createPipelineHooks<ProcessoVenda>(
     getCardId: (p) => p.id,
     getCardValue: (p) => Number(p.valor || 0),
     entityLabel: "processo",
+  },
+  api,
+);
+
+/**
+ * Esteira de Reels (Core Studio). The board is a VIEW (`/esteira/board`), the
+ * card a RESOURCE (`/esteira/posts`); stage CRUD is the seed
+ * `pipeline_stages_router` at `/esteira/etapas`.
+ *
+ * The contract's board payload is `{colunas, orfaos}`, not a bare
+ * `PipelineColumn[]`, so the board is read by `useEsteiraBoard`
+ * (hooks/geracao/useEsteira.ts), which stores the unwrapped `colunas` under
+ * this descriptor's key so `useMoveCard`'s optimistic splice keeps working.
+ * Take `useStages` / `useMoveCard` / stage CRUD from here, not `useBoard`.
+ */
+export const esteiraPipeline = createPipelineHooks<PostCard>(
+  {
+    queryKey: ESTEIRA_PIPELINE_KEY,
+    boardEndpoint: "/api/media-creation/esteira/board",
+    stagesEndpoint: "/api/media-creation/esteira/etapas",
+    moveEndpoint: "/api/media-creation/esteira/posts",
+    getCardId: (p) => p.id,
+    getCardValue: () => 0,
+    entityLabel: "post",
+    // A move changes the post detail, and the Geração libraries show the
+    // post badge (`etapa_label`).
+    invalidateOnSettle: ["sw"],
   },
   api,
 );

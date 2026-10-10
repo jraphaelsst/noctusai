@@ -32,9 +32,12 @@ export type ViralDetalhe = ViralCard & { caption: string | null; gancho: string 
 export type Referencia = { id: string; modo: 'perfil' | 'video'; perfil: PerfilMonitorado | null; viral: ViralCard | null;
                     auto_atualizar: boolean; posts_ate: string | null; updated_at: string }
 export type ItemUsado = { slot: string; item_id: string; conteudo: string }
+/** Esteira post a headline/roteiro is bound to (contract §5.3), from a left join on cs_posts. */
+export type PostRef = { id: string; titulo: string; etapa_label: string }
 export type Headline = { id: string; marca_id: string; lote_id: string | null; texto: string; texto_original: string | null;
                   angulo: 1 | 2 | null; viral: ViralCard | null; template_metodo: number | null; itens_usados: ItemUsado[];
-                  favorita: boolean; modo: 'manual' | 'automatico' | null; roteiro_id: string | null; created_at: string }
+                  favorita: boolean; modo: 'manual' | 'automatico' | null; roteiro_id: string | null; created_at: string;
+                  post?: PostRef | null }
 export type HeadlineLote = { id: string; marca_id: string; origem: LoteOrigem; status: GeracaoStatus; etapa: string | null;
                       estruturas_total: number; estruturas_processadas: number; estruturas_com_erro: number;
                       aviso_poucas_estruturas: boolean; fallback_metodo: boolean; erro: string | null;
@@ -46,7 +49,7 @@ export type RoteiroResumo = { id: string; nome: string; headline_texto: string; 
 export type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' | 'link'; duracao: 'auto'|'1'|'2'|'3';
                  brain_id: string | null; viral: ViralCard | null; perguntas: RoteiroPergunta[]; etapa: string | null;
                  conteudo: string | null; fontes: string | null; versao: number; feedback: 'gostei'|'nao_gostei'|null;
-                 feedback_motivo: string | null; erro: string | null }
+                 feedback_motivo: string | null; erro: string | null; post?: PostRef | null }
 export type Agente = 'headline' | 'roteiro'
 export type Conversa = { id: string; marca_id: string; agente: Agente; titulo: string; last_message_at: string | null }
 export type MencaoTipo = 'pesquisa' | 'cerebro' | 'biblioteca' | 'headline'
