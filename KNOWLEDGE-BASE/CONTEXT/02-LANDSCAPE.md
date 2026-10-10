@@ -47,7 +47,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Daily Life | 6 | 8 | 11 | 9 | 19 | 230 |
 | Adconnect | 9 | 10 | 16 | 5 | 26 | 238 |
 | Dev Team | 0 | 2 | 6 | 0 | 3 | 46 |
-| Social Wiring | 27 | 56 | 175 | 147 | 429 | 6,841 |
+| Social Wiring | 27 | 56 | 175 | 149 | 429 | 6,841 |
 | Knowledge Extractor | 4 | 12 | 13 | 4 | 17 | 96 |
 | Orbity | 10 | 11 | 20 | 17 | 31 | 654 |
 | Igig | 23 | 26 | 31 | 26 | 43 | 974 |
@@ -56,7 +56,7 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Agents | 14 | 1 | 39 | 27 | 79 | 1,087 |
 | Community | 23 | 29 | 49 | 30 | 58 | 656 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
-| **Total** | **292** | **323** | **648** | **421** | **1114** | **15,968** |
+| **Total** | **292** | **323** | **648** | **423** | **1114** | **15,968** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
