@@ -167,7 +167,16 @@ fleet-wide fan-out, on a product this branch never touched, does not block
 layer up, for migrations). `inconclusive` / `incomplete` / a timed-out gate
 push anyway, reported under the `merged_tip_check` result key — "cannot
 measure" pushes, exactly like a pre-existing red does, because acting on an
-unmeasurable red is the § 6 mistake at integrate time. Opt out with
+unmeasurable red is the § 6 mistake at integrate time. **But "pushes" must
+never read as "verified" (2026-10-10):** every gate the integrate did not
+judge (time-box spent, timeout, harness-invalid, harness-suspect) is named in
+`merged_tip_unmeasured` AND in the message ("UNMEASURED on the merged tip
+(n): …; CI is their verdict"). Measured that day: every social-wiring change
+had integrated with its 191s suite unmeasured in the 90s box, under a bare
+"integrated". (6 parallel file-shards run it green in 77s on an 8-core laptop,
+but under a peer session's load 8 shards took 112s, so sharding alone cannot
+promise the shared box; CI's product-backend-tests leg plus bless's
+qualifying-green requirement remain the SW verdict.) Opt out with
 `verify_merged_tip=False` for a doc-only slice. See
 `mcp/noctusai/tools/noctus/dev/task_branch.py`'s module comment above
 `_merged_tip_red_is_new`.

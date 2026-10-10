@@ -1438,6 +1438,22 @@ def _deadline_boxed_run_gate(timeout: int):
 # `page.goto` load timeouts at load 36-40. Before blocking, the red gates are
 # re-run ONCE against a detached origin/dev checkout. Gate-level granularity:
 # a gate is rerun whole (gate_sweep exposes no failing-test ids to narrow by).
+def _unmeasured_gates(merged_tip_result: dict[str, Any] | None) -> list[dict[str, str]]:
+    """Merged-tip gates this integrate did NOT judge: never ran (time-box spent,
+    harness preflight failed) or ran without a verdict (timeout) or on a suspect
+    harness. They don't block — but a bare "integrated" read as "verified"
+    (2026-10-10: every social-wiring change integrated with its 191s suite
+    unmeasured in the 90s box, and the message never said so). Named in the
+    result + message so the reader knows CI is their verdict."""
+    out = []
+    for g in (merged_tip_result or {}).get("gates", []) or []:
+        if g.get("ran") and g.get("exit_code") is not None and not g.get("harness_suspect"):
+            continue
+        why = str(g.get("summary") or ("harness suspect" if g.get("harness_suspect") else "did not run"))
+        out.append({"gate": str(g.get("gate", "?")), "why": why[:80]})
+    return out
+
+
 def _baseline_outcome(entry: dict[str, Any] | None) -> tuple[str, str]:
     """(outcome, why) for one gate entry from `run_gates_named`:
     green | red | inconclusive. Only a gate that RAN on a valid harness and
@@ -2496,6 +2512,14 @@ def task_branch(
                     result["merged_tip_check"] = merged_tip_result
                     if baseline_note:
                         result["message"] += baseline_note
+                    unmeasured = _unmeasured_gates(merged_tip_result)
+                    if unmeasured:
+                        result["merged_tip_unmeasured"] = unmeasured
+                        result["message"] += (
+                            f" UNMEASURED on the merged tip ({len(unmeasured)}): "
+                            + ", ".join(u["gate"] for u in unmeasured)
+                            + " — not judged by this integrate; CI is their verdict "
+                            "(see merged_tip_unmeasured).")
                 if kb_counts_result is not None:
                     result["kb_counts_regenerate"] = kb_counts_result
                     if kb_counts_result.get("committed"):

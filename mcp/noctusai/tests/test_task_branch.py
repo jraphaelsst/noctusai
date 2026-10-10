@@ -2412,6 +2412,25 @@ class TestMergedTipVerificationMechanism:
         assert res["merged_tip_check"]["status"] == "red"
         assert "1 gate(s)" in res["message"]
 
+    def test_unmeasured_gates_are_named_not_silent(self):
+        """A timed-out / never-run gate doesn't block, but "integrated" must not
+        read as "verified": the result and message name it (2026-10-10)."""
+        fake = self._fake()
+
+        def check(abs_wt_path, dev_ref):
+            return {"status": "incomplete", "gates": [
+                {"gate": "pytest:core", "ran": True, "exit_code": 0, "summary": "ok"},
+                {"gate": "pytest:social-wiring", "ran": False, "exit_code": None,
+                 "summary": "timeout after 86s"},
+            ], "scope": {"products": ["social-wiring"], "seed_fleet_wide": False}}
+
+        res = T.task_branch(action="integrate", slug="x", confirm=True, run=fake,
+                             merged_tip_check=check)
+        assert res["status"] == "integrated", res
+        assert res["merged_tip_unmeasured"] == [
+            {"gate": "pytest:social-wiring", "why": "timeout after 86s"}]
+        assert "UNMEASURED on the merged tip (1): pytest:social-wiring" in res["message"]
+
     def test_verify_merged_tip_false_opts_out_entirely(self):
         fake = self._fake()
         called = []
