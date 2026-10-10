@@ -5007,6 +5007,53 @@ _REG_PROBE_TARGET = (
     "WHERE org_id = v_org AND codigo_canonical = 'NOC_PROBE_T')"
 )
 
+_M231 = "231_intermediario_documento_canonico.sql"
+
+
+def _intermediario_ins(cols: str, vals: str) -> str:
+    return (
+        f"    INSERT INTO {_S}.atendimento_intermediarios (org_id, atendimento_id, nome, tipo, {cols})\n"
+        f"    VALUES (v_org, v_atendimento, 'NOC_PROBE', 'percentual', {vals});"
+    )
+
+
+#: Migration 231 — the intermediary document CHECKs on the CANONICAL
+#: (punctuated) form. Before 231 they demanded bare digits while the service
+#: wrote punctuated ones (canonical identifiers, 2026-10-01), so every save
+#: of an intermediary with a document was refused in production. Each probe
+#: writes the OLD bare shape and must now be refused.
+_SW_231_PROBES: tuple[GuardProbe, ...] = (
+    _sw_junction_probe(
+        probe_id="atendimento_intermediarios.documento_formato",
+        guard_name="atendimento_intermediarios_documento_formato",
+        migration=_M231,
+        rationale=(
+            "The intermediary's CPF/CNPJ is printed into the contract; only the canonical "
+            "punctuated form the service writes may be stored, never a bare digit string."
+        ),
+        fixtures=("atendimento_org",),
+        tabelas=(f"{_S}.atendimento_intermediarios",),
+        ops_sql=_intermediario_ins("pessoa_tipo, documento", "'pf', '11144477735'"),
+        sqlstate_condition=_CHECK,
+        what="a pf intermediary whose documento is bare digits",
+    ),
+    _sw_junction_probe(
+        probe_id="atendimento_intermediarios.representante_cpf_formato",
+        guard_name="atendimento_intermediarios_representante_cpf_formato",
+        migration=_M231,
+        rationale=(
+            "The PJ representative's CPF is printed into the contract; only the canonical "
+            "punctuated form may be stored."
+        ),
+        fixtures=("atendimento_org",),
+        tabelas=(f"{_S}.atendimento_intermediarios",),
+        ops_sql=_intermediario_ins("representante_cpf", "'11144477735'"),
+        sqlstate_condition=_CHECK,
+        what="an intermediary whose representante_cpf is bare digits",
+    ),
+)
+
+
 _SW_IMOVEL_MANUAL_PROBES: tuple[GuardProbe, ...] = (
     _sw_junction_probe(
         probe_id="imovel_captacao.valores_positivos",
@@ -6104,6 +6151,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_218_PROBES,
     *_SW_PROPOSTAS_PROBES,
     *_SW_IMOVEL_MANUAL_PROBES,
+    *_SW_231_PROBES,
     *_EDITORIAL_PROBES,
     *_AGENTS_EDITORIAL_PROBES,
     *_BRANDING_PROBES,
