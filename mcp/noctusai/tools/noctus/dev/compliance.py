@@ -7030,6 +7030,126 @@ def check_seed_declared_imports(repo_root: Path | None = None) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# `check_redis_client_via_seam` — every Redis client is built by the seed seam
+# (`noctusai_lib.integrations.redis`: make_redis_client / make_async_redis_client
+# / redis_connection_url) and nowhere else.
+#
+# WHY. Prod Redis gets a password (ACL user). Before the seam every site did
+# `from_url(REDIS_URL)` and passed no credentials, so adding auth meant editing
+# N call sites per product — and the next feature to touch Redis would build an
+# unauthenticated client again. The seam resolves REDIS_URL / REDIS_USERNAME /
+# REDIS_PASSWORD / REDIS_REQUIRE_AUTH in ONE place; this keeper makes bypassing
+# it a commit-time finding. → KB § PATTERNS/backend/redis-auth-seam.md
+#
+# Detection is AST (imports resolved, not text): a call to `Redis` / `StrictRedis`
+# / `<anything imported from redis>.from_url` / `ConnectionPool.from_url`, or any
+# `aioredis` import. Exempt: the seam module itself, tests (tests/ dirs,
+# test_*.py, conftest.py) and fakeredis (never imported from `redis`).
+#
+# Scope. Seed backend + ACTIVE products only (`_active_product_dirs`, i.e.
+# deploy/fleet/active-scope.txt — an asleep product is checked by nobody).
+# `paths=[...]` (pre-commit's staged files) restricts the scan to those files,
+# so a commit is only ever judged on what it touches; omitted = full audit.
+# ---------------------------------------------------------------------------
+
+_REDIS_SEAM_REL = "seed/lib/backend/noctusai_lib/integrations/redis.py"
+_REDIS_CTOR_NAMES = {"Redis", "StrictRedis"}
+
+
+def _redis_bypass_findings(tree: "ast.AST") -> list[tuple[int, str]]:
+    """(lineno, description) for each Redis-client construction in `tree`."""
+    import ast
+
+    out: list[tuple[int, str]] = []
+    redis_names: set[str] = set()  # local names bound to anything from redis*
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                root = a.name.split(".")[0]
+                if root == "aioredis":
+                    out.append((node.lineno, "import aioredis"))
+                elif root == "redis":
+                    redis_names.add((a.asname or a.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root == "aioredis":
+                out.append((node.lineno, "from aioredis import ..."))
+            elif root == "redis" and node.level == 0:
+                for a in node.names:
+                    redis_names.add(a.asname or a.name)
+    if not redis_names:
+        return out
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        if isinstance(f, ast.Name) and f.id in redis_names and f.id in _REDIS_CTOR_NAMES | {"ConnectionPool", "BlockingConnectionPool"}:
+            out.append((node.lineno, f"{f.id}(...)"))
+        elif isinstance(f, ast.Attribute):
+            root = f
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if isinstance(root, ast.Name) and root.id in redis_names and (
+                f.attr == "from_url" or f.attr in _REDIS_CTOR_NAMES
+            ):
+                out.append((node.lineno, f"...{f.attr}(...)"))
+    return out
+
+
+def check_redis_client_via_seam(
+    repo_root: Path | None = None, paths: list[str] | None = None
+) -> list[dict]:
+    """Flag any Redis client built outside `noctusai_lib.integrations.redis`."""
+    import ast
+
+    root = repo_root or REPO_ROOT
+    scan_roots: list[Path] = [root / "seed"]
+    scan_roots += [d / "backend" for d in _active_product_dirs(root / "products")]
+    if paths is not None:
+        files = [(root / p) for p in paths if p.endswith(".py")]
+    else:
+        files = [f for r in scan_roots if r.exists() for f in r.rglob("*.py")]
+    issues: list[dict] = []
+    for f in sorted(set(files)):
+        try:
+            rel = f.relative_to(root).as_posix()
+        except ValueError:
+            continue
+        parts = rel.split("/")
+        in_scope = (parts[0] == "seed" and "backend" in parts) or (
+            parts[0] == "products" and len(parts) > 2 and parts[2] == "backend"
+            and any(d.name == parts[1] for d in _active_product_dirs(root / "products"))
+        )
+        if not in_scope or rel == _REDIS_SEAM_REL or not f.is_file():
+            continue
+        if (
+            {"tests", "test", "node_modules", ".venv", "venv", "__pycache__"} & set(parts)
+            or f.name == "conftest.py" or f.name.startswith("test_")
+        ):
+            continue
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue  # un-parseable files are check_outlined's finding
+        for lineno, what in _redis_bypass_findings(tree):
+            issues.append({
+                "product": parts[1] if parts[0] == "products" else "seed",
+                "file": rel,
+                "line": lineno,
+                "issue": (
+                    f"`{rel}:{lineno}` builds a Redis client directly ({what}). "
+                    "Every Redis client goes through the seed seam "
+                    "`noctusai_lib.integrations.redis` (make_redis_client / "
+                    "make_async_redis_client / redis_connection_url) so ACL "
+                    "credentials + REDIS_REQUIRE_AUTH apply uniformly and a raw "
+                    "URL is never logged. See KB § PATTERNS/backend/redis-auth-seam.md."
+                ),
+                "severity": "high",
+            })
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_every_test_file_is_gated` — no tracked test file may live outside an
 # area some workflow actually runs.
 #
@@ -15871,6 +15991,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_ci_test_matrix_coverage())
     all_issues.extend(check_seed_test_root_ci_coverage())
     all_issues.extend(check_seed_declared_imports())
+    all_issues.extend(check_redis_client_via_seam())
     all_issues.extend(check_every_test_file_is_gated())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
     # class: a product's `max_body_path_overrides` map. Only social-wiring

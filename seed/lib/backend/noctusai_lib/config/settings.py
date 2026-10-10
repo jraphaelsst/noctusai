@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional
 from pydantic_settings import BaseSettings
-from pydantic import field_validator
+from pydantic import SecretStr, field_validator
 
 
 class BaseAppSettings(BaseSettings):
@@ -44,6 +44,14 @@ class BaseAppSettings(BaseSettings):
     # Observability (optional — graceful degradation if not set)
     sentry_dsn: Optional[str] = None
     redis_url: Optional[str] = None
+    # Redis auth (seed seam: `noctusai_lib.integrations.redis`). Declared here
+    # for discoverability/validation; the seam itself resolves REDIS_USERNAME /
+    # REDIS_PASSWORD / REDIS_REQUIRE_AUTH from the process env (creds embedded
+    # in `redis_url` win). `redis_require_auth=True` => fail-closed when no
+    # credentials resolve (turn on in prod after the Redis ACL rollout).
+    redis_username: Optional[str] = None
+    redis_password: Optional[SecretStr] = None
+    redis_require_auth: bool = False
 
     # App-held Fernet key (44 url-safe-base64 chars, from `generate_key()`)
     # used to encrypt auth-session tokens AT REST in the shared fleet Redis

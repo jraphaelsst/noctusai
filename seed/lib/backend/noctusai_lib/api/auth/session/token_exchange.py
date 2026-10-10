@@ -406,9 +406,9 @@ def make_token_exchanger_from_settings(
     """
     lock_client = None
     if redis_url:
-        from redis.asyncio import Redis
+        from noctusai_lib.integrations.redis import make_async_redis_client
 
-        lock_client = Redis.from_url(redis_url, decode_responses=True)
+        lock_client = make_async_redis_client(redis_url)
     return make_token_exchanger(
         store, supabase_url=supabase_url, supabase_anon_key=supabase_anon_key,
         lock_client=lock_client,

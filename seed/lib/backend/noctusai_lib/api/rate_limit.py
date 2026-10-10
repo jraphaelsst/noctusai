@@ -13,6 +13,13 @@ from typing import Optional
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
+from noctusai_lib.integrations.redis import (
+    RedisAuthRequired,
+    make_redis_client,
+    redact_redis_url,
+    redis_connection_url,
+)
+
 logger = logging.getLogger(__name__)
 
 # Set by Cloudflare's edge on every proxied request, overwriting any value
@@ -34,6 +41,41 @@ def client_ip_key(request) -> str:
     return forwarded or get_remote_address(request)
 
 
+def resolve_limiter_storage_uri(
+    redis_url: Optional[str], *, probe_client=None
+) -> Optional[str]:
+    """Authenticated slowapi ``storage_uri`` for ``redis_url``, or ``None``.
+
+    Probes reachability through the Redis auth seam (``probe_client`` is the
+    injection point for tests); on an unreachable Redis logs a REDACTED
+    warning and returns ``None`` (in-memory fallback). ``RedisAuthRequired``
+    is never swallowed (fail-closed).
+    """
+    if not redis_url:
+        return None
+    try:
+        candidate_uri = redis_connection_url(redis_url)
+        client = probe_client or make_redis_client(
+            redis_url, decode_responses=False, socket_connect_timeout=2
+        )
+        client.ping()
+        logger.info(
+            "Rate limiter using Redis backend: %s", redact_redis_url(candidate_uri)
+        )
+        return candidate_uri
+    except RedisAuthRequired:
+        # Fail-closed: auth was declared mandatory (REDIS_REQUIRE_AUTH) —
+        # a silent in-memory fallback would hide the misconfiguration.
+        raise
+    except Exception as exc:
+        logger.warning(
+            "Redis not reachable for rate limiting (%s), falling back to in-memory: %s",
+            redact_redis_url(redis_url),
+            exc,
+        )
+        return None
+
+
 def create_limiter(
     redis_url: Optional[str] = None,
     default_limits: Optional[list[str]] = None,
@@ -53,22 +95,7 @@ def create_limiter(
     if default_limits is None:
         default_limits = ["100/minute"]
 
-    storage_uri = None
-
-    if redis_url:
-        try:
-            import redis
-
-            r = redis.from_url(redis_url, socket_connect_timeout=2)
-            r.ping()
-            storage_uri = redis_url
-            logger.info("Rate limiter using Redis backend: %s", redis_url)
-        except Exception as exc:
-            logger.warning(
-                "Redis not reachable for rate limiting (%s), falling back to in-memory: %s",
-                redis_url,
-                exc,
-            )
+    storage_uri = resolve_limiter_storage_uri(redis_url)
 
     # `client_ip_key`, not the bare `get_remote_address` slowapi default: in
     # prod every product sits behind the Cloudflare tunnel, so the socket

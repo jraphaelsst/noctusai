@@ -113,13 +113,13 @@ class RedisSessionStore:
         """Lazily open the Redis connection (import-time stays Redis-free)."""
         if self._client is None:
             try:
-                from redis.asyncio import Redis
+                from noctusai_lib.integrations.redis import make_async_redis_client
             except ImportError as exc:  # pragma: no cover - dep always present
                 raise RuntimeError(
                     "redis package not installed — add `redis>=5.0.0` to deps "
                     "or construct RedisSessionStore with a `client=...` argument."
                 ) from exc
-            self._client = Redis.from_url(self._url, decode_responses=True)
+            self._client = make_async_redis_client(self._url)
         return self._client
 
     @staticmethod

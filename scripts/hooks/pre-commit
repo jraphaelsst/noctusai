@@ -820,6 +820,22 @@ if [[ -n "$STAGED_SEED_IMPORTS" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies-bis. Redis-client-via-seam gate (blocking, only when staged ─
+# backend python is in seed/ or products/) ──────────────────────────────────
+# Keeper `check_redis_client_via_seam` + `KB § PATTERNS/backend/
+# redis-auth-seam.md`. Scoped to STAGED files (--paths) — a commit is judged
+# only on what it touches, so a product file you did not stage never blocks.
+STAGED_REDIS_PY=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(seed/[^/]+/backend|products/[^/]+/backend)/.*\.py$' || true)
+if [[ -n "$STAGED_REDIS_PY" ]] && have_py; then
+    echo "[pre-commit] backend python staged — checking Redis clients go through the auth seam..."
+    STAGED_REDIS_PY_CSV=$(echo "$STAGED_REDIS_PY" | paste -sd, -)
+    if ! "$PY" "$CLI" --check-redis-client-via-seam --paths "$STAGED_REDIS_PY_CSV" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] REDIS-CLIENT-VIA-SEAM check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Build the client with noctusai_lib.integrations.redis (make_redis_client / make_async_redis_client / redis_connection_url). See KB § PATTERNS/backend/redis-auth-seam.md." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-quinquies. Upload-route body-override gate (blocking, only when a ─
 # product backend .py file changed) ────────────────────────────────────────
 # Keeper `check_upload_route_body_override` + `KB § PATTERNS/backend/
