@@ -71,6 +71,7 @@ import {
   Wallet,
   Search,
   Lightbulb,
+  Sparkles,
 } from "lucide-react";
 
 import { lazyWithReload } from "@noctusai/lib";
@@ -128,6 +129,7 @@ const AgentesFinanceiros = lazyWithReload(
 );
 const Testemunhas = lazyWithReload(() => import("@/pages/Testemunhas"));
 const Pesquisa = lazyWithReload(() => import("@/pages/Pesquisa"));
+const ExtrairPesquisa = lazyWithReload(() => import("@/pages/ExtrairPesquisa"));
 const Imobiliarias = lazyWithReload(() => import("@/pages/Imobiliarias"));
 // Edição de Fotos — W10a (plan §4/§7). Admin pages (Referências, Guias —
 // W6; Regras — W7; Curadores — notify slice; Painel — W9; Modelos +
@@ -233,6 +235,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
         icon: Search,
         items: [
           { name: "Minha Pesquisa", href: "/media-creation/pesquisa", icon: Lightbulb, route: "media-creation-pesquisa" },
+          { name: "Extrair Pesquisa", href: "/media-creation/pesquisa/extrair", icon: Sparkles, route: "media-creation-pesquisa-extrair" },
         ],
       },
     ],
@@ -397,6 +400,7 @@ const NAV_FALLBACK: NavGroup[] = [
         icon: Search,
         items: [
           { name: "Minha Pesquisa", href: "/media-creation/pesquisa", icon: Lightbulb },
+          { name: "Extrair Pesquisa", href: "/media-creation/pesquisa/extrair", icon: Sparkles },
         ],
       },
     ],
@@ -488,6 +492,7 @@ export default createProductApp({
     { path: "/", component: Dashboard },
     { path: "/media-creation", component: MediaCreation },
     { path: "/media-creation/pesquisa", component: Pesquisa },
+    { path: "/media-creation/pesquisa/extrair", component: ExtrairPesquisa },
     // Legacy /email-marketing repointed at EmailCampanhas (vestigial EmailMarketing.tsx stays but is unrouted)
     { path: "/email-marketing", component: EmailCampanhas },
     { path: "/contatos", component: Contatos },
