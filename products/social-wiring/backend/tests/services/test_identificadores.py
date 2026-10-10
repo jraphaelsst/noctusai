@@ -23,9 +23,11 @@ class TestParaGravar:
         g = idf.para_gravar("cpf", "41295423898")
         assert (g.valor, g.canonico, g.aceito) == ("412.954.238-98", True, True)
 
-    def test_a_cnh_rg_without_dv_is_completed_arithmetically(self):
+    def test_a_cnh_rg_without_dv_is_kept_as_printed_never_completed(self):
+        # OWNER RULE 2026-10-10: a check digit the document does not print is
+        # never computed into a stored value (the bank returns such contracts).
         g = idf.para_gravar("rg", "30128742")
-        assert g.valor == "30.128.742-9" and g.motivo == "dv_completado"
+        assert g.valor == "30.128.742" and g.motivo == "dv_ausente"
 
     def test_a_value_that_does_not_fit_is_kept_as_read_never_rewritten(self):
         # DV-OCR `15.668.564-3`: stays visible exactly as read.

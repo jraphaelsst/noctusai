@@ -100,8 +100,8 @@ BEGIN
     ELSIF tipo = 'rg' THEN
         IF uf IS NOT NULL AND upper(uf) <> 'SP' THEN RETURN NULL; END IF;  -- no mask evidenced: never invent
         d := regexp_replace(upper(s), '[-./[:space:]]', '', 'g');
-        IF d ~ '^[0-9]{8}$' THEN              -- DV absent: arithmetic completion
-            RETURN substr(d,1,2) || '.' || substr(d,3,3) || '.' || substr(d,6,3) || '-' || identificador_rg_sp_dv(d);
+        IF d ~ '^[0-9]{8}$' THEN              -- DV absent: kept AS PRINTED, never computed (owner rule 2026-10-10)
+            RETURN substr(d,1,2) || '.' || substr(d,3,3) || '.' || substr(d,6,3);
         ELSIF d ~ '^[0-9]{8}[0-9X]$' THEN
             IF identificador_rg_sp_dv(substr(d,1,8)) <> substr(d,9,1) THEN RETURN NULL; END IF;
             RETURN substr(d,1,2) || '.' || substr(d,3,3) || '.' || substr(d,6,3) || '-' || substr(d,9,1);
@@ -176,10 +176,10 @@ BEGIN
         ('canon', 'rg', '30.128.742-9', NULL, NULL, NULL, '30.128.742-9'),
         ('canon', 'rg', '301287429', NULL, NULL, NULL, '30.128.742-9'),
         ('canon', 'rg', '30128742-9', NULL, NULL, NULL, '30.128.742-9'),
-        ('canon', 'rg', '30128742', NULL, NULL, NULL, '30.128.742-9'),
+        ('canon', 'rg', '30128742', NULL, NULL, NULL, '30.128.742'),
         ('canon', 'rg', '16.669.554-3', NULL, NULL, NULL, '16.669.554-3'),
         ('canon', 'rg', '15.668.564-3', NULL, NULL, NULL, NULL),
-        ('canon', 'rg', '16669554', NULL, NULL, NULL, '16.669.554-3'),
+        ('canon', 'rg', '16669554', NULL, NULL, NULL, '16.669.554'),
         ('canon', 'rg', '297.556.088-50', NULL, NULL, NULL, NULL),
         ('canon', 'rg', '29755608850', NULL, NULL, NULL, NULL),
         ('canon', 'rg', '3415227369', NULL, NULL, NULL, NULL),
@@ -208,7 +208,7 @@ BEGIN
         ('canon', 'inscricao_municipal', '23231.42.11.0377.00.000', 'Osasco', NULL, NULL, NULL),
         ('canon', 'inscricao_municipal', '23231.42.11.0377.00.000', NULL, NULL, NULL, NULL),
         ('chave', 'rg', '30.128.742-9', NULL, NULL, NULL, '301287429'),
-        ('chave', 'rg', '30128742', NULL, NULL, NULL, '301287429'),
+        ('chave', 'rg', '30128742', NULL, NULL, NULL, '30128742'),
         ('chave', 'rg', '3012', NULL, NULL, NULL, '3012'),
         ('chave', 'rg', '15.668.564-3', NULL, NULL, NULL, '156685643'),
         ('chave', 'cpf', '412.954.238-98', NULL, NULL, NULL, '41295423898'),

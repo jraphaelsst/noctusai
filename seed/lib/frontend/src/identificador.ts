@@ -26,7 +26,7 @@ export interface Leitura {
   cabe: boolean;
   dvOk: boolean | null;
   dvCompletado: boolean;
-  /** stable code: ok · dv_completado · dv_invalido · tamanho · ... */
+  /** stable code: ok · dv_ausente · dv_invalido · tamanho · ... */
   motivo: string;
   /** another type this value is a VALID instance of (CPF sitting in an RG field) */
   tipoDetectado: string | null;
@@ -165,7 +165,8 @@ const lerRg: Reader = (s, o) => {
   const a = deaccentUpper(s).replace(SEP, '');
   if (o.uf && !RG_UFS_CONHECIDAS.has(o.uf.toUpperCase())) return no('rg_uf_sem_mascara');
   if (/^[0-9]{8}$/.test(a)) {
-    return ok(`${a.slice(0, 2)}.${a.slice(2, 5)}.${a.slice(5, 8)}-${rgSpDv(a)}`, 'dv_completado', null, true);
+    // Owner rule 2026-10-10: never invent the check digit — kept AS PRINTED.
+    return ok(`${a.slice(0, 2)}.${a.slice(2, 5)}.${a.slice(5, 8)}`, 'dv_ausente', null, false);
   }
   if (/^[0-9]{8}[0-9X]$/.test(a)) {
     if (rgSpDv(a.slice(0, 8)) !== a[8]) return no('dv_invalido', false);
@@ -394,6 +395,13 @@ export function equivalentesIdentificador(
       if (da && db && (da.startsWith(db) || db.startsWith(da))) return null;
       return da && db ? false : null;
     }
+  }
+  if (tipo === 'rg' && la.canonico && lb.canonico) {
+    // 8-digit RG (CNH, no DV) ~ 9-digit RG: same base, DVs agree when both carry one. Comparison only.
+    const ba = la.canonico.slice(0, 10), da = la.canonico.slice(11) || null;
+    const bb = lb.canonico.slice(0, 10), db = lb.canonico.slice(11) || null;
+    if (ba !== bb) return false;
+    return da && db && da !== db ? false : true;
   }
   if (la.canonico && lb.canonico) return la.canonico === lb.canonico;
   if (ra === rb) return true;

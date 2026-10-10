@@ -39,7 +39,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import ESTADO_CIVIL_VALORES, looks_like_a_name
-from noctusai_lib.integrations.documents.rg import only_alnum
+from noctusai_lib.integrations.documents.rg import mesmo_rg, only_alnum
 
 from app.modules.card_hub import documentos_service as docs_svc
 from app.modules.card_hub import identidade_extracao_service as identidade_svc
@@ -235,7 +235,7 @@ ITEM_KEYS = tuple(item["key"] for item in ITENS)
 #:   value the contract gate (`contrato_gerador.validacao_extracao`) already
 #:   refuses to print unconfirmed. It clears on a human confirmation, a typed
 #:   value, a newer reading from another document, or an RG-card reading of
-#:   the SAME number (corroboration — the RG card carries the DV).
+#:   the SAME number (corroboration — the RG card carries the DV; stored RG stays as printed).
 #: - ``documentos`` — the upload slots, in the owner's order: RG/CPF (filed
 #:   as `rg`: the RG card carries the CPF; `cpf` stays catalogued but is not
 #:   a slot — one card, one slot), CNH, CIN. All three are read
@@ -285,7 +285,9 @@ def _rg_so_da_cnh(cliente: dict, documentos: dict[str, dict]) -> bool:
     rg = only_alnum(str(cliente.get("rg") or "")).upper()
     cartao = documentos.get("rg") or {}
     lido = only_alnum(str(cartao.get("extracao_rg") or "")).upper()
-    return not (rg and lido == rg)
+    # `mesmo_rg` bridges the CNH's printed-without-DV `18.568.536` and the RG
+    # card's `18.568.536-5` (comparison only — no DV is ever written).
+    return not (rg and (lido == rg or mesmo_rg(rg, lido) is True))
 
 
 #: Named rules under which a FILLED ``campos_todos`` column still does not

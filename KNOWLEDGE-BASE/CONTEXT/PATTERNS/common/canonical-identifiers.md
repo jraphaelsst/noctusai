@@ -61,7 +61,7 @@ The registry is half the job; the other half is making every door go through it.
    `documentos_chave*` fixtures twin. Write paths never call the primitives directly.
 2. **Storage — decide per field, write the decision down** (migration 187 header): canonical IN PLACE
    with the raw kept in an append-only log (`identificador_canonizacoes`) where the canonical form
-   adds nothing (cpf/cep/matrícula/IM; rg adds only the arithmetic SP check digit); a KEY column
+   adds nothing (cpf/cep/matrícula/IM; rg adds NOTHING: an 8-digit RG stays as printed (`dv_ausente`) — NEVER a computed check digit, owner rule 2026-10-10; the DV algorithm only validates a printed DV and bridges 8-vs-9-digit in `equivalentes`); a KEY column
    that other code joins on stays as it is and RENDERS canonical (`empresas.cnpj`, digits, until
    `certidoes/**` compares by key). A value that does not fit is never rewritten — it shows in
    `vw_identificadores_nao_conformes`.

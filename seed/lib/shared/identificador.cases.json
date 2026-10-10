@@ -236,14 +236,14 @@
   {
    "tipo": "rg",
    "entrada": "30128742",
-   "canonico": "30.128.742-9",
+   "canonico": "30.128.742",
    "cabe": true,
    "dv_ok": null,
-   "dv_completado": true,
-   "motivo": "dv_completado",
+   "dv_completado": false,
+   "motivo": "dv_ausente",
    "tipo_detectado": null,
    "sql": true,
-   "nota": "CNH prints the RG without its DV; DV is arithmetic"
+   "nota": "CNH prints the RG without its DV; kept as printed, NEVER completed (owner rule 2026-10-10)"
   },
   {
    "tipo": "rg",
@@ -271,11 +271,11 @@
   {
    "tipo": "rg",
    "entrada": "16669554",
-   "canonico": "16.669.554-3",
+   "canonico": "16.669.554",
    "cabe": true,
    "dv_ok": null,
-   "dv_completado": true,
-   "motivo": "dv_completado",
+   "dv_completado": false,
+   "motivo": "dv_ausente",
    "tipo_detectado": null,
    "sql": true
   },
@@ -1078,6 +1078,18 @@
    "a": "13010-110",
    "b": "13010110",
    "esperado": true
+  },
+  {
+   "tipo": "rg",
+   "a": "30128742",
+   "b": "30.128.742-8",
+   "esperado": false
+  },
+  {
+   "tipo": "rg",
+   "a": "30128742",
+   "b": "16.669.554-3",
+   "esperado": false
   }
  ],
  "chave_busca": [
@@ -1090,7 +1102,7 @@
   {
    "tipo": "rg",
    "entrada": "30128742",
-   "esperado": "301287429",
+   "esperado": "30128742",
    "sql": true
   },
   {

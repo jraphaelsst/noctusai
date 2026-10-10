@@ -597,9 +597,11 @@ def _data_iso(d: str, m: str, a: str) -> Optional[str]:
 
 
 def _rg_canonico(bruto: str) -> str:
-    """Canonical digits of an RG — the seed's identifier registry completes the
-    SP check digit, so `12.345.678` and `12.345.678-9` are one identifier.
-    Falls back to the raw alphanumerics when the registry does not know it."""
+    """Comparison form of an RG — the 8-digit base, so a CNH's `12.345.678`
+    (printed without DV) and an RG card's `12.345.678-9` compare as one
+    identifier. COMPARISON ONLY: no check digit is ever computed into a value
+    (owner rule 2026-10-10). Falls back to the raw alphanumerics when the
+    registry does not know it."""
     alnum = re.sub(r"[^0-9Xx]", "", bruto).upper()
     try:
         from noctusai_lib.primitives import identificador
@@ -607,7 +609,8 @@ def _rg_canonico(bruto: str) -> str:
         canonico = identificador.canonico("rg", alnum)
     except Exception:  # noqa: BLE001 — comparison form only; the raw digits still compare exactly
         canonico = None
-    return re.sub(r"[^0-9X]", "", canonico or alnum)
+    digitos = re.sub(r"[^0-9X]", "", canonico or alnum)
+    return digitos[:8] if canonico else digitos
 
 
 def _canon_generico(token: str) -> Optional[str]:

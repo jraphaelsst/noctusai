@@ -56,9 +56,11 @@ class Leitura:
     `canonico` is the punctuated canonical form, or None when the value does
     not fit. `cabe` — it fits the type (shape and, where it exists, the
     check digit). `dv_ok` — True/False when a check digit was verified,
-    None when the type has none or none was present. `dv_completado` — the
-    check digit was absent and COMPUTED (SP RG only). `motivo` — a stable
-    code (`ok`, `dv_completado`, `dv_invalido`, `tamanho`, ...), asserted
+    None when the type has none or none was present. `dv_completado` — ALWAYS
+    False: a check digit the document does not print is never computed into a
+    value (owner rule 2026-10-10; an 8-digit RG reads `dv_ausente`, kept as
+    printed). `motivo` — a stable
+    code (`ok`, `dv_ausente`, `dv_invalido`, `tamanho`, ...), asserted
     by the shared case table. `tipo_detectado` — when it does not fit but is
     a valid value of ANOTHER type (a CPF sitting in an RG field).
     """
@@ -243,8 +245,10 @@ def _ler_rg(s: str, ctx: _Ctx) -> Leitura:
     if ctx.uf and ctx.uf.upper() not in _RG_UFS_CONHECIDAS:
         return _no("rg_uf_sem_mascara")
     if re.fullmatch(r"[0-9]{8}", a):
-        dv = rg_sp_dv(a)
-        return _ok(f"{a[:2]}.{a[2:5]}.{a[5:8]}-{dv}", "dv_completado", None, True)
+        # OWNER RULE 2026-10-10: never invent the check digit. A CNH prints the
+        # RG without it; the value stays exactly as printed. The DV algorithm
+        # is for COMPARISON only (`equivalentes`), never for a stored value.
+        return _ok(f"{a[:2]}.{a[2:5]}.{a[5:8]}", "dv_ausente", None)
     if re.fullmatch(r"[0-9]{8}[0-9X]", a):
         if rg_sp_dv(a[:8]) != a[8]:
             return _no("dv_invalido", False)
@@ -560,6 +564,14 @@ def equivalentes(tipo: str, a: object, b: object, **ctx: Optional[str]) -> Optio
             if da and db and (da.startswith(db) or db.startswith(da)):
                 return None
             return False if da and db else None
+    if tipo == "rg" and la.canonico and lb.canonico:
+        # 8-digit RG (a CNH's, printed without DV) ~ 9-digit RG: same base,
+        # and the DV (when both carry one) must agree. Comparison only.
+        ba, da = la.canonico[:10], la.canonico[11:] or None
+        bb, db = lb.canonico[:10], lb.canonico[11:] or None
+        if ba != bb:
+            return False
+        return False if (da and db and da != db) else True
     if la.canonico and lb.canonico:
         return la.canonico == lb.canonico
     if ra == rb:

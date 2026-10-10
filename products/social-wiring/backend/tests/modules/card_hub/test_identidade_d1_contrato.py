@@ -346,7 +346,7 @@ class TestResolucaoAutomaticaDeDivergencia:
         ))
         row = _cliente(scoped, cid)
         assert row["cpf"] == "412.954.238-98"
-        assert row["rg"] == "30.128.742-9"  # DV completed arithmetically
+        assert row["rg"] == "30.128.742"  # as printed: a computed DV is NEVER stored (owner rule 2026-10-10)
 
     def test_married_name_adoption_requires_cpf_corroboration_when_both_present(self):
         """Owner directive, 2026-09-29: `_nome_anterior_confirma_adocao`'s

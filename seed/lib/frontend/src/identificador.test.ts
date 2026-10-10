@@ -68,7 +68,7 @@ describe('extrairCns / detectarTipoIdentificador — shared case table', () => {
 
 describe('formatIdentificador — the display seam', () => {
   it('canonical when it fits, raw (visible) when it does not', () => {
-    expect(formatIdentificador('rg', '30128742')).toBe('30.128.742-9');
+    expect(formatIdentificador('rg', '30128742')).toBe('30.128.742');
     expect(formatIdentificador('rg', ' 15.668.564-3 ')).toBe('15.668.564-3');
     expect(formatIdentificador('rg', null)).toBe('');
   });

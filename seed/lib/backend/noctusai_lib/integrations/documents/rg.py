@@ -678,12 +678,14 @@ def is_same_as_cpf(rg: Optional[str], cpf: Optional[str]) -> bool:
     return only_alnum(rg) == _cpf_only_digits(cpf)
 
 
-def completar_dv(rg: Optional[str]) -> Optional[str]:
-    """`30128742` (a CNH prints the RG without its check digit) -> `30.128.742-9`.
+def formatar_rg_como_impresso(rg: Optional[str]) -> Optional[str]:
+    """`30128742` (a CNH prints the RG without its check digit) -> `30.128.742`.
 
-    Delegates to the canonical-identifier registry — the ONE place the SP RG
-    check-digit algorithm lives. None when the value does not fit an SP RG
-    or its own check digit is wrong (never invents).
+    OWNER RULE 2026-10-10: never invent the check digit — a contract carrying
+    a DV the document does not print is sent back by the bank. The value is
+    formatted exactly as printed; a 9-char RG keeps its printed DV. Delegates
+    to the canonical-identifier registry. None when the value does not fit an
+    SP RG or its own printed check digit is wrong.
     """
     return _identificador.canonico("rg", rg)
 
@@ -694,7 +696,7 @@ def mesmo_rg(a: Optional[str], b: Optional[str]) -> Optional[bool]:
 
 
 __all__ = [
-    "completar_dv",
+    "formatar_rg_como_impresso",
     "find_rg",
     "find_rg_orgao",
     "is_same_as_cpf",

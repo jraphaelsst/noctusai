@@ -110,7 +110,7 @@ class TestCanonizar:
     def test_fitting_values_become_canonical_and_the_raw_is_logged_first(self, banco):
         out = bf.run_backfill(banco, ORG_UUID)
         a = _cliente(banco, banco._ids["a"])
-        assert (a["cpf"], a["rg"], a["endereco_cep"]) == (CPF_CANON, "30.128.742-9", "13010-110")
+        assert (a["cpf"], a["rg"], a["endereco_cep"]) == (CPF_CANON, "30.128.742", "13010-110")
         log = {(r["tabela"], r["campo"]): r for r in _rows(banco, "identificador_canonizacoes")}
         assert log[("clientes", "cpf")]["valor_bruto"] == CPF_RAW
         assert log[("clientes", "rg")]["valor_bruto"] == "30128742"
@@ -157,7 +157,7 @@ class TestChavesDeBusca:
         and the rendered number would not find it."""
         out = bf.run_backfill(banco, ORG_UUID)
         assert _cliente(banco, banco._ids["b"])["documentos_chave"] == "41295423898"
-        assert _cliente(banco, banco._ids["a"])["documentos_chave"] == "52998224725 301287429"
+        assert _cliente(banco, banco._ids["a"])["documentos_chave"] == "52998224725 30128742"
         assert _rows(banco, "imovel_dados")[0]["documentos_chave"] == "79826 232314211037700000"
         docs = {r["documento"]: r["documentos_chave"] for r in _rows(banco, "certidao_consultas")}
         assert docs["412.954.238-98"] == "41295423898"

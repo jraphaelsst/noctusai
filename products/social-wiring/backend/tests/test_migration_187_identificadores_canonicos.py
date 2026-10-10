@@ -75,7 +75,50 @@ def test_the_plpgsql_twin_matches_the_seed_except_for_the_search_path_pin(sql: s
     inicio = seed.index("CREATE OR REPLACE FUNCTION identificador_cpf_dv_ok")
     corpo = seed[inicio:].strip()
     assert corpo.count(_PIN) == len(re.findall(r"^CREATE OR REPLACE FUNCTION", corpo, re.M))
-    assert corpo.replace(_PIN, "") in sql
+    # 187 is immutable: the seed's 8-digit RG branch has since changed (migration
+    # 232 — never invent the check digit, owner rule 2026-10-10). Swap exactly
+    # that branch back to the snapshot 187 applied; nothing else may differ.
+    assert _RG8_SEED in corpo
+    snapshot = corpo.replace(_PIN, "").replace(_RG8_SEED, _RG8_187)
+    for novo, antigo in _ROWS_232:
+        assert novo in snapshot
+        snapshot = snapshot.replace(novo, antigo)
+    assert snapshot in sql
+
+
+_RG8_SEED = (
+    "IF d ~ '^[0-9]{8}$' THEN              -- DV absent: kept AS PRINTED, never computed (owner rule 2026-10-10)\n"
+    "            RETURN substr(d,1,2) || '.' || substr(d,3,3) || '.' || substr(d,6,3);"
+)
+_RG8_187 = (
+    "IF d ~ '^[0-9]{8}$' THEN              -- DV absent: arithmetic completion\n"
+    "            RETURN substr(d,1,2) || '.' || substr(d,3,3) || '.' || substr(d,6,3) || '-' || identificador_rg_sp_dv(d);"
+)
+
+
+_ROWS_232 = (
+    ("('canon', 'rg', '30128742', NULL, NULL, NULL, '30.128.742')",
+     "('canon', 'rg', '30128742', NULL, NULL, NULL, '30.128.742-9')"),
+    ("('canon', 'rg', '16669554', NULL, NULL, NULL, '16.669.554')",
+     "('canon', 'rg', '16669554', NULL, NULL, NULL, '16.669.554-3')"),
+    ("('chave', 'rg', '30128742', NULL, NULL, NULL, '30128742')",
+     "('chave', 'rg', '30128742', NULL, NULL, NULL, '301287429')"),
+)
+
+
+def test_migration_232_replaces_the_canonizar_function_with_the_seeds_and_repairs_cnh_rgs():
+    """232 carries the seed's `canonizar_identificador` verbatim (pin included)
+    and strips computed DVs only from unconfirmed CNH-sourced rows."""
+    m232 = migration_path(HERE.parents[1], "rg_sem_dv_inventado").read_text(encoding="utf-8")
+    seed = SEED_TWIN.read_text(encoding="utf-8")
+    i = seed.index("CREATE OR REPLACE FUNCTION canonizar_identificador(")
+    fn = seed[i : seed.index("END $$;", i) + len("END $$;")]
+    assert fn in m232
+    assert "identificador_rg_sp_dv(d);" not in fn.split("ELSIF d ~")[0]  # no DV appended to the 8-digit branch
+    assert "c.rg_confirmado_por IS NULL" in m232 and "c.rg_origem = 'cnh'" in m232
+    assert "d.extracao_rg" in m232 and "'backfill'" in m232
+    pglast = pytest.importorskip("pglast", reason="pglast not installed in this env")
+    pglast.parse_sql(m232)
 
 
 def test_migration_188_pins_exactly_the_functions_the_seed_defines_plus_uf_do_orgao():

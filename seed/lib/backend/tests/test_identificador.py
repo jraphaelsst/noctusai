@@ -59,7 +59,7 @@ def test_detectar_tipo(c: dict) -> None:
 
 
 def test_formatar_is_canonical_or_raw_visible() -> None:
-    assert idf.formatar("rg", "30128742") == "30.128.742-9"
+    assert idf.formatar("rg", "30128742") == "30.128.742"  # never a computed DV
     assert idf.formatar("rg", " 15.668.564-3 ") == "15.668.564-3"  # DV-bad: stays visible as stored
     assert idf.formatar("rg", None) == ""
 
@@ -89,8 +89,11 @@ class TestSingleImplementation:
         assert cnpj_mod.format_cnpj("123") is None
 
     def test_rg_module_delegates(self) -> None:
-        assert rg_mod.completar_dv("30128742") == "30.128.742-9"
-        assert rg_mod.completar_dv("15.668.564-3") is None
+        # OWNER RULE 2026-10-10: never invent the check digit.
+        assert rg_mod.formatar_rg_como_impresso("30128742") == "30.128.742"
+        assert rg_mod.formatar_rg_como_impresso("30.128.742-9") == "30.128.742-9"
+        assert rg_mod.formatar_rg_como_impresso("15.668.564-3") is None
+        assert not hasattr(rg_mod, "completar_dv")
         assert rg_mod.mesmo_rg("30128742", "30.128.742-9") is True
 
     def test_no_second_dv_algorithm(self) -> None:
@@ -148,3 +151,14 @@ def test_sql_twin_parity_block_in_sync_with_case_table() -> None:
 )
 def test_rg_anomalia(valor, uf, esperado) -> None:
     assert idf.rg_anomalia(valor, uf=uf) == esperado
+
+
+def test_an_8_digit_rg_is_never_given_a_computed_check_digit() -> None:
+    r = idf.ler("rg", "18568536")
+    assert (r.canonico, r.motivo, r.dv_ok, r.dv_completado) == ("18.568.536", "dv_ausente", None, False)
+    assert idf.canonico("rg", "18.568.536") == "18.568.536"
+    # a printed DV is validated and kept; a wrong one stays a refusal
+    assert idf.canonico("rg", "301287429") == "30.128.742-9"
+    assert idf.canonico("rg", "301287428") is None
+    # comparison still bridges the CNH reading and the RG card
+    assert idf.equivalentes("rg", "18568536", "18.568.536-5") is True

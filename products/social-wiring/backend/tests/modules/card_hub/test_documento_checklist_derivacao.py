@@ -188,9 +188,16 @@ class TestIdentidadeCompletaPorQualquerDocumento:
         }
         assert svc.derivar(cnh, frozenset(docs), docs)["identidade"] is True
 
-    def test_cnh_rg_contradicted_by_the_rg_card_stays_incomplete(self):
+    def test_cnh_rg_as_printed_without_dv_is_corroborated_by_the_rg_cards_dv(self):
+        """The stored RG keeps the CNH's printed digits (no computed DV —
+        owner rule 2026-10-10); the RG card's `-X` is the same number."""
         cnh = {**IDENTIDADE_COMPLETA, "rg": "52.179.965", "rg_origem": "cnh"}
         docs = {"rg": {"tipo_documento": "rg", "extracao_rg": "52.179.965-X"}}
+        assert svc.campos_faltando(cnh, "identidade", docs) == []
+
+    def test_cnh_rg_contradicted_by_the_rg_card_stays_incomplete(self):
+        cnh = {**IDENTIDADE_COMPLETA, "rg": "52.179.965", "rg_origem": "cnh"}
+        docs = {"rg": {"tipo_documento": "rg", "extracao_rg": "11.222.333-3"}}
         assert svc.campos_faltando(cnh, "identidade", docs) == ["rg"]
 
     def test_a_typed_rg_is_trusted_whatever_document_is_on_file(self):
