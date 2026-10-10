@@ -114,7 +114,10 @@ def _rebuild_decision(files: list[str], build_set: list[str] | None = None) -> d
     files (the pre-commit's `_version_static.py` version-stamp, written on EVERY
     commit) are excluded — otherwise every deploy_pull falsely flags a fleet
     rebuild for a no-op version string."""
+    from .build_scope import service_owners  # lazy: settings import
     products: set[str] = set()
+    services: set[str] = set()
+    service_reasons: list[str] = []
     reasons: list[str] = []
     non_fleet_reasons: list[str] = []
     config_reasons: list[str] = []
@@ -122,6 +125,14 @@ def _rebuild_decision(files: list[str], build_set: list[str] | None = None) -> d
     for f in files:
         if _COSMETIC_NONRUNTIME.search(f):
             continue  # version-stamp etc. — baked but behaviourally a no-op
+        # A sanctioned service (e.g. transcriber) is built by its OWN workflow from its
+        # own paths; the generic Dockerfile/seed fleet-wide patterns below must not
+        # claim its files. Checked first.
+        owners = service_owners(f)
+        if owners:
+            services.update(owners)
+            service_reasons.append(f)
+            continue
         m = _RUNTIME_PRODUCT.match(f)
         if m:
             products.add(m.group(1))
@@ -153,7 +164,10 @@ def _rebuild_decision(files: list[str], build_set: list[str] | None = None) -> d
     return {
         # `needed` = an IMAGE rebuild (build inputs changed). Compose/config
         # changes are the separate `config_changed` / `recreate_needed` signal.
-        "needed": bool(products) or fleet,
+        "needed": bool(products) or fleet or bool(services),
+        # Sanctioned services whose own build inputs (workflow `paths:`) changed.
+        "services": sorted(services),
+        "service_reasons": service_reasons[:20],
         "rebuild_set": rebuild_set,
         # Directly changed but no maintained image (asleep / dev-only) — surfaced,
         # never silently dropped: changing them needs no prod rebuild.
@@ -161,7 +175,7 @@ def _rebuild_decision(files: list[str], build_set: list[str] | None = None) -> d
         "build_set_warning": warning,
         "config_changed": bool(config_reasons),
         "config_reasons": config_reasons[:20],
-        "recreate_needed": bool(products) or fleet or bool(config_reasons),
+        "recreate_needed": bool(products) or fleet or bool(services) or bool(config_reasons),
         "products": sorted(products),
         "fleet_wide": fleet,
         "reasons": reasons[:20],

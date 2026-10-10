@@ -49,6 +49,11 @@ ALWAYS_BUILD = ("core",)
 #: Deliberately NOT consumed by build/active scope, migrate_product, or schema exposure.
 SERVICES_PATH = REPO_ROOT / "deploy" / "fleet" / "services.txt"
 
+#: Each sanctioned service is built by its OWN workflow, `.github/workflows/build-<slug>.yml`,
+#: whose `on.push.paths` filter IS that service's build-scope (what triggers its image
+#: rebuild). Drift/rebuild decisions read THAT filter - one source, no second hand-kept list.
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+
 _KEY_RE = re.compile(r"^  ([a-z0-9][a-z0-9-]*):\s*$")
 
 
@@ -235,6 +240,52 @@ def read_sanctioned_services(path: Path | None = None) -> list[str]:
     return _parse_slugs(p.read_text(encoding="utf-8"))
 
 
+def service_build_paths(slug: str, workflows_dir: Path | None = None) -> list[str]:
+    """The path globs that trigger sanctioned service `slug`'s image build: the
+    `on.push.paths` of `.github/workflows/build-<slug>.yml`. Missing workflow or no
+    `paths:` filter => [] (the service then has NO known build inputs; callers must
+    treat that as unverifiable, never as "everything")."""
+    import yaml
+    wf = (workflows_dir or WORKFLOWS_DIR) / f"build-{slug}.yml"
+    if not wf.exists():
+        return []
+    data = yaml.safe_load(wf.read_text(encoding="utf-8")) or {}
+    on = data.get("on", data.get(True)) or {}  # PyYAML parses bare `on:` as True
+    push = on.get("push") if isinstance(on, dict) else None
+    paths = push.get("paths") if isinstance(push, dict) else None
+    return [str(x) for x in (paths or [])]
+
+
+def _glob_re(glob: str) -> "re.Pattern[str]":
+    """GitHub-Actions path glob -> regex: `**` crosses `/`, `*` and `?` do not."""
+    out, i = [], 0
+    while i < len(glob):
+        if glob.startswith("**/", i):
+            out.append("(?:.*/)?")
+            i += 3
+        elif glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        elif glob[i] == "?":
+            out.append("[^/]")
+            i += 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
+def service_owners(path: str, workflows_dir: Path | None = None,
+                   services: list[str] | None = None) -> list[str]:
+    """Sanctioned services whose build-trigger paths match repo-relative `path`."""
+    svcs = read_sanctioned_services() if services is None else services
+    return [s for s in svcs
+            if any(_glob_re(g).match(path) for g in service_build_paths(s, workflows_dir))]
+
+
 def register(server) -> None:
     @server.tool(
         name="noctus.dev.refresh_build_scope",
@@ -264,6 +315,8 @@ __all__ = [
     "ALWAYS_BUILD",
     "fleet_slugs",
     "read_build_scope",
+    "service_build_paths",
+    "service_owners",
     "refresh_build_scope",
     "register",
 ]

@@ -254,6 +254,22 @@ def _diff_drift(
         }
     files = [ln.strip() for ln in out_d.splitlines() if ln.strip()]
     decision = _rebuild_decision(files)
+    if slug in set(_build_scope.read_sanctioned_services()):
+        # Sanctioned service: ONLY its own workflow-declared build inputs count;
+        # fleet-wide seed/Dockerfile/compose paths are not its inputs.
+        hit = slug in decision["services"]
+        return {
+            "actionable_drift": hit,
+            "changed_file_count": len(files),
+            "fleet_wide_change": False,
+            "build_relevant_files": decision["service_reasons"] if hit else [],
+            "reason": (
+                f"{len(files)} file(s) changed; service '{slug}' build inputs "
+                + (f"(.github/workflows/build-{slug}.yml paths) changed: "
+                   + ", ".join(decision["service_reasons"][:5]) if hit else
+                   "(its workflow paths) are untouched - older revision is the steady state.")
+            ),
+        }
     touches_product = slug in decision["products"]
     actionable = touches_product or decision["fleet_wide"]
     if actionable:
