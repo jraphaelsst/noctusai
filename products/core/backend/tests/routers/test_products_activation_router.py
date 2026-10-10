@@ -129,6 +129,28 @@ class TestDeployScope:
         assert resp.status_code == 200
         assert resp.json()["data"]["deploy_scope"] == "live"
 
+    def test_passing_probe_persists_verification_with_the_promotion(self, admin_client):
+        """The DB trigger refuses live without the stamp: it rides in the SAME write."""
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("products", _product(ativo=True, deploy_scope="dev"))
+
+        resp = admin_client.post(
+            "/api/products/prod-1/deploy-scope", json={"deploy_scope": "live"}
+        )
+
+        assert resp.status_code == 200
+        assert resp.json()["data"]["sso_callback_verified_at"]
+
+    def test_demotion_writes_no_verification(self, admin_client):
+        mock_sb = admin_client.mock_supabase
+        mock_sb.set_table_data("products", _product(ativo=True, deploy_scope="live"))
+
+        resp = admin_client.post(
+            "/api/products/prod-1/deploy-scope", json={"deploy_scope": "dev"}
+        )
+
+        assert "sso_callback_verified_at" not in resp.json()["data"]
+
     def test_promotion_refused_when_bundle_has_old_sso_callback(self, admin_client):
         """P2.1: live => strict SSO; rebuild first, then flip. Nothing is written."""
         mock_sb = admin_client.mock_supabase

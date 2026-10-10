@@ -23,6 +23,7 @@ transition rule that a generic field write cannot express. See
 `app/schemas/products.py` and migration 042 for the invariants.
 """
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
@@ -315,10 +316,10 @@ async def definir_deploy_scope(
             ),
         )
 
-    # NOC-REMEDIATE[sso-promotion-sql-bypass]: this API is the only guarded flip;
-    # a hand SQL UPDATE / the sync-product-scope workflow can still set 'live'
-    # without the bundle probe -- mirror the check into that path (dest: roadmap
-    # sso-identity-hardening-2026-10 P2.1 exit) -- 2026-10-09
+    # The probe verdict is persisted (sso_callback_verified_at) because migration
+    # `sso_promotion_probe_guard` has a trigger refusing any transition into
+    # 'live' without it -- hand SQL / other writers cannot skip the probe.
+    patch: dict = {"deploy_scope": body.deploy_scope}
     if body.deploy_scope == "live" and current.data[0].get("deploy_scope") != "live":
         slug = current.data[0].get("slug")
         url_base = resolve_product_url(slug, db_url_base=current.data[0].get("url_base"))
@@ -331,10 +332,11 @@ async def definir_deploy_scope(
                     f"e publique antes de promover para LIVE. ({verdict.detail})"
                 ),
             )
+        patch["sso_callback_verified_at"] = datetime.now(timezone.utc).isoformat()
 
     result = (
         db.table("products")
-        .update({"deploy_scope": body.deploy_scope})
+        .update(patch)
         .eq("id", product_id)
         .execute()
     )

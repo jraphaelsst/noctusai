@@ -5853,6 +5853,53 @@ END;
 )
 
 
+# ---------------------------------------------------------------------------
+# Registry — public.products SSO promotion guard (core migration 075).
+# A transition INTO deploy_scope='live' without sso_callback_verified_at is
+# refused (the probe verdict is recorded by POST /deploy-scope). Borrows an
+# existing ativo dev product inside the rollback-only wrapper; nothing persists.
+# ---------------------------------------------------------------------------
+
+_SSO_PROMOTION_PROBE = GuardProbe(
+    id="products.sso_promotion_requires_probe",
+    product="core",
+    schema="public",
+    guard_name="enforce_sso_promotion_probe",
+    kind="write_refusal",
+    migrations=("075_sso_promotion_probe_guard.sql",),
+    rationale=(
+        "Promoting a product to live makes its SSO regime strict; only the API "
+        "probes the served bundle. The trigger refuses a hand-written promotion "
+        "that lacks the recorded probe verdict (SSO P2.1)."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_id uuid;
+BEGIN
+  IF to_regprocedure('public.enforce_sso_promotion_probe()') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: enforce_sso_promotion_probe() missing — core 075 not applied';
+  END IF;
+  SELECT id INTO v_id FROM public.products WHERE ativo IS TRUE AND deploy_scope = 'dev' LIMIT 1;
+  IF v_id IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no active dev product to attempt a promotion on';
+  END IF;
+  BEGIN
+    UPDATE public.products SET deploy_scope = 'live', sso_callback_verified_at = NULL WHERE id = v_id;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: promotion to live without a probe verdict succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%without a passing SSO callback probe%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
+
 DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_MATRICULA_PROBES,
     _RUIDO_SHAPE_PROBE,
@@ -5892,6 +5939,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ATENDIMENTO_CONFLITO_STATUS_PROBE,
     *_IGIG_PROBES,
     *_CORE_AUDIT_LOGS_PROBES,
+    _SSO_PROMOTION_PROBE,
     *_MFA_POLICY_PROBES,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
