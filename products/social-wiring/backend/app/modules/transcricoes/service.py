@@ -400,7 +400,7 @@ class TranscricaoService:
     # ── admin ───────────────────────────────────────────────────────────
 
     async def stats(self) -> dict[str, Any]:
-        queue = await self.jobs.queue_stats(job_types=[JOB_TYPE])
+        queue = await self.jobs.queue_stats(job_types=[JOB_TYPE, JOB_TYPE_BIBLIOTECA])
         queue_out = {
             k: (v.isoformat() if isinstance(v, datetime) else list(v) if isinstance(v, tuple) else v)
             for k, v in dataclasses.asdict(queue).items()

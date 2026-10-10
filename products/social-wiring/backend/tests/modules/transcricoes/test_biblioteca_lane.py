@@ -5,9 +5,9 @@ migration 229's ``reservar_transcricao_biblioteca`` (the shared rpc_fakes regist
 other slices)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import uuid
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from typing import Any
 
 import anyio
 import pytest
@@ -17,7 +17,6 @@ from noctusai_lib.integrations.transcription import (
     TranscriberBusy,
     TranscriberUnavailable,
 )
-from noctusai_lib.testing import MockSelectBuilder
 
 from app.modules.transcricoes import biblioteca_worker, hooks
 from app.modules.transcricoes.biblioteca_worker import TranscriberHealth, voz_ocupada
@@ -36,36 +35,11 @@ CFG = SimpleNamespace(transcricao_gate_ttl_seconds=0.0, transcricao_poll_seconds
 OWNER = "perfil-owner-1"
 
 
-class RpcDb:
-    """The mock client + a double of the 229 RPC (inserts an ``origem='biblioteca'`` row)."""
-
-    def __init__(self, db: Any) -> None:
-        self._db = db
-        self.rpc_calls: list[tuple[str, dict]] = []
-        self.deny: dict | None = None
-
-    def table(self, name):
-        return self._db.table(name)
-
-    def from_(self, name):
-        return self._db.from_(name)
-
-    def rpc(self, name, params=None):
-        self.rpc_calls.append((name, params or {}))
-        assert name == "reservar_transcricao_biblioteca"
-        if self.deny:
-            return MockSelectBuilder([self.deny])
-        row = {
-            "id": params["p_id"], "org_id": params["p_org"], "user_id": params["p_user"],
-            "contexto_tipo": "biblioteca_viral", "contexto_ref": params["p_contexto_ref"],
-            "storage_path": params["p_storage_path"], "bytes": params["p_bytes"], "duracao_s": params["p_duracao_s"],
-            "formato": params["p_formato"], "status": "na_fila", "texto": None, "erro_codigo": None,
-            "modelo": None, "rtf": None, "criado_em": datetime.now(timezone.utc).isoformat(), "iniciado_em": None,
-            "concluido_em": None, "audio_apagado_em": None, "minutos_reembolsados": False,
-            "hook_aplicado_em": None, "origem": "biblioteca",
-        }
-        self._db.table("transcricoes").insert(row).execute()
-        return MockSelectBuilder([{"ok": True, "row": row}])
+class TestStats:
+    def test_queue_stats_count_library_jobs_too(self, lane):
+        sistema(lane)
+        stats = anyio.run(lambda: service(lane).stats())
+        assert stats["queue_stats"]["pending"] == 1
 
 
 class Recorder:
@@ -85,8 +59,6 @@ def lane(client):
             raise TranscricaoErro("nao_encontrada")
 
     hooks.register_contexto(CONTEXTO_BIBLIOTECA, validar=validar, aplicar=rec.aplicar)
-    db = RpcDb(client.mock_supabase)
-    client.lane_db = db
     client.recorder = rec
     client.transcriber = FakeTranscriber(default_probe=probe(60.0))
     return client
@@ -94,9 +66,20 @@ def lane(client):
 
 def service(c, **kw) -> TranscricaoService:
     return TranscricaoService(
-        c.lane_db, ORG, USER, storage=c.storage, jobs=c.jobs,
+        c.mock_supabase, ORG, USER, storage=c.storage, jobs=c.jobs,
         transcriber_factory=lambda: c.transcriber, kill_switch=lambda: c.habilitada, **kw,
     )
+
+
+def seed_lib(c, *, status, dur=60.0, org=ORG):
+    rid = str(uuid.uuid4())
+    c.mock_supabase.from_("transcricoes").insert({
+        "id": rid, "org_id": org, "user_id": OWNER, "contexto_tipo": CONTEXTO_BIBLIOTECA, "contexto_ref": "v",
+        "storage_path": f"{org}/{OWNER}/{rid}.webm", "bytes": 10, "duracao_s": dur, "formato": "webm",
+        "status": status, "criado_em": datetime.now(timezone.utc).isoformat(),
+        "minutos_reembolsados": False, "audio_apagado_em": None, "origem": "biblioteca",
+    }).execute()
+    return rid
 
 
 def sistema(c, data=AUDIO, ref="viral-1"):
@@ -124,8 +107,6 @@ class TestSubmitSistema:
         (row,) = rows(lane)
         assert row["origem"] == "biblioteca" and row["user_id"] == OWNER and row["contexto_tipo"] == CONTEXTO_BIBLIOTECA
         assert anyio.run(lambda: lane.storage.get(bucket=BUCKET, key=row["storage_path"])) is not None
-        name, params = lane.lane_db.rpc_calls[0]
-        assert name == "reservar_transcricao_biblioteca" and params["p_user"] == OWNER
 
     def test_validation_order_size_magic_hook_probe_before_any_reservation(self, lane):
         too_big = AUDIO + b"\x00" * (service(lane).limits.max_bytes + 1)
@@ -137,28 +118,51 @@ class TestSubmitSistema:
             with pytest.raises(TranscricaoErro) as e:
                 sistema(lane, data, ref)
             assert e.value.codigo == codigo
-        assert lane.lane_db.rpc_calls == [] and lane.transcriber.calls == []
+        assert rows(lane) == [] and lane.transcriber.calls == []
 
     def test_a_probe_failure_never_reserves(self, lane):
         lane.transcriber = FakeTranscriber(script=[], default_probe=probe(99999.0))
         with pytest.raises(TranscricaoErro):
             sistema(lane)
-        assert lane.lane_db.rpc_calls == []
+        assert rows(lane) == []
 
-    @pytest.mark.parametrize(
-        "deny,status",
-        [
-            ({"ok": False, "codigo": "reel_longo", "http": 422, "retry_after_s": 0}, 422),
-            ({"ok": False, "codigo": "fila_biblioteca_cheia", "http": 503, "retry_after_s": 120}, 503),
-            ({"ok": False, "codigo": "cota_diaria_biblioteca_org", "http": 429, "retry_after_s": 900}, 429),
-        ],
-    )
-    def test_rpc_denials_surface_with_their_codes(self, lane, deny, status):
-        lane.lane_db.deny = deny
+    def test_reel_longer_than_180s_is_refused(self, lane):
+        lane.transcriber = FakeTranscriber(default_probe=probe(181.0))
         with pytest.raises(TranscricaoErro) as e:
             sistema(lane)
-        assert e.value.codigo == deny["codigo"] and e.value.status == status
-        assert jobs_of(lane, JOB_TYPE_BIBLIOTECA) == [] and rows(lane) == []
+        assert (e.value.codigo, e.value.status) == ("reel_longo", 422) and rows(lane) == []
+
+    def test_library_queue_is_capped_at_5(self, lane):
+        for _ in range(5):
+            seed_lib(lane, status="na_fila")
+        with pytest.raises(TranscricaoErro) as e:
+            sistema(lane)
+        assert (e.value.codigo, e.value.status) == ("fila_biblioteca_cheia", 503)
+        assert jobs_of(lane, JOB_TYPE_BIBLIOTECA) == []
+
+    def test_org_daily_budget_is_30_min(self, lane):
+        seed_lib(lane, status="concluida", dur=1790.0)
+        with pytest.raises(TranscricaoErro) as e:
+            sistema(lane)
+        assert (e.value.codigo, e.value.status) == ("cota_diaria_biblioteca_org", 429)
+
+    def test_platform_daily_budget_is_60_min(self, lane):
+        for i in range(2):
+            seed_lib(lane, status="concluida", dur=1790.0, org=f"other-{i}")
+        with pytest.raises(TranscricaoErro) as e:
+            sistema(lane)
+        assert (e.value.codigo, e.value.status) == ("capacidade_diaria_biblioteca", 503)
+
+    def test_library_rows_never_count_against_a_voice_answer(self, lane):
+        for _ in range(5):
+            seed_lib(lane, status="na_fila", dur=900.0)
+        lane.transcriber = FakeTranscriber(default_probe=probe(30.0))
+        from tests.modules.transcricoes.test_submit_api import CTX, post
+
+        hooks.register_contexto(CTX, validar=lambda *a: None, aplicar=lambda *a: None)
+
+        r = post(lane)
+        assert r.status_code == 202, r.text
 
     def test_enqueue_failure_releases_the_reservation_and_the_audio(self, lane):
         async def boom(**kw):

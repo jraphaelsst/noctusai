@@ -68,6 +68,30 @@ class TestAudioRetention:
         assert not has_audio(client, k_old) and row(client, old)["audio_apagado_em"]
         assert has_audio(client, k_recent) and row(client, recent)["audio_apagado_em"] is None
 
+    def test_failed_library_audio_follows_the_same_72h_rule(self, client):
+        # third-party reel audio (origem='biblioteca') must never outlive the voice guarantees
+        old = seed(client, status="falhou")
+        recent = seed(client, status="falhou")
+        for rid in (old, recent):
+            mark(client, rid, origem="biblioteca", contexto_tipo="biblioteca_viral")
+        k_old, k_recent = put_audio(client, old), put_audio(client, recent)
+        mark(client, old, concluido_em=ago(73))
+        mark(client, recent, concluido_em=ago(71))
+        sweep(client)
+        assert not has_audio(client, k_old) and row(client, old)["audio_apagado_em"]
+        assert has_audio(client, k_recent)
+
+    def test_library_leftovers_stale_jobs_and_transcripts_are_swept_too(self, client):
+        done = seed(client, status="concluida")
+        stuck = seed(client, status="processando", ago=timedelta(hours=3))
+        for rid in (done, stuck):
+            mark(client, rid, origem="biblioteca")
+        key = put_audio(client, done)
+        mark(client, done, concluido_em=ago(24 * 8), texto="t")
+        sweep(client)
+        assert not has_audio(client, key) and row(client, done)["texto"] is None
+        assert row(client, stuck)["status"] == "falhou" and row(client, stuck)["minutos_reembolsados"] is True
+
     def test_leftover_audio_of_a_finished_job_is_retried(self, client):
         rid = seed(client, status="concluida")
         key = put_audio(client, rid)

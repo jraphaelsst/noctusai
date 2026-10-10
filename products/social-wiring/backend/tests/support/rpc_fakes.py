@@ -95,7 +95,8 @@ def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
     (`minutos_reembolsados`) never count toward the windows."""
     tabela = "transcricoes"
     agora = datetime.now(timezone.utc)
-    rows = client.table(tabela).select("*").execute().data or []
+    # migration 229: every voice counter sees only origem = 'usuario' (library rows never 429 a voice answer)
+    rows = [r for r in (client.table(tabela).select("*").execute().data or []) if (r.get("origem") or "usuario") == "usuario"]
 
     def quando(r: dict) -> datetime:
         return datetime.fromisoformat(str(r["criado_em"]))
@@ -136,7 +137,49 @@ def reservar_transcricao(client: Any, params: dict) -> MockSelectBuilder:
         "formato": params["p_formato"], "status": "na_fila", "texto": None, "erro_codigo": None,
         "modelo": None, "rtf": None, "criado_em": agora.isoformat(), "iniciado_em": None,
         "concluido_em": None, "audio_apagado_em": None, "minutos_reembolsados": False,
-        "hook_aplicado_em": None,
+        "hook_aplicado_em": None, "origem": "usuario",
+    }
+    client.table(tabela).insert(row).execute()
+    return MockSelectBuilder([{"ok": True, "row": row}])
+
+
+def reservar_transcricao_biblioteca(client: Any, params: dict) -> MockSelectBuilder:
+    """Migration 229 `social_wiring.reservar_transcricao_biblioteca(...)`: the library lane's
+    own gate + insert (geracao-contract 3.4). Counters see only origem = 'biblioteca': <= 180 s
+    per reel (422), <= 5 queued/processing (503), <= 1800 s / 24 h per org (429), <= 3600 s /
+    24 h platform-wide (503). Refunded rows never count toward the windows."""
+    tabela = "transcricoes"
+    agora = datetime.now(timezone.utc)
+    rows = [r for r in (client.table(tabela).select("*").execute().data or []) if r.get("origem") == "biblioteca"]
+    org, dur = str(params["p_org"]), float(params["p_duracao_s"])
+
+    def nega(codigo: str, http: int, retry: int) -> MockSelectBuilder:
+        return MockSelectBuilder([{"ok": False, "codigo": codigo, "http": http, "retry_after_s": retry}])
+
+    def janela(only_org: bool) -> list[dict]:
+        return [
+            r for r in rows
+            if not r.get("minutos_reembolsados") and datetime.fromisoformat(str(r["criado_em"])) > agora - timedelta(hours=24)
+            and (not only_org or str(r["org_id"]) == org)
+        ]
+
+    if dur > 180:
+        return nega("reel_longo", 422, 0)
+    if sum(1 for r in rows if r["status"] in ("na_fila", "processando")) >= 5:
+        return nega("fila_biblioteca_cheia", 503, 120)
+    if sum(float(r["duracao_s"]) for r in janela(True)) + dur > 1800:
+        return nega("cota_diaria_biblioteca_org", 429, 60)
+    if sum(float(r["duracao_s"]) for r in janela(False)) + dur > 3600:
+        return nega("capacidade_diaria_biblioteca", 503, 60)
+
+    row = {
+        "id": params["p_id"], "org_id": org, "user_id": str(params["p_user"]),
+        "contexto_tipo": "biblioteca_viral", "contexto_ref": params["p_contexto_ref"],
+        "storage_path": params["p_storage_path"], "bytes": params["p_bytes"], "duracao_s": dur,
+        "formato": params["p_formato"], "status": "na_fila", "texto": None, "erro_codigo": None,
+        "modelo": None, "rtf": None, "criado_em": agora.isoformat(), "iniciado_em": None,
+        "concluido_em": None, "audio_apagado_em": None, "minutos_reembolsados": False,
+        "hook_aplicado_em": None, "origem": "biblioteca",
     }
     client.table(tabela).insert(row).execute()
     return MockSelectBuilder([{"ok": True, "row": row}])

@@ -60,8 +60,9 @@ logger = logging.getLogger(__name__)
 STOP_TIMEOUT_SECONDS = 10.0
 #: 2 retries (contract section 2), a few seconds apart. Busy never reaches this.
 RETRY_POLICY = RetryPolicy(max_retries=2, backoff_seconds=30.0)
-# The per-job hard cap (min(1800, 3 x duracao) + 60 s) is the Real transcriber
-# client's timeout (``LocalWhisperTranscriber``); the lease heartbeat covers the wait.
+# The per-job hard cap is the Real transcriber client's timeout
+# (``LocalWhisperTranscriber``, ``transcribe_timeout``): min(9000, 3 x duracao + 60) seconds
+# (9000 s = the transcriber worker's MAX_HARD_S); the lease heartbeat covers the wait.
 
 _handle: Optional[WorkerHandle] = None
 

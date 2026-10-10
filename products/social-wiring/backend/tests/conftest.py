@@ -129,7 +129,7 @@ def _simulate_product_rpcs(monkeypatch):
     services call to their contract fakes (`tests/support/rpc_fakes.py`, each
     pinned against its migration by a `test_migration_<NNN>_*` file), every
     other name to the mock's own behaviour. Migrations 185 (CPF lookup) and
-    195 (atomic parcela reorder), 224 (cs_brain_append), 225 (reservar_transcricao)."""
+    195 (atomic parcela reorder), 224 (cs_brain_append), 225 (reservar_transcricao), 229 (reservar_transcricao_biblioteca)."""
     from tests.support import rpc_fakes
 
     fakes = {
@@ -137,6 +137,7 @@ def _simulate_product_rpcs(monkeypatch):
         "reordenar_negociacao_parcelas": rpc_fakes.reordenar_negociacao_parcelas,
         "cs_brain_append": rpc_fakes.cs_brain_append,
         "reservar_transcricao": rpc_fakes.reservar_transcricao,
+        "reservar_transcricao_biblioteca": rpc_fakes.reservar_transcricao_biblioteca,
     }
     original = MockSupabaseClient.rpc
 
