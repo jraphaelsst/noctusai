@@ -118,3 +118,110 @@ append their own section as they ship.
 - [ ] Questionnaire hints for the 3 non-Núcleo brains (currently empty) — write them or fetch from CoreStudio?
 - [ ] Which brand gets your existing CoreStudio brains (Núcleo answers + Call de diagnóstico / Formulário / Narrativa)?
 - [ ] Switch Extrair / Segundo Cérebro pages from `desenvolvimento` to everyone?
+
+## Geração — Dashboard, Chat, Biblioteca, Headlines, Roteiros, Treinamentos, Meu Perfil (contract `specs/geracao-contract.md`; migration 229)
+
+> Build everything, then validate everything at once (owner, 2026-10-10). Before walking this list:
+> - migration 229 is applied;
+> - the image is deployed;
+> - `biblioteca_ingestao_habilitada` is ON, but only after the security review passes. If it is OFF, the Biblioteca shows the "ingestão desligada" banner and headlines use Método Audience templates. Note that and continue.
+>
+> Use one marca with a filled bio throughout (e.g. Gilson Tangerino), plus one marca with nothing filled.
+
+### Access and navigation (all pages `desenvolvimento`)
+- [ ] Sidebar shows, under **Criação de mídia**: Dashboard · Criar Headlines e Roteiros · Biblioteca, and group **Configurações** › Meu Perfil · Minha Biblioteca · Treinamentos · **Headlines** › Gerar Headlines · Headlines Favoritas · Headlines sugeridas · Roteiros. Pesquisa and Segundo Cérebro are unchanged.
+- [ ] A non-dev user sees none of the new links; opening their URLs directly does not show the pages.
+- [ ] Every page has the marca switcher. Switching marca changes the data, and nothing from marca A appears under marca B.
+
+### Meu Perfil (`/media-creation/perfil`)
+- [ ] Nichos and Profissões accept at most 3 each ("Selecione até 3 …"). A 4th is refused.
+- [ ] The Bio popover shows the "Eu sou (Nome)…" template. Saving the bio here shows the same text on the Segundo Cérebro bio card, and the reverse.
+- [ ] Apresentação magnética and CTAs save and persist after reload.
+- [ ] Filling the bio but no nichos (or the reverse) and pressing Atualizar shows the "Atenção" modal. Continuar saves.
+- [ ] The Instagram card tells you whether this marca has a Meta (Facebook Login) connection, needed to monitor profiles, and links to Conexões › Marcas.
+
+### Treinamentos (`/media-creation/treinamentos`)
+- [ ] 5 lessons in order (Como preencher a Bio … Como gerar roteiros com Headlines Próprias), each with its description.
+- [ ] Each lesson shows "Vídeo em produção — em breve." (no broken player).
+- [ ] As platform admin: edit a lesson, paste a YouTube/Vimeo/Bunny embed URL, save, and the video plays. A URL from another site is refused.
+
+### Minha Biblioteca (`/media-creation/minha-biblioteca`)
+- [ ] **Solicitar Perfil**: typing `instagram.com/<user>` becomes `@<user>`; a reel link is refused ("Isso é um link de vídeo…"); spaces and invalid characters show the right message; the live check shows "✓ Username válido".
+- [ ] With no Meta (Facebook Login) account in the org, the form says so and does not pretend to work.
+- [ ] Enviar a real public business/creator account: it appears under **Perfis monitorados** as Aguardando, then Ativo with name, photo and number of virais (after the sync job). A non-existent handle ends as "Não encontrado".
+- [ ] "Atualizar agora" works once; a second click within the hour is refused.
+- [ ] **Perfil completo**: add a monitored profile to this marca with Atualização automática on. It appears in **Minhas referências** as Perfil + Auto. Removing it asks to confirm and is gone after reload.
+- [ ] Removing a monitored profile that another marca still uses is refused with a clear message.
+
+### Biblioteca (`/media-creation/biblioteca`)
+- [ ] The grid shows virais of the monitored profiles, 24 per page. Each card shows @handle, thumbnail, metrics ("—" when unknown, never 0), duration, date and **Ver post**.
+- [ ] **Judge "viral"**: do the cards really stand out against each profile's normal posts? Toggle "Mostrar só virais" off to compare. (D4: 3× the profile's median.)
+- [ ] The auto-filter banner shows when the marca has nichos/profissões. "Ver todos os virais" removes it. "Meus nichos e profissões" re-applies it.
+- [ ] Sort Mais vistos ↔ Mais recentes. Keywords (comma-separated) in gancho vs transcrição. Período, mínimos, Perfil, Formato, ID filters.
+- [ ] Select cards → "Adicionar à Minha Biblioteca" → they appear in Minha Biblioteca as Vídeo.
+- [ ] Open a viral: the Instagram embed plays (or the "Não consegue ver o vídeo?" fallback); Métricas; Transcrição with **Copiar Transcrição**; badges Nicho / Profissão / Formato / Gatilho.
+- [ ] **Judge the transcription and the classification** (DRAFT prompt): right niche, format and trigger? Hook correct?
+- [ ] A long or large reel shows the honest status (e.g. "longa demais") and is still classified from its caption.
+- [ ] **Gerar headline** wizard: pick approved assuntos virais and/or type one → Revisar → Criar Headline → "Headline enviada para criação!" → **Ver Headlines Sugeridas** shows 2 new Manual headlines within about 2 minutes.
+- [ ] "Citar no Chat" / "Citar perfil no Chat" open the chat with the reference attached.
+- [ ] While you record a Cérebro voice answer, a library transcription never delays it by more than one reel (voice answers come first).
+
+### Gerar Headlines (`/media-creation/headlines/gerar` → `?who=…`)
+- [ ] The landing has 3 cards: Sobre mim · Sobre meu público · Assuntos do Virais.
+- [ ] **Sobre meu público**: select 2 variables; each shows its approved items to pick from. Opções Avançadas: Modelagem de um Perfil (max 2; profiles without compatible structures are disabled, with the alert) / Formato / Gatilho. Criatividade slider. Gerar.
+- [ ] Progress shows the **real step** ("estrutura 2 de 5"), no fake bar. It ends Completo and the result modal opens.
+- [ ] **Judge the headlines** (DRAFT system prompt, D1): do they keep the viral's structure, sound like the marca (bio), avoid invented numbers? Two different angles per structure?
+- [ ] "Itens da pesquisa usados" chips appear on headlines that used your approved items. Each chip's text really is in the headline.
+- [ ] Tick "Criar as headlines usando apenas os itens da minha pesquisa" with a variable that has no approved items: you get the clear failure listing which variables lack items (no empty "Completo").
+- [ ] **Assuntos Virais** (`who=viral`): pick a topic or type one → Tom de Comunicação → Gerar.
+- [ ] A marca without bio: Gerar is refused with "Preencha a bio em Meu Perfil…".
+- [ ] A second Gerar while one is running is refused.
+- [ ] History: search, view (👁), Reprocessar (creates a new batch), excluir one / Excluir Selecionados.
+- [ ] Structure link "#N" opens that viral. With an empty library, the warning "usando templates do Método Audience" shows.
+
+### Headlines Favoritas / sugeridas
+- [ ] ♥ a headline in the result modal: it appears in **Headlines Favoritas**. Desfavoritar removes it.
+- [ ] Editar a headline: the new text persists. Excluir and Excluir Selecionados work.
+- [ ] **Headlines sugeridas**: Modo Automático/Manual, source metric, Abrir link opens the original post.
+- [ ] **Gerar sugestões agora** creates today's automatic suggestions (about 10) within a few minutes. A second click the same day is refused.
+- [ ] Next day: new automatic suggestions arrived on their own (daily job), with no repeats of yesterday's virais.
+
+### Roteiro Avançado + Roteiros (`/media-creation/roteiros`)
+- [ ] From a favorite → **Criar roteiro**: the modal opens with the headline filled.
+- [ ] Fonte: "Deixe a IA pensar" is selectable; "Link específico" and "Pesquisar na web" show "Em breve".
+- [ ] Duração ~1 min, a brain, and a library video picked through the picker (filters work), then Criar: strategic questions appear. Answer them → Gerar Roteiro → Criado with tabs Roteiro / Fontes.
+- [ ] **Judge the roteiro** (DRAFT): Headline → CTA de salvar → … → your CTAs and Apresentação magnética from Meu Perfil at the end; models the reference video's rhetorical device; **no invented statistics**; length close to ~1 min.
+- [ ] "Pular perguntas" goes straight to generation.
+- [ ] Closing the modal mid-generation: the roteiro still finishes and shows in **Meus roteiros**.
+- [ ] Meus roteiros: search, H. Origem links back to the headline, view/edit (Atualizar persists), Gostei / Não gostei + motivo, Reprocessar with extra info (creates a new one), excluir and Excluir Selecionados. The headline in Favoritas now shows "Roteiro criado".
+- [ ] "Criar roteiro" in the list header opens the modal with an empty headline.
+
+### Criar Headlines e Roteiros — chat (`/media-creation/chat`)
+- [ ] Tabs HEADLINE / ROTEIRO; "+" creates a conversation; rename and Apagar work; "Ver mais conversas" pages.
+- [ ] Ask HEADLINE for "10 headlines sobre <tema>": the answer **streams** word by word, cites "(estrutura #N)" links that open the viral, and each headline has ♥ (lands in Favoritas) and "Criar roteiro a partir desta headline".
+- [ ] `@` → Minha Pesquisa / Segundo Cérebro / Biblioteca / Headlines tabs attach chips. "me dá mais 5 baseadas no @perfil" uses mostly that profile's structures.
+- [ ] **Memória**: save "não uso emojis" → new answers respect it; delete it. Memories of marca A don't apply in marca B.
+- [ ] ROTEIRO agent writes a full roteiro using your brains.
+- [ ] Mic dictation fills the composer (it does not send by itself).
+- [ ] Stop mid-answer: the partial answer stays, marked as partial. Reload keeps the conversation.
+- [ ] A very long answer continues instead of being cut, or says it was cut.
+- [ ] The context meter warns when you attach a lot.
+
+### Dashboard (`/media-creation/dashboard`)
+- [ ] "Olá, <nome>!" and the KPIs Headlines geradas · Roteiros gerados · Itens pendentes (the last opens Minha Pesquisa pendentes). The numbers match what you created above.
+- [ ] Histórico lists your recent actions; Data crescente / decrescente / Tipo reorder it.
+- [ ] Headlines Sugeridas widget: Criar roteiro (modal), Editar, Abrir link; "ver todas as headlines" goes to Sugeridas.
+
+### Errors, limits and states (all new pages)
+- [ ] First load shows a skeleton, never an empty-state flash. Switching marca keeps the old data until the new arrives.
+- [ ] Each page shows "Tentar novamente" on a failed load.
+- [ ] With the AI key missing (or the budget exceeded), generation shows a clear "IA indisponível" message, never a spinner forever.
+
+### Owner decisions to take while testing (contract §12)
+- [ ] D1 headline prompt · D2 slot filling · D7 classifier · D9 roteiro prompt: OK or list corrections.
+- [ ] D3/D4: is "monitored profiles + 3× median" the right viral source and definition?
+- [ ] D5/D6/D19: transcription budget for the library (60 / 30 min/day), retention (90 days), LGPD basis.
+- [ ] D8: memory per marca (not global) OK?
+- [ ] D10/D12: daily suggestion count (10) and the per-user caps.
+- [ ] D13: who records the Treinamentos videos?
+- [ ] Switch each page from `desenvolvimento` to everyone?

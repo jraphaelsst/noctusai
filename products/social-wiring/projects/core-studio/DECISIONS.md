@@ -76,8 +76,35 @@ Rule for this project: the owner is interviewed for every specification; nothing
 - **Minhas extrações**: keep.
 - **Transcription**: self-hosted faster-whisper (large-v3-turbo, CPU int8, pt) on the prod server as its own container, hard-capped (1 core, ~2 GB, one job at a time, DB queue), so it can never degrade the products; shielded against abuse (login, per-user rate limit + daily minutes, size/duration caps, type check, kill switch). Design: `specs/transcription-contract.md`.
 
+## Decided — 2026-10-10, round 9
+
+- **Voice transcription is on in prod.** The owner turned on `transcricao_habilitada=true` in prod `platform_settings`.
+  - Segundo Cérebro voice answers are live through the shared `transcricoes` layer.
+  - The rule that only one queue drains the transcriber is gone. SW `transcricoes` and core's `transcricao_api_habilitada` both run. The worker stays one job at a time, and a busy 503 becomes a reschedule without using up a retry.
+- **"Go all the way and build everything, then we validate all at once."** The rest of CoreStudio's tree is specified in one contract, `specs/geracao-contract.md`: Dashboard, Criar Headlines e Roteiros (chat), Biblioteca, Meu Perfil, Minha Biblioteca, Treinamentos, Gerar Headlines, Favoritas, Sugeridas, Roteiro Avançado and Roteiros. All pages ship as `desenvolvimento` and are validated together through `TEST-CHECKLIST.md` "Geração".
+- **The owner asked the tech-lead to decide the open points and validate later.** The defaults are listed in `specs/geracao-contract.md` §12:
+  - **D1** headline system prompt = reverse-engineered payload merged with Método Audience (DRAFT)
+  - **D2** `{{DB-SLUG}}` slots filled from approved Pesquisa items, with "usar apenas os itens da minha pesquisa" semantics and a worked example
+  - **D3** viral library source = monitored Instagram profiles via the official Business Discovery API through a Meta (Facebook-Login) connection
+  - **D4** viral = 3× the profile's median (views, else likes + comments)
+  - **D5** library Reels transcription as a lower-priority, separately budgeted lane that never starves voice answers or core jobs
+  - **D6** SSRF-safe, Instagram-CDN-only download; ingestion behind a kill switch until a security review passes
+  - **D7** library classification by LLM
+  - **D8** chat with two agents on Claude, SSE, server-side retrievers, memory per user and marca
+  - **D9** Roteiro Avançado with "Deixe a IA pensar" only (web and link sources in phase 2)
+  - **D10** daily automatic suggestions
+  - **D11** real async status on the jobs queue
+  - **D12** caps
+  - **D13** DB-backed Treinamentos without videos yet
+  - **D14** Meu Perfil per marca
+  - **D15** Método Audience fallback
+  - **D16** Dashboard without "Diagnóstico"
+  - **D17** pages and sidebar
+  - **D18** dropped features (workspaces/agency, Headlines na Box, credits/twin, dead UI)
+  - **D19** library retention
+
 ## Open — to ask before building
 
-- Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items? Owner unsure (2026-10-09) — revisit when the headline module starts, with a worked example.
-- Viral library source (see round 7).
+- ~~Fill the headline blueprint `{{DB-SLUG}}` slots from approved Pesquisa items?~~ Tech-lead default D2 (round 9, `specs/geracao-contract.md` §5.3, with a worked example). The owner validates it while testing.
+- ~~Viral library source (see round 7).~~ Tech-lead default D3 (round 9). The owner validates it while testing.
 - Approval for checks that change the CoreStudio account (study spec §7), including one live generation (1 credit) to read the real HEADLINE/ROTEIRO prompts.
