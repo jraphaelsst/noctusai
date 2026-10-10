@@ -3911,6 +3911,99 @@ _MFA_POLICY_PROBES: tuple[GuardProbe, ...] = (
 
 
 # ---------------------------------------------------------------------------
+# Registry — the 2026-10-10 ledger-checksum audit gaps: seed's anon table
+# grants (seed 010) and erp.current_org_id()'s customer-role exclusion (SW 234).
+# Both intents had been edited INTO already-applied files, so prod never got
+# them; these probes pin that prod now holds them.
+# ---------------------------------------------------------------------------
+
+_SEED_ANON_LOCKDOWN_MIGRATIONS = ("010_anon_grant_lockdown.sql",)
+
+_SEED_ANON_LOCKDOWN_PROBES: tuple[GuardProbe, ...] = (
+    GuardProbe(
+        id="seed.anon_insert_refused_by_privilege",
+        product="seed",
+        schema="seed",
+        guard_name="seed_anon_grant_lockdown",
+        kind="write_refusal",
+        migrations=_SEED_ANON_LOCKDOWN_MIGRATIONS,
+        sql=_do_block("""
+BEGIN
+  IF to_regclass('seed.examples') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: seed.examples does not exist';
+  END IF;
+  BEGIN
+    SET LOCAL ROLE anon;
+    INSERT INTO seed.examples DEFAULT VALUES;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: INSERT into seed.examples as role anon succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLSTATE = '42501' AND SQLERRM LIKE 'permission denied%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      -- an RLS refusal ("new row violates row-level security policy") is ALSO
+      -- 42501, but it means the GRANT is still there: not this guard.
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: refused by something other than the missing grant: %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+        rationale=(
+            "anon must hold no write privilege in the seed schema: RLS alone stood "
+            "between the public anon key and seed's tables until 010 (2026-10-10)."
+        ),
+    ),
+    GuardProbe(
+        id="seed.anon_only_reads_status_pagina",
+        product="seed",
+        schema="seed",
+        guard_name="seed_anon_grant_lockdown",
+        kind="state_assertion",
+        migrations=_SEED_ANON_LOCKDOWN_MIGRATIONS,
+        sql=_state_assertion_probe(
+            select_count_sql=(
+                "SELECT (SELECT count(*) FROM information_schema.role_table_grants"
+                " WHERE grantee = 'anon' AND table_schema = 'seed'"
+                " AND NOT (table_name = 'status_pagina' AND privilege_type = 'SELECT'))"
+                " + (SELECT count(*) FROM pg_default_acl d JOIN pg_namespace n ON n.oid = d.defaclnamespace"
+                " WHERE n.nspname = 'seed' AND d.defaclacl::text LIKE '%anon=%')"
+                " INTO v_count;"
+            ),
+            clean_message="anon holds only SELECT on seed.status_pagina; no anon default privileges in seed",
+            violation_message_prefix="anon table privilege(s) / default ACL entries LIVE in seed —",
+        ),
+        rationale=(
+            "The public route map is the only seed table anon may read; any other "
+            "grant (or a default ACL re-granting future tables) reopens the gap."
+        ),
+    ),
+)
+
+_ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
+    id="erp.current_org_id_excludes_customer",
+    product="social-wiring",
+    schema="erp",
+    guard_name="erp_current_org_id_customer_exclusion",
+    kind="state_assertion",
+    migrations=("234_erp_current_org_id_customer_roles.sql",),
+    sql=_state_assertion_probe(
+        select_count_sql=(
+            "SELECT count(*) INTO v_count FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace"
+            " WHERE n.nspname = 'erp' AND p.proname = 'current_org_id'"
+            " AND pg_get_functiondef(p.oid) NOT LIKE '%membro%';"
+        ),
+        clean_message="erp.current_org_id() excludes customer roles (or erp is absent)",
+        violation_message_prefix="erp.current_org_id() still returns a customer's org —",
+    ),
+    rationale=(
+        "183 erp policies call erp.current_org_id(); without the 'membro' exclusion "
+        "a customer user reads their org's erp rows through PostgREST."
+    ),
+)
+
+
+# ---------------------------------------------------------------------------
 # Registry — public.erase_test_org_audit_logs's own org-category guard
 # (migration 054). Companion to _CORE_AUDIT_LOGS_PROBES above: that pair
 # proves the append-only TRIGGER still refuses a plain UPDATE/DELETE
@@ -6152,6 +6245,8 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CORE_AUDIT_LOGS_PROBES,
     _SSO_PROMOTION_PROBE,
     *_MFA_POLICY_PROBES,
+    *_SEED_ANON_LOCKDOWN_PROBES,
+    _ERP_CURRENT_ORG_ID_PROBE,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,
