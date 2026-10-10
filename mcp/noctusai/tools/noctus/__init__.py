@@ -9,6 +9,7 @@ Sub-umbrellas:
     per-rejected-photo comment/guide-version/model/signed-URLs for an org).
   - ``noctus.seed.*`` — seed-system absorption + capability tools.
   - ``noctus.team.*`` — agno multi-agent dev team tools.
+  - ``noctus.transcription.*`` — platform async transcription API client (submit/get/transcribe).
   - ``noctus.youtube.*`` — YouTube channel analytics + action tools (read snapshots,
     report on growth, trigger syncs).
   - ``noctus.business.*`` — product business-logic tools (Phase 4 of
@@ -22,7 +23,7 @@ from __future__ import annotations
 
 def register_all(server) -> None:
     """Register every tool under the ``noctus.*`` umbrella."""
-    from . import dev, graph, hound, photo_editing, seed, team, youtube
+    from . import dev, graph, hound, photo_editing, seed, team, transcription, youtube
 
     dev.register_all(server)
     graph.register_all(server)
@@ -30,6 +31,7 @@ def register_all(server) -> None:
     photo_editing.register_all(server)
     seed.register_all(server)
     team.register_all(server)
+    transcription.register_all(server)
     youtube.register_all(server)
 
 

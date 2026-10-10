@@ -475,6 +475,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bp-no-push", action="store_true", dest="bp_no_push", help="With --branch-pointer-append/update: skip the FF-push to dev (local-only write).")
     parser.add_argument("--bp-local", action="store_true", dest="bp_local", help="With --branch-pointer-update/query/list: read from local file, not dev's copy.")
     parser.add_argument("--bp-terminal", action="store_true", dest="bp_terminal", help="With --branch-pointer-list: include terminal statuses (shipped/canceled/stale).")
+    parser.add_argument("--transcription-submit", metavar="PATH", dest="transcription_submit", help="Upload a local file to the platform transcription API; prints the 202 body. Needs NOCTUS_TRANSCRIPTION_TOKEN. MCP: noctus.transcription.submit.")
+    parser.add_argument("--transcription-get", metavar="ID", dest="transcription_get", help="Fetch a transcription job by id. MCP: noctus.transcription.get.")
+    parser.add_argument("--transcription-transcribe", metavar="PATH", dest="transcription_transcribe", help="Submit a file and poll until terminal/timeout. MCP: noctus.transcription.transcribe.")
+    parser.add_argument("--transcription-idioma", metavar="LANG", default="pt", dest="transcription_idioma", help="With --transcription-submit/-transcribe: language (default pt).")
+    parser.add_argument("--transcription-rotulo", metavar="TEXT", dest="transcription_rotulo", help="With --transcription-submit/-transcribe: optional label (<=120 chars).")
+    parser.add_argument("--transcription-segmentos", action="store_true", dest="transcription_segmentos", help="With --transcription-submit: also return timed segments.")
+    parser.add_argument("--transcription-timeout", metavar="SECONDS", type=float, default=3600, dest="transcription_timeout", help="With --transcription-transcribe: client-side wait budget (default 3600).")
     return parser
 
 
@@ -3301,6 +3308,19 @@ def main():
             print(f"  {RED}Error:{RESET} {result.get('error')}")
             sys.exit(1)
         sys.exit(0)
+
+    elif args.transcription_submit or args.transcription_get or args.transcription_transcribe:
+        from tools.noctus.transcription import client as _tx
+        if args.transcription_submit:
+            _r = _tx.submit(args.transcription_submit, idioma=args.transcription_idioma,
+                            rotulo=args.transcription_rotulo, segmentos=args.transcription_segmentos)
+        elif args.transcription_get:
+            _r = _tx.get(args.transcription_get)
+        else:
+            _r = _tx.transcribe(args.transcription_transcribe, idioma=args.transcription_idioma,
+                                rotulo=args.transcription_rotulo, timeout_s=args.transcription_timeout)
+        print(json.dumps(_r, default=str, ensure_ascii=False))
+        sys.exit(1 if "codigo" in _r else 0)
 
     elif args.list_pending_surfaces:
         from tools.noctus.dev.list_pending_surfaces import list_pending_surfaces as _lps
