@@ -261,3 +261,41 @@ For the accepted proposta's `imovel_codigo`:
 
 ### 7.4 Next phase seam (owner's main goal, not built now)
 Every extraction here goes through ONE interface per document type (`tipo → extractor`), so each type's reader can be replaced by a dedicated, rule-based parser one at a time in the next phase, without touching the orchestration. See memory `project_sw_reliable_contract_generation_goal`. S2's inbound-media classifier routes through that SAME interface (§2.3).
+
+---
+
+## §8 · S6 Cadastrar imóvel — manual captação (owner 2026-10-09)
+
+Owner: "a way to register properties, as if my agents go inside the platform to register new captações. They click a button and a modal opens with imovel data editable for new registrations." Option (b): a first-class manual imóvel, never a Vista re-listing. Plus the deal's Drive folder and process number reachable from the imóvel, "so we can access it easily without fetching from Vista". Unblocks the live test: deal 876's imóvel (Al. Liverpool 81, Reserva do Vianna) left the Vista catalog.
+
+### 8.1 Where the data lives (and where it must NOT)
+- `imoveis` is the Vista MIRROR, a disposable cache (mig 063 header). **No manual row is ever written there.** That avoids three concrete hazards: `_last_sync_at` orders `sincronizado_em DESC` with NULLs first (a NULL makes the org look overdue, forcing a perpetual re-sync); `sweep_imovel_registry` would flip a manual row's activity; and a later Vista código collision would overwrite the row through the upsert on `(org_id, codigo)`.
+- `imovel_registry` is the permanent identity every table FKs to. A manual imóvel gets a registry row with `origem_descoberta='manual'`, `ativo_no_vista=false`. That row already exists today: `dados_service.registrar_imovel(origem="manual")`, `POST /api/imoveis/{codigo}/registrar`, the picker's "cadastrar novo". **Extend that path; never fork it.**
+- **New table `social_wiring.imovel_captacao`** holds the listing data that only a manual imóvel has. PK `(org_id, codigo_canonical)`, FK → `imovel_registry(org_id, codigo_canonical)`. Column names are IDENTICAL to `imoveis` so one serializer serves both: `titulo text NOT NULL`, `categoria`, `status` (finalidade: "Venda" | "Aluguel" | "Venda e Aluguel", free text like the mirror), `finalidades text[]`, `valor_venda`, `valor_locacao`, `valor_condominio`, `valor_iptu` (numeric(14,2), >0 when set), `area_total`, `area_privativa`, `area_construida` (>0), `dormitorios`, `suites`, `vagas` (>=0), `descricao_web`, `observacoes`, `created_at/created_por/updated_at/updated_por`.
+- **Reused on `imovel_dados`, never duplicated:** address `endereco_manual_{cep,logradouro,numero,complemento,bairro,cidade,uf}` (149/159), `empreendimento_manual` (158), `em_condominio` (202).
+- **Deal refs on `imovel_dados`** (authored data, valid for ANY imóvel, Vista or manual): `drive_folder_url text` (https://drive.google.com/… folder only) and `drive_folder_id text` (derived from the URL `…/folders/<id>`, never typed). The folder belongs to the imóvel. Also `processo_atual_numero text`, named and documented as the CURRENT deal's number (architect review 2026-10-09): an imóvel can be sold or rented more than once, so this is a convenience pointer to today's deal, not the deal's identity. Deals live in `processos_venda`.
+- RLS: org-picker shape (mig 211) on `imovel_captacao` + `attach_acting_audit_triggers('social_wiring')`. Migration: next free number at write time.
+
+### 8.2 Código
+- Generated, never typed, already uppercase (`busca_service.canonical` = `strip().upper()`): `SW-` + 4-digit sequence per org (`SW-0001`, …; grows past 9999 unpadded). The hyphen never appears in Vista shapes (`ONE\d+`, `CA\d+`, `AP\d+`), so no collision. Next = max existing `SW-n` in the org's registry + 1, with a retry on the registry unique `(org_id, codigo_canonical)`.
+- **One write path** (architect): `dados_service.registrar_imovel(origem="manual")` is EXTENDED to also write the captação (and deal refs). `POST /manuais` is a thin route over it; there is no second registration implementation.
+- The existing typed-código registration (the picker's "cadastrar novo") stays as is. The two coexist.
+
+### 8.3 Routes (prefix `/api/imoveis`, bare JSON, seed error envelope `{"error":{code,message,details?}}`, strict `== 401`)
+- `POST /manuais`, body `ImovelManualIn` → `201 Imovel`.
+  - `ImovelManualIn` (StrictHttpModel): `titulo` (required), `categoria`, `status`, `finalidades`, the valores/áreas/cômodos above, `descricao_web`, `observacoes`, `endereco: {cep, logradouro*, numero*, complemento, bairro*, cidade*, uf*}` (* = required, same rule as 159), `empreendimento`, `em_condominio`, `processo_atual_numero`, `drive_folder_url`.
+  - Writes registry (manual) + captação + imovel_dados in that order. A failure after the registry row is reported, never swallowed, and a retry with the returned código converges.
+- `PATCH /manuais/{codigo}`, partial `ImovelManualPatch` → `200 Imovel`. `409 imovel_vista_somente_leitura` when the código is not manual; `404` unknown/other org.
+- `PATCH /{codigo}/referencias`, body `{processo_atual_numero?: str|null, drive_folder_url?: str|null}` → `200 {processo_atual_numero, drive_folder_url, drive_folder_id}`. Any imóvel (Vista or manual). `400 drive_url_invalida` for a non-Drive-folder URL.
+- `GET /{codigo}` (existing details): for a manual código, returns the SAME `Imovel` shape built from captação + imovel_dados (no more mirror 404 → reduced layout), with `fonte: "manual"`. Vista ones get `fonte: "vista"`. Both carry `referencias: {processo_atual_numero, drive_folder_url, drive_folder_id}`.
+- `GET ""` (list): reads a new view `social_wiring.imoveis_catalogo` (`security_invoker = true`, so RLS applies) = `SELECT …, 'vista' AS fonte FROM imoveis UNION ALL SELECT …, 'manual' AS fonte FROM imovel_captacao JOIN imovel_dados` (the manual branch maps `endereco_manual_*` → the mirror's address columns, `updated_at` → `data_atualizacao`, `caracteristicas` → `'{}'`). The list stays ONE PostgREST query, so filters, `count=exact`, order and pages stay exact (architect: never merge in Python).
+- `GET /busca`: manual imóveis match the same text filters (código, título, bairro, empreendimento, logradouro), with `fonte: "manual"`. `busca_service.enriquecer` falls back mirror → captação + imovel_dados → registry `snap_*`, so every consumer (lead form, campanhas, atendimento imóveis, roteiro, propostas) renders a manual imóvel's title and address.
+- Sync: `ImovelSyncService.sync` and `sweep_imovel_registry` never touch a manual registry row or `imovel_captacao`. A test runs a full sync + sweep and asserts that.
+
+### 8.4 FE
+- `/imoveis`: a **"Cadastrar imóvel"** button opens `ImovelManualModal`, built from `@noctusai/lib` canonical form/modal organs (check `noctus.dev.find_reusable_component` first, no local re-implementation). Every field is editable, grouped as Identificação · Endereço · Valores · Áreas e cômodos · Descrição · Referências do negócio (processo, pasta do Drive). Creating it puts the new imóvel in the list/search immediately (invalidate `["sw","imoveis"]` AND `["sw","cardHub","imoveisBusca"]`).
+- Details page: a manual imóvel renders the full layout with an **"Editar"** button opening the same modal. Vista ones stay read-only as today (EditPlaceholderButton). EVERY imóvel shows a "Referências do negócio" card (processo + "Abrir pasta no Drive" link, editable).
+- Loading states per the two-signal rule.
+
+### 8.5 First real use
+noc-2 registers Al. Liverpool 81 (Reserva do Vianna), processo atual `876`, Drive https://drive.google.com/drive/folders/1vfD3HHF7jN8EiMwhcHkKYrvuxz5GDlEK, through the UI.
