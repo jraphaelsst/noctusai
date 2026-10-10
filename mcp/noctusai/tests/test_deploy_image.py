@@ -533,6 +533,24 @@ def test_active_probe_curls_the_given_path():
     assert status == "healthy" and execs[-1][-1] == "http://localhost:9000/healthz"
 
 
+def test_python_only_healthcheck_is_not_curl_probed():
+    """The transcriber image has no curl; its HEALTHCHECK runs python. The active
+    `docker exec curl` probe would never pass, so docker's own health is polled."""
+    py = '["CMD","python","-c","import urllib.request; urllib.request.urlopen(\'http://localhost:9000/healthz\')"]'
+    assert DI._healthcheck_uses_curl(lambda cmd: (0, py, ""), "noctus-transcriber") is False
+    curl = '["CMD","curl","-fsS","http://localhost:8000/api/health"]'
+    assert DI._healthcheck_uses_curl(lambda cmd: (0, curl, ""), "noctus-core") is True
+
+
+def test_docker_health_status_is_polled_without_a_port():
+    seq = iter(["running", "starting", "running", "healthy"])
+    def runner(cmd):
+        return (0, next(seq) + "\n", "")
+    status, states = DI._poll_health(runner, lambda s: None, "noctus-transcriber",
+                                     timeout=60, interval=5, port=None)
+    assert status == "healthy" and states[-1] == "healthy"
+
+
 def test_tool_registers_with_dotted_name():
     captured = {}
 

@@ -256,6 +256,16 @@ def _container_health_probe(runner, container: str) -> tuple[str, int]:
     return path, start_period_s
 
 
+def _healthcheck_uses_curl(runner, container: str) -> bool:
+    """True when the container's HEALTHCHECK test runs `curl`, so `docker exec curl`
+    is known to exist in the image. Otherwise (e.g. the transcriber's python-only
+    image) the active curl probe would fail forever whatever the path, so the
+    caller polls docker's own health status instead (2026-10-10, second cause)."""
+    _rc, out, _e = _docker(runner, "inspect", "-f",
+                           "{{if .Config.Healthcheck}}{{json .Config.Healthcheck.Test}}{{end}}", container)
+    return "curl" in (out or "")
+
+
 def _poll_health(runner, sleep, container: str, timeout: int, interval: int,
                  port: str | None = None, startup_grace: int = 30,
                  path: str = "/api/health") -> tuple[str, list[str]]:
@@ -488,8 +498,8 @@ def deploy_image(
         never a false 'rolled_back'."""
         _docker(runner, "tag", prev, f"{image}:{tag}")  # retag :latest from the committed snapshot
         _compose(runner, cf, "up", "-d", "--force-recreate", product)
-        rb_health, rb_states = _poll_health(runner, napper, container, health_timeout,
-                                            poll_interval, port=port, startup_grace=probe_grace,
+        rb_health, rb_states = _poll_health(runner, napper, container, probe_timeout,
+                                            poll_interval, port=probe_port, startup_grace=probe_grace,
                                             path=health_path)
         _rcv, running_now, _ev = _docker(runner, "inspect", "-f", "{{.Image}}", container)
         running_now = running_now.strip()
@@ -607,6 +617,10 @@ def deploy_image(
     port = _container_port(runner, container)
     health_path, start_period_s = _container_health_probe(runner, container)
     probe_grace = max(startup_grace, start_period_s)
+    # No curl in the image ⇒ no active probe: poll docker's own health status,
+    # and give it the whole StartPeriod plus a few check intervals.
+    probe_port = port if _healthcheck_uses_curl(runner, container) else None
+    probe_timeout = max(health_timeout, start_period_s + 90)
 
     # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
     #    recreation when only the tag target changed) ──
@@ -616,8 +630,8 @@ def deploy_image(
                          new_image_id)
 
     # ── HEALTH-PROBE (active /api/health when the port is known) ──
-    health, states = _poll_health(runner, napper, container, health_timeout, poll_interval,
-                                  port=port, startup_grace=probe_grace, path=health_path)
+    health, states = _poll_health(runner, napper, container, probe_timeout, poll_interval,
+                                  port=probe_port, startup_grace=probe_grace, path=health_path)
     if health == "healthy":
         # ── SWAP-VERIFY (2026-08-13 phantom-deploy guard) — a HEALTHY probe
         #    only proves *some* container answers on that port; it does NOT
