@@ -156,6 +156,13 @@ append their own section as they ship.
 - [ ] While ingestion is OFF, both Biblioteca pages say "Monitoramento ainda não ativado" (not an empty library).
 - [ ] More than 20 manual "Atualizar agora" in one day across the org are refused (daily cap).
 
+### Creator opt-out (legitimate-interest safeguard, migration 233)
+- [ ] Minha Biblioteca › Solicitar Perfil shows the transparency note (public business/creator accounts only, structure study only, opt-out via the privacy policy contact).
+- [ ] As platform admin, "Pedidos de exclusão (opt-out)" is visible; as a normal member it is not.
+- [ ] Add an opt-out for a monitored handle: the confirm dialog warns that ALL data is deleted now, and the toast reports how many profiles and virais were purged. The profile and its virais disappear from Minha Biblioteca and Biblioteca in every org.
+- [ ] Trying to register that handle again shows "Este perfil pediu para não ser monitorado." Adding the same opt-out twice changes nothing.
+- [ ] Removing the opt-out lets the handle be registered again.
+
 ### Biblioteca (`/media-creation/biblioteca`)
 - [ ] The grid shows virais of the monitored profiles, 24 per page. Each card shows @handle, thumbnail, metrics ("—" when unknown, never 0), duration, date and **Ver post**.
 - [ ] **Judge "viral"**: do the cards really stand out against each profile's normal posts? Toggle "Mostrar só virais" off to compare. (D4: 3× the profile's median.)
