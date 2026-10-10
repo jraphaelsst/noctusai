@@ -723,12 +723,12 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
     doc), then per-product node_modules (per-entry overlay — the
     primary-contamination fix, see module doc) + the two @noctusai
     re-points. The repo-root `.env` is planned FIRST — see
-    `_link_root_dotenv`. `products` scopes the per-product overlay (`None` =
+    `_plan_scrubbed_dotenv`. `products` scopes the per-product overlay (`None` =
     every product) — see `_derive_wire_scope`."""
     wire: list[dict] = []
     skipped: list[dict] = []
 
-    def _link_root_dotenv() -> None:
+    def _plan_scrubbed_dotenv() -> None:
         """The repo-root `.env`, which every product frontend AND backend reads.
 
         WHY THIS IS PART OF wire_env. `.env` is gitignored, so a fresh worktree
@@ -740,11 +740,16 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
         reads as "the app is broken" rather than "the env is missing". Cost
         ~15 min to diagnose during the igig e2e sweep (2026-09-01).
 
-        Symlinked rather than copied so a later edit to the real `.env` is
-        picked up everywhere, and because a COPY of a secrets file into a
-        worktree is a second place for it to leak from. Gitignored at both ends
-        ⇒ it can never be staged, so it cannot cause the divergence the
-        self-branching gate exists to prevent."""
+        🔴 SCRUBBED, NOT SYMLINKED (2026-10-10). It used to be a symlink to
+        the primary `.env` — production service-role key included — and on
+        2026-10-09 a social-wiring test run from a worktree read those real
+        credentials through the seed's `ProductSettings.env_file` and wrote
+        into production. The worktree now gets a GENERATED `.env`
+        (`env_bootstrap.render_scrubbed_dotenv`): `VITE_*` (public, shipped in
+        every bundle) plus every non-secret key, so the SPA still boots. The
+        toolkit keeps reading the primary `.env` by path. An existing symlink
+        is replaced; a real file without the scrub marker is someone's own
+        and is left alone (reported). Gitignored ⇒ it can never be staged."""
         src = os.path.join(primary_root, ".env")
         link = os.path.join(wt_root, ".env")
         if not fs.exists(src):
@@ -753,7 +758,7 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
         if fs.is_dir(link):
             skipped.append({"link": link, "reason": "real directory at .env path"})
             return
-        wire.append({"link": link, "target": src, "kind": "dotenv"})
+        wire.append({"link": link, "target": src, "kind": "dotenv_scrubbed"})
 
     def _link_toolkit_node_modules() -> None:
         """`mcp/noctusai/node/node_modules` — the ts-morph runtime the
@@ -779,7 +784,7 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
             return
         wire.append({"link": link, "target": src, "kind": "node_modules"})
 
-    _link_root_dotenv()
+    _plan_scrubbed_dotenv()
     _link_toolkit_node_modules()
 
     def _link_whole_node_modules(rel_pkg: str) -> None:
@@ -889,6 +894,54 @@ def _plan_env_wiring(primary_root: str, wt_root: str, fs: FsOps,
     return wire, skipped
 
 
+def _write_scrubbed_dotenv(spec: dict, fs: FsOps) -> dict:
+    """Write the worktree's scrubbed `.env` (`env_bootstrap.
+    render_scrubbed_dotenv`): replaces a symlink (the old wiring — this is the
+    migration), overwrites a previously generated file, refuses a real file
+    without the scrub marker (someone's own). Returns the spec, with
+    `dropped` key names, or with a `reason` when it refused."""
+    from env_bootstrap import SCRUBBED_DOTENV_MARKER, render_scrubbed_dotenv
+
+    link = spec["link"]
+    if fs.exists(link) and not fs.is_symlink(link):
+        with open(link, encoding="utf-8", errors="replace") as fh:
+            if not fh.readline().startswith(SCRUBBED_DOTENV_MARKER):
+                return {**spec, "reason": "a real .env without the scrub marker — left alone"}
+    content, dropped = render_scrubbed_dotenv(Path(spec["target"]))
+    if fs.is_symlink(link):
+        os.unlink(link)
+    fs.write_text(link, content)
+    return {**spec, "dropped": dropped}
+
+
+def scrub_worktree_dotenvs(primary_root: str, fs: FsOps | None = None) -> dict[str, Any]:
+    """Convert every worktree whose `.env` is still a SYMLINK (the pre-
+    2026-10-10 wiring — the primary's production secrets) into the scrubbed
+    file. Run by the SessionStart sweep, so worktrees created before the fix
+    stop carrying production credentials without anyone remembering to
+    re-wire them. Only symlinks are touched: a generated file is already
+    scrubbed, and a real file without the marker is someone's own.
+
+    Returns `{converted: [paths], failed: [{link, reason}]}` — names and
+    paths only, never values."""
+    fs = fs or FsOps()
+    src = os.path.join(primary_root, ".env")
+    wt_dir = os.path.join(primary_root, ".claude", "worktrees")
+    out: dict[str, Any] = {"converted": [], "failed": []}
+    if not fs.exists(src) or not os.path.isdir(wt_dir):
+        return out
+    for name in sorted(os.listdir(wt_dir)):
+        link = os.path.join(wt_dir, name, ".env")
+        if not fs.is_symlink(link):
+            continue
+        result = _write_scrubbed_dotenv({"link": link, "target": src, "kind": "dotenv_scrubbed"}, fs)
+        if "reason" in result:
+            out["failed"].append({"link": link, "reason": result["reason"]})
+        else:
+            out["converted"].append(link)
+    return out
+
+
 def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dict]]:
     """`ln -sfn` semantics, best-effort: create each planned symlink; if the link
     path is an existing symlink, replace it (force); if it is a real dir, SKIP
@@ -904,6 +957,10 @@ def _apply_env_wiring(wire: list[dict], fs: FsOps) -> tuple[list[dict], list[dic
     for spec in wire:
         link = spec["link"]
         try:
+            if spec.get("kind") == "dotenv_scrubbed":
+                created_or_failed = _write_scrubbed_dotenv(spec, fs)
+                (created if "reason" not in created_or_failed else failed).append(created_or_failed)
+                continue
             if spec.get("kind") == "ensure_real_dir":
                 if fs.is_symlink(link):
                     os.unlink(link)

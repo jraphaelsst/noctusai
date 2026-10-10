@@ -355,6 +355,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--archive-clean", action="store_true", help="Keep today+yesterday archive folders, classify D-2+ stale (absorbed scripts/archive-clean.sh). USER-INVOKED; pair --force to delete. MCP: noctus.dev.archive_clean.")
     parser.add_argument("--check-disk-usage", action="store_true", help="Disk-pressure monitor 70/80/90 bands (absorbed scripts/disk-usage-monitor.sh). MCP: noctus.dev.check_disk_usage.")
     parser.add_argument("--check-framework-deps", action="store_true", help="Audit product frontend package.json framework-dep parity (absorbed scripts/check-framework-deps.py). MCP: noctus.dev.check_framework_deps.")
+    parser.add_argument("--scrub-worktree-dotenvs", action="store_true", help="Replace every worktree .env that is still a SYMLINK to the primary .env (its production secrets) with the scrubbed file (VITE_* + non-secret keys). Run by the SessionStart sweep.")
     parser.add_argument("--cleanup-stale-worktrees", action="store_true", help="Remove worktrees merged to origin/main (absorbed scripts/cleanup-stale-worktrees.sh). Dry-run unless --force. MCP: noctus.dev.cleanup_stale_worktrees.")
     parser.add_argument("--harness-status", action="store_true", help="Print ONE JSON object (schema noc.harness_status/v1) for the noc-harness Claude Code mod: session tree/branch/dirty, dev drift, reminders; --hs-full adds caches/auto-improvement/pointers/worktrees/dispatcher. Never fetches; exit 0 even when sections fail (see `errors`). MCP: noctus.dev.harness_status.")
     parser.add_argument("--hs-full", action="store_true", help="With --harness-status: full mode (slower, ~60s cadence).")
@@ -3120,6 +3121,13 @@ def main():
         r = check_framework_deps(fix=args.fix)
         print(json.dumps(r, indent=2, default=str))
         sys.exit(int(r.get("exit_code", 1 if r.get("drift") else 0)))
+
+    elif args.scrub_worktree_dotenvs:
+        from tools.noctus.dev.task_branch import scrub_worktree_dotenvs
+        from settings import REPO_ROOT as _ROOT
+        r = scrub_worktree_dotenvs(str(_ROOT))
+        print(json.dumps(r, indent=2, default=str))
+        sys.exit(1 if r["failed"] else 0)
 
     elif args.cleanup_stale_worktrees:
         from tools.noctus.dev.cleanup_worktrees import cleanup_stale_worktrees

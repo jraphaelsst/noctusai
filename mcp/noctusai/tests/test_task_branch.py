@@ -537,7 +537,7 @@ def test_plan_env_wiring_lists_expected_symlink_targets(tmp_path):
     # without it vite's envDir yields no VITE_* and the SPA renders blank with
     # NO console error (createProductSupabase throws inside a module).
     env_link = str(wt_root / ".env")
-    assert env_link in links and links[env_link]["kind"] == "dotenv"
+    assert env_link in links and links[env_link]["kind"] == "dotenv_scrubbed"
     assert links[env_link]["target"] == str(primary / ".env")
 
     # the toolkit's ts-morph runtime — same gitignored-and-absent class as
@@ -656,27 +656,84 @@ def test_plan_env_wiring_reports_missing_primary_dotenv(tmp_path):
     _seed_worktree_tree(wt_root)
 
     wire, skipped = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
-    assert not [w for w in wire if w["kind"] == "dotenv"]
+    assert not [w for w in wire if w["kind"] == "dotenv_scrubbed"]
     assert [s for s in skipped if "primary .env absent" in s["reason"]]
 
 
-def test_apply_env_wiring_creates_dotenv_symlink(tmp_path):
-    """End-to-end: the planned `.env` spec actually lands as a symlink whose
-    content resolves to the primary file."""
+def _dotenv_wiring(tmp_path, name, primary_env: str):
     primary = tmp_path / "primary"
-    wt_root = primary / ".claude" / "worktrees" / "epsilon"
-    _seed_primary(primary, slugs=("epsilon",))
+    wt_root = primary / ".claude" / "worktrees" / name
+    _seed_primary(primary, slugs=(name,))
+    (primary / ".env").write_text(primary_env)
     _seed_worktree_tree(wt_root)
-
     wire, _ = T._plan_env_wiring(str(primary), str(wt_root), T.FsOps())
-    created, failed = T._apply_env_wiring(
-        [w for w in wire if w["kind"] == "dotenv"], T.FsOps()
+    return primary, wt_root, [w for w in wire if w["kind"] == "dotenv_scrubbed"]
+
+
+_PRIMARY_ENV = (
+    'VITE_SUPABASE_URL="https://prodref.supabase.co"\n'
+    'VITE_SUPABASE_PUBLISHABLE_KEY="sb_publishable_abcdefgh"\n'
+    'SUPABASE_URL="https://prodref.supabase.co"\n'
+    'SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiJ9.service.role"\n'
+    'JWT_SECRET="super-secret-jwt-value"\n'
+    'DATABASE_URL="postgresql://postgres:hunter2pass@db.prodref.supabase.co:5432/postgres"\n'
+    'SUPABASE_DB_URL="postgres://postgres.prodref:p4ssw0rd!@aws-0.pooler.supabase.com:6543/postgres"\n'
+    'REDIS_URL="redis://default:redispass@redis:6379/0"\n'
+    'CORS_ORIGINS="http://localhost:5173"\n'
+)
+
+
+def test_apply_env_wiring_writes_a_scrubbed_dotenv_not_a_symlink(tmp_path):
+    """2026-10-09 incident: the worktree `.env` symlinked the primary's prod
+    service-role key into product settings. The worktree now gets a
+    GENERATED file: VITE_* + non-secret keys only."""
+    primary, wt_root, specs = _dotenv_wiring(tmp_path, "epsilon", _PRIMARY_ENV)
+
+    created, failed = T._apply_env_wiring(specs, T.FsOps())
+
+    assert failed == [] and len(created) == 1
+    env = wt_root / ".env"
+    assert not env.is_symlink()
+    text = env.read_text()
+    for kept in ("VITE_SUPABASE_URL", "VITE_SUPABASE_PUBLISHABLE_KEY"):
+        assert f"{kept}=" in text, kept
+    for gone in ("\nSUPABASE_URL=", "CORS_ORIGINS="):  # backend keys: the backend runs as in CI
+        assert gone not in text, gone
+    for secret in ("eyJhbGciOiJIUzI1NiJ9.service.role", "super-secret-jwt-value", "hunter2pass",
+                   "p4ssw0rd!", "redispass"):
+        assert secret not in text, secret
+    assert set(created[0]["dropped"]) == {
+        "SUPABASE_SERVICE_ROLE_KEY", "JWT_SECRET", "DATABASE_URL", "SUPABASE_DB_URL", "REDIS_URL",
+        "SUPABASE_URL", "CORS_ORIGINS"}
+
+
+def test_a_password_bearing_postgres_dsn_never_reaches_a_worktree(tmp_path):
+    """noc-2's ask: a direct psycopg / asyncpg path must not bypass both the
+    scrub and the seed pytest guard — whatever the variable is called."""
+    _, wt_root, specs = _dotenv_wiring(
+        tmp_path, "zeta",
+        'MY_ODD_NAME="postgresql://app:Zq8!pass@db.example:5432/x"\n'
+        'ANOTHER="postgres://u:v@h/d"\nVITE_X="ok"\n',
     )
-    assert failed == []
-    link = wt_root / ".env"
-    assert link.is_symlink()
-    assert "VITE_SUPABASE_URL" in link.read_text()
-    assert len(created) == 1
+
+    T._apply_env_wiring(specs, T.FsOps())
+
+    text = (wt_root / ".env").read_text()
+    assert "Zq8!pass" not in text and "u:v@" not in text and "VITE_X=" in text
+
+
+def test_an_existing_symlink_is_migrated_and_a_foreign_file_left_alone(tmp_path):
+    primary, wt_root, specs = _dotenv_wiring(tmp_path, "eta", _PRIMARY_ENV)
+    env = wt_root / ".env"
+    env.symlink_to(primary / ".env")  # the OLD wiring
+
+    created, failed = T._apply_env_wiring(specs, T.FsOps())
+
+    assert failed == [] and not env.is_symlink() and "hunter2pass" not in env.read_text()
+    env.write_text("MY_OWN=1\n")  # someone's own file, no scrub marker
+    created, failed = T._apply_env_wiring(specs, T.FsOps())
+    assert created == [] and "scrub marker" in failed[0]["reason"]
+    assert env.read_text() == "MY_OWN=1\n"
 
 
 def test_plan_env_wiring_reports_missing_primary_node_modules(tmp_path):
@@ -3123,7 +3180,7 @@ def test_plan_env_wiring_scoped_overlays_only_in_scope_products(tmp_path):
     assert not any(w["kind"] == "@noctusai" and "/products/alpha/" in w["link"] for w in wire)
     # .env / toolkit / seed node_modules stay wired regardless of scope
     kinds = {w["kind"] for w in wire}
-    assert {"dotenv", "node_modules"} <= kinds
+    assert {"dotenv_scrubbed", "node_modules"} <= kinds
 
 
 def test_plan_env_wiring_empty_scope_wires_no_product_entries(tmp_path):
@@ -3378,3 +3435,24 @@ def test_renumber_rewrites_old_stem_in_branch_files_only(tmp_path):
     assert (mig / "218_foo.sql").exists() and not (mig / "217_foo.sql").exists()
     assert g("status", "--porcelain") == ""  # rewrite committed in the renumber commit
     assert "renumber 217→218" in g("log", "-1", "--format=%s")
+
+
+def test_scrub_worktree_dotenvs_converts_only_symlinks(tmp_path):
+    """The SessionStart sweep's one-shot migration: a worktree created before
+    2026-10-10 still SYMLINKS the primary's prod .env — converted; a generated
+    file is left as-is; someone's own file is left alone."""
+    primary = tmp_path / "primary"
+    (primary / ".claude" / "worktrees").mkdir(parents=True)
+    (primary / ".env").write_text(_PRIMARY_ENV)
+    old, own, fresh = (primary / ".claude" / "worktrees" / n for n in ("old", "own", "fresh"))
+    for wt in (old, own, fresh):
+        wt.mkdir()
+    (old / ".env").symlink_to(primary / ".env")
+    (own / ".env").write_text("MINE=1\n")
+
+    out = T.scrub_worktree_dotenvs(str(primary))
+
+    assert out == {"converted": [str(old / ".env")], "failed": []}
+    assert not (old / ".env").is_symlink() and "hunter2pass" not in (old / ".env").read_text()
+    assert (own / ".env").read_text() == "MINE=1\n" and not (fresh / ".env").exists()
+    assert T.scrub_worktree_dotenvs(str(primary)) == {"converted": [], "failed": []}  # idempotent

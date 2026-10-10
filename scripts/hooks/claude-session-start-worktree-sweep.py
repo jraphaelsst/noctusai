@@ -90,6 +90,29 @@ def sweep(root: Path, *, timeout: float = TIMEOUT_S) -> str:
         lock.close()
 
 
+def scrub_dotenvs(root: Path, *, timeout: float = TIMEOUT_S) -> str:
+    """Convert worktrees whose `.env` still SYMLINKS the primary's (production
+    secrets, the 2026-10-09 incident) into the scrubbed file — every session
+    start, so a worktree created before the fix is fixed without anyone
+    re-wiring it. Summary line ('' when nothing was converted)."""
+    cli = root / "mcp" / "noctusai" / "cli.py"
+    if not cli.exists():
+        return ""
+    r = subprocess.run([python_for(root), str(cli), "--scrub-worktree-dotenvs"],
+                       cwd=str(root), capture_output=True, text=True, timeout=timeout)
+    try:
+        data = json.loads(r.stdout)
+    except ValueError:
+        print(f"[noc-sweep] dotenv scrub: {r.stderr.strip()[:200]}", file=sys.stderr)
+        return ""
+    n = len(data.get("converted", []))
+    failed = len(data.get("failed", []))
+    parts = [f"{n} worktree .env symlink(s) scrubbed"] if n else []
+    if failed:
+        parts.append(f"{failed} worktree .env left alone (not ours)")
+    return "; ".join(parts)
+
+
 def fast_forward_primary(root: Path) -> str:
     """ff-only the primary to origin/dev; the summary line ('' if up to date)."""
     mod_path = root / "mcp" / "noctusai" / "primary_ff.py"
@@ -114,7 +137,7 @@ def run_child(root: Path) -> None:
     """Detached-child entry: fast-forward the primary, sweep, then record a
     non-empty summary as unseen. The FF runs first so the sweep (and every
     later cli.py run from the primary) uses the code that is on dev."""
-    lines = [fast_forward_primary(root), sweep(root)]
+    lines = [fast_forward_primary(root), scrub_dotenvs(root), sweep(root)]
     line = " | ".join(x for x in lines if x)
     if line:
         (root / ".git" / LAST_NAME).write_text(json.dumps({"line": line, "shown": False}))

@@ -433,3 +433,62 @@ class TestGateSubprocessEnvScrub:
         env = env_bootstrap.gate_subprocess_env(tmp_path, {"NOC_STALE_SECRET": "ci-value-xyz"})
 
         assert env == {"NOC_STALE_SECRET": "ci-value-xyz"}
+
+
+# ── worktree .env scrub (2026-10-10, the prod-test incident) ─────────────────
+import pytest as _pytest  # noqa: E402
+
+import env_bootstrap as _eb  # noqa: E402
+
+
+@_pytest.mark.parametrize("key,value", [
+    ("SUPABASE_SERVICE_ROLE_KEY", "eyJhbGciOi.x.y"),
+    ("JWT_SECRET", "abc"),
+    ("META_SYSTEM_USER_TOKEN", "EAAG..."),
+    ("DB_PASSWORD", "x"),
+    ("DATABASE_URL", "postgresql://postgres:hunter2@db.prodref.supabase.co:5432/postgres"),
+    ("SUPABASE_DB_URL", "postgres://postgres.ref:p4ss@aws-0.pooler.supabase.com:6543/postgres"),
+    ("ANY_NAME_AT_ALL", "postgresql://u:v@h/d"),
+    ("REDIS_URL", "redis://default:secret@redis:6379/0"),
+    ("SOME_SETTING", "sk-ant-api03-abcdefghijklmnop"),
+])
+def test_secret_entries(key, value):
+    assert _eb.is_secret_entry(key, value)
+
+
+@_pytest.mark.parametrize("key,value", [
+    ("SUPABASE_URL", "https://prodref.supabase.co"),
+    ("REDIS_URL", "redis://redis:6379/0"),
+    ("CORS_ORIGINS", "http://localhost:5173"),
+    ("META_APP_ID", "123456"),
+])
+def test_non_secret_entries(key, value):
+    assert not _eb.is_secret_entry(key, value)
+
+
+def test_a_worktree_env_holds_vite_keys_only():
+    """Measured 2026-10-10: any backend key changes how the product boots
+    (REDIS_URL → shared-Redis sessions needing a key; SENTRY_DSN → prod
+    Sentry; SUPABASE_URL → the seed live-DB guard). The backend gets what CI
+    gives it: nothing."""
+    kept, dropped = _eb.scrub_dotenv({
+        "VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_x", "VITE_SUPABASE_URL": "https://ref.supabase.co",
+        "SUPABASE_SERVICE_ROLE_KEY": "eyJ.x.y", "SUPABASE_URL": "https://ref.supabase.co",
+        "REDIS_URL": "redis://noctus-redis:6379/0", "SENTRY_DSN": "https://k@o.ingest.sentry.io/1",
+        "DATABASE_URL": "postgresql://postgres:pw@db/x", "CORS_ORIGINS": "http://localhost:5173",
+    })
+    assert kept == {"VITE_SUPABASE_PUBLISHABLE_KEY": "sb_publishable_x", "VITE_SUPABASE_URL": "https://ref.supabase.co"}
+    assert set(dropped) == {"SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_URL", "REDIS_URL", "SENTRY_DSN",
+                            "DATABASE_URL", "CORS_ORIGINS"}
+
+
+def test_a_credentialed_url_behind_a_vite_name_is_dropped_but_a_public_jwt_is_kept():
+    """A VITE_ key ships to every browser: a password in it is a leak. The
+    Supabase publishable/anon key IS a JWT and is public by design — the SPA
+    can't boot without it (a token-shape rule here dropped it, 2026-10-10)."""
+    jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiYW5vbiJ9.abcdefghijklmnopqrstuvwxyz"
+    kept, dropped = _eb.scrub_dotenv({
+        "VITE_DB": "postgresql://u:secretpw@h/d", "VITE_SUPABASE_PUBLISHABLE_KEY": jwt,
+        "VITE_OK": "https://x.example"})
+    assert kept == {"VITE_SUPABASE_PUBLISHABLE_KEY": jwt, "VITE_OK": "https://x.example"}
+    assert dropped == ["VITE_DB"]
