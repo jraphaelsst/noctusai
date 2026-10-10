@@ -793,17 +793,18 @@ BUSINESS_DISCOVERY_MEDIA_FIELDS = (
     "like_count",
     "comments_count",
 )
+# NOC-REMEDIATE[meta-token-header]: send the access token in an Authorization header plus appsecret_proof where the adapter holds the app secret, instead of the query string; destination: integrations/meta real adapter — 2026-10-10
 # A username is interpolated INTO the Graph field expression, so it is
 # validated, never escaped: Instagram handles are [A-Za-z0-9._], 1..30.
-_IG_HANDLE_RE = re.compile(r"^[A-Za-z0-9._]{1,30}$")
-_GRAPH_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
-_GRAPH_CURSOR_RE = re.compile(r"^[A-Za-z0-9_\-=+/.]{1,512}$")
+_IG_HANDLE_RE = re.compile(r"[A-Za-z0-9._]{1,30}")
+_GRAPH_FIELD_RE = re.compile(r"[a-z][a-z0-9_]{0,40}")
+_GRAPH_CURSOR_RE = re.compile(r"[A-Za-z0-9_\-=+/.]{1,512}")
 BUSINESS_DISCOVERY_MAX_PAGE_SIZE = 100
 
 
 def normalize_ig_handle(username: str) -> str:
     handle = (username or "").strip().lstrip("@")
-    if not _IG_HANDLE_RE.match(handle):
+    if not _IG_HANDLE_RE.fullmatch(handle):
         raise ValueError("invalid Instagram username")
     return handle
 
@@ -820,13 +821,13 @@ def business_discovery_fields_param(
 
     handle = normalize_ig_handle(username)
     names = list(media_fields)
-    if not names or any(not _GRAPH_FIELD_RE.match(n) for n in names):
+    if not names or any(not _GRAPH_FIELD_RE.fullmatch(n) for n in names):
         raise ValueError("invalid Business Discovery media field")
     if not 1 <= int(limit) <= BUSINESS_DISCOVERY_MAX_PAGE_SIZE:
         raise ValueError("limit out of range")
     page = f"media.limit({int(limit)})"
     if after is not None:
-        if not _GRAPH_CURSOR_RE.match(after):
+        if not _GRAPH_CURSOR_RE.fullmatch(after):
             raise ValueError("invalid cursor")
         page += f".after({after})"
     return (

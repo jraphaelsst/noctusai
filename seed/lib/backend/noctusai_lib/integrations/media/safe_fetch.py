@@ -43,6 +43,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 import time
+import concurrent.futures
 from dataclasses import dataclass, field
 from typing import Callable, Mapping, Protocol, Sequence
 from urllib.parse import SplitResult, urljoin, urlsplit
@@ -295,13 +296,29 @@ class RealSafeFetcher:
         for hop in range(self.max_redirects + 1):
             parts = validate_url(current, allowed_hosts)
             host = (parts.hostname or "").lower().rstrip(".")
-            addrs = resolve_public(host, self.resolver)
+            addrs = self._resolve_with_deadline(host, deadline, current)
             response = self._get_once(current, parts, host, addrs, max_bytes, allowed_ct,
                                       expect_magic, deadline, hop)
             if isinstance(response, FetchResult):
                 return response
             current = response  # the next (unvalidated) redirect target
         raise SafeFetchError("redirect_limit", f"more than {self.max_redirects} redirects", url=url)
+
+    def _resolve_with_deadline(self, host: str, deadline: float, url: str) -> list[str]:
+        """DNS in a worker thread so ``getaddrinfo`` (which has no timeout of
+        its own) cannot outlive the total deadline."""
+
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise SafeFetchError("timeout", "total deadline exceeded before DNS", url=url)
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="safe-fetch-dns")
+        future = pool.submit(resolve_public, host, self.resolver)
+        try:
+            return future.result(timeout=remaining)
+        except concurrent.futures.TimeoutError as exc:
+            raise SafeFetchError("timeout", "DNS resolution exceeded the total deadline", url=url) from exc
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
 
     def _get_once(
         self, url: str, parts: SplitResult, host: str, addrs: list[str], max_bytes: int,
@@ -310,7 +327,13 @@ class RealSafeFetcher:
         path = parts.path or "/"
         if parts.query:
             path += "?" + parts.query
-        timeout = httpx.Timeout(self.read_timeout, connect=self.connect_timeout)
+        remaining = deadline - self._clock()
+        if remaining <= 0:
+            raise SafeFetchError("timeout", "total deadline exceeded", url=url)
+        # Connect + header read are bounded by what is left of the total deadline.
+        timeout = httpx.Timeout(
+            min(self.read_timeout, remaining), connect=min(self.connect_timeout, remaining)
+        )
         last_exc: Exception | None = None
         for ip in addrs:
             host_ip = f"[{ip}]" if ":" in ip else ip
@@ -322,7 +345,7 @@ class RealSafeFetcher:
                 ) as client:
                     with client.stream(
                         "GET", target,
-                        headers={"Host": host, "Accept": "*/*"},
+                        headers={"Host": host, "Accept": "*/*", "Accept-Encoding": "identity"},
                         extensions={"sni_hostname": host},
                     ) as resp:
                         return self._consume(resp, url, ip, max_bytes, allowed_ct,
@@ -352,13 +375,18 @@ class RealSafeFetcher:
         ctype = _normalize_content_type(resp.headers.get("content-type"))
         if ctype not in allowed_ct:
             raise SafeFetchError("content_type", f"{ctype or 'missing'!r} not allowed", url=url)
+        encoding = resp.headers.get("content-encoding", "").strip().lower()
+        if encoding not in ("", "identity"):
+            # Refused before any body is read: one compressed chunk could
+            # otherwise expand ~1000x past the byte cap in memory.
+            raise SafeFetchError("content_type", f"content-encoding {encoding!r} is not allowed", url=url)
         declared = resp.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > max_bytes:
             raise SafeFetchError("too_large", f"declared length exceeds {max_bytes} bytes", url=url)
         need = max((m.needed for m in expect_magic), default=0) if expect_magic else 0
         buf = bytearray()
         magic_checked = not expect_magic
-        for chunk in resp.iter_bytes():
+        for chunk in resp.iter_bytes():  # identity-only: compressed refused above
             buf.extend(chunk)
             if len(buf) > max_bytes:
                 raise SafeFetchError("too_large", f"body exceeds {max_bytes} bytes", url=url)
