@@ -10,7 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { MultiSelectPopover } from "@/pages/leads/components/MultiSelectPopover";
-import { usePerfisMonitorados, useTaxonomiasBiblioteca } from "@/hooks/geracao/useBiblioteca";
+import { usePerfisMonitorados } from "@/hooks/geracao/useBiblioteca";
+import { useTaxonomias } from "@/hooks/geracao/useTaxonomias";
 import { FILTROS_VAZIOS, type BuscarEm, type FiltrosViral } from "./filtros";
 
 interface Props {
@@ -29,7 +30,7 @@ export function FiltrosVirais({ filtros, onAplicar, compacto = false }: Props) {
   const [rascunho, setRascunho] = useState<FiltrosViral>(filtros);
   useEffect(() => setRascunho(filtros), [filtros]);
 
-  const taxQ = useTaxonomiasBiblioteca();
+  const taxQ = useTaxonomias();
   const perfisQ = usePerfisMonitorados();
   const tax = taxQ.data;
   const perfis = perfisQ.data ?? [];

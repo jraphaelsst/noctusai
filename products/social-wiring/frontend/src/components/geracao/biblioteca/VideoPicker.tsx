@@ -25,11 +25,11 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   usePerfisMonitorados,
-  useTaxonomiasBiblioteca,
   useViraisBiblioteca,
   useViralDetalhe,
   VIRAIS_POR_PAGINA,
 } from "@/hooks/geracao/useBiblioteca";
+import { useTaxonomias } from "@/hooks/geracao/useTaxonomias";
 import { compactoPtBr } from "@/components/pesquisa/format";
 import { cn } from "@/lib/utils";
 import { FILTROS_VAZIOS, type FiltrosViral } from "./filtros";
@@ -58,7 +58,7 @@ export function VideoPicker({ marcaId, value, onChange, disabled, className }: V
 
   const escolhido = useViralDetalhe(marcaId, value);
   const virais = useViraisBiblioteca(aberto ? marcaId : null, filtros);
-  const tax = useTaxonomiasBiblioteca().data;
+  const tax = useTaxonomias().data;
   const perfis = usePerfisMonitorados().data ?? [];
 
   const total = virais.data?.total ?? 0;

@@ -35,9 +35,11 @@ vi.mock("@/hooks/geracao/useBiblioteca", () => ({
   useViraisBiblioteca: (...a: any[]) => m.virais(...a),
   useViralDetalhe: (...a: any[]) => m.detalhe(...a),
   usePerfisMonitorados: () => m.perfis(),
-  useTaxonomiasBiblioteca: () => m.tax(),
   useCriarReferencias: () => ({ mutateAsync: m.criarRef, isPending: false }),
   useGerarHeadlineViral: () => ({ mutateAsync: m.gerar, isPending: false }),
+}));
+vi.mock("@/hooks/geracao/useTaxonomias", () => ({
+  useTaxonomias: () => m.tax(),
 }));
 vi.mock("@/hooks/useAssuntosVirais", () => ({
   useAssuntosVirais: (...a: any[]) => m.assuntos(...a),

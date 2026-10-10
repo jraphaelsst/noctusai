@@ -101,19 +101,6 @@ export function useViralDetalhe(marcaId: string | null, viralId: string | null) 
   };
 }
 
-/**
- * Static taxonomies (#1). Same query key as FE-1's `useTaxonomias`, so both
- * share one cache entry; kept local because FE-1 owns that file.
- */
-export function useTaxonomiasBiblioteca() {
-  return useQuery({
-    queryKey: [...GERACAO_KEY, "taxonomias"],
-    staleTime: 60 * 60 * 1000,
-    queryFn: async () =>
-      unwrap(await api.get<Envelope<Taxonomias>>("/api/media-creation/taxonomias")),
-  });
-}
-
 /** Org-wide monitored profiles (#9). */
 export function usePerfisMonitorados(q = "") {
   const query = useQuery({
