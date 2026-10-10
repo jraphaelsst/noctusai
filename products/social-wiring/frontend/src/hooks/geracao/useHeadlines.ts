@@ -61,6 +61,29 @@ export function useLotes(marcaId: string | null, q = "", offset = 0) {
   };
 }
 
+/** Batches generated from one Esteira post (`GET /lotes?post_id=`, contract §5.3). Polls while one runs. */
+export function useLotesDoPost(marcaId: string | null, postId: string | null) {
+  const query = useQuery({
+    queryKey: [...HEAD_KEY, marcaId, "lotes", "post", postId],
+    enabled: !!marcaId && !!postId,
+    queryFn: async () => {
+      const p = new URLSearchParams({
+        marca_id: marcaId as string,
+        post_id: postId as string,
+        limit: String(HEADLINES_PAGE_SIZE),
+      });
+      return unwrap(await api.get<Envelope<{ items: HeadlineLote[]; total: number }>>(`${BASE}/lotes?${p}`));
+    },
+    refetchInterval: (s) => (algumLoteEmAndamento(s.state.data?.items) ? HEADLINES_POLL_MS : false),
+    placeholderData: keepPreviousData,
+  });
+  return {
+    ...query,
+    showSkeleton: !!marcaId && !!postId && query.isPending && !query.data,
+    isRefreshing: query.isFetching && !!query.data,
+  };
+}
+
 export function useLote(id: string | null) {
   const query = useQuery({
     queryKey: [...HEAD_KEY, "lote", id],
@@ -92,6 +115,8 @@ export type LoteCreate =
       referencia?: ReferenciaLote;
       somente_pesquisa: boolean;
       criatividade: Criatividade;
+      /** Batch generated from inside an Esteira post (contract §5.3 `LoteParams.post_id`). */
+      post_id?: string;
     }
   | {
       marca_id: string;
@@ -101,6 +126,7 @@ export type LoteCreate =
       tom?: number;
       referencia?: Exclude<ReferenciaLote, { tipo: "gatilho" }>;
       criatividade: Criatividade;
+      post_id?: string;
     };
 
 export function useCriarLote() {

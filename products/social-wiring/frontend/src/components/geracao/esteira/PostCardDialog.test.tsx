@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const m = vi.hoisted(() => ({
@@ -15,6 +15,14 @@ const m = vi.hoisted(() => ({
   lista: vi.fn(),
   toastErr: vi.fn(),
   roteiroModal: vi.fn(),
+  excluir: vi.fn(),
+  mover: vi.fn(),
+  setMembros: vi.fn(),
+  reprocessar: vi.fn(),
+  editarHeadline: vi.fn(),
+  headlineCompleta: vi.fn(),
+  lotes: vi.fn(),
+  stages: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: m.toastErr } }));
@@ -29,19 +37,32 @@ vi.mock("@/hooks/geracao/useEsteira", () => ({
   useVincularRoteiro: () => idle,
   useDesvincularRoteiro: () => idle,
   useGerarLegenda: () => ({ mutate: m.gerar, isPending: false }),
-  useEquipe: () => ({ data: [], showSkeleton: false, isError: false }),
+  useExcluirPost: () => ({ mutate: m.excluir, isPending: false }),
+  useEquipe: () => ({
+    data: [
+      { id: "u1", nome: "Ana", ativo: true },
+      { id: "u2", nome: "Bia", ativo: true },
+    ],
+    showSkeleton: false,
+    isError: false,
+  }),
+}));
+vi.mock("@/lib/pipelines", () => ({
+  esteiraPipeline: {
+    useStages: () => m.stages(),
+    useMoveCard: () => ({ mutate: m.mover, isPending: false }),
+  },
 }));
 
 const q = (data: unknown) => ({ data, isPending: false, isFetching: false, isError: false });
 vi.mock("@/hooks/geracao/usePostHub", () => ({
   flattenTimeline: () => [],
-  useDatasPost: () => idle,
   postHub: {
     useCardResumo: () => q({ descricao: null }),
     useNotaMutations: () => ({ create: idle }),
     useChecklists: () => q([]),
     useChecklistMutations: () => ({ removeChecklist: idle, addItem: idle, toggleItem: idle, removeItem: idle }),
-    useSetMembrosMutation: () => idle,
+    useSetMembrosMutation: () => ({ mutate: m.setMembros, isPending: false }),
     useTimeline: () => ({ ...q(undefined), hasNextPage: false, isFetchingNextPage: false, fetchNextPage: vi.fn() }),
     useDocumentos: () => q([]),
     useTiposDocumento: () => q([]),
@@ -52,15 +73,41 @@ vi.mock("@/hooks/geracao/usePostHub", () => ({
 }));
 vi.mock("@/hooks/geracao/useHeadlines", () => ({
   useHeadlinesLista: (_marca: string | null, lista: string) => m.lista(lista),
+  useHeadline: (id: string | null) => m.headlineCompleta(id),
+  useLotesDoPost: () => m.lotes(),
 }));
 vi.mock("@/hooks/geracao/useRoteiros", () => ({
   useRoteiros: () => ({ data: { items: [] }, showSkeleton: false, isError: false }),
+  useReprocessarRoteiro: () => ({ mutate: m.reprocessar, isPending: false }),
   useRoteiro: () => ({ data: { id: "r1", conteudo: "Cena 1", etapa: null }, showSkeleton: false, isError: false }),
 }));
 vi.mock("@/hooks/useIntegrationAccounts", () => ({
   useIntegrationAccounts: () => ({ data: [{ id: "c1", account_label: "@marca" }] }),
 }));
-vi.mock("@/components/geracao/headlines/EditarHeadlineModal", () => ({ EditarHeadlineModal: () => null }));
+vi.mock("@/components/geracao/headlines/EditarHeadlineModal", () => ({
+  EditarHeadlineModal: (p: any) => {
+    m.editarHeadline(p);
+    return p.open ? <div>editar-headline</div> : null;
+  },
+}));
+vi.mock("@/components/geracao/esteira/GerarHeadlinesDialog", () => ({
+  GerarHeadlinesDialog: (p: any) =>
+    p.open ? (
+      <div>
+        gerar-dialog:{p.postId}:{p.marcaId}
+        <button onClick={() => p.onConcluido("l9")}>concluir-lote</button>
+      </div>
+    ) : null,
+}));
+vi.mock("@/components/geracao/headlines/HeadlinesGeradasModal", () => ({
+  HeadlinesGeradasModal: (p: any) =>
+    p.open ? (
+      <div>
+        lote-aberto:{p.loteId}
+        <button onClick={() => p.onUsarNoPost({ id: "hg1" })}>usar-hg1</button>
+      </div>
+    ) : null,
+}));
 vi.mock("@/components/geracao/roteiro/EditarRoteiroModal", () => ({ EditarRoteiroModal: () => null }));
 vi.mock("@/components/geracao/roteiro/RoteiroAvancadoModal", () => ({
   RoteiroAvancadoModal: (p: any) => {
@@ -122,6 +169,19 @@ const montar = (onClose = vi.fn()) => {
 
 beforeEach(() => {
   m.post.mockReturnValue(ok(postBase()));
+  m.headlineCompleta.mockReturnValue({ data: undefined });
+  m.lotes.mockReturnValue({ data: { items: [] }, showSkeleton: false, isError: false });
+  m.stages.mockReturnValue({
+    data: [
+      { id: "e0", label: "Ideia", posicao: 0, papel: null, ativo: true },
+      { id: "e1", label: "Roteiro", posicao: 1, papel: null, ativo: true },
+      { id: "e2", label: "Gravação", posicao: 2, papel: "gravacao", ativo: true },
+      { id: "e3", label: "Postado", posicao: 3, papel: "postado", ativo: true },
+      { id: "e4", label: "Cancelado", posicao: 4, papel: "cancelado", ativo: true },
+    ],
+    isPending: false,
+    isError: false,
+  });
   m.lista.mockImplementation((lista: string) => ({
     data: {
       items:
@@ -177,7 +237,7 @@ describe("PostCardDialog states", () => {
   it("renderiza título, marca e motivo de bloqueio", () => {
     m.post.mockReturnValue(ok(postBase({ motivo_bloqueio: "Falta autorização" })));
     montar();
-    expect(screen.getByLabelText("Título do post")).toHaveValue("Reel do café");
+    expect(screen.getAllByRole("heading", { level: 2, name: "Reel do café" }).length).toBeGreaterThan(0);
     expect(screen.getByTestId("post-marca")).toHaveTextContent("Marca Um");
     expect(screen.getByTestId("motivo-bloqueio")).toHaveTextContent("Falta autorização");
   });
@@ -320,5 +380,185 @@ describe("Publicação / legenda", () => {
     fireEvent.change(screen.getByLabelText("Permalink"), { target: { value: "https://exemplo.com/x" } });
     expect(screen.getByText("Use um link do instagram.com.")).toBeInTheDocument();
     expect(screen.getByText("Salvar")).toBeDisabled();
+  });
+});
+
+describe("Cabeçalho: título, etapa, membros, menu", () => {
+  it("renomeia inline no cabeçalho", () => {
+    montar();
+    fireEvent.click(screen.getByLabelText("Renomear post"));
+    fireEvent.change(screen.getByLabelText("Título do post"), { target: { value: "Novo nome" } });
+    fireEvent.click(screen.getByText("Salvar"));
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { titulo: "Novo nome" } }, expect.any(Object));
+  });
+
+  it("mover para frente envia direto, sem diálogo", () => {
+    montar();
+    fireEvent.change(screen.getByLabelText("Etapa"), { target: { value: "e2" } });
+    expect(m.mover).toHaveBeenCalledWith({ cardId: "p1", toStageId: "e2" });
+  });
+
+  it("voltar pede o motivo antes de enviar (mesma regra do quadro)", async () => {
+    m.post.mockReturnValue(ok(postBase({ etapa_id: "e2" })));
+    montar();
+    fireEvent.change(screen.getByLabelText("Etapa"), { target: { value: "e1" } });
+    expect(m.mover).not.toHaveBeenCalled();
+    const campo = await screen.findByPlaceholderText("Por que voltar?");
+    fireEvent.change(campo, { target: { value: "Faltou cena" } });
+    fireEvent.click(screen.getByText("Devolver"));
+    expect(m.mover).toHaveBeenCalledWith({ cardId: "p1", toStageId: "e1", motivo: "Faltou cena" });
+  });
+
+  it("mover para Postado pede o permalink opcional", async () => {
+    m.post.mockReturnValue(ok(postBase({ etapa_id: "e2" })));
+    montar();
+    fireEvent.change(screen.getByLabelText("Etapa"), { target: { value: "e3" } });
+    expect(m.mover).not.toHaveBeenCalled();
+    fireEvent.change(await screen.findByPlaceholderText(/instagram.com/), {
+      target: { value: "https://www.instagram.com/reel/abc" },
+    });
+    fireEvent.click(screen.getByText("Confirmar"));
+    expect(m.mover).toHaveBeenCalledWith({
+      cardId: "p1",
+      toStageId: "e3",
+      extra: { permalink: "https://www.instagram.com/reel/abc" },
+    });
+  });
+
+  it("etapas indisponíveis mostram erro, sem select", () => {
+    m.stages.mockReturnValue({ data: undefined, isPending: false, isError: true });
+    montar();
+    expect(screen.getByTestId("etapa-erro")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Etapa")).not.toBeInTheDocument();
+  });
+
+  it("membros: o popover do seed alterna e envia a lista inteira", async () => {
+    m.post.mockReturnValue(ok(postBase({ membros: [{ id: "u1", nome: "Ana", cor: null }] })));
+    montar();
+    fireEvent.click(screen.getByTestId("membros-trigger"));
+    fireEvent.click(await screen.findByTestId("membro-item-u2"));
+    expect(m.setMembros).toHaveBeenCalledWith(["u1", "u2"], expect.any(Object));
+  });
+
+  it("arquivar pede confirmação", async () => {
+    montar();
+    fireEvent.pointerDown(screen.getByLabelText("Mais ações"), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByText("Arquivar"));
+    expect(m.atualizar).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByText("Confirmar"));
+    expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { arquivado: true } }, expect.any(Object));
+  });
+
+  it("excluir pede confirmação e fecha o cartão ao concluir", async () => {
+    m.excluir.mockImplementation((_id: string, o: any) => o.onSuccess());
+    const onClose = montar();
+    fireEvent.pointerDown(screen.getByLabelText("Mais ações"), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByText("Excluir"));
+    expect(m.excluir).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir" }));
+    expect(m.excluir).toHaveBeenCalledWith("p1", expect.any(Object));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("falha ao excluir mostra o erro e mantém o cartão aberto", async () => {
+    m.excluir.mockImplementation((_id: string, o: any) => o.onError(new Error("sem permissão")));
+    const onClose = montar();
+    fireEvent.pointerDown(screen.getByLabelText("Mais ações"), { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByText("Excluir"));
+    fireEvent.click(await screen.findByRole("button", { name: "Excluir" }));
+    expect(m.toastErr).toHaveBeenCalledWith("sem permissão");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("Headline: gerar, recentes e original", () => {
+  it("Gerar headlines abre o diálogo com a marca e o post fixos", () => {
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Gerar headlines"));
+    expect(screen.getByText("gerar-dialog:p1:m1")).toBeInTheDocument();
+  });
+
+  it("ao concluir o lote mostra as headlines e 'Usar neste post' vincula", () => {
+    m.vincularH.mockImplementation((_v: unknown, o: any) => o.onSuccess());
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Gerar headlines"));
+    fireEvent.click(screen.getByText("concluir-lote"));
+    expect(screen.getByText("lote-aberto:l9")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("usar-hg1"));
+    expect(m.vincularH).toHaveBeenCalledWith({ postId: "p1", body: { headline_id: "hg1" } }, expect.any(Object));
+    expect(screen.queryByText(/lote-aberto/)).not.toBeInTheDocument();
+  });
+
+  it("aba 'Geradas recentemente' lista os lotes do post e abre o lote", () => {
+    m.lotes.mockReturnValue({
+      data: { items: [{ id: "l1", resumo: "10 headlines", status: "completo" }] },
+      showSkeleton: false,
+      isError: false,
+    });
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Escolher da biblioteca"));
+    fireEvent.click(screen.getByText("Geradas recentemente"));
+    fireEvent.click(screen.getByText("Ver headlines"));
+    expect(screen.getByText("lote-aberto:l1")).toBeInTheDocument();
+  });
+
+  it("aba recentes: vazio e erro", () => {
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Escolher da biblioteca"));
+    fireEvent.click(screen.getByText("Geradas recentemente"));
+    expect(screen.getByTestId("headline-picker-vazio")).toBeInTheDocument();
+    cleanup();
+    m.lotes.mockReturnValue({ data: undefined, showSkeleton: false, isError: true });
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Escolher da biblioteca"));
+    fireEvent.click(screen.getByText("Geradas recentemente"));
+    expect(screen.getByTestId("headline-picker-erro")).toBeInTheDocument();
+  });
+
+  it("Editar passa o texto_original REAL (nunca null) ao modal", () => {
+    m.post.mockReturnValue(ok(postBase({ headline })));
+    m.headlineCompleta.mockReturnValue({ data: { id: "h1", texto_original: "Original da IA" } });
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Editar"));
+    const abertas = m.editarHeadline.mock.calls.map((c) => c[0]).filter((p) => p.open);
+    expect(abertas.at(-1).headline).toEqual({ id: "h1", texto: "Café muda tudo", texto_original: "Original da IA" });
+    expect(m.headlineCompleta).toHaveBeenCalledWith("h1");
+  });
+
+  it("antes de carregar a linha real, o original não vira null", () => {
+    m.post.mockReturnValue(ok(postBase({ headline })));
+    montar();
+    tab("headline");
+    fireEvent.click(screen.getByText("Editar"));
+    const abertas = m.editarHeadline.mock.calls.map((c) => c[0]).filter((p) => p.open);
+    expect(abertas.at(-1).headline.texto_original).not.toBeNull();
+  });
+});
+
+describe("Roteiro: reprocessar", () => {
+  it("confirma e reprocessa o roteiro vinculado", () => {
+    m.post.mockReturnValue(ok(postBase({ headline, roteiro: roteiroOk })));
+    montar();
+    tab("roteiro");
+    fireEvent.click(screen.getByText("Reprocessar"));
+    fireEvent.change(screen.getByLabelText("Informações adicionais"), { target: { value: "mais curto" } });
+    fireEvent.click(within(screen.getByTestId("reprocessar-roteiro")).getByText("Reprocessar"));
+    expect(m.reprocessar).toHaveBeenCalledWith({ id: "r1", instrucoes_adicionais: "mais curto" }, expect.any(Object));
+  });
+
+  it("falha ao reprocessar mostra o erro", () => {
+    m.reprocessar.mockImplementation((_v: unknown, o: any) => o.onError(new Error("cota")));
+    m.post.mockReturnValue(ok(postBase({ headline, roteiro: roteiroOk })));
+    montar();
+    tab("roteiro");
+    fireEvent.click(screen.getByText("Reprocessar"));
+    fireEvent.click(within(screen.getByTestId("reprocessar-roteiro")).getByText("Reprocessar"));
+    expect(m.toastErr).toHaveBeenCalledWith("cota");
   });
 });

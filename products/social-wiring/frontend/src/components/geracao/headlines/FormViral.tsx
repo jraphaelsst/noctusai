@@ -25,10 +25,12 @@ const ASSUNTOS_MAX = 5;
 interface Props {
   marcaId: string | null;
   bloqueado?: boolean;
+  /** Esteira: the batch is generated for this post (`post_id`). */
+  postId?: string;
   onCriado: (lote: HeadlineLote) => void;
 }
 
-export function FormViral({ marcaId, bloqueado, onCriado }: Props) {
+export function FormViral({ marcaId, bloqueado, postId, onCriado }: Props) {
   const assuntosQ = useAssuntosVirais(marcaId, "approved");
   const taxQ = useTaxonomias();
   const perfisQ = usePerfisMonitorados();
@@ -61,6 +63,7 @@ export function FormViral({ marcaId, bloqueado, onCriado }: Props) {
           ? { referencia: { tipo: "formato" as const, formato_ids: formatoIds } }
           : {}),
       criatividade: "equilibrado",
+      ...(postId ? { post_id: postId } : {}),
     };
     try {
       onCriado(await criar.mutateAsync(body));

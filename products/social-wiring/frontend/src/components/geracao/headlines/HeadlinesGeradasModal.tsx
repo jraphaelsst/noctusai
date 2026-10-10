@@ -39,9 +39,11 @@ interface Props {
   marcaId: string | null;
   /** The new batch created by Reprocessar (the old one is kept) — the page follows it. */
   onReprocessado?: (loteId: string) => void;
+  /** Esteira post card: adds "Usar neste post" to each headline (binds it and the caller closes). */
+  onUsarNoPost?: (h: Headline) => void;
 }
 
-export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onReprocessado }: Props) {
+export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onReprocessado, onUsarNoPost }: Props) {
   const q = useLote(open ? loteId : null);
   const lote = q.data;
   const favoritar = useFavoritarHeadline();
@@ -167,7 +169,13 @@ export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onR
                       <Button size="sm" variant="outline" onClick={() => setRoteiroDe(h)}>
                         <Sparkles className="mr-1 h-4 w-4" /> Criar roteiro
                       </Button>
-                      <CriarPostButton marcaId={marcaId} headlineId={h.id} post={h.post} />
+                      {onUsarNoPost ? (
+                        <Button size="sm" disabled={!!h.post} title={h.post ? `No post: ${h.post.titulo}` : undefined} onClick={() => onUsarNoPost(h)}>
+                          Usar neste post
+                        </Button>
+                      ) : (
+                        <CriarPostButton marcaId={marcaId} headlineId={h.id} post={h.post} />
+                      )}
                     </div>
                   </li>
                 ))}

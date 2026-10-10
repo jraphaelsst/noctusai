@@ -16,21 +16,21 @@ import {
   DescricaoSection,
   LembretesSubpage,
   dataHoraLocalParaIsoSP,
+  formatarDataHoraSP,
   isoParaDataHoraLocalSP,
   type CardSubpage,
 } from "@noctusai/lib/components";
 import { Bell, FileText, Film, Lightbulb, Megaphone, MessageSquareText, ScrollText } from "lucide-react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useAtualizarPost, usePost } from "@/hooks/geracao/useEsteira";
-import { flattenTimeline, postHub, useDatasPost } from "@/hooks/geracao/usePostHub";
-import { useEquipe } from "@/hooks/geracao/useEsteira";
+import { flattenTimeline, postHub } from "@/hooks/geracao/usePostHub";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe } from "@/types/esteira";
+import { PostHeaderAcoes } from "./PostHeaderAcoes";
 import { HeadlineSecao } from "./secoes/HeadlineSecao";
 import { ProducaoSecao } from "./secoes/ProducaoSecao";
 import { PublicacaoSecao } from "./secoes/PublicacaoSecao";
@@ -55,15 +55,11 @@ function Campo({ rotulo, children }: { rotulo: string; children: ReactNode }) {
 }
 
 function GeralSecao({ post }: { post: PostDetalhe }) {
-  const [titulo, setTitulo] = useState(post.titulo);
   const atualizar = useAtualizarPost();
-  const datas = useDatasPost(post.id);
   const resumoQ = postHub.useCardResumo(post.id);
   const notas = postHub.useNotaMutations(post.id);
   const checklistsQ = postHub.useChecklists(post.id);
   const checklistMut = postHub.useChecklistMutations(post.id);
-  const equipeQ = useEquipe();
-  const membrosMut = postHub.useSetMembrosMutation(post.id);
   const contasQ = useIntegrationAccounts({ provider: "instagram", marcaId: post.marca_id });
   const contas = contasQ.data ?? [];
 
@@ -71,27 +67,8 @@ function GeralSecao({ post }: { post: PostDetalhe }) {
   const patch = (p: Parameters<typeof atualizar.mutate>[0]["patch"], falha: string) =>
     atualizar.mutate({ id: post.id, patch: p }, { onError: erro(falha) });
 
-  const selecionados = post.membros.map((m) => m.id);
-  const alternar = (id: string) =>
-    membrosMut.mutate(selecionados.includes(id) ? selecionados.filter((x) => x !== id) : [...selecionados, id], {
-      onError: erro("Não foi possível atualizar a equipe."),
-    });
-
   return (
     <div className="space-y-4" data-testid="secao-geral">
-      <Campo rotulo="Título">
-        <div className="flex gap-2">
-          <Input aria-label="Título do post" value={titulo} onChange={(e) => setTitulo(e.target.value)} />
-          <Button
-            size="sm"
-            disabled={!titulo.trim() || titulo.trim() === post.titulo || atualizar.isPending}
-            onClick={() => patch({ titulo: titulo.trim() }, "Não foi possível renomear o post.")}
-          >
-            Salvar título
-          </Button>
-        </div>
-      </Campo>
-
       {post.motivo_bloqueio && (
         <p className="rounded border border-destructive/40 p-2 text-sm text-destructive" data-testid="motivo-bloqueio">
           Motivo do bloqueio: {post.motivo_bloqueio}
@@ -125,47 +102,12 @@ function GeralSecao({ post }: { post: PostDetalhe }) {
             }}
           />
         </Campo>
+        {/* Read-only: no Datas WRITE route exists yet for posts (see the delivery report). */}
         <Campo rotulo="Postagem prevista">
-          <Input
-            type="datetime-local"
-            aria-label="Postagem prevista"
-            defaultValue={isoParaDataHoraLocalSP(post.data_entrega)}
-            onBlur={(e) => {
-              const iso = e.target.value ? dataHoraLocalParaIsoSP(e.target.value) : null;
-              if (iso !== post.data_entrega) {
-                datas.mutate({ data_entrega: iso }, { onError: erro("Não foi possível salvar a data de postagem.") });
-              }
-            }}
-          />
+          <p className="flex h-9 items-center text-sm" data-testid="postagem-prevista">
+            {post.data_entrega ? formatarDataHoraSP(post.data_entrega) : "Não definida"}
+          </p>
         </Campo>
-      </div>
-
-      <div className="space-y-1">
-        <p className="text-sm text-muted-foreground">Equipe</p>
-        {equipeQ.showSkeleton ? (
-          <div className="h-8 animate-pulse rounded bg-muted" data-testid="equipe-loading" />
-        ) : equipeQ.isError && !equipeQ.data ? (
-          <p className="text-sm text-destructive">Não foi possível carregar a equipe.</p>
-        ) : (equipeQ.data ?? []).length === 0 ? (
-          <p className="text-sm text-muted-foreground">Nenhum membro na equipe ainda.</p>
-        ) : (
-          <div className="flex flex-wrap gap-1">
-            {(equipeQ.data ?? [])
-              .filter((m) => m.ativo || selecionados.includes(m.id))
-              .map((m) => (
-                <Button
-                  key={m.id}
-                  size="sm"
-                  variant={selecionados.includes(m.id) ? "default" : "outline"}
-                  aria-pressed={selecionados.includes(m.id)}
-                  disabled={membrosMut.isPending}
-                  onClick={() => alternar(m.id)}
-                >
-                  {m.nome}
-                </Button>
-              ))}
-          </div>
-        )}
       </div>
 
       <DescricaoSection
@@ -254,10 +196,8 @@ export function PostCardDialog({ postId, onClose }: PostCardDialogProps) {
       headerActions={
         post ? (
           <>
-            <Badge variant="secondary" data-testid="post-marca">
-              {post.marca_nome}
-            </Badge>
             {postQ.isRefreshing && <span className="text-xs text-muted-foreground">Atualizando…</span>}
+            <PostHeaderAcoes key={post.id} post={post} onExcluido={onClose} />
           </>
         ) : null
       }

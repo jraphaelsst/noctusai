@@ -11,9 +11,10 @@ import { EditarRoteiroModal } from "@/components/geracao/roteiro/EditarRoteiroMo
 import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
 import { StatusBadge } from "@/components/geracao/StatusBadge";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useDesvincularRoteiro, useVincularRoteiro } from "@/hooks/geracao/useEsteira";
-import { useRoteiro, useRoteiros } from "@/hooks/geracao/useRoteiros";
+import { useReprocessarRoteiro, useRoteiro, useRoteiros } from "@/hooks/geracao/useRoteiros";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe } from "@/types/esteira";
@@ -90,6 +91,9 @@ export function RoteiroSecao({ post }: { post: PostDetalhe }) {
   const [criando, setCriando] = useState(false);
   const [vinculando, setVinculando] = useState(false);
   const [editando, setEditando] = useState(false);
+  const [reprocessando, setReprocessando] = useState(false);
+  const [info, setInfo] = useState("");
+  const reprocessar = useReprocessarRoteiro();
   const qc = useQueryClient();
   const desvincular = useDesvincularRoteiro();
   const r = post.roteiro;
@@ -99,6 +103,23 @@ export function RoteiroSecao({ post }: { post: PostDetalhe }) {
     desvincular.mutate(post.id, {
       onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível desvincular o roteiro.")),
     });
+  }
+
+  function confirmarReprocesso() {
+    if (!r) return;
+    reprocessar.mutate(
+      { id: r.id, instrucoes_adicionais: info.trim() || undefined },
+      {
+        onSuccess: () => {
+          toast.success("Reprocessando: um novo roteiro foi criado e segue vinculado ao post.");
+          setReprocessando(false);
+          setInfo("");
+          void qc.invalidateQueries({ queryKey: ESTEIRA_KEY });
+          void qc.invalidateQueries({ queryKey: [ESTEIRA_PIPELINE_KEY] });
+        },
+        onError: (e) => toast.error(mensagemErroServidor(e, "Não foi possível reprocessar o roteiro.")),
+      },
+    );
   }
 
   async function copiar(conteudo: string) {
@@ -149,6 +170,9 @@ export function RoteiroSecao({ post }: { post: PostDetalhe }) {
             <Button size="sm" variant="outline" onClick={() => setEditando(true)}>
               Editar
             </Button>
+            <Button size="sm" variant="outline" onClick={() => setReprocessando(true)}>
+              Reprocessar
+            </Button>
             <Button size="sm" variant="outline" disabled={desvincular.isPending} onClick={desvincularRoteiro}>
               Desvincular
             </Button>
@@ -181,6 +205,30 @@ export function RoteiroSecao({ post }: { post: PostDetalhe }) {
         headlineInicial={post.headline ? { id: post.headline.id, texto: post.headline.texto } : null}
       />
       <Picker open={vinculando} marcaId={post.marca_id} postId={post.id} onClose={() => setVinculando(false)} />
+      <Dialog open={reprocessando} onOpenChange={(o) => !o && setReprocessando(false)}>
+        <DialogContent data-testid="reprocessar-roteiro">
+          <DialogHeader>
+            <DialogTitle>Reprocessar roteiro</DialogTitle>
+            <DialogDescription>
+              Gera um novo roteiro a partir deste. O vínculo com o post passa para o novo.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            aria-label="Informações adicionais"
+            placeholder="Informações adicionais (opcional)"
+            value={info}
+            onChange={(e) => setInfo(e.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={() => setReprocessando(false)}>
+              Cancelar
+            </Button>
+            <Button disabled={reprocessar.isPending} onClick={confirmarReprocesso}>
+              {reprocessar.isPending ? "Reprocessando…" : "Reprocessar"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {r && <EditarRoteiroModal open={editando} onOpenChange={setEditando} roteiroId={r.id} />}
     </section>
   );

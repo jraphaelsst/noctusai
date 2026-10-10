@@ -37,6 +37,8 @@ interface Props {
   marcaId: string | null;
   /** Disabled while another batch of this marca is running (the backend answers 409). */
   bloqueado?: boolean;
+  /** Esteira: the batch is generated for this post (`post_id`). */
+  postId?: string;
   onCriado: (lote: HeadlineLote) => void;
 }
 
@@ -78,7 +80,7 @@ function Valores({ marcaId, slug, label, selecionados, onChange }: {
   );
 }
 
-export function FormMePublico({ who, marcaId, bloqueado, onCriado }: Props) {
+export function FormMePublico({ who, marcaId, bloqueado, postId, onCriado }: Props) {
   const grupo = who === "me" ? "especialista" : "publico";
   const variaveisQ = usePesquisaVariaveis();
   const taxQ = useTaxonomias();
@@ -131,6 +133,7 @@ export function FormMePublico({ who, marcaId, bloqueado, onCriado }: Props) {
       ...(referencia ? { referencia } : {}),
       somente_pesquisa: somentePesquisa,
       criatividade: NIVEIS[nivel],
+      ...(postId ? { post_id: postId } : {}),
     };
     try {
       onCriado(await criar.mutateAsync(body));
