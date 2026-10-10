@@ -798,6 +798,20 @@ if [[ -n "$STAGED_CI_MATRIX" ]] && have_py; then
     fi
 fi
 
+# ─── 6e-sexies-pre0. Not-configured exceptions carry the marker (blocking) ─
+# Keeper `check_not_configured_carries_marker` (2026-10-10): a new
+# `*NotConfigured`/`*NaoConfigurado` class without `IntegrationNotConfigured`
+# re-reds check_stand_in_conformance leg A. Static AST, ~2s, staged-scoped.
+STAGED_NOT_CONFIGURED=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^(products/[^/]+/backend/app/.*|seed/[^/]+/backend/[^/]+/.*)\.py$' || true)
+if [[ -n "$STAGED_NOT_CONFIGURED" ]] && have_py; then
+    echo "[pre-commit] backend python staged — checking not-configured exceptions carry the marker..."
+    if ! "$PY" "$CLI" --check-not-configured-carries-marker --paths "$(echo "$STAGED_NOT_CONFIGURED" | paste -sd, -)" --worktree-path "$REPO_ROOT"; then
+        echo "[pre-commit] NOT-CONFIGURED-CARRIES-MARKER check FAILED. Commit aborted." >&2
+        echo "[pre-commit] Add IntegrationNotConfigured (noctusai_lib.primitives.not_configured) as an extra base of the exception." >&2
+        exit 1
+    fi
+fi
+
 # ─── 6e-sexies-pre. Product declared-imports gate (blocking, only when a ────
 # product's backend app/ or requirements, or a seed manifest, changed) ─────
 # Keeper `check_product_declared_imports` — the product half of the seed gate

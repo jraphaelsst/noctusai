@@ -1094,3 +1094,15 @@ social-wiring migrations concurrently (N>=3 on 2026-10-09) a test that hardcodes
   `mcp/noctusai/tests/migration_number_refs_baseline.json` (`{files: {path: count}}`); only a new file or a grown
   count blocks. `--refresh-migration-number-refs-baseline` is shrink-only — touching a legacy test? migrate it to
   the helper (docstrings too: the keeper counts raw text) and refresh.
+
+## "Not configured" exceptions carry `IntegrationNotConfigured` (2026-10-10)
+
+An integration that refuses to run because its config is absent (`*NotConfigured` / `*NaoConfigurado`) mixes in `noctusai_lib.primitives.not_configured.IntegrationNotConfigured`:
+
+```python
+class VistaConfigError(VistaError, IntegrationNotConfigured): ...
+```
+
+The mixin is plain, so it does not change MRO or `except` behaviour. `check_stand_in_conformance` leg A resolves DI graphs in a config-less subprocess and skips these BY TYPE, across a `raise … from exc` wrapper, via `is_integration_not_configured`. An unmarked one reads as a stand-in violation, which was the red since 9363832c4.
+
+Keeper `check_not_configured_carries_marker` blocks a new unmarked class at pre-commit, scoped to the staged products. Scope: the seed packages and active products' `backend/app/`; tests are out of scope.

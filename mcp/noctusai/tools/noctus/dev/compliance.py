@@ -7211,6 +7211,105 @@ def check_product_declared_imports(
 
 
 # ---------------------------------------------------------------------------
+# `check_not_configured_carries_marker` — every "integration deliberately off:
+# config absent" exception carries the seed marker (2026-10-10).
+#
+# WHY. The fleet grew 20+ `*NotConfigured` / `*NaoConfigurado` types with no
+# common base, so nothing could recognise the class: `check_stand_in_conformance`
+# leg A reported each fail-closed integration as a stand-in violation (red since
+# 9363832c4). The root fix was `noctusai_lib.primitives.not_configured.
+# IntegrationNotConfigured`, mixed into all of them; this keeper keeps the NEXT
+# one from silently reopening it.
+#
+# Rule: a class whose NAME says "not configured" (`_NOT_CONFIGURED_NAME`) in the
+# seed packages or an ACTIVE product's `backend/app/` must reach
+# `IntegrationNotConfigured` through its bases — directly, or via a base class
+# in the same scan scope (product + seed) that does. Tests are out of scope.
+# Severity high (it re-reds the stand-in gate and hides real leg-A findings).
+# ---------------------------------------------------------------------------
+
+_NOT_CONFIGURED_NAME = re.compile(r"(NotConfigured|NaoConfigurad[oa])$")
+_NOT_CONFIGURED_MARKER = "IntegrationNotConfigured"
+
+
+def _class_bases_in(paths: list[Path]) -> dict[str, tuple[set[str], str, int]]:
+    """`{class name: (base names, file, lineno)}` over `paths` (first wins)."""
+    out: dict[str, tuple[set[str], str, int]] = {}
+    for path in paths:
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        except (OSError, UnicodeDecodeError, SyntaxError) as exc:
+            logger.debug("compliance: cannot parse %s (%s)", path, exc)
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef):
+                bases = {b.attr if isinstance(b, ast.Attribute) else getattr(b, "id", "")
+                         for b in node.bases}
+                out.setdefault(node.name, (bases, str(path), node.lineno))
+    return out
+
+
+def _runtime_py_files(base: Path) -> list[Path]:
+    return [p for p in sorted(base.rglob("*.py"))
+            if "tests" not in p.relative_to(base).parts and not p.name.startswith("test_")]
+
+
+def check_not_configured_carries_marker(
+    repo_root: Path | None = None, paths: list[str] | None = None,
+) -> list[dict]:
+    """Every `*NotConfigured` / `*NaoConfigurado` exception class in the seed or
+    an active product's `backend/app/` must subclass `IntegrationNotConfigured`
+    (directly or via a marked in-scope base). `paths` narrows to the products
+    they touch; a staged seed file keeps the whole fleet. See the header."""
+    root = repo_root or REPO_ROOT
+    seed_files: list[Path] = []
+    for layer in _SEED_PKG_GLOB:
+        backend = root / "seed" / layer / "backend"
+        for child in sorted(backend.iterdir()) if backend.is_dir() else []:
+            if child.is_dir() and (child / "__init__.py").is_file():
+                seed_files.extend(_runtime_py_files(child))
+    seed_classes = _class_bases_in(seed_files)
+
+    product_dirs = _active_product_dirs(root / "products")
+    seed_touched = paths is None or any(p.startswith("seed/") for p in paths)
+    if paths is not None:
+        slugs = {p.split("/")[1] for p in paths if p.startswith("products/") and p.count("/") >= 2}
+        product_dirs = [d for d in product_dirs if d.name in slugs]
+
+    scopes: list[tuple[str, dict, dict]] = []  # (label, classes to judge, resolution scope)
+    if seed_touched:
+        scopes.append(("seed", seed_classes, seed_classes))
+    for d in product_dirs:
+        app_dir = d / "backend" / "app"
+        if app_dir.is_dir():
+            own = _class_bases_in(_runtime_py_files(app_dir))
+            scopes.append((d.name, own, {**seed_classes, **own}))
+
+    issues: list[dict] = []
+    for label, judged, scope in scopes:
+        marked: set[str] = set()
+        grew = True
+        while grew:
+            grew = False
+            for name, (bases, _f, _l) in scope.items():
+                if name not in marked and (_NOT_CONFIGURED_MARKER in bases or bases & marked):
+                    marked.add(name)
+                    grew = True
+        for name, (_bases, path, lineno) in sorted(judged.items()):
+            if not _NOT_CONFIGURED_NAME.search(name) or name in marked or name == _NOT_CONFIGURED_MARKER:
+                continue
+            rel = str(Path(path).relative_to(root))
+            issues.append({"product": label, "file": rel, "severity": "high", "issue": (
+                f"`{rel}:{lineno}` defines `{name}` — a \"not configured\" exception — "
+                f"without the `IntegrationNotConfigured` marker "
+                f"(`noctusai_lib.primitives.not_configured`). Unmarked, leg A of "
+                f"check_stand_in_conformance reads this fail-closed integration as a "
+                f"stand-in violation (the 2026-10-10 red). Fix: add it as an extra base, "
+                f"e.g. `class {name}(<existing base>, IntegrationNotConfigured)`.")})
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # `check_redis_client_via_seam` — every Redis client is built by the seed seam
 # (`noctusai_lib.integrations.redis`: make_redis_client / make_async_redis_client
 # / redis_connection_url) and nowhere else.
@@ -16175,6 +16274,7 @@ def check_all_products() -> tuple[int, list]:
     all_issues.extend(check_seed_test_root_ci_coverage())
     all_issues.extend(check_seed_declared_imports())
     all_issues.extend(check_product_declared_imports())
+    all_issues.extend(check_not_configured_carries_marker())
     all_issues.extend(check_redis_client_via_seam())
     all_issues.extend(check_every_test_file_is_gated())
     # 2026-08-31 THIRD surface of the same hand-maintained-list-drift
