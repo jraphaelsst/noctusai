@@ -220,6 +220,42 @@ def test_drift_when_diff_touches_the_products_own_build_scope(tmp_path):
     assert "products/orbity/backend/app/main.py" in orbity["build_relevant_files"]
 
 
+def _orbity_drift(tmp_path, n):
+    kw = _with_compose(tmp_path)
+    old = "OLDORBITY000000000000000000000000"
+    files = [f"products/orbity/backend/app/m{i:02d}.py" for i in range(n)]
+    r, _v, _g = _run(
+        containers={
+            "erp-imobiliario": {"revision": _SHA}, "igig": {"revision": _SHA},
+            "orbity": {"revision": old}, "seed": {"revision": _SHA},
+            "social-wiring": {"revision": _SHA}, "core": {"revision": _SHA},
+        },
+        known_commits={old}, diffs={old: files}, **kw,
+    )
+    return next(p for p in r["products"] if p["product"] == "orbity")
+
+
+def test_build_relevant_files_truncation_is_explicit_over_cap(tmp_path):
+    orbity = _orbity_drift(tmp_path, DV._BUILD_RELEVANT_FILES_CAP + 7)
+    assert len(orbity["build_relevant_files"]) == DV._BUILD_RELEVANT_FILES_CAP
+    assert orbity["build_relevant_file_count"] == DV._BUILD_RELEVANT_FILES_CAP + 7
+    assert orbity["build_relevant_files_truncated"] is True
+    n = DV._BUILD_RELEVANT_FILES_CAP + 7 - DV._REASON_FILES_CAP
+    assert orbity["note"].endswith(f"… +{n} more")
+
+
+def test_build_relevant_files_not_truncated_at_or_under_cap(tmp_path):
+    orbity = _orbity_drift(tmp_path, DV._BUILD_RELEVANT_FILES_CAP)
+    assert len(orbity["build_relevant_files"]) == DV._BUILD_RELEVANT_FILES_CAP
+    assert orbity["build_relevant_file_count"] == DV._BUILD_RELEVANT_FILES_CAP
+    assert orbity["build_relevant_files_truncated"] is False
+    # reason still drops beyond 5 -> marked; but with <=5 files it is unmarked
+    small = _orbity_drift(tmp_path, 3)
+    assert "more" not in small["note"]
+    assert small["build_relevant_file_count"] == 3
+    assert small["build_relevant_files_truncated"] is False
+
+
 def test_fleet_wide_seed_change_flags_drift_for_every_actionable_product(tmp_path):
     kw = _with_compose(tmp_path)
     old = "OLDSEEDCHANGE00000000000000000000"
