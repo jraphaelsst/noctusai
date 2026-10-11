@@ -168,6 +168,10 @@ def _rebuild_decision(files: list[str], build_set: list[str] | None = None) -> d
         # Sanctioned services whose own build inputs (workflow `paths:`) changed.
         "services": sorted(services),
         "service_reasons": service_reasons[:20],
+        # Pre-cap lengths: the lists above are capped at 20, so consumers that
+        # surface them (deploy_verify) need the true total to say they were cut.
+        "service_reasons_total": len(service_reasons),
+        "reasons_total": len(reasons),
         "rebuild_set": rebuild_set,
         # Directly changed but no maintained image (asleep / dev-only) — surfaced,
         # never silently dropped: changing them needs no prod rebuild.

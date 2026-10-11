@@ -89,7 +89,10 @@ A deploy is not done until BOTH of these pass:
   `deploy_verify` diffs the running revision against the prod tip through
   `deploy_pull`'s build-scope oracle and only flags `drift` when that diff
   actually touches the product's own build inputs (or a fleet-wide `seed/`/
-  Dockerfile/compose change). A catalog-active product with NO container at
+  Dockerfile/compose change). The per-product
+  `build_relevant_files` list is capped (20); the cut is explicit, never silent —
+  `build_relevant_file_count` is the full length, `build_relevant_files_truncated`
+  the flag, and the prose note ends `… +N more` when it drops items. A catalog-active product with NO container at
   all is its own finding (`missing`) — real (a p-studio-shaped absence,
   2026-08-17), not silently invisible because a compose-driven loop never
   iterates a slug it has no service block for. `status='verified'` (exit 0)
