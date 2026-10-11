@@ -98,6 +98,32 @@ DEFAULT_COMPOSE = "deploy/fleet/docker-compose.prod.yml"
 # dependency: this module never calls into deploy_image, by design).
 _REVISION_LABEL = "org.opencontainers.image.revision"
 
+#: Output-size caps for the build-relevant file list. The cut is never silent:
+#: `build_relevant_file_count` carries the full length, `build_relevant_files_truncated`
+#: the flag, and the prose `reason` ends with "… +N more" when it drops items.
+_BUILD_RELEVANT_FILES_CAP = 20
+_REASON_FILES_CAP = 5
+
+
+def _cap_files(files: list[str], total: int) -> dict[str, Any]:
+    """Explicitly-capped file list: kept slice + full count + truncated flag.
+
+    `total` is the PRE-cap length (`_rebuild_decision` itself pre-caps its
+    lists at 20, so `len(files)` alone would under-report)."""
+    total = max(total, len(files))
+    return {
+        "build_relevant_files": files[:_BUILD_RELEVANT_FILES_CAP],
+        "build_relevant_file_count": total,
+        "build_relevant_files_truncated": total > _BUILD_RELEVANT_FILES_CAP,
+    }
+
+
+def _reason_list(files: list[str], total: int) -> str:
+    """Comma-joined head of `files` for prose, ending "… +N more" when cut."""
+    text = ", ".join(files[:_REASON_FILES_CAP])
+    dropped = max(total, len(files)) - _REASON_FILES_CAP
+    return f"{text} … +{dropped} more" if dropped > 0 else text
+
 _INSPECT_TEMPLATE = (
     "{{.State.Status}}|"
     "{{if .State.Health}}{{.State.Health.Status}}{{end}}|"
@@ -262,11 +288,14 @@ def _diff_drift(
             "actionable_drift": hit,
             "changed_file_count": len(files),
             "fleet_wide_change": False,
-            "build_relevant_files": decision["service_reasons"] if hit else [],
+            **_cap_files(
+                decision["service_reasons"] if hit else [],
+                decision["service_reasons_total"] if hit else 0,
+            ),
             "reason": (
                 f"{len(files)} file(s) changed; service '{slug}' build inputs "
                 + (f"(.github/workflows/build-{slug}.yml paths) changed: "
-                   + ", ".join(decision["service_reasons"][:5]) if hit else
+                   + _reason_list(decision["service_reasons"], decision["service_reasons_total"]) if hit else
                    "(its workflow paths) are untouched - older revision is the steady state.")
             ),
         }
@@ -277,7 +306,7 @@ def _diff_drift(
             f"{len(files)} file(s) changed between the running revision and the prod "
             f"tip, including build-relevant path(s) for '{slug}' "
             f"({'fleet-wide — seed/ or Dockerfile/compose/config change' if decision['fleet_wide'] else 'product-own path'})"
-            + (f": {', '.join(decision['reasons'][:5])}" if decision["reasons"] else "")
+            + (f": {_reason_list(decision['reasons'], decision['reasons_total'])}" if decision["reasons"] else "")
         )
     else:
         reason = (
@@ -290,7 +319,7 @@ def _diff_drift(
         "actionable_drift": actionable,
         "changed_file_count": len(files),
         "fleet_wide_change": decision["fleet_wide"],
-        "build_relevant_files": decision["reasons"][:20],
+        **_cap_files(decision["reasons"], decision["reasons_total"]),
         "reason": reason,
     }
 
@@ -425,6 +454,8 @@ def _verify_one(
         out["fleet_wide_change"] = diff.get("fleet_wide_change")
         if diff.get("build_relevant_files"):
             out["build_relevant_files"] = diff["build_relevant_files"]
+            out["build_relevant_file_count"] = diff["build_relevant_file_count"]
+            out["build_relevant_files_truncated"] = diff["build_relevant_files_truncated"]
         out["note"] = diff["reason"]
         if diff["actionable_drift"] is None:
             out["verdict"] = "unverifiable"
