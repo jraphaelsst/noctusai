@@ -1054,6 +1054,11 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
     reads through the same reference).
     """
 
+    #: See MockSupabaseClient.strict_single (set by the owning request builder).
+    _strict_single = False
+    _single_raises_on_empty = False
+
+
     def __init__(
         self,
         data=None,
@@ -1114,10 +1119,12 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
 
     def single(self):
         self._single_mode = True
+        self._single_raises_on_empty = self._strict_single
         return self
 
     def maybe_single(self):
         self._single_mode = True
+        self._single_raises_on_empty = False
         return self
 
     def _filtered_rows(self) -> list:
@@ -1180,6 +1187,16 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
             # row-cap window applies (the result is 0 or 1 row either way).
             data = filtered[0] if filtered else None
             self._single_mode = False
+            if data is None and self._single_raises_on_empty:
+                # Real PostgREST: `.single()` on 0 rows is an ERROR (PGRST116),
+                # never `data=None` — only `.maybe_single()` yields no data.
+                from postgrest.exceptions import APIError
+                raise APIError({
+                    "code": "PGRST116",
+                    "message": "Cannot coerce the result to a single JSON object",
+                    "details": "The result contains 0 rows",
+                    "hint": None,
+                })
             return MockSupabaseResponse(data=data, count=count)
         data = self._windowed_rows(filtered) if isinstance(filtered, list) else filtered
         return MockSupabaseResponse(data=data, count=count)
@@ -1348,6 +1365,10 @@ class MockRequestBuilder:
     three because they hold the same list reference.
     """
 
+    #: See MockSupabaseClient.strict_single (set by the owning client).
+    strict_single = False
+
+
     def __init__(
         self,
         data=None,
@@ -1472,13 +1493,15 @@ class MockRequestBuilder:
         # size; precomputing `len(self._data)` here — the pre-2026-09-16
         # behavior — silently returned the whole-table count for every
         # filtered query).
-        return MockSelectBuilder(
+        sel = MockSelectBuilder(
             self._data,
             count_exact=(count == "exact"),
             response_queue=self._response_queue,
             response_idx=self._response_idx,
             **self._builder_kwargs(),
         )
+        sel._strict_single = self.strict_single
+        return sel
 
     def insert(self, data=None, *a, **k):
         """Track the insert payload AND return the inserted row(s) so that
@@ -1814,6 +1837,12 @@ class MockSupabaseClient:
         self._validate_constraints = validate_schema_constraints
         self._constraint_manifest = manifest
         self._presence_manifest = presence_manifest
+        #: Opt-in real-PostgREST `.single()` semantics: 0 rows RAISES PGRST116
+        #: (as prod does) instead of returning data=None. Off by default only
+        #: because existing suites lean on the lenient shape — it hid a prod
+        #: 404 for every first-time invitee (2026-10-12). Set it before the
+        #: tables are seeded.
+        self.strict_single = False
 
     # -----------------------------------------------------------------
     # Implicit trusted membership row (SEC-2, 2026-09-28)
@@ -1868,7 +1897,7 @@ class MockSupabaseClient:
         else:
             schema, table = self._schema, name
         payload = data if data is not None else self._data
-        return MockRequestBuilder(
+        builder = MockRequestBuilder(
             payload,
             validate_schema=self._validate_schema,
             schema=schema,
@@ -1878,6 +1907,8 @@ class MockSupabaseClient:
             constraint_manifest=self._constraint_manifest,
             presence_manifest=self._presence_manifest,
         )
+        builder.strict_single = self.strict_single
+        return builder
 
     def table(self, name):
         if name not in self._tables:

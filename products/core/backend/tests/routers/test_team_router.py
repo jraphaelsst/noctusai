@@ -334,6 +334,23 @@ class TestAcceptInvite:
         data = resp.json()
         assert data["message"] == "Convite aceito com sucesso"
 
+    def test_accept_invite_first_time_invitee_under_real_single_semantics(self, client):
+        """Regression 2026-10-12: a brand-new invitee has NO noctus_users row.
+
+        Real PostgREST RAISES PGRST116 on `.single()` with 0 rows (→ global 404);
+        the lenient mock returned data=None, so the test above stayed green while
+        every first-time invitee got a bare 404 in prod. `strict_single` restores
+        the real semantics.
+        """
+        mock_sb = client.mock_supabase
+        mock_sb.strict_single = True
+        self._invite(mock_sb, "test@example.com")
+        mock_sb.set_table_data("noctus_users", [])
+
+        resp = client.post("/api/team/accept-invite", json={"token": "tok", "nome": "Isadora"})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"] == {"org_id": "org-1", "role": "owner"}
+
     def _invite(self, mock_sb, email):
         mock_sb.set_table_data("invitations", {
             "id": "inv-1", "org_id": "org-1", "email": email, "role": "owner",

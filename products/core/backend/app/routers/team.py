@@ -473,18 +473,23 @@ async def aceitar_convite(
     user_id = authenticated_user.id
     user_email = authenticated_user.email
 
-    # Check if user already has a profile
-    existing = (
+    # Check if user already has a profile. A brand-new invitee has NONE — that is
+    # the main path of an invite, so this MUST be maybe_single(): `.single()` raises
+    # PGRST116 on 0 rows, which the global handler turns into a bare 404 and every
+    # first-time invitee was locked out (2026-10-12). maybe_single() may also return
+    # None itself (postgrest-py 0 rows), hence the double guard.
+    existing_resp = (
         db.table("noctus_users")
         .select("id, org_id")
         .eq("id", user_id)
-        .single()
+        .maybe_single()
         .execute()
     )
+    existing_data = existing_resp.data if existing_resp is not None else None
 
-    if existing.data and existing.data.get("org_id"):
+    if existing_data and existing_data.get("org_id"):
         # User already belongs to an org — check if it's the same one
-        if existing.data["org_id"] == invite_data["org_id"]:
+        if existing_data["org_id"] == invite_data["org_id"]:
             raise HTTPException(
                 status_code=409,
                 detail="Você já pertence a esta organização",
@@ -495,7 +500,7 @@ async def aceitar_convite(
                 detail="Você já pertence a outra organização. Entre em contato com o suporte.",
             )
 
-    if existing.data:
+    if existing_data:
         # Update existing profile to join the org
         db.table("noctus_users").update({
             "org_id": invite_data["org_id"],
