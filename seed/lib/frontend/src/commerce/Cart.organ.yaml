@@ -1,0 +1,32 @@
+name: Cart
+kind: component
+path: seed/lib/frontend/src/commerce/Cart.tsx
+phase: pilot-seed
+registered_at: "2026-10-12"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Cart view over useCart() (localStorage per host); totals come from the server quote."
+  - "Part of the commerce organ (projects/commerce-seed-p3/CONTRACT.md §5); money is integer cents end to end, formatted only via formatCents; pt-BR default copy with an en map (commerce/messages.ts) keyed by locale."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "Seed-portable: no product coupling; the host product passes its authenticated api client (staff) or a base URL (public storefront)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by products/commerce and later products."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []

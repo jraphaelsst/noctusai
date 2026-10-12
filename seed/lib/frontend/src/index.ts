@@ -242,3 +242,9 @@ export {
   limiteFotosPorLote,
   limiteBytesPorFoto,
 } from "./photo-editing/permissions";
+
+// Commerce organ (storefront + back office) — `createCommerceHooks`, staff and
+// storefront components, contract §1 enums/DTOs. Contract:
+// projects/commerce-seed-p3/CONTRACT.md. Product-agnostic; the host product
+// supplies the api client (staff) or base URL (public storefront).
+export * from './commerce';
