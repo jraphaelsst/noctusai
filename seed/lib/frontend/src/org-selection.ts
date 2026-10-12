@@ -1,9 +1,16 @@
 /**
- * Org picker client (platform staff enter a customer org once per login).
+ * Org picker client (platform staff choose the org EVERY time they enter a product).
  *
  * `useOrgSelection()` exposes the access snapshot, the choices and the
  * choose/end actions. Server is the gate; this is UX only. Swapping orgs
  * hard-reloads the page so no cross-org React-Query cache survives.
+ *
+ * Entry handshake (owner decision 2026-10-12, see `org-visit.ts`): a page load
+ * with no visit marker is an ENTRY. For staff on a picker-ready product it ends
+ * any selection left from a previous visit (`DELETE /api/me/org-choice`), refetches
+ * access and keeps the picker REQUIRED (and the product content unrendered) until a
+ * choice -- which sets the marker and reloads. Reloads of the same tab keep the
+ * choice. Non-staff: the marker is set, nothing else happens.
  */
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -14,6 +21,11 @@ import type { MeAccess, OrgChoice, OrgSelectionState } from './access';
 import {
   getOrgPin, setOrgPin, setOrgSelectionChangedHandler, subscribeOrgPin,
 } from './org-pin';
+import {
+  clearOrgVisitMarker, getOrgEntryPhase, markOrgVisit, resetOrgEntryPhase,
+  setOrgEntryPhase, subscribeOrgEntryPhase,
+} from './org-visit';
+import type { OrgEntryPhase } from './org-visit';
 
 export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 
@@ -50,8 +62,16 @@ export interface UseOrgSelectionResult {
   choicesLoading: boolean;
   choicesError: boolean;
   refetchChoices: () => void;
-  /** Whether the picker should be visible without user action. */
+  /** Whether the picker should be visible without user action (non-dismissible). */
   pickerRequired: boolean;
+  /**
+   * The product's routes/children must NOT render: an entry whose access is still
+   * pending, a staff entry handshake in flight, or a required picker. Non-staff
+   * within a visit: always `false`.
+   */
+  contentBlocked: boolean;
+  /** This page load's entry phase (see `org-visit.ts`). */
+  entryPhase: OrgEntryPhase;
   /** PUT the choice, pin it, reload. Rejects with the ApiError on failure. */
   choose: (orgId: string) => Promise<void>;
   choosing: boolean;
@@ -86,12 +106,18 @@ function subscribeForced(l: () => void) {
 let pageOrg: string | null = null;
 let swapping = false;
 /** Tests / logout reset. */
-export function resetOrgSelectionPage() { pageOrg = null; swapping = false; }
+export function resetOrgSelectionPage() { pageOrg = null; swapping = false; resetOrgEntryPhase(); }
+
+/** Entry phases during which no choice exists yet for this page load. */
+function isEntry(phase: OrgEntryPhase): boolean {
+  return phase === 'entry' || phase === 'ending' || phase === 'ended';
+}
 
 export function useOrgSelection():UseOrgSelectionResult {
   const qc = useQueryClient();
   const pin = useSyncExternalStore(subscribeOrgPin, getOrgPin, getOrgPin);
   const pickerForced = useSyncExternalStore(subscribeForced, () => forced, () => forced);
+  const entryPhase = useSyncExternalStore(subscribeOrgEntryPhase, getOrgEntryPhase, getOrgEntryPhase);
 
   const accessQ = useQuery<MeAccess>({
     queryKey: ME_ACCESS_QUERY_KEY,
@@ -109,7 +135,38 @@ export function useOrgSelection():UseOrgSelectionResult {
   // org swap (another tab, 409) -> hard reload, never a silent re-pin.
   const accessOrgId = selection.available && selection.selection_id && selection.org
     ? selection.org.id : null;
+  const accessLoaded = accessQ.data !== undefined;
+
+  // Entry handshake -- runs once per page load (module-level phase; every hook
+  // instance sees the same transition). Staff: end the leftover selection BEFORE
+  // the product renders, then refetch so the server agrees (`required`).
   useEffect(() => {
+    // Read the LIVE phase: sibling hook instances run this effect in the same
+    // commit with the same stale render value -- only the first may start the DELETE.
+    if (getOrgEntryPhase() !== 'entry' || !accessLoaded) return;
+    if (!selection.available) {
+      markOrgVisit(); // non-staff / not picker-ready: no picker, behaviour unchanged
+      setOrgEntryPhase('visit');
+      return;
+    }
+    setOrgEntryPhase('ending');
+    void (async () => {
+      try {
+        await api.delete('/api/me/org-choice');
+      } catch (err) {
+        // The picker stays REQUIRED client-side regardless (fail toward prompting);
+        // logged so a broken DELETE is visible, never silently trusted.
+        console.warn('[org-picker] entry: could not end the previous selection', err);
+      }
+      await qc.refetchQueries({ queryKey: ME_ACCESS_QUERY_KEY });
+      setOrgEntryPhase('ended');
+    })();
+  }, [entryPhase, accessLoaded, selection.available, qc]);
+
+  useEffect(() => {
+    // An entry page load never adopts a selection: the only way out is a choice
+    // (which reloads). Within a visit the pin/swap rules below apply unchanged.
+    if (entryPhase !== 'visit') return;
     if (pageOrg === null) {
       if (accessOrgId) { pageOrg = accessOrgId; setOrgPin(accessOrgId); }
       else if (!selection.available) setOrgPin(null);
@@ -120,7 +177,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     swapping = true;
     setForced(false);
     void teardownRealtime().finally(reloadPage);
-  }, [accessOrgId, selection.available, pin]);
+  }, [accessOrgId, selection.available, pin, entryPhase]);
 
   // Stale pin (409 org_selection_changed): refetch access + reopen the picker.
   useEffect(() => {
@@ -147,6 +204,7 @@ export function useOrgSelection():UseOrgSelectionResult {
   const choose = useCallback(async (orgId: string) => {
     await chooseM.mutateAsync(orgId);
     swapping = true; // the reload below IS the swap; the pin effect must not double-fire
+    markOrgVisit(); // the choice holds for this tab's visit (reloads included)
     setOrgPin(orgId);
     setForced(false);
     await teardownRealtime();
@@ -159,6 +217,13 @@ export function useOrgSelection():UseOrgSelectionResult {
     setOrgPin(null);
   }, []);
 
+  const entering = isEntry(entryPhase);
+  const pickerRequired = selection.available && (selection.required || entering);
+  const contentBlocked =
+    (entryPhase === 'entry' && accessQ.isPending && !accessQ.data)
+    || (selection.available && (entryPhase === 'entry' || entryPhase === 'ending'))
+    || pickerRequired;
+
   return {
     access: accessQ.data,
     selection,
@@ -166,10 +231,14 @@ export function useOrgSelection():UseOrgSelectionResult {
     isRefreshing: accessQ.isFetching && !!accessQ.data,
     accessError: accessQ.isError && !accessQ.data,
     choices: choicesQ.data?.orgs,
-    choicesLoading: choicesQ.isPending && choicesQ.fetchStatus !== 'idle' && !choicesQ.data,
+    // Choosing is held until the entry DELETE settled (a PUT racing it would be ended).
+    choicesLoading: (choicesQ.isPending && choicesQ.fetchStatus !== 'idle' && !choicesQ.data)
+      || (selection.available && (entryPhase === 'entry' || entryPhase === 'ending')),
     choicesError: choicesQ.isError && !choicesQ.data,
     refetchChoices: () => { void choicesQ.refetch(); },
-    pickerRequired: selection.available && selection.required,
+    pickerRequired,
+    contentBlocked,
+    entryPhase,
     choose,
     choosing: chooseM.isPending,
     chooseError: chooseM.error,
@@ -195,5 +264,6 @@ export async function endOrgSelectionBestEffort(): Promise<void> {
   } finally {
     pageOrg = null;
     setOrgPin(null);
+    clearOrgVisitMarker(); // the next load after a logout is an entry
   }
 }

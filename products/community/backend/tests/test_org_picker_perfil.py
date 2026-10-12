@@ -1,6 +1,7 @@
 """Org picker: platform staff acting in a customer org are judged in THAT org by the
 community back-office gate (`_perfil_of` -> the ONE effective-org resolver); everyone
-else, and staff without a valid selection, keep the home profile. Fakes only."""
+else keeps the home profile; staff with a token but no valid selection are refused
+409 org_selection_required. Fakes only."""
 import base64
 import json
 from types import SimpleNamespace
@@ -61,11 +62,22 @@ def test_staff_acting_is_judged_as_owner_of_the_target_org(picker):
     assert (perfil["org_id"], perfil["org_role"], perfil["role"]) == (TARGET, "owner", "admin")
 
 
-def test_without_a_token_or_aal2_or_selection_the_home_profile_stays(picker):
+def test_without_a_token_or_aal2_the_home_profile_stays(picker):
     from app.dependencies import _perfil_of
 
     user = SimpleNamespace(id=STAFF)
     assert _perfil_of(user)["org_id"] == HOME                       # no token (imperative call)
-    assert _perfil_of(user, _jwt(STAFF))["org_id"] == HOME           # no selection yet
     picker.set(STAFF, "community", TARGET, SID)
     assert _perfil_of(user, _jwt(STAFF, aal="aal1"))["org_id"] == HOME
+
+
+def test_staff_with_a_token_but_no_selection_is_refused_never_home(picker):
+    """Every entry is a choice (owner 2026-10-12): no silent home landing."""
+    from fastapi import HTTPException
+
+    from app.dependencies import _perfil_of
+
+    with pytest.raises(HTTPException) as exc:
+        _perfil_of(SimpleNamespace(id=STAFF), _jwt(STAFF))
+    assert exc.value.status_code == 409
+    assert exc.value.detail["code"] == "org_selection_required"

@@ -19,6 +19,7 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { checkProductAccess, SEM_ACESSO_PATH } from '../access';
 import { env } from '../env';
 import { clearLocalIdentity, dropProductCookieSession } from '../identity';
+import { beginOrgVisitEntry } from '../org-visit';
 // Use a loose type so products with custom schema generics can pass their client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = { auth: any };
@@ -309,6 +310,10 @@ export function SSOCallback({
   }, [finish]);
 
   useEffect(() => {
+    // An SSO landing from core is ALWAYS an org-picker entry (owner 2026-10-12),
+    // even in the same tab: drop this tab's visit marker so platform staff choose
+    // the org again once the product renders. Idempotent (StrictMode re-run).
+    beginOrgVisitEntry();
     const token = tokenRef.current ?? readTokenFromLocation(searchParams);
     if (!token) {
       setState({ status: 'error', message: 'Token SSO não encontrado na URL.' });

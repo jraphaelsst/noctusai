@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from noctusai_lib.api.audit.sink import _to_row
 from noctusai_lib.api.audit.types import AuditActor, AuditEntry
-from noctusai_lib.api.auth.effective_org import resolve_effective_org
+from noctusai_lib.api.auth.effective_org import ORG_SELECTION_REQUIRED_CODE, resolve_effective_org
 from noctusai_lib.api.auth.mfa.aal import read_session_claims
 from noctusai_lib.api.auth.org_selection import (
     FakeOrgSelectionStore,
@@ -204,6 +204,38 @@ class TestResolverIneligiblePaths:
             self._core(plain), STAFF, product_slug="igig", token=_tok(STAFF, session_id=SID, aal="aal2"),
             acting_header=TARGET, selection_store=self._store())
         assert eff.org_id == HOME
+
+
+class TestResolverRequiresASelection:
+    """Owner decision 2026-10-12: gated resolution never silently lands staff at home."""
+
+    def _core(self):
+        c = MockSupabaseClient()
+        c.set_table_data("noctus_users", [{"id": STAFF, "org_id": HOME, "org_role": "owner", "role": "admin"}])
+        c.set_table_data("organizations", [{"id": HOME, "nome": "Casa", "is_platform": True}])
+        return c
+
+    def _store(self):
+        return FakeOrgSelectionStore(ready={"igig"}, staff={STAFF}, licensed={(TARGET, "igig")},
+                                     home_orgs={STAFF: HOME})
+
+    def test_staff_without_selection_is_409_org_selection_required_by_default(self):
+        with pytest.raises(HTTPException) as exc:
+            resolve_effective_org(self._core(), STAFF, product_slug="igig",
+                                  token=_tok(STAFF, session_id=SID, aal="aal2"), selection_store=self._store())
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == ORG_SELECTION_REQUIRED_CODE == "org_selection_required"
+
+    def test_ungated_bootstrap_opts_out_and_gets_the_staff_home_snapshot(self):
+        eff = resolve_effective_org(self._core(), STAFF, product_slug="igig",
+                                    token=_tok(STAFF, session_id=SID, aal="aal2"),
+                                    selection_store=self._store(), require_selection=False)
+        assert (eff.org_id, eff.is_staff, eff.selection_id) == (HOME, True, None)
+
+    def test_mfa_path_is_not_refused(self):
+        eff = resolve_effective_org(self._core(), STAFF, product_slug="igig",
+                                    token=_tok(STAFF, session_id=SID, aal="aal1"), selection_store=self._store())
+        assert (eff.org_id, eff.mfa_required) == (HOME, True)
 
 
 class TestStaffEligibilityAndActorHelper:

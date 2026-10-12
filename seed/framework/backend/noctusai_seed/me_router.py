@@ -11,7 +11,8 @@ Auto-mounted on EVERY product by ``create_product_app`` (registry key ``"me"``):
   org ``is_platform``): everyone else gets strict ``403 not_platform_staff``; staff
   without an aal2 session get ``403 mfa_required``; a product that is not
   ``org_picker_ready`` answers ``409 product_not_ready``. The listed orgs are those with
-  an ACTIVE, non-expired license for this product, the home org always first.
+  an ACTIVE, non-expired license for this product: client orgs by name, the home org
+  ("Entrar como NoctusAI (minha org)") always LAST (owner decision 2026-10-12).
 
 Identity resolves through the ONE effective-org resolver
 (:mod:`noctusai_lib.api.auth.effective_org`); the selection itself is written only by
@@ -91,7 +92,11 @@ def create_me_router(deps) -> APIRouter:
 
     def _access_body(core: Any, user_id: Any, token: str) -> dict:
         try:
-            eff = resolve_effective_org_for_request(core, user_id, token=token)
+            # Ungated picker bootstrap: staff without a selection get the home
+            # snapshot + `required`, never the gated 409 org_selection_required.
+            eff = resolve_effective_org_for_request(
+                core, user_id, token=token, require_selection=False
+            )
         except HTTPException:
             raise
         except LicenseCheckUnavailable:
@@ -168,15 +173,14 @@ def create_me_router(deps) -> APIRouter:
             logger.error("org_choices_error user_id=%s", user.id, exc_info=True)
             raise HTTPException(status_code=503, detail="Falha ao listar organizações")
         home_id = str(eff.org_id) if eff is not None and eff.org_id else None
-        orgs = []
-        if home_id:
-            home = _org_dto(core, home_id)
-            orgs.append({**home, "is_home": True})
         others = sorted(
             (o for o in licensed if str(o["id"]) != home_id),
             key=lambda o: (o.get("nome") or "").lower(),
         )
-        orgs.extend({**o, "is_home": False} for o in others)
+        orgs = [{**o, "is_home": False} for o in others]
+        if home_id:
+            # Home LAST: a client org is the usual destination; home is the explicit opt-in.
+            orgs.append({**_org_dto(core, home_id), "is_home": True})
         return {"orgs": orgs}
 
     @router.put("/org-choice")

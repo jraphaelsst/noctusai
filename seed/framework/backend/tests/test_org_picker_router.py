@@ -178,15 +178,15 @@ class TestBoundary:
 
 
 class TestChoices:
-    def test_home_first_then_by_name_only_licensed_and_no_store(self):
+    def test_clients_by_name_then_home_last_only_licensed_and_no_store(self):
         c, _ = _make()
         resp = c.get("/api/me/org-choices", headers=_h(STAFF))
         assert resp.status_code == 200
         assert resp.headers["cache-control"] == "no-store"
         assert resp.json()["orgs"] == [
-            {"id": HOME, "nome": "NoctusAI", "is_home": True},
             {"id": CLIENT_Z, "nome": "Alfa Imob", "is_home": False},
             {"id": CLIENT_A, "nome": "Zeta Imob", "is_home": False},
+            {"id": HOME, "nome": "NoctusAI", "is_home": True},
         ]
 
 
@@ -249,7 +249,9 @@ class TestSelectionLifecycle:
         h2 = _h(STAFF, session_id=OTHER_SESSION)
         sel = c.get("/api/me/access", headers=h2).json()["org_selection"]
         assert (sel["required"], sel["acting"]) == (True, False)
-        assert c.get("/api/things", headers=h2).json() == {"org_id": HOME}
+        resp = c.get("/api/things", headers=h2)
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "org_selection_required"
 
     def test_existing_selection_without_aal2_resolves_home_and_flags_mfa(self):
         c, _ = _make()
@@ -265,7 +267,9 @@ class TestSelectionLifecycle:
         store.licensed.discard((CLIENT_A, SLUG))  # same set the license checker reads
         sel = c.get("/api/me/access", headers=_h(STAFF)).json()["org_selection"]
         assert (sel["required"], sel["acting"]) == (True, False)
-        assert c.get("/api/things", headers=_h(STAFF)).json() == {"org_id": HOME}
+        resp = c.get("/api/things", headers=_h(STAFF))
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "org_selection_required"
 
     def test_product_not_ready_hides_the_picker_and_resolves_home(self):
         c, _ = _make(ready=False)
@@ -288,10 +292,11 @@ class TestIntentPin:
         assert resp.status_code == 200
         assert resp.json() == {"org_id": CLIENT_A}
 
-    def test_pin_for_an_org_when_resolving_home_is_409(self):
+    def test_pin_for_an_org_whose_selection_ended_is_409_org_selection_changed(self):
         c, _ = _make()
         resp = c.get("/api/things", headers={**_h(STAFF), "X-Noctus-Acting-Org": CLIENT_A})
         assert resp.status_code == 409
+        assert resp.json()["code"] == "org_selection_changed"
 
     def test_non_staff_pin_is_ignored(self):
         c, _ = _make()
@@ -345,3 +350,66 @@ class TestActingWritesAreClientVisible:
         c, _ = _make()
         body = c.post("/api/base-write", headers=_h(OWNER)).json()
         assert body["tag"] is None and body["role"] is None
+
+
+class TestEveryEntryRequiresAChoice:
+    """Owner decision 2026-10-12: staff never silently land in the home org. Without a
+    live selection every GATED route refuses 409 org_selection_required; the ungated
+    /api/me/* surface keeps answering so the picker can load."""
+
+    def _required(self, resp) -> None:
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "org_selection_required"
+
+    def test_staff_without_selection_is_409_on_org_and_base_gated_routes(self):
+        c, _ = _make()
+        self._required(c.get("/api/things", headers=_h(STAFF)))
+        self._required(c.post("/api/base-write", headers=_h(STAFF)))
+
+    def test_me_access_still_answers_200_with_required_true(self):
+        c, _ = _make()
+        resp = c.get("/api/me/access", headers=_h(STAFF))
+        assert resp.status_code == 200
+        sel = resp.json()["org_selection"]
+        assert (sel["available"], sel["required"], sel["selection_id"]) == (True, True, None)
+        assert c.get("/api/me/org-choices", headers=_h(STAFF)).status_code == 200
+
+    def test_with_a_selection_the_gated_route_resolves_the_target(self):
+        c, _ = _make()
+        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=_h(STAFF)).status_code == 200
+        resp = c.get("/api/things", headers=_h(STAFF))
+        assert resp.status_code == 200
+        assert resp.json() == {"org_id": CLIENT_Z}
+
+    def test_choosing_home_explicitly_resolves_home(self):
+        c, _ = _make()
+        c.put("/api/me/org-choice", json={"org_id": HOME}, headers=_h(STAFF))
+        resp = c.get("/api/things", headers=_h(STAFF))
+        assert resp.status_code == 200
+        assert resp.json() == {"org_id": HOME}
+
+    def test_ending_the_selection_refuses_again(self):
+        """The SPA entry handshake: DELETE on entry ends any selection left over."""
+        c, _ = _make()
+        c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF))
+        assert c.delete("/api/me/org-choice", headers=_h(STAFF)).status_code == 204
+        self._required(c.get("/api/things", headers=_h(STAFF)))
+
+    def test_non_staff_is_unaffected(self):
+        c, _ = _make()
+        resp = c.get("/api/things", headers=_h(OWNER))
+        assert resp.status_code == 200
+        assert resp.json() == {"org_id": CLIENT_A}
+        assert c.post("/api/base-write", headers=_h(OWNER)).status_code == 200
+
+    def test_non_ready_product_still_resolves_home(self):
+        c, _ = _make(ready=False)
+        resp = c.get("/api/things", headers=_h(STAFF))
+        assert resp.status_code == 200
+        assert resp.json() == {"org_id": HOME}
+
+    def test_mfa_path_unchanged_aal1_staff_resolve_home(self):
+        c, _ = _make()
+        resp = c.get("/api/things", headers=_h(STAFF, aal="aal1"))
+        assert resp.status_code == 200
+        assert resp.json() == {"org_id": HOME}

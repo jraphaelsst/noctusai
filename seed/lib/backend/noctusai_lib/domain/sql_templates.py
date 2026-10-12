@@ -343,6 +343,12 @@ def _org_picker_fn_sql(roles: str) -> str:
         "      RETURN NULL;\n"
         "    END IF;\n"
         "  END IF;\n"
+        # NOC-REMEDIATE[org-picker-postgrest-entry]: staff on an org_picker_ready product
+        # with no live selection still fall through to v_home here, so a direct PostgREST
+        # read serves home-org rows that the FastAPI resolver now refuses (409
+        # org_selection_required, owner decision 2026-10-12). Needs a core migration
+        # re-declaring current_org_id_for (+ this template) to RETURN NULL for that case
+        # (keeping the requires_mfa/aal1 path on home) — core SQL, out of the seed slice. — 2026-10-12
         "  RETURN v_home;\n"
         "END;\n"
         "$f$;"

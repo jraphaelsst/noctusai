@@ -1,9 +1,9 @@
 /**
  * `<OrgPickerModal/>` — popup where platform staff choose which org to enter.
  *
- * Shown by `<OrgSelectionGate/>` once per login (non-dismissible while the
- * server says `required`), and reopened by "Trocar org" (dismissible).
- * The home org is listed first as "Entrar como NoctusAI (minha org)". Staff
+ * Shown by `<OrgSelectionGate/>` on every ENTRY into the product (non-dismissible
+ * while required — see `org-visit.ts`), and reopened by "Trocar org" (dismissible).
+ * Client orgs are listed first; the home org LAST as "Entrar como NoctusAI (minha org)". Staff
  * without an aal2 session see a 2FA CTA instead of the list (server also
  * refuses with `mfa_required`). While non-dismissible it covers the header, so
  * it carries its own "Sair" (logout) — otherwise a staff user who cannot pick
@@ -84,9 +84,11 @@ export function OrgPickerModalView(props: OrgPickerModalViewProps) {
       </p>
     );
   } else {
+    // Client orgs first (server order: by name), the home org LAST (owner 2026-10-12).
+    const ordered = [...choices.filter((c) => !c.is_home), ...choices.filter((c) => c.is_home)];
     body = (
       <ul className="space-y-2" data-testid="org-picker-list">
-        {choices.map((c) => (
+        {ordered.map((c) => (
           <li key={c.id}>
             <button
               type="button"

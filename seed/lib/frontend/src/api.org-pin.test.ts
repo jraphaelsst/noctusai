@@ -36,6 +36,18 @@ describe('api org pin', () => {
     expect((f.mock.calls[1][1] as any).headers[ORG_PIN_HEADER]).toBeUndefined();
   });
 
+  it('409 org_selection_required (no live selection) also reopens the picker, no retry loop', async () => {
+    // let the previous test's burst guard re-arm (it re-arms on the next tick)
+    await new Promise((r) => setTimeout(r, 0));
+    const handler = vi.fn();
+    setOrgSelectionChangedHandler(handler);
+    const f = vi.spyOn(globalThis, 'fetch').mockImplementation(async () =>
+      json(409, { detail: { code: 'org_selection_required' } }));
+    await expect(make().get('/api/a')).rejects.toThrow('[409]');
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
   it('other 409s do not fire the handler', async () => {
     const handler = vi.fn();
     setOrgSelectionChangedHandler(handler);

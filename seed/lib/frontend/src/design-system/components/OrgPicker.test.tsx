@@ -19,9 +19,10 @@ vi.mock('@noctusai/seed/infra', () => ({
 
 import { ActingAsBanner } from './ActingAsBanner';
 import { OrgPickerModal, OrgPickerModalView } from './OrgPickerModal';
-import { OrgSelectionGate } from './OrgSelectionGate';
+import { OrgContentGate, OrgSelectionGate } from './OrgSelectionGate';
 import { endOrgSelectionBestEffort, resetOrgSelectionPage, setOrgPickerForced } from '../../org-selection';
-import { getOrgPin, setOrgPin } from '../../org-pin';
+import { getOrgPin, notifyOrgSelectionChanged, setOrgPin } from '../../org-pin';
+import { hasOrgVisitMarker, markOrgVisit } from '../../org-visit';
 
 const HOME = { id: 'h', nome: 'NoctusAI' };
 const ACME = { id: 'o1', nome: 'Imobiliária Acme' };
@@ -51,10 +52,12 @@ describe('OrgPickerModal', () => {
     [apiGet, apiPut, apiDelete, reload, removeAllChannels].forEach((m) => m.mockReset());
     setOrgPin(null);
     resetOrgSelectionPage();
+    markOrgVisit(); // within a visit (reload): entry behaviour is covered below
     Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
   });
   afterEach(() => {
     cleanup();
+    window.sessionStorage.clear();
     Object.defineProperty(window, 'location', { configurable: true, value: orig });
   });
 
@@ -65,12 +68,13 @@ describe('OrgPickerModal', () => {
     expect(screen.queryByRole('dialog')).toBeNull();
   });
 
-  it('required: home first, non-dismissible (Escape + no close button)', async () => {
+  it('required: client orgs first, home LAST, non-dismissible (Escape + no close button)', async () => {
     route({ ...base, org_selection: sel() });
     mount(<OrgPickerModal />);
     expect(await screen.findByText('Entrar como NoctusAI (minha org)')).toBeInTheDocument();
     const items = screen.getAllByRole('listitem');
-    expect(items[0]).toHaveTextContent('Entrar como NoctusAI (minha org)');
+    expect(items[0]).toHaveTextContent('Imobiliária Acme');
+    expect(items[items.length - 1]).toHaveTextContent('Entrar como NoctusAI (minha org)');
     await userEvent.keyboard('{Escape}');
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.queryByLabelText('Fechar')).toBeNull();
@@ -145,8 +149,8 @@ describe('OrgPickerModal', () => {
 });
 
 describe('ActingAsBanner / OrgSelectionGate', () => {
-  beforeEach(() => { [apiGet, apiPut, apiDelete].forEach((m) => m.mockReset()); setOrgPin(null); resetOrgSelectionPage(); setOrgPickerForced(false); });
-  afterEach(() => cleanup());
+  beforeEach(() => { [apiGet, apiPut, apiDelete].forEach((m) => m.mockReset()); setOrgPin(null); resetOrgSelectionPage(); setOrgPickerForced(false); markOrgVisit(); });
+  afterEach(() => { cleanup(); window.sessionStorage.clear(); });
 
   it('hidden for non-staff', async () => {
     route({ ...base, org_selection: sel({ available: false, required: false, acting: true, org: ACME }) });
@@ -190,5 +194,136 @@ describe('ActingAsBanner / OrgSelectionGate', () => {
     await expect(endOrgSelectionBestEffort()).resolves.toBeUndefined();
     expect(apiDelete).toHaveBeenCalledWith('/api/me/org-choice?all=true');
     expect(getOrgPin()).toBeNull();
+    expect(hasOrgVisitMarker()).toBe(false); // the next load after logout is an entry
+  });
+});
+
+describe('every entry is a choice (owner 2026-10-12)', () => {
+  const reload = vi.fn();
+  const orig = window.location;
+  const LEFTOVER = sel({ required: false, acting: true, org: ACME, selection_id: 's-old' });
+
+  /** Access answers `first` until the entry DELETE lands, then `after`. */
+  function routeEntry(first: object, after: object) {
+    let ended = false;
+    apiDelete.mockImplementation(async () => { ended = true; });
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === '/api/me/access') return ended ? after : first;
+      if (path === '/api/me/org-choices') return choices;
+      throw new Error(`unexpected ${path}`);
+    });
+  }
+  function mountShell() {
+    return mount(
+      <>
+        <OrgSelectionGate />
+        <OrgContentGate><p data-testid="product-content">conteúdo</p></OrgContentGate>
+      </>,
+    );
+  }
+
+  beforeEach(() => {
+    [apiGet, apiPut, apiDelete, reload, removeAllChannels].forEach((m) => m.mockReset());
+    setOrgPin(null);
+    resetOrgSelectionPage();
+    setOrgPickerForced(false);
+    window.sessionStorage.clear();
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
+  });
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    window.sessionStorage.clear();
+    Object.defineProperty(window, 'location', { configurable: true, value: orig });
+  });
+
+  it('entry (no marker): DELETEs the leftover selection, then a REQUIRED picker with no content behind it', async () => {
+    routeEntry({ ...base, org: ACME, org_selection: LEFTOVER }, { ...base, org_selection: sel() });
+    mountShell();
+    expect(screen.queryByTestId('product-content')).toBeNull();
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith('/api/me/org-choice'));
+    expect(await screen.findByText('Imobiliária Acme')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Fechar')).toBeNull(); // non-dismissible
+    expect(screen.queryByTestId('product-content')).toBeNull();
+    // the leftover org is never adopted on an entry page load
+    expect(getOrgPin()).toBeNull();
+    expect(reload).not.toHaveBeenCalled();
+    expect(apiDelete).toHaveBeenCalledTimes(1);
+    expect(hasOrgVisitMarker()).toBe(false); // set only after a choice
+  });
+
+  it('the DELETE precedes the access refetch the picker is built from', async () => {
+    routeEntry({ ...base, org_selection: LEFTOVER }, { ...base, org_selection: sel() });
+    mountShell();
+    await screen.findByText('Imobiliária Acme');
+    const accessCalls = apiGet.mock.calls
+      .map((c, i) => [c[0], apiGet.mock.invocationCallOrder[i]] as const)
+      .filter(([p]) => p === '/api/me/access');
+    expect(accessCalls.length).toBeGreaterThanOrEqual(2);
+    expect(apiDelete.mock.invocationCallOrder[0]).toBeLessThan(accessCalls[accessCalls.length - 1][1]);
+  });
+
+  it('choosing on entry sets the visit marker, pins, reloads', async () => {
+    routeEntry({ ...base, org_selection: sel() }, { ...base, org_selection: sel() });
+    apiPut.mockResolvedValue({});
+    mountShell();
+    await userEvent.click(await screen.findByText('Imobiliária Acme'));
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(apiPut).toHaveBeenCalledWith('/api/me/org-choice', { org_id: 'o1' });
+    expect(hasOrgVisitMarker()).toBe(true);
+    expect(getOrgPin()).toBe('o1');
+  });
+
+  it('reload within the visit (marker + live selection): no DELETE, no picker, content renders', async () => {
+    markOrgVisit();
+    route({ ...base, org: ACME, org_selection: LEFTOVER });
+    mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    await waitFor(() => expect(getOrgPin()).toBe('o1'));
+    expect(apiDelete).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('sessionStorage throwing => treated as an entry (fail toward prompting)', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+    routeEntry({ ...base, org: ACME, org_selection: LEFTOVER }, { ...base, org_selection: sel() });
+    mountShell();
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledWith('/api/me/org-choice'));
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByTestId('product-content')).toBeNull();
+  });
+
+  it('non-staff entry: no DELETE, no picker, content renders, marker set', async () => {
+    route({ ...base, org_selection: sel({ available: false, required: false }) });
+    mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    expect(apiDelete).not.toHaveBeenCalled();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(hasOrgVisitMarker()).toBe(true);
+  });
+
+  it('409 org_selection_required within a visit reopens the REQUIRED picker and hides the content', async () => {
+    markOrgVisit();
+    let required = false;
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === '/api/me/access') {
+        return required
+          ? { ...base, org_selection: sel() }
+          : { ...base, org_selection: sel({ required: false, selection_id: 's' }) };
+      }
+      if (path === '/api/me/org-choices') return choices;
+      throw new Error(`unexpected ${path}`);
+    });
+    mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    // another tab's entry ended this selection: the next gated call answers 409
+    required = true;
+    notifyOrgSelectionChanged(); // what the api client does on org_selection_required
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByTestId('product-content')).toBeNull());
+    expect(screen.queryByLabelText('Fechar')).toBeNull();
+    expect(apiDelete).not.toHaveBeenCalled(); // a 409 is not an entry
   });
 });

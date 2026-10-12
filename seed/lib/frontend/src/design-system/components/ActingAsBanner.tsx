@@ -60,9 +60,11 @@ export function ActingAsBanner() {
   const sel = useOrgSelection();
   const s = sel.selection;
   if (!s.available || !s.org) return null;
+  // The mandatory picker is up (incl. an entry whose leftover selection is being
+  // ended): no banner/bar — it would name an org this visit has not chosen.
+  if (sel.pickerRequired) return null;
   if (!s.acting) {
-    // Staff in their own org: compact control, hidden while the mandatory picker is up.
-    if (s.required) return null;
+    // Staff in their own org: compact control.
     return <OrgSwitchBarView orgNome={s.org.nome} onSwitch={sel.openPicker} />;
   }
   return <ActingAsBannerView orgNome={s.org.nome} onSwitch={sel.openPicker} />;

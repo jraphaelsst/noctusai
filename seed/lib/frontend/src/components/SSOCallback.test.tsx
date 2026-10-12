@@ -2,6 +2,7 @@ import { render, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SSOCallback } from './SSOCallback';
+import { getOrgEntryPhase, hasOrgVisitMarker, markOrgVisit, resetOrgEntryPhase } from '../org-visit';
 
 function makeSupabase() {
   return {
@@ -155,5 +156,35 @@ describe('SSOCallback license gate', () => {
     const { findByText } = mountGate(supabaseWithToken());
     expect(await findByText('home')).toBeTruthy();
     expect(fetchMock.mock.calls.some((c) => c[0] === 'http://prod/api/me/access')).toBe(true);
+  });
+});
+
+describe('SSOCallback org-picker visit marker (owner 2026-10-12)', () => {
+  const fetchMock = vi.fn();
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers(),
+      json: async () => ({ access_token: 'a', refresh_token: 'r' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    window.history.replaceState({}, '', '/sso?token=abc.def.ghi');
+    resetOrgEntryPhase();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    window.sessionStorage.clear();
+    resetOrgEntryPhase();
+  });
+
+  it('an SSO landing is ALWAYS an entry: the same-tab visit marker is dropped', async () => {
+    markOrgVisit();
+    expect(hasOrgVisitMarker()).toBe(true);
+    expect(getOrgEntryPhase()).toBe('visit');
+    mount(makeSupabase(), 'erp');
+    await waitFor(() => expect(hasOrgVisitMarker()).toBe(false));
+    expect(getOrgEntryPhase()).toBe('entry');
   });
 });

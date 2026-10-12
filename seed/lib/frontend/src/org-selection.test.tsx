@@ -11,6 +11,7 @@ vi.mock('@noctusai/seed/infra', () => ({
 
 import { useOrgSelection, resetOrgSelectionPage, ME_ACCESS_QUERY_KEY } from './org-selection';
 import { getOrgPin, setOrgPin, notifyOrgSelectionChanged } from './org-pin';
+import { markOrgVisit } from './org-visit';
 
 const X = { id: 'x', nome: 'X' };
 const Y = { id: 'y', nome: 'Y' };
@@ -32,11 +33,14 @@ describe('useOrgSelection pin vs org swap', () => {
   beforeEach(() => {
     apiGet.mockReset(); reload.mockReset();
     resetOrgSelectionPage(); setOrgPin(null);
+    // These cover reloads WITHIN a visit (the tab already chose): marker present.
+    markOrgVisit();
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
   });
   afterEach(() => {
     cleanup();
+    window.sessionStorage.clear();
     Object.defineProperty(window, 'location', { configurable: true, value: orig });
   });
 

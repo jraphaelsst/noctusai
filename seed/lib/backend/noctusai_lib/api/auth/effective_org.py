@@ -12,7 +12,15 @@ exception is the platform org picker (owner decision 2026-10-08): PLATFORM STAFF
 (``noctus_users.role='admin'`` AND home org ``is_platform``) with a LIVE selection
 for this product -- bound to THIS login (the token's ``session_id``), made at
 ``aal2``, target still licensed -- resolve to the selected org with the ``owner``
-role. Anyone else, and staff without a valid selection, resolve home. The
+role. Anyone else resolves home.
+
+**Every entry is a choice** (owner decision 2026-10-12). Staff on a picker-ready product
+with NO valid live selection do NOT silently resolve home on a GATED path: the resolver
+refuses ``409 org_selection_required`` (``require_selection=True``, the default) so no
+product data is served until the picker has been answered. Only the ungated
+``/api/me/access`` (which must answer so the picker can load) passes
+``require_selection=False`` and gets the staff home snapshot. Staff whose token lacks
+the required ``aal2`` keep the MFA path unchanged (home + ``mfa_required``). The
 ``X-Noctus-Acting-Org`` header is an intent pin: when present and different from the
 resolved org the request is refused ``409 org_selection_changed`` (the SPA refetches
 and reopens the picker); for non-staff it is ignored.
@@ -47,6 +55,9 @@ ACTING_AUDIT_ROLE = "platform_support"
 #: Intent-pin request header (also PostgREST: helper treats it as narrowing only).
 ACTING_ORG_HEADER = "x-noctus-acting-org"
 ORG_SELECTION_CHANGED_CODE = "org_selection_changed"
+#: 409 code: platform staff on a picker-ready product with no live selection reached a
+#: gated route -- the SPA must (re)open the required picker; nothing resolves home.
+ORG_SELECTION_REQUIRED_CODE = "org_selection_required"
 
 
 @dataclass(frozen=True)
@@ -79,6 +90,16 @@ def org_selection_changed() -> HTTPException:
         detail={
             "detail": "A organização selecionada mudou. Selecione novamente.",
             "code": ORG_SELECTION_CHANGED_CODE,
+        },
+    )
+
+
+def org_selection_required() -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={
+            "detail": "Selecione a organização para continuar.",
+            "code": ORG_SELECTION_REQUIRED_CODE,
         },
     )
 
@@ -152,8 +173,14 @@ def resolve_effective_org(
     acting_header: Optional[str] = None,
     selection_store: Any = None,
     license_checker: Any = None,
+    require_selection: bool = True,
 ) -> Optional[EffectiveOrg]:
     """The caller's effective org, or ``None`` when no ``noctus_users`` row.
+
+    ``require_selection`` (default ``True`` -- every gated path): platform staff on a
+    picker-ready product whose token passes the MFA requirement but who hold no valid
+    live selection are refused ``409 org_selection_required`` instead of resolving home.
+    ``False`` only for the ungated picker bootstrap (``/api/me/access``).
 
     ``core_client`` MUST be the ``public``-schema service-role client. ``product_slug``
     is REQUIRED (``None`` only for core / an unconfigured process: no picker). Without
@@ -208,6 +235,8 @@ def resolve_effective_org(
     pin = _clean_header(acting_header)
     if pin is not None and pin != str(eff.org_id).lower():
         raise org_selection_changed()
+    if require_selection and mfa_ok and eff.selection_id is None:
+        raise org_selection_required()
     return eff
 
 
@@ -217,10 +246,11 @@ def resolve_effective_org_for_request(
     *,
     token: Optional[str] = None,
     acting_header: Optional[str] = None,
+    require_selection: bool = True,
 ) -> Optional[EffectiveOrg]:
     """:func:`resolve_effective_org` with the process license gate's product slug,
     selection store and license checker (what ``create_product_app`` configured).
-    No gate configured / core => the home org."""
+    No gate configured / core => the home org. ``require_selection`` as there."""
     from noctusai_lib.domain.licensing import get_license_gate
 
     gate = get_license_gate()
@@ -229,7 +259,7 @@ def resolve_effective_org_for_request(
     return resolve_effective_org(
         core_client, user_id, product_slug=gate.product_slug, token=token,
         acting_header=acting_header, selection_store=gate.selection_store,
-        license_checker=gate.checker,
+        license_checker=gate.checker, require_selection=require_selection,
     )
 
 
@@ -250,10 +280,12 @@ __all__ = [
     "STAFF_ORG_ROLES",
     "acting_audit_actor",
     "ORG_SELECTION_CHANGED_CODE",
+    "ORG_SELECTION_REQUIRED_CODE",
     "STAFF_ROLE",
     "EffectiveOrg",
     "is_platform_staff",
     "org_selection_changed",
+    "org_selection_required",
     "resolve_effective_org",
     "resolve_effective_org_for_request",
     "resolve_effective_org_via",

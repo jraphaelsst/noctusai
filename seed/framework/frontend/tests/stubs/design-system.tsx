@@ -149,6 +149,10 @@ export const LLMSpendBadge: React.FC = () => (
 
 /** Org picker gate: inert in the harness (needs seed infra + a query client). */
 export const OrgSelectionGate: React.FC = () => <div data-testid="org-selection-gate-stub" />;
+/** Content gate: the harness has no picker state — a marked pass-through. */
+export const OrgContentGate: React.FC<{ children?: React.ReactNode }> = ({ children }) => (
+  <div data-testid="org-content-gate-stub">{children}</div>
+);
 /** Call log so layout tests can assert the logout path ends the selection first. */
 export const orgSelectionCalls: string[] = [];
 export const endOrgSelectionBestEffort = async (): Promise<void> => {

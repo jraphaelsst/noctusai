@@ -296,6 +296,12 @@ describe("org picker gate (layout)", () => {
     expect(screen.getAllByTestId("org-selection-gate-stub")).toHaveLength(1);
   });
 
+  it("renders the product children INSIDE <OrgContentGate> (no content behind a required picker)", () => {
+    renderLayout(createProductLayout({ ...baseConfig(), supabase: makeSupabaseClient() }));
+    const gate = screen.getByTestId("org-content-gate-stub");
+    expect(gate).toContainElement(screen.getByTestId("child-content"));
+  });
+
   it("logout ends the org selection best-effort BEFORE signOut", async () => {
     const stub = await import("./stubs/design-system");
     stub.orgSelectionCalls.length = 0;

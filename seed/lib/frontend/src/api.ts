@@ -6,7 +6,7 @@
  * is written once.
  */
 
-import { isOrgSelectionChangedBody, isOrgSemLicencaBody, redirectToSemAcesso } from './access';
+import { isOrgSelectionRefusalBody, isOrgSemLicencaBody, redirectToSemAcesso } from './access';
 import { ORG_PIN_HEADER, getOrgPin, notifyOrgSelectionChanged } from './org-pin';
 
 // ---------------------------------------------------------------------------
@@ -504,7 +504,9 @@ export function createApiClient(options: CreateApiClientOptions): ApiClient {
   async function checkOrgSelectionRefusal(response: Response): Promise<void> {
     if (response.status !== 409) return;
     const data = await response.clone().json().catch(() => null);
-    if (isOrgSelectionChangedBody(data)) notifyOrgSelectionChanged();
+    // org_selection_changed (stale pin) AND org_selection_required (no live
+    // selection): both reopen the required picker; the pin clear stops any loop.
+    if (isOrgSelectionRefusalBody(data)) notifyOrgSelectionChanged();
   }
 
   // The MFA interceptor wraps the auth-retrying fetch. `raw` (no interceptor)

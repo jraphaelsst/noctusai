@@ -139,10 +139,46 @@ strict `403 {"code":"not_platform_staff"}`.
   restore = `UPDATE products SET org_picker_requires_mfa = true`). Intent pin: header present and ≠
   resolved org ⇒ `409 {"code":"org_selection_changed"}` (non-staff: ignored).
   `/api/me/access` gains `org_selection{available, required, mfa_required, acting, org,
-  home_org, selection_id, org_role}`; `GET /api/me/org-choices` (home first, licensed orgs,
-  `no-store`), `PUT`/`DELETE /api/me/org-choice` (`403 mfa_required`, `403 org_sem_licenca`,
+  home_org, selection_id, org_role}`; `GET /api/me/org-choices` (client orgs by name, the
+  home org LAST, licensed orgs, `no-store`), `PUT`/`DELETE /api/me/org-choice` (`403 mfa_required`, `403 org_sem_licenca`,
   `409 product_not_ready`; `DELETE …?all=true`, staff-only, ends every product's selection
   as `logout`). Core logout ends all selections. `org_id` must be a UUID (422 otherwise).
+- **Every entry is a choice (owner decision 2026-10-12).** Platform staff must choose the org
+  EVERY time they ENTER a product, never silently landing in the home org (NoctusAI).
+  - ENTRY = (a) an SSO launch/redeem landing from core (always an entry, even in the same
+    tab), or (b) a page load of the product in a browser tab that has no visit marker for
+    this product (new tab, typed URL, bookmark, reopen after tab close).
+  - NOT entry: reload (F5) of the same tab, in-app navigation, "Trocar org" (already reopens
+    the picker), silent token refresh, 409 handling.
+  - On entry the picker is REQUIRED (non-dismissible), product content is NOT rendered behind
+    it, and the server refuses product data until a choice exists.
+  - Within the visit (same tab, reloads included) the choice holds.
+  - Multi-tab: ONE live org per (user, product). Choosing in a second tab ends the first
+    tab's choice; that tab gets 409 org_selection_changed → picker reopens.
+  - Picker list order: client orgs first (alphabetical), the home org "Entrar como NoctusAI
+    (minha org)" LAST.
+  - Single-org / non-staff users: no picker, no behaviour change at all.
+
+  **Visit marker (seed FE, `org-visit.ts`):** `sessionStorage['noctus:org-visit:<slug>']`
+  (per tab, per product); every access is try/catch and unavailable storage reads as "no
+  marker" (fail toward prompting). Written ONLY after a successful `PUT` (so a reload
+  mid-pick is still an entry) or, for non-staff, once `/api/me/access` says
+  `available=false`. `SSOCallback` drops it on mount (`beginOrgVisitEntry`); logout
+  (`endOrgSelectionBestEffort`) drops it too. **Entry handshake** (`useOrgSelection`):
+  no marker + `available` ⇒ `DELETE /api/me/org-choice` (this product, end reason `exit`)
+  then refetch access ⇒ required picker; the leftover selection is never pinned/adopted.
+  `<OrgContentGate>` (mounted by the seed shell around the routes) renders no children while
+  an entry's access is pending, the handshake is in flight, or the picker is required.
+  **Server:** `resolve_effective_org(..., require_selection=True)` (the default — every
+  gated path: base dep license gate, org dep, `resolve_org_membership`) answers staff on a
+  ready product with no valid live selection `409 {"code":"org_selection_required"}`
+  (`ORG_SELECTION_REQUIRED_CODE`) instead of home; only `/api/me/access` passes
+  `require_selection=False`. The MFA path is unchanged (aal1 on a requires-MFA product ⇒
+  home + `mfa_required`). A pin mismatch is still checked first (`org_selection_changed`).
+  The FE api client treats both 409 codes alike (clear pin, reopen picker, no retry).
+  **Open:** PostgREST `current_org_id_for` still falls through to home for staff without a
+  selection — `NOC-REMEDIATE[org-picker-postgrest-entry]` in `sql_templates.py` (core SQL
+  follow-up).
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads

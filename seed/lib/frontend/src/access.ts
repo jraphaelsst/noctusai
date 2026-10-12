@@ -16,6 +16,12 @@ export const SEM_ACESSO_PATH = '/sem-acesso';
 /** Machine code of the 409 the backend answers when the SPA's org pin is stale. */
 export const ORG_SELECTION_CHANGED_CODE = 'org_selection_changed';
 
+/**
+ * Machine code of the 409 a gated route answers when platform staff hold no live
+ * selection on a picker-ready product (every entry is a choice — owner 2026-10-12).
+ */
+export const ORG_SELECTION_REQUIRED_CODE = 'org_selection_required';
+
 export interface OrgRef { id: string; nome: string }
 
 /** `org_selection` block of `GET /api/me/access` (org-picker contract). */
@@ -56,28 +62,35 @@ export function orgSelectionOf(access: MeAccess | null | undefined): OrgSelectio
   return { ...NO_ORG_SELECTION, ...(access?.org_selection ?? {}) };
 }
 
-/** True when a parsed 409 body (flat, `{error:{}}` or `{detail:{}}`) is the stale-pin refusal. */
-export function isOrgSelectionChangedBody(data: unknown): boolean {
-  if (!data || typeof data !== 'object') return false;
+/** The `code` of a parsed error body (flat, `{error:{}}` or `{detail:{}}`). */
+function errorCodeOf(data: unknown): unknown {
+  if (!data || typeof data !== 'object') return undefined;
   const d = data as Record<string, any>;
   const body = d.error && typeof d.error === 'object'
     ? d.error
     : d.detail && typeof d.detail === 'object'
       ? d.detail
       : d;
-  return body?.code === ORG_SELECTION_CHANGED_CODE;
+  return body?.code;
+}
+
+/** True when a parsed 409 body (flat, `{error:{}}` or `{detail:{}}`) is the stale-pin refusal. */
+export function isOrgSelectionChangedBody(data: unknown): boolean {
+  return errorCodeOf(data) === ORG_SELECTION_CHANGED_CODE;
+}
+
+/**
+ * True for EITHER org-picker 409 (`org_selection_changed` stale pin, or
+ * `org_selection_required` no live selection) — both reopen the required picker.
+ */
+export function isOrgSelectionRefusalBody(data: unknown): boolean {
+  const code = errorCodeOf(data);
+  return code === ORG_SELECTION_CHANGED_CODE || code === ORG_SELECTION_REQUIRED_CODE;
 }
 
 /** True when a parsed 403 body (flat, `{error:{}}` or `{detail:{}}`) is the license refusal. */
 export function isOrgSemLicencaBody(data: unknown): boolean {
-  if (!data || typeof data !== 'object') return false;
-  const d = data as Record<string, any>;
-  const body = d.error && typeof d.error === 'object'
-    ? d.error
-    : d.detail && typeof d.detail === 'object'
-      ? d.detail
-      : d;
-  return body?.code === ORG_SEM_LICENCA_CODE;
+  return errorCodeOf(data) === ORG_SEM_LICENCA_CODE;
 }
 
 export interface CheckProductAccessOptions {

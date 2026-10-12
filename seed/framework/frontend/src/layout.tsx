@@ -39,6 +39,7 @@ import {
   PendingConsentBadge,
   LLMSpendBadge,
   OrgSelectionGate,
+  OrgContentGate,
   endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
 import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system";
@@ -541,7 +542,9 @@ export function createProductLayout(config: ProductLayoutConfig) {
                 : "Licenca expirada."}
             </div>
           )}
-          {children}
+          {/* Org picker: no product content behind a required picker / pending
+              entry handshake (staff only; non-staff render as always). */}
+          <OrgContentGate>{children}</OrgContentGate>
         </div>
         <InactivityWarning
           onExtend={extendSession}
