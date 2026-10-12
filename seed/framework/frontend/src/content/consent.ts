@@ -26,8 +26,8 @@ export const CONSENT_META = {
   email: "joaoraphaelsst@gmail.com",
   phone: "+55 (11) 97469-3365",
   canonicalBase: "https://noctusai.com/consent",
-  lastUpdated: "01/06/2026",
-  version: "1.0",
+  lastUpdated: "11/10/2026",
+  version: "1.1",
 } as const;
 
 /** A content block: a paragraph (`p`) or an unordered list (`ul`). */
@@ -204,6 +204,7 @@ export const PRIVACY_POLICY: ConsentDoc = {
             "Meta Platforms, Inc. — WhatsApp Business Platform, Instagram e Facebook Graph API (mensageria e publicação).",
             "Google LLC — autenticação OAuth e APIs do Google (por exemplo, YouTube, Agenda/Calendar, Drive, Planilhas, Gmail, Maps) e modelos de IA do Google.",
             "OpenAI — modelos de linguagem e geração de embeddings.",
+            "Anthropic, PBC — modelos de linguagem (assistentes de criação de conteúdo, geração de textos e análise de transcrições).",
             "Supabase — banco de dados, autenticação e hospedagem.",
             "n8n — orquestração de fluxos de automação.",
             "Cloudflare — rede de distribuição de conteúdo, túnel de acesso e proteção.",
@@ -257,7 +258,7 @@ export const PRIVACY_POLICY: ConsentDoc = {
       blocks: [
         {
           p:
-            "Alguns operadores (por exemplo, Google, OpenAI, Meta e Cloudflare) podem " +
+            "Alguns operadores (por exemplo, Google, OpenAI, Anthropic, Meta e Cloudflare) podem " +
             "tratar dados fora do Brasil. Nesses casos, adotamos salvaguardas previstas " +
             "na LGPD, como cláusulas contratuais adequadas e a observância de padrões " +
             "reconhecidos de segurança e proteção de dados.",
@@ -351,8 +352,39 @@ export const PRIVACY_POLICY: ConsentDoc = {
         },
       ],
     },
+    // The opt-out e-mail below is a static copy of the Social Wiring default
+    // `settings.biblioteca_optout_contato` (products/social-wiring/backend/app/config.py); keep in sync.
     {
       n: "18",
+      title: "Biblioteca de virais do Social Wiring (criadores de terceiros)",
+      blocks: [
+        {
+          p:
+            "O produto Social Wiring oferece a \"Biblioteca de virais\": a organização cliente " +
+            "cadastra perfis públicos de empresa ou criador do Instagram (contas business/creator) " +
+            "para estudar a estrutura de conteúdos que performam bem. Esta seção descreve o " +
+            "tratamento de dados dos criadores desses perfis, que não são usuários da plataforma.",
+        },
+        {
+          ul: [
+            "Dados tratados: dados públicos das publicações do perfil cadastrado (legenda, métricas de desempenho, miniatura) e a transcrição da fala dos Reels, obtidos pela API oficial do Instagram (Graph API, Business Discovery).",
+            "Finalidade: estudar a estrutura do conteúdo. Não republicamos o material e não construímos perfis dos criadores.",
+            "Base legal: legítimo interesse (LGPD, art. 7º, IX), com avaliação de impacto documentada e salvaguardas de minimização.",
+            "Retenção: os dados são eliminados 90 dias após o perfil ser pausado ou deixar de ser usado; em caso de oposição do criador, a eliminação é imediata.",
+            "Sub-processador: Anthropic (Estados Unidos), para classificação e análise das transcrições, com transferência internacional nos termos da seção 11. A hospedagem é feita pela Supabase.",
+          ],
+        },
+        {
+          p:
+            "Se você é criador de um perfil monitorado e não deseja que ele seja usado, solicite a " +
+            "exclusão por e-mail a joaoraphaelsst@gmail.com; o perfil é removido da biblioteca, os " +
+            "dados são eliminados e novos cadastros do mesmo perfil são bloqueados. Você também pode " +
+            "exercer os demais direitos da seção 14.",
+        },
+      ],
+    },
+    {
+      n: "19",
       title: "Atualizações desta Política",
       blocks: [
         {
