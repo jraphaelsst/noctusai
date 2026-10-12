@@ -36,7 +36,7 @@ Architect Phase-0 (2026-10-12): the platform org picker (core 070, `resolve_effe
 | # | Title | Files | Status | Verify recipe |
 |---|---|---|---|---|
 | P1.0 | accept-invite works for first-time invitees | EDIT `products/core/backend/app/routers/team.py`, `seed/lib/backend/noctusai_lib/testing/mocks.py` (opt-in `strict_single`) | **shipped (dev `d73a333bf`)** | after prod deploy: rerun the pending invite's accept → 200; invitee profile in the inviting org; invitation `accepted` |
-| P1.1 | `public.org_memberships` + mirror trigger + backfill | NEW `products/core/backend/migrations/079_org_memberships.sql`, NEW `products/core/backend/tests/test_migration_079_org_memberships.py` | **shipped (dev)** — replay green ×2 | after `migrate_product core`: membership count == profile count; inserting a profile creates its membership |
+| P1.1 | `public.org_memberships` + mirror trigger + backfill | NEW `products/core/backend/migrations/079_org_memberships.sql`, NEW `products/core/backend/tests/test_migration_org_memberships.py` | **shipped (dev)** — replay green ×2 | after `migrate_product core`: membership count == profile count; inserting a profile creates its membership |
 
 **Behavior guarantee**: no runtime change — nothing reads `org_memberships` yet; `noctus_users` stays the source for every reader.
 
