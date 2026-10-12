@@ -448,6 +448,14 @@ class TestBinding:
         assert d["headline"]["texto"] == "Nova headline" and d["headline"]["id"] != h["id"]
         row = [x for x in ec.mock_supabase.from_("cs_headlines").select("*").execute().data if x["id"] == d["headline"]["id"]][0]
         assert row["lote_id"] is None and row["marca_id"] == MARCA and row["org_id"] == ORG
+        assert d["headline"]["acima_recomendado"] is False and d["headline"]["recomendado_max_texto"] == 120
+
+    def test_a_typed_headline_over_the_recommendation_is_kept_and_flagged(self, ec):
+        p = _post(ec)
+        r = ec.put(f"{BASE}/posts/{p['id']}/headline", json={"texto": "w" * 300})
+        assert r.status_code == 200
+        h = r.json()["data"]["headline"]
+        assert h["texto"] == "w" * 300 and h["acima_recomendado"] is True and h["recomendado_max_texto"] == 120
 
     def test_headline_body_needs_exactly_one(self, ec):
         pid = _post(ec)["id"]

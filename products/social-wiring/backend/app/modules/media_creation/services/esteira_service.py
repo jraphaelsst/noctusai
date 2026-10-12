@@ -42,6 +42,7 @@ from app.modules.media_creation.esteira_config import (
     ROLE_GRAVACAO,
     ROLE_POSTADO,
 )
+from app.modules.media_creation.prompts.headline_geracao import aviso_tamanho
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +236,9 @@ class EsteiraService:
                     "etapa_id": r["etapa_id"],
                     "kanban_pos": str(position_of(r)),
                     "headline": (
-                        {"id": h["id"], "texto": h["texto"], "favorita": bool(h.get("favorita"))} if h else None
+                        {"id": h["id"], "texto": h["texto"], "favorita": bool(h.get("favorita")), **aviso_tamanho(h["texto"])}
+                        if h
+                        else None
                     ),
                     "roteiro": (
                         {

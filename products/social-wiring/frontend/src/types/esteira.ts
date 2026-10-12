@@ -1,6 +1,7 @@
 /** Esteira de Reels — types per esteira-contract.md §5.4 (BE schemas mirror these). */
 export type PapelEsteira = "gravacao" | "postado" | "cancelado";
-export interface ResumoHeadline { id: string; texto: string; favorita: boolean }
+/** `acima_recomendado` / `recomendado_max_texto`: computed length warning (never a block). */
+export interface ResumoHeadline { id: string; texto: string; favorita: boolean; acima_recomendado: boolean; recomendado_max_texto: number }
 export interface ResumoRoteiro { id: string; nome: string; status: "criando"|"perguntas"|"processando"|"completo"|"falha"; headline_id: string | null; headline_diferente: boolean }
 export interface LinkProducao { rotulo: string; url: string }
 export interface PostCard {

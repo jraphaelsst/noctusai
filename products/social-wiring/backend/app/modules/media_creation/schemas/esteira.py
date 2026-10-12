@@ -14,6 +14,8 @@ from pydantic import Field, field_validator, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
+from app.modules.media_creation.schemas.headlines import MAX_TEXTO_CHARS
+
 MAX_TITULO = 200
 MAX_LEGENDA = 2200
 MAX_HASHTAGS = 30
@@ -123,7 +125,7 @@ class MoverEtapaRequest(StrictHttpModel):
 
 class HeadlineBind(StrictHttpModel):
     headline_id: Optional[uuid.UUID] = None
-    texto: Optional[str] = Field(default=None, max_length=1000)
+    texto: Optional[str] = Field(default=None, max_length=MAX_TEXTO_CHARS)
 
     @model_validator(mode="after")
     def _exatamente_um(self) -> "HeadlineBind":

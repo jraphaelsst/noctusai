@@ -120,6 +120,7 @@ LOTE_KEYS = {
 HEADLINE_KEYS = {
     "id", "marca_id", "lote_id", "texto", "texto_original", "angulo", "viral", "template_metodo",
     "itens_usados", "favorita", "modo", "roteiro_id", "post", "created_at",
+    "acima_recomendado", "recomendado_max_texto",
 }
 
 
@@ -339,6 +340,15 @@ class TestLotes:
         assert h["viral"]["thumbnail_url"].startswith("fake://storage/sw-biblioteca/t/1.jpg")
         assert h["viral"]["views"] is None and h["viral"]["e_viral"] is True
 
+    def test_detail_flags_a_generated_headline_over_the_recommendation_without_dropping_it(self, hc):
+        lid = _lote_row(hc)
+        longa = _hl(hc, lote=lid, angulo=1, texto="x" * 300)
+        curta = _hl(hc, lote=lid, angulo=2, texto="Curta.")
+        hs = {h["id"]: h for h in hc.get(f"{BASE}/lotes/{lid}").json()["data"]["headlines"]}
+        assert hs[longa]["acima_recomendado"] is True and len(hs[longa]["texto"]) == 300
+        assert hs[curta]["acima_recomendado"] is False
+        assert {h["recomendado_max_texto"] for h in hs.values()} == {120}
+
     def test_foreign_batch_is_404(self, hc):
         other = _lote_row(hc, marca=OTHER_MARCA, org="other-org")
         assert hc.get(f"{BASE}/lotes/{other}").status_code == 404
@@ -431,6 +441,24 @@ class TestHeadlines:
         assert d["texto"] == "Texto editado" and d["texto_original"] == "Texto da IA"
         d = hc.patch(f"{BASE}/{h}", json={"texto": "Segunda edição"}).json()["data"]
         assert d["texto"] == "Segunda edição" and d["texto_original"] == "Texto da IA"
+
+    def test_list_carries_the_computed_length_warning(self, hc):
+        longa = _hl(hc, texto="y" * 121, favorita=True)
+        curta = _hl(hc, texto="y" * 120, favorita=True)
+        items = {h["id"]: h for h in hc.get(BASE, params={"marca_id": MARCA, "lista": "favoritas"}).json()["data"]["items"]}
+        assert items[longa]["acima_recomendado"] is True and items[curta]["acima_recomendado"] is False
+        assert items[longa]["recomendado_max_texto"] == 120
+
+    def test_edit_over_the_recommendation_is_never_blocked(self, hc):
+        h = _hl(hc)
+        r = hc.patch(f"{BASE}/{h}", json={"texto": "z" * 300})
+        assert r.status_code == 200
+        d = r.json()["data"]
+        assert d["texto"] == "z" * 300 and d["acima_recomendado"] is True and d["recomendado_max_texto"] == 120
+
+    def test_edit_at_the_storage_cap_succeeds(self, hc):
+        h = _hl(hc)
+        assert hc.patch(f"{BASE}/{h}", json={"texto": "z" * 1000}).status_code == 200
 
     @pytest.mark.parametrize("texto", ["", "   ", "x" * 1001])
     def test_edit_validation(self, hc, texto):

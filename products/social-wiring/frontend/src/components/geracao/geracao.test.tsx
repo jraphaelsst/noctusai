@@ -7,6 +7,7 @@ import { StatusBadge } from "./StatusBadge";
 import { MetricaPill } from "./MetricaPill";
 import { emAndamento, STATUS_ROTULO } from "./labels";
 import { EditarHeadlineModal } from "./headlines/EditarHeadlineModal";
+import { AvisoTamanhoHeadline, ContadorHeadline } from "./headlines/TamanhoHeadline";
 
 rtl.configure({ asyncUtilTimeout: 20_000 });
 vi.setConfig({ testTimeout: 40_000 });
@@ -74,5 +75,52 @@ describe("EditarHeadlineModal", () => {
     rtl.render(<EditarHeadlineModal open onOpenChange={vi.fn()} headline={headline} />);
     rtl.fireEvent.change(rtl.screen.getByLabelText("Headline"), { target: { value: "   " } });
     expect((rtl.screen.getByRole("button", { name: "Salvar" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("tamanho da headline — recomendação, nunca bloqueio (owner 2026-10-11)", () => {
+  const base = { id: "h1", texto: "Original", texto_original: "Original", recomendado_max_texto: 120 };
+
+  it("contador fica âmbar acima do recomendado e Salvar continua habilitado", () => {
+    rtl.render(<EditarHeadlineModal open onOpenChange={vi.fn()} headline={base} />);
+    const contador = rtl.screen.getByTestId("contador-headline");
+    expect(contador.textContent).toBe("8/120 caracteres recomendados");
+    expect(contador.getAttribute("data-estado")).toBe("ok");
+    rtl.fireEvent.change(rtl.screen.getByLabelText("Headline"), { target: { value: "x".repeat(300) } });
+    expect(contador.getAttribute("data-estado")).toBe("acima");
+    expect(contador.className).toContain("text-amber-700");
+    expect(contador.textContent).toContain("Acima do recomendado (300/120 caracteres)");
+    expect((rtl.screen.getByRole("button", { name: "Salvar" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("salva uma headline de 300 caracteres", async () => {
+    editar.mutateAsync.mockResolvedValue({ id: "h1", texto: "x".repeat(300) });
+    rtl.render(<EditarHeadlineModal open onOpenChange={vi.fn()} headline={base} />);
+    rtl.fireEvent.change(rtl.screen.getByLabelText("Headline"), { target: { value: "x".repeat(300) } });
+    rtl.fireEvent.click(rtl.screen.getByRole("button", { name: "Salvar" }));
+    await rtl.waitFor(() => expect(editar.mutateAsync).toHaveBeenCalledWith({ id: "h1", texto: "x".repeat(300) }));
+  });
+
+  it("só o teto de armazenamento (1000) bloqueia", () => {
+    rtl.render(<EditarHeadlineModal open onOpenChange={vi.fn()} headline={base} />);
+    rtl.fireEvent.change(rtl.screen.getByLabelText("Headline"), { target: { value: "x".repeat(1001) } });
+    expect(rtl.screen.getByTestId("contador-headline").getAttribute("data-estado")).toBe("maximo");
+    expect((rtl.screen.getByRole("button", { name: "Salvar" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("sem limiar conhecido conta só contra o teto", () => {
+    rtl.render(<ContadorHeadline texto={"x".repeat(300)} />);
+    const c = rtl.screen.getByTestId("contador-headline");
+    expect(c.textContent).toBe("300/1000 caracteres");
+    expect(c.getAttribute("data-estado")).toBe("ok");
+  });
+
+  it("aviso âmbar aparece só quando o backend marca acima_recomendado", () => {
+    const longa = { texto: "y".repeat(150), acima_recomendado: true, recomendado_max_texto: 120 };
+    const a = rtl.render(<AvisoTamanhoHeadline headline={longa} />);
+    expect(rtl.screen.getByTestId("aviso-tamanho-headline").textContent).toBe("Acima do recomendado (150/120 caracteres)");
+    a.unmount();
+    rtl.render(<AvisoTamanhoHeadline headline={{ ...longa, texto: "curta", acima_recomendado: false }} />);
+    expect(rtl.screen.queryByTestId("aviso-tamanho-headline")).toBeNull();
   });
 });

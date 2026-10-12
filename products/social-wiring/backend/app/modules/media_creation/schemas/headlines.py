@@ -135,6 +135,7 @@ __all__ = [
     "HeadlineCreate",
     "HeadlineEdit",
     "IdsBody",
+    "MAX_TEXTO_CHARS",
     "LoteBiblioteca",
     "LoteCreate",
     "LoteForm",

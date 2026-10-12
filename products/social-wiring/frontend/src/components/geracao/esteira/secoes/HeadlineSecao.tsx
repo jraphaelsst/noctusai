@@ -10,6 +10,8 @@ import { toast } from "sonner";
 import { GerarHeadlinesDialog } from "@/components/geracao/esteira/GerarHeadlinesDialog";
 import { EditarHeadlineModal } from "@/components/geracao/headlines/EditarHeadlineModal";
 import { HeadlinesGeradasModal } from "@/components/geracao/headlines/HeadlinesGeradasModal";
+import { AvisoTamanhoHeadline, ContadorHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
+import { HEADLINE_TEXTO_MAX } from "@/components/geracao/labels";
 import { StatusBadge } from "@/components/geracao/StatusBadge";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,8 +26,6 @@ import { useDesvincularHeadline, useVincularHeadline } from "@/hooks/geracao/use
 import { useHeadline, useHeadlinesLista, useLotesDoPost, type ListaHeadlines } from "@/hooks/geracao/useHeadlines";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe } from "@/types/esteira";
-
-const TEXTO_MAX = 1000;
 
 function Picker({
   open,
@@ -115,6 +115,7 @@ function Picker({
                 <div key={h.id} className="flex items-start justify-between gap-2 rounded border p-2 text-sm">
                   <div className="min-w-0">
                     <p>{h.texto}</p>
+                    <AvisoTamanhoHeadline headline={h} className="mt-1" />
                     {ocupada && <p className="text-xs text-muted-foreground">No post: {h.post?.titulo}</p>}
                   </div>
                   <Button size="sm" disabled={ocupada || vincular.isPending} onClick={() => usar(h.id)}>
@@ -146,8 +147,16 @@ export function HeadlineSecao({ post }: { post: PostDetalhe }) {
 
   // Stable identity: the modal resets its textarea whenever `headline` changes.
   const paraEditar = useMemo(
-    () => (h ? { id: h.id, texto: h.texto, texto_original: completa.data?.texto_original ?? h.texto } : null),
-    [h?.id, h?.texto, completa.data?.texto_original], // eslint-disable-line react-hooks/exhaustive-deps
+    () =>
+      h
+        ? {
+            id: h.id,
+            texto: h.texto,
+            texto_original: completa.data?.texto_original ?? h.texto,
+            recomendado_max_texto: h.recomendado_max_texto,
+          }
+        : null,
+    [h?.id, h?.texto, h?.recomendado_max_texto, completa.data?.texto_original], // eslint-disable-line react-hooks/exhaustive-deps
   );
 
   function usarNoPost(headlineId: string) {
@@ -199,6 +208,7 @@ export function HeadlineSecao({ post }: { post: PostDetalhe }) {
             {h.favorita ? "♥ " : ""}
             {h.texto}
           </p>
+          <AvisoTamanhoHeadline headline={h} />
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => setEditando(true)}>
               Editar
@@ -225,10 +235,11 @@ export function HeadlineSecao({ post }: { post: PostDetalhe }) {
             <div className="space-y-2">
               <Textarea
                 aria-label="Texto da headline"
-                maxLength={TEXTO_MAX}
+                maxLength={HEADLINE_TEXTO_MAX}
                 value={texto}
                 onChange={(e) => setTexto(e.target.value)}
               />
+              <ContadorHeadline texto={texto} />
               <div className="flex gap-2">
                 <Button size="sm" disabled={!texto.trim() || vincular.isPending} onClick={salvarTexto}>
                   Salvar headline

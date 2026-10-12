@@ -29,7 +29,7 @@ ITENS = [
 
 class TestVersion:
     def test_prompt_is_a_marked_draft(self):
-        assert hg.PROMPT_VERSAO == "headline-v2-draft"
+        assert hg.PROMPT_VERSAO == "headline-v3-draft"
         assert "DRAFT" in (hg.__doc__ or "")
 
     def test_temperature_map_is_the_contract_one(self):
@@ -140,18 +140,24 @@ class TestParseOutput:
         out = hg.parse_output(self.good(headline_1={"texto": "   "}))
         assert [o.angulo for o in out] == [2]
 
-    def test_a_multi_sentence_headline_at_the_limit_is_kept_and_one_char_over_is_rejected_not_truncated(self):
-        ok = "x" * hg.MAX_TEXTO
-        out = hg.parse_output(self.good(headline_1={"texto": ok}, headline_2={"texto": ok + "y"}))
-        assert [h.texto for h in out] == [ok]
+    def test_a_headline_over_the_recommendation_is_kept_whole_never_truncated(self):
+        # owner decision 2026-10-11: 120 chars is a recommendation + warning, never a block
+        longa = "x" * 300
+        out = hg.parse_output(self.good(headline_1={"texto": "curta"}, headline_2={"texto": longa}))
+        assert [(h.angulo, h.texto) for h in out] == [(1, "curta"), (2, longa)]
 
-    def test_prompt_demands_one_short_line_with_length_references(self):
+    def test_prompt_recommends_one_short_line_without_a_discard_threat(self):
         p = hg.build_system_prompt()
-        assert f"no máximo {hg.MAX_TEXTO} caracteres" in p
+        assert f"/ {hg.RECOMENDADO_MAX_TEXTO} caracteres" in p
+        assert "idealmente" in p
         assert "UMA ÚNICA FRASE" in p
+        assert "descartada" not in p
+        assert "no máximo" not in p
         assert all(r in p for r in hg.REFERENCIAS_TAMANHO)
-        assert all(len(r) <= hg.MAX_TEXTO for r in hg.REFERENCIAS_TAMANHO)
+        assert all(len(r) <= hg.RECOMENDADO_MAX_TEXTO for r in hg.REFERENCIAS_TAMANHO)
 
-    def test_over_long_text_is_dropped(self):
-        out = hg.parse_output(self.good(headline_2={"texto": "x" * (hg.MAX_TEXTO + 1)}))
-        assert [o.angulo for o in out] == [1]
+    def test_aviso_tamanho_is_computed_from_the_recommendation(self):
+        assert hg.RECOMENDADO_MAX_TEXTO == 120
+        assert hg.aviso_tamanho("x" * 120) == {"acima_recomendado": False, "recomendado_max_texto": 120}
+        assert hg.aviso_tamanho("x" * 121) == {"acima_recomendado": True, "recomendado_max_texto": 120}
+        assert hg.aviso_tamanho("  " + "x" * 120 + "  ")["acima_recomendado"] is False

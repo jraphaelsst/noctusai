@@ -1,6 +1,8 @@
 """Headline generation prompt -- DRAFT, awaiting owner validation.
 
-``PROMPT_VERSAO = 'headline-v2-draft'`` (v2: one short line per headline, see :data:`MAX_TEXTO`). Contract ``specs/geracao-contract.md`` section 5.2-5.4.
+``PROMPT_VERSAO = 'headline-v3-draft'`` (v2: one short line per headline; v3: the length is a RECOMMENDATION,
+see :data:`RECOMENDADO_MAX_TEXTO`, never a block -- owner decision 2026-10-11). Contract
+``specs/geracao-contract.md`` section 5.2-5.4.
 
 The system prompt MERGES three sources (owner decision, round 7):
 
@@ -25,7 +27,7 @@ from typing import NamedTuple, Optional
 
 from app.modules.media_creation.prompts.methodology import METODO_QUALITY, METODO_TEMPLATES, METODO_TRIGGERS
 
-PROMPT_VERSAO = "headline-v2-draft"
+PROMPT_VERSAO = "headline-v3-draft"
 
 #: ``criatividade`` -> sampling temperature (contract 5.4). NOTE: the seed Anthropic provider does
 #: not forward ``temperature`` (the SDK removed it), so for the pinned model the knob is carried by
@@ -65,9 +67,22 @@ REFERENCIAS_TAMANHO: tuple[str, ...] = (
 )
 _REFERENCIAS_TAMANHO = "\n".join(f"  - {r}" for r in REFERENCIAS_TAMANHO)
 
-#: A model headline longer than this is REJECTED by :func:`parse_output` (never truncated).
-#: The prompt asks for ~110; the hard cut leaves a little slack for the soft target.
-MAX_TEXTO = 120
+#: The RECOMMENDED headline length (one short line). Owner decision 2026-10-11: "not limitation, but
+#: recommendation and warning. not block with limitations". The prompt asks for it, :func:`parse_output`
+#: keeps a longer headline (never truncated, never dropped), and every headline response carries
+#: :func:`aviso_tamanho` so the FE warns without hardcoding the number. The only hard bound is the
+#: storage sanity cap ``schemas.headlines.MAX_TEXTO_CHARS``.
+RECOMENDADO_MAX_TEXTO = 120
+
+
+def acima_recomendado(texto: str) -> bool:
+    """True when ``texto`` is longer than :data:`RECOMENDADO_MAX_TEXTO` (a warning, never a block)."""
+    return len((texto or "").strip()) > RECOMENDADO_MAX_TEXTO
+
+
+def aviso_tamanho(texto: str) -> dict[str, object]:
+    """The computed length fields every headline response carries (no DB column)."""
+    return {"acima_recomendado": acima_recomendado(texto), "recomendado_max_texto": RECOMENDADO_MAX_TEXTO}
 
 
 def build_system_prompt() -> str:
@@ -82,10 +97,9 @@ Receberá o NÚCLEO DE INFLUÊNCIA de uma pessoa (quem ela é, para quem fala, o
 - O slot {{{{GPT}}}} é sempre livre: você o preenche com a sua criatividade, a partir do Núcleo.
 - Se a estrutura for um TEMPLATE do Método Audience (não tiver slots), use o template como molde e escolha o gatilho que ele pede.
 - As duas headlines devem ter ÂNGULOS DIFERENTES entre si (outro público, outra dor, outro gatilho ou outra cena).
-- Cada headline é UMA ÚNICA FRASE curta, em uma linha: idealmente até 15 palavras e no máximo {MAX_TEXTO} caracteres. Nada de duas ou três frases, parágrafos, explicações ou comentários. Se a estrutura de origem for longa, condense só o gancho central.
+- Cada headline é UMA ÚNICA FRASE curta, idealmente em uma linha de até ~15 palavras / {RECOMENDADO_MAX_TEXTO} caracteres. Nada de duas ou três frases, parágrafos, explicações ou comentários. Se a estrutura de origem for longa, condense só o gancho central.
 - Referências de tamanho (extensão e ritmo, não de conteúdo):
 {_REFERENCIAS_TAMANHO}
-- Uma headline acima de {MAX_TEXTO} caracteres será descartada.
 - Sem emojis, sem hashtags e sem chamada para ação (CTA) dentro da headline.
 - O Núcleo é a identidade da própria pessoa: nomes reais que estejam nele podem aparecer.
 
@@ -108,7 +122,7 @@ Tudo o que estiver entre {BEGIN} e {END} é MATERIAL de terceiros (uma estrutura
 ## Formato da resposta
 Responda SOMENTE com um objeto JSON válido, sem texto antes ou depois, sem markdown:
 {{"headline_1": {{"texto": "...", "itens": ["<id>", ...]}}, "headline_2": {{"texto": "...", "itens": []}}}}
-"itens" lista os ids dos itens da pesquisa usados literalmente (lista vazia se nenhum). Cada "texto" é uma única frase de no máximo {MAX_TEXTO} caracteres."""
+"itens" lista os ids dos itens da pesquisa usados literalmente (lista vazia se nenhum). Cada "texto" é uma única frase, idealmente de até {RECOMENDADO_MAX_TEXTO} caracteres."""
 
 
 class ItemOfertado(NamedTuple):
@@ -209,8 +223,9 @@ def parse_output(reply: str) -> list[HeadlineSaida]:
 
     Accepts the bare CoreStudio form ``{"headline_1": "..."}`` (``itens = ()``) and a reply that is
     ENTIRELY one fenced block. Anything else that is not a JSON object raises
-    :class:`HeadlineParseError`. A headline that is empty, over :data:`MAX_TEXTO` (one short line; rejected, never
-    truncated), or not a string is skipped; no valid headline at all raises."""
+    :class:`HeadlineParseError`. A headline that is empty or not a string is skipped; no valid headline at all raises. A headline
+    longer than :data:`RECOMENDADO_MAX_TEXTO` is KEPT as is (never truncated, never dropped): the length
+    is a recommendation surfaced as a warning, not a block."""
     raw = (reply or "").strip()
     m = _FENCE.match(raw)
     if m:
@@ -233,7 +248,7 @@ def parse_output(reply: str) -> list[HeadlineSaida]:
         if not isinstance(texto, str):
             continue
         texto = texto.strip()
-        if not texto or len(texto) > MAX_TEXTO:
+        if not texto:
             continue
         itens: list[str] = []
         if isinstance(itens_raw, list):
@@ -252,10 +267,12 @@ __all__ = [
     "END",
     "HeadlineParseError",
     "HeadlineSaida",
-    "MAX_TEXTO",
+    "RECOMENDADO_MAX_TEXTO",
     "REFERENCIAS_TAMANHO",
     "ItemOfertado",
     "PROMPT_VERSAO",
+    "acima_recomendado",
+    "aviso_tamanho",
     "TEMPERATURA",
     "TEMPLATES_METODO",
     "TEMPLATES_POR_CRIATIVIDADE",

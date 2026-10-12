@@ -498,7 +498,7 @@ The server is the authority (`services/esteira_service.py :: mover_post`). The F
 
 ```ts
 export type PapelEsteira = "gravacao" | "postado" | "cancelado";
-export interface ResumoHeadline { id: string; texto: string; favorita: boolean }
+export interface ResumoHeadline { id: string; texto: string; favorita: boolean; acima_recomendado: boolean; recomendado_max_texto: number }  // length warning, computed (geracao-contract §5.4)
 export interface ResumoRoteiro { id: string; nome: string; status: "criando"|"perguntas"|"processando"|"completo"|"falha"; headline_id: string | null; headline_diferente: boolean }
 export interface LinkProducao { rotulo: string; url: string }
 export interface PostCard {

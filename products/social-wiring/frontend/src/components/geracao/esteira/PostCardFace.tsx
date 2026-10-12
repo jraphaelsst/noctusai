@@ -7,6 +7,7 @@ import { resolveDueState } from "@noctusai/lib/components";
 import { CheckSquare, Clock, MessageSquare } from "lucide-react";
 
 import { StatusBadge } from "@/components/geracao/StatusBadge";
+import { AvisoTamanhoHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
 import { cn } from "@/lib/utils";
 import type { PostCard } from "@/types/esteira";
 
@@ -66,7 +67,10 @@ export function PostCardFace({ post, papelEtapa, esconderMarca, isDragging, onCl
       <p className="line-clamp-2 text-sm font-medium leading-snug">{post.titulo}</p>
 
       {post.headline ? (
-        <p className="line-clamp-2 text-xs text-muted-foreground">{post.headline.texto}</p>
+        <>
+          <p className="line-clamp-2 text-xs text-muted-foreground">{post.headline.texto}</p>
+          <AvisoTamanhoHeadline headline={post.headline} className="px-1.5 text-[10px]" />
+        </>
       ) : (
         <p className="text-xs italic text-muted-foreground">Sem headline</p>
       )}

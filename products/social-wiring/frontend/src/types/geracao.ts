@@ -39,7 +39,9 @@ export type PostRef = { id: string; titulo: string; etapa_label: string }
 export type Headline = { id: string; marca_id: string; lote_id: string | null; texto: string; texto_original: string | null;
                   angulo: 1 | 2 | null; viral: ViralCard | null; template_metodo: number | null; itens_usados: ItemUsado[];
                   favorita: boolean; modo: 'manual' | 'automatico' | null; roteiro_id: string | null; created_at: string;
-                  post?: PostRef | null }
+                  post?: PostRef | null;
+                  /** Computed by the BE (no column): over the recommended length — a warning, never a block. */
+                  acima_recomendado: boolean; recomendado_max_texto: number }
 export type HeadlineLote = { id: string; marca_id: string; origem: LoteOrigem; status: GeracaoStatus; etapa: string | null;
                       estruturas_total: number; estruturas_processadas: number; estruturas_com_erro: number;
                       aviso_poucas_estruturas: boolean; fallback_metodo: boolean; erro: string | null;

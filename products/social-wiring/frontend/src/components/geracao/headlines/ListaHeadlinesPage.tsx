@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { MetricaPill } from "@/components/geracao/MetricaPill";
 import { CriarPostButton, NoPostBadge } from "@/components/geracao/PostEsteira";
+import { AvisoTamanhoHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
 import { RoteiroAvancadoModal } from "@/components/geracao/roteiro/RoteiroAvancadoModal";
 import { MarcaSwitcher } from "@/components/pesquisa/MarcaSwitcher";
 import { dataPtBr } from "@/components/pesquisa/format";
@@ -159,6 +160,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
         <td className="whitespace-nowrap p-2">{dataPtBr(h.created_at)}</td>
         <td className="max-w-md p-2">
           <p className="whitespace-pre-wrap">{h.texto}</p>
+          <AvisoTamanhoHeadline headline={h} className="mt-1" />
           {h.roteiro_id && (
             <Link to={`${ROTEIROS}?open=${encodeURIComponent(h.roteiro_id)}`}>
               <Badge variant="secondary" className="mt-1">

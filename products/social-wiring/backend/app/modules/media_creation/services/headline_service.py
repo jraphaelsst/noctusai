@@ -27,6 +27,8 @@ from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from app.modules.media_creation.geracao_taxonomias import FORMATO_IDS
 from app.modules.media_creation.pesquisa_variables import VARIABLE_SLUGS
+from app.modules.media_creation.prompts.headline_geracao import aviso_tamanho
+from app.modules.media_creation.schemas.headlines import MAX_TEXTO_CHARS
 from app.modules.media_creation.services import headline_pipeline as pipe
 from app.modules.media_creation.services.post_ref import post_refs
 from app.modules.media_creation.services.viral_card import viral_cards
@@ -154,6 +156,8 @@ class HeadlineService:
                 "favorita": bool(r.get("favorita")), "modo": r.get("modo"),
                 "roteiro_id": roteiros.get(str(r["id"])), "post": posts.get(str(r["id"])),
                 "created_at": r["created_at"],
+                # computed, never stored: the 120-char length is a recommendation (warning), not a block
+                **aviso_tamanho(r["texto"]),
             }
             for r in rows
         ]
@@ -446,8 +450,8 @@ class HeadlineService:
     async def editar(self, headline_id: str, texto: str) -> dict[str, Any]:
         row = self._get_headline_row(headline_id)
         texto = texto.strip()
-        if not texto or len(texto) > 1000:
-            raise HeadlineError(422, "O texto deve ter entre 1 e 1000 caracteres")
+        if not texto or len(texto) > MAX_TEXTO_CHARS:
+            raise HeadlineError(422, f"O texto deve ter entre 1 e {MAX_TEXTO_CHARS} caracteres")
         patch = {"texto": texto, "updated_at": _iso()}
         if not row.get("texto_original"):
             patch["texto_original"] = row["texto"]
@@ -464,8 +468,8 @@ class HeadlineService:
     async def criar(self, marca_id: str, texto: str) -> dict[str, Any]:
         self.assert_marca(marca_id)
         texto = texto.strip()
-        if not texto or len(texto) > 1000:
-            raise HeadlineError(422, "O texto deve ter entre 1 e 1000 caracteres")
+        if not texto or len(texto) > MAX_TEXTO_CHARS:
+            raise HeadlineError(422, f"O texto deve ter entre 1 e {MAX_TEXTO_CHARS} caracteres")
         hid = str(uuid.uuid4())
         now = _iso()
         self.db.table(pipe.HEADLINES).insert({

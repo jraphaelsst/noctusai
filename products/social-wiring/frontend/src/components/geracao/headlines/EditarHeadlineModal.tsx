@@ -24,6 +24,7 @@ import { useEditarHeadline } from "@/hooks/geracao/useHeadlineMutations";
 import type { Headline, Roteiro } from "@/types/geracao";
 import { HEADLINE_TEXTO_MAX } from "../labels";
 import { CONTEUDO_MAX, MSG_CONFLITO, type useEdicaoRoteiro } from "../roteiro/RoteiroEdicao";
+import { ContadorHeadline } from "./TamanhoHeadline";
 
 export interface RoteiroBloco {
   /** Undefined while loading or when the roteiro is not ready to edit. */
@@ -36,7 +37,8 @@ export interface RoteiroBloco {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  headline: Pick<Headline, "id" | "texto" | "texto_original"> | null;
+  /** `recomendado_max_texto` (from any headline response) drives the amber counter; it never blocks. */
+  headline: (Pick<Headline, "id" | "texto" | "texto_original"> & Partial<Pick<Headline, "recomendado_max_texto">>) | null;
   onSalvo?: (h: Headline) => void;
   roteiroBloco?: RoteiroBloco;
 }
@@ -50,6 +52,7 @@ export function EditarHeadlineModal({ open, onOpenChange, headline, onSalvo, rot
   }, [open, headline]);
 
   const limpo = texto.trim();
+  // Only the storage cap blocks; the recommended length is a warning (owner decision 2026-10-11).
   const excedeu = limpo.length > HEADLINE_TEXTO_MAX;
   const alterou = !!headline && limpo !== headline.texto.trim();
   const edicao = roteiroBloco?.edicao;
@@ -101,9 +104,7 @@ export function EditarHeadlineModal({ open, onOpenChange, headline, onSalvo, rot
             onChange={(e) => setTexto(e.target.value)}
             aria-invalid={excedeu}
           />
-          <p className={`text-xs ${excedeu ? "text-destructive" : "text-muted-foreground"}`}>
-            {limpo.length}/{HEADLINE_TEXTO_MAX} caracteres
-          </p>
+          <ContadorHeadline texto={texto} recomendado={headline?.recomendado_max_texto} />
           {headline?.texto_original && headline.texto_original !== headline.texto && (
             <p className="text-xs text-muted-foreground">Original: {headline.texto_original}</p>
           )}
