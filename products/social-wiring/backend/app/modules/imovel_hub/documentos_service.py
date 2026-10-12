@@ -66,6 +66,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 from uuid import UUID
 
+from noctusai_lib.integrations.documents import cnd_imovel
 from noctusai_lib.integrations.documents.matricula_certidao import (
     MOTIVO_ANTERIOR_AO_ULTIMO_ATO,
     MOTIVO_NAO_ENCONTRADA,
@@ -528,10 +529,16 @@ _DESCRICAO_CAMPO: dict[str, str] = {
         "validade_ate (formato YYYY-MM-DD ou null) - data de validade "
         "impressa no documento, quando houver"
     ),
+    # 🔴 The semantics are spelled out: without them a paid-up condomínio
+    # declaração ("cotas quitadas") read as a reassuring, "positive" document
+    # and came back `positiva` — which in a certidão means THERE ARE DEBTS.
     "resultado": (
-        "resultado (um destes valores exatos: negativa, positiva, "
-        "positiva_com_efeito_de_negativa - ou null se nao for possivel "
-        "determinar com confianca)"
+        "resultado (um destes valores exatos: negativa = o documento atesta "
+        "que NAO ha debitos/pendencias, inclusive declaracao de quitacao ou "
+        "de que a unidade esta em dia; positiva = o documento aponta debitos "
+        "em aberto; positiva_com_efeito_de_negativa = ha debitos com "
+        "exigibilidade suspensa - ou null se nao for possivel determinar com "
+        "confianca)"
     ),
     "inscricao_imobiliaria": (
         "inscricao_imobiliaria (string ou null) - o numero de inscricao "
@@ -979,6 +986,47 @@ def _preencher_onus_certidao_em(
     return True
 
 
+def _estrutura_impressa(
+    paginas: Sequence["PaginaLida"], tipo: str
+) -> tuple[dict, bool]:
+    """P6 (2026-10): the imóvel CNDs' fields read DETERMINISTICALLY from the
+    printed text (`noctusai_lib...cnd_imovel`) — text-layer pages first, a
+    vision transcription only for what they did not print. Returns the
+    fields (row column names) and whether the inscrição came from vision
+    (the mask gate below escalates only those)."""
+    leitor = cnd_imovel.LEITORES_POR_TIPO.get(tipo)
+    if leitor is None:
+        return {}, False
+    do_texto = "\n".join(p.texto for p in paginas if not p.via_visao)
+    da_visao = "\n".join(p.texto for p in paginas if p.via_visao)
+    campos = leitor(do_texto).campos() if do_texto.strip() else {}
+    extra = leitor(da_visao).campos() if da_visao.strip() else {}
+    via_visao = "inscricao_imobiliaria" in extra and "inscricao_imobiliaria" not in campos
+    for chave, valor in extra.items():
+        campos.setdefault(chave, valor)
+    return campos, via_visao
+
+
+def _impresso_vence(
+    via_ia: Optional[dict], impresso: dict, documento_id: str
+) -> dict:
+    """The printed reading wins field by field; the model only fills what the
+    print did not carry. A disagreement is logged — it is evidence about the
+    model, never a reason to keep its answer."""
+    via_ia = dict(via_ia or {})
+    divergentes = [
+        f"{k}: ia={via_ia[k]!r} impresso={v!r}"
+        for k, v in impresso.items()
+        if via_ia.get(k) not in (None, v)
+    ]
+    if divergentes:
+        logger.warning(
+            "extracao estrutura %s: leitura impressa diverge da IA (vale a impressa): %s",
+            documento_id, "; ".join(divergentes),
+        )
+    return {**via_ia, **impresso}
+
+
 def _estrutura_da_matricula(
     paginas: Sequence["PaginaLida"], via_ia: Optional[dict]
 ) -> dict:
@@ -1169,12 +1217,17 @@ async def extrair_estrutura(
             _pagina(p) for p in await extract_text(blob.data, doc.get("mime_type"), str(org_id))
         )
         via_ia: Optional[dict] = None
-        if paginas:
+        campos = CAMPOS_ESTRUTURA_POR_TIPO.get(tipo) or ()
+        impresso, inscricao_impressa_via_visao = _estrutura_impressa(paginas, tipo)
+        if paginas and impresso and all(c in impresso for c in campos):
+            # Every field read from the printed text — no model asked.
+            via_ia = dict(impresso)
+            inscricao_via_visao = inscricao_impressa_via_visao
+        elif paginas:
             respostas = [
                 (await analyze_estrutura(p.texto, tipo, str(org_id)), p.via_visao)
                 for p in paginas
             ]
-            campos = CAMPOS_ESTRUTURA_POR_TIPO.get(tipo) or ()
             # 🔴 TEXT LAYER FIRST (extraction defect, 2026-10-03): the merge
             # keeps the first page that answered a field, so text-layer
             # pages' answers are ordered ahead of vision pages' — an exact
@@ -1191,6 +1244,10 @@ async def extrair_estrutura(
                     "extracao estrutura %s: paginas divergem: %s",
                     documento_id, "; ".join(avisos),
                 )
+            if impresso:
+                via_ia = _impresso_vence(via_ia, impresso, documento_id)
+                if "inscricao_imobiliaria" in impresso:
+                    inscricao_via_visao = inscricao_impressa_via_visao
             if tipo == "matricula":
                 matricula = _estrutura_da_matricula(paginas, via_ia)
                 via_ia = {**(via_ia or {}), **matricula}

@@ -57,6 +57,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
+from noctusai_lib.integrations.documents.datas_ptbr import datas_no_texto
 from noctusai_lib.integrations.documents.matricula import normalize
 
 ALTA = "alta"
@@ -107,15 +108,6 @@ _MARCAS_CERTIDAO = re.compile(
 )
 
 # ─── emission date ────────────────────────────────────────────────────────
-
-_MESES = {
-    "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5, "JUNHO": 6,
-    "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
-}
-_DATA = re.compile(
-    r"(?<![\d/.])(?P<d>\d{1,2})\s*[/.\-]\s*(?P<m>\d{1,2})\s*[/.\-]\s*(?P<a>\d{4})(?![\d/])"
-    r"|(?<!\d)(?P<de>\d{1,2})\s*(?:O|°)?\s+DE\s+(?P<me>" + "|".join(_MESES) + r")\s+DE\s+(?P<ae>\d{4})(?!\d)"
-)
 
 #: A label that ends right before the emission date. `AS 10:22:33 HORAS DO
 #: DIA` / `EM` / `NO DIA` connectors tolerated.
@@ -186,15 +178,6 @@ class CertidaoMatriculaLida:
         return True
 
 
-def _data(m: re.Match[str]) -> Optional[date]:
-    try:
-        if m.group("a"):
-            return date(int(m.group("a")), int(m.group("m")), int(m.group("d")))
-        return date(int(m.group("ae")), _MESES[m.group("me")], int(m.group("de")))
-    except ValueError:
-        return None
-
-
 def classificar_documento_matricula(texto: str) -> tuple[Optional[str], Optional[str]]:
     """`(tipo_documento_matricula, marker)` — see module docstring. A
     visualização marker wins; neither marker → `(None, None)`."""
@@ -238,20 +221,17 @@ def _candidatas(norm: str) -> tuple[list[tuple[date, str]], list[tuple[date, str
 
     rotuladas: list[tuple[date, str]] = []
     fechos: list[tuple[date, str]] = []
-    for m in _DATA.finditer(norm):
-        valor = _data(m)
-        if valor is None:
-            continue
-        na_cabeca = m.start() < _CABECA
-        na_zona = inicio_zona is not None and m.start() >= inicio_zona
+    for inicio, _fim, valor in datas_no_texto(norm):
+        na_cabeca = inicio < _CABECA
+        na_zona = inicio_zona is not None and inicio >= inicio_zona
         if not (na_cabeca or na_zona):
             continue
-        prefixo = norm[max(0, m.start() - _JANELA_ROTULO) : m.start()]
+        prefixo = norm[max(0, inicio - _JANELA_ROTULO) : inicio]
         rotulo = _ROTULO_EMISSAO.search(prefixo)
         if rotulo:
             rotuladas.append((valor, rotulo.group(0).strip()))
         elif na_zona:
-            fecho = _FECHO.search(norm[max(inicio_zona, m.start() - 120) : m.start()])
+            fecho = _FECHO.search(norm[max(inicio_zona, inicio - 120) : inicio])
             if fecho:
                 fechos.append((valor, fecho.group(0).strip()))
     return rotuladas, fechos[-1:]

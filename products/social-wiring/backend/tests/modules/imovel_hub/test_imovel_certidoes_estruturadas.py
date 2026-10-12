@@ -136,9 +136,11 @@ class TestTheStructuredExtraction:
         out = await documentos_service.extrair_estrutura(
             scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
             extract_text=_texto_fixo("declaracao de quitacao ..."),
+            # A declaração de quitação is NEGATIVA (no debts) — `positiva`
+            # here once encoded the very misreading P6 fixed.
             analyze_estrutura=_analise_fixa({
                 "emitida_em": "2026-09-05",
-                "resultado": "positiva",
+                "resultado": "negativa",
             }),
         )
         assert out["status"] == "ok"
@@ -147,9 +149,80 @@ class TestTheStructuredExtraction:
         docs = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()
         row = docs["items"][0]
         assert row["emitida_em"] == "2026-09-05"
-        assert row["resultado"] == "positiva"
+        assert row["resultado"] == "negativa"
         assert row["numero"] is None
         assert row["inscricao_imobiliaria"] is None
+
+
+#: Synthetic, shaped after the GIAP "Cidadão Online" CND layout.
+_CND_IMPRESSA = """CERTIDÃO NEGATIVA DE TRIBUTOS IMOBILIÁRIOS
+CERTIDÃO NEGATIVA Nº. 123456/2026
+Certificamos para os devidos fins e efeitos que NÃO CONSTAM DÉBITOS nesta municipalidade.
+Prefeitura do Municipio de Exemplo, 11 de agosto de 2026.
+Essa certidão é válida por 60 dias.
+Inscrição Imobiliária: 11111.22.33.0444.00.000
+"""
+
+
+def _ia_proibida():
+    async def _fn(texto, tipo_documento, org_id):
+        raise AssertionError("o modelo não deveria ser consultado")
+    return _fn
+
+
+class TestTheReadFromThePrintFirst:
+    """P6: the imóvel CNDs are read from the PRINTED text first
+    (`noctusai_lib...cnd_imovel`); the model only fills what is not printed,
+    and the print wins any disagreement."""
+
+    async def _ler(self, scoped, fake_storage, tipo, texto, analyzer):
+        did = str(uuid4())
+        path = f"{ORG_ID}/imoveis/{CODIGO}/{did}"
+        seed(scoped, documentos=[documento_row(did, tipo_documento=tipo, storage_path=path)])
+        await _seed_storage(fake_storage, path)
+        return await documentos_service.extrair_estrutura(
+            scoped, fake_storage, UUID(ORG_ID), CODIGO, UUID(did),
+            extract_text=_texto_fixo(texto), analyze_estrutura=analyzer,
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_fully_printed_cnd_never_asks_the_model(self, client, scoped, fake_storage):
+        out = await self._ler(scoped, fake_storage, "cnd_iptu", _CND_IMPRESSA, _ia_proibida())
+        assert out["status"] == "ok"
+        row = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()["items"][0]
+        assert row["numero"] == "123456/2026"
+        assert row["emitida_em"] == "2026-08-11"
+        assert row["validade_ate"] == "2026-10-10"
+        assert row["resultado"] == "negativa"
+        assert row["inscricao_imobiliaria"] == "11111.22.33.0444.00.000"
+
+    @pytest.mark.asyncio
+    async def test_a_paid_up_condominio_declaracao_is_negativa_whatever_the_model_says(
+        self, client, scoped, fake_storage
+    ):
+        texto = (
+            "Declaramos que a unidade 12 está com as cotas condominiais quitadas "
+            "até a presente data.\nCotia, 31 de agosto de 2026."
+        )
+        out = await self._ler(scoped, fake_storage, "cnd_condominio", texto, _ia_proibida())
+        assert out["status"] == "ok"
+        row = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()["items"][0]
+        assert row["resultado"] == "negativa"
+        assert row["emitida_em"] == "2026-08-31"
+
+    @pytest.mark.asyncio
+    async def test_the_model_fills_only_what_is_not_printed_and_loses_disagreements(
+        self, client, scoped, fake_storage
+    ):
+        sem_numero = _CND_IMPRESSA.replace("CERTIDÃO NEGATIVA Nº. 123456/2026\n", "")
+        out = await self._ler(
+            scoped, fake_storage, "cnd_iptu", sem_numero,
+            _analise_fixa({"numero": "999/2026", "resultado": "positiva"}),
+        )
+        assert out["status"] == "ok"
+        row = client.get(f"/api/imoveis/{CODIGO}/documentos", headers=auth()).json()["items"][0]
+        assert row["numero"] == "999/2026"  # not printed → the model's
+        assert row["resultado"] == "negativa"  # printed → the print's
 
 
 class TestParseJsonEstrutura:

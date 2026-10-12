@@ -53,6 +53,7 @@ from typing import Any, Literal, Optional, Sequence
 
 from noctusai_lib.integrations.documents.cpf import format_cpf
 from noctusai_lib.integrations.documents.cpf import is_valid as _cpf_valido
+from noctusai_lib.integrations.documents.datas_ptbr import datas_no_texto as _datas
 from noctusai_lib.integrations.documents.matricula import normalize
 from noctusai_lib.integrations.documents.matricula_atos import normalized_with_offsets
 
@@ -425,36 +426,8 @@ def _natureza(
     return natureza, BAIXA
 
 
-# ─── dates ────────────────────────────────────────────────────────────────
-
-_MESES = {
-    "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5, "JUNHO": 6,
-    "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9, "OUTUBRO": 10, "NOVEMBRO": 11, "DEZEMBRO": 12,
-}
-
-_DATA_NUM = re.compile(r"(?<![\d/.])(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{4})(?![\d/])")
-_DATA_EXT = re.compile(
-    r"(?<!\d)(\d{1,2})\s*(?:O|°)?\s+DE\s+(" + "|".join(_MESES) + r")\s+DE\s+(\d{4})(?!\d)"
-)
-
-
-def _datas(norm: str, desde: int = 0, ate: Optional[int] = None) -> list[tuple[int, int, date]]:
-    ate = len(norm) if ate is None else ate
-    saida: list[tuple[int, int, date]] = []
-    for m in _DATA_NUM.finditer(norm, desde, ate):
-        dia, mes, ano = (int(g) for g in m.groups())
-        try:
-            saida.append((m.start(), m.end(), date(ano, mes, dia)))
-        except ValueError:
-            continue
-    for m in _DATA_EXT.finditer(norm, desde, ate):
-        try:
-            saida.append((m.start(), m.end(), date(int(m.group(3)), _MESES[m.group(2)], int(m.group(1)))))
-        except ValueError:
-            continue
-    saida.sort()
-    return saida
-
+# ─── dates ─────────────────────────────────────────────────────────────────
+# `_datas` is the shared `datas_ptbr.datas_no_texto` (imported above).
 
 #: The date sits right after the header: `R-1/45.678 - Em 10 de março de 2001`.
 _ANCORA_INICIO = re.compile(r"^[\s\-–—.:,]*(?:EM\s+|DATA\s*[:\-–—]?\s*)?$")

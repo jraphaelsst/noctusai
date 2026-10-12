@@ -70,6 +70,7 @@ from noctusai_lib.integrations.documents.cnpj import (
     normalize as _cnpj_normalize,
 )
 from noctusai_lib.integrations.documents.cpf import format_cpf, is_valid as _cpf_is_valid
+from noctusai_lib.integrations.documents.datas_ptbr import MESES
 from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
@@ -119,12 +120,6 @@ def _tempered_map(
 
 # ─── small parsing helpers, local to this layout ──────────────────────────
 
-_MESES = {
-    "JANEIRO": 1, "FEVEREIRO": 2, "MARCO": 3, "ABRIL": 4, "MAIO": 5,
-    "JUNHO": 6, "JULHO": 7, "AGOSTO": 8, "SETEMBRO": 9, "OUTUBRO": 10,
-    "NOVEMBRO": 11, "DEZEMBRO": 12,
-}
-
 
 def _data_br(txt: str) -> Optional[date]:
     """`DD/MM/AAAA` → `date`, or `None` when not shaped like one."""
@@ -165,7 +160,7 @@ def _decimal_pct(txt: str) -> Optional[Decimal]:
 
 
 _CONSULTA_EM_RE = re.compile(
-    r"(\d{1,2})\s+DE\s+(" + "|".join(_MESES) + r")\s+DE\s+(\d{4})\s+"
+    r"(\d{1,2})\s+DE\s+(" + "|".join(MESES) + r")\s+DE\s+(\d{4})\s+"
     r"(\d{2}):(\d{2}):(\d{2})"
 )
 _PROTOCOLO_RE = re.compile(r"PROTOCOLO\s+DA\s+CONSULTA\s*:?\s*(\d+)")
@@ -492,7 +487,7 @@ def parse_crednet(text: str, source: TextSource) -> CrednetFields:
         dia, mes_nome, ano, hh, mm, ss = m.groups()
         try:
             consulta_em = datetime(
-                int(ano), _MESES[mes_nome], int(dia), int(hh), int(mm), int(ss)
+                int(ano), MESES[mes_nome], int(dia), int(hh), int(mm), int(ss)
             )
             confiancas["consulta_em"] = ExtractionConfidence.ALTA
         except ValueError:
