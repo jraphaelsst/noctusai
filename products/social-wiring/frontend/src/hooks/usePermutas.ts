@@ -67,6 +67,23 @@ export interface PermutaInteresse {
   observacoes: string | null;
 }
 
+export const NATUREZA_LABELS: Record<Natureza, string> = {
+  imovel: "Imóvel do catálogo",
+  permuta_imovel: "Imóvel oferecido em permuta",
+  permuta_automovel: "Automóvel oferecido em permuta",
+};
+
+/** The DB CHECK on `permuta_ativos.status` (migration 101). Only `ativo`
+ *  rows are listed by default and only `ativo` rows feed the engine. */
+export type StatusAtivo = "ativo" | "pausado" | "concluido" | "arquivado";
+
+export const STATUS_ATIVO_LABELS: Record<StatusAtivo, string> = {
+  ativo: "Ativo",
+  pausado: "Pausado",
+  concluido: "Concluído",
+  arquivado: "Arquivado",
+};
+
 export interface PermutaAtivo {
   id: string;
   natureza: Natureza;
@@ -75,19 +92,53 @@ export interface PermutaAtivo {
   corretor_id: string | null;
   proprietario_nome: string | null;
   proprietario_telefone: string | null;
+  proprietario_email?: string | null;
   tipo_imovel: string | null;
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
   cidade: string | null;
   bairro: string | null;
   uf: string | null;
   zona: string | null;
+  condominio_nome?: string | null;
   valor: number | null;
+  area_total?: number | null;
+  area_privativa?: number | null;
+  quartos?: number | null;
+  suites?: number | null;
+  vagas?: number | null;
+  faixa_preco_min?: number | null;
+  faixa_preco_max?: number | null;
+  regiao_preferida?: string[] | null;
+  aceita_completar_diferenca?: boolean | null;
+  limite_complemento?: number | null;
+  percentual_min?: number | null;
+  percentual_max?: number | null;
+  /** The free text the semantic matching embeds as "what this ativo wants"
+   *  (`adapter.texto_interesses_para_embedding` leads with it). */
   observacoes: string | null;
+  /** DERIVED, read-only: the text last sent to the embedding model. Not
+   *  accepted by the create/patch body (`StrictHttpModel` would 422 it). */
+  interesses_descricao?: string | null;
   status: string;
   origem: string;
   /** Never the vectors themselves — 1536 floats each, and nothing plots them. */
   tem_embedding: boolean;
   tem_embedding_interesses: boolean;
   interesses: PermutaInteresse[];
+  /** Registry list only: the catalog listing a natureza='imovel' row points
+   *  at, kept OFF the row's own columns so an edit never writes catalog data
+   *  back into the intent. `null` = código not (or no longer) in the
+   *  catalog. Absent on an older backend. */
+  catalogo?: {
+    titulo: string | null;
+    categoria: string | null;
+    bairro: string | null;
+    cidade: string | null;
+    uf: string | null;
+    valor_venda: number | null;
+  } | null;
 }
 
 /** The display summary both sides of a match resolve to. Catalog data wins
@@ -161,22 +212,94 @@ export interface EmbutirResultado {
   nao_resolvidos: number;
 }
 
+/** One accepted-in-exchange criterion — `InteresseBody` in schemas.py. */
+export interface InteressePayload {
+  tipo?: string;
+  tipo_imovel?: string | null;
+  zona?: string | null;
+  cidade?: string | null;
+  bairro?: string | null;
+  valor_minimo?: number | null;
+  valor_maximo?: number | null;
+  percentual_min?: number | null;
+  percentual_max?: number | null;
+  marca?: string | null;
+  modelo?: string | null;
+  ano_min?: number | null;
+  ano_max?: number | null;
+  observacoes?: string | null;
+}
+
+/** `AtivoCreateBody` / `AtivoPatchBody` in schemas.py — the server forbids
+ *  unknown keys, so this type is the whole contract. On a PATCH an omitted
+ *  key is left alone, an explicit `null` clears it, and `interesses` (when
+ *  present) REPLACES the set. */
+export interface AtivoPayload {
+  natureza?: Natureza;
+  imovel_codigo?: string | null;
+  codigo?: string | null;
+  corretor_id?: string | null;
+  proprietario_nome?: string | null;
+  proprietario_telefone?: string | null;
+  proprietario_email?: string | null;
+  tipo_imovel?: string | null;
+  cep?: string | null;
+  logradouro?: string | null;
+  numero?: string | null;
+  complemento?: string | null;
+  bairro?: string | null;
+  cidade?: string | null;
+  uf?: string | null;
+  zona?: string | null;
+  condominio_nome?: string | null;
+  valor?: number | null;
+  area_total?: number | null;
+  area_privativa?: number | null;
+  quartos?: number | null;
+  suites?: number | null;
+  vagas?: number | null;
+  faixa_preco_min?: number | null;
+  faixa_preco_max?: number | null;
+  regiao_preferida?: string[] | null;
+  aceita_completar_diferenca?: boolean | null;
+  limite_complemento?: number | null;
+  percentual_min?: number | null;
+  percentual_max?: number | null;
+  observacoes?: string | null;
+  status?: StatusAtivo | null;
+  interesses?: InteressePayload[] | null;
+}
+
 // ─── Keys ───────────────────────────────────────────────────────────────────
 
 const BASE = "/api/permutas";
 
-const ATIVOS_KEY = (natureza?: Natureza) =>
-  ["sw", "permutas", "ativos", { natureza: natureza ?? null }] as const;
+const ATIVOS_KEY = (natureza?: Natureza, incluirInativos = false) =>
+  [
+    "sw",
+    "permutas",
+    "ativos",
+    { natureza: natureza ?? null, incluirInativos },
+  ] as const;
 const MATCHES_KEY = (etapa?: Etapa) =>
   ["sw", "permutas", "matches", { etapa: etapa ?? null }] as const;
 
 // ─── Queries ────────────────────────────────────────────────────────────────
 
-export function usePermutaAtivos(natureza?: Natureza) {
+export function usePermutaAtivos(
+  natureza?: Natureza,
+  opts: { incluirInativos?: boolean } = {},
+) {
+  const incluirInativos = opts.incluirInativos ?? false;
   return useQuery({
-    queryKey: ATIVOS_KEY(natureza),
+    queryKey: ATIVOS_KEY(natureza, incluirInativos),
     queryFn: async () => {
-      const qs = natureza ? `?natureza=${encodeURIComponent(natureza)}` : "";
+      const params = new URLSearchParams();
+      if (natureza) params.set("natureza", natureza);
+      // The server lists only `status='ativo'` unless asked — a paused or
+      // archived intent would otherwise be invisible AND uneditable.
+      if (incluirInativos) params.set("incluir_inativos", "true");
+      const qs = params.toString() ? `?${params.toString()}` : "";
       const res = await api.get<{ items: PermutaAtivo[]; total: number }>(
         `${BASE}${qs}`,
       );
@@ -245,6 +368,39 @@ export function useMoverEtapa() {
         etapa,
         ...(observacoes !== undefined ? { observacoes } : {}),
       }),
+    onSuccess: () => invalidarTudo(qc),
+  });
+}
+
+// ─── Registry mutations ─────────────────────────────────────────────────────
+//
+// Every write invalidates ALL permutas queries, not just the registry list:
+// a delete cascades to the ativo's matches (FK CASCADE), and an edit clears
+// its vectors server-side (`atualizar_ativo`), which changes the "sem
+// vetores" count on the embeddings button.
+
+export function useCriarAtivo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: AtivoPayload & { natureza: Natureza }) =>
+      api.post<PermutaAtivo>(BASE, body),
+    onSuccess: () => invalidarTudo(qc),
+  });
+}
+
+export function useAtualizarAtivo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ ativoId, body }: { ativoId: string; body: AtivoPayload }) =>
+      api.patch<PermutaAtivo>(`${BASE}/${ativoId}`, body),
+    onSuccess: () => invalidarTudo(qc),
+  });
+}
+
+export function useRemoverAtivo() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ativoId: string) => api.delete<void>(`${BASE}/${ativoId}`),
     onSuccess: () => invalidarTudo(qc),
   });
 }

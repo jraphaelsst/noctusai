@@ -97,6 +97,10 @@ def listar_ativos(
     for i in interesses:
         por_ativo.setdefault(i["ativo_id"], []).append(i)
 
+    catalogo = _catalogo_por_codigo(
+        client, org_id, [r["imovel_codigo"] for r in rows if r.get("imovel_codigo")]
+    )
+
     itens = []
     for row in rows:
         # The vectors are 1536 floats each. Returning them would put ~24KB of
@@ -106,9 +110,42 @@ def listar_ativos(
         item["tem_embedding"] = bool(row.get("embedding"))
         item["tem_embedding_interesses"] = bool(row.get("embedding_interesses"))
         item["interesses"] = por_ativo.get(row["id"], [])
+        # 🔴 A SEPARATE KEY, never folded over the row's own columns. A
+        # natureza='imovel' row is a pointer whose own bairro/valor are mostly
+        # empty, so the registry list needs the catalog's — but the edit form
+        # is prefilled from THIS payload, and merging would write catalog data
+        # back into the intent row on the next save. `None` = the código is
+        # not (or no longer) in the catalog, which the page says out loud.
+        imovel = catalogo.get(row.get("imovel_codigo") or "")
+        item["catalogo"] = (
+            {
+                "titulo": imovel.get("titulo"),
+                "categoria": imovel.get("categoria"),
+                "bairro": imovel.get("bairro"),
+                "cidade": imovel.get("cidade"),
+                "uf": imovel.get("uf"),
+                "valor_venda": imovel.get("valor_venda"),
+            }
+            if imovel
+            else None
+        )
         itens.append(item)
 
     return {"items": itens, "total": len(itens)}
+
+
+def _catalogo_por_codigo(client: Any, org_id: UUID, codigos: list[str]) -> dict[str, dict]:
+    """Catalog listings for a set of códigos, in one query (never per row)."""
+    if not codigos:
+        return {}
+    linhas = (
+        _t(client, "imoveis")
+        .select("codigo,titulo,categoria,bairro,cidade,uf,valor_venda")
+        .eq("org_id", str(org_id))
+        .in_("codigo", sorted(set(codigos)))
+        .execute()
+    ).data or []
+    return {i["codigo"]: i for i in linhas}
 
 
 def obter_ativo(client: Any, org_id: UUID, ativo_id: UUID) -> dict:

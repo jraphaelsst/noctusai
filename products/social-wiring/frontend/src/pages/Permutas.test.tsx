@@ -29,6 +29,7 @@ vi.mock("@noctusai/seed/infra", () => ({
 
 vi.mock("@noctusai/lib/design-system", () => ({
   TableSkeleton: () => <div data-testid="skeleton" />,
+  Skeleton: () => <div data-testid="skeleton-linha" />,
 }));
 
 vi.mock("sonner", () => ({
@@ -49,6 +50,9 @@ vi.mock("@/hooks/usePermutas", async () => {
     useGerarMatches: () => ({ mutateAsync: mockGerar, isPending: false }),
     useGerarEmbeddings: () => ({ mutateAsync: vi.fn(), isPending: false }),
     useMoverEtapa: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useCriarAtivo: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useAtualizarAtivo: () => ({ mutateAsync: vi.fn(), isPending: false }),
+    useRemoverAtivo: () => ({ mutateAsync: vi.fn(), isPending: false }),
   };
 });
 
@@ -227,5 +231,92 @@ describe("decisões herdadas", () => {
     const { getByText, queryByText } = await render();
     expect(getByText("Decisão herdada do Permutas")).toBeTruthy();
     expect(queryByText(/0 · Parcial/)).toBeNull();
+  });
+});
+
+describe("cabeçalho — contagens", () => {
+  it("🔴 não mostra '0 imóveis · 0 matches' enquanto as consultas carregam", async () => {
+    mockUsePermutaAtivos.mockReturnValue(
+      query({ isPending: true, isFetching: true, data: undefined }),
+    );
+    mockUsePermutaMatches.mockReturnValue(
+      query({ isPending: true, isFetching: true, data: undefined }),
+    );
+    const { queryByText, getByTestId, queryByTestId } = await render();
+    expect(queryByText(/0 imóveis/)).toBeNull();
+    expect(queryByTestId("permutas-contagens")).toBeNull();
+    expect(getByTestId("permutas-contagens-carregando")).toBeTruthy();
+  });
+
+  it("espera as DUAS consultas — matches prontos e ativos pendentes ainda é placeholder", async () => {
+    mockUsePermutaAtivos.mockReturnValue(
+      query({ isPending: true, isFetching: true, data: undefined }),
+    );
+    mockUsePermutaMatches.mockReturnValue(query({ data: [match()] }));
+    const { queryByTestId } = await render();
+    expect(queryByTestId("permutas-contagens")).toBeNull();
+    expect(queryByTestId("permutas-contagens-carregando")).toBeTruthy();
+  });
+
+  it("mostra as contagens reais quando os dados chegam", async () => {
+    mockUsePermutaAtivos.mockReturnValue(query({ data: [{ id: "x" }, { id: "y" }] }));
+    mockUsePermutaMatches.mockReturnValue(query({ data: [match()] }));
+    const { getByTestId } = await render();
+    expect(getByTestId("permutas-contagens").textContent).toMatch(
+      /2 imóveis abertos a permuta · 1 match$/,
+    );
+  });
+
+  it("falha nas contagens não vira '0'", async () => {
+    mockUsePermutaAtivos.mockReturnValue(
+      query({ isError: true, error: { message: "boom" }, data: undefined }),
+    );
+    const { getByText, queryByTestId } = await render();
+    expect(getByText("Contagens indisponíveis")).toBeTruthy();
+    expect(queryByTestId("permutas-contagens")).toBeNull();
+  });
+});
+
+describe("LadoDoMatch — endereço uma vez só", () => {
+  it("🔴 não repete o bairro quando o empreendimento é o próprio bairro", async () => {
+    const lado = {
+      ...RESUMO,
+      titulo: "Casa térrea",
+      bairro: "Fazendinha - Km 23",
+      cidade: "Carapicuíba",
+      condominio_nome: "Fazendinha - Km 23",
+    };
+    mockUsePermutaMatches.mockReturnValue(
+      query({ data: [match({ ativo_origem: lado, ativo_destino: { ...RESUMO, id: "b" } })] }),
+    );
+    const { getAllByText } = await render();
+    expect(getAllByText(/Fazendinha - Km 23/).length).toBe(1);
+  });
+
+  it("não repete o bairro quando o título é o bairro", async () => {
+    const lado = { ...RESUMO, titulo: "Fazendinha - Km 23", bairro: "Fazendinha - Km 23" };
+    mockUsePermutaMatches.mockReturnValue(
+      query({ data: [match({ ativo_origem: lado, ativo_destino: { ...RESUMO, id: "b" } })] }),
+    );
+    const { getAllByText } = await render();
+    expect(getAllByText(/Fazendinha - Km 23/).length).toBe(1);
+  });
+
+  it("um empreendimento distinto continua visível", async () => {
+    const lado = { ...RESUMO, condominio_nome: "Residencial Aldeia" };
+    mockUsePermutaMatches.mockReturnValue(
+      query({ data: [match({ ativo_origem: lado, ativo_destino: { ...RESUMO, id: "b" } })] }),
+    );
+    const { getByText } = await render();
+    expect(getByText("Residencial Aldeia")).toBeTruthy();
+  });
+});
+
+describe("abas", () => {
+  it("a aba 'Imóveis em permuta' mostra o registro", async () => {
+    const { fireEvent, waitFor } = await import("@testing-library/react");
+    const { getByRole, getByTestId } = await render();
+    fireEvent.mouseDown(getByRole("tab", { name: "Imóveis em permuta" }), { button: 0 });
+    await waitFor(() => expect(getByTestId("permuta-ativos-lista")).toBeTruthy());
   });
 });

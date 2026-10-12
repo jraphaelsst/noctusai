@@ -20,6 +20,9 @@
  * rewrite it again — that is what stops a re-scan from resurrecting every
  * discarded pair forever. Moving it BACK to sugerido hands it to the engine
  * again, which is why that transition is offered rather than hidden.
+ *
+ * Two tabs: "Matches" (the board) and "Imóveis em permuta" (the registry —
+ * `PermutaAtivosLista`, where ativos are registered, edited and removed).
  */
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -48,7 +51,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { TableSkeleton } from "@noctusai/lib/design-system";
+import { Skeleton, TableSkeleton } from "@noctusai/lib/design-system";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { PermutaAtivosLista } from "@/components/permutas/PermutaAtivosLista";
 
 const BRL = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -86,7 +91,21 @@ function LadoDoMatch({ ativo, papel }: { ativo: AtivoResumo | null; papel: strin
   }
 
   const codigo = ativo.imovel_codigo || ativo.codigo || "—";
-  const local = [ativo.bairro, ativo.cidade, ativo.uf].filter(Boolean).join(", ");
+  const titulo = ativo.titulo || ativo.tipo_imovel || "Imóvel";
+  // Each place name is shown ONCE. The catalog's `empreendimento` (folded in
+  // as `condominio_nome`) is frequently the bairro string itself — e.g.
+  // "Fazendinha - Km 23" — and a title can be too, so a line that repeats
+  // something already on the card is dropped rather than printed twice.
+  const chave = (s: string) => s.trim().toLocaleLowerCase("pt-BR");
+  const partesLocal = [ativo.bairro, ativo.cidade, ativo.uf].filter(
+    (p): p is string => !!p && chave(p) !== chave(titulo),
+  );
+  const local = partesLocal.join(", ");
+  const jaMostrado = new Set([chave(titulo), ...partesLocal.map(chave)]);
+  const condominio =
+    ativo.condominio_nome && !jaMostrado.has(chave(ativo.condominio_nome))
+      ? ativo.condominio_nome
+      : null;
   const specs = [
     ativo.quartos ? `${ativo.quartos} dorm.` : null,
     ativo.vagas ? `${ativo.vagas} vaga${ativo.vagas > 1 ? "s" : ""}` : null,
@@ -100,11 +119,9 @@ function LadoDoMatch({ ativo, papel }: { ativo: AtivoResumo | null; papel: strin
         {papel}
         <span className="font-mono normal-case tracking-normal">{codigo}</span>
       </div>
-      <div className="font-medium">{ativo.titulo || ativo.tipo_imovel || "Imóvel"}</div>
+      <div className="font-medium">{titulo}</div>
       {local && <div className="text-sm text-muted-foreground">{local}</div>}
-      {ativo.condominio_nome && (
-        <div className="text-sm text-muted-foreground">{ativo.condominio_nome}</div>
-      )}
+      {condominio && <div className="text-sm text-muted-foreground">{condominio}</div>}
       <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <span className="font-semibold tabular-nums">{moeda(ativo.valor)}</span>
         {specs.length > 0 && (
@@ -201,6 +218,7 @@ function LinhaDeMatch({
 }
 
 export default function Permutas() {
+  const [aba, setAba] = useState<"matches" | "imoveis">("matches");
   const [etapa, setEtapa] = useState<Etapa | undefined>(undefined);
   const [aviso, setAviso] = useState<string | null>(null);
 
@@ -218,10 +236,18 @@ export default function Permutas() {
   // → KB § PATTERNS/frontend/lying-loading-state.md
   const showSkeleton = matchesQuery.isPending && !matchesQuery.data;
   const isRefreshing = matchesQuery.isFetching && !!matchesQuery.data;
+  // The header counts obey the same rule: "0 imóveis · 0 matches" while the
+  // requests are in flight is a lying count, so they wait for real data.
+  const contagensProntas = !!ativosQuery.data && !!matchesQuery.data;
+  const contagensFalharam =
+    (ativosQuery.isError && !ativosQuery.data) || (matchesQuery.isError && !matchesQuery.data);
 
   const semVetores = useMemo(
-    () => ativos.filter((a) => !a.tem_embedding || !a.tem_embedding_interesses).length,
-    [ativos],
+    () =>
+      (ativosQuery.data ?? []).filter(
+        (a) => !a.tem_embedding || !a.tem_embedding_interesses,
+      ).length,
+    [ativosQuery.data],
   );
 
   async function handleGerar() {
@@ -300,11 +326,19 @@ export default function Permutas() {
                 />
               )}
             </h1>
-            <p className="text-sm text-muted-foreground">
-              {ativos.length} imóve{ativos.length === 1 ? "l" : "is"} aberto
-              {ativos.length === 1 ? "" : "s"} a permuta · {matches.length} match
-              {matches.length === 1 ? "" : "es"}
-            </p>
+            {contagensProntas ? (
+              <p className="text-sm text-muted-foreground" data-testid="permutas-contagens">
+                {ativos.length} imóve{ativos.length === 1 ? "l" : "is"} aberto
+                {ativos.length === 1 ? "" : "s"} a permuta · {matches.length} match
+                {matches.length === 1 ? "" : "es"}
+              </p>
+            ) : contagensFalharam ? (
+              <p className="text-sm text-muted-foreground">Contagens indisponíveis</p>
+            ) : (
+              <div className="mt-1" data-testid="permutas-contagens-carregando">
+                <Skeleton width={220} height={14} label="Carregando contagens" />
+              </div>
+            )}
           </div>
         </div>
 
@@ -344,61 +378,74 @@ export default function Permutas() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          variant={etapa === undefined ? "default" : "outline"}
-          onClick={() => setEtapa(undefined)}
-        >
-          Todos
-        </Button>
-        {ETAPAS.map((e) => (
-          <Button
-            key={e}
-            size="sm"
-            variant={etapa === e ? "default" : "outline"}
-            onClick={() => setEtapa(e)}
-          >
-            {ETAPA_LABELS[e]}
-          </Button>
-        ))}
-      </div>
+      <Tabs value={aba} onValueChange={(v) => setAba(v as "matches" | "imoveis")}>
+        <TabsList>
+          <TabsTrigger value="matches">Matches</TabsTrigger>
+          <TabsTrigger value="imoveis">Imóveis em permuta</TabsTrigger>
+        </TabsList>
 
-      {showSkeleton ? (
-        <TableSkeleton rows={5} />
-      ) : matchesQuery.isError ? (
-        // An empty list and a failed request are DIFFERENT states. Conflating
-        // them is how a 500 hides behind "nenhum match".
-        <Card>
-          <CardContent className="p-6 text-sm text-destructive">
-            Não foi possível carregar os matches.{" "}
-            {erroDoServidor(matchesQuery.error, "Tente recarregar a página.")}
-          </CardContent>
-        </Card>
-      ) : matches.length === 0 ? (
-        <Card>
-          <CardContent className="space-y-2 p-6 text-sm text-muted-foreground">
-            <p>Nenhum match {etapa ? `em “${ETAPA_LABELS[etapa]}”` : "ainda"}.</p>
-            {!etapa && (
-              <p>
-                Gere os embeddings e rode o matching — o motor cruza cada imóvel
-                aberto a permuta com os demais e com as permutas registradas.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {matches.map((m) => (
-            <LinhaDeMatch
-              key={m.id}
-              match={m}
-              movendo={mover.isPending}
-              onMover={(novaEtapa) => handleMover(m.id, novaEtapa)}
-            />
-          ))}
-        </div>
-      )}
+        <TabsContent value="imoveis" className="mt-4">
+          <PermutaAtivosLista />
+        </TabsContent>
+
+        <TabsContent value="matches" className="mt-4 space-y-6">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant={etapa === undefined ? "default" : "outline"}
+              onClick={() => setEtapa(undefined)}
+            >
+              Todos
+            </Button>
+            {ETAPAS.map((e) => (
+              <Button
+                key={e}
+                size="sm"
+                variant={etapa === e ? "default" : "outline"}
+                onClick={() => setEtapa(e)}
+              >
+                {ETAPA_LABELS[e]}
+              </Button>
+            ))}
+          </div>
+
+          {showSkeleton ? (
+            <TableSkeleton rows={5} />
+          ) : matchesQuery.isError ? (
+            // An empty list and a failed request are DIFFERENT states. Conflating
+            // them is how a 500 hides behind "nenhum match".
+            <Card>
+              <CardContent className="p-6 text-sm text-destructive">
+                Não foi possível carregar os matches.{" "}
+                {erroDoServidor(matchesQuery.error, "Tente recarregar a página.")}
+              </CardContent>
+            </Card>
+          ) : matches.length === 0 ? (
+            <Card>
+              <CardContent className="space-y-2 p-6 text-sm text-muted-foreground">
+                <p>Nenhum match {etapa ? `em “${ETAPA_LABELS[etapa]}”` : "ainda"}.</p>
+                {!etapa && (
+                  <p>
+                    Gere os embeddings e rode o matching — o motor cruza cada imóvel
+                    aberto a permuta com os demais e com as permutas registradas.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-3">
+              {matches.map((m) => (
+                <LinhaDeMatch
+                  key={m.id}
+                  match={m}
+                  movendo={mover.isPending}
+                  onMover={(novaEtapa) => handleMover(m.id, novaEtapa)}
+                />
+              ))}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
