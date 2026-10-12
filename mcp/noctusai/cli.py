@@ -528,6 +528,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--bp-session", metavar="SESSION", dest="bp_session", help="With --branch-pointer-append: owning session label.")
     parser.add_argument("--bp-no-push", action="store_true", dest="bp_no_push", help="With --branch-pointer-append/update: skip the FF-push to dev (local-only write).")
     parser.add_argument("--bp-local", action="store_true", dest="bp_local", help="With --branch-pointer-update/query/list: read from local file, not dev's copy.")
+    parser.add_argument("--method-trial", dest="method_trial", metavar="ACTION", help="Methodology trial (open|observe|verdict|status|report); args as JSON via --mt-args. MCP: noctus.dev.method_trial. KB § PATTERNS/common/method-trials.md.")
+    parser.add_argument("--mt-args", dest="mt_args", metavar="JSON", default=None, help="With --method-trial: JSON object of the action's arguments (slug, target, hypothesis, metrics, ...).")
     parser.add_argument("--bp-terminal", action="store_true", dest="bp_terminal", help="With --branch-pointer-list: include terminal statuses (shipped/canceled/stale).")
     parser.add_argument("--transcription-submit", metavar="PATH", dest="transcription_submit", help="Upload a local file to the platform transcription API; prints the 202 body. Needs NOCTUS_TRANSCRIPTION_TOKEN. MCP: noctus.transcription.submit.")
     parser.add_argument("--transcription-get", metavar="ID", dest="transcription_get", help="Fetch a transcription job by id. MCP: noctus.transcription.get.")
@@ -3716,6 +3718,19 @@ def main():
             print(f"  {GREEN}✓ Live branch map ({len(rows)} pointer(s)):{RESET}")
             print(json.dumps(rows, indent=2, default=str))
         sys.exit(0)
+
+    elif getattr(args, "method_trial", None):
+        from tools.noctus.dev.method_trial import run as _mt_run
+        try:
+            _mt_kw = json.loads(args.mt_args) if args.mt_args else {}
+            if not isinstance(_mt_kw, dict):
+                raise ValueError("--mt-args must be a JSON object")
+        except ValueError as e:
+            print(f"  {RED}Error:{RESET} bad --mt-args: {e}")
+            sys.exit(2)
+        result = _mt_run(args.method_trial, **_mt_kw)
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        sys.exit(0 if result.get("ok") else 1)
 
     elif getattr(args, "branch_pointer_cache_exempt", False):
         from tools.noctus.dev.refresh_all_caches import should_skip_cache_refresh as _bpce

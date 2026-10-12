@@ -86,6 +86,7 @@ def register_all(server) -> None:
     from . import lgpd
     from . import master_prompts
     from . import merge_debt
+    from . import method_trial
     from . import migrate_product
     from . import migration_replay
     from . import mole
@@ -234,6 +235,7 @@ def register_all(server) -> None:
     lgpd.register(server)
     master_prompts.register(server)
     merge_debt.register(server)
+    method_trial.register(server)
     migrate_product.register(server)
     migration_replay.register(server)
     mole.register(server)

@@ -76,7 +76,13 @@ LEDGER_NAME = "auto-improvement.ndjson"
 
 # Allowed enums (defensive; loud-fail on unknown values so typos don't grow stalely).
 SCOPES = frozenset({"scoped", "broad"})
-KINDS = frozenset({"drift", "improvement"})
+# Methodology-trial rows (`noctus.dev.method_trial`) share this ledger ("extend
+# before spawn"): `trial` = the head (hypothesis + metrics), `trial-obs` = an
+# observation, `trial-verdict` = the closing verdict. Obs/verdict rows are
+# written `closed` so they never pollute the open/radar views; the head stays
+# `s1-emergent` and is dropped from `open_only` once a verdict row exists.
+TRIAL_KINDS = frozenset({"trial", "trial-obs", "trial-verdict"})
+KINDS = frozenset({"drift", "improvement"}) | TRIAL_KINDS
 # `s3-codified` is the canonical s3 name (matches `check_codification_pipeline_health` +
 # CLAUDE.md §1 + user-facing terminology). `s3-kb` is the LEGACY alias from the
 # first implementation (one historical entry uses it; new writes should prefer
@@ -202,7 +208,8 @@ CREATE TABLE IF NOT EXISTS auto_improvement (
   description TEXT NOT NULL,
   status      TEXT NOT NULL,
   source_ref  TEXT,
-  cached_at   TEXT NOT NULL
+  cached_at   TEXT NOT NULL,
+  trial       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_auto_target ON auto_improvement(target);
 CREATE INDEX IF NOT EXISTS idx_auto_status ON auto_improvement(status);
@@ -216,6 +223,12 @@ CREATE TABLE IF NOT EXISTS cache_meta (
 
 def _init_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(_SCHEMA)
+    # Pre-trial caches lack the `trial` JSON column: add it in place (the
+    # cache is a rebuildable mirror, but ALTER keeps the stored source_sha
+    # valid, so no forced rebuild is needed for old rows — they have trial=NULL).
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(auto_improvement)")}
+    if "trial" not in cols:
+        conn.execute("ALTER TABLE auto_improvement ADD COLUMN trial TEXT")
     conn.commit()
 
 
@@ -241,6 +254,7 @@ def log_entry(
     source_ref: str | None = None,
     resolve_when: str | list[str] | None = None,
     resolve_to: str | None = None,
+    trial: dict | None = None,
 ) -> dict:
     """Append one entry to the ndjson + invalidate the cache.
 
@@ -278,6 +292,8 @@ def log_entry(
         entry["resolve_when"] = resolve_when
     if resolve_to is not None:
         entry["resolve_to"] = resolve_to
+    if trial is not None:
+        entry["trial"] = trial
     publish = _ledger().append(
         [json.dumps(entry, ensure_ascii=False)],
         message=f"auto-improvement {scope}/{kind} {status} — {target}"[:160],
@@ -364,11 +380,12 @@ def refresh(force: bool = False, worktree_path: str | None = None) -> dict:
                 e.get("status", ""),
                 e.get("source_ref"),
                 now,
+                json.dumps(e["trial"], ensure_ascii=False) if e.get("trial") is not None else None,
             ))
     if rows:
         conn.executemany(
-            "INSERT INTO auto_improvement(ts,agent,scope,kind,target,description,status,source_ref,cached_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO auto_improvement(ts,agent,scope,kind,target,description,status,source_ref,cached_at,trial) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
             rows,
         )
     conn.execute(
@@ -462,11 +479,23 @@ def query(
         _terminal = sorted(TERMINAL_STATUSES)
         sql += f" AND status NOT IN ({','.join('?' for _ in _terminal)})"
         params.extend(_terminal)
+        # Trial rows: observations/verdicts are never "open work"; a trial head
+        # is open only until its verdict row exists (kind='trial' only surfaces
+        # while pending — validated by verdict, not by status promotion).
+        sql += (" AND kind NOT IN ('trial-obs','trial-verdict')"
+                " AND NOT (kind='trial' AND source_ref IN"
+                " (SELECT source_ref FROM auto_improvement WHERE kind='trial-verdict'))")
     sql += " ORDER BY ts DESC LIMIT ?"
     params.append(limit)
     cur = conn.execute(sql, params)
     out = [dict(r) for r in cur.fetchall()]
     conn.close()
+    for r in out:
+        if isinstance(r.get("trial"), str):
+            try:
+                r["trial"] = json.loads(r["trial"])
+            except json.JSONDecodeError:
+                pass  # leave the raw text; never drop the row
     if open_only and not skip_reconcile and out:
         # Heal-on-contact: drop entries whose resolve_when already passes, so a
         # landed fix is never re-surfaced as open even before the ledger row is
@@ -689,8 +718,8 @@ def reconcile(dry_run: bool = True, repo_root: Path | None = None) -> dict:
     now = _now_iso()
 
     for e in entries:
-        if e.get("status") in TERMINAL_STATUSES:
-            continue
+        if e.get("status") in TERMINAL_STATUSES or e.get("kind") in TRIAL_KINDS:
+            continue  # trials close by verdict, never by a resolve_when predicate
         rw = e.get("resolve_when")
         if not rw:
             unhandled.append({"ts": e.get("ts"), "target": e.get("target"), "status": e.get("status")})
@@ -854,6 +883,7 @@ __all__ = [
     "LEDGER_PATH",
     "SCOPES",
     "KINDS",
+    "TRIAL_KINDS",
     "STATUSES",
     "TERMINAL_STATUSES",
     "log_entry",

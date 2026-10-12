@@ -85,7 +85,9 @@ def cluster(threshold: float = DEFAULT_THRESHOLD, limit: int = 200) -> dict:
     # 1. Load open entries via the existing seed-shipped API.
     try:
         from tools.noctus.dev import auto_improvement as ai
-        rows = ai.query(open_only=True, limit=limit)
+        # Methodology trials are validated by verdict, not clustering: skip.
+        rows = [r for r in ai.query(open_only=True, limit=limit)
+                if r.get("kind") not in ai.TRIAL_KINDS]
     except Exception as e:  # noqa: BLE001 — surface the load error
         return {"ok": False, "error": f"auto_improvement.query failed: {e}", "clusters": []}
 

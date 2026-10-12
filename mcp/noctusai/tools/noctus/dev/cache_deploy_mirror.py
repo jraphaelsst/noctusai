@@ -149,7 +149,7 @@ _SIMPLE_CACHE_SPEC: dict[str, dict[str, Any]] = {
         "pg_table": "cache_auto_improvement",
         "columns": [
             "ts", "agent", "scope", "kind", "target", "description",
-            "status", "source_ref", "cached_at",
+            "status", "source_ref", "cached_at", "trial",
         ],
     },
 }
@@ -364,8 +364,10 @@ CREATE TABLE IF NOT EXISTS noctus_cache.cache_auto_improvement (
     description     TEXT NOT NULL,
     status          TEXT NOT NULL,
     source_ref      TEXT,
-    cached_at       TEXT NOT NULL
+    cached_at       TEXT NOT NULL,
+    trial           TEXT
 );
+ALTER TABLE noctus_cache.cache_auto_improvement ADD COLUMN IF NOT EXISTS trial TEXT;
 CREATE INDEX IF NOT EXISTS idx_pg_ai_target ON noctus_cache.cache_auto_improvement(target);
 CREATE INDEX IF NOT EXISTS idx_pg_ai_status ON noctus_cache.cache_auto_improvement(status);
 CREATE INDEX IF NOT EXISTS idx_pg_ai_status ON noctus_cache.cache_auto_improvement(status);
