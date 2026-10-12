@@ -205,7 +205,7 @@ export function HeadlinesGeradasModal({ open, onOpenChange, loteId, marcaId, onR
         open={!!roteiroDe}
         onOpenChange={(o) => !o && setRoteiroDe(null)}
         marcaId={marcaId}
-        headlineInicial={roteiroDe ? { id: roteiroDe.id, texto: roteiroDe.texto } : null}
+        headlineInicial={roteiroDe}
       />
     </>
   );

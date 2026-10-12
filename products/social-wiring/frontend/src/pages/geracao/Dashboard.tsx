@@ -224,7 +224,7 @@ export default function Dashboard() {
         open={!!roteiroDe}
         onOpenChange={(o) => !o && setRoteiroDe(null)}
         marcaId={marcaId}
-        headlineInicial={roteiroDe ? { id: roteiroDe.id, texto: roteiroDe.texto } : undefined}
+        headlineInicial={roteiroDe}
       />
       <EditarHeadlineModal
         open={!!editando}

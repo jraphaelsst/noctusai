@@ -345,7 +345,7 @@ export function ListaHeadlinesPage({ lista }: { lista: ListaHeadlines }) {
         open={!!roteiroDe}
         onOpenChange={(o) => !o && setRoteiroDe(null)}
         marcaId={marcaId}
-        headlineInicial={roteiroDe ? { id: roteiroDe.id, texto: roteiroDe.texto } : null}
+        headlineInicial={roteiroDe}
       />
 
       <AlertDialog open={!!confirmar} onOpenChange={(o) => !o && !excluir.isPending && setConfirmar(null)}>

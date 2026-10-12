@@ -14,6 +14,7 @@ import { AlertCircle, Brain, Globe, Link2, Loader2, Sparkles } from "lucide-reac
 import { toast } from "sonner";
 
 import { VideoPicker } from "@/components/geracao/biblioteca/VideoPicker";
+import { AvisoTamanhoHeadline } from "@/components/geracao/headlines/TamanhoHeadline";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -54,6 +55,9 @@ const DURACOES: { valor: Roteiro["duracao"]; rotulo: string }[] = [
 export interface HeadlineInicial {
   id?: string | null;
   texto: string;
+  /** Carried by a headline response: past the recommended length (a warning, never a block). */
+  acima_recomendado?: boolean;
+  recomendado_max_texto?: number;
 }
 
 interface Props {
@@ -194,6 +198,17 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
                 value={headline}
                 onChange={(e) => setHeadline(e.target.value)}
               />
+              {headlineInicial?.acima_recomendado &&
+                headlineInicial.recomendado_max_texto != null &&
+                headlineLimpa === headlineInicial.texto.trim() && (
+                  <AvisoTamanhoHeadline
+                    headline={{
+                      texto: headlineInicial.texto,
+                      acima_recomendado: true,
+                      recomendado_max_texto: headlineInicial.recomendado_max_texto,
+                    }}
+                  />
+                )}
             </div>
 
             <div className="space-y-1.5">

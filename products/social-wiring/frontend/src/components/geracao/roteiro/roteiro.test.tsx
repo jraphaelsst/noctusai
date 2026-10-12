@@ -158,6 +158,17 @@ describe("RoteiroAvancadoModal", () => {
     expect(m.criar.mock.calls[0][0]).toMatchObject({ estrutura: "metodo" });
   });
 
+  it("headline sinalizada acima do recomendado mostra o aviso (sem bloquear) enquanto não editada", () => {
+    abrir({ headlineInicial: { id: "h1", texto: "3 alimentos", acima_recomendado: true, recomendado_max_texto: 5 } });
+    expect(screen.getByTestId("aviso-tamanho-headline")).toHaveTextContent("Acima do recomendado (11/5 caracteres)");
+    expect(screen.getByRole("button", { name: "Criar roteiro" })).not.toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Headline"), { target: { value: "curta" } });
+    expect(screen.queryByTestId("aviso-tamanho-headline")).toBeNull();
+    cleanup();
+    abrir({ headlineInicial: { id: "h1", texto: "3 alimentos" } });
+    expect(screen.queryByTestId("aviso-tamanho-headline")).toBeNull();
+  });
+
   it("headline editada deixa de apontar para a headline original; vazio bloqueia o envio", () => {
     abrir({ headlineInicial: { id: "h1", texto: "3 alimentos" } });
     fireEvent.change(screen.getByLabelText("Headline"), { target: { value: "" } });
