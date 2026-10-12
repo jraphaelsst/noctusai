@@ -2115,6 +2115,9 @@ END;
 # ---------------------------------------------------------------------------
 
 _ORG_PICKER_MIGRATIONS = ("070_platform_org_selections.sql",)
+#: Probes whose expectation is core 078's "every entry is a choice" (staff with no valid
+#: selection on a ready product -> NULL): parked as pending_migration until 078 is applied.
+_ORG_PICKER_ENTRY_MIGRATIONS = _ORG_PICKER_MIGRATIONS + ("078_org_picker_postgrest_entry.sql",)
 
 _ORG_PICKER_DECLARE = """
 DECLARE
@@ -2173,14 +2176,17 @@ def _caller_sql(uid: str, sid: str = "v_sid", aal: str = "aal2", header: str | N
     return out
 
 
-def _org_picker_probe(*, probe_id: str, guard_name: str, kind: str, rationale: str, steps: str) -> GuardProbe:
+def _org_picker_probe(
+    *, probe_id: str, guard_name: str, kind: str, rationale: str, steps: str,
+    migrations: tuple[str, ...] = _ORG_PICKER_MIGRATIONS,
+) -> GuardProbe:
     return GuardProbe(
         id=probe_id,
         product="core",
         schema="public",
         guard_name=guard_name,
         kind=kind,
-        migrations=_ORG_PICKER_MIGRATIONS,
+        migrations=migrations,
         rationale=rationale,
         sql=_do_block(_ORG_PICKER_DECLARE + "BEGIN\n" + _ORG_PICKER_FIXTURE + steps + "\nEND;\n"),
     )
@@ -2206,11 +2212,15 @@ def _picker_rpc_refusal_probe(*, probe_id: str, code: str, setup: str, call: str
     )
 
 
-def _picker_helper_probe(*, probe_id: str, rationale: str, steps: str, expect: str, what: str) -> GuardProbe:
+def _picker_helper_probe(
+    *, probe_id: str, rationale: str, steps: str, expect: str, what: str,
+    migrations: tuple[str, ...] = _ORG_PICKER_MIGRATIONS,
+) -> GuardProbe:
     """State assertion on ``current_org_id_for(v_schema)``: after ``steps`` forge a caller,
     `v_got` is compared with `expect` (a SQL uuid expression)."""
     return _org_picker_probe(
         probe_id=probe_id, guard_name="current_org_id_for", kind="state_assertion", rationale=rationale,
+        migrations=migrations,
         steps=steps + f"""
   v_got := public.current_org_id_for(v_schema);
   IF v_got IS NOT DISTINCT FROM ({expect}) THEN
@@ -2308,13 +2318,17 @@ _ORG_PICKER_HELPER_NON_STAFF_PROBE = _picker_helper_probe(
 )
 
 _ORG_PICKER_HELPER_SESSION_PROBE = _picker_helper_probe(
-    probe_id="current_org_id_for.home_on_session_mismatch",
-    rationale="A selection is bound to ONE login: another session_id (a new login) resolves home.",
+    probe_id="current_org_id_for.null_on_session_mismatch",
+    rationale=(
+        "A selection is bound to ONE login: another session_id (a new login) holds no valid "
+        "selection, so -- every entry is a choice (core 078) -- it resolves NULL, never home."
+    ),
     steps="""
   PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
 """ + _caller_sql("v_staff::text", sid="v_other_sid"),
-    expect="v_home",
-    what="another login session_id resolves to the home org",
+    expect="NULL::uuid",
+    what="another login session_id resolves NULL (no valid selection)",
+    migrations=_ORG_PICKER_ENTRY_MIGRATIONS,
 )
 
 # Core 073 put the aal2 rule behind products.org_picker_requires_mfa (owner switched it off
@@ -2356,11 +2370,11 @@ _ORG_PICKER_HELPER_AAL1_OPTIONAL_PROBE = _picker_helper_probe(
 )
 
 _ORG_PICKER_HELPER_LICENSE_PROBE = _picker_helper_probe(
-    probe_id="current_org_id_for.home_when_target_unlicensed",
+    probe_id="current_org_id_for.null_when_target_unlicensed",
     rationale=(
         "The helper re-checks the license itself: a selection whose target holds no active "
-        "license (inserted at table level, bypassing the RPC and the revocation trigger) "
-        "resolves home."
+        "license (inserted at table level, bypassing the RPC and the revocation trigger) is "
+        "not a valid selection -- NULL (core 078), never the target and never home."
     ),
     steps="""
   IF v_unlic IS NULL THEN
@@ -2369,8 +2383,9 @@ _ORG_PICKER_HELPER_LICENSE_PROBE = _picker_helper_probe(
   INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
   VALUES (v_staff, v_pid, v_unlic, v_home, v_sid);
 """ + _caller_sql("v_staff::text"),
-    expect="v_home",
-    what="an unlicensed target resolves to the home org",
+    expect="NULL::uuid",
+    what="an unlicensed target resolves NULL",
+    migrations=_ORG_PICKER_ENTRY_MIGRATIONS,
 )
 
 _ORG_PICKER_HELPER_HEADER_PROBE = _picker_helper_probe(
@@ -2410,14 +2425,18 @@ _ORG_PICKER_HELPER_STALE_HEADER_PROBE = _picker_helper_probe(
 )
 
 _ORG_PICKER_HELPER_SESSION_GONE_PROBE = _picker_helper_probe(
-    probe_id="current_org_id_for.home_when_auth_session_gone",
-    rationale="A selection dies with its login: once the auth.sessions row is gone the helper resolves home.",
+    probe_id="current_org_id_for.null_when_auth_session_gone",
+    rationale=(
+        "A selection dies with its login: once the auth.sessions row is gone the selection is "
+        "not valid and the helper resolves NULL (core 078), not home."
+    ),
     steps="""
   PERFORM public.platform_org_selection_set(v_staff, v_slug, v_target, v_sid);
   DELETE FROM auth.sessions WHERE id = v_sid;
 """ + _caller_sql("v_staff::text"),
-    expect="v_home",
-    what="a selection whose auth session is gone resolves to the home org",
+    expect="NULL::uuid",
+    what="a selection whose auth session is gone resolves NULL",
+    migrations=_ORG_PICKER_ENTRY_MIGRATIONS,
 )
 
 _ORG_PICKER_HELPER_NOT_READY_PROBE = _picker_helper_probe(
@@ -2443,6 +2462,46 @@ _ORG_PICKER_HELPER_STAFF_ROLE_PROBE = _picker_helper_probe(
 """ + _caller_sql("v_staff::text"),
     expect="v_home",
     what="role=admin without an owner/admin org_role resolves to the home org",
+)
+
+# Core 078 -- every entry is a choice: staff on a READY product with NO valid live selection
+# whose token satisfies the MFA rule resolve NULL (the SQL half of resolve_effective_org's 409
+# org_selection_required); an aal1 token on a product that requires 2FA keeps home (the
+# resolver's mfa_required path).
+_ORG_PICKER_HELPER_NO_SELECTION_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.null_for_staff_without_selection_on_ready_product",
+    rationale=(
+        "Core 078 (owner, 2026-10-12): platform staff on an org_picker_ready product with no live "
+        "selection must NOT silently read their home org through PostgREST -- NULL until they pick."
+    ),
+    steps="\n" + _caller_sql("v_staff::text"),
+    expect="NULL::uuid",
+    what="staff without a selection on a ready product resolve NULL",
+    migrations=_ORG_PICKER_ENTRY_MIGRATIONS,
+)
+
+_ORG_PICKER_HELPER_NO_SELECTION_AAL1_OPTIONAL_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.null_for_aal1_staff_without_selection_when_mfa_optional",
+    rationale=(
+        "Core 078 with org_picker_requires_mfa = false (the fleet setting since 2026-10-09): an aal1 "
+        "staff token passes the MFA rule, so no selection still means NULL, not home."
+    ),
+    steps=_PIN_MFA_SQL.format(val="false") + _caller_sql("v_staff::text", aal="aal1"),
+    expect="NULL::uuid",
+    what="aal1 staff without a selection resolve NULL when the product does not require 2FA",
+    migrations=_ORG_PICKER_ENTRY_MIGRATIONS,
+)
+
+_ORG_PICKER_HELPER_NO_SELECTION_AAL1_REQUIRED_PROBE = _picker_helper_probe(
+    probe_id="current_org_id_for.home_for_aal1_staff_without_selection_when_mfa_required",
+    rationale=(
+        "Control for core 078: when the product requires 2FA an aal1 staff token is on the MFA "
+        "path (resolver: home + mfa_required), so it keeps the home org even without a selection."
+    ),
+    steps=_PIN_MFA_SQL.format(val="true") + _caller_sql("v_staff::text", aal="aal1"),
+    expect="v_home",
+    what="aal1 staff without a selection keep the home org when the product requires 2FA",
+    migrations=_ORG_PICKER_ENTRY_MIGRATIONS,
 )
 
 _ORG_PICKER_PRODUCT_REVOKE_PROBE = _org_picker_probe(
@@ -2650,6 +2709,9 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_HELPER_SESSION_GONE_PROBE,
     _ORG_PICKER_HELPER_NOT_READY_PROBE,
     _ORG_PICKER_HELPER_STAFF_ROLE_PROBE,
+    _ORG_PICKER_HELPER_NO_SELECTION_PROBE,
+    _ORG_PICKER_HELPER_NO_SELECTION_AAL1_OPTIONAL_PROBE,
+    _ORG_PICKER_HELPER_NO_SELECTION_AAL1_REQUIRED_PROBE,
     _ORG_PICKER_PRODUCT_REVOKE_PROBE,
     _ACTING_AUDIT_ACTING_WRITE_PROBE,
     _ACTING_AUDIT_PLAIN_WRITE_PROBE,

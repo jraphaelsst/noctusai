@@ -28,9 +28,13 @@ def test_owner_decision_switches_it_off_fleet_wide():
     assert "UPDATE public.products SET org_picker_requires_mfa = false;" in FLAT
 
 
-def test_helper_is_the_canonical_rendering_and_honours_the_flag():
-    assert _canon() in FLAT
-    assert "(NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')" in FLAT
+def test_helper_honours_the_flag_and_the_flag_clause_survives_in_the_canon():
+    # 073's copy is historical since core 078 (every entry is a choice) re-declared the helper;
+    # it is ratified in mcp/noctusai/tests/org_identity_parity_baseline.json. The flag clause
+    # must still be part of today's canonical rendering.
+    clause = "(NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')"
+    assert clause in FLAT
+    assert clause in _canon()
 
 
 def test_restore_path_is_documented():

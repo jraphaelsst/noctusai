@@ -117,8 +117,9 @@ strict `403 {"code":"not_platform_staff"}`.
   marker) returns the live selection's target only for staff + this login's `session_id` (and
   that `auth.sessions` row still exists) + `aal2` + a `org_picker_ready` product + a
   still-licensed target; a staff request whose `x-noctus-acting-org` is present and differs
-  from the result is DENIED (NULL, also on the home fall-through); otherwise the home rule
-  (customers NULL). Un-readying a product (or changing its `db_schema`) ends its live
+  from the result is DENIED (NULL, also on the home fall-through); staff on a ready product
+  with no valid selection get NULL (core 078, § Every entry is a choice); otherwise the home
+  rule (customers NULL). Un-readying a product (or changing its `db_schema`) ends its live
   selections by trigger. `current_org_id()` / `current_user_org_id()` stay
   HOME-ONLY forever. A product's policies opt in with
   `(SELECT public.current_org_id_for('<schema>'))`; it flips `org_picker_ready=true` only
@@ -176,9 +177,17 @@ strict `403 {"code":"not_platform_staff"}`.
   `require_selection=False`. The MFA path is unchanged (aal1 on a requires-MFA product ⇒
   home + `mfa_required`). A pin mismatch is still checked first (`org_selection_changed`).
   The FE api client treats both 409 codes alike (clear pin, reopen picker, no retry).
-  **Open:** PostgREST `current_org_id_for` still falls through to home for staff without a
-  selection — `NOC-REMEDIATE[org-picker-postgrest-entry]` in `sql_templates.py` (core SQL
-  follow-up).
+  **PostgREST (core 078):** `current_org_id_for(p_schema)` mirrors the resolver — staff on
+  the ready product owning `p_schema` whose token passes its MFA rule (`NOT
+  org_picker_requires_mfa OR aal='aal2'`) but who hold no valid live selection (this login,
+  auth session alive, target licensed) get **NULL** (RLS: no rows, writes refused; a
+  `DEFAULT current_org_id_for(…)` `org_id NOT NULL` column refuses the insert). aal1 on a
+  requires-MFA product stays home (the resolver's `mfa_required` path); non-staff, a
+  not-ready product, and the pin-header narrowing are unchanged. Probes
+  `current_org_id_for.null_for_*` / `null_on_session_mismatch` / `null_when_*`
+  (`verify_db_guards`, parked `pending_migration` until 078 is applied). Known residual: the
+  SQL helper also requires the `auth.sessions` row to exist, the Python resolver does not
+  (SQL stricter: NULL vs target for a token outliving its session).
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads

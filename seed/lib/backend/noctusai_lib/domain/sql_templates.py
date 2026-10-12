@@ -287,6 +287,10 @@ def _org_picker_fn_sql(roles: str) -> str:
     ``x-noctus-acting-org`` equal to the target, resolve to the target org. A staff
     request whose pin header is present and DIFFERENT from the result (target or home
     fall-through) is DENIED (NULL) -- a stale tab never reads/writes the wrong org.
+    Staff on a ready product with NO valid live selection whose token satisfies the
+    product's MFA rule are DENIED (NULL, core 078 -- every entry is a choice, the SQL
+    mirror of ``resolve_effective_org``'s 409 ``org_selection_required``); an aal1 token
+    on a product that requires 2FA keeps the home org (the resolver's MFA path).
     EVERYONE else resolves the home rule (customers excluded → NULL)."""
     return (
         "CREATE OR REPLACE FUNCTION public.current_org_id_for(p_schema text)\n"
@@ -342,13 +346,17 @@ def _org_picker_fn_sql(roles: str) -> str:
         "    IF v_hdr IS NOT NULL AND lower(v_hdr) <> v_home::text THEN\n"
         "      RETURN NULL;\n"
         "    END IF;\n"
+        # Every entry is a choice (core 078, owner decision 2026-10-12) -- the SQL half of
+        # resolve_effective_org's 409 org_selection_required: staff on a READY product whose
+        # token passes the MFA rule but who hold no valid live selection get NULL (RLS: no
+        # rows, writes refused), never the home org. The aal1-on-a-2FA-product path is NOT
+        # matched here and stays home (the resolver's mfa_required path).
+        "    IF EXISTS (SELECT 1 FROM public.products p\n"
+        "                WHERE p.db_schema = p_schema AND p.org_picker_ready\n"
+        "                  AND (NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')) THEN\n"
+        "      RETURN NULL;\n"
+        "    END IF;\n"
         "  END IF;\n"
-        # NOC-REMEDIATE[org-picker-postgrest-entry]: staff on an org_picker_ready product
-        # with no live selection still fall through to v_home here, so a direct PostgREST
-        # read serves home-org rows that the FastAPI resolver now refuses (409
-        # org_selection_required, owner decision 2026-10-12). Needs a core migration
-        # re-declaring current_org_id_for (+ this template) to RETURN NULL for that case
-        # (keeping the requires_mfa/aal1 path on home) — core SQL, out of the seed slice. — 2026-10-12
         "  RETURN v_home;\n"
         "END;\n"
         "$f$;"
