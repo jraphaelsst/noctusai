@@ -1282,6 +1282,32 @@ _VISITA_MOTIVO_CHECK_PROBE = GuardProbe(
 )
 
 
+_ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE = GuardProbe(
+    id="org_memberships.ended_at.iff_removed",
+    product="core",
+    schema="public",
+    guard_name="org_memberships_ended_iff_removed",
+    kind="write_refusal",
+    migrations=("079_org_memberships.sql",),
+    rationale=(
+        "A membership is ended exactly when it is `removed`. A `removed` row with "
+        "no `ended_at` (or an active one with it) would let the org picker and the "
+        "RLS re-check disagree about whether someone still belongs to an org — the "
+        "revocation the multi-org model relies on. CHECK fires before the "
+        "(user_id, org_id) unique index, so borrowing an existing profile's pair is safe."
+    ),
+    sql=_insert_check_probe(
+        schema="public",
+        table="org_memberships",
+        columns_sql="user_id, org_id, org_role, status, ended_at",
+        values_sql="id, org_id, 'member', 'removed', NULL",
+        fixture_from="public.noctus_users",
+        fixture_description="no row in public.noctus_users to borrow a (user_id, org_id) from",
+        guard_fragment='constraint "org_memberships_ended_iff_removed"',
+    ),
+)
+
+
 _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE = GuardProbe(
     id="roteiros.feedback_status.allowed_values",
     product="social-wiring",
@@ -6922,6 +6948,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_CS_WAVE2_PROBES,
     *_CS_GERACAO_PROBES,
     _VISITA_MOTIVO_CHECK_PROBE,
+    _ORG_MEMBERSHIP_ENDED_IFF_REMOVED_PROBE,
     _ROTEIRO_FEEDBACK_STATUS_CHECK_PROBE,
     _ENDERECO_REGISTRO_PROBE,
     _ULTIMA_TRANSFERENCIA_MANUAL_PROBE,
