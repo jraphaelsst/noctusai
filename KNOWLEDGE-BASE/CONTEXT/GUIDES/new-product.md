@@ -120,6 +120,29 @@ A product's `docker-compose.yml` + `backend/Dockerfile` are **regenerated from t
 
 **Methodology gap → formalize candidate (flagged 2026-05-23).** `scaffold_product` does **not** yet auto-register a product into `propagate.py` `PRODUCTS`/`_C_VITE`, and the slug→port list lives hardcoded in **3 places** (`start.sh` · `propagate.py` · `vite.config.factory`) — N≥3, so the recurrence rule says *formalize*. Root fix: single-source the list (derive `propagate.py` + the vite factory map from the `start.sh` registry, the canonical one) **and** have `scaffold_product` add the row by construction so it can never be missed ("filled upon creation"). Until that lands, this registration is a **mandatory manual creation step** — this section is the interim guard.
 
+## Market products from a vertical seed
+
+When the product belongs to a market family (e-commerce, ERP, CRM …), it is built from a **vertical seed** — `../PATTERNS/architect/vertical-seed.md` holds the model (layers L0–L3, named seams, client extension packs, isolation levels). This section is the **procedure**. It was written on the commerce seed run (`project-history/roadmaps/commerce-seed-2026-10.md`: photo → artifacts → Gilson's Store) and is refined at each learning round of that run; the revision log at the end of the section records what each round changed.
+
+**Stage 0 — Is the vertical seed there?** If the family has no vertical seed yet, the first market run builds it: generic organs in `noctusai_lib` with the seams named up front, validated on their own before any market specialization (the owner's "seed first, then specs to the market" — gate T2 in the commerce roadmap). Skill `noc-verify-seed` per organ.
+
+**Stage 1 — Learning round setup.** Skill `noc-learn-refine`: open trials on the methods you rely on (vertical-seed model, this procedure, new tools). First runs of a market are always learning rounds.
+
+**Stage 2 — Market research brief.** One web-research pass per market family plus one per market: reference platforms, product/fulfillment types, payments/fiscal/legal constraints for the client's country, KPIs. Output a brief with sources next to the roadmap (example: `project-history/roadmaps/commerce-seed-2026-10-market-brief.md`).
+
+**Stage 3 — Module classification.** One table: module × {vertical core · per-type (e.g. digital/physical) · per-market}. This is the vertical spec; it decides what lands in L1 vs L2 (`vertical-seed.md` §1 placement test).
+
+**Stage 4 — Interview.** AskUserQuestion rounds (≤4 questions each, several rounds), observed facts as options, a recommendation first when one exists, never an assumed default (memory `feedback_interview_never_assume_specs`). Cover at least: client offer, payments, invoices/tax regime, fulfillment, AI automations + runtime, storefront address, language/currency, deadlines, client-specific code needs. Answers land as numbered decisions in the roadmap decision log (and the run's tracker) before code.
+
+**Stage 5 — Build.** Reserve ports → `scaffold_product` with the market spec as the brief → fill L2 seams + market-only modules contract-first → client onboarding as org (profile, license, keys, brand, subdomain). Client-specific code goes in a client extension pack, never in shared code. Changes driven by an external date (tax system, provider API) use `../PATTERNS/architect/approved-cutover.md`.
+
+**Stage 6 — Validate with the owner.** The owner walks the product end to end and says "validated" before the next market starts.
+
+**Stage 7 — Learning round close.** Trial verdicts (`noctus.dev.method_trial`) → apply refinements to: this section, `vertical-seed.md`, skill `noc-new-product`, the market spec library, organ knowledge sidecars. Append one line to the revision log below.
+
+**Revision log**
+- 2026-10-12 — v1 written at the start of the commerce seed run (stages 0–7). Next refinements due: after the photo store (P8), after the artifacts store and Gilson's Store (P10).
+
 ## Checklist for launch
 
 - [ ] Schema migration runs clean on a fresh Supabase.

@@ -8,6 +8,7 @@ owns_kb:
   - CONTEXT/PATTERNS/compliance/testing.md
   - CONTEXT/PATTERNS/compliance/auth-boundary-false-green.md
   - CONTEXT/PATTERNS/common/silent-test-failure-from-missing-dep.md
+  - CONTEXT/PATTERNS/common/method-trials.md
 ---
 
 # compliance-reviewer — quality + methodology gate (read-only)
@@ -29,6 +30,7 @@ Review code for quality, maintainability, standards + seed-compliance — indepe
 - **Silent-failure-from-missing-dep.** A test importing `X` where prod code does `try: import X / except ImportError` fails silently when `X` isn't declared in `requirements.txt`/`pyproject.toml` (lockstep). Sibling of boundary-contract-tests at the dep-declaration boundary; verify suite-green doesn't hide undeclared-dep failures. → `KB § PATTERNS/common/silent-test-failure-from-missing-dep.md`
 - **Verify on a clean `origin/dev` worktree.** A busy shared checkout yields phantom regressions (worktree-sensitivity). → `KB § PATTERNS/common/branching.md`
 - **Methodology codification pipeline ownership.** When a review surfaces an N≥2 recurrence or rule-gap, file the s1→s2→s3→s4 codification proposal — discipline → mechanism. → `KB § PATTERNS/common/methodology-codification-pipeline.md`
+- **Method trials.** A method under evaluation carries an open `noctus.dev.method_trial`; at review, check the verdict cites observations (no self-grading) and that adopt → s3 only, s4 after N≥5. → `KB § PATTERNS/common/method-trials.md`
 
 ## Workflow
 1. **Compliance gate** (`noctus.dev.validate`, regression). 2. **Seed-compliance**. 3. **Wiring** (`scan_wiring`). 4. **DRY / recurrence** (`scan_*` sextet). 5. **Eight-way sync**. 6. **Testing discipline**. 7. **Output**: pass/block recommendation + bundled proposal + file:line.

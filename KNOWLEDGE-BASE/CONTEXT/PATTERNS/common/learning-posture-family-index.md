@@ -11,6 +11,10 @@ This family is about NOTICING and deciding. What happens to what you noticed is 
 - **Learn from friction on BOTH axes — process ∧ craft.** A fired gate or recurring bug is a learning event, never a bypass; close the loop (nothing dangles). → `KB § PATTERNS/common/methodology-execution-discipline.md` · `product-dev-learning-ground.md`
 - **Always-hardening posture.** Every surfaced pattern (incl. explanation-as-signal) is a methodology-improvement opportunity; announce LOUDLY, apply before ship. → `KB § 01-PHILOSOPHY.md` · skills `skill-scout` / `codify`
 
+## Procedure for judging a method while using it
+
+When the owner frames work as a learning round ("learn during this"), the noticing above is run as a **method trial** — hypothesis + metrics first, observations with evidence, verdict at the end. Skill `noc-learn-refine` · tool `noctus.dev.method_trial` · depth `method-trials.md`. (Procedure pointer, not a §1 member.)
+
 ## Why a family line
 
 These 4 rules shared one framework, and a session that needs one of them typically needs the rest — so a single router hop costs a lookup and returns 3 always-on lines of budget. The forcing function is the router keeper's rule-COUNT ceiling; the procedure is `/gc` step 5. → `KB § PATTERNS/common/claude-md-router-discipline.md`
