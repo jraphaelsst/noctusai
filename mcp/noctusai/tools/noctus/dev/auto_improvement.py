@@ -83,6 +83,21 @@ SCOPES = frozenset({"scoped", "broad"})
 # `s1-emergent` and is dropped from `open_only` once a verdict row exists.
 TRIAL_KINDS = frozenset({"trial", "trial-obs", "trial-verdict"})
 KINDS = frozenset({"drift", "improvement"}) | TRIAL_KINDS
+
+
+def is_workable(row: dict, *, verdicted_refs=frozenset(), include_trial_heads: bool = True) -> bool:
+    """THE single predicate for "does this row represent open work?" beyond status.
+
+    Obs/verdict rows are never work. A `trial` head is work only while its
+    `source_ref` is not in `verdicted_refs`; callers that must never act on
+    trials at all (radar clustering, reconcile) pass ``include_trial_heads=False``.
+    """
+    kind = row.get("kind")
+    if kind in ("trial-obs", "trial-verdict"):
+        return False
+    if kind == "trial":
+        return include_trial_heads and row.get("source_ref") not in verdicted_refs
+    return True
 # `s3-codified` is the canonical s3 name (matches `check_codification_pipeline_health` +
 # CLAUDE.md §1 + user-facing terminology). `s3-kb` is the LEGACY alias from the
 # first implementation (one historical entry uses it; new writes should prefer
@@ -479,16 +494,16 @@ def query(
         _terminal = sorted(TERMINAL_STATUSES)
         sql += f" AND status NOT IN ({','.join('?' for _ in _terminal)})"
         params.extend(_terminal)
-        # Trial rows: observations/verdicts are never "open work"; a trial head
-        # is open only until its verdict row exists (kind='trial' only surfaces
-        # while pending — validated by verdict, not by status promotion).
-        sql += (" AND kind NOT IN ('trial-obs','trial-verdict')"
-                " AND NOT (kind='trial' AND source_ref IN"
-                " (SELECT source_ref FROM auto_improvement WHERE kind='trial-verdict'))")
-    sql += " ORDER BY ts DESC LIMIT ?"
-    params.append(limit)
+    # open_only: the work-predicate filters in Python, so LIMIT applies after it.
+    sql += " ORDER BY ts DESC" + ("" if open_only else " LIMIT ?")
+    if not open_only:
+        params.append(limit)
     cur = conn.execute(sql, params)
     out = [dict(r) for r in cur.fetchall()]
+    if open_only:
+        verdicted = {r[0] for r in conn.execute(
+            "SELECT source_ref FROM auto_improvement WHERE kind='trial-verdict'")}
+        out = [r for r in out if is_workable(r, verdicted_refs=verdicted)][:limit]
     conn.close()
     for r in out:
         if isinstance(r.get("trial"), str):
@@ -718,7 +733,7 @@ def reconcile(dry_run: bool = True, repo_root: Path | None = None) -> dict:
     now = _now_iso()
 
     for e in entries:
-        if e.get("status") in TERMINAL_STATUSES or e.get("kind") in TRIAL_KINDS:
+        if e.get("status") in TERMINAL_STATUSES or not is_workable(e, include_trial_heads=False):
             continue  # trials close by verdict, never by a resolve_when predicate
         rw = e.get("resolve_when")
         if not rw:
@@ -884,6 +899,7 @@ __all__ = [
     "SCOPES",
     "KINDS",
     "TRIAL_KINDS",
+    "is_workable",
     "STATUSES",
     "TERMINAL_STATUSES",
     "log_entry",
