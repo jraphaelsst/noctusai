@@ -37,7 +37,7 @@ import {
 } from "@/hooks/geracao/useRoteiros";
 import { cn } from "@/lib/utils";
 import type { Roteiro } from "@/types/geracao";
-import { HEADLINE_TEXTO_MAX } from "../labels";
+import { ESTRUTURAS_ROTEIRO, HEADLINE_TEXTO_MAX } from "../labels";
 import { FeedbackRoteiro } from "./FeedbackRoteiro";
 import { RoteiroCorpo, useEdicaoRoteiro } from "./RoteiroEdicao";
 
@@ -76,6 +76,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
   const [headline, setHeadline] = useState("");
   const [instrucoes, setInstrucoes] = useState("");
   const [duracao, setDuracao] = useState<Roteiro["duracao"]>("auto");
+  const [estrutura, setEstrutura] = useState<Roteiro["estrutura"]>("corestudio");
   const [brainId, setBrainId] = useState<string>("");
   const [viralId, setViralId] = useState<string | null>(null);
   const [comPerguntas, setComPerguntas] = useState(true);
@@ -98,6 +99,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
     setHeadline(headlineInicial?.texto ?? "");
     setInstrucoes("");
     setDuracao("auto");
+    setEstrutura("corestudio");
     setBrainId("");
     setViralId(null);
     setComPerguntas(true);
@@ -130,6 +132,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
         instrucoes: instrucoes.trim() || undefined,
         fonte: "ia",
         duracao,
+        estrutura,
         brain_id: brainId || null,
         viral_id: viralId,
         gerar_perguntas: comPerguntas,
@@ -255,6 +258,26 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
                     onClick={() => setDuracao(d.valor)}
                   >
                     {d.rotulo}
+                  </Button>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Estrutura</legend>
+              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Estrutura">
+                {ESTRUTURAS_ROTEIRO.map((e) => (
+                  <Button
+                    key={e.valor}
+                    type="button"
+                    role="radio"
+                    aria-checked={estrutura === e.valor}
+                    variant={estrutura === e.valor ? "default" : "outline"}
+                    className="h-auto flex-col items-start gap-1 whitespace-normal p-3 text-left"
+                    onClick={() => setEstrutura(e.valor)}
+                  >
+                    <span className="font-medium">{e.rotulo}</span>
+                    <span className="text-xs font-normal opacity-80">{e.explicacao}</span>
                   </Button>
                 ))}
               </div>

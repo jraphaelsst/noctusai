@@ -84,6 +84,8 @@ export interface CriarRoteiroInput {
   instrucoes?: string;
   fonte: "ia";
   duracao: Roteiro["duracao"];
+  /** Beat order; the server defaults to "corestudio" when omitted. */
+  estrutura?: Roteiro["estrutura"];
   brain_id?: string | null;
   viral_id?: string | null;
   gerar_perguntas: boolean;

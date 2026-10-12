@@ -4,6 +4,7 @@ import type {
   GeracaoStatus,
   Headline,
   LoteOrigem,
+  RoteiroEstrutura,
   RoteiroStatus,
 } from "@/types/geracao";
 
@@ -21,6 +22,24 @@ export const STATUS_ROTULO: Record<StatusGeracao, string> = {
 export function emAndamento(status: StatusGeracao): boolean {
   return status === "criando" || status === "processando";
 }
+
+/** The two roteiro beat orders (owner decision 2026-10-11); the first is the default. */
+export const ESTRUTURAS_ROTEIRO: { valor: RoteiroEstrutura; rotulo: string; explicacao: string }[] = [
+  {
+    valor: "corestudio",
+    rotulo: "CoreStudio (CTA de salvar no início)",
+    explicacao: "Pede para salvar logo depois da headline e fecha com compartilhar/comentar.",
+  },
+  {
+    valor: "metodo",
+    rotulo: "Método (CTA no final)",
+    explicacao: "Capa primeiro e um único CTA no fim: salvar + compartilhar/comentar/enviar.",
+  },
+];
+
+export const ESTRUTURA_ROTULO: Record<RoteiroEstrutura, string> = Object.fromEntries(
+  ESTRUTURAS_ROTEIRO.map((e) => [e.valor, e.rotulo]),
+) as Record<RoteiroEstrutura, string>;
 
 export const ORIGEM_ROTULO: Record<LoteOrigem, string> = {
   form_me: "Sobre mim",

@@ -38,9 +38,11 @@ from noctusai_lib.integrations.llm import LLMBudgetExceeded, LLMNotConfigured, c
 
 from app.modules.media_creation.geracao_scheduler import MSG_JOB_FAILED
 from app.modules.media_creation.prompts.roteiro_geracao import (
-    PROMPT_VERSAO,
-    ROTEIRO_GERACAO_SYSTEM_PROMPT,
+    ESTRUTURA_PADRAO,
+    ESTRUTURAS,
     build_geracao_user_message,
+    prompt_versao,
+    system_prompt,
 )
 from app.modules.media_creation.prompts.roteiro_perguntas import (
     ROTEIRO_PERGUNTAS_SYSTEM_PROMPT,
@@ -79,7 +81,7 @@ MSG_ORCAMENTO = "O orçamento de IA da organização foi excedido."
 
 ROTEIRO_COLS = (
     "id,marca_id,created_by,nome,headline_id,headline_texto,instrucoes,fonte,duracao,brain_id,viral_id,"
-    "perguntas,status,etapa,erro,conteudo,versao,fontes,feedback,feedback_motivo,created_at"
+    "perguntas,status,etapa,erro,conteudo,versao,fontes,feedback,feedback_motivo,estrutura,created_at"
 )
 
 #: ``(system_prompt, user_message, org_id) -> raw model reply`` (same shape as the cerebro seam).
@@ -187,6 +189,7 @@ def present_roteiro(
         "instrucoes": row.get("instrucoes") or "",
         "fonte": row.get("fonte") or "ia",
         "duracao": row.get("duracao") or "auto",
+        "estrutura": row.get("estrutura") or ESTRUTURA_PADRAO,
         "brain_id": row.get("brain_id"),
         "viral": viral,
         "perguntas": present_perguntas(row.get("perguntas")),
@@ -411,7 +414,8 @@ class RoteiroService:
             "id": roteiro_id, "org_id": self.org_id, "marca_id": marca_id, "created_by": self.user_id,
             "nome": _default_nome(headline), "headline_id": headline_id,
             "headline_texto": headline, "instrucoes": body.instrucoes.strip(), "fonte": "ia",
-            "duracao": body.duracao, "brain_id": str(body.brain_id) if body.brain_id else None,
+            "duracao": body.duracao, "estrutura": body.estrutura,
+            "brain_id": str(body.brain_id) if body.brain_id else None,
             "viral_id": str(body.viral_id) if body.viral_id else None, "perguntas": [],
             "status": "criando" if pergunta_primeiro else "processando",
             "etapa": ETAPA_PERGUNTAS if pergunta_primeiro else ETAPA_GERANDO,
@@ -504,7 +508,8 @@ class RoteiroService:
             "id": novo_id, "org_id": self.org_id, "marca_id": origem["marca_id"], "created_by": self.user_id,
             "nome": origem["nome"][:MAX_NOME], "headline_id": origem.get("headline_id"),
             "headline_texto": origem["headline_texto"], "instrucoes": instrucoes, "fonte": origem.get("fonte") or "ia",
-            "duracao": origem.get("duracao") or "auto", "brain_id": origem.get("brain_id"),
+            "duracao": origem.get("duracao") or "auto", "estrutura": origem.get("estrutura") or ESTRUTURA_PADRAO,
+            "brain_id": origem.get("brain_id"),
             "viral_id": origem.get("viral_id"), "perguntas": list(origem.get("perguntas") or []),
             "status": "processando", "etapa": ETAPA_GERANDO, "conteudo": "", "versao": 1,
             "modelo": self.cfg.geracao_llm_model, "created_at": _iso(_now()), "updated_at": _iso(_now()),
@@ -633,10 +638,17 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         raise DeadLetterError(f"roteiro {roteiro_id or '?'} não existe")
     if row["status"] != "processando":
         return
+    # A row written before migration 250 has no ``estrutura``: it was generated with the CoreStudio
+    # order (the column's default). A value outside the contract fails the row loudly, never a fallback.
+    estrutura = row.get("estrutura") or ESTRUTURA_PADRAO
+    if estrutura not in ESTRUTURAS:
+        logger.error("roteiro %s: estrutura desconhecida %r", roteiro_id, estrutura)
+        _falha(db, roteiro_id, MSG_IA_FALHOU, from_status=["processando"])
+        return
     ctx = _contexto(db, row)
     try:
         reply = await llm(
-            ROTEIRO_GERACAO_SYSTEM_PROMPT,
+            system_prompt(estrutura),
             build_geracao_user_message(
                 headline=row["headline_texto"], instrucoes=row.get("instrucoes") or "",
                 duracao=row.get("duracao") or "auto", perguntas=list(row.get("perguntas") or []),
@@ -668,7 +680,7 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         db, roteiro_id,
         {
             "status": "completo", "etapa": None, "erro": None, "conteudo": conteudo, "conteudo_original": conteudo,
-            "modelo": cfg.geracao_llm_model, "prompt_versao": PROMPT_VERSAO, "finished_at": _iso(_now()),
+            "modelo": cfg.geracao_llm_model, "prompt_versao": prompt_versao(estrutura), "finished_at": _iso(_now()),
         },
         from_status=["processando"],
     )

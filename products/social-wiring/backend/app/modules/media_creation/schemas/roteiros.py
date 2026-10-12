@@ -15,6 +15,8 @@ from pydantic import Field, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
+from app.modules.media_creation.prompts.roteiro_geracao import ESTRUTURA_PADRAO, Estrutura
+
 Fonte = Literal["ia", "web", "link"]
 Duracao = Literal["auto", "1", "2", "3"]
 
@@ -32,6 +34,9 @@ class RoteiroCreate(StrictHttpModel):
     instrucoes: str = Field(default="", max_length=MAX_INSTRUCOES)
     fonte: Fonte = "ia"
     duracao: Duracao = "auto"
+    #: The beat order (owner decision 2026-10-11): ``corestudio`` (CTA de salvar no início, default)
+    #: or ``metodo`` (CTA no final). Reprocessar reuses the stored value.
+    estrutura: Estrutura = ESTRUTURA_PADRAO
     brain_id: Optional[uuid.UUID] = None
     viral_id: Optional[uuid.UUID] = None
     gerar_perguntas: bool = True

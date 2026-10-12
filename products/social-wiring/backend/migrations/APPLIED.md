@@ -574,3 +574,7 @@ Authored 2026-10-10 (esteira-contract.md §A, A-3, FE-Z). Sets `status_pagina.me
 ## 248 — link_clicks: drop ip_address + user_agent (LGPD — clicks store nothing personal) — NOT APPLIED
 
 Authored 2026-10-11 (owner decision relayed by noc-0: click tracking must store no IP and no user agent). Destroys any captured values with the columns. The writer stopped sending them in the same commit. Between apply and the new image going live, an old-image click insert would fail; harmless in practice because prod sends no marketing email yet (Resend webhook secret + frontend base URL unset), so no tracked links exist.
+
+## 250 — cs_roteiros.estrutura (Roteiro Avançado: CoreStudio vs Método beat order) — NOT APPLIED
+
+Authored 2026-10-11 (owner decision "both structures"). Additive + idempotent: `estrutura TEXT NOT NULL DEFAULT 'corestudio'` (every existing row was generated with the CoreStudio order, so the default is the truthful backfill) with the named `cs_roteiros_estrutura_check` (`corestudio|metodo`, DROP IF EXISTS + ADD). Requires 229. Apply BEFORE deploying the image that reads/writes it (create/reprocessar insert `estrutura`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`.

@@ -50,7 +50,10 @@ export type HeadlineLoteDetalhe = HeadlineLote & { parametros: Record<string, un
 export type RoteiroPergunta = { id: string; pergunta: string; resposta: string | null }
 export type RoteiroResumo = { id: string; nome: string; headline_texto: string; headline_id: string | null;
                        status: RoteiroStatus; created_at: string; post?: PostRef | null }
+/** Beat order (owner decision 2026-10-11): CTA de salvar no início (corestudio) or CTA no final (metodo). */
+export type RoteiroEstrutura = 'corestudio' | 'metodo'
 export type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' | 'link'; duracao: 'auto'|'1'|'2'|'3';
+                 estrutura: RoteiroEstrutura;
                  brain_id: string | null; viral: ViralCard | null; perguntas: RoteiroPergunta[]; etapa: string | null;
                  conteudo: string | null; fontes: string | null; versao: number; feedback: 'gostei'|'nao_gostei'|null;
                  feedback_motivo: string | null; erro: string | null; post?: PostRef | null }

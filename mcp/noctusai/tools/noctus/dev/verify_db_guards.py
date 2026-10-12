@@ -4100,6 +4100,20 @@ _SW_CERTIDAO_RESULTADO_ORIGEM_PROBE = _ai_tables_probe(
     rationale="social_wiring.certidao_resultados: a resultado_origem outside api|texto|ia|manual would hide who decided the verdict.",
 )
 
+# Migration 250 (Roteiro Avançado, owner decision 2026-10-11): a roteiro's
+# beat order is corestudio | metodo. An unknown structure would make the
+# worker pick no prompt (the row fails) and the UI show a structure that does
+# not exist. The CHECK fires before the (fabricated) org/marca FKs, which are
+# deferred to the end of the statement.
+_SW_250_ESTRUTURA_PROBE = _ai_tables_probe(
+    "social-wiring", "social_wiring", "250_cs_roteiros_estrutura.sql",
+    "cs_roteiros_estrutura_check", "cs_roteiros",
+    "INSERT INTO social_wiring.cs_roteiros (org_id, marca_id, nome, headline_texto, estrutura) "
+    "VALUES (v_org, gen_random_uuid(), 'noc-probe', 'noc-probe', 'bogus')",
+    "23514",
+    rationale="social_wiring.cs_roteiros: an estrutura outside corestudio|metodo has no prompt and no UI label.",
+)
+
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
     id="erp.current_org_id_excludes_customer",
     product="social-wiring",
@@ -6879,6 +6893,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     *_SW_AI_TABLES_PROBES,
     _SW_CONTACTS_EMAIL_OPTIN_PROBE,
     _SW_CERTIDAO_RESULTADO_ORIGEM_PROBE,
+    _SW_250_ESTRUTURA_PROBE,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,

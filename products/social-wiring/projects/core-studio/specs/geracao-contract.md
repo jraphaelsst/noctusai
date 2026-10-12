@@ -503,7 +503,7 @@ selecionadas." and greys out profiles with 0.
 ### 4.5 Roteiros (`routers/roteiros.py`, BE-5)
 | # | Method + path | Request | `data` |
 |---|---|---|---|
-| 32 | `POST /roteiros` | `{marca_id, headline_id?, headline_texto, instrucoes?, fonte:'ia', duracao, brain_id?, viral_id?, gerar_perguntas: bool (default true)}` | 202 `Roteiro` (`criando`). `fonte` web or link → 422 "Fonte ainda não disponível"; more than `ROTEIROS_DIA_USUARIO` (20) → 429; foreign brain or viral → 404 |
+| 32 | `POST /roteiros` | `{marca_id, headline_id?, headline_texto, instrucoes?, fonte:'ia', duracao, estrutura? ('corestudio' default \| 'metodo', §6.1a), brain_id?, viral_id?, gerar_perguntas: bool (default true)}` | 202 `Roteiro` (`criando`). `fonte` web or link → 422 "Fonte ainda não disponível"; more than `ROTEIROS_DIA_USUARIO` (20) → 429; foreign brain or viral → 404 |
 | 33 | `GET /roteiros` | `marca_id`, `q?`, `limit≤50`, `offset` | `{items: RoteiroResumo[], total}` |
 | 34 | `GET /roteiros/{id}` | — | `Roteiro` |
 | 35 | `PUT /roteiros/{id}/perguntas` | `{respostas: [{id, resposta ≤1000}]}` | `Roteiro`; only while `perguntas` (409 otherwise) |
@@ -575,7 +575,7 @@ type HeadlineLoteDetalhe = HeadlineLote & { parametros: Record<string, unknown>;
 type RoteiroPergunta = { id: string; pergunta: string; resposta: string | null }
 type RoteiroResumo = { id: string; nome: string; headline_texto: string; headline_id: string | null;
                        status: RoteiroStatus; created_at: string }
-type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' | 'link'; duracao: 'auto'|'1'|'2'|'3';
+type Roteiro = RoteiroResumo & { instrucoes: string; fonte: 'ia' | 'web' | 'link'; duracao: 'auto'|'1'|'2'|'3'; estrutura: 'corestudio'|'metodo';
                  brain_id: string | null; viral: ViralCard | null; perguntas: RoteiroPergunta[]; etapa: string | null;
                  conteudo: string | null; fontes: string | null; versao: number; feedback: 'gostei'|'nao_gostei'|null;
                  feedback_motivo: string | null; erro: string | null }
@@ -721,6 +721,14 @@ Additional rules:
 - **Beats** = CoreStudio's observed order aligned to Método Audience:
   Headline (capa) → CTA de salvar → identificação → virada → nome → prova (specificity, **never invented numbers**; an explicit rule, because 41428 fabricated statistics) → valor → CTA de compartilhar/comentar (from `<CTAs>` when filled) → Apresentação Magnética (from the profile when filled, otherwise omitted, never invented).
 - **Duration** in words at about 150 words/min: auto ≈ 150–220, ~1 ≈ 150, ~2 ≈ 300, ~3 ≈ 450.
+
+#### 6.1a Two beat structures (owner decision 2026-10-11: "both structures")
+The creator picks the beat order in the Roteiro Avançado modal ("Estrutura"). It is stored on the row as `cs_roteiros.estrutura` (migration `250_cs_roteiros_estrutura.sql`: text NOT NULL DEFAULT `'corestudio'`, CHECK `cs_roteiros_estrutura_check` IN (`corestudio`,`metodo`), GuardProbe in `verify_db_guards`).
+- `corestudio` (default, `roteiro-v1-draft`, unchanged byte for byte): the order above, with the CTA de salvar right after the capa.
+- `metodo` (`roteiro-metodo-v1-draft`): the Método Audience rule "capa primeiro, CTA por último". Headline (capa) → identificação → virada → nome → prova → valor → Apresentação Magnética (only when filled) → **CTA final**, ONE closing beat asking to SALVAR + compartilhar/comentar/enviar, using `<CTAs>` when filled.
+- Every beat's rule is shared verbatim, including the anti-fabrication rule in Prova; only the order and the CTA merge differ. The system/user split and the untrusted-data blocks are the same.
+- `POST /roteiros` takes an optional `estrutura` (default `corestudio`; any other value → 422). `Roteiro` exposes `estrutura`. **Reprocessar** copies it, so a regenerated roteiro keeps its structure. `prompt_versao` records the version that actually ran. A row written before the migration (no value) generates as `corestudio`.
+- The chat ROTEIRO agent (`chat-roteiro-v2-draft`) describes both orders and uses CoreStudio unless the user asks for the Método.
 - Output is markdown with beat headings. `fontes` stays NULL in v1.
 
 ### 6.2 Chat agents

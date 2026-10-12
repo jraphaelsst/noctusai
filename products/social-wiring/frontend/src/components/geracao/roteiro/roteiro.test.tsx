@@ -67,6 +67,7 @@ const base = {
   instrucoes: "",
   fonte: "ia",
   duracao: "auto",
+  estrutura: "corestudio",
   brain_id: null,
   viral: null,
   perguntas: [],
@@ -131,11 +132,30 @@ describe("RoteiroAvancadoModal", () => {
       instrucoes: "tom leve",
       fonte: "ia",
       duracao: "2",
+      estrutura: "corestudio",
       brain_id: "b1",
       viral_id: "viral-9",
       gerar_perguntas: true,
     });
     await waitFor(() => expect(onCriado).toHaveBeenCalled());
+  });
+
+  it("estrutura: CoreStudio é o padrão, cada opção explica a ordem, Método é enviado quando escolhido", async () => {
+    m.criar.mockResolvedValue({ ...base, status: "criando", estrutura: "metodo" });
+    abrir({ headlineInicial: { id: "h1", texto: "3 alimentos" } });
+    const grupo = screen.getByRole("radiogroup", { name: "Estrutura" });
+    expect(grupo).toBeInTheDocument();
+    const corestudio = screen.getByRole("radio", { name: /CoreStudio \(CTA de salvar no início\)/ });
+    const metodo = screen.getByRole("radio", { name: /Método \(CTA no final\)/ });
+    expect(corestudio).toHaveAttribute("aria-checked", "true");
+    expect(metodo).toHaveAttribute("aria-checked", "false");
+    expect(corestudio).toHaveTextContent(/salvar logo depois da headline/);
+    expect(metodo).toHaveTextContent(/um único CTA no fim/);
+    fireEvent.click(metodo);
+    expect(metodo).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Criar roteiro" }));
+    await waitFor(() => expect(m.criar).toHaveBeenCalled());
+    expect(m.criar.mock.calls[0][0]).toMatchObject({ estrutura: "metodo" });
   });
 
   it("headline editada deixa de apontar para a headline original; vazio bloqueia o envio", () => {
@@ -238,6 +258,12 @@ describe("EditarRoteiroModal", () => {
     abrir();
     fireEvent.click(screen.getByRole("button", { name: "Tentar novamente" }));
     expect(refetch).toHaveBeenCalled();
+  });
+
+  it("mostra a estrutura usada no roteiro", () => {
+    m.roteiro.mockReturnValue(q({ ...base, estrutura: "metodo" }));
+    abrir();
+    expect(screen.getByTestId("roteiro-estrutura")).toHaveTextContent("Estrutura: Método (CTA no final)");
   });
 
   it("aba Fontes só aparece quando fontes não é NULL", () => {

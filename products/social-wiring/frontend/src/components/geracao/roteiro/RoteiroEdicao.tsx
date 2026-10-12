@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useSalvarRoteiro } from "@/hooks/geracao/useRoteiros";
 import type { Roteiro } from "@/types/geracao";
+import { ESTRUTURA_ROTULO } from "../labels";
 
 export const NOME_MAX = 160;
 export const CONTEUDO_MAX = 30_000;
@@ -107,6 +109,9 @@ export function RoteiroCorpo({ roteiro, edicao, mostrarNome = true, onRecarregar
           )}
         </div>
       )}
+      <p className="text-xs text-muted-foreground" data-testid="roteiro-estrutura">
+        Estrutura: <Badge variant="secondary">{ESTRUTURA_ROTULO[roteiro.estrutura]}</Badge>
+      </p>
       <Tabs defaultValue="roteiro">
         {temFontes && (
           <TabsList>
