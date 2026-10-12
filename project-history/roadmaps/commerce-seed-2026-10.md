@@ -67,6 +67,12 @@ Rule: anything 2+ markets need lives in L1; market-only behavior lives in L2 beh
 - 2026-10-12 · **D20 photo-licensing tax** — Claude designs a recommendation (below, *Parked recommendations*); owner evaluates later; the losing options are deleted after the decision.
 - 2026-10-12 · **D21 digital products** — a digital-product model + KPIs from research (companion doc); Gilson's contract = first canonical digital catalog product; **products-inside-products tools** (MCP now, the same service powers in-app "new product" tools later).
 - 2026-10-12 · **D22 continuous refinement** — the method, skill and tools are refined while building the commerce architecture AND at each store (photo, artifacts, Gilson's), not only at the learning-round phases.
+- 2026-10-12 · **D24 photo-licensing tax** — owner chose recommendation **B** (rights assignment + receipt + license certificate, no NFS-e) for the photographer. R1 below closed.
+- 2026-10-12 · **D25 Gilson** — not a lawyer: real-estate entrepreneur and agent, owner of One Consultoria Imobiliária. Contracts are sold as templates with disclaimers; no per-buyer legal review (P13).
+- 2026-10-12 · **D26 buyers** — guest checkout + magic link to "my orders"; the customer record is enriched from form data and payment data, **payment is the source of truth** (field-level provenance).
+- 2026-10-12 · **D27 Asaas money flow** — each client's own Asaas account + **noc fee via Asaas split** (owner delegated the choice after a fee check: no published split fee, split on net value, refunds reverse the split, chargeback undocumented → fee counted only when settled). Fee rate per org, platform-admin only, default 0.
+- 2026-10-12 · **D28 addresses** — reference product slug `commerce`, back office `commerce.noctusai.com`, one explicit test storefront subdomain for validation; wildcard in P12.
+- 2026-10-12 · **D29 coupons** — percent or fixed in P3; bumps/upsells/affiliates later.
 - 2026-10-12 · **D23 learn-while-building** — new skill `noc-learn-refine` + tool `noctus.dev.method_trial`: methods in use are trials with hypothesis, metrics, observations and verdicts.
 
 ## Phases
@@ -78,7 +84,7 @@ Week numbers are estimates from 2026-10-12 (W1). Each phase gets its own `projec
 | **P0** Orient + research | method | W1 | — | ✅ market brief, codebase map, live tracker | brief file exists; tracker loads live |
 | **P1** Interview + master plan | method | W1 | **T1 owner signs off this plan** | ✅ decisions D1–D17, this roadmap, `create_testing_ground` path fix | roadmap on `dev`; tracker decisions = D1–D17 |
 | **P2** Vertical-seed method + skill v2 | method | W2 | T1 ✅ | `vertical-seed.md` (layers, seams, client extension packs, isolation levels) · `approved-cutover.md` · new-product guide § Market products from a vertical seed · `noc-new-product` v2.0.0 · skill `noc-learn-refine` + `method-trials.md` + tool `noctus.dev.method_trial` · digital-product spec · photo-tax recommendation | pre-commit keepers green; `method_trial` tests green; trials opened for the vertical-seed method, skill v2 and `noc-learn-refine` itself |
-| **P3** Commerce core | seed | W2–3 | T1 | organs: customers + addresses + LGPD consent/rights; **store profile** (CNPJ required+validated, tax regime, language, currency, brand tokens, subdomain); catalog with `product_type` seam; one-price + coupons pricing; cart/checkout with Decreto 7.962 disclosures + immediate-delivery consent; order state machine with `fulfillment_type` seam. **Mine `products/store` first.** | contract-first per organ; Fake-backed tests; org-isolation test per table |
+| **P3** Commerce core | seed | W2–3 | T1 ✅ — project `projects/commerce-seed-p3/` (PROJECT.md + CONTRACT.md) | organs: customers + addresses + LGPD consent/rights; **store profile** (CNPJ required+validated, tax regime, language, currency, brand tokens, subdomain); catalog with `product_type` seam; one-price + coupons pricing; cart/checkout with Decreto 7.962 disclosures + immediate-delivery consent; order state machine with `fulfillment_type` seam. **Mine `products/store` first.** | contract-first per organ; Fake-backed tests; org-isolation test per table |
 | **P4** Commerce money | seed | W3–4 | P3 | payments via Asaas organ (Pix, boleto, card + parcelamento, refunds, webhooks idempotent, `expired` + recovery); finance (AR/AP, cash flow, gateway settlement reconciliation); **invoice adapter** Protocol + Fake + Real (NF-e + current NFS-e + NFS-e Nacional, IBS/CBS fields) with the **approved cutover** for NFS-e (D19) | Asaas sandbox e2e; invoice Fake round-trip; real provider sandbox |
 | **P5** Fulfillment seams, back-office, AI | seed | W4–5 | P4 | digital-product model (`deliverable_type` seam, versions, entitlements, KPIs + events — companion doc §2–3); digital delivery (private bucket, signed expiring URLs, download limits/log, license certificate + verify page); **products-inside-products MCP tools** (companion doc §5); client extension pack loader (D18); physical seam stub (filled in P9); admin + roles + reports; storefront theming per org; **AI layer** (Protocol + Fake + local + Claude) + **eval harness**; the 3 automations | eval report local vs Claude; wiring audit (`noc-wiring-audit`) green |
 | **P6** Seed validation | seed | W6 | **T2 owner says "validated"** | e2e walk of a generic store on a subdomain | owner sign-off recorded in decision log |
@@ -119,19 +125,9 @@ Week numbers are estimates from 2026-10-12 (W1). Each phase gets its own `projec
 
 ## Parked recommendations (evaluate later · delete the losing options after the decision)
 
-### R1 · Photo-licensing tax treatment (D20)
+### R1 · Photo-licensing tax treatment (D20) — DECIDED 2026-10-12 (D24)
 
-*The legal question:* is selling a license to use a photo a **service** (ISS, NFS-e) or the **assignment of a right / movable asset** (no ISS; São Paulo rulings and a 2026 STJ decision lean this way — brief §C)?
-
-*Recommendation:* make tax treatment a per-product-type rule set in the store profile, with three presets, and default the photographer to **B** until the accountant confirms:
-
-| Preset | Invoice | When it fits |
-|---|---|---|
-| A · Service | NFS-e (ISS) per sale | accountant treats licensing as a service, or the municipality requires it |
-| **B · Rights assignment + receipt** (default) | no NFS-e; system issues a detailed sale receipt + license certificate; revenue still reported via the regime (DAS for MEI/Simples) | follows the São Paulo/STJ reading; lowest friction for one-price photo licenses |
-| C · Mixed | NFS-e only for commissioned shoots/services; licenses under B | photographer also sells services through the store |
-
-Switching preset is an owner-approved change per org (same audit trail as `approved-cutover.md`). *Discard rule:* once the owner decides, delete the unused presets from the code and this section keeps a one-line record of the decision.
+Owner chose **B · rights assignment + receipt** (no NFS-e; sale receipt + license certificate; revenue reported via the regime) for the photographer. The organ keeps `TaxTreatment` as a per-product-type setting (`service_nfse` · `rights_receipt` · `goods_nfe` · `none`) because other clients and markets need the other values; the photographer's profile defaults to `rights_receipt`.
 
 ## Phase 1 (SHIPPED with this file)
 
