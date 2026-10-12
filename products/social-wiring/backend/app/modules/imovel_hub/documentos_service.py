@@ -838,6 +838,47 @@ _MSG_INSCRICAO_ILEGIVEL = (
 )
 
 
+#: A vision-read inscrição that fits the mask but contradicts the value the
+#: imóvel already holds from ANOTHER prefeitura document (CND/guia, filled
+#: exact or corroborated). Seen live (2026-10-12): a photo read
+#: "32252-53-55-0304-00-000" against the CND's printed 23252.53.55.0304.00.000
+#: — two digits swapped, 18 digits, mask satisfied. A mask cannot see a
+#: transposition; the exact reading on file can.
+AVISO_INSCRICAO_DIVERGENTE = "inscricao_foto_diverge"
+_MSG_INSCRICAO_DIVERGENTE = (
+    "a inscrição lida na foto não confere com a da CND/guia já registrada — "
+    "envie o PDF ou uma foto melhor"
+)
+
+
+def _inscricao_de_referencia(
+    client: Any, org_id: UUID, codigo: str, documento_id: Any
+) -> Optional[str]:
+    """The imóvel's inscrição when it came from ANOTHER prefeitura document
+    — the only value exact enough to judge a photo by. A matrícula-sourced
+    or hand-typed value is not used here (the conflict path owns those)."""
+    from app.modules.imovel_hub.conflito_resolucao import FONTES_PREFEITURA
+
+    row = dados_service.linha(client, org_id, codigo) or {}
+    valor = row.get("prefeitura_cadastro_imobiliario")
+    if not valor or row.get("prefeitura_cadastro_imobiliario_origem") not in FONTES_PREFEITURA:
+        return None
+    if str(row.get("prefeitura_cadastro_imobiliario_documento_id") or "") == str(documento_id):
+        return None  # this document's own earlier read is no reference
+    return valor
+
+
+def _inscricao_suspeita(
+    valor: str, municipio: Optional[str], texto: str, referencia: Optional[str]
+) -> Optional[str]:
+    """Why `valor` cannot be stored as read, or `None`. Never repairs it."""
+    if inscricao_valida_na_mascara(valor, municipio, texto) is False:
+        return AVISO_INSCRICAO_ILEGIVEL
+    if referencia and _so_digitos(referencia) != _so_digitos(valor):
+        return AVISO_INSCRICAO_DIVERGENTE
+    return None
+
+
 def inscricao_valida_na_mascara(
     valor: str, municipio: Optional[str], texto: str = ""
 ) -> Optional[bool]:
@@ -1286,13 +1327,17 @@ async def extrair_estrutura(
             )
             municipio = None
         texto_doc = "\n".join(p.texto for p in paginas)
-        valida = inscricao_valida_na_mascara(
-            via_ia["inscricao_imobiliaria"], municipio, texto_doc
+        referencia = (
+            _inscricao_de_referencia(client, org_id, codigo, documento_id)
+            if inscricao_via_visao else None
         )
-        if valida is False:
+        motivo = _inscricao_suspeita(
+            via_ia["inscricao_imobiliaria"], municipio, texto_doc, referencia
+        )
+        if motivo:
             logger.warning(
-                "extracao estrutura %s: inscricao fora da mascara do municipio "
-                "(via_visao=%s)", documento_id, inscricao_via_visao,
+                "extracao estrutura %s: inscricao suspeita (%s, via_visao=%s)",
+                documento_id, motivo, inscricao_via_visao,
             )
             corrigida = None
             if inscricao_via_visao:
@@ -1306,12 +1351,18 @@ async def extrair_estrutura(
                         "extracao estrutura %s: releitura da inscricao falhou: %s",
                         documento_id, exc,
                     )
+            if corrigida and _inscricao_suspeita(corrigida, municipio, texto_doc, referencia):
+                corrigida = None  # the stronger read is still suspect
             if corrigida:
                 via_ia["inscricao_imobiliaria"] = corrigida
             else:
                 via_ia.pop("inscricao_imobiliaria")
                 descartada = True
-                aviso = f"{AVISO_INSCRICAO_ILEGIVEL}: {_MSG_INSCRICAO_ILEGIVEL}"
+                aviso = (
+                    f"{AVISO_INSCRICAO_DIVERGENTE}: {_MSG_INSCRICAO_DIVERGENTE}"
+                    if motivo == AVISO_INSCRICAO_DIVERGENTE
+                    else f"{AVISO_INSCRICAO_ILEGIVEL}: {_MSG_INSCRICAO_ILEGIVEL}"
+                )
     limpar_inscricao = {"inscricao_imobiliaria": None} if descartada else {}
 
     if not paginas:
