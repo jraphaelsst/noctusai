@@ -53,6 +53,7 @@ from noctusai_lib.integrations.documents.abnt import (
     render_abnt_pdf,
     render_word_html,
 )
+from noctusai_lib.integrations.documents.certidao_resultado import ler_resultado_certidao
 from noctusai_lib.integrations.documents.cpf import only_digits
 from noctusai_lib.integrations.documents.formatting import (
     FormatRange,
@@ -1488,6 +1489,27 @@ def _data_tipo_do_raw(raw: Any) -> Optional[str]:
     return None
 
 
+def _aplicar_resultado_impresso(
+    destino: dict, tipo: Optional[str], paginas_texto: Sequence[str], nome_display: str
+) -> bool:
+    """P6: the verdict the ISSUER PRINTED (`ler_resultado_certidao`) replaces
+    a model's answer in `destino`. True when the print decided it — the
+    caller then records `resultado_origem='texto'` (migration 249). A model
+    answer that disagrees is logged: evidence about the model, never a
+    reason to keep it. Nothing printed unambiguously → `destino` untouched."""
+    impresso = ler_resultado_certidao(tipo or "", "\n".join(paginas_texto))
+    if not impresso:
+        return False
+    anterior = destino.get("resultado")
+    if anterior and anterior != impresso:
+        logger.warning(
+            "Certidão %s: resultado impresso %r diverge da leitura da IA %r — vale o impresso",
+            nome_display, impresso, anterior,
+        )
+    destino["resultado"] = impresso
+    return True
+
+
 async def _derive_estrutura(
     *,
     config: Optional[dict],
@@ -1539,12 +1561,19 @@ async def _derive_estrutura(
         ):
             patch["resultado"] = "positiva_com_efeito_de_negativa"
             origem = "api"
-    if "resultado" not in patch and texto_para_ia:
+    api_decidiu = "resultado" in patch
+    if not api_decidiu and texto_para_ia:
         via_ia = await analyze_estrutura(texto_para_ia, nome_display, org_id)
         if via_ia:
             for k, v in via_ia.items():
                 patch.setdefault(k, v)
             origem = "ia"
+    # The issuer's printed sentence decides the verdict whenever the API did
+    # not (P6) — over the model's answer, and even where no model was asked.
+    if not api_decidiu and paginas_texto and _aplicar_resultado_impresso(
+        patch, (config or {}).get("tipo"), paginas_texto, nome_display
+    ):
+        origem = "texto"
     # The stored document's own text is the last deterministic source: an API
     # response that names neither number nor emission (TRF3/TRT2 receipts) still
     # prints both on the certidão. Fill-missing only — never overrides the API.
@@ -2844,6 +2873,8 @@ async def process_manual_extraction(
         if via_ia:
             destino.update(via_ia)
             destino["resultado_origem"] = "ia"
+        if _aplicar_resultado_impresso(destino, tipo, paginas_texto, nome_display):
+            destino["resultado_origem"] = "texto"
 
     if destino is not None and tipo == "cenprot":
         await _aplicar_leitura_cenprot(
@@ -3356,6 +3387,7 @@ async def _reler_emissao(
         extracted = ExtractedPdfText(para_ia=None, erro="falha_extracao")
 
     lido: dict = {}
+    resultado_impresso = False
     paginas_texto: tuple[str, ...] = extracted.paginas_texto or (
         (extracted.para_ia,) if extracted.para_ia else ()
     )
@@ -3367,6 +3399,9 @@ async def _reler_emissao(
             )
             if via_ia:
                 lido.update(via_ia)
+            resultado_impresso = _aplicar_resultado_impresso(
+                lido, tipo, paginas_texto, nome_display
+            )
         if tipo == "cenprot":
             await _aplicar_leitura_cenprot(
                 lido, pdf_bytes, resultado_id, consulta_id, nome_display,
@@ -3395,7 +3430,9 @@ async def _reler_emissao(
             divergencias.append(item)
     if "resultado" in patch:
         # `resultado_origem` tracks the VERDICT (see `_derive_estrutura`).
-        patch["resultado_origem"] = "api" if "resultado" in da_api else "ia"
+        patch["resultado_origem"] = (
+            "api" if "resultado" in da_api else "texto" if resultado_impresso else "ia"
+        )
     patch["releitura"] = estado_releitura_concluida(divergencias)
 
     persist = dict(patch)

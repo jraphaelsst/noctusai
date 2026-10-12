@@ -2895,6 +2895,77 @@ class TestDerivaEstrutura:
         }
         estrutura_ia.assert_awaited_once()
 
+    # ── P6: the issuer's printed sentence decides the verdict ─────────────
+
+    _IMPRESSO_NEGATIVA = (
+        "CERTIDÃO NEGATIVA DE DÉBITOS RELATIVOS AOS TRIBUTOS FEDERAIS E À DÍVIDA ATIVA DA UNIÃO"
+    )
+
+    @pytest.mark.asyncio
+    async def test_o_impresso_vence_a_ia_e_a_origem_e_texto(self):
+        estrutura_ia = AsyncMock(return_value={"resultado": "positiva", "validade_ate": "2026-12-01"})
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{"numero_controle": "X"}]}},
+            texto_para_ia="texto",
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+            paginas_texto=(self._IMPRESSO_NEGATIVA,),
+        )
+        assert patch_out["resultado"] == "negativa"
+        assert patch_out["resultado_origem"] == "texto"
+        assert patch_out["validade_ate"] == "2026-12-01"  # the model still fills the rest
+
+    @pytest.mark.asyncio
+    async def test_o_impresso_decide_mesmo_sem_ia(self):
+        estrutura_ia = AsyncMock()
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{"numero_controle": "X"}]}},
+            texto_para_ia=None,
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+            paginas_texto=(self._IMPRESSO_NEGATIVA,),
+        )
+        assert patch_out["resultado"] == "negativa"
+        assert patch_out["resultado_origem"] == "texto"
+        estrutura_ia.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_o_veredito_da_api_nao_e_relido_do_impresso(self):
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"nada_consta": "Nada consta"},
+            texto_para_ia=None,
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=AsyncMock(),
+            paginas_texto=("CERTIDÃO POSITIVA DE DÉBITOS RELATIVOS AOS TRIBUTOS FEDERAIS",),
+        )
+        assert patch_out["resultado"] == "negativa"
+        assert patch_out["resultado_origem"] == "api"
+
+    @pytest.mark.asyncio
+    async def test_impresso_ambiguo_mantem_a_ia(self):
+        estrutura_ia = AsyncMock(return_value={"resultado": "positiva"})
+        patch_out = await service._derive_estrutura(
+            config=CONFIG_FEDERAL,
+            result={"raw_response": {"data": [{"numero_controle": "X"}]}},
+            texto_para_ia="texto",
+            nome_display="CND Federal",
+            org_id=ORG,
+            travado=False,
+            analyze_estrutura=estrutura_ia,
+            paginas_texto=("página sem a frase de certificação",),
+        )
+        assert patch_out["resultado"] == "positiva"
+        assert patch_out["resultado_origem"] == "ia"
+
     @pytest.mark.asyncio
     async def test_ia_nunca_sobrescreve_o_que_a_api_ja_disse(self):
         """`setdefault` — the AI leg only FILLS GAPS, never overwrites a field
@@ -3044,6 +3115,36 @@ class TestProcessManualUploadEstruturado:
         assert update_data["resultado_origem"] == "ia"
         assert update_data["status"] == "sucesso"
         estrutura_ia.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_tjsp_upload_le_o_veredito_impresso(self):
+        """P6: a TJSP e-SAJ upload whose page prints 'verificou CONSTAR … em
+        nome de:' (the qualified person) is positiva from the print, whatever
+        the model answered; origem 'texto'."""
+        texto = (
+            "CERTIFICA E DÁ FÉ QUE, pesquisando os registros, verificou CONSTAR como "
+            "réu/requerido/interessado em nome de: *** FULANA DE TAL, RG: 1, CPF: 2"
+        )
+        db = _db(
+            certidao_consultas=[_consulta_row()],
+            certidao_resultados=[_resultado(tipo="tjsp_esaj", nome_display="TJSP e-SAJ")],
+        )
+        update_data = await service.process_manual_extraction(
+            pdf_bytes=b"%PDF-1.4",
+            resultado_id="resultado-001",
+            consulta_id="consulta-001",
+            nome_display="TJSP e-SAJ",
+            org_id=ORG,
+            db=db,
+            tipo="tjsp_esaj",
+            extract_text=AsyncMock(return_value=service.ExtractedPdfText(
+                para_ia=texto, paginas_texto=(texto,),
+            )),
+            analyze=AsyncMock(return_value="resumo"),
+            analyze_estrutura=AsyncMock(return_value={"resultado": "negativa"}),
+        )
+        assert update_data["resultado"] == "positiva"
+        assert update_data["resultado_origem"] == "texto"
 
     @pytest.mark.asyncio
     async def test_travado_por_confirmado_por_nao_chama_ia(self):

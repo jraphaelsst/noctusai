@@ -108,6 +108,7 @@ import {
   type ResultadoValor,
   type SituacaoCadastral,
   type SituacaoCadastralPatchInput,
+  type SituacaoOrigem,
 } from "@/types/certidoesEstruturadas";
 
 const UPLOAD_INPUT_TESTID = "certidoes-parte-upload-input";
@@ -928,7 +929,7 @@ function SituacaoCadastralEditor({
   consultaId: string;
   situacaoCadastral: SituacaoCadastral | null;
   dataSituacao: string | null;
-  situacaoOrigem: "api" | "ia" | "manual" | null;
+  situacaoOrigem: SituacaoOrigem | null;
   onSalvar: (patch: SituacaoCadastralPatchInput) => void;
   saving: boolean;
 }) {

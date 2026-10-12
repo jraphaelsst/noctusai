@@ -4087,6 +4087,18 @@ _SW_CONTACTS_EMAIL_OPTIN_PROBE = _ai_tables_probe(
     rationale="social_wiring.contacts: an email_optin outside not_required|pending|confirmed would slip past the double opt-in send gate.",
 )
 
+# Migration 249 (P6): resultado_origem gains 'texto' (verdict read from the
+# issuer's printed sentence). The widened CHECK must still refuse anything
+# outside api|texto|ia|manual — an unknown origin would hide who decided a
+# certidão's verdict.
+_SW_CERTIDAO_RESULTADO_ORIGEM_PROBE = _ai_tables_probe(
+    "social-wiring", "social_wiring", "249_certidao_resultado_origem_texto.sql",
+    "certidao_resultados_resultado_origem_check", "certidao_resultados",
+    "INSERT INTO social_wiring.certidao_resultados (consulta_id, org_id, tipo, nome_display, resultado_origem) "
+    "VALUES (gen_random_uuid(), v_org, 'trf3', 'noc-probe', 'bogus')",
+    "23514",
+    rationale="social_wiring.certidao_resultados: a resultado_origem outside api|texto|ia|manual would hide who decided the verdict.",
+)
 
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
     id="erp.current_org_id_excludes_customer",
@@ -6866,6 +6878,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _ERP_CURRENT_ORG_ID_PROBE,
     *_SW_AI_TABLES_PROBES,
     _SW_CONTACTS_EMAIL_OPTIN_PROBE,
+    _SW_CERTIDAO_RESULTADO_ORIGEM_PROBE,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,

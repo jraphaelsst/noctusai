@@ -32,6 +32,7 @@ import { authenticatedFetch, triggerBlobDownload } from "@/lib/file-download";
 import { readableError, type FormatRange } from "@/hooks/useMatriculas";
 import type {
   ResultadoOrigem,
+  SituacaoOrigem,
   ResultadoPatchInput,
   ResultadoValor,
   SituacaoCadastral,
@@ -90,7 +91,7 @@ export interface CertidaoResultado {
    * See `@/types/certidoesEstruturadas::situacaoCadastralBadge`. */
   consulta_situacao_cadastral?: SituacaoCadastral | null;
   consulta_data_situacao?: string | null; // YYYY-MM-DD
-  consulta_situacao_origem?: ResultadoOrigem | null;
+  consulta_situacao_origem?: SituacaoOrigem | null;
   /** Migration 113 (ABNT formatting project, `projects/abnt-formatting-
    *  CONTRACT.md` § 4) — `GENERATED ALWAYS AS (texto_extraido IS NOT NULL)`.
    *  Gates the "Transcrição PDF" / "Copiar" actions; `false`/absent hides

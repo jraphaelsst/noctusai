@@ -36,9 +36,15 @@ export type ResultadoValor =
   | "nao_emitida"
   | "negativa_com_homonimos";
 
-/** `certidao_resultados.resultado_origem` — who last wrote the structured
- * fields. NULL alongside a NULL `resultado` means neither has run yet. */
-export type ResultadoOrigem = "api" | "ia" | "manual";
+/** `certidao_resultados.resultado_origem` — who decided `resultado`:
+ * the source's API, the issuer's printed sentence (`texto`, migration 249),
+ * a model's read (`ia`), or a human. NULL alongside a NULL `resultado` means
+ * neither has run yet. */
+export type ResultadoOrigem = "api" | "texto" | "ia" | "manual";
+
+/** `certidao_consultas.situacao_origem` — the consulta's situação cadastral
+ * has no printed-verdict leg, so it never carries `texto`. */
+export type SituacaoOrigem = Exclude<ResultadoOrigem, "texto">;
 
 export const RESULTADO_VALOR_LABELS: Record<ResultadoValor, string> = {
   negativa: "Negativa",
@@ -124,6 +130,7 @@ export const SITUACAO_CADASTRAL_BADGE_VARIANT: Record<
 
 export const RESULTADO_ORIGEM_LABELS: Record<ResultadoOrigem, string> = {
   api: "API",
+  texto: "Lido do documento",
   ia: "IA (sugestão)",
   manual: "Confirmado manualmente",
 };
