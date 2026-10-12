@@ -476,8 +476,10 @@ def deploy_image(
     both verifiably match what was intended. `noctus.dev.deploy_verify` is
     the independent, standalone check for the same ground truth.
 
-    status ∈ {planned, up_to_date, deployed, swap_unverified, rolled_back,
-    refused_catalog_scope, error}.
+    status ∈ {planned, up_to_date, deployed, swap_unverified, unverified,
+    rolled_back, refused_catalog_scope, error} — `unverified` = an SSH
+    transport failure left the swap state unknown (no rollback; run
+    noctus.dev.deploy_verify).
     Never raises on an operational failure — it returns it (no silent errors)."""
     if not product or not product.strip():
         return {"ok": False, "status": "error", "exit_code": 1, "error": "product required"}
@@ -842,7 +844,7 @@ def register(server) -> None:
             "RUNNING container's own image id + revision label (not the pulled tag) and "
             "REFUSES status='deployed' (returns 'swap_unverified' instead, no "
             "auto-rollback) unless both verifiably match. status: planned | up_to_date | "
-            "deployed | swap_unverified | rolled_back | refused_catalog_scope | "
+            "deployed | swap_unverified | unverified | rolled_back | refused_catalog_scope | "
             "refused_stale_toolkit | error. "
             "Independent standalone witness for the same ground truth: "
             "noctus.dev.deploy_verify. TOOLKIT-STALENESS GUARD (2026-09-18; R4 "
