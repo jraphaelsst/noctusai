@@ -139,3 +139,57 @@ class TestSemLogradouro:
     def test_texto_sem_marcador_situado_nao_derruba_nem_inventa(self):
         r = derivar_endereco(TEXTO_SEM_LOGRADOURO)
         assert r == EnderecoMatricula()
+
+
+# ─── 876 audit (2026-10): averbação addresses, decree numbers, thousands ────
+
+_ABERTURA_RUA_UM = (
+    'IMÓVEL: UM TERRENO URBANO consistente no LOTE Nº19 DA QUADRA "A", do loteamento '
+    'denominado "RESERVA EXEMPLO", situado no Bairro da Granja Exemplo, assim descrito: '
+    "mede 11,32 metros de frente para a Rua Um; encerrando a área de 640,87 metros quadrados."
+)
+_ATOS_CONSTRUCAO = (
+    _ABERTURA_RUA_UM + "\n"
+    "AV.01 - Fica averbado o que consta.\n"
+    "AV.06 - Pelo requerimento firmado em 2022, procede-se à presente para constar que sobre o "
+    "imóvel desta matrícula foi edificada uma construção residencial com área total de 299,43 "
+    "metros quadrados, situada na Alameda Exemplo, nº 81, (antiga Rua Um, oficializada através "
+    "do Decreto nº 7746/2013 do Município), conforme prova o Habite-se.\n"
+)
+
+
+class TestEnderecoDaAverbacaoDeConstrucao:
+    def test_a_construction_averbacao_states_the_address(self):
+        e = derivar_endereco(_ABERTURA_RUA_UM, _ATOS_CONSTRUCAO)
+        assert (e.logradouro, e.numero) == ("Alameda Exemplo", "81")
+
+    def test_a_bairro_is_never_a_street(self):
+        # Without the averbação: "situado no Bairro …" names no street at all.
+        assert derivar_endereco(_ABERTURA_RUA_UM, _ABERTURA_RUA_UM).logradouro is None
+
+    def test_a_decree_number_is_never_the_house_number(self):
+        atos = _ABERTURA_RUA_UM + "\nAV.03 - Rua oficializada através do Decreto nº 7746/2013.\n"
+        assert derivar_endereco(_ABERTURA_RUA_UM, atos).numero is None
+
+    def test_number_followed_by_a_parenthesis(self):
+        atos = _ATOS_CONSTRUCAO.replace("nº 81, (antiga", "nº 81 (antiga")
+        assert derivar_endereco(_ABERTURA_RUA_UM, atos).numero == "81"
+
+
+class TestNumeroComMilhar:
+    def test_thousands_separator_is_part_of_the_number(self):
+        texto = "IMÓVEL: CASA 24, sito à Estrada Exemplo, nº2.350, Jardim Exemplo, Cotia."
+        assert derivar_endereco(texto).numero == "2.350"
+
+    def test_a_rectification_averbacao_replaces_the_printed_number(self):
+        texto = "IMÓVEL: CASA 24, sito à Estrada Exemplo, nº2.350, Jardim Exemplo, Cotia."
+        atos = texto + (
+            "\nAV.04 - para constar que o Condomínio faz frente para a Estrada Exemplo, "
+            "nº2.530 e não 2.350 como constou.\n"
+        )
+        assert derivar_endereco(texto, atos).numero == "2.530"
+
+
+def test_a_line_break_inside_the_street_is_layout():
+    e = derivar_endereco("IMÓVEL: casa situada na Rua\nExemplar, nº 10, Cotia.")
+    assert e.logradouro == "Rua Exemplar"

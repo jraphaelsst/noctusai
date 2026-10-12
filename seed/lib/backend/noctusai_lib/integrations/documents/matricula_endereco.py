@@ -66,17 +66,40 @@ from noctusai_lib.integrations.documents.matricula_atos import (
 #: a LOTE number, not a street number, and the character class excluding
 #: commas keeps this pattern from reaching past it.
 _LOGRADOURO_COM_NUMERO = re.compile(
-    r"SITUAD[OA]\s+(?:NO|NA|EM|A)\s+([^,]+?)\s*,\s*N[ºO°]\.?\s*(\d[\w/-]*)\s*(?:,|\.|$)"
+    r"(?:SITUAD[OA]|SITO)\s+(?:NO|NA|EM|A)\s+([^,]+?)\s*,\s*N[ºO°]\.?\s*(" + r"\d{1,3}(?:\.\d{3})+(?![\d])|\d[\w/-]*" + r")\s*(?:,|\.|\(|$)"
 )
 
-#: Loose form: the street alone, whatever follows the comma.
-_LOGRADOURO = re.compile(r"SITUAD[OA]\s+(?:NO|NA|EM|A)\s+([^,.\n]+)")
+#: A street TYPE — what makes a "situado no …" phrase a street at all. Without
+#: it the loose form read "situado no Bairro da Granja Vianna" as the
+#: logradouro (876, 2026-10).
+_TIPO_LOGRADOURO = (
+    r"(?:RUA|AVENIDA|AV\.?|ALAMEDA|AL\.?|ESTRADA|ESTR\.?|TRAVESSA|TV\.?|PRACA|"
+    r"RODOVIA|ROD\.?|VIA|LARGO|VIELA|VILA|PASSAGEM|BECO|CAMINHO|R\.)"
+)
+
+#: Loose form: the street alone, whatever follows the comma — only when what
+#: follows "situado no/na" IS a street type.
+_LOGRADOURO = re.compile(
+    r"SITUAD[OA]\s+(?:NO|NA|EM|A)\s+(" + _TIPO_LOGRADOURO + r"\s[^,.\n]+)"
+)
 
 #: An averbação that OFFICIALISES a número — "para ficar constando a
 #: oficialização do nº 535", "fica oficializado o número 535" — within ~60
 #: normalised chars of "OFICIALIZA..." so the match cannot reach across
 #: unrelated prose into an unrelated number.
-_OFICIALIZACAO = re.compile(r"OFICIALIZA\w*[^\n]{0,60}?N[ºO°]?\.?\s*(\d[\w/-]*)")
+#: 🔴 The número must follow the officialisation DIRECTLY ("oficialização do
+#: nº 535", "oficializado o número 535"): "oficializada através do Decreto nº
+#: 7746/2013" names a DECREE, and the old 60-char window returned 7746/2013 as
+#: the house number (876, 2026-10).
+_OFICIALIZACAO = re.compile(
+    r"OFICIALIZA\w*\s+(?:D?[OA]S?\s+)?(?:N[ºO°]|NUMERO)\.?\s*(\d[\w/-]*)"
+)
+
+#: A rectification averbação — "faz frente para a Estrada X, nº 2.530 e não
+#: 2.350 como constou": the registry correcting a número it printed earlier.
+_RETIFICACAO = re.compile(
+    r"N[ºO°]\.?\s*(\d[\d.]*\d|\d)\s+E\s+NAO\s+(\d[\d.]*\d|\d)\s+COMO\s+CONST"
+)
 
 #: An EXPLICIT "sem número" statement — "s/nº", "S/N", "sem número".
 _SEM_NUMERO = re.compile(r"S\s*/\s*N[ºO°]?\b|SEM\s+N[ºO°]MERO")
@@ -102,7 +125,9 @@ def _fatiar(texto: str, norm: str, origem: list[int], m: "re.Match[str]", grupo:
         return ""
     inicio = origem[a]
     fim = origem[b - 1] + 1 if b > 0 else inicio
-    return texto[inicio:fim].strip()
+    # Literal casing/accents kept; a transcription's line break inside the
+    # street ("Rua\nMaracatu") is layout, not text — collapse it.
+    return re.sub(r"\s+", " ", texto[inicio:fim]).strip()
 
 
 def derivar_endereco(texto_imovel: str, texto_atos: str = "") -> EnderecoMatricula:
@@ -130,12 +155,26 @@ def derivar_endereco(texto_imovel: str, texto_atos: str = "") -> EnderecoMatricu
 
     ausente = bool(_SEM_NUMERO.search(norm_im))
 
+    averbacoes = sorted(
+        (a for a in segment_matricula_atos(texto_atos or "") if a.kind == "AV" and a.numero is not None),
+        key=lambda a: a.numero,  # type: ignore[arg-type,return-value]
+        reverse=True,
+    )
+    # An averbação that states the FULL address ("edificada uma construção …
+    # situada na Alameda X, nº 81,") is the registry's latest word on it — it
+    # supersedes the abertura (often "frente para a Rua Um", a street later
+    # renamed). Highest averbação first, same rule as the officialisation pass.
+    for ato in averbacoes:
+        corpo = texto_atos[ato.start : ato.end]
+        norm_ato, orig_ato = normalized_with_offsets(corpo)
+        mt = _LOGRADOURO_COM_NUMERO.search(norm_ato)
+        if mt and re.match(_TIPO_LOGRADOURO, mt.group(1)):
+            logradouro = _fatiar(corpo, norm_ato, orig_ato, mt, 1) or logradouro
+            numero = _fatiar(corpo, norm_ato, orig_ato, mt, 2) or numero
+            ausente = False
+            break
+
     if numero is None and texto_atos:
-        averbacoes = sorted(
-            (a for a in segment_matricula_atos(texto_atos) if a.kind == "AV" and a.numero is not None),
-            key=lambda a: a.numero,  # type: ignore[arg-type,return-value]
-            reverse=True,
-        )
         for ato in averbacoes:
             corpo = texto_atos[ato.start : ato.end]
             norm_ato, orig_ato = normalized_with_offsets(corpo)
@@ -149,6 +188,15 @@ def derivar_endereco(texto_imovel: str, texto_atos: str = "") -> EnderecoMatricu
         if numero is None and not ausente:
             norm_atos, _orig_atos = normalized_with_offsets(texto_atos)
             ausente = bool(_SEM_NUMERO.search(norm_atos))
+
+    if numero:
+        for ato in averbacoes:
+            corpo = texto_atos[ato.start : ato.end]
+            norm_ato, orig_ato = normalized_with_offsets(corpo)
+            mr = _RETIFICACAO.search(norm_ato)
+            if mr and re.sub(r"\D", "", mr.group(2)) == re.sub(r"\D", "", numero):
+                numero = _fatiar(corpo, norm_ato, orig_ato, mr, 1) or numero
+                break
 
     return EnderecoMatricula(
         logradouro=logradouro,
