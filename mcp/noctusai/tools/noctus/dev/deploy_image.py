@@ -127,6 +127,51 @@ def _run_remote_default(ssh_host: str, cmd: list[str]) -> tuple[int, str, str]:
     return _throttled_ssh(ssh_host, cmd)
 
 
+# Markers of an SSH TRANSPORT failure (the link to the box, not the command run
+# on it). Deliberately ssh-specific: a container's own stderr can say "Network
+# is unreachable" (the boot smoke runs `--network none`) or "Permission denied",
+# and that is a REAL image verdict, so only ssh-client phrasing counts, plus
+# ssh's own exit 255 (also what the throttle's open-circuit fast-fail returns).
+_TRANSPORT_MARKERS = (
+    "ssh: connect to host",
+    "ssh: could not resolve",
+    "mux_client_request_session",
+    "control master",
+    "controlmaster",
+    "broken pipe",
+    "kex_exchange_identification",
+    "during banner exchange",
+    "connection reset by",
+    "connection closed by",
+    "ssh circuit open",
+)
+
+
+def _is_transport_failure(rc: int, stderr: str, stdout: str = "") -> bool:
+    """True when (rc, output) shows the SSH LINK failed rather than the remote
+    command: ssh exit 255, or ssh-client transport phrasing in the output. The
+    ONE classifier every SSH leg shares - a transport failure means 'not
+    measured', never a verdict about the image/container."""
+    if rc == 255:
+        return True
+    low = f"{stderr or ''}\n{stdout or ''}".lower()
+    return any(m in low for m in _TRANSPORT_MARKERS)
+
+
+def _fmt_failure(rc: int, out: str, err: str) -> str:
+    """Never-empty failure description: rc + stdout + stderr, plus an explicit
+    SSH-transport label when that is what it was."""
+    parts = [f"rc={rc}"]
+    if (out or "").strip():
+        parts.append(f"stdout={out.strip()[-400:]!r}")
+    if (err or "").strip():
+        parts.append(f"stderr={err.strip()[-400:]!r}")
+    msg = " ".join(parts)
+    if _is_transport_failure(rc, err, out):
+        msg += " [SSH TRANSPORT failure - could not reach/keep the connection to the host]"
+    return msg
+
+
 def _docker(runner, *args) -> tuple[int, str, str]:
     """Run a non-compose docker command — only if on the safe allowlist."""
     sub = args[0] if args else ""
@@ -195,26 +240,30 @@ def _is_product_backend(product: str) -> bool:
     return (_REPO_ROOT / "products" / product / "backend" / "app" / "main.py").is_file()
 
 
-def _boot_smoke(runner, product: str, image_id: str) -> tuple[bool, str]:
+def _boot_smoke(runner, product: str, image_id: str) -> tuple[str, str]:
     """Run the in-image boot smoke against `image_id` on the box.
 
     Same contract as build-and-push.sh's `boot_smoke`: `--network none`,
     `REDIS_URL=` (no Redis is reachable, say so), product backend as cwd, no
     lifespan. The payload goes as `python -c` because the SSH runner carries
-    argv, not stdin. Returns (ok, detail)."""
+    argv, not stdin. Returns (status, detail), status in passed | failed |
+    unmeasured - `unmeasured` = the SSH link failed so the smoke never ran and
+    the image was NOT judged."""
     try:
         source = _BOOT_SMOKE_SCRIPT.read_text()
     except OSError as exc:
-        return False, f"boot smoke payload unreadable ({_BOOT_SMOKE_SCRIPT}): {exc}"
+        return "unmeasured", f"boot smoke payload unreadable ({_BOOT_SMOKE_SCRIPT}): {exc}"
     rc, out, err = _docker(
         runner, "run", "--rm", "--network", "none", "-e", "REDIS_URL=",
         "--entrypoint", "python", "-w", f"/app/products/{product}/backend",
         image_id, "-c", source,
     )
     if rc == 0:
-        return True, out.strip().splitlines()[-1] if out.strip() else "ok"
+        return "passed", out.strip().splitlines()[-1] if out.strip() else "ok"
+    if _is_transport_failure(rc, err, out):
+        return "unmeasured", _fmt_failure(rc, out, err)
     tail = "\n".join((err.strip() or out.strip()).splitlines()[-15:])
-    return False, tail or f"exit {rc}"
+    return "failed", tail or f"exit {rc}"
 
 
 def _compose(runner, compose_file: str, action: str, *rest) -> tuple[int, str, str]:
@@ -529,14 +578,21 @@ def deploy_image(
     #    2026-05-22 social-wiring outage). Commit captures the running container
     #    as the :previous image. VERIFY it resolves — fail-safe: no confirmed
     #    rollback target ⇒ REFUSE to deploy (the container is untouched). ──
-    rc_c, _oc, err_c = _docker(runner, "commit", container, prev)
+    rc_c, out_c, err_c = _docker(runner, "commit", container, prev)
     rc_s, snap_id, err_s = _docker(runner, "image", "inspect", "-f", "{{.Id}}", prev)
     snapshot_id = snap_id.strip()
     if rc_c != 0 or rc_s != 0 or not snapshot_id:
+        failed_leg = (("commit", rc_c, out_c, err_c) if rc_c != 0
+                      else ("image inspect", rc_s, snap_id, err_s))
+        transport = _is_transport_failure(failed_leg[1], failed_leg[3], failed_leg[2])
         return {**base, "status": "error", "exit_code": 1,
+                "transport_failure": transport,
                 "reason": f"snapshot via `docker commit {container} {prev}` failed "
-                          f"({err_c.strip() or err_s.strip()!r}); REFUSING to deploy without a "
-                          "confirmed rollback target (fail-safe). Container untouched."}
+                          f"({failed_leg[0]}: {_fmt_failure(*failed_leg[1:])}); "
+                          + ("the host could not be reached/kept over SSH - NOT an image "
+                             "problem, retry. " if transport else "")
+                          + "REFUSING to deploy without a confirmed rollback target "
+                            "(fail-safe). Container untouched."}
     base["snapshot_id"] = snapshot_id
 
     # ── ACQUIRE the new image: pull from GHCR (source=pull, the live model) OR
@@ -605,9 +661,15 @@ def deploy_image(
         base["boot_smoke"] = {"status": "not_applicable",
                               "reason": f"no products/{product}/backend/app/main.py (non-product service)"}
     else:
-        smoke_ok, smoke_detail = _boot_smoke(runner, product, new_image_id)
-        base["boot_smoke"] = {"status": "passed" if smoke_ok else "failed", "detail": smoke_detail}
-        if not smoke_ok:
+        smoke_status, smoke_detail = _boot_smoke(runner, product, new_image_id)
+        base["boot_smoke"] = {"status": smoke_status, "detail": smoke_detail}
+        if smoke_status == "unmeasured":
+            return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
+                    "transport_failure": True,
+                    "reason": ("BOOT SMOKE UNMEASURED: could not reach the host to run the "
+                               "boot smoke - the image was NOT judged; retry. Container "
+                               f"untouched. Detail: {smoke_detail}")}
+        if smoke_status != "passed":
             return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
                     "reason": (f"BOOT SMOKE: image {new_image_id[:19]} cannot import its app / answer "
                                f"/api/health in-image — REFUSING the swap. Container untouched. Most "
@@ -625,8 +687,32 @@ def deploy_image(
     # ── DEPLOY (force-recreate so the swap ALWAYS takes — `up -d` alone can skip
     #    recreation when only the tag target changed) ──
     rc_u, out_u, err_u = _compose(runner, cf, "up", "-d", "--force-recreate", product)
-    if rc_u != 0:
-        return _rollback(f"`compose up -d {product}` failed: {err_u.strip() or out_u.strip()}.",
+    if rc_u != 0 and _is_transport_failure(rc_u, err_u, out_u):
+        # The SSH link dropped mid-`up` (e.g. a broken mux master): the recreate
+        # may well have landed. Re-check ONCE over a fresh connection before
+        # judging - never roll back a possibly-healthy new image on transport alone.
+        rc_i, now_id, err_i = _docker(runner, "inspect", "-f", "{{.Image}}", container)
+        now_id = now_id.strip()
+        if rc_i == 0 and now_id == new_image_id:
+            base["transport_note"] = (
+                f"`compose up` lost its SSH connection ({_fmt_failure(rc_u, out_u, err_u)}) "
+                "but a fresh connection shows the new image running; health-probing it.")
+        elif rc_i == 0 and now_id == current_image_id:
+            return {**base, "status": "error", "exit_code": 1, "new_image_id": new_image_id,
+                    "transport_failure": True, "running_image_id": now_id,
+                    "reason": (f"`compose up -d {product}` lost its SSH connection "
+                               f"({_fmt_failure(rc_u, out_u, err_u)}) and the swap did NOT land - "
+                               "the container is still on the previous image. Retry.")}
+        else:
+            return {**base, "status": "unverified", "exit_code": 1, "new_image_id": new_image_id,
+                    "transport_failure": True, "running_image_id": now_id or None,
+                    "reason": (f"`compose up -d {product}` lost its SSH connection "
+                               f"({_fmt_failure(rc_u, out_u, err_u)}) and the post-check could not "
+                               f"determine the state (rc={rc_i} running={now_id[:19]!r} "
+                               f"{err_i.strip()!r}). NOT rolled back. Run "
+                               "`noctus.dev.deploy_verify` for ground truth before any retry.")}
+    elif rc_u != 0:
+        return _rollback(f"`compose up -d {product}` failed: {_fmt_failure(rc_u, out_u, err_u)}.",
                          new_image_id)
 
     # ── HEALTH-PROBE (active /api/health when the port is known) ──
@@ -698,6 +784,8 @@ def deploy_image(
             "tunnel_restart": tunnel_ok, "tunnel_msg": tunnel_msg,
             "message": f"deployed {product} on {new_image_id[:19]} — healthy.",
         }
+        if base.get("transport_note"):
+            result["message"] += f" NOTE: {base['transport_note']}"
         if edge_ok is True:
             result["edge_check"] = edge_detail
         elif edge_ok is False:

@@ -815,3 +815,104 @@ def test_boot_smoke_not_run_on_dry_run_or_up_to_date():
     f2 = FakeDocker()
     _run(f2, confirm=False)
     assert _smoke_calls(f) == [] and _smoke_calls(f2) == []
+
+
+# ── SSH TRANSPORT failures (2026-10-12): never an image/rollback verdict ──
+_NET = "ssh: connect to host 72.61.28.36 port 22: Network is unreachable"
+_MUX = ("mux_client_request_session: read from master failed: Broken pipe\n"
+        "Failed to connect to new control master")
+
+
+class _LinkDrop(FakeDocker):
+    """FakeDocker whose SSH link fails on chosen legs: `drop` maps a leg name
+    (smoke | commit | up) to (rc, stderr). `up_lands` = the recreate really
+    happened despite the dropped `up` call."""
+
+    def __init__(self, drop, up_lands=False, post_inspect_fails=False, **kw):
+        super().__init__(**kw)
+        self.drop, self.up_lands, self.post_inspect_fails = drop, up_lands, post_inspect_fails
+        self._up_dropped = False
+
+    def __call__(self, cmd):
+        if cmd[:2] == ["docker", "run"] and "smoke" in self.drop:
+            self.calls.append(cmd)
+            return (self.drop["smoke"][0], "", self.drop["smoke"][1])
+        if cmd[:2] == ["docker", "commit"] and "commit" in self.drop:
+            self.calls.append(cmd)
+            return (self.drop["commit"][0], "", self.drop["commit"][1])
+        if cmd[:3] == ["docker", "compose", "-f"] and cmd[4] == "up" and "up" in self.drop \
+                and not self._up_dropped:
+            self.calls.append(cmd)
+            self._up_dropped = True
+            if self.up_lands:
+                self.running = self.tags.get(f"{self.IMG}:latest", "")
+            return (self.drop["up"][0], "", self.drop["up"][1])
+        if self._up_dropped and self.post_inspect_fails and cmd[:2] == ["docker", "inspect"] \
+                and ".Image" in cmd[3]:
+            self.calls.append(cmd)
+            return (255, "", _NET)
+        return super().__call__(cmd)
+
+
+def test_is_transport_failure_classifier():
+    assert DI._is_transport_failure(255, "")
+    assert DI._is_transport_failure(1, _NET)
+    assert DI._is_transport_failure(1, _MUX)
+    assert not DI._is_transport_failure(1, "ModuleNotFoundError: No module named 'multipart'")
+    # an in-image "Network is unreachable" (boot smoke runs --network none) is a REAL verdict
+    assert not DI._is_transport_failure(1, "OSError: [Errno 101] Network is unreachable")
+
+
+def test_boot_smoke_transport_failure_is_unmeasured_not_a_dependency_verdict():
+    f = _LinkDrop({"smoke": (255, _NET)}, running="G0", latest="NEWID")
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["exit_code"] == 1
+    assert r["boot_smoke"]["status"] == "unmeasured"
+    assert "NOT judged" in r["reason"] and "requirements.txt" not in r["reason"]
+    assert r["transport_failure"] is True
+    assert f.count("up") == 0 and f.running == "G0"
+
+
+def test_snapshot_failure_reports_rc_and_stderr():
+    f = FakeDocker(snapshot_sticks=False)
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and "rc=1" in r["reason"] and "commit failed" in r["reason"]
+    assert r["transport_failure"] is False
+
+
+def test_snapshot_transport_failure_with_empty_stderr_is_labelled():
+    f = _LinkDrop({"commit": (255, "")}, running="G0", latest="NEWID")
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["transport_failure"] is True
+    assert "rc=255" in r["reason"] and "SSH TRANSPORT" in r["reason"]
+
+
+def test_compose_up_mux_drop_with_swap_landed_reports_deployed_not_rollback():
+    f = _LinkDrop({"up": (255, _MUX)}, up_lands=True, running="G0", latest="NEWID", health=("up",))
+    r = _run(f, confirm=True)
+    assert r["status"] == "deployed" and r["exit_code"] == 0
+    assert "SSH connection" in r["message"]
+    assert f.count("up") == 1  # no rollback force-recreate
+
+
+def test_compose_up_mux_drop_swap_not_landed_is_error_not_rolled_back():
+    f = _LinkDrop({"up": (255, _MUX)}, up_lands=False, running="G0", latest="NEWID")
+    r = _run(f, confirm=True)
+    assert r["status"] == "error" and r["transport_failure"] is True
+    assert "did NOT land" in r["reason"] and f.running == "G0"
+    assert f.count("up") == 1
+
+
+def test_compose_up_mux_drop_with_undeterminable_state_is_unverified():
+    f = _LinkDrop({"up": (255, _MUX)}, up_lands=True, post_inspect_fails=True,
+                  running="G0", latest="NEWID")
+    r = _run(f, confirm=True)
+    assert r["status"] == "unverified" and r["exit_code"] == 1
+    assert "deploy_verify" in r["reason"]
+    assert f.count("up") == 1  # NOT rolled back
+
+
+def test_compose_up_real_failure_still_rolls_back():
+    f = FakeDocker(running="G0", latest="NEWID", up_rc=1)
+    r = _run(f, confirm=True)
+    assert r["status"] in ("rolled_back", "rollback_failed")
