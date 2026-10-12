@@ -290,6 +290,60 @@ class TestSameDocumentReReadReplaces:
         assert conflitos[0]["status"] == "rejeitado"
 
 
+class TestReleituraQueConcordaEncerraAPropriaProposta:
+    """876 (2026-10-12): a photo misread proposed "32252…" against the CND's
+    "23252…"; the photo's re-read then read "23252…" (agrees). The pending
+    conflict it had proposed is the document contradicting itself — closed
+    automatically. A conflict proposed by ANOTHER document stays pending."""
+
+    _CND = "23252.53.55.0304.00.000"
+
+    def _seed(self, scoped, documento_proposto):
+        pendente_id = str(uuid4())
+        seed(
+            scoped,
+            dados=[dados_row(
+                prefeitura_cadastro_imobiliario=self._CND,
+                prefeitura_cadastro_imobiliario_origem="cnd_iptu",
+                prefeitura_cadastro_imobiliario_documento_id=str(uuid4()),
+            )],
+            conflitos=[{
+                "id": pendente_id, "org_id": ORG_ID, "codigo": CODIGO,
+                "campo": "prefeitura_cadastro_imobiliario",
+                "valor_anterior": self._CND, "origem_anterior": "cnd_iptu",
+                "valor_proposto": "32252-53-55-0304-00-000", "origem_proposto": "guia_iptu",
+                "documento_id_proposto": documento_proposto,
+                "confianca_proposta": "baixa", "status": "pendente",
+                "created_at": "2026-10-12T01:41:54+00:00",
+            }],
+        )
+        return pendente_id
+
+    def test_the_documents_own_stale_proposal_is_resolved(self, scoped):
+        foto = str(uuid4())
+        pendente_id = self._seed(scoped, foto)
+        r = campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario", self._CND,
+            origem="guia_iptu", documento_id=foto, confianca="baixa",
+            exige_corroboracao=True,
+        )
+        assert r.status == campos_svc.IGUAL
+        (c,) = _conflitos(scoped)
+        assert c["id"] == pendente_id
+        assert c["status"] == "resolvido_automatico"
+        assert c["motivo_resolucao"].startswith("[releitura_mesmo_documento]")
+
+    def test_another_documents_proposal_stays_pending(self, scoped):
+        self._seed(scoped, str(uuid4()))
+        campos_svc.aplicar(
+            scoped, ORG, CODIGO, "prefeitura_cadastro_imobiliario", self._CND,
+            origem="guia_iptu", documento_id=str(uuid4()), confianca="baixa",
+            exige_corroboracao=True,
+        )
+        (c,) = _conflitos(scoped)
+        assert c["status"] == "pendente"
+
+
 class TestPrefeituraPrecedence:
     """Owner rule (2026-09-24), `prefeitura_cadastro_imobiliario` only: a
     guia_iptu/cnd_iptu reading outranks a matrícula-sourced, unconfirmed

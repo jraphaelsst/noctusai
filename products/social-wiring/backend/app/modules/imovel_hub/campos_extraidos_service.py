@@ -589,6 +589,9 @@ def aplicar(
     if iguais(campo, atual, valor) or (
         exige_corroboracao and _iguais_no_imovel(client, org_id, codigo)(campo, atual, valor)
     ):
+        _encerrar_proposta_superada_pelo_mesmo_documento(
+            client, org_id, codigo, chave, documento_id, atual
+        )
         return Resultado(IGUAL)
 
     igual_valor = lambda a, b: iguais(campo, a, b)  # noqa: E731
@@ -704,6 +707,46 @@ def aplicar(
         codigo, chave, origem_anterior, origem,
     )
     return Resultado(CONFLITO, conflito=linha)
+
+
+#: `motivo_resolucao` rule name — same `[regra] … evidência` convention the
+#: card_hub resolvers use.
+REGRA_RELEITURA_MESMO_DOCUMENTO = "releitura_mesmo_documento"
+
+
+def _encerrar_proposta_superada_pelo_mesmo_documento(
+    client: Any, org_id: UUID, codigo: str, chave: str,
+    documento_id: Optional[Any], valor_atual: Any,
+) -> int:
+    """A document re-read now READS the value already on file. A still-pending
+    conflict that THIS SAME document proposed (its earlier, different read —
+    876, 2026-10-12: a photo misread "32252…" vs the CND's "23252…") has no
+    author anymore: the document itself no longer says it. Closed as an
+    automatic resolution, never deleted (audit trail). Conflicts proposed by
+    OTHER documents, or already decided, are untouched."""
+    if documento_id is None:
+        return 0
+    fechados = 0
+    for p in _conflitos(client, org_id, codigo, chave, "pendente"):
+        if str(p.get("documento_id_proposto") or "") != str(documento_id):
+            continue
+        _t(client, CONFLITOS_TABLE).update({
+            "status": "resolvido_automatico",
+            "decidido_por": None,
+            "decidido_em": _now(),
+            "motivo_resolucao": (
+                f"[{REGRA_RELEITURA_MESMO_DOCUMENTO}] a releitura do mesmo documento "
+                f"leu o valor já registrado ({valor_atual}); a proposta anterior "
+                f"({p.get('valor_proposto')}) era uma leitura superada. evidência: "
+                f"documento {documento_id}"
+            ),
+        }).eq("id", p["id"]).execute()
+        fechados += 1
+        logger.info(
+            "imovel %s: %s — pending conflict %s closed: its own document re-read "
+            "now agrees with the value on file", codigo, chave, p.get("id"),
+        )
+    return fechados
 
 
 def _encerrar_leituras_visuais_superadas(
