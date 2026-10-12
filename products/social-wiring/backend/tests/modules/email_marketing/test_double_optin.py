@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from noctusai_lib.integrations.email import FakeEmailSender, ResendEmailSender
@@ -113,6 +114,46 @@ class TestCreation:
         assert "confirmation" not in resp.json()["data"]
         assert _contacts(client)[0]["email_optin"] == "not_required"
         assert fake.sent == []
+
+
+class TestEmailChange:
+    """A new address never consented: changing the email of a double opt-in
+    contact puts it back to pending and mails the NEW address a link."""
+
+    def test_confirmed_contact_changing_email_must_reconfirm(self, client, fake):
+        client.mock_supabase.set_table_data("contacts", [
+            {**_contact(optin="confirmed", email="old@test.com"), "email_confirmed_at": "2026-10-01T00:00:00+00:00"}])
+        resp = client.patch(f"{CONTACTS}/k1", json={"email": "new@test.com"})
+        assert resp.status_code == 200, resp.text
+        data = resp.json()["data"]
+        assert data["email_optin"] == "pending" and data["email_confirmed_at"] is None
+        assert data["confirmation"] == {"sent": True, "reason": None}
+        (mail,) = fake.sent
+        assert mail.to == ["new@test.com"]
+        assert eo.verify_token(SECRET, _link_token(mail))["email"] == "new@test.com"
+        assert not eo.receives_marketing_email(_contacts(client)[0])
+
+    def test_same_address_in_other_case_keeps_confirmation(self, client, fake):
+        client.mock_supabase.set_table_data("contacts", [_contact(optin="confirmed", email="lead@test.com")])
+        resp = client.patch(f"{CONTACTS}/k1", json={"email": "LEAD@test.com", "nome": "Novo"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email_optin"] == "confirmed"
+        assert "confirmation" not in resp.json()["data"]
+        assert fake.sent == []
+
+    def test_not_required_contact_keeps_its_state(self, client, fake):
+        client.mock_supabase.set_table_data("contacts", [_contact(optin="not_required", email="old@test.com")])
+        resp = client.patch(f"{CONTACTS}/k1", json={"email": "new@test.com"})
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email_optin"] == "not_required"
+        assert fake.sent == []
+
+    def test_old_link_no_longer_confirms_the_new_address(self, client, fake):
+        client.mock_supabase.set_table_data("contacts", [_contact(optin="pending", email="old@test.com")])
+        old_token = eo.make_token(SECRET, ORG, "k1", "old@test.com")
+        client.patch(f"{CONTACTS}/k1", json={"email": "new@test.com"})
+        client.raw().post(f"/api/email-marketing/confirm/{old_token}")
+        assert _contacts(client)[0]["email_optin"] == "pending"
 
 
 class TestNothingFaked:
@@ -254,8 +295,8 @@ class TestSendGate:
         queued = {r["contact_id"] for r in db.table("send_logs").select("*").execute().data}
         assert queued == {"k2", "k3"}
 
-    @pytest.mark.parametrize("optin, sends", [("pending", 0), ("confirmed", 1), ("not_required", 1)])
-    def test_automation_send_email_step_excludes_pending(self, optin, sends):
+    @pytest.mark.parametrize("optin", ["confirmed", "not_required"])
+    def test_automation_send_email_step_sends_to_a_sendable_contact(self, optin):
         from noctusai_lib.domain.jobs import FakeJobRepository
 
         from tests.modules.email_marketing.test_automation_executor import TPL, FakeDb, drain
@@ -264,9 +305,73 @@ class TestSendGate:
         db.contact["email_optin"] = optin
         db.steps(("send_email", {"template_id": TPL}), ("add_tag", {"tag": "seguiu"}))
         drain(db, repo)
-        assert len(db.rows["send_logs"]) == sends
-        assert db.contact["tags"] == ["seguiu"]  # the flow continues; only the mail is held back
+        assert len(db.rows["send_logs"]) == 1
+        assert db.contact["tags"] == ["seguiu"]
         assert db.enrollment["status"] == "completed"
+
+
+class TestAutomationHoldsForOptin:
+    """A send_email step for a pending contact WAITS for the confirmation
+    (hourly re-check, same job) instead of skipping the mail; after the
+    confirmation link's 7-day life it gives up and the flow continues."""
+
+    def _setup(self):
+        from tests.modules.email_marketing.test_automation_executor import TPL, FakeDb
+
+        db = FakeDb()
+        db.contact["email_optin"] = "pending"
+        db.steps(("send_email", {"template_id": TPL}), ("add_tag", {"tag": "seguiu"}))
+        return db
+
+    def test_pending_contact_holds_the_step(self):
+        from noctusai_lib.domain.jobs import FakeJobRepository, JobStatus
+
+        from tests.modules.email_marketing.test_automation_executor import drain, jobs
+
+        db, repo = self._setup(), FakeJobRepository()
+        drain(db, repo)
+        assert db.rows["send_logs"] == []
+        assert db.contact["tags"] == []  # the flow did NOT move past the mail
+        assert db.enrollment["status"] == "active"
+        assert db.enrollment["current_step_id"] == "st-1"
+        (job,) = jobs(repo)
+        assert job.status == JobStatus.PENDING and job.retry_count == 0  # rescheduled, not failed
+        assert job.scheduled_for > datetime.now(timezone.utc)
+
+    def test_confirmed_while_held_sends_and_continues(self):
+        from noctusai_lib.domain.jobs.repo import RescheduleLater
+
+        from app.modules.email_marketing.services import automation_executor as ex
+        from tests.modules.email_marketing.test_automation_executor import ORG
+
+        db = self._setup()
+        started = datetime.now(timezone.utc)
+        with pytest.raises(RescheduleLater):
+            ex.run_step(db, enrollment_id="en-1", step_id="st-1", org_id=ORG, held_since=started)
+        db.contact["email_optin"] = "confirmed"
+        nxt = ex.run_step(db, enrollment_id="en-1", step_id="st-1", org_id=ORG, held_since=started)
+        assert len(db.rows["send_logs"]) == 1
+        assert nxt == {"enrollment_id": "en-1", "step_id": "st-2", "org_id": ORG}
+
+    def test_hold_gives_up_after_the_confirmation_window(self):
+        from app.modules.email_marketing.services import automation_executor as ex
+        from tests.modules.email_marketing.test_automation_executor import ORG
+
+        db = self._setup()
+        long_ago = datetime.now(timezone.utc) - ex.OPTIN_HOLD_MAX - timedelta(minutes=1)
+        nxt = ex.run_step(db, enrollment_id="en-1", step_id="st-1", org_id=ORG, held_since=long_ago)
+        assert db.rows["send_logs"] == []  # never mailed an unconfirmed address
+        assert nxt is not None and nxt["step_id"] == "st-2"  # the flow continues
+
+    def test_contact_without_address_is_skipped_not_held(self):
+        from app.modules.email_marketing.services import automation_executor as ex
+        from tests.modules.email_marketing.test_automation_executor import ORG
+
+        db = self._setup()
+        db.contact["email"] = None
+        nxt = ex.run_step(db, enrollment_id="en-1", step_id="st-1", org_id=ORG,
+                          held_since=datetime.now(timezone.utc))
+        assert db.rows["send_logs"] == [] and nxt["step_id"] == "st-2"
 
 
 def test_confirmation_send_failure_is_reported():

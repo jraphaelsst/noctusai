@@ -7,8 +7,12 @@ executes the enrollment's CURRENT step and moves it forward:
 =================  ==========================================================================
 ``send_email``     queues ONE ``send_logs`` row; the ordinary ``SendService`` pipeline sends it,
                    so dry-run / unsubscribe / link guards all apply. Advances immediately.
-                   A contact awaiting double opt-in (``email_optin='pending'``) is skipped
-                   (``email_optin.receives_marketing_email``): no row, the flow continues.
+                   A contact awaiting double opt-in (``email_optin='pending'``) is HELD:
+                   the job reschedules itself hourly (``RescheduleLater``, same dedupe key)
+                   and the step sends once the address is confirmed. After
+                   ``OPTIN_HOLD_MAX`` (the confirmation link's 7-day life) the send is
+                   skipped and the flow continues. Any other unsendable contact (no
+                   address) is skipped at once.
 ``wait``           ``next_action_at = now + delay``; ``current_step_id`` = next step; the job
                    ENDS (no ``RescheduleLater``: the scan re-enqueues once due, and the next
                    step has a different dedupe key, so nothing is held in the queue).
@@ -34,8 +38,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from noctusai_lib.domain.jobs import DeadLetterError, Job, JobRepository
+from noctusai_lib.domain.jobs.repo import RescheduleLater
 
-from .email_optin import receives_marketing_email
+from .email_optin import CONFIRM_TTL_SECONDS, OPTIN_PENDING, receives_marketing_email
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +51,15 @@ _POSITIVE_OPS = {"eq", "is", "has", "contains"}
 _NEGATIVE_OPS = {"ne", "not", "not_has"}
 _CONDITION_FIELDS = ("tag", "status", "opened_campaign")
 _OPENED = ("opened", "clicked")
+
+# A send_email step for a contact awaiting double opt-in waits this long (the
+# confirmation link's own lifetime), re-checking every OPTIN_HOLD_RECHECK_S.
+OPTIN_HOLD_MAX = timedelta(seconds=CONFIRM_TTL_SECONDS)
+OPTIN_HOLD_RECHECK_S = 3600
+
+
+class _AwaitingOptin(Exception):
+    """Raised by ``_queue_send`` for a contact whose address is not confirmed yet."""
 
 
 def dedupe_key(enrollment_id: str, step_id: Optional[str]) -> str:
@@ -195,7 +209,10 @@ def _queue_send(db: Any, org_id: str, automation_id: str, step: dict, contact: d
         raise ValueError(f"send_email template {template_id} does not exist in this org")
     if not receives_marketing_email(contact):
         # Double opt-in send gate (P1b(d)): a contact awaiting confirmation gets
-        # no marketing email; the step is skipped (no send_logs row), not retried.
+        # no marketing email. ``run_step`` decides hold vs skip; anything else
+        # unsendable (no address) is skipped (no send_logs row), not retried.
+        if contact.get("email") and contact.get("email_optin") == OPTIN_PENDING:
+            raise _AwaitingOptin()
         logger.info("automation %s step %s: contact %s not sendable (email_optin=%s) — send skipped",
                     automation_id, step["id"], contact["id"], contact.get("email_optin"))
         return
@@ -234,10 +251,13 @@ def _apply_side_effect(db: Any, org_id: str, automation_id: str, step: dict, con
         ).execute()
 
 
-def run_step(db: Any, *, enrollment_id: str, step_id: Optional[str], org_id: str) -> Optional[dict]:
+def run_step(db: Any, *, enrollment_id: str, step_id: Optional[str], org_id: str,
+             held_since: Optional[datetime] = None) -> Optional[dict]:
     """Execute the enrollment's current step. Returns the payload of the next job to enqueue
     immediately (``None`` when the enrollment waits, finished, exited, paused or the job is stale).
-    Raises ``DeadLetterError`` (after pausing the enrollment) on unsupported / malformed steps."""
+    Raises ``DeadLetterError`` (after pausing the enrollment) on unsupported / malformed steps,
+    and ``RescheduleLater`` while a ``send_email`` step holds for double opt-in —
+    ``held_since`` is when this step's job was first created (the hold's clock)."""
     enrollment = next(iter(_rows(db, "automation_enrollments", id=enrollment_id)), None)
     if enrollment is None or enrollment.get("status") != "active":
         return None
@@ -270,7 +290,16 @@ def run_step(db: Any, *, enrollment_id: str, step_id: Optional[str], org_id: str
         elif tipo == "condition":
             target = _jump_target(steps, current, config, _evaluate(db, org_id, contact, config))
         else:
-            _apply_side_effect(db, org_id, automation["id"], current, contact)
+            try:
+                _apply_side_effect(db, org_id, automation["id"], current, contact)
+            except _AwaitingOptin:
+                started = held_since or _now()
+                if _now() - started < OPTIN_HOLD_MAX:
+                    _update_enrollment(db, enrollment_id, next_action_at=(
+                        _now() + timedelta(seconds=OPTIN_HOLD_RECHECK_S)).isoformat())
+                    raise RescheduleLater(OPTIN_HOLD_RECHECK_S, "aguardando confirmação do e-mail") from None
+                logger.info("automation %s step %s: contact %s never confirmed its address in %s — send skipped",
+                            automation["id"], current["id"], contact["id"], OPTIN_HOLD_MAX)
             target = next((s for s in steps if s["posicao"] > current["posicao"]), None)
     except ValueError as exc:
         raise _pause(db, enrollment_id, f"malformed {tipo} step {current['id']}: {exc}") from exc
@@ -299,7 +328,8 @@ def build_handler(db: Any, repo: JobRepository):
         except KeyError as exc:
             raise DeadLetterError(f"automation_step job without {exc.args[0]}") from exc
         nxt = await asyncio.to_thread(
-            run_step, db, enrollment_id=enrollment_id, step_id=payload.get("step_id"), org_id=org_id
+            run_step, db, enrollment_id=enrollment_id, step_id=payload.get("step_id"), org_id=org_id,
+            held_since=job.created_at,
         )
         if nxt is not None:
             await repo.enqueue(type=JOB_TYPE, payload=nxt, dedupe_key=dedupe_key(nxt["enrollment_id"], nxt["step_id"]))

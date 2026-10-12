@@ -72,13 +72,23 @@ async def get_contact(contact_id: str, auth = Depends(get_current_user_org)):
 
 
 @router.patch("/{contact_id}")
-async def update_contact(contact_id: str, body: ContactUpdate, auth = Depends(get_current_user_org)):
+async def update_contact(
+    contact_id: str,
+    body: ContactUpdate,
+    auth = Depends(get_current_user_org),
+    sender = Depends(get_confirmation_sender),
+    cfg = Depends(get_settings),
+):
     user, _, org_id = auth
     svc = _get_service(org_id)
     data = body.model_dump(exclude_unset=True)
     result = svc.update_contact(contact_id, data)
     if not result:
         raise HTTPException(status_code=404, detail="Contato nao encontrado")
+    if data.get("email_optin") == OPTIN_PENDING:
+        # The address changed on a double opt-in contact: the new one must
+        # confirm. The outcome is part of the response, never silent.
+        result = {**result, "confirmation": await send_confirmation(sender, cfg, result)}
     return success_response(result)
 
 

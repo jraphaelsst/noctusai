@@ -97,6 +97,17 @@ Every new owner-visible page or nav entry ships with `status_pagina='desenvolvim
   `confirmed` + `email_confirmed_at`.
 - **Send gate.** Campaign recipients and automation `send_email` steps exclude `pending` contacts,
   by construction in recipient resolution.
+- **Automation hold (2026-10-12).** An automation `send_email` step for a `pending` contact is
+  HELD, not skipped: the job reschedules itself hourly (`RescheduleLater`, same dedupe key) and
+  the flow does not move on. Once the contact confirms, the step sends and the flow continues.
+  After 7 days (the confirmation link's lifetime) the send is skipped and the flow continues.
+- **Address change (2026-10-12).** Changing the email of a `pending` or `confirmed` contact puts
+  it back to `pending` (`email_confirmed_at` cleared) and mails the NEW address a link. The PATCH
+  response carries `confirmation: {sent, reason}`. A link minted for the old address no longer
+  confirms (address mismatch). `not_required` contacts keep their state.
+- **Failed confirmation sends are not persisted.** The reason is returned to the caller and
+  logged at ERROR. The contact stays `pending` (badged in Contatos) with the per-row "Reenviar
+  confirmação" action, which retries and shows the outcome.
 
 ## Tests per slice
 

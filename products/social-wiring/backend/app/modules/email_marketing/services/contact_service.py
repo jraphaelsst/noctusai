@@ -92,6 +92,18 @@ class ContactService:
         return result.data[0] if result.data else None
 
     def update_contact(self, contact_id: str, data: dict):
+        """Update a contact. Changing the address of a double opt-in contact
+        (``pending`` or ``confirmed``) puts it back to ``pending``: the new
+        address never consented, so it gets no marketing email until it
+        confirms. A ``not_required`` contact keeps its state."""
+        new_email = data.get("email")
+        if new_email is not None:
+            current = self.get_contact(contact_id)
+            if (current is not None
+                    and (current.get("email") or "").lower() != new_email.lower()
+                    and current.get("email_optin") in (OPTIN_PENDING, OPTIN_CONFIRMED)):
+                data["email_optin"] = OPTIN_PENDING
+                data["email_confirmed_at"] = None
         data["updated_at"] = "now()"
         result = (
             self.db.table("contacts")
