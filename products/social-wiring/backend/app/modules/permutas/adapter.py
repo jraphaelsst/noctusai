@@ -43,6 +43,7 @@ swap. That is what the flag means and it is the only place we actually know it.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Iterable, Optional
 
 logger = logging.getLogger(__name__)
@@ -137,13 +138,15 @@ def ativo_para_scorer(
         "interesses": lista_interesses,
         "embedding": ativo.get("embedding"),
         "embedding_interesses": ativo.get("embedding_interesses"),
-        # The scorer excludes a pair whose two sides share an owner. This
-        # product has no owner identity on either side yet (the legacy
-        # `proprietario` rows are deliberately not promoted to `clientes` —
-        # see migration 101), so the key is left absent. The lib's guard
-        # requires a TRUTHY owner_id before it excludes anything, precisely so
-        # an absent one does not silently exclude every pair.
-        "owner_id": None,
+        # The scorer excludes a pair whose two sides share an owner. There is
+        # still no `clientes` identity behind a legacy ativo (migration 101),
+        # but the row carries the owner's CONTACT, and that is identity
+        # enough to say "same person": 2026-10-12 live smoke, the top match
+        # paired two properties of the same owner ("MPM", 22 ativos under 2
+        # phones). Phone digits, else e-mail — never the bare name ("Larissa"
+        # x2 are two people). No contact => None, which the lib's guard reads
+        # as "unknown", never as "same".
+        "owner_id": identidade_proprietario(ativo),
     }
 
     if natureza == "imovel":
@@ -199,6 +202,25 @@ def ativo_para_scorer(
         "regiao_preferida": ativo.get("regiao_preferida") or [],
         "aceita_completar_diferenca": ativo.get("aceita_completar_diferenca"),
     }
+
+
+def identidade_proprietario(ativo: dict) -> Optional[str]:
+    """A stable owner key from the ativo's own contact columns, or None.
+
+    Phone first (digits only; a leading Brazil 55 dropped from 12-13 digit
+    numbers so "+55 11 9..." and "(11) 9..." agree), then e-mail (lower-
+    cased). Fewer than 8 digits is not a phone. The NAME is deliberately not
+    used: a shared first name is not a shared owner.
+    """
+    digitos = re.sub(r"\D", "", str(ativo.get("proprietario_telefone") or ""))
+    if len(digitos) in (12, 13) and digitos.startswith("55"):
+        digitos = digitos[2:]
+    if len(digitos) >= 8:
+        return f"tel:{digitos}"
+    email = str(ativo.get("proprietario_email") or "").strip().lower()
+    if "@" in email:
+        return f"email:{email}"
+    return None
 
 
 def listar_ativos_para_scorer(

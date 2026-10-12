@@ -335,17 +335,29 @@ def gerar_matches(
 
     gravados = _upsert_matches(client, org_id, matches)
 
+    # A full scan is the whole truth about which suggestions still hold; a
+    # narrowed one (`ativo_id`) is not, so only a full scan prunes. Without
+    # this, a pair the engine stopped producing (an owner now recognised as
+    # the same on both sides, a de-listed imóvel, a score that fell under the
+    # bar) stays in the "Sugerido" column forever — 128 → 193 on the
+    # 2026-10-12 live smoke. Never prunes when nothing was evaluated (an empty
+    # catalog read must not read as "every suggestion is stale").
+    obsoletos = 0
+    if not ativo_id and imoveis:
+        obsoletos = _remover_sugestoes_obsoletas(client, org_id, matches)
+
     logger.info(
         "permutas.gerar_matches org=%s imoveis=%d permutas=%d encontrados=%d "
-        "gravados=%d sem_semantica=%d nao_resolvidos=%d",
+        "gravados=%d obsoletos=%d sem_semantica=%d nao_resolvidos=%d",
         org_id, len(imoveis), len(permutas), len(matches), gravados,
-        sem_semantica, len(nao_resolvidos),
+        obsoletos, sem_semantica, len(nao_resolvidos),
     )
 
     return {
         "encontrados": len(matches),
         "gravados": gravados,
         "protegidos": len(matches) - gravados,
+        "removidos_obsoletos": obsoletos,
         "imoveis_avaliados": len(imoveis),
         "permutas_avaliadas": len(permutas),
         # 🔴 SURFACED, NOT LOGGED. A run with no embeddings still returns a
@@ -408,6 +420,37 @@ def _upsert_matches(client: Any, org_id: UUID, matches: list[dict]) -> int:
         linhas, on_conflict="org_id,ativo_origem_id,ativo_destino_id"
     ).execute()
     return len(linhas)
+
+
+def _remover_sugestoes_obsoletas(client: Any, org_id: UUID, matches: list[dict]) -> int:
+    """Delete engine suggestions this full scan no longer produced.
+
+    Only `etapa='sugerido'` AND `origem='motor'` rows: a person's decision
+    (any later etapa) and an imported legacy row are never touched — the same
+    protection `_upsert_matches` gives them.
+    """
+    vigentes = {(m["ativo_origem_id"], m["ativo_destino_id"]) for m in matches}
+    linhas = (
+        _t(client, MATCHES)
+        .select("id,ativo_origem_id,ativo_destino_id")
+        .eq("org_id", str(org_id))
+        .eq("etapa", ETAPA_INICIAL)
+        .eq("origem", "motor")
+        .execute()
+    ).data or []
+    ids = [
+        r["id"] for r in linhas
+        if (r["ativo_origem_id"], r["ativo_destino_id"]) not in vigentes
+    ]
+    for i in range(0, len(ids), 200):
+        (
+            _t(client, MATCHES)
+            .delete()
+            .eq("org_id", str(org_id))
+            .in_("id", ids[i:i + 200])
+            .execute()
+        )
+    return len(ids)
 
 
 MATCH_FIELDS = (
