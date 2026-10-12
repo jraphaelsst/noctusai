@@ -342,6 +342,24 @@ describe("ImovelDocumentosCard — structured read (guia de IPTU / CND de IPTU)"
     expect(container.textContent).not.toMatch(/Inscrição imobiliária|Resultado:|Validade/);
   });
 
+  it("🔴 says why the inscrição is missing when the photo read was discarded (estrutura_aviso)", async () => {
+    const { screen, container } = await render({
+      documentos: [
+        doc({
+          tipo_documento: "guia_iptu",
+          nome_original: "iptu.jpg",
+          inscricao_imobiliaria: null,
+          estrutura_aviso:
+            "inscricao_ilegivel_foto: inscrição ilegível na foto — envie o PDF ou uma foto melhor",
+        }),
+      ],
+    });
+    expect(
+      screen.getByText("inscrição ilegível na foto — envie o PDF ou uma foto melhor"),
+    ).toBeTruthy();
+    expect(container.textContent).not.toContain("inscricao_ilegivel_foto");
+  });
+
   it("never shows structured fields the tipo does not carry (a matrícula gets no inscrição imobiliária line)", async () => {
     const { screen, container } = await render({
       documentos: [

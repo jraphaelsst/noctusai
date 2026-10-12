@@ -227,6 +227,10 @@ export interface ImovelDocumento {
   validade_ate?: string | null;
   resultado?: string | null;
   inscricao_imobiliaria?: string | null;
+  /** A non-failure note on the structured read, `"<codigo>: <mensagem>"`
+   *  (e.g. `inscricao_ilegivel_foto: inscrição ilegível na foto — …`): the
+   *  read finished but a value was discarded rather than stored wrong. */
+  estrutura_aviso?: string | null;
   /** `'ia'` (the read) | `'manual'` (an operator confirmed/corrected it). */
   origem?: string | null;
   confirmado_por?: Ator | null;

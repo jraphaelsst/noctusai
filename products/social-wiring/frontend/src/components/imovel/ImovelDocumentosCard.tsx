@@ -411,8 +411,11 @@ function EstruturaLinha({ documento }: { documento: ImovelDocumento }) {
     resultado,
     inscricao_imobiliaria,
   } = documento;
+  const aviso = mensagemDoAviso(documento.estrutura_aviso);
 
-  if (!numero && !emitida_em && !validade_ate && !resultado && !inscricao_imobiliaria) {
+  if (
+    !numero && !emitida_em && !validade_ate && !resultado && !inscricao_imobiliaria && !aviso
+  ) {
     return null;
   }
 
@@ -425,6 +428,12 @@ function EstruturaLinha({ documento }: { documento: ImovelDocumento }) {
 
   return (
     <div className="space-y-0.5 text-xs text-muted-foreground">
+      {aviso && (
+        <p className="flex items-center gap-1 text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="h-3 w-3 shrink-0" />
+          {aviso}
+        </p>
+      )}
       {campos.includes("inscricao_imobiliaria") && inscricao_imobiliaria && (
         <p>
           Inscrição imobiliária: <strong>{inscricao_imobiliaria}</strong>
@@ -453,4 +462,12 @@ function EstruturaLinha({ documento }: { documento: ImovelDocumento }) {
       )}
     </div>
   );
+}
+
+/** `estrutura_aviso` is `"<codigo>: <mensagem>"` — the operator reads the
+ *  mensagem; a bare código (no mensagem) is still shown rather than hidden. */
+export function mensagemDoAviso(aviso: string | null | undefined): string | null {
+  if (!aviso) return null;
+  const i = aviso.indexOf(": ");
+  return i >= 0 ? aviso.slice(i + 2) : aviso;
 }
