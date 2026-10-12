@@ -1904,3 +1904,20 @@ class TestScaffoldIconDedupe:
                 f"{fname}: duplicate lucide-react import specifier(s): {specifiers}"
             )
             assert "Users" in specifiers
+
+
+def test_create_testing_ground_finds_bootstrap_script_under_scripts_bootstrap(tmp_path):
+    """The bootstrap script lives at scripts/bootstrap/; a stale scripts/ path made
+    every create_testing_ground call return 'bootstrap script not found'."""
+    noc = tmp_path / "noc"
+    (noc / "scripts" / "bootstrap").mkdir(parents=True)
+    stub = noc / "scripts" / "bootstrap" / "bootstrap-seed-workspace.sh"
+    stub.write_text(
+        '#!/usr/bin/env bash\n'
+        'while [ $# -gt 0 ]; do [ "$1" = "--target" ] && mkdir -p "$2"; shift; done\n'
+    )
+    result = scaffold_module.create_testing_ground(
+        str(tmp_path / "sandbox"), noc_home=noc
+    )
+    assert "error" not in result, result
+    assert result["created"] is True

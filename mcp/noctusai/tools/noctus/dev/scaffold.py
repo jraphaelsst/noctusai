@@ -1938,7 +1938,7 @@ def create_testing_ground(
             "returncode": int, "next_steps": [...]}``
     """
     noc_root = noc_home if noc_home is not None else get_noctusai_home()
-    script = noc_root / "scripts" / "bootstrap-seed-workspace.sh"
+    script = noc_root / "scripts" / "bootstrap" / "bootstrap-seed-workspace.sh"
     if not script.is_file():
         return {
             "created": False,
