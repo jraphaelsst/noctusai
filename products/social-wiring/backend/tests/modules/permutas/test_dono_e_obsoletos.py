@@ -23,6 +23,16 @@ class TestIdentidadeProprietario:
         b = adapter.identidade_proprietario({"proprietario_telefone": "11974693365"})
         assert a == b == "tel:11974693365"
 
+    def test_celular_antigo_sem_o_nove_e_o_mesmo_telefone(self):
+        # Live prod, MPM: ONE8540 "1181938800" vs ONE9423 "11981938800".
+        assert adapter.identidade_proprietario({"proprietario_telefone": "(11) 8193-8800"}) \
+            == adapter.identidade_proprietario({"proprietario_telefone": "11 98193-8800"}) \
+            == "tel:11981938800"
+
+    def test_fixo_de_dez_digitos_nao_ganha_nove(self):
+        assert adapter.identidade_proprietario({"proprietario_telefone": "(11) 4000-1234"}) \
+            == "tel:1140001234"
+
     def test_email_quando_nao_ha_telefone(self):
         assert adapter.identidade_proprietario(
             {"proprietario_telefone": "", "proprietario_email": " Dono@Ex.com "}

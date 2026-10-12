@@ -208,13 +208,20 @@ def identidade_proprietario(ativo: dict) -> Optional[str]:
     """A stable owner key from the ativo's own contact columns, or None.
 
     Phone first (digits only; a leading Brazil 55 dropped from 12-13 digit
-    numbers so "+55 11 9..." and "(11) 9..." agree), then e-mail (lower-
+    numbers so "+55 11 9..." and "(11) 9..." agree; a pre-2016 8-digit
+    mobile gains its 9), then e-mail (lower-
     cased). Fewer than 8 digits is not a phone. The NAME is deliberately not
     used: a shared first name is not a shared owner.
     """
     digitos = re.sub(r"\D", "", str(ativo.get("proprietario_telefone") or ""))
     if len(digitos) in (12, 13) and digitos.startswith("55"):
         digitos = digitos[2:]
+    # A pre-2016 mobile is stored without the leading 9 (DDD + 8 digits whose
+    # first is 6-9; landlines start 2-5): "1181938800" and "11981938800" are
+    # the same phone — 2026-10-12 live smoke, the MPM self-swap survived on
+    # exactly this.
+    if len(digitos) == 10 and digitos[2] in "6789":
+        digitos = digitos[:2] + "9" + digitos[2:]
     if len(digitos) >= 8:
         return f"tel:{digitos}"
     email = str(ativo.get("proprietario_email") or "").strip().lower()
