@@ -5,10 +5,13 @@
 the ``send_logs`` row clicked, then 302 to the URL INSIDE the token. The target
 never comes from the request, and only http(s) targets verify, so this is not an
 open redirect. Invalid / forged / other-purpose token → 400.
+
+A click row stores NOTHING personal (owner decision 2026-10-11, LGPD): no IP,
+no user agent — only which send (recipient) clicked which URL, and when.
+Migration 248 dropped those columns.
 """
 # NO `from __future__ import annotations` — slowapi's @limiter.limit resolves the
 # endpoint signature at runtime (keeper `check_slowapi_with_pep563`).
-import ipaddress
 import logging
 from datetime import datetime, timezone
 
@@ -25,18 +28,6 @@ router = APIRouter(prefix="/api/email-marketing/t", tags=["Tracking"])
 
 # A click never regresses a terminal / already-clicked delivery state.
 _STATUS_KEPT = {"clicked", "bounced", "complained"}
-
-
-def _client_ip(request: Request):
-    """CF-Connecting-IP (prod sits behind the Cloudflare tunnel), else the
-    socket peer. Only a parseable IP is stored (the column is INET)."""
-    raw = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else None)
-    if not raw:
-        return None
-    try:
-        return str(ipaddress.ip_address(raw.strip()))
-    except ValueError:
-        return None
 
 
 @router.get("/c/{token}")
@@ -56,8 +47,6 @@ async def click_redirect(request: Request, token: str, cfg=Depends(get_settings)
             "send_log_id": send_log_id,
             "url": url,
             "clicked_at": now,
-            "user_agent": (request.headers.get("user-agent") or "")[:1000] or None,
-            "ip_address": _client_ip(request),
         }).execute()
         log = found.data[0]
         update = {}

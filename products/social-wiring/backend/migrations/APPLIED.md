@@ -570,3 +570,7 @@ Authored 2026-10-10 (owner decision: retire legacy mailing; value harvested into
 ## 246 — status_pagina_media_creation_desativado (retire the legacy Criação de mídia page, A-3) — NOT APPLIED
 
 Authored 2026-10-10 (esteira-contract.md §A, A-3, FE-Z). Sets `status_pagina.media_creation` to `desativado`; no data touched (legacy posts/brand-kit tables + routers stay). Requires 241. Apply together with the image that ships the `/media-creation` → Carrosséis/Branding redirect.
+
+## 248 — link_clicks: drop ip_address + user_agent (LGPD — clicks store nothing personal) — NOT APPLIED
+
+Authored 2026-10-11 (owner decision relayed by noc-0: click tracking must store no IP and no user agent). Destroys any captured values with the columns. The writer stopped sending them in the same commit. Between apply and the new image going live, an old-image click insert would fail; harmless in practice because prod sends no marketing email yet (Resend webhook secret + frontend base URL unset), so no tracked links exist.

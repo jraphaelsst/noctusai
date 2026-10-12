@@ -150,8 +150,8 @@ class TestRedirect:
         assert len(clicks) == 1
         assert clicks[0]["send_log_id"] == "l1"
         assert clicks[0]["url"] == "https://shop.example/a?x=1"
-        assert clicks[0]["user_agent"] == "Mozilla/5.0"
-        assert clicks[0]["ip_address"] == "203.0.113.7"
+        # Nothing personal is stored — the headers were sent and dropped.
+        assert set(clicks[0]) == {"send_log_id", "url", "clicked_at"}
         log = client.mock_supabase.table("send_logs").select("*").execute().data[0]
         assert log["status"] == "clicked" and log["clicked_at"]
 
