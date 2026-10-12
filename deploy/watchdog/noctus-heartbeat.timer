@@ -1,0 +1,16 @@
+# Fires noctus-heartbeat.service 1 min after boot, then every 5 min.
+# Persistent=true records the catch-up intent explicitly (it only takes effect
+# for OnCalendar= triggers; OnUnitActiveSec= already re-arms after a boot).
+# KB § PATTERNS/devops/prod-watchdog.md
+[Unit]
+Description=NoctusAI heartbeat timer (off-host prod watchdog)
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=5min
+Persistent=true
+AccuracySec=30s
+Unit=noctus-heartbeat.service
+
+[Install]
+WantedBy=timers.target

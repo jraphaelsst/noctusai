@@ -778,6 +778,15 @@ state change, not a removal.
 - **Scope:** the one file, carrying its `[carve:hook]` row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3.
 - **Revisit trigger:** identical to 9a's (a).
 
+### 9h Prod-watchdog host scripts retain shell (`[carve:hook]` + `[carve:bootstrap]`, 2026-10-11)
+
+- **Subject:** the off-host prod watchdog (`KB § PATTERNS/devops/prod-watchdog.md`) needs two scripts that run ON the VPS: `deploy/watchdog/host-probe.sh` (sshd forced command of the restricted watchdog key) and `deploy/watchdog/install-heartbeat.sh` (root provisioning of the heartbeat units + the key line).
+- **Decision `[A]`:** both stay shell, each with its row in `KB § PATTERNS/architect/mcp-first-scripts.md` §3. Their MCP analog is `noctus.dev.prod_watchdog`, which holds every bit of logic (parsing, thresholds, dedupe, routing).
+- **Reason:** sshd execs the forced command on the host, where the toolkit venv and the MCP server do not exist — and the probe must keep working on a host whose Python/containers are the thing failing. The installer is host plumbing (`install`, `systemctl`, one `authorized_keys` append) with no extractable logic.
+- **Scope:** the two files above.
+- **Revisit trigger:** the VPS gains a toolkit runtime the probe may depend on even when the fleet is degraded (it should not), or the installer grows real decision logic.
+- **Recorded by:** prod-watchdog slice (2026-10-11), after the VPS freeze.
+
 ### 9e Agent-package push hooks retain shell (`[carve:hook]`, 2026-10-03)
 
 - **Subject:** `scripts/agent-hooks/{noc-pre-push-publish.sh, consumer-pre-push.sh, agent_sync_runner.py}` — the push-time legs of the Agent Packages contract (`products/agents/projects/agent-packages/CONTRACT.md` §A5, §F, §G, §H).

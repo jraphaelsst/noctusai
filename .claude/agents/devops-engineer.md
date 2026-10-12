@@ -17,6 +17,7 @@ owns_kb:
   - CONTEXT/PATTERNS/devops/ci-deploy-prod.md
   - CONTEXT/PATTERNS/devops/dev-main-ci-gates.md
   - CONTEXT/PATTERNS/devops/prod-deploy-safety-gates.md
+  - CONTEXT/PATTERNS/devops/prod-watchdog.md
   - CONTEXT/PATTERNS/devops/prod-exposure-consent.md
   - CONTEXT/PATTERNS/devops/ship-consent-riders.md
   - CONTEXT/PATTERNS/devops/predeploy-leg-verify-or-block.md
@@ -61,6 +62,7 @@ Wire features into containers + CI + the production fleet. Don't decide service 
 - **Deploys + rollback.** `noctus.dev.release` (bless / promote, FF-only) → `noctus.dev.deploy_pull` / `deploy_image` (atomic, snapshot + rollback / D3 enforcement). → `KB § GUIDES/production-deploy.md` · skill `noc-ship`
 - **Prod cache container.** `pgvector/pgvector:pg16` service in `deploy/fleet/compose.infra.prod.yml`; profile-gated (`--profile cache` / `--profile full`); volume `noctus-cache-pg-data`; internal-only via `noctus-net`. → `KB § PATTERNS/devops/prod-cache-container.md`
 - **Prod-deploy safety gates.** 4 keepers + composite + cache_deploy_mirror tool — `check_prod_cache_reachable` (high) + `check_cache_backend_env_matches_environment` (warning) + `check_drift_shield` (warning) + `check_slip_shield` (warning) + `check_pre_deploy_gate` (composite). The prod-side closed loop. → `KB § PATTERNS/devops/prod-deploy-safety-gates.md`
+- **Off-host prod watchdog.** `prod-watchdog.yml` (*/10 cron) runs `noctus.dev.prod_watchdog` (stdlib-only): HTTP /api/health for core + build-scope + ONE restricted forced-command SSH call (`deploy/watchdog/host-probe.sh`) reading journald/heartbeat age, MemAvailable, swap, load; up/degraded/down needs 2 consecutive failed runs; alerts only on change (+6h reminder) via Resend / WAHA. Born from the 2026-10-11 freeze. → `KB § PATTERNS/devops/prod-watchdog.md`
 - **Prod-exposure consent — you MUST NOT author a `deploy/consent/*.prod.yml` on the user's behalf.** A product's first arrival on compose.prod.yml/ingress.yml/ALL_SLUGS IS the promotion decision; `check_prod_exposure_consent` (high) gates it, `noctus.dev.prod_consent` only ever hands back status/a template — never writes it. → `KB § PATTERNS/devops/prod-exposure-consent.md`
 - **Ship on the owner's ask — no approval phrase (2026-09-24).** Default `release stage=bless` (`mode=ff`) FFs main to the newest CI-qualifying-green commit `main..dev` (not necessarily the tip — R1); the rider manifest is informational. Never ask the owner for a per-project phrase. A new product's first prod exposure still needs `prod_consent`. `mode=cut`/`refuse` are opt-ins for shipping only approved work. → `KB § PATTERNS/devops/ship-consent-riders.md`
 - **A `predeploy_check` leg must verify or block — never silently `ok=True` on a state it couldn't check.** `check_predeploy_leg_verify_or_block` (high) AST-derives `DEFAULT_CHECKS` + flags a literal `return True` with no preceding failure branch and no explicit "skip" marker in its message; the legitimate "nothing to verify" case (no frontend dir, no prod-env snapshot) is allowed only when it says so. → `KB § PATTERNS/devops/predeploy-leg-verify-or-block.md`

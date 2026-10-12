@@ -1,0 +1,139 @@
+name: Prod Watchdog (off-host)
+
+# OFF-HOST liveness check for the prod VPS — `noctus.dev.prod_watchdog`.
+#
+# WHY (2026-10-11): the VPS hard-froze after a fleet deploy (no ping, no SSH,
+# Cloudflare 530 everywhere) and host journald + cron had silently stopped ~20h
+# earlier while the sites kept serving. An on-host check dies with the host;
+# this one runs here, every 10 min.
+#
+# Per run: HTTP /api/health for core + every build-scope slug (+ core `/`), and
+# ONE SSH call with a RESTRICTED forced-command key (deploy/watchdog/host-probe.sh)
+# that prints host metrics. State (consecutive counters, dedupe, SSH backoff)
+# persists across runs in the Actions cache. Alerts only on a state change,
+# plus a reminder every 6h while not up.
+#
+# RED means the WATCHDOG cannot alert (no channel configured, or an alert that
+# reached no channel) — not that prod is down; prod state goes out by email /
+# WhatsApp. Schedules fire only from the default branch (main), and GitHub may
+# delay or skip a cron tick under load.
+#
+# Secrets (names only): NOCTUS_VPS_HOST, NOCTUS_VPS_WATCHDOG_KEY, RESEND_API_KEY,
+# WAHA_BASE_URL, WAHA_API_KEY, WAHA_SESSION, WATCHDOG_ALERT_WHATSAPP.
+# Variable: WATCHDOG_ALERT_EMAIL. Runbook: KB § PATTERNS/devops/prod-watchdog.md.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+    inputs:
+      send_test_alert:
+        description: "Also push a TEST message through every configured alert channel"
+        type: boolean
+        default: false
+
+concurrency:
+  group: prod-watchdog
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write # prune this workflow's own superseded state caches (gh cache delete)
+
+jobs:
+  watchdog:
+    name: Probe prod + alert on change
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    # Map secrets to job env — the `secrets` context is FORBIDDEN in step `if:`
+    # (it fails the workflow at STARTUP, 0s, no logs). Gate on a STEP OUTPUT
+    # derived from these env vars instead. (memory feedback_ci_secrets_in_if_startup_failure)
+    env:
+      NOCTUS_VPS_HOST: ${{ secrets.NOCTUS_VPS_HOST }}
+      VPS_WATCHDOG_KEY: ${{ secrets.NOCTUS_VPS_WATCHDOG_KEY }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      WAHA_BASE_URL: ${{ secrets.WAHA_BASE_URL }}
+      WAHA_API_KEY: ${{ secrets.WAHA_API_KEY }}
+      WAHA_SESSION: ${{ secrets.WAHA_SESSION }}
+      WATCHDOG_ALERT_WHATSAPP: ${{ secrets.WATCHDOG_ALERT_WHATSAPP }}
+      WATCHDOG_ALERT_EMAIL: ${{ vars.WATCHDOG_ALERT_EMAIL || 'joaoraphaelsst@gmail.com' }}
+      STATE_FILE: .prod-watchdog/state.json
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+
+      - name: Restore watchdog state
+        uses: actions/cache/restore@v4
+        with:
+          path: .prod-watchdog/state.json
+          key: prod-watchdog-state-${{ github.run_id }}
+          restore-keys: |
+            prod-watchdog-state-
+
+      - name: Guard — SSH leg needs host + restricted key
+        id: guard
+        run: |
+          if [[ -z "${NOCTUS_VPS_HOST:-}" || -z "${VPS_WATCHDOG_KEY:-}" ]]; then
+            echo "::warning::SSH leg skipped: NOCTUS_VPS_HOST / NOCTUS_VPS_WATCHDOG_KEY not set. HTTP checks and alerting still run. See KB § PATTERNS/devops/prod-watchdog.md."
+            echo "ready=0" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the restricted key
+        if: ${{ steps.guard.outputs.ready == '1' }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_WATCHDOG_KEY" > ~/.ssh/watchdog-key
+          chmod 600 ~/.ssh/watchdog-key
+          echo "WATCHDOG_SSH_KEY_FILE=$HOME/.ssh/watchdog-key" >> "$GITHUB_ENV"
+
+      # Stdlib only, no pip: the module imports nothing outside the standard
+      # library. It does its own ssh-keyscan (3 tries) + ONE ssh call with
+      # StrictHostKeyChecking=yes / ConnectTimeout=20 / BatchMode=yes, and only
+      # when the persisted SSH backoff says this run may connect.
+      - name: Run the watchdog
+        working-directory: mcp/noctusai
+        env:
+          NOCTUSAI_HOME: ${{ github.workspace }}
+          TEST_ALERT: ${{ inputs.send_test_alert }}
+        run: |
+          args=(--state "$GITHUB_WORKSPACE/$STATE_FILE" --send)
+          if [[ "${TEST_ALERT:-false}" == "true" ]]; then
+            args+=(--test-alert)
+          fi
+          python -m tools.noctus.dev.prod_watchdog "${args[@]}"
+
+      - name: Remove key
+        if: always()
+        run: rm -f ~/.ssh/watchdog-key
+
+      - name: Save watchdog state
+        id: save
+        if: ${{ always() && hashFiles('.prod-watchdog/state.json') != '' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .prod-watchdog/state.json
+          key: prod-watchdog-state-${{ github.run_id }}
+
+      # One new cache per run (~144/day) would crowd the repo's cache list and
+      # `cache-cleanup.yml`'s weekly `--limit 1000` listing. Keep only the
+      # newest. (cache-cleanup.yml would also keep only the newest: the decimal
+      # run_id suffix matches its hex-suffix strip, so the prefix groups.)
+      - name: Prune superseded state caches
+        # Only after THIS run's state is safely saved — never delete the last good one.
+        if: ${{ always() && steps.save.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP: prod-watchdog-state-${{ github.run_id }}
+        run: |
+          if ! ids=$(gh cache list --repo "$GITHUB_REPOSITORY" --key prod-watchdog-state- --limit 100 --json id,key --jq ".[] | select(.key != \"$KEEP\") | .id"); then
+            echo "::warning::could not list prod-watchdog state caches — pruning skipped this run"
+            exit 0
+          fi
+          for id in $ids; do
+            gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || echo "::warning::could not delete cache $id"
+          done

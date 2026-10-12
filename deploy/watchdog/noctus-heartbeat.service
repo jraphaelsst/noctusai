@@ -1,0 +1,13 @@
+# Writes the current epoch to /var/lib/noctus/heartbeat. Fired every 5 min by
+# noctus-heartbeat.timer; the off-host prod watchdog reads the file's age over
+# its restricted SSH key (deploy/watchdog/host-probe.sh). A stale heartbeat
+# while the sites still serve = systemd timers have stalled on the host — the
+# silent precursor of the 2026-10-11 freeze.
+# Installed by deploy/watchdog/install-heartbeat.sh. KB § PATTERNS/devops/prod-watchdog.md
+[Unit]
+Description=NoctusAI heartbeat for the off-host prod watchdog
+
+[Service]
+Type=oneshot
+StateDirectory=noctus
+ExecStart=/bin/sh -c 'date +%%s > /var/lib/noctus/heartbeat.tmp && mv -f /var/lib/noctus/heartbeat.tmp /var/lib/noctus/heartbeat'

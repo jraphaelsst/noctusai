@@ -473,6 +473,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--files", metavar="FILES", help="Comma-separated target file paths for --compose-brief (e.g. mcp/noctusai/tools/noctus/dev/foo.py,mcp/noctusai/cli.py).")
     parser.add_argument("--description", metavar="TEXT", help="Task description text for --compose-brief.")
     parser.add_argument("--spa-smoke", action="store_true", help="Post-deploy gate for the FRONTEND: per live product, assert the shell serves a mount point + bundle tag, the bundle is real JS (not the SPA HTML fallback, which 200s), and a deep link 200s. Closes the gap where container-health, /api/health and an edge 200 are all green while every user sees a blank page. MCP: noctus.dev.spa_smoke. KB § PATTERNS/devops/prod-deploy-safety-gates.md.")
+    parser.add_argument("--prod-watchdog", action="store_true", help="OFF-HOST prod liveness check: /api/health for core + every build-scope slug (browser UA), core `/`, and ONE restricted-key SSH call reading host metrics (journald/heartbeat age, MemAvailable, swap, load). Classifies up|degraded|down (2 consecutive failed runs before down). DRY by default — prints the report, sends nothing, writes state only with --watchdog-state. MCP: noctus.dev.prod_watchdog. KB § PATTERNS/devops/prod-watchdog.md.")
+    parser.add_argument("--watchdog-state", metavar="PATH", help="With --prod-watchdog: the JSON state file (counters, dedupe, SSH backoff).")
+    parser.add_argument("--send", action="store_true", help="With --prod-watchdog: send REAL alerts (Resend email / WAHA WhatsApp). Default is a dry run.")
+    parser.add_argument("--watchdog-test-alert", action="store_true", help="With --prod-watchdog: also push a TEST message through every configured alert channel.")
     parser.add_argument("--product-scope-report", nargs="?", const="__all__", metavar="SLUG", help="Per product, ask every gate surface's real listing code whether it CHECKS or SKIPS the product (CI jobs, compliance keepers, gate_sweep seed fan-out, run_all_tests/build/smoke/predeploy, dependabot, propagate) and compare deploy/fleet/active-scope.txt with the live catalog. Verdicts: awake | asleep | MIXED | STALE. Optional SLUG narrows to one product. MCP: noctus.dev.product_scope_report. KB § PATTERNS/architect/product-working-scope.md § 4c.")
     parser.add_argument("--refresh-build-scope", action="store_true", help="Regenerate deploy/fleet/build-scope.txt — the products whose images a PUSH-triggered build rebuilds. Derived from the catalog (ativo=true AND deploy_scope='live') plus core. Also regenerates deploy/fleet/active-scope.txt (ativo=true, any scope, + core) AND every artifact derived from scope (dependabot.yml, test.yml matrices, composes/Dockerfiles) via scope_settle. Run after activating/deactivating a product. Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY. MCP: noctus.dev.refresh_build_scope. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
     parser.add_argument("--refresh-dependabot-coverage", action="store_true", help="Repair .github/dependabot.yml: add an npm block for every products/<slug>/frontend with a package.json missing one, and append the fleet-major `ignore:` guard to any npm block that lacks it (full or partial). Targeted repair, not a rewrite — every existing comment/entry survives byte-for-byte. Idempotent. Stale blocks (directory has no package.json any more) are reported, never removed. Pass --dry to preview. MCP: noctus.dev.refresh_dependabot_coverage. KB § PATTERNS/devops/product-lockfile-and-slug-drift.md.")
@@ -3330,6 +3334,18 @@ def main():
             print(f"  {BOLD}Auto-improvement context:{RESET} {len(result['auto_improvement_context'])} entry(ies)\n")
             print(result["brief"])
         sys.exit(0)
+    elif args.prod_watchdog:
+        from tools.noctus.dev.prod_watchdog import main as _prod_watchdog_main
+        _pw_argv = []
+        if args.watchdog_state:
+            _pw_argv += ["--state", args.watchdog_state]
+        if args.send:
+            _pw_argv.append("--send")
+        if args.watchdog_test_alert:
+            _pw_argv.append("--test-alert")
+        if args.json:
+            _pw_argv.append("--json")
+        sys.exit(_prod_watchdog_main(_pw_argv))
 
     elif args.spa_smoke:
         from tools.noctus.dev.spa_smoke import spa_smoke as _spa

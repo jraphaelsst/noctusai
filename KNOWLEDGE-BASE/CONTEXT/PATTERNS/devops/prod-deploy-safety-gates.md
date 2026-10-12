@@ -140,6 +140,10 @@ carries an autouse guard that fails any test attempting a real network call:
 while writing it, one test omitted its fake and silently smoke-tested LIVE PROD,
 passing for the wrong reason.
 
+**Between deploys** these gates are silent. The off-host liveness check that
+runs every 10 min from GitHub Actions — and catches a frozen host, a dead
+journald or a stalled heartbeat — is `KB § PATTERNS/devops/prod-watchdog.md`.
+
 ## A CI trigger's scope is its contract, too (2026-08-11)
 
 `embedding-cache-gate.yml` triggered on a bare `products/seed/**`. That gate
