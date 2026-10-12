@@ -30,6 +30,7 @@ export function VisitasSemResposta() {
               data-testid="painel-visitas-sem-resposta-badge"
             >
               {data.length}
+              {/* lying-loading-ok: text-only suffix, never unmounts real content */}
               {isRefreshing ? "…" : ""}
             </span>
           )}

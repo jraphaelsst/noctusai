@@ -125,6 +125,7 @@ export function CertidoesPartesTab(props: {
       )}
       {(isRefreshing || temPdfArmazenado) && (
         <div className="flex flex-wrap items-center justify-between gap-2">
+          {/* lying-loading-ok: indicator-only — the else branch is an empty spacer, never content */}
           {isRefreshing ? (
             <p className="text-xs text-muted-foreground" data-testid="certidoes-partes-refreshing">Atualizando…</p>
           ) : <span />}
