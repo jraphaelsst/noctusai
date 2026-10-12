@@ -35,23 +35,18 @@ Depth: `KB § PATTERNS/devops/prod-deploy-safety-gates.md` · skill `noc-ship` �
 """
 from __future__ import annotations
 
-import logging
 import re
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from settings import REPO_ROOT
 
+from . import _public_edge as _edge
 from . import toolkit_freshness as _toolkit_freshness
 
-logger = logging.getLogger(__name__)
-
-#: WAF rule 1010 rejects non-browser User-Agents at the Cloudflare edge.
-_BROWSER_UA = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-)
+#: WAF rule 1010 rejects non-browser User-Agents at the Cloudflare edge. The UA,
+#: `_fetch` and the ingress resolver live in the stdlib-only `_public_edge`
+#: module, shared with `prod_watchdog` (which runs in CI with no pip install).
+_BROWSER_UA = _edge.BROWSER_UA
 
 #: A real product bundle is hundreds of KB. Anything this small is a stub, an
 #: error page, or a truncated upload — all of which would otherwise pass as 200.
@@ -70,77 +65,24 @@ _ROOT_DIV_RE = re.compile(r'<div\s+id="root"\s*>')
 DEFAULT_DEEP_LINK = "/login"
 
 BUILD_SCOPE = REPO_ROOT / "deploy" / "fleet" / "build-scope.txt"
-
-
-def _fetch(url: str, timeout: int = 25) -> tuple[int, bytes, str]:
-    """GET with a browser UA. Returns `(status, body, content_type)`.
-
-    A non-2xx is returned as its status rather than raised — the caller reports
-    it as a finding; an exception here would look like a tool bug, not a
-    deploy problem.
-    """
-    req = urllib.request.Request(url, headers={"User-Agent": _BROWSER_UA})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.status, resp.read(), resp.headers.get("Content-Type", "")
-    except urllib.error.HTTPError as exc:
-        return exc.code, b"", exc.headers.get("Content-Type", "") if exc.headers else ""
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        logger.debug("spa_smoke: %s unreachable (%s)", url, exc)
-        return 0, b"", ""
+_fetch = _edge.fetch  # shared, stdlib-only; module-level so tests can inject
 
 
 def _live_slugs() -> list[str]:
     """The active set — same source the build workflow scopes on."""
-    if not BUILD_SCOPE.exists():
-        return []
-    return sorted({
-        ln.strip() for ln in BUILD_SCOPE.read_text(encoding="utf-8").splitlines()
-        if ln.strip() and not ln.lstrip().startswith("#")
-    })
+    return _edge.read_slug_file(BUILD_SCOPE)
 
 
 def public_hostname(slug: str, domain: str = "noctusai.com") -> str:
     """The hostname this product is ACTUALLY served at.
 
-    `f"{slug}.{domain}"` was a guess that happened to be true, and it stopped
-    being true on 2026-08-25 when `erp-imobiliario.noctusai.com` and
-    `social-wiring.noctusai.com` were retired in favour of the short
-    `erp.` / `social.` hosts the owner had set. This gate then reported
-    `GET / -> 404` for two perfectly healthy SPAs.
-
-    A gate that is red for a reason unrelated to what it measures is worse
-    than no gate: people learn to skip it, and the next real failure reads
-    as the same familiar noise. So the hostname comes from
-    `deploy/tunnel/ingress.yml`, the declared single source of truth for
-    hostname → service routing, by matching the route whose service names
-    this slug. Falls back to the old guess when the file is unreadable or
-    the slug has no route, so this can never be the thing that breaks the
-    smoke.
+    Resolved from `deploy/tunnel/ingress.yml` (the declared single source of
+    truth for hostname → service routing) by the stdlib-only shared helper
+    `_public_edge.public_hostname`, which `prod_watchdog` also uses — the
+    history (the 2026-08-25 `erp.` / `social.` rename that turned a guessed
+    `f"{slug}.{domain}"` into a false red) lives in that docstring.
     """
-    try:
-        import re
-
-        import yaml
-
-        text = (Path(REPO_ROOT) / "deploy" / "tunnel" / "ingress.yml").read_text(
-            encoding="utf-8"
-        )
-        routes = (yaml.safe_load(text) or {}).get("routes") or []
-        matches = [
-            str(r.get("hostname", "")).strip()
-            for r in routes
-            if isinstance(r, dict)
-            and re.match(rf"^https?://{re.escape(slug)}:\d+$", str(r.get("service", "")).strip())
-        ]
-        if matches:
-            # Shortest wins: when several hostnames point at one container the
-            # short one is the canonical public name (that is the whole reason
-            # the long ones were retired).
-            return min(matches, key=len)
-    except Exception:
-        pass
-    return f"{slug}.{domain}"
+    return _edge.public_hostname(slug, Path(REPO_ROOT), domain)
 
 
 def smoke_product(
