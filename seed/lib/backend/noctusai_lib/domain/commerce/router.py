@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, get_type_hints
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
@@ -74,6 +74,24 @@ logger = logging.getLogger(__name__)
 #: `(limit_string) -> decorator` -- e.g. slowapi's `limiter.limit`. Optional: a
 #: host without a limiter simply mounts unthrottled routes (tests do).
 RateLimit = Callable[[str], Callable[[Callable], Callable]]
+
+
+def _apply_limit(rate_limit: Optional["RateLimit"], limit: str, fn: Callable) -> Callable:
+    """Wrap `fn` with the host's rate-limit decorator, keeping its annotations resolvable.
+
+    This module uses `from __future__ import annotations`, so a handler's annotations are
+    STRINGS resolved against the defining function's `__globals__`. A real decorator
+    (slowapi's `limiter.limit`) returns a wrapper from ANOTHER module: FastAPI then looks
+    the strings up in the wrapper's globals, can't find `UUID` / `Request` / the body
+    models, and every wrapped route 500s ("TypeAdapter ... not fully defined"). Resolving
+    them here, against THIS module, before wrapping makes the wrapper carry real types.
+    The organ suite's pass-through `rate_limit` never wrapped, so only a real limiter
+    (prod) exposed it.
+    """
+    if rate_limit is None:
+        return fn
+    fn.__annotations__ = get_type_hints(fn, include_extras=True)
+    return rate_limit(limit)(fn)
 
 
 def _dump(model: Any, **kw: Any) -> dict:
@@ -380,7 +398,7 @@ def storefront_router(
         return store_svc.resolve_storefront_org(db, request.headers.get("host", ""), checker, cfg)
 
     def limited(limit: str, fn: Callable) -> Callable:
-        return rate_limit(limit)(fn) if rate_limit is not None else fn
+        return _apply_limit(rate_limit, limit, fn)
 
     read_limit, write_limit = cfg.storefront_rate_limit, cfg.checkout_rate_limit
 
@@ -541,7 +559,7 @@ def commerce_webhook_router(
         outcome = webhook_svc.handle_event(db, str(org_id), event, inbox=inbox, gateway=gateway, fulfillment=fulfillment)
         return {"received": True, "outcome": outcome}
 
-    handler = rate_limit(cfg.webhook_rate_limit)(receive) if rate_limit is not None else receive
+    handler = _apply_limit(rate_limit, cfg.webhook_rate_limit, receive)
     router.add_api_route("/{gateway_name}/{org_id}", handler, methods=["POST"], name="commerce_payment_webhook")
     return router
 

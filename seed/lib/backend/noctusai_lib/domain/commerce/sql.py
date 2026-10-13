@@ -457,6 +457,14 @@ CREATE INDEX IF NOT EXISTS idx_commerce_order_events_org ON {s}.commerce_order_e
     return out
 
 
+def _credentials_org_expr(cfg: CommerceConfig) -> str:
+    """The credentials SELECT policy's org predicate: the seed DDL's own default form for the
+    default `org_id_expr` (output unchanged), else the config's expression in the `(SELECT ...)` form."""
+    if cfg.org_id_expr == CommerceConfig.__dataclass_fields__["org_id_expr"].default:
+        return "current_org_id()"
+    return f"(SELECT {cfg.org_id_expr})"
+
+
 def commerce_migration(cfg: CommerceConfig, schema: str) -> str:
     """The whole commerce DDL for `schema`, as one re-runnable migration body.
 
@@ -471,7 +479,7 @@ def commerce_migration(cfg: CommerceConfig, schema: str) -> str:
         f"{set_search_path(schema)};",
         *_tables(cfg, schema),
         "-- Per-org payment-gateway credentials (Fernet-encrypted; Asaas key + webhook token).\n"
-        + credentials_table_ddl(schema, idempotent=True),
+        + credentials_table_ddl(schema, idempotent=True, org_id_expr=_credentials_org_expr(cfg)),
         "-- Webhook idempotency inbox (RealSupabaseEventInbox).\n" + event_inbox_table_sql(schema),
         private_org_bucket_sql(
             cfg.bucket,

@@ -20,7 +20,7 @@ products/commerce/backend/app/
   routers/             → example + webhook skeletons (day-one); organ staff/storefront/webhook routers are mounted in Part 2
 ```
 
-Part 2 adds `app/commerce.py` (`CommerceConfig`), `migrations/0NN_commerce.sql` rendered verbatim from `commerce_migration(cfg, "commerce")` plus a parity test (precedent: `products/igig/backend/migrations/019_card_hub.sql`), the Asaas api-key spec with readiness tester, and fake-or-refuse dependencies (precedent: `products/store/backend/app/store_deps.py`).
+`app/commerce.py` (`CommerceConfig`), `migrations/0NN_commerce.sql` rendered verbatim from `commerce_migration(cfg, "commerce")` plus a parity test (precedent: `products/igig/backend/migrations/019_card_hub.sql`), the Asaas api-key spec with readiness tester, and fake-or-refuse dependencies (precedent: `products/store/backend/app/store_deps.py`).
 
 ### Frontend
 

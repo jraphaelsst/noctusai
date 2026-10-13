@@ -19,6 +19,20 @@ class SeedSettings(ProductSettings):
     # Rename per vendor (``resend_webhook_secret`` / ``meta_webhook_secret`` / etc.).
     example_webhook_secret: str = ""
 
+    # ── Commerce organ ──
+    # Fernet key for the per-org Asaas credentials (`commerce.credentials`).
+    # Unset => key WRITES 503 (never plaintext); READS degrade to the platform chain.
+    encryption_key: str = ""
+    # HMAC secret that signs the e-mailed access / privacy-verify links
+    # (resolved per request; unset => those routes 503, never an unsigned link).
+    commerce_link_secret: str = ""
+    # A missing Asaas key / SMTP config REFUSES (503) unless this is explicitly on.
+    # Test harness / local dev only: a silent Fake in a real deploy would hand a
+    # paying buyer a fake checkout URL.
+    payments_allow_fake: bool = False
+    # Origin the Asaas readiness probe uses as `successUrl`.
+    commerce_public_url: str = "https://commerce.noctusai.com"
+
     # Rate-limit for webhook endpoints (per-IP). Public surface — DDOS guard.
     webhook_rate_limit: str = "60/minute"
 

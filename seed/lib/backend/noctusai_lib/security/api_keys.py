@@ -446,7 +446,11 @@ def make_local_credential_override(
 
 
 def credentials_table_ddl(
-    schema: str, *, table: str = "credentials", idempotent: bool = False
+    schema: str,
+    *,
+    table: str = "credentials",
+    idempotent: bool = False,
+    org_id_expr: str = "current_org_id()",
 ) -> str:
     """DDL template for the org-scoped, Fernet-encrypted credentials table.
 
@@ -468,10 +472,16 @@ def credentials_table_ddl(
     table + indexes, ``DROP POLICY IF EXISTS`` before each policy) for a
     generator whose output is replayed twice by the migration-chain replay
     (e.g. ``commerce_migration``). The default is byte-identical to before.
+
+    ``org_id_expr`` is the SQL expression the own-org SELECT policy compares
+    ``org_id`` to. The default is the home-only ``current_org_id()``; a schema
+    on the org-picker rollout passes ``(SELECT public.current_org_id_for('<schema>'))``
+    so the policy follows the acting org (``commerce_migration`` derives it from
+    ``CommerceConfig.org_id_expr``).
     """
     select_policy = rls_subquery_policy(
         schema, table, f"{table}_select_own_org", "SELECT",
-        using="org_id = current_org_id()",
+        using=f"org_id = {org_id_expr}",
     )
     bypass_policy = service_role_bypass(table, schema=schema)
     ine = "IF NOT EXISTS " if idempotent else ""

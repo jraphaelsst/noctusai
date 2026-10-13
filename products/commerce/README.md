@@ -26,4 +26,6 @@ cd products/commerce/frontend && npm run dev
 
 ## Status
 
-Part 1 (host shell): seed spine registered (`start.sh`, catalog row, schema exposure). Part 2 (wiring the commerce organ: `app/commerce.py`, generated migration + parity test, router mounts, Asaas key spec) follows once the organ lands on `dev`. Contract: `projects/commerce-seed-p3/CONTRACT.md` §6.
+Backend wired to the commerce organ: `app/commerce.py` (`CommerceConfig` + generated `migrations/012_commerce.sql`, pinned by `tests/test_commerce_wiring.py`), staff / storefront / payment-webhook routers (`app/routers/commerce_routers.py`), per-org Asaas keys (`app/api_keys.py`, `/api/settings/api-keys`, readiness probe `app/key_testers.py`), fake-or-refuse deps (`app/commerce_deps.py`). Frontend pages (`/admin/*`, storefront `/`) follow with the frontend organ. Contract: `projects/commerce-seed-p3/CONTRACT.md` §6.
+
+Env: `ENCRYPTION_KEY` (Fernet, key writes 503 without it), `COMMERCE_LINK_SECRET` (signs e-mailed links; unset => 503), `PAYMENTS_ALLOW_FAKE` (tests/local only).

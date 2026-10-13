@@ -314,3 +314,20 @@ class TestWebhookRoute:
         h, order = self._order(shop)
         assert self._post(h, ORG_B, self._payload(order)).json()["outcome"] == "ignored"
         assert h.db.table("commerce_orders").select("*").execute().data[0]["status"] == "pending_payment"
+
+
+class TestRealRateLimiter:
+    """A REAL slowapi `limiter.limit` returns a wrapper from another module; the routers
+    must stay mountable (string annotations resolved before wrapping), or every wrapped
+    route 500s in prod while the suite's pass-through limiter stays green."""
+
+    def test_storefront_routes_resolve_types_under_a_real_limiter(self, commerce_schema_cache):
+        from slowapi import Limiter
+        from slowapi.util import get_remote_address
+
+        limiter = Limiter(key_func=get_remote_address)
+        h = build_harness(rate_limit=limiter.limit)
+        seed_profile(h.db)
+        h.seed_host()
+        r = h.client.get("/api/storefront/catalog", headers=h.shop())
+        assert r.status_code == 200
