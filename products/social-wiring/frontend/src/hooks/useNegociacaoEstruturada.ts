@@ -155,6 +155,34 @@ export function useDeleteFavorecido(clienteId: string) {
   });
 }
 
+/**
+ * Pick a registry favorecido for the card (`PUT .../atendimentos/{id}/
+ * favorecidos/selecao`). The response shape is not part of the contract, so
+ * the aggregate is re-read (invalidate) rather than seeded.
+ */
+export function useSelecionarFavorecidoRegistro(clienteId: string) {
+  const onSuccess = useInvalidateOnSuccess(clienteId);
+  return useMutation({
+    mutationFn: ({
+      atendimentoId,
+      favorecidoId,
+      intermediarioId,
+    }: {
+      atendimentoId: string;
+      favorecidoId: string;
+      intermediarioId?: string | null;
+    }) =>
+      api.put(
+        `/api/card-hub/atendimentos/${encodeURIComponent(atendimentoId)}/favorecidos/selecao`,
+        {
+          favorecido_id: favorecidoId,
+          ...(intermediarioId ? { intermediario_id: intermediarioId } : {}),
+        },
+      ),
+    onSuccess,
+  });
+}
+
 // ─── Intermediários ─────────────────────────────────────────────────────────
 
 export function useCreateIntermediario(clienteId: string) {

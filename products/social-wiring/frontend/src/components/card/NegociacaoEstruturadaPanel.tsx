@@ -50,6 +50,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 // `Table` has no local copy in this product — the seed primitive is the
 // canonical source, same sourcing decision `pages/Certidoes.tsx` documents.
@@ -71,7 +72,6 @@ import {
   type NegociacaoConflito,
 } from "@/hooks/useNegociacao";
 import {
-  useCreateFavorecido,
   useCreateIntermediario,
   useCreateParcela,
   useDeleteFavorecido,
@@ -81,7 +81,7 @@ import {
   useReordenarParcelas,
   useNegociacaoEstruturada,
   useNegociacaoPosseMutation,
-  useUpdateFavorecido,
+  useSelecionarFavorecidoRegistro,
   useUpdateIntermediario,
   useUpdateParcela,
 } from "@/hooks/useNegociacaoEstruturada";
@@ -90,7 +90,6 @@ import {
   INTERMEDIARIO_TIPO_LABELS,
   PARCELA_TIPO_LABELS,
   type DividirSaldoPayload,
-  type FavorecidoCreate,
   type IntermediarioCreate,
   type IntermediarioNatureza,
   type IntermediarioTipo,
@@ -106,6 +105,8 @@ import {
   rotuloNegociacaoOrigem,
 } from "@/types/negociacaoEstruturada";
 import TermosNegocioSection from "@/components/card/TermosNegocioSection";
+import { FavorecidoCombobox } from "@/components/favorecidos/FavorecidoCombobox";
+import { FavorecidoDialog } from "@/components/favorecidos/FavorecidoDialog";
 import {
   PARCELA_FORMA_PAGAMENTO_MAX,
   ParcelaFormDialog,
@@ -119,21 +120,40 @@ import {
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import { exibirData, exibirMoeda, lerValorDigitado } from "@/lib/moedaDecimal";
 
+type NegociacaoSubtab =
+  | "parcelas"
+  | "favorecidos"
+  | "intermediarios"
+  | "posse"
+  | "termos";
+
 interface Props {
   clienteId: string;
+  /** Subtab shown first. Defaults to "parcelas". */
+  defaultSubtab?: NegociacaoSubtab;
 }
+
+// One section per subtab — no scrolling between sections. The Radix `Tabs`
+// spine is the same one `SocialDashboardShell` (YouTube / Meta pages) and the
+// card's Certidões subtabs use; the shell itself is a page-level container
+// (h1 + `container max-w-7xl`) and cannot be embedded in a modal.
+const NEGOCIACAO_SUBTABS: {
+  key: NegociacaoSubtab;
+  label: string;
+  contar?: (d: NegociacaoEstruturada) => number;
+}[] = [
+  { key: "parcelas", label: "Parcelas", contar: (d) => d.parcelas.length },
+  { key: "favorecidos", label: "Favorecidos", contar: (d) => d.favorecidos.length },
+  { key: "intermediarios", label: "Intermediários", contar: (d) => d.intermediarios.length },
+  { key: "posse", label: "Posse e permuta" },
+  { key: "termos", label: "Termos do negócio" },
+];
 
 // ─── Backend `max_length` caps, mirrored so a 422 can't be hit by typing ───
 // (`ParcelaCreateBody`/`ParcelaPatchBody`, `FavorecidoCreateBody`/
 // `FavorecidoPatchBody`, `_IntermediarioQualificacao` — card_hub/schemas.py).
 // `maxLength` on the `<Input>`/`<Textarea>` truncates on type AND on paste,
 // so these are a hard prevention, not just a hint.
-const FAVORECIDO_NOME_MAX = 255;
-const FAVORECIDO_CPF_CNPJ_MAX = 32;
-const FAVORECIDO_BANCO_MAX = 120;
-const FAVORECIDO_AGENCIA_MAX = 32;
-const FAVORECIDO_CONTA_MAX = 32;
-const FAVORECIDO_PIX_MAX = 140;
 const INTERMEDIARIO_NOME_MAX = 255;
 const INTERMEDIARIO_CRECI_MAX = 64;
 const INTERMEDIARIO_EMAIL_MAX = 254;
@@ -250,8 +270,14 @@ function mascarar(v: string | null | undefined): string {
 
 // ─── Root ───────────────────────────────────────────────────────────────────
 
-export default function NegociacaoEstruturadaPanel({ clienteId }: Props) {
+export default function NegociacaoEstruturadaPanel({
+  clienteId,
+  defaultSubtab = "parcelas",
+}: Props) {
   const query = useNegociacaoEstruturada(clienteId);
+  // The selected subtab lives ABOVE the loading/error early returns, so a
+  // refetch (or a transient error) never resets it to the first one.
+  const [subtab, setSubtab] = useState<NegociacaoSubtab>(defaultSubtab);
 
   // 🔴 Two signals, never `isLoading`. → KB § PATTERNS/frontend/lying-loading-state.md
   const showSkeleton = query.isPending && !query.data;
@@ -304,16 +330,51 @@ export default function NegociacaoEstruturadaPanel({ clienteId }: Props) {
       <ConflitosNegociacaoBanner clienteId={clienteId} />
       <CompletudeCard completude={data.completude} />
       <ValorNegociadoCard data={data} />
-      <ParcelasSection clienteId={clienteId} data={data} />
-      <FavorecidosSection clienteId={clienteId} favorecidos={data.favorecidos} />
-      <IntermediariosSection
-        clienteId={clienteId}
-        intermediarios={data.intermediarios}
-        favorecidos={data.favorecidos}
-        valorNegociado={data.valor_negociado}
-      />
-      <PosseSection clienteId={clienteId} data={data} />
-      <TermosNegocioSection clienteId={clienteId} data={data} />
+      <Tabs
+        value={subtab}
+        onValueChange={(v) => setSubtab(v as NegociacaoSubtab)}
+      >
+        <TabsList
+          className="h-auto flex-wrap gap-0.5"
+          data-testid="negest-subtabs"
+        >
+          {NEGOCIACAO_SUBTABS.map(({ key, label, contar }) => (
+            <TabsTrigger
+              key={key}
+              value={key}
+              data-testid={`negest-subtab-${key}`}
+            >
+              {label}
+              {contar ? ` (${contar(data)})` : ""}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        <TabsContent value="parcelas" className="mt-4">
+          <ParcelasSection clienteId={clienteId} data={data} />
+        </TabsContent>
+        <TabsContent value="favorecidos" className="mt-4">
+          <FavorecidosSection
+            clienteId={clienteId}
+            atendimentoId={data.atendimento_id}
+            favorecidos={data.favorecidos}
+            intermediarios={data.intermediarios}
+          />
+        </TabsContent>
+        <TabsContent value="intermediarios" className="mt-4">
+          <IntermediariosSection
+            clienteId={clienteId}
+            intermediarios={data.intermediarios}
+            favorecidos={data.favorecidos}
+            valorNegociado={data.valor_negociado}
+          />
+        </TabsContent>
+        <TabsContent value="posse" className="mt-4">
+          <PosseSection clienteId={clienteId} data={data} />
+        </TabsContent>
+        <TabsContent value="termos" className="mt-4">
+          <TermosNegocioSection clienteId={clienteId} data={data} />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
@@ -936,21 +997,29 @@ function DividirSaldoDialog({
 }
 
 // ─── Favorecidos ────────────────────────────────────────────────────────────
+//
+// Payees are picked from the org REGISTRY (`pages/Favorecidos.tsx`), never
+// free-typed per negociação. The list below is what this card already uses
+// (masked; "Revelar" is an explicit, per-row act). Bank data is edited in the
+// registry, not here.
 
 function FavorecidosSection({
   clienteId,
+  atendimentoId,
   favorecidos,
+  intermediarios,
 }: {
   clienteId: string;
+  atendimentoId: string;
   favorecidos: NegociacaoFavorecido[];
+  intermediarios: NegociacaoIntermediario[];
 }) {
-  const criar = useCreateFavorecido(clienteId);
-  const atualizar = useUpdateFavorecido(clienteId);
+  const selecionar = useSelecionarFavorecidoRegistro(clienteId);
   const excluir = useDeleteFavorecido(clienteId);
 
-  const [open, setOpen] = useState(false);
-  const [editando, setEditando] = useState<NegociacaoFavorecido | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [escolhido, setEscolhido] = useState<string | null>(null);
+  const [intermediarioId, setIntermediarioId] = useState<string>("");
+  const [novoOpen, setNovoOpen] = useState(false);
   const [revelados, setRevelados] = useState<Set<string>>(new Set());
 
   function alternarRevelar(id: string) {
@@ -962,16 +1031,25 @@ function FavorecidosSection({
     });
   }
 
-  function abrirNovo() {
-    setEditando(null);
-    setFormError(null);
-    setOpen(true);
-  }
-
-  function abrirEdicao(f: NegociacaoFavorecido) {
-    setEditando(f);
-    setFormError(null);
-    setOpen(true);
+  function vincular(favorecidoId: string) {
+    selecionar.mutate(
+      {
+        atendimentoId,
+        favorecidoId,
+        intermediarioId: intermediarioId || null,
+      },
+      {
+        onSuccess: () => {
+          toast.success("Favorecido selecionado.");
+          setEscolhido(null);
+          setIntermediarioId("");
+        },
+        onError: (err: unknown) =>
+          toast.error(
+            mensagemErroServidor(err, "Não foi possível selecionar o favorecido."),
+          ),
+      },
+    );
   }
 
   function remover(f: NegociacaoFavorecido) {
@@ -983,264 +1061,131 @@ function FavorecidosSection({
 
   return (
     <Card data-testid="negest-favorecidos">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+      <CardHeader>
         <CardTitle className="text-base">Favorecidos</CardTitle>
-        <Button size="sm" onClick={abrirNovo} data-testid="negest-favorecido-novo">
-          <Plus className="mr-1 h-4 w-4" />
-          Novo favorecido
-        </Button>
       </CardHeader>
-      <CardContent className="space-y-2">
+      <CardContent className="space-y-4">
+        <div
+          className="space-y-3 rounded-md border border-dashed p-3"
+          data-testid="negest-favorecido-selecao"
+        >
+          <div className="space-y-1.5">
+            <Label htmlFor="negest-favorecido-select">
+              Selecionar do cadastro de favorecidos
+            </Label>
+            <FavorecidoCombobox
+              id="negest-favorecido-select"
+              value={escolhido}
+              onChange={setEscolhido}
+              onNovo={() => setNovoOpen(true)}
+              disabled={selecionar.isPending}
+            />
+          </div>
+          {intermediarios.length > 0 && (
+            <div className="space-y-1.5">
+              <Label htmlFor="negest-favorecido-intermediario">
+                Vincular a um intermediário (opcional)
+              </Label>
+              <Select
+                value={intermediarioId || "__none__"}
+                onValueChange={(v) => setIntermediarioId(v === "__none__" ? "" : v)}
+              >
+                <SelectTrigger id="negest-favorecido-intermediario">
+                  <SelectValue placeholder="Nenhum" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Nenhum</SelectItem>
+                  {intermediarios.map((i) => (
+                    <SelectItem key={i.id} value={i.id}>
+                      {i.nome}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          <div className="flex justify-end">
+            <Button
+              size="sm"
+              disabled={!escolhido || selecionar.isPending}
+              onClick={() => escolhido && vincular(escolhido)}
+              data-testid="negest-favorecido-adicionar"
+            >
+              {selecionar.isPending ? "Adicionando…" : "Adicionar à negociação"}
+            </Button>
+          </div>
+        </div>
+
         {favorecidos.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Nenhum favorecido cadastrado.
           </p>
         ) : (
-          favorecidos.map((f) => {
-            const revelado = revelados.has(f.id);
-            return (
-              <div
-                key={f.id}
-                className="flex items-center justify-between rounded-md border p-3"
-                data-testid={`favorecido-${f.id}`}
-              >
-                <div className="space-y-0.5">
-                  <p className="flex items-center gap-1.5 text-sm font-medium">
-                    {f.nome}
-                    {/* H5 (owner, 2026-09-25) — filled from the Quadro
-                        Resumo's seller-credit account, matched by CPF. */}
-                    <OrigemBadge
-                      origem={f.origem}
-                      confirmadoEm={f.confirmado_em}
-                      testId={`favorecido-origem-${f.id}`}
-                    />
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {f.cpf_cnpj ? (revelado ? f.cpf_cnpj : mascarar(f.cpf_cnpj)) : "—"}
-                    {" · "}
-                    {f.banco ?? "—"} · Ag{" "}
-                    {f.agencia ? (revelado ? f.agencia : "••••") : "—"} · Cc{" "}
-                    {f.conta ? (revelado ? f.conta : mascarar(f.conta)) : "—"}
-                    {f.pix
-                      ? ` · PIX ${revelado ? f.pix : mascarar(f.pix)}`
-                      : ""}
-                  </p>
+          <div className="space-y-2">
+            {favorecidos.map((f) => {
+              const revelado = revelados.has(f.id);
+              return (
+                <div
+                  key={f.id}
+                  className="flex items-center justify-between rounded-md border p-3"
+                  data-testid={`favorecido-${f.id}`}
+                >
+                  <div className="space-y-0.5">
+                    <p className="flex items-center gap-1.5 text-sm font-medium">
+                      {f.nome}
+                      {/* H5 (owner, 2026-09-25) — filled from the Quadro
+                          Resumo's seller-credit account, matched by CPF. */}
+                      <OrigemBadge
+                        origem={f.origem}
+                        confirmadoEm={f.confirmado_em}
+                        testId={`favorecido-origem-${f.id}`}
+                      />
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {f.cpf_cnpj ? (revelado ? f.cpf_cnpj : mascarar(f.cpf_cnpj)) : "—"}
+                      {" · "}
+                      {f.banco ?? "—"} · Ag{" "}
+                      {f.agencia ? (revelado ? f.agencia : "••••") : "—"} · Cc{" "}
+                      {f.conta ? (revelado ? f.conta : mascarar(f.conta)) : "—"}
+                      {f.pix
+                        ? ` · PIX ${revelado ? f.pix : mascarar(f.pix)}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => alternarRevelar(f.id)}
+                      data-testid={`favorecido-revelar-${f.id}`}
+                    >
+                      {revelado ? "Ocultar" : "Revelar"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => remover(f)}
+                      aria-label={`Remover ${f.nome}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => alternarRevelar(f.id)}
-                    data-testid={`favorecido-revelar-${f.id}`}
-                  >
-                    {revelado ? "Ocultar" : "Revelar"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => abrirEdicao(f)}
-                    aria-label={`Editar ${f.nome}`}
-                  >
-                    <Pencil className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => remover(f)}
-                    aria-label={`Remover ${f.nome}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </CardContent>
 
-      <FavorecidoFormDialog
-        open={open}
-        onOpenChange={(v) => {
-          setOpen(v);
-          if (!v) setFormError(null);
-        }}
-        favorecido={editando}
-        saving={criar.isPending || atualizar.isPending}
-        error={formError}
-        onSubmit={(payload) => {
-          setFormError(null);
-          const onSuccess = () => setOpen(false);
-          const onError = (err: unknown) => {
-            const msg = errorMessage(err, "Não foi possível salvar o favorecido.");
-            setFormError(msg);
-            toast.error(msg);
-          };
-          if (editando) {
-            atualizar.mutate(
-              { id: editando.id, patch: payload },
-              { onSuccess, onError },
-            );
-          } else {
-            criar.mutate(payload as FavorecidoCreate, { onSuccess, onError });
-          }
-        }}
+      {/* The SAME create dialog the Favorecidos page opens; the saved record
+          is selected for this card straight away. */}
+      <FavorecidoDialog
+        open={novoOpen}
+        onOpenChange={setNovoOpen}
+        favorecidoId={null}
+        onSaved={(f) => setEscolhido(f.id)}
       />
     </Card>
-  );
-}
-
-interface FavorecidoDraft {
-  nome: string;
-  cpf_cnpj: string;
-  banco: string;
-  agencia: string;
-  conta: string;
-  pix: string;
-}
-
-function toFavorecidoDraft(f: NegociacaoFavorecido | null): FavorecidoDraft {
-  return {
-    nome: f?.nome ?? "",
-    cpf_cnpj: f?.cpf_cnpj ?? "",
-    banco: f?.banco ?? "",
-    agencia: f?.agencia ?? "",
-    conta: f?.conta ?? "",
-    pix: f?.pix ?? "",
-  };
-}
-
-function FavorecidoFormDialog({
-  open,
-  onOpenChange,
-  favorecido,
-  onSubmit,
-  saving,
-  error,
-}: {
-  open: boolean;
-  onOpenChange: (v: boolean) => void;
-  favorecido: NegociacaoFavorecido | null;
-  onSubmit: (payload: FavorecidoCreate) => void;
-  saving: boolean;
-  error: string | null;
-}) {
-  const [draft, setDraft] = useState<FavorecidoDraft>(() =>
-    toFavorecidoDraft(favorecido),
-  );
-
-  useEffect(() => {
-    if (open) setDraft(toFavorecidoDraft(favorecido));
-  }, [open, favorecido]);
-
-  function submit() {
-    onSubmit({
-      nome: draft.nome.trim(),
-      cpf_cnpj: draft.cpf_cnpj.trim() || null,
-      banco: draft.banco.trim() || null,
-      agencia: draft.agencia.trim() || null,
-      conta: draft.conta.trim() || null,
-      pix: draft.pix.trim() || null,
-    });
-  }
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {favorecido ? "Editar favorecido" : "Novo favorecido"}
-          </DialogTitle>
-        </DialogHeader>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="fav-nome">Nome</Label>
-            <Input
-              id="fav-nome"
-              value={draft.nome}
-              maxLength={FAVORECIDO_NOME_MAX}
-              onChange={(e) => setDraft((d) => ({ ...d, nome: e.target.value }))}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="fav-doc">CPF/CNPJ</Label>
-            <Input
-              id="fav-doc"
-              value={draft.cpf_cnpj}
-              maxLength={FAVORECIDO_CPF_CNPJ_MAX}
-              onChange={(e) =>
-                setDraft((d) => ({ ...d, cpf_cnpj: e.target.value }))
-              }
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="fav-banco">Banco</Label>
-              <Input
-                id="fav-banco"
-                value={draft.banco}
-                maxLength={FAVORECIDO_BANCO_MAX}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, banco: e.target.value }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="fav-agencia">Agência</Label>
-              <Input
-                id="fav-agencia"
-                value={draft.agencia}
-                maxLength={FAVORECIDO_AGENCIA_MAX}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, agencia: e.target.value }))
-                }
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="fav-conta">Conta</Label>
-              <Input
-                id="fav-conta"
-                value={draft.conta}
-                maxLength={FAVORECIDO_CONTA_MAX}
-                onChange={(e) =>
-                  setDraft((d) => ({ ...d, conta: e.target.value }))
-                }
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="fav-pix">PIX</Label>
-              <Input
-                id="fav-pix"
-                value={draft.pix}
-                maxLength={FAVORECIDO_PIX_MAX}
-                onChange={(e) => setDraft((d) => ({ ...d, pix: e.target.value }))}
-              />
-            </div>
-          </div>
-          {error && (
-            <div
-              className="rounded-md border border-destructive/30 bg-destructive/5 p-2.5 text-xs"
-              data-testid="negest-favorecido-erro"
-            >
-              <p className="flex items-center gap-1.5 text-destructive">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                {error}
-              </p>
-            </div>
-          )}
-        </div>
-        <DialogFooter>
-          <Button
-            onClick={submit}
-            disabled={!draft.nome.trim() || saving}
-            data-testid="negest-favorecido-salvar"
-          >
-            {saving ? "Salvando…" : "Salvar"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

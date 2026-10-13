@@ -53,8 +53,7 @@ const mockUpdateParcela = vi.fn();
 const mockDeleteParcela = vi.fn();
 const mockDividirSaldo = vi.fn();
 const mockReordenarParcelas = vi.fn();
-const mockCreateFavorecido = vi.fn();
-const mockUpdateFavorecido = vi.fn();
+const mockSelecionarFavorecido = vi.fn();
 const mockDeleteFavorecido = vi.fn();
 const mockCreateIntermediario = vi.fn();
 const mockUpdateIntermediario = vi.fn();
@@ -74,12 +73,8 @@ vi.mock("@/hooks/useNegociacaoEstruturada", async () => {
     useDeleteParcela: () => ({ mutate: mockDeleteParcela, isPending: false }),
     useDividirSaldo: () => ({ mutate: mockDividirSaldo, isPending: false }),
     useReordenarParcelas: () => ({ mutate: mockReordenarParcelas, isPending: false }),
-    useCreateFavorecido: () => ({
-      mutate: mockCreateFavorecido,
-      isPending: false,
-    }),
-    useUpdateFavorecido: () => ({
-      mutate: mockUpdateFavorecido,
+    useSelecionarFavorecidoRegistro: () => ({
+      mutate: mockSelecionarFavorecido,
       isPending: false,
     }),
     useDeleteFavorecido: () => ({
@@ -106,6 +101,26 @@ vi.mock("@/hooks/useNegociacaoEstruturada", async () => {
       mutate: mockAtualizarTermos,
       isPending: false,
     }),
+  };
+});
+
+// The Favorecidos subtab's registry combobox + the shared create dialog read
+// the org registry (`useFavorecidosRegistro`) — mocked like every other hook.
+const mockUseFavorecidosRegistro = vi.fn();
+const mockCreateFavorecidoRegistro = vi.fn();
+vi.mock("@/hooks/useFavorecidosRegistro", async () => {
+  const actual = await vi.importActual<
+    typeof import("@/hooks/useFavorecidosRegistro")
+  >("@/hooks/useFavorecidosRegistro");
+  return {
+    ...actual,
+    useFavorecidos: mockUseFavorecidosRegistro,
+    useFavorecido: () => ({ data: undefined, isPending: false, isError: false }),
+    useCreateFavorecidoRegistro: () => ({
+      mutate: mockCreateFavorecidoRegistro,
+      isPending: false,
+    }),
+    useUpdateFavorecidoRegistro: () => ({ mutate: vi.fn(), isPending: false }),
   };
 });
 
@@ -199,18 +214,33 @@ function aggregate(over: Record<string, unknown> = {}) {
   };
 }
 
-async function render() {
+// Each section lives in its own subtab (only the active one is mounted), so a
+// test names the subtab it exercises. Default = "parcelas", the first tab.
+async function render(
+  defaultSubtab:
+    | "parcelas"
+    | "favorecidos"
+    | "intermediarios"
+    | "posse"
+    | "termos" = "parcelas",
+) {
   const { render: rtlRender } = await import("@testing-library/react");
   const { default: NegociacaoEstruturadaPanel } = await import(
     "./NegociacaoEstruturadaPanel"
   );
-  return rtlRender(<NegociacaoEstruturadaPanel clienteId="cli-1" />);
+  return rtlRender(
+    <NegociacaoEstruturadaPanel
+      clienteId="cli-1"
+      defaultSubtab={defaultSubtab}
+    />,
+  );
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   mockUseNegociacaoEstruturada.mockReturnValue(query({ data: aggregate() }));
   mockUsePermutaAtivos.mockReturnValue(query({ data: [] }));
+  mockUseFavorecidosRegistro.mockReturnValue(query({ data: { items: [] } }));
   mockUseNegociacaoConflitos.mockReturnValue(query({ data: [] }));
 });
 
@@ -620,7 +650,7 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({ data: aggregate({ intermediarios: [UM] }) }),
     );
-    const { getByLabelText } = await render();
+    const { getByLabelText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByLabelText(/Editar ONE/));
@@ -638,7 +668,7 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     mockUpdateIntermediario.mockImplementation(
       (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
     );
-    const { getByLabelText, getByTestId } = await render();
+    const { getByLabelText, getByTestId } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByLabelText(/Editar ONE/));
@@ -657,7 +687,7 @@ describe("diálogos de registro — reset ao trocar de alvo (edição -> novo)",
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({ data: aggregate({ intermediarios: [UM, DOIS] }) }),
     );
-    const { getByLabelText } = await render();
+    const { getByLabelText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByLabelText(/Editar ONE/));
@@ -676,7 +706,7 @@ describe("Valor (%) do intermediário — a base é o valor do imóvel, não a c
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({ data: aggregate({ valor_negociado: "1450000.00" }) }),
     );
-    const { getByTestId, getByText } = await render();
+    const { getByTestId, getByText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-intermediario-novo"));
@@ -687,7 +717,7 @@ describe("Valor (%) do intermediário — a base é o valor do imóvel, não a c
     mockUseNegociacaoEstruturada.mockReturnValue(
       query({ data: aggregate({ valor_negociado: "1450000.00" }) }),
     );
-    const { getByTestId, getByText } = await render();
+    const { getByTestId, getByText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-intermediario-novo"));
@@ -703,7 +733,7 @@ describe("Valor (%) do intermediário — a base é o valor do imóvel, não a c
 
 describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parceiro sem CRECI", () => {
   it("por padrão é 'intermediario' e mostra o campo CRECI (não papel)", async () => {
-    const { getByTestId, getByLabelText, queryByLabelText } = await render();
+    const { getByTestId, getByLabelText, queryByLabelText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-intermediario-novo"));
@@ -713,7 +743,7 @@ describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parcei
 
   it("🔴 trocar para 'parceiro sem CRECI' esconde o CRECI e mostra o papel", async () => {
     const { getByTestId, getByText, getByLabelText, queryByLabelText } =
-      await render();
+      await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-intermediario-novo"));
@@ -724,7 +754,7 @@ describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parcei
   });
 
   it("o payload de criação de um parceiro sem CRECI envia natureza + papel, creci null", async () => {
-    const { getByTestId, getByText } = await render();
+    const { getByTestId, getByText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByTestId("negest-intermediario-novo"));
@@ -778,7 +808,7 @@ describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parcei
         }),
       }),
     );
-    const { getByLabelText, queryByLabelText } = await render();
+    const { getByLabelText, queryByLabelText } = await render("intermediarios");
     const { fireEvent } = await import("@testing-library/react");
 
     fireEvent.click(getByLabelText(/Editar SBCM/));
@@ -786,38 +816,6 @@ describe("[sw-comissao-parceiro-sem-creci] natureza do intermediário — parcei
       "indicação",
     );
     expect(queryByLabelText("CRECI")).toBeNull();
-  });
-});
-
-describe("diálogo de favorecido — reset ao trocar de alvo", () => {
-  const FAV_UM = {
-    id: "fav-one",
-    nome: "ONE CONSULTORIA IMOBILIARIA LTDA",
-    cpf_cnpj: "11222333000181",
-    banco: "Banco Exemplo",
-    agencia: "0001",
-    conta: "12345-6",
-    pix: "one@exemplo.test",
-  };
-
-  it("🔴 abrir 'Novo favorecido' logo após editar UM começa vazio", async () => {
-    mockUseNegociacaoEstruturada.mockReturnValue(
-      query({ data: aggregate({ favorecidos: [FAV_UM] }) }),
-    );
-    mockUpdateFavorecido.mockImplementation(
-      (_vars: unknown, opts?: { onSuccess?: () => void }) => opts?.onSuccess?.(),
-    );
-    const { getByLabelText, getByTestId } = await render();
-    const { fireEvent } = await import("@testing-library/react");
-
-    fireEvent.click(getByLabelText(/Editar ONE/));
-    expect((document.getElementById("fav-nome") as HTMLInputElement).value).toBe(FAV_UM.nome);
-    fireEvent.click(getByTestId("negest-favorecido-salvar"));
-    expect(mockUpdateFavorecido).toHaveBeenCalledTimes(1);
-
-    fireEvent.click(getByTestId("negest-favorecido-novo"));
-    expect((document.getElementById("fav-nome") as HTMLInputElement).value).toBe("");
-    expect((document.getElementById("fav-pix") as HTMLInputElement).value).toBe("");
   });
 });
 
@@ -991,7 +989,7 @@ describe("favorecido — proveniência (H5)", () => {
         }),
       }),
     );
-    const { getByTestId } = await render();
+    const { getByTestId } = await render("favorecidos");
     expect(getByTestId("favorecido-origem-f1")).toBeTruthy();
   });
 });
@@ -1162,5 +1160,247 @@ describe("reordenar parcelas", () => {
     fireEvent.click(getByTestId("parcela-p-int-descer"));
 
     expect(toast.error).toHaveBeenCalledWith("a nova ordem deve listar exatamente as parcelas atuais");
+  });
+});
+
+describe("subtabs — uma seção por aba, sem rolagem entre seções", () => {
+  const SECOES = {
+    parcelas: "negest-parcelas",
+    favorecidos: "negest-favorecidos",
+    intermediarios: "negest-intermediarios",
+    posse: "negest-posse",
+  } as const;
+
+  async function clicarAba(key: string) {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen } = await import("@testing-library/react");
+    await userEvent.setup().click(screen.getByTestId(`negest-subtab-${key}`));
+  }
+
+  it("abre na aba Parcelas e monta SÓ a seção ativa", async () => {
+    const { queryByTestId, getByTestId } = await render();
+    expect(getByTestId("negest-subtabs")).toBeTruthy();
+    expect(getByTestId("negest-subtab-parcelas").getAttribute("data-state")).toBe("active");
+    expect(queryByTestId(SECOES.parcelas)).toBeTruthy();
+    expect(queryByTestId(SECOES.favorecidos)).toBeNull();
+    expect(queryByTestId(SECOES.intermediarios)).toBeNull();
+    expect(queryByTestId(SECOES.posse)).toBeNull();
+  });
+
+  it("trocar de aba mostra a outra seção e esconde a anterior", async () => {
+    const { queryByTestId } = await render();
+    await clicarAba("favorecidos");
+    expect(queryByTestId(SECOES.favorecidos)).toBeTruthy();
+    expect(queryByTestId(SECOES.parcelas)).toBeNull();
+    await clicarAba("posse");
+    expect(queryByTestId(SECOES.posse)).toBeTruthy();
+    expect(queryByTestId(SECOES.favorecidos)).toBeNull();
+  });
+
+  it("🔴 a aba escolhida sobrevive a um refetch e a um re-render", async () => {
+    const { queryByTestId, rerender } = await render();
+    await clicarAba("intermediarios");
+    expect(queryByTestId(SECOES.intermediarios)).toBeTruthy();
+
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({ data: aggregate({ valor_negociado: "900000.00" }), isFetching: true }),
+    );
+    const { default: Panel } = await import("./NegociacaoEstruturadaPanel");
+    rerender(<Panel clienteId="cli-1" />);
+
+    expect(queryByTestId(SECOES.intermediarios)).toBeTruthy();
+    expect(queryByTestId(SECOES.parcelas)).toBeNull();
+  });
+
+  it("os rótulos das abas trazem a contagem", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          favorecidos: [
+            {
+              id: "f",
+              nome: "X",
+              cpf_cnpj: null,
+              banco: null,
+              agencia: null,
+              conta: null,
+              pix: null,
+              origem: null,
+              documento_id: null,
+              confirmado_em: null,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    const { getByTestId } = await render();
+    expect(getByTestId("negest-subtab-favorecidos").textContent).toContain("(1)");
+    expect(getByTestId("negest-subtab-intermediarios").textContent).toContain("(0)");
+  });
+});
+
+describe("aba Favorecidos — seleção do cadastro (sem digitar à mão)", () => {
+  const REG = [
+    {
+      id: "reg-1",
+      nome: "Maria da Silva",
+      tipo_pessoa: "PF",
+      cpf_cnpj_mascarado: "***.456.789-**",
+      banco: "Itaú",
+      pix_tipo: "cpf",
+      pix_mascarado: "***.456.789-**",
+      ativo: true,
+    },
+    {
+      id: "reg-2",
+      nome: "Construtora Alfa Ltda",
+      tipo_pessoa: "PJ",
+      cpf_cnpj_mascarado: "**.***.***/0001-**",
+      banco: "Bradesco",
+      pix_tipo: null,
+      pix_mascarado: null,
+      ativo: true,
+    },
+  ];
+
+  beforeEach(() => {
+    mockUseFavorecidosRegistro.mockReturnValue(query({ data: { items: REG } }));
+  });
+
+  it("não há campos de digitação livre de dados bancários na aba", async () => {
+    await render("favorecidos");
+    expect(document.getElementById("fav-nome")).toBeNull();
+    expect(document.getElementById("fav-doc")).toBeNull();
+    expect(document.getElementById("fav-pix")).toBeNull();
+  });
+
+  it("🔴 escolhe do cadastro e envia favorecido_id (+ intermediario_id) para a seleção", async () => {
+    mockUseNegociacaoEstruturada.mockReturnValue(
+      query({
+        data: aggregate({
+          intermediarios: [
+            {
+              id: "int-1",
+              nome: "Corretor Beta",
+              creci: null,
+              tipo: "percentual",
+              valor: "5",
+              corretor_id: null,
+              favorecido_id: null,
+              created_at: null,
+              updated_at: null,
+            },
+          ],
+        }),
+      }),
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen, fireEvent } = await import("@testing-library/react");
+    await render("favorecidos");
+    const user = userEvent.setup();
+
+    expect(
+      (screen.getByTestId("negest-favorecido-adicionar") as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await user.click(screen.getByTestId("favorecido-combobox"));
+    // masked document only in the options
+    expect(screen.getByTestId("favorecido-opcao-reg-1").textContent).toContain("***.456.789-**");
+    await user.click(screen.getByTestId("favorecido-opcao-reg-1"));
+    expect(screen.getByTestId("favorecido-combobox").textContent).toContain("Maria da Silva");
+
+    // intermediário link (optional) — the Select mock renders items inline
+    fireEvent.click(screen.getByText("Corretor Beta"));
+    await user.click(screen.getByTestId("negest-favorecido-adicionar"));
+
+    expect(mockSelecionarFavorecido).toHaveBeenCalledTimes(1);
+    expect(mockSelecionarFavorecido.mock.calls[0][0]).toEqual({
+      atendimentoId: "at-1",
+      favorecidoId: "reg-1",
+      intermediarioId: "int-1",
+    });
+  });
+
+  it("a busca filtra por nome, no cliente", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen } = await import("@testing-library/react");
+    await render("favorecidos");
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("favorecido-combobox"));
+    await user.type(screen.getByTestId("favorecido-combobox-busca"), "alfa");
+    expect(screen.queryByTestId("favorecido-opcao-reg-1")).toBeNull();
+    expect(screen.getByTestId("favorecido-opcao-reg-2")).toBeTruthy();
+    await user.clear(screen.getByTestId("favorecido-combobox-busca"));
+    await user.type(screen.getByTestId("favorecido-combobox-busca"), "zzz");
+    expect(screen.getByTestId("favorecido-combobox-vazio")).toBeTruthy();
+  });
+
+  it("🔴 'Novo favorecido' abre o diálogo de cadastro e seleciona o resultado", async () => {
+    mockCreateFavorecidoRegistro.mockImplementation(
+      (_p: unknown, opts?: { onSuccess?: (f: unknown) => void }) =>
+        opts?.onSuccess?.({ ...REG[0], id: "reg-novo", nome: "Novo Pagador" }),
+    );
+    // the new record is in the (refetched) registry list
+    mockUseFavorecidosRegistro.mockReturnValue(
+      query({
+        data: { items: [...REG, { ...REG[0], id: "reg-novo", nome: "Novo Pagador" }] },
+      }),
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen, fireEvent } = await import("@testing-library/react");
+    await render("favorecidos");
+    const user = userEvent.setup();
+
+    await user.click(screen.getByTestId("favorecido-combobox"));
+    await user.click(screen.getByTestId("favorecido-combobox-novo"));
+    expect(screen.getByTestId("favorecido-dialog")).toBeTruthy();
+
+    fireEvent.change(document.getElementById("favreg-nome") as HTMLInputElement, {
+      target: { value: "Novo Pagador" },
+    });
+    await user.click(screen.getByTestId("favorecido-dialog-salvar"));
+
+    expect(mockCreateFavorecidoRegistro).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("favorecido-combobox").textContent).toContain("Novo Pagador");
+  });
+
+  it("registro vazio: avisa e oferece o atalho", async () => {
+    mockUseFavorecidosRegistro.mockReturnValue(query({ data: { items: [] } }));
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen } = await import("@testing-library/react");
+    await render("favorecidos");
+    await userEvent.setup().click(screen.getByTestId("favorecido-combobox"));
+    expect(screen.getByTestId("favorecido-combobox-vazio").textContent).toContain(
+      "Nenhum favorecido cadastrado",
+    );
+    expect(screen.getByTestId("favorecido-combobox-novo")).toBeTruthy();
+  });
+
+  it("estado de erro do cadastro tem retry", async () => {
+    const refetch = vi.fn();
+    mockUseFavorecidosRegistro.mockReturnValue(
+      query({ data: undefined, isError: true, refetch }),
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen } = await import("@testing-library/react");
+    await render("favorecidos");
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("favorecido-combobox"));
+    expect(screen.getByTestId("favorecido-combobox-erro")).toBeTruthy();
+    await user.click(screen.getByText("Tentar novamente"));
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("esqueleto só antes do primeiro carregamento (isPending && !data)", async () => {
+    mockUseFavorecidosRegistro.mockReturnValue(
+      query({ data: undefined, isPending: true, isFetching: true }),
+    );
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const { screen } = await import("@testing-library/react");
+    await render("favorecidos");
+    await userEvent.setup().click(screen.getByTestId("favorecido-combobox"));
+    expect(screen.getByTestId("favorecido-combobox-skeleton")).toBeTruthy();
   });
 });

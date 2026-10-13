@@ -139,6 +139,7 @@ const AgentesFinanceiros = lazyWithReload(
   () => import("@/pages/AgentesFinanceiros"),
 );
 const Testemunhas = lazyWithReload(() => import("@/pages/Testemunhas"));
+const Favorecidos = lazyWithReload(() => import("@/pages/Favorecidos"));
 const Pesquisa = lazyWithReload(() => import("@/pages/Pesquisa"));
 const ExtrairPesquisa = lazyWithReload(() => import("@/pages/ExtrairPesquisa"));
 const CerebroLista = lazyWithReload(() => import("@/pages/cerebro/CerebroLista"));
@@ -373,6 +374,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon, route: "configuracoes" },
       { name: "Imobiliárias", href: "/imobiliarias", icon: Building2, route: "imobiliarias" },
       { name: "Testemunhas", href: "/testemunhas", icon: UserRound, route: "testemunhas" },
+      { name: "Favorecidos", href: "/favorecidos", icon: Landmark, route: "favorecidos" },
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Custos", href: "/custos", icon: Wallet, route: "custos" },
     ],
@@ -575,6 +577,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Configurações", href: "/configuracoes", icon: SettingsIcon },
       { name: "Imobiliárias", href: "/imobiliarias", icon: Building2 },
       { name: "Testemunhas", href: "/testemunhas", icon: UserRound },
+      { name: "Favorecidos", href: "/favorecidos", icon: Landmark },
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Custos", href: "/custos", icon: Wallet },
     ],
@@ -627,6 +630,7 @@ export default createProductApp({
     { path: "/matriculas", component: Matriculas },
     { path: "/agentes-financeiros", component: AgentesFinanceiros },
     { path: "/testemunhas", component: Testemunhas },
+    { path: "/favorecidos", component: Favorecidos },
     { path: "/imobiliarias", component: Imobiliarias },
     { path: "/edicao-fotos", component: EdicaoFotosLotes },
     { path: "/edicao-fotos/novo", component: EdicaoFotosNovoLote },
