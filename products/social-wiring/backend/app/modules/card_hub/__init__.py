@@ -104,6 +104,7 @@ def register() -> Any:
         negociacao_extracao_service,
     )
     from app.modules.card_hub import roteiros_feedback_scheduler
+    from app.modules.card_hub.favorecidos_router import router as favorecidos_router
     from app.modules.card_hub.roteiros_router import metricas_router, pendentes_router
     from app.modules.card_hub.router import defaults_router, proveniencia_router, router
 
@@ -123,7 +124,10 @@ def register() -> Any:
     roteiros_feedback_scheduler.configure()
 
     return ModuleRegistration(
-        routers=[router, defaults_router, proveniencia_router, pendentes_router, metricas_router],
+        routers=[
+            router, defaults_router, proveniencia_router, pendentes_router,
+            metricas_router, favorecidos_router,
+        ],
         standard_routers=(),
     )
 

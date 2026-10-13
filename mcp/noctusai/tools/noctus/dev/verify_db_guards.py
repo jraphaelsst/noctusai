@@ -4202,6 +4202,19 @@ _SW_250_ESTRUTURA_PROBE = _ai_tables_probe(
     rationale="social_wiring.cs_roteiros: an estrutura outside corestudio|metodo has no prompt and no UI label.",
 )
 
+# Migration 251 (org-level favorecidos registry): one ACTIVE payee per document
+# per org (alphanumeric-normalized). Two rows differing only in punctuation must
+# collide — a duplicate payee splits one person's bank account across entries.
+_SW_251_FAVORECIDOS_UNIQUE_PROBE = _ai_tables_probe(
+    "social-wiring", "social_wiring", "251_favorecidos_registry.sql",
+    "uq_sw_favorecidos_org_documento", "favorecidos",
+    "INSERT INTO social_wiring.favorecidos (org_id, nome, tipo_pessoa, cpf_cnpj, pix) "
+    "VALUES (v_org, 'noc-probe-a', 'PF', '529.982.247-25', 'x'), "
+    "(v_org, 'noc-probe-b', 'PF', '52998224725', 'y')",
+    "23505",
+    rationale="social_wiring.favorecidos: two active entries for the same CPF/CNPJ in one org must be refused.",
+)
+
 _ERP_CURRENT_ORG_ID_PROBE = GuardProbe(
     id="erp.current_org_id_excludes_customer",
     product="social-wiring",
@@ -6988,6 +7001,7 @@ DEFAULT_REGISTRY: tuple[GuardProbe, ...] = (
     _SW_CONTACTS_EMAIL_OPTIN_PROBE,
     _SW_CERTIDAO_RESULTADO_ORIGEM_PROBE,
     _SW_250_ESTRUTURA_PROBE,
+    _SW_251_FAVORECIDOS_UNIQUE_PROBE,
     _ERASE_TEST_ORG_AUDIT_LOGS_PROBE,
     _CUSTOMER_GETS_NO_ORG_PROBE,
     _INVITATION_TOKEN_PROBE,

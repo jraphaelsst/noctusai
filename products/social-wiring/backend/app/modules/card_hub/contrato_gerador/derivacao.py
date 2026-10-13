@@ -2215,6 +2215,10 @@ def _checar_favorecido(av: Avaliacao, fav, rot: str, cpfs_vendedores: set[str]) 
     whether it receives a whole parcela or one share of it (192)."""
     if not fav.conta and not fav.pix:
         av.falta(f"negociacao.favorecido.{fav.id}.conta", f"Conta ou chave PIX de {fav.nome}", "negociacao")
+    # A blank CPF/CNPJ otherwise passed readiness ("Pronto") and only the
+    # post-generation verifier refused it ("CPF/CNPJ nº ,").
+    if not any(c.isalnum() for c in (fav.cpf_cnpj or "")):
+        av.falta(f"negociacao.favorecido.{fav.id}.cpf_cnpj", f"CPF/CNPJ de {fav.nome}", "negociacao")
     if fav.conta and not (fav.banco and fav.agencia):
         av.falta(f"negociacao.favorecido.{fav.id}.banco", f"Banco e agência de {fav.nome}", "negociacao")
     if frases.so_digitos(fav.cpf_cnpj) not in cpfs_vendedores:

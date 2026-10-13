@@ -74,6 +74,8 @@ from app.services import table_reads
 
 TABLE_PARCELAS = "atendimento_negociacao_parcelas"
 TABLE_FAVORECIDOS = "atendimento_favorecidos"
+#: Migration 251 — the org-level registry a card row may reference.
+TABLE_REGISTRO_FAVORECIDOS = "favorecidos"
 TABLE_INTERMEDIARIOS = "atendimento_intermediarios"
 TABLE_TERMOS = "atendimento_negociacao_termos"
 TABLE_PARCELA_PERMUTA_ATIVOS = "atendimento_parcela_permuta_ativos"
@@ -246,6 +248,9 @@ def _favorecido_out(row: dict) -> dict:
         "agencia": row.get("agencia"),
         "conta": row.get("conta"),
         "pix": row.get("pix"),
+        #: Migration 251 — the registry entry this row references (NULL = typed
+        #: on the card). When set, the values above are the registry's.
+        "favorecido_id": row.get("favorecido_id"),
         # S2 contract §C.6/§H5 — NULL for every favorecido typed by hand
         # (unchanged behaviour); set when the Quadro Resumo's seller credit
         # account filled this row.
@@ -262,7 +267,36 @@ def _listar_favorecidos_rows(client: Any, org_id: UUID, atendimento_id: UUID) ->
         eq_filters={"atendimento_id": str(atendimento_id)},
     )
     rows.sort(key=lambda r: r["created_at"])
-    return rows
+    return _sobrepor_registro(client, org_id, rows)
+
+
+#: The payee columns a linked card row takes from the registry.
+_CAMPOS_DO_REGISTRO: tuple[str, ...] = ("nome", "cpf_cnpj", "banco", "agencia", "conta", "pix")
+
+
+def _sobrepor_registro(client: Any, org_id: UUID, rows: list[dict]) -> list[dict]:
+    """Migration 251 — REFERENCE semantics: a card row linked to the registry
+    reads the registry's CURRENT payee values (a corrected account reaches
+    every open card); an unlinked row, or one whose registry entry vanished,
+    keeps its own columns. A key present on the registry row wins even when
+    blank — a cleared registry field must not resurrect a stale card copy."""
+    ids = [str(r["favorecido_id"]) for r in rows if r.get("favorecido_id")]
+    if not ids:
+        return rows
+    registro = {
+        str(r["id"]): r
+        for r in table_reads.in_batched_rows(
+            client, TABLE_REGISTRO_FAVORECIDOS, org_id, "id", ids
+        )
+    }
+    out: list[dict] = []
+    for r in rows:
+        reg = registro.get(str(r.get("favorecido_id") or ""))
+        if reg is None:
+            out.append(r)
+        else:
+            out.append({**r, **{c: reg.get(c) for c in _CAMPOS_DO_REGISTRO}})
+    return out
 
 
 def _exigir_favorecido(
@@ -327,10 +361,16 @@ def atualizar_favorecido(
     provenance too.
     """
     atendimento_id = UUID(str(svc.resolve_atendimento_id(client, org_id, cliente_id)))
-    _exigir_favorecido(client, org_id, atendimento_id, favorecido_id)
+    atual = _exigir_favorecido(client, org_id, atendimento_id, favorecido_id)
     patch = _favorecido_canonico(
         {k: v for k, v in valores.items() if k in _FAVORECIDO_CAMPOS_EDITAVEIS}
     )
+    if atual.get("favorecido_id") and patch:
+        # Migration 251: a linked row READS the registry, so a card-level edit
+        # would be silently invisible — refuse and say where to edit instead.
+        raise ConflictError(
+            "este favorecido vem do cadastro da organização; edite-o em Favorecidos"
+        )
     now = _now()
     patch["updated_at"] = now
     patch["updated_por"] = str(usuario_id) if usuario_id else None
