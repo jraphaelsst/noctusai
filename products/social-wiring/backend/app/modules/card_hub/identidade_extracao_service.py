@@ -680,8 +680,20 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.data_casamento_confianca,
             fields.data_casamento_rotulo,
         ),
+        # A foreign national's CNH prints only "ESTRANGEIRO(A)" — a CATEGORY,
+        # not a nationality: the contract needs the gentílico ("italiana") the
+        # certidão / RNE / ficha names. Treated as NOT READ (neither the
+        # document row's `extracao_nacionalidade` nor the cliente): stored, it
+        # would fill the empty column and block the specific value, or open a
+        # false conflict against it. The foreigner status itself is not lost —
+        # the RNE/identidade_tipo carries it. 876 real-doc scorecard,
+        # 2026-10-13: Santa Maria Fracasso stored "estrangeiro" from her CNH.
         "nacionalidade": item(
-            fields.nacionalidade, fields.nacionalidade_confianca, fields.nacionalidade_rotulo
+            None
+            if fields.nacionalidade and nacionalidade_canonica(str(fields.nacionalidade)) == "estrangeiro"
+            else fields.nacionalidade,
+            fields.nacionalidade_confianca,
+            fields.nacionalidade_rotulo,
         ),
         "profissao": item(
             fields.profissao, fields.profissao_confianca, fields.profissao_rotulo
