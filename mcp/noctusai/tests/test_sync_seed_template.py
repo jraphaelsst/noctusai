@@ -293,4 +293,7 @@ def test_real_template_matches_seed_plus_declared_divergences():
     assert sst.check_seed_template_sync(Path(REPO_ROOT)) == []
     assert set(sst.load_divergences(Path(REPO_ROOT))) == {
         "backend/migrations/001_seed.sql", "backend/migrations/003_examples.sql",
+        # D31: template copies carry verified secdef-execute-ok markers.
+        "backend/migrations/005_status_pagina_dev_visibility.sql",
+        "backend/migrations/006_customer_role_isolation.sql",
     }
