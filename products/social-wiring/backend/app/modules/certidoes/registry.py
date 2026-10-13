@@ -199,6 +199,15 @@ MANUAL_TIPOS_CONFIG = [
         "ordem": 14,
         "aplicavel_a": ("cnpj",),
     },
+    # [Resolução Conjunta SFP/PGE nº 1/2026, DOE-SP 14/09/2026] From
+    # ~14/10/2026 SEFAZ-SP + PGE-SP issue ONE "Certidão Única de Débitos" in
+    # place of `cnd_fazenda_sp` + `divida_ativa_sp` (valid 90 days; 180 for
+    # the Cadastro Fiscal Positivo; número = "Código de controle"
+    # XXXX.XXXX.XXXX.XXXX). Manual-upload until an InfoSimples endpoint for
+    # it exists. The contract prints it as ONE line in place of the two
+    # legacy ones (`contrato_gerador.derivacao.tipos_exigidos`). NOT a
+    # `MATRIZ_LINHAS` row: the matriz's 5.1-5.13 are owner-fixed.
+    {"tipo": "certidao_unica_sp", "nome": "Certidão Única de Débitos (SP)", "ordem": 15},
 ]
 
 MANUAL_CONFIG_BY_TIPO: dict[str, dict] = {c["tipo"]: c for c in MANUAL_TIPOS_CONFIG}
