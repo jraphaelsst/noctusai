@@ -2736,7 +2736,52 @@ _ORG_MEMBER_ROLE_PROBE = _org_picker_probe(
   RAISE EXCEPTION 'NOC_PROBE:clean: the member is a viewer in the target and both memberships are intact';""",
 )
 
+_ORG_MEMBER_PROFILE_ORG_ACTIVE_PROBE = GuardProbe(
+    id="org_memberships.profile_org_stays_active",
+    product="core",
+    schema="public",
+    guard_name="org_memberships_profile_org_active",
+    kind="write_refusal",
+    migrations=_ORG_MEMBER_MIGRATIONS,
+    rationale=(
+        "Every reader that trusts noctus_users.org_id (the Python resolver's common path, products "
+        "without the picker) is revocation-safe only because ending the membership a profile points "
+        "at is refused unless the profile moves in the same transaction. Without it a removed member "
+        "keeps FastAPI access while RLS denies them."
+    ),
+    sql=_do_block("""
+DECLARE
+  v_user uuid;
+  v_org uuid;
+BEGIN
+  SELECT n.id, n.org_id INTO v_user, v_org
+    FROM public.noctus_users n
+    JOIN public.org_memberships m ON m.user_id = n.id AND m.org_id = n.org_id AND m.status = 'active'
+   LIMIT 1;
+  IF v_user IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: no profile with an active home membership to borrow';
+  END IF;
+  BEGIN
+    UPDATE public.org_memberships SET status = 'removed', ended_at = now()
+     WHERE user_id = v_user AND org_id = v_org;
+    -- the guard is a DEFERRED constraint trigger and this probe always rolls back: fire it now
+    SET CONSTRAINTS public.org_memberships_profile_org_active IMMEDIATE;
+    RAISE EXCEPTION 'NOC_PROBE:permitted: ending the membership a profile points at succeeded — the guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE 'org_memberships_profile_org_active:%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+"""),
+)
+
 _ORG_MEMBER_PROBES: tuple[GuardProbe, ...] = (
+    _ORG_MEMBER_PROFILE_ORG_ACTIVE_PROBE,
     _ORG_MEMBER_NOT_A_MEMBER_PROBE,
     _ORG_MEMBER_REMOVED_PROBE,
     _ORG_MEMBER_POSITIVE_PROBE,

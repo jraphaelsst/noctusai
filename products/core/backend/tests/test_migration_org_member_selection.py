@@ -134,3 +134,16 @@ class TestHelper:
 def test_the_file_parses_as_postgres():
     pglast = pytest.importorskip("pglast")
     assert len(pglast.parse_sql(SQL)) >= 4
+
+
+def test_profile_org_must_stay_an_active_membership():
+    """Revocation-safety for every reader that trusts noctus_users.org_id: ending the membership a
+    profile points at is refused at COMMIT unless the profile moves in the same transaction."""
+    assert "CREATE CONSTRAINT TRIGGER org_memberships_profile_org_active" in FLAT
+    assert "AFTER UPDATE OR DELETE ON public.org_memberships DEFERRABLE INITIALLY DEFERRED" in FLAT
+    assert "RAISE EXCEPTION 'org_memberships_profile_org_active:" in FLAT
+    fn = _fn(SQL, "org_memberships_profile_org_active")
+    assert "m.status = 'active'" in fn
+    assert "REVOKE EXECUTE ON FUNCTION public.org_memberships_profile_org_active() FROM PUBLIC, anon, authenticated" in FLAT
+    # the migration refuses to install over data that already breaks the invariant
+    assert "profile(s) point at an org without an ACTIVE membership" in FLAT

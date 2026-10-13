@@ -98,6 +98,7 @@ Answered 2026-10-13 (decision log) — kept for the record.
 - **2026-10-13 (T1/T3)**: 079 and 078 both on prod; T1 signal holds (every profile has its active home membership).
 - **2026-10-13 (T4)**: Legacy org absorbed by IDENTITY SWAP instead of a data move (see Retrospective): the legacy org became the company org (keeps agent, kit, logos, licenses; kit re-attached to the company marca); the signup org became the personal-brand org (gets the personal marca); real account owns both via memberships; placeholder account removed from the org and banned (reversible), not deleted. Phase 4's original COPY plan is superseded.
 - **2026-10-13**: Phase 2 starts: S2+S3 together in one slice — the backend resolver and `current_org_id_for` must agree on who may select an org, so they ship and are tested together.
+- **2026-10-13 (S2+S3 review)**: Accepted: a non-staff pin mismatch returns 409 (the SPA pins only the resolved org and handles 409 globally); picking an org on one product ends the user's live selections on other products (consequence of Q3 — the last-active org is one value). Refused: leaving the Python home path trusting a profile whose membership was ended. Closed at the root instead — a deferred constraint trigger makes "a profile's org is an ACTIVE membership" a DB invariant, so no reader needs an extra query and S4 cannot forget it.
 
 ## Retrospective (filled at first trigger fire)
 

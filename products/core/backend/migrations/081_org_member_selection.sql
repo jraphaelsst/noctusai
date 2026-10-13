@@ -211,3 +211,49 @@ COMMENT ON FUNCTION public.current_org_id_for(text) IS
     'x-noctus-acting-org that differs from the result DENIES; else the HOME rule (customers NULL, '
     'home must be an ACTIVE membership). Product policies opt in with '
     '(SELECT public.current_org_id_for(''<schema>'')).';
+
+-- 3. invariant: a profile's org is always an ACTIVE membership ------------------------------------
+-- Every reader that trusts noctus_users.org_id (the Python resolver's common path, every product
+-- without the picker, get_org_id) is only revocation-safe if ending the membership that a profile
+-- points at is impossible unless the profile moves (or is deleted) in the SAME transaction. A
+-- deferred constraint trigger states that once, here, instead of an extra membership read on every
+-- request in every reader. Refuses -- never repairs silently.
+CREATE OR REPLACE FUNCTION public.org_memberships_profile_org_active()
+RETURNS trigger
+  LANGUAGE plpgsql
+  SECURITY DEFINER
+  SET search_path = public
+AS $f$
+BEGIN
+  IF EXISTS (SELECT 1 FROM public.noctus_users n
+              WHERE n.id = OLD.user_id AND n.org_id = OLD.org_id)
+     AND NOT EXISTS (SELECT 1 FROM public.org_memberships m
+                      WHERE m.user_id = OLD.user_id AND m.org_id = OLD.org_id
+                        AND m.status = 'active') THEN
+    RAISE EXCEPTION 'org_memberships_profile_org_active: user % still has org % as their profile org; move or remove the profile in the same transaction before ending this membership',
+      OLD.user_id, OLD.org_id
+      USING ERRCODE = '23514';
+  END IF;
+  RETURN NULL;
+END;
+$f$;
+
+REVOKE EXECUTE ON FUNCTION public.org_memberships_profile_org_active() FROM PUBLIC, anon, authenticated;
+
+DROP TRIGGER IF EXISTS org_memberships_profile_org_active ON public.org_memberships;
+CREATE CONSTRAINT TRIGGER org_memberships_profile_org_active
+    AFTER UPDATE OR DELETE ON public.org_memberships
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION public.org_memberships_profile_org_active();
+
+-- the invariant must already hold, or this migration is wrong about the data
+DO $$
+DECLARE v_bad integer;
+BEGIN
+  SELECT count(*) INTO v_bad FROM public.noctus_users n
+   WHERE NOT EXISTS (SELECT 1 FROM public.org_memberships m
+                      WHERE m.user_id = n.id AND m.org_id = n.org_id AND m.status = 'active');
+  IF v_bad > 0 THEN
+    RAISE EXCEPTION 'org_member_selection: % profile(s) point at an org without an ACTIVE membership', v_bad;
+  END IF;
+END $$;

@@ -235,9 +235,13 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
   - **Audit:** the selection row is the record of a switch (user, target, previous home, login,
     `started_at`/`ended_by`); a member is never "acting" (`EffectiveOrg.acting` is staff-only), so
     their writes carry the plain actor with `org_id` = the selected org — no `platform_support` tag.
-  - **Known gap → S4:** a user removed from the org their profile still names is refused by the SQL
-    helper (NULL) but the Python home path (no selection, licensed home) does not re-read
-    memberships — remove-member (S4) must also move/clear the profile mirror.
+  - **Invariant, enforced by the DB:** a profile's org is always an ACTIVE membership. Ending
+    (or deleting) the membership a profile points at is refused at COMMIT
+    (`org_memberships_profile_org_active`, a deferred constraint trigger, core
+    `org_member_selection`) unless the profile moves or is deleted in the same transaction. That
+    is why the Python home path and every non-picker reader may trust `noctus_users.org_id`
+    without re-reading memberships: revocation-safety is one DB rule, not a query in each reader.
+    S4's remove-member must therefore move or delete the profile in the same transaction.
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads
