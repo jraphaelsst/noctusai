@@ -3,8 +3,9 @@
  * (owner decision 2026-09-30, migration 177).
  *
  * Pins every state: `nao_exigida` renders nothing, `aguardando` lists each
- * machine-derived field as "extraído automaticamente — revisar no documento"
- * (never its value) with the single "Aprovar revisão jurídica" (admin only,
+ * fact with its VALUE (masked until revealed), source, reason and measured
+ * precision — derived/corroborated ones collapsed apart, uncounted — with
+ * the single "Aprovar revisão jurídica" (admin only,
  * behind a confirmation), `aprovada` says who/when; and the in-flight
  * approval disables the button.
  */
@@ -79,17 +80,63 @@ describe("RevisaoJuridicaSection", () => {
     expect(segundo.screen.queryByTestId("contrato-revisao-aguardando-c1")).toBeNull();
   });
 
-  it("🔴 aguardando lists each machine-derived field with its source — to be checked in the document", async () => {
+  it("🔴 a row recorded before values existed still lists the field, its person and source", async () => {
     const { screen } = await render();
     const bloco = screen.getByTestId("contrato-revisao-aguardando-c1");
     expect(bloco.textContent).toContain("Aguardando revisão jurídica");
+    expect(bloco.textContent).toContain("Fulano de Tal (proprietario)");
     const linha = screen.getByTestId("contrato-revisao-campo-cliente:p1:cpf");
     expect(linha.textContent).toContain("CPF");
-    expect(linha.textContent).toContain("Fulano de Tal (proprietario)");
     expect(linha.textContent).toContain("extraído automaticamente");
-    expect(linha.textContent).toContain("RG");
-    expect(linha.textContent).toContain("rg-fulano.pdf");
-    expect(linha.textContent).toContain("revisar no documento");
+    expect(linha.textContent).toContain("fonte: RG · rg-fulano.pdf");
+    expect(linha.textContent).toContain("confira no PDF");
+    expect(linha.textContent).toContain("sem medição");
+    // The document's own confidence is never shown (owner 2026-10-13).
+    expect(linha.textContent).not.toContain("Confiança");
+  });
+
+  it("🔴 shows the VALUE, masked until revealed, with the measured precision and the reason", async () => {
+    const campo = {
+      ...CAMPO, valor: "123.456.789-09", valor_mascarado: "***.456.789-**", valor_confere: true,
+      secao: "extraido" as const, fonte_tipo: "CNH", precisao: "precisão medida 39% (18 contratos)",
+      motivo: "Lido automaticamente do documento e ainda não confirmado por ninguém.",
+    };
+    const { screen, fireEvent } = await render({ versao: versao(aguardando([campo])) });
+    const valor = screen.getByTestId("contrato-revisao-valor-cliente:p1:cpf");
+    expect(valor.textContent).toBe("***.456.789-**");
+    fireEvent.click(screen.getByTestId("contrato-revisao-revelar-cliente:p1:cpf"));
+    expect(valor.textContent).toBe("123.456.789-09");
+    const linha = screen.getByTestId("contrato-revisao-campo-cliente:p1:cpf").textContent ?? "";
+    expect(linha).toContain("fonte: CNH · rg-fulano.pdf");
+    expect(linha).toContain("precisão medida 39% (18 contratos)");
+    expect(linha).toContain("ainda não confirmado");
+    expect(screen.queryByTestId("contrato-revisao-mudou-cliente:p1:cpf")).toBeNull();
+  });
+
+  it("🔴 derived and corroborated values are collapsed apart and never counted as extracted", async () => {
+    const derivado = { ...CAMPO, chave: "cliente:p2:endereco", campo: "endereco", secao: "derivado" as const,
+      valor: "Rua das Amostras, 10", motivo: "Copiado do endereço do cônjuge (mesmo domicílio)" };
+    const corroborado = { ...CAMPO, chave: "cliente:p1:nome_oficial", campo: "nome_oficial",
+      secao: "corroborado" as const, valor: "Fulano de Tal", n_documentos: 2 };
+    const { screen } = await render({ versao: versao(aguardando([CAMPO, derivado, corroborado])) });
+    const texto = screen.getByTestId("contrato-revisao-texto-c1").textContent ?? "";
+    expect(texto).toContain("um dado extraído automaticamente");
+    const derivados = screen.getByTestId("contrato-revisao-derivados-c1");
+    expect(derivados.tagName).toBe("DETAILS");
+    expect(derivados.textContent).toContain("Derivados (conferir) (1)");
+    expect(derivados.textContent).toContain("Copiado do endereço do cônjuge");
+    expect(screen.getByTestId("contrato-revisao-corroborados-c1").textContent).toContain(
+      "Confirmado por documentos (1)",
+    );
+    expect(screen.getByTestId("contrato-revisao-campos-c1").textContent).not.toContain("Rua das Amostras");
+  });
+
+  it("warns when the value changed after the version was generated", async () => {
+    const campo = { ...CAMPO, valor: "529.982.247-25", valor_confere: false };
+    const { screen } = await render({ versao: versao(aguardando([campo])) });
+    expect(screen.getByTestId("contrato-revisao-mudou-cliente:p1:cpf").textContent).toContain(
+      "gere uma nova versão",
+    );
   });
 
   it("🔴 counts the extracted values only when there are some", async () => {
