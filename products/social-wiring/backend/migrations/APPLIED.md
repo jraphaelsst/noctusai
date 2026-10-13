@@ -586,3 +586,7 @@ Authored 2026-10-13 (owner decision: WhatsApp leaves "Conexões" and becomes the
 ## 253 — cs_roteiros.estrutura value rename (corestudio→cta_inicio, metodo→cta_final) — NOT APPLIED
 
 Authored 2026-10-13 (owner decision "no leftovers from Core"). Drops `cs_roteiros_estrutura_check`, rewrites existing rows, sets the default `'cta_inicio'`, re-adds the same-named CHECK (`cta_inicio|cta_final`). Idempotent. Requires 250. Apply BEFORE deploying the image that reads/writes the new values (create/reprocessar insert `cta_inicio`/`cta_final`); until then an old-values DB rejects them. Then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`. (Renumbered from 252 at integrate: 252 was taken by `status_pagina_lais`.)
+
+## 254 — extracao_leitura_resultados (model-routing learning loop) — NOT APPLIED
+
+Authored 2026-10-13 (owner direction: route each document/field to the measured best model, conciliate only doubtful reads, learn from outcomes). New table, one row per critical field of a routed identity read: model, trust-gate verdict + reasons, fallback ran, agreement, outcome, cost, and the later human resolution. Fingerprints only (24-bit), never values. RLS mirrors 138 as converted by 211 (own-org SELECT via current_org_id_for('social_wiring'), service_role ALL). Additive + idempotent; the writer (`card_hub.leitura_resultados`) logs and continues while the table is absent, so apply order vs image is free — apply BEFORE relying on the recalibration export.

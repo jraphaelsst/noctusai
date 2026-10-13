@@ -2223,6 +2223,16 @@ def update_cliente(
     if not rows:
         raise ClienteNotFound(f"cliente {cliente_id} not found for org {org_id}")
     resultado = rows[0]
+    # Model-routing learning loop (migration 254): a value a human typed
+    # settles every still-open machine reading of that field.
+    from app.modules.card_hub import leitura_resultados
+
+    for campo in _CAMPOS_COM_ORIGEM:
+        if payload.get(campo) and campo in leitura_resultados.CAMPOS_DA_COLUNA:
+            leitura_resultados.registrar_resolucao(
+                client, org_id, cliente_id, campo,
+                resolucao="edicao_manual", valor_final=payload[campo],
+            )
     if chave_nova:
         _vincular_chats_best_effort(client, org_id, cliente_id, chave_nova)
 
