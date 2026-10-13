@@ -57,15 +57,22 @@ class _Ladder:
     assertion the brief asks for ("no trigger on a complete clean read: no
     second call")."""
 
-    def __init__(self, texto: str, source: TextSource = TextSource.OCR, erro=None):
-        self.texto = texto
+    def __init__(self, texto, source: TextSource = TextSource.OCR, erro=None):
+        # `texto` may be a LIST: successive calls return successive reads (the
+        # last one repeats) — the extractor takes up to three transcriptions.
+        self.textos = [texto] if isinstance(texto, str) else list(texto)
         self.source = source
         self.erro = erro
         self.chamadas: list[bool] = []
 
+    @property
+    def texto(self) -> str:
+        return self.textos[0]
+
     async def to_text(self, content, mimetype=None, filename=None, *, pular_camada_texto=False):
+        i = min(len(self.chamadas), len(self.textos) - 1)
         self.chamadas.append(pular_camada_texto)
-        return (self.texto, self.source, self.erro)
+        return (self.textos[i], self.source, self.erro)
 
 
 class TestAlwaysEscalatesForCriticalFields:
@@ -90,16 +97,32 @@ class TestAlwaysEscalatesForCriticalFields:
     @pytest.mark.asyncio
     async def test_two_reads_that_disagree_store_nothing_and_say_so(self):
         outra = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO")
+        terceira = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRE")
         out = await LadderIdentityExtractor(
-            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True, escalation_ladder=_Ladder(outra),
+            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True,
+            escalation_ladder=_Ladder([outra, terceira]),
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
         assert out.nome is None
         assert out.cpf == _CPF_VALIDO and out.rg == "52.179.965-X"  # the rest agree
         assert AVISO_DIVERGENCIA in out.aviso.split("+")
         assert {v for c, v in out.leituras_alternativas if c == "nome"} == {
-            "JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO",
+            "JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO", "JOAO CARLOS PEREIRE",
         }
+
+    @pytest.mark.asyncio
+    async def test_an_unsettled_field_gets_one_more_read_and_two_of_three_agree(self):
+        """The cheap read is often too weak to corroborate anything: a field
+        left unsettled after cheap+escalated gets ONE more escalated read —
+        two escalated reads agreeing settles it. Bounded at three reads."""
+        outra = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO")
+        escalada = _Ladder([outra, _RG_COMPLETO])
+        out = await LadderIdentityExtractor(
+            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True, escalation_ladder=escalada,
+        ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
+        assert len(escalada.chamadas) == 2
+        assert out.nome == "JOAO CARLOS PEREIRA"
+        assert ("nome", "JOAO CARLOS PEREIRO") in out.leituras_alternativas
 
     @pytest.mark.asyncio
     async def test_a_failed_anchor_read_never_counts_toward_agreement(self):
@@ -229,21 +252,25 @@ class TestAgreementAndDisagreement:
             "NOME JOAO CARLOS PEREIRA\n"
             f"CPF {_CPF_VALIDO}\n"
         )
-        escalada = _Ladder(
+        escalada = _Ladder([
             "REGISTRO GERAL 52.179.965-X\n"
             "NOME JOAO CARLOS PEREIRA\n"
-            f"CPF {outro_cpf_valido}\n"
-        )
+            f"CPF {outro_cpf_valido}\n",
+            "NOME JOAO CARLOS PEREIRA\n"
+            "CPF 529.982.247-25\n",
+        ])
         out = await LadderIdentityExtractor(
             ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
-        assert len(escalada.chamadas) == 1
+        assert len(escalada.chamadas) == 2  # re-read + one more for the unsettled cpf
         # the rg is only in ONE read: not corroborated -> no value
         assert out.rg is None
-        # both cpf readings verify and they disagree: NO value, both attached
+        # all three cpf readings verify and they disagree: NO value, both attached
         assert out.cpf is None
-        assert {v for c, v in out.leituras_alternativas if c == "cpf"} == {_CPF_VALIDO, outro_cpf_valido}
+        assert {v for c, v in out.leituras_alternativas if c == "cpf"} == {
+            _CPF_VALIDO, outro_cpf_valido, "529.982.247-25",
+        }
         assert out.nome == "JOAO CARLOS PEREIRA"
         assert AVISO_RELEITURA in out.aviso.split("+")
         assert AVISO_DIVERGENCIA in out.aviso.split("+")

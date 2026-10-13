@@ -35,13 +35,15 @@ ALTA = ExtractionConfidence.ALTA
 
 
 class _Ladder:
-    def __init__(self, texto: str) -> None:
-        self.texto = texto
+    def __init__(self, texto) -> None:
+        # a list = successive reads (the last repeats); up to 3 are taken
+        self.textos = [texto] if isinstance(texto, str) else list(texto)
         self.chamadas = 0
 
     async def to_text(self, content, mimetype=None, filename=None, *, pular_camada_texto=False):
+        i = min(self.chamadas, len(self.textos) - 1)
         self.chamadas += 1
-        return (self.texto, TextSource.OCR, None)
+        return (self.textos[i], TextSource.OCR, None)
 
 
 # ─── R1 ─────────────────────────────────────────────────────────────────────
@@ -178,14 +180,19 @@ class TestR3AverbacaoVence:
 
     @pytest.mark.asyncio
     async def test_end_to_end_disagreement_leaves_estado_civil_for_review(self) -> None:
+        obito = CERTIDAO_SEM_AVERBACAO_LIDA.replace(
+            "(ilegível)", "AVERBACAO: OBITO DO CONJUGE VARAO, REGISTRADO NO LIVRO C-12."
+        )
         out = await LadderIdentityExtractor(
             ladder=_Ladder(CERTIDAO_SEM_AVERBACAO_LIDA),
             escalar_releitura=True,
-            escalation_ladder=_Ladder(CERTIDAO_COM_DIVORCIO),
+            escalation_ladder=_Ladder([CERTIDAO_COM_DIVORCIO, obito]),
         ).extract(b"x", mimetype="application/pdf", tipo_documento="certidao_casamento")
+        # three reads, three different estados civis: no two agree, no winner
         assert out.estado_civil is None
         assert ("estado_civil", "casado") in out.leituras_alternativas
         assert ("estado_civil", "divorciado") in out.leituras_alternativas
+        assert ("estado_civil", "viuvo") in out.leituras_alternativas
         assert out.regime_bens == "comunhao_universal"
         assert out.genero is None
         assert all(c.genero is None or c.genero_derivado for c in out.conjuges)

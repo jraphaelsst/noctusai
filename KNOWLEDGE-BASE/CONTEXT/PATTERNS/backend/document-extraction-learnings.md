@@ -64,6 +64,18 @@ Extraction is its own process, measured separately from contract generation (own
   human review, never pick** — it turned a hallucinated CNH name into a blank instead of a wrong
   value. A group field travels with its anchor *only when the reads disagree on it too*: an
   issuer both reads agree on survives a divergent RG number.
+- **🔴 Superseded 2026-10-13 — the AGREEMENT GATE (owner decision: "ship only with an agreement
+  rule").** Winner-picking heuristics between disagreeing reads (compromised-loses, averbação-
+  wins, wrong-shape-RG-loses, implausible-name-loses) were whack-a-mole: the same certidão gave
+  two divorce averbações, estado_civil came out divorciado/casado/viúvo across runs. Critical
+  fields (nome, cpf, rg+órgão, rne, data_nascimento, estado_civil, regime_bens, data_casamento,
+  spouses' names, certidão matrícula) are now emitted ONLY when two valid reads agree; the re-read
+  ALWAYS runs for OCR documents carrying them. Disagreement ⇒ NO value, both readings in
+  `leituras_alternativas`/`divergencias`, aviso `divergencia_leituras`; social-wiring opens a
+  pending `cliente_campo_conflitos` review with both. A CPF/matrícula whose DV verifies may stand
+  alone; a transcription containing a CPF/32-digit matrícula with a failing DV is `ancora_falhou`
+  (never counts, like a failed/compromised read — a third read is taken). Real-corpus gate = 0
+  WRONG over 3 consecutive harness runs; a field left empty WITH a divergence aviso is REVIEW.
 - **Escalation can't fix attribution.** Comprovante address scores didn't move because the reader
   never extracts the bill HOLDER, so the address can't be attached to the right party — a parser
   gap, not a model gap (see §4).
