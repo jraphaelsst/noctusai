@@ -209,6 +209,14 @@ _INSTITUTIONAL_TOKENS = frozenset(
         # letters-only words) and sit inside a certidão's holder block.
         "CPF", "NUMERO", "MATRICULA",
         "NACIONALIDADE", "PROFISSAO", "OCUPACAO", "CASAMENTO",
+        # A CNH/CIN vision transcription's own field labels and footer prose
+        # read as the holder's name (measured on real CNHs, 2026-10-13:
+        # "DATAS DE NASCIMENTO", "SE VOCE PRECISA DESTA INFORMACAO"). None of
+        # these is a Brazilian surname.
+        "DATA", "DATAS", "SOBRENOME", "CATEGORIA", "CATEGORIAS", "PERMISSAO",
+        "CONDUTOR", "DETRAN", "SENATRAN", "DENATRAN", "CNH", "CODIGO",
+        "INFORMACAO", "INFORMACOES", "VOCE", "PRECISA", "DESTA", "DESTE",
+        "DRIVER", "LICENSE", "PERMISO", "CONDUCCION", "LOCAL", "ACESSE",
     }
 )
 

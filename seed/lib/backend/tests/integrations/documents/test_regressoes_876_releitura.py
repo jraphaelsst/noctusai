@@ -186,6 +186,34 @@ class TestR4RgTruncadoReleitura:
         assert ("rg", "1656536") in out.leituras_alternativas
 
 
+#: R5 (measured on a later harness run): a CNH first read with no CPF/RG/
+#: birthdate took a label / footer line as the holder's name, and the
+#: "keep the first reading" rule kept it over the re-read's real name.
+class TestR5NomeLixoPerde:
+    @pytest.mark.parametrize("lixo", ["DATAS DE NASCIMENTO", "SE VOCE PRECISA DESTA INFORMACAO"])
+    def test_label_and_footer_lines_are_not_names(self, lixo: str) -> None:
+        from noctusai_lib.integrations.documents.name import find_name, looks_like_a_name
+
+        assert looks_like_a_name(lixo) is False
+        assert find_name(f"NOME: {lixo}")[0] is None
+
+    def test_implausible_first_name_loses_to_a_real_one(self) -> None:
+        original = IdentityFields(nome="SOBRENOME LOCAL", nome_confianca=BAIXA)
+        escalada = IdentityFields(nome="ANA EXEMPLO SILVA", nome_confianca=BAIXA)
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.nome == "ANA EXEMPLO SILVA"
+
+    def test_incomplete_first_read_loses_a_disagreement(self) -> None:
+        original = IdentityFields(nome="ANA EXEMPLO SOUZA", nome_confianca=BAIXA)
+        escalada = IdentityFields(
+            nome="ANA EXEMPLO SILVA", nome_confianca=BAIXA,
+            cpf="412.954.238-98", cpf_confianca=ALTA, rg="18568536", rg_confianca=BAIXA,
+        )
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.nome == "ANA EXEMPLO SILVA"
+        assert ("nome", "ANA EXEMPLO SOUZA") in out.leituras_alternativas
+
+
 #: R3b (measured on a later harness run): the escalated transcription
 #: rendered the matrícula appendix's book-type legend in a variant shape the
 #: old "LIVRO X (Evento)" guard did not cover, and "Óbito" read as a death.
