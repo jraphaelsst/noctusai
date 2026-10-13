@@ -170,6 +170,14 @@ strict `403 {"code":"not_platform_staff"}`.
   then refetch access ⇒ required picker; the leftover selection is never pinned/adopted.
   `<OrgContentGate>` (mounted by the seed shell around the routes) renders no children while
   an entry's access is pending, the handshake is in flight, or the picker is required.
+  **Entry polish (2026-10-13):** `/api/me/org-choices` fires as soon as the FIRST access says
+  `available && !mfa_required`, in PARALLEL with the entry DELETE (the list does not depend on
+  the selection; `staleTime` 5 min so "Trocar org" opens instantly); the list renders at once
+  and the buttons stay disabled (`chooseBlocked`; `choose()` also awaits the handshake) until
+  the DELETE settles. The same gate state is exposed as `useOrgEntryPending()`: the seed shell
+  header does NOT mount org-scoped widgets (notification bell, AI/LLM badges) nor the
+  enrichment "Carregando" state while it is true, so nothing fetches behind the picker; logo,
+  sidebar shell and avatar/name stay. Non-staff: unchanged.
   **Server:** `resolve_effective_org(..., require_selection=True)` (the default — every
   gated path: base dep license gate, org dep, `resolve_org_membership`) answers staff on a
   ready product with no valid live selection `409 {"code":"org_selection_required"}`

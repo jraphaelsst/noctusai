@@ -19,7 +19,7 @@ vi.mock('@noctusai/seed/infra', () => ({
 
 import { ActingAsBanner } from './ActingAsBanner';
 import { OrgPickerModal, OrgPickerModalView } from './OrgPickerModal';
-import { OrgContentGate, OrgSelectionGate } from './OrgSelectionGate';
+import { OrgContentGate, OrgSelectionGate, useOrgEntryPending } from './OrgSelectionGate';
 import { endOrgSelectionBestEffort, resetOrgSelectionPage, setOrgPickerForced } from '../../org-selection';
 import { getOrgPin, notifyOrgSelectionChanged, setOrgPin } from '../../org-pin';
 import { hasOrgVisitMarker, markOrgVisit } from '../../org-visit';
@@ -283,6 +283,49 @@ describe('every entry is a choice (owner 2026-10-12)', () => {
     await waitFor(() => expect(getOrgPin()).toBe('o1'));
     expect(apiDelete).not.toHaveBeenCalled();
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('entry: the choices request fires before the DELETE resolves, the list shows, choosing waits for the DELETE', async () => {
+    let releaseDelete: () => void = () => {};
+    apiDelete.mockImplementation(() => new Promise<void>((r) => { releaseDelete = r; }));
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === '/api/me/access') return { ...base, org_selection: sel() };
+      if (path === '/api/me/org-choices') return choices;
+      throw new Error(`unexpected ${path}`);
+    });
+    mountShell();
+    await waitFor(() => expect(apiDelete).toHaveBeenCalledTimes(1));
+    // DELETE still pending, yet the list is already rendered (no "Carregando")
+    const btn = await screen.findByText('Imobiliária Acme');
+    expect(apiGet).toHaveBeenCalledWith('/api/me/org-choices');
+    expect(screen.queryByTestId('org-picker-loading')).toBeNull();
+    const button = btn.closest('button') as HTMLButtonElement;
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(apiPut).not.toHaveBeenCalled();
+    releaseDelete();
+    await waitFor(() => expect(button).not.toBeDisabled());
+    apiPut.mockResolvedValue({});
+    await userEvent.click(button);
+    await waitFor(() => expect(apiPut).toHaveBeenCalledWith('/api/me/org-choice', { org_id: 'o1' }));
+  });
+
+  it('org-scoped widgets (useOrgEntryPending) are not mounted while the picker is required, mounted after', async () => {
+    const widgetFetch = vi.fn();
+    function Widget() { widgetFetch(); return <span data-testid="bell" />; }
+    function Header() { return useOrgEntryPending() ? null : <Widget />; }
+    routeEntry({ ...base, org_selection: sel() }, { ...base, org_selection: sel() });
+    mount(<><OrgSelectionGate /><Header /></>);
+    await screen.findByText('Imobiliária Acme');
+    expect(screen.queryByTestId('bell')).toBeNull();
+    expect(widgetFetch).not.toHaveBeenCalled();
+  });
+
+  it('org-scoped widgets mount for non-staff and within a visit (no change)', async () => {
+    function Header() { return useOrgEntryPending() ? null : <span data-testid="bell" />; }
+    route({ ...base, org_selection: sel({ available: false, required: false }) });
+    mount(<><OrgSelectionGate /><Header /></>);
+    expect(await screen.findByTestId('bell')).toBeInTheDocument();
   });
 
   it('sessionStorage throwing => treated as an entry (fail toward prompting)', async () => {

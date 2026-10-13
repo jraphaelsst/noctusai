@@ -31,6 +31,11 @@ export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 
 export const ME_ACCESS_QUERY_KEY = ['me', 'access'] as const;
 export const ORG_CHOICES_QUERY_KEY = ['me', 'org-choices'] as const;
+const CHOICES_STALE_MS = 5 * 60_000;
+
+// Resolves when the entry handshake (DELETE + access refetch) settled, or at once when
+// there is none in flight. `choose` awaits it (belt and braces over the disabled buttons).
+let entrySettled: Promise<void> = Promise.resolve();
 
 /**
  * Drop every Supabase realtime channel so a stale subscription can't keep
@@ -59,7 +64,13 @@ export interface UseOrgSelectionResult {
   isRefreshing: boolean;
   accessError: boolean;
   choices: OrgChoice[] | undefined;
+  /** Choices request in flight with nothing cached (pure query state; never held by the entry handshake). */
   choicesLoading: boolean;
+  /**
+   * The entry DELETE has not settled yet: the list may already be on screen but a choice
+   * must wait (a PUT racing the DELETE would be ended by it).
+   */
+  chooseBlocked: boolean;
   choicesError: boolean;
   refetchChoices: () => void;
   /** Whether the picker should be visible without user action (non-dismissible). */
@@ -106,7 +117,9 @@ function subscribeForced(l: () => void) {
 let pageOrg: string | null = null;
 let swapping = false;
 /** Tests / logout reset. */
-export function resetOrgSelectionPage() { pageOrg = null; swapping = false; resetOrgEntryPhase(); }
+export function resetOrgSelectionPage() {
+  pageOrg = null; swapping = false; entrySettled = Promise.resolve(); resetOrgEntryPhase();
+}
 
 /** Entry phases during which no choice exists yet for this page load. */
 function isEntry(phase: OrgEntryPhase): boolean {
@@ -150,6 +163,8 @@ export function useOrgSelection():UseOrgSelectionResult {
       return;
     }
     setOrgEntryPhase('ending');
+    let release: () => void = () => {};
+    entrySettled = new Promise<void>((resolve) => { release = resolve; });
     void (async () => {
       try {
         await api.delete('/api/me/org-choice');
@@ -160,6 +175,7 @@ export function useOrgSelection():UseOrgSelectionResult {
       }
       await qc.refetchQueries({ queryKey: ME_ACCESS_QUERY_KEY });
       setOrgEntryPhase('ended');
+      release();
     })();
   }, [entryPhase, accessLoaded, selection.available, qc]);
 
@@ -192,8 +208,11 @@ export function useOrgSelection():UseOrgSelectionResult {
   const choicesQ = useQuery<{ orgs: OrgChoice[] }>({
     queryKey: ORG_CHOICES_QUERY_KEY,
     queryFn: () => api.get<{ orgs: OrgChoice[] }>('/api/me/org-choices'),
+    // Starts as soon as the FIRST access says the picker applies -- in parallel with the
+    // entry DELETE (the list does not depend on the selection). Never fires for non-staff.
     enabled: selection.available && !selection.mfa_required,
-    staleTime: 0,
+    // Kept for the page so "Trocar org" opens instantly; a choice reloads the page anyway.
+    staleTime: CHOICES_STALE_MS,
     retry: false,
     placeholderData: (prev) => prev,
   });
@@ -202,6 +221,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     mutationFn: (orgId: string) => api.put<MeAccess>('/api/me/org-choice', { org_id: orgId }),
   });
   const choose = useCallback(async (orgId: string) => {
+    await entrySettled; // keep the guard: never PUT before the entry DELETE settled
     await chooseM.mutateAsync(orgId);
     swapping = true; // the reload below IS the swap; the pin effect must not double-fire
     markOrgVisit(); // the choice holds for this tab's visit (reloads included)
@@ -231,9 +251,8 @@ export function useOrgSelection():UseOrgSelectionResult {
     isRefreshing: accessQ.isFetching && !!accessQ.data,
     accessError: accessQ.isError && !accessQ.data,
     choices: choicesQ.data?.orgs,
-    // Choosing is held until the entry DELETE settled (a PUT racing it would be ended).
-    choicesLoading: (choicesQ.isPending && choicesQ.fetchStatus !== 'idle' && !choicesQ.data)
-      || (selection.available && (entryPhase === 'entry' || entryPhase === 'ending')),
+    choicesLoading: choicesQ.isPending && choicesQ.fetchStatus !== 'idle' && !choicesQ.data,
+    chooseBlocked: selection.available && (entryPhase === 'entry' || entryPhase === 'ending'),
     choicesError: choicesQ.isError && !choicesQ.data,
     refetchChoices: () => { void choicesQ.refetch(); },
     pickerRequired,

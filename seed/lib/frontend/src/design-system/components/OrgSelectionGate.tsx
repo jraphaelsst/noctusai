@@ -24,6 +24,16 @@ export function OrgSelectionGate({ onSignOut }: { onSignOut?: () => void | Promi
   );
 }
 
+/**
+ * True while org-scoped UI must NOT mount (and therefore must not fetch): the entry's
+ * first access / staff handshake is pending, or the picker is required. The seed shell
+ * uses it to hide the header bell + AI badges behind the picker. Non-staff within a
+ * visit: always `false`.
+ */
+export function useOrgEntryPending(): boolean {
+  return useOrgSelection().contentBlocked;
+}
+
 export function OrgContentGate({ children }: { children: ReactNode }) {
   const { contentBlocked } = useOrgSelection();
   if (contentBlocked) {

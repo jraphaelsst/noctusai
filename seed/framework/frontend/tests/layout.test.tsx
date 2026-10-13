@@ -302,6 +302,23 @@ describe("org picker gate (layout)", () => {
     expect(gate).toContainElement(screen.getByTestId("child-content"));
   });
 
+  it("hides the header bell + AI badges while the org picker is required, restores them after", async () => {
+    const stub = await import("./stubs/design-system");
+    stub.orgEntryState.pending = true;
+    try {
+      const { unmount } = renderLayout(createProductLayout({ ...baseConfig(), supabase: makeSupabaseClient() }));
+      expect(screen.queryByTestId("notification-bell-stub")).toBeNull();
+      expect(screen.queryByTestId("llm-spend-badge-stub")).toBeNull();
+      expect(screen.getByTestId("logout-button")).toBeInTheDocument(); // avatar/name stays
+      unmount();
+      stub.orgEntryState.pending = false;
+      renderLayout(createProductLayout({ ...baseConfig(), supabase: makeSupabaseClient() }));
+      expect(screen.getByTestId("notification-bell-stub")).toBeInTheDocument();
+    } finally {
+      stub.orgEntryState.pending = false;
+    }
+  });
+
   it("logout ends the org selection best-effort BEFORE signOut", async () => {
     const stub = await import("./stubs/design-system");
     stub.orgSelectionCalls.length = 0;

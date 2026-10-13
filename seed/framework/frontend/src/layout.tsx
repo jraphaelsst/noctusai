@@ -40,6 +40,7 @@ import {
   LLMSpendBadge,
   OrgSelectionGate,
   OrgContentGate,
+  useOrgEntryPending,
   endOrgSelectionBestEffort,
 } from "@noctusai/lib/design-system";
 import type { LogoutScope, NavGroup, NavItem } from "@noctusai/lib/design-system";
@@ -366,8 +367,12 @@ export function createProductLayout(config: ProductLayoutConfig) {
     const { data: sessionStatusPaginas } = useSessionStatusPaginas();
     const statusPaginas = sessionAuth ? sessionStatusPaginas : supabaseStatusPaginas;
 
+    // Staff behind the org picker (or a pending entry): org-scoped header widgets are not
+    // mounted (no bell / AI-badge fetches) and the enrichment "Carregando" state is moot.
+    const orgEntryPending = useOrgEntryPending();
+
     // If enrichment is loading, show loading state
-    if (enrichment.isLoading) {
+    if (enrichment.isLoading && !orgEntryPending) {
       return (
         <header className="h-14 sm:h-16 bg-card border-b border-border px-4 sm:px-6 flex items-center justify-end">
           <p className="text-sm font-medium text-muted-foreground">Carregando...</p>
@@ -496,7 +501,7 @@ export function createProductLayout(config: ProductLayoutConfig) {
             onLogout={handleLogout}
             theme={theme}
             onThemeToggle={toggleTheme}
-            actions={(() => {
+            actions={orgEntryPending ? undefined : (() => {
               // Default-fill `aiBadge` with the seed standard stack when the
               // product didn't provide one. Semantics:
               //   - `undefined` → use seed default (`<AIBadgeStack/>` of

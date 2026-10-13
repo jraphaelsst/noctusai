@@ -32,6 +32,8 @@ export interface OrgPickerModalViewProps {
   mfaUrl: string;
   choices: OrgChoice[] | undefined;
   loading: boolean;
+  /** List visible but choosing not yet allowed (entry DELETE still in flight). */
+  chooseBlocked?: boolean;
   error: boolean;
   onRetry: () => void;
   onChoose: (orgId: string) => void;
@@ -47,9 +49,9 @@ const noop = () => {};
 export function OrgPickerModalView(props: OrgPickerModalViewProps) {
   const {
     open, required, onClose, mfaRequired, mfaUrl, choices, loading, error, onRetry,
-    onChoose, choosingId = null, chooseErrorMessage = null, onSignOut,
+    onChoose, chooseBlocked = false, choosingId = null, chooseErrorMessage = null, onSignOut,
   } = props;
-  const busy = choosingId !== null;
+  const busy = choosingId !== null || chooseBlocked;
 
   let body: React.ReactNode;
   if (mfaRequired) {
@@ -166,6 +168,7 @@ export function OrgPickerModal({ onSignOut }: { onSignOut?: () => void | Promise
       mfaUrl={coreMfaUrl()}
       choices={sel.choices}
       loading={sel.choicesLoading}
+      chooseBlocked={sel.chooseBlocked}
       error={sel.choicesError}
       onRetry={sel.refetchChoices}
       onChoose={onChoose}
