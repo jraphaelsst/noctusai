@@ -44,7 +44,11 @@ aplicar_leitura` uses (the seed's own reading is `FichaCadastralLida`, not
         an earlier `ficha_cadastral`) is never silently overwritten — a
         genuine disagreement opens the SAME conflict a comprovante
         disagreement would, unattended-safe exactly the way "no measured
-        precision yet" is supposed to behave;
+        precision yet" is supposed to behave. EXCEPTION (owner decision,
+        2026-10-13): against a COMPROVANTE that agrees on CEP + cidade/UF
+        the ficha's address WINS — the ficha is the authoritative source
+        for the residential address, the comprovante only confirms it
+        (`identidade_extracao_service._decisao_ficha_x_comprovante`);
     (e) unmatched persons are IGNORED — never create a `clientes` row, per
         owner scope (a misfiled/unrelated form is not evidence about
         anyone this atendimento does not already know).
@@ -236,7 +240,9 @@ def _aplicar_endereco_ficha(
     disagreement opens a conflict, exactly as "no measured precision yet"
     (unmeasured `PRECISAO` for address entirely — see `divergencia_
     resolucao.py`) is supposed to behave: never a silent overwrite either
-    way.
+    way — except a comprovante that agrees on CEP + cidade/UF, which the
+    ficha's address replaces (owner decision, 2026-10-13, see the module
+    docstring's (d)).
     """
     atual = (
         _t(client, identidade_svc.CLIENTES_TABLE)

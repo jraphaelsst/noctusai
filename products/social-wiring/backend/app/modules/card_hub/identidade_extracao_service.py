@@ -91,7 +91,7 @@ import logging
 import re
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import UUID, uuid4
 
 from noctusai_lib.integrations.documents import (
@@ -464,6 +464,27 @@ AVISO_TITULAR_NAO_CONFERE = "comprovante_titular_nao_confere"
 #: 2026-10-05) — the WRONG KIND of value for the field. The group is applied
 #: WITHOUT a número and the document is flagged for a human.
 AVISO_NUMERO_INVALIDO = "endereco_numero_invalido"
+
+#: 🔴 FICHA PREVALECE (owner decision, 2026-10-13). For the party's
+#: residential address the ficha cadastral — filled in by the client — is
+#: the AUTHORITATIVE source; a comprovante only CONFIRMS it (same CEP, same
+#: cidade/UF). Real case: a seller in a gated condominium whose Enel bill is
+#: addressed to the condominium gate ("Rua Gal. Fernando V. Cavalcanti
+#: Albuquerque, 1135") with the SAME CEP as her ficha ("Al. Liverpool, 81"),
+#: the address the signed contract carries. Derived, never hand-listed: every
+#: address-bearing cliente document that is not a declaration.
+ORIGENS_ENDERECO_COMPROVANTE = TIPOS_ENDERECO - ORIGENS_ENDERECO_DECLARADO
+#: `Decisao.regra` of the ficha-vs-comprovante rule (`_decisao_ficha_x_
+#: comprovante`) — the audit row and the backfill report name it.
+REGRA_FICHA_PREVALECE = "ficha_prevalece"
+#: `extracao_aviso` on a comprovante that CONFIRMED (CEP + cidade/UF) a
+#: ficha-sourced address with a different street — a note on the document
+#: row, never a review item: nothing is pending about it.
+AVISO_COMPROVANTE_CONFIRMA_FICHA = "comprovante_confirma_ficha"
+MENSAGEM_COMPROVANTE_CONFIRMA_FICHA = (
+    "Comprovante em nome do condomínio/portaria — endereço da ficha prevalece "
+    "(CEP e cidade/UF conferem com a ficha cadastral)."
+)
 
 #: 🔴 `data_emissao` (contract F6) is deliberately NOT a member of `CAMPOS` —
 #: see `types.IdentityFields.data_emissao`'s own comment. It is the
@@ -1899,6 +1920,96 @@ def _mesmo_endereco(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
     return True
 
 
+def _cep_e_cidade_conferem(atual: dict[str, Any], proposto: dict[str, Any]) -> bool:
+    """Does `proposto` (a reading's parts) CONFIRM the record `atual`
+    (`endereco_*` columns) at the locality level — the comprovante's whole
+    job against a ficha (owner decision, 2026-10-13)?
+
+    The CEP is REQUIRED on both sides and must be equal: without it nothing
+    is confirmed, so the caller treats it as a real divergence (a human
+    decides). Cidade and UF must agree whenever both sides carry them; a
+    side that lacks one is not a disagreement (the CEP already pins the
+    locality — and `_enriquecer_endereco_via_cep` fills cidade/UF from it)."""
+    cep_atual = only_digits(str(atual.get("endereco_cep") or ""))
+    cep_novo = only_digits(str(proposto.get("cep") or ""))
+    if not cep_atual or cep_atual != cep_novo:
+        return False
+    cidade_atual, cidade_nova = atual.get("endereco_cidade"), proposto.get("cidade")
+    if not _vazio(cidade_atual) and not _vazio(cidade_nova) and not _mesmo_nome(
+        str(cidade_atual), str(cidade_nova)
+    ):
+        return False
+    uf_atual, uf_nova = atual.get("endereco_uf"), proposto.get("uf")
+    if not _vazio(uf_atual) and not _vazio(uf_nova) and (
+        str(uf_atual).strip().upper() != str(uf_nova).strip().upper()
+    ):
+        return False
+    return True
+
+
+def _decisao_ficha_x_comprovante(
+    atual: dict[str, Any], partes: dict[str, Any], origem_novo: Optional[str],
+    decisao_por_titular: Callable[[], divergencia_resolucao.Decisao],
+) -> Optional[divergencia_resolucao.Decisao]:
+    """The ficha-prevalece rule (owner decision, 2026-10-13) for a DIFFERING
+    address where one side is the ficha cadastral and the other a
+    comprovante; `None` for every other pair (the holder rule decides).
+
+    - CEP and cidade/UF confirm -> the FICHA's address wins: kept when it is
+      on file (the comprovante is recorded as corroboration, never a
+      conflict), written when it is the proposal.
+    - CEP or cidade/UF differ -> a REAL divergence: a human decides, never
+      an automatic pick — with ONE carve-out kept from the holder rule
+      (`decisao_por_titular`, evaluated lazily): a bill whose printed
+      holder is verifiably NOT this party (a co-party's, a stranger's) is no
+      evidence about this party's address at all, so when that rule already
+      keeps / picks the FICHA's side it stands. It never lets a comprovante
+      beat the ficha unattended.
+
+    The caller owns the manual/confirmed guard — a human's value never
+    reaches this rule."""
+    origem_atual = atual.get("endereco_origem")
+    if origem_atual in ORIGENS_ENDERECO_DECLARADO and origem_novo in ORIGENS_ENDERECO_COMPROVANTE:
+        vencedor = "atual"
+    elif origem_atual in ORIGENS_ENDERECO_COMPROVANTE and origem_novo in ORIGENS_ENDERECO_DECLARADO:
+        vencedor = "proposto"
+    else:
+        return None
+    if not _cep_e_cidade_conferem(atual, partes):
+        por_titular = decisao_por_titular()
+        if not por_titular.requer_humano and por_titular.vencedor == vencedor:
+            return por_titular
+        return divergencia_resolucao.Decisao(
+            vencedor=None, regra="requer_humano",
+            motivo=(
+                "endereco: a ficha cadastral e o comprovante divergem no CEP "
+                "ou na cidade/UF — divergência real; apenas um humano decide."
+            ),
+            requer_humano=True,
+        )
+    return _resolvido(
+        vencedor, REGRA_FICHA_PREVALECE,
+        "endereco: o comprovante confirma o CEP e a cidade/UF da ficha "
+        "cadastral — o endereço da ficha prevalece (comprovante em nome do "
+        "condomínio/portaria).",
+    )
+
+
+def endereco_comprovante_confirma_ficha(
+    cliente_row: dict[str, Any], partes: dict[str, Any], origem_proposta: Optional[str],
+) -> bool:
+    """Public predicate for READERS of a stored conflict / suggestion (the
+    contract review panel, the pessoa checklist): the cliente's address is
+    the ficha's (machine, unconfirmed or not — a human-held value is shown
+    as a human decision elsewhere), the other side is a comprovante, and it
+    confirms CEP + cidade/UF — i.e. nothing about it is pending."""
+    if origem_proposta not in ORIGENS_ENDERECO_COMPROVANTE:
+        return False
+    if cliente_row.get("endereco_origem") not in ORIGENS_ENDERECO_DECLARADO:
+        return False
+    return _cep_e_cidade_conferem(cliente_row, partes)
+
+
 def _titular_do_documento(client: Any, org_id: UUID, documento_id: Optional[Any]) -> Optional[str]:
     """The RAW holder name a `cliente_documentos` row's own comprovante
     read carried (`extracao_endereco_titular`, written unconditionally by
@@ -2190,6 +2301,14 @@ def aplicar_endereco_ao_cliente(
       replaced this way.
     - Human-cleared group (`endereco_origem='manual'`, all parts empty) ->
       respected, like any other field.
+    - **Ficha prevalece (owner decision, 2026-10-13)** — ficha cadastral vs
+      comprovante (`_decisao_ficha_x_comprovante`): same CEP + cidade/UF ->
+      the ficha's address is kept (or written over a comprovante's), the
+      comprovante is recorded as corroboration
+      (`AVISO_COMPROVANTE_CONFIRMA_FICHA` on its document row, an audit
+      row, no conflict) — also when its printed holder is the condominium;
+      a different CEP or cidade/UF -> the normal pending conflict. A
+      manual/confirmed value is never touched.
     - **F3 (2026-09-30)** — before anything else runs, `cidade`/`uf` are
       enriched (or a garbage `cidade` withheld) via `_enriquecer_endereco_
       via_cep` when a `cep_lookup` adapter is given; every comparison,
@@ -2229,6 +2348,19 @@ def aplicar_endereco_ao_cliente(
     ):
         # `titular_e_pessoa is False`: a utility / company printed as holder
         # is never the resident, whatever its words happen to share.
+        if endereco_comprovante_confirma_ficha(atual, partes, origem):
+            # Ficha prevalece (owner decision, 2026-10-13): the bill in the
+            # condominium's/gate's name still CONFIRMS the ficha's CEP and
+            # cidade/UF — a note on the document, never a pending
+            # substitution (`sugestoes_pendentes` reads this same aviso).
+            if avisos is not None:
+                avisos.append(AVISO_COMPROVANTE_CONFIRMA_FICHA)
+            logger.info(
+                "endereco do cliente %s: comprovante %s confirma CEP/cidade da "
+                "ficha cadastral — endereço da ficha prevalece",
+                cliente_id, documento_id,
+            )
+            return False, None
         if avisos is not None:
             avisos.append(AVISO_TITULAR_NAO_CONFERE)
         logger.info(
@@ -2330,7 +2462,30 @@ def aplicar_endereco_ao_cliente(
             and origem_atual_grupo != "manual"
             and not atual.get("endereco_confirmado_em")
         )
-        if _difere_so_por_um_caractere_no_numero(atual, partes):
+        def por_titular() -> divergencia_resolucao.Decisao:
+            return _decisao_endereco_por_titular(
+                client, org_id, atual,
+                _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
+                titular_documento or _titular_do_documento(client, org_id, documento_id),
+                origem_novo=origem,
+            )
+
+        decisao_ficha = _decisao_ficha_x_comprovante(atual, partes, origem, por_titular)
+        if not pode_resolver_automaticamente:
+            decisao = divergencia_resolucao.Decisao(
+                vencedor=None, regra="requer_humano",
+                motivo=(
+                    "endereco: o valor em registro foi digitado ou "
+                    "confirmado por um humano — apenas um humano decide."
+                ),
+                requer_humano=True,
+            )
+        elif decisao_ficha is not None:
+            # 🔴 Ficha prevalece (owner decision, 2026-10-13) — ahead of the
+            # one-character-número and holder rules: the ficha is the
+            # authority, the comprovante only confirms CEP + cidade/UF.
+            decisao = decisao_ficha
+        elif _difere_so_por_um_caractere_no_numero(atual, partes):
             # 🔴 Same address, número off by ONE character (650 vs 640): an
             # OCR misread on one side that no holder rank can adjudicate —
             # always a human, whoever the titular is.
@@ -2343,22 +2498,8 @@ def aplicar_endereco_ao_cliente(
                 ),
                 requer_humano=True,
             )
-        elif not pode_resolver_automaticamente:
-            decisao = divergencia_resolucao.Decisao(
-                vencedor=None, regra="requer_humano",
-                motivo=(
-                    "endereco: o valor em registro foi digitado ou "
-                    "confirmado por um humano — apenas um humano decide."
-                ),
-                requer_humano=True,
-            )
         else:
-            decisao = _decisao_endereco_por_titular(
-                client, org_id, atual,
-                _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
-                titular_documento or _titular_do_documento(client, org_id, documento_id),
-                origem_novo=origem,
-            )
+            decisao = por_titular()
         campo_conflitos.registrar_decisao_automatica(
             client, campo_conflitos.CLIENTE, org_id, cliente_id, CAMPO_ENDERECO,
             valor_anterior=_endereco_json(anterior) if tem_endereco else None,
@@ -2380,8 +2521,11 @@ def aplicar_endereco_ao_cliente(
             )
             return True, None
         # decisao.vencedor == "atual": the record already holds the address
-        # the verified holder printed — nothing to write, the audit row
-        # alone records the resolver ran.
+        # the verified holder printed (or the ficha's, which this comprovante
+        # confirmed) — nothing to write, the audit row alone records the
+        # resolver ran.
+        if decisao.regra == REGRA_FICHA_PREVALECE and avisos is not None:
+            avisos.append(AVISO_COMPROVANTE_CONFIRMA_FICHA)
         return False, None
     if grupo_limpo_por_humano:
         return False, None
@@ -3136,11 +3280,13 @@ def _decisao_endereco_por_titular(
     rank_novo, holder_novo = _rank_titular(
         client, org_id, atual, titular_novo, origem_novo,
     )
-    # A declared source DEFENDS the address on file, but never WINS one: no
-    # measured tier makes the bank form outrank a real document of the
+    # A declared source DEFENDS the address on file, but never WINS one here:
+    # no measured tier makes the bank form outrank a real document of the
     # party's, so a proposed declaration against any on-file document falls
     # through to a human (`ficha_cadastral_service` (d) — never a silent
-    # overwrite).
+    # overwrite). The ONE exception — ficha vs comprovante agreeing on CEP +
+    # cidade/UF (owner decision, 2026-10-13) — is decided BEFORE this
+    # function runs (`_decisao_ficha_x_comprovante`).
     if rank_novo > rank_atual and origem_novo not in ORIGENS_ENDERECO_DECLARADO:
         return divergencia_resolucao.Decisao(
             vencedor="proposto", regra="endereco_titular",
@@ -3291,12 +3437,18 @@ def _decidir_endereco_pendente(
             "endereco: o comprovante da proposta foi excluído; o endereço em "
             "registro segue sustentado.",
         ), partes
-    return _decisao_endereco_por_titular(
-        client, org_id, atual,
-        _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
-        proposto.get("titular") or _titular_do_documento(client, org_id, row.get("fonte_id")),
-        origem_novo=row.get("origem_proposto"),
-    ), partes
+    def por_titular() -> divergencia_resolucao.Decisao:
+        return _decisao_endereco_por_titular(
+            client, org_id, atual,
+            _titular_do_documento(client, org_id, atual.get("endereco_documento_id")),
+            proposto.get("titular") or _titular_do_documento(client, org_id, row.get("fonte_id")),
+            origem_novo=row.get("origem_proposto"),
+        )
+
+    decisao_ficha = _decisao_ficha_x_comprovante(
+        atual, partes, row.get("origem_proposto"), por_titular
+    )
+    return (decisao_ficha if decisao_ficha is not None else por_titular()), partes
 
 
 #: `motivo_resolucao` rule name for a pending conflict whose on-file side
@@ -4518,6 +4670,13 @@ async def extrair_identidade(
                         "pessoa nem com nenhuma outra do card — o endereço NÃO foi "
                         "aplicado; fica como sugestão aguardando confirmação.",
                     )
+                if AVISO_COMPROVANTE_CONFIRMA_FICHA in avisos_endereco:
+                    # A note on the document row — never a review item: the
+                    # ficha's address is on file and this bill confirmed it.
+                    _sinalizar(
+                        AVISO_COMPROVANTE_CONFIRMA_FICHA,
+                        MENSAGEM_COMPROVANTE_CONFIRMA_FICHA,
+                    )
                 if AVISO_NUMERO_INVALIDO in avisos_endereco:
                     _sinalizar(
                         AVISO_NUMERO_INVALIDO,
@@ -5358,6 +5517,13 @@ def sugestoes_pendentes(client: Any, org_id: UUID, cliente_id: UUID) -> dict:
                 continue
             proposto = {p: doc.get(f"extracao_endereco_{p}") for p in ENDERECO_PARTES}
             if _mesmo_endereco(cliente, proposto):
+                continue
+            if endereco_comprovante_confirma_ficha(
+                cliente, proposto, doc.get("tipo_documento")
+            ):
+                # Ficha prevalece (owner decision, 2026-10-13): a gate/
+                # condominium bill flagged before the ficha landed only
+                # confirms the ficha's CEP + cidade/UF — not a substitution.
                 continue
             out[CAMPO_ENDERECO] = {
                 "valor": proposto,

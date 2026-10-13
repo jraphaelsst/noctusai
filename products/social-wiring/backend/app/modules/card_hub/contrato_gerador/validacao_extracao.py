@@ -91,6 +91,7 @@ from app.modules.card_hub.favorecidos_service import mascarar_conta, mascarar_do
 from app.modules.card_hub.identidade_extracao_service import CAMPO_POR_ITEM
 from app.modules.card_hub.identidade_extracao_service import CAMPOS as CAMPOS_IDENTIDADE
 from app.modules.card_hub.identidade_extracao_service import ORIGEM_CONJUGE_DOMICILIO
+from app.modules.card_hub.identidade_extracao_service import endereco_comprovante_confirma_ficha
 from app.modules.card_hub.identidade_extracao_service import _mesmo_valor
 from app.modules.certidoes import service as certidoes_svc
 from app.modules.imovel_hub import vinculo_legal
@@ -1071,6 +1072,27 @@ def _conflito_atendimento(campo_bruto: str, atendimento_id: str) -> Optional[tup
     return entidade, atendimento_id, registro_campo
 
 
+def _comprovante_confirma_ficha_registrada(conflito: dict, cliente_row: Optional[dict]) -> bool:
+    """A pending `endereco` conflict that, by the ficha-prevalece rule
+    (owner decision, 2026-10-13), is no divergence: the stored address is
+    the ficha cadastral's and the proposal is a comprovante agreeing on CEP
+    + cidade/UF (a gate/condominium bill). Opened before the rule existed,
+    it is not pending — the panel does not list it (the backfill,
+    `identidade_extracao_service.backfill_resolver_conflitos_pendentes`,
+    settles the row itself)."""
+    if cliente_row is None:
+        return False
+    try:
+        proposto = json.loads(conflito.get("valor_proposto") or "null")
+    except ValueError:
+        return False
+    if not isinstance(proposto, dict):
+        return False
+    return endereco_comprovante_confirma_ficha(
+        cliente_row, proposto, conflito.get("origem_proposto")
+    )
+
+
 def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[dict]:
     """Open extraction CONFLICTS on this contract's data — a later reading
     disagreed with a value already set (D1: never a silent overwrite), and an
@@ -1094,9 +1116,19 @@ def listar_conflitos(client: Any, org_id: UUID, dados: DadosContrato) -> list[di
         rows = table_reads.in_batched_rows(
             client, "cliente_campo_conflitos", org_id, "cliente_id", sorted(pessoas)
         )
-        for r in rows:
-            registro = _CONFLITO_CAMPO_CLIENTE.get(r.get("campo") or "")
-            if r.get("status") != "pendente" or registro is None:
+        pendentes_cliente = [
+            r for r in rows
+            if r.get("status") == "pendente" and _CONFLITO_CAMPO_CLIENTE.get(r.get("campo") or "")
+        ]
+        clientes_endereco = _rows_por_id(
+            client, org_id, "clientes",
+            {str(r["cliente_id"]) for r in pendentes_cliente if r.get("campo") == "endereco"},
+        )
+        for r in pendentes_cliente:
+            registro = _CONFLITO_CAMPO_CLIENTE[r["campo"]]
+            if registro == "endereco" and _comprovante_confirma_ficha_registrada(
+                r, clientes_endereco.get(str(r["cliente_id"]))
+            ):
                 continue
             p = pessoas[str(r["cliente_id"])]
             campo = _POR_ENTIDADE_CAMPO[(ENTIDADE_CLIENTE, registro)]
