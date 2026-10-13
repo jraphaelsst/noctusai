@@ -961,6 +961,76 @@ def _registrar_conflito(
     )
 
 
+#: Seed `IdentityFields` critical-field name -> `clientes` column / conflict
+#: `campo` (`releitura.CAMPOS_CRITICOS`). `conjuges` / `matricula_certidao` are
+#: document-level (no `clientes` column): their divergence rides on the
+#: document row's aviso + message only.
+_CAMPO_CLIENTE_DA_DIVERGENCIA = {
+    "nome": "nome_oficial",
+    "cpf": "cpf",
+    "rg": "rg",
+    "rne": "rg",
+    "data_nascimento": "data_nascimento",
+    "estado_civil": "estado_civil",
+    "regime_bens": "regime_bens",
+    "data_casamento": "data_casamento",
+}
+
+ORIGEM_LEITURA_A = "extracao_leitura_a"
+ORIGEM_LEITURA_B = "extracao_leitura_b"
+
+
+def abrir_revisoes_divergencia(
+    client: Any,
+    org_id: UUID,
+    cliente_id: UUID,
+    divergencias: tuple,
+    *,
+    documento_id: Optional[UUID],
+) -> list[dict]:
+    """Open a PENDING review for every critical field the seed's AGREEMENT
+    GATE left empty (`IdentityFields.divergencias`, owner decision 2026-10-13:
+    "ship only with an agreement rule").
+
+    The two independent readings become the conflict's `valor_anterior` /
+    `valor_proposto` (`origem_*` = `extracao_leitura_a/b`) — NO heuristic
+    picks either; an admin adjudicates through `resolver_conflito`
+    (accepting writes reading B; rejecting keeps the record, and reading A is
+    typed by hand). A field with a single uncorroborated reading opens the
+    review with `valor_anterior=None`. A field the record ALREADY holds is
+    skipped: the gate never overrides what is on file, so there is nothing to
+    decide. Returns the NEW rows so the caller notifies.
+    """
+    abertos: list[dict] = []
+    for campo, valores in divergencias or ():
+        coluna = _CAMPO_CLIENTE_DA_DIVERGENCIA.get(campo)
+        if coluna is None or not valores:
+            continue
+        atual = (
+            _t(client, CLIENTES_TABLE)
+            .select(f"id,{coluna}")
+            .eq("org_id", str(org_id))
+            .eq("id", str(cliente_id))
+            .limit(1)
+            .execute()
+        ).data or []
+        if atual and not _vazio(atual[0].get(coluna)):
+            continue
+        linha = _registrar_conflito(
+            client, org_id, cliente_id, coluna,
+            valor_anterior=valores[0] if len(valores) > 1 else None,
+            origem_anterior=ORIGEM_LEITURA_A if len(valores) > 1 else None,
+            valor_proposto=valores[-1],
+            origem_proposto=ORIGEM_LEITURA_B,
+            confianca_proposta="baixa",
+            fonte_tabela=DOCUMENTOS_TABLE,
+            fonte_id=documento_id,
+        )
+        if linha is not None:
+            abertos.append(linha)
+    return abertos
+
+
 def _papeis_das_pessoas(client: Any, org_id: UUID, cliente_ids: list[str]) -> dict[str, str]:
     """Best-effort role label per cliente_id, for R4's rejection message —
     `atendimento_partes.papel` when this person is a party; the label
@@ -4241,6 +4311,17 @@ async def extrair_identidade(
             leituras_anteriores=leituras_anteriores,
         )
         conflitos += abertos
+
+        # 🔴 AGREEMENT GATE (owner decision 2026-10-13): a critical field the
+        # seed's reads could not settle arrives EMPTY with both readings in
+        # `fields.divergencias` — never a winner. Open the human review with
+        # them (not on a compromised read: that whole document is already
+        # held for a human, and not for address-only documents).
+        if not so_endereco and not fields.leitura_comprometida:
+            conflitos += abrir_revisoes_divergencia(
+                client, org_id, cliente_id, fields.divergencias,
+                documento_id=documento_id,
+            )
 
         # The document type the number was PRINTED as (`rne`/`rnm`) rides
         # with the `rg` write: fill-empty only, and only when the number

@@ -208,25 +208,47 @@ class TestCertidaoUnica:
         assert not any(f["campo"] in ("certidao.cnd_fazenda_sp", "certidao.divida_ativa_sp") for f in av.faltando)
         assert av.pronto, (av.faltando, av.bloqueios)
 
-    def test_printed_validity_decides(self):
-        # Emitted 60 days before signing (past the 30-day age rule) but the
-        # printed validity covers the signing date: valid.
-        av = _avaliar(1, self._com_unica(emitida_em=fx.ASSINATURA - timedelta(days=60),
-                                         validade_ate=fx.ASSINATURA + timedelta(days=30)))
-        assert "CERTIDAO_EMISSAO_ANTIGA" not in {b["codigo"] for b in av.bloqueios}
-        assert "CERTIDAO_VENCIDA" not in {b["codigo"] for b in av.bloqueios}
+    def _codigos(self, **campos) -> set[str]:
+        return {b["codigo"] for b in _avaliar(1, self._com_unica(**campos)).bloqueios}
 
-    def test_printed_validity_expired_blocks(self):
-        av = _avaliar(1, self._com_unica(emitida_em=fx.ASSINATURA - timedelta(days=60),
-                                         validade_ate=fx.ASSINATURA - timedelta(days=1)))
-        assert "CERTIDAO_VENCIDA" in {b["codigo"] for b in av.bloqueios}
+    def test_the_30_day_emission_rule_applies_like_every_other_certidao(self):
+        """Owner decision 2026-10-13: NO exemption — a printed validity that
+        still covers the signing date does not excuse a 60-day-old emission."""
+        codigos = self._codigos(emitida_em=fx.ASSINATURA - timedelta(days=60),
+                                validade_ate=fx.ASSINATURA + timedelta(days=30))
+        assert "CERTIDAO_EMISSAO_ANTIGA" in codigos
+        assert "CERTIDAO_VENCIDA" not in codigos  # the validity check is separate
 
-    def test_without_printed_validity_uses_90_days(self):
-        ok = _avaliar(1, self._com_unica(emitida_em=fx.ASSINATURA - timedelta(days=89), validade_ate=None))
-        assert "CERTIDAO_VENCIDA" not in {b["codigo"] for b in ok.bloqueios}
-        vencida = _avaliar(1, self._com_unica(emitida_em=fx.ASSINATURA - timedelta(days=91), validade_ate=None))
+    def test_a_fresh_emission_with_a_valid_validity_passes_both(self):
+        codigos = self._codigos(emitida_em=fx.ASSINATURA - timedelta(days=10),
+                                validade_ate=fx.ASSINATURA + timedelta(days=30))
+        assert not codigos & {"CERTIDAO_EMISSAO_ANTIGA", "CERTIDAO_VENCIDA"}
+
+    def test_printed_validity_expired_blocks_even_when_the_emission_is_fresh(self):
+        codigos = self._codigos(emitida_em=fx.ASSINATURA - timedelta(days=10),
+                                validade_ate=fx.ASSINATURA - timedelta(days=1))
+        assert "CERTIDAO_VENCIDA" in codigos
+        assert "CERTIDAO_EMISSAO_ANTIGA" not in codigos
+
+    def test_without_printed_validity_the_30_day_rule_is_the_binding_one(self):
+        ok = self._codigos(emitida_em=fx.ASSINATURA - timedelta(days=29), validade_ate=None)
+        assert not ok & {"CERTIDAO_EMISSAO_ANTIGA", "CERTIDAO_VENCIDA"}
+        antiga = self._codigos(emitida_em=fx.ASSINATURA - timedelta(days=31), validade_ate=None)
+        assert "CERTIDAO_EMISSAO_ANTIGA" in antiga
+        assert "CERTIDAO_VENCIDA" not in antiga  # 31 days < the 90-day validity
+
+    def test_the_90_day_validity_is_a_separate_check(self):
+        """Its own validity (emission + 90 days) is still enforced — with a
+        looser office policy than 30 days the 90-day cap is what binds."""
+        from dataclasses import replace as _replace
+
+        d = self._com_unica(emitida_em=fx.ASSINATURA - timedelta(days=91), validade_ate=None)
+        pol = _replace(fx.politica_variante(1), certidao_max_dias=365)
+        sw = derivacao.derivar_switches(d, pol, fx.REFERENCIA)
+        av = derivacao.avaliar(d, sw, pol, fx.ASSINATURA, fx.REFERENCIA)
         assert any(
-            b["codigo"] == "CERTIDAO_VENCIDA" and "90 dias da emissão" in b["mensagem"] for b in vencida.bloqueios
+            b["codigo"] == "CERTIDAO_VENCIDA" and "90 dias da emissão" in b["mensagem"]
+            for b in av.bloqueios
         )
 
     def test_half_filled_unica_names_its_own_gap(self):

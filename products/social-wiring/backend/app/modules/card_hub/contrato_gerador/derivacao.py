@@ -2771,10 +2771,23 @@ def _certidoes(
                     av, d, "CERTIDAO_EMITIDA_APOS_ASSINATURA",
                     f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.",
                 )
-            elif tipo == frases.CERTIDAO_UNICA_SP:
-                # [Resolução Conjunta SFP/PGE nº 1/2026] Judged by validity,
-                # not emission age: the printed "válida até" when read,
-                # else emission + 90 days.
+            elif not excecao_pcen and (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
+                # [Q10] every certidão is emitted less than 30 days before signing.
+                # (The Receita PCEN 2ª via is judged by its printed validity below.)
+                tempo(
+                    "CERTIDAO_EMISSAO_ANTIGA",
+                    f"{rotulo} de {nome_grupo} foi emitida há {(assinatura - c.emitida_em).days} dias; "
+                    f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura."
+                    + certidao_pcen.nota_segunda_via_antiga(
+                        segunda_via=c.segunda_via, validade_ate=c.validade_ate, assinatura=assinatura,
+                    ),
+                )
+            if tipo == frases.CERTIDAO_UNICA_SP and c.emitida_em <= assinatura:
+                # [Resolução Conjunta SFP/PGE nº 1/2026] The Certidão Única
+                # follows the office's 30-day emission rule ABOVE like every
+                # other certidão (owner decision 2026-10-13 — no exemption),
+                # AND, as a SEPARATE check, its own validity: the printed
+                # "válida até" when read, else emission + 90 days.
                 validade = c.validade_ate or (
                     c.emitida_em + timedelta(days=frases.VALIDADE_CERTIDAO_UNICA_SP_DIAS)
                 )
@@ -2787,18 +2800,7 @@ def _certidoes(
                         f"{rotulo} de {nome_grupo} está vencida na data da assinatura "
                         f"(validade {origem}: {validade.strftime('%d/%m/%Y')}).",
                     )
-            elif not excecao_pcen and (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
-                # [Q10] every certidão is emitted less than 30 days before signing.
-                # (The Receita PCEN 2ª via is judged by its printed validity below.)
-                tempo(
-                    "CERTIDAO_EMISSAO_ANTIGA",
-                    f"{rotulo} de {nome_grupo} foi emitida há {(assinatura - c.emitida_em).days} dias; "
-                    f"precisa ter menos de {politica.certidao_max_dias} dias na data da assinatura."
-                    + certidao_pcen.nota_segunda_via_antiga(
-                        segunda_via=c.segunda_via, validade_ate=c.validade_ate, assinatura=assinatura,
-                    ),
-                )
-            if tipo != frases.CERTIDAO_UNICA_SP and c.validade_ate is not None and c.validade_ate < assinatura:
+            elif tipo != frases.CERTIDAO_UNICA_SP and c.validade_ate is not None and c.validade_ate < assinatura:
                 tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
             elif excecao_pcen and c.emitida_em <= assinatura:
                 confirmar_pcen(parte_id, c, rotulo, nome_grupo)
