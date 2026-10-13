@@ -47,6 +47,7 @@ import logging
 from typing import Awaitable, Callable
 
 from fastapi import Cookie, Header, HTTPException, Request
+from noctusai_lib.api.auth._reasons import log_auth_401, token_shape
 from noctusai_lib.api.auth.session.cookie import session_cookie_clear_header
 
 from noctusai_lib.api.auth.session.api_tokens import ApiTokenResolver
@@ -122,6 +123,7 @@ def make_get_auth_context(
             or bearer_ctx.user_id == cookie_ctx.user_id
         ):
             return
+        log_auth_401("cookie_bearer_identity_mismatch")
         logger.warning(
             "auth_cookie_bearer_identity_mismatch cookie_user_id=%s bearer_user_id=%s",
             cookie_ctx.user_id,
@@ -150,6 +152,7 @@ def make_get_auth_context(
             # cookie + redirect to /login. Do NOT fall through to
             # bearer; an attacker could otherwise scrub a cookie and
             # downgrade an authn check.
+            log_auth_401("session_cookie_unrecognised")
             raise HTTPException(
                 status_code=401,
                 detail="Session expired or invalid",
@@ -163,6 +166,7 @@ def make_get_auth_context(
                 if ctx is not None:
                     request.state.auth_context = ctx
                     return ctx
+                log_auth_401("api_token_invalid_or_revoked")
                 raise HTTPException(
                     status_code=401,
                     detail="API token invalid or revoked",
@@ -178,12 +182,18 @@ def make_get_auth_context(
                 if ctx is not None:
                     request.state.auth_context = ctx
                     return ctx
+            log_auth_401(
+                "bearer_not_recognised",
+                token=token_shape(token),
+                legacy_resolver="configured" if legacy_jwt_resolver is not None else "absent",
+            )
             raise HTTPException(
                 status_code=401,
                 detail="Bearer token not recognised",
             )
 
         # ── Priority 4: no credential at all ──
+        log_auth_401("no_credential")
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     return get_auth_context

@@ -49,12 +49,21 @@ function ok(token = 'fresh') {
   return { data: { session: { access_token: token }, user: {} }, error: null };
 }
 
-function fakeSupabase(results: unknown[]) {
+/** GoTrue `getUser()` answers: the session is gone / alive / GoTrue unreachable. */
+const USER_DEAD = { data: { user: null }, error: { name: 'AuthApiError', status: 403, code: 'session_not_found', message: 'Session not found' } };
+const USER_ALIVE = { data: { user: { id: 'u1' } }, error: null };
+const USER_TRANSIENT = { data: { user: null }, error: { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' } };
+
+function fakeSupabase(results: unknown[], getUserResult: unknown = USER_DEAD) {
   const refreshSession = vi.fn();
   for (const r of results) refreshSession.mockResolvedValueOnce(r);
   const signOut = vi.fn().mockResolvedValue({ error: null });
-  return { auth: { refreshSession, signOut } };
+  const getUser = vi.fn().mockResolvedValue(getUserResult);
+  return { auth: { refreshSession, signOut, getUser } };
 }
+
+/** The handler confirms with GoTrue asynchronously — let it settle. */
+const settle = () => new Promise<void>((r) => setTimeout(r, 0));
 
 function fakeStore() {
   const setUser = vi.fn();
@@ -123,6 +132,7 @@ describe('a deploy window never logs the user out', () => {
     const { client, onUnauthenticated, store } = wire(supabase);
 
     await expect(client.get('/api/x')).rejects.toThrow('[401]');
+    await settle();
     expect(supabase.auth.refreshSession).toHaveBeenCalledTimes(1);
     expect(onUnauthenticated).toHaveBeenCalledTimes(1);
     expect(store.setUser).toHaveBeenCalledWith(null);
@@ -134,6 +144,7 @@ describe('a deploy window never logs the user out', () => {
     const { client } = wire(supabase);
 
     await expect(client.get('/api/x')).rejects.toThrow('[401]');
+    await settle();
     expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
     expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
   });
@@ -164,25 +175,105 @@ describe('a deploy window never logs the user out', () => {
   });
 });
 
+describe('only a 401 can reach the dead-session path', () => {
+  it.each([
+    [409, { code: 'org_selection_changed' }],
+    [409, { code: 'org_selection_required' }],
+    [403, { code: 'mfa_required' }],
+    [403, { code: 'org_sem_licenca' }],
+    [403, {}],
+  ])('a %i %j never refreshes, reaches onUnauthenticated, or signs out', async (status, body) => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(status, body));
+    const supabase = fakeSupabase([]);
+    const { client, onUnauthenticated, store } = wire(supabase);
+    await expect(client.get('/api/x')).rejects.toBeDefined();
+    await settle();
+    expect(supabase.auth.refreshSession).not.toHaveBeenCalled();
+    expect(onUnauthenticated).not.toHaveBeenCalled();
+    expect(supabase.auth.getUser).not.toHaveBeenCalled();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+  });
+
+  it('a 401 that GoTrue says is alive reaches onUnauthenticated but signs nobody out', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(401));
+    const supabase = fakeSupabase([refused(400)], USER_ALIVE);
+    const { client, store } = wire(supabase);
+    await expect(client.get('/api/x')).rejects.toThrow('[401]');
+    await settle();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+});
+
 describe('createDeadSessionHandler', () => {
   beforeEach(() => {
     Object.defineProperty(window, 'location', { value: { pathname: '/app' }, writable: true });
   });
 
-  it('collapses a burst of dead-session signals into one sign-out', () => {
+  it('collapses a burst of dead-session signals into one confirmation + one sign-out', async () => {
     const supabase = fakeSupabase([]);
     const store = fakeStore();
     const handle = createDeadSessionHandler(supabase, store.useAuthStore);
     handle(); handle(); handle();
+    await settle();
+    expect(supabase.auth.getUser).toHaveBeenCalledTimes(1);
     expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
+    expect(supabase.auth.signOut).toHaveBeenCalledWith({ scope: 'local' });
     expect(store.setUser).toHaveBeenCalledTimes(1);
   });
 
-  it('does nothing on a public auth route (no redirect loop)', () => {
+  it('GoTrue says the session is ALIVE: no sign-out, user untouched (a stray 401 must not kill every tab)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const supabase = fakeSupabase([], USER_ALIVE);
+    const store = fakeStore();
+    createDeadSessionHandler(supabase, store.useAuthStore)();
+    await settle();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('/app');
+    warn.mockRestore();
+  });
+
+  it('GoTrue unreachable (transient): no sign-out, user untouched', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const supabase = fakeSupabase([], USER_TRANSIENT);
+    const store = fakeStore();
+    createDeadSessionHandler(supabase, store.useAuthStore)();
+    await settle();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    expect(store.setUser).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('getUser throwing counts as transient, not dead', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const supabase = fakeSupabase([]);
+    supabase.auth.getUser.mockRejectedValue(new TypeError('Failed to fetch'));
+    const store = fakeStore();
+    createDeadSessionHandler(supabase, store.useAuthStore)();
+    await settle();
+    expect(supabase.auth.signOut).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('no local session at all (AuthSessionMissingError) is dead', async () => {
+    const supabase = fakeSupabase([], { data: { user: null }, error: { name: 'AuthSessionMissingError', status: 400, message: 'Auth session missing!' } });
+    createDeadSessionHandler(supabase, fakeStore().useAuthStore)();
+    await settle();
+    expect(supabase.auth.signOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('does nothing on a public auth route (no redirect loop)', async () => {
     Object.defineProperty(window, 'location', { value: { pathname: '/sso' }, writable: true });
     const supabase = fakeSupabase([]);
     const handle = createDeadSessionHandler(supabase, fakeStore().useAuthStore);
     handle();
+    await settle();
+    expect(supabase.auth.getUser).not.toHaveBeenCalled();
     expect(supabase.auth.signOut).not.toHaveBeenCalled();
   });
 });

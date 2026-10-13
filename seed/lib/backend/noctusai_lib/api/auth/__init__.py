@@ -68,6 +68,7 @@ import jwt
 from fastapi import Header, HTTPException, Request, Response
 
 from noctusai_lib.api.audit import AuditActor
+from noctusai_lib.api.auth._reasons import log_auth_401, token_shape
 from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
 from noctusai_lib.api.auth.effective_org import resolve_effective_org_via
 from noctusai_lib.domain.licensing import enforce_license as _enforce_license
@@ -209,15 +210,17 @@ def validate_bearer_token(client: Any, token: str) -> Any:
         user_response = client.auth.get_user(token)
     except Exception as exc:  # noqa: BLE001 — classified below, never swallowed
         if is_authoritative_token_rejection(exc):
-            logger.info(
-                "auth: token rejected by the auth provider (%s, status=%s)",
-                type(exc).__name__,
-                getattr(exc, "status", None),
+            log_auth_401(
+                "provider_rejected",
+                exc=type(exc).__name__,
+                status=getattr(exc, "status", None),
+                code=getattr(exc, "code", None),
             )
             raise HTTPException(status_code=401, detail="Não autenticado") from exc
         raise auth_provider_unavailable(exc) from exc
     user = getattr(user_response, "user", None) if user_response else None
     if not user:
+        log_auth_401("provider_returned_no_user", token=token_shape(token))
         raise HTTPException(status_code=401, detail="Token inválido")
     return user
 
@@ -255,6 +258,9 @@ async def _get_current_user(
     modules.
     """
     if not authorization or not authorization.startswith("Bearer "):
+        log_auth_401(
+            "missing_authorization_header" if not authorization else "authorization_not_bearer"
+        )
         raise HTTPException(status_code=401, detail="Token ausente")
 
     token = authorization.replace("Bearer ", "")
@@ -1084,11 +1090,14 @@ def verify_sso_token_factory(settings) -> Callable[[str], dict]:
                 options={"require": ["exp", "iat", "iss", "aud", "type", "jti"]},
             )
             if payload.get("type") != "sso":
+                log_auth_401("sso_token_wrong_type")
                 raise HTTPException(status_code=401, detail="Token não é SSO")
             return payload
         except jwt.ExpiredSignatureError:
+            log_auth_401("sso_token_expired")
             raise HTTPException(status_code=401, detail="Token SSO expirado")
         except jwt.InvalidTokenError:
+            log_auth_401("sso_token_invalid")
             raise HTTPException(status_code=401, detail="Token SSO inválido")
 
     return verify_sso_token

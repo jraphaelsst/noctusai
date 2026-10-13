@@ -43,6 +43,7 @@ from noctusai_lib.api.auth import (
     make_resolve_platform_role,
     validate_bearer_token,
 )
+from noctusai_lib.api.auth._reasons import log_auth_401
 from noctusai_lib.api.auth.effective_org import acting_audit_actor, acting_header_of
 from noctusai_lib.api.auth.session.scopes import resolve_org_role
 from noctusai_lib.domain.licensing import enforce_license, enforce_license_for_user
@@ -170,6 +171,9 @@ class ProductDependencies:
         `authorization` to stay first.
         """
         if not authorization or not authorization.startswith("Bearer "):
+            log_auth_401(
+                "missing_authorization_header" if not authorization else "authorization_not_bearer"
+            )
             raise HTTPException(status_code=401, detail="Token ausente")
         token = authorization.replace("Bearer ", "")
         # 401 ONLY when Supabase Auth rejected the token; 503 + Retry-After

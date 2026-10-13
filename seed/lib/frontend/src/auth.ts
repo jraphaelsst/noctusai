@@ -112,30 +112,58 @@ export function createSupabaseTokenRefresher(
     refreshWithBackoff(async () => classifySupabaseRefresh(await supabase.auth.refreshSession()), options);
 }
 
+/** Verdict of asking GoTrue "is this session still alive?". */
+export type SessionLiveness = 'alive' | 'dead' | 'transient';
+
+/**
+ * Ask GoTrue (`auth.getUser()` — a server round-trip, NOT a local read)
+ * whether the current session is alive. `dead` only when GoTrue ANSWERED that
+ * there is no usable session (no local session, 401/403/other non-transient
+ * 4xx such as `session_not_found` / `bad_jwt`); `transient` when it could not
+ * be asked (network, 408/425/429/5xx, a throw) — the unanswered case must
+ * never destroy a session.
+ */
+export async function probeSessionLiveness(supabase: AnySupabaseClient): Promise<SessionLiveness> {
+  try {
+    const res = await supabase.auth.getUser();
+    const error = res?.error;
+    if (!error) return res?.data?.user ? 'alive' : 'dead';
+    if (error.name === 'AuthSessionMissingError') return 'dead';
+    const status: number | null | undefined = error.status;
+    if (error.name === 'AuthRetryableFetchError' || isTransientHttpStatus(status)) return 'transient';
+    return 'dead';
+  } catch {
+    return 'transient';
+  }
+}
+
 /**
  * The `onUnauthenticated` handler for a supabase-js product: a request came
  * back 401 with no recovery (no token, or the refresh was REFUSED / the retry
- * still 401'd) — the session is dead. Clears the local auth state + signs out
- * (purging the stale token from storage), which flips the app's `!user` gate
- * in `createProductApp` and redirects to Landing/login. Without this the user
- * is stranded on a logged-in-looking shell that 401s every call ("[401] Token
- * ausente" on every page — the 2026-07-03 report).
+ * still 401'd). That is a CLAIM that the session is dead, not proof — so the
+ * handler CONFIRMS with GoTrue before destroying anything:
  *
- * 🔴 Signs out with scope `"local"`, NEVER the supabase-js default
- * `"global"`. A global signOut REVOKES every refresh token the user holds —
- * core's session and every other product's — so one product tab judging its
- * session dead logged the user out of the whole platform (2026-10-03: after a
- * social-wiring deploy, core asked for the password too). Only this tab's
- * session is dead; purge only this tab's stored copy. An explicit "Sair" is a
- * different action and keeps its own scope.
+ *  - `dead` (GoTrue says no usable session) → clear the auth store + sign out,
+ *    which flips the app's `!user` gate in `createProductApp` and redirects to
+ *    Landing/login.
+ *  - `alive` → the 401 came from the product backend for another reason; do
+ *    NOT sign out, do NOT clear the user. Warn (with the path) and let the
+ *    caller's error propagate.
+ *  - `transient` (GoTrue unreachable) → keep the session, same as alive.
  *
- * Idempotent (a page fires many requests at once, so a dead session produces
- * a BURST of 401s — collapsed to one logout; the guard resets after 3s so a
- * later genuine re-login → expiry can redirect again); never acts on a public
- * auth route (/login, /sso) to avoid a loop; best-effort throughout (never
- * throws into the fetch path). Clearing `user` drives a CLIENT-side redirect
- * (React Router `<Navigate>`), so no full reload; `signOut()` also fires
- * `onAuthStateChange` → `setUser(null)` as a belt.
+ * 🔴 Why confirm (2026-10-13, prod): `signOut({ scope: 'local' })` is NOT a
+ * purely local purge — supabase-js still calls GoTrue `/logout?scope=local`,
+ * which DELETES the current session server-side. Every tab of a product shares
+ * that one session (same localStorage), so ONE tab's false dead-session verdict
+ * destroyed a healthy session for all of them and every later request 401'd
+ * `session_not_found`. The previous comment ("only this tab's session is
+ * dead") was wrong. `scope: 'local'` is still used (never the default
+ * `'global'`, which would also revoke core's and other products' sessions).
+ *
+ * Idempotent (a dead session produces a BURST of 401s — collapsed to one
+ * verdict; the guard resets after 3s so a later genuine re-login → expiry can
+ * redirect again); never acts on a public auth route (/login, /sso); never
+ * throws into the fetch path.
  */
 export function createDeadSessionHandler(
   supabase: AnySupabaseClient,
@@ -147,11 +175,21 @@ export function createDeadSessionHandler(
     const path = typeof window !== 'undefined' ? window.location.pathname : '';
     if (path.startsWith('/login') || path.startsWith('/sso')) return;
     handling = true;
-    try { useAuthStore.getState().setUser?.(null); } catch { /* best-effort */ }
-    try { void supabase.auth.signOut?.({ scope: 'local' })?.catch?.(() => {}); } catch { /* best-effort */ }
     if (typeof window !== 'undefined') {
       window.setTimeout(() => { handling = false; }, 3000);
     }
+    void (async () => {
+      const verdict = await probeSessionLiveness(supabase);
+      if (verdict !== 'dead') {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[auth] 401 on ${path || '(unknown path)'} but the session is ${verdict} per GoTrue — keeping it signed in`,
+        );
+        return;
+      }
+      try { useAuthStore.getState().setUser?.(null); } catch { /* best-effort */ }
+      try { await supabase.auth.signOut?.({ scope: 'local' }); } catch { /* best-effort */ }
+    })();
   };
 }
 

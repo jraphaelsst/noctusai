@@ -1359,3 +1359,76 @@ class TestIsAuthoritativeTokenRejection:
         from noctusai_lib.api.auth import is_authoritative_token_rejection
 
         assert is_authoritative_token_rejection(ValueError("invalid JWT")) is False
+
+
+class TestFirst401IsExplainable:
+    """Every 401 from bearer validation logs a structured, secret-free reason
+    with the correlation id (2026-10-13: a prod logout whose first 401 could
+    not be explained). Tokens are never logged."""
+
+    SECRET = "eyJhbGciOi.SUPER-SECRET-PAYLOAD.sig"
+
+    @staticmethod
+    def _client(exc=None, user=None):
+        class _Auth:
+            def get_user(self, _t):
+                if exc is not None:
+                    raise exc
+                return type("R", (), {"user": user})()
+
+        return type("C", (), {"auth": _Auth()})()
+
+    @staticmethod
+    def _reasons(caplog):
+        return [r.getMessage() for r in caplog.records if r.getMessage().startswith("auth_401")]
+
+    def test_provider_rejection_logs_reason_status_code_and_cid(self, caplog):
+        from gotrue.errors import AuthApiError
+        from noctusai_lib.api.auth import validate_bearer_token
+        from noctusai_lib.primitives._correlation import correlation_id_var
+
+        tok = correlation_id_var.set("cid-123")
+        try:
+            with caplog.at_level(logging.WARNING), pytest.raises(HTTPException) as ei:
+                validate_bearer_token(
+                    self._client(AuthApiError("bad", 403, "session_not_found")), self.SECRET
+                )
+        finally:
+            correlation_id_var.reset(tok)
+        assert ei.value.status_code == 401
+        (line,) = self._reasons(caplog)
+        assert "reason=provider_rejected" in line
+        assert "cid=cid-123" in line
+        assert "status=403" in line and "code=session_not_found" in line
+        assert "SUPER-SECRET" not in caplog.text
+
+    def test_no_user_logs_reason_and_token_shape_only(self, caplog):
+        from noctusai_lib.api.auth import validate_bearer_token
+
+        with caplog.at_level(logging.WARNING), pytest.raises(HTTPException):
+            validate_bearer_token(self._client(user=None), self.SECRET)
+        (line,) = self._reasons(caplog)
+        assert "reason=provider_returned_no_user" in line and "token=jwt" in line
+        assert "SUPER-SECRET" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_missing_and_non_bearer_header_are_distinguished(self, caplog):
+        from noctusai_lib.api.auth import _get_current_user
+
+        with caplog.at_level(logging.WARNING):
+            for hdr in (None, "Basic abc"):
+                with pytest.raises(HTTPException) as ei:
+                    await _get_current_user(hdr, _get_supabase_client=lambda: None)
+                assert ei.value.status_code == 401
+        lines = self._reasons(caplog)
+        assert "reason=missing_authorization_header" in lines[0]
+        assert "reason=authorization_not_bearer" in lines[1]
+
+    def test_transient_provider_failure_is_503_and_logs_no_401(self, caplog):
+        from gotrue.errors import AuthRetryableError
+        from noctusai_lib.api.auth import validate_bearer_token
+
+        with caplog.at_level(logging.WARNING), pytest.raises(HTTPException) as ei:
+            validate_bearer_token(self._client(AuthRetryableError("x", 502)), self.SECRET)
+        assert ei.value.status_code == 503
+        assert self._reasons(caplog) == []
