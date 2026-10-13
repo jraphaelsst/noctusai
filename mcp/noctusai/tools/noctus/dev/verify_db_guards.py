@@ -2183,6 +2183,11 @@ _ORG_PICKER_FIXTURE = """
      SELECT 1 FROM public.licenses l
       WHERE l.org_id = o.id AND l.product_id = v_pid AND l.status = 'active') LIMIT 1;
   UPDATE public.products SET org_picker_ready = true WHERE id = v_pid;
+  -- The fixture users are REAL people who may hold a live selection right now (the owner
+  -- using the product): end it inside this always-rolled-back probe, or a forged row
+  -- collides with platform_org_selections_one_live and the probe reads as a failure.
+  UPDATE public.platform_org_selections SET ended_at = now(), ended_by = 'exit'
+   WHERE user_id IN (v_staff, v_plain) AND product_id = v_pid AND ended_at IS NULL;
   -- the helper requires the login to still exist in auth.sessions
   INSERT INTO auth.sessions (id, user_id) VALUES (v_sid, v_staff);
   INSERT INTO auth.sessions (id, user_id) VALUES (v_other_sid, v_staff);
@@ -7233,7 +7238,7 @@ _COMMERCE_COUPON_PERCENT_PROBE = _commerce_coupon_probe(
         "server-side, but the table must still refuse the row."
     ),
     rows_sql=f"INSERT INTO {_COMMERCE_SCHEMA}.commerce_coupons (org_id, code, kind, value) VALUES (v_org, 'PROBE', 'percent', 101);",
-    permitted="a 101% coupon insert succeeded",
+    permitted="a 101 percent coupon insert succeeded"  # no bare % -- it is a RAISE placeholder,
 )
 
 _COMMERCE_COUPON_CODE_UNIQUE_PROBE = _commerce_coupon_probe(
