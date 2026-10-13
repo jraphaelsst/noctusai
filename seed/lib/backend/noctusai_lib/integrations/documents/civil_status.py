@@ -406,6 +406,11 @@ def _clausula_negada(zona: str, at: int) -> bool:
 #: across cartório templates.
 _DETALHAMENTO_MATRICULA_RE = re.compile(
     r"DETALHAMENTO\s+D[AO]\s+(?:NUMERO\s+D[AE]\s+)?MATRICULA"
+    # The same appendix whose heading did not survive transcription, opened
+    # by its own item legend ("e (1): Tipo do livro, sendo: ...") — real,
+    # measured 2026-10-13 (a divorced seller read as "viuvo" off the book-type
+    # legend "4: Livro C (Óbito)").
+    r"|\bTIPO\s+DO\s+LIVRO\b"
 )
 
 
@@ -432,7 +437,16 @@ _LIVRO_LEGENDA_RE = re.compile(r"LIVRO\s+[A-Z]+(?:\s+AUXILIAR)?\s*\([^)]*\)")
 def _dentro_de_legenda_de_livro(zona: str, at: int) -> bool:
     """Is the event keyword matched at `at` sitting inside a "LIVRO X
     (Evento)" book-type legend entry?"""
-    return any(m.start() <= at < m.end() for m in _LIVRO_LEGENDA_RE.finditer(zona))
+    if any(m.start() <= at < m.end() for m in _LIVRO_LEGENDA_RE.finditer(zona)):
+        return True
+    # Transcription variants of the same legend with no closing paren, or a
+    # dash/colon/pipe instead ("Livro C - Óbito", "Livro C: Óbito",
+    # "Livro C (Óbito" cut at a line end): the keyword sits right after a
+    # bare "LIVRO <letter>" book reference.
+    return bool(_LIVRO_ANTES_RE.search(zona[max(0, at - 24) : at]))
+
+
+_LIVRO_ANTES_RE = re.compile(r"\bLIVRO\s+[A-Z](?:\s+AUXILIAR)?\s*[(\-–:|=]?\s*$")
 
 
 def find_regime_bens(text: str) -> tuple[Optional[str], str, Optional[str]]:
