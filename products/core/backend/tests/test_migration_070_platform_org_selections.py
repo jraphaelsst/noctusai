@@ -8,8 +8,11 @@ from pathlib import Path
 
 import pytest
 
+from noctusai_lib.testing.migrations import migration_path
+
 ROOT = Path(__file__).resolve().parents[4]
-SQL = (ROOT / "products/core/backend/migrations/070_platform_org_selections.sql").read_text(encoding="utf-8")
+MIGRATION = migration_path(ROOT / "products/core", "platform_org_selections")
+SQL = MIGRATION.read_text(encoding="utf-8")
 
 
 def _declared_schemas() -> dict[str, str]:
@@ -26,10 +29,29 @@ def _declared_schemas() -> dict[str, str]:
     return out
 
 
+def _later_seed_row_schemas() -> dict[str, str]:
+    """`db_schema` set by core seed-row migrations after 070 (070 is applied, so a
+    product scaffolded later maps itself in its own `NNN_seed_<slug>_product.sql`)."""
+    out: dict[str, str] = {}
+    for path in sorted(MIGRATION.parent.glob("*.sql")):
+        if path.name <= MIGRATION.name:
+            continue
+        out.update(
+            (slug, schema)
+            for schema, slug in re.findall(
+                r"UPDATE\s+public\.products\s+SET\s+db_schema\s*=\s*'([^']+)'\s+WHERE\s+slug\s*=\s*'([^']+)'",
+                path.read_text(encoding="utf-8"),
+                re.IGNORECASE,
+            )
+        )
+    return out
+
+
 def test_backfill_equals_every_products_create_product_app_schema():
     declared = _declared_schemas()
     block = SQL.split("FROM (VALUES", 1)[1].split(") AS v(slug, db_schema)", 1)[0]
     backfill = dict(re.findall(r"\('([^']+)',\s*'([^']+)'\)", block))
+    backfill.update(_later_seed_row_schemas())
     # `store` etc. may have no catalog row yet; every on-disk product must be MAPPED.
     assert backfill == declared
 
