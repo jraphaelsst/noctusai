@@ -86,8 +86,10 @@ class TestExtractor:
         out = await LadderIdentityExtractor(ladder=_Ladder(CNH_ESTRANGEIRO)).extract(
             b"%PDF", mimetype="application/pdf",
         )
-        assert out.rg == "W123456Z"
-        assert out.rg_orgao == "DIREX"
+        # Owner rule 2026-10-13: an RNE is its own kind — never in `rg`.
+        assert out.rg is None and out.rg_orgao is None
+        assert out.rne == "W123456Z"
+        assert out.rne_orgao == "DIREX"
         assert out.identidade_tipo == "rne"
         assert out.nacionalidade == "estrangeiro"
 
@@ -113,3 +115,4 @@ class TestCertidaoDivorcio:
         assert c.data_nascimento is not None and c.data_nascimento.isoformat() == "1982-02-20"
         assert c.titular is True  # matched through her pre-adoption name
         assert out.genero == "Feminino"
+        assert out.genero_derivado is True  # grammar, never a printed SEXO

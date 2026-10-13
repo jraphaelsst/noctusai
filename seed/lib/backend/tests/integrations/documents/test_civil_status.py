@@ -54,9 +54,11 @@ class TestEstadoCivilLabelled:
         valor, conf, _ = find_estado_civil("ESTADO CIVIL: DIVORCIADA")
         assert (valor, conf) == ("divorciado", "alta")
 
-    def test_uniao_estavel_is_a_two_word_phrase(self):
+    def test_uniao_estavel_is_not_an_estado_civil(self):
+        """Owner rule 2026-10-13: união estável is NOT an estado civil — a
+        document reading of it is reported absent, never emitted."""
         valor, conf, _ = find_estado_civil("ESTADO CIVIL: UNIAO ESTAVEL")
-        assert (valor, conf) == ("uniao_estavel", "alta")
+        assert (valor, conf) == (None, "nenhuma")
 
     def test_accents_and_casing_do_not_matter(self):
         valor, conf, _ = find_estado_civil("Estado Cívil: Viúva")

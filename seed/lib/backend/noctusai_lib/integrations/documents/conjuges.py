@@ -92,9 +92,20 @@ class ConjugeLido:
     profissao_confianca: str = "nenhuma"
     genero: Optional[str] = None
     genero_confianca: str = "nenhuma"
+    #: 🔴 ALWAYS `True` when `genero` is set (owner rule 2026-10-13): a
+    #: certidão de casamento prints no SEXO field, so every gender here is
+    #: DERIVED from grammatical agreement — a hint, never a reading.
+    genero_derivado: bool = False
     #: Set by the extractor (never by this module) when the caller's
     #: `TitularEsperado` hint selected this spouse.
     titular: bool = False
+
+
+    @property
+    def nome_apos_casamento(self) -> Optional[str]:
+        """The name this spouse adopted at marriage, when the certidão states
+        a change (`nome` then holds it and `nome_anterior` the maiden form)."""
+        return self.nome if self.nome_anterior else None
 
 
 def _padrao_nome(nome: str) -> re.Pattern[str]:
@@ -1220,6 +1231,12 @@ def find_conjuges(
     exactly the historical behaviour on every document whose label-driven
     read has no such conflict to notice.
     """
+    return _finalizar(_find_conjuges_bruto(text, esperados=esperados))
+
+
+def _find_conjuges_bruto(
+    text: str, *, esperados: tuple[str, ...] = ()
+) -> tuple[ConjugeLido, ...]:
     esperados = tuple(e for e in esperados if _nome_de_pessoa_plausivel(e))
     for leitor in (_ler_bloco_estruturado, _ler_narrativa_matrimonio, _ler_rotulada):
         lido = leitor(text or "")
@@ -1232,6 +1249,51 @@ def find_conjuges(
     if esperados:
         return _ler_ancorada(text or "", esperados)
     return ()
+
+
+def _e_nome_de_casada(curto: str, longo: str) -> bool:
+    """Is `longo` the married form of `curto` — the SAME person?
+
+    Same prenome (first word) AND every significant word of `curto`
+    contained in `longo` (`name.nomes_compativeis`). The prenome guard is
+    what keeps a real couple apart when one spouse's name is word-contained
+    in the other's ("JOSE SILVA" and "MARIA JOSE SILVA" are two people).
+    """
+    a, b = strip_accents_upper(curto).split(), strip_accents_upper(longo).split()
+    if not a or not b or a == b or len(a) >= len(b) or a[0] != b[0]:
+        return False
+    return nomes_compativeis(curto, longo)
+
+
+def _finalizar(lido: tuple[ConjugeLido, ...]) -> tuple[ConjugeLido, ...]:
+    """Owner rules (2026-10-13) applied to every reader's output.
+
+    1. 🔴 A TITULAR'S OWN MARRIED NAME IS NOT A SPOUSE. Measured (a real
+       seller): "SANTA MARIA FRACASSO" and "SANTA MARIA FRACASSO PICCHI" were
+       read as the two spouses, the second one given "Masculino" — it is HER
+       name after marriage. When one name is the married form of the other
+       (`_e_nome_de_casada`), they collapse into ONE spouse: `nome` = the
+       married form, `nome_anterior` = the maiden form, and every per-person
+       fact taken ONLY from the maiden-form entry (its own qualification
+       clause; the married-name entry's facts were read from text about
+       someone else). The other spouse is then MISSING — reported by the
+       extractor's core-field check ("os dois cônjuges"), never fabricated.
+    2. Every gender here is derived (`genero_derivado=True`).
+    """
+    out = list(lido)
+    if len(out) == 2:
+        a, b = out
+        for curto, longo in ((a, b), (b, a)):
+            if _e_nome_de_casada(curto.nome, longo.nome):
+                out = [replace(
+                    curto,
+                    nome=longo.nome,
+                    nome_anterior=curto.nome_anterior or curto.nome,
+                )]
+                break
+    return tuple(
+        replace(c, genero_derivado=True) if c.genero is not None else c for c in out
+    )
 
 
 __all__ = ["ConjugeLido", "find_conjuges"]
