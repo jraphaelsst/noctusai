@@ -1,6 +1,6 @@
 # lais — reference material (study only, no build)
 
-Everything extracted from **Lais** (`casa.lais.ai`, vendor **Lastro**) — the real-estate WhatsApp AI agent One Consultoria Imobiliária uses — to understand it and later build our own. Studied **2026-10-13, read-only, on the owner's own account**, with skill `noc-reverse-engineer` (born from this run and CoreStudio's). **Stage 1 (map) done; Stage 2 waits for the owner's review.** Nothing is being built yet.
+Everything extracted from **Lais** (`casa.lais.ai`, vendor **Lastro**) — the real-estate WhatsApp AI agent One Consultoria Imobiliária uses — to understand it and later build our own. Studied **2026-10-13, read-only, on the owner's own account**, with skill `noc-reverse-engineer` (born from this run and CoreStudio's). **Stages 1 (map) and 2 (read-only data + Bubble definition) are done.** Nothing of Lais is being rebuilt yet; our own module will live in SW's "Lais" nav group (see `DECISIONS.md`).
 
 Start with `analysis/SUMMARY.md`, then `specs/page-map.md`.
 
@@ -9,7 +9,10 @@ Start with `analysis/SUMMARY.md`, then `specs/page-map.md`.
 | Path | What |
 | --- | --- |
 | `specs/page-map.md` | Live UI map: shell, every sidebar page, tabs, fields, buttons, current config values, observed AI script, mechanisms (evidence tags C/I/U). Screenshot names in it refer to `screenshots/` or the private set (see below). |
-| `analysis/SUMMARY.md` | Static-analysis headline: counts, top findings, unknowns, Stage-2 safe-GET allowlist, never-call list. |
+| `analysis/SUMMARY.md` | Headline of both stages: S2 findings, then S1 counts, findings, unknowns, safe-GET allowlist, never-call list. |
+| `analysis/agent-brain.md` | S2: how the agent is configured — compiled prompt, 63-question slot catalogue, CRM forwarding (Vista), reengage, templates + param registry, visits, plans/credits. |
+| `analysis/bubble-app-definition.md` | S2: the Bubble app read from `window.app` — data types, option sets, API Connector catalogue, every edit form's fields/options and the endpoint each save calls. |
+| `captures/xhr-2026-10-13/` | S2: method, per-call status, response shapes of ~100 read-only GETs (no raw data stored). |
 | `analysis/endpoints.{md,json}` | 230 endpoints by domain: method, caller, request/response, routes, **safety class** (READ / WRITE / SEND / AUTH). |
 | `analysis/routes.md` | 58 routes: gate/redirect reason, native vs Bubble, sections, fields, validations. |
 | `analysis/domain-model.md` | ~35 entities, fields, enums, relations, state machines. |

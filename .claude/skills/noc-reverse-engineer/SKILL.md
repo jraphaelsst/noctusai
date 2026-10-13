@@ -21,9 +21,9 @@ rows to a guessed id).
 1. **Open + orient (S1).** Chrome: `tabs_context_mcp` → navigate to the app; if logged out, **stop and let the owner log in** (never type credentials). Record stack + hosts from `performance.getEntriesByType('resource')` and the CSP header (`curl -sI`).
 2. **Routes.** Expand every menu; then grep the downloaded bundles for route strings — the bundle is the source of truth, the menu is a subset. Visit each route; record title, iframes, redirects (= gated) and the API calls it fires.
 3. **Bundles (background).** Collect every chunk (per-route via a `__re_chunks` `localStorage` accumulator + the webpack runtime's async map), `curl` them into `scratchpad/<target>/js/`, then dispatch a background agent for static analysis: endpoints + method + safety class, service classes, zod/enum/MSW mocks, flags/permissions, integrations. Clean the `localStorage` key afterwards.
-4. **UI layer.** Per page: screenshot (saved + copied as `NN-<page>.jpg`) + `get_page_text`; open only READ controls (tabs, accordions, filter drawers, view toggles). Persist `ui/ui-notes.md` after every batch. Embedded legacy apps: open the iframe URL top-level with the same params.
+4. **UI layer.** Per page: screenshot (saved + copied as `NN-<page>.jpg`) + `get_page_text`; open only READ controls (tabs, accordions, filter drawers, view toggles). Persist `ui/ui-notes.md` after every batch. Embedded legacy apps: open the iframe URL top-level with the same params; for Bubble.io read `window.app` (whole UI + workflows + API catalogue, no live data needed).
 5. **Checkpoint S1** → report to the owner: page map, architecture, mechanisms seen, the "never call" list, open questions. **Wait** for the go to S2.
-6. **S2 · Data** — fetch only read-only GETs on ids seen in the owner's UI (allowlist from step 3); bulk results leave the browser via an owner-approved download; redact; status table in `specs/xhr-to-fetch.md`. Checkpoint.
+6. **S2 · Data** — fetch only read-only GETs on ids seen in the owner's UI (allowlist from step 3), fire-and-poll with a per-request timeout; learn missing params from 400 bodies. Reduce responses in the tab to shapes + enum values + product-content config, and read them out with `get_page_text`. Use a raw download only if needed, with the owner's yes. Record per-call status + shapes in `captures/xhr-<date>/README.md`. Checkpoint.
 7. **S3 · Mechanisms** — `specs/mechanisms.md`: entities + relations, state machines, triggers, AI layer (prompts as `*-DRAFT.md`, never final), pricing unit, integrations. Checkpoint.
 8. **S4 · Synthesis** — study doc + mapping to our seed/products + owner interview rounds (`AskUserQuestion`, options not decisions) → `DECISIONS.md`. Build only on "go all the way" (skill `noc-contract-first`).
 9. **Learn.** Log what the procedure got wrong this run and fold it into the KB pattern (skill `noc-learn-refine`).
@@ -36,6 +36,7 @@ rows to a guessed id).
 - PII (leads, staff, chat text) and tokens never reach a committed file — summarise structure, redact samples.
 - Evidence tags C / I / U on every claim; concepts are equal only by definition + real data.
 - Browser JS output caps at ~1 KB; zsh doesn't word-split `$VAR`; prefer `find` refs over coordinates.
+- Never open dropdowns by coordinates on edit forms (a stray click selects an option); read options from the DOM/definition. If a value changes, leave via the discard path and verify.
 
 ## Depth
 `KB § PATTERNS/common/app-reverse-engineering.md` (stages, safety classes, techniques, gotchas, sensitivity) · template study: `products/social-wiring/projects/core-studio/README.md`.

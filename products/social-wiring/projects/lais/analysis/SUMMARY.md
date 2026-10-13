@@ -1,4 +1,18 @@
-# Lais — static analysis summary (S1, 2026-10-13)
+# Lais — study summary
+
+## Stage 2 (2026-10-13) — read-only data + Bubble definition
+Detail: `agent-brain.md` (how the AI is configured), `bubble-app-definition.md` (every Bubble edit form, field, option and save endpoint), `../captures/xhr-2026-10-13/README.md` (~100 GETs: status + response shapes).
+1. **Prompt is compiled, not written.** Each config save does `PUT business-settings/<section>` then `POST {core-ai}/prompt/rea/{agency}/refresh`. C
+2. **Slot catalogue.** 63 "Perguntas essenciais" in 6 categories, some with an LLM hint; max 8 active / 5 qualifying; "Objetivo: comprar ou alugar" is required. C
+3. **CRM = Vista** (`web/forwardings` type `vista-v2`). Cold leads are auto-sent 30 min after the last reengage attempt. C
+4. **WhatsApp provider = 360dialog** (`dialog360/account-info`) + Meta Embedded Signup (`waba/onboardings/*`); there is a prompt-injection guard `agents/malicious-instructions/verify`. C
+5. Reengage: reminder 15 min (any hour) + final 4 h (08–20 h); réguas reuse 4 Meta templates; replying resets the flow. C
+6. Templates use typed params from a registry (`core` / `core_ai` / `session` / `manual`) and a per-chat send cap. C
+7. Messages are grouped by day; `chunkReference` groups multi-bubble AI replies; one chat has many "interactions" (lead-episodes) with AI summaries. C
+8. `notifications` and `chats/:id/transfers` return 404 in prod (mock-only / not deployed). Backend = Go + Postgres. C
+9. Bubble's own DB holds only users/roles/banners/flags; all business data is behind the APIs. C
+
+# Stage 1 — static analysis summary (2026-10-13)
 
 Source: 130 production chunks of casa.lais.ai (never executed). Detail files alongside.
 
