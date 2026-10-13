@@ -593,6 +593,206 @@ def equivalentes(tipo: str, a: object, b: object, **ctx: Optional[str]) -> Optio
     return None
 
 
+# ─── Standalone validators (accept or flag; never complete a value) ─────────
+#
+# OWNER RULE (2026-10-13): validation only ACCEPTS or FLAGS. A check digit the
+# document does not print is never computed and appended. These are NOT in
+# `_REGISTRO` (and so not in the shared Python/TS/SQL case table) — they are
+# extraction-side gates used by `integrations/documents`; promoting one to a
+# registry type means adding it to all three runtimes at once (module
+# docstring).
+
+
+@dataclass(frozen=True)
+class Validacao:
+    """Outcome of a standalone validator.
+
+    `valido` — the value fits (shape and, where the rule is HARD, the check
+    digit). `canonico` — the value as printed, punctuation-normalised, or None
+    when it does not fit. `motivo` — a stable code. `avisos` — SOFT findings
+    that never refuse the value (an unverified community DV, a DV variant).
+    `partes` — the decoded structure, when the identifier has one.
+    """
+
+    valido: bool
+    canonico: Optional[str]
+    motivo: str
+    avisos: tuple[str, ...] = ()
+    partes: Optional[dict] = None
+
+
+#: RNE / CRNM: one letter, six digits, one PRINTED check character. No DV
+#: algorithm is applied — the check character is accepted as printed.
+_RNE_MASCARA = re.compile(r"^([A-Z])-?(\d{3})\.?(\d{3})-?([0-9A-Z])$")
+
+
+def validar_rne(valor: object) -> Validacao:
+    """`W-573.678-Z` / `W573678Z` / `W573678-Z` -> canonical `W573678-Z`.
+
+    Mask only (`^[A-Z]-?\\d{3}\\.?\\d{3}-?[0-9A-Z]$`), no check-digit math.
+    An issuing body glued to the number (`W573678ZDIREX`) does not fit: the
+    órgão (DIREX/CGPI/DPF) is never part of the number — the reader splits it
+    off before validating.
+    """
+    s = re.sub(r"\s+", "", _deaccent_upper(_texto(valor)))
+    if not s:
+        return Validacao(False, None, "vazio")
+    m = _RNE_MASCARA.match(s)
+    if not m:
+        return Validacao(False, None, "mascara")
+    letra, a, b, dv = m.groups()
+    return Validacao(True, f"{letra}{a}{b}-{dv}", "ok", partes={"letra": letra, "dv": dv})
+
+
+#: tipoLivro (position 15 of the RCPN matrícula) per certificate type.
+TIPO_LIVRO_RCPN = {
+    "nascimento": "1",
+    "casamento": "2",
+    "casamento_b_auxiliar": "3",
+    "obito": "4",
+}
+
+
+def _rcpn_dv(digitos30: str) -> str:
+    """Community-documented RCPN DV (UNVERIFIED against an official spec)."""
+    b = [int(c) for c in digitos30]
+    dv1 = sum(b[i] * ((i + 2) % 11) for i in range(30)) % 11
+    dv1 = 1 if dv1 == 10 else dv1
+    b2 = b + [dv1]
+    dv2 = sum(b2[i] * ((i + 1) % 11) for i in range(31)) % 11
+    dv2 = 1 if dv2 == 10 else dv2
+    return f"{dv1}{dv2}"
+
+
+def validar_matricula_rcpn(
+    valor: object,
+    *,
+    tipo_certidao: Optional[str] = None,
+    data_emissao: Optional[object] = None,
+) -> Validacao:
+    """The 32-digit matrícula of an RCPN certidão (Provimento CNJ 63/2017).
+
+    Structure: CNS(6) acervo(2) "55"(2) ano(4) tipoLivro(1) livro(5)
+    folha(3) termo(7) DV(2). HARD checks: 32 digits, positions 9-10 == "55",
+    tipoLivro matches `tipo_certidao` (when given), ano ≤ the emission
+    year (when given). The DV is a SOFT warning only (`dv_nao_confere`) —
+    the algorithm is community-documented and unverified, so it may never
+    refuse a printed value.
+    """
+    d = re.sub(r"[\s.\-]", "", _texto(valor))
+    if not d:
+        return Validacao(False, None, "vazio")
+    if not re.fullmatch(r"[0-9]+", d):
+        return Validacao(False, None, "caracteres_invalidos")
+    if len(d) != 32:
+        return Validacao(False, None, "tamanho")
+    partes = {
+        "cns": d[0:6], "acervo": d[6:8], "rcpn": d[8:10], "ano": d[10:14],
+        "tipo_livro": d[14], "livro": d[15:20], "folha": d[20:23],
+        "termo": d[23:30], "dv": d[30:32],
+    }
+    canon = " ".join(
+        (d[0:6], d[6:8], d[8:10], d[10:14], d[14], d[15:20], d[20:23], d[23:30], d[30:32])
+    )
+    if partes["rcpn"] != "55":
+        return Validacao(False, None, "nao_rcpn", partes=partes)
+    if tipo_certidao is not None:
+        esperado = TIPO_LIVRO_RCPN.get(tipo_certidao)
+        if esperado is None:
+            raise ValueError(f"tipo_certidao desconhecido: {tipo_certidao!r}")
+        aceitos = {esperado}
+        if tipo_certidao == "casamento":
+            aceitos.add(TIPO_LIVRO_RCPN["casamento_b_auxiliar"])
+        if partes["tipo_livro"] not in aceitos:
+            return Validacao(False, None, "tipo_livro_incompativel", partes=partes)
+    if data_emissao is not None:
+        ano_emissao = getattr(data_emissao, "year", None)
+        if ano_emissao is None:
+            m = re.search(r"(\d{4})", _texto(data_emissao))
+            ano_emissao = int(m.group(1)) if m else None
+        if ano_emissao is not None and int(partes["ano"]) > ano_emissao:
+            return Validacao(False, None, "ano_posterior_a_emissao", partes=partes)
+    avisos: tuple[str, ...] = ()
+    if _rcpn_dv(d[:30]) != partes["dv"]:
+        avisos = ("dv_nao_confere",)
+    return Validacao(True, canon, "ok", avisos, partes)
+
+
+def validar_cnh_registro(valor: object) -> Validacao:
+    """The CNH's 11-digit Nº REGISTRO (never the espelho nor the RENACH).
+
+    s1 = Σ d[i]·(i+2) (i 0..8); dv1 = 0 if s1%11 < 2 else 11 − s1%11.
+    s2 = Σ d[i]·(i+3) + dv1·2;   dv2 likewise.
+    DV1 mismatch is a HARD fail. A DV2 mismatch is a HARD fail too, EXCEPT
+    when the dv1 remainder was < 2 — the case where the published variants
+    of the algorithm disagree — where it is only a warning
+    (`dv2_variante`).
+    """
+    d = _numerico(_texto(valor))
+    if d is None:
+        return Validacao(False, None, "caracteres_invalidos")
+    if len(d) != 11:
+        return Validacao(False, None, "tamanho")
+    if d == d[0] * 11:
+        return Validacao(False, None, "repetido")
+    n = [int(c) for c in d]
+    r1 = sum(n[i] * (i + 2) for i in range(9)) % 11
+    dv1 = 0 if r1 < 2 else 11 - r1
+    if dv1 != n[9]:
+        return Validacao(False, None, "dv_invalido")
+    r2 = (sum(n[i] * (i + 3) for i in range(9)) + dv1 * 2) % 11
+    dv2 = 0 if r2 < 2 else 11 - r2
+    if dv2 != n[10]:
+        if r1 < 2:
+            return Validacao(True, d, "ok", ("dv2_variante",))
+        return Validacao(False, None, "dv_invalido")
+    return Validacao(True, d, "ok")
+
+
+def validar_cnpj(valor: object) -> Validacao:
+    """Numeric OR alphanumeric CNPJ (IN RFB 2.229/2024, from July 2026):
+    `AA.AAA.AAA/AAAA-DD`, letters allowed in the 12 base positions, value
+    `ord(c) − 48`, DVs numeric — the ONE algorithm is `cnpj_dv_valido`."""
+    r = _ler_cnpj(_texto(valor), _Ctx()) if _texto(valor) else _no("vazio")
+    return Validacao(r.cabe, r.canonico, r.motivo)
+
+
+#: CRECI: number (1-6 digits), the PRINTED F/J suffix, optional region
+#: before ("CRECI/SP 12345-F") or after ("12345-J/SP").
+_CRECI_RE = re.compile(
+    r"^(?:CRECI)?\s*(?:[-/]?\s*(?P<uf_antes>[A-Z]{2})\b)?\s*(?:N[O°º]?\.?\s*)?[:\-]?\s*"
+    r"(?P<num>\d{1,6})\s*-?\s*(?P<tipo>[A-Z])?"
+    r"(?:\s*[-/]\s*(?:(?:\d{1,2}A?\s*REGIAO)|(?P<uf_depois>[A-Z]{2})))?$"
+)
+
+
+def validar_creci(valor: object) -> Validacao:
+    """CRECI `^\\d{1,6}-?[FJ]$` plus an optional region.
+
+    F = pessoa física, J = pessoa jurídica — read ONLY from the printed
+    suffix; a number without it is `sem_tipo` (never inferred).
+    """
+    s = re.sub(r"\s+", " ", _deaccent_upper(_texto(valor))).strip()
+    if not s:
+        return Validacao(False, None, "vazio")
+    m = _CRECI_RE.match(s)
+    if not m:
+        return Validacao(False, None, "mascara")
+    tipo = m.group("tipo")
+    if tipo is None:
+        return Validacao(False, None, "sem_tipo")
+    if tipo not in ("F", "J"):
+        return Validacao(False, None, "tipo_invalido")
+    uf = m.group("uf_antes") or m.group("uf_depois")
+    if uf is not None and uf not in _UFS:
+        return Validacao(False, None, "regiao_invalida")
+    canon = f"{m.group('num')}-{tipo}" + (f"/{uf}" if uf else "")
+    return Validacao(
+        True, canon, "ok",
+        partes={"numero": m.group("num"), "tipo": tipo, "pessoa": "fisica" if tipo == "F" else "juridica", "uf": uf},
+    )
+
+
 # ─── CNS (cartório) extraction ───────────────────────────────────────────────
 
 _CNS_RE = re.compile(r"\bC\.?\s?N\.?\s?S\.?\s*[:\-.Nº°O]*\s*([0-9]{2}\.?[0-9]{3}\s?-?\s?[0-9])(?![0-9])")
@@ -629,4 +829,11 @@ __all__ = [
     "rg_anomalia",
     "rg_sp_dv",
     "tipos",
+    "TIPO_LIVRO_RCPN",
+    "Validacao",
+    "validar_cnh_registro",
+    "validar_cnpj",
+    "validar_creci",
+    "validar_matricula_rcpn",
+    "validar_rne",
 ]
