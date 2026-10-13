@@ -46,7 +46,7 @@ interface CampoTaxonProps {
   onChange: (ids: number[]) => void;
 }
 
-/** Nichos / profissões picker: the shared MultiSelectPopover with a hard cap + CoreStudio's copy. */
+/** Nichos / profissões picker: the shared MultiSelectPopover with a hard cap + the reference app's copy. */
 function CampoTaxon({ id, label, ajuda, dica, erroMax, opcoes, valor, max, onChange }: CampoTaxonProps) {
   const noLimite = valor.length >= max;
   return (
@@ -84,7 +84,7 @@ export const BIO_TEMPLATE =
 const AJUDA_MAGNETICA = "Esse campo será incluso nas gerações de Roteiros. Dentro da Tag Apresentação Magnética";
 const AJUDA_CTAS = "Esse campo será incluso nas gerações de Roteiros. Dentro da Tag CTAs";
 
-/** CoreStudio's rule: bio needs nichos ∧ profissões, and nichos ∧ profissões need the bio. */
+/** The reference app's rule: bio needs nichos ∧ profissões, and nichos ∧ profissões need the bio. */
 export function perfilIncompleto(f: { bio: string; nichos: number[]; profissoes: number[] }): boolean {
   const bio = f.bio.trim().length > 0;
   const taxons = f.nichos.length > 0 && f.profissoes.length > 0;

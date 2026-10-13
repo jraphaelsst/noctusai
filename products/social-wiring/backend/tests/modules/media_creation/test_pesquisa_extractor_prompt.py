@@ -47,7 +47,7 @@ def test_valid_pairs_pass_with_excerpts():
                      ("FRUSTRACOES-DO-AVATAR", "Já tentei várias dietas")]
     assert desc == 0
     # truncateHeadline: the right cut is searched from max(matchEnd, leftCut+30),
-    # so a very short sentence runs on into the next one (CoreStudio's rule).
+    # so a very short sentence runs on into the next one (the reference app's rule).
     assert excerpts[pairs[0]] == "Sofro com insônia há anos! Já tentei várias dietas e nada funcionou."
     assert excerpts[pairs[1]] == "Já tentei várias dietas e nada funcionou."
 

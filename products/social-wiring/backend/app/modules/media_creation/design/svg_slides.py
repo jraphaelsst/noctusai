@@ -1,7 +1,7 @@
 """Deterministic SVG slide builders — one per layout role.
 
 The in-home locked structural skeleton (canvas 1080×1350, safe-area margins,
-the base layout roles cover/develop/insight/cta with the Método Audience
+the base layout roles cover/develop/insight/cta with the Método
 roles aliased onto them, gold accent rules, brand handle) as token-driven
 Python builders. The palette / typography are NOT baked here — they come
 from :class:`DesignTokens` (preset or per-brand ``design_tokens``). Only the
@@ -233,7 +233,7 @@ def build_slide_svg(
 ) -> str:
     """Dispatch to the role builder. Unknown role → cover layout (safe default).
 
-    Método Audience roles (capa/identificacao/virada/nome/prova/valor/cta) map
+    Método roles (capa/identificacao/virada/nome/prova/valor/cta) map
     onto the four base layouts: capa→cover, virada→insight (the reframe/
     punchline), cta→cta, and the body beats (identificacao/nome/prova/valor)→
     develop. Legacy roles (cover/develop/insight/cta) still dispatch directly.

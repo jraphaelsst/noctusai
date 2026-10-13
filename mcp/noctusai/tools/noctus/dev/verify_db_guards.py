@@ -4421,7 +4421,7 @@ _SW_CERTIDAO_RESULTADO_ORIGEM_PROBE = _ai_tables_probe(
 )
 
 # Migration 250 (Roteiro Avançado, owner decision 2026-10-11): a roteiro's
-# beat order is corestudio | metodo. An unknown structure would make the
+# beat order is cta_inicio | cta_final (values renamed by 253). An unknown structure would make the
 # worker pick no prompt (the row fails) and the UI show a structure that does
 # not exist. The CHECK fires before the (fabricated) org/marca FKs, which are
 # deferred to the end of the statement.
@@ -4431,7 +4431,7 @@ _SW_250_ESTRUTURA_PROBE = _ai_tables_probe(
     "INSERT INTO social_wiring.cs_roteiros (org_id, marca_id, nome, headline_texto, estrutura) "
     "VALUES (v_org, gen_random_uuid(), 'noc-probe', 'noc-probe', 'bogus')",
     "23514",
-    rationale="social_wiring.cs_roteiros: an estrutura outside corestudio|metodo has no prompt and no UI label.",
+    rationale="social_wiring.cs_roteiros: an estrutura outside cta_inicio|cta_final has no prompt and no UI label.",
 )
 
 # Migration 251 (org-level favorecidos registry): one ACTIVE payee per document

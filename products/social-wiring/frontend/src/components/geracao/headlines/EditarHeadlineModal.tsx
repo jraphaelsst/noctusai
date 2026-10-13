@@ -2,7 +2,7 @@
  * Edit a headline's text (contract §4.4 #27: PATCH keeps `texto_original`).
  * Used by P1 Dashboard, P2 Chat and P7–P9 Headlines. When the host passes a
  * `roteiroBloco` (Favoritas / Sugeridas, page-map-v2 §18/§19) it becomes
- * CoreStudio's "Editar Headline e Roteiro": the roteiro text is edited through
+ * The reference app's "Editar Headline e Roteiro": the roteiro text is edited through
  * FE-3's `useEdicaoRoteiro` (optimistic-lock 409 included); blank = unchanged.
  */
 import { useEffect, useState } from "react";
@@ -57,7 +57,7 @@ export function EditarHeadlineModal({ open, onOpenChange, headline, onSalvo, rot
   const alterou = !!headline && limpo !== headline.texto.trim();
   const edicao = roteiroBloco?.edicao;
   const roteiroEditavel = !!roteiroBloco?.roteiro;
-  // Blank roteiro = "don't change it" (CoreStudio); an untouched textarea is unchanged too.
+  // Blank roteiro = "don't change it" (the reference app); an untouched textarea is unchanged too.
   const roteiroAlterado = roteiroEditavel && !!edicao && edicao.alterou && edicao.conteudo.trim() !== "";
   const salvando = editar.isPending || !!edicao?.salvando;
   const podeSalvar =

@@ -2,7 +2,7 @@
 
 Produces the text that surrounds the post on Instagram — caption, hashtags,
 alt text, first comment (NOT the text inside slides, which lives in the
-storyboard). Obeys the in-home Método Audience quality rules (see
+storyboard). Obeys the in-home Método quality rules (see
 :mod:`.methodology`): a specific hook, deliver-the-promise, and a save +
 tag/send CTA. Self-contained; no external references.
 """

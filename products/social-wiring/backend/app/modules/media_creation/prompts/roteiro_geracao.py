@@ -1,12 +1,12 @@
 """Roteiro Avançado — stage 2: the script. **DRAFT for owner validation** (``roteiro-v1-draft``).
 
-CoreStudio's roteiro prompt was never captured (``projects/core-studio/prompts/roteiro-DRAFT.md``
-section 1). This one is designed from the Método Audience and the behaviour observed on roteiros
+The reference app's roteiro prompt was never captured (``projects/core-studio/prompts/roteiro-DRAFT.md``
+section 1). This one is designed from the Método and the behaviour observed on roteiros
 41428 / 41429 (beat order, viral-as-skeleton, fabricated statistics to forbid). The owner validates it.
 
-Two beat orders, chosen per roteiro (``estrutura``, owner decision 2026-10-11): ``corestudio``
-(``roteiro-v1-draft``, CTA de salvar right after the capa) and ``metodo``
-(``roteiro-metodo-v1-draft``, capa first and ONE merged CTA last). Every beat's rule is shared.
+Two beat orders, chosen per roteiro (``estrutura``, owner decision 2026-10-11): ``cta_inicio``
+(``roteiro-v1-draft``, CTA de salvar right after the capa) and ``cta_final``
+(``roteiro-cta-final-v1-draft``, capa first and ONE merged CTA last). Every beat's rule is shared.
 
 Untrusted text (brain, viral transcript/caption, the creator's free text) is placed in
 ``<dados_nao_confiaveis>`` blocks and declared material, never instructions (contract 9.1); model
@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal, Optional, get_args
 
-from app.modules.media_creation.prompts.methodology import METODO_AUDIENCE
+from app.modules.media_creation.prompts.methodology import METODO
 
 BRAIN_MAX_CHARS = 20_000
 VIRAL_MAX_CHARS = 8_000
@@ -47,17 +47,17 @@ def dados_nao_confiaveis(rotulo: str, texto: str, *, max_chars: Optional[int] = 
 
 
 #: The two beat orders the creator chooses between at generation time (owner decision 2026-10-11,
-#: "both structures"). ``corestudio`` is the order observed on CoreStudio roteiros 41428 / 41429
-#: (CTA de salvar right after the capa); ``metodo`` is the Método Audience rule "capa primeiro,
+#: "both structures"). ``cta_inicio`` is the order observed on original-app roteiros 41428 / 41429
+#: (CTA de salvar right after the capa); ``cta_final`` is the Método rule "capa primeiro,
 #: CTA por último" (``methodology.METODO_STRUCTURE``), with the two CTAs merged into one closing beat.
-Estrutura = Literal["corestudio", "metodo"]
+Estrutura = Literal["cta_inicio", "cta_final"]
 ESTRUTURAS: tuple[str, ...] = get_args(Estrutura)
-ESTRUTURA_PADRAO: Estrutura = "corestudio"
+ESTRUTURA_PADRAO: Estrutura = "cta_inicio"
 
 #: One prompt version per structure; the version actually used is stored on the row.
 PROMPT_VERSOES: dict[str, str] = {
-    "corestudio": "roteiro-v1-draft",
-    "metodo": "roteiro-metodo-v1-draft",
+    "cta_inicio": "roteiro-v1-draft",
+    "cta_final": "roteiro-cta-final-v1-draft",
 }
 #: The default structure's version (kept for callers that predate the choice).
 PROMPT_VERSAO = PROMPT_VERSOES[ESTRUTURA_PADRAO]
@@ -89,11 +89,11 @@ _BEAT_CTA_FINAL = (
 
 #: The ordered beats of each structure.
 BEATS: dict[str, tuple[str, ...]] = {
-    "corestudio": (
+    "cta_inicio": (
         _BEAT_HEADLINE, _BEAT_CTA_SALVAR, _BEAT_IDENTIFICACAO, _BEAT_VIRADA, _BEAT_NOME,
         _BEAT_PROVA, _BEAT_VALOR, _BEAT_CTA_COMPARTILHAR, _BEAT_APRESENTACAO,
     ),
-    "metodo": (
+    "cta_final": (
         _BEAT_HEADLINE, _BEAT_IDENTIFICACAO, _BEAT_VIRADA, _BEAT_NOME,
         _BEAT_PROVA, _BEAT_VALOR, _BEAT_APRESENTACAO, _BEAT_CTA_FINAL,
     ),
@@ -121,9 +121,9 @@ def system_prompt(estrutura: str = ESTRUTURA_PADRAO) -> str:
 
 _BEATS_SLOT = "{beats}"
 
-_SYSTEM_PROMPT_TEMPLATE = f"""Você é um roteirista de Reels que escreve roteiros falados, prontos para gravar, seguindo o Método Audience.
+_SYSTEM_PROMPT_TEMPLATE = f"""Você é um roteirista de Reels que escreve roteiros falados, prontos para gravar, seguindo o Método.
 
-{METODO_AUDIENCE}
+{METODO}
 
 ## Como montar o roteiro (beats, nesta ordem, cada um sob um título markdown `## `)
 {{beats}}

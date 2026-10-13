@@ -80,7 +80,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
   const [headline, setHeadline] = useState("");
   const [instrucoes, setInstrucoes] = useState("");
   const [duracao, setDuracao] = useState<Roteiro["duracao"]>("auto");
-  const [estrutura, setEstrutura] = useState<Roteiro["estrutura"]>("corestudio");
+  const [estrutura, setEstrutura] = useState<Roteiro["estrutura"]>("cta_inicio");
   const [brainId, setBrainId] = useState<string>("");
   const [viralId, setViralId] = useState<string | null>(null);
   const [comPerguntas, setComPerguntas] = useState(true);
@@ -103,7 +103,7 @@ export function RoteiroAvancadoModal({ open, onOpenChange, marcaId, headlineInic
     setHeadline(headlineInicial?.texto ?? "");
     setInstrucoes("");
     setDuracao("auto");
-    setEstrutura("corestudio");
+    setEstrutura("cta_inicio");
     setBrainId("");
     setViralId(null);
     setComPerguntas(true);

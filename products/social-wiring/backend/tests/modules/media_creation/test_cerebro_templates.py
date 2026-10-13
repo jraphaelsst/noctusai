@@ -118,10 +118,10 @@ class TestSynthesisPrompt:
             "Perfil Profissional", "Público-Alvo e Desafios", "Solução e Transformação", "Histórias de Sucesso",
         )
 
-    def test_prompt_pins_the_method_audience_rules(self):
+    def test_prompt_pins_the_metodo_rules(self):
         prompt = build_synthesis_system_prompt("nucleo-de-influencia")
         assert "PRESERVE LITERALMENTE" in prompt and "NUNCA invente" in prompt and "PRIMEIRA PESSOA" in prompt
-        # the coined names feed the beats these roles name in Método Audience
+        # the coined names feed the beats these roles name in Método
         for beat in ("identificacao", "virada", "nome"):
             assert f"**{beat}**" in METODO_STRUCTURE
 

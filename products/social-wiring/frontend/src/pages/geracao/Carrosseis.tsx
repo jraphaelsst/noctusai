@@ -2,7 +2,7 @@
  * Carrosséis e posts de imagem (CoreStudio, `/media-creation/carrosseis`) — the
  * legacy "Criação de mídia" Biblioteca + Novo post tabs, unchanged
  * (esteira-contract §A.5 A-2): storyboard → prompts de imagem → render → legenda
- * → avaliação (Método Audience).
+ * → avaliação (Método).
  */
 import { useState } from "react";
 import { Library, Plus, Wand2 } from "lucide-react";

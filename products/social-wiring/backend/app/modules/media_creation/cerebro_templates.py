@@ -14,10 +14,10 @@ Origin (``projects/core-studio/specs/cerebro-contract.md`` §2 and §10):
 * ``hint`` is captured ONLY for Núcleo de Influência (from the owner's brain
   3081 page, ``captures/crawl-2026-10-06/pages/html__cores_questions_3081.html``)
   — the other three templates have no hints until the owner provides them;
-* ``optional`` is DRAFT: Núcleo 02, 04, 07, 13, 15 only (the questions CoreStudio
+* ``optional`` is DRAFT: Núcleo 02, 04, 07, 13, 15 only (the questions the reference app
   words as "se tiver"); the other templates have no optional question yet.
 
-Template ``description`` texts are DRAFT, written here (CoreStudio shows none).
+Template ``description`` texts are DRAFT, written here (the reference app shows none).
 """
 from __future__ import annotations
 

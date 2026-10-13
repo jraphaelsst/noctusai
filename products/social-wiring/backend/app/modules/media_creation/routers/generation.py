@@ -142,7 +142,7 @@ async def score_post(
     gen_svc: GenerationService = Depends(get_generation_service),
     post_svc: PostService = Depends(get_post_service),
 ):
-    """Audit the post against the Método Audience rubric (8 criteria).
+    """Audit the post against the Método rubric (8 criteria).
 
     Returns ``{score, verdict, strengths, corrections, criteria, rationale}``
     and persists it to the post. Requires a storyboard.

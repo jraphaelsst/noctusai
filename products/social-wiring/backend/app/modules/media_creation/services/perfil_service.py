@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 PERFIL = "cs_marca_perfil"
 MAX_ITENS = 3
-#: ``tom`` ids are CoreStudio's 10..15 (contract §4.4); ``TONS`` is ordered by them.
+#: ``tom`` ids are the reference app's 10..15 (contract §4.4); ``TONS`` is ordered by them.
 TOM_ID_BASE = 10
 
 

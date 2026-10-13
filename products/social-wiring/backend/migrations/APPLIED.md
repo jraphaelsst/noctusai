@@ -575,10 +575,14 @@ Authored 2026-10-10 (esteira-contract.md §A, A-3, FE-Z). Sets `status_pagina.me
 
 Authored 2026-10-11 (owner decision relayed by noc-0: click tracking must store no IP and no user agent). Destroys any captured values with the columns. The writer stopped sending them in the same commit. Between apply and the new image going live, an old-image click insert would fail; harmless in practice because prod sends no marketing email yet (Resend webhook secret + frontend base URL unset), so no tracked links exist.
 
-## 250 — cs_roteiros.estrutura (Roteiro Avançado: CoreStudio vs Método beat order) — NOT APPLIED
+## 250 — cs_roteiros.estrutura (Roteiro Avançado: beat order) — APPLIED (seen in prod social_wiring.schema_migrations 2026-10-13)
 
 Authored 2026-10-11 (owner decision "both structures"). Additive + idempotent: `estrutura TEXT NOT NULL DEFAULT 'corestudio'` (every existing row was generated with the CoreStudio order, so the default is the truthful backfill) with the named `cs_roteiros_estrutura_check` (`corestudio|metodo`, DROP IF EXISTS + ADD). Requires 229. Apply BEFORE deploying the image that reads/writes it (create/reprocessar insert `estrutura`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`.
 
 ## 252 — status_pagina_lais (nav keys `lais_conversas` + `lais_configuracoes` for the Lais group) — NOT APPLIED
 
 Authored 2026-10-13 (owner decision: WhatsApp leaves "Conexões" and becomes the "Lais" chatbot group, /lais/conversas + /lais/configuracoes). Inserts both rows copying the CURRENT `whatsapp_chat` status (guard: refuses if that row is absent); `whatsapp_chat` row kept (/whatsapp-chat now redirects). ON CONFLICT DO NOTHING; no CHECK/UNIQUE/trigger, so no GuardProbe. Requires 014. Apply together with (or before) the image that ships the Lais nav group — until applied, the two Lais nav items stay hidden (routes still reachable directly).
+
+## 253 — cs_roteiros.estrutura value rename (corestudio→cta_inicio, metodo→cta_final) — NOT APPLIED
+
+Authored 2026-10-13 (owner decision "no leftovers from Core"). Drops `cs_roteiros_estrutura_check`, rewrites existing rows, sets the default `'cta_inicio'`, re-adds the same-named CHECK (`cta_inicio|cta_final`). Idempotent. Requires 250. Apply BEFORE deploying the image that reads/writes the new values (create/reprocessar insert `cta_inicio`/`cta_final`); until then an old-values DB rejects them. Then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`. (Renumbered from 252 at integrate: 252 was taken by `status_pagina_lais`.)

@@ -1,6 +1,6 @@
 """Chat retrieval -- the v1 "tools" (``specs/geracao-contract.md`` section 6.3).
 
-The seed LLM layer has no tool calling, so what CoreStudio's agents fetched through tools
+The seed LLM layer has no tool calling, so what the reference app's agents fetched through tools
 (``consultar_variaveis_perfil`` / ``searchMyResearch`` / ``searchMyCerebro``) is assembled here,
 server-side, **per message**, in a fixed priority order under a hard character cap:
 

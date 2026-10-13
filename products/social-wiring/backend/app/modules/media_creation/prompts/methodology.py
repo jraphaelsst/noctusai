@@ -1,4 +1,4 @@
-"""Método Audience — the in-home content methodology the generation stages obey.
+"""Método — the in-home content methodology the generation stages obey.
 
 This is the platform's own copy of the attention-economy methodology used to
 structure Instagram-first posts (carousel / single / reels). It is embedded
@@ -74,9 +74,9 @@ METODO_QUALITY = """## Regras de qualidade (obedeça na geração — é o mesmo
    Deixe placeholders `[seu nome]` / `[sua abordagem]` para a pessoa preencher a própria identidade."""
 
 # The full methodology block, assembled once, injected into system prompts.
-METODO_AUDIENCE = "\n\n".join(
+METODO = "\n\n".join(
     [
-        "# Método Audience (a metodologia que rege este post)",
+        "# Método (a metodologia que rege este post)",
         METODO_TRIGGERS,
         METODO_STRUCTURE,
         METODO_TEMPLATES,
@@ -85,7 +85,7 @@ METODO_AUDIENCE = "\n\n".join(
 )
 
 __all__ = [
-    "METODO_AUDIENCE",
+    "METODO",
     "METODO_TRIGGERS",
     "METODO_STRUCTURE",
     "METODO_TEMPLATES",

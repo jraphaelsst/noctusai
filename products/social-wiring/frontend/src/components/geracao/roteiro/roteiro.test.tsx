@@ -67,7 +67,7 @@ const base = {
   instrucoes: "",
   fonte: "ia",
   duracao: "auto",
-  estrutura: "corestudio",
+  estrutura: "cta_inicio",
   brain_id: null,
   viral: null,
   perguntas: [],
@@ -132,7 +132,7 @@ describe("RoteiroAvancadoModal", () => {
       instrucoes: "tom leve",
       fonte: "ia",
       duracao: "2",
-      estrutura: "corestudio",
+      estrutura: "cta_inicio",
       brain_id: "b1",
       viral_id: "viral-9",
       gerar_perguntas: true,
@@ -140,22 +140,22 @@ describe("RoteiroAvancadoModal", () => {
     await waitFor(() => expect(onCriado).toHaveBeenCalled());
   });
 
-  it("estrutura: CoreStudio é o padrão, cada opção explica a ordem, Método é enviado quando escolhido", async () => {
-    m.criar.mockResolvedValue({ ...base, status: "criando", estrutura: "metodo" });
+  it("estrutura: CTA no início é o padrão, cada opção explica a ordem, CTA no final é enviado quando escolhido", async () => {
+    m.criar.mockResolvedValue({ ...base, status: "criando", estrutura: "cta_final" });
     abrir({ headlineInicial: { id: "h1", texto: "3 alimentos" } });
     const grupo = screen.getByRole("radiogroup", { name: "Estrutura" });
     expect(grupo).toBeInTheDocument();
-    const corestudio = screen.getByRole("radio", { name: /CoreStudio \(CTA de salvar no início\)/ });
-    const metodo = screen.getByRole("radio", { name: /Método \(CTA no final\)/ });
-    expect(corestudio).toHaveAttribute("aria-checked", "true");
-    expect(metodo).toHaveAttribute("aria-checked", "false");
-    expect(corestudio).toHaveTextContent(/salvar logo depois da headline/);
-    expect(metodo).toHaveTextContent(/um único CTA no fim/);
-    fireEvent.click(metodo);
-    expect(metodo).toHaveAttribute("aria-checked", "true");
+    const ctaInicio = screen.getByRole("radio", { name: /CTA de salvar no início \(padrão\)/ });
+    const ctaFinal = screen.getByRole("radio", { name: /^CTA no final/ });
+    expect(ctaInicio).toHaveAttribute("aria-checked", "true");
+    expect(ctaFinal).toHaveAttribute("aria-checked", "false");
+    expect(ctaInicio).toHaveTextContent(/salvar logo depois da headline/);
+    expect(ctaFinal).toHaveTextContent(/um único CTA no fim/);
+    fireEvent.click(ctaFinal);
+    expect(ctaFinal).toHaveAttribute("aria-checked", "true");
     fireEvent.click(screen.getByRole("button", { name: "Criar roteiro" }));
     await waitFor(() => expect(m.criar).toHaveBeenCalled());
-    expect(m.criar.mock.calls[0][0]).toMatchObject({ estrutura: "metodo" });
+    expect(m.criar.mock.calls[0][0]).toMatchObject({ estrutura: "cta_final" });
   });
 
   it("headline sinalizada acima do recomendado mostra o aviso (sem bloquear) enquanto não editada", () => {
@@ -289,9 +289,9 @@ describe("EditarRoteiroModal", () => {
   });
 
   it("mostra a estrutura usada no roteiro", () => {
-    m.roteiro.mockReturnValue(q({ ...base, estrutura: "metodo" }));
+    m.roteiro.mockReturnValue(q({ ...base, estrutura: "cta_final" }));
     abrir();
-    expect(screen.getByTestId("roteiro-estrutura")).toHaveTextContent("Estrutura: Método (CTA no final)");
+    expect(screen.getByTestId("roteiro-estrutura")).toHaveTextContent("Estrutura: CTA no final");
   });
 
   it("aba Fontes só aparece quando fontes não é NULL", () => {

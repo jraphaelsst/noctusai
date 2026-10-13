@@ -5,11 +5,11 @@ Migration 217 seeds ``social_wiring.cs_research_variables`` from this list
 carries exactly this text), and the classifier prompt table is rendered from
 it too — so the taxonomy is written ONCE.
 
-Origin: 29 CoreStudio DB variables (slug as CoreStudio stores it, except the
+Origin: 29 reference-app DB variables (slug as that app stores it, except the
 ``LOCAIS-...`` typo), 4 globals, 7 classifier-only concepts
 (``projects/core-studio/specs/pesquisa-contract.md`` §2). Descriptions of the
-five CoreStudio-classifier variables and the 7 classifier-only ones are
-CoreStudio's wording; the rest are written here. All are refinable from real
+five reference-app classifier variables and the 7 classifier-only ones are
+The reference app's wording; the rest are written here. All are refinable from real
 usage ("first a fully working prototype, then refine").
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ def _v(slug, label, grupo, description, cid=None):
     return ResearchVariable(slug, label, grupo, description, cid, grupo != _G)
 
 
-#: Ordered: CoreStudio select order, then classifier-only, then globals
+#: Ordered: the original select order, then classifier-only, then globals
 #: (the position IS ``sort_order``, starting at 1).
 VARIABLES: tuple[ResearchVariable, ...] = (
     _v("DESEJOS-TANGIVEIS-DO-AVATAR", "Desejos do meu público", _P, "Resultados concretos que o avatar quer alcançar", 18),
@@ -65,7 +65,7 @@ VARIABLES: tuple[ResearchVariable, ...] = (
     _v("HABITOS-RECOMENDADOS-PELO-ESPECIALISTA", "Hábitos que eu recomendo para o meu público", _E, "Hábitos que o especialista recomenda ao público", 3),
     _v("HABITOS-NAO-RECOMENDADOS-PELO-ESPECIALISTA", "Hábitos que eu não recomendo para o meu público", _E, "Hábitos que o especialista não recomenda ao público", 2),
     _v("CRENCAS-DO-ESPECIALISTA", "Crenças e ideias que eu defendo", _E, "Crenças e ideias que o especialista defende", 1),
-    # classifier-only (no CoreStudio UI variable)
+    # classifier-only (no reference-app UI variable)
     _v("FRUSTRACOES-DO-AVATAR", "Frustrações do meu público", _P, "Tentativas passadas que falharam"),
     _v("CRENCAS-LIMITANTES-DO-AVATAR", "Crenças limitantes do meu público", _P, "Crenças internas negativas sobre si mesmo"),
     _v("INIMIGO-COMUM", "Inimigo comum", _P, "Vilão externo que o avatar culpa"),

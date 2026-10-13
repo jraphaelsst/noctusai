@@ -81,7 +81,7 @@ beforeEach(() => {
 });
 
 describe("perfilIncompleto", () => {
-  it("applies CoreStudio's bio XOR (nichos ∧ profissões) rule", () => {
+  it("applies the reference app's bio XOR (nichos ∧ profissões) rule", () => {
     expect(perfilIncompleto({ bio: "", nichos: [], profissoes: [] })).toBe(false);
     expect(perfilIncompleto({ bio: "x", nichos: [1], profissoes: [2] })).toBe(false);
     expect(perfilIncompleto({ bio: "x", nichos: [1], profissoes: [] })).toBe(true);
@@ -96,7 +96,7 @@ describe("MeuPerfil", () => {
     expect(MeuPerfilDefault).toBe(MeuPerfil);
   });
 
-  it("limits nichos to 3 and shows the CoreStudio error", async () => {
+  it("limits nichos to 3 and shows the original-app error", async () => {
     const { user } = renderPage();
     await user.click(rtl.screen.getByTestId("taxon-nichos"));
     const box = (n: string) => rtl.screen.getByRole("checkbox", { name: n }) as HTMLButtonElement;

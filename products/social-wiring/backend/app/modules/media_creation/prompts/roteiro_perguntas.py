@@ -1,7 +1,7 @@
 """Roteiro Avançado — stage 1: the clarifying questions. **DRAFT for owner validation.**
 
-CoreStudio's prompt was never captured (``prompts/roteiro-DRAFT.md`` section 1); this one is designed
-from the Método Audience and must be validated by the owner before it is trusted.
+The reference app's prompt was never captured (``prompts/roteiro-DRAFT.md`` section 1); this one is designed
+from the Método and must be validated by the owner before it is trusted.
 
 Everything third-party or user-authored (brain, viral transcript, instructions) goes inside a
 delimited ``dados_nao_confiaveis`` block and is declared material, never instructions
@@ -21,7 +21,7 @@ MAX_PERGUNTA_CHARS = 300
 BRAIN_PERGUNTAS_MAX_CHARS = 6000
 VIRAL_PERGUNTAS_MAX_CHARS = 3000
 
-ROTEIRO_PERGUNTAS_SYSTEM_PROMPT = """Você é um roteirista estratégico de vídeos curtos (Reels) que segue o Método Audience.
+ROTEIRO_PERGUNTAS_SYSTEM_PROMPT = """Você é um roteirista estratégico de vídeos curtos (Reels) que segue o Método.
 
 Seu trabalho agora NÃO é escrever o roteiro. É fazer de 3 a 5 perguntas curtas e estratégicas ao criador, para que o roteiro seja específico, verdadeiro e dele.
 

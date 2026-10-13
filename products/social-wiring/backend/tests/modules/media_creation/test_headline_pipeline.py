@@ -314,7 +314,7 @@ class TestMetodoFallback:
         assert row["status"] == "completo" and row["fallback_metodo"] is True and row["estruturas_total"] == 5
         assert sorted({h["template_metodo"] for h in headlines(sb)}) == sorted(nums)
         assert all(h["viral_id"] is None for h in headlines(sb))
-        assert "###TEMPLATE MÉTODO AUDIENCE #" in llm.calls[0][1]
+        assert "###TEMPLATE MÉTODO #" in llm.calls[0][1]
         assert llm.calls[0][3] == hg.TEMPERATURA[crit]
 
     def test_fallback_still_offers_the_selected_research_items(self, sb):

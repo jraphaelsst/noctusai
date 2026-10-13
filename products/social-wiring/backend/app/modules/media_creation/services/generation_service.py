@@ -208,7 +208,7 @@ class GenerationService:
     # ── Stage 3b: score (methodology audit) ─────────────────────────────
 
     async def score_post(self, post: dict[str, Any]) -> dict[str, Any]:
-        """Audit a finished post against the Método Audience rubric (8 criteria).
+        """Audit a finished post against the Método rubric (8 criteria).
 
         Returns ``{score, verdict, strengths, corrections, criteria, rationale}``
         and persists it to ``mc_posts.score`` (JSONB) so it survives reload.

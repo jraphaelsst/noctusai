@@ -9,7 +9,7 @@ ONCE (same idiom as ``cerebro_templates.py`` / ``pesquisa_variables.py``).
 Origin (``projects/core-studio/specs/geracao-contract.md`` section 2.2):
 
 * nichos / profissoes: ids and labels verbatim from ``biblioteca-roteiros-analysis.md``
-  section 1.4 (CoreStudio's ids; the gaps are deliberate, they are not renumbered);
+  section 1.4 (the reference app's ids; the gaps are deliberate, they are not renumbered);
 * formatos: names from the same section; ``definicao`` is the *Definition* column of the
   15-format rubric in ``docs/platform-study.md``;
 * treinamentos: the 5 lessons, titles and descriptions verbatim from
@@ -20,7 +20,7 @@ Origin (``projects/core-studio/specs/geracao-contract.md`` section 2.2):
 """
 from __future__ import annotations
 
-# (id, nome) -- 28 rows, CoreStudio ids.
+# (id, nome) -- 28 rows, reference-app ids.
 NICHOS: tuple[tuple[int, str], ...] = (
     (1, 'Saúde e Bem-Estar'),
     (2, 'Relacionamentos'),
@@ -52,7 +52,7 @@ NICHOS: tuple[tuple[int, str], ...] = (
     (33, 'Construção Civil'),
 )
 
-# (id, nome) -- 102 rows, CoreStudio ids.
+# (id, nome) -- 102 rows, reference-app ids.
 PROFISSOES: tuple[tuple[int, str], ...] = (
     (25, 'Acupunturista'),
     (70, 'Advogado Administrativo'),
@@ -186,7 +186,7 @@ TREINAMENTOS: tuple[tuple[int, str, str], ...] = (
     (5, 'Como gerar roteiros com Headlines Próprias', 'Crie seus próprios ganchos/headlines e gere roteiros a partir deles.'),
 )
 
-# The 7 Metodo Audience attention triggers: (slug, nome). Formulas: METODO_TRIGGERS.
+# The 7 Metodo attention triggers: (slug, nome). Formulas: METODO_TRIGGERS.
 GATILHOS: tuple[tuple[str, str], ...] = (
     ("recompensa", "Recompensa"),
     ("misterio", "Mistério"),
@@ -197,7 +197,7 @@ GATILHOS: tuple[tuple[str, str], ...] = (
     ("disrupcao", "Disrupção"),
 )
 
-# Tom de Comunicacao (CoreStudio ids 10-15, mechanisms.md section 5.5): (slug, nome).
+# Tom de Comunicacao (reference-app ids 10-15, mechanisms.md section 5.5): (slug, nome).
 TONS: tuple[tuple[str, str], ...] = (
     ("chocante-disruptiva", "Chocante e Disruptiva"),
     ("futuro-possibilidades", "Futuro e Possibilidades"),

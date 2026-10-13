@@ -1,7 +1,7 @@
 /**
  * Dashboard (P1, `/media-creation/dashboard`) — contract §7.1.
  * "Olá, {nome}!" + MarcaSwitcher · KPI cards (Headlines geradas · Roteiros
- * gerados · Itens pendentes -> Minha Pesquisa; CoreStudio's "Diagnóstico" is
+ * gerados · Itens pendentes -> Minha Pesquisa; the reference app's "Diagnóstico" is
  * dropped, §1.3) · Histórico with its order select · Headlines Sugeridas widget
  * (Criar roteiro / Editar / Abrir link). Loading = two signals off `data`.
  */

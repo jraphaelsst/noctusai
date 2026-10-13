@@ -1,7 +1,7 @@
 /**
  * Gerar headlines — form + history (P7, `/media-creation/headlines?who=me|public|viral`,
  * `?lote=` opens a batch result). contract §7.7, page-map-v2 §17.
- * An unknown or absent `who` behaves as `viral` (CoreStudio). The progress block shows
+ * An unknown or absent `who` behaves as `viral` (the reference app). The progress block shows
  * the REAL `etapa` and counters of the running batch (3 s poll in the hook), never
  * rotating messages. The form is locked while a batch of the marca is running.
  */

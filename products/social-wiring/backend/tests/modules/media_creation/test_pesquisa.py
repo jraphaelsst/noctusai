@@ -1,4 +1,4 @@
-"""Minha Pesquisa (CoreStudio rebuild) — backend contract tests.
+"""Minha Pesquisa (rebuilt module) — backend contract tests.
 
 The classifier LLM is faked through the real DI seam
 (``get_pesquisa_llm`` dependency override) — no patching of our own code.

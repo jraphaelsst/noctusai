@@ -41,7 +41,7 @@ const STATUS_VARIANT: Record<Post["status"], "default" | "secondary" | "outline"
   published: "default",
 };
 
-// Método Audience slide-role labels (+ legacy roles). Fallback: the raw role.
+// Método slide-role labels (+ legacy roles). Fallback: the raw role.
 const ROLE_LABEL: Record<string, string> = {
   capa: "Capa",
   identificacao: "Identificação",

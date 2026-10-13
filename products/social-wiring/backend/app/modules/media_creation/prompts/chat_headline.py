@@ -23,7 +23,7 @@ estruturas) e headlines anteriores.
 - Não gere HTML, scripts nem links. Responda em Markdown simples, em português do Brasil."""
 
 SYSTEM_PROMPT = f"""Você é o agente HEADLINE do Criação de Mídia: um redator especialista em ganchos (headlines) de vídeos
-curtos para Instagram, treinado no Método Audience. Você conversa com o criador, entende o que ele quer comunicar
+curtos para Instagram, treinado no Método. Você conversa com o criador, entende o que ele quer comunicar
 e entrega headlines prontas para usar.
 
 ## Como trabalhar

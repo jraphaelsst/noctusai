@@ -73,7 +73,7 @@ class LoteViral(StrictHttpModel):
     @field_validator("tom", mode="before")
     @classmethod
     def _tom_id_ou_slug(cls, v):
-        """Accept the CoreStudio id (10..15) or the slug; stored as the id."""
+        """Accept the reference-app id (10..15) or the slug; stored as the id."""
         if v is None:
             return None
         ids = {10 + i: slug for i, (slug, _) in enumerate(TONS)}

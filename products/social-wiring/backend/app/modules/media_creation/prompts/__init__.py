@@ -2,12 +2,12 @@
 
 Each constant is the system message of one generation stage:
 
-- ``STORYBOARD_SYSTEM_PROMPT``  — idea + kit → Método Audience storyboard.
+- ``STORYBOARD_SYSTEM_PROMPT``  — idea + kit → Método storyboard.
 - ``IMAGE_PROMPTS_SYSTEM_PROMPT`` — storyboard → per-renderer image prompts.
 - ``COPY_SYSTEM_PROMPT``         — storyboard → caption / hashtags / alt / comment.
 - ``SCORE_SYSTEM_PROMPT``        — finished post → 8-criteria audit (score + verdict).
 
-All three build on the in-home :data:`METODO_AUDIENCE` methodology (self-contained,
+All three build on the in-home :data:`METODO` methodology (self-contained,
 no external references). The persona + design system + references + brand name
 arrive as **user-role context** at call time (per-org tenant data), not baked
 into the system prompt — so one deployment can serve many brands.
@@ -17,7 +17,7 @@ from app.modules.media_creation.prompts.image_prompts import IMAGE_PROMPTS_SYSTE
 from app.modules.media_creation.prompts.copy import COPY_SYSTEM_PROMPT
 from app.modules.media_creation.prompts.score import SCORE_SYSTEM_PROMPT
 from app.modules.media_creation.prompts.methodology import (
-    METODO_AUDIENCE,
+    METODO,
     METODO_QUALITY,
     METODO_STRUCTURE,
     METODO_TEMPLATES,
@@ -29,7 +29,7 @@ __all__ = [
     "IMAGE_PROMPTS_SYSTEM_PROMPT",
     "COPY_SYSTEM_PROMPT",
     "SCORE_SYSTEM_PROMPT",
-    "METODO_AUDIENCE",
+    "METODO",
     "METODO_QUALITY",
     "METODO_STRUCTURE",
     "METODO_TEMPLATES",

@@ -1,22 +1,22 @@
 """System prompt for the storyboard generation stage.
 
 Turns ONE idea + a brand kit into a slide-by-slide storyboard built on the
-in-home Método Audience methodology (see :mod:`.methodology`): a dominant
+in-home Método methodology (see :mod:`.methodology`): a dominant
 attention trigger, named headline template(s), and the
 capa→identificacao→virada→nome→prova→valor→cta role skeleton. Self-contained;
 no external references.
 """
 
-from app.modules.media_creation.prompts.methodology import METODO_AUDIENCE
+from app.modules.media_creation.prompts.methodology import METODO
 
 STORYBOARD_SYSTEM_PROMPT = f"""You are a senior content director for an Instagram-first brand studio.
 
 Your job: turn ONE idea + a brand kit into a slide-by-slide storyboard for a
 carousel (format=carousel), a single-slide post (format=single), or a reels
-script (format=reels). You build every post on the Método Audience below — never
+script (format=reels). You build every post on the Método below — never
 generic benefit copy.
 
-{METODO_AUDIENCE}
+{METODO}
 
 # Hard rules
 

@@ -1,5 +1,5 @@
 /**
- * "Filtros de Virais" panel (contract §7.3): CoreStudio's fields minus Rede
+ * "Filtros de Virais" panel (contract §7.3): the reference app's fields minus Rede
  * Social and Core, plus the "Mostrar só virais" switch. Edits a local draft;
  * **Aplicar** commits it, **Limpar Filtros** resets to the defaults.
  */

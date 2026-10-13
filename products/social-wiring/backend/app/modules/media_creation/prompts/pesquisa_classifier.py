@@ -2,10 +2,10 @@
 
 DRAFT — awaiting owner validation.
 
-Drafted from CoreStudio's captured classifier prompt
+Drafted from the reference app's captured classifier prompt
 (``projects/core-studio/prompts/pesquisa-classifier-prompt.md``): same strict
 ``{{SLUG}}`` / ``[conteúdo literal]`` pair output and the same tie-break
-hierarchy, extended from CoreStudio's 13 slugs to all 36 classifiable
+hierarchy, extended from the reference app's 13 slugs to all 36 classifiable
 variables. The variables table is RENDERED from
 ``pesquisa_variables.CLASSIFIABLE`` (the same source the migration seed uses),
 never hand-duplicated.

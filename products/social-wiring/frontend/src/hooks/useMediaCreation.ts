@@ -24,7 +24,7 @@ export interface BrandKit {
 
 export type PostFormat = "carousel" | "single" | "reels" | "video";
 export type PostStatus = "draft" | "ready" | "published";
-// Método Audience role skeleton + legacy roles (back-compat).
+// Método role skeleton + legacy roles (back-compat).
 export type SlideRole =
   | "capa"
   | "identificacao"
@@ -44,7 +44,7 @@ export interface ScoreCriterion {
   note?: string;
 }
 
-/** Método Audience audit result persisted on the post. */
+/** Método audit result persisted on the post. */
 export interface PostScore {
   score: number;
   verdict: string;
@@ -65,7 +65,7 @@ export interface StoryboardSlide {
   visual_brief?: string;
 }
 
-/** Storyboard JSON blob persisted on the post (Método Audience metadata). */
+/** Storyboard JSON blob persisted on the post (Método metadata). */
 export interface Storyboard {
   title?: string;
   audience?: string;

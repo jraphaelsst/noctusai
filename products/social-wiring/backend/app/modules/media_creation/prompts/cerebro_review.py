@@ -2,7 +2,7 @@
 
 DRAFT — awaiting owner validation.
 
-CoreStudio validated every answer and BLOCKED synthesis until all were
+The reference app validated every answer and BLOCKED synthesis until all were
 approved; here the review is advisory (cerebro-contract.md §1/§5): per answer
 the model suggests a verdict (``approved`` / ``rejected``), a one-sentence
 reason and, when it can, an improved answer. The user accepts or dismisses; the

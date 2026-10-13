@@ -1,4 +1,4 @@
-"""Segundo Cérebro (CoreStudio rebuild) — brains core contract tests
+"""Segundo Cérebro (rebuilt module) — brains core contract tests
 (cerebro-contract.md §4 endpoints 1-12 and 16-18, §8).
 
 The LLM is faked through the real DI seam (``get_cerebro_llm`` dependency

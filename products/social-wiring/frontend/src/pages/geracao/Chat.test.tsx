@@ -114,7 +114,7 @@ describe("Chat", () => {
     expect(refetch).toHaveBeenCalled();
   });
 
-  it("rail vazio usa a cópia do CoreStudio", () => {
+  it("rail vazio usa a cópia de referência", () => {
     c.conversas.mockReturnValue({ conversas: [], showSkeleton: false, isRefreshing: false, isError: false, data: {}, hasNextPage: false });
     renderPage("/media-creation/chat");
     expect(rtl.screen.getByText("Nenhuma conversa para este agente.")).toBeTruthy();

@@ -24,7 +24,7 @@ CORPUS = [
     "São Paulo/SP",
     "FILIAÇÃO",
     "Ação  de   Cobrança\n\tJoão",
-    "Gilson Tangerino — CoreStudio",
+    "Gilson Tangerino — Estúdio",
     "Nós no Limiar",
     "Rose Oliveira | Nutricionista Oncológica",
     "nei_nunes",

@@ -26,13 +26,13 @@ export function emAndamento(status: StatusGeracao): boolean {
 /** The two roteiro beat orders (owner decision 2026-10-11); the first is the default. */
 export const ESTRUTURAS_ROTEIRO: { valor: RoteiroEstrutura; rotulo: string; explicacao: string }[] = [
   {
-    valor: "corestudio",
-    rotulo: "CoreStudio (CTA de salvar no início)",
+    valor: "cta_inicio",
+    rotulo: "CTA de salvar no início (padrão)",
     explicacao: "Pede para salvar logo depois da headline e fecha com compartilhar/comentar.",
   },
   {
-    valor: "metodo",
-    rotulo: "Método (CTA no final)",
+    valor: "cta_final",
+    rotulo: "CTA no final",
     explicacao: "Capa primeiro e um único CTA no fim: salvar + compartilhar/comentar/enviar.",
   },
 ];

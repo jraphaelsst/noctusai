@@ -1,7 +1,7 @@
 /**
  * Conversation rail (contract §7.2): "Conversas", `+`, inline rename (max 100,
  * "Salvando..."), "Apagar conversa" (confirm), "Ver mais conversas" and the
- * CoreStudio empty copy.
+ * The original app's empty copy.
  */
 import { useState } from "react";
 import { Check, Loader2, MessageSquarePlus, Pencil, Trash2, X } from "lucide-react";

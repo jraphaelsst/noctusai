@@ -6,7 +6,7 @@ W2.2 distributes email campaigns, W2.3 schedules real-estate appointments,
 W2.4 PRODUCES the media that the rest of the product distributes.
 
 A multi-tenant, API-driven, DB-backed content studio under the
-``social_wiring`` schema. Every post is built on the in-home Método Audience
+``social_wiring`` schema. Every post is built on the in-home Método
 methodology (see :mod:`.prompts.methodology`) — a dominant attention trigger,
 named headline template(s), and the capa→identificacao→virada→nome→prova→
 valor→cta role skeleton. Fully self-contained: no external folder dependency.

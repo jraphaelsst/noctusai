@@ -4,7 +4,7 @@ DRAFT — awaiting owner validation.
 
 Returns up to 5 short subjects per post (noun phrases, 2-60 chars, pt-BR,
 lowercase except proper nouns), one per line. An optional parenthesized
-variable hint such as ``(desejo)`` is tolerated, as in CoreStudio's samples
+variable hint such as ``(desejo)`` is tolerated, as in the original samples
 (``specs/pesquisa-cerebro-spec.md`` section 5.6), and stripped.
 
 Parser: strips list markers and hints, enforces length, dedupes within the

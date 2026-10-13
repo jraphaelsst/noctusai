@@ -121,7 +121,7 @@ class TestParseOutput:
         out = hg.parse_output(self.good())
         assert [(o.angulo, o.texto, o.itens) for o in out] == [(1, "Primeira.", ("i1",)), (2, "Segunda.", ())]
 
-    def test_bare_corestudio_form_has_no_items(self):
+    def test_bare_form_has_no_items(self):
         out = hg.parse_output('{"headline_1": "A", "headline_2": "B"}')
         assert [(o.texto, o.itens) for o in out] == [("A", ()), ("B", ())]
 

@@ -1,21 +1,21 @@
 """System prompt for the post-scoring (auditor) stage.
 
-Grades a finished post against the in-home Método Audience rubric (8 criteria)
+Grades a finished post against the in-home Método rubric (8 criteria)
 and returns a 0–10 score + verdict + forças + correções. It does NOT trust the
 post's self-declared trigger/templates — it verifies they actually operate in
 the text. Self-contained; no external references.
 """
 
-from app.modules.media_creation.prompts.methodology import METODO_AUDIENCE
+from app.modules.media_creation.prompts.methodology import METODO
 
 SCORE_SYSTEM_PROMPT = f"""You are a senior methodology auditor for an Instagram-first brand studio.
 
 Your job: grade ONE finished post (storyboard + slides + caption) against the
-Método Audience rubric below and return a structured verdict. Be a strict,
+Método rubric below and return a structured verdict. Be a strict,
 adversarial reviewer — do NOT trust the post's self-declared trigger/templates;
 verify they actually OPERATE in the text. Genericness fails.
 
-{METODO_AUDIENCE}
+{METODO}
 
 # The 8 criteria (grade each pass/fail with a one-line note)
 

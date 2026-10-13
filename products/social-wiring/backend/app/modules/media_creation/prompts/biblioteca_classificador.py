@@ -20,7 +20,7 @@ SQL or file path):
 * the blueprint must reproduce the ``gancho`` with only the slotted spans replaced: the words left
   after stripping the slots must be >= 80 % contained in the gancho, else the blueprint is rejected.
 
-The stored ``blueprint`` is the CoreStudio "blueprint document" (DRAFT 1.2 variant A without the
+The stored ``blueprint`` is the reference app's "blueprint document" (DRAFT 1.2 variant A without the
 generator's own HEADLINES MODELADAS / CONFORMIDADE blocks), assembled HERE from the validated parts so
 the model never controls its layout.
 """

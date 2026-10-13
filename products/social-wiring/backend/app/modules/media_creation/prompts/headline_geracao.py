@@ -6,10 +6,10 @@ see :data:`RECOMENDADO_MAX_TEXTO`, never a block -- owner decision 2026-10-11). 
 
 The system prompt MERGES three sources (owner decision, round 7):
 
-(a) the behaviour reverse-engineered from CoreStudio (``prompts/headline-engenharia-reversa-DRAFT.md``
+(a) the behaviour reverse-engineered from the reference app (``prompts/headline-engenharia-reversa-DRAFT.md``
     section 4): keep the blueprint's syntax, refill its slots for the Nucleo's niche, give the two
     headlines different angles, adapt the length, no emoji / hashtag / CTA;
-(b) Metodo Audience (:mod:`.methodology`): the 7 triggers and quality rules 1-5 (taken from
+(b) Metodo (:mod:`.methodology`): the 7 triggers and quality rules 1-5 (taken from
     ``METODO_QUALITY`` itself, not re-typed), plus "no invented result numbers" from rule 7. Rule 7's
     anonymity / placeholder clause does NOT apply: the Nucleo is the marca's own identity, so real
     names from the bio may appear (contract section 12);
@@ -58,7 +58,7 @@ def _quality_rules_1_to_5() -> str:
     return "\n".join(lines)
 
 
-#: One-line length references, the first sentences of real CoreStudio "suggested headline" payloads
+#: One-line length references, the first sentences of real reference-app "suggested headline" payloads
 #: (captures/xhr-2026-10-06, c13_suggested_get_*). Shown for length and rhythm only.
 REFERENCIAS_TAMANHO: tuple[str, ...] = (
     "Como seu pai tratava a casa própria se tornou sua visão sobre patrimônio.",
@@ -86,7 +86,7 @@ def aviso_tamanho(texto: str) -> dict[str, object]:
 
 
 def build_system_prompt() -> str:
-    return f"""Você é um redator de headlines (ganchos de abertura de vídeos curtos) que aplica o Método Audience.
+    return f"""Você é um redator de headlines (ganchos de abertura de vídeos curtos) que aplica o Método.
 
 ## Sua tarefa
 Receberá o NÚCLEO DE INFLUÊNCIA de uma pessoa (quem ela é, para quem fala, o que entrega) e UMA ESTRUTURA de headline que já funcionou. Escreva DUAS headlines novas para essa pessoa, reaproveitando a estrutura.
@@ -95,7 +95,7 @@ Receberá o NÚCLEO DE INFLUÊNCIA de uma pessoa (quem ela é, para quem fala, o
 - Mantenha a SINTAXE da estrutura: o esqueleto das frases, o ritmo, os contrastes e a virada. Troque o conteúdo para o universo do Núcleo.
 - A estrutura traz slots no formato {{{{NOME-DO-SLOT}}}}. Preencha cada slot com conteúdo que combine com o que o slot significa.
 - O slot {{{{GPT}}}} é sempre livre: você o preenche com a sua criatividade, a partir do Núcleo.
-- Se a estrutura for um TEMPLATE do Método Audience (não tiver slots), use o template como molde e escolha o gatilho que ele pede.
+- Se a estrutura for um TEMPLATE do Método (não tiver slots), use o template como molde e escolha o gatilho que ele pede.
 - As duas headlines devem ter ÂNGULOS DIFERENTES entre si (outro público, outra dor, outro gatilho ou outra cena).
 - Cada headline é UMA ÚNICA FRASE curta, idealmente em uma linha de até ~15 palavras / {RECOMENDADO_MAX_TEXTO} caracteres. Nada de duas ou três frases, parágrafos, explicações ou comentários. Se a estrutura de origem for longa, condense só o gancho central.
 - Referências de tamanho (extensão e ritmo, não de conteúdo):
@@ -109,7 +109,7 @@ Receberá o NÚCLEO DE INFLUÊNCIA de uma pessoa (quem ela é, para quem fala, o
 - MODO PESQUISA_PREFERENCIAL: os itens são preferidos; um slot sem item (ou sem item que caiba) você gera a partir do Núcleo e dos ELEMENTOS DOS CÉREBROS.
 - MODO SOMENTE_PESQUISA: todo slot (exceto {{{{GPT}}}}) DEVE ser preenchido com um item oferecido, literalmente. Não gere esses slots por conta própria.
 
-## Método Audience
+## Método
 {METODO_TRIGGERS}
 
 Regras de qualidade (obedeça na geração):
@@ -131,7 +131,7 @@ class ItemOfertado(NamedTuple):
     conteudo: str
 
 
-# ── the template lines of Método Audience ───────────────────────────────────────
+# ── the template lines of Método ───────────────────────────────────────
 
 
 def _parse_templates() -> dict[int, str]:
@@ -163,7 +163,7 @@ TEMPLATES_POR_CRIATIVIDADE: dict[str, tuple[int, ...]] = {
 
 
 def template_blob(n: int) -> str:
-    return f"###TEMPLATE MÉTODO AUDIENCE #{n}: {TEMPLATES_METODO[n]}"
+    return f"###TEMPLATE MÉTODO #{n}: {TEMPLATES_METODO[n]}"
 
 
 def viral_blob(blueprint: str) -> str:
@@ -221,7 +221,7 @@ _FENCE = re.compile(r"\A```(?:json)?\s*(.*?)\s*```\Z", re.S | re.I)
 def parse_output(reply: str) -> list[HeadlineSaida]:
     """Strict parse of ``{"headline_1": {...}, "headline_2": {...}}``.
 
-    Accepts the bare CoreStudio form ``{"headline_1": "..."}`` (``itens = ()``) and a reply that is
+    Accepts the bare reference-app form ``{"headline_1": "..."}`` (``itens = ()``) and a reply that is
     ENTIRELY one fenced block. Anything else that is not a JSON object raises
     :class:`HeadlineParseError`. A headline that is empty or not a string is skipped; no valid headline at all raises. A headline
     longer than :data:`RECOMENDADO_MAX_TEXTO` is KEPT as is (never truncated, never dropped): the length

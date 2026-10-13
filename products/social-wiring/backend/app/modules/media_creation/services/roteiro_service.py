@@ -638,7 +638,7 @@ async def executar_geracao(job: Job, *, db: Any, llm: RoteiroLlm, cfg: Any = Non
         raise DeadLetterError(f"roteiro {roteiro_id or '?'} não existe")
     if row["status"] != "processando":
         return
-    # A row written before migration 250 has no ``estrutura``: it was generated with the CoreStudio
+    # A row written before migration 250 has no ``estrutura``: it was generated with the cta_inicio
     # order (the column's default). A value outside the contract fails the row loudly, never a fallback.
     estrutura = row.get("estrutura") or ESTRUTURA_PADRAO
     if estrutura not in ESTRUTURAS:

@@ -5,7 +5,7 @@ DRAFT — awaiting owner validation.
 An extraction is an LLM reading ONE post (text + metrics) and proposing
 research items per variable. Same ``{{SLUG}}`` / ``[conteúdo]`` pair output as
 the classifier, with one extra hard rule: every item is a LITERAL span of the
-post text (CoreStudio's extractor is literal in 641 of 643 cases,
+post text (the reference app's extractor is literal in 641 of 643 cases,
 ``specs/mechanisms.md`` section 4). The variables table is the classifier's own
 rendering of ``pesquisa_variables.CLASSIFIABLE`` (reused, never duplicated).
 
@@ -94,7 +94,7 @@ def _unwrap(s: str) -> str:
 
 
 def truncate_headline(texto: str, content: str) -> str:
-    """CoreStudio ``truncateHeadline``: the source sentence of ``content``.
+    """The reference app's ``truncateHeadline``: the source sentence of ``content``.
 
     Cut left at the last ``.?!`` before the match; cut right at the first
     ``.?!`` after ``max(matchEnd, leftCut + 30)`` (punctuation kept). A span

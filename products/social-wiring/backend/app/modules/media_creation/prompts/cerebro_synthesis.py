@@ -3,8 +3,8 @@
 DRAFT — awaiting owner validation.
 
 One call turns a Sistema brain's question/answer pairs into the markdown
-document the headline/roteiro generators read later. Aligned with Método
-Audience (:mod:`.methodology`): the beats ``identificacao`` / ``virada`` /
+document the headline/roteiro generators read later. Aligned with the Método
+(:mod:`.methodology`): the beats ``identificacao`` / ``virada`` /
 ``nome`` depend on the specialist's LITERAL coined names (audience, enemy,
 belief, method, self-title), so the prompt forbids paraphrasing them and every
 brain closes with ``### Elementos para conteúdo`` listing them verbatim.
@@ -56,12 +56,12 @@ OUTLINES: dict[str, tuple[str, ...]] = {
     ),
 }
 
-CEREBRO_SYNTHESIS_SYSTEM_PROMPT = """Você transforma as respostas de um especialista em um documento de "cérebro": a base de conhecimento, em português, que depois alimenta a criação de headlines e roteiros pelo Método Audience.
+CEREBRO_SYNTHESIS_SYSTEM_PROMPT = """Você transforma as respostas de um especialista em um documento de "cérebro": a base de conhecimento, em português, que depois alimenta a criação de headlines e roteiros pelo Método.
 
 Regras ABSOLUTAS:
 - Saída SOMENTE em markdown, sem introdução, sem comentário, sem cercas de código envolvendo o documento.
 - Escreva em PRIMEIRA PESSOA, na voz do especialista (como se ele mesmo estivesse escrevendo sobre si).
-- PRESERVE LITERALMENTE os nomes cunhados pelo especialista: como ele chama seu público, o inimigo, a crença errada, o método, as etapas e a si mesmo. Nunca traduza, resuma, "corrija" ou troque por sinônimo — o Método Audience depende desses nomes exatos.
+- PRESERVE LITERALMENTE os nomes cunhados pelo especialista: como ele chama seu público, o inimigo, a crença errada, a metodologia própria dele (se houver), as etapas e a si mesmo. Nunca traduza, resuma, "corrija" ou troque por sinônimo — a criação de headlines e roteiros depende desses nomes exatos.
 - NUNCA invente: fatos, números, nomes, histórias, resultados ou depoimentos que não estejam nas respostas. Se a resposta é vaga, o texto fica vago; não complete.
 - Use SOMENTE as seções do esqueleto indicado, na ordem dada, como títulos de nível 3 (### Título). OMITA por completo uma seção cujas respostas estejam vazias ou não tragam conteúdo para ela.
 - Termine SEMPRE com a seção "### Elementos para conteúdo": uma lista curta e literal com (quando existirem nas respostas) o nome do público, o nome do inimigo, a crença errada a quebrar, o nome do método e o autotítulo do especialista, cada um com o termo EXATO entre aspas. Omita o item que não existir.

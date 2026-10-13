@@ -3,7 +3,7 @@
 Contract ``specs/geracao-contract.md`` section 5. For one batch (``cs_headline_lotes`` row):
 
 1. **select structures** -- deterministic, no LLM (:func:`selecionar_estruturas`): the pool order,
-   the filters, the variable compatibility, the ``somente_pesquisa`` exclusion, the Metodo Audience
+   the filters, the variable compatibility, the ``somente_pesquisa`` exclusion, the Metodo
    fallback when the library has nothing;
 2. **assemble** one user message per structure (``prompts.headline_geracao.build_user_message``);
 3. **one LLM call per structure** -> two headlines; a failure of one structure never stops the rest;
@@ -89,7 +89,7 @@ MSG_DESCARTADAS = (
 HeadlineLlm = Callable[[str, str, Optional[str], float], Awaitable[str]]
 
 _LABELS = {v.slug: v.label for v in VARIABLES}
-#: Tom ids 10..15 (CoreStudio) -> label, by position in ``TONS``.
+#: Tom ids 10..15 (the reference app) -> label, by position in ``TONS``.
 TOM_LABELS = {10 + i: nome for i, (_, nome) in enumerate(TONS)}
 
 
@@ -243,7 +243,7 @@ def referencias_da_marca(db: Any, org_id: str, marca_id: str) -> list[dict[str, 
 
 @dataclass(frozen=True)
 class Estrutura:
-    """One structure to generate from: a library viral or a Metodo Audience template."""
+    """One structure to generate from: a library viral or a Metodo template."""
 
     viral_id: Optional[str] = None
     template_metodo: Optional[int] = None
@@ -290,7 +290,7 @@ def pool_da_biblioteca(
     candidatos: list[dict[str, Any]], referencias: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Tier 1: what the marca's Minha Biblioteca allows -- the virals of the profile references newer
-    than their ``posts_ate`` plus the video references (CoreStudio did the same, mechanisms 7.3.1)."""
+    than their ``posts_ate`` plus the video references (the reference app did the same, mechanisms 7.3.1)."""
     by_perfil: dict[str, Optional[datetime]] = {}
     videos: set[str] = set()
     for ref in referencias:
