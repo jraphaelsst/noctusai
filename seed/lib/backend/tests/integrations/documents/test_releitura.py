@@ -5,14 +5,20 @@ measured run-to-run-variance this closes.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import date
 
+import pytest
+
+from noctusai_lib.integrations.documents.ancora import ancora_falhou
 from noctusai_lib.integrations.documents.releitura import (
     AVISO_CAMPOS_NUCLEO_AUSENTES,
+    AVISO_DIVERGENCIA,
     AVISO_RELEITURA,
     campos_nucleo_faltando,
     deve_escalar,
     marcar_campos_ausentes,
     mesclar,
+    sem_corroboracao,
 )
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
@@ -28,28 +34,31 @@ class TestDeveEscalar:
     """The declarative trigger table + the two independent signals
     (`leitura_comprometida`, `source is not OCR`)."""
 
-    def test_no_trigger_on_a_complete_clean_read(self):
+    def test_a_complete_clean_ocr_read_STILL_escalates_for_critical_fields(self):
+        """Owner decision 2026-10-13: the agreement gate needs a second
+        independent read of EVERY document that carries critical identity
+        fields — a complete, clean first read is not an exemption."""
         fields = IdentityFields(
             nome="JOAO CARLOS PEREIRA", nome_confianca=ExtractionConfidence.BAIXA,
             cpf=_CPF_A, cpf_confianca=ExtractionConfidence.ALTA,
             source=TextSource.OCR,
         )
-        assert deve_escalar(fields, "cin") is False
+        for tipo in ("cin", "rg", "cnh", "certidao_casamento", "certidao_nascimento"):
+            assert deve_escalar(fields, tipo) is True, tipo
 
     def test_trigger_on_missing_core_field_cpf_card(self):
         fields = IdentityFields(nome="JOAO CARLOS PEREIRA", source=TextSource.OCR)
         assert deve_escalar(fields, "cin") is True
 
-    def test_rg_and_cnh_additionally_require_rg(self):
+    def test_rg_and_cnh_additionally_require_rg_for_completeness(self):
         completo_sem_rg = IdentityFields(
             nome="JOAO CARLOS PEREIRA", cpf=_CPF_A, source=TextSource.OCR,
         )
-        assert deve_escalar(completo_sem_rg, "rg") is True
-        assert deve_escalar(completo_sem_rg, "cnh") is True
-        # CIN/CPF cards carry no RG number of their own — the SAME reading
-        # is already complete for those two types.
-        assert deve_escalar(completo_sem_rg, "cin") is False
-        assert deve_escalar(completo_sem_rg, "cpf") is False
+        assert campos_nucleo_faltando(completo_sem_rg, "rg") == ("rg",)
+        assert campos_nucleo_faltando(completo_sem_rg, "cnh") == ("rg",)
+        # CIN/CPF cards carry no RG number of their own.
+        assert campos_nucleo_faltando(completo_sem_rg, "cin") == ()
+        assert campos_nucleo_faltando(completo_sem_rg, "cpf") == ()
 
     def test_trigger_on_comprometida(self):
         fields = IdentityFields(
@@ -96,7 +105,7 @@ class TestDeveEscalar:
         )
         assert deve_escalar(fields, "certidao_casamento") is True
 
-    def test_certidao_casamento_complete_does_not_trigger(self):
+    def test_certidao_casamento_complete_still_escalates(self):
         from noctusai_lib.integrations.documents.conjuges import ConjugeLido
 
         fields = IdentityFields(
@@ -106,11 +115,12 @@ class TestDeveEscalar:
                 ConjugeLido(nome="JOAO"),
             ),
         )
-        assert deve_escalar(fields, "certidao_casamento") is False
+        assert campos_nucleo_faltando(fields, "certidao_casamento") == ()
+        assert deve_escalar(fields, "certidao_casamento") is True
 
     def test_certidao_nascimento_has_no_conjuge_expectation(self):
         fields = IdentityFields(estado_civil="casado", source=TextSource.OCR)
-        assert deve_escalar(fields, "certidao_nascimento") is False
+        assert campos_nucleo_faltando(fields, "certidao_nascimento") == ()
 
     def test_unlisted_tipo_never_triggers_on_missing_fields(self):
         fields = IdentityFields(source=TextSource.OCR)
@@ -189,8 +199,22 @@ class TestMarcarCamposAusentes:
         assert "CPF" in marcado.aviso_mensagem
 
 
+def _matricula(dv_ok: bool = True) -> str:
+    """A structurally valid 32-digit RCPN matrícula (CNS 123456, acervo 01,
+    '55', ano 2001, livro tipo 2 = casamento) with a correct — or broken — DV."""
+    from noctusai_lib.primitives.identificador import _rcpn_dv
+
+    corpo = "123456" + "01" + "55" + "2001" + "2" + "00012" + "034" + "0001234"
+    dv = _rcpn_dv(corpo)
+    if not dv_ok:
+        dv = "00" if dv != "00" else "11"
+    return corpo + dv
+
+
 class TestMesclar:
-    """`mesclar`'s merge policy — fill / confirm / conflict, never a guess."""
+    """`mesclar` is the AGREEMENT GATE (owner decision 2026-10-13): a critical
+    identity field is stored only when two independent reads agree. A
+    disagreement yields NO value plus both readings — never a winner."""
 
     def _original(self, **kwargs) -> IdentityFields:
         base = IdentityFields(
@@ -200,185 +224,246 @@ class TestMesclar:
         )
         return replace(base, **kwargs)
 
-    def test_escalation_error_returns_original_unchanged(self):
-        original = self._original()
-        escalada = IdentityFields(error="resolver_failed", error_message="boom")
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out is original
+    # ── agree ───────────────────────────────────────────────────────────
 
-    def test_original_comprometida_escalada_clean_lifts_the_gate(self):
-        """The brief's own condition: "if the escalated read is not
-        comprometida ... use it" — a clean stronger-model read resolves the
-        human-review reason the FIRST read carried, so the CODE that gates
-        `aplicar_campos_ao_cliente` (`IdentityFields.leitura_comprometida`)
-        is lifted. The full history — including the original comprometida
-        sentence — survives in `aviso_mensagem` for audit."""
-        original = self._original(
-            aviso="leitura_comprometida",
-            aviso_mensagem="leitura comprometida: algo — conferencia humana obrigatoria",
+    def test_two_agreeing_reads_store_the_field_and_promote_one_step(self):
+        out = mesclar(
+            self._original(),
+            IdentityFields(nome="Joao Carlos Pereira", nome_confianca=ExtractionConfidence.BAIXA),
+            escalation_model="m",
         )
-        escalada = IdentityFields(nome="JOAO CARLOS PEREIRA", cpf=_CPF_A)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.leitura_comprometida is False
-        assert AVISO_RELEITURA in out.aviso.split("+")
-        assert "leitura_comprometida" not in out.aviso.split("+")
-        # the ORIGINAL sentence is preserved for audit, plus the new one:
-        assert "conferencia humana obrigatoria" in out.aviso_mensagem
-        assert "liberada" in out.aviso_mensagem
-
-    def test_escalated_also_comprometida_keeps_withheld_and_records_both(self):
-        original = self._original(
-            aviso="leitura_comprometida",
-            aviso_mensagem="leitura comprometida: algo — conferencia humana obrigatoria",
-        )
-        escalada = IdentityFields(aviso="leitura_comprometida")
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.leitura_comprometida is True
-        assert AVISO_RELEITURA in out.aviso.split("+")
-        assert "tambem comprometida" in out.aviso_mensagem.replace("é", "e").replace("á", "a")
-        # The ORIGINAL fields are untouched — nothing was applied unattended.
-        assert out.nome == original.nome
-        assert out.cpf == original.cpf
-
-    def test_fill_gap_adopts_the_escalated_value(self):
-        original = self._original(rg=None, rg_confianca=ExtractionConfidence.NENHUMA)
-        escalada = IdentityFields(
-            rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
-            rg_rotulo="REGISTRO GERAL", rg_orgao="SSP/SP",
-            rg_orgao_confianca=ExtractionConfidence.BAIXA,
-        )
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg == "52.179.965-X"
-        assert out.rg_confianca == ExtractionConfidence.BAIXA
-        assert out.rg_orgao == "SSP/SP"
-        assert AVISO_RELEITURA in out.aviso.split("+")
-        assert "preencheu" in out.aviso_mensagem
-        assert "rg" in out.aviso_mensagem
-
-    def test_agreement_promotes_confidence_one_step_never_past_media(self):
-        original = self._original()  # cpf at BAIXA
-        escalada = IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.BAIXA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf == _CPF_A
-        assert out.cpf_confianca == ExtractionConfidence.MEDIA
-        assert "confirmou" in out.aviso_mensagem
+        assert out.nome == "JOAO CARLOS PEREIRA"
+        assert out.nome_confianca is ExtractionConfidence.MEDIA
+        assert out.divergencias == ()
+        assert AVISO_DIVERGENCIA not in (out.aviso or "").split("+")
 
     def test_agreement_never_promotes_past_media(self):
-        original = self._original(cpf_confianca=ExtractionConfidence.MEDIA)
-        escalada = IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.MEDIA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf_confianca == ExtractionConfidence.MEDIA
-
-    def test_disagreement_keeps_first_reading_pending_with_alternative(self):
-        """Owner rule 2026-10-13: a divergence never DROPS the value — the
-        first reading stays as a `baixa` pending-review value, the other
-        reading rides beside it. Never a pick: confidence drops to baixa."""
-        original = self._original()  # cpf = _CPF_A
-        escalada = IdentityFields(cpf=_CPF_B, cpf_confianca=ExtractionConfidence.BAIXA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf == _CPF_A
-        assert out.cpf_confianca is ExtractionConfidence.BAIXA
-        assert out.leituras_alternativas == (("cpf", _CPF_B),)
-        assert AVISO_RELEITURA in out.aviso.split("+")
-        assert "divergiu" in out.aviso_mensagem
-        assert f"cpf (alternativa: {_CPF_B})" in out.aviso_mensagem
-        assert "descartado" not in out.aviso_mensagem
-
-    def test_cnh_name_divergence_is_kept_for_review_not_discarded(self):
-        """Measured: a CNH holder's name — its most legible field — vanished
-        after a model divergence ("divergiu (descartado…)")."""
-        original = self._original(nome="JOSE FORTUNATO DA SILVA", nome_confianca=ExtractionConfidence.BAIXA)
-        escalada = IdentityFields(nome="JOSE FORTUNATO DA SILVEIRA", nome_confianca=ExtractionConfidence.BAIXA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.nome == "JOSE FORTUNATO DA SILVA"
-        assert out.nome_confianca is ExtractionConfidence.BAIXA
-        assert out.sugestao("nome")  # pending human review
-        assert ("nome", "JOSE FORTUNATO DA SILVEIRA") in out.leituras_alternativas
-
-    def test_disagreement_on_rg_adopts_escalated_value_as_baixa(self):
-        """Measured (P2): on RG disagreements the escalated read was right
-        3/3, so it is kept — as a baixa suggestion with a divergence note —
-        instead of blanking the field."""
-        original = self._original(
-            rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
-            rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.BAIXA,
-        )
-        escalada = IdentityFields(
-            rg="99.999.999-0", rg_confianca=ExtractionConfidence.MEDIA,
-            rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.MEDIA,
-        )
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg == "99.999.999-0"
-        assert out.rg_confianca is ExtractionConfidence.BAIXA
-        assert out.rg_orgao == "SSP/SP"
-        assert out.rg_orgao_confianca is ExtractionConfidence.BAIXA
-        assert "adotado o valor do modelo superior" in out.aviso_mensagem
-
-    def test_disagreement_on_rg_without_escalated_issuer_clears_issuer(self):
-        original = self._original(
-            rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
-            rg_orgao="SSP/SP", rg_orgao_confianca=ExtractionConfidence.BAIXA,
-        )
-        escalada = IdentityFields(rg="99.999.999-0", rg_confianca=ExtractionConfidence.BAIXA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg == "99.999.999-0"
-        assert out.rg_orgao is None
-        assert out.rg_orgao_confianca is ExtractionConfidence.NENHUMA
-
-    def test_disagreement_on_cpf_is_demoted_never_adopted(self):
-        original = self._original()
-        escalada = IdentityFields(cpf=_CPF_B, cpf_confianca=ExtractionConfidence.MEDIA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf == _CPF_A and out.cpf_confianca is ExtractionConfidence.BAIXA
-
-    def test_a_cnh_rg_without_dv_and_the_full_rg_agree_not_disagree(self):
-        """Owner rule 2026-10-01 (`canonical-identifiers`): `30128742` (a CNH
-        prints the RG without its check digit) and `30.128.742-9` are ONE RG —
-        the stronger model corroborates, it does not disagree."""
-        original = self._original(rg="30128742", rg_confianca=ExtractionConfidence.BAIXA)
-        escalada = IdentityFields(rg="30.128.742-9", rg_confianca=ExtractionConfidence.MEDIA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg == "30128742"  # the first read's value is not rewritten
-        assert out.rg_confianca is ExtractionConfidence.MEDIA  # promoted one step
-        assert "divergiu" not in (out.aviso_mensagem or "")
+        original = self._original(nome_confianca=ExtractionConfidence.MEDIA)
+        escalada = IdentityFields(nome="JOAO CARLOS PEREIRA", nome_confianca=ExtractionConfidence.MEDIA)
+        assert mesclar(original, escalada, escalation_model="m").nome_confianca is ExtractionConfidence.MEDIA
 
     def test_cpf_in_two_spellings_agrees(self):
-        original = self._original(cpf="41295423898")
-        escalada = IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.BAIXA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf == "41295423898"
-        assert out.cpf_confianca is ExtractionConfidence.MEDIA
+        out = mesclar(
+            self._original(cpf="41295423898"),
+            IdentityFields(nome="JOAO CARLOS PEREIRA", cpf=_CPF_A, cpf_confianca=ExtractionConfidence.BAIXA),
+            escalation_model="m",
+        )
+        assert out.cpf is not None and out.divergencias == ()
 
-    def test_disagreeing_cpf_the_escalated_read_verifies_and_the_first_does_not(self):
-        original = self._original(cpf="412.954.238-99")  # DV fails
-        escalada = IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.MEDIA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf == _CPF_A
-        assert out.cpf_confianca is ExtractionConfidence.BAIXA  # still human-gated
-        assert "dígito verificador válido" in out.aviso_mensagem
-
-    def test_disagreeing_cpf_the_first_read_verifies_and_the_escalated_does_not(self):
-        original = self._original()  # _CPF_A, verifies
-        escalada = IdentityFields(cpf="412.954.238-99", cpf_confianca=ExtractionConfidence.MEDIA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf == _CPF_A
-        assert "mantido o valor da primeira leitura" in out.aviso_mensagem
-
-    def test_disagreeing_rg_dv_swap_keeps_the_one_that_verifies(self):
-        original = self._original(rg="15.668.564-3", rg_confianca=ExtractionConfidence.BAIXA)  # DV fails
-        escalada = IdentityFields(rg="16.669.554-3", rg_confianca=ExtractionConfidence.MEDIA)
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.rg == "16.669.554-3"
-        assert out.rg_confianca is ExtractionConfidence.BAIXA
-
-    def test_no_change_when_escalation_agrees_at_the_ceiling_and_finds_nothing_new(self):
+    def test_a_cnh_rg_without_dv_and_the_full_rg_agree(self):
+        """`30128742` (a CNH prints no check digit) and `30.128.742-9` are
+        ONE RG (`canonical-identifiers`): an agreement, not a divergence."""
         original = self._original(
-            cpf_confianca=ExtractionConfidence.ALTA,
-            nome_confianca=ExtractionConfidence.ALTA,
+            rg="30128742", rg_confianca=ExtractionConfidence.BAIXA, rg_orgao="SSP/SP",
+            rg_orgao_confianca=ExtractionConfidence.BAIXA,
         )
+        escalada = IdentityFields(nome="JOAO CARLOS PEREIRA", rg="30.128.742-9", rg_confianca=ExtractionConfidence.MEDIA)
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.rg == "30.128.742-9"  # the fuller of the two agreeing values
+        assert out.rg_orgao == "SSP/SP"
+        assert out.divergencias == ()
+
+    def test_all_three_reads_two_agree_one_differs(self):
+        original = self._original(nome="ANA EXEMPLO SILVA")
+        escalada = IdentityFields(nome="ANA EXEMPLO SILVEIRA")
+        terceira = IdentityFields(nome="ANA EXEMPLO SILVA")
+        out = mesclar(original, escalada, escalation_model="m", extras=(terceira,))
+        assert out.nome == "ANA EXEMPLO SILVA"
+        assert ("nome", "ANA EXEMPLO SILVEIRA") in out.leituras_alternativas
+
+    # ── disagree ────────────────────────────────────────────────────────
+
+    def test_disagreement_yields_no_value_and_both_readings(self):
+        original = self._original(nome="JOSE FORTUNATO DA SILVA")
+        escalada = IdentityFields(nome="JOSE FORTUNATO DA SILVEIRA", nome_confianca=ExtractionConfidence.BAIXA)
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.nome is None
+        assert out.nome_confianca is ExtractionConfidence.NENHUMA
+        assert not out.sugestao("nome") and not out.persistable("nome")
+        assert out.leituras_alternativas == (
+            ("nome", "JOSE FORTUNATO DA SILVA"), ("nome", "JOSE FORTUNATO DA SILVEIRA"),
+        )
+        assert out.divergencias == (
+            ("nome", ("JOSE FORTUNATO DA SILVA", "JOSE FORTUNATO DA SILVEIRA")),
+        )
+        codigos = out.aviso.split("+")
+        assert AVISO_DIVERGENCIA in codigos and AVISO_RELEITURA in codigos
+        assert "nome" in out.aviso_mensagem
+
+    def test_other_fields_still_agree_when_one_diverges(self):
+        out = mesclar(
+            self._original(nome="ANA SILVA"),
+            IdentityFields(nome="ANA SOUZA", cpf=_CPF_A, cpf_confianca=ExtractionConfidence.BAIXA),
+            escalation_model="m",
+        )
+        assert out.nome is None and out.cpf == _CPF_A
+
+    @pytest.mark.parametrize("ordem", ["a_primeiro", "b_primeiro"])
+    def test_no_heuristic_picks_a_winner_for_estado_civil(self, ordem):
+        """Was 'averbação wins': a divorce read and a bare 'casado' read of
+        the same certidão now give NO estado civil — the order is irrelevant."""
+        divorciado = IdentityFields(
+            estado_civil="divorciado", estado_civil_rotulo="AVERBACAO DE DIVORCIO",
+            estado_civil_confianca=ExtractionConfidence.BAIXA,
+        )
+        casado = IdentityFields(estado_civil="casado", estado_civil_confianca=ExtractionConfidence.BAIXA)
+        a, b = (divorciado, casado) if ordem == "a_primeiro" else (casado, divorciado)
+        out = mesclar(replace(a, source=TextSource.OCR), b, escalation_model="m")
+        assert out.estado_civil is None
+        assert {v for c, v in out.leituras_alternativas if c == "estado_civil"} == {"divorciado", "casado"}
+
+    @pytest.mark.parametrize("ordem", ["truncado_primeiro", "truncado_depois"])
+    def test_no_heuristic_picks_a_winner_for_a_truncated_rg(self, ordem):
+        ruim = IdentityFields(rg="1656536", rg_confianca=ExtractionConfidence.BAIXA, rg_orgao="SSP/SP",
+                              source=TextSource.OCR)
+        bom = IdentityFields(rg="18568536", rg_confianca=ExtractionConfidence.BAIXA, rg_orgao="SSP/SP")
+        a, b = (ruim, bom) if ordem == "truncado_primeiro" else (replace(bom, source=TextSource.OCR), ruim)
+        out = mesclar(a, b, escalation_model="m")
+        assert out.rg is None and out.rg_orgao is None
+        assert {v for c, v in out.leituras_alternativas if c == "rg"} == {"1656536", "18568536"}
+
+    def test_a_compromised_first_read_no_longer_wins_or_loses_by_rule(self):
+        """Was 'compromised-first-read-loses': now it simply does not count,
+        so a single clean read corroborates nothing."""
+        original = self._original(
+            nome="CLELIER BASSO MERY", aviso="leitura_comprometida", aviso_mensagem="x",
+        )
+        escalada = IdentityFields(nome="CILENE AFRA EXEMPLO NERY", nome_confianca=ExtractionConfidence.BAIXA)
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.nome is None
+        assert {v for c, v in out.leituras_alternativas if c == "nome"} == {
+            "CLELIER BASSO MERY", "CILENE AFRA EXEMPLO NERY",
+        }
+        assert AVISO_DIVERGENCIA in out.aviso.split("+")
+
+    def test_a_third_read_lets_two_valid_reads_agree_around_a_compromised_one(self):
+        original = self._original(nome="CLELIER BASSO MERY", aviso="leitura_comprometida")
+        e1 = IdentityFields(nome="CILENE AFRA EXEMPLO NERY")
+        e2 = IdentityFields(nome="Cilene Afra Exemplo Nery")
+        out = mesclar(original, e1, escalation_model="m", extras=(e2,))
+        assert out.nome == "CILENE AFRA EXEMPLO NERY"
+        assert not out.leitura_comprometida  # built from a clean read
+
+    def test_a_field_only_one_read_has_is_not_stored(self):
+        """A gap the re-read fills is NOT agreement: one transcription alone
+        is exactly what invents content."""
+        out = mesclar(
+            self._original(rg=None, rg_confianca=ExtractionConfidence.NENHUMA),
+            IdentityFields(nome="JOAO CARLOS PEREIRA", rg="52.179.965-X",
+                           rg_confianca=ExtractionConfidence.BAIXA, rg_orgao="SSP/SP"),
+            escalation_model="m",
+        )
+        assert out.rg is None and out.rg_orgao is None
+        assert ("rg", "52.179.965-X") in out.leituras_alternativas
+        assert out.divergencias == (("rg", ("52.179.965-X",)),)
+
+    def test_spouse_names_must_agree(self):
+        from noctusai_lib.integrations.documents.conjuges import ConjugeLido
+
+        a = (ConjugeLido(nome="ANA EXEMPLO"), ConjugeLido(nome="JOAO EXEMPLO"))
+        b = (ConjugeLido(nome="ANA EXEMPLO"), ConjugeLido(nome="JOAO EXEMPLAR"))
+        c = (ConjugeLido(nome="JOAO EXEMPLO"), ConjugeLido(nome="ANA EXEMPLO"))
+        ok = mesclar(self._original(conjuges=a), IdentityFields(nome="JOAO CARLOS PEREIRA", conjuges=c),
+                     escalation_model="m")
+        assert len(ok.conjuges) == 2
+        ruim = mesclar(self._original(conjuges=a), IdentityFields(nome="JOAO CARLOS PEREIRA", conjuges=b),
+                       escalation_model="m")
+        assert ruim.conjuges == ()
+        assert [c for c, _ in ruim.divergencias] == ["conjuges"]
+
+    # ── DV anchor ───────────────────────────────────────────────────────
+
+    def test_disagreeing_cpf_only_one_verifies_that_one_stands(self):
+        """The one DV-based tie-break kept: a CPF whose check digit verifies
+        is strong evidence on its own (a slip passes mod-11 ~1 in 100)."""
+        out = mesclar(
+            self._original(cpf="412.954.238-99"),  # DV fails
+            IdentityFields(cpf=_CPF_A, cpf_confianca=ExtractionConfidence.MEDIA),
+            escalation_model="m",
+        )
+        assert out.cpf == _CPF_A
+        assert ("cpf", "412.954.238-99") in out.leituras_alternativas
+
+    def test_two_disagreeing_cpfs_both_verifying_yield_no_value(self):
+        out = mesclar(
+            self._original(),
+            IdentityFields(cpf=_CPF_B, cpf_confianca=ExtractionConfidence.MEDIA),
+            escalation_model="m",
+        )
+        assert out.cpf is None
+        assert {v for c, v in out.leituras_alternativas if c == "cpf"} == {_CPF_A, _CPF_B}
+
+    def test_a_transcription_with_a_failed_anchor_never_counts(self):
+        original = self._original(ancora_falhou=True)
         escalada = IdentityFields(
-            nome="JOAO CARLOS PEREIRA", nome_confianca=ExtractionConfidence.ALTA,
-            cpf=_CPF_A, cpf_confianca=ExtractionConfidence.ALTA,
+            nome="JOAO CARLOS PEREIRA", nome_confianca=ExtractionConfidence.BAIXA,
+            cpf=_CPF_A, cpf_confianca=ExtractionConfidence.BAIXA,
         )
-        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out is original
+        out = mesclar(original, escalada, escalation_model="m")
+        # Agreement on nome is impossible (one valid read); the lone valid
+        # read's CPF verifies, so it stands by itself.
+        assert out.nome is None
+        assert out.cpf == _CPF_A
+
+    # ── single read with a valid DV ─────────────────────────────────────
+
+    def test_escalation_error_leaves_a_single_read_where_only_dv_verified_values_stand(self):
+        original = self._original(
+            rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
+            data_nascimento=date(1980, 5, 12),
+            data_nascimento_confianca=ExtractionConfidence.ALTA,
+        )
+        escalada = IdentityFields(error="resolver_failed", error_message="boom")
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.cpf == _CPF_A  # DV verifies: stands alone
+        assert out.nome is None and out.rg is None and out.data_nascimento is None
+        assert [c for c, _ in out.divergencias] == ["nome", "rg", "data_nascimento"]
+
+    def test_single_read_with_an_invalid_cpf_dv_is_withheld(self):
+        out = sem_corroboracao(self._original(cpf="412.954.238-99"))
+        assert out.cpf is None
+        assert ("cpf", "412.954.238-99") in out.leituras_alternativas
+
+    def test_matricula_certidao_single_read_stands_only_with_a_valid_dv(self):
+        ok = sem_corroboracao(self._original(
+            matricula_certidao=_matricula(True), matricula_certidao_confianca=ExtractionConfidence.ALTA))
+        assert ok.matricula_certidao == _matricula(True)
+        ruim = sem_corroboracao(self._original(
+            matricula_certidao=_matricula(False), matricula_certidao_confianca=ExtractionConfidence.ALTA))
+        assert ruim.matricula_certidao is None
+        assert ("matricula_certidao", _matricula(False)) in ruim.leituras_alternativas
+
+    def test_a_text_layer_read_is_never_gated(self):
+        original = self._original(source=TextSource.TEXT_LAYER)
+        assert sem_corroboracao(original) is original
+
+    # ── rg / rne exclusivity survives the gate ──────────────────────────
+
+    def test_rne_and_rg_never_both_stand(self):
+        original = self._original(rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
+                                  rne="W573678Z", rne_confianca=ExtractionConfidence.BAIXA)
+        escalada = IdentityFields(rg="52.179.965-X", rg_confianca=ExtractionConfidence.BAIXA,
+                                  rne="W573678Z", rne_confianca=ExtractionConfidence.BAIXA)
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.rne == "W573678Z" and out.rg is None
+
+
+class TestAncora:
+    def test_a_cpf_whose_dv_fails_marks_the_transcription(self):
+        assert ancora_falhou("NOME ANA\nCPF: 412.954.238-99\n") is True
+        assert ancora_falhou("NOME ANA\nCPF: 41295423899\n") is True
+
+    def test_a_valid_cpf_does_not(self):
+        assert ancora_falhou("NOME ANA\nCPF: 412.954.238-98\n") is False
+
+    def test_a_bare_eleven_digit_run_without_a_cpf_label_is_not_a_cpf(self):
+        assert ancora_falhou("REGISTRO: 12346581446") is False
+
+    def test_a_32_digit_matricula_with_a_broken_dv_marks_the_transcription(self):
+        assert ancora_falhou(f"MATRICULA {_matricula(False)}") is True
+        assert ancora_falhou(f"MATRICULA {_matricula(True)}") is False
+
+    def test_the_matricula_is_found_through_spacing(self):
+        m = _matricula(False)
+        espacada = " ".join(m[i:i + 4] for i in range(0, 32, 4))
+        assert ancora_falhou(f"Matrícula: {espacada}") is True

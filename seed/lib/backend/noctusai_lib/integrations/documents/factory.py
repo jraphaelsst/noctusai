@@ -45,12 +45,16 @@ def make_identity_extractor(
             this is a MANUAL selection, nothing here fails over to another
             vendor. See `noctusai_lib.integrations.llm.resolve_llm_provider`
             for the per-org switch a caller resolves this from.
-        escalar_releitura: Re-read a triggering document (`leitura_
-            comprometida`, or a core field missing for its declared type —
-            see `documents.releitura.deve_escalar`) with a stronger model
+        escalar_releitura: Re-read with a stronger model
             (`documents.providers.ESCALATION_OCR_MODELS`) before returning.
-            `True` (the default) — on by default for the identity family,
-            per owner decision. A caller resolving a per-org off switch
+            🔴 ALWAYS for an OCR read of a document that carries critical
+            identity fields (`documents.releitura.deve_escalar`): the
+            agreement gate (`releitura.mesclar`) emits a critical field only
+            when two independent reads agree, so the second read is not
+            optional cost-control any more (owner decision 2026-10-13).
+            `True` (the default) — on by default for the identity family.
+            `False` is the per-org OFF SWITCH: the single read is returned
+            as before, WITHOUT the agreement gate. A caller resolving a per-org off switch
             passes `False` through here; see
             `social_wiring...api_keys_store.resolve_releitura_habilitada`
             for that consume seam.

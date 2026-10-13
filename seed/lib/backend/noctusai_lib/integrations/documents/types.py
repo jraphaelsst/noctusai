@@ -320,6 +320,22 @@ class IdentityFields:
     #: never resolved by dropping the value (owner rule 2026-10-13).
     leituras_alternativas: tuple[tuple[str, str], ...] = ()
 
+    #: 🔴 AGREEMENT GATE (owner decision 2026-10-13, `releitura.mesclar`): a
+    #: critical identity field is emitted only when two independent
+    #: transcriptions agree. Each `(campo, (leitura_a, leitura_b, ...))` here
+    #: is a critical field the reads could NOT settle: the field is EMPTY on
+    #: this result, both (all) readings ride here and in
+    #: `leituras_alternativas`, and the aviso `divergencia_leituras` names it.
+    #: A consumer opens a human review with these values — nothing here is a
+    #: winner, and nothing picked one.
+    divergencias: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+    #: `True` when this transcription held a CPF or 32-digit certidão
+    #: matrícula whose check digit FAILS (`ancora.ancora_falhou`): the model
+    #: demonstrably mis-copied digits on this page, so none of its readings
+    #: counts toward the agreement gate.
+    ancora_falhou: bool = False
+
     # ─── Estado civil (marital status) ─────────────────────────────────
     #: Normalised to a closed snake_case vocabulary (`civil_status.
     #: ESTADO_CIVIL_VALORES`) rather than to the document's own wording —
