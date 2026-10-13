@@ -7,13 +7,19 @@
  * never `isLoading`. The real status drives the 3 s poll (contract §3.2): only
  * `criando` / `processando` are moving — `perguntas` waits for the user. The poll
  * goes through `jobPolling`, so it keeps running in a background tab.
- * Every mutation invalidates the whole `["sw","geracao"]` family.
+ * Every mutation invalidates the whole `["sw","geracao"]` family AND the Esteira
+ * board/post family: a post card carries its roteiro's status chip and the
+ * roteiro worker never touches the post row, so the board only learns about a
+ * roteiro status change from here. `useRoteiro` does the same when its poll sees
+ * a run reach a terminal status.
  */
+import { useEffect, useRef } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
 import { emAndamento } from "@/components/geracao/labels";
+import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import type { Roteiro, RoteiroResumo } from "@/types/geracao";
 import { GERACAO_KEY } from "./useHeadlineMutations";
 
@@ -33,7 +39,12 @@ const detalheKey = (id: string | null) => [...GERACAO_KEY, "roteiros", "detalhe"
 
 function useInvalidateGeracao() {
   const qc = useQueryClient();
-  return () => qc.invalidateQueries({ queryKey: GERACAO_KEY });
+  return () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: GERACAO_KEY }),
+      qc.invalidateQueries({ queryKey: [ESTEIRA_PIPELINE_KEY] }),
+      qc.invalidateQueries({ queryKey: ESTEIRA_KEY }),
+    ]);
 }
 
 /** True while any visible roteiro is still being produced (drives the poll). */
@@ -65,6 +76,7 @@ export function useRoteiros(marcaId: string | null, q = "", offset = 0) {
 }
 
 export function useRoteiro(id: string | null) {
+  const qc = useQueryClient();
   const query = useQuery({
     queryKey: detalheKey(id),
     enabled: !!id,
@@ -72,6 +84,25 @@ export function useRoteiro(id: string | null) {
     ...jobPolling((d: Roteiro | undefined) => !!d && emAndamento(d.status), ROTEIROS_POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
+
+  // A run leaving criando/processando changes the Esteira card chip and the
+  // roteiro lists — refresh them now instead of waiting on their own poll.
+  const anterior = useRef<{ id: string; status: Roteiro["status"] } | null>(null);
+  const dados = query.data;
+  useEffect(() => {
+    if (!dados) return;
+    const prev = anterior.current;
+    anterior.current = { id: dados.id, status: dados.status };
+    if (prev && prev.id === dados.id && emAndamento(prev.status) && !emAndamento(dados.status)) {
+      void qc.invalidateQueries({ queryKey: [ESTEIRA_PIPELINE_KEY] });
+      void qc.invalidateQueries({ queryKey: ESTEIRA_KEY });
+      void qc.invalidateQueries({
+        queryKey: [...GERACAO_KEY, "roteiros"],
+        predicate: (q) => q.queryKey[3] !== "detalhe",
+      });
+    }
+  }, [dados?.id, dados?.status]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return {
     ...query,
     showSkeleton: !!id && query.isPending && !query.data,

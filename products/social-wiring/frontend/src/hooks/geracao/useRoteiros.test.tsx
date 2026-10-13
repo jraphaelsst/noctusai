@@ -62,6 +62,27 @@ describe("useRoteiro (detalhe)", () => {
     await waitFor(() => expect(result.current.data?.id).toBe("r1"));
     expect(api.get).toHaveBeenCalledWith("/api/media-creation/roteiros/r1");
   });
+
+  it("ao chegar a um status terminal invalida o board da Esteira (chip 'Criando' preso)", async () => {
+    api.get.mockResolvedValueOnce({ data: { id: "r1", status: "processando" } });
+    const inv = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useRoteiro("r1"), { wrapper });
+    await waitFor(() => expect(result.current.data?.status).toBe("processando"));
+    expect(inv).not.toHaveBeenCalledWith({ queryKey: ["sw-esteira"] });
+    api.get.mockResolvedValueOnce({ data: { id: "r1", status: "completo" } });
+    await result.current.refetch();
+    await waitFor(() => expect(inv).toHaveBeenCalledWith({ queryKey: ["sw-esteira"] }));
+    expect(inv).toHaveBeenCalledWith({ queryKey: ["sw", "esteira"] });
+  });
+
+  it("não invalida a Esteira quando o roteiro já abre completo", async () => {
+    api.get.mockResolvedValue({ data: { id: "r1", status: "completo" } });
+    const inv = vi.spyOn(qc, "invalidateQueries");
+    const { result } = renderHook(() => useRoteiro("r1"), { wrapper });
+    await waitFor(() => expect(result.current.data?.status).toBe("completo"));
+    await result.current.refetch();
+    expect(inv).not.toHaveBeenCalled();
+  });
 });
 
 describe("polling em segundo plano (jobPolling)", () => {
@@ -104,6 +125,9 @@ describe("mutações", () => {
     expect(api.post).toHaveBeenCalledWith("/api/media-creation/roteiros", body);
     expect(r.id).toBe("r1");
     await waitFor(() => expect(inv).toHaveBeenCalledWith({ queryKey: ["sw", "geracao"] }));
+    // The post card's roteiro chip lives on the Esteira board.
+    expect(inv).toHaveBeenCalledWith({ queryKey: ["sw-esteira"] });
+    expect(inv).toHaveBeenCalledWith({ queryKey: ["sw", "esteira"] });
   });
 
   it("perguntas → PUT; gerar → POST com pular_perguntas", async () => {

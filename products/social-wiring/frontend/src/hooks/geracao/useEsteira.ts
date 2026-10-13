@@ -20,6 +20,7 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { api } from "@noctusai/seed/infra";
 import { jobPolling } from "@noctusai/lib";
 
+import { emAndamento } from "@/components/geracao/labels";
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import type {
   LegendaGerada,
@@ -39,7 +40,7 @@ const unwrap = <T>(res: Envelope<T>): T => res.data;
 
 export const ESTEIRA_BASE = "/api/media-creation/esteira";
 export const EQUIPE_BASE = "/api/media-creation/equipe";
-/** Poll cadence for a post that still has a headline batch running (`lote_ativo`). */
+/** Poll cadence while a post has a headline batch (`lote_ativo`) or a linked roteiro still running. */
 export const ESTEIRA_POLL_MS = 3000;
 
 export const esteiraKeys = {
@@ -84,6 +85,15 @@ function useInvalidateEsteira() {
 
 // ─── Board ──────────────────────────────────────────────────────────────────
 
+/**
+ * True while any card's linked roteiro is still being produced (`criando` /
+ * `processando`). The roteiro worker writes the roteiro row, never the post, so
+ * without this poll a card's roteiro chip stayed on "Criando" forever (2026-10-13).
+ */
+export function algumRoteiroDoBoardEmAndamento(colunas: Pick<EsteiraColuna, "cards">[] | undefined): boolean {
+  return !!colunas?.some((c) => c.cards.some((card) => !!card.roteiro && emAndamento(card.roteiro.status)));
+}
+
 /** Strip empty filter values so `{busca: ""}` and `{}` share one cache entry. */
 function limpar(f: EsteiraFiltros): EsteiraFiltros {
   const out: Record<string, unknown> = {};
@@ -114,6 +124,7 @@ export function useEsteiraBoard(filtros: EsteiraFiltros = {}, options?: { enable
       qc.setQueryData(esteiraKeys.orfaos, d.orfaos ?? 0);
       return d.colunas ?? [];
     },
+    ...jobPolling((d: EsteiraColuna[] | undefined) => algumRoteiroDoBoardEmAndamento(d), ESTEIRA_POLL_MS),
     placeholderData: keepPreviousData,
   });
   const orfaos = useQuery({
@@ -133,14 +144,17 @@ export function useEsteiraBoard(filtros: EsteiraFiltros = {}, options?: { enable
 
 // ─── Posts ──────────────────────────────────────────────────────────────────
 
-/** One post (§5.1 #4). Polls while a headline batch bound to it is running. */
+/** One post (§5.1 #4). Polls while a headline batch bound to it or its linked roteiro is running. */
 export function usePost(id: string | null) {
   const query = useQuery({
     queryKey: esteiraKeys.post(id),
     enabled: !!id,
     queryFn: async () =>
       unwrap(await api.get<Envelope<PostDetalhe>>(`${ESTEIRA_BASE}/posts/${encodeURIComponent(id as string)}`)),
-    ...jobPolling((d: PostDetalhe | undefined) => !!d?.lote_ativo, ESTEIRA_POLL_MS),
+    ...jobPolling(
+      (d: PostDetalhe | undefined) => !!d && (!!d.lote_ativo || (!!d.roteiro && emAndamento(d.roteiro.status))),
+      ESTEIRA_POLL_MS,
+    ),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
   return {

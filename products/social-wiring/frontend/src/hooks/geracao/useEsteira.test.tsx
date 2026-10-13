@@ -7,7 +7,10 @@ import { renderHook, waitFor } from "@testing-library/react";
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn(), put: vi.fn(), delete: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api }));
 
+import type { PostCard } from "@/types/esteira";
 import {
+  algumRoteiroDoBoardEmAndamento,
+  ESTEIRA_POLL_MS,
   esteiraKeys,
   useAtualizarPost,
   useCriarMembro,
@@ -55,6 +58,36 @@ describe("useEsteiraBoard", () => {
 
   it("filtros vazios compartilham a mesma chave", () => {
     expect(esteiraKeys.board({})).toEqual(["sw-esteira", {}]);
+  });
+
+  it("detecta roteiro em andamento em qualquer card (dirige o poll do board)", () => {
+    const col = (status?: "criando" | "perguntas" | "processando" | "completo" | "falha") => ({
+      cards: [{ roteiro: status ? { status } : null }] as unknown as PostCard[],
+    });
+    expect(algumRoteiroDoBoardEmAndamento(undefined)).toBe(false);
+    expect(algumRoteiroDoBoardEmAndamento([col(), col("completo"), col("perguntas"), col("falha")])).toBe(false);
+    expect(algumRoteiroDoBoardEmAndamento([col("completo"), col("criando")])).toBe(true);
+    expect(algumRoteiroDoBoardEmAndamento([col("processando")])).toBe(true);
+  });
+
+  it("re-busca o board enquanto um roteiro vinculado está 'criando' e para quando completa", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const card = (status: string) => ({ id: "p1", roteiro: { id: "r1", status } });
+      const board = (status: string) => ({
+        data: { colunas: [{ etapa: "e1", stage: {}, cards: [card(status)], total: 1, exibidos: 1 }], orfaos: 0 },
+      });
+      api.get.mockResolvedValueOnce(board("criando")).mockResolvedValue(board("completo"));
+      const { result } = renderHook(() => useEsteiraBoard(), { wrapper });
+      await waitFor(() => expect(result.current.colunas?.[0].cards[0].roteiro?.status).toBe("criando"));
+      await vi.advanceTimersByTimeAsync(ESTEIRA_POLL_MS + 50);
+      await waitFor(() => expect(result.current.colunas?.[0].cards[0].roteiro?.status).toBe("completo"));
+      const chamadas = api.get.mock.calls.length;
+      await vi.advanceTimersByTimeAsync(ESTEIRA_POLL_MS * 3);
+      expect(api.get.mock.calls.length).toBe(chamadas);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
