@@ -1,11 +1,11 @@
 /**
  * `/admin/produtos/novo` and `/admin/produtos/:id` — the organ's
- * `ProductEditor` (fields, type slots, status transitions, media, delete) +
- * `OffersEditor` (prices + Asaas fee estimate). Create redirects to the new
- * product's own URL so offers and media can be added right away.
+ * `ProductEditor` (fields, type slots, status transitions, media, delete, and
+ * its embedded `OffersEditor` — prices + Asaas fee estimate). Create redirects
+ * to the new product's own URL so offers and media can be added right away.
  */
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { OffersEditor, ProductEditor } from "@noctusai/lib";
+import { ProductEditor } from "@noctusai/lib";
 
 import { AdminFrame } from "@/components/AdminFrame";
 import { staffCommerce } from "@/lib/commerce";
@@ -41,7 +41,7 @@ export default function ProductEdit() {
         }}
         onDeleted={() => navigate("/admin/produtos", { replace: true })}
       />
-      {productId ? <OffersEditor hooks={staffCommerce} productId={productId} /> : <OffersHint />}
+      {productId ? null : <OffersHint />}
     </AdminFrame>
   );
 }

@@ -93,7 +93,9 @@ describe("Admin › Produtos", () => {
     expect(url).toBe("/api/commerce/products");
     expect(body).toMatchObject({ title: "Curso de Foto", slug: "curso-de-foto", product_type: "digital" });
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/admin/produtos/p1"));
+    // Exactly one offers section: the one `ProductEditor` embeds (the page must not add a second).
     expect(await screen.findByRole("button", { name: "Nova oferta" })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Nova oferta" })).toHaveLength(1));
   });
 
   it("surfaces a slug_em_uso create error instead of navigating", async () => {
