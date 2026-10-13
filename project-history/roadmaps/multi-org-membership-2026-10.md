@@ -27,16 +27,16 @@ Architect Phase-0 (2026-10-12): the platform org picker (core 070, `resolve_effe
 | T3 | Sibling branch `feat/org-picker-postgrest-entry` (core 078) integrated | it appears in `origin/dev` | S2/S3 touch the same resolver/RLS helper — never in parallel with it |
 | T4 | Owner says "go" on the legacy-org absorption | decision log entry | moves real prod data + storage objects |
 
-**Today's status**: none fired. S1 shipped to dev (not applied on prod).
+**Today's status (2026-10-13)**: T1 ✅ (079 on prod; every profile has its active home membership) · T2 ✅ (defaults, see decision log) · T3 ✅ (078 on prod) · T4 ✅ (absorption done). Phase 2 is unblocked.
 
 > Every slice carries a test-recipe AND a verify-recipe (live state). Tests-green ≠ verified-in-production.
 
-## Phase 1 — the membership list exists (SHIPPED to dev)
+## Phase 1 — the membership list exists (SHIPPED to prod)
 
 | # | Title | Files | Status | Verify recipe |
 |---|---|---|---|---|
 | P1.0 | accept-invite works for first-time invitees | EDIT `products/core/backend/app/routers/team.py`, `seed/lib/backend/noctusai_lib/testing/mocks.py` (opt-in `strict_single`) | **shipped (dev `d73a333bf`)** | after prod deploy: rerun the pending invite's accept → 200; invitee profile in the inviting org; invitation `accepted` |
-| P1.1 | `public.org_memberships` + mirror trigger + backfill | NEW `products/core/backend/migrations/079_org_memberships.sql`, NEW `products/core/backend/tests/test_migration_org_memberships.py` | **shipped (dev)** — replay green ×2 | after `migrate_product core`: membership count == profile count; inserting a profile creates its membership |
+| P1.1 | `public.org_memberships` + mirror trigger + backfill | NEW `products/core/backend/migrations/079_org_memberships.sql`, NEW `products/core/backend/tests/test_migration_org_memberships.py` | **shipped (prod)** — replay green ×2; verified 2026-10-13 | after `migrate_product core`: membership count == profile count; inserting a profile creates its membership |
 
 **Behavior guarantee**: no runtime change — nothing reads `org_memberships` yet; `noctus_users` stays the source for every reader.
 
@@ -62,7 +62,7 @@ Architect Phase-0 (2026-10-12): the platform org picker (core 070, `resolve_effe
 | P3.2 | social-wiring `is_primary` marca = projection of the org brand (never authored twice); extra marcas stay for multi-brand companies | social-wiring | P3.1 | the company kit shows as the company org's brand |
 | P3.3 | therapy `clinic_branding` onto the org brand (N=2 consumer) | therapy | P3.1 | clinic theme comes from the org brand |
 
-## Phase 4 — absorb the legacy org (DEFERRED — T4; needs S1 on prod)
+## Phase 4 — absorb the legacy org (DONE 2026-10-13 — shape changed, see decision log)
 
 1. Company org: receives the company marca, its brand kit **re-attached to the company marca** (+components, +references; storage objects COPIED under the company org prefix, paths rewritten), the agent + all its `agents.*` rows, an agents license.
 2. Legacy org becomes the personal-brand org: owner → the real account, `is_personal`, keeps the personal marca + historical ledgers.
@@ -80,6 +80,8 @@ Exact IDs: reproduce from the DB at T4 (never committed).
 
 ## Open questions (owner — T2)
 
+Answered 2026-10-13 (decision log) — kept for the record.
+
 - **Q1** Do regular members need MFA (aal2) to switch orgs, or only staff?
 - **Q2** Must a multi-org user choose on every product entry, or only when the last-active org isn't licensed for it?
 - **Q3** `noctus_users.org_id`: follows the last selection, or a fixed home?
@@ -92,9 +94,15 @@ Exact IDs: reproduce from the DB at T4 (never committed).
 - **2026-10-12**: Generalize the platform org picker (architect Phase-0) instead of a new mechanism; S1 expand-only membership table shipped to dev; accept-invite first-time-invitee 404 fixed on dev.
 - **2026-10-12**: Mock fidelity — the shared mock's lenient `.single()` hid the 404. `strict_single` opt-in shipped; flipping the default reds 5 more core tests (licenses check-access ×3, products detail ×2, website-settings rollback) — same probable live-404 class. NOC-REMEDIATE destination: slice "mock-fidelity" here (fix those call sites, then default `strict_single=True` fleet-wide).
 
+- **2026-10-13 (T2)**: Owner accepted the recommended defaults ("go on"): **Q1** MFA to switch orgs only for staff, never for regular members · **Q2** a multi-org user chooses only when the last-active org isn't licensed for the product · **Q3** `noctus_users.org_id` follows the last selection (it is the "last-active" org, not a fixed home) · **Q4** yes — `pessoa_fisica` marcas become personal orgs · **Q5** one brand per org (no per-product overrides) · **Q6** joining a second org needs no approval from the home org.
+- **2026-10-13 (T1/T3)**: 079 and 078 both on prod; T1 signal holds (every profile has its active home membership).
+- **2026-10-13 (T4)**: Legacy org absorbed by IDENTITY SWAP instead of a data move (see Retrospective): the legacy org became the company org (keeps agent, kit, logos, licenses; kit re-attached to the company marca); the signup org became the personal-brand org (gets the personal marca); real account owns both via memberships; placeholder account removed from the org and banned (reversible), not deleted. Phase 4's original COPY plan is superseded.
+- **2026-10-13**: Phase 2 starts: S2+S3 together in one slice — the backend resolver and `current_org_id_for` must agree on who may select an org, so they ship and are tested together.
+
 ## Retrospective (filled at first trigger fire)
 
-*To be filled.*
+- **Phase 4's plan was wrong in a way only the DB could tell.** It said "move the agent + all its `agents.*` rows". Published versions, compiled prompts, package trees and the agent audit log are guard-immutable — moving them means switching our own guards off. The org that already held them took the company identity instead (identity swap): ~15 rows changed, zero storage copies, zero guards touched. Lesson: when a plan says "move rows across orgs", list the immutability guards on those tables first.
+- **A stale toolkit produced a false red.** The predeploy run inside a long-lived MCP server still carried pre-078 probe names, so `db_guards` failed on probes that no longer exist in the tree. A fresh `cli.py --predeploy-check` was green. The result already carried `toolkit_stale`; read it before believing a red.
 
 ## Composes with
 
