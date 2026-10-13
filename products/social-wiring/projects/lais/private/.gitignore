@@ -1,0 +1,3 @@
+# Private — never commit. Lead/staff PII screenshots + the vendor JS bundles (third-party code).
+*
+!.gitignore

@@ -1,0 +1,5779 @@
+[
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/agency",
+  "caller": "chatService.getChats (3b4451b3 `er`, BASE_PATH=/web/chats)",
+  "safety": "READ",
+  "request": "query: limit(15) page operation suspended leadStatus creditAnalysisStatus teamIds(csv) userAssigneds(csv; '' = unassigned) assignedToMe archived tags(csv) withoutTags pinned",
+  "response": "data.chats[], data.pagination{total,nextPage}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/agency (pinned=true&limit=5)",
+  "caller": "chatService.getPinnedChats",
+  "safety": "READ",
+  "request": "query: pinned=true limit=5",
+  "response": "data.chats[], data.pagination.total",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/agency/search",
+  "caller": "chatService.searchChats / chatsService.searchAgencyChats",
+  "safety": "READ",
+  "request": "query: searchText searchIn(csv) limit page operation suspended leadStatus creditAnalysisStatus assignedToMe archived",
+  "response": "data.chats[0] = {data:[],meta:{total}} (facet shape)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "9994-2a782b21be023876.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/history/page-1b3eaeddb2428423.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/history",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/agency/validate-phone",
+  "caller": "chatService.validatePhone",
+  "safety": "READ",
+  "request": "query: phoneNumber",
+  "response": "data (validation result; shape U)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id",
+  "caller": "chatService.getChatById / chatsService.getChatById",
+  "safety": "READ",
+  "request": "optional request opts",
+  "response": "data = Chat",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "9994-2a782b21be023876.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/history/page-1b3eaeddb2428423.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/history",
+   "/visits"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id?withFeedback=true",
+  "caller": "chatService.getChatWithFeedback",
+  "safety": "READ",
+  "request": "",
+  "response": "data = Chat + feedback",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/agency",
+  "caller": "chatsService.getChatAgency (skipAgencyId:true)",
+  "safety": "READ",
+  "request": "no x-agency-id header",
+  "response": "data = agency owning chat",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9994-2a782b21be023876.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/history/page-1b3eaeddb2428423.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/history",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PATCH",
+  "path": "/web/chats/:id/suspend",
+  "caller": "chatService.suspendChat",
+  "safety": "SEND",
+  "request": "{suspended:boolean}",
+  "response": "",
+  "evidence": "C",
+  "note": "C: AI on/off switch. suspended=true -> 'Atendimento manual' (Lais paused); false -> 'Lais atendendo'. UI says AI auto-resumes after 5 days w/o messages",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PATCH",
+  "path": "/web/chats/:id",
+  "caller": "chatService.updateChatStatus",
+  "safety": "WRITE",
+  "request": "{suspended?,unread?,archived?} (at least one)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PATCH",
+  "path": "/web/chats/:id/pin",
+  "caller": "chatService.pinChat/unpinChat",
+  "safety": "WRITE",
+  "request": "{pinned:boolean}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/feedback",
+  "caller": "chatService.sendFeedback",
+  "safety": "WRITE",
+  "request": "feedback body (like/dislike + comment; see domain-model)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/credit-analyses",
+  "caller": "chatService.getCreditAnalyses",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] CreditAnalysis",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "9994-2a782b21be023876.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/history/page-1b3eaeddb2428423.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/history",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/interactions",
+  "caller": "chatService.getChatInteractions",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] Interaction",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/messages",
+  "caller": "messageService.getMessages (t9)",
+  "safety": "READ",
+  "request": "query: page limit(25) order_by=created_at order_desc=true",
+  "response": "data{chat, messages[], pagination{nextPage}}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/messages/human",
+  "caller": "messageService.sendMessage",
+  "safety": "SEND",
+  "request": "message body (text/media ref; routes.md Part A)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/media",
+  "caller": "messageService.uploadMedia (chat pkg G(); timeout 120s, video 340s w/ retries)",
+  "safety": "SEND",
+  "request": "multipart: file, voice='true'?",
+  "response": "media ref",
+  "evidence": "C",
+  "note": "I: upload precedes a human send; treat as SEND-adjacent",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/messages/template/draft",
+  "caller": "templateService.getTemplateDraft",
+  "safety": "READ",
+  "request": "query: templateId",
+  "response": "data = rendered draft",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/new/messages/template/draft",
+  "caller": "templateService.getNewConversationTemplateDraft",
+  "safety": "READ",
+  "request": "query: templateId",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/messages/human/template",
+  "caller": "templateService.sendTemplateMessage",
+  "safety": "SEND",
+  "request": "template send body",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/new/messages/human/template",
+  "caller": "templateService.sendNewConversationTemplate",
+  "safety": "SEND",
+  "request": "new-conversation template body (phone + template + params)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/user-assignment",
+  "caller": "chatAssignService.assignChat / userAssignService.assignUser",
+  "safety": "SEND",
+  "request": "{userId, reason?, userName?} (userId '' = unassign)",
+  "response": "",
+  "evidence": "C",
+  "note": "changes who answers the chat (human attendant)",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/team-assignment",
+  "caller": "chatAssignService.assignTeam",
+  "safety": "SEND",
+  "request": "{teamId, reason?}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/transfer",
+  "caller": "transferService.transferChat (B)",
+  "safety": "SEND",
+  "request": "{toUserId?, toTeamId?, reason?}",
+  "response": "data{transferId,chatId,toUserId,toTeamId,origin}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/transfers",
+  "caller": "transferService.getTransferHistory",
+  "safety": "READ",
+  "request": "query: page limit",
+  "response": "data[] Transfer",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/self-assign",
+  "caller": "transferService.selfAssign",
+  "safety": "SEND",
+  "request": "(no body)",
+  "response": "data{chatId,userAssigned,teamAssigned}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/visits",
+  "caller": "chatVisits.getChatVisits",
+  "safety": "READ",
+  "request": "",
+  "response": "data.visits[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/kanban-move",
+  "caller": "kanbanService.moveChat",
+  "safety": "WRITE",
+  "request": "move body (columnId, position; I)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/tags",
+  "caller": "tagService.getChatTags",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] Tag",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PUT",
+  "path": "/web/chats/:id/tags",
+  "caller": "tagService.saveChatTags",
+  "safety": "WRITE",
+  "request": "{tagIds:[]}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/chats/:id/internals",
+  "caller": "notesService.listNotes",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]{entry,todos} -> flattened",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/internals",
+  "caller": "notesService.createNote",
+  "safety": "WRITE",
+  "request": "note body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/chats/:id/internals/audio/process",
+  "caller": "notesService.processAudio",
+  "safety": "WRITE",
+  "request": "multipart file=audio.webm",
+  "response": "data (transcription/structured note; I)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "DELETE",
+  "path": "/web/chats/:id/internals/:noteId",
+  "caller": "notesService.deleteNote",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PATCH",
+  "path": "/web/chats/:id/internals/:noteId/todos/:todoId/complete",
+  "caller": "notesService.completeTodo",
+  "safety": "WRITE",
+  "request": "",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/kanban/columns",
+  "caller": "kanbanService.listColumns",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] Column",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/kanban/columns",
+  "caller": "kanbanService.addColumn",
+  "safety": "WRITE",
+  "request": "column body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "DELETE",
+  "path": "/web/kanban/columns/:id",
+  "caller": "kanbanService.removeColumn",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PATCH",
+  "path": "/web/kanban/columns/reorder",
+  "caller": "kanbanService.reorderColumns",
+  "safety": "WRITE",
+  "request": "order body",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/tags",
+  "caller": "tagService.getTags",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] Tag",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/tags",
+  "caller": "tagService.createTag",
+  "safety": "WRITE",
+  "request": "tag body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "PATCH",
+  "path": "/web/tags/:id",
+  "caller": "tagService.updateTag",
+  "safety": "WRITE",
+  "request": "tag body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "DELETE",
+  "path": "/web/tags/:id",
+  "caller": "tagService.deleteTag",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "POST",
+  "path": "/web/users/block",
+  "caller": "leadService.blockLeadNumber",
+  "safety": "WRITE",
+  "request": "block body {reason:int, reasonDetails, phoneNumber?} (schema sp)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "DELETE",
+  "path": "/web/users/unblock",
+  "caller": "leadService.unblockLeadNumber",
+  "safety": "WRITE",
+  "request": "query: phoneNumber",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/auth/users?skipInternal=true[&managedByMe=true]",
+  "caller": "assignableUsers.getAssignableUsers",
+  "safety": "READ",
+  "request": "query: skipInternal managedByMe",
+  "response": "data[]{id,name,email}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "chats/conversations",
+  "method": "GET",
+  "path": "/web/teams[?managedByMe=true]",
+  "caller": "teamsLite.getTeams (chat module)",
+  "safety": "READ",
+  "request": "query: managedByMe",
+  "response": "data.teams[]{id,name}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js"
+  ],
+  "routes": [],
+  "hasMswMock": false
+ },
+ {
+  "domain": "templates (WhatsApp/Meta)",
+  "method": "GET",
+  "path": "/web/templates/available",
+  "caller": "templateService.getAvailableTemplates",
+  "safety": "READ",
+  "request": "query: chatId?",
+  "response": "data[] Template",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/configs_templates/page-698395b00e1df24d.js"
+  ],
+  "routes": [
+   "/broadcasts",
+   "/configs_templates"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "templates (WhatsApp/Meta)",
+  "method": "GET",
+  "path": "/web/templates/categories",
+  "caller": "templateService.getCategories",
+  "safety": "READ",
+  "request": "",
+  "response": "data.categories",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "app/configs_templates/page-698395b00e1df24d.js"
+  ],
+  "routes": [
+   "/configs_templates"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "templates (WhatsApp/Meta)",
+  "method": "GET",
+  "path": "/web/templates/params",
+  "caller": "templateService.getParams",
+  "safety": "READ",
+  "request": "",
+  "response": "data.params",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "app/configs_templates/page-698395b00e1df24d.js"
+  ],
+  "routes": [
+   "/configs_templates"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "templates (WhatsApp/Meta)",
+  "method": "POST",
+  "path": "/web/templates",
+  "caller": "templateService.createCustomTemplate / createTemplate",
+  "safety": "WRITE",
+  "request": "template body (routes.md Part B)",
+  "response": "data",
+  "evidence": "C",
+  "note": "I: likely submits template to Meta for approval",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "app/configs_templates/page-698395b00e1df24d.js"
+  ],
+  "routes": [
+   "/configs_templates"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "templates (WhatsApp/Meta)",
+  "method": "DELETE",
+  "path": "/web/templates/:id",
+  "caller": "templateService.deleteTemplate",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_templates/page-698395b00e1df24d.js"
+  ],
+  "routes": [
+   "/configs_templates"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "leads",
+  "method": "GET",
+  "path": "/web/leads/",
+  "caller": "leadsService.listLeads (6989)",
+  "safety": "READ",
+  "request": "query: page limit view phase distinctByPhone suggestionId order_by order_desc + filter fields (i(e): name/number/email/clientListingId/chatId ...)",
+  "response": "data (leads list; routes.md Part A)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "leads",
+  "method": "GET",
+  "path": "/web/leads/origins",
+  "caller": "leadsService.listLeadOrigins",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "leads",
+  "method": "GET",
+  "path": "/web/leads/campaigns",
+  "caller": "leadsService.listLeadCampaigns",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "leads",
+  "method": "POST",
+  "path": "/web/leads/:id/enhance",
+  "caller": "leadsService.enhanceLead",
+  "safety": "WRITE",
+  "request": "(no body)",
+  "response": "202 Accepted -> {accepted:true} else data=lead",
+  "evidence": "C",
+  "note": "I: 'enhance' = qualify + send to CRM (mock: enhanced:true, sentToCRM:true)",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "leads",
+  "method": "POST",
+  "path": "/web/leads/batch-enhance",
+  "caller": "leadsService.batchEnhanceLeads",
+  "safety": "WRITE",
+  "request": "{leadIds[]} | {selectAll:true, filter, excludedLeadIds[]} (max 60)",
+  "response": "data.summary{enhanced,skipped,failed}",
+  "evidence": "C",
+  "note": "pushes leads to agency CRM (external side effect)",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "leads",
+  "method": "PATCH",
+  "path": "/web/leads/:id/enhance/force",
+  "caller": "leadService.forceEnhance",
+  "safety": "WRITE",
+  "request": "(no body)",
+  "response": "data{leadId,enhanced,sentToCRM,timestamp} (mock)",
+  "evidence": "C",
+  "note": "pushes lead to agency CRM (external side effect)",
+  "chunks": [
+   "3b4451b3-c014840964a13726.js",
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "leads",
+  "method": "POST",
+  "path": "/web/leads/export",
+  "caller": "leadsService.startLeadExport",
+  "safety": "WRITE",
+  "request": "query: filters; body: export options",
+  "response": "data.jobId",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "leads",
+  "method": "GET",
+  "path": "/web/leads/export/:jobId",
+  "caller": "leadsService.getLeadExportStatus",
+  "safety": "READ",
+  "request": "",
+  "response": "data (job status)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "leads",
+  "method": "GET",
+  "path": "/web/leads/export/:jobId/download",
+  "caller": "leadsService.downloadLeadExport",
+  "safety": "READ",
+  "request": "parseAs blob",
+  "response": "file blob",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6989-48293521f8f0240f.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "GET",
+  "path": "/web/visits",
+  "caller": "visitsService.getVisits",
+  "safety": "READ",
+  "request": "query: view date transactionType clientListingIds status leadIds",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "GET",
+  "path": "/web/visits/:id",
+  "caller": "visitsService.getVisitById/getVisitDetails",
+  "safety": "READ",
+  "request": "",
+  "response": "data Visit",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "GET",
+  "path": "/web/visits/config",
+  "caller": "visitsService.getConfig",
+  "safety": "READ",
+  "request": "",
+  "response": "data visit config",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "POST",
+  "path": "/web/visits",
+  "caller": "visitsService.createVisit",
+  "safety": "WRITE",
+  "request": "visit body",
+  "response": "data",
+  "evidence": "C",
+  "note": "no call site found (dead code, I)",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "PATCH",
+  "path": "/web/visits/:id",
+  "caller": "visitsService.updateVisit",
+  "safety": "WRITE",
+  "request": "visit patch",
+  "response": "data",
+  "evidence": "C",
+  "note": "no call site found (I)",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "PUT",
+  "path": "/web/visits/:id",
+  "caller": "visitsService.updateVisitGroup",
+  "safety": "SEND",
+  "request": "{visitId|alternativeDateTime, confirmedByName, confirmedByEmail} (reschedule) | {propertyId, propertyType} (associate property)",
+  "response": "data",
+  "evidence": "C",
+  "note": "reschedule: with flag visit_action_notifications Lais WhatsApps the lead",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "9994-2a782b21be023876.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "DELETE",
+  "path": "/web/visits/:id",
+  "caller": "visitsService.deleteVisit",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "POST",
+  "path": "/web/visits/:id/confirm",
+  "caller": "visitsService.confirmVisit",
+  "safety": "SEND",
+  "request": "{visitId|alternativeDateTime, confirmedByName, confirmedByEmail}",
+  "response": "data",
+  "evidence": "C",
+  "note": "with flag visit_action_notifications Lais WhatsApps the lead",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "POST",
+  "path": "/web/visits/:id/cancel",
+  "caller": "visitsService.cancelVisit",
+  "safety": "SEND",
+  "request": "{}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/configs_qualification/page-67cc9d5093922265.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "visits",
+  "method": "GET",
+  "path": "/web/agency/settings/visits",
+  "caller": "visitSettingsService.getSettings (1647)",
+  "safety": "READ",
+  "request": "",
+  "response": "data VisitSettings (mock: mode unified, general{...})",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "1647-a3c836255cc3b66e.js"
+  ],
+  "routes": [
+   "/configs_visits",
+   "/configs_visits_embed"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "visits",
+  "method": "PUT",
+  "path": "/web/agency/settings/visits",
+  "caller": "visitSettingsService.upsertSettings",
+  "safety": "WRITE",
+  "request": "VisitSettings",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "1647-a3c836255cc3b66e.js"
+  ],
+  "routes": [
+   "/configs_visits",
+   "/configs_visits_embed"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "GET",
+  "path": "/web/properties/ads",
+  "caller": "adsService.searchAds/getAds",
+  "safety": "READ",
+  "request": "query: search | arbitrary filters; header x-agency-id override",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "GET",
+  "path": "/web/ads/xml/status",
+  "caller": "adsService.getFeedSyncStatus",
+  "safety": "READ",
+  "request": "",
+  "response": "data feed sync status",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "POST",
+  "path": "/web/ads/xml/sync",
+  "caller": "adsService.triggerFeedSync",
+  "safety": "WRITE",
+  "request": "(no body)",
+  "response": "",
+  "evidence": "C",
+  "note": "triggers XML feed re-import; completion via ws feed_sync_completed",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/visits/page-0114b67a9f9747c3.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/visits"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "GET",
+  "path": "/web/properties/developments",
+  "caller": "developmentsService.getDevelopments",
+  "safety": "READ",
+  "request": "query: filters",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/developments"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "POST",
+  "path": "/web/developments",
+  "caller": "developmentsService.createDevelopment",
+  "safety": "WRITE",
+  "request": "development body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/developments"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "PATCH",
+  "path": "/web/developments/:id",
+  "caller": "developmentsService.updateDevelopment",
+  "safety": "WRITE",
+  "request": "development patch",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/developments"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "POST",
+  "path": "/web/developments/bulk",
+  "caller": "developmentsService.bulkImport (GO direct)",
+  "safety": "WRITE",
+  "request": "multipart file",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/developments"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "GET",
+  "path": "/web/developments/bulk-imports",
+  "caller": "developmentsService.listBulkImports",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/developments"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "properties/captacao/developments",
+  "method": "GET",
+  "path": "/web/developments/bulk-imports/:id/status",
+  "caller": "developmentsService.getBulkImportStatus",
+  "safety": "READ",
+  "request": "",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/developments"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts",
+  "caller": "broadcastService.listBroadcasts",
+  "safety": "READ",
+  "request": "query: type status(csv) limit offset",
+  "response": "data{total,limit,offset,items[]}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts/:id",
+  "caller": "broadcastService.getBroadcast",
+  "safety": "READ",
+  "request": "",
+  "response": "data Broadcast (detail)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts/:id/targets",
+  "caller": "broadcastService.listTargets",
+  "safety": "READ",
+  "request": "query: limit offset",
+  "response": "data{total,limit,offset,targets[]}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts/property-owners",
+  "caller": "broadcastService.listPropertyOwners",
+  "safety": "READ",
+  "request": "query: search limit offset",
+  "response": "data{total,limit,offset,items[]{id,name,phoneNumber}}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts/segments",
+  "caller": "broadcastService.listSegments",
+  "safety": "READ",
+  "request": "query: type",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts/available-dates",
+  "caller": "broadcastService.listAvailableDates",
+  "safety": "READ",
+  "request": "",
+  "response": "data.dates[]{day,available}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/broadcasts/plan",
+  "caller": "broadcastService.getAgencyPlan",
+  "safety": "READ",
+  "request": "",
+  "response": "data (plan limits)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "POST",
+  "path": "/web/broadcasts",
+  "caller": "broadcastService.createBroadcast",
+  "safety": "SEND",
+  "request": "{type,name,createAsDraft,scheduleDate,templateType|templateRef,templateCustom?,propertyLink?,leads[]|propertyOwners[],wizardStep}",
+  "response": "data{id,type,status,scheduleDate,warnings}",
+  "evidence": "C",
+  "note": "createAsDraft=false -> status confirmed (scheduled send)",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "POST",
+  "path": "/web/broadcasts/file",
+  "caller": "broadcastService.createBroadcastFromFile",
+  "safety": "SEND",
+  "request": "multipart: file type createAsDraft name? scheduleDate? scheduledAt? templateRef? templateCustom? templateType? propertyLink?",
+  "response": "data{id,totalValid,warnings,status}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "POST",
+  "path": "/web/broadcasts/validate-file",
+  "caller": "broadcastService.validateBroadcastFile",
+  "safety": "WRITE",
+  "request": "multipart: file type",
+  "response": "data (validation)",
+  "evidence": "C",
+  "note": "I: pure validation, no persistence (U)",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "POST",
+  "path": "/web/broadcasts/:id/file",
+  "caller": "broadcastService.replaceBroadcastFile",
+  "safety": "WRITE",
+  "request": "multipart file",
+  "response": "data{totalValid,warnings}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "POST",
+  "path": "/web/broadcasts/:id/confirm-pending",
+  "caller": "broadcastService.confirmBroadcast",
+  "safety": "SEND",
+  "request": "{}",
+  "response": "",
+  "evidence": "C",
+  "note": "draft -> confirmed (scheduled)",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "PATCH",
+  "path": "/web/broadcasts/:id/schedule",
+  "caller": "broadcastService.updateSchedule",
+  "safety": "SEND",
+  "request": "{scheduledAt}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "PUT",
+  "path": "/web/broadcasts/:id",
+  "caller": "broadcastService.updateBroadcast",
+  "safety": "WRITE",
+  "request": "draft body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "DELETE",
+  "path": "/web/broadcasts/:id",
+  "caller": "broadcastService.cancelBroadcast",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "soft cancel -> status canceled",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "/broadcasts"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "DELETE",
+  "path": "/web/broadcasts/:id/permanent",
+  "caller": "(mock only; no service caller found)",
+  "safety": "WRITE",
+  "request": "",
+  "response": "message",
+  "evidence": "C(mock)",
+  "note": "",
+  "chunks": [],
+  "routes": [],
+  "hasMswMock": true
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/agency/smart-suggestions",
+  "caller": "smartSuggestionService.getSmartSuggestions",
+  "safety": "READ",
+  "request": "",
+  "response": "list",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "GET",
+  "path": "/web/agency/smart-suggestions/:id",
+  "caller": "smartSuggestionService.getSmartSuggestionById",
+  "safety": "READ",
+  "request": "",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "broadcasts/campaigns",
+  "method": "POST",
+  "path": "/web/agency/smart-suggestions/:id/cooldown",
+  "caller": "smartSuggestionService.sendCooldown",
+  "safety": "WRITE",
+  "request": "{action}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/smart-campaigns/onboarding-state",
+  "caller": "smartCampaignsService.getOnboardingState",
+  "safety": "READ",
+  "request": "",
+  "response": "data{state:needs_oauth|awaiting_configuration|ready,agencyName,hasPixel,hasToken,hasAdAccount}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "544-c029f4d7a0ffbaa0.js",
+   "7808-9ecbc2f2f019291f.js",
+   "app/add-ons/administrative/page-554fb976dde2b25d.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/smart-campaigns/remarketing/page-c70561fa3fa443cf.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/smart-campaigns/ad-accounts",
+  "caller": "smartCampaignsService.getAdAccounts",
+  "safety": "READ",
+  "request": "",
+  "response": "data.adAccounts[]{id,adAccountId,name}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "544-c029f4d7a0ffbaa0.js",
+   "7808-9ecbc2f2f019291f.js",
+   "app/add-ons/administrative/page-554fb976dde2b25d.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/smart-campaigns/remarketing/page-c70561fa3fa443cf.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/smart-campaigns/campaigns",
+  "caller": "smartCampaignsService.getCampaigns",
+  "safety": "READ",
+  "request": "query: from to status(csv) adAccountId",
+  "response": "data{campaigns[],summary,lastUpdatedAt,syncedAt}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "544-c029f4d7a0ffbaa0.js",
+   "7808-9ecbc2f2f019291f.js",
+   "app/add-ons/administrative/page-554fb976dde2b25d.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/smart-campaigns/remarketing/page-c70561fa3fa443cf.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/smart-campaigns/campaigns/:campaignId/leads",
+  "caller": "smartCampaignsService.getCampaignLeads",
+  "safety": "READ",
+  "request": "query: from to page limit search",
+  "response": "data{leads[],total,offset,limit}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "544-c029f4d7a0ffbaa0.js",
+   "7808-9ecbc2f2f019291f.js",
+   "app/add-ons/administrative/page-554fb976dde2b25d.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/smart-campaigns/remarketing/page-c70561fa3fa443cf.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/catalog/listings",
+  "caller": "catalogService.getListings",
+  "safety": "READ",
+  "request": "query: status search city operation priceMin priceMax limit(<=200) offset",
+  "response": "data{listings[],pagination}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/catalog/listings/stats",
+  "caller": "catalogService.getListingsStats",
+  "safety": "READ",
+  "request": "query: search priceMin priceMax operation city",
+  "response": "data{total,byStatus,lastSyncedAt}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "POST",
+  "path": "/web/catalog/listings/include",
+  "caller": "catalogService.includeListings",
+  "safety": "WRITE",
+  "request": "{adIds[]|selectAll,excludedAdIds[]} + filter query",
+  "response": "data{applied,skipped,failed,summary}",
+  "evidence": "C",
+  "note": "pushes listings to Meta catalog (external side effect)",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "POST",
+  "path": "/web/catalog/listings/exclude",
+  "caller": "catalogService.excludeListings",
+  "safety": "WRITE",
+  "request": "same",
+  "response": "same",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "POST",
+  "path": "/web/catalog/listings/resync",
+  "caller": "catalogService.resyncListings",
+  "safety": "WRITE",
+  "request": "{adIds[]...}",
+  "response": "same",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "GET",
+  "path": "/web/catalog/product-sets",
+  "caller": "catalogService.getProductSets",
+  "safety": "READ",
+  "request": "",
+  "response": "data.productSets[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "POST",
+  "path": "/web/catalog/product-sets",
+  "caller": "catalogService.createProductSet (retries:0)",
+  "safety": "WRITE",
+  "request": "{name,color,filter,adAccountId?}",
+  "response": "data ProductSet (201)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "PATCH",
+  "path": "/web/catalog/product-sets/:id",
+  "caller": "catalogService.updateProductSet",
+  "safety": "WRITE",
+  "request": "{name,color,filter}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "smart-campaigns/remarketing/meta-catalog",
+  "method": "DELETE",
+  "path": "/web/catalog/product-sets/:id",
+  "caller": "catalogService.deleteProductSet",
+  "safety": "WRITE",
+  "request": "",
+  "response": "204",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js"
+  ],
+  "routes": [
+   "/catalogs"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/agency/settings",
+  "caller": "agencyService.getSettings",
+  "safety": "READ",
+  "request": "",
+  "response": "data AgencySettings{allowNotifications,useIptu,allowEnhanceAcquisitionLeads,prefixHumanMessagesWithSenderName,overduePaymentSlipAlertDismissedAt,bankslipOccurrences,disableOnboardingTestLeadStep}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "POST",
+  "path": "/web/agency/settings",
+  "caller": "agencyService.updateSettings",
+  "safety": "WRITE",
+  "request": "partial AgencySettings (+dismissOverduePaymentSlipAlert)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/agency/details",
+  "caller": "agencyService.getDetails",
+  "safety": "READ",
+  "request": "header x-agency-id override",
+  "response": "data Agency (id,status,modules[],type...)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/agency/access-code",
+  "caller": "agencyService.getAccessCode",
+  "safety": "READ",
+  "request": "",
+  "response": "data access code",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/audiences/required-informations",
+  "caller": "requiredInfoService.getSelected",
+  "safety": "READ",
+  "request": "",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9013-c982e375dffccbab.js"
+  ],
+  "routes": [
+   "/configs",
+   "/configs_qualification"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/audiences/user-profiles",
+  "caller": "audienceService.getUserProfiles",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9013-c982e375dffccbab.js"
+  ],
+  "routes": [
+   "/configs",
+   "/configs_qualification"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "POST",
+  "path": "/web/audiences/user-profiles",
+  "caller": "audienceService.createUserProfile",
+  "safety": "WRITE",
+  "request": "profile body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9013-c982e375dffccbab.js"
+  ],
+  "routes": [
+   "/configs",
+   "/configs_qualification"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "PATCH",
+  "path": "/web/audiences/user-profiles/:id",
+  "caller": "audienceService.updateUserProfile",
+  "safety": "WRITE",
+  "request": "profile patch",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9013-c982e375dffccbab.js"
+  ],
+  "routes": [
+   "/configs",
+   "/configs_qualification"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/reengage/configs",
+  "caller": "reengageService.getConfigs",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]{enabled,reengageType:reminder|final,delayMinutes}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/reengage/configs/delay-minutes",
+  "caller": "reengageService.getDelayOptions",
+  "safety": "READ",
+  "request": "query: reengageType",
+  "response": "data[]{label,value}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "PUT",
+  "path": "/web/reengage/configs",
+  "caller": "reengageService.upsertConfig",
+  "safety": "WRITE",
+  "request": "{enabled,reengageType,delayMinutes}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/reengage/rules/templates",
+  "caller": "reengageService.getTemplates",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]{slug,name,preview}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/reengage/rules",
+  "caller": "reengageService.listRules",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] Rule",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "POST",
+  "path": "/web/reengage/rules",
+  "caller": "reengageService.createRule",
+  "safety": "WRITE",
+  "request": "{name?,buy,rent}",
+  "response": "data Rule",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "GET",
+  "path": "/web/reengage/rules/:id",
+  "caller": "reengageService.getRule",
+  "safety": "READ",
+  "request": "",
+  "response": "data Rule",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "PATCH",
+  "path": "/web/reengage/rules/:id",
+  "caller": "reengageService.updateRule",
+  "safety": "WRITE",
+  "request": "{name?,buy?,rent?}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "POST",
+  "path": "/web/reengage/rules/:id/activate",
+  "caller": "reengageService.activateRule",
+  "safety": "WRITE",
+  "request": "{}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "POST",
+  "path": "/web/reengage/rules/:id/deactivate",
+  "caller": "reengageService.deactivateRule",
+  "safety": "WRITE",
+  "request": "{}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "POST",
+  "path": "/web/reengage/rules/:id/attempts",
+  "caller": "reengageService.addAttempt",
+  "safety": "WRITE",
+  "request": "{attemptIndex?,delayValue,delayUnit:days|...,templateId,enabled}",
+  "response": "data Attempt (max 3/rule in mock)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "PATCH",
+  "path": "/web/reengage/rules/:id/attempts/:attemptId",
+  "caller": "reengageService.updateAttempt",
+  "safety": "WRITE",
+  "request": "attempt patch",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "DELETE",
+  "path": "/web/reengage/rules/:id/attempts/:attemptId",
+  "caller": "reengageService.deleteAttempt",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "configs/behavior (AI brain)",
+  "method": "DELETE",
+  "path": "/web/reengage/rules/:id",
+  "caller": "reengageService.deleteRule",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2470-13a56d1a8a693b03.js"
+  ],
+  "routes": [
+   "/configs_reengage"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "POST",
+  "path": "/web/facebook/callback",
+  "caller": "facebookService.callback",
+  "safety": "AUTH",
+  "request": "{code} (OAuth code from facebook dialog v21.0)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "POST",
+  "path": "/web/facebook/connect/finalize",
+  "caller": "facebookService.connectFinalize",
+  "safety": "WRITE",
+  "request": "finalize body (selected pages/ad account; routes.md Part B)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "GET",
+  "path": "/web/facebook/pages",
+  "caller": "facebookService.getPages",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] Page",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "DELETE",
+  "path": "/web/facebook/pages/:pageId",
+  "caller": "facebookService.deletePage",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "GET",
+  "path": "/web/facebook/forms",
+  "caller": "facebookService.getForms",
+  "safety": "READ",
+  "request": "query: pageId?",
+  "response": "data[] Form",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "GET",
+  "path": "/web/facebook/forms/local",
+  "caller": "facebookService.getFormsLocal",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "GET",
+  "path": "/web/facebook/forms/meta",
+  "caller": "facebookService.getFormsMeta",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "POST",
+  "path": "/web/facebook/forms",
+  "caller": "facebookService.createForm",
+  "safety": "WRITE",
+  "request": "form body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "PUT",
+  "path": "/web/facebook/forms/:formId/toggle",
+  "caller": "facebookService.toggleForm",
+  "safety": "WRITE",
+  "request": "{active}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "PUT",
+  "path": "/web/facebook/forms/:formId/mapping",
+  "caller": "facebookService.updateFormMapping",
+  "safety": "WRITE",
+  "request": "{mappings}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "facebook/meta integration",
+  "method": "GET",
+  "path": "/web/facebook/forms/:formId/questions",
+  "caller": "facebookService.getFormQuestions",
+  "safety": "READ",
+  "request": "query: pageId?",
+  "response": "data.questions[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/plan-consumption",
+  "caller": "chartsService.getPlanConsumption",
+  "safety": "READ",
+  "request": "query (buildQuery: period)",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/alerts",
+  "caller": "chartsService.getAlerts",
+  "safety": "READ",
+  "request": "query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/lead-summary",
+  "caller": "chartsService.getLeadSummary",
+  "safety": "READ",
+  "request": "query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/leads-by-channel",
+  "caller": "chartsService.getLeadsByChannel",
+  "safety": "READ",
+  "request": "category query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/lead-status-by-channel",
+  "caller": "chartsService.getLeadStatusByChannel",
+  "safety": "READ",
+  "request": "category query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/leads-per-hour",
+  "caller": "chartsService.getLeadsPerHour",
+  "safety": "READ",
+  "request": "category query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/leads-per-weekday",
+  "caller": "chartsService.getLeadsPerWeekday",
+  "safety": "READ",
+  "request": "category query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/leads-last-six-months",
+  "caller": "chartsService.getLeadsLastSixMonths",
+  "safety": "READ",
+  "request": "category query",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/broadcasts"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/administrative-report/volume",
+  "caller": "adminReportService.getVolume",
+  "safety": "READ",
+  "request": "query: month year",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/atendimento-administrativo/page-eb9a443dee94fb1d.js"
+  ],
+  "routes": [
+   "/atendimento-administrativo"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/administrative-report/occurrence-ranking",
+  "caller": "adminReportService.getOccurrenceRanking",
+  "safety": "READ",
+  "request": "query: month year",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/atendimento-administrativo/page-eb9a443dee94fb1d.js"
+  ],
+  "routes": [
+   "/atendimento-administrativo"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/charts/administrative-report/conversation-resolution",
+  "caller": "adminReportService.getConversationResolution",
+  "safety": "READ",
+  "request": "query: month year",
+  "response": "chart payload",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/atendimento-administrativo/page-eb9a443dee94fb1d.js"
+  ],
+  "routes": [
+   "/atendimento-administrativo"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/report",
+  "caller": "useReport (GO direct)",
+  "safety": "READ",
+  "request": "params: date=yyyy-MM-01",
+  "response": "data.metadata.report{rentSection,buySection}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/relatorio-v2/page-c30d0052a6f2deb9.js",
+   "app/relatorio-v3/page-b331ff7f4ddda989.js"
+  ],
+  "routes": [
+   "/relatorio-v2",
+   "/relatorio-v3"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/credit-analysis/summary",
+  "caller": "creditAnalysisService.getSummary",
+  "safety": "READ",
+  "request": "query (month/year)",
+  "response": "summary",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/credit-analysis/page-a7f02740981b0884.js"
+  ],
+  "routes": [
+   "/credit-analysis"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/credit-analysis/chart",
+  "caller": "creditAnalysisService.getChart",
+  "safety": "READ",
+  "request": "query",
+  "response": "chart",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/credit-analysis/page-a7f02740981b0884.js"
+  ],
+  "routes": [
+   "/credit-analysis"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/credit-analysis",
+  "caller": "creditAnalysisService.getList",
+  "safety": "READ",
+  "request": "query: month year page limit status",
+  "response": "list",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/catalogs/page-8e0a7cec4e0ec046.js",
+   "app/credit-analysis/page-a7f02740981b0884.js"
+  ],
+  "routes": [
+   "/catalogs",
+   "/credit-analysis"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "reports/charts",
+  "method": "GET",
+  "path": "/web/agency/google-reviews/dashboard",
+  "caller": "googleReviewsService.getDashboard",
+  "safety": "READ",
+  "request": "",
+  "response": "dashboard",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/avaliacoes/page-0a90c0e0ced599aa.js"
+  ],
+  "routes": [
+   "/avaliacoes"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/subscriptions",
+  "caller": "financeService.getSubscriptions",
+  "safety": "READ",
+  "request": "query (buildQueryString)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/consumption",
+  "caller": "financeService.getConsumption",
+  "safety": "READ",
+  "request": "query (buildQueryString)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/billing-account",
+  "caller": "financeService.getBillingAccount",
+  "safety": "READ",
+  "request": "",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/financial-contacts",
+  "caller": "financeService.getFinancialContacts",
+  "safety": "READ",
+  "request": "",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/invoices",
+  "caller": "financeService.getInvoices",
+  "safety": "READ",
+  "request": "query (buildQueryString)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/add-on-billing-accounts",
+  "caller": "financeService.getAddOns",
+  "safety": "READ",
+  "request": "query (buildQueryString)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/finance/invoices/:id",
+  "caller": "financeService.getInvoice",
+  "safety": "READ",
+  "request": "",
+  "response": "data Invoice",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "POST",
+  "path": "/web/finance/financial-contacts",
+  "caller": "financeService.createFinancialContact",
+  "safety": "WRITE",
+  "request": "{email}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "PUT",
+  "path": "/web/finance/financial-contacts/:id",
+  "caller": "financeService.updateFinancialContact",
+  "safety": "WRITE",
+  "request": "{email}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "DELETE",
+  "path": "/web/finance/financial-contacts/:id",
+  "caller": "financeService.deleteFinancialContact",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4424-8690570ba3374c02.js",
+   "app/financeiro/page-bc79ba175a4c0147.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/financeiro"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/subscription/premium",
+  "caller": "premiumService.getStatus",
+  "safety": "READ",
+  "request": "",
+  "response": "data Subscription{active,status,subscriptionId,agencyId,seats,peakSeats,billingPeriod,cycleStart,cycleEnd,activatedAt,cancelledAt?}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "POST",
+  "path": "/web/subscription/premium",
+  "caller": "premiumService.activate",
+  "safety": "WRITE",
+  "request": "{seats,...}",
+  "response": "data Subscription (201)",
+  "evidence": "C",
+  "note": "contracts a paid module (billing side effect)",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "PATCH",
+  "path": "/web/subscription/premium",
+  "caller": "premiumService.changeSeats",
+  "safety": "WRITE",
+  "request": "{seats}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "DELETE",
+  "path": "/web/subscription/premium",
+  "caller": "premiumService.cancel",
+  "safety": "WRITE",
+  "request": "",
+  "response": "data{accepted,effectiveAt}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/seats/summary",
+  "caller": "seatsService.getSummary",
+  "safety": "READ",
+  "request": "",
+  "response": "data{agencyId,period{year,month},summary{paid,free,test,maxPaidSeats},users[]}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "finance/billing/add-ons",
+  "method": "GET",
+  "path": "/web/seats/availability",
+  "caller": "seatsService.getAvailability",
+  "safety": "READ",
+  "request": "",
+  "response": "data{contracted,occupied,extra,pricePerExtra}",
+  "evidence": "C",
+  "note": "mock registers it as /seats/* without /web prefix; real service uses /web/seats (C 7531 C=\"/web/seats\")",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/auth/users/me",
+  "caller": "meService.getMe",
+  "safety": "READ",
+  "request": "",
+  "response": "data user + REAs/roles",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/auth/users/me/profile",
+  "caller": "meService.getMe (2nd half)",
+  "safety": "READ",
+  "request": "",
+  "response": "data onboarding profile",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "PATCH",
+  "path": "/auth/profile",
+  "caller": "meService.updateProfile",
+  "safety": "WRITE",
+  "request": "profile body",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "PATCH",
+  "path": "/auth/users/me/profile",
+  "caller": "meService.updateProfilePhone",
+  "safety": "WRITE",
+  "request": "{phone}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "4450-fd473c7799b02419.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "POST",
+  "path": "/auth/users/me/onboarding",
+  "caller": "onboardingService.completeOnboarding",
+  "safety": "WRITE",
+  "request": "{phone,workAreas[],workAreasOther,jobRoles...}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7427-d3b7c588ee51e773.js"
+  ],
+  "routes": [
+   "(layout)"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/auth/users/check-email",
+  "caller": "authService.checkEmail",
+  "safety": "READ",
+  "request": "query: email",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js",
+   "app/atendimento-administrativo/page-eb9a443dee94fb1d.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/financeiro/page-bc79ba175a4c0147.js",
+   "app/page-1dd97fa3e0c91d44.js",
+   "app/perfil/page-a5fc79c1cf8ee42e.js",
+   "app/performance/page-6d7c19acb90270c6.js",
+   "app/platform/page-af6b007dae1b336a.js",
+   "app/trainings/page-6a0c38da12f722e4.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/perfil",
+   "/performance",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/auth/agencies/search",
+  "caller": "authService.searchAgencies",
+  "safety": "READ",
+  "request": "query: q",
+  "response": "data[]",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js",
+   "app/atendimento-administrativo/page-eb9a443dee94fb1d.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/financeiro/page-bc79ba175a4c0147.js",
+   "app/page-1dd97fa3e0c91d44.js",
+   "app/perfil/page-a5fc79c1cf8ee42e.js",
+   "app/performance/page-6d7c19acb90270c6.js",
+   "app/platform/page-af6b007dae1b336a.js",
+   "app/trainings/page-6a0c38da12f722e4.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/perfil",
+   "/performance",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/auth/users",
+  "caller": "usersService.getUsers",
+  "safety": "READ",
+  "request": "query: seatType? page? ...",
+  "response": "data[] User{id,name,email,role,seatType,active}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "POST",
+  "path": "/auth/users",
+  "caller": "usersService.createUser",
+  "safety": "WRITE",
+  "request": "{name,email,role,seatType}",
+  "response": "data User (upsert by email in mock)",
+  "evidence": "C",
+  "note": "I: may send invite e-mail (Keycloak)",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js",
+   "9013-c982e375dffccbab.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/configs",
+   "/configs_qualification",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "DELETE",
+  "path": "/auth/users/:id",
+  "caller": "usersService.deleteUser",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/teams",
+  "caller": "teamsService.getTeams",
+  "safety": "READ",
+  "request": "query: page limit",
+  "response": "data{teams[],pagination}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/teams/:id",
+  "caller": "teamsService.getTeamById",
+  "safety": "READ",
+  "request": "",
+  "response": "data TeamDetail",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "POST",
+  "path": "/web/teams",
+  "caller": "teamsService.createTeam",
+  "safety": "WRITE",
+  "request": "{name,distributionEnabled,rouletteEnabled,lastAttendantEnabled,autoCrmEnabled,receivesSpecificSubcategories?,classifiers?}",
+  "response": "data Team",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "PATCH",
+  "path": "/web/teams/:id",
+  "caller": "teamsService.updateTeam",
+  "safety": "WRITE",
+  "request": "partial team",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "DELETE",
+  "path": "/web/teams/:id",
+  "caller": "teamsService.deleteTeam",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "POST",
+  "path": "/web/teams/:id/members",
+  "caller": "teamsService.addMember",
+  "safety": "WRITE",
+  "request": "{members:[{userId,role}]}",
+  "response": "data[] Member",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "DELETE",
+  "path": "/web/teams/:id/members/:userId",
+  "caller": "teamsService.removeMember",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "mock transfer origin member_removed -> reassigns chats",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "PATCH",
+  "path": "/web/teams/:id/members/:userId",
+  "caller": "teamsService.updateMember",
+  "safety": "WRITE",
+  "request": "{role?,active?,distributionActive?}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/teams/:id/distribution",
+  "caller": "teamsService.getDistributionConfig",
+  "safety": "READ",
+  "request": "",
+  "response": "data{teamId,leadTypes[]}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "PUT",
+  "path": "/web/teams/:id/distribution",
+  "caller": "teamsService.updateDistributionConfig",
+  "safety": "WRITE",
+  "request": "{leadTypes[]}",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/teams/lead-types",
+  "caller": "teamsService.getLeadTypes",
+  "safety": "READ",
+  "request": "query: excludeTeamId",
+  "response": "data{leadTypes[]{key,label,available},generalAdmTeamExists}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/teams/occurrences/availability",
+  "caller": "teamsService.getOccurrencesAvailability",
+  "safety": "READ",
+  "request": "query: excludeTeamId",
+  "response": "data[]{classifier,name,linkedTeamId,linkedTeamName}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "PUT",
+  "path": "/web/teams/:id/roulette",
+  "caller": "teamsService.updateRouletteConfig",
+  "safety": "WRITE",
+  "request": "{membersOrder[]}",
+  "response": "data{teamId,membersOrder,currentIndex}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/teams/:id/metrics",
+  "caller": "teamsService.getTeamMetrics",
+  "safety": "READ",
+  "request": "",
+  "response": "data.members[]{userId,userName,tprAvgMinutes,activeConversations,lastAccess}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/permissions",
+  "caller": "usePagePermissions (GO direct)",
+  "safety": "READ",
+  "request": "",
+  "response": "data.permissions{<perm>:{allowed,reason,blockBehavior}}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2800-a470a4e66261a317.js",
+   "9654-683df5d447313a6d.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "users/teams/seats/permissions",
+  "method": "GET",
+  "path": "/web/permissions/teams",
+  "caller": "useTeamPermissions (GO direct)",
+  "safety": "READ",
+  "request": "",
+  "response": "data{permissions{team:*},context{managedTeamIds,memberTeamIds,hasPremiumModule,hasPremiumSeat}}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2800-a470a4e66261a317.js",
+   "9654-683df5d447313a6d.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "notifications",
+  "method": "GET",
+  "path": "/web/notifications",
+  "caller": "notificationsService.getNotifications (7531)",
+  "safety": "READ",
+  "request": "query: page limit type read",
+  "response": "data[] Notification",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "notifications",
+  "method": "PATCH",
+  "path": "/web/notifications/:id/read",
+  "caller": "notificationsService.markAsRead",
+  "safety": "WRITE",
+  "request": "",
+  "response": "data{id,read}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "notifications",
+  "method": "PATCH",
+  "path": "/web/notifications/read-all",
+  "caller": "notificationsService.markAllAsRead",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7531-6b46bfec9bcba325.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "notifications",
+  "method": "GET",
+  "path": "/web/notification-events",
+  "caller": "notificationEventsService.getNotifications (page /notifications)",
+  "safety": "READ",
+  "request": "query: page limit createdSince createdUntil transactionType type(repeatable)",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/notifications/page-f192aee3b0d15033.js"
+  ],
+  "routes": [
+   "/notifications"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "GET",
+  "path": "/web/flows/:flowSlug/onboarding-progress",
+  "caller": "onboardingFlowService.getOnboardingProgress",
+  "safety": "READ",
+  "request": "flowSlug in {chat-control, add-team, connect-origins, reachout-leads}",
+  "response": "data{steps[]{stepSlug,completed},totalSteps,completedSteps}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2800-a470a4e66261a317.js",
+   "9934-22dc5ff232ccd16b.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/checklist/page-ea321ed564e7c151.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/user-management/page-d01f0665f0abbd27.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/pro",
+   "/broadcasts",
+   "/chats",
+   "/checklist",
+   "/leads",
+   "/leads-v3",
+   "/user-management"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "POST",
+  "path": "/web/flows/:flowSlug/steps/:stepSlug/complete",
+  "caller": "onboardingFlowService.completeStep",
+  "safety": "WRITE",
+  "request": "{}",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "2800-a470a4e66261a317.js",
+   "9934-22dc5ff232ccd16b.js",
+   "app/broadcasts/page-1f968e7e235eb49e.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/checklist/page-ea321ed564e7c151.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/user-management/page-d01f0665f0abbd27.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/acessos",
+   "/add-ons/pro",
+   "/broadcasts",
+   "/chats",
+   "/checklist",
+   "/leads",
+   "/leads-v3",
+   "/user-management"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "GET",
+  "path": "/web/checklist/channels-status",
+  "caller": "checklistService.getChannelStatus",
+  "safety": "READ",
+  "request": "",
+  "response": "data.channels",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/checklist/page-ea321ed564e7c151.js"
+  ],
+  "routes": [
+   "/checklist"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "POST",
+  "path": "/web/checklist/channels",
+  "caller": "checklistService.saveChannelStatus",
+  "safety": "WRITE",
+  "request": "channels body",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/checklist/page-ea321ed564e7c151.js"
+  ],
+  "routes": [
+   "/checklist"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "GET",
+  "path": "/web/test-users",
+  "caller": "testUsersService.list",
+  "safety": "READ",
+  "request": "",
+  "response": "data[] TestUser",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9934-22dc5ff232ccd16b.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/leads",
+   "/leads-v3"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "POST",
+  "path": "/web/test-users",
+  "caller": "testUsersService.create",
+  "safety": "SEND",
+  "request": "{name,phoneNumber} (test lead)",
+  "response": "",
+  "evidence": "C",
+  "note": "I: registering a test lead likely makes Lais message that WhatsApp number",
+  "chunks": [
+   "9934-22dc5ff232ccd16b.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/leads",
+   "/leads-v3"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "DELETE",
+  "path": "/web/test-users/:id",
+  "caller": "testUsersService.remove",
+  "safety": "WRITE",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9934-22dc5ff232ccd16b.js",
+   "app/chats/page-96a486208254a018.js",
+   "app/layout-cdffc32cc89c2014.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/chats",
+   "/leads",
+   "/leads-v3"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "GET",
+  "path": "/web/banners/home",
+  "caller": "bannersService.getHomeBanners",
+  "safety": "READ",
+  "request": "",
+  "response": "data[]{displayOrder,...}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/page-1dd97fa3e0c91d44.js"
+  ],
+  "routes": [
+   "/"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "onboarding/checklist/test-users/misc",
+  "method": "GET",
+  "path": "/web/whats-new",
+  "caller": "whatsNewService.getReleases",
+  "safety": "READ",
+  "request": "query",
+  "response": "data",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/whats-new/page-c0bdcf37851bcc81.js"
+  ],
+  "routes": [
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "GET",
+  "path": "/api/analytics",
+  "caller": "analytics proxy health",
+  "safety": "READ",
+  "request": "",
+  "response": "{status,timestamp} (mock)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "7215-25c6b5aa0fcba1de.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/owners",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "POST",
+  "path": "/api/analytics",
+  "caller": "analytics proxy (Amplitude events)",
+  "safety": "WRITE",
+  "request": "event batch JSON",
+  "response": "{success}",
+  "evidence": "C",
+  "note": "telemetry only",
+  "chunks": [
+   "7215-25c6b5aa0fcba1de.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/owners",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": true
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "POST",
+  "path": "/api/intercom",
+  "caller": "intercom identity hash",
+  "safety": "READ",
+  "request": "{user_id}",
+  "response": "{hash}",
+  "evidence": "C",
+  "note": "POST but idempotent HMAC",
+  "chunks": [
+   "2134-fa69474770404aae.js",
+   "app/layout-cdffc32cc89c2014.js",
+   "app/leads/page-537774e727c0ede8.js",
+   "app/relatorio-v2/page-c30d0052a6f2deb9.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/configs_behavior",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_reengage",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/developments",
+   "/history",
+   "/leads",
+   "/owners",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/relatorio-v2",
+   "/trainings",
+   "/user-management"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "GET",
+  "path": "/api/bubble-health",
+  "caller": "BubbleIframePage health probe",
+  "safety": "READ",
+  "request": "",
+  "response": "{ok}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "5812-711919db3579bc53.js",
+   "app/history/page-1b3eaeddb2428423.js",
+   "app/leads/page-537774e727c0ede8.js",
+   "app/relatorio-v2/page-c30d0052a6f2deb9.js"
+  ],
+  "routes": [
+   "/captacao",
+   "/configs_behavior",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_whatsapp_profile",
+   "/developments",
+   "/history",
+   "/leads",
+   "/owners",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/relatorio-v2",
+   "/trainings",
+   "/user-management"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "GET",
+  "path": "/api/geocoding/autocomplete",
+  "caller": "geocoding.autocomplete",
+  "safety": "READ",
+  "request": "query: input",
+  "response": "{predictions[]}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/developments",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "GET",
+  "path": "/api/geocoding/geocode",
+  "caller": "geocoding.geocode",
+  "safety": "READ",
+  "request": "query: address",
+  "response": "{status,results[]} (Google Geocoding)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "9654-683df5d447313a6d.js",
+   "app/developments/page-15f20ea19c11ebab.js"
+  ],
+  "routes": [
+   "/add-ons/smart-campaigns",
+   "/catalogs",
+   "/chats",
+   "/credit-analysis",
+   "/developments",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "POST",
+  "path": "/api/access-code/validate",
+  "caller": "history access-code login",
+  "safety": "AUTH",
+  "request": "{code (4 digits), chatId}",
+  "response": "session cookie",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/history/page-1b3eaeddb2428423.js"
+  ],
+  "routes": [
+   "/history"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "GET",
+  "path": "/api/access-code/session",
+  "caller": "history session",
+  "safety": "READ",
+  "request": "",
+  "response": "data (401 = none)",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/history/page-1b3eaeddb2428423.js"
+  ],
+  "routes": [
+   "/history"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "DELETE",
+  "path": "/api/access-code/session",
+  "caller": "history logout",
+  "safety": "AUTH",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/history/page-1b3eaeddb2428423.js"
+  ],
+  "routes": [
+   "/history"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "next api routes (casa.lais.ai/api/*)",
+  "method": "*",
+  "path": "/api/auth/* (NextAuth: signin, signout, session, csrf, callback/keycloak)",
+  "caller": "next-auth client",
+  "safety": "AUTH",
+  "request": "",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "5278-adf1024bad2800c8.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/avaliacoes",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "auth (BFF + Keycloak)",
+  "method": "DELETE",
+  "path": "https://bff.lastro.services/api/v1/auth/logout",
+  "caller": "AuthLogout.performLogout",
+  "safety": "AUTH",
+  "request": "Authorization: Bearer",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "5138-d8101bc3f70f58f8.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/avaliacoes",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "auth (BFF + Keycloak)",
+  "method": "POST",
+  "path": "{KEYCLOAK_ISSUER}/protocol/openid-connect/token",
+  "caller": "TokenService.refreshAccessToken (server-side NextAuth)",
+  "safety": "AUTH",
+  "request": "form: client_id client_secret grant_type=refresh_token refresh_token",
+  "response": "{access_token,expires_in,refresh_token}",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "5138-d8101bc3f70f58f8.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/avaliacoes",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/financeiro",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/notifications",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/smart-campaigns/remarketing",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "auth (BFF + Keycloak)",
+  "method": "GET",
+  "path": "https://sso.lastro.services/realms/lastro-prod/protocol/openid-connect/logout",
+  "caller": "logout redirect (browser nav)",
+  "safety": "AUTH",
+  "request": "id_token_hint, post_logout_redirect_uri (I)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "6844-4f864164a52eaae6.js"
+  ],
+  "routes": [
+   "(layout)",
+   "/",
+   "/acessos",
+   "/add-ons/administrative",
+   "/add-ons/pro",
+   "/add-ons/smart-campaigns",
+   "/atendimento-administrativo",
+   "/broadcasts",
+   "/captacao",
+   "/catalogs",
+   "/chats",
+   "/checklist",
+   "/configs",
+   "/configs_behavior",
+   "/configs_display_attendant_name",
+   "/configs_meta_integration",
+   "/configs_my_business",
+   "/configs_property_info",
+   "/configs_qualification",
+   "/configs_reengage",
+   "/configs_templates",
+   "/configs_visits",
+   "/configs_visits_embed",
+   "/configs_whatsapp_profile",
+   "/credit-analysis",
+   "/developments",
+   "/history",
+   "/leads",
+   "/leads-v3",
+   "/owners",
+   "/perfil",
+   "/performance",
+   "/plans",
+   "/platform",
+   "/properties",
+   "/relatorio-v2",
+   "/relatorio-v3",
+   "/smart-campaigns",
+   "/trainings",
+   "/trainings_page",
+   "/user-management",
+   "/visits",
+   "/whats-new"
+  ],
+  "hasMswMock": false
+ },
+ {
+  "domain": "auth (BFF + Keycloak)",
+  "method": "GET",
+  "path": "https://www.facebook.com/v21.0/dialog/oauth",
+  "caller": "Meta OAuth dialog (browser nav)",
+  "safety": "AUTH",
+  "request": "client_id redirect_uri scope state (routes.md Part B)",
+  "response": "",
+  "evidence": "C",
+  "note": "",
+  "chunks": [
+   "app/configs_meta_integration/page-07e410294b8fdcc1.js"
+  ],
+  "routes": [
+   "/configs_meta_integration"
+  ],
+  "hasMswMock": false
+ }
+]

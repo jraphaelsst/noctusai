@@ -1,0 +1,381 @@
+862 [@lastro/chat] Config store not initialized. Ensure <ChatConfigProvider> is mounted.
+1048 [@lastro/chat] useChatConfig must be used within <ChatConfigProvider>
+3728 )}},Z=/\/$/,B=class extends Error{status;body;constructor(e,t,a){super(e),this.name=
+3822 ,this.status=t,this.body=a}};function H(e){return e instanceof DOMException&&
+3911 ===e.name}async function G(e,t={}){let a,n=D(),{body:s,params:r,timeout:i=1e4,signal:l,...o}=t,c=n.bffUrl.replace(Z,
+4230 ,n.agencyId),s instanceof FormData||
+4922 Request timeout
+4959 Fetch failed
+6276 Armazenamento não configurado. Contate o suporte.
+6357 Tipo de arquivo não permitido.
+6412 Arquivo muito grande.
+6454 Falha no upload. Tente novamente.
+6514 Serviço indisponível. Tente novamente mais tarde.
+6594 Não foi possível converter o vídeo. Tente outro arquivo.
+8787 At least one parameter (suspended, unread, or archived) must be provided
+11274 validate-phone returned no data
+11652 API error occurred
+11736 Requisição inválida. Verifique os dados enviados.
+11812 Sua sessão expirou. Faça login novamente.
+11877 Você não tem permissão para realizar esta ação.
+11957 Recurso não encontrado.
+12001 Conflito de dados. Verifique se o recurso já existe.
+12074 Dados inválidos. Verifique os campos obrigatórios.
+12148 Muitas tentativas. Aguarde alguns instantes e tente novamente.
+12228 Erro interno do servidor. Nossa equipe foi notificada.
+12318 Serviço temporariamente indisponível. Tente novamente em alguns instantes.
+12427 Erro na requisição.
+12489 Erro desconhecido. Tente novamente em alguns instantes.
+12995 Falha ao carregar chats
+15888 Falha ao carregar usuários disponíveis
+17582 ,t.reason)]):void 0!==t.toTeamId?void await eQ.assignTeam(e,t.toTeamId,t.reason):void await eQ.assignChat(e,t.toUserId??
+17704 ,{reason:t.reason,userName:t.toUserName})}var eB=new class extends J{TEAMS_PATH=
+18202 Falha ao carregar equipes
+19778 Falha ao carregar chat
+20026 Falha ao carregar interações do chat
+20877 Falha ao carregar notas do chat
+21265 Falha ao carregar visitas do chat
+21524 Falha ao carregar dados do chat
+21798 Falha ao criar anotação
+25043 ChatSocketService already initialized with same credentials
+25162 Credentials changed, reconnecting with new credentials
+25780 Error closing WebSocket during credential swap
+26146 Reconnection with new credentials failed
+26407 Recovering dropped chat socket
+26557 Chat socket recovery attempt failed
+26647 connectToChat called
+26904 Invalid chatId provided
+26988 connectToChat skipped: service not initialized yet
+27382 Skipping join: superseded by a newer chat selection
+27567 Skipping join: socket not OPEN after wait
+27759 Connected to chat
+28502 WebSocket is ready (OPEN state)
+28577 Timeout waiting for WebSocket to be ready
+28901 Cannot join chat room: WebSocket not in OPEN state
+29123 Joined chat room
+29301 Cannot leave chat room: WebSocket not in OPEN state
+29525 Left chat room
+29771 Received WebSocket message
+30011 Error in chat list update handler:
+30141 Error in new message handler:
+30281 Error in feed sync completed handler:
+30457 Error in tag definition updated handler:
+30668 Error in chat typing handler:
+30837 Error in message status updated handler:
+31062 connectToChatList called
+31302 Chat socket service not initialized
+31381 Already listening to chat list updates
+31480 Started listening for chat list updates
+31827 Stopped listening for chat list updates
+32316 Access token has expired
+32413 Abandoning superseded WebSocket connection attempt
+32710 Max retry attempts reached for WebSocket connection - continuing without real-time updates
+32851 Real-time updates disabled, using REST API fallback
+32916 Check EventHub service status and network connectivity
+33567 ,{hasAccessToken:!!this.accessToken,agencyId:this.agencyId??void 0,isConnected:this.connection.isConnected}),this.connection.isConnected&&this.connection.socket?.readyState===WebSocket.OPEN)return void q.debug(
+35306 WebSocket closed
+35951 WebSocket connection failed
+36116 Error parsing WebSocket message:
+37592 Error in connection change handler:
+37713 Error in reconnect handler:
+38405 WebSocket reconnection attempt failed
+38599 Cleanup called, closing all connections
+38948 WebSocket closed successfully
+38997 Error closing WebSocket during cleanup
+39621 Cleanup completed successfully
+39745 [@lastro/chat] useChatSocket must be used within <ChatSocketProvider>
+42489 Coluna não encontrada. Atualizandoâ¦
+42562 Esta etiqueta já é uma coluna do kanban
+42642 Etiqueta indisponível. Atualizandoâ¦
+42758 Limite de 50 colunas atingido.
+43061 Esta conversa não pode mais ser movida. Atualizandoâ¦
+43198 Status do chat divergente. Atualizando…
+43984 Sem etiqueta
+46014 toDateGroup received an invalid date
+47051 :tO.format(r)}function tP(){let e=(0,s.useCallback)(e=>{if(e instanceof B){let t=e.body,a=t?.code,n=t?.details,s=(a?X[a]:void 0)||
+47697 Unhandled client-side media error
+47771 Unknown error type in media upload
+47827 Erro ao enviar arquivo. Tente novamente.
+48388 Tipo de mídia não suportado.
+50038 {{sent by a human attendant}}
+52954 Falha ao carregar mensagens
+53375 Media send canceled by user
+54397 Vídeo não pode ser enviado. Tente novamente.
+55750 Falha ao enviar mídia
+56189 Falha na busca
+56451 Falha ao enviar feedback
+57440 Falha ao carregar categorias de modelo
+59904 Falha ao atualizar status do chat
+60290 Para criar modelos de mensagem, é necessário ser Editor ou Administrador.
+61021 Novo modelo de mensagem
+63572 :`Remover parâmetro ${e}`,className:
+65101 Conteúdo da mensagem
+67509 Falha ao carregar parâmetros de modelo
+69561 Falha ao criar modelo de mensagem
+70244 Nome do modelo de mensagem
+70364 Nome do modelo
+70432 Nome é obrigatório
+70863 Erro ao carregar categorias
+70893 Selecione uma categoria
+71532 }),(0,l.jsx)(n.Button,{disabled:!f||C.isPending,loading:C.isPending,onClick:()=>{let e=p.getValues(),n=I();if(!n)return void eL.error(
+72630 Modelo de mensagem em análise
+72773 O seu modelo precisa ser aprovado pela Meta para ser utilizado. Assim que ele for aprovado, aparecerá na lista de modelos prontos para envio.
+74746 Falha ao carregar modelos de mensagem
+75540 Falha ao carregar pré-preenchimento do template
+85039 Mensagem enviada
+85073 Mensagem entregue
+85103 Mensagem lida
+89144 Erro no envio da mensagem
+90226 Tentar novamente
+90355 Cancelar envio
+91067 [vídeo]
+91134 [áudio]
+91251 Vídeo
+91268 Mensagem de voz
+91379 Localização
+93671 Vídeo da mensagem citada
+93931 Ir para a mensagem original
+100428 Responder mensagem
+333802 Não foi possível carregar os valores pré-preenchidos. Preencha os campos manualmente.
+338684 Nenhum template disponível
+338891 Não encontramos modelos aprovados para envio de mensagens.
+339824 Buscar modelos
+342931 Falha ao enviar mensagem com template
+343471 Mensagem enviada com sucesso
+343532 Falha ao enviar modelo de mensagem. Tente novamente mais tarde.
+344677 Próximo
+345024 Empty state
+347596 Failed to change conversation status
+350301 Falha ao enviar lead para o CRM
+350497 )}});return{handleBlockNumber:()=>{r&&r()},handleCallWhatsapp:()=>{if(!a)return void q.warn(
+350994 COPY_LINK: Link copied successfully
+351049 COPY_LINK: Clipboard API blocked, using fallback
+351348 COPY_LINK: Link copied successfully using fallback
+351419 execCommand failed
+351458 COPY_LINK: All copy methods failed
+351776 SEND_TO_CRM: No lead ID available
+352258 Conversa desarquivada com sucesso!
+352295 Conversa arquivada com sucesso!
+352709 Arquivar conversa?
+352835 A Lais irá assumir o atendimento nesta conversa
+353307 Arquivar conversa
+354071 Bloquear número
+354225 Confirmar desbloqueio de número
+354262 Confirmar bloqueio de número
+354908 Razão do bloqueio
+354990 Selecione uma razão para o bloqueio
+355342 Detalhes adicionais
+355470 Descreva os detalhes adicionais da razão que levou o número a ser bloqueado
+355957 Avaliação do atendimento
+356080 Informação importante
+356153 As avaliações de conversa são usadas para melhoria contínua da Lais, mas não geram chamado. Se você possui um problema urgente, entre em
+359044 Falha ao bloquear contato
+359372 Falha ao desbloquear contato
+361558 Desbloquear contato
+361580 Bloquear contato
+361637 Desarquivar conversa
+365128 para facilitar a distribuição dos atendimentos.
+369155 Atribuir responsável
+369809 Atribuições removidas com sucesso
+369882 Equipe atribuída com sucesso
+369916 Equipe removida com sucesso
+369952 Responsável removido com sucesso
+369990 Responsável atribuído com sucesso
+370092 Não foi possível remover as atribuições. Tente novamente.
+370195 Não foi possível atribuir a equipe. Tente novamente.
+370256 Não foi possível remover a equipe. Tente novamente.
+370322 Não foi possível remover. Tente novamente.
+370373 Não foi possível atribuir. Tente novamente.
+370446 Falha ao atribuir atendimento
+374589 Adicionar anexo
+377834 Selecionar emoji
+378624 Selecione a imagem
+378650 Selecione o arquivo
+378678 Selecione o vídeo
+378871 o vídeo
+382278 )} ou ${a}`})(t),
+382561 Selecionar arquivo
+384905 Cancelar resposta
+385068 Para reativar a Lais, é necessário ser Editor ou Administrador.
+385166 Para pausar a Lais, é necessário ser Editor ou Administrador.
+385265 Só é possível mandar mensagens livres em conversas durante às 24 horas que sucedem a última mensagem do cliente. Para retomar o contato, envie um modelo de mensagem.
+385475 Ação indisponível
+385533 Só é possível mandar uma mensagem de template. Aguarde o contato responder para mandar outra.
+385664 Aguarde 24 horas da última mensagem de template para enviar a próxima.
+385827 três
+385841 Enviar modelo de mensagem
+390219 Falha ao enviar mensagem
+394858 Digite uma mensagem
+395556 Envie uma mensagem diretamente ao lead
+395913 Gravar áudio
+396305 Send message
+396998 dd/MM/yy 'às' H:mm
+493781 ,userID:x}),!e.messageId)return void eL.info(
+493854 );let t=rl(H.current,U(e));if(t)return void G(t.element,t.key);v.current=!0,q.current=0,Q(e)},[H,G,U,p,f,y,x]),K=(0,s.useMemo)(()=>{let e=new Map;for(let t of m){let a=new Date(t.day).toDateString(),n=e.get(a)??[];for(let e of t.messages)n.push({type:
+495045 Mensagem não encontrada
+495413 Lista de mensagens do chat
+496109 ===e.type)return(0,l.jsx)(n1,{content:`${e.authorName} criou uma nota interna`,onMouseEnter:()=>{T.current=setTimeout(()=>{window.dispatchEvent(new CustomEvent(
+496738 Lead não respondeu mais. Lais reativou a conversa
+496842 Disparo de mensagem para proprietário
+499813 Call on WhatsApp
+499844 Chamar no WhatsApp
+499925 History link
+499952 Copiar link do histórico
+500049 Send to CRM
+500075 Enviar ao CRM
+501779 Não é possível enviar lead ao CRM
+501839 Lead já enviado ao CRM
+502583 Você não poderá reverter essa ação.
+504368 Administração
+504437 Atualização
+510137 Ocorrência
+513547 Interações
+516969 Remover ação
+517185 ×
+519279 Falha ao concluir tarefa
+519553 Falha ao excluir anotação
+521550 Excluir anotação
+521622 Tem certeza que deseja excluir esta anotação? Esta ação não pode ser desfeita.
+524943 Nova anotação
+525949 Adicionar anotação
+526426 Criar nota interna
+526610 Gravar com IA
+526834 Gravar nota com IA
+527118 Notas internas
+528272 Crédito aprovado
+528325 Crédito reprovado
+532043 ===t?`Primeiro contato ${t}`:a?`Primeiro contato hoje às ${t}`:`Primeiro contato em ${t}`,(0,l.jsx)(n.Badge,{color:
+534578 ,children:['Você realmente deseja excluir a etiqueta 
+538577 Criar nova etiqueta
+540331 Adicionar etiqueta
+542131 Editar etiquetas
+545673 ===r.type?`Imóvel #${r.clientListingId}`:r.name:
+547727 Visitas solicitadas
+550513 Resumo do chat
+552457 );c.push({start:a,end:a+t.length,text:e.substring(a,a+t.length)})}if(0===c.length)return e;let d=[],u=0;for(let t of c)t.start>u&&d.push((0,l.jsx)(s.Fragment,{children:e.substring(u,t.start)},`${a}-text-${u}`)),d.push((0,l.jsx)(
+553177 ,r_=`Só é possível fixar até 5 conversas.`,r$=()=>(0,l.jsxs)(n.Tooltip,{children:[(0,l.jsx)(n.TooltipTrigger,{asChild:!0,children:(0,l.jsx)(
+554607 Falha ao fixar conversa
+554702 Conversa fixada com sucesso!
+554733 Conversa desafixada com sucesso!
+555235 Abrir menu de ações da conversa
+555842 Marcar como lido
+555861 Marcar como não lido
+556745 ),disabled:k,onClick:t=>{if(t.stopPropagation(),m(!1),e&&!k){if(!(b||N))return void eL.error(r_);I({chat:e,pinned:!b})}},type:
+556913 Fixar conversa
+557351 Atendimento manual
+557681 Mensagens não lidas na conversa
+557808 Sem nome
+565291 )}function C(){p(!1),b(!0)}async function A(e){try{let a=await m(e);a?.id&&t({id:a.id,name:a.name,color:a.color})}catch(e){q.error(
+566188 Adicionar coluna
+567599 Selecionar etiqueta
+568044 Buscar etiquetas
+569333 Nenhuma etiqueta corresponde à busca.
+570841 Clique aqui para abrir esta conversa
+576030 Missing currentUserId for assignedToMe update
+576144 Removing chat from assignedToMe list
+576579 Chat assigned to me, fetching complete chat data to add to list
+577220 Chat added to list successfully
+577320 Error fetching chat data
+578114 Scheduling attendant assignment invalidate
+578671 Failed to confirm attendant chat removal after refetch
+579504 Scheduling scoped new-chat invalidate
+580679 Falha ao carregar conversas fixadas
+585734 Lista de conversas
+586374 Conversas fixadas
+586675 Todas as conversas foram carregadas
+586886 Nenhuma conversa encontrada
+587020 Lembre-se de reativar a Lais para este cliente quando finalizar o contato. A Lais será reativada automaticamente após 5 dias sem novas mensagens nesta conversa.
+587240 Sair com Lais pausada?
+594112 Arrastar coluna
+595410 Remover coluna
+596552 ,children:['Você realmente deseja remover a coluna 
+596621  do kanban?',
+596682 A etiqueta continuará existindo e as conversas não serão afetadas.
+600056 Para usar a barra de busca, 
+608876 Filter chats
+611611 Ver como lista
+612119 Ver como kanban
+615095 Não foi possível adicionar a coluna.
+615482 Não foi possível remover a coluna.
+616043 Não foi possível reordenar as colunas.
+618479 Não foi possível mover a conversa. Tente novamente.
+625548 useKanbanCacheSync: failed to process event
+628317 KanbanView: column crashed
+631434 Todos os contatos foram carregados
+638126 Número válido
+638196 Número inválido
+638242 Conversa existente
+638285 Este contato possui uma conversa arquivada.
+638352 Este contato já está em atendimento por outro membro da equipe.
+638443 Falha ao verificar número. Tente novamente.
+639206 Nome da pessoa
+639314 Informe o nome da pessoa
+639581 Número do contato
+639875 -translate-x-1/2 -translate-y-1/2 absolute top-1/2 left-1/2
+643855 Esta conversa já possui um modelo de mensagem aguardando a resposta do contato. Acesse a conversa existente para continuar o atendimento.
+644511 Para iniciar nova conversa, é necessário ser Editor ou Administrador.
+644589 Iniciar nova conversa
+644914 Nova conversa
+645651 ]'))return void e.preventDefault();P.current&&e.preventDefault()},children:[(0,l.jsx)(n.DrawerHeader,{onBack:()=>i>1?I():b(!1),children:(0,l.jsxs)(
+646828 Ir para a conversa
+650998 Chat state matches expectation (cache check)
+651122 Max polling retries reached, state mismatch
+651240 Polling for chat state
+651420 Chat state matches expectation after polling
+657081 Tag definition updated via WebSocket
+658652 Chat list update without chatId or id
+658809 Ignoring duplicate event within 500ms
+659808 Chat membership unresolved for active filters, not inserting
+659946 Chat no longer matches active filters, removing from list
+660434 Chat does not match active filters, ignoring update
+660687 assignedToMe filter active, relying on assignment events to manage list
+661455 archived filter active, chat does not belong to this list
+662074 chat_updated pinned event missing user id
+662927 Chat assigned to me, invalidating queries to add to list
+663141 Chat reassigned outside the responsible filter, removing from list
+663667 Kanban-move echo window swallowed archived
+663878 Processing archive event
+664007 Archiving chat - removing from active lists
+664167 Checking query for removal during archive
+664345 Skipping query without archived filter during archive
+664542 Removed chat from active list
+664666 Already polling for this chat, skipping duplicate
+664738 Viewing archived list, starting poll to see chat appear
+664857 Error polling after archiving
+664937 Viewing active list, chat already removed manually, skipping poll
+665044 Unarchiving chat - removing from archived lists
+665237 Skipping query without archived filter during unarchive
+665436 Removed chat from archived list
+665545 Viewing archived list, chat already removed, skipping poll
+665714 Starting poll for active list after unarchiving
+665825 Error polling after unarchiving
+666299 Kanban-move echo window swallowed tags_updated
+666444 chat_updated tags_updated received without tag_ids array
+666513 Processing tags_updated event
+666928 Processing chats_template event
+667586 Processing kanban_move event
+668520 chat_updated received with unknown triggeredBy value
+670562 No first page (page=1) found in cache, forcing refetch
+670734 Chat outside the active filters, skipping reorder
+672409 Failed to process chat from socket
+672482 Error in chat list update handler
+672787 Setting up onNewMessage handler
+672876 Received new message from socket
+672959 Received new_message event without data
+673062 Received new_message event without chatId
+674492 Processing socket message
+674719 No existing messages cache, invalidating query
+674893 Cache state
+675309 ),n=tG(t.createdAt);if(!a||null===n)return null;let s=null,r=1/0;for(let t of e??[])for(let e of t?.messages??[]){if(!tL(e?.id)||
+676247 Updated existing message in cache
+676426 Added new message to cache
+676672 Received message status update from socket
+676826 Received message_status_updated with incomplete payload
+678576 Ignoring duplicate chat resync within dedup window
+678649 WebSocket reconnected — resyncing chat caches
+681069 Histórico
+681659 Erro ao aplicar filtro
+681725 Não foi possível aplicar o filtro. Exibindo dados anteriores.
+684865 An unexpected error occurred
+684982 @lastro/chat: Something went wrong.
+686739 ChatModule error boundary caught an error
