@@ -184,7 +184,23 @@ def deve_escalar(fields: IdentityFields, tipo_documento: Optional[str]) -> bool:
         return False
     if fields.leitura_comprometida:
         return True
+    if rg_anomalo(fields):
+        # A wrong-SHAPE RG (7 digits where SP prints 8 — measured: a CNH's
+        # "18568536" read as "1656536") is a misread the core-field check
+        # cannot see: the field is "present". Worth a second, stronger read.
+        return True
     return bool(campos_nucleo_faltando(fields, tipo_documento))
+
+
+def rg_anomalo(fields: IdentityFields) -> bool:
+    """Does `fields.rg` have the wrong SHAPE for its issuer's UF
+    (`identificador.rg_anomalia`: truncated / CPF-shaped)?"""
+    if not fields.rg:
+        return False
+    from noctusai_lib.integrations.documents.rg import separar_orgao_uf
+
+    uf = separar_orgao_uf(fields.rg_orgao)[1]
+    return _ident.rg_anomalia(fields.rg, uf=uf) is not None
 
 
 #: A two-model AGREEMENT promotes a field's confidence by ONE step, never
@@ -274,6 +290,10 @@ def _vencedor_por_contexto(
     """
     if primeira_comprometida:
         return ("primeira leitura comprometida", True)
+    if campo == "rg":
+        a, b = rg_anomalo(original), rg_anomalo(escalada)
+        if a != b:
+            return ("forma de RG", a)
     if campo == "estado_civil":
         a = (original.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
         b = (escalada.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
@@ -401,7 +421,7 @@ def mesclar(
                             ExtractionConfidence.BAIXA if escalada.rg_orgao else ExtractionConfidence.NENHUMA
                         )
                     dv_adotados.append(campo)
-            elif campo in _ADOTA_ESCALADA_NA_DIVERGENCIA:
+            elif campo in _ADOTA_ESCALADA_NA_DIVERGENCIA and _vencedor_por_contexto(campo, original, escalada, estava_comprometida) is None:
                 # Measured exception (P2 corpus, 2026-09-29): on every RG
                 # disagreement (3/3 CNHs) the escalated read matched the
                 # signed contract and the first read was wrong — blanking the

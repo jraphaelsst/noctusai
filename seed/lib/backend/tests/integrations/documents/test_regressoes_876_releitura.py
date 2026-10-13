@@ -163,6 +163,29 @@ class TestR3AverbacaoVence:
         assert all(c.genero is None or c.genero_derivado for c in out.conjuges)
 
 
+#: R4 (measured on a later harness run): a CNH's RG "18568536" read as
+#: "1656536" — present, so no core field was missing and no re-read ran.
+class TestR4RgTruncadoReleitura:
+    def test_truncated_sp_rg_triggers_a_re_read(self) -> None:
+        from noctusai_lib.integrations.documents.releitura import deve_escalar
+
+        f = IdentityFields(
+            nome="JOAO EXEMPLO", nome_confianca=BAIXA, cpf="412.954.238-98", cpf_confianca=ALTA,
+            rg="1656536", rg_confianca=BAIXA, rg_orgao="SSP/SP", source=TextSource.OCR,
+        )
+        assert deve_escalar(f, "cnh") is True
+        assert deve_escalar(f.__class__(**{**f.__dict__, "rg": "18568536"}), "cnh") is False
+
+    @pytest.mark.parametrize("ordem", ["truncado_primeiro", "truncado_depois"])
+    def test_the_well_shaped_rg_wins(self, ordem: str) -> None:
+        ruim = IdentityFields(rg="1656536", rg_confianca=BAIXA, rg_orgao="SSP/SP", rg_orgao_confianca=BAIXA)
+        bom = IdentityFields(rg="18568536", rg_confianca=BAIXA, rg_orgao="SSP/SP", rg_orgao_confianca=BAIXA)
+        a, b = (ruim, bom) if ordem == "truncado_primeiro" else (bom, ruim)
+        out = mesclar(a, b, escalation_model="m")
+        assert out.rg == "18568536"
+        assert ("rg", "1656536") in out.leituras_alternativas
+
+
 #: R3b (measured on a later harness run): the escalated transcription
 #: rendered the matrícula appendix's book-type legend in a variant shape the
 #: old "LIVRO X (Evento)" guard did not cover, and "Óbito" read as a death.
