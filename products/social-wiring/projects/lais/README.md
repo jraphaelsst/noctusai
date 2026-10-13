@@ -22,6 +22,7 @@ Start with `analysis/SUMMARY.md`, then `specs/page-map.md`.
 | `screenshots/` | 23 screenshots without third-party personal data. |
 | `private/` (git-ignored) | Optional local drop zone. The real private set lives **outside the repo** at `~/Documents/repository/NoctusAI/_private-studies/lais/` (`screenshots/` with lead/staff data, `all-screenshots/` = all 35, `js/` = the vendor's 130 bundle chunks). Never commit it. |
 | `DECISIONS.md` | Owner answers and open questions. |
+| `BUILD-ROADMAP.md` | Our own Lais module in SW: reuse inventory, pages 0–5 (Agente → Conhecimento → Perguntas → Envio ao SW → Reengajamento → Visitas), risks, owner questions. |
 
 ## Architecture in one paragraph
 
