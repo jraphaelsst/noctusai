@@ -350,11 +350,50 @@ _RNE_TOKEN_RE = re.compile(
 )
 
 #: Issuers that print on a foreign national's document (Polícia Federal
-#: Diretoria de Estrangeiros and siblings). Matched ONLY immediately after
-#: the number's check character, and returned only when actually printed.
-_ORGAOS_ESTRANGEIROS = ("DELEMIG", "DIREX", "CGPI", "DPF", "PF", "MRE")
+#: Diretoria de Estrangeiros and siblings). An ISSUING BODY, never part of
+#: the number (owner rule 2026-10-13): `W573678ZDIREXEX` is number `W573678Z`
+#: + issuer `DIREX`. Longest first, so `DPF` is not read as `PF`.
+_ORGAOS_ESTRANGEIROS = ("DELEMIG", "DIREX", "CGPI", "DPMAF", "DPF", "PF", "MRE")
+_ORGAO_ESTRANGEIRO_ALT = "|".join(_ORGAOS_ESTRANGEIROS)
+#: The issuer right after the number — glued (`ZDIREX`), separated
+#: (`W-573.678-Z DIREX`), or under its own label on the same line
+#: (`RG: W-573.678-Z · Órgão expedidor: DIREX`). Multi-body forms
+#: (`CGPI/DIREX/DPF`) are kept whole.
+_ORGAO_ESTRANGEIRO_APOS_RE = re.compile(
+    r"^[\s/\-·•.,:;|]*(?:ORG(?:AO)?\.?\s*(?:EXPEDIDOR|EMISSOR)\s*[:.\-]?\s*)?"
+    r"((?:" + _ORGAO_ESTRANGEIRO_ALT + r")(?:\s*/\s*(?:" + _ORGAO_ESTRANGEIRO_ALT + r"))*)"
+)
+_ORGAO_ESTRANGEIRO_JANELA = 48
 _RNM_MARCADORES = ("CRNM", "RNM", "REGISTRO NACIONAL MIGRATORIO")
 _RNE_MARCADORES = ("RNE", "REGISTRO NACIONAL DE ESTRANGEIROS")
+#: Labels that introduce a foreign national's identity number on its OWN
+#: card (an RNE/CRNM), on top of every RG label (a foreigner's CNH prints it
+#: under `DOC. IDENTIDADE`; a form under `RG`).
+_RNE_LABELS = (
+    "REGISTRO NACIONAL MIGRATORIO",
+    "REGISTRO NACIONAL DE ESTRANGEIROS",
+    "CRNM",
+    "RNM",
+    "RNE",
+)
+
+
+def _label_before_rne(haystack: str, at: int) -> Achado:
+    return label_before(
+        haystack,
+        at,
+        labels=_RG_LABELS + _RNE_LABELS,
+        blocos=_BLOCO_LABELS,
+        valores=_VALOR_LABELS,
+        window=_LABEL_WINDOW,
+    )
+
+
+def _orgao_estrangeiro_apos(norm: str, fim: int) -> Optional[str]:
+    m = _ORGAO_ESTRANGEIRO_APOS_RE.match(norm[fim : fim + _ORGAO_ESTRANGEIRO_JANELA])
+    if m is None:
+        return None
+    return re.sub(r"\s*/\s*", "/", m.group(1))
 
 
 def find_rne(text: str) -> tuple[Optional[str], str, Optional[str], Optional[str], Optional[str]]:
@@ -365,30 +404,33 @@ def find_rne(text: str) -> tuple[Optional[str], str, Optional[str], Optional[str
     derive a document value). `W573678ZDIREXEX` yields `W573678Z`: the
     letter prefix and the printed check letter stay; nothing is added.
     `orgao` is a federal issuer ONLY when it is printed right after the
-    number (`DIREX`); otherwise `None` — never a state RG issuer defaulted
-    from elsewhere on the document (a CNH header's `DETRAN/SP` is the CNH's
-    issuer, not the identity document's). `tipo` is `"rnm"`/`"rne"` when the
-    text names the document or its issuer is a federal-police body, else
-    `None` (shape alone does not decide RNE vs RNM).
+    number (`DIREX`) or under its own issuer label on that same line
+    (`RG: W-573.678-Z · Órgão expedidor: DIREX`); otherwise `None` — never a
+    state RG issuer defaulted from elsewhere on the document (a CNH header's
+    `DETRAN/SP` is the CNH's issuer, not the identity document's). `tipo` is
+    `"rnm"`/`"rne"` when the text names the document or its issuer is a
+    federal-police body, else `None` (shape alone does not decide RNE vs
+    RNM).
 
-    Label-anchored like `find_rg` (alta only), because a letter+digits run
-    is otherwise too common (plates, protocols).
+    Label-anchored (an RG label, `DOC. IDENTIDADE`, or an RNE/CRNM label —
+    alta only), because a letter+digits run is otherwise too common
+    (plates, protocols).
     """
     norm = normalize(text or "")
     if not norm:
         return (None, "nenhuma", None, None, None)
     achados: list[tuple[str, str, str]] = []
     for m in _RNE_TOKEN_RE.finditer(norm):
-        achado = _label_before(norm, m.start())
+        achado = _label_before_rne(norm, m.start())
         if achado.rejeitado or achado.rebaixado or not achado.rotulo:
             continue
         valor = m.group(0).replace(" ", "")
-        resto = norm[m.end() : m.end() + 12].lstrip(" /-")
-        orgao = next((o for o in _ORGAOS_ESTRANGEIROS if resto.startswith(o)), None)
+        orgao = _orgao_estrangeiro_apos(norm, m.end())
         achados.append((valor, achado.rotulo, orgao or ""))
     if not achados or len({only_alnum(v) for v, _, _ in achados}) != 1:
         return (None, "nenhuma", None, None, None)
     valor, rotulo, orgao = achados[0]
+    orgao = orgao or next((o for _, _, o in achados if o), "")
     if any(mk in norm for mk in _RNM_MARCADORES):
         tipo: Optional[str] = "rnm"
     elif orgao or any(re.search(rf"\b{mk}\b", norm) for mk in _RNE_MARCADORES):
@@ -396,6 +438,85 @@ def find_rne(text: str) -> tuple[Optional[str], str, Optional[str], Optional[str
     else:
         tipo = None
     return (valor, "alta", rotulo, orgao or None, tipo)
+
+
+#: The CNH's own "4c" box: `DOC. IDENTIDADE / ÓRG. EMISSOR / UF` — three
+#: column labels printed together, the three VALUES together below them
+#: (`13032360 SSP SP`). Read as ONE unit (owner rule 2026-10-13): the number,
+#: its issuer and the UF are only meaningful together.
+_CAIXA_CNH_RE = re.compile(
+    r"\bDOC(?:UMENTO)?\.?\s*(?:DE\s+)?IDENTIDADE\s*/\s*ORG(?:AO)?\.?\s*EMISSOR\s*/\s*UF\b\s*[:.\-]?\s*"
+)
+_CAIXA_CNH_RG_RE = re.compile(
+    r"^((?:\d{1,3}(?:\.\d{3})+|\d{5,11})(?:\s*-\s*[\dX]|X)?)(?![\d])\s*[/\-,]?\s*"
+    r"([A-Z]{2,10})?(?:\s*[/\-]?\s*([A-Z]{2}))?\b"
+)
+
+
+def separar_orgao_uf(valor: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """`SSP/SP`, `SSP-SP`, `SSP SP`, `SSPSP` -> `("SSP", "SP")`.
+
+    `{orgao, uf}` structure of an issuer string. An issuer with no UF
+    (`DPF`, `DIREX`) -> `("DPF", None)`. Unparseable -> `(valor, None)`
+    (kept visible, never guessed); empty -> `(None, None)`.
+    """
+    bruto = normalize(valor or "").strip()
+    if not bruto:
+        return (None, None)
+    m = re.fullmatch(r"([A-Z]{2,10})\s*(?:[/\-]\s*|\s+)(" + _UFS_ALTERNATIVA + r")", bruto)
+    if m and m.group(1) not in _UFS:
+        return (m.group(1), m.group(2))
+    m = re.fullmatch(r"([A-Z]{2,8})(" + _UFS_ALTERNATIVA + r")", bruto)
+    if m and m.group(1) in _ORGAOS_CONHECIDOS:
+        return (m.group(1), m.group(2))
+    if re.fullmatch(r"[A-Z]{2,10}(?:/[A-Z]{2,10})*", bruto):
+        return (bruto, None)
+    return (bruto, None)
+
+
+def find_caixa_identidade_cnh(
+    text: str,
+) -> Optional[tuple[str, str, Optional[str], Optional[str]]]:
+    """Read the CNH "DOC. IDENTIDADE / ÓRG. EMISSOR / UF" box as one unit.
+
+    Returns `(tipo, numero, orgao, uf)` — `tipo` `"rg"` or `"rne"` — or
+    `None` when the box label is absent or its value does not parse.
+
+    - An RNE-shaped value (`W573678ZDIREXEX`, `W-573.678-Z DIREX`) is
+      `("rne", "W573678Z", "DIREX", None)` — NEVER an RG.
+    - An RG value (`13032360 SSP SP`, `13.032.360 SSP/SP`, `13032360SSPSP`)
+      is `("rg", "13032360", "SSP", "SP")`; the issuer must be a known one
+      (`_ORGAOS_CONHECIDOS`) and the UF a real UF, else `orgao`/`uf` stay
+      `None` (the number is still returned).
+    """
+    norm = normalize(text or "")
+    m = _CAIXA_CNH_RE.search(norm)
+    if m is None:
+        return None
+    resto = norm[m.end() : m.end() + 64]
+    rne = _RNE_TOKEN_RE.match(resto)
+    if rne is not None:
+        return ("rne", rne.group(0).replace(" ", ""), _orgao_estrangeiro_apos(resto, rne.end()), None)
+    mrg = _CAIXA_CNH_RG_RE.match(resto)
+    if mrg is None:
+        return None
+    numero = re.sub(r"\s*-\s*", "-", mrg.group(1))
+    if parece_data(numero):
+        return None
+    org, uf = mrg.group(2), mrg.group(3)
+    if org in _UFS and not uf:
+        # Issuer omitted, UF printed (`44886493866 SP` — a CIN-convention box).
+        org, uf = None, org
+    if org and not uf and len(org) > 2:
+        # Glued issuer+UF (`SSPSP`).
+        partes = separar_orgao_uf(org)
+        if partes[1] is not None:
+            org, uf = partes
+    if org not in _ORGAOS_CONHECIDOS:
+        org = None
+    if uf not in _UFS:
+        uf = None
+    return ("rg", numero, org, uf)
 
 
 def _dentro_de_token_rne(norm: str, inicio: int, fim: int) -> bool:
@@ -775,6 +896,7 @@ def mesmo_rg(a: Optional[str], b: Optional[str]) -> Optional[bool]:
 
 
 __all__ = [
+    "find_caixa_identidade_cnh",
     "formatar_rg_como_impresso",
     "find_rg",
     "find_rg_orgao",
@@ -785,4 +907,5 @@ __all__ = [
     "only_alnum",
     "parece_data",
     "rg_shape_valido",
+    "separar_orgao_uf",
 ]

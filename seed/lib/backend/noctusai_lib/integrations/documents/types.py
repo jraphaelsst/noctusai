@@ -110,7 +110,7 @@ class TextSource(str, Enum):
 CAMPOS: tuple[str, ...] = (
     "data_nascimento", "nome", "genero", "cpf", "rg",
     "estado_civil", "regime_bens", "data_casamento", "nacionalidade",
-    "profissao",
+    "profissao", "rne",
 )
 
 
@@ -282,6 +282,44 @@ class IdentityFields:
     #: ordinary RG, or the document does not say" — never a claim of RG.
     identidade_tipo: Optional[str] = None
 
+    # ─── RNE / RNM / CRNM (a foreign national's identity document) ─────
+    #: 🔴 ITS OWN KIND, NEVER `rg` (owner rule 2026-10-13). An RNE printed
+    #: anywhere — an RNE card, or a foreigner's CNH "DOC. IDENTIDADE" box,
+    #: or a field merely LABELLED "RG" (`RG: W-573.678-Z`) — lands here,
+    #: exactly as printed, and `rg` stays empty. `identidade_tipo` above
+    #: still names the sub-kind (`rne`/`rnm`) when the document says which.
+    rne: Optional[str] = None
+    rne_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+    rne_rotulo: Optional[str] = None
+    #: The issuing body (`DIREX`, `CGPI/DIREX/DPF`) — TRAVELS WITH `rne`, the
+    #: same way `rg_orgao` travels with `rg`. Never part of the number.
+    rne_orgao: Optional[str] = None
+
+    # ─── CNH Nº REGISTRO ─────────────────────────────────────────────────
+    #: The 11-digit registro, DV-checked by `identificador.validar_cnh_
+    #: registro`. Never the espelho number nor the RENACH. Not a `CAMPOS`
+    #: member: no consuming column yet — carried for the contract layer.
+    registro_cnh: Optional[str] = None
+    registro_cnh_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+
+    # ─── Certidão RCPN matrícula (32 digits) ─────────────────────────────
+    #: Validated by `identificador.validar_matricula_rcpn` (structure hard,
+    #: DV soft). Not a `CAMPOS` member (document-level, not per-person).
+    matricula_certidao: Optional[str] = None
+    matricula_certidao_confianca: ExtractionConfidence = ExtractionConfidence.NENHUMA
+
+    #: 🔴 `True` when `genero` was NOT read off a printed `SEXO` field but
+    #: DERIVED (grammatical agreement on a certidão). A derived gender is a
+    #: hint for a human, never a reading: a consumer must not write it to a
+    #: record unattended (owner rule 2026-10-13).
+    genero_derivado: bool = False
+
+    #: `(campo, valor_alternativo)` pairs: a re-read that DISAGREED with the
+    #: first reading. The first reading stays on the field as a `baixa`
+    #: pending-review value and the alternative rides here — a divergence is
+    #: never resolved by dropping the value (owner rule 2026-10-13).
+    leituras_alternativas: tuple[tuple[str, str], ...] = ()
+
     # ─── Estado civil (marital status) ─────────────────────────────────
     #: Normalised to a closed snake_case vocabulary (`civil_status.
     #: ESTADO_CIVIL_VALORES`) rather than to the document's own wording —
@@ -397,6 +435,14 @@ class IdentityFields:
     #: not a persistable per-person fact, it is a diagnostic).
     tipo_provavel: Optional[str] = None
 
+    @property
+    def rg_orgao_partes(self) -> tuple[Optional[str], Optional[str]]:
+        """`rg_orgao` split into `(orgao, uf)` — `SSP/SP` -> `("SSP", "SP")`;
+        an issuer with no UF -> `("DPF", None)`; none -> `(None, None)`."""
+        from noctusai_lib.integrations.documents.rg import separar_orgao_uf
+
+        return separar_orgao_uf(self.rg_orgao)
+
     def _valor(self, campo: str) -> object:
         return getattr(self, campo)
 
@@ -469,6 +515,14 @@ class IdentityFields:
     # typo like `persistable_nomee` is an AttributeError at import rather
     # than a string that quietly misses at runtime — which is the one real
     # cost of the generic form.
+
+    @property
+    def persistable_rne(self) -> bool:
+        return self.persistable("rne")
+
+    @property
+    def sugestao_rne(self) -> bool:
+        return self.sugestao("rne")
 
     @property
     def persistable_data_nascimento(self) -> bool:
