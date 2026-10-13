@@ -823,6 +823,9 @@ export function useEmUnsubscribeInfo(token: string | undefined) {
     queryKey: ["sw", "email-marketing", "unsubscribe", token ?? "_none"],
     enabled: !!token,
     retry: false,
+    // An invalid/expired link is a stable state the page renders itself —
+    // the global "Erro ao carregar dados" toast would only duplicate it.
+    meta: { suppressErrorToastStatuses: [400] },
     queryFn: () =>
       api.get<EmUnsubscribeInfo>(`${EM_UNSUBSCRIBE}/${encodeURIComponent(token!)}`),
   });
@@ -853,6 +856,9 @@ export function useEmConfirmEmailInfo(token: string | undefined) {
     queryKey: ["sw", "email-marketing", "confirm-email", token ?? "_none"],
     enabled: !!token,
     retry: false,
+    // 400 invalid/expired link · 404 contact gone — both rendered by the page
+    // as "Link inválido ou expirado"; a global toast on top only alarms.
+    meta: { suppressErrorToastStatuses: [400, 404] },
     queryFn: () => api.get<EmConfirmInfo>(`${EM_CONFIRM}/${encodeURIComponent(token!)}`),
   });
 }
