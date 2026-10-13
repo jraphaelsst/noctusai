@@ -227,6 +227,14 @@ export default function Favorecidos() {
                     {f.cpf_cnpj_mascarado ?? "—"}
                     {" · "}
                     {f.banco ?? "—"}
+                    {f.banco_requer_revisao && (
+                      <Badge
+                        variant="outline"
+                        className="ml-1 text-[10px] text-amber-700"
+                      >
+                        Revisar dados bancários
+                      </Badge>
+                    )}
                     {f.pix_mascarado
                       ? ` · ${rotuloPix(f.pix_tipo)} ${f.pix_mascarado}`
                       : ""}

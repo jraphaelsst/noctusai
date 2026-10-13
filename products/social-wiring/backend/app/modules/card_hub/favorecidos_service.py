@@ -45,6 +45,7 @@ from noctusai_lib.primitives.exceptions import (
 )
 
 from app.modules.card_hub import negociacao_estruturada_service as estruturada
+from app.modules.card_hub.banco_texto import banco_saneado, banco_tem_dados_de_conta
 from app.services import identificadores as idf
 from app.services import table_reads
 
@@ -135,7 +136,8 @@ def _saida_lista(row: dict) -> dict:
         "nome": row["nome"],
         "tipo_pessoa": row.get("tipo_pessoa"),
         "cpf_cnpj_mascarado": mascarar_documento(row.get("cpf_cnpj")),
-        "banco": row.get("banco"),
+        "banco": banco_saneado(row.get("banco")),
+        "banco_requer_revisao": banco_tem_dados_de_conta(row.get("banco")),
         "pix_tipo": row.get("pix_tipo"),
         "pix_mascarado": mascarar_pix(row.get("pix"), row.get("pix_tipo")),
         "ativo": bool(row.get("ativo", True)),
@@ -172,6 +174,8 @@ def _saida_detalhe_mascarada(row: dict) -> dict:
         "cpf_cnpj": mascarar_documento(row.get("cpf_cnpj")),
         "conta": mascarar_conta(row.get("conta")),
         "agencia": None,
+        "banco": banco_saneado(row.get("banco")),
+        "banco_requer_revisao": banco_tem_dados_de_conta(row.get("banco")),
         "pix": mascarar_pix(row.get("pix"), row.get("pix_tipo")),
         "cpf_cnpj_mascarado": mascarar_documento(row.get("cpf_cnpj")),
         "pix_mascarado": mascarar_pix(row.get("pix"), row.get("pix_tipo")),
@@ -245,6 +249,12 @@ def _normalizar(valores: dict, *, atual: Optional[dict] = None) -> dict:
                 f"{campo} deve ser um de: {', '.join(validos)}", field=campo
             )
 
+    if banco_tem_dados_de_conta(mesclado["banco"]):
+        raise ValidationError_(
+            "O campo Banco deve conter apenas o nome do banco; "
+            "informe a agência e a conta nos campos Agência e Conta",
+            field="banco",
+        )
     if not mesclado["conta"] and not mesclado["pix"]:
         raise ValidationError_("informe a conta bancária ou a chave PIX", field="conta")
     if mesclado["conta"] and not (mesclado["banco"] and mesclado["agencia"]):

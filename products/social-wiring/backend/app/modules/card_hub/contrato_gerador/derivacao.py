@@ -59,6 +59,7 @@ from noctusai_lib.integrations.documents.cnpj import is_valid as cnpj_valido
 from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.primitives.accents import fold_accents
 
+from app.modules.card_hub.banco_texto import banco_tem_dados_de_conta
 from app.modules.card_hub.contrato_gerador import certidao_pcen, frases
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
@@ -2221,6 +2222,12 @@ def _checar_favorecido(av: Avaliacao, fav, rot: str, cpfs_vendedores: set[str]) 
         av.falta(f"negociacao.favorecido.{fav.id}.cpf_cnpj", f"CPF/CNPJ de {fav.nome}", "negociacao")
     if fav.conta and not (fav.banco and fav.agencia):
         av.falta(f"negociacao.favorecido.{fav.id}.banco", f"Banco e agência de {fav.nome}", "negociacao")
+    if not fav.conta and banco_tem_dados_de_conta(fav.banco):
+        av.falta(
+            f"negociacao.favorecido.{fav.id}.conta",
+            f"Dados bancários de {fav.nome} estão no campo Banco; preencha Agência e Conta",
+            "negociacao",
+        )
     if frases.so_digitos(fav.cpf_cnpj) not in cpfs_vendedores:
         av.avisa("FAVORECIDO_TERCEIRO", f"{fav.nome} ({rot}) não é um dos vendedores.")
 

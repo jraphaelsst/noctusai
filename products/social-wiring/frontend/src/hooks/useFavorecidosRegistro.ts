@@ -29,6 +29,7 @@ export interface FavorecidoResumo {
   tipo_pessoa: FavorecidoTipoPessoa;
   cpf_cnpj_mascarado: string | null;
   banco: string | null;
+  banco_requer_revisao?: boolean;
   pix_tipo: string | null;
   pix_mascarado: string | null;
   ativo: boolean;
