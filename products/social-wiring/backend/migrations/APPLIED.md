@@ -578,3 +578,7 @@ Authored 2026-10-11 (owner decision relayed by noc-0: click tracking must store 
 ## 250 — cs_roteiros.estrutura (Roteiro Avançado: CoreStudio vs Método beat order) — NOT APPLIED
 
 Authored 2026-10-11 (owner decision "both structures"). Additive + idempotent: `estrutura TEXT NOT NULL DEFAULT 'corestudio'` (every existing row was generated with the CoreStudio order, so the default is the truthful backfill) with the named `cs_roteiros_estrutura_check` (`corestudio|metodo`, DROP IF EXISTS + ADD). Requires 229. Apply BEFORE deploying the image that reads/writes it (create/reprocessar insert `estrutura`); `predeploy_check` `schema_drift` fails until applied; then run `verify_db_guards` for `social_wiring.cs_roteiros_estrutura_check`.
+
+## 254 — extracao_leitura_resultados (model-routing learning loop) — NOT APPLIED
+
+Authored 2026-10-13 (owner direction: route each document/field to the measured best model, conciliate only doubtful reads, learn from outcomes). New table, one row per critical field of a routed identity read: model, trust-gate verdict + reasons, fallback ran, agreement, outcome, cost, and the later human resolution. Fingerprints only (24-bit), never values. RLS mirrors 138 as converted by 211 (own-org SELECT via current_org_id_for('social_wiring'), service_role ALL). Additive + idempotent; the writer (`card_hub.leitura_resultados`) logs and continues while the table is absent, so apply order vs image is free — apply BEFORE relying on the recalibration export.

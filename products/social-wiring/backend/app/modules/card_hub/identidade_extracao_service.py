@@ -129,6 +129,7 @@ from app.modules.card_hub.proveniencia import fontes
 from app.services import campo_conflitos, divergencia_resolucao, extracao_job, table_reads
 from app.services import identificadores as idf
 from app.services.api_keys_store import resolve_vision_provider
+from app.modules.card_hub import leitura_resultados
 from app.modules.card_hub.services import _now, _t
 
 logger = logging.getLogger(__name__)
@@ -1030,6 +1031,42 @@ def abrir_revisoes_divergencia(
             abertos.append(linha)
     return abertos
 
+
+
+def _confirmados_de_outro_documento(
+    client: Any, org_id: UUID, cliente_id: UUID, tipo: Optional[str]
+) -> dict[str, Any]:
+    """Cross-document corroboration for the seed's trust gate
+    (`documents.confianca`, owner direction 2026-10-13): each critical field
+    this cliente ALREADY holds from ANOTHER source — a different document
+    type, or a human (`manual`) — keyed by the seed field name. A value whose
+    provenance is THIS document type is not independent evidence and is left
+    out. A selector of trust only: nothing here is ever written back."""
+    colunas = sorted({c for c in _CAMPO_CLIENTE_DA_DIVERGENCIA.values()})
+    try:
+        rows = (
+            _t(client, CLIENTES_TABLE)
+            .select(",".join([*colunas, *(f"{c}_origem" for c in colunas)]))
+            .eq("org_id", str(org_id))
+            .eq("id", str(cliente_id))
+            .limit(1)
+            .execute()
+        ).data or []
+    except Exception as exc:  # noqa: BLE001 — corroboration is optional evidence
+        logger.warning("confirmados: leitura do cliente %s falhou: %s", cliente_id, exc)
+        return {}
+    if not rows:
+        return {}
+    atual = rows[0]
+    out: dict[str, Any] = {}
+    for campo, coluna in _CAMPO_CLIENTE_DA_DIVERGENCIA.items():
+        if campo == "rne":
+            continue
+        valor, origem = atual.get(coluna), atual.get(f"{coluna}_origem")
+        if _vazio(valor) or not origem or origem == tipo:
+            continue
+        out[campo] = valor
+    return out
 
 def _papeis_das_pessoas(client: Any, org_id: UUID, cliente_ids: list[str]) -> dict[str, str]:
     """Best-effort role label per cliente_id, for R4's rejection message —
@@ -3782,6 +3819,22 @@ def resolver_conflito(
         if item_key == "cpf" and conflito.get("valor_proposto"):
             cpf_conhecido(client, org_id, conflito["cliente_id"], conflito["valor_proposto"])
 
+    # Model-routing learning loop (migration 254): a human just settled a
+    # machine reading. Agreement-gate review (readings A/B): accept = reading
+    # B is right; reject = B is wrong, the right value comes with the manual
+    # edit that follows. Any other document-sourced conflict: the accepted
+    # proposal, or the record value the rejection kept, is the truth.
+    if conflito.get("fonte_tabela") == DOCUMENTOS_TABLE:
+        if conflito.get("origem_proposto") == ORIGEM_LEITURA_B:
+            final = conflito.get("valor_proposto") if aceitar else None
+        else:
+            final = conflito.get("valor_proposto") if aceitar else conflito.get("valor_anterior")
+        leitura_resultados.registrar_resolucao(
+            client, org_id, UUID(str(conflito["cliente_id"])), conflito["campo"],
+            resolucao="conflito_aceito" if aceitar else "conflito_rejeitado",
+            valor_final=final,
+        )
+
     return {**conflito, **patch}
 
 
@@ -4069,9 +4122,16 @@ async def extrair_identidade(
             filename=doc_row.get("nome_original"),
             titular=_titular_do_card(client, org_id, cliente_id),
             tipo_documento=tipo,
+            confirmados=_confirmados_de_outro_documento(client, org_id, cliente_id, tipo),
         )
 
     async def _processar(fields: IdentityFields, doc_row: dict) -> dict:
+        # Model-routing learning loop (migration 254): one row per critical
+        # field of this read — model, trust verdict, fallback, agreement,
+        # cost. Never blocks the extraction (logged on failure).
+        leitura_resultados.registrar_leitura(
+            client, org_id, cliente_id, documento_id, tipo, fields
+        )
         if fields.aviso:
             # Not a failure — the result is persisted below. Recorded so
             # the withheld fields are explainable from the logs.
@@ -5517,6 +5577,10 @@ def confirmar_sugestao(
     _t(client, CLIENTES_TABLE).update(updates).eq("id", str(cliente_id)).execute()
     if campo.item_key == "cpf" and valor:
         cpf_conhecido(client, org_id, cliente_id, valor, excluir_documento_id=documento_id)
+    # Learning loop (migration 254): a human vouched for this reading.
+    leitura_resultados.registrar_resolucao(
+        client, org_id, cliente_id, campo.item_key, resolucao="confirmado", valor_final=valor,
+    )
 
     return {
         "confirmado": True,
