@@ -310,7 +310,7 @@ class TestPerfis:
     def test_sincronizar_has_a_daily_cap_per_org(self, bib, client):
         from app.config import settings
 
-        hoje = NOW.strftime("%Y%m%d")
+        hoje = datetime.now(timezone.utc).strftime("%Y%m%d")
         for i in range(settings.biblioteca_sync_manual_dia_org):
             bib.db.from_("jobs").insert({
                 "id": str(uuid.uuid4()), "type": "biblioteca.sync_perfil", "status": "completed",
@@ -323,7 +323,7 @@ class TestPerfis:
     def test_sincronizar_cap_ignores_other_orgs_and_other_days(self, bib, client):
         from app.config import settings
 
-        hoje = NOW.strftime("%Y%m%d")
+        hoje = datetime.now(timezone.utc).strftime("%Y%m%d")
         for i in range(settings.biblioteca_sync_manual_dia_org):
             bib.db.from_("jobs").insert({
                 "id": str(uuid.uuid4()), "type": "biblioteca.sync_perfil", "status": "completed",
@@ -336,7 +336,7 @@ class TestPerfis:
         assert client.post(f"{BASE}/perfis/{P1}/sincronizar").status_code == 202
 
     def test_sincronizar_refused_right_after_a_sync(self, bib, client):
-        bib.db.from_("cs_perfis_monitorados").update({"ultima_sync_em": (NOW - timedelta(minutes=10)).isoformat()}).eq("id", P2).execute()
+        bib.db.from_("cs_perfis_monitorados").update({"ultima_sync_em": (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()}).eq("id", P2).execute()
         r = client.post(f"{BASE}/perfis/{P2}/sincronizar")
         assert r.status_code == 429 and int(r.headers["Retry-After"]) <= 3600
         assert bib.queued() == []
