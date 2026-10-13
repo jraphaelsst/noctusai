@@ -223,6 +223,18 @@ class TestCreate:
         r = ec.post(f"{BASE}/posts", json={"marca_id": MARCA, "titulo": "x", "bogus": 1})
         assert r.status_code == 422
 
+    @pytest.mark.parametrize("valor", ["2026-10-27", "2026-10-27T00:00:00"])
+    def test_create_data_entrega_naive_or_bare_date_is_422(self, ec, valor):
+        """The prod bug of 2026-10-13: "2026-10-27" became 2026-10-27 00:00+00 = 26/10 in São Paulo."""
+        r = ec.post(f"{BASE}/posts", json={"marca_id": MARCA, "titulo": "x", "data_entrega": valor})
+        assert r.status_code == 422, r.text
+        assert ec.mock_supabase.from_("cs_posts").select("*").execute().data == []
+
+    def test_create_data_entrega_aware_is_stored_with_offset(self, ec):
+        d = _post(ec, data_entrega="2026-10-27T09:00:00-03:00")
+        row = ec.mock_supabase.from_("cs_posts").select("*").eq("id", d["id"]).execute().data[0]
+        assert row["data_entrega"] == "2026-10-27T09:00:00-03:00"
+
 
 class TestReadUpdateDelete:
     def test_cross_org_post_is_404_everywhere(self, ec):
@@ -294,6 +306,25 @@ class TestReadUpdateDelete:
         pid = _post(ec)["id"]
         for bad in ({"recorrencia": "quinzenal"}, {"lembrete_minutos_antes": -1}, {"data_entrega": "ontem"}):
             assert ec.patch(f"{BASE}/posts/{pid}", json=bad).status_code == 422, bad
+
+    @pytest.mark.parametrize("campo", ["data_inicio", "data_entrega"])
+    @pytest.mark.parametrize("valor", ["2026-10-27", "2026-10-27T00:00:00", "2026-10-27T09:00"])
+    def test_patch_datas_naive_or_bare_date_is_422(self, ec, campo, valor):
+        """TIMESTAMPTZ columns: a value without an offset would be read as UTC midnight (one day
+        early in São Paulo), so it is refused, not guessed."""
+        pid = _post(ec)["id"]
+        r = ec.patch(f"{BASE}/posts/{pid}", json={campo: valor})
+        assert r.status_code == 422, r.text
+        row = ec.mock_supabase.from_("cs_posts").select("*").eq("id", pid).execute().data[0]
+        assert row.get(campo) is None
+
+    @pytest.mark.parametrize("campo", ["data_inicio", "data_entrega"])
+    def test_patch_datas_aware_is_accepted(self, ec, campo):
+        pid = _post(ec)["id"]
+        r = ec.patch(f"{BASE}/posts/{pid}", json={campo: "2026-10-27T09:00:00-03:00"})
+        assert r.status_code == 200, r.text
+        row = ec.mock_supabase.from_("cs_posts").select("*").eq("id", pid).execute().data[0]
+        assert row[campo] == "2026-10-27T09:00:00-03:00"
 
     def test_hub_members_body_key_is_membro_ids(self, ec):
         pid = _post(ec)["id"]

@@ -31,7 +31,10 @@ const DUE_CLASSE = {
 function dataCurta(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString("pt-BR", { day: "numeric", month: "short" }).replace(".", "");
+  // The agency's business day, not the viewer's device zone (same anchor as the card's Datas).
+  return d
+    .toLocaleDateString("pt-BR", { day: "numeric", month: "short", timeZone: "America/Sao_Paulo" })
+    .replace(".", "");
 }
 
 export function PostCardFace({ post, papelEtapa, esconderMarca, isDragging, onClick }: PostCardFaceProps) {

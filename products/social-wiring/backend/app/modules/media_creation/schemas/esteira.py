@@ -6,11 +6,11 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import date, datetime
+from datetime import date
 from typing import Literal, Optional
 from urllib.parse import urlparse
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import AwareDatetime, Field, field_validator, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 
@@ -24,6 +24,9 @@ MAX_MOTIVO = 1000
 MAX_LEMBRETE_MINUTOS = 60 * 24 * 365  # a year ahead is the most a reminder offset means
 #: cs_posts_recorrencia_valid (migration 241)
 Recorrencia = Literal["diaria", "semanal", "mensal", "anual"]
+# ``data_inicio`` / ``data_entrega`` are TIMESTAMPTZ: the request must carry the offset (``AwareDatetime``).
+# A bare date or a naive datetime is a 422, never silently read as UTC midnight — "27/10" stored as
+# ``2026-10-27 00:00+00`` renders as 26/10 in América/São Paulo (seen in prod 2026-10-13).
 PERMALINK_RE = re.compile(r"^https://(www\.)?instagram\.com/")
 #: Fields a PATCH must never carry (they have dedicated endpoints / are immutable).
 CAMPOS_NAO_EDITAVEIS = frozenset({"etapa_id", "marca_id", "headline_id", "roteiro_id"})
@@ -48,7 +51,7 @@ class PostCreate(StrictHttpModel):
     etapa_id: Optional[str] = Field(default=None, min_length=1, max_length=64)
     conta_id: Optional[uuid.UUID] = None
     gravacao_em: Optional[date] = None
-    data_entrega: Optional[datetime] = None
+    data_entrega: Optional[AwareDatetime] = None
 
     @field_validator("titulo")
     @classmethod
@@ -83,8 +86,8 @@ class PostUpdate(StrictHttpModel):
     arquivado: Optional[bool] = None
     # The card hub's "Datas" columns (the seed hub has no Datas write route: they are written here).
     # `data_entrega` is "Postagem prevista". Validation mirrors the column types / CHECKs of 241.
-    data_inicio: Optional[datetime] = None
-    data_entrega: Optional[datetime] = None
+    data_inicio: Optional[AwareDatetime] = None
+    data_entrega: Optional[AwareDatetime] = None
     entrega_concluida: Optional[bool] = None
     lembrete_minutos_antes: Optional[int] = Field(default=None, ge=0, le=MAX_LEMBRETE_MINUTOS)
     recorrencia: Optional[Recorrencia] = None

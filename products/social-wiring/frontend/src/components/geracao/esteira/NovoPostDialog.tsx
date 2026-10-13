@@ -3,6 +3,11 @@
  * (the marca's Favoritas, then Sugeridas, only those not yet bound to a post), conta de
  * destino (the marca's connected Instagram accounts; hidden when there is only one, which
  * is then sent) and the planned dates. The server decides the stage.
+ *
+ * "Postagem prevista" is the same `datetime-local` control as the card's Datas section
+ * (PostCardDialog): `data_entrega` is TIMESTAMPTZ, so it goes out with São Paulo's offset —
+ * a bare date was stored as UTC midnight and shown one day early. "Gravação prevista" is a
+ * real DATE and stays `YYYY-MM-DD`.
  */
 import { useState } from "react";
 import { toast } from "sonner";
@@ -20,6 +25,7 @@ import { useCriarPost } from "@/hooks/geracao/useEsteira";
 import { useHeadlinesLista } from "@/hooks/geracao/useHeadlines";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
 import type { Marca } from "@/hooks/useMarcas";
+import { dataHoraLocalParaIsoComOffsetSP } from "@/lib/dataHoraSP";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe } from "@/types/esteira";
 
@@ -65,7 +71,7 @@ export function NovoPostDialog({ open, marcas, marcaIdInicial, onClose, onCriado
         headline_id: headlineValida || undefined,
         conta_id: contaId || undefined,
         gravacao_em: gravacao || undefined,
-        data_entrega: entrega || undefined,
+        data_entrega: entrega ? dataHoraLocalParaIsoComOffsetSP(entrega) : undefined,
       },
       {
         onSuccess: (post) => {
@@ -151,11 +157,21 @@ export function NovoPostDialog({ open, marcas, marcaIdInicial, onClose, onCriado
           <div className="grid grid-cols-2 gap-3">
             <label className="block space-y-1">
               <span>Gravação prevista</span>
-              <Input type="date" value={gravacao} onChange={(e) => setGravacao(e.target.value)} />
+              <Input
+                type="date"
+                aria-label="Gravação prevista"
+                value={gravacao}
+                onChange={(e) => setGravacao(e.target.value)}
+              />
             </label>
             <label className="block space-y-1">
               <span>Postagem prevista</span>
-              <Input type="date" value={entrega} onChange={(e) => setEntrega(e.target.value)} />
+              <Input
+                type="datetime-local"
+                aria-label="Postagem prevista"
+                value={entrega}
+                onChange={(e) => setEntrega(e.target.value)}
+              />
             </label>
           </div>
         </div>

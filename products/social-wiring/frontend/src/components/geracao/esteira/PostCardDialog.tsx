@@ -15,7 +15,6 @@ import {
   ChecklistsSection,
   DescricaoSection,
   LembretesSubpage,
-  dataHoraLocalParaIsoSP,
   isoParaDataHoraLocalSP,
   type CardDatas,
   type CardSubpage,
@@ -28,6 +27,7 @@ import { CampoDataCommit } from "./CampoDataCommit";
 import { useAtualizarPost, usePost } from "@/hooks/geracao/useEsteira";
 import { flattenTimeline, postHub } from "@/hooks/geracao/usePostHub";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
+import { dataHoraLocalParaIsoComOffsetSP } from "@/lib/dataHoraSP";
 import { mensagemErroServidor } from "@/lib/erroServidor";
 import type { PostDetalhe, PostUpdate, RecorrenciaPost } from "@/types/esteira";
 import { PostHeaderAcoes } from "./PostHeaderAcoes";
@@ -108,8 +108,8 @@ function DatasPost({
             rotulo="Postagem prevista"
             salvo={entregaLocal}
             onCommit={(valor) => {
-              // Explicit -03:00 (São Paulo has no DST): a naive datetime would be read in the DB zone.
-              const iso = valor ? `${dataHoraLocalParaIsoSP(valor)}-03:00` : null;
+              // Explicit SP offset: the server refuses a naive datetime (it would be read as UTC).
+              const iso = valor ? dataHoraLocalParaIsoComOffsetSP(valor) : null;
               onPatch({ data_entrega: iso }, "Não foi possível salvar a data de postagem.");
             }}
           />

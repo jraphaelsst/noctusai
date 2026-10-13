@@ -76,4 +76,25 @@ describe("NovoPostDialog", () => {
     fireEvent.click(screen.getByText("Criar post"));
     expect(m.mutate.mock.calls[0][0]).toMatchObject({ conta_id: "c2" });
   });
+
+  it("Postagem prevista sai com offset de São Paulo e cai no dia escolhido; gravação segue DATE", () => {
+    montar();
+    fireEvent.change(screen.getByPlaceholderText(/Título do reel/), { target: { value: "T" } });
+    fireEvent.change(screen.getByLabelText("Gravação prevista"), { target: { value: "2026-10-25" } });
+    fireEvent.change(screen.getByLabelText("Postagem prevista"), { target: { value: "2026-10-27T00:00" } });
+    fireEvent.click(screen.getByText("Criar post"));
+    const body = m.mutate.mock.calls[0][0];
+    expect(body.gravacao_em).toBe("2026-10-25");
+    // The prod bug: a bare "2026-10-27" was stored as UTC midnight and shown as 26/10.
+    expect(body.data_entrega).toBe("2026-10-27T00:00:00-03:00");
+    const diaSP = new Date(body.data_entrega).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" });
+    expect(diaSP).toBe("27/10/2026");
+  });
+
+  it("sem Postagem prevista não envia data_entrega", () => {
+    montar();
+    fireEvent.change(screen.getByPlaceholderText(/Título do reel/), { target: { value: "T" } });
+    fireEvent.click(screen.getByText("Criar post"));
+    expect(m.mutate.mock.calls[0][0].data_entrega).toBeUndefined();
+  });
 });
