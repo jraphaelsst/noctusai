@@ -3,8 +3,8 @@
 > Living document. Zero-context reader: start with the roadmap `project-history/roadmaps/commerce-seed-2026-10.md` (decisions D1–D29, phases P0–P13), then this file, then `CONTRACT.md` (the exact shapes every slice builds to). Live tracker: https://claude.ai/artifact/4mn1fH7nk2fsVeKQHdGdr4.
 
 - **Created:** 2026-10-12
-- **Last updated:** 2026-10-12
-- **Status:** Design locked → slices A–D dispatched
+- **Last updated:** 2026-10-13
+- **Status:** ✅ Phase 1 closed 2026-10-13 — slices A–D + D30/D31 + hardening on dev; next phase P4 (money)
 - **Owner / stakeholders:** noc owner · tech-lead session · architect (advisor)
 - **Related docs:** roadmap + market brief + digital-products companion · `KB § PATTERNS/architect/vertical-seed.md` · `KB § PATTERNS/architect/approved-cutover.md` · `KB § CONTEXT/GUIDES/new-product.md § Market products from a vertical seed` · `CONTRACT.md`
 - **Project slug:** `commerce-seed-p3` (cross-product seed work → `projects/`)
@@ -88,20 +88,24 @@ See `CONTRACT.md` (enums, transitions, tables, staff + storefront + webhook API,
 
 ## 6. Implementation phases
 
-### Phase 1 — Organs + reference product ⏳
-- [ ] A · `domain/commerce` organ: types, order_state, sql generator, services (+ Fakes), router factories (staff, storefront, webhook), host resolver, `event_inbox_table_sql`; tests incl. per-table org isolation + generator snapshot
-- [ ] C · `@noctusai/lib` commerce organ: `types.ts` (parity with A's enums), hooks, staff + storefront components
-- [ ] B · scaffold `products/commerce` (ports, start.sh, products row `ativo=true, deploy_scope=dev`), generated migration + parity test, mounts, Asaas api-key spec + tester
-- [ ] D · `products/commerce` pages: `/admin/*` + storefront `/`
-- [ ] Merged-tip gates (pytest organ + product, vite build product, mcp tests if counts changed); `noc-wiring-audit` on `products/commerce`
-- [ ] Trial observations logged on `vertical-seed-commerce` and `new-product-v2`
+### Phase 1 — Organs + reference product ✅
+- [x] A · `domain/commerce` organ: types, order_state, sql generator, services (+ Fakes), router factories (staff, storefront, webhook), host resolver, `event_inbox_table_sql`; tests incl. per-table org isolation + generator snapshot
+- [x] C · `@noctusai/lib` commerce organ: `types.ts` (parity with A's enums), hooks, staff + storefront components
+- [x] B · scaffold `products/commerce` (ports, start.sh, products row `ativo=true, deploy_scope=dev`), generated migration + parity test, mounts, Asaas api-key spec + tester
+- [x] D · `products/commerce` pages: `/admin/*` + storefront `/`
+- [x] Merged-tip gates (pytest organ + product, vite build product, mcp tests if counts changed); `noc-wiring-audit` on `products/commerce`
+- [x] Trial observations logged on `vertical-seed-commerce` and `new-product-v2`
 
-**Improvements:** _NOC-FILL-IMPROVEMENTS — REQUIRED before this phase flips `✅`: replace with the methodology improvements spotted this phase, or write "none identified." Never ship this placeholder (keeper Rule 5 blocks it)._
+Shipped: A `e0d18d4bd` · C `7fc41149c` · B `2737bbb33`+`f013e0f0c` · D `7ebe8e0f0`..`5adccf6c9` · D30 fiscal retention `5a1e2df7e` · D31 secdef-by-construction `0bedda8c8` · organ hardening `91e2c21cd` · core test fix `9b0d3f09d`. Merged-tip suites re-run by the tech-lead where integrate timed out: seed lib 8447 · igig 1052 · commerce 86/72 + vitest 28 · migration replay green. Wiring audit: green except one scanner false positive (factory-built organ routers).
+
+**Improvements:**
+- **Shipped this phase:** secdef keeper now verifies `rls-helper` markers against real policy references and the template is compliant by construction (D31); org-picker-aware organ default `current_org_id_for(<schema>)`; real rate limiter as a standing organ-test guard; Asaas environment selector + seed readiness verdict; core 070 schema-map test derives from post-070 seed-row migrations instead of a closed list.
+- **Open (named destinations):** `scaffold_product` should append the FE test matrix, seed per-page `status_pagina` rows, and drop the example router/webhook (trial `new-product-v2`); `task_branch` should re-wire node_modules after a scaffold; `scan_wiring` should resolve seed-lib factory routers and typed `api.get<T>` calls; seed deep-link restore when `/` is public; `templates/product-seed-divergences.json` now holds 4 same-cause divergences (immutable seed originals) — consider a forward-migration mechanism; tracker owner-question ticks must ask for confirmation before acting (trial `learn-refine-self`). FE organ gaps D1–D8 → `NOC-REMEDIATE[commerce-*]` markers, triage at P5.
 
 ## 7. Open questions
 
 1. **Asaas chargeback + split** — does a chargeback reverse the split? Ask Asaas support before P4 (fee counted only when settled until then).
-2. **Auth triggers on `auth.users`** (`handle_new_user`, `assign_default_corretor_role`) live in prod? Must be known before buyer accounts with passwords (not needed for P3 guest checkout).
+2. **Auth triggers on `auth.users`** — ANSWERED 2026-10-13: both live in prod; every new auth user gets an `erp.profiles` row + ERP `corretor` role. Guest checkout unaffected (signed tokens, no auth users). Buyer password accounts need their own design before that phase.
 3. **noc's Asaas wallet** — the platform wallet id for the fee split; owner to provide when fees are switched on.
 
 ## 8. Dependencies & blockers
@@ -124,3 +128,4 @@ Live-tick tasks; revise when understanding changes; contract changes go through 
 | Date | Change | By |
 |---|---|---|
 | 2026-10-12 | Created from the P3 Phase-0 audit + owner answers D26–D29 | tech-lead |
+| 2026-10-13 | Owner decisions D30 (fiscal retention) + D31 (secdef by construction); Phase 1 closed; Q2 answered | tech-lead |
