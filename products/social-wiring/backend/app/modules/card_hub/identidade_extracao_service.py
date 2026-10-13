@@ -608,6 +608,34 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
     def item(valor: Any, confianca: Any, rotulo: Optional[str]) -> tuple:
         return (valor, getattr(confianca, "value", confianca), rotulo, bool(valor))
 
+    # 🔴 The seed emits a foreign national's RNE as its OWN kind (`fields.rne`,
+    # never `fields.rg` — owner rule 2026-10-13). The cliente's identity
+    # column pair (`rg` + `rg_orgao_expedidor`) holds it, typed by
+    # `clientes.identidade_tipo` (migration 193, written after apply below).
+    if fields.rne and not fields.rg:
+        ident = item(fields.rne, fields.rne_confianca, fields.rne_rotulo)
+        ident_orgao = item(
+            fields.rne_orgao, fields.rne_confianca, fields.rne_rotulo if fields.rne_orgao else None
+        )
+    else:
+        ident = item(fields.rg, fields.rg_confianca, fields.rg_rotulo)
+        # The issuer has no label of its own — it is read BESIDE the RG
+        # number, so the RG's label is the honest audit trail for it.
+        ident_orgao = item(
+            fields.rg_orgao,
+            fields.rg_orgao_confianca,
+            fields.rg_rotulo if fields.rg_orgao else None,
+        )
+    genero = item(
+        canonical_gender(fields.genero) or fields.genero,
+        fields.genero_confianca,
+        fields.genero_rotulo,
+    )
+    if fields.genero_derivado:
+        # DERIVED (a certidão's grammar), never printed: kept on the document
+        # row as a suggestion, NEVER written to `clientes` (owner 2026-10-13).
+        genero = genero[:3] + (False,)
+
     return {
         "data_nascimento": item(
             fields.data_nascimento.isoformat() if fields.data_nascimento else None,
@@ -615,20 +643,10 @@ def _valores_lidos(fields: IdentityFields) -> dict[str, tuple[Any, str, Optional
             fields.data_nascimento_rotulo,
         ),
         "nome_oficial": item(fields.nome, fields.nome_confianca, fields.nome_rotulo),
-        "genero": item(
-            canonical_gender(fields.genero) or fields.genero,
-            fields.genero_confianca,
-            fields.genero_rotulo,
-        ),
+        "genero": genero,
         "cpf": item(fields.cpf, fields.cpf_confianca, fields.cpf_rotulo),
-        "rg": item(fields.rg, fields.rg_confianca, fields.rg_rotulo),
-        # The issuer has no label of its own — it is read BESIDE the RG
-        # number, so the RG's label is the honest audit trail for it.
-        "rg_orgao_expedidor": item(
-            fields.rg_orgao,
-            fields.rg_orgao_confianca,
-            fields.rg_rotulo if fields.rg_orgao else None,
-        ),
+        "rg": ident,
+        "rg_orgao_expedidor": ident_orgao,
         "estado_civil": item(
             fields.estado_civil, fields.estado_civil_confianca, fields.estado_civil_rotulo
         ),
@@ -673,6 +691,9 @@ def _lidos_do_conjuge(conjuge: Any, fields: IdentityFields) -> dict[str, tuple]:
         conjuge.data_nascimento_confianca, rot,
     )
     lidos["genero"] = item(conjuge.genero, conjuge.genero_confianca, rot)
+    if getattr(conjuge, "genero_derivado", False):
+        # Grammar-derived on a certidão — a suggestion, never written.
+        lidos["genero"] = lidos["genero"][:3] + (False,)
     lidos["nacionalidade"] = item(conjuge.nacionalidade, conjuge.nacionalidade_confianca, rot)
     lidos["profissao"] = item(conjuge.profissao, conjuge.profissao_confianca, rot)
     comuns = _valores_lidos(fields)
