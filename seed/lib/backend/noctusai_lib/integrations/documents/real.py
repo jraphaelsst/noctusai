@@ -70,6 +70,7 @@ from noctusai_lib.integrations.documents.providers import (
     OCR_MODELS,
 )
 import noctusai_lib.integrations.documents.releitura as releitura
+from noctusai_lib.integrations.documents.ancora import ancora_falhou
 from noctusai_lib.integrations.documents.transcription import (
     identity_document_render_dpi_policy,
 )
@@ -377,21 +378,35 @@ class LadderIdentityExtractor:
         SAME page-by-page transcriber) the first read already paid for, per
         page, never batched.
         """
-        ladder = self._get_escalation_ladder()
-        texto, fonte, erro = await ladder.to_text(
-            content, mimetype, filename, pular_camada_texto=True
-        )
-        if erro is not None:
-            logger.warning(
-                "releitura: escalation transcription failed for org=%s: %s",
-                self._org_id, erro,
+        async def _reler() -> Optional[IdentityFields]:
+            texto, fonte, erro = await self._get_escalation_ladder().to_text(
+                content, mimetype, filename, pular_camada_texto=True
             )
-            return original
-        if not texto.strip():
-            return original
-        escalada = self._ler(texto, fonte, original.kind, titular, tipo_documento)
+            if erro is not None:
+                logger.warning(
+                    "releitura: escalation transcription failed for org=%s: %s",
+                    self._org_id, erro,
+                )
+                return None
+            if not texto.strip():
+                return None
+            return self._ler(texto, fonte, original.kind, titular, tipo_documento)
+
+        escalada = await _reler()
+        if escalada is None:
+            # The re-read could not run: the first read stands ALONE, so only
+            # a check-digit-verified critical value may be emitted.
+            return releitura.sem_corroboracao(original)
+        extras: tuple[IdentityFields, ...] = ()
+        if not (releitura.leitura_valida(original) and releitura.leitura_valida(escalada)):
+            # Fewer than two reads may count (compromised / failed anchor):
+            # one more independent escalated read, so two valid ones can
+            # still agree. Bounded: never more than three transcriptions.
+            terceira = await _reler()
+            if terceira is not None:
+                extras = (terceira,)
         return releitura.mesclar(
-            original, escalada, escalation_model=self._escalation_model
+            original, escalada, escalation_model=self._escalation_model, extras=extras
         )
 
     def _get_escalation_ladder(self) -> DocumentTextLadder:
@@ -881,6 +896,7 @@ class LadderIdentityExtractor:
             matricula_certidao=matricula_certidao,
             matricula_certidao_confianca=ExtractionConfidence(matricula_conf),
             leituras_alternativas=(("rg", rg_descartado[0]),) if rg_descartado else (),
+            ancora_falhou=ancora_falhou(text),
             estado_civil=estado_civil,
             estado_civil_confianca=ExtractionConfidence(estado_civil_conf),
             estado_civil_rotulo=estado_civil_label,

@@ -14,6 +14,7 @@ import pytest
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 from noctusai_lib.integrations.documents.releitura import (
     AVISO_CAMPOS_NUCLEO_AUSENTES,
+    AVISO_DIVERGENCIA,
     AVISO_RELEITURA,
 )
 from noctusai_lib.integrations.documents.types import ExtractionConfidence, TextSource
@@ -67,21 +68,70 @@ class _Ladder:
         return (self.texto, self.source, self.erro)
 
 
-class TestNoTriggerOnCompleteCleanRead:
+class TestAlwaysEscalatesForCriticalFields:
     @pytest.mark.asyncio
-    async def test_escalation_ladder_is_never_called(self):
+    async def test_a_complete_clean_read_is_still_read_twice(self):
+        """Owner decision 2026-10-13: the second read is the agreement gate's
+        evidence, not a repair for a bad first read."""
         primeira = _Ladder(_RG_COMPLETO)
-        escalada = _Ladder("NUNCA DEVERIA SER LIDO")
+        escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
             ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
-        assert out.persistable_nome is False  # vision-sourced, tempered — unrelated to this test
+        assert len(escalada.chamadas) == 1
         assert out.cpf == _CPF_VALIDO
         assert out.rg == "52.179.965-X"
+        assert out.nome == "JOAO CARLOS PEREIRA"
+        assert out.divergencias == ()
         assert out.leitura_comprometida is False
+        assert out.rg_confianca == ExtractionConfidence.MEDIA  # promoted by agreement
+
+    @pytest.mark.asyncio
+    async def test_two_reads_that_disagree_store_nothing_and_say_so(self):
+        outra = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO")
+        out = await LadderIdentityExtractor(
+            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True, escalation_ladder=_Ladder(outra),
+        ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
+
+        assert out.nome is None
+        assert out.cpf == _CPF_VALIDO and out.rg == "52.179.965-X"  # the rest agree
+        assert AVISO_DIVERGENCIA in out.aviso.split("+")
+        assert {v for c, v in out.leituras_alternativas if c == "nome"} == {
+            "JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO",
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_failed_anchor_read_never_counts_toward_agreement(self):
+        """A transcription whose CPF fails its check digit is `ancora_falhou`:
+        a third read is taken and the two VALID ones agree around it."""
+        ruim = _RG_COMPLETO.replace(_CPF_VALIDO, "412.954.238-99")
+        primeira = _Ladder(ruim)
+        escalada = _Ladder(_RG_COMPLETO)
+        out = await LadderIdentityExtractor(
+            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+        ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
+
+        assert len(escalada.chamadas) == 2  # re-read + the extra read
+        assert out.cpf == _CPF_VALIDO and out.nome == "JOAO CARLOS PEREIRA"
+        assert out.divergencias == ()
+
+    @pytest.mark.asyncio
+    async def test_a_text_layer_read_is_exact_and_never_gated(self):
+        primeira = _Ladder(_RG_COMPLETO, source=TextSource.TEXT_LAYER)
+        escalada = _Ladder("NUNCA")
+        out = await LadderIdentityExtractor(
+            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+        ).extract(b"fake-bytes", mimetype="application/pdf", tipo_documento="rg")
         assert len(escalada.chamadas) == 0
-        assert (out.aviso or "") == "" or AVISO_RELEITURA not in out.aviso.split("+")
+        assert out.nome == "JOAO CARLOS PEREIRA" and out.divergencias == ()
+
+    @pytest.mark.asyncio
+    async def test_the_factory_default_escalates(self):
+        from noctusai_lib.integrations.documents.factory import make_identity_extractor
+
+        assert make_identity_extractor(real=True)._escalar_releitura is True
+        assert make_identity_extractor(real=True, escalar_releitura=False)._escalar_releitura is False
 
     @pytest.mark.asyncio
     async def test_escalar_releitura_off_never_calls_escalation_ladder_even_when_incomplete(self):
@@ -109,27 +159,28 @@ class TestTriggerOnMissingCoreField:
 
         assert len(escalada.chamadas) == 1
         assert escalada.chamadas == [True]  # straight to vision, no text-layer retry
+        # The CPF is one read's only, but its check digit verifies: it stands.
         assert out.cpf == _CPF_VALIDO
         assert AVISO_RELEITURA in out.aviso.split("+")
-        assert "preencheu" in out.aviso_mensagem
 
 
 class TestTriggerOnComprometida:
     @pytest.mark.asyncio
-    async def test_a_clean_escalated_read_lifts_the_comprometida_gate(self):
+    async def test_clean_re_reads_that_agree_lift_the_comprometida_gate(self):
         primeira = _Ladder(_CNH_COMPROMETIDA)
         escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
             ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
-        assert len(escalada.chamadas) == 1
+        # the compromised read cannot count, so TWO clean re-reads are taken
+        assert len(escalada.chamadas) == 2
         # The escalated read is clean — the brief's own condition ("if the
         # escalated read is not comprometida ... use it") lifts the gate a
         # human would otherwise have to clear by hand.
         assert out.leitura_comprometida is False
         assert AVISO_RELEITURA in out.aviso.split("+")
-        assert out.cpf == _CPF_VALIDO  # both readings agree on the CPF
+        assert out.cpf == _CPF_VALIDO and out.nome == "JOAO CARLOS PEREIRA"
 
 
 class TestEscalatedAlsoComprometidaStaysWithheld:
@@ -141,11 +192,13 @@ class TestEscalatedAlsoComprometidaStaysWithheld:
             ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
-        assert len(escalada.chamadas) == 1
+        assert len(escalada.chamadas) == 2
         assert out.leitura_comprometida is True
         assert AVISO_RELEITURA in out.aviso.split("+")
-        motivos = out.aviso_mensagem.replace("é", "e")
-        assert "tambem comprometida" in motivos
+        # no valid read -> nothing agrees, nothing is stored (not even the
+        # check-digit-valid CPF: a compromised read never counts)
+        assert out.nome is None and out.cpf is None
+        assert "fora da concordância" in out.aviso_mensagem
 
 
 class TestAgreementAndDisagreement:
@@ -157,11 +210,11 @@ class TestAgreementAndDisagreement:
             ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
         assert out.cpf == _CPF_VALIDO
-        # FILLED verbatim from the escalated read (a gap, not an agreement)
-        # — `cpf` is not tempered by source, so a label-anchored, check-
-        # digit-verified read is `alta` regardless of which rung produced
-        # the text (see `real._ler`'s own comment on why CPF is exempt).
+        # stands on its check digit alone (not an agreement): `cpf` is not
+        # tempered by source, so a label-anchored, check-digit-verified read
+        # is `alta` (see `real._ler`'s own comment on why CPF is exempt).
         assert out.cpf_confianca == ExtractionConfidence.ALTA
+        assert out.nome == "JOAO CARLOS PEREIRA"  # both reads agree
 
     @pytest.mark.asyncio
     async def test_disagreeing_field_is_reported_absent_never_guessed(self):
@@ -186,15 +239,14 @@ class TestAgreementAndDisagreement:
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
         assert len(escalada.chamadas) == 1
-        assert out.rg == "52.179.965-X"  # the gap — filled
-        # both reads had a value and they disagree: the first stays, demoted
-        # to a pending-review baixa, the other attached (owner rule 2026-10-13)
-        assert out.cpf == _CPF_VALIDO
-        assert out.cpf_confianca == ExtractionConfidence.BAIXA
-        assert ("cpf", outro_cpf_valido) in out.leituras_alternativas
+        # the rg is only in ONE read: not corroborated -> no value
+        assert out.rg is None
+        # both cpf readings verify and they disagree: NO value, both attached
+        assert out.cpf is None
+        assert {v for c, v in out.leituras_alternativas if c == "cpf"} == {_CPF_VALIDO, outro_cpf_valido}
+        assert out.nome == "JOAO CARLOS PEREIRA"
         assert AVISO_RELEITURA in out.aviso.split("+")
-        assert "divergiu" in out.aviso_mensagem
-        assert "preencheu" in out.aviso_mensagem
+        assert AVISO_DIVERGENCIA in out.aviso.split("+")
 
 
 #: The measured live-prod shape (2026-09-30): only nome + data_nascimento

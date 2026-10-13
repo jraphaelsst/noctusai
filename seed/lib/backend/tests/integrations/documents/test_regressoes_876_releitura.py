@@ -7,6 +7,14 @@
   clean escalated read ("CILENE …") kept the garbage.
 - R3: a certidão de casamento whose divorce AVERBAÇÃO one transcription missed
   came out "casado" (the regime phrase alone implies casado).
+
+🔴 SEMANTICS CHANGED 2026-10-13 (owner decision: ship only with an agreement
+rule). These regressions were each "fixed" by a heuristic that PICKED A WINNER
+between two disagreeing reads (compromised-loses, averbação-wins, wrong-shape-
+RG-loses, implausible-name-loses) — whack-a-mole. They now assert the one
+rule: a critical field is stored only when two valid reads AGREE; a
+disagreement yields NO value, both readings in `leituras_alternativas`, and
+the aviso `divergencia_leituras`. Never a winner, whichever order.
 """
 from __future__ import annotations
 
@@ -15,7 +23,7 @@ import pytest
 from noctusai_lib.integrations.documents.civil_status import find_estado_civil
 from noctusai_lib.integrations.documents.legibilidade import AVISO_LEITURA_COMPROMETIDA
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
-from noctusai_lib.integrations.documents.releitura import mesclar
+from noctusai_lib.integrations.documents.releitura import AVISO_DIVERGENCIA, mesclar
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
     IdentityFields,
@@ -71,17 +79,29 @@ class TestR1RgNuncaComRne:
         out = LadderIdentityExtractor()._ler(texto, TextSource.OCR, None, None, "rg")
         assert out.rne == "W-573.678-Z" and out.rg is None
 
-    def test_merge_drops_a_first_read_rg_when_the_re_read_finds_an_rne(self) -> None:
-        original = IdentityFields(rg="52.179.965-X", rg_confianca=BAIXA, rg_orgao="SSP/SP", rg_orgao_confianca=BAIXA)
+    def test_merge_drops_a_stray_rg_when_both_reads_agree_on_an_rne(self) -> None:
+        original = IdentityFields(
+            rg="52.179.965-X", rg_confianca=BAIXA, rg_orgao="SSP/SP", rg_orgao_confianca=BAIXA,
+            rne="W573678Z", rne_confianca=BAIXA, rne_orgao="DIREX", identidade_tipo="rne",
+            source=TextSource.OCR,
+        )
         escalada = IdentityFields(rne="W573678Z", rne_confianca=BAIXA, rne_orgao="DIREX", identidade_tipo="rne")
         out = mesclar(original, escalada, escalation_model="m")
         assert out.rne == "W573678Z" and out.rg is None and out.rg_orgao is None
         assert ("rg", "52.179.965-X") in out.leituras_alternativas
 
+    def test_an_rne_only_one_read_found_is_not_stored(self) -> None:
+        original = IdentityFields(source=TextSource.OCR)
+        escalada = IdentityFields(rne="W573678Z", rne_confianca=BAIXA, rne_orgao="DIREX", identidade_tipo="rne")
+        out = mesclar(original, escalada, escalation_model="m")
+        assert out.rne is None and out.rg is None
+        assert ("rne", "W573678Z") in out.leituras_alternativas
+        assert AVISO_DIVERGENCIA in out.aviso.split("+")
+
     @pytest.mark.asyncio
     async def test_end_to_end_rne_as_printed_no_rg_registro_kept(self) -> None:
         out = await LadderIdentityExtractor(
-            ladder=_Ladder(CNH_RNE_PRIMEIRA),
+            ladder=_Ladder(CNH_RNE_ESCALADA),
             escalar_releitura=True,
             escalation_ladder=_Ladder(CNH_RNE_ESCALADA),
         ).extract(b"x", mimetype="image/jpeg", tipo_documento="cnh")
@@ -94,23 +114,28 @@ class TestR1RgNuncaComRne:
 # ─── R2 ─────────────────────────────────────────────────────────────────────
 
 
-class TestR2LeituraComprometidaPerde:
-    def test_clean_escalated_read_wins_over_a_compromised_first_read(self) -> None:
+class TestR2LeituraComprometidaNaoDecide:
+    def test_a_compromised_first_read_neither_wins_nor_loses_it_just_does_not_count(self) -> None:
         original = IdentityFields(
-            nome="CLELIER BASSO MERY", nome_confianca=BAIXA, aviso=AVISO_LEITURA_COMPROMETIDA
+            nome="CLELIER BASSO MERY", nome_confianca=BAIXA, aviso=AVISO_LEITURA_COMPROMETIDA,
+            source=TextSource.OCR,
         )
         escalada = IdentityFields(nome="CILENE AFRA EXEMPLO NERY", nome_confianca=BAIXA)
         out = mesclar(original, escalada, escalation_model="m")
-        assert out.nome == "CILENE AFRA EXEMPLO NERY"
-        assert ("nome", "CLELIER BASSO MERY") in out.leituras_alternativas
-        assert not out.leitura_comprometida
+        assert out.nome is None
+        assert {v for c, v in out.leituras_alternativas if c == "nome"} == {
+            "CLELIER BASSO MERY", "CILENE AFRA EXEMPLO NERY",
+        }
 
-    def test_two_clean_reads_that_disagree_keep_the_first_pending(self) -> None:
-        original = IdentityFields(nome="ANA EXEMPLO SILVA", nome_confianca=BAIXA)
+    def test_two_clean_reads_that_disagree_store_no_name(self) -> None:
+        original = IdentityFields(nome="ANA EXEMPLO SILVA", nome_confianca=BAIXA, source=TextSource.OCR)
         escalada = IdentityFields(nome="ANA EXEMPLO SILVEIRA", nome_confianca=BAIXA)
         out = mesclar(original, escalada, escalation_model="m")
-        assert out.nome == "ANA EXEMPLO SILVA" and out.nome_confianca is BAIXA
-        assert ("nome", "ANA EXEMPLO SILVEIRA") in out.leituras_alternativas
+        assert out.nome is None and out.nome_confianca is ExtractionConfidence.NENHUMA
+        assert out.leituras_alternativas == (
+            ("nome", "ANA EXEMPLO SILVA"), ("nome", "ANA EXEMPLO SILVEIRA"),
+        )
+        assert AVISO_DIVERGENCIA in out.aviso.split("+")
 
 
 # ─── R3 ─────────────────────────────────────────────────────────────────────
@@ -140,27 +165,40 @@ class TestR3AverbacaoVence:
         assert com.estado_civil_rotulo.startswith("AVERBACAO")
 
     @pytest.mark.parametrize("ordem", ["sem_primeiro", "com_primeiro"])
-    def test_the_averbacao_reading_wins_either_way(self, ordem: str) -> None:
+    def test_no_estado_civil_when_the_reads_disagree_either_order(self, ordem: str) -> None:
         ex = LadderIdentityExtractor()
         sem = ex._ler(CERTIDAO_SEM_AVERBACAO_LIDA, TextSource.OCR, None, None, "certidao_casamento")
         com = ex._ler(CERTIDAO_COM_DIVORCIO, TextSource.OCR, None, None, "certidao_casamento")
         a, b = (sem, com) if ordem == "sem_primeiro" else (com, sem)
         out = mesclar(a, b, escalation_model="m")
-        assert out.estado_civil == "divorciado"
-        assert out.regime_bens == "comunhao_universal"
-        assert ("estado_civil", "casado") in out.leituras_alternativas
+        assert out.estado_civil is None  # no 'averbação wins' heuristic
+        assert {v for c, v in out.leituras_alternativas if c == "estado_civil"} == {"casado", "divorciado"}
+        assert out.regime_bens == "comunhao_universal"  # both reads agree
+        assert AVISO_DIVERGENCIA in out.aviso.split("+")
 
     @pytest.mark.asyncio
-    async def test_end_to_end_divorced_no_gender(self) -> None:
+    async def test_end_to_end_disagreement_leaves_estado_civil_for_review(self) -> None:
         out = await LadderIdentityExtractor(
             ladder=_Ladder(CERTIDAO_SEM_AVERBACAO_LIDA),
             escalar_releitura=True,
             escalation_ladder=_Ladder(CERTIDAO_COM_DIVORCIO),
         ).extract(b"x", mimetype="application/pdf", tipo_documento="certidao_casamento")
-        assert out.estado_civil == "divorciado"
+        assert out.estado_civil is None
+        assert ("estado_civil", "casado") in out.leituras_alternativas
+        assert ("estado_civil", "divorciado") in out.leituras_alternativas
         assert out.regime_bens == "comunhao_universal"
         assert out.genero is None
         assert all(c.genero is None or c.genero_derivado for c in out.conjuges)
+
+    @pytest.mark.asyncio
+    async def test_end_to_end_two_reads_that_both_read_the_divorce_agree(self) -> None:
+        out = await LadderIdentityExtractor(
+            ladder=_Ladder(CERTIDAO_COM_DIVORCIO),
+            escalar_releitura=True,
+            escalation_ladder=_Ladder(CERTIDAO_COM_DIVORCIO),
+        ).extract(b"x", mimetype="application/pdf", tipo_documento="certidao_casamento")
+        assert out.estado_civil == "divorciado"
+        assert out.regime_bens == "comunhao_universal"
 
 
 class TestR3cNomeDeCasadaComParticula:
@@ -189,17 +227,22 @@ class TestR4RgTruncadoReleitura:
             nome="JOAO EXEMPLO", nome_confianca=BAIXA, cpf="412.954.238-98", cpf_confianca=ALTA,
             rg="1656536", rg_confianca=BAIXA, rg_orgao="SSP/SP", source=TextSource.OCR,
         )
+        from noctusai_lib.integrations.documents.releitura import rg_anomalo
+
         assert deve_escalar(f, "cnh") is True
-        assert deve_escalar(f.__class__(**{**f.__dict__, "rg": "18568536"}), "cnh") is False
+        assert rg_anomalo(f) is True
+        assert rg_anomalo(f.__class__(**{**f.__dict__, "rg": "18568536"})) is False
 
     @pytest.mark.parametrize("ordem", ["truncado_primeiro", "truncado_depois"])
-    def test_the_well_shaped_rg_wins(self, ordem: str) -> None:
-        ruim = IdentityFields(rg="1656536", rg_confianca=BAIXA, rg_orgao="SSP/SP", rg_orgao_confianca=BAIXA)
-        bom = IdentityFields(rg="18568536", rg_confianca=BAIXA, rg_orgao="SSP/SP", rg_orgao_confianca=BAIXA)
+    def test_no_rg_is_stored_when_the_reads_disagree(self, ordem: str) -> None:
+        ruim = IdentityFields(rg="1656536", rg_confianca=BAIXA, rg_orgao="SSP/SP",
+                              rg_orgao_confianca=BAIXA, source=TextSource.OCR)
+        bom = IdentityFields(rg="18568536", rg_confianca=BAIXA, rg_orgao="SSP/SP",
+                             rg_orgao_confianca=BAIXA, source=TextSource.OCR)
         a, b = (ruim, bom) if ordem == "truncado_primeiro" else (bom, ruim)
         out = mesclar(a, b, escalation_model="m")
-        assert out.rg == "18568536"
-        assert ("rg", "1656536") in out.leituras_alternativas
+        assert out.rg is None and out.rg_orgao is None
+        assert {v for c, v in out.leituras_alternativas if c == "rg"} == {"1656536", "18568536"}
 
 
 #: R5 (measured on a later harness run): a CNH first read with no CPF/RG/
@@ -213,21 +256,27 @@ class TestR5NomeLixoPerde:
         assert looks_like_a_name(lixo) is False
         assert find_name(f"NOME: {lixo}")[0] is None
 
-    def test_implausible_first_name_loses_to_a_real_one(self) -> None:
-        original = IdentityFields(nome="SOBRENOME LOCAL", nome_confianca=BAIXA)
+    def test_implausible_first_name_does_not_win_or_lose_by_rule(self) -> None:
+        original = IdentityFields(nome="SOBRENOME LOCAL", nome_confianca=BAIXA, source=TextSource.OCR)
         escalada = IdentityFields(nome="ANA EXEMPLO SILVA", nome_confianca=BAIXA)
         out = mesclar(original, escalada, escalation_model="m")
-        assert out.nome == "ANA EXEMPLO SILVA"
+        assert out.nome is None
+        assert {v for c, v in out.leituras_alternativas if c == "nome"} == {
+            "SOBRENOME LOCAL", "ANA EXEMPLO SILVA",
+        }
 
-    def test_incomplete_first_read_loses_a_disagreement(self) -> None:
-        original = IdentityFields(nome="ANA EXEMPLO SOUZA", nome_confianca=BAIXA)
+    def test_an_incomplete_first_read_does_not_decide_a_disagreement(self) -> None:
+        original = IdentityFields(nome="ANA EXEMPLO SOUZA", nome_confianca=BAIXA, source=TextSource.OCR)
         escalada = IdentityFields(
             nome="ANA EXEMPLO SILVA", nome_confianca=BAIXA,
             cpf="412.954.238-98", cpf_confianca=ALTA, rg="18568536", rg_confianca=BAIXA,
         )
         out = mesclar(original, escalada, escalation_model="m")
-        assert out.nome == "ANA EXEMPLO SILVA"
-        assert ("nome", "ANA EXEMPLO SOUZA") in out.leituras_alternativas
+        assert out.nome is None
+        assert {v for c, v in out.leituras_alternativas if c == "nome"} == {
+            "ANA EXEMPLO SOUZA", "ANA EXEMPLO SILVA",
+        }
+        assert out.cpf == "412.954.238-98"  # its check digit verifies: stands alone
 
 
 #: R3b (measured on a later harness run): the escalated transcription

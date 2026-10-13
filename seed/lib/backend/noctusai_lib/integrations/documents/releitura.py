@@ -20,6 +20,30 @@ This module owns the two PURE decisions that surround that second call:
    with the escalation model — this module only says whether to.)
 2. `mesclar` — given both reads, what is the honest combined answer?
 
+THE AGREEMENT GATE (owner decision 2026-10-13 — supersedes every rule below
+that picks a winner)
+-------------------------------------------------------------------------
+Scans and photos are transcribed by a generative vision model that INVENTS
+content on dense pages: the same marriage certificate gave two different
+divorce averbações, and estado_civil came out divorciado / casado / viúvo on
+different runs of the same code. Heuristics that choose between two
+disagreeing reads (compromised-first-read-loses, averbação-wins, wrong-shape-
+RG-loses, implausible-name-loses) were whack-a-mole. The rule is now:
+
+1. CRITICAL fields (`CAMPOS_CRITICOS`: nome, cpf, rg(+órgão), rne, data_
+   nascimento, estado_civil, regime_bens, data_casamento; the spouses'
+   names; the certidão matrícula) are emitted only when TWO independent
+   transcriptions agree after normalisation. The escalated re-read therefore
+   ALWAYS runs for such documents (`deve_escalar`).
+2. A CPF / certidão matrícula whose check digit verifies may stand alone.
+3. On disagreement (or a reading only one read produced): NO value; every
+   reading in `leituras_alternativas` / `divergencias`; aviso
+   `divergencia_leituras`. A consumer opens a human review with them.
+4. A transcription holding a CPF or 32-digit matrícula whose check digit
+   FAILS is `ancora_falhou`: its readings never count. Likewise a
+   `leitura_comprometida` or failed read — a third read is taken when fewer
+   than two valid reads exist (`real.LadderIdentityExtractor._escalar`).
+
 WHY THE MERGE IS CONSERVATIVE, NEVER A TIE-BREAKER
 ---------------------------------------------------
 Two independent transcriptions AGREEING is real corroborating evidence — a
@@ -44,7 +68,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from noctusai_lib.integrations.documents.legibilidade import AVISO_LEITURA_COMPROMETIDA
-from noctusai_lib.integrations.documents.name import chave_nome, looks_like_a_name
+from noctusai_lib.integrations.documents.name import chave_nome
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
@@ -174,20 +198,24 @@ def campos_nucleo_faltando(
 def deve_escalar(fields: IdentityFields, tipo_documento: Optional[str]) -> bool:
     """Should the caller read the SAME pages again with a stronger model?
 
-    `fields.source is not TextSource.OCR` short-circuits to `False` even
-    when `leitura_comprometida` — an exact PDF text layer is not
-    model-dependent, so a stronger VISION model reads the identical bytes
-    no better. Escalation only helps a transcription that already went
-    through a vision pass.
+    🔴 ALWAYS, for an OCR read of a document that carries critical identity
+    fields (owner decision 2026-10-13): the agreement gate (`mesclar`) needs
+    a SECOND independent transcription before any critical field may be
+    stored, so the re-read no longer waits for a trigger. The legacy
+    triggers (`leitura_comprometida`, a wrong-shape RG, a missing core field)
+    remain for types that carry no critical field.
+
+    `fields.source is not TextSource.OCR` short-circuits to `False`: an exact
+    PDF text layer is not model-dependent, so a stronger VISION model reads
+    the identical bytes no better.
     """
     if fields.source is not TextSource.OCR:
         return False
+    if carrega_campos_criticos(fields, tipo_documento):
+        return True
     if fields.leitura_comprometida:
         return True
     if rg_anomalo(fields):
-        # A wrong-SHAPE RG (7 digits where SP prints 8 — measured: a CNH's
-        # "18568536" read as "1656536") is a misread the core-field check
-        # cannot see: the field is "present". Worth a second, stronger read.
         return True
     return bool(campos_nucleo_faltando(fields, tipo_documento))
 
@@ -216,13 +244,6 @@ _PROMOCAO_UM_DEGRAU: dict[ExtractionConfidence, ExtractionConfidence] = {
 }
 
 
-#: Fields where, on a disagreement, the escalated (stronger-model) read is
-#: kept as a `baixa` suggestion instead of blanking the field. Only fields
-#: with measured evidence belong here (RG: escalated read right 3/3 on the
-#: P2 corpus); everything else keeps "disagreement is absence".
-_ADOTA_ESCALADA_NA_DIVERGENCIA = frozenset({"rg"})
-
-
 def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
     """Do these two INDEPENDENT reads of the SAME document state the same
     fact for `campo`?
@@ -238,9 +259,9 @@ def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
         # The ONE identifier registry (`primitives.identificador`, owner rule
         # 2026-10-01): same identifier in any punctuation, and an RG read
         # without its check digit (a CNH) against the full one is the SAME
-        # RG — an agreement, not a disagreement that blanks or demotes it.
+        # RG — an agreement.
         return _ident.equivalentes(campo, str(a), str(b)) is True
-    if campo == "rne":
+    if campo in ("rne", "matricula_certidao"):
         return re.sub(r"[^0-9A-Z]", "", strip_accents_upper(str(a))) == re.sub(
             r"[^0-9A-Z]", "", strip_accents_upper(str(b))
         )
@@ -255,66 +276,96 @@ def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
     return strip_accents_upper(str(a)) == strip_accents_upper(str(b))
 
 
-#: Fields whose check digit can break a tie between two DISAGREEING reads.
-_CAMPOS_COM_DV = frozenset({"cpf", "rg"})
+# ─── The agreement gate ───────────────────────────────────────────────────
+
+#: 🔴 CRITICAL IDENTITY FIELDS (owner decision 2026-10-13). A generative
+#: vision model invents content on dense pages (the same certidão gave two
+#: different divorce averbações; estado_civil came out divorciado / casado /
+#: viúvo on different runs of the same code), and heuristics that PICK A
+#: WINNER between two disagreeing reads were whack-a-mole. These fields are
+#: emitted only when two independent transcriptions AGREE; otherwise they are
+#: EMPTY, both readings ride in `leituras_alternativas`/`divergencias`, and
+#: the aviso `divergencia_leituras` names the field. `rg_orgao`/`rne_orgao`
+#: travel with their number; the spouses' names are checked as `conjuges`.
+CAMPOS_CRITICOS: tuple[str, ...] = (
+    "nome", "cpf", "rg", "rne", "data_nascimento", "estado_civil",
+    "regime_bens", "data_casamento",
+)
+#: Critical but not in `CAMPOS` (group/document-level).
+_GRUPOS_CRITICOS: tuple[str, ...] = ("matricula_certidao",)
+
+AVISO_DIVERGENCIA = "divergencia_leituras"
+
+#: Fields whose own check digit lets ONE read stand alone (strong evidence:
+#: a mis-copied digit passes a mod-11 check ~1 time in 100).
+_CAMPOS_COM_DV = frozenset({"cpf", "matricula_certidao"})
+
+#: Declared types whose critical fields no consumer reads (an address
+#: document contributes its address only) — never re-read for them.
+_TIPOS_SEM_CRITICOS = frozenset({"COMPROVANTE_ENDERECO"})
 
 
-def _vencedor_por_dv(campo: str, a: Any, b: Any) -> Optional[str]:
-    """`'original'` / `'escalada'` when EXACTLY ONE of two disagreeing reads
-    passes the field's check digit and the other fails it, else `None`.
-
-    A one-digit OCR slip passes a mod-11 check 1 time in ~11 (CPF: 1 in 100),
-    so a reading that verifies against one that does not is overwhelmingly
-    the right one — deterministic, zero extra API cost, and the only honest
-    way to break a tie between two models (`15.668.564-3` vs
-    `16.669.554-3`). Both valid, both invalid, or a field with no check
-    digit stays what it was: a disagreement."""
-    if campo not in _CAMPOS_COM_DV:
-        return None
-    la, lb = _ident.ler(campo, str(a)), _ident.ler(campo, str(b))
-    if la.dv_ok is True and lb.dv_ok is False:
-        return "original"
-    if lb.dv_ok is True and la.dv_ok is False:
-        return "escalada"
-    return None
+def _tem(leitura: IdentityFields, campo: str) -> bool:
+    return bool(getattr(leitura, campo, None))
 
 
-def _vencedor_por_contexto(
-    campo: str, original: IdentityFields, escalada: IdentityFields, primeira_comprometida: bool
-) -> Optional[tuple[str, bool]]:
-    """`(motivo, venceu_escalada)` when context — not the values — says which
-    of two disagreeing reads is better evidence, else None.
+def carrega_campos_criticos(
+    fields: IdentityFields, tipo_documento: Optional[str]
+) -> bool:
+    """Does this document carry critical identity fields? A declared type with
+    an authority rule answers from the rule; a type without one is judged by
+    what the first read actually found."""
+    from noctusai_lib.integrations.documents import autoridade
 
-    Called only when `escalada` is NOT compromised (`mesclar` returns early
-    otherwise), so `primeira_comprometida` means "only the first read was".
-    """
-    if primeira_comprometida:
-        return ("primeira leitura comprometida", True)
-    if campo == "nome":
-        # A value that is not a person's name at all (a field label, footer
-        # prose) loses to one that is — measured: "DATAS DE NASCIMENTO" vs
-        # the holder's real name on a CNH re-read.
-        a, b = looks_like_a_name(str(original.nome)), looks_like_a_name(str(escalada.nome))
-        if a != b:
-            return ("nome implausível", b)
-    if campo == "rg":
-        a, b = rg_anomalo(original), rg_anomalo(escalada)
-        if a != b:
-            return ("forma de RG", a)
-    if campo == "estado_civil":
-        a = (original.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
-        b = (escalada.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
-        if a != b:
-            return ("averbação", b)
-    # The first read is visibly the WORSE transcription of the same page:
-    # the re-read found two or more fields it missed entirely (measured: a
-    # CNH first read with no CPF/RG/birthdate took a footer line as the
-    # name). A disagreement then goes to the re-read; the first is kept as
-    # the alternative.
-    preenchidos = sum(1 for c in CAMPOS if not original.presente(c) and escalada.presente(c))
-    if preenchidos >= 2:
-        return ("primeira leitura incompleta", True)
-    return None
+    tipo = autoridade.tipo_normalizado(tipo_documento)
+    if tipo in _TIPOS_SEM_CRITICOS:
+        return False
+    autorizados = autoridade.campos_autorizados(tipo_documento)
+    if autorizados is not None:
+        return bool(
+            autorizados & (set(CAMPOS_CRITICOS) | {"conjuges", "matricula_certidao"})
+        )
+    # No authority rule (cpf card, ficha, an undeclared/unlisted type): judged
+    # by what the first read actually found.
+    return (
+        any(_tem(fields, c) for c in CAMPOS_CRITICOS)
+        or bool(fields.conjuges)
+        or _tem(fields, "matricula_certidao")
+    )
+
+
+def leitura_valida(leitura: IdentityFields) -> bool:
+    """May this transcription count toward agreement? Not when the call
+    failed, the legibility gate flagged it, or a check-digit anchor in it
+    failed (it demonstrably mis-copied digits)."""
+    return (
+        leitura.error is None
+        and not leitura.leitura_comprometida
+        and not leitura.ancora_falhou
+    )
+
+
+def _dv_ok(campo: str, valor: Any) -> bool:
+    if campo == "cpf":
+        return _ident.ler("cpf", str(valor)).dv_ok is True
+    if campo == "matricula_certidao":
+        r = _ident.validar_matricula_rcpn(valor)
+        return bool(r.valido and not r.avisos)
+    return False
+
+
+def _agrupar(
+    campo: str, pares: list[tuple[IdentityFields, Any]]
+) -> list[list[tuple[IdentityFields, Any]]]:
+    grupos: list[list[tuple[IdentityFields, Any]]] = []
+    for leitura, valor in pares:
+        for g in grupos:
+            if _mesmo_valor(campo, g[0][1], valor):
+                g.append((leitura, valor))
+                break
+        else:
+            grupos.append([(leitura, valor)])
+    return grupos
 
 
 def _como_texto(valor: Any) -> str:
@@ -332,259 +383,274 @@ def _somar_mensagem(atual: Optional[str], mensagem: str) -> str:
     return f"{atual} | {mensagem}" if atual else mensagem
 
 
+def _limpar(campo: str) -> dict[str, Any]:
+    """The `replace(...)` kwargs that EMPTY a field and what travels with it."""
+    out: dict[str, Any] = {campo: None}
+    if campo in CAMPOS or campo == "matricula_certidao":
+        out[f"{campo}_confianca"] = ExtractionConfidence.NENHUMA
+    if campo in CAMPOS:
+        out[f"{campo}_rotulo"] = None
+    if campo == "rg":
+        out.update(rg_orgao=None, rg_orgao_confianca=ExtractionConfidence.NENHUMA)
+    if campo == "rne":
+        out.update(rne_orgao=None)
+    return out
+
+
+def _preencher(
+    campo: str, fonte: IdentityFields, *, promover: bool, irmaos: list[IdentityFields]
+) -> dict[str, Any]:
+    """The `replace(...)` kwargs that set `campo` (and what travels with it)
+    from the read `fonte`. `irmaos` are the other reads that AGREED — an
+    issuer one of them printed fills a gap in `fonte`'s."""
+    conf = getattr(fonte, f"{campo}_confianca")
+    out: dict[str, Any] = {
+        campo: getattr(fonte, campo),
+        f"{campo}_confianca": _PROMOCAO_UM_DEGRAU[conf] if promover else conf,
+    }
+    if campo in CAMPOS:
+        out[f"{campo}_rotulo"] = getattr(fonte, f"{campo}_rotulo", None)
+    if campo in ("rg", "rne"):
+        orgao = f"{campo}_orgao"
+        com_orgao = next((l for l in [fonte, *irmaos] if getattr(l, orgao)), None)
+        out[orgao] = getattr(com_orgao, orgao) if com_orgao else None
+        if campo == "rg":
+            out["rg_orgao_confianca"] = (
+                com_orgao.rg_orgao_confianca if com_orgao else ExtractionConfidence.NENHUMA
+            )
+        if campo == "rne":
+            out["identidade_tipo"] = fonte.identidade_tipo or "rne"
+    return out
+
+
+def _decidir_campo(
+    campo: str, todas: list[IdentityFields], validas: list[IdentityFields]
+) -> tuple[Optional[dict[str, Any]], list[str]]:
+    """`(kwargs_se_estabelecido, outros_valores)` for ONE critical field.
+
+    - ≥2 VALID reads agree (after normalisation) -> the field is set from
+      them, confidence promoted one step; any read that differed rides as an
+      alternative.
+    - otherwise, exactly one distinct DV-VALID value among the valid reads
+      (cpf / matrícula only) -> it stands alone, as evidence of its own.
+    - otherwise NOTHING is set (`kwargs` None): every distinct reading
+      (every read, valid or not — shown, never counted) is returned for
+      review.
+    """
+    pares = [(l, getattr(l, campo)) for l in validas if _tem(l, campo)]
+    grupos = _agrupar(campo, pares)
+    concordes = [g for g in grupos if len(g) >= 2]
+    if concordes:
+        g = max(concordes, key=len)
+        fonte = g[0][0]
+        if campo in ("rg", "rne", "cpf"):
+            # Prefer the member whose value is fullest (an RG WITH its check
+            # digit beats the same RG without one).
+            fonte = max(g, key=lambda p: len(re.sub(r"[^0-9A-Za-z]", "", str(p[1]))))[0]
+        kwargs = _preencher(campo, fonte, promover=True, irmaos=[l for l, _ in g])
+        return kwargs, [_como_texto(gg[0][1]) for gg in grupos if gg is not g]
+    if campo in _CAMPOS_COM_DV:
+        com_dv = [g for g in grupos if _dv_ok(campo, g[0][1])]
+        if len(com_dv) == 1:
+            kwargs = _preencher(campo, com_dv[0][0][0], promover=False, irmaos=[])
+            return kwargs, [_como_texto(g[0][1]) for g in grupos if g is not com_dv[0]]
+    valores: list[str] = []
+    for l in todas:
+        if _tem(l, campo):
+            texto = _como_texto(getattr(l, campo))
+            if texto not in valores:
+                valores.append(texto)
+    return None, valores
+
+
+def _chaves_conjuges(leitura: IdentityFields) -> frozenset[str]:
+    return frozenset(chave_nome(c.nome) for c in leitura.conjuges if c.nome)
+
+
+def _texto_conjuges(leitura: IdentityFields) -> str:
+    return " / ".join(c.nome for c in leitura.conjuges if c.nome)
+
+
+def _portao(leituras: list[IdentityFields], *, modelo: Optional[str]) -> IdentityFields:
+    """The agreement gate over every read of ONE document (the cheap read
+    first). Pure; see `mesclar`."""
+    original = leituras[0]
+    validas = [l for l in leituras if leitura_valida(l)]
+    # The result's NON-critical content comes from the first read that may
+    # be trusted at all; critical fields are recomputed from agreement.
+    base = original if leitura_valida(original) else (validas[0] if validas else original)
+
+    updates: dict[str, Any] = {}
+    estabelecidos: list[str] = []
+    divergentes: list[tuple[str, tuple[str, ...]]] = []
+    alternativas: list[tuple[str, str]] = list(base.leituras_alternativas)
+
+    def anotar(campo: str, valores: list[str]) -> None:
+        for v in valores:
+            if (campo, v) not in alternativas:
+                alternativas.append((campo, v))
+
+    for campo in (*CAMPOS_CRITICOS, *_GRUPOS_CRITICOS):
+        if not any(_tem(l, campo) for l in leituras):
+            continue
+        kwargs, outros = _decidir_campo(campo, leituras, validas)
+        anotar(campo, outros)
+        if kwargs is not None:
+            updates.update(kwargs)
+            estabelecidos.append(campo)
+        else:
+            updates.update(_limpar(campo))
+            divergentes.append((campo, tuple(outros)))
+
+    # Spouses: the names must agree between two valid reads.
+    if any(l.conjuges for l in leituras):
+        grupos: list[list[IdentityFields]] = []
+        for l in (v for v in validas if v.conjuges):
+            for g in grupos:
+                if _chaves_conjuges(g[0]) == _chaves_conjuges(l):
+                    g.append(l)
+                    break
+            else:
+                grupos.append([l])
+        concordes = [g for g in grupos if len(g) >= 2]
+        if concordes:
+            updates["conjuges"] = max(concordes, key=len)[0].conjuges
+        else:
+            updates["conjuges"] = ()
+            textos = [
+                t for t in dict.fromkeys(_texto_conjuges(l) for l in leituras if l.conjuges) if t
+            ]
+            anotar("conjuges", textos)
+            divergentes.append(("conjuges", tuple(textos)))
+
+    # rg/rne exclusive: the identity box holds ONE document.
+    rg_final = updates.get("rg", base.rg)
+    if updates.get("rne", base.rne) and rg_final:
+        anotar("rg", [_como_texto(rg_final)])
+        updates.update(_limpar("rg"))
+    if not updates.get("rg", base.rg) and not updates.get("rne", base.rne):
+        updates["identidade_tipo"] = None
+
+    # Non-critical fields (genero, nacionalidade, profissao): fill a gap from
+    # another valid read; a disagreement keeps the base reading pending.
+    outras = [l for l in validas if l is not base]
+    for campo in CAMPOS:
+        if campo in CAMPOS_CRITICOS:
+            continue
+        outra = next((l for l in outras if l.presente(campo)), None)
+        if outra is None:
+            continue
+        if not base.presente(campo):
+            for suf in ("", "_confianca", "_rotulo"):
+                updates[f"{campo}{suf}"] = getattr(outra, f"{campo}{suf}", None)
+        elif _mesmo_valor(campo, getattr(base, campo), getattr(outra, campo)):
+            conf = getattr(base, f"{campo}_confianca")
+            if _PROMOCAO_UM_DEGRAU[conf] is not conf:
+                updates[f"{campo}_confianca"] = _PROMOCAO_UM_DEGRAU[conf]
+        else:
+            updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
+            anotar(campo, [_como_texto(getattr(outra, campo))])
+    for grupo in ("endereco", "data_emissao", "registro_cnh"):
+        if not getattr(base, grupo):
+            achado = next((l for l in outras if getattr(l, grupo)), None)
+            if achado is not None:
+                updates[grupo] = getattr(achado, grupo)
+                for suf in ("_confianca", "_rotulo"):
+                    if hasattr(achado, f"{grupo}{suf}"):
+                        updates[f"{grupo}{suf}"] = getattr(achado, f"{grupo}{suf}")
+
+    # Provenance.
+    codigos = base.aviso.split("+") if base.aviso else []
+    mensagem_base = base.aviso_mensagem
+    if base is not original:
+        # The cheap read was set aside: keep ITS non-gate codes (e.g.
+        # titulares_multiplos), drop the readability flag that no longer
+        # describes the transcription the result is built from.
+        for c in (original.aviso.split("+") if original.aviso else []):
+            if c != AVISO_LEITURA_COMPROMETIDA and c not in codigos:
+                codigos.append(c)
+        mensagem_base = original.aviso_mensagem
+    partes: list[str] = []
+    fora = [
+        "comprometida" if l.leitura_comprometida
+        else ("âncora CPF/matrícula com DV inválido" if l.ancora_falhou else "falhou")
+        for l in leituras if not leitura_valida(l)
+    ]
+    if fora:
+        partes.append("leitura(s) fora da concordância: " + ", ".join(fora))
+    if estabelecidos:
+        partes.append("concordaram (duas leituras independentes): " + ", ".join(estabelecidos))
+    if divergentes:
+        partes.append(
+            "SEM valor — leituras divergentes ou não corroboradas; nenhuma foi "
+            "escolhida, todas anexadas para revisão: "
+            + "; ".join(f"{c}: " + " ≠ ".join(v) if v else c for c, v in divergentes)
+        )
+        if AVISO_DIVERGENCIA not in codigos:
+            codigos.append(AVISO_DIVERGENCIA)
+    if len(leituras) > 1 and AVISO_RELEITURA not in codigos:
+        codigos.append(AVISO_RELEITURA)
+    if len(validas) < 2:
+        partes.append("menos de duas leituras válidas — nada foi corroborado")
+
+    if alternativas != list(base.leituras_alternativas):
+        updates["leituras_alternativas"] = tuple(alternativas)
+    updates["divergencias"] = tuple(divergentes)
+    rotulo_modelo = f"releitura com {modelo}: " if modelo else "leitura única: "
+    return replace(
+        base,
+        aviso="+".join(codigos) or None,
+        aviso_mensagem=(
+            _somar_mensagem(mensagem_base, rotulo_modelo + "; ".join(partes))
+            if partes else mensagem_base
+        ),
+        **updates,
+    )
+
+
 def mesclar(
-    original: IdentityFields, escalada: IdentityFields, *, escalation_model: str
+    original: IdentityFields,
+    escalada: IdentityFields,
+    *,
+    escalation_model: str,
+    extras: tuple[IdentityFields, ...] = (),
 ) -> IdentityFields:
-    """Deterministic, conservative merge of a first read and its escalated
-    re-read (same pages, stronger model) — call only when `deve_escalar`
-    said yes. Field-by-field over `CAMPOS`: a gap in `original` is filled
-    from `escalada`; a value both carry that AGREES may have its confidence
-    promoted one step (never past `MEDIA` — see `_PROMOCAO_UM_DEGRAU`); a
-    value both carry that DISAGREES is reported ABSENT, never chosen.
+    """Combine a first read and its escalated re-read(s) (same pages, stronger
+    model) under the AGREEMENT GATE — call only when `deve_escalar` said yes.
+
+    A critical field (`CAMPOS_CRITICOS`, the spouses' names, the certidão
+    matrícula) is set only when two VALID reads agree after normalisation;
+    a single read whose CPF / matrícula check digit verifies may stand alone
+    for that field. Otherwise the field is EMPTY, every reading rides in
+    `leituras_alternativas` + `divergencias`, and `divergencia_leituras` names
+    it. NO heuristic picks a winner (the old compromised-first-read-loses /
+    averbação-wins / RG-shape / implausible-name rules are gone for critical
+    fields). A read whose call failed, that was flagged `leitura_comprometida`,
+    or whose transcription failed its check-digit anchor (`ancora_falhou`)
+    never counts toward agreement.
     """
     if escalada.error is not None:
-        # The escalation call itself failed (network/credentials/quota) —
-        # nothing to merge. The ORIGINAL read's own retry policy is
-        # unaffected by this best-effort second call failing.
+        # The escalation call itself failed (network/credentials/quota):
+        # the first read stands ALONE, so only a check-digit-verified value
+        # may be emitted.
         logger.warning(
             "releitura: escalation with %s failed: %s",
             escalation_model, escalada.error_message or escalada.error,
         )
+        return sem_corroboracao(original)
+    if original.source is not TextSource.OCR:
         return original
+    leituras = [original, escalada, *(e for e in extras if e.error is None)]
+    return _portao(leituras, modelo=escalation_model)
 
-    if escalada.leitura_comprometida:
-        # Both readings are compromised. The original was already withheld
-        # (the human gate `IdentityFields.leitura_comprometida` already
-        # enforces) — recorded so a reviewer sees the stronger model was
-        # tried and ALSO could not trust this transcription, rather than
-        # silently stopping at one attempt.
-        return replace(
-            original,
-            aviso=_somar_codigo(original.aviso, AVISO_RELEITURA),
-            aviso_mensagem=_somar_mensagem(
-                original.aviso_mensagem,
-                f"releitura com {escalation_model} também comprometida — "
-                "ambas as leituras retidas para revisão humana",
-            ),
-        )
 
-    # 🔴 A CLEAN ESCALATED READ LIFTS THE `leitura_comprometida` GATE.
-    # Escalating exists PRECISELY so a document does not stay withheld
-    # forever on one bad transcription — "the escalated read is not
-    # comprometida" is the brief's own condition for "use it". The CODE is
-    # what `IdentityFields.leitura_comprometida` actually gates on, so it is
-    # removed here; `aviso_mensagem` (below) keeps the FULL history —
-    # including the original comprometida sentence — for audit, since it is
-    # human-facing prose, never machine-matched (see `AVISO_LEITURA_
-    # COMPROMETIDA`'s own docstring).
-    estava_comprometida = original.leitura_comprometida
-    codigos = [
-        c for c in (original.aviso.split("+") if original.aviso else [])
-        if c != AVISO_LEITURA_COMPROMETIDA
-    ]
-
-    updates: dict[str, Any] = {}
-    preenchidos: list[str] = []
-    confirmados: list[str] = []
-    conflitantes: list[str] = []
-    adotados: list[str] = []
-    dv_adotados: list[str] = []
-    dv_mantidos: list[str] = []
-    alternativas: list[tuple[str, str]] = list(original.leituras_alternativas)
-    vencidos: list[tuple[str, str, str, str]] = []
-
-    for campo in CAMPOS:
-        tinha = original.presente(campo)
-        tem_escalada = escalada.presente(campo)
-        if not tinha and tem_escalada:
-            updates[campo] = getattr(escalada, campo)
-            updates[f"{campo}_confianca"] = getattr(escalada, f"{campo}_confianca")
-            updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
-            preenchidos.append(campo)
-            if campo == "rg":
-                # `rg_orgao` TRAVELS WITH `rg` — see `types.IdentityFields
-                # .rg_orgao`'s own comment. Whichever side supplies `rg`
-                # must also supply its issuer.
-                updates["rg_orgao"] = escalada.rg_orgao
-                updates["rg_orgao_confianca"] = escalada.rg_orgao_confianca
-            if campo == "rne":
-                updates["rne_orgao"] = escalada.rne_orgao
-                updates["identidade_tipo"] = escalada.identidade_tipo
-        elif tinha and tem_escalada:
-            v0, v1 = getattr(original, campo), getattr(escalada, campo)
-            if _mesmo_valor(campo, v0, v1):
-                atual_conf = getattr(original, f"{campo}_confianca")
-                nova_conf = _PROMOCAO_UM_DEGRAU[atual_conf]
-                if nova_conf is not atual_conf:
-                    updates[f"{campo}_confianca"] = nova_conf
-                    confirmados.append(campo)
-            elif (vencedor_dv := _vencedor_por_dv(campo, v0, v1)) is not None:
-                if vencedor_dv == "original":
-                    # The first read verifies, the escalated one does not —
-                    # keep the first, untouched.
-                    dv_mantidos.append(campo)
-                else:
-                    # The escalated read verifies, the first does not — adopt
-                    # it, but as a `baixa` suggestion with a divergence note:
-                    # still human-gated, never alta.
-                    updates[campo] = v1
-                    updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
-                    updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
-                    if campo == "rg":
-                        updates["rg_orgao"] = escalada.rg_orgao
-                        updates["rg_orgao_confianca"] = (
-                            ExtractionConfidence.BAIXA if escalada.rg_orgao else ExtractionConfidence.NENHUMA
-                        )
-                    dv_adotados.append(campo)
-            elif campo in _ADOTA_ESCALADA_NA_DIVERGENCIA and _vencedor_por_contexto(campo, original, escalada, estava_comprometida) is None:
-                # Measured exception (P2 corpus, 2026-09-29): on every RG
-                # disagreement (3/3 CNHs) the escalated read matched the
-                # signed contract and the first read was wrong — blanking the
-                # field discarded the right answer. So the stronger model's
-                # value is kept, but only as a `baixa` suggestion with an
-                # explicit divergence note: still human-gated, never alta.
-                updates[campo] = v1
-                updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
-                updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
-                if campo == "rg":
-                    updates["rg_orgao"] = escalada.rg_orgao
-                    updates["rg_orgao_confianca"] = (
-                        ExtractionConfidence.BAIXA if escalada.rg_orgao else ExtractionConfidence.NENHUMA
-                    )
-                adotados.append(campo)
-            elif (vencedor := _vencedor_por_contexto(campo, original, escalada, estava_comprometida)) is not None:
-                # 🔴 ONE SIDE IS BETTER EVIDENCE (owner rule 2026-10-13):
-                # - the first read was flagged `leitura_comprometida` and the
-                #   escalated one was not — the clean read wins (measured: a
-                #   compromised RG read "CLELIER BASSO MERY" for "CILENE AFRA
-                #   RAMOS NERY");
-                # - `estado_civil`: a reading resolved from an AVERBAÇÃO event
-                #   (a divorce, a death) is the LATER fact on the document and
-                #   outranks a bare "casado" read off the same certidão whose
-                #   averbação the other transcription missed (measured: a
-                #   dissolved marriage came out "casado").
-                # The losing reading is kept as an alternative, never dropped.
-                motivo_vencedor, venceu_escalada = vencedor
-                if venceu_escalada:
-                    updates[campo] = v1
-                    updates[f"{campo}_confianca"] = getattr(escalada, f"{campo}_confianca")
-                    updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
-                    if campo == "rg":
-                        updates["rg_orgao"] = escalada.rg_orgao
-                        updates["rg_orgao_confianca"] = escalada.rg_orgao_confianca
-                    if campo == "rne":
-                        updates["rne_orgao"] = escalada.rne_orgao
-                    perdedora = v0
-                else:
-                    perdedora = v1
-                alternativas.append((campo, _como_texto(perdedora)))
-                vencidos.append((campo, motivo_vencedor, "modelo superior" if venceu_escalada else "primeira leitura", _como_texto(perdedora)))
-            else:
-                # Genuine disagreement — never pick one, and 🔴 NEVER DROP
-                # the value either (owner rule 2026-10-13; measured: a CNH's
-                # holder name — its most legible field — vanished after a
-                # model divergence). The FIRST reading stays, demoted to a
-                # `baixa` pending-review value, and the escalated reading
-                # rides beside it in `leituras_alternativas` (and in the
-                # aviso message) so the human who reviews it sees BOTH.
-                updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
-                if campo == "rg":
-                    updates["rg_orgao_confianca"] = (
-                        ExtractionConfidence.BAIXA if original.rg_orgao else ExtractionConfidence.NENHUMA
-                    )
-                alternativas.append((campo, _como_texto(v1)))
-                conflitantes.append((campo, _como_texto(v1)))
-        # both absent: nothing to do — neither read found this field.
-
-    # Grupo fields (outside `CAMPOS`) — filled ONLY when the original had
-    # none at all. NOC-REMEDIATE[releitura-conjuge-merge]: this does not
-    # cross-check each spouse's OWN facts field-by-field against a
-    # partially-resolved original — aligning "which escalated cônjuge is
-    # the same person as which original cônjuge" needs its own matching
-    # rule this module does not yet have. 2026-09-28.
-    if original.endereco is None and escalada.endereco is not None:
-        updates["endereco"] = escalada.endereco
-        preenchidos.append("endereco")
-    if len(original.conjuges) != 2 and len(escalada.conjuges) == 2:
-        updates["conjuges"] = escalada.conjuges
-        preenchidos.append("conjuges")
-    if original.data_emissao is None and escalada.data_emissao is not None:
-        updates["data_emissao"] = escalada.data_emissao
-        updates["data_emissao_confianca"] = escalada.data_emissao_confianca
-        updates["data_emissao_rotulo"] = escalada.data_emissao_rotulo
-    for grupo in ("registro_cnh", "matricula_certidao"):
-        if getattr(original, grupo) is None and getattr(escalada, grupo) is not None:
-            updates[grupo] = getattr(escalada, grupo)
-            updates[f"{grupo}_confianca"] = getattr(escalada, f"{grupo}_confianca")
-            preenchidos.append(grupo)
-
-    # 🔴 RG AND RNE ARE EXCLUSIVE (owner rule 2026-10-13): a person's
-    # identity box holds ONE document. When the merged result carries an RNE,
-    # any `rg` (a stray 11-digit run one transcription read under an RG label
-    # — measured: the CNH's own form number) is not the holder's RG.
-    rne_final = updates.get("rne", original.rne)
-    rg_final = updates.get("rg", original.rg)
-    if rne_final and rg_final:
-        alternativas.append(("rg", _como_texto(rg_final)))
-        updates["rg"] = None
-        updates["rg_confianca"] = ExtractionConfidence.NENHUMA
-        updates["rg_rotulo"] = None
-        updates["rg_orgao"] = None
-        updates["rg_orgao_confianca"] = ExtractionConfidence.NENHUMA
-        vencidos.append(("rg", "documento de identidade é RNE", "rne", _como_texto(rg_final)))
-
-    if not updates and not estava_comprometida and not dv_mantidos and not vencidos:
-        # Nothing changed and there was no gate to lift — no provenance
-        # worth recording.
+def sem_corroboracao(original: IdentityFields) -> IdentityFields:
+    """The gate over a SINGLE read (the re-read could not run): critical
+    fields stand only when their own check digit verifies (a valid CPF /
+    matrícula); every other critical reading is withheld for review."""
+    if original.source is not TextSource.OCR:
         return original
-
-    partes: list[str] = []
-    if estava_comprometida:
-        partes.append("não ficou comprometida — leitura original liberada")
-    if preenchidos:
-        partes.append("preencheu: " + ", ".join(preenchidos))
-    if confirmados:
-        partes.append("confirmou: " + ", ".join(confirmados))
-    if adotados:
-        partes.append(
-            "divergiu (adotado o valor do modelo superior como sugestão baixa — "
-            "confirme): " + ", ".join(adotados)
-        )
-    if dv_adotados:
-        partes.append(
-            "divergiu (adotado o valor com dígito verificador válido do modelo "
-            "superior como sugestão baixa — confirme): " + ", ".join(dv_adotados)
-        )
-    if dv_mantidos:
-        partes.append(
-            "divergiu (mantido o valor da primeira leitura, o único com dígito "
-            "verificador válido): " + ", ".join(dv_mantidos)
-        )
-    if vencidos:
-        partes.append(
-            "divergiu (adotada a leitura mais confiável, a outra anexada como "
-            "alternativa): "
-            + ", ".join(f"{c} ({motivo}: {quem}; alternativa: {v})" for c, motivo, quem, v in vencidos)
-        )
-    if conflitantes:
-        partes.append(
-            "divergiu (mantida a primeira leitura como pendente de revisão, "
-            "leitura alternativa anexada): "
-            + ", ".join(f"{c} (alternativa: {v})" for c, v in conflitantes)
-        )
-    if alternativas != list(original.leituras_alternativas):
-        updates["leituras_alternativas"] = tuple(alternativas)
-    mensagem = f"releitura com {escalation_model} " + "; ".join(partes)
-
-    if AVISO_RELEITURA not in codigos:
-        codigos.append(AVISO_RELEITURA)
-
-    return replace(
-        original,
-        aviso="+".join(codigos) or None,
-        aviso_mensagem=_somar_mensagem(original.aviso_mensagem, mensagem),
-        **updates,
-    )
+    return _portao([original], modelo=None)
 
 
 #: Human-readable field names for `marcar_campos_ausentes`'s message —
@@ -636,9 +702,14 @@ def marcar_campos_ausentes(
 
 __all__ = [
     "AVISO_CAMPOS_NUCLEO_AUSENTES",
+    "AVISO_DIVERGENCIA",
     "AVISO_RELEITURA",
+    "CAMPOS_CRITICOS",
     "campos_nucleo_faltando",
+    "carrega_campos_criticos",
     "deve_escalar",
+    "leitura_valida",
     "marcar_campos_ausentes",
     "mesclar",
+    "sem_corroboracao",
 ]
