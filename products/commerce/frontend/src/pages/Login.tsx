@@ -15,9 +15,9 @@ export default function Login() {
       <LoginForm
         brandIcon={Store}
         brandTitle="Commerce"
-        brandSubtitle="A minimal NoctusAI product"
+        brandSubtitle="Painel da loja"
         supabase={supabase}
-        onSuccess={() => navigate("/")}
+        onSuccess={() => navigate("/admin")}
         showForgotPassword
         renderLink={({ to, className, children }) => (
           <Link to={to} className={className}>{children}</Link>

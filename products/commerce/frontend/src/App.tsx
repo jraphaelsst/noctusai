@@ -1,58 +1,112 @@
 /**
- * Commerce App — the simplest possible product.
+ * Commerce — the reference host product of the commerce organ (P3).
  *
- * Infrastructure comes from @/infra (one file, one createProductInfra call).
- * Structure comes from createProductApp + createProductLayout.
- * This file only defines pages and nav — zero boilerplate.
+ * Two audiences on one SPA:
+ *   - **Storefront** (public, no login, host-resolved by the backend): `/`,
+ *     `/p/:slug`, `/carrinho`, `/checkout`, `/pedido/:token`,
+ *     `/minhas-compras`, `/privacidade`, `/privacidade/verificar` —
+ *     `publicRoutes`, so they render for anonymous buyers. The paths match
+ *     the organ's e-mailed link templates (`CommerceConfig.*_path_template`).
+ *   - **Back office** (`/admin/*`, license-gated staff): flat `routes` under
+ *     the seed layout.
+ *
+ * `/` is the storefront, so there is no marketing Landing: an anonymous
+ * visitor to `/admin/*` goes to `/login` (`unauthRedirect`). On the back-office
+ * host itself the storefront shows the organ's "no store on this address"
+ * state and sends a signed-in staff member on to `/admin`.
+ *
+ * Consent routes (`/consent*`) are seed-mounted by `createProductApp` — never
+ * re-declared here.
  */
 import { lazy } from "react";
 import { createProductApp, createProductLayout } from "@noctusai/seed";
-import infra from '@noctusai/seed/infra';
+import infra from "@noctusai/seed/infra";
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Store, Boxes } from "lucide-react";
+import {
+  Store,
+  Package,
+  Tags,
+  TicketPercent,
+  ShoppingCart,
+  Users,
+  UserCog,
+  Building2,
+  Globe,
+  KeyRound,
+  Settings,
+} from "lucide-react";
 
-// Pages
-const Landing = lazy(() => import("@/pages/Landing"));
+// Seed public pages
 const Login = lazy(() => import("@/pages/Login"));
 const AcceptInvite = lazy(() => import("@/pages/AcceptInvite"));
 const ForgotPassword = lazy(() => import("@/pages/ForgotPassword"));
-const Dashboard = lazy(() => import("@/pages/Dashboard"));
-const Equipe = lazy(() => import("@/pages/Equipe"));
 const NotFound = lazy(() => import("@/pages/NotFound"));
-// Placeholder domain page — rename + replace per
-// `products/seed/frontend/src/pages/Example.tsx`. Backend mirror at
-// `app/routers/example_router.py`.
-const Example = lazy(() => import("@/pages/Example"));
 
-// Nav
+// Back office
+const AdminHome = lazy(() => import("@/pages/admin/AdminHome"));
+const StoreProfile = lazy(() => import("@/pages/admin/StoreProfile"));
+const StorefrontHosts = lazy(() => import("@/pages/admin/StorefrontHosts"));
+const Categories = lazy(() => import("@/pages/admin/Categories"));
+const Products = lazy(() => import("@/pages/admin/Products"));
+const ProductEdit = lazy(() => import("@/pages/admin/ProductEdit"));
+const Coupons = lazy(() => import("@/pages/admin/Coupons"));
+const Orders = lazy(() => import("@/pages/admin/Orders"));
+const OrderView = lazy(() => import("@/pages/admin/OrderView"));
+const Customers = lazy(() => import("@/pages/admin/Customers"));
+const ApiKeys = lazy(() => import("@/pages/admin/ApiKeys"));
+const Equipe = lazy(() => import("@/pages/Equipe"));
+
+// Storefront (public)
+const StoreHome = lazy(() => import("@/pages/storefront/StoreHome"));
+const StoreProduct = lazy(() => import("@/pages/storefront/StoreProduct"));
+const StoreCart = lazy(() => import("@/pages/storefront/StoreCart"));
+const StoreCheckout = lazy(() => import("@/pages/storefront/StoreCheckout"));
+const StoreOrder = lazy(() => import("@/pages/storefront/StoreOrder"));
+const MyOrders = lazy(() => import("@/pages/storefront/MyOrders"));
+const PrivacyRequest = lazy(() => import("@/pages/storefront/PrivacyRequest"));
+const PrivacyVerify = lazy(() => import("@/pages/storefront/PrivacyVerify"));
+
+// Nav — `route` keys are `status_pagina.nome_pagina` rows (an item without a row is hidden).
 const NAV_GROUPS: NavGroupWithRoute[] = [
   {
-    key: "principal",
-    label: "Principal",
-    icon: Home,
-    defaultOpen: true,
+    key: "vendas",
+    label: "Vendas",
+    icon: ShoppingCart,
     items: [
-      { name: "Dashboard", href: "/", icon: LayoutDashboard, route: "dashboard" },
-      { name: "Example", href: "/example", icon: Boxes, route: "example" },
-      { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
+      { name: "Pedidos", href: "/admin/pedidos", icon: ShoppingCart, route: "pedidos" },
+      { name: "Clientes", href: "/admin/clientes", icon: Users, route: "clientes" },
+      { name: "Cupons", href: "/admin/cupons", icon: TicketPercent, route: "cupons" },
+    ],
+  },
+  {
+    key: "catalogo",
+    label: "Catálogo",
+    icon: Package,
+    items: [
+      { name: "Produtos", href: "/admin/produtos", icon: Package, route: "produtos" },
+      { name: "Categorias", href: "/admin/categorias", icon: Tags, route: "categorias" },
+    ],
+  },
+  {
+    key: "configuracoes",
+    label: "Configurações",
+    icon: Settings,
+    items: [
+      { name: "Perfil da loja", href: "/admin/loja", icon: Building2, route: "loja" },
+      { name: "Endereços da vitrine", href: "/admin/enderecos", icon: Globe, route: "enderecos" },
+      { name: "Integrações", href: "/admin/integracoes", icon: KeyRound, route: "integracoes" },
+      { name: "Equipe", href: "/admin/equipe", icon: UserCog, route: "equipe" },
     ],
   },
 ];
 
-const NAV_FALLBACK: NavGroup[] = [
-  {
-    key: "principal",
-    label: "Principal",
-    icon: Home,
-    defaultOpen: true,
-    items: [
-      { name: "Dashboard", href: "/", icon: LayoutDashboard },
-      { name: "Example", href: "/example", icon: Boxes },
-      { name: "Equipe", href: "/equipe", icon: Users },
-    ],
-  },
-];
+const NAV_FALLBACK: NavGroup[] = NAV_GROUPS.map((g) => ({
+  key: g.key,
+  label: g.label,
+  icon: g.icon,
+  items: g.items.map(({ name, href, icon }) => ({ name, href, icon })),
+}));
 
 const Layout = createProductLayout({
   brandIcon: Store,
@@ -65,15 +119,34 @@ const Layout = createProductLayout({
 
 export default createProductApp({
   routes: [
-    { path: "/", component: Dashboard },
-    { path: "/example", component: Example },
-    { path: "/equipe", component: Equipe },
+    { path: "/admin", component: AdminHome },
+    { path: "/admin/pedidos", component: Orders },
+    { path: "/admin/pedidos/:id", component: OrderView },
+    { path: "/admin/clientes", component: Customers },
+    { path: "/admin/cupons", component: Coupons },
+    { path: "/admin/produtos", component: Products },
+    { path: "/admin/produtos/:id", component: ProductEdit },
+    { path: "/admin/categorias", component: Categories },
+    { path: "/admin/loja", component: StoreProfile },
+    { path: "/admin/enderecos", component: StorefrontHosts },
+    { path: "/admin/integracoes", component: ApiKeys },
+    { path: "/admin/equipe", component: Equipe },
+  ],
+  publicRoutes: [
+    { path: "/", component: StoreHome },
+    { path: "/p/:slug", component: StoreProduct },
+    { path: "/carrinho", component: StoreCart },
+    { path: "/checkout", component: StoreCheckout },
+    { path: "/pedido/:token", component: StoreOrder },
+    { path: "/minhas-compras", component: MyOrders },
+    { path: "/privacidade", component: PrivacyRequest },
+    { path: "/privacidade/verificar", component: PrivacyVerify },
   ],
   Layout,
   ...infra.appConfig,
-  Landing,
   Login,
   AcceptInvite,
   ForgotPassword,
   NotFound,
+  unauthRedirect: "/login",
 });

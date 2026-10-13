@@ -571,6 +571,7 @@ jobs:
           - agents
           - community
           - store
+          - commerce
 
     steps:
       - uses: actions/checkout@v7
