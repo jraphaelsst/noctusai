@@ -287,6 +287,71 @@ def divergencia_calibrar(
     }
 
 
+# ── Model routing table (the per-model extension of this calibration) ──
+
+
+def roteamento_modelos_recalibrar(
+    *,
+    repo_root: Optional[str] = None,
+    bench_dir: Optional[str] = None,
+    bench_fonte: Optional[str] = None,
+    producao_path: Optional[str] = None,
+    producao_fonte: str = "producao",
+    escrever: bool = False,
+    timeout_s: int = 600,
+) -> dict[str, Any]:
+    """Recompute per-(model, doc type, field) precision and regenerate the
+    seed's document model routing table — the per-MODEL extension of
+    `divergencia_calibrar` (which measures per document TYPE): `PRECISAO`
+    says which document to believe, this says which model to read it with.
+
+    Runs the TARGET checkout's own engine (`noctusai_lib.integrations.
+    documents.roteamento_calibracao`) in a subprocess with that checkout's
+    seed on `PYTHONPATH`, so a worktree's table is written by that worktree's
+    generator — never by whichever `noctusai_lib` this MCP process imported.
+
+    Dry run by default (`escrever=False`): returns the diff against the
+    committed table, the routing rows, flagged recommendations (an excluded
+    model — Fable, 30-day retention — beating the fallback, or a fallback
+    whose measured precision sinks below the threshold: "if Opus keeps
+    failing, switch to Fable" is surfaced here, NEVER applied), and cost per
+    document / per correct field per model. Verdicts and counts only — the
+    benchmark answer key and production values never leave the subprocess.
+    `producao_path`: a JSON export of `social_wiring.extracao_leitura_
+    resultados` rows the CALLER assembles via the Supabase MCP (same split as
+    `divergencia_calibrar`'s `prod_extractions_path`).
+    """
+    import os
+    import subprocess
+
+    raiz = Path(repo_root) if repo_root else REPO_ROOT
+    seed = raiz / "seed" / "lib" / "backend"
+    if not (seed / "noctusai_lib" / "integrations" / "documents" / "roteamento_calibracao.py").exists():
+        raise FileNotFoundError(f"roteamento_modelos_recalibrar: no routing engine under {seed}")
+    cmd = [sys.executable, "-m", "noctusai_lib.integrations.documents.roteamento_calibracao"]
+    if bench_dir:
+        cmd += ["--bench-dir", bench_dir, "--bench-fonte", bench_fonte or ""]
+    if producao_path:
+        cmd += ["--producao-path", producao_path, "--producao-fonte", producao_fonte]
+    if escrever:
+        cmd.append("--escrever")
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join([str(seed), str(raiz / "seed" / "framework" / "backend")])}
+    proc = subprocess.run(
+        cmd, cwd=str(raiz), env=env, capture_output=True, text=True, timeout=timeout_s, check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"roteamento_modelos_recalibrar: engine exited {proc.returncode}: "
+            + (proc.stderr or "")[-2000:]
+        )
+    out = json.loads(proc.stdout)
+    out["repo_root"] = str(raiz)
+    out["recomendacoes_sinalizadas"] = [
+        r for r in out.get("recomendacoes", []) if r.get("motivo")
+    ]
+    return out
+
+
 # ── MCP registration ───────────────────────────────────────────────────
 
 
@@ -322,4 +387,36 @@ def register(server) -> None:
             prod_extractions_path=prod_extractions_path,
             prod_extractions_raw=prod_extractions_raw,
             diff_threshold=diff_threshold,
+        )
+
+    @server.tool(
+        name="noctus.dev.roteamento_modelos_recalibrar",
+        description=(
+            "Recompute per-(model, doc type, field) precision for the seed's "
+            "document extraction and regenerate its model routing table "
+            "(`documents/roteamento_modelos.py`, primary + fallback per doc "
+            "type/field). Inputs: a local real-document benchmark dir "
+            "(`bench_dir` + stable `bench_fonte` id) and/or a JSON export of "
+            "social_wiring.extracao_leitura_resultados rows YOU assemble via "
+            "the Supabase MCP (`producao_path`). Dry run by default: returns "
+            "the diff vs the committed table, routing rows, cost per document "
+            "and per correct field, and FLAGGED recommendations (e.g. Fable "
+            "beating the Opus fallback — never auto-applied, owner decision "
+            "on 30-day retention). `escrever=True` writes the evidence + table "
+            "into `repo_root` (default this checkout); a pin moves only when "
+            "the data clears the minimum-sample + separation rule. Counts and "
+            "verdicts only, no personal data."
+        ),
+    )
+    def _roteamento_modelos_recalibrar(
+        repo_root: str | None = None,
+        bench_dir: str | None = None,
+        bench_fonte: str | None = None,
+        producao_path: str | None = None,
+        producao_fonte: str = "producao",
+        escrever: bool = False,
+    ) -> dict[str, Any]:
+        return roteamento_modelos_recalibrar(
+            repo_root=repo_root, bench_dir=bench_dir, bench_fonte=bench_fonte,
+            producao_path=producao_path, producao_fonte=producao_fonte, escrever=escrever,
         )

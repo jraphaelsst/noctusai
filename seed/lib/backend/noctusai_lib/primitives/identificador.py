@@ -654,7 +654,13 @@ TIPO_LIVRO_RCPN = {
 
 
 def _rcpn_dv(digitos30: str) -> str:
-    """Community-documented RCPN DV (UNVERIFIED against an official spec)."""
+    """Community-documented RCPN DV (UNVERIFIED against an official spec).
+
+    MEASURED 2026-10-13 (real-document benchmark, 13 certidões de casamento
+    whose 32-digit matrícula every model read identically): this algorithm
+    verified 13/13; the plain mod-11 variant (weights 31->2, `11-r`, 10/11->0)
+    failed one of them. Still a SOFT warning — no official spec — but the
+    evidence favours this variant."""
     b = [int(c) for c in digitos30]
     dv1 = sum(b[i] * ((i + 2) % 11) for i in range(30)) % 11
     dv1 = 1 if dv1 == 10 else dv1

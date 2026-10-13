@@ -175,6 +175,12 @@ DOCUMENT_PROVIDERS: tuple[str, ...] = tuple(OCR_MODELS)
 #: 4.5's deficit is robust. Vendor: owner prefers to stay all-Anthropic —
 #: a cloud OCR (Azure Document Intelligence, Brazil South) is the fallback
 #: only if Claude proves unreliable on real reads.
+#: IDENTITY READS ARE NOW ROUTED (owner direction, later 2026-10-13): for the
+#: Anthropic vendor, `real.LadderIdentityExtractor` takes its primary and
+#: fallback models from the GENERATED routing table (`documents.roteamento`,
+#: per doc type / field, from measured evidence) — these two pins remain the
+#: table's global default and the pins every OTHER reader (matrícula,
+#: certidões, imóvel documents, media) uses.
 REAL_BENCHMARK_2026_10_13 = "scratchpad bench: 27 real docs x 6 models x 3 runs"
 
 #: NOC-REMEDIATE[escalation-model-openai-gemini]: OpenAI and Gemini have NO

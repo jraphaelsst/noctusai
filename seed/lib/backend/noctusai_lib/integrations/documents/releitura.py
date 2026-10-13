@@ -44,6 +44,16 @@ RG-loses, implausible-name-loses) were whack-a-mole. The rule is now:
    `leitura_comprometida` or failed read — a third read is taken when fewer
    than two valid reads exist (`real.LadderIdentityExtractor._escalar`).
 
+🔴 ALWAYS-TWO-READS IS NOW MEASUREMENT-ONLY (owner direction 2026-10-13,
+later the same day): "conciliation only on low-reliability extractions that
+don't pass the first model's quality and trust gate. Always debating every
+run is too expensive." Production reads ONCE with the routed primary model
+(`roteamento.rota`), judges every critical field (`confianca.avaliar`) and
+pays for ONE fallback read only when a critical field is `duvidoso`; then
+`conciliar` reconciles just those fields under the rules above (no third
+read). `deve_escalar` + `mesclar` + the third read are the MEASUREMENT mode
+(`modo_medicao=True`, evaluation harnesses only).
+
 WHY THE MERGE IS CONSERVATIVE, NEVER A TIE-BREAKER
 ---------------------------------------------------
 Two independent transcriptions AGREEING is real corroborating evidence — a
@@ -197,6 +207,8 @@ def campos_nucleo_faltando(
 
 def deve_escalar(fields: IdentityFields, tipo_documento: Optional[str]) -> bool:
     """Should the caller read the SAME pages again with a stronger model?
+    MEASUREMENT MODE ONLY (`modo_medicao=True`) — production decides with the
+    trust gate (`confianca.criticos_duvidosos`) instead.
 
     🔴 ALWAYS, for an OCR read of a document that carries critical identity
     fields (owner decision 2026-10-13): the agreement gate (`mesclar`) needs
@@ -661,6 +673,119 @@ def sem_corroboracao(original: IdentityFields) -> IdentityFields:
     return _portao([original], modelo=None)
 
 
+
+def conciliar(
+    primaria: IdentityFields,
+    fallback: Optional[IdentityFields],
+    *,
+    duvidosos: tuple[str, ...],
+    modelo_fallback: str,
+    substitutos: tuple[str, ...] = (),
+) -> IdentityFields:
+    """PRODUCTION reconciliation (owner direction 2026-10-13): the primary
+    read stands for every field the trust gate passed (`confianca`); only the
+    `duvidosos` critical fields are reconciled against ONE fallback read,
+    under the agreement gate's rules (`_portao`) — agreement -> stored;
+    a check digit that verifies -> stands alone; otherwise EMPTY with both
+    readings in `divergencias` for a human (`divergencia_leituras`).
+
+    `fallback=None` (the fallback read failed / produced nothing): the
+    doubtful fields get the single-read gate (`sem_corroboracao` rules) and
+    the gate-passing fields are kept.
+
+    A gate-passing field the fallback read DIFFERENTLY (it ran for another
+    field) keeps the primary value — the gate passed it — and the other
+    reading rides in `leituras_alternativas` for the record.
+
+    `substitutos` — only meaningful when the PRIMARY read is invalid as a
+    whole (compromised / failed anchor): there is nothing to agree with, so
+    the fallback read stands in as the read the gate judges. The caller
+    names the fields that passed the trust gate AS THE FALLBACK MODEL's read
+    with a MEASURED, sufficient precision (an unmeasured cell is not enough
+    for a stand-in); those are stored from the fallback read, the rest stay
+    empty for review. Measured on the real benchmark replay: this settles
+    the certidão / CNH fields whose primary read failed its anchor, while
+    the stand-in rule's measured-precision bar keeps Opus's thin-sample RG
+    names (3 wrong in measurement mode) in review.
+    """
+    if primaria.source is not TextSource.OCR:
+        return primaria
+    leituras = [primaria] + ([fallback] if fallback is not None and fallback.error is None else [])
+    gate = _portao(leituras, modelo=modelo_fallback if len(leituras) > 1 else None)
+    if not leitura_valida(primaria):
+        # The whole primary read is out (compromised / failed anchor): every
+        # critical field was doubtful; the fallback read stands in for the
+        # fields the caller found trustworthy on it (`substitutos`).
+        if fallback is None or fallback.error is not None or not substitutos:
+            return gate
+        upd: dict[str, Any] = {}
+        postos: list[str] = []
+        for campo in substitutos:
+            if campo == "conjuges":
+                if fallback.conjuges and not gate.conjuges:
+                    upd["conjuges"] = fallback.conjuges
+                    postos.append(campo)
+                continue
+            if _tem(fallback, campo) and not _tem(gate, campo):
+                upd.update(_preencher(campo, fallback, promover=False, irmaos=[]))
+                postos.append(campo)
+        if not postos:
+            return gate
+        divs = tuple(d for d in gate.divergencias if d[0] not in postos)
+        cods = gate.aviso.split("+") if gate.aviso else []
+        if not divs and AVISO_DIVERGENCIA in cods:
+            cods.remove(AVISO_DIVERGENCIA)
+        return replace(
+            gate,
+            divergencias=divs,
+            aviso="+".join(cods) or None,
+            aviso_mensagem=_somar_mensagem(
+                gate.aviso_mensagem,
+                f"leitura primária inválida; leitura de {modelo_fallback} aprovada no "
+                "portão de confiança (precisão medida) para: " + ", ".join(postos),
+            ),
+            **upd,
+        )
+    updates: dict[str, Any] = {}
+    mantidos: list[str] = []
+    for campo in (*CAMPOS_CRITICOS, *_GRUPOS_CRITICOS):
+        if campo in duvidosos or not _tem(primaria, campo):
+            continue
+        if _tem(gate, campo) and _mesmo_valor(campo, getattr(gate, campo), getattr(primaria, campo)):
+            continue
+        updates.update(_preencher(campo, primaria, promover=False, irmaos=[]))
+        mantidos.append(campo)
+    if "conjuges" not in duvidosos and primaria.conjuges:
+        if _chaves_conjuges(gate) != _chaves_conjuges(primaria):
+            updates["conjuges"] = primaria.conjuges
+            mantidos.append("conjuges")
+    if "rg" in updates and (updates.get("rne") or gate.rne):
+        # The identity box holds ONE document: never re-introduce an RG
+        # next to an RNE the gate kept.
+        for k in ("rg", "rg_confianca", "rg_rotulo", "rg_orgao", "rg_orgao_confianca"):
+            updates.pop(k, None)
+        mantidos.remove("rg")
+    if updates.get("rg") or updates.get("rne"):
+        updates["identidade_tipo"] = primaria.identidade_tipo
+    divergencias = tuple(d for d in gate.divergencias if d[0] not in mantidos)
+    codigos = gate.aviso.split("+") if gate.aviso else []
+    if not divergencias and AVISO_DIVERGENCIA in codigos:
+        codigos.remove(AVISO_DIVERGENCIA)
+    mensagem = gate.aviso_mensagem
+    if mantidos:
+        mensagem = _somar_mensagem(
+            mensagem,
+            "aprovados no portão de confiança da leitura primária (mantidos): "
+            + ", ".join(mantidos),
+        )
+    return replace(
+        gate,
+        divergencias=divergencias,
+        aviso="+".join(codigos) or None,
+        aviso_mensagem=mensagem,
+        **updates,
+    )
+
 #: Human-readable field names for `marcar_campos_ausentes`'s message —
 #: `CAMPOS`/`_TABELA_NUCLEO` entries are attribute names, not prose.
 _NOME_CAMPO = {
@@ -746,6 +871,7 @@ __all__ = [
     "CAMPOS_CRITICOS",
     "campos_nucleo_faltando",
     "carrega_campos_criticos",
+    "conciliar",
     "deve_escalar",
     "leitura_valida",
     "marcar_campos_ausentes",

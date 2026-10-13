@@ -16,10 +16,12 @@ signal without leaking patient data.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional, Protocol
+from typing import Any, Iterator, Optional, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -326,15 +328,6 @@ async def record_usage(
     Imported lazily inside provider methods to avoid a circular import
     (provider → client → usage → ...).
     """
-    try:
-        from .client import get_llm_config
-        config = get_llm_config()
-    except Exception as exc:
-        logger.debug("llm.usage: get_llm_config() unavailable (%s); usage sink not invoked", exc)
-        return
-    sink = getattr(config, "usage_sink", None)
-    if sink is None:
-        return
     cost = estimate_cost_usd(
         provider=provider,
         model=model,
@@ -345,22 +338,67 @@ async def record_usage(
         cache_creation_input_tokens=cache_creation_input_tokens,
         cache_read_input_tokens=cache_read_input_tokens,
     )
+    event = UsageEvent(
+        provider=provider,
+        model=model,
+        operation=operation,
+        org_id=org_id,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=total_tokens,
+        image_input_tokens=image_input_tokens,
+        image_output_tokens=image_output_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+        cost_estimate_usd=cost,
+        model_version=model_version,
+        batch=batch,
+    )
+    # Every active `coletar_uso()` scope sees the event too — independent of
+    # whether a sink is configured (a harness or an extractor attributing
+    # cost to ONE read needs the numbers even where billing is off).
+    for coletor in _COLETORES.get():
+        coletor.append(event)
     try:
-        await sink.record(UsageEvent(
-            provider=provider,
-            model=model,
-            operation=operation,
-            org_id=org_id,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            total_tokens=total_tokens,
-            image_input_tokens=image_input_tokens,
-            image_output_tokens=image_output_tokens,
-            cache_creation_input_tokens=cache_creation_input_tokens,
-            cache_read_input_tokens=cache_read_input_tokens,
-            cost_estimate_usd=cost,
-            model_version=model_version,
-            batch=batch,
-        ))
+        from .client import get_llm_config
+        config = get_llm_config()
+    except Exception as exc:
+        logger.debug("llm.usage: get_llm_config() unavailable (%s); usage sink not invoked", exc)
+        return
+    sink = getattr(config, "usage_sink", None)
+    if sink is None:
+        return
+    try:
+        await sink.record(event)
     except Exception as exc:
         logger.warning("usage_sink.record failed: %s", exc)
+
+
+# ── Scoped collection (per-read cost attribution) ─────────────────
+
+#: The open `coletar_uso()` scopes of the CURRENT task context. A tuple of
+#: lists so nesting works (an outer per-document scope and an inner per-read
+#: scope both see the same event) and a copy-on-enter keeps sibling tasks
+#: from seeing each other's scopes.
+_COLETORES: contextvars.ContextVar[tuple[list[UsageEvent], ...]] = contextvars.ContextVar(
+    "noctusai_llm_usage_coletores", default=()
+)
+
+
+@contextlib.contextmanager
+def coletar_uso() -> Iterator[list[UsageEvent]]:
+    """Collect every `UsageEvent` recorded inside this scope (this task and
+    the tasks it spawns) — the per-read cost attribution an extractor needs
+    to say "this read cost US$ X with model Y" without a second accounting
+    path: the SAME events the configured sink receives.
+
+        with coletar_uso() as eventos:
+            await ladder.to_text(...)
+        usd = sum(e.cost_estimate_usd for e in eventos)
+    """
+    eventos: list[UsageEvent] = []
+    token = _COLETORES.set((*_COLETORES.get(), eventos))
+    try:
+        yield eventos
+    finally:
+        _COLETORES.reset(token)

@@ -39,7 +39,7 @@ import logging
 import re
 from dataclasses import replace
 from datetime import date
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 import noctusai_lib.integrations.documents.autoridade as autoridade
 from noctusai_lib.integrations.documents.address import find_endereco
@@ -69,7 +69,10 @@ from noctusai_lib.integrations.documents.providers import (
     ESCALATION_OCR_MODELS,
     OCR_MODELS,
 )
+import noctusai_lib.integrations.documents.confianca as confianca
 import noctusai_lib.integrations.documents.releitura as releitura
+import noctusai_lib.integrations.documents.roteamento as roteamento
+from noctusai_lib.integrations.llm.usage import coletar_uso
 from noctusai_lib.integrations.documents.ancora import ancora_falhou
 from noctusai_lib.integrations.documents.transcription import (
     identity_document_render_dpi_policy,
@@ -102,7 +105,10 @@ from noctusai_lib.integrations.documents.types import (
     CAMPOS,
     ExtractionConfidence,
     IdentityDocumentKind,
+    CustoLeitura,
+    DesfechoCampo,
     IdentityFields,
+    ResumoRoteamento,
     TextSource,
     TitularEsperado,
 )
@@ -220,6 +226,7 @@ class LadderIdentityExtractor:
         ladder: Optional[DocumentTextLadder] = None,
         escalar_releitura: bool = False,
         escalation_ladder: Optional[DocumentTextLadder] = None,
+        modo_medicao: bool = False,
     ) -> None:
         # `ladder` is a DI seam for tests that must drive BOTH rungs (the
         # text-layer-then-vision fallthrough) without a real PDF or model.
@@ -247,9 +254,23 @@ class LadderIdentityExtractor:
         # policy bands a dense page at the model's native resolution — built
         # lazily, only when such a type is read. An injected `ladder=` (a
         # test) answers for every class, same as every other DI default.
+        #
+        # 🔴 AND BY ROUTED MODEL (owner direction 2026-10-13, `documents.
+        # roteamento`): every other ladder is keyed by (model, full-page?) —
+        # the routed primary or fallback model × the card/page render policy
+        # — and built lazily by `_ladder_para`. `self._ladder` stays the card
+        # ladder of the provider's default model (the routing table's global
+        # default for Anthropic).
         self._ladder_injetada = ladder is not None
         self._resolver = resolver
-        self._ladders_pagina: dict[bool, DocumentTextLadder] = {}
+        self._ladders: dict[tuple[str, bool], DocumentTextLadder] = {}
+        # 🔴 MEASUREMENT MODE (owner direction 2026-10-13): the always-two-
+        # reads agreement gate (`releitura.deve_escalar` + `mesclar` + a third
+        # read) is for evaluation harnesses ONLY. Production (`False`) reads
+        # once with the routed primary model and pays for ONE fallback read
+        # only when the trust gate (`confianca`) finds a critical field
+        # doubtful.
+        self._modo_medicao = modo_medicao
         # Remembered so `_get_escalation_ladder` (built lazily, only when a
         # read actually triggers `releitura.deve_escalar`) can construct a
         # SECOND ladder on the same org/prompt/page-cap/vendor, differing
@@ -274,7 +295,6 @@ class LadderIdentityExtractor:
         # Every real caller omits it; built lazily, pinned to
         # `providers.ESCALATION_OCR_MODELS`, on first use.
         self._escalation_ladder_override = escalation_ladder
-        self._escalation_ladder_built: Optional[DocumentTextLadder] = None
         # `ESCALATION_OCR_MODELS` and `OCR_MODELS` share the SAME key set
         # (every `documents.providers.DOCUMENT_PROVIDERS` vendor) — an
         # unrecognised `provider` string falls back to the seed-canonical
@@ -293,8 +313,14 @@ class LadderIdentityExtractor:
         filename: Optional[str] = None,
         titular: Optional[TitularEsperado] = None,
         tipo_documento: Optional[str] = None,
+        confirmados: Optional[Mapping[str, Any]] = None,
     ) -> IdentityFields:
+        """`confirmados` (optional): critical field -> the value already
+        CONFIRMED on the cliente from ANOTHER document type — the trust gate's
+        cross-document corroboration (`confianca.avaliar`)."""
         kind = classify_kind(mimetype, filename)
+        primario, fallback = self._modelos(tipo_documento)
+        custos: list[CustoLeitura] = []
         if not content:
             return IdentityFields(
                 kind=kind,
@@ -302,8 +328,10 @@ class LadderIdentityExtractor:
                 error_message="no bytes to read",
             )
 
-        ladder = self._ladder_para(tipo_documento)
-        leitura = await _ler(ladder, content, mimetype, filename)
+        ladder = self._ladder_para(tipo_documento, primario)
+        with coletar_uso() as uso:
+            leitura = await _ler(ladder, content, mimetype, filename)
+        custos.append(_custo(primario, "primaria", uso))
         text, source, err = leitura.text, leitura.source, leitura.error
         if err is not None:
             return IdentityFields(kind=kind, source=source, error=err[0], error_message=err[1])
@@ -348,9 +376,11 @@ class LadderIdentityExtractor:
             # the same table `deve_escalar` already reads), a text layer
             # missing any of THOSE fields gets the same second chance a
             # truly-empty one already got, whether or not it found nome.
-            leitura = await _ler(
-                ladder, content, mimetype, filename, pular_camada_texto=True
-            )
+            with coletar_uso() as uso:
+                leitura = await _ler(
+                    ladder, content, mimetype, filename, pular_camada_texto=True
+                )
+            custos.append(_custo(primario, "primaria", uso))
             texto_ocr, fonte_ocr, err_ocr = leitura.text, leitura.source, leitura.error
             if err_ocr is not None:
                 # The text layer had nothing and vision could not run: that
@@ -365,16 +395,15 @@ class LadderIdentityExtractor:
                     leitura,
                 )
 
-        # 🔴 RE-READ ESCALATION (owner directive, 2026-09-28) — see
-        # `releitura.py`'s own module docstring for why this exists (the
-        # measured Haiku run-to-run variance a hallucination gate cannot
-        # catch) and `_escalar`'s docstring for the mechanism. Runs AFTER
+        # 🔴 ROUTED READ + TRUST GATE (owner direction 2026-10-13). Runs AFTER
         # the text-layer→vision fallthrough above so it always judges the
-        # BEST first read this extractor already produced, never the
-        # empty-text-layer attempt.
-        if self._escalar_releitura and releitura.deve_escalar(fields, tipo_documento):
-            fields = await self._escalar(
-                fields, content, mimetype, filename, titular, tipo_documento
+        # BEST first read this extractor already produced. A text layer is
+        # exact (not model-dependent): no gate, no fallback.
+        if fields.source is TextSource.OCR:
+            fields = await self._conciliar(
+                fields, content, mimetype, filename, titular, tipo_documento,
+                primario=primario, fallback=fallback, confirmados=confirmados,
+                custos=custos,
             )
 
         # 🔴 THE SILENT-PARTIAL GUARD (live prod, 2026-09-30) — checked LAST,
@@ -409,8 +438,11 @@ class LadderIdentityExtractor:
         filename: Optional[str],
         titular: Optional[TitularEsperado],
         tipo_documento: Optional[str],
+        custos: Optional[list[CustoLeitura]] = None,
     ) -> IdentityFields:
-        """One more transcription of the SAME pages with a stronger model
+        """MEASUREMENT MODE ONLY (`modo_medicao=True`).
+
+        One more transcription of the SAME pages with a stronger model
         (`providers.ESCALATION_OCR_MODELS`), merged via `releitura.mesclar`.
 
         `pular_camada_texto=True`: `releitura.deve_escalar` already gated on
@@ -420,10 +452,13 @@ class LadderIdentityExtractor:
         page, never batched.
         """
         async def _reler() -> Optional[IdentityFields]:
-            leitura = await _ler(
-                self._get_escalation_ladder(tipo_documento),
-                content, mimetype, filename, pular_camada_texto=True,
-            )
+            with coletar_uso() as uso:
+                leitura = await _ler(
+                    self._get_escalation_ladder(tipo_documento),
+                    content, mimetype, filename, pular_camada_texto=True,
+                )
+            if custos is not None:
+                custos.append(_custo(self._escalation_model, "medicao", uso))
             texto, fonte, erro = leitura.text, leitura.source, leitura.error
             if erro is not None:
                 logger.warning(
@@ -469,53 +504,160 @@ class LadderIdentityExtractor:
                 )
         return resultado
 
-    def _ladder_para(self, tipo_documento: Optional[str]) -> DocumentTextLadder:
-        """The first-read ladder for this document CLASS — `self._ladder`
-        (card policy) unless the declared type reads as a full page."""
+    def _modelos(self, tipo_documento: Optional[str]) -> tuple[str, str]:
+        """(primary, fallback) for this read: the routing table for the
+        seed-canonical vendor, the per-provider pins otherwise."""
+        if roteamento.roteia(self._provider):
+            r = roteamento.rota(tipo_documento)
+            return r.primario, r.fallback
+        return (
+            OCR_MODELS.get(self._provider, OCR_MODELS[DEFAULT_DOCUMENT_PROVIDER]),
+            self._escalation_model,
+        )
+
+    def _ladder_para(
+        self, tipo_documento: Optional[str], modelo: Optional[str] = None
+    ) -> DocumentTextLadder:
+        """The ladder for (routed model × document CLASS): the card policy
+        (one native image per page) unless the declared type reads as a full
+        page (banded, `transcription.render_dpi_policy_for`). `modelo=None`
+        is the routed primary for the type. An injected `ladder=` (a test)
+        answers for every model and class."""
         if self._ladder_injetada:
             return self._ladder
+        if modelo is None:
+            modelo = self._modelos(tipo_documento)[0]
         politica = render_dpi_policy_for(tipo_documento)
-        if politica.max_bands <= 1:
+        pagina = politica.max_bands > 1
+        padrao = OCR_MODELS.get(self._provider or DEFAULT_DOCUMENT_PROVIDER)
+        if not pagina and modelo == padrao:
             return self._ladder
-        if True not in self._ladders_pagina:
-            self._ladders_pagina[True] = DocumentTextLadder(
+        chave = (modelo, pagina)
+        if chave not in self._ladders:
+            self._ladders[chave] = DocumentTextLadder(
                 org_id=self._org_id,
                 document_prompt=self._document_prompt or _IDENTITY_DOCUMENT_PROMPT,
                 resolver=self._resolver,
                 max_pages=self._max_pages,
                 provider=self._provider,
-                render_dpi_policy=politica,
+                render_dpi_policy=politica if pagina else identity_document_render_dpi_policy(),
+                ocr_model=modelo,
             )
-        return self._ladders_pagina[True]
+        return self._ladders[chave]
 
     def _get_escalation_ladder(self, tipo_documento: Optional[str] = None) -> DocumentTextLadder:
-        """The escalated-model ladder, with the SAME class policy the first
-        read used (a certidão escalates with bands too)."""
+        """MEASUREMENT MODE's escalated-model ladder, with the SAME class
+        policy the first read used (a certidão escalates with bands too)."""
         if self._escalation_ladder_override is not None:
             return self._escalation_ladder_override
-        politica = render_dpi_policy_for(tipo_documento)
-        pagina = politica.max_bands > 1
-        if pagina:
-            if False not in self._ladders_pagina:
-                self._ladders_pagina[False] = DocumentTextLadder(
-                    org_id=self._org_id,
-                    document_prompt=self._document_prompt or _IDENTITY_DOCUMENT_PROMPT,
-                    max_pages=self._max_pages,
-                    provider=self._provider,
-                    render_dpi_policy=politica,
-                    ocr_model=self._escalation_model,
+        return self._ladder_para(tipo_documento, self._escalation_model)
+
+    async def _conciliar(
+        self,
+        fields: IdentityFields,
+        content: bytes,
+        mimetype: Optional[str],
+        filename: Optional[str],
+        titular: Optional[TitularEsperado],
+        tipo_documento: Optional[str],
+        *,
+        primario: str,
+        fallback: str,
+        confirmados: Optional[Mapping[str, Any]],
+        custos: list[CustoLeitura],
+    ) -> IdentityFields:
+        """The production path: trust gate over the primary read, ONE
+        fallback read only for a doubtful critical field, reconcile just
+        those fields (`releitura.conciliar`). Measurement mode and the per-org
+        off switch branch off here."""
+        vereditos = confianca.avaliar(
+            fields, tipo_documento, modelo=primario, confirmados=confirmados
+        )
+        if self._modo_medicao:
+            modo = "medicao"
+            resultado = fields
+            if self._escalar_releitura and releitura.deve_escalar(fields, tipo_documento):
+                resultado = await self._escalar(
+                    fields, content, mimetype, filename, titular, tipo_documento, custos
                 )
-            return self._ladders_pagina[False]
-        if self._escalation_ladder_built is None:
-            self._escalation_ladder_built = DocumentTextLadder(
-                org_id=self._org_id,
-                document_prompt=self._document_prompt or _IDENTITY_DOCUMENT_PROMPT,
-                max_pages=self._max_pages,
-                provider=self._provider,
-                render_dpi_policy=identity_document_render_dpi_policy(),
-                ocr_model=self._escalation_model,
+            return replace(resultado, roteamento=_resumo(
+                tipo_documento, primario, self._escalation_model, modo, vereditos,
+                (), fields, None, resultado, custos,
+            ))
+        if not self._escalar_releitura:
+            # Per-org OFF SWITCH: the single read, as before — verdicts are
+            # recorded (learning loop) but nothing is reconciled.
+            return replace(fields, roteamento=_resumo(
+                tipo_documento, primario, None, "leitura_unica", vereditos,
+                (), fields, None, fields, custos,
+            ))
+        duvidosos = confianca.criticos_duvidosos(vereditos, fields, tipo_documento)
+        if not duvidosos:
+            return replace(fields, roteamento=_resumo(
+                tipo_documento, primario, fallback, "producao", vereditos,
+                (), fields, None, fields, custos,
+            ))
+        lida = await self._ler_fallback(
+            fallback, content, mimetype, filename, fields.kind, titular, tipo_documento, custos
+        )
+        substitutos: tuple[str, ...] = ()
+        if lida is not None and not releitura.leitura_valida(fields) and releitura.leitura_valida(lida):
+            # The primary read is out as a whole: the fallback read stands in
+            # for the fields IT passes the gate on, with a MEASURED precision
+            # (an unmeasured cell is no stand-in) — `releitura.conciliar`.
+            vf = confianca.avaliar(lida, tipo_documento, modelo=fallback, confirmados=confirmados)
+            substitutos = tuple(
+                c for c, v in vf.items()
+                if c in confianca.campos_criticos() and v.estado == confianca.CONFIAVEL
+                and "precisao_nao_medida" not in v.motivos
             )
-        return self._escalation_ladder_built
+        resultado = releitura.conciliar(
+            fields, lida, duvidosos=duvidosos, modelo_fallback=fallback,
+            substitutos=substitutos,
+        )
+        return replace(resultado, roteamento=_resumo(
+            tipo_documento, primario, fallback, "producao", vereditos,
+            duvidosos, fields, lida, resultado, custos, fallback_executado=True,
+        ))
+
+    async def _ler_fallback(
+        self,
+        modelo: str,
+        content: bytes,
+        mimetype: Optional[str],
+        filename: Optional[str],
+        kind,
+        titular: Optional[TitularEsperado],
+        tipo_documento: Optional[str],
+        custos: list[CustoLeitura],
+    ) -> Optional[IdentityFields]:
+        """ONE fallback-model read of the same pages (vision rung only — the
+        primary read already established there is no usable text layer).
+        `None` (logged) when the call fails or reads nothing."""
+        ladder = (
+            self._escalation_ladder_override
+            if self._escalation_ladder_override is not None
+            else self._ladder_para(tipo_documento, modelo)
+        )
+        with coletar_uso() as uso:
+            leitura = await _ler(ladder, content, mimetype, filename, pular_camada_texto=True)
+        custos.append(_custo(modelo, "fallback", uso))
+        texto, fonte, erro = leitura.text, leitura.source, leitura.error
+        if erro is not None:
+            logger.warning(
+                "roteamento: fallback read with %s failed for org=%s: %s",
+                modelo, self._org_id, erro,
+            )
+            return None
+        if not texto.strip():
+            logger.warning(
+                "roteamento: fallback read with %s returned no text for org=%s",
+                modelo, self._org_id,
+            )
+            return None
+        return _marcar_avisos_leitura(
+            self._ler(texto, fonte, kind, titular, tipo_documento), leitura
+        )
 
     def _ler(
         self,
@@ -1058,6 +1200,91 @@ class LadderIdentityExtractor:
         return confidence
 
 
+
+
+def _custo(modelo: str, papel: str, eventos: list) -> CustoLeitura:
+    """One transcription's spend, from the `llm.usage` events it produced."""
+    return CustoLeitura(
+        modelo=modelo,
+        papel=papel,
+        chamadas=len(eventos),
+        tokens_entrada=sum(
+            (e.prompt_tokens or 0) + (e.cache_creation_input_tokens or 0)
+            + (e.cache_read_input_tokens or 0)
+            for e in eventos
+        ),
+        tokens_saida=sum(e.completion_tokens or 0 for e in eventos),
+        usd=round(sum(e.cost_estimate_usd or 0.0 for e in eventos), 6),
+    )
+
+
+def _resumo(
+    tipo_documento: Optional[str],
+    primario: str,
+    fallback: Optional[str],
+    modo: str,
+    vereditos: Mapping[str, "confianca.Veredito"],
+    duvidosos: tuple[str, ...],
+    primaria: IdentityFields,
+    lida_fallback: Optional[IdentityFields],
+    resultado: IdentityFields,
+    custos: list[CustoLeitura],
+    *,
+    fallback_executado: bool = False,
+) -> ResumoRoteamento:
+    """The learning-loop record of one routed read (see `DesfechoCampo`)."""
+    criticos = set(confianca.campos_criticos())
+    divergentes = {c for c, _ in resultado.divergencias}
+    desfechos: list[DesfechoCampo] = []
+    for campo, v in vereditos.items():
+        if campo not in criticos:
+            continue
+
+        def tem(f: Optional[IdentityFields]) -> bool:
+            if f is None:
+                return False
+            return bool(f.conjuges) if campo == "conjuges" else bool(getattr(f, campo, None))
+
+        acordo: Optional[bool] = None
+        if lida_fallback is not None and tem(primaria) and tem(lida_fallback):
+            if campo == "conjuges":
+                acordo = releitura._chaves_conjuges(primaria) == releitura._chaves_conjuges(lida_fallback)
+            else:
+                acordo = releitura._mesmo_valor(
+                    campo, getattr(primaria, campo), getattr(lida_fallback, campo)
+                )
+        if campo in divergentes:
+            desfecho = "divergiu" if lida_fallback is not None else "nao_conciliado"
+        elif not tem(resultado):
+            desfecho = "nao_conciliado" if campo in duvidosos and lida_fallback is None else "sem_leitura"
+        elif campo in duvidosos:
+            if acordo:
+                desfecho = "concordou"
+            elif lida_fallback is None and not fallback_executado:
+                desfecho = "nao_conciliado"
+            else:
+                desfecho = "dv"
+        else:
+            desfecho = "armazenado"
+        def imp(f: Optional[IdentityFields]) -> Optional[str]:
+            if f is None:
+                return None
+            return confianca.impressao(campo, f.conjuges if campo == "conjuges" else getattr(f, campo, None))
+
+        desfechos.append(DesfechoCampo(
+            campo=campo, veredito=v.estado, motivos=v.motivos,
+            resultado=desfecho, acordo=acordo,
+            impressao_primaria=imp(primaria), impressao_fallback=imp(lida_fallback),
+        ))
+    return ResumoRoteamento(
+        tipo_documento=tipo_documento,
+        modelo_primario=primario,
+        modelo_fallback=fallback,
+        modo=modo,
+        fallback_executado=fallback_executado,
+        campos=tuple(desfechos),
+        custos=tuple(custos),
+    )
 
 
 def _achou_algo(fields: IdentityFields) -> bool:

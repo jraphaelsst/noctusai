@@ -6,6 +6,11 @@ escalated re-read), not just the pure units (see `test_releitura.py`).
 `escalar_releitura` defaults to `False` on `LadderIdentityExtractor` itself
 (Fake-by-default posture — see `real.py`'s own comment); every test below
 passes `escalar_releitura=True` explicitly to exercise the feature.
+
+🔴 These pin the always-two-reads agreement gate, which is now MEASUREMENT
+MODE ONLY (`modo_medicao=True`, owner direction 2026-10-13) — the production
+conditional path (trust gate + one fallback read) is pinned in
+`test_extractor_roteamento.py`.
 """
 from __future__ import annotations
 
@@ -83,7 +88,7 @@ class TestAlwaysEscalatesForCriticalFields:
         primeira = _Ladder(_RG_COMPLETO)
         escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
         assert len(escalada.chamadas) == 1
@@ -99,7 +104,7 @@ class TestAlwaysEscalatesForCriticalFields:
         outra = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO")
         terceira = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRE")
         out = await LadderIdentityExtractor(
-            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True,
+            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True, modo_medicao=True,
             escalation_ladder=_Ladder([outra, terceira]),
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
@@ -118,7 +123,7 @@ class TestAlwaysEscalatesForCriticalFields:
         outra = _RG_COMPLETO.replace("JOAO CARLOS PEREIRA", "JOAO CARLOS PEREIRO")
         escalada = _Ladder([outra, _RG_COMPLETO])
         out = await LadderIdentityExtractor(
-            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True, escalation_ladder=escalada,
+            ladder=_Ladder(_RG_COMPLETO), escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
         assert len(escalada.chamadas) == 2
         assert out.nome == "JOAO CARLOS PEREIRA"
@@ -132,7 +137,7 @@ class TestAlwaysEscalatesForCriticalFields:
         primeira = _Ladder(ruim)
         escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
         assert len(escalada.chamadas) == 2  # re-read + the extra read
@@ -144,7 +149,7 @@ class TestAlwaysEscalatesForCriticalFields:
         primeira = _Ladder(_RG_COMPLETO, source=TextSource.TEXT_LAYER)
         escalada = _Ladder("NUNCA")
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="application/pdf", tipo_documento="rg")
         assert len(escalada.chamadas) == 0
         assert out.nome == "JOAO CARLOS PEREIRA" and out.divergencias == ()
@@ -177,7 +182,7 @@ class TestTriggerOnMissingCoreField:
         primeira = _Ladder(_RG_SEM_CPF)
         escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
         assert len(escalada.chamadas) == 1
@@ -193,7 +198,7 @@ class TestTriggerOnComprometida:
         primeira = _Ladder(_CNH_COMPROMETIDA)
         escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
         # the compromised read cannot count, so TWO clean re-reads are taken
@@ -212,7 +217,7 @@ class TestEscalatedAlsoComprometidaStaysWithheld:
         primeira = _Ladder(_CNH_COMPROMETIDA)
         escalada = _Ladder(_CNH_COMPROMETIDA)
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
         assert len(escalada.chamadas) == 2
@@ -230,7 +235,7 @@ class TestAgreementAndDisagreement:
         primeira = _Ladder(_RG_SEM_CPF)  # missing cpf -> triggers
         escalada = _Ladder(_RG_COMPLETO)
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
         assert out.cpf == _CPF_VALIDO
         # stands on its check digit alone (not an agreement): `cpf` is not
@@ -260,7 +265,7 @@ class TestAgreementAndDisagreement:
             "CPF 529.982.247-25\n",
         ])
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="cnh")
 
         assert len(escalada.chamadas) == 2  # re-read + one more for the unsettled cpf
@@ -298,7 +303,7 @@ class TestSilentPartialGuard:
         primeira = _Ladder(_RG_SO_NOME_E_DATA)
         escalada = _Ladder(_RG_SO_NOME_E_DATA)  # stronger model, SAME gaps
         out = await LadderIdentityExtractor(
-            ladder=primeira, escalar_releitura=True, escalation_ladder=escalada,
+            ladder=primeira, escalar_releitura=True, modo_medicao=True, escalation_ladder=escalada,
         ).extract(b"fake-bytes", mimetype="image/jpeg", tipo_documento="rg")
 
         assert len(escalada.chamadas) == 1  # escalation WAS tried

@@ -20,6 +20,11 @@
 - `DEFAULT_DOCUMENT_PROVIDER` / `OCR_MODELS` / `DOCUMENT_ANALYSIS_MODELS` —
   the ONE place the document-read vendor default and per-rung model pins
   live (`providers.py`, with the measurement behind them).
+- `roteamento` (routing lookup over the GENERATED `roteamento_modelos.TABELA`,
+  rules in `roteamento_gerador`, recalibration engine in
+  `roteamento_calibracao`) + `confianca` (the per-field trust gate after the
+  primary read) — which model reads a document first, which is the fallback,
+  and when the fallback is worth paying for.
 
 **Why this is a seed module and not product code.** RG/CPF extraction is
 requested as *the canonical procedure*, and the platform already has the
