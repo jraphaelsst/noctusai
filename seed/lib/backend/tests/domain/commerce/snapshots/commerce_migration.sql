@@ -235,7 +235,7 @@ CREATE POLICY "commerce_privacy_requests_select_own_org" ON commerce.commerce_pr
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_privacy_requests;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_privacy_requests FOR ALL TO service_role USING (true) WITH CHECK (true);
 
--- Orders. token = the opaque public handle; platform_fee_cents is the EXPECTED noc fee (D27).
+-- Orders. token = the opaque public handle; platform_fee_cents is the EXPECTED noc fee (D27). buyer_doc/buyer_name/fiscal_retain_until = the D30 tax-record snapshot taken at `paid` (LGPD art. 16 II + CTN art. 173).
 CREATE TABLE IF NOT EXISTS commerce.commerce_orders (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id             UUID NOT NULL,
@@ -255,9 +255,14 @@ CREATE TABLE IF NOT EXISTS commerce.commerce_orders (
     expires_at         TIMESTAMPTZ,
     paid_at            TIMESTAMPTZ,
     platform_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK (platform_fee_cents >= 0),
+    buyer_doc          TEXT,
+    buyer_name         TEXT,
+    fiscal_retain_until DATE,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_commerce_orders_fiscal_retain ON commerce.commerce_orders (fiscal_retain_until)
+    WHERE fiscal_retain_until IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_commerce_orders_org_created ON commerce.commerce_orders (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_commerce_orders_org_status ON commerce.commerce_orders (org_id, status);
 CREATE INDEX IF NOT EXISTS idx_commerce_orders_customer ON commerce.commerce_orders (customer_id);

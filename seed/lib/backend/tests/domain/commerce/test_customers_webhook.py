@@ -184,3 +184,67 @@ class TestWebhook:
         order = db.table("commerce_orders").select("*").execute().data[0]
         handle_event(db, ORG_A, paid_event(order["id"]), inbox=FakeEventInbox(), gateway=gw, fulfillment=make_fulfillment_registry())
         assert orders.get_order(db, ORG_A, order["id"])["status"] == "paid"
+
+
+class TestFiscalRetention:
+    """D30: paid orders keep buyer doc+name (tax record) through anonymize, until purged."""
+
+    @staticmethod
+    def _paid(placed):
+        db, order, gw, inbox, reg, _ = placed
+        handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg)
+        return db, order, gw, inbox, reg
+
+    def test_snapshot_on_paid_uses_payment_values_and_sets_window(self, placed):
+        db, order, *_ = self._paid(placed)
+        o = orders.get_order(db, ORG_A, order["id"])
+        assert o["buyer_name"] == "Ana Souza Real" and o["buyer_doc"]
+        assert o["fiscal_retain_until"] == f"{int(o['paid_at'][:4]) + 6}-01-01"
+
+    def test_snapshot_is_idempotent_and_never_overwritten(self, placed):
+        from noctusai_lib.domain.commerce.fiscal_retention import snapshot_fiscal_identity
+
+        db, order, gw, inbox, reg = self._paid(placed)
+        first_ = orders.get_order(db, ORG_A, order["id"])
+        cust = db.table("commerce_customers").select("*").execute().data[0]
+        db.table("commerce_customers").update({"name": "Outro Nome", "doc": "11111111111"}).eq("id", cust["id"]).execute()
+        snapshot_fiscal_identity(db, ORG_A, first_)
+        handle_event(db, ORG_A, paid_event(order["id"], event_id="evt2", name="PAYMENT_RECEIVED"), inbox=inbox, gateway=gw, fulfillment=reg)
+        again = orders.get_order(db, ORG_A, order["id"])
+        assert (again["buyer_doc"], again["buyer_name"], again["fiscal_retain_until"]) == (
+            first_["buyer_doc"], first_["buyer_name"], first_["fiscal_retain_until"])
+
+    def test_anonymize_keeps_paid_scrubs_non_paid(self, placed):
+        db, order, *_ = self._paid(placed)
+        cust = db.table("commerce_customers").select("*").execute().data[0]
+        stray = db.table("commerce_orders").select("*").eq("id", order["id"]).execute().data[0]
+        stray = {**stray, "id": "22222222-2222-4222-8222-222222222222", "token": "stray-token", "status": "expired"}
+        db.table("commerce_orders").insert(stray).execute()
+        customers.anonymize_customer(db, ORG_A, cust["id"])
+        kept = orders.get_order(db, ORG_A, order["id"])
+        assert kept["buyer_name"] == "Ana Souza Real" and kept["buyer_doc"] and kept["fiscal_retain_until"]
+        gone = orders.get_order(db, ORG_A, stray["id"])
+        assert gone["buyer_doc"] is None and gone["buyer_name"] is None and gone["fiscal_retain_until"] is None
+
+    def test_purge_boundary(self, placed):
+        from datetime import date, timedelta
+
+        db, order, *_ = self._paid(placed)
+        until = date.fromisoformat(orders.get_order(db, ORG_A, order["id"])["fiscal_retain_until"])
+        assert customers.__name__  # keep import local
+        from noctusai_lib.domain.commerce import purge_expired_fiscal_retention as purge
+
+        assert purge(db, ORG_A, today=until - timedelta(days=1)) == 0
+        assert orders.get_order(db, ORG_A, order["id"])["buyer_doc"]
+        assert purge(db, ORG_B, today=until) == 0  # other org untouched
+        assert purge(db, ORG_A, today=until) == 1
+        o = orders.get_order(db, ORG_A, order["id"])
+        assert o["buyer_doc"] is None and o["buyer_name"] is None and o["fiscal_retain_until"] is None
+        assert purge(db, None, today=until) == 0
+
+    def test_export_includes_retained_fields(self, placed):
+        db, order, *_ = self._paid(placed)
+        cust = db.table("commerce_customers").select("*").execute().data[0]
+        exp = customers.export_customer(db, ORG_A, cust["id"])
+        o = exp["orders"][0]
+        assert o["buyer_name"] == "Ana Souza Real" and o["buyer_doc"] and o["fiscal_retain_until"]

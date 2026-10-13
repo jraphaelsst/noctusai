@@ -27,8 +27,9 @@ Logged by the tech-lead from the slice returns, 2026-10-13. Fold into `CONTRACT.
 | A7 | Webhook: a confirmed payment on `created`/`failed` chains legally to `paid` (money never dropped); payment on cancelled/refunded/chargeback → ignored + error log (manual refund); `PAYMENT_CHARGEBACK_REQUESTED` → `chargeback`; `PAYMENT_OVERDUE` → `expired`; fulfillment handlers must be idempotent per order | P4 adds refund/void flows |
 | A8 | Coupon zeroing the total refused (`total_zero`, `NOC-REMEDIATE[commerce-free-orders]`); cancelling a pending order does not void the gateway charge (`NOC-REMEDIATE[commerce-gateway-cancel]`) | P4 |
 | A9 | `CommerceConfig` + router factory signatures — see `noctusai_lib/domain/commerce/__init__.py` and `KB § 04-SHARED-LIBRARY.md` organ entry; host adds `{MEDIA_UPLOAD_PATH_PATTERN: MEDIA_UPLOAD_MAX_BYTES}` to `max_body_path_overrides` | slice B PART 2 |
+| A10 | `commerce_orders` gains nullable `buyer_doc TEXT`, `buyer_name TEXT`, `fiscal_retain_until DATE` (D30 tax-record snapshot set when the order reaches `paid`; nulled by `purge_expired_fiscal_retention`). Order payloads / `export_customer` now carry them. FE: staff order detail may show `buyer_doc` masked | fiscal retention |
 
-**Open (owner):** fiscal retention of the buyer's CPF/CNPJ on paid orders after an anonymize request (recommended: keep document + order data for the 5-year tax obligation, scrub the rest; then file `noctus.dev.lgpd_flag`).
+**Decided (D30, 2026-10-13):** on anonymize, PAID orders (incl. later refunded/chargeback) keep the buyer's CPF/CNPJ + name as a tax record until `fiscal_retain_until` (LGPD art. 16 II + CTN art. 173: 1 Jan of paid year + 6); everything else is scrubbed; `purge_expired_fiscal_retention` erases them after the window.
 
 ## Hold — host product commit (owner decision pending, 2026-10-13)
 

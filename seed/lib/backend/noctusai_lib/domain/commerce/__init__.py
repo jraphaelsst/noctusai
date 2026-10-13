@@ -32,6 +32,7 @@ from . import (
     coupons,
     customers,
     fees,
+    fiscal_retention,
     fulfillment,
     gateway,
     hosts,
@@ -50,6 +51,7 @@ from .errors import (
     CommerceError,
     GatewayNotConfigured,
 )
+from .fiscal_retention import purge_expired_fiscal_retention
 from .fulfillment import FulfillmentHandler, FulfillmentRegistry, NoopFulfillment, make_fulfillment_registry
 from .gateway import AsaasCheckoutGateway, CheckoutGateway, FakeCheckoutGateway, make_checkout_gateway
 from .media import MEDIA_UPLOAD_MAX_BYTES, MEDIA_UPLOAD_PATH_PATTERN
@@ -112,6 +114,7 @@ __all__ = [
     "coupons",
     "customers",
     "fees",
+    "fiscal_retention",
     "fulfillment",
     "gateway",
     "hosts",
@@ -120,6 +123,7 @@ __all__ = [
     "media",
     "order_state",
     "orders",
+    "purge_expired_fiscal_retention",
     "profile",
     "storefront",
     "storefront_router",

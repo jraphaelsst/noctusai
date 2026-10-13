@@ -367,7 +367,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_privacy_requests_org ON {s}.commerce_pri
     )
     out.append(
         _section(
-            "Orders. token = the opaque public handle; platform_fee_cents is the EXPECTED noc fee (D27).",
+            "Orders. token = the opaque public handle; platform_fee_cents is the EXPECTED noc fee (D27). buyer_doc/buyer_name/fiscal_retain_until = the D30 tax-record snapshot taken at `paid` (LGPD art. 16 II + CTN art. 173).",
             s,
             "commerce_orders",
             f"""
@@ -390,9 +390,14 @@ CREATE TABLE IF NOT EXISTS {s}.commerce_orders (
     expires_at         TIMESTAMPTZ,
     paid_at            TIMESTAMPTZ,
     platform_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK (platform_fee_cents >= 0),
+    buyer_doc          TEXT,
+    buyer_name         TEXT,
+    fiscal_retain_until DATE,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_commerce_orders_fiscal_retain ON {s}.commerce_orders (fiscal_retain_until)
+    WHERE fiscal_retain_until IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_commerce_orders_org_created ON {s}.commerce_orders (org_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_commerce_orders_org_status ON {s}.commerce_orders (org_id, status);
 CREATE INDEX IF NOT EXISTS idx_commerce_orders_customer ON {s}.commerce_orders (customer_id);

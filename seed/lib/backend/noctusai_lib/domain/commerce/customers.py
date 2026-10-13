@@ -15,7 +15,10 @@ pure function that decides it -- checkout and the webhook both call it.
 LGPD: `export_customer` (portability/access) and `anonymize_customer` (deletion)
 are staff acts triggered by a VERIFIED request; anonymization scrubs PII from the
 customer row and the consents' ip/user-agent but keeps order rows and amounts
-(commercial/fiscal records).
+(commercial/fiscal records). FISCAL RETENTION (D30, LGPD art. 16 II + CTN art.
+173): orders that reached paid (paid/refunded/chargeback) keep `buyer_doc` +
+`buyer_name` until `fiscal_retain_until` (see `fiscal_retention`); any other
+order has them scrubbed.
 """
 from __future__ import annotations
 
@@ -27,7 +30,7 @@ from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from ._common import digits, first, get_row, like_term, new_id, now_iso, page_rows, tbl
 from .errors import not_found
-from .types import ConsentKind, FieldSource, PrivacyRequestKind, PrivacyRequestStatus
+from .types import ConsentKind, FieldSource, OrderStatus, PrivacyRequestKind, PrivacyRequestStatus
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +40,11 @@ _PRIVACY = "commerce_privacy_requests"
 _ORDERS = "commerce_orders"
 _ITEMS = "commerce_order_items"
 _EVENTS = "commerce_order_events"
+
+#: Statuses that never reached `paid` -- their buyer_doc/buyer_name are scrubbed on anonymize (D30).
+_NON_PAID_STATUSES: list[str] = [
+    s.value for s in OrderStatus if s not in (OrderStatus.PAID, OrderStatus.REFUNDED, OrderStatus.CHARGEBACK)
+]
 
 #: Customer columns subject to provenance (email is also the identity key).
 FIELDS: tuple[str, ...] = ("name", "doc", "email", "phone", "address")
@@ -329,7 +337,12 @@ def export_customer(db: Any, org_id: Any, customer_id: Any) -> dict:
 
 def anonymize_customer(db: Any, org_id: Any, customer_id: Any) -> dict:
     """Scrub the customer's PII (idempotent). Orders/amounts are kept: they are
-    commercial records; the link from them to a person is what is cut."""
+    commercial records; the link from them to a person is what is cut.
+
+    Fiscal retention (D30): `buyer_doc`/`buyer_name` on orders that reached paid
+    (paid, refunded, chargeback) are KEPT as a tax record until
+    `fiscal_retain_until` (purged by `purge_expired_fiscal_retention`); on every
+    other order they are scrubbed defensively."""
     customer = get_customer(db, org_id, customer_id)
     if customer.get("anonymized_at"):
         return customer
@@ -346,6 +359,9 @@ def anonymize_customer(db: Any, org_id: Any, customer_id: Any) -> dict:
         "updated_at": at,
     }
     updated = tbl(db, _CUSTOMERS).update(patch).eq("org_id", str(org_id)).eq("id", cid).execute()
+    tbl(db, _ORDERS).update({"buyer_doc": None, "buyer_name": None, "fiscal_retain_until": None}).eq(
+        "org_id", str(org_id)
+    ).eq("customer_id", cid).in_("status", _NON_PAID_STATUSES).execute()
     tbl(db, _CONSENTS).update({"ip": None, "user_agent": None}).eq("org_id", str(org_id)).eq("customer_id", cid).execute()
     for request in list_privacy_requests(db, org_id, customer_id):
         if request["kind"] == PrivacyRequestKind.DELETION.value and request["status"] in (

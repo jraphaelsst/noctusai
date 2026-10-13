@@ -33,6 +33,7 @@ from noctusai_lib.primitives.exceptions import NotFoundError
 
 from ._common import now_iso
 from .customers import enrich_from_payment
+from .fiscal_retention import snapshot_fiscal_identity
 from .fulfillment import FulfillmentRegistry
 from .gateway import CheckoutGateway
 from .order_state import OrderEvent
@@ -143,6 +144,10 @@ def _on_paid(
             reason="pagamento confirmado", extra=extra,
         )
         _enrich_customer(db, org_id, order, event, gateway)
+
+    # D30: snapshot the tax identity AFTER enrichment (payment values win); idempotent,
+    # so it also heals a paid order whose first delivery failed before this point.
+    order = snapshot_fiscal_identity(db, org_id, order)
 
     # Idempotent handlers (see fulfillment module): also runs for the second
     # confirmation event of an already-paid order and for a redelivery after a failure.
