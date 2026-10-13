@@ -7,12 +7,14 @@ Auto-mounted on EVERY product by ``create_product_app`` (registry key ``"me"``):
   ``org_selection`` block (picker state) and the EFFECTIVE ``org_role`` -- the SPA's
   role labels come from here, never from ``user_metadata``.
 * ``GET /api/me/org-choices`` / ``PUT`` / ``DELETE /api/me/org-choice`` -- the org picker
-  (owner decision 2026-10-08). PLATFORM STAFF only (``noctus_users.role='admin'`` AND home
-  org ``is_platform``): everyone else gets strict ``403 not_platform_staff``; staff
-  without an aal2 session get ``403 mfa_required``; a product that is not
-  ``org_picker_ready`` answers ``409 product_not_ready``. The listed orgs are those with
-  an ACTIVE, non-expired license for this product: client orgs by name, the home org
-  ("Entrar como NoctusAI (minha org)") always LAST (owner decision 2026-10-12).
+  (owner decisions 2026-10-08, widened to members 2026-10-13). WHO may choose: PLATFORM
+  STAFF (``noctus_users.role='admin'`` AND home org ``is_platform``) -- any org licensed for
+  the product, ``aal2`` required when the product asks for it (``403 mfa_required``), the home
+  org ("Entrar como NoctusAI (minha org)") always LAST (owner decision 2026-10-12) -- OR any
+  user with an ACTIVE membership (``public.org_memberships``): only the orgs they are an
+  active member of AND that are licensed for the product, never ``aal2`` (Q1), their last-active
+  org first. A PUT for an org that is neither is ``403 not_a_member``; a product that is not
+  ``org_picker_ready`` answers ``409 product_not_ready``.
 
 Identity resolves through the ONE effective-org resolver
 (:mod:`noctusai_lib.api.auth.effective_org`); the selection itself is written only by
@@ -42,10 +44,11 @@ from noctusai_lib.domain.licensing import (
     get_license_gate,
     org_sem_licenca,
 )
+from noctusai_lib.primitives.roles import is_customer_role
 
 logger = logging.getLogger(__name__)
 
-NOT_PLATFORM_STAFF = "not_platform_staff"
+NOT_A_MEMBER = "not_a_member"
 MFA_REQUIRED = "mfa_required"
 PRODUCT_NOT_READY = "product_not_ready"
 
@@ -74,10 +77,14 @@ class OrgChoiceBody(StrictHttpModel):
 def _selection_block(core: Any, eff: Optional[EffectiveOrg]) -> dict:
     home = _org_dto(core, eff.home_org_id) if eff is not None else None
     effective = _org_dto(core, eff.org_id) if eff is not None else None
-    available = bool(eff is not None and eff.is_staff)
+    is_staff = bool(eff is not None and eff.is_staff)
+    can_select = bool(eff is not None and eff.member_can_select)
     return {
-        "available": available,
-        "required": available and eff.selection_id is None,
+        "available": is_staff or can_select,
+        # Staff: every entry is a choice. A member: only when the last-active org cannot be
+        # served (not licensed for this product / no longer an active membership) -- Q2.
+        "required": (is_staff and eff.selection_id is None)
+        or bool(eff is not None and eff.member_choice_required),
         "mfa_required": bool(eff is not None and eff.mfa_required),
         "acting": bool(eff is not None and eff.acting),
         "org": effective,
@@ -122,19 +129,17 @@ def create_me_router(deps) -> APIRouter:
             "org_selection": block,
         }
 
-    def _staff_gate(core: Any, user_id: Any) -> None:
+    def _is_staff(core: Any, user_id: Any) -> bool:
         try:
-            staff = is_platform_staff(core, user_id)
+            return is_platform_staff(core, user_id)
         except Exception:
             logger.error("org_picker_staff_lookup_error user_id=%s", user_id, exc_info=True)
             raise HTTPException(status_code=503, detail="Falha ao resolver organizacao do usuario")
-        if not staff:
-            raise _err(403, "Acesso restrito à equipe da plataforma.", NOT_PLATFORM_STAFF)
 
     def _picker_ctx(core: Any, user, token: str, *, need_aal2: bool = True):
-        """Staff gate -> aal2 (when the product requires it) -> product ready.
-        Returns ``(slug, store, session_id)``."""
-        _staff_gate(core, user.id)
+        """aal2 (STAFF only, when the product requires it) -> product ready. Members never
+        need aal2 (owner decision Q1). Returns ``(slug, store, session_id, is_staff)``."""
+        is_staff = _is_staff(core, user.id)
         session_id, aal = read_session_claims(token, user_id=user.id)
         gate = get_license_gate()
         store = gate.selection_store if gate else None
@@ -144,7 +149,7 @@ def create_me_router(deps) -> APIRouter:
         except Exception:
             logger.error("org_picker_mfa_lookup_error product=%s", slug, exc_info=True)
             raise HTTPException(status_code=503, detail="Falha ao consultar o produto")
-        if need_aal2 and requires_mfa and aal != "aal2":
+        if is_staff and need_aal2 and requires_mfa and aal != "aal2":
             raise _err(403, "Verificação em duas etapas (MFA) obrigatória.", MFA_REQUIRED)
         try:
             ready = bool(store and slug and store.product_ready(slug))
@@ -153,7 +158,7 @@ def create_me_router(deps) -> APIRouter:
             raise HTTPException(status_code=503, detail="Falha ao consultar o produto")
         if not ready:
             raise _err(409, "Este produto ainda não permite escolher a organização.", PRODUCT_NOT_READY)
-        return slug, store, session_id
+        return slug, store, session_id, is_staff
 
     @router.get("/access")
     async def me_access(auth=Depends(deps.get_current_user_ungated)) -> dict:
@@ -164,15 +169,28 @@ def create_me_router(deps) -> APIRouter:
     async def org_choices(response: Response, auth=Depends(deps.get_current_user_ungated)) -> dict:
         user, token = auth
         core = deps.get_core_client()
-        slug, store, _sid = _picker_ctx(core, user, token)
+        slug, store, _sid, is_staff = _picker_ctx(core, user, token)
         response.headers["Cache-Control"] = "no-store"
         try:
             eff = resolve_effective_org_for_request(core, user.id)  # home (no token)
             licensed = store.licensed_orgs(slug)
+            roles = {} if is_staff else {
+                m.org_id: m.org_role for m in store.memberships(user.id)
+                if not is_customer_role(m.org_role)
+            }
         except Exception:
             logger.error("org_choices_error user_id=%s", user.id, exc_info=True)
             raise HTTPException(status_code=503, detail="Falha ao listar organizações")
         home_id = str(eff.org_id) if eff is not None and eff.org_id else None
+        if not is_staff:
+            # A member sees only the orgs they are an ACTIVE member of AND that are licensed
+            # for this product; their last-active org (profile home) leads.
+            mine = sorted(
+                ({**o, "is_home": str(o["id"]) == home_id, "org_role": roles[str(o["id"])]}
+                 for o in licensed if str(o["id"]) in roles),
+                key=lambda o: (not o["is_home"], (o.get("nome") or "").lower()),
+            )
+            return {"orgs": mine}
         others = sorted(
             (o for o in licensed if str(o["id"]) != home_id),
             key=lambda o: (o.get("nome") or "").lower(),
@@ -187,14 +205,14 @@ def create_me_router(deps) -> APIRouter:
     async def put_org_choice(body: OrgChoiceBody, auth=Depends(deps.get_current_user_ungated)) -> dict:
         user, token = auth
         core = deps.get_core_client()
-        slug, store, session_id = _picker_ctx(core, user, token)
+        slug, store, session_id, _is_staff_caller = _picker_ctx(core, user, token)
         if not session_id:
             raise _err(403, "Sessão sem identificador.", MFA_REQUIRED)
         try:
             store.set(user.id, slug, str(body.org_id), session_id)
         except OrgSelectionError as exc:
-            if exc.code == "not_platform_staff":
-                raise _err(403, "Acesso restrito à equipe da plataforma.", NOT_PLATFORM_STAFF)
+            if exc.code == "not_a_member":
+                raise _err(403, "Você não é membro desta organização.", NOT_A_MEMBER)
             if exc.code == "product_not_ready":
                 raise _err(409, "Este produto ainda não permite escolher a organização.", PRODUCT_NOT_READY)
             raise org_sem_licenca()
@@ -211,8 +229,7 @@ def create_me_router(deps) -> APIRouter:
         """End this product's selection (``exit``); ``?all=true`` ends EVERY product's
         selection of the caller (``logout`` -- the SPA calls it before signing out)."""
         user, _token = auth
-        core = deps.get_core_client()
-        _staff_gate(core, user.id)
+        # Ends only the CALLER's own selections (staff or member alike): no role gate needed.
         if all_products:
             gate = get_license_gate()
             store = gate.selection_store if gate else None

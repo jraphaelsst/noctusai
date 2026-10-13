@@ -335,7 +335,17 @@ def _org_picker_fn_sql(roles: str) -> str:
     product's MFA rule are DENIED (NULL, core 078 -- every entry is a choice, the SQL
     mirror of ``resolve_effective_org``'s 409 ``org_selection_required``); an aal1 token
     on a product that requires 2FA keeps the home org (the resolver's MFA path).
-    EVERYONE else resolves the home rule (customers excluded → NULL)."""
+
+    MEMBERS (multi-org S3, owner decisions 2026-10-13): a NON-staff user with a live
+    selection for the product -- same login binding, auth session alive, target licensed --
+    resolves to the target ONLY while ``public.org_memberships`` holds an ACTIVE row for
+    (user, target): the membership is re-checked on every call (no org/role in the JWT), so
+    ending it stops the selection resolving on the next query. No aal2 for members (Q1). The
+    pin header only NARROWS (a mismatch DENIES, never widens). A customer-role membership
+    resolves NULL like a customer home. EVERYONE else resolves the home rule (customers
+    excluded → NULL), and the home org must itself be an ACTIVE membership -- a user removed
+    from the org their profile still names (the profile follows the last selection, Q3) never
+    falls back to the org they were removed from."""
     return (
         "CREATE OR REPLACE FUNCTION public.current_org_id_for(p_schema text)\n"
         "  RETURNS uuid\n"
@@ -350,6 +360,7 @@ def _org_picker_fn_sql(roles: str) -> str:
         "  v_org_role text;\n"
         "  v_role     text;\n"
         "  v_target   uuid;\n"
+        "  v_mrole    text;\n"
         "  v_hdr      text;\n"
         "BEGIN\n"
         "  SELECT u.org_id, u.org_role, u.role INTO v_home, v_org_role, v_role\n"
@@ -357,18 +368,15 @@ def _org_picker_fn_sql(roles: str) -> str:
         "  IF NOT FOUND THEN\n"
         "    RETURN NULL;\n"
         "  END IF;\n"
-        f"  IF COALESCE(v_org_role, '') = ANY ({roles}) THEN\n"
-        "    RETURN NULL;\n"
-        "  END IF;\n"
+        "  BEGIN\n"
+        "    v_hdr := NULLIF(btrim(NULLIF(current_setting('request.headers', true), '')::json\n"
+        "                          ->> 'x-noctus-acting-org'), '');\n"
+        "  EXCEPTION WHEN OTHERS THEN\n"
+        "    v_hdr := NULL;\n"
+        "  END;\n"
         "  IF v_role = 'admin' AND p_schema IS NOT NULL AND v_org_role IN ('owner', 'admin')\n"
         "     AND EXISTS (SELECT 1 FROM public.organizations o WHERE o.id = v_home AND o.is_platform)\n"
         "  THEN\n"
-        "    BEGIN\n"
-        "      v_hdr := NULLIF(btrim(NULLIF(current_setting('request.headers', true), '')::json\n"
-        "                            ->> 'x-noctus-acting-org'), '');\n"
-        "    EXCEPTION WHEN OTHERS THEN\n"
-        "      v_hdr := NULL;\n"
-        "    END;\n"
         "    SELECT s.target_org_id INTO v_target\n"
         "      FROM public.products p\n"
         "      JOIN public.platform_org_selections s\n"
@@ -400,6 +408,39 @@ def _org_picker_fn_sql(roles: str) -> str:
         "                  AND (NOT p.org_picker_requires_mfa OR v_claims ->> 'aal' = 'aal2')) THEN\n"
         "      RETURN NULL;\n"
         "    END IF;\n"
+        # Multi-org S3 (owner decisions 2026-10-13): a member's selection is honoured only
+        # while the membership is ACTIVE (re-checked here, every call), the login is the one
+        # that chose, the auth session lives and the target is licensed. No aal2 (Q1).
+        "  ELSIF p_schema IS NOT NULL THEN\n"
+        "    SELECT s.target_org_id, m.org_role INTO v_target, v_mrole\n"
+        "      FROM public.products p\n"
+        "      JOIN public.platform_org_selections s\n"
+        "        ON s.product_id = p.id AND s.user_id = v_uid AND s.ended_at IS NULL\n"
+        "      JOIN public.org_memberships m\n"
+        "        ON m.user_id = v_uid AND m.org_id = s.target_org_id AND m.status = 'active'\n"
+        "     WHERE p.db_schema = p_schema AND p.org_picker_ready\n"
+        "       AND s.auth_session_id = NULLIF(v_claims ->> 'session_id', '')::uuid\n"
+        "       AND EXISTS (SELECT 1 FROM auth.sessions se WHERE se.id = s.auth_session_id)\n"
+        "       AND EXISTS (\n"
+        "         SELECT 1 FROM public.licenses l\n"
+        "          WHERE l.org_id = s.target_org_id AND l.product_id = p.id\n"
+        "            AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now()));\n"
+        "    IF FOUND THEN\n"
+        f"      IF COALESCE(v_mrole, '') = ANY ({roles}) THEN\n"
+        "        RETURN NULL;\n"
+        "      END IF;\n"
+        "      IF v_hdr IS NULL OR lower(v_hdr) = v_target::text THEN\n"
+        "        RETURN v_target;\n"
+        "      END IF;\n"
+        "      RETURN NULL;\n"
+        "    END IF;\n"
+        "  END IF;\n"
+        f"  IF COALESCE(v_org_role, '') = ANY ({roles}) THEN\n"
+        "    RETURN NULL;\n"
+        "  END IF;\n"
+        "  IF NOT EXISTS (SELECT 1 FROM public.org_memberships m\n"
+        "                  WHERE m.user_id = v_uid AND m.org_id = v_home AND m.status = 'active') THEN\n"
+        "    RETURN NULL;\n"
         "  END IF;\n"
         "  RETURN v_home;\n"
         "END;\n"

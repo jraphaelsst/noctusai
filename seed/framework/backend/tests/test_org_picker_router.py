@@ -43,7 +43,7 @@ USERS = [
 ]
 
 
-def _make(*, ready=True, users=None, mfa_optional=False):
+def _make(*, ready=True, users=None, mfa_optional=False, members=None):
     core = MockSupabaseClient()
     core.set_table_data("noctus_users", users or USERS)
     core.set_table_data("organizations", [
@@ -58,6 +58,9 @@ def _make(*, ready=True, users=None, mfa_optional=False):
         orgs={HOME: "NoctusAI", CLIENT_A: "Zeta Imob", CLIENT_Z: "Alfa Imob"},
         home_orgs={STAFF: HOME},
         mfa_optional={SLUG} if mfa_optional else set(),
+        members=members if members is not None else {
+            STAFF: {HOME: "owner"}, OWNER: {CLIENT_A: "owner"},
+        },
     )
 
     async def get_current_user(authorization: Optional[str] = Header(None)):
@@ -121,27 +124,28 @@ class TestBoundary:
         assert c.put("/api/me/org-choice", json={"org_id": CLIENT_A}).status_code == 401
         assert c.delete("/api/me/org-choice").status_code == 401
 
-    def test_non_staff_is_403_not_platform_staff_on_all_three(self):
+    def test_non_member_is_403_not_a_member_on_put_and_never_sees_foreign_orgs(self):
         c, store = _make()
         h = _h(OWNER)
-        for resp in (
-            c.get("/api/me/org-choices", headers=h),
-            c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=h),
-            c.delete("/api/me/org-choice", headers=h),
-        ):
-            assert resp.status_code == 403
-            assert resp.json()["code"] == "not_platform_staff"
+        resp = c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h)
+        assert resp.status_code == 403
+        assert resp.json()["code"] == "not_a_member"
+        listed = c.get("/api/me/org-choices", headers=h).json()["orgs"]
+        assert [o["id"] for o in listed] == [CLIENT_A]  # only the orgs they belong to
+        assert c.delete("/api/me/org-choice", headers=h).status_code == 204
         assert store.rows == []
 
     def test_org_owner_is_never_staff_even_with_admin_org_role(self):
         users = [{"id": OWNER, "org_id": CLIENT_A, "org_role": "admin", "role": "user"}]
         c, _ = _make(users=users)
-        assert c.get("/api/me/org-choices", headers=_h(OWNER)).json()["code"] == "not_platform_staff"
+        listed = c.get("/api/me/org-choices", headers=_h(OWNER)).json()["orgs"]
+        assert [o["id"] for o in listed] == [CLIENT_A]
+        assert c.put("/api/me/org-choice", json={"org_id": HOME}, headers=_h(OWNER)).json()["code"] == "not_a_member"
 
     def test_admin_role_in_a_non_platform_org_is_not_staff(self):
         users = [{"id": OWNER, "org_id": CLIENT_A, "org_role": "owner", "role": "admin"}]
         c, _ = _make(users=users)
-        assert c.get("/api/me/org-choices", headers=_h(OWNER)).status_code == 403
+        assert c.put("/api/me/org-choice", json={"org_id": HOME}, headers=_h(OWNER)).status_code == 403
 
     def test_staff_without_aal2_is_403_mfa_required(self):
         c, _ = _make()
@@ -298,18 +302,25 @@ class TestIntentPin:
         assert resp.status_code == 409
         assert resp.json()["code"] == "org_selection_changed"
 
-    def test_non_staff_pin_is_ignored(self):
+    def test_non_staff_pin_only_narrows(self):
         c, _ = _make()
         resp = c.get("/api/things", headers={**_h(OWNER), "X-Noctus-Acting-Org": CLIENT_Z})
-        assert resp.status_code == 200
-        assert resp.json() == {"org_id": CLIENT_A}
+        assert resp.status_code == 409
+        assert resp.json()["code"] == "org_selection_changed"
+        ok = c.get("/api/things", headers={**_h(OWNER), "X-Noctus-Acting-Org": CLIENT_A})
+        assert ok.status_code == 200
+        assert ok.json() == {"org_id": CLIENT_A}
 
 
 class TestStaffEligibilityAndBody:
     def test_platform_admin_with_a_lesser_org_role_is_not_staff(self):
         users = [{"id": STAFF, "org_id": HOME, "org_role": "manager", "role": "admin"}]
-        c, _ = _make(users=users)
-        assert c.get("/api/me/org-choices", headers=_h(STAFF)).json()["code"] == "not_platform_staff"
+        c, store = _make(users=users)
+        store.staff.discard(STAFF)  # the real RPC derives staff from the profile (manager is not)
+        # Not staff: a plain member of HOME -- sees only HOME, no aal2 asked, no switcher.
+        resp = c.get("/api/me/org-choices", headers=_h(STAFF, aal="aal1"))
+        assert [o["id"] for o in resp.json()["orgs"]] == [HOME]
+        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_A}, headers=_h(STAFF)).json()["code"] == "not_a_member"
         assert c.get("/api/me/access", headers=_h(STAFF)).json()["org_selection"]["available"] is False
 
     def test_org_id_must_be_a_uuid(self):
@@ -328,11 +339,12 @@ class TestDeleteAll:
         assert c.delete("/api/me/org-choice?all=true", headers=_h(STAFF)).status_code == 204
         assert [r["ended_by"] for r in store.rows] == ["logout", "logout"]
 
-    def test_all_true_is_staff_only(self):
-        c, _ = _make()
-        resp = c.delete("/api/me/org-choice?all=true", headers=_h(OWNER))
-        assert resp.status_code == 403
-        assert resp.json()["code"] == "not_platform_staff"
+    def test_all_true_only_ever_ends_the_callers_own_selections(self):
+        c, store = _make()
+        store.rows.append({"id": "x", "user_id": STAFF, "slug": SLUG, "target": CLIENT_A,
+                           "home": HOME, "session": SESSION, "ended_by": None})
+        assert c.delete("/api/me/org-choice?all=true", headers=_h(OWNER)).status_code == 204
+        assert store.rows[0]["ended_by"] is None  # a member cannot end the staff member's selection
 
 
 class TestActingWritesAreClientVisible:
@@ -413,3 +425,95 @@ class TestEveryEntryRequiresAChoice:
         resp = c.get("/api/things", headers=_h(STAFF, aal="aal1"))
         assert resp.status_code == 200
         assert resp.json() == {"org_id": HOME}
+
+
+MEMBER = "cccccccc-0000-0000-0000-000000000003"
+MULTI = [{"id": MEMBER, "org_id": CLIENT_A, "org_role": "owner", "role": "user"}]
+MULTI_MEMBERS = {MEMBER: {CLIENT_A: "owner", CLIENT_Z: "viewer"}}
+
+
+class TestMemberPicker:
+    """Multi-org S2 (owner decisions 2026-10-13): a regular member of >1 orgs uses the SAME
+    picker endpoints -- no aal2, only their own (active, licensed) orgs, role = membership role."""
+
+    def _c(self, **kw):
+        return _make(users=MULTI, members={k: dict(v) for k, v in MULTI_MEMBERS.items()}, **kw)
+
+    def test_choices_are_the_members_licensed_orgs_with_the_last_active_first_and_their_roles(self):
+        c, _ = self._c()
+        orgs = c.get("/api/me/org-choices", headers=_h(MEMBER, aal="aal1")).json()["orgs"]
+        assert [(o["id"], o["is_home"], o["org_role"]) for o in orgs] == [
+            (CLIENT_A, True, "owner"), (CLIENT_Z, False, "viewer")]
+
+    def test_switching_needs_no_aal2_and_the_role_is_the_membership_role_in_the_target(self):
+        c, store = self._c()
+        h = _h(MEMBER, aal="aal1")
+        resp = c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h)
+        assert resp.status_code == 200
+        sel = resp.json()["org_selection"]
+        assert (sel["org"]["id"], sel["org_role"], sel["acting"], sel["available"]) == (
+            CLIENT_Z, "viewer", False, True)
+        assert store.last_active[MEMBER] == (CLIENT_Z, "viewer")
+        # the gated route serves the selected org, not the (stale) profile org
+        got = c.get("/api/things", headers={**h, "X-Noctus-Acting-Org": CLIENT_Z})
+        assert got.json() == {"org_id": CLIENT_Z}
+
+    def test_member_audit_actor_is_plain_not_platform_support(self):
+        c, _ = self._c()
+        h = _h(MEMBER, aal="aal1")
+        c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h)
+        body = c.post("/api/base-write", headers=h).json()
+        assert body["role"] is None and body["acting_org_id"] is None
+
+    def test_a_member_cannot_select_an_unlicensed_member_org_nor_a_foreign_org(self):
+        members = {MEMBER: {CLIENT_A: "owner", UNLICENSED: "viewer"}}
+        c, store = _make(users=MULTI, members=members)
+        h = _h(MEMBER, aal="aal1")
+        r1 = c.put("/api/me/org-choice", json={"org_id": UNLICENSED}, headers=h)
+        assert (r1.status_code, r1.json()["code"]) == (403, "org_sem_licenca")
+        r2 = c.put("/api/me/org-choice", json={"org_id": HOME}, headers=h)
+        assert (r2.status_code, r2.json()["code"]) == (403, "not_a_member")
+        assert store.rows == []
+
+    def test_ending_the_membership_ends_the_selection_on_the_next_request(self):
+        c, store = self._c()
+        h = _h(MEMBER, aal="aal1")
+        c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h)
+        assert c.get("/api/things", headers=h).json() == {"org_id": CLIENT_Z}
+        del store.members[MEMBER][CLIENT_Z]
+        assert c.get("/api/things", headers=h).json() == {"org_id": CLIENT_A}
+
+    def test_single_org_member_sees_no_picker_and_no_choice(self):
+        c, _ = _make()  # OWNER: member of CLIENT_A only
+        sel = c.get("/api/me/access", headers=_h(OWNER, aal="aal1")).json()["org_selection"]
+        assert (sel["available"], sel["required"]) == (False, False)
+
+    def test_multi_org_member_with_licensed_last_active_org_is_not_asked(self):
+        c, _ = self._c()
+        sel = c.get("/api/me/access", headers=_h(MEMBER, aal="aal1")).json()["org_selection"]
+        assert (sel["available"], sel["required"]) == (True, False)
+        assert c.get("/api/things", headers=_h(MEMBER, aal="aal1")).json() == {"org_id": CLIENT_A}
+
+    def test_unlicensed_last_active_org_requires_a_choice_on_gated_routes_only(self):
+        users = [{"id": MEMBER, "org_id": UNLICENSED, "org_role": "owner", "role": "user"}]
+        members = {MEMBER: {UNLICENSED: "owner", CLIENT_Z: "viewer"}}
+        c, _ = _make(users=users, members=members)
+        h = _h(MEMBER, aal="aal1")
+        gated = c.get("/api/things", headers=h)
+        assert (gated.status_code, gated.json()["code"]) == (409, "org_selection_required")
+        sel = c.get("/api/me/access", headers=h).json()
+        assert (sel["has_access"], sel["org_selection"]["required"], sel["org_selection"]["available"]) == (
+            False, True, True)
+        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=h).status_code == 200
+        assert c.get("/api/things", headers=h).json() == {"org_id": CLIENT_Z}
+
+    def test_product_not_ready_is_409_for_members_too(self):
+        c, _ = self._c(ready=False)
+        resp = c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}, headers=_h(MEMBER, aal="aal1"))
+        assert (resp.status_code, resp.json()["code"]) == (409, "product_not_ready")
+
+    def test_no_token_is_still_401_strict(self):
+        c, _ = self._c()
+        assert c.put("/api/me/org-choice", json={"org_id": CLIENT_Z}).status_code == 401
+        assert c.get("/api/me/org-choices").status_code == 401
+        assert c.get("/api/things").status_code == 401

@@ -2151,7 +2151,7 @@ DECLARE
   v_pid uuid; v_slug text; v_schema text; v_target uuid; v_unlic uuid;
   v_sid uuid := gen_random_uuid();
   v_other_sid uuid := gen_random_uuid();
-  v_got uuid; v_sel uuid;
+  v_got uuid; v_sel uuid; v_mtarget uuid;
 """
 
 _ORG_PICKER_FIXTURE = """
@@ -2218,10 +2218,13 @@ def _org_picker_probe(
     )
 
 
-def _picker_rpc_refusal_probe(*, probe_id: str, code: str, setup: str, call: str, rationale: str) -> GuardProbe:
+def _picker_rpc_refusal_probe(
+    *, probe_id: str, code: str, setup: str, call: str, rationale: str,
+    migrations: tuple[str, ...] = _ORG_PICKER_MIGRATIONS,
+) -> GuardProbe:
     return _org_picker_probe(
         probe_id=probe_id, guard_name="platform_org_selection_set", kind="write_refusal",
-        rationale=rationale,
+        rationale=rationale, migrations=migrations,
         steps=setup + f"""
   BEGIN
     {call}
@@ -2282,17 +2285,6 @@ _ORG_PICKER_ONE_LIVE_PROBE = _org_picker_probe(
   END;""",
 )
 
-_ORG_PICKER_SET_NOT_STAFF_PROBE = _picker_rpc_refusal_probe(
-    probe_id="platform_org_selection_set.refuses_non_staff",
-    code="not_platform_staff",
-    setup="",
-    call="PERFORM public.platform_org_selection_set(v_plain, v_slug, v_target, v_sid);",
-    rationale=(
-        "Only platform staff (role=admin AND home org is_platform) may enter another org; "
-        "the RPC re-checks it itself, so a compromised or buggy API caller cannot grant it."
-    ),
-)
-
 _ORG_PICKER_SET_UNLICENSED_PROBE = _picker_rpc_refusal_probe(
     probe_id="platform_org_selection_set.refuses_unlicensed_target",
     code="target_not_licensed",
@@ -2332,15 +2324,20 @@ _ORG_PICKER_HELPER_POSITIVE_PROBE = _picker_helper_probe(
 _ORG_PICKER_HELPER_NON_STAFF_PROBE = _picker_helper_probe(
     probe_id="current_org_id_for.home_for_non_staff",
     rationale=(
-        "A non-staff caller never acts: even with a (forged, table-level) selection row naming "
-        "another org, the helper answers their HOME org."
+        "A non-staff caller who is NOT a member of the named org never acts there: even with a "
+        "(forged, table-level) selection row naming another org, the helper answers their HOME org."
     ),
     steps="""
+  DELETE FROM public.org_memberships WHERE user_id = v_plain AND org_id = v_target;
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_plain, v_plain_home, COALESCE((SELECT u.org_role FROM public.noctus_users u WHERE u.id = v_plain), 'member'), 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET status = 'active', ended_at = NULL;
   INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
   VALUES (v_plain, v_pid, v_target, v_plain_home, v_sid);
 """ + _caller_sql("v_plain::text"),
     expect="v_plain_home",
     what="a non-staff caller resolves to their home org",
+    migrations=_ORG_PICKER_MIGRATIONS + ("079_org_memberships.sql",),
 )
 
 _ORG_PICKER_HELPER_SESSION_PROBE = _picker_helper_probe(
@@ -2562,6 +2559,196 @@ _ORG_PICKER_REVOKE_PROBE = _org_picker_probe(
 )
 
 
+
+# ---- Multi-org S2+S3 (core 081): a MEMBER selects through the same picker -------------------------
+# Fixture: v_plain (a non-staff user with an active HOME membership) is made a member of v_mtarget --
+# a licensed org that is neither their home nor the platform org -- with the role 'viewer', so
+# "owner at home / viewer in the target" is the standing shape every probe checks against.
+_ORG_MEMBER_MIGRATIONS = _ORG_PICKER_ENTRY_MIGRATIONS + (
+    "079_org_memberships.sql", "081_org_member_selection.sql",
+)
+
+_ORG_MEMBER_FIXTURE = """
+  IF to_regclass('public.org_memberships') IS NULL THEN
+    RAISE EXCEPTION 'NOC_PROBE:no_fixture: public.org_memberships missing — core 079 not applied';
+  END IF;
+  SELECT l.org_id INTO v_mtarget
+    FROM public.licenses l
+   WHERE l.product_id = v_pid AND l.status = 'active' AND (l.fim IS NULL OR l.fim > now())
+     AND l.org_id <> v_plain_home AND l.org_id <> v_home LIMIT 1;
+  IF v_mtarget IS NULL THEN
+    SELECT o.id INTO v_mtarget FROM public.organizations o
+     WHERE o.id <> v_plain_home AND o.id <> v_home AND NOT o.is_platform LIMIT 1;
+    IF v_mtarget IS NULL THEN
+      RAISE EXCEPTION 'NOC_PROBE:no_fixture: no third organization to make the plain user a member of';
+    END IF;
+    INSERT INTO public.licenses (org_id, product_id, status) VALUES (v_mtarget, v_pid, 'active');
+  END IF;
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_plain, v_plain_home,
+          COALESCE((SELECT u.org_role FROM public.noctus_users u WHERE u.id = v_plain), 'member'), 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET status = 'active', ended_at = NULL;
+  INSERT INTO public.org_memberships (user_id, org_id, org_role, status)
+  VALUES (v_plain, v_mtarget, 'viewer', 'active')
+  ON CONFLICT (user_id, org_id) DO UPDATE SET org_role = 'viewer', status = 'active', ended_at = NULL;
+"""
+
+_ORG_MEMBER_REMOVE = """
+  UPDATE public.org_memberships SET status = 'removed', ended_at = now()
+   WHERE user_id = v_plain AND org_id = v_mtarget;
+"""
+
+
+def _member_refusal_probe(*, probe_id: str, rationale: str, setup: str) -> GuardProbe:
+    return _picker_rpc_refusal_probe(
+        probe_id=probe_id, code="not_a_member", rationale=rationale,
+        setup=_ORG_MEMBER_FIXTURE + setup,
+        call="PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);",
+        migrations=_ORG_MEMBER_MIGRATIONS,
+    )
+
+
+def _member_helper_probe(*, probe_id: str, rationale: str, steps: str, expect: str, what: str) -> GuardProbe:
+    return _picker_helper_probe(
+        probe_id=probe_id, rationale=rationale, steps=_ORG_MEMBER_FIXTURE + steps,
+        expect=expect, what=what, migrations=_ORG_MEMBER_MIGRATIONS,
+    )
+
+
+_ORG_MEMBER_NOT_A_MEMBER_PROBE = _member_refusal_probe(
+    probe_id="platform_org_selection_set.refuses_non_member",
+    rationale=(
+        "Who may select org X: platform staff OR an ACTIVE member of X. A user with no membership in "
+        "the target is refused by the RPC itself -- a compromised or buggy API caller cannot grant it."
+    ),
+    setup="  DELETE FROM public.org_memberships WHERE user_id = v_plain AND org_id = v_mtarget;",
+)
+
+_ORG_MEMBER_REMOVED_PROBE = _member_refusal_probe(
+    probe_id="platform_org_selection_set.refuses_removed_member",
+    rationale="A REMOVED membership is not a membership: the RPC refuses it exactly like a stranger.",
+    setup=_ORG_MEMBER_REMOVE,
+)
+
+_ORG_MEMBER_POSITIVE_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.member_selection_resolves_target",
+    rationale=(
+        "Positive control for members: an ACTIVE member's valid selection (this login, aal1 -- members "
+        "never need 2FA, owner Q1 -- licensed target) resolves to the target even though the product "
+        "requires 2FA for staff. Without it every 'stops resolving' probe passes vacuously."
+    ),
+    steps=_PIN_MFA_SQL.format(val="true") + """
+  PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);
+""" + _caller_sql("v_plain::text", aal="aal1"),
+    expect="v_mtarget",
+    what="a valid member selection resolves to the target org without aal2",
+)
+
+_ORG_MEMBER_REMOVED_FALLBACK_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.removed_member_selection_falls_back_to_home",
+    rationale=(
+        "Revocation by recheck: ending the membership makes a live selection stop resolving on the "
+        "very next query (nothing is cached in the JWT) -- the helper falls back to the HOME rule."
+    ),
+    steps="""
+  INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+  VALUES (v_plain, v_pid, v_mtarget, v_plain_home, v_sid);
+""" + _ORG_MEMBER_REMOVE + _caller_sql("v_plain::text", aal="aal1"),
+    expect="v_plain_home",
+    what="the selection of a removed member falls back to their home org",
+)
+
+_ORG_MEMBER_NEVER_REMOVED_ORG_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.removed_member_never_resolves_the_removed_org",
+    rationale=(
+        "The profile follows a member's pick (owner Q3), so after a RPC selection the 'home' IS the "
+        "target. Removing that membership must NOT fall back to it: the home rule itself needs an "
+        "ACTIVE membership, so the answer is NULL -- never the org they were removed from."
+    ),
+    steps="""
+  PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);
+""" + _ORG_MEMBER_REMOVE + _caller_sql("v_plain::text", aal="aal1"),
+    expect="NULL::uuid",
+    what="a removed member resolves NULL, never the removed org",
+)
+
+_ORG_MEMBER_PIN_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.member_pin_mismatch_denied",
+    rationale="The pin header only NARROWS for members too: a header naming another org DENIES (NULL), never widens.",
+    steps="""
+  PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);
+""" + _caller_sql("v_plain::text", aal="aal1", header="v_plain_home::text"),
+    expect="NULL::uuid",
+    what="a mismatching x-noctus-acting-org denies a member selection",
+)
+
+_ORG_MEMBER_CUSTOMER_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.null_for_customer_role_membership",
+    rationale=(
+        "An end customer (customer-role membership) never acts through the picker: like a customer "
+        "home, the helper answers NULL -- the membership grants a seat, not staff access."
+    ),
+    steps="""
+  UPDATE public.org_memberships SET org_role = 'membro' WHERE user_id = v_plain AND org_id = v_mtarget;
+  INSERT INTO public.platform_org_selections (user_id, product_id, target_org_id, home_org_id, auth_session_id)
+  VALUES (v_plain, v_pid, v_mtarget, v_plain_home, v_sid);
+""" + _caller_sql("v_plain::text", aal="aal1"),
+    expect="NULL::uuid",
+    what="a customer-role membership resolves NULL",
+)
+
+_ORG_MEMBER_HOME_REMOVED_PROBE = _member_helper_probe(
+    probe_id="current_org_id_for.null_when_home_membership_removed",
+    rationale=(
+        "Even with no selection at all, a user whose profile still names an org they were REMOVED "
+        "from never resolves it: the home rule requires an ACTIVE membership."
+    ),
+    steps="""
+  UPDATE public.org_memberships SET status = 'removed', ended_at = now()
+   WHERE user_id = v_plain AND org_id = v_plain_home;
+""" + _caller_sql("v_plain::text", aal="aal1"),
+    expect="NULL::uuid",
+    what="a user removed from their home org resolves NULL",
+)
+
+_ORG_MEMBER_ROLE_PROBE = _org_picker_probe(
+    probe_id="platform_org_selection_set.member_role_is_the_target_membership_role",
+    guard_name="platform_org_selection_set",
+    kind="state_assertion",
+    rationale=(
+        "The #1 risk of multi-org (privilege leak): a member's pick moves their profile to the target "
+        "with the role of THAT membership ('viewer'), never the role they hold elsewhere, and the "
+        "memberships themselves are neither ended nor downgraded."
+    ),
+    migrations=_ORG_MEMBER_MIGRATIONS,
+    steps=_ORG_MEMBER_FIXTURE + """
+  PERFORM public.platform_org_selection_set(v_plain, v_slug, v_mtarget, v_sid);
+  IF NOT EXISTS (SELECT 1 FROM public.noctus_users u
+                  WHERE u.id = v_plain AND u.org_id = v_mtarget AND u.org_role = 'viewer') THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: the profile did not follow the pick with the target membership role';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.org_memberships m
+                  WHERE m.user_id = v_plain AND m.org_id = v_mtarget AND m.status = 'active' AND m.org_role = 'viewer')
+     OR NOT EXISTS (SELECT 1 FROM public.org_memberships m
+                     WHERE m.user_id = v_plain AND m.org_id = v_plain_home AND m.status = 'active') THEN
+    RAISE EXCEPTION 'NOC_PROBE:violation: following the pick ended or downgraded a membership';
+  END IF;
+  RAISE EXCEPTION 'NOC_PROBE:clean: the member is a viewer in the target and both memberships are intact';""",
+)
+
+_ORG_MEMBER_PROBES: tuple[GuardProbe, ...] = (
+    _ORG_MEMBER_NOT_A_MEMBER_PROBE,
+    _ORG_MEMBER_REMOVED_PROBE,
+    _ORG_MEMBER_POSITIVE_PROBE,
+    _ORG_MEMBER_REMOVED_FALLBACK_PROBE,
+    _ORG_MEMBER_NEVER_REMOVED_ORG_PROBE,
+    _ORG_MEMBER_PIN_PROBE,
+    _ORG_MEMBER_CUSTOMER_PROBE,
+    _ORG_MEMBER_HOME_REMOVED_PROBE,
+    _ORG_MEMBER_ROLE_PROBE,
+)
+
+
 def _picker_constraint_probe(*, probe_id: str, guard_name: str, rationale: str, declare: str, steps: str, what: str) -> GuardProbe:
     return GuardProbe(
         id=probe_id, product="core", schema="public", guard_name=guard_name, kind="write_refusal",
@@ -2719,7 +2906,6 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_READY_NEEDS_SCHEMA_PROBE,
     _ORG_PICKER_ENDED_PAIR_PROBE,
     _ORG_PICKER_ONE_LIVE_PROBE,
-    _ORG_PICKER_SET_NOT_STAFF_PROBE,
     _ORG_PICKER_SET_UNLICENSED_PROBE,
     _ORG_PICKER_SET_NOT_READY_PROBE,
     _ORG_PICKER_HELPER_POSITIVE_PROBE,
@@ -2739,6 +2925,7 @@ _ORG_PICKER_PROBES: tuple[GuardProbe, ...] = (
     _ORG_PICKER_HELPER_NO_SELECTION_AAL1_OPTIONAL_PROBE,
     _ORG_PICKER_HELPER_NO_SELECTION_AAL1_REQUIRED_PROBE,
     _ORG_PICKER_PRODUCT_REVOKE_PROBE,
+    *_ORG_MEMBER_PROBES,
     _ACTING_AUDIT_ACTING_WRITE_PROBE,
     _ACTING_AUDIT_PLAIN_WRITE_PROBE,
 )

@@ -72,7 +72,7 @@ class _RpcClient:
 
 class TestRealStore:
     def test_set_maps_rpc_errors_to_codes(self):
-        for code in ("not_platform_staff", "target_not_licensed", "product_not_ready"):
+        for code in ("not_a_member", "target_not_licensed", "product_not_ready"):
             store = RealOrgSelectionStore(lambda c=code: _RpcClient(error=RuntimeError(f"platform_org_selection:{c}")))
             with pytest.raises(OrgSelectionError) as exc:
                 store.set(STAFF, "igig", TARGET, SID)
@@ -136,7 +136,7 @@ class TestFakeStoreMirrorsTheRpcErrors:
         s = FakeOrgSelectionStore(ready={"igig"}, staff={STAFF}, licensed={(TARGET, "igig")})
         with pytest.raises(OrgSelectionError) as e1:
             s.set("someone", "igig", TARGET, SID)
-        assert e1.value.code == "not_platform_staff"
+        assert e1.value.code == "not_a_member"
         with pytest.raises(OrgSelectionError) as e2:
             s.set(STAFF, "other", TARGET, SID)
         assert e2.value.code == "product_not_ready"
@@ -190,7 +190,7 @@ class TestResolverIneligiblePaths:
             selection_store=store)
         assert eff.org_id == HOME and eff.is_staff is False
 
-    def test_intent_pin_only_enforced_for_staff(self):
+    def test_intent_pin_refuses_a_mismatch_for_staff_and_members_alike(self):
         row = {"id": STAFF, "org_id": HOME, "org_role": "owner", "role": "admin"}
         with pytest.raises(HTTPException) as exc:
             resolve_effective_org(
@@ -199,10 +199,17 @@ class TestResolverIneligiblePaths:
                 selection_store=self._store())
         assert exc.value.status_code == 409
         assert exc.value.detail["code"] == "org_selection_changed"
+        # A member's pin is a narrowing check too (their last-active org can move under a
+        # stale tab): it can refuse a request, never widen one. A MATCHING pin passes.
         plain = {"id": STAFF, "org_id": HOME, "org_role": "owner", "role": "user"}
+        with pytest.raises(HTTPException) as exc2:
+            resolve_effective_org(
+                self._core(plain), STAFF, product_slug="igig", token=_tok(STAFF, session_id=SID, aal="aal2"),
+                acting_header=TARGET, selection_store=self._store())
+        assert exc2.value.detail["code"] == "org_selection_changed"
         eff = resolve_effective_org(
             self._core(plain), STAFF, product_slug="igig", token=_tok(STAFF, session_id=SID, aal="aal2"),
-            acting_header=TARGET, selection_store=self._store())
+            acting_header=HOME.upper(), selection_store=self._store())
         assert eff.org_id == HOME
 
 
@@ -245,11 +252,13 @@ class TestStaffEligibilityAndActorHelper:
         c.set_table_data("noctus_users", [row])
         c.set_table_data("organizations", [{"id": HOME, "nome": "Casa", "is_platform": True}])
         store = FakeOrgSelectionStore(ready={"igig"}, staff={STAFF}, licensed={(TARGET, "igig")},
-                                      home_orgs={STAFF: HOME})
+                                      home_orgs={STAFF: HOME}, members={STAFF: {HOME: "manager"}})
         store.set(STAFF, "igig", TARGET, SID)
         eff = resolve_effective_org(c, STAFF, product_slug="igig",
                                     token=_tok(STAFF, session_id=SID, aal="aal2"), selection_store=store)
-        assert eff.org_id == HOME and eff.is_staff is False
+        # Not staff (lesser org_role): the selection above is not honoured as staff -- the caller
+        # is a plain member of HOME and resolves there with the MEMBERSHIP role.
+        assert (eff.org_id, eff.org_role, eff.is_staff, eff.acting) == (HOME, "manager", False, False)
 
     def test_acting_actor_is_client_visible_and_tagged(self):
         from noctusai_lib.api.auth.effective_org import EffectiveOrg, acting_audit_actor

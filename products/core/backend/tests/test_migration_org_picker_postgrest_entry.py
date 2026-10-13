@@ -3,7 +3,6 @@ on a ready product with no valid live selection resolve NULL in current_org_id_f
 2026-10-12). The live behaviour is proven by ``noctus.dev.verify_db_guards`` probes (rolled back)."""
 from __future__ import annotations
 
-import importlib.util
 import re
 from pathlib import Path
 
@@ -25,22 +24,19 @@ NO_SELECTION_BRANCH = (
 )
 
 
-def _canon() -> str:
-    tpl = ROOT / "seed/lib/backend/noctusai_lib/domain/sql_templates.py"
-    spec = importlib.util.spec_from_file_location("_t_pg_entry_sql_templates", tpl)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return " ".join(mod.org_identity_function_sql("current_org_id_for").split())
-
-
 def _fn(sql: str) -> str:
     m = re.search(r"CREATE OR REPLACE FUNCTION public\.current_org_id_for.*?\$f\$;", sql, re.S)
     assert m is not None
     return " ".join(m.group(0).split())
 
 
-def test_helper_is_the_canonical_rendering():
-    assert _canon() in FLAT
+def test_helper_was_the_canonical_rendering_until_member_selection_superseded_it():
+    """078 stays byte-immutable (applied to prod); once a later migration re-declared the helper
+    its copy became a RATIFIED HISTORICAL one -- frozen by content hash in the parity baseline,
+    and the LAST core declaration (the member-selection migration) carries the canon."""
+    baseline = (ROOT / "mcp/noctusai/tests/org_identity_parity_baseline.json").read_text(encoding="utf-8")
+    assert f"{THIS.relative_to(ROOT)}::current_org_id_for" in baseline
+    assert "org_memberships" not in FLAT  # 078 predates multi-org: staff-only
 
 
 def test_staff_without_a_selection_on_a_ready_product_resolve_null_not_home():
@@ -61,12 +57,13 @@ def test_execute_stays_with_the_rls_helper_marker():
     assert "REVOKE EXECUTE ON FUNCTION public.current_org_id_for" not in SQL
 
 
-def test_is_the_last_core_declaration_of_the_helper():
+def test_declares_the_helper_after_the_mfa_flag_declaration():
     declaring = [
         p.name for p in sorted(MIGRATIONS.glob("[0-9]*.sql"))
         if re.search(r"FUNCTION\s+public\.current_org_id_for\s*\(", p.read_text(encoding="utf-8"))
     ]
-    assert declaring[-1] == THIS.name
+    assert declaring.index(THIS.name) == declaring.index(migration_path(MIGRATIONS, "org_picker_mfa_flag").name) + 1
+    # the LAST core declaration being canonical is the keeper's job (check_org_identity_function_parity)
 
 
 def test_remediation_marker_is_closed():

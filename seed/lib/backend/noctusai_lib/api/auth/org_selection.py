@@ -1,11 +1,14 @@
 """Platform org picker -- the live-selection store (Protocol + Real + Fake + factory).
 
-Platform staff (``noctus_users.role='admin'`` AND home org ``is_platform``) pick, once
-per product per LOGIN (Supabase auth ``session_id``), which org they work in. The
-selection lives in ``public.platform_org_selections`` (core 070, service-role only);
+Platform staff (``noctus_users.role='admin'`` AND home org ``is_platform``) AND ordinary
+MEMBERS of several orgs (an ACTIVE ``public.org_memberships`` row, multi-org 2026-10-13)
+pick, once per product per LOGIN (Supabase auth ``session_id``), which org they work in.
+The selection lives in ``public.platform_org_selections`` (core 070, service-role only);
 this module is the ONLY Python reader/writer. All writes go through the SECURITY DEFINER
 RPCs ``platform_org_selection_set`` / ``platform_org_selection_end``, which re-check
-staff + license themselves -- the server is the authority, the SPA only asks.
+staff-or-active-membership + license themselves -- the server is the authority, the SPA
+only asks. A member's pick also moves their last-active org (``noctus_users.org_id`` /
+``org_role`` follow it, with the MEMBERSHIP's role); a staff pick never touches the profile.
 
 * :class:`RealOrgSelectionStore` -- a ``public``-schema service-role client.
 * :class:`FakeOrgSelectionStore` -- in-memory, same contract (tests).
@@ -13,7 +16,8 @@ staff + license themselves -- the server is the authority, the SPA only asks.
   ``make_license_checker``) unless ``force_real``.
 
 Errors carry the RPC's code: :class:`OrgSelectionError` ``.code`` is one of
-``not_platform_staff`` | ``target_not_licensed`` | ``product_not_ready``.
+``not_a_member`` (neither staff nor an active member of the target) |
+``target_not_licensed`` | ``product_not_ready``.
 
 KB § PATTERNS/backend/tenancy-license-gate.md § Platform org picker
 """
@@ -32,7 +36,7 @@ from noctusai_lib.integrations.persistence.paging import iter_paged_rows
 logger = logging.getLogger(__name__)
 
 ENDED_BY_VALUES = ("replaced", "exit", "logout", "new_session", "revoked")
-ERROR_CODES = ("not_platform_staff", "target_not_licensed", "product_not_ready")
+ERROR_CODES = ("not_a_member", "target_not_licensed", "product_not_ready")
 _RPC_PREFIX = "platform_org_selection:"
 _IN_BATCH = 100
 #: Seconds the ``org_picker_ready`` flag of a product is reused in-process.
@@ -53,6 +57,14 @@ class LiveSelection:
     auth_session_id: str
 
 
+@dataclass(frozen=True)
+class OrgMembership:
+    """One ACTIVE ``public.org_memberships`` row: the user's role IN THAT ORG."""
+
+    org_id: str
+    org_role: str
+
+
 class OrgSelectionStore(Protocol):
     def product_ready(self, product_slug: str) -> bool: ...
 
@@ -67,6 +79,8 @@ class OrgSelectionStore(Protocol):
     def end(self, user_id: Any, product_slug: Optional[str], reason: str) -> int: ...
 
     def licensed_orgs(self, product_slug: str) -> list[dict]: ...
+
+    def memberships(self, user_id: Any) -> list[OrgMembership]: ...
 
 
 def _batched(values: list, size: int = _IN_BATCH):
@@ -180,6 +194,22 @@ class RealOrgSelectionStore:
             data = data[0] if data else 0
         return int(data or 0)
 
+    def memberships(self, user_id: Any) -> list[OrgMembership]:
+        """The user's ACTIVE memberships, read fresh (revocation by recheck: never cached)."""
+        core = self._core()
+
+        def page(start: int, end: int):
+            return (
+                core.table("org_memberships").select("id, org_id, org_role")
+                .eq("user_id", str(user_id)).eq("status", "active")
+                .order("id").range(start, end).execute().data
+            )
+
+        return [
+            OrgMembership(org_id=str(r["org_id"]), org_role=str(r.get("org_role") or ""))
+            for r in iter_paged_rows(page, label="org_memberships")
+        ]
+
     def licensed_orgs(self, product_slug: str) -> list[dict]:
         from noctusai_lib.domain.licensing import license_rows_valid
 
@@ -208,8 +238,14 @@ class RealOrgSelectionStore:
 
 @dataclass
 class FakeOrgSelectionStore:
-    """In-memory store. ``ready`` slugs may be picked; ``staff`` user ids may pick;
-    ``licensed`` is ``{(org_id, slug)}``; ``orgs`` names them. Mirrors the RPC errors."""
+    """In-memory store. ``ready`` slugs may be picked; ``staff`` user ids may pick any
+    licensed org; any other user may pick only an org they hold an ACTIVE entry for in
+    ``members`` (``{user_id: {org_id: org_role}}``, the fake ``org_memberships``);
+    ``licensed`` is ``{(org_id, slug)}``; ``orgs`` names them. Mirrors the RPC errors AND
+    the member side effects: the profile mirror (``last_active``: ``{user_id: (org_id,
+    org_role)}``) follows a member's pick with the MEMBERSHIP role, and moving it ends the
+    user's other live selections ('revoked') like the 070 trigger. Ending a membership
+    (``members[user].pop(org)``) is all a test needs to model revocation: nothing is cached."""
 
     ready: set[str] = field(default_factory=set)
     staff: set[str] = field(default_factory=set)
@@ -220,6 +256,10 @@ class FakeOrgSelectionStore:
     unavailable: bool = False
     #: Slugs whose picker does NOT require aal2 (``org_picker_requires_mfa = false``).
     mfa_optional: set[str] = field(default_factory=set)
+    #: ``{user_id: {org_id: org_role}}`` -- ACTIVE memberships only (a removed one is absent).
+    members: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: ``{user_id: (org_id, org_role)}`` -- the ``noctus_users`` mirror a member's pick moves.
+    last_active: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def product_ready(self, product_slug: str) -> bool:
         return product_slug in self.ready
@@ -235,21 +275,38 @@ class FakeOrgSelectionStore:
                 return LiveSelection(r["id"], r["target"], r["home"], r["session"])
         return None
 
+    def memberships(self, user_id: Any) -> list[OrgMembership]:
+        if self.unavailable:
+            raise RuntimeError("fake selection store outage")
+        return [OrgMembership(o, role) for o, role in self.members.get(str(user_id), {}).items()]
+
     def set(self, user_id: Any, product_slug: str, target_org_id: Any, auth_session_id: Any) -> str:
         uid = str(user_id)
-        if uid not in self.staff:
-            raise OrgSelectionError("not_platform_staff")
+        target = str(target_org_id)
+        is_staff = uid in self.staff
+        member_role = None if is_staff else self.members.get(uid, {}).get(target)
+        if not is_staff and member_role is None:
+            raise OrgSelectionError("not_a_member")
         if product_slug not in self.ready:
             raise OrgSelectionError("product_not_ready")
-        if (str(target_org_id), product_slug) not in self.licensed:
+        if (target, product_slug) not in self.licensed:
             raise OrgSelectionError("target_not_licensed")
+        home = self.home_orgs.get(uid)
+        if not is_staff:
+            # Q3: the profile follows the pick (membership role); a real change ends the
+            # user's live selections everywhere (the 070 revocation trigger).
+            if self.last_active.get(uid) != (target, member_role):
+                self.last_active[uid] = (target, member_role)
+                for r in self.rows:
+                    if r["user_id"] == uid and r["ended_by"] is None:
+                        r["ended_by"] = "revoked"
         for r in self.rows:
             if r["user_id"] == uid and r["slug"] == product_slug and r["ended_by"] is None:
                 r["ended_by"] = "new_session" if r["session"] != str(auth_session_id) else "replaced"
         sid = str(uuid.uuid4())
         self.rows.append({
-            "id": sid, "user_id": uid, "slug": product_slug, "target": str(target_org_id),
-            "home": self.home_orgs.get(uid), "session": str(auth_session_id), "ended_by": None,
+            "id": sid, "user_id": uid, "slug": product_slug, "target": target,
+            "home": home, "session": str(auth_session_id), "ended_by": None,
         })
         return sid
 
@@ -284,6 +341,6 @@ def make_org_selection_store(
 
 __all__ = [
     "ENDED_BY_VALUES", "ERROR_CODES", "FakeOrgSelectionStore", "LiveSelection",
-    "OrgSelectionError", "OrgSelectionStore", "RealOrgSelectionStore",
+    "OrgMembership", "OrgSelectionError", "OrgSelectionStore", "RealOrgSelectionStore",
     "make_org_selection_store",
 ]

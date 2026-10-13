@@ -97,8 +97,9 @@ around a license call; it also pins the seed wiring. Strict `== 401` / `== 403` 
 ## Platform org picker (2026-10-08, core 070 + seed `me_router`)
 
 Contract: `projects/org-picker/CONTRACT.md`. Platform STAFF enter a customer org **per
-product, per login**; everyone else enters their own org and the picker endpoints answer a
-strict `403 {"code":"not_platform_staff"}`.
+product, per login**; since multi-org (2026-10-13, § Members below) so do ordinary MEMBERS of
+several orgs — but only the orgs they are an ACTIVE member of (`public.org_memberships`);
+a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
 
 - **Staff = explicit grant, never derived from `org_role`:** `noctus_users.role='admin'`
   (superadmin, writable only through the superadmin-gated users router) AND home
@@ -138,12 +139,13 @@ strict `403 {"code":"not_platform_staff"}`.
   `owner`, else home (no aal2 ⇒ home + `mfa_required`; the aal2 leg applies only while the
   product's `org_picker_requires_mfa` is true — core 073, owner switched it off 2026-10-09,
   restore = `UPDATE products SET org_picker_requires_mfa = true`). Intent pin: header present and ≠
-  resolved org ⇒ `409 {"code":"org_selection_changed"}` (non-staff: ignored).
+  resolved org ⇒ `409 {"code":"org_selection_changed"}` (staff AND members; it only narrows — it
+  can refuse a request, never widen one).
   `/api/me/access` gains `org_selection{available, required, mfa_required, acting, org,
   home_org, selection_id, org_role}`; `GET /api/me/org-choices` (client orgs by name, the
   home org LAST, licensed orgs, `no-store`), `PUT`/`DELETE /api/me/org-choice` (`403 mfa_required`, `403 org_sem_licenca`,
-  `409 product_not_ready`; `DELETE …?all=true`, staff-only, ends every product's selection
-  as `logout`). Core logout ends all selections. `org_id` must be a UUID (422 otherwise).
+  `409 product_not_ready`; `DELETE …?all=true` ends every product's selection of the CALLER
+  as `logout`; any authenticated user — it only ever touches their own rows). Core logout ends all selections. `org_id` must be a UUID (422 otherwise).
 - **Every entry is a choice (owner decision 2026-10-12).** Platform staff must choose the org
   EVERY time they ENTER a product, never silently landing in the home org (NoctusAI).
   - ENTRY = (a) an SSO launch/redeem landing from core (always an entry, even in the same
@@ -206,6 +208,36 @@ strict `403 {"code":"not_platform_staff"}`.
   (`verify_db_guards`, parked `pending_migration` until 078 is applied). Known residual: the
   SQL helper also requires the `auth.sessions` row to exist, the Python resolver does not
   (SQL stricter: NULL vs target for a token outliving its session).
+- **Members (multi-org S2+S3, owner decisions 2026-10-13, core `org_member_selection`).** The
+  SAME picker, widened from "staff" to "staff OR an ACTIVE member of the target org" — no second
+  mechanism. Roadmap: `project-history/roadmaps/multi-org-membership-2026-10.md`.
+  - **Who:** the RPC `platform_org_selection_set` keeps its staff path byte-for-byte; a non-staff
+    caller needs an ACTIVE `org_memberships` row for the target (else
+    `platform_org_selection:not_a_member`, row locked `FOR SHARE`), plus the usual ready/licensed
+    refusals. A customer-role membership never resolves (helper NULL, resolver ignores it).
+  - **Role = the membership role in the EFFECTIVE org, never the home profile role** (owner in A
+    + viewer in B ⇒ viewer in B — the privilege-leak guard; probe
+    `platform_org_selection_set.member_role_is_the_target_membership_role`). The resolver reads it
+    from `org_memberships` on EVERY request (`OrgSelectionStore.memberships`, never cached).
+  - **Q1** no aal2 for members (staff keep it). **Q2** a multi-org member lands silently in their
+    last-active org when it is licensed for the product; only when it is NOT (or they are no
+    longer an active member of it) and another eligible membership exists does a gated path answer
+    `409 org_selection_required` (`/api/me/access`: `org_selection.required`, `available`). A
+    single-org member never sees a choice; `available` = ≥2 eligible orgs. **Q3**
+    `noctus_users.org_id/org_role` = the LAST-ACTIVE org and follow the pick (with the membership
+    role, in the RPC's transaction, before the selection row is written); the 079 mirror trigger
+    then upserts the identical membership, so a pick never ends or downgrades one. The 070 trigger
+    ends the user's other live selections when the mirror moves — the last-active org is ONE value.
+  - **Revocation by recheck (S3):** `current_org_id_for` joins `org_memberships` (`status='active'`)
+    on every call — ending a membership makes the selection stop resolving on the next query, and
+    the HOME fall-back itself requires an ACTIVE membership, so a removed member never falls back to
+    the org they were removed from (NULL). Nothing in the JWT. The pin header only narrows.
+  - **Audit:** the selection row is the record of a switch (user, target, previous home, login,
+    `started_at`/`ended_by`); a member is never "acting" (`EffectiveOrg.acting` is staff-only), so
+    their writes carry the plain actor with `org_id` = the selected org — no `platform_support` tag.
+  - **Known gap → S4:** a user removed from the org their profile still names is refused by the SQL
+    helper (NULL) but the Python home path (no selection, licensed home) does not re-read
+    memberships — remove-member (S4) must also move/clear the profile mirror.
 - **Audit/LGPD:** data-mutating rows while acting carry `org_id = target`,
   `acting_org_id = home`, `act_as_session_id = selection id`, role `platform_support` (the
   client sees the changes, labelled "Suporte NoctusAI"); selection start/end/swap and reads

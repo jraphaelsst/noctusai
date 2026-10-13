@@ -262,7 +262,10 @@ class ProductDependencies:
         * no ``noctus_users`` row / no org → 403 (a metadata org is ignored);
         * effective org without a license  → 403 ``org_sem_licenca`` (round 2;
           always the HOME org here: this method receives no token, so a platform-staff org-picker
-          selection is never applied — use ``make_get_current_user_org``);
+          selection is never applied — use ``make_get_current_user_org``). For a multi-org
+          MEMBER "home" is their LAST-ACTIVE org (``noctus_users.org_id/org_role`` follow their
+          pick with the membership role, multi-org Q3), so org AND role here are the selected
+          org's — never a role carried over from another org;
         * DB / transport error             → 503 (fail closed, no fallback).
 
         Prefer the ``org_id`` already unpacked from ``get_current_user_org``
