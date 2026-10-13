@@ -284,3 +284,16 @@ class TestBackfill:
         )
         assert _endereco_de(_cliente(scoped, cid)) == FICHA_TUPLA
         assert _conflitos(scoped, "pendente") == []
+
+
+def test_cnh_estrangeiro_is_not_read_as_a_nationality():
+    """876 real-doc scorecard (2026-10-13): a foreign national's CNH prints
+    only "ESTRANGEIRO" — a category, never the contract's gentílico."""
+    from noctusai_lib.integrations.documents.types import IdentityFields
+
+    from app.modules.card_hub.identidade_extracao_service import _valores_lidos
+
+    generico = IdentityFields(nacionalidade="estrangeiro", nacionalidade_confianca="alta")
+    assert _valores_lidos(generico)["nacionalidade"][0] is None
+    especifico = IdentityFields(nacionalidade="italiano", nacionalidade_confianca="alta")
+    assert _valores_lidos(especifico)["nacionalidade"][0] == "italiano"
