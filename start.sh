@@ -67,6 +67,7 @@ PRODUCTS=(
   "agents:Agentes:8016:8200"
   "community:Community:8017:8210"
   "store:Store:8018:8220"
+  "commerce:Commerce:8019:8230"
 )
 # END_PRODUCTS_REGISTRY
 

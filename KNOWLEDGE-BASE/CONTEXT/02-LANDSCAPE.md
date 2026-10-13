@@ -24,6 +24,7 @@
 | **Agentes** | `products/agents/` | Home of managed AI agents: Julia (Claude Agent SDK, web-only, approval-gated writes to academia via scoped API) + One Chat listing with on/off via social-wiring's scoped toggle (scaffold 2026-09-14; roadmap `julia-agents-academia-2026-09`) | 8016/8200 | `agents` |
 | **Community** | `products/community/` | Management center for one paid online women's community: back office (`admin`/`moderador`) + member portal, tiered paid access (Stripe + Asaas), semi-automatic WhatsApp group management. pt-BR. Scaffolded 2026-09-16 — domain modules planned, not built | 8017/8210 | `community` |
 | **Store** | `products/store/` | Public sales page for digital products (first: the generic "Contrato Blindado de Compra e Venda" kit). Asaas one-off checkout, webhook-confirmed fulfillment by email + thank-you page, owner-only `/login` admin for landing values and sales. Scaffolded 2026-10-02 (contract `products/store/projects/store-v1-CONTRACT.md`) | 8018/8220 | `store` |
+| **Commerce** | `products/commerce/` | Generic e-commerce + ERP reference store for the commerce vertical seed (consumes `noctusai_lib.domain.commerce`): staff back office + host-resolved public storefront. Scaffolded 2026-10-12; `deploy_scope=dev` until owner validation (contract `projects/commerce-seed-p3/CONTRACT.md` §6) | 8019/8230 | `commerce` |
 | **Orbity** | `products/orbity/` | Agency operating-system (absorbing `sistema-orbity`): CRM/funil, clients, contracts, financeiro, agenda, WhatsApp automation, Meta ads, notifications — built seed-first via the absorption capability-uplift loop (in flight on `feat/orbity-build`, roadmap `project-history/roadmaps/orbity-2026-06.md`, knowledge `KB § ABSORPTIONS/orbity/`) | 8010/8140 | `orbity` |
 
 > **Retired 2026-05-16** (`social-wiring-absorption` Wave 4): `media-scheduling`, `youtube-crawler`, `mailing`, `imobi-scheduling` were consolidated into **`social-wiring`** (`products/social-wiring/`). Email-marketing → `social-wiring/app/modules/email_marketing/`; WhatsApp-scheduling → `social-wiring/app/modules/scheduling/`. Core un-registration: forward migration `products/core/backend/migrations/033_retire_consolidated_products.sql` (013/028 immutable). Durable record: `project-history/ledger.ndjson` slug `social-wiring-absorption-wave4-teardown`.
@@ -62,8 +63,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 ## Database
 
 <!-- kb-counts:start:database -->
-- **Schemas DECLARED in migrations (17):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
-- **Tables: 735** declared across those schemas.
+- **Schemas DECLARED in migrations (18):** `public` + `academia_de_reciclagem` + `adconnect` + `agents` + `commerce` + `community` + `daily_life` + `dev_team` + `erp` + `igig` + `knowledge_extractor` + `orbity` + `p_studio` + `personal-finance` + `seed` + `social_wiring` + `store` + `therapy`.
+- **Tables: 738** declared across those schemas.
 - Counted from `products/*/backend/migrations/*.sql` — this is what the
   REPO declares, not what is provisioned on the Supabase project. A
   schema can appear here and not exist live (unapplied migrations, or
