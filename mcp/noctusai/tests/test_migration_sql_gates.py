@@ -47,9 +47,28 @@ class TestCheckSecdefMigrationRevokesExecute:
         sql = SECDEF + "DO $$ BEGIN EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, anon, authenticated', 'x'); END $$;\n"
         assert check_secdef_migration_revokes_execute(_repo(sql)) == []
 
-    def test_rls_helper_escape_hatch_passes(self):
-        sql = "-- secdef-execute-ok: rls-helper referenced by pg_policy\n" + SECDEF
+    def test_rls_helper_escape_passes_when_policy_references_fn(self):
+        sql = (
+            "-- secdef-execute-ok: rls-helper referenced by pg_policy\n" + SECDEF
+            + "CREATE POLICY p ON demo.t USING (x = demo.do_thing(1));\n"
+        )
         assert check_secdef_migration_revokes_execute(_repo(sql)) == []
+
+    def test_rls_helper_escape_refused_without_policy_reference(self):
+        sql = "-- secdef-execute-ok: rls-helper referenced by pg_policy\n" + SECDEF
+        issues = check_secdef_migration_revokes_execute(_repo(sql))
+        assert len(issues) == 1 and "CREATE POLICY" in issues[0]["issue"]
+
+    def test_commented_policy_reference_does_not_verify(self):
+        sql = (
+            "-- secdef-execute-ok: rls-helper x\n" + SECDEF
+            + "-- CREATE POLICY p ON demo.t USING (demo.do_thing(1));\n"
+        )
+        assert len(check_secdef_migration_revokes_execute(_repo(sql))) == 1
+
+    def test_freeform_escape_reason_refused(self):
+        sql = "-- secdef-execute-ok: trust me\n" + SECDEF
+        assert len(check_secdef_migration_revokes_execute(_repo(sql))) == 1
 
     def test_security_invoker_function_ignored(self):
         sql = "CREATE FUNCTION demo.f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;\n"

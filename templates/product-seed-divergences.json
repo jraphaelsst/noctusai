@@ -8,6 +8,14 @@
     {
       "path": "backend/migrations/003_examples.sql",
       "rationale": "Template copy is idempotent (migration_replay applies every new file twice); the seed's own 003 is applied in prod, ledger-checksummed, therefore immutable."
+    },
+    {
+      "path": "backend/migrations/005_status_pagina_dev_visibility.sql",
+      "rationale": "Template copy carries verified `secdef-execute-ok: rls-helper` markers / REVOKE (D31, check_secdef_migration_revokes_execute) so a scaffolded product passes the keeper by construction; the seed's own 005 is applied in prod, ledger-checksummed, therefore immutable (its legacy functions stay baselined)."
+    },
+    {
+      "path": "backend/migrations/006_customer_role_isolation.sql",
+      "rationale": "Template copy carries verified `secdef-execute-ok: rls-helper` markers / REVOKE (D31, check_secdef_migration_revokes_execute) so a scaffolded product passes the keeper by construction; the seed's own 006 is applied in prod, ledger-checksummed, therefore immutable (its legacy functions stay baselined)."
     }
   ]
 }

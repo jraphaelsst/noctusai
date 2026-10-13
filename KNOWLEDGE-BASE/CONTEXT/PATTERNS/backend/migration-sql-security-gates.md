@@ -51,6 +51,16 @@ Therefore:
   `pg_policy` (as the lockdown DO-blocks do) over listing names.
 - No policy reference ⇒ no escape: revoke it.
 
+**Verified markers + scaffold by construction (D31, 2026-10-13).** The keeper no
+longer takes `secdef-execute-ok` on faith: only `-- secdef-execute-ok: rls-helper <why>`
+is accepted, and only when `<fn>(` appears inside a `CREATE/ALTER POLICY` somewhere in
+the scanned migrations (the helpers are shared `public` functions, so the corpus is
+fleet-wide); a free-form reason or an unreferenced function is refused. The seed
+template (`templates/product-seed` migrations 001/005/006, declared divergences from the
+immutable `products/seed` originals, which stay baselined) carries those verified
+markers — and `REVOKE`s `is_customer()`, which no policy uses — so `scaffold_product`
+emits migrations that pass the keeper with no baseline entry.
+
 ## 2. Untyped empty array literals
 
 `ARRAY[]` with no cast fails at apply time with `42P18 could not determine data

@@ -243,6 +243,42 @@ class TestSqlTemplatesIntegration:
         assert f"{self.SCAFFOLD_SCHEMA}.invitations" in content
 
 
+class TestScaffoldPassesSecdefKeeper:
+    """D31 (2026-10-13): a freshly scaffolded product's migrations satisfy
+    `check_secdef_migration_revokes_execute` BY CONSTRUCTION (verified
+    `rls-helper` markers / REVOKE) — no baseline entry, no hand edit."""
+
+    def test_fresh_scaffold_migrations_pass_keeper_without_baseline(self, tmp_path):
+        from tools.noctus.dev.compliance import secdef_migration_violations
+
+        result = scaffold_product(
+            "Secdef Probe", "secdef-probe", "secdef_probe", 8097, 8197, "Zap",
+            brief={}, products_dir=tmp_path / "products", template_dir=WORKTREE_TEMPLATE,
+        )
+        assert result["created"] is True, result
+        # Raw violations (baseline NOT applied) must be empty for the new product,
+        # and the scaffold must really ship the SECURITY DEFINER helpers.
+        sql = "\n".join(
+            p.read_text() for p in (tmp_path / "products" / "secdef-probe" / "backend" / "migrations").glob("*.sql")
+        )
+        assert "SECURITY DEFINER" in sql
+        # Stand-in for the shared fleet: `current_user_org_id` / `current_customer_org_id`
+        # are shared public helpers whose policies live in OTHER products' chains
+        # (core / community) — the keeper verifies markers against the whole corpus.
+        other = tmp_path / "products" / "other" / "backend" / "migrations"
+        other.mkdir(parents=True)
+        (other / "001_x.sql").write_text(
+            "CREATE POLICY a ON o.t USING (org_id = public.current_user_org_id());\n"
+            "CREATE POLICY b ON o.t USING (org_id = public.current_customer_org_id());\n"
+        )
+        assert secdef_migration_violations(tmp_path) == []
+        # And the marker is verified, not on faith: without the fleet policies it is refused.
+        (other / "001_x.sql").unlink()
+        assert {n for _, _, n in secdef_migration_violations(tmp_path)} == {
+            "current_user_org_id", "current_customer_org_id"
+        }
+
+
 class TestSlugPlaceholder:
     """Phase 3.4 — `{{PRODUCT_SLUG}}` placeholder + README path templating.
 

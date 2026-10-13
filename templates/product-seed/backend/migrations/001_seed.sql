@@ -75,6 +75,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA {{SCHEMA_NAME}} GRANT ALL ON SEQUENCES TO aut
 -- .org_identity_function_sql() so a fresh-env apply of this chain can never revert
 -- the customer exclusion (prod receives it via the *_customer_role_isolation.sql
 -- forward migration). Keeper: check_org_identity_function_parity.
+-- secdef-execute-ok: rls-helper (referenced by every tenant-scoped CREATE POLICY)
 CREATE OR REPLACE FUNCTION public.current_org_id()
   RETURNS uuid
   LANGUAGE sql

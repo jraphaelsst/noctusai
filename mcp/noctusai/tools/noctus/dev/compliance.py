@@ -11568,7 +11568,7 @@ def check_product_guide_cochange_range(
 # this keeper catches it at commit time. A migration that creates a SECURITY
 # DEFINER function must, in the same file, `REVOKE EXECUTE|ALL ... FROM PUBLIC,
 # anon, authenticated` naming the function (or run a dynamic REVOKE loop).
-# Escape hatch: a `secdef-execute-ok: <why>` comment within the 3 lines above the
+# Escape hatch: a `secdef-execute-ok: rls-helper <why>` comment (VERIFIED: a CREATE POLICY must reference the fn) within the 3 lines above the
 # CREATE (RLS helpers that policies call — must equal the probe's rule: the
 # function is referenced by a pg_policy), or an entry in the legacy baseline
 # `mcp/noctusai/tests/secdef_migration_baseline.json` (historical files only;
@@ -11595,6 +11595,8 @@ _SECDEF_REVOKE_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _SECDEF_OK_RE = re.compile(r"secdef-execute-ok\s*:\s*\S", re.IGNORECASE)
+_SECDEF_RLS_HELPER_RE = re.compile(r"secdef-execute-ok\s*:\s*rls-helper\b", re.IGNORECASE)
+_SQL_POLICY_STMT_RE = re.compile(r"\b(?:CREATE|ALTER)\s+POLICY\b.*?;", re.IGNORECASE | re.DOTALL)
 _UNTYPED_EMPTY_ARRAY_RE = re.compile(r"\bARRAY\s*\[\s*\]\s*(?!::)", re.IGNORECASE)
 
 
@@ -11632,10 +11634,27 @@ def _secdef_load_baseline() -> set[str]:
     return set(data.get("legacy", []))
 
 
-def secdef_migration_violations(root: Path) -> list[tuple[str, int, str]]:
-    """(relpath, line, function) for every SECURITY DEFINER create lacking a
-    same-file REVOKE and an `secdef-execute-ok` escape — baseline NOT applied."""
-    found: list[tuple[str, int, str]] = []
+def _secdef_policy_referenced_names(root: Path) -> set[str]:
+    """Lower-cased identifiers followed by ``(`` inside any CREATE/ALTER POLICY
+    statement across ALL scanned migrations. RLS helpers live in the shared
+    ``public`` schema, so a policy in ANY product's chain is a real reference
+    (the runtime probe asks the one shared ``pg_policy``)."""
+    names: set[str] = set()
+    for path in _migration_sql_files(root):
+        try:
+            text = _sql_strip_comments(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            continue
+        for stmt in _SQL_POLICY_STMT_RE.finditer(text):
+            names.update(n.lower() for n in re.findall(r"([A-Za-z_]\w*)\s*\(", stmt.group(0)))
+    return names
+
+
+def _secdef_scan(root: Path) -> list[tuple[str, int, str, str]]:
+    """(relpath, line, function, reason) — reason ``unrevoked`` or
+    ``unverified-rls-helper`` (escape present but no policy references the fn)."""
+    found: list[tuple[str, int, str, str]] = []
+    policy_names: set[str] | None = None
     for path in _migration_sql_files(root):
         try:
             raw = path.read_text(encoding="utf-8")
@@ -11661,10 +11680,26 @@ def secdef_migration_violations(root: Path) -> list[tuple[str, int, str]]:
             if dynamic_revoke:
                 continue
             window = raw_lines[max(0, line_no - 1 - 3):line_no]
-            if any(_SECDEF_OK_RE.search(ln) for ln in window):
-                continue
-            found.append((rel, line_no, name))
+            if any(_SECDEF_RLS_HELPER_RE.search(ln) for ln in window):
+                if policy_names is None:
+                    policy_names = _secdef_policy_referenced_names(root)
+                if name in policy_names:
+                    continue
+                found.append((rel, line_no, name, "unverified-rls-helper"))
+            elif any(_SECDEF_OK_RE.search(ln) for ln in window):
+                # Free-form escape reasons are refused: the only sanctioned
+                # escape is the VERIFIED `rls-helper` form (refuse-not-null).
+                found.append((rel, line_no, name, "unverified-rls-helper"))
+            else:
+                found.append((rel, line_no, name, "unrevoked"))
     return found
+
+
+def secdef_migration_violations(root: Path) -> list[tuple[str, int, str]]:
+    """(relpath, line, function) for every SECURITY DEFINER create lacking a
+    same-file REVOKE and a VERIFIED `secdef-execute-ok: rls-helper` escape —
+    baseline NOT applied."""
+    return [(rel, ln, name) for rel, ln, name, _ in _secdef_scan(root)]
 
 
 def check_secdef_migration_revokes_execute(repo_root: Path | None = None) -> list[dict]:
@@ -11679,8 +11714,22 @@ def check_secdef_migration_revokes_execute(repo_root: Path | None = None) -> lis
         return []
     legacy = _secdef_load_baseline()
     issues: list[dict] = []
-    for rel, line_no, name in secdef_migration_violations(root):
+    for rel, line_no, name, reason in _secdef_scan(root):
         if f"{rel}::{name}" in legacy:
+            continue
+        if reason == "unverified-rls-helper":
+            issues.append({
+                "file": rel,
+                "issue": (
+                    f"`{rel}:{line_no}` escapes SECURITY DEFINER `{name}` with "
+                    f"`secdef-execute-ok`, but only `-- secdef-execute-ok: rls-helper <why>` "
+                    f"is sanctioned AND `{name}(` must appear in a CREATE POLICY in the "
+                    f"migrations. No policy references it, so the escape is refused: "
+                    f"REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated instead. Per "
+                    f"`KB § PATTERNS/backend/migration-sql-security-gates.md`."
+                ),
+                "severity": "high",
+            })
             continue
         issues.append({
             "file": rel,

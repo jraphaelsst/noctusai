@@ -32,6 +32,7 @@
 
 SET search_path = {{SCHEMA_NAME}}, public;
 
+-- secdef-execute-ok: rls-helper (referenced by the status_pagina CREATE POLICY)
 CREATE OR REPLACE FUNCTION public.current_org_role()
   RETURNS text
   LANGUAGE sql

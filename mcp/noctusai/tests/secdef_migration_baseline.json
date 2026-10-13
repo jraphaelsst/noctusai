@@ -217,13 +217,6 @@
   "products/therapy-platform/backend/migrations/001_therapy_platform.sql::set_updated_at",
   "products/therapy-platform/backend/migrations/011_scheduling_pilot.sql::decrypt_gcal_token",
   "products/therapy-platform/backend/migrations/011_scheduling_pilot.sql::encrypt_gcal_token",
-  "products/therapy-platform/backend/migrations/016_status_pagina_dev_visibility.sql::current_org_role",
-  "templates/product-seed/backend/migrations/001_seed.sql::current_org_id",
-  "templates/product-seed/backend/migrations/005_status_pagina_dev_visibility.sql::current_org_role",
-  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_customer_org_id",
-  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_org_id",
-  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_org_role",
-  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::current_user_org_id",
-  "templates/product-seed/backend/migrations/006_customer_role_isolation.sql::is_customer"
+  "products/therapy-platform/backend/migrations/016_status_pagina_dev_visibility.sql::current_org_role"
  ]
 }

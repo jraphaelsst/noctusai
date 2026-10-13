@@ -25,6 +25,7 @@ SET search_path = {{SCHEMA_NAME}}, public;
 -- 1. Canonical org-identity functions (shared public schema)
 -- ---------------------------------------------------------------------------
 
+-- secdef-execute-ok: rls-helper (referenced by every tenant-scoped CREATE POLICY)
 CREATE OR REPLACE FUNCTION public.current_org_id()
   RETURNS uuid
   LANGUAGE sql
@@ -36,6 +37,7 @@ AS $f$
      AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
 $f$;
 
+-- secdef-execute-ok: rls-helper (referenced by core CREATE POLICY; shared public helper)
 CREATE OR REPLACE FUNCTION public.current_user_org_id()
   RETURNS uuid
   LANGUAGE sql
@@ -47,6 +49,7 @@ AS $f$
      AND COALESCE(org_role, '') <> ALL (ARRAY['membro']);
 $f$;
 
+-- secdef-execute-ok: rls-helper (referenced by CREATE POLICY across the fleet)
 CREATE OR REPLACE FUNCTION public.current_org_role()
   RETURNS text
   LANGUAGE sql
@@ -56,6 +59,8 @@ AS $f$
   SELECT org_role FROM public.noctus_users WHERE id = (SELECT auth.uid());
 $f$;
 
+-- is_customer() is referenced by NO policy fleet-wide (core 064 revoked it live): no
+-- rls-helper escape; it is REVOKEd below like every non-helper SECURITY DEFINER fn.
 CREATE OR REPLACE FUNCTION public.is_customer()
   RETURNS boolean
   LANGUAGE sql
@@ -69,6 +74,7 @@ AS $f$
   );
 $f$;
 
+-- secdef-execute-ok: rls-helper (referenced by customer-isolation CREATE POLICY; shared public helper)
 CREATE OR REPLACE FUNCTION public.current_customer_org_id()
   RETURNS uuid
   LANGUAGE sql
@@ -79,6 +85,9 @@ AS $f$
    WHERE id = (SELECT auth.uid())
      AND org_role = ANY (ARRAY['membro']);
 $f$;
+
+REVOKE EXECUTE ON FUNCTION public.is_customer() FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.is_customer() TO service_role;
 
 -- ---------------------------------------------------------------------------
 -- 2. invitations.token — service-role only
