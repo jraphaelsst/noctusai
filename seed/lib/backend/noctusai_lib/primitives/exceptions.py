@@ -239,6 +239,15 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             status_code=exc.status_code, content=exc.detail, headers=exc.headers
         )
 
+    # A route that hand-parses a body and re-raises pydantic's error list as
+    # `HTTPException(422, detail=[...])` would otherwise have the list
+    # `str()`-ed into a Python repr ("[{'type': ...}]") as the toast text.
+    if exc.status_code == 422 and _is_pydantic_error_list(exc.detail):
+        response = _validation_errors_response(exc.detail)
+        if exc.headers:
+            response.headers.update(exc.headers)
+        return response
+
     code = "HTTP_ERROR"
     if exc.status_code == 404:
         code = "NOT_FOUND"
@@ -382,13 +391,27 @@ async def request_validation_exception_handler(
     client parsing it field-by-field); only the human `message` — what a
     toast renders — is pt-BR, one clause per field.
     """
+    return _validation_errors_response(exc.errors())
+
+
+def _is_pydantic_error_list(detail: object) -> bool:
+    """True for a non-empty list of pydantic error dicts (`loc` + `type`)."""
+    return (
+        isinstance(detail, list)
+        and bool(detail)
+        and all(isinstance(e, dict) and "loc" in e and "type" in e for e in detail)
+    )
+
+
+def _validation_errors_response(raw_errors: list) -> JSONResponse:
+    """The canonical 422 for a list of pydantic error dicts (pt-BR `message`)."""
     errors = []
     human_parts = []
-    for error in exc.errors():
+    for error in raw_errors:
         field = _validation_field(tuple(error["loc"]))
         errors.append({
             "field": field,
-            "message": error["msg"],
+            "message": error.get("msg", ""),
             "type": error["type"],
         })
         human_parts.append(f"{field}: {_pt_br_validation_message(error)}")

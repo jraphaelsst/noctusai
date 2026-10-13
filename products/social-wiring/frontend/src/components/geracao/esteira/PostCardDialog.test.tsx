@@ -603,6 +603,34 @@ describe("Datas do post (PATCH /posts/{id})", () => {
     expect(m.atualizar).toHaveBeenCalledWith({ id: "p1", patch: { data_entrega: null } }, expect.any(Object));
   });
 
+  it("não envia a cada digitação: só no blur/Enter, e nunca com ano de 6 dígitos", () => {
+    m.post.mockReturnValue(ok(postBase({ data_entrega: "2026-10-20T15:00:00+00:00" })));
+    montar();
+    const campo = screen.getByLabelText("Postagem prevista");
+    fireEvent.change(campo, { target: { value: "2026-10-21T09:30" } });
+    expect(m.atualizar).not.toHaveBeenCalled(); // typing alone never PATCHes
+    fireEvent.change(campo, { target: { value: "202618-10-27T00:00" } });
+    fireEvent.blur(campo);
+    expect(m.atualizar).not.toHaveBeenCalled();
+    expect(campo).toHaveValue("2026-10-20T12:00"); // snapped back to the saved value
+    fireEvent.change(campo, { target: { value: "2026-10-27T00:00" } });
+    fireEvent.keyDown(campo, { key: "Enter" });
+    expect(m.atualizar).toHaveBeenCalledTimes(1);
+    expect(m.atualizar).toHaveBeenCalledWith(
+      { id: "p1", patch: { data_entrega: "2026-10-27T00:00:00-03:00" } },
+      expect.any(Object),
+    );
+  });
+
+  it("Gravação agendada também descarta ano inválido", () => {
+    m.post.mockReturnValue(ok(postBase({ gravacao_em: "2026-10-20" })));
+    montar();
+    const campo = screen.getByLabelText("Gravação agendada");
+    fireEvent.change(campo, { target: { value: "202618-10-27" } });
+    fireEvent.blur(campo);
+    expect(m.atualizar).not.toHaveBeenCalled();
+  });
+
   it("entrega concluída alterna via PATCH", () => {
     montar();
     fireEvent.click(screen.getByLabelText("Entrega concluída"));

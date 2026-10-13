@@ -234,3 +234,48 @@ class TestRequestValidationExceptionHandlerIsPtBr:
         assert "número inteiro" in message
         assert "Data inválida" in message
         assert "verdadeiro ou falso" in message
+
+
+# ---------------------------------------------------------------------------
+# http_exception_handler — a pydantic error LIST as `detail` (hand-parsed body)
+# ---------------------------------------------------------------------------
+
+
+class TestHttpExceptionHandlerPydanticErrorList:
+    def _client(self) -> TestClient:
+        app = FastAPI()
+        app.add_exception_handler(HTTPException, http_exception_handler)
+
+        @app.get("/lista")
+        async def lista():
+            raise HTTPException(
+                status_code=422,
+                detail=[
+                    {
+                        "type": "datetime_from_date_parsing",
+                        "loc": ["data_entrega"],
+                        "msg": "Input should be a valid datetime or date, invalid character in year",
+                        "input": "202618-10-27T00:00:00-03:00",
+                    }
+                ],
+            )
+
+        @app.get("/lista-estranha")
+        async def lista_estranha():
+            raise HTTPException(status_code=422, detail=["a", "b"])
+
+        return TestClient(app)
+
+    def test_error_list_becomes_ptbr_envelope_never_a_python_repr(self) -> None:
+        resp = self._client().get("/lista")
+        assert resp.status_code == 422
+        body = resp.json()["error"]
+        assert body["code"] == "VALIDATION_ERROR"
+        assert body["message"] == "data_entrega: Data e hora inválidas"
+        assert "{'" not in body["message"]
+        assert body["details"]["errors"][0]["field"] == "data_entrega"
+
+    def test_non_pydantic_list_keeps_legacy_stringification(self) -> None:
+        resp = self._client().get("/lista-estranha")
+        assert resp.status_code == 422
+        assert resp.json()["error"]["code"] == "HTTP_ERROR"

@@ -24,7 +24,7 @@ import { Bell, FileText, Film, Lightbulb, Megaphone, MessageSquareText, ScrollTe
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { CampoDataCommit } from "./CampoDataCommit";
 import { useAtualizarPost, usePost } from "@/hooks/geracao/useEsteira";
 import { flattenTimeline, postHub } from "@/hooks/geracao/usePostHub";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
@@ -103,14 +103,13 @@ function DatasPost({
       <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Datas</legend>
       <div className="grid gap-3 sm:grid-cols-2">
         <Campo rotulo="Postagem prevista">
-          <Input
-            type="datetime-local"
-            aria-label="Postagem prevista"
-            defaultValue={entregaLocal}
-            onBlur={(e) => {
-              if (e.target.value === entregaLocal) return;
+          <CampoDataCommit
+            tipo="datetime-local"
+            rotulo="Postagem prevista"
+            salvo={entregaLocal}
+            onCommit={(valor) => {
               // Explicit -03:00 (São Paulo has no DST): a naive datetime would be read in the DB zone.
-              const iso = e.target.value ? `${dataHoraLocalParaIsoSP(e.target.value)}-03:00` : null;
+              const iso = valor ? `${dataHoraLocalParaIsoSP(valor)}-03:00` : null;
               onPatch({ data_entrega: iso }, "Não foi possível salvar a data de postagem.");
             }}
           />
@@ -218,17 +217,12 @@ function GeralSecao({ post }: { post: PostDetalhe }) {
           </select>
         </Campo>
         <Campo rotulo="Gravação agendada">
-          <Input
-            type="date"
-            aria-label="Gravação agendada"
-            defaultValue={post.gravacao_em ? post.gravacao_em.slice(0, 10) : ""}
-            onBlur={(e) => {
-              // `gravacao_em` is a DATE column: send `YYYY-MM-DD`, never a datetime.
-              const dia = e.target.value || null;
-              if (dia !== (post.gravacao_em ? post.gravacao_em.slice(0, 10) : null)) {
-                patch({ gravacao_em: dia }, "Não foi possível salvar a gravação.");
-              }
-            }}
+          <CampoDataCommit
+            tipo="date"
+            rotulo="Gravação agendada"
+            salvo={post.gravacao_em ? post.gravacao_em.slice(0, 10) : ""}
+            // `gravacao_em` is a DATE column: send `YYYY-MM-DD`, never a datetime.
+            onCommit={(dia) => patch({ gravacao_em: dia }, "Não foi possível salvar a gravação.")}
           />
         </Campo>
       </div>
