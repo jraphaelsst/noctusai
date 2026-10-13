@@ -4326,6 +4326,11 @@ BEGIN
     INSERT INTO public.organizations (nome, slug)
     VALUES ('NOC probe org (customer isolation)', 'noc-probe-' || gen_random_uuid()::text)
     RETURNING id INTO v_org;
+    -- Real profiles always follow their auth user; core 079's membership mirror
+    -- (org_memberships.user_id → auth.users) refuses a profile without one.
+    INSERT INTO auth.users (id, email) VALUES
+      (v_staff, 'noc-probe-staff@invalid'),
+      (v_cust,  'noc-probe-cust@invalid');
     INSERT INTO public.noctus_users (id, email, nome, org_id, role, org_role) VALUES
       (v_staff, 'noc-probe-staff@invalid', 'noc probe staff', v_org, 'user', 'member'),
       (v_cust,  'noc-probe-cust@invalid',  'noc probe customer', v_org, 'user', 'membro');
