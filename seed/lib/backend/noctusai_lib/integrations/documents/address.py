@@ -432,7 +432,12 @@ def _e_nome_de_pessoa(candidato: Optional[str]) -> bool:
 _RUIDO_FINAL_RE = re.compile(r"\s+\d{1,4}\s*/\s*\d{1,8}\s*$")
 
 
-#: Where a labelled value stops: two+ spaces, a pipe, or another label.
+#: Where a labelled value stops: a pipe, the NEXT KNOWN LABEL, or the end of
+#: the line — 🔴 NEVER a bare run of spaces (2026-10-13, real 876 error): an
+#: OCR double space inside a value ("Bairro: ALPHAVILLE RESIDENCIAL  DOIS")
+#: used to end it at "RESIDENCIAL", losing "DOIS". Internal whitespace is
+#: collapsed by `_Texto.literal`. Two fields sharing a line are still split —
+#: at the second field's own label ("Bairro: X   Cidade: Y").
 #:
 #: Bairro fix (2026-10-03, measured on the cached comprovante corpus): a
 #: water bill prints `End:  AVENIDA X,344 -  - BAIRRO - CIDADE` — an EMPTY
@@ -440,7 +445,10 @@ _RUIDO_FINAL_RE = re.compile(r"\s+\d{1,4}\s*/\s*\d{1,8}\s*$")
 #: value right after the número, so the bairro after it was never read. A
 #: 2+-space run touching a hyphen on either side is a separator INSIDE the
 #: value, never a column boundary.
-_PARADA = r"(?=(?<!-)\s{2,}(?![\s-])|\s*\||\s+(?:CEP|BAIRRO|CIDADE|MUNICIPIO|UF|ESTADO|COMPLEMENTO|NUMERO)\b\s*[:\-]|$)"
+_PARADA = (
+    r"(?=\s*\||\s+(?:CEP|BAIRRO|DISTRITO|CIDADE|MUNICIPIO|LOCALIDADE|UF|ESTADO|"
+    r"COMPLEMENTO|COMPL|NUMERO|NUM|ENDERECO|LOGRADOURO|TELEFONE|FONE|E-?MAIL)\b\s*[:\-]|\s*$)"
+)
 
 
 @dataclass(frozen=True)

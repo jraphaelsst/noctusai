@@ -483,7 +483,30 @@ def find_regime_bens(text: str) -> tuple[Optional[str], str, Optional[str]]:
     return (None, "nenhuma", None)
 
 
+#: 🔴 What a DOCUMENT may state as an estado civil (owner rule 2026-10-13):
+#: solteiro / casado / divorciado / viúvo / separado judicialmente. União
+#: estável is NOT an estado civil (the person's civil status is unchanged by
+#: it) — `uniao_estavel` stays in `ESTADO_CIVIL_VALORES` only because the
+#: consuming column's vocabulary carries it for MANUAL entry; no document
+#: reading ever emits it.
+ESTADO_CIVIL_DOCUMENTAL: tuple[str, ...] = tuple(
+    v for v in ESTADO_CIVIL_VALORES if v != "uniao_estavel"
+)
+
+
 def find_estado_civil(text: str) -> tuple[Optional[str], str, Optional[str]]:
+    """Extract the holder's marital status — see `_find_estado_civil_bruto`.
+
+    Restricted to :data:`ESTADO_CIVIL_DOCUMENTAL`: a reading of "união
+    estável" (label or averbação) is reported absent, never emitted.
+    """
+    valor, conf, rotulo = _find_estado_civil_bruto(text)
+    if valor is not None and valor not in ESTADO_CIVIL_DOCUMENTAL:
+        return (None, "nenhuma", None)
+    return (valor, conf, rotulo)
+
+
+def _find_estado_civil_bruto(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """Extract the holder's marital status.
 
     Returns `(value, confidence, matched_label)` — value one of

@@ -269,15 +269,31 @@ class TestMesclar:
         out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
         assert out.cpf_confianca == ExtractionConfidence.MEDIA
 
-    def test_disagreement_reports_absent_never_guesses(self):
+    def test_disagreement_keeps_first_reading_pending_with_alternative(self):
+        """Owner rule 2026-10-13: a divergence never DROPS the value — the
+        first reading stays as a `baixa` pending-review value, the other
+        reading rides beside it. Never a pick: confidence drops to baixa."""
         original = self._original()  # cpf = _CPF_A
         escalada = IdentityFields(cpf=_CPF_B, cpf_confianca=ExtractionConfidence.BAIXA)
         out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf is None
-        assert out.cpf_confianca is ExtractionConfidence.NENHUMA
+        assert out.cpf == _CPF_A
+        assert out.cpf_confianca is ExtractionConfidence.BAIXA
+        assert out.leituras_alternativas == (("cpf", _CPF_B),)
         assert AVISO_RELEITURA in out.aviso.split("+")
         assert "divergiu" in out.aviso_mensagem
-        assert "cpf" in out.aviso_mensagem
+        assert f"cpf (alternativa: {_CPF_B})" in out.aviso_mensagem
+        assert "descartado" not in out.aviso_mensagem
+
+    def test_cnh_name_divergence_is_kept_for_review_not_discarded(self):
+        """Measured: a CNH holder's name — its most legible field — vanished
+        after a model divergence ("divergiu (descartado…)")."""
+        original = self._original(nome="JOSE FORTUNATO DA SILVA", nome_confianca=ExtractionConfidence.BAIXA)
+        escalada = IdentityFields(nome="JOSE FORTUNATO DA SILVEIRA", nome_confianca=ExtractionConfidence.BAIXA)
+        out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
+        assert out.nome == "JOSE FORTUNATO DA SILVA"
+        assert out.nome_confianca is ExtractionConfidence.BAIXA
+        assert out.sugestao("nome")  # pending human review
+        assert ("nome", "JOSE FORTUNATO DA SILVEIRA") in out.leituras_alternativas
 
     def test_disagreement_on_rg_adopts_escalated_value_as_baixa(self):
         """Measured (P2): on RG disagreements the escalated read was right
@@ -309,11 +325,11 @@ class TestMesclar:
         assert out.rg_orgao is None
         assert out.rg_orgao_confianca is ExtractionConfidence.NENHUMA
 
-    def test_disagreement_on_cpf_still_blanks(self):
+    def test_disagreement_on_cpf_is_demoted_never_adopted(self):
         original = self._original()
         escalada = IdentityFields(cpf=_CPF_B, cpf_confianca=ExtractionConfidence.MEDIA)
         out = mesclar(original, escalada, escalation_model="claude-sonnet-5")
-        assert out.cpf is None
+        assert out.cpf == _CPF_A and out.cpf_confianca is ExtractionConfidence.BAIXA
 
     def test_a_cnh_rg_without_dv_and_the_full_rg_agree_not_disagree(self):
         """Owner rule 2026-10-01 (`canonical-identifiers`): `30128742` (a CNH

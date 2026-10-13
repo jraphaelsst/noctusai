@@ -37,6 +37,8 @@ to whatever human-review surface the consumer already has for a `sugestao`
 """
 from __future__ import annotations
 
+import re
+
 import logging
 from dataclasses import dataclass, replace
 from typing import Any, Optional
@@ -109,6 +111,10 @@ _TABELA_NUCLEO: dict[str, _RegraNucleo] = {
     "RG": _RegraNucleo(campos=("nome", "cpf", "rg")),
     "CNH": _RegraNucleo(campos=("nome", "cpf", "rg")),
     "CIN": _RegraNucleo(campos=("nome", "cpf")),
+    # A foreign national's own card — the number is an RNE, never an RG.
+    "RNE": _RegraNucleo(campos=("nome", "rne")),
+    "CRNM": _RegraNucleo(campos=("nome", "rne")),
+    "RNM": _RegraNucleo(campos=("nome", "rne")),
     "CPF": _RegraNucleo(campos=("nome", "cpf")),
     # Comprovante — the address IS the document's own subject (mirrors
     # `legibilidade.ClasseDocumento.COMPROVANTE`'s own scoping).
@@ -151,7 +157,13 @@ def campos_nucleo_faltando(
     regra = _TABELA_NUCLEO.get(strip_accents_upper(tipo_documento or ""))
     if regra is None:
         return ()
-    faltando = [campo for campo in regra.campos if not fields.presente(campo)]
+    faltando = [
+        campo for campo in regra.campos
+        if not fields.presente(campo)
+        # A foreigner's CNH prints an RNE in the identity box — the box is
+        # filled, just with the other kind (owner rule 2026-10-13).
+        and not (campo == "rg" and fields.presente("rne"))
+    ]
     if regra.exige_endereco and fields.endereco is None:
         faltando.append("endereco")
     if regra.exige_dois_conjuges and len(fields.conjuges) != 2:
@@ -212,6 +224,10 @@ def _mesmo_valor(campo: str, a: Any, b: Any) -> bool:
         # without its check digit (a CNH) against the full one is the SAME
         # RG — an agreement, not a disagreement that blanks or demotes it.
         return _ident.equivalentes(campo, str(a), str(b)) is True
+    if campo == "rne":
+        return re.sub(r"[^0-9A-Z]", "", strip_accents_upper(str(a))) == re.sub(
+            r"[^0-9A-Z]", "", strip_accents_upper(str(b))
+        )
     if campo == "nome":
         return chave_nome(str(a)) == chave_nome(str(b))
     if campo in ("data_nascimento", "data_casamento"):
@@ -245,6 +261,10 @@ def _vencedor_por_dv(campo: str, a: Any, b: Any) -> Optional[str]:
     if lb.dv_ok is True and la.dv_ok is False:
         return "escalada"
     return None
+
+
+def _como_texto(valor: Any) -> str:
+    return valor.isoformat() if hasattr(valor, "isoformat") else str(valor)
 
 
 def _somar_codigo(atual: Optional[str], codigo: str) -> str:
@@ -316,6 +336,7 @@ def mesclar(
     adotados: list[str] = []
     dv_adotados: list[str] = []
     dv_mantidos: list[str] = []
+    alternativas: list[tuple[str, str]] = list(original.leituras_alternativas)
 
     for campo in CAMPOS:
         tinha = original.presente(campo)
@@ -331,6 +352,9 @@ def mesclar(
                 # must also supply its issuer.
                 updates["rg_orgao"] = escalada.rg_orgao
                 updates["rg_orgao_confianca"] = escalada.rg_orgao_confianca
+            if campo == "rne":
+                updates["rne_orgao"] = escalada.rne_orgao
+                updates["identidade_tipo"] = escalada.identidade_tipo
         elif tinha and tem_escalada:
             v0, v1 = getattr(original, campo), getattr(escalada, campo)
             if _mesmo_valor(campo, v0, v1):
@@ -374,13 +398,19 @@ def mesclar(
                     )
                 adotados.append(campo)
             else:
-                # Genuine disagreement — never pick one. Reported absent,
-                # not merely demoted to a suggestion: two independent
-                # models disagreeing is a stronger signal of trouble than
-                # either read's own confidence describes on its own.
-                updates[campo] = None
-                updates[f"{campo}_confianca"] = ExtractionConfidence.NENHUMA
-                updates[f"{campo}_rotulo"] = None
+                # Genuine disagreement — never pick one, and 🔴 NEVER DROP
+                # the value either (owner rule 2026-10-13; measured: a CNH's
+                # holder name — its most legible field — vanished after a
+                # model divergence). The FIRST reading stays, demoted to a
+                # `baixa` pending-review value, and the escalated reading
+                # rides beside it in `leituras_alternativas` (and in the
+                # aviso message) so the human who reviews it sees BOTH.
+                updates[f"{campo}_confianca"] = ExtractionConfidence.BAIXA
+                if campo == "rg":
+                    updates["rg_orgao_confianca"] = (
+                        ExtractionConfidence.BAIXA if original.rg_orgao else ExtractionConfidence.NENHUMA
+                    )
+                alternativas.append((campo, _como_texto(v1)))
                 conflitantes.append(campo)
         # both absent: nothing to do — neither read found this field.
 
@@ -429,10 +459,13 @@ def mesclar(
             "verificador válido): " + ", ".join(dv_mantidos)
         )
     if conflitantes:
+        novas = alternativas[len(original.leituras_alternativas):]
         partes.append(
-            "divergiu (descartado, revisão humana necessária): "
-            + ", ".join(conflitantes)
+            "divergiu (mantida a primeira leitura como pendente de revisão, "
+            "leitura alternativa anexada): "
+            + ", ".join(f"{c} (alternativa: {v})" for c, v in novas)
         )
+        updates["leituras_alternativas"] = tuple(alternativas)
     mensagem = f"releitura com {escalation_model} " + "; ".join(partes)
 
     if AVISO_RELEITURA not in codigos:

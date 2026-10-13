@@ -130,6 +130,97 @@ def find_profissoes(text: str) -> list[tuple[str, str, int]]:
     return out
 
 
+#: 🔴 VOCABULARY GATE (owner rule 2026-10-13). A labelled value must ALSO
+#: be a real profissão word: "aposentanda" (a transcription of "aposentada")
+#: passed the label anchor and reached a contract. The HEAD word of the value
+#: (`engenheiro` in "engenheiro civil") — or the whole value, for fixed
+#: multi-word forms ("do lar") — must be in this vocabulary, accent-stripped,
+#: masculine and feminine forms both listed. A value outside it is NOT
+#: emitted; `avaliar_profissao` reports it as `vocabulario_invalido` with the
+#: nearest valid form as a SUGGESTION only (never substituted).
+#: Extend with evidence: a legitimate profissão refused here is a one-line
+#: addition, a wrong one accepted is a wrong contract.
+_HEADS = """
+administrador administradora advogado advogada agente agricultor agricultora
+agronomo agronoma ajudante almoxarife analista aposentado aposentada arquiteto
+arquiteta artesao artesa artista assessor assessora assistente atendente ator
+atriz autonomo autonoma auxiliar avicultor aviador bailarino bailarina bancario
+bancaria barbeiro barbeira bibliotecario bibliotecaria biologo biologa biomedico
+biomedica bombeiro bombeira cabeleireiro cabeleireira caixa caminhoneiro
+caminhoneira carpinteiro carteiro carteira chefe cientista cirurgiao cirurgia
+comerciante comerciario comerciaria comissario comissaria comprador compradora
+confeiteiro confeiteira consultor consultora contador contadora coordenador
+coordenadora corretor corretora costureiro costureira cozinheiro cozinheira
+delegado delegada dentista desembargador desembargadora desenhista designer
+desempregado desempregada diarista diretor diretora domestica domestico
+economista economiario economiaria educador educadora eletricista eletrotecnico
+empregado empregada empresario empresaria encanador enfermeiro enfermeira
+engenheiro engenheira escritor escritora escrivao escriva escriturario
+escrituraria estagiario estagiaria estudante estoquista farmaceutico
+farmaceutica faxineiro faxineira fazendeiro fazendeira fiscal fisico fisica
+fisioterapeuta fonoaudiologo fonoaudiologa fotografo fotografa frentista
+funcionario funcionaria garcom garconete gerente geologo geologa gestor gestora
+guarda historiador historiadora industrial industriario industriaria
+inspetor inspetora instrutor instrutora investidor investidora jardineiro
+jardineira jornalista juiz juiza lavrador lavradora lojista marceneiro
+mecanico mecanica medico medica mestre metalurgico metalurgica militar
+ministro ministra motorista musico musica nutricionista odontologo odontologa
+operador operadora operario operaria optometrista ourives padeiro padeira
+pecuarista pedagogo pedagoga pedreiro pensionista pesquisador pesquisadora
+pescador pescadora piloto pintor pintora policial porteiro porteira produtor
+produtora professor professora programador programadora projetista promotor
+promotora psicologo psicologa psicanalista psiquiatra publicitario publicitaria
+quimico quimica radialista recepcionista representante sacerdote secretario
+secretaria seguranca servente servidor servidora socio socia sociologo sociologa
+soldado supervisor supervisora tabeliao tabelia tecnico tecnica tecnologo
+tecnologa telefonista terapeuta tesoureiro tesoureira topografo topografa
+torneiro tradutor tradutora transportador transportadora urbanista vendedor
+vendedora veterinario veterinaria vigilante vereador vereadora zelador zeladora
+zootecnista oficial capitao coronel sargento tenente major general almirante
+comandante delegado perito perita auditor auditora defensor defensora
+procurador procuradora analista bancario do engenheira
+"""
+_VOCABULARIO_HEADS: frozenset[str] = frozenset(_HEADS.split()) - {"do"}
+_VOCABULARIO_FRASES: frozenset[str] = frozenset({
+    "do lar", "prendas domesticas", "dona de casa", "sem ocupacao",
+})
+
+VOCABULARIO_INVALIDO = "vocabulario_invalido"
+
+
+def avaliar_profissao(valor: Optional[str]) -> tuple[bool, Optional[str]]:
+    """`(valida, sugestao)` — is `valor` a profissão in the vocabulary?
+
+    `sugestao` is the nearest vocabulary head (difflib) when invalid — a
+    SUGGESTION for a human, never applied to the value.
+    """
+    import difflib
+
+    from noctusai_lib.integrations.documents.text import strip_accents_upper
+
+    if not valor:
+        return (False, None)
+    norm = " ".join(strip_accents_upper(valor).lower().split())
+    if norm in _VOCABULARIO_FRASES:
+        return (True, None)
+    cabeca = norm.split()[0] if norm.split() else ""
+    if cabeca in _VOCABULARIO_HEADS:
+        return (True, None)
+    perto = difflib.get_close_matches(cabeca, sorted(_VOCABULARIO_HEADS), n=1, cutoff=0.75)
+    return (False, perto[0] if perto else None)
+
+
+def find_profissao_invalida(text: str) -> Optional[tuple[str, Optional[str]]]:
+    """The labelled profissão reading the vocabulary REFUSED, with its
+    suggestion — `(valor, sugestao)` — or None. For the extractor's
+    `vocabulario_invalido` aviso: the refused value stays visible."""
+    for valor, _rotulo, _pos in find_profissoes(text):
+        ok, sugestao = avaliar_profissao(valor)
+        if not ok:
+            return (valor, sugestao)
+    return None
+
+
 def find_profissao(text: str) -> tuple[Optional[str], str, Optional[str]]:
     """The holder's profissão: `(value, confidence, matched_label)`.
 
@@ -144,7 +235,17 @@ def find_profissao(text: str) -> tuple[Optional[str], str, Optional[str]]:
     if len(distintos) != 1:
         return (None, "nenhuma", None)
     valor, rotulo, _ = leituras[0]
+    if not avaliar_profissao(valor)[0]:
+        # Not a profissão word — never emitted as a reading (see
+        # `_VOCABULARIO_HEADS`); `find_profissao_invalida` reports it.
+        return (None, "nenhuma", None)
     return (valor, "alta", rotulo)
 
 
-__all__ = ["find_profissao", "find_profissoes"]
+__all__ = [
+    "VOCABULARIO_INVALIDO",
+    "avaliar_profissao",
+    "find_profissao",
+    "find_profissao_invalida",
+    "find_profissoes",
+]

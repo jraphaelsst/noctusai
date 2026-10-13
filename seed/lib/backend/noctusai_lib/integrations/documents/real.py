@@ -40,6 +40,7 @@ from dataclasses import replace
 from datetime import date
 from typing import Optional
 
+import noctusai_lib.integrations.documents.autoridade as autoridade
 from noctusai_lib.integrations.documents.address import find_endereco
 from noctusai_lib.integrations.documents.birthdate import MIN_AGE, find_birthdate
 from noctusai_lib.integrations.documents.civil_status import (
@@ -78,8 +79,22 @@ from noctusai_lib.integrations.documents.name import (
     find_name_conflitos,
     nomes_compativeis,
 )
-from noctusai_lib.integrations.documents.profession import find_profissao
-from noctusai_lib.integrations.documents.rg import find_rg, find_rg_orgao, find_rne
+from noctusai_lib.integrations.documents.numeros_documento import (
+    find_matricula_certidao,
+    find_registro_cnh,
+)
+from noctusai_lib.integrations.documents.profession import (
+    VOCABULARIO_INVALIDO,
+    find_profissao,
+    find_profissao_invalida,
+)
+from noctusai_lib.integrations.documents.rg import (
+    find_caixa_identidade_cnh,
+    find_rg,
+    find_rg_orgao,
+    find_rne,
+    only_alnum,
+)
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
     ExtractionConfidence,
@@ -398,16 +413,44 @@ class LadderIdentityExtractor:
         titular: Optional[TitularEsperado],
         tipo_documento: Optional[str] = None,
     ) -> IdentityFields:
-        """Pure half: text + the rung that produced it -> typed fields."""
-        data, data_conf, data_label = find_birthdate(text)
-        nome, nome_conf, nome_label = find_name(text)
+        """Pure half: text + the rung that produced it -> typed fields.
+
+        🔴 FIELD AUTHORITY (owner rule 2026-10-13, `autoridade.py`): when the
+        caller declared a `tipo_documento` the authority table knows, a
+        finder for a field that type is NOT the authoritative source for
+        never runs, and the field is never emitted. An undeclared/unlisted
+        type keeps the historical type-agnostic read.
+        """
+        autorizados = autoridade.campos_autorizados(tipo_documento)
+        tipo_norm = autoridade.tipo_normalizado(tipo_documento)
+
+        def pode(campo: str) -> bool:
+            return autorizados is None or campo in autorizados
+
+        def explicito(campo: str) -> bool:
+            # Readers that only make sense on a DECLARED type (a document
+            # number with a type-specific label) never run type-agnostic.
+            return autorizados is not None and campo in autorizados
+
+        nada3: tuple = (None, "nenhuma", None)
+        data, data_conf, data_label = find_birthdate(text) if pode("data_nascimento") else nada3
+        nome, nome_conf, nome_label = find_name(text) if pode("nome") else nada3
         nome_conf = self._temper_name_confidence(nome_conf, source)
         # Gender is NOT tempered by source, unlike the name. Its alphabet has
         # two elements and its parser refuses every unlabelled single letter,
         # so an OCR pass cannot turn "Masculino" into a different VALID value —
         # it can only turn it into nothing. The name's risk is a plausible
         # misreading; this field has no plausible misreadings to make.
-        genero, genero_conf, genero_label = find_gender(text)
+        #
+        # 🔴 GENDER IS A PRINTED FIELD ONLY (owner rule 2026-10-13): read off
+        # a `SEXO` label (`find_gender` is label-anchored) on a type that
+        # prints one. A certidão de casamento prints none — its only gender
+        # is the DERIVED one attached below (`genero_derivado=True`).
+        genero_derivado = False
+        if pode("genero") and tipo_norm not in autoridade.GENERO_SO_DERIVADO:
+            genero, genero_conf, genero_label = find_gender(text)
+        else:
+            genero, genero_conf, genero_label = nada3
 
         # CPF is NOT tempered by source either, and for a reason the other
         # fields cannot claim: it verifies its own two check digits. An OCR
@@ -416,32 +459,58 @@ class LadderIdentityExtractor:
         # already demoted to `baixa` on its own. Tempering here would demote
         # the reads that survived that gate — which are precisely the ones
         # worth trusting.
-        cpf, cpf_conf, cpf_label = find_cpf(text)
+        cpf, cpf_conf, cpf_label = find_cpf(text) if pode("cpf") else nada3
 
         # The RG has NO check digit anywhere in Brazil, so it gets the name's
         # treatment: a vision-read RG is a suggestion. It has no structural
         # self-evidence to fall back on, which makes it the weakest of the
         # five — see `rg.py`.
-        rg, rg_conf, rg_label = find_rg(text)
+        rg, rg_conf, rg_label = find_rg(text) if pode("rg") else nada3
         rg_conf = self._temper_name_confidence(rg_conf, source)
-        rg_orgao, rg_orgao_conf = find_rg_orgao(text, rg)
+        if pode("rg"):
+            rg_orgao, rg_orgao_conf = find_rg_orgao(text, rg)
+        else:
+            rg_orgao, rg_orgao_conf = None, ExtractionConfidence.NENHUMA.value
         rg_orgao_conf = self._temper_name_confidence(rg_orgao_conf, source)
         identidade_tipo: Optional[str] = None
-        # 🔴 A foreign national's RNE/RNM/CRNM in the identity-document field
-        # (`W573678ZDIREXEX`) is recorded AS THAT DOCUMENT, exactly as
-        # printed — never as an RG with the letters dropped, and never with
-        # an issuer the document does not print next to the number (the
-        # shape scan above would otherwise lift a CNH header's `DETRAN/SP`).
-        rne, rne_conf, rne_label, rne_orgao, rne_tipo = find_rne(text)
+        # 🔴 RNE IS ITS OWN KIND (owner rule 2026-10-13). A foreign national's
+        # RNE/RNM/CRNM — on its own card, in a CNH "DOC. IDENTIDADE" box, or
+        # under a field merely labelled "RG" (`RG: W-573.678-Z · Órgão
+        # expedidor: DIREX`) — is emitted as `rne` exactly as printed, with
+        # its federal issuer in `rne_orgao`, and NEVER in `rg`.
+        rne: Optional[str] = None
+        rne_conf: str = ExtractionConfidence.NENHUMA.value
+        rne_label: Optional[str] = None
+        rne_orgao: Optional[str] = None
+        if pode("rne"):
+            rne, rne_conf, rne_label, rne_orgao, identidade_tipo = find_rne(text)
+            rne_conf = self._temper_name_confidence(rne_conf, source)
+        # The CNH's 4c box, read as ONE unit: number + issuer + UF together
+        # (a CNH RG used to come out without its issuer/UF).
+        caixa = find_caixa_identidade_cnh(text) if (pode("rg") or pode("rne")) else None
+        if caixa is not None:
+            tipo_caixa, numero_caixa, org_caixa, uf_caixa = caixa
+            if tipo_caixa == "rne" and pode("rne") and rne is None:
+                rne, rne_label, rne_orgao = numero_caixa, "DOC. IDENTIDADE (CNH)", org_caixa
+                rne_conf = self._temper_name_confidence("alta", source)
+            elif tipo_caixa == "rg" and pode("rg"):
+                if rg is None or only_alnum(rg) == only_alnum(numero_caixa):
+                    rg = numero_caixa
+                    rg_label = "DOC. IDENTIDADE / ORG. EMISSOR / UF"
+                    rg_conf = self._temper_name_confidence("alta", source)
+                if org_caixa and uf_caixa and only_alnum(rg or "") == only_alnum(numero_caixa):
+                    rg_orgao = f"{org_caixa}/{uf_caixa}"
+                    rg_orgao_conf = self._temper_name_confidence("alta", source)
         if rne is not None:
-            rg, rg_label = rne, rne_label
-            rg_conf = self._temper_name_confidence(rne_conf, source)
-            rg_orgao = rne_orgao
-            rg_orgao_conf = (
-                self._temper_name_confidence("alta", source)
-                if rne_orgao else ExtractionConfidence.NENHUMA.value
-            )
-            identidade_tipo = rne_tipo
+            # The number is an RNE: whatever `rg` read is the same number
+            # (or a fragment of it) — never an RG of its own.
+            if rg is not None and (
+                only_alnum(rg) in only_alnum(rne) or only_alnum(rne) in only_alnum(rg)
+            ):
+                rg, rg_conf, rg_label = None, ExtractionConfidence.NENHUMA.value, None
+            identidade_tipo = identidade_tipo or "rne"
+        else:
+            identidade_tipo = None
         if not rg:
             # 🔴 AN ISSUING BODY WITH NO RG NUMBER BESIDE IT IDENTIFIES
             # NOTHING. `find_rg_orgao` finds its match by SHAPE alone (an
@@ -456,14 +525,22 @@ class LadderIdentityExtractor:
             # might forget to check.
             rg_orgao, rg_orgao_conf = None, ExtractionConfidence.NENHUMA.value
 
+        registro_cnh, registro_cnh_conf, _ = (
+            find_registro_cnh(text) if explicito("registro_cnh") else nada3
+        )
+
         # Estado civil / regime de bens are NOT tempered by source, for the
         # same reason `genero` is not: both parsers require an explicit
         # label, an AVERBAÇÃO event keyword, or the regime-de-bens phrase
         # itself (structural evidence, like the CPF check digit) — none of
         # which an OCR misread can turn into a DIFFERENT valid vocabulary
         # token. It can only turn a real reading into nothing.
-        estado_civil, estado_civil_conf, estado_civil_label = find_estado_civil(text)
-        regime_bens, regime_bens_conf, regime_bens_label = find_regime_bens(text)
+        estado_civil, estado_civil_conf, estado_civil_label = (
+            find_estado_civil(text) if pode("estado_civil") else nada3
+        )
+        regime_bens, regime_bens_conf, regime_bens_label = (
+            find_regime_bens(text) if pode("regime_bens") else nada3
+        )
 
         # `data_casamento` / `data_emissao` (contract F6, migration 117) — NOT
         # tempered by source, same reasoning `data_nascimento` above already
@@ -475,9 +552,11 @@ class LadderIdentityExtractor:
         # extractor is document-type-agnostic, and a document that carries
         # neither pattern simply returns `nenhuma`.
         data_casamento, data_casamento_conf, data_casamento_label = (
-            find_data_casamento(text)
+            find_data_casamento(text) if pode("data_casamento") else nada3
         )
-        data_emissao, data_emissao_conf, data_emissao_label = find_data_emissao(text)
+        data_emissao, data_emissao_conf, data_emissao_label = (
+            find_data_emissao(text) if pode("data_emissao") else nada3
+        )
 
         # `nacionalidade` is NOT tempered by source, for the same reason
         # `genero` and `estado_civil` are not: the parser requires an
@@ -490,7 +569,9 @@ class LadderIdentityExtractor:
         # `NOC-REMEDIATE[nacionalidade-titular-hint]` — the one case this
         # leaves unresolved: a genuinely binational couple's certidão,
         # which reports `nenhuma` here with no `titular`-hint tie-break.
-        nacionalidade, nacionalidade_conf, nacionalidade_label = find_nacionalidade(text)
+        nacionalidade, nacionalidade_conf, nacionalidade_label = (
+            find_nacionalidade(text) if pode("nacionalidade") else nada3
+        )
 
         # 🔴 TWO TITULARES: SELECT WITH THE CALLER'S HINT, ELSE A NOTICE
         # -------------------------------------------------------------------
@@ -510,7 +591,7 @@ class LadderIdentityExtractor:
         # civil, regime, datas) are valid whoever the holder is, and an
         # `error` makes every consumer discard them.
         multiplos_titulares: list[str] = []
-        if nome is None:
+        if nome is None and pode("nome"):
             conflito_nome = find_name_conflitos(text)
             if conflito_nome:
                 escolhido = _selecionar_nome(conflito_nome, titular)
@@ -523,7 +604,7 @@ class LadderIdentityExtractor:
                     nome_label = "NOMES (titular do card)"
                 else:
                     multiplos_titulares.append(f"nome ({len(conflito_nome)} titulares)")
-        if cpf is None:
+        if cpf is None and pode("cpf"):
             conflito_cpf = find_cpf_conflitos(text)
             if conflito_cpf:
                 escolhido_cpf = _selecionar_cpf(conflito_cpf, titular)
@@ -539,12 +620,20 @@ class LadderIdentityExtractor:
         # Profissão — label-anchored only, NOT tempered by source for the
         # same reason `nacionalidade` is not: it needs an explicit label, so a
         # misread can only lose it or make two readings disagree (`nenhuma`).
-        profissao, profissao_conf, profissao_label = find_profissao(text)
+        profissao, profissao_conf, profissao_label = (
+            find_profissao(text) if pode("profissao") else nada3
+        )
+        # A labelled profissão the vocabulary refused ("aposentanda") is NOT
+        # emitted (`profession.avaliar_profissao`) — but it is not dropped
+        # silently either: named in an aviso, nearest form as a suggestion.
+        profissao_invalida = (
+            find_profissao_invalida(text) if pode("profissao") and profissao is None else None
+        )
 
         # Endereço — read on every document (the extractor is type-agnostic);
         # WHICH document types may promote it is the consumer's decision (a
         # certidão prints its CARTÓRIO's address, which is nobody's home).
-        endereco = find_endereco(text)
+        endereco = find_endereco(text) if pode("endereco") else None
 
         # Both spouses, when the document names two. The one the caller's
         # `titular` hint picked (by the name or CPF selected above) is marked,
@@ -566,7 +655,7 @@ class LadderIdentityExtractor:
             )
             if n
         )
-        conjuges = find_conjuges(text, esperados=esperados)
+        conjuges = find_conjuges(text, esperados=esperados) if pode("conjuges") else ()
         if conjuges:
             escolhido_idx = _conjuge_do_titular(conjuges, nome, cpf)
             if escolhido_idx is None and titular is not None and titular.nome:
@@ -602,19 +691,22 @@ class LadderIdentityExtractor:
                     eu.data_nascimento_confianca if eu.data_nascimento is not None else "nenhuma",
                     "certidão (cônjuge titular)" if eu.data_nascimento is not None else None,
                 )
-                if eu.nacionalidade is not None:
+                if eu.nacionalidade is not None and pode("nacionalidade"):
                     nacionalidade, nacionalidade_conf, nacionalidade_label = (
                         eu.nacionalidade, eu.nacionalidade_confianca, "certidão (cônjuge titular)"
                     )
-                if eu.profissao is not None:
+                if eu.profissao is not None and pode("profissao"):
                     profissao, profissao_conf, profissao_label = (
                         eu.profissao, eu.profissao_confianca, "certidão (cônjuge titular)"
                     )
-                if eu.genero is not None and genero is None:
+                if eu.genero is not None and genero is None and pode("genero"):
+                    # DERIVED (grammatical agreement on THIS spouse's own
+                    # clause) — flagged, never a reading.
                     genero, genero_conf, genero_label = (
-                        eu.genero, eu.genero_confianca, "certidão (concordância)"
+                        eu.genero, eu.genero_confianca, "certidão (concordância — derivado)"
                     )
-                if cpf is None and eu.cpf:
+                    genero_derivado = True
+                if cpf is None and eu.cpf and pode("cpf"):
                     cpf, cpf_conf, cpf_label = eu.cpf, eu.cpf_confianca, "CPF (titular do card)"
                     # The spouse pairing resolved what the bare CPF hint could
                     # not — it is no longer a withheld field.
@@ -651,6 +743,14 @@ class LadderIdentityExtractor:
         # holds both) — that is a cross-document decision the D1 merge path
         # in `products/social-wiring/.../identidade_extracao_service.py`
         # makes, not a single extraction result this function returns.
+        matricula_certidao, matricula_conf, matricula_avisos = (
+            find_matricula_certidao(
+                text, tipo_documento=tipo_norm, data_emissao=data_emissao
+            )
+            if explicito("matricula_certidao")
+            else (None, "nenhuma", ())
+        )
+
         data_nascimento_rejeitada: Optional[date] = None
         if data is not None and data_casamento is not None:
             idade_no_casamento = data_casamento.year - data.year - (
@@ -667,6 +767,19 @@ class LadderIdentityExtractor:
                 "documento nomeia mais de um titular com igual proeminencia "
                 "para: " + ", ".join(multiplos_titulares) + " — esses campos "
                 "nao foram gravados; os demais (estado civil, regime, datas) sim",
+            ))
+        if profissao_invalida is not None:
+            valor_inv, sugestao_inv = profissao_invalida
+            avisos.append((
+                VOCABULARIO_INVALIDO,
+                f"profissao lida '{valor_inv}' nao consta do vocabulario — nao "
+                "gravada" + (f"; sugestao: '{sugestao_inv}' (confirme)" if sugestao_inv else ""),
+            ))
+        for codigo_mat in matricula_avisos:
+            avisos.append((
+                codigo_mat,
+                f"matricula da certidao: {codigo_mat.removeprefix('matricula_')}"
+                + (" — leitura nao gravada" if matricula_certidao is None else " (aviso)"),
             ))
         if data_nascimento_rejeitada is not None:
             avisos.append((
@@ -723,6 +836,7 @@ class LadderIdentityExtractor:
             genero=genero,
             genero_confianca=ExtractionConfidence(genero_conf),
             genero_rotulo=genero_label,
+            genero_derivado=genero_derivado and genero is not None,
             cpf=cpf,
             cpf_confianca=ExtractionConfidence(cpf_conf),
             cpf_rotulo=cpf_label,
@@ -732,6 +846,14 @@ class LadderIdentityExtractor:
             rg_orgao=rg_orgao,
             rg_orgao_confianca=ExtractionConfidence(rg_orgao_conf),
             identidade_tipo=identidade_tipo,
+            rne=rne,
+            rne_confianca=ExtractionConfidence(rne_conf),
+            rne_rotulo=rne_label,
+            rne_orgao=rne_orgao if rne else None,
+            registro_cnh=registro_cnh,
+            registro_cnh_confianca=ExtractionConfidence(registro_cnh_conf),
+            matricula_certidao=matricula_certidao,
+            matricula_certidao_confianca=ExtractionConfidence(matricula_conf),
             estado_civil=estado_civil,
             estado_civil_confianca=ExtractionConfidence(estado_civil_conf),
             estado_civil_rotulo=estado_civil_label,
@@ -750,7 +872,7 @@ class LadderIdentityExtractor:
             profissao=profissao,
             profissao_confianca=ExtractionConfidence(profissao_conf),
             profissao_rotulo=profissao_label,
-            endereco=endereco if endereco.presente else None,
+            endereco=endereco if endereco is not None and endereco.presente else None,
             conjuges=conjuges,
             source=source,
         )
@@ -813,7 +935,7 @@ def _achou_algo(fields: IdentityFields) -> bool:
     (birth/emission) is not enough; the read must carry a core identity field
     (nome/CPF/RG), an address, the spouses, or an estado civil."""
     return (
-        any(fields.presente(c) for c in ("nome", "cpf", "rg"))
+        any(fields.presente(c) for c in ("nome", "cpf", "rg", "rne"))
         or fields.endereco is not None
         or bool(fields.conjuges)
         or fields.presente("estado_civil")

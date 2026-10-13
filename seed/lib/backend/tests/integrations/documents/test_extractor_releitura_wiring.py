@@ -187,8 +187,11 @@ class TestAgreementAndDisagreement:
 
         assert len(escalada.chamadas) == 1
         assert out.rg == "52.179.965-X"  # the gap — filled
-        assert out.cpf is None  # both reads had a value, and they disagree
-        assert out.cpf_confianca == ExtractionConfidence.NENHUMA
+        # both reads had a value and they disagree: the first stays, demoted
+        # to a pending-review baixa, the other attached (owner rule 2026-10-13)
+        assert out.cpf == _CPF_VALIDO
+        assert out.cpf_confianca == ExtractionConfidence.BAIXA
+        assert ("cpf", outro_cpf_valido) in out.leituras_alternativas
         assert AVISO_RELEITURA in out.aviso.split("+")
         assert "divergiu" in out.aviso_mensagem
         assert "preencheu" in out.aviso_mensagem
