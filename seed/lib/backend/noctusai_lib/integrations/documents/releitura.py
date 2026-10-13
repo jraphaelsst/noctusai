@@ -263,6 +263,25 @@ def _vencedor_por_dv(campo: str, a: Any, b: Any) -> Optional[str]:
     return None
 
 
+def _vencedor_por_contexto(
+    campo: str, original: IdentityFields, escalada: IdentityFields, primeira_comprometida: bool
+) -> Optional[tuple[str, bool]]:
+    """`(motivo, venceu_escalada)` when context — not the values — says which
+    of two disagreeing reads is better evidence, else None.
+
+    Called only when `escalada` is NOT compromised (`mesclar` returns early
+    otherwise), so `primeira_comprometida` means "only the first read was".
+    """
+    if primeira_comprometida:
+        return ("primeira leitura comprometida", True)
+    if campo == "estado_civil":
+        a = (original.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
+        b = (escalada.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
+        if a != b:
+            return ("averbação", b)
+    return None
+
+
 def _como_texto(valor: Any) -> str:
     return valor.isoformat() if hasattr(valor, "isoformat") else str(valor)
 
@@ -337,6 +356,7 @@ def mesclar(
     dv_adotados: list[str] = []
     dv_mantidos: list[str] = []
     alternativas: list[tuple[str, str]] = list(original.leituras_alternativas)
+    vencidos: list[tuple[str, str, str, str]] = []
 
     for campo in CAMPOS:
         tinha = original.presente(campo)
@@ -397,6 +417,33 @@ def mesclar(
                         ExtractionConfidence.BAIXA if escalada.rg_orgao else ExtractionConfidence.NENHUMA
                     )
                 adotados.append(campo)
+            elif (vencedor := _vencedor_por_contexto(campo, original, escalada, estava_comprometida)) is not None:
+                # 🔴 ONE SIDE IS BETTER EVIDENCE (owner rule 2026-10-13):
+                # - the first read was flagged `leitura_comprometida` and the
+                #   escalated one was not — the clean read wins (measured: a
+                #   compromised RG read "CLELIER BASSO MERY" for "CILENE AFRA
+                #   RAMOS NERY");
+                # - `estado_civil`: a reading resolved from an AVERBAÇÃO event
+                #   (a divorce, a death) is the LATER fact on the document and
+                #   outranks a bare "casado" read off the same certidão whose
+                #   averbação the other transcription missed (measured: a
+                #   dissolved marriage came out "casado").
+                # The losing reading is kept as an alternative, never dropped.
+                motivo_vencedor, venceu_escalada = vencedor
+                if venceu_escalada:
+                    updates[campo] = v1
+                    updates[f"{campo}_confianca"] = getattr(escalada, f"{campo}_confianca")
+                    updates[f"{campo}_rotulo"] = getattr(escalada, f"{campo}_rotulo", None)
+                    if campo == "rg":
+                        updates["rg_orgao"] = escalada.rg_orgao
+                        updates["rg_orgao_confianca"] = escalada.rg_orgao_confianca
+                    if campo == "rne":
+                        updates["rne_orgao"] = escalada.rne_orgao
+                    perdedora = v0
+                else:
+                    perdedora = v1
+                alternativas.append((campo, _como_texto(perdedora)))
+                vencidos.append((campo, motivo_vencedor, "modelo superior" if venceu_escalada else "primeira leitura", _como_texto(perdedora)))
             else:
                 # Genuine disagreement — never pick one, and 🔴 NEVER DROP
                 # the value either (owner rule 2026-10-13; measured: a CNH's
@@ -411,7 +458,7 @@ def mesclar(
                         ExtractionConfidence.BAIXA if original.rg_orgao else ExtractionConfidence.NENHUMA
                     )
                 alternativas.append((campo, _como_texto(v1)))
-                conflitantes.append(campo)
+                conflitantes.append((campo, _como_texto(v1)))
         # both absent: nothing to do — neither read found this field.
 
     # Grupo fields (outside `CAMPOS`) — filled ONLY when the original had
@@ -430,8 +477,28 @@ def mesclar(
         updates["data_emissao"] = escalada.data_emissao
         updates["data_emissao_confianca"] = escalada.data_emissao_confianca
         updates["data_emissao_rotulo"] = escalada.data_emissao_rotulo
+    for grupo in ("registro_cnh", "matricula_certidao"):
+        if getattr(original, grupo) is None and getattr(escalada, grupo) is not None:
+            updates[grupo] = getattr(escalada, grupo)
+            updates[f"{grupo}_confianca"] = getattr(escalada, f"{grupo}_confianca")
+            preenchidos.append(grupo)
 
-    if not updates and not estava_comprometida and not dv_mantidos:
+    # 🔴 RG AND RNE ARE EXCLUSIVE (owner rule 2026-10-13): a person's
+    # identity box holds ONE document. When the merged result carries an RNE,
+    # any `rg` (a stray 11-digit run one transcription read under an RG label
+    # — measured: the CNH's own form number) is not the holder's RG.
+    rne_final = updates.get("rne", original.rne)
+    rg_final = updates.get("rg", original.rg)
+    if rne_final and rg_final:
+        alternativas.append(("rg", _como_texto(rg_final)))
+        updates["rg"] = None
+        updates["rg_confianca"] = ExtractionConfidence.NENHUMA
+        updates["rg_rotulo"] = None
+        updates["rg_orgao"] = None
+        updates["rg_orgao_confianca"] = ExtractionConfidence.NENHUMA
+        vencidos.append(("rg", "documento de identidade é RNE", "rne", _como_texto(rg_final)))
+
+    if not updates and not estava_comprometida and not dv_mantidos and not vencidos:
         # Nothing changed and there was no gate to lift — no provenance
         # worth recording.
         return original
@@ -458,13 +525,19 @@ def mesclar(
             "divergiu (mantido o valor da primeira leitura, o único com dígito "
             "verificador válido): " + ", ".join(dv_mantidos)
         )
+    if vencidos:
+        partes.append(
+            "divergiu (adotada a leitura mais confiável, a outra anexada como "
+            "alternativa): "
+            + ", ".join(f"{c} ({motivo}: {quem}; alternativa: {v})" for c, motivo, quem, v in vencidos)
+        )
     if conflitantes:
-        novas = alternativas[len(original.leituras_alternativas):]
         partes.append(
             "divergiu (mantida a primeira leitura como pendente de revisão, "
             "leitura alternativa anexada): "
-            + ", ".join(f"{c} (alternativa: {v})" for c, v in novas)
+            + ", ".join(f"{c} (alternativa: {v})" for c, v in conflitantes)
         )
+    if alternativas != list(original.leituras_alternativas):
         updates["leituras_alternativas"] = tuple(alternativas)
     mensagem = f"releitura com {escalation_model} " + "; ".join(partes)
 

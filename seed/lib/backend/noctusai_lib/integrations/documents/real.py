@@ -36,6 +36,7 @@ correctable rather than becoming an anonymous fact in a column.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import replace
 from datetime import date
 from typing import Optional
@@ -103,6 +104,8 @@ from noctusai_lib.integrations.documents.types import (
     TextSource,
     TitularEsperado,
 )
+
+from noctusai_lib.primitives import identificador as _ident
 
 logger = logging.getLogger(__name__)
 
@@ -501,16 +504,33 @@ class LadderIdentityExtractor:
                 if org_caixa and uf_caixa and only_alnum(rg or "") == only_alnum(numero_caixa):
                     rg_orgao = f"{org_caixa}/{uf_caixa}"
                     rg_orgao_conf = self._temper_name_confidence("alta", source)
+        # 🔴 WHAT `rg` MAY NEVER HOLD (owner rule 2026-10-13, measured on a
+        # real RNE holder's CNH: `rg='12346581446'`, a form number printed
+        # at the card's foot). Dropped values are kept visible in
+        # `leituras_alternativas` + an aviso — never silently.
+        rg_descartado: Optional[tuple[str, str]] = None
         if rne is not None:
-            # The number is an RNE: whatever `rg` read is the same number
-            # (or a fragment of it) — never an RG of its own.
-            if rg is not None and (
-                only_alnum(rg) in only_alnum(rne) or only_alnum(rne) in only_alnum(rg)
-            ):
+            # The identity box holds ONE document: with an RNE read, any `rg`
+            # is either the same number or a stray run — never an RG.
+            if rg is not None:
+                rg_descartado = (rg, "o documento de identidade é um RNE")
                 rg, rg_conf, rg_label = None, ExtractionConfidence.NENHUMA.value, None
             identidade_tipo = identidade_tipo or "rne"
         else:
             identidade_tipo = None
+        if rg is not None and re.fullmatch(r"\d{11}", re.sub(r"[.\-\s/]", "", rg)):
+            # Eleven digits is a CPF or a CNH Nº REGISTRO shape, never an RG
+            # (no Brazilian RG body runs to 11 digits). Refused whether or
+            # not its check digits verify as one of those.
+            digitos = re.sub(r"\D", "", rg)
+            if _ident.cpf_dv_valido(digitos):
+                motivo_rg = "11 dígitos com DV de CPF"
+            elif _ident.validar_cnh_registro(digitos).valido:
+                motivo_rg = "11 dígitos com DV de registro de CNH"
+            else:
+                motivo_rg = "11 dígitos não é forma de RG"
+            rg_descartado = (rg, motivo_rg)
+            rg, rg_conf, rg_label = None, ExtractionConfidence.NENHUMA.value, None
         if not rg:
             # 🔴 AN ISSUING BODY WITH NO RG NUMBER BESIDE IT IDENTIFIES
             # NOTHING. `find_rg_orgao` finds its match by SHAPE alone (an
@@ -768,6 +788,12 @@ class LadderIdentityExtractor:
                 "para: " + ", ".join(multiplos_titulares) + " — esses campos "
                 "nao foram gravados; os demais (estado civil, regime, datas) sim",
             ))
+        if rg_descartado is not None:
+            avisos.append((
+                "rg_descartado",
+                f"valor lido como RG ('{rg_descartado[0]}') descartado: "
+                f"{rg_descartado[1]} — mantido apenas como leitura alternativa",
+            ))
         if profissao_invalida is not None:
             valor_inv, sugestao_inv = profissao_invalida
             avisos.append((
@@ -854,6 +880,7 @@ class LadderIdentityExtractor:
             registro_cnh_confianca=ExtractionConfidence(registro_cnh_conf),
             matricula_certidao=matricula_certidao,
             matricula_certidao_confianca=ExtractionConfidence(matricula_conf),
+            leituras_alternativas=(("rg", rg_descartado[0]),) if rg_descartado else (),
             estado_civil=estado_civil,
             estado_civil_confianca=ExtractionConfidence(estado_civil_conf),
             estado_civil_rotulo=estado_civil_label,
