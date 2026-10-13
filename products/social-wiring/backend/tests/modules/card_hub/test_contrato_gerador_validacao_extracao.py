@@ -634,6 +634,43 @@ class TestConflitosAbertos:
         assert r.status_code == 409, r.text
         assert r.json()["error"]["details"]["conflitos"] == corpo["conflitos"]
 
+    def _ficha_x_portaria(self, scoped, ids, *, cep_proposto: str) -> str:
+        """The seller's ficha address on file; a pre-rule pending conflict
+        proposes her condominium-gate Enel bill (owner decision,
+        2026-10-13 — ficha prevalece)."""
+        clientes = [
+            {**r, "endereco_cep": "06711-020", "endereco_logradouro": "AL. LIVERPOOL",
+             "endereco_numero": "81", "endereco_bairro": "RESERVA DO VIANNA",
+             "endereco_cidade": "COTIA", "endereco_uf": "SP",
+             "endereco_origem": "ficha_cadastral", "endereco_confirmado_em": None}
+            if r["id"] == ids["vendedor"] else r
+            for r in _rows(scoped, "clientes")
+        ]
+        scoped.set_table_data("clientes", clientes)
+        cid = self._conflito_cliente(scoped, ids, campo="endereco")
+        linhas = [
+            {**r, "origem_anterior": "ficha_cadastral", "origem_proposto": "comprovante_endereco",
+             "valor_anterior": '{"cep": "06711-020", "logradouro": "AL. LIVERPOOL"}',
+             "valor_proposto": (
+                 '{"cep": "%s", "logradouro": "RUA GAL. FERNANDO V. CAVALCANTI ALBUQUERQUE", '
+                 '"numero": "1135", "cidade": "COTIA", "uf": "SP"}' % cep_proposto
+             )}
+            for r in _rows(scoped, "cliente_campo_conflitos")
+        ]
+        scoped.set_table_data("cliente_campo_conflitos", linhas)
+        return cid
+
+    def test_a_gate_bill_confirming_the_fichas_cep_is_not_listed(self, client, scoped):
+        ids = _seed_completo(scoped)
+        self._ficha_x_portaria(scoped, ids, cep_proposto="06711-020")
+        assert client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"] == []
+
+    def test_a_bill_with_another_cep_is_still_a_listed_conflict(self, client, scoped):
+        ids = _seed_completo(scoped)
+        cid = self._ficha_x_portaria(scoped, ids, cep_proposto="06700-000")
+        [conflito] = client.get(_url(ids, "validacao-extracao"), headers=_auth()).json()["conflitos"]
+        assert conflito["id"] == cid and conflito["campo"] == "endereco"
+
     def test_a_conflict_on_a_non_contract_field_does_not_block(self, client, scoped, fake_storage):
         ids = _seed_completo(scoped)
         self._conflito_cliente(scoped, ids, campo="data_nascimento")
