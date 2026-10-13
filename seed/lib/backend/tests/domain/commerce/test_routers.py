@@ -9,7 +9,7 @@ import pytest
 from noctusai_lib.domain.commerce import access_links, customers, storefront
 from noctusai_lib.domain.licensing import FakeLicenseChecker
 
-from .conftest import CFG, HOST_A, HOST_B, ORG_A, ORG_B, SECRET, VALID_CNPJ, build_harness, checkout_body, seed_product, seed_profile
+from .conftest import CFG, HOST_A, HOST_B, ORG_A, ORG_B, SECRET, VALID_CNPJ, checkout_body, seed_product, seed_profile
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 64
 UUID0 = "11111111-1111-1111-1111-111111111111"
@@ -317,17 +317,20 @@ class TestWebhookRoute:
 
 
 class TestRealRateLimiter:
-    """A REAL slowapi `limiter.limit` returns a wrapper from another module; the routers
-    must stay mountable (string annotations resolved before wrapping), or every wrapped
-    route 500s in prod while the suite's pass-through limiter stays green."""
+    """The harness mounts every rate-limited router under a REAL slowapi `Limiter` (see
+    conftest): these pin that it stays real and actually limits, so the whole router suite
+    keeps exercising the wrapped handlers prod runs."""
 
-    def test_storefront_routes_resolve_types_under_a_real_limiter(self, commerce_schema_cache):
+    def test_the_harness_limiter_is_real_slowapi(self, h):
         from slowapi import Limiter
-        from slowapi.util import get_remote_address
 
-        limiter = Limiter(key_func=get_remote_address)
-        h = build_harness(rate_limit=limiter.limit)
-        seed_profile(h.db)
-        h.seed_host()
-        r = h.client.get("/api/storefront/catalog", headers=h.shop())
-        assert r.status_code == 200
+        assert isinstance(h.limiter, Limiter) and h.app.state.limiter is h.limiter
+
+    def test_checkout_is_429_past_its_configured_limit(self, shop):
+        h, _, o = shop
+        allowed = int(CFG.checkout_rate_limit.split("/")[0])
+        codes = [
+            h.client.post("/api/storefront/checkout", json=checkout_body(o["id"]), headers=h.shop()).status_code
+            for _ in range(allowed + 1)
+        ]
+        assert 429 not in codes[:allowed] and codes[-1] == 429

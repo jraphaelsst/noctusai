@@ -16,11 +16,10 @@ from noctusai_lib.domain.commerce import CommerceConfig, commerce_migration
 
 SCHEMA = "commerce"
 
-# Org-picker rollout (core 070): every own-org RLS predicate resolves the caller's org through
-# `current_org_id_for(<schema>)` (home org for everyone, the selected org while platform staff
-# act) -- never the home-only `current_org_id()` the organ's default would emit.
-# `tests/test_migration_007_org_picker_rollout.py` fails on any policy that doesn't.
-CFG = CommerceConfig(schema=SCHEMA, org_id_expr=f"public.current_org_id_for('{SCHEMA}')")
+# Org-picker rollout (core 070): the organ's default `org_id_expr` is already
+# `current_org_id_for('<schema>')` (home org for everyone, the selected org while platform
+# staff act), so no override here. `tests/test_commerce_wiring.py` pins it.
+CFG = CommerceConfig(schema=SCHEMA)
 
 
 def generate_migration() -> str:

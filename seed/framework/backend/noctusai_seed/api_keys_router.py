@@ -36,6 +36,11 @@ product-specific is a parameter:
   with the same "Teste não disponível" message `social-wiring` uses.
   Testers are product-specific (pt-BR operator-facing probe logic) and
   stay product-owned — this router only dispatches to them.
+- ``org_testers``: optional ``{spec_name: async fn(value, org_id) -> ...}``
+  for probes whose answer depends on the CALLER'S org besides the value
+  (e.g. the commerce Asaas probe runs in the org's chosen sandbox /
+  production environment). Same dispatch as ``testers``; a key may sit in
+  only one of the two mappings (ValueError at construction).
 - ``require_admin``: optional ``(user, context: str) -> None`` gate for
   the two WRITE routes (403 when it raises). Defaults to a no-op (open
   write) — a product wanting `social-wiring`'s owner/admin gate passes
@@ -70,6 +75,9 @@ logger = logging.getLogger(__name__)
 
 #: Signature every entry in the ``testers`` mapping must satisfy.
 ApiKeyTester = Callable[[str], Awaitable["ApiKeyTestResultOut"]]
+
+#: Signature of an ``org_testers`` entry: ``(value, org_id)`` — org-dependent probes.
+ApiKeyOrgTester = Callable[[str, str], Awaitable["ApiKeyTestResultOut"]]
 
 #: No-op admin gate — the default when a product doesn't pass its own.
 def _open_admin_gate(user: Any, context: str) -> None:  # noqa: ARG001
@@ -134,6 +142,7 @@ def create_api_keys_router(
     store_factory: Callable[[], Any],
     get_current_user_org: Callable[..., Any],
     testers: Optional[dict[str, ApiKeyTester]] = None,
+    org_testers: Optional[dict[str, ApiKeyOrgTester]] = None,
     require_admin: Callable[[Any, str], None] = _open_admin_gate,
     resolver: Callable[[str, Optional[str]], Optional[str]] = resolve_credential,
     prefix: str = "/api/settings",
@@ -157,6 +166,10 @@ def create_api_keys_router(
     """
     specs_by_name = {spec.name: spec for spec in specs}
     testers = dict(testers or {})
+    org_testers = dict(org_testers or {})
+    both = sorted(set(testers) & set(org_testers))
+    if both:
+        raise ValueError(f"api-key testers registered twice (testers AND org_testers): {both}")
     router = APIRouter(prefix=prefix, tags=["settings"])
 
     def _store_dep():
@@ -266,7 +279,8 @@ def create_api_keys_router(
         _user, _token, raw_org = auth
         spec = _spec_or_404(key, specs_by_name)
         tester = testers.get(spec.name)
-        if tester is None:
+        org_tester = org_testers.get(spec.name)
+        if tester is None and org_tester is None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Teste não disponível para '{spec.name}'.",
@@ -280,6 +294,8 @@ def create_api_keys_router(
                     "Configure em Configurações → Chaves de API."
                 ),
             )
+        if org_tester is not None:
+            return await org_tester(value, str(raw_org))
         return await tester(value)
 
     return router

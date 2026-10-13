@@ -57,6 +57,114 @@ class TestAsaas:
         assert isinstance(make_checkout_gateway(CFG), AsaasCheckoutGateway)
 
 
+class TestAsaasEnvironment:
+    """Each org's key belongs to ONE Asaas environment; the gateway calls that environment's
+    API root. Unset => sandbox (never real money by accident); garbage => refused."""
+
+    def _host(self, values):
+        hosts = []
+
+        def handler(request):
+            hosts.append(request.url.host)
+            return httpx.Response(200, json={"name": "Ana"})
+
+        gw({("asaas_api_key", ORG_A): "k", **values}, handler).customer_data(ORG_A, "cus_1")
+        return hosts
+
+    def test_unset_environment_is_sandbox(self):
+        assert gw({}).environment(ORG_A) == "sandbox"
+        assert self._host({}) == ["api-sandbox.asaas.com"]
+
+    def test_production_is_an_explicit_per_org_choice(self):
+        values = {("asaas_environment", ORG_A): "production"}
+        assert gw(values).environment(ORG_A) == "production" and gw(values).environment(ORG_B) == "sandbox"
+        assert self._host(values) == ["api.asaas.com"]
+
+    def test_choice_is_normalised(self):
+        assert gw({("asaas_environment", ORG_A): " Production "}).environment(ORG_A) == "production"
+
+    def test_unknown_environment_refuses_instead_of_guessing(self):
+        g = gw({("asaas_api_key", ORG_A): "k", ("asaas_environment", ORG_A): "prod"})
+        with pytest.raises(GatewayNotConfigured):
+            g.hosted_checkout(ORG_A)
+        assert g.customer_data(ORG_A, "c") is None  # enrichment degrades, logged
+
+    def test_hosted_checkout_targets_the_orgs_environment(self):
+        seen = []
+
+        def handler(request):
+            seen.append(str(request.url))
+            return httpx.Response(200, json={"object": "account", "site": "https://loja.test"})
+
+        g = gw({("asaas_api_key", ORG_A): "k", ("asaas_environment", ORG_A): "production"}, handler)
+        g.hosted_checkout(ORG_A).check_checkout_readiness()
+        assert seen and all(u.startswith("https://api.asaas.com/v3/") for u in seen)
+
+    def test_config_refuses_an_unknown_default(self):
+        from noctusai_lib.domain.commerce import CommerceConfig
+
+        with pytest.raises(ValueError):
+            CommerceConfig(schema="x", asaas_default_environment="prod")
+
+
+class TestReadinessProbe:
+    """`probe_api_key_readiness` -- the settings page's "Testar", lifted from the store/commerce copies."""
+
+    def _probe(self, gateway, key="$aact_x", org=ORG_A):
+        from noctusai_lib.domain.commerce import probe_api_key_readiness
+
+        from .conftest import run
+
+        return run(probe_api_key_readiness(gateway, CFG, org_id=org, api_key=key, public_url="https://loja.test/"))
+
+    def test_ready_and_the_return_url_is_the_order_page(self):
+        from noctusai_lib.domain.commerce import order_return_url
+        from noctusai_lib.integrations.payments.checkout import READINESS_READY_MESSAGE
+
+        fake = FakeCheckoutGateway()
+        v = self._probe(fake)
+        assert v.success is True and v.message == READINESS_READY_MESSAGE
+        assert fake.checkout.calls == [("check_checkout_readiness", "https://loja.test/pedido")]
+        assert order_return_url(CFG, "https://loja.test/") == "https://loja.test/pedido"
+
+    def test_info_only_is_ready_with_the_info_and_error_is_not(self):
+        from noctusai_lib.integrations.payments.checkout import ReadinessIssue
+
+        fake = FakeCheckoutGateway()
+        fake.checkout.script_readiness([ReadinessIssue("site_registered", "Site: x", severity="info")])
+        v = self._probe(fake)
+        assert v.success is True and v.message.endswith("Site: x")
+        fake.checkout.script_readiness([ReadinessIssue("missing_site", "Cadastre o site.")])
+        assert self._probe(fake) == type(v)(False, "Cadastre o site.")
+
+    def test_typed_key_runs_in_the_orgs_environment(self):
+        seen = []
+
+        def handler(request):
+            seen.append((request.url.host, request.headers.get("access_token")))
+            return httpx.Response(401, json={"errors": [{"code": "invalid_environment", "description": "x"}]})
+
+        g = gw({("asaas_environment", ORG_A): "production"}, handler)
+        v = self._probe(g, key="$aact_typed")
+        assert v.success is False and "ambiente" in v.message
+        assert seen[0] == ("api.asaas.com", "$aact_typed")
+
+    def test_unknown_environment_is_a_failed_verdict_not_a_raise(self):
+        v = self._probe(gw({("asaas_environment", ORG_A): "prod"}))
+        assert v.success is False and "Ambiente do Asaas" in v.message
+
+    def test_gateway_error_is_a_failed_verdict_not_a_raise(self):
+        from noctusai_lib.integrations.payments.errors import PaymentGatewayError
+
+        class Boom:
+            def check_checkout_readiness(self, success_url=None):
+                raise PaymentGatewayError("asaas", "down", retryable=True)
+
+        fake = FakeCheckoutGateway(checkout=Boom())
+        v = self._probe(fake)
+        assert v.success is False and "down" in v.message
+
+
 class TestLinks:
     NOW = datetime(2026, 10, 12, 12, tzinfo=timezone.utc)
 

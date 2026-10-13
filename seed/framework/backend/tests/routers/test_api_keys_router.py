@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from fastapi import FastAPI, HTTPException, status
 from fastapi.testclient import TestClient
 
@@ -75,7 +77,7 @@ def _org_dep(*, raise_401=False):
     return _dep
 
 
-def _app(*, store=None, testers=None, require_admin=None, raise_401=False):
+def _app(*, store=None, testers=None, org_testers=None, require_admin=None, raise_401=False):
     store = store or _fresh_store()
     kwargs = {}
     if require_admin is not None:
@@ -87,6 +89,7 @@ def _app(*, store=None, testers=None, require_admin=None, raise_401=False):
         store_factory=lambda: store,
         get_current_user_org=_org_dep(raise_401=raise_401),
         testers=testers,
+        org_testers=org_testers,
         # DI seam — never the ambient `resolve_credential` chain; see
         # test_social_wiring_parity.py's `_app()` for why.
         resolver=lambda key, org_id: None,
@@ -249,3 +252,33 @@ class TestTestApiKey:
         app, _store = _app(raise_401=True, testers={"openai_api_key": self._pass_tester})
         resp = TestClient(app).post("/api/settings/api-keys/openai_api_key/test")
         assert resp.status_code == 401
+
+    def test_org_tester_receives_the_callers_org(self):
+        from noctusai_seed.api_keys_router import ApiKeyTestResultOut
+
+        seen = []
+
+        async def org_tester(value: str, org_id: str):
+            seen.append((value, org_id))
+            return ApiKeyTestResultOut(key="openai_api_key", success=True, message=f"org {org_id}")
+
+        app, _store = _app(org_testers={"openai_api_key": org_tester})
+        TestClient(app).put("/api/settings/api-keys/openai_api_key", json={"value": "sk-x"})
+        resp = TestClient(app).post("/api/settings/api-keys/openai_api_key/test")
+        assert resp.status_code == 200 and resp.json()["message"] == "org org-1"
+        assert seen == [("sk-x", "org-1")]
+
+    def test_org_tester_auth_boundary_strict_401(self):
+        async def org_tester(value: str, org_id: str):  # pragma: no cover - never reached
+            raise AssertionError("tester ran without auth")
+
+        app, _store = _app(raise_401=True, org_testers={"openai_api_key": org_tester})
+        resp = TestClient(app).post("/api/settings/api-keys/openai_api_key/test")
+        assert resp.status_code == 401
+
+    def test_a_key_in_both_tester_maps_is_refused(self):
+        async def org_tester(value: str, org_id: str):  # pragma: no cover - never reached
+            raise AssertionError
+
+        with pytest.raises(ValueError, match="registered twice"):
+            _app(testers={"openai_api_key": self._pass_tester}, org_testers={"openai_api_key": org_tester})

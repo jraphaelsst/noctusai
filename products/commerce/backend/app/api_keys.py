@@ -1,8 +1,9 @@
 """Commerce's managed keys -- the product-local half of `noctusai_lib.security.api_keys`.
 
-The per-org Asaas API key and webhook token live Fernet-encrypted in
+The per-org Asaas API key, webhook token and environment choice live Fernet-encrypted in
 `commerce.credentials` (written from the back office, never env). The names are the
-organ's (`CommerceConfig.asaas_api_key_name` / `asaas_webhook_token_name`): the
+organ's (`CommerceConfig.asaas_api_key_name` / `asaas_webhook_token_name` /
+`asaas_environment_name`): the
 organ's `AsaasCheckoutGateway` resolves them per org through the same store, so a
 rename here without the config would silently disconnect the gateway.
 
@@ -14,7 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from noctusai_lib.security.api_keys import ApiKeySpec, build_api_key_store
+from noctusai_lib.integrations.payments.real_asaas import ASAAS_PRODUCTION, ASAAS_SANDBOX
+from noctusai_lib.security.api_keys import ApiKeyOption, ApiKeySpec, build_api_key_store
 from noctusai_lib.security.token_store import CredentialStore
 
 from app.commerce import CFG
@@ -46,6 +48,27 @@ API_KEY_SPECS: tuple[ApiKeySpec, ...] = (
         is_secret=True,
         testable=False,
         input_type="password",
+    ),
+    # The environment the org's Asaas key belongs to (a sandbox key fails against production and
+    # vice versa). Default SANDBOX, for safety: an org that never touched this setting must not move
+    # real money by accident -- selling for real is an explicit choice the admin makes here (store
+    # precedent). The default is the organ's own (`CFG.asaas_default_environment`), so the screen and
+    # the gateway can never disagree on what "unset" means.
+    ApiKeySpec(
+        name=CFG.asaas_environment_name,
+        label="Ambiente do Asaas",
+        description=(
+            "Sandbox para testar sem cobrar de verdade; Produção para vender. A chave de API "
+            "precisa ser do mesmo ambiente. Sem escolha, usa Sandbox."
+        ),
+        is_secret=False,
+        testable=False,
+        input_type="text",
+        options=(
+            ApiKeyOption(ASAAS_SANDBOX, "Sandbox (testes)", "Nenhuma cobrança real é feita."),
+            ApiKeyOption(ASAAS_PRODUCTION, "Produção", "Cobranças reais."),
+        ),
+        default=CFG.asaas_default_environment,
     ),
 )
 

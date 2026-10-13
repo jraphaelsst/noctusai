@@ -73,6 +73,39 @@ def readiness_ok(issues: list["ReadinessIssue"]) -> bool:
     return not any(i.severity == "error" for i in issues)
 
 
+#: The operator-facing line a clean readiness probe opens with (pt-BR).
+READINESS_READY_MESSAGE = "Chave válida e conta pronta para receber pagamentos."
+
+
+@dataclass(frozen=True)
+class ReadinessVerdict:
+    """The "Testar" button's answer for a payment key: pass/fail + one pt-BR line."""
+
+    success: bool
+    message: str
+
+
+def readiness_verdict(checkout: "HostedCheckout", success_url: Optional[str] = None) -> ReadinessVerdict:
+    """Run `check_checkout_readiness` and fold the issues into ONE operator verdict.
+
+    No issue => ready. Info-only issues => ready, the info lines appended. Any
+    error issue => not ready, the issue lines only. A `PaymentGatewayError`
+    escaping the probe (the gateway itself unreachable) is logged and reported
+    as a failed verdict -- never raised into the settings page. Blocking (HTTP
+    under the hood): call it from a worker thread in an async route."""
+    try:
+        issues = checkout.check_checkout_readiness(success_url=success_url)
+    except PaymentGatewayError as exc:
+        logger.warning("payments: checkout readiness probe failed: %s", exc)
+        return ReadinessVerdict(False, f"Não foi possível consultar o gateway de pagamento: {exc.message}")
+    if not issues:
+        return ReadinessVerdict(True, READINESS_READY_MESSAGE)
+    lines = " ".join(i.message for i in issues)
+    if readiness_ok(issues):
+        return ReadinessVerdict(True, f"{READINESS_READY_MESSAGE} {lines}")
+    return ReadinessVerdict(False, lines)
+
+
 @dataclass(frozen=True)
 class PixQr:
     """Asaas' Pix "Copia e Cola" payload + a scannable image, from the
@@ -606,8 +639,11 @@ __all__ = [
     "FakeHostedCheckout",
     "HostedCheckout",
     "PixQr",
+    "READINESS_READY_MESSAGE",
     "ReadinessIssue",
+    "ReadinessVerdict",
     "StripeHostedCheckout",
     "make_hosted_checkout",
     "readiness_ok",
+    "readiness_verdict",
 ]

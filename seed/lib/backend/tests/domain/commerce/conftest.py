@@ -5,6 +5,14 @@ schema EMITTED BY `commerce_migration` (injected through the mock's own
 `set_cache_for_tests` seam), so a column the services write that the generator
 forgot fails here, not in prod. Nothing is monkeypatched: db, storage, gateway,
 mailer, licence checker and inbox are the factories' own DI seams.
+
+Rate limiting is a REAL slowapi `Limiter` on every rate-limited router (storefront +
+webhook), always -- a standing guard, not one regression test: a real
+`limiter.limit` wraps the handler from another module, and a router whose string
+annotations do not survive that wrapping 500s in prod while a pass-through
+decorator stays green (slice B's bug). `Harness.limited` still records each limit
+string the routers asked for. Each harness gets its own in-memory Limiter, so no
+test inherits another's counters.
 """
 from __future__ import annotations
 
@@ -16,6 +24,9 @@ import pytest
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from noctusai_lib.domain.commerce import (
     CommerceConfig,
@@ -105,6 +116,7 @@ class Harness:
     fulfillment: FulfillmentRegistry
     app: FastAPI
     client: TestClient
+    limiter: Limiter
     limited: list[str] = field(default_factory=list)
 
     def staff(self, role: str = "user") -> dict:
@@ -121,7 +133,7 @@ class Harness:
         )
 
 
-def build_harness(*, rate_limit: Any = None) -> Harness:
+def build_harness() -> Harness:
     db = make_db()
     storage = FakeStorageBackend()
     gateway = FakeCheckoutGateway(webhook_secret="hook-token")
@@ -131,11 +143,14 @@ def build_harness(*, rate_limit: Any = None) -> Harness:
     cnpj = FakeCnpjRegistryLookup()
     fulfillment = make_fulfillment_registry()
     limited: list[str] = []
+    limiter = Limiter(key_func=get_remote_address)
 
     def rl(limit: str):
+        real = limiter.limit(limit)
+
         def deco(fn):
             limited.append(limit)
-            return fn
+            return real(fn)
 
         return deco
 
@@ -156,7 +171,7 @@ def build_harness(*, rate_limit: Any = None) -> Harness:
         get_email=lambda: mailer,
         get_license_checker=lambda: checker,
         get_link_secret=lambda: SECRET,
-        rate_limit=rate_limit if rate_limit is not None else rl,
+        rate_limit=rl,
     )
     hook = commerce_webhook_router(
         CFG,
@@ -167,13 +182,15 @@ def build_harness(*, rate_limit: Any = None) -> Harness:
         rate_limit=rl,
     )
     app = FastAPI()
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     app.add_exception_handler(AppException, app_exception_handler)
     app.add_exception_handler(HTTPException, http_exception_handler)
     app.add_exception_handler(ValidationError, validation_exception_handler)
     app.include_router(staff)
     app.include_router(shop)
     app.include_router(hook)
-    return Harness(db, storage, gateway, mailer, checker, inbox, cnpj, fulfillment, app, TestClient(app), limited)
+    return Harness(db, storage, gateway, mailer, checker, inbox, cnpj, fulfillment, app, TestClient(app), limiter, limited)
 
 
 @pytest.fixture

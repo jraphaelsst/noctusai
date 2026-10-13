@@ -127,3 +127,45 @@ def test_asaas_gateway_get_commercial_info_returns_body() -> None:
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"site": "s"})),
     )
     assert gw.get_commercial_info() == {"site": "s"}
+
+
+# ── readiness_verdict: the "Testar" fold over the issues ─────────────────────
+
+
+def test_verdict_folds_issues_into_one_operator_line() -> None:
+    from noctusai_lib.integrations.payments.checkout import READINESS_READY_MESSAGE, readiness_verdict
+
+    fake = FakeHostedCheckout()
+    assert readiness_verdict(fake, URL) == type(readiness_verdict(fake, URL))(True, READINESS_READY_MESSAGE)
+    fake.script_readiness([ReadinessIssue("site_registered", "Site: s", severity="info")])
+    ok = readiness_verdict(fake, URL)
+    assert ok.success is True and ok.message == f"{READINESS_READY_MESSAGE} Site: s"
+    fake.script_readiness([ReadinessIssue("missing_site", "Cadastre."), ReadinessIssue("x", "Info.", severity="info")])
+    bad = readiness_verdict(fake, URL)
+    assert bad.success is False and bad.message == "Cadastre. Info."
+
+
+def test_verdict_turns_a_gateway_error_into_a_failed_verdict() -> None:
+    from noctusai_lib.integrations.payments.checkout import readiness_verdict
+
+    class Down:
+        def check_checkout_readiness(self, success_url=None):
+            raise PaymentGatewayError("asaas", "timeout", retryable=True)
+
+    v = readiness_verdict(Down(), URL)  # type: ignore[arg-type]
+    assert v.success is False and "timeout" in v.message
+
+
+# ── Asaas environments ───────────────────────────────────────────────────────
+
+
+def test_asaas_base_url_for_maps_both_environments_and_refuses_the_rest() -> None:
+    import pytest
+
+    from noctusai_lib.integrations.payments.real_asaas import DEFAULT_BASE_URL, asaas_base_url_for
+
+    assert asaas_base_url_for("sandbox") == "https://api-sandbox.asaas.com/v3"
+    assert asaas_base_url_for(" PRODUCTION ") == DEFAULT_BASE_URL == "https://api.asaas.com/v3"
+    for bad in ("prod", "", "homolog"):
+        with pytest.raises(ValueError):
+            asaas_base_url_for(bad)

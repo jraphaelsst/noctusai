@@ -16,7 +16,7 @@ from app.api_keys import API_KEY_SPECS, build_store
 from app.commerce import CFG
 from app.config import settings
 from app.dependencies import get_current_user_org, get_user_role
-from app.key_testers import checkout_probe
+from app.key_testers import make_asaas_key_tester
 
 
 def _require_admin_gate(user: Any, context: str) -> None:
@@ -36,6 +36,7 @@ router = create_api_keys_router(
     specs=API_KEY_SPECS,
     store_factory=build_store,
     get_current_user_org=get_current_user_org,
-    testers={CFG.asaas_api_key_name: checkout_probe.test_asaas_api_key},
+    # Org-dependent: the probe runs in the CALLER org's chosen Asaas environment.
+    org_testers={CFG.asaas_api_key_name: make_asaas_key_tester()},
     require_admin=_require_admin_gate,
 )

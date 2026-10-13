@@ -4,7 +4,8 @@ Everything the commerce organ needs from "the payment gateway" that is NOT the
 charge call itself (that is the seed's `HostedCheckout`):
 
 * which `HostedCheckout` to use for THIS org (each client has its OWN Asaas
-  account -- D5/D27; the key is resolved per org, never a platform-wide key);
+  account -- D5/D27; the key AND its environment -- sandbox / production -- are
+  resolved per org, never a platform-wide key);
 * noc's platform wallet id for the fee split (PLATFORM tier credential);
 * the per-org webhook token the delivery is verified against;
 * the gateway's customer record (name/doc/e-mail/phone/address) for the
@@ -24,6 +25,7 @@ import httpx
 from noctusai_lib.integrations.payments.checkout import FakeHostedCheckout, HostedCheckout, make_hosted_checkout
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
 from noctusai_lib.integrations.payments.factory import make_payment_gateway
+from noctusai_lib.integrations.payments.real_asaas import asaas_base_url_for
 from noctusai_lib.security.api_keys import resolve_api_key
 
 from ._common import digits
@@ -42,6 +44,12 @@ class CheckoutGateway(Protocol):
     def hosted_checkout(self, org_id: Any) -> HostedCheckout:
         """The org's hosted-checkout client. Raises `GatewayNotConfigured` when the
         org has no usable credentials (checkout answers 503 BEFORE any write)."""
+        ...
+
+    def checkout_for_key(self, org_id: Any, api_key: str) -> HostedCheckout:
+        """A hosted-checkout client for an EXPLICIT key, in the org's environment --
+        what the settings page's "Testar" probe runs against. Raises
+        `GatewayNotConfigured` when the org's environment choice is unusable."""
         ...
 
     def platform_wallet_id(self) -> Optional[str]:
@@ -89,6 +97,9 @@ class FakeCheckoutGateway:
     def hosted_checkout(self, org_id: Any) -> HostedCheckout:
         if not self.configured:
             raise GatewayNotConfigured(f"no payment gateway credentials for org {org_id}")
+        return self.checkout
+
+    def checkout_for_key(self, org_id: Any, api_key: str) -> HostedCheckout:
         return self.checkout
 
     def platform_wallet_id(self) -> Optional[str]:
@@ -165,8 +176,35 @@ class AsaasCheckoutGateway:
             raise GatewayNotConfigured(f"no Asaas API key for org {org_id}")
         return key
 
+    def environment(self, org_id: Any) -> str:
+        """The org's Asaas environment: its saved choice, else the config default
+        (sandbox). A value we cannot map refuses (`GatewayNotConfigured`, logged) --
+        never a silent fallback that could charge in the wrong environment."""
+        raw = self._resolve(self._cfg.asaas_environment_name, org_id)
+        env = (raw or self._cfg.asaas_default_environment).strip().lower()
+        try:
+            asaas_base_url_for(env)
+        except ValueError:
+            logger.error("commerce: org %s has an unknown Asaas environment %r", org_id, raw)
+            raise GatewayNotConfigured(f"unknown Asaas environment {raw!r} for org {org_id}") from None
+        return env
+
+    def _base_url(self, org_id: Any) -> str:
+        return asaas_base_url_for(self.environment(org_id))
+
+    def _checkout(self, org_id: Any, api_key: str) -> HostedCheckout:
+        return make_hosted_checkout(
+            provider="asaas",
+            asaas_api_key=api_key,
+            asaas_base_url=self._base_url(org_id),
+            asaas_transport=self._transport,
+        )
+
     def hosted_checkout(self, org_id: Any) -> HostedCheckout:
-        return make_hosted_checkout(provider="asaas", asaas_api_key=self._api_key(org_id), asaas_transport=self._transport)
+        return self._checkout(org_id, self._api_key(org_id))
+
+    def checkout_for_key(self, org_id: Any, api_key: str) -> HostedCheckout:
+        return self._checkout(org_id, api_key)
 
     def platform_wallet_id(self) -> Optional[str]:
         # PLATFORM tier on purpose (org_id=None): the wallet is noc's, never a client's.
@@ -178,7 +216,10 @@ class AsaasCheckoutGateway:
     def customer_data(self, org_id: Any, customer_id_at_gateway: str) -> Optional[dict]:
         try:
             gateway = make_payment_gateway(
-                provider="asaas", asaas_api_key=self._api_key(org_id), asaas_transport=self._transport
+                provider="asaas",
+                asaas_api_key=self._api_key(org_id),
+                asaas_base_url=self._base_url(org_id),
+                asaas_transport=self._transport,
             )
             raw = gateway.get_customer(customer_id_at_gateway)
         except (GatewayNotConfigured, PaymentGatewayError) as exc:

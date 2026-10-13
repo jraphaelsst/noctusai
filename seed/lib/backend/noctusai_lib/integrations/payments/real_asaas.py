@@ -46,6 +46,30 @@ logger = logging.getLogger(__name__)
 DEFAULT_BASE_URL = "https://api.asaas.com/v3"
 DEFAULT_TIMEOUT_SECONDS = 15.0
 
+#: The two Asaas environments and their API roots. An Asaas key belongs to ONE
+#: environment (a sandbox key against production is a 401 `invalid_environment`),
+#: so a consumer that lets the operator pick the environment maps the choice
+#: through `asaas_base_url_for` instead of hard-coding a URL.
+ASAAS_SANDBOX = "sandbox"
+ASAAS_PRODUCTION = "production"
+ASAAS_BASE_URLS: dict[str, str] = {
+    ASAAS_SANDBOX: "https://api-sandbox.asaas.com/v3",
+    ASAAS_PRODUCTION: DEFAULT_BASE_URL,
+}
+
+
+def asaas_base_url_for(environment: str) -> str:
+    """The API root for an Asaas environment name (`sandbox` / `production`,
+    case/space-insensitive). Anything else raises `ValueError` -- an environment
+    we cannot map is a misconfiguration, never a silent fallback to production."""
+    key = (environment or "").strip().lower()
+    try:
+        return ASAAS_BASE_URLS[key]
+    except KeyError:
+        raise ValueError(
+            f"unknown Asaas environment {environment!r}; expected one of {sorted(ASAAS_BASE_URLS)}"
+        ) from None
+
 # Asaas `Subscription.status` → our normalized vocabulary. Coarse by
 # construction (see module docstring) — `INACTIVE` covers both "never
 # billed" and "manually deactivated", which Asaas itself does not
@@ -267,4 +291,12 @@ class AsaasPaymentGateway:
         return FeeBreakdown(gross=gross, fee=fee, net=net)
 
 
-__all__ = ["AsaasPaymentGateway", "DEFAULT_BASE_URL", "DEFAULT_TIMEOUT_SECONDS"]
+__all__ = [
+    "ASAAS_BASE_URLS",
+    "ASAAS_PRODUCTION",
+    "ASAAS_SANDBOX",
+    "AsaasPaymentGateway",
+    "DEFAULT_BASE_URL",
+    "DEFAULT_TIMEOUT_SECONDS",
+    "asaas_base_url_for",
+]

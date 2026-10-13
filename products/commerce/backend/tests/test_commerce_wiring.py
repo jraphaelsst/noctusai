@@ -47,9 +47,27 @@ def test_api_key_specs_use_the_names_the_organ_gateway_resolves():
     from app.commerce import CFG
 
     names = {s.name: s for s in API_KEY_SPECS}
-    assert set(names) == {CFG.asaas_api_key_name, CFG.asaas_webhook_token_name}
+    assert set(names) == {CFG.asaas_api_key_name, CFG.asaas_webhook_token_name, CFG.asaas_environment_name}
     assert names[CFG.asaas_api_key_name].testable is True
     assert names[CFG.asaas_api_key_name].is_secret and names[CFG.asaas_webhook_token_name].is_secret
+
+
+def test_asaas_environment_is_a_choice_defaulting_to_sandbox():
+    from noctusai_lib.integrations.payments.real_asaas import ASAAS_BASE_URLS
+
+    from app.api_keys import API_KEY_SPECS
+    from app.commerce import CFG
+
+    env = next(s for s in API_KEY_SPECS if s.name == CFG.asaas_environment_name)
+    assert env.is_secret is False
+    assert set(env.allowed_values) == set(ASAAS_BASE_URLS)  # every option maps to an API root
+    assert env.default == CFG.asaas_default_environment == "sandbox"
+
+
+def test_config_uses_the_organs_org_picker_aware_default():
+    from app.commerce import CFG
+
+    assert CFG.org_id_expr == "public.current_org_id_for('commerce')"
 
 
 STAFF_ROUTES = [
@@ -108,15 +126,31 @@ class TestPaymentWebhook:
 
 
 class TestReadinessProbe:
-    def test_probe_reports_the_fake_checkouts_readiness(self):
+    """The host adapter over the organ's `probe_api_key_readiness` (the probe lives in the seed)."""
+
+    def _run(self, gateway, value="$aact_fake", org=UUID0):
         import asyncio
 
-        from noctusai_lib.integrations.payments.checkout import make_hosted_checkout
+        from app.key_testers import make_asaas_key_tester
 
-        from app.key_testers import READY_MESSAGE, CheckoutProbe
+        return asyncio.run(make_asaas_key_tester(lambda: gateway)(value, org))
 
-        probe = CheckoutProbe()
-        probe.use(factory=lambda key: make_hosted_checkout(use_fake=True))
-        result = asyncio.run(probe.test_asaas_api_key("$aact_fake"))
+    def test_ready_account_is_success(self):
+        from noctusai_lib.integrations.payments.checkout import READINESS_READY_MESSAGE
+
+        result = self._run(FakeCheckoutGateway())
         assert result.key == "asaas_api_key"
-        assert result.message.startswith(READY_MESSAGE) or result.success is False
+        assert result.success is True and result.message == READINESS_READY_MESSAGE
+
+    def test_missing_site_is_failure_with_the_issue_line(self):
+        from noctusai_lib.integrations.payments.checkout import FakeHostedCheckout, ReadinessIssue
+
+        checkout = FakeHostedCheckout()
+        checkout.script_readiness([ReadinessIssue("missing_site", "Cadastre o site da loja no Asaas.")])
+        result = self._run(FakeCheckoutGateway(checkout=checkout))
+        assert result.success is False and result.message == "Cadastre o site da loja no Asaas."
+        assert checkout.calls == [("check_checkout_readiness", "https://commerce.noctusai.com/pedido")]
+
+    def test_the_settings_router_registers_it_as_an_org_tester(self, client):
+        # Mounted: the probe route exists and is auth-gated (strict 401).
+        assert client.raw().post("/api/settings/api-keys/asaas_api_key/test").status_code == 401

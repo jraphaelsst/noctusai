@@ -40,6 +40,7 @@ from . import (
     order_state,
     orders,
     profile,
+    readiness,
     storefront,
     webhook,
 )
@@ -56,6 +57,7 @@ from .fulfillment import FulfillmentHandler, FulfillmentRegistry, NoopFulfillmen
 from .gateway import AsaasCheckoutGateway, CheckoutGateway, FakeCheckoutGateway, make_checkout_gateway
 from .media import MEDIA_UPLOAD_MAX_BYTES, MEDIA_UPLOAD_PATH_PATTERN
 from .order_state import InvalidTransition, OrderEvent, transition
+from .readiness import order_return_url, probe_api_key_readiness
 from .router import commerce_staff_router, commerce_webhook_router, storefront_router
 from .sql import APPEND_ONLY_TABLES, COMMERCE_TABLES, commerce_migration
 from .types import (
@@ -122,9 +124,12 @@ __all__ = [
     "make_fulfillment_registry",
     "media",
     "order_state",
+    "order_return_url",
     "orders",
+    "probe_api_key_readiness",
     "purge_expired_fiscal_retention",
     "profile",
+    "readiness",
     "storefront",
     "storefront_router",
     "transition",

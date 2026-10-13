@@ -357,3 +357,10 @@ Every `HostedCheckout` (`noctusai_lib.integrations.payments.checkout`) now expos
 - **Fake**: `script_readiness([...])`, calls recorded.
 
 Consumer wiring: store's `asaas_api_key` is `testable`; `app/key_testers.py` runs the check from the admin "Testar" button (seed `ApiKeysPanel` already renders Testar for `testable` keys — no FE change).
+
+### Asaas environments + the readiness verdict, lifted (2026-10-13, commerce organ hardening)
+
+- **Environment selector** — `real_asaas.ASAAS_BASE_URLS` (`sandbox` → `https://api-sandbox.asaas.com/v3`, `production` → `DEFAULT_BASE_URL`) + `asaas_base_url_for(env)`, which REFUSES an unknown name (`ValueError`) rather than falling back to production. An Asaas key belongs to one environment, so a consumer that lets the operator choose maps the choice through this, never a hard-coded URL.
+- **`readiness_verdict(checkout, success_url) -> ReadinessVerdict(success, message)`** (`checkout.py`) — the "Testar" fold over `check_checkout_readiness`: no issue ⇒ `READINESS_READY_MESSAGE`; info-only ⇒ ready + the info lines; any error ⇒ not ready, issue lines only; a `PaymentGatewayError` ⇒ failed verdict, logged, never raised.
+- **Commerce organ** consumes both: `CommerceConfig.asaas_environment_name` (per-org credential) + `asaas_default_environment` (`sandbox` — unset never moves real money); `AsaasCheckoutGateway.environment(org)` / `checkout_for_key(org, key)`; `noctusai_lib.domain.commerce.probe_api_key_readiness(gateway, cfg, org_id=, api_key=, public_url=)`. The host registers it through the seed `create_api_keys_router(org_testers={...})` seam (a tester that receives `(value, org_id)`), since the probe must run in the CALLER org's environment.
+- **Consumer left to migrate:** `products/store` still carries its own `key_testers.py` + `asaas_base_url()` (inactive, slated for retirement — migrate or retire with it).

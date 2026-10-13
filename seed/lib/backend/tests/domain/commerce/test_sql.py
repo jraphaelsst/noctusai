@@ -136,7 +136,50 @@ def test_enum_checks_come_from_the_enums():
 
 def test_private_bucket_with_per_org_object_rls():
     assert "VALUES ('commerce-media', 'commerce-media', false)" in SQL
+    # HOME-ONLY on purpose: storage never acts under the org picker (projects/org-picker/
+    # CONTRACT.md; keeper check_org_picker_ready_policies skips storage.objects). The backend
+    # reads/writes media through the service role, so acting staff are unaffected.
     assert "(storage.foldername(name))[1] = (SELECT public.current_org_id())::text" in SQL
+
+
+ACTING = "(SELECT public.current_org_id_for('commerce'))"
+
+
+def _authenticated_policies(sql: str) -> dict[str, str]:
+    """`schema.table::policy` -> its USING / WITH CHECK text, for every policy TO authenticated."""
+    out = {}
+    for m in re.finditer(r'CREATE POLICY "([^"]+)" ON ([\w.]+) FOR \w+ TO authenticated\n(.*?);', sql, re.S):
+        out[f"{m.group(2)}::{m.group(1)}"] = m.group(3)
+    return out
+
+
+def test_default_org_id_expr_is_the_org_picker_aware_helper_for_the_schema():
+    assert CFG.org_id_expr == "public.current_org_id_for('commerce')"
+    assert CommerceConfig(schema="foto").org_id_expr == "public.current_org_id_for('foto')"
+
+
+def test_staff_acting_in_a_customer_org_is_covered_by_every_table_and_credentials_policy():
+    """A platform-staff member acting in a customer org (org picker) resolves to THAT org only
+    through `current_org_id_for('<schema>')` (core 070) -- the home-only `current_org_id()`
+    would show them NoctusAI's rows. Every authenticated own-org policy (the 14 tables AND the
+    Asaas `credentials` table) must compare `org_id` to the acting-aware expression."""
+    policies = _authenticated_policies(SQL)
+    own_org = {k: v for k, v in policies.items() if not k.startswith("storage.")}
+    assert f"commerce.credentials::credentials_select_own_org" in own_org
+    assert {f"commerce.{t}::{t}_select_own_org" for t in COMMERCE_TABLES} <= set(own_org)
+    for key, body in own_org.items():
+        assert f"org_id = {ACTING}" in body, key
+        assert "current_org_id()" not in body and "current_user_org_id" not in body, key
+
+
+def test_explicit_org_id_expr_still_overrides():
+    sql = commerce_migration(CommerceConfig(schema="commerce", org_id_expr="public.current_org_id()"), "commerce")
+    assert 'org_id = (SELECT public.current_org_id())' in _authenticated_policies(sql)["commerce.credentials::credentials_select_own_org"]
+
+
+def test_blank_org_id_expr_is_refused():
+    with pytest.raises(ValueError):
+        CommerceConfig(schema="x", org_id_expr="  ")
 
 
 def test_append_only_tables_are_a_subset_of_the_tables():

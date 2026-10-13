@@ -34,3 +34,12 @@ Logged by the tech-lead from the slice returns, 2026-10-13. Fold into `CONTRACT.
 ## Hold — host product commit (owner decision pending, 2026-10-13)
 
 Slice B's scaffold of `products/commerce` is complete and staged but NOT committed: the pre-commit keeper `check_secdef_migration_revokes_execute` flags the 5 SECURITY DEFINER RLS helpers the template copies (`current_org_id`, `current_org_role`, `current_user_org_id`, `is_customer`, `current_customer_org_id` — all verified as referenced by policies). The engineer's marker edit (`-- secdef-execute-ok: rls-helper`) was refused by the auto-mode safety classifier. Owner chose to hold and decide; options presented: scaffold emits verified markers / REVOKEs by construction (recommended), mark the commerce copies only, or baseline entries. Slice D (pages) waits on this.
+
+## Organ hardening deltas (feat/commerce-organ-hardening, off dev 8fad3c98e)
+
+| # | Delta | Frontend / host action |
+|---|---|---|
+| H1 | `CommerceConfig.org_id_expr` is now `Optional[str] = None` ⇒ derived `public.current_org_id_for('<schema>')` (was the home-only `public.current_org_id()`). Every own-org policy AND the `credentials` SELECT policy use it. The media bucket's object RLS stays HOME-ONLY (`current_org_id()`): storage never acts per `projects/org-picker/CONTRACT.md` | host override removed (`app/commerce.py`); `012_commerce.sql` output byte-identical (host already passed the same expression) |
+| H2 | New per-org key `asaas_environment` (`CommerceConfig.asaas_environment_name`), choice `sandbox` / `production`, default `sandbox` (`CommerceConfig.asaas_default_environment`). The gateway charges, reads customers and probes in the org's environment; an unknown value ⇒ `GatewayNotConfigured` (checkout 503) | host `API_KEY_SPECS` gains the CHOICE spec; seed `ApiKeysPanel` renders it as a switch (no FE change expected — options/default come from `GET /api/settings/api-keys`) |
+| H3 | `CheckoutGateway` Protocol gains `checkout_for_key(org_id, api_key) -> HostedCheckout` (Fake returns its checkout) | a custom gateway implementation must add it |
+| H4 | Readiness probe lifted: `noctusai_lib.domain.commerce.probe_api_key_readiness` + payments `readiness_verdict` / `ReadinessVerdict` / `READINESS_READY_MESSAGE`. Seed `create_api_keys_router` gains `org_testers={name: async (value, org_id)}` (additive) | `POST /api/settings/api-keys/asaas_api_key/test` unchanged on the wire (`{key, success, message}`); `products/store` keeps its copy (inactive, to migrate or retire) |

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
+
+from noctusai_lib.integrations.payments.real_asaas import ASAAS_BASE_URLS, ASAAS_SANDBOX
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
 _BUCKET = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -45,11 +47,22 @@ class CommerceConfig:
         platform_wallet_credential: `resolve_credential` key (PLATFORM tier) of
             noc's Asaas wallet id for the fee split (D27).
         asaas_api_key_name / asaas_webhook_token_name: per-org credential names.
+        asaas_environment_name: per-org credential holding the Asaas environment
+            (`sandbox` / `production`) the org's key belongs to.
+        asaas_default_environment: the environment used while the org never chose
+            one. SANDBOX on purpose: an unset choice must never move real money --
+            production is an explicit operator decision (store precedent).
         order_expiry_hours: how long a pending order's charge stays payable.
         *_path_template: frontend paths the redirect/e-mail links point to.
         link_ttl_minutes: lifetime of an e-mailed access / verification link.
         signed_url_ttl_seconds: lifetime of a media signed URL.
-        org_id_expr: SQL expression the authenticated own-org policies compare to.
+        org_id_expr: SQL expression the authenticated own-org policies (every
+            organ table + `credentials`) compare `org_id` to. Unset (the default) =>
+            `public.current_org_id_for('<schema>')`: the home org for everyone, the
+            SELECTED org while platform staff act through the org picker (core 070),
+            so the canonical answer is right for every product, ready or not. The
+            private media bucket stays on the home-only `current_org_id()` --
+            storage never acts (`projects/org-picker/CONTRACT.md`).
     """
 
     schema: str
@@ -64,17 +77,28 @@ class CommerceConfig:
     platform_wallet_credential: str = "asaas_platform_wallet_id"
     asaas_api_key_name: str = "asaas_api_key"
     asaas_webhook_token_name: str = "asaas_webhook_token"
+    asaas_environment_name: str = "asaas_environment"
+    asaas_default_environment: str = ASAAS_SANDBOX
     order_expiry_hours: int = 72
     order_path_template: str = "/pedido/{token}"
     my_orders_path_template: str = "/minhas-compras?token={token}"
     privacy_verify_path_template: str = "/privacidade/verificar?token={token}"
     link_ttl_minutes: int = 60
     signed_url_ttl_seconds: int = 3600
-    org_id_expr: str = "public.current_org_id()"
+    org_id_expr: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not _IDENT.match(self.schema or ""):
             raise ValueError(f"CommerceConfig.schema must be a bare lowercase identifier, got {self.schema!r}")
+        if self.org_id_expr is None:
+            object.__setattr__(self, "org_id_expr", f"public.current_org_id_for('{self.schema}')")
+        elif not self.org_id_expr.strip():
+            raise ValueError("CommerceConfig.org_id_expr must be a non-empty SQL expression (or unset)")
+        if self.asaas_default_environment not in ASAAS_BASE_URLS:
+            raise ValueError(
+                f"CommerceConfig.asaas_default_environment must be one of {sorted(ASAAS_BASE_URLS)}, "
+                f"got {self.asaas_default_environment!r}"
+            )
         if not _BUCKET.match(self.bucket or ""):
             raise ValueError(f"CommerceConfig.bucket must be a bucket id, got {self.bucket!r}")
         for name in ("storefront_rate_limit", "checkout_rate_limit", "webhook_rate_limit"):

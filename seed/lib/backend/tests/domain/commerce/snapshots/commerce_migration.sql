@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS commerce.commerce_store_profiles (
 ALTER TABLE commerce.commerce_store_profiles ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_store_profiles_select_own_org" ON commerce.commerce_store_profiles;
 CREATE POLICY "commerce_store_profiles_select_own_org" ON commerce.commerce_store_profiles FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_store_profiles;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_store_profiles FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS commerce.commerce_store_profile_versions (
 ALTER TABLE commerce.commerce_store_profile_versions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_store_profile_versions_select_own_org" ON commerce.commerce_store_profile_versions;
 CREATE POLICY "commerce_store_profile_versions_select_own_org" ON commerce.commerce_store_profile_versions FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_store_profile_versions;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_store_profile_versions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -55,7 +55,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_storefront_hosts_org ON commerce.commerc
 ALTER TABLE commerce.commerce_storefront_hosts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_storefront_hosts_select_own_org" ON commerce.commerce_storefront_hosts;
 CREATE POLICY "commerce_storefront_hosts_select_own_org" ON commerce.commerce_storefront_hosts FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_storefront_hosts;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_storefront_hosts FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS commerce.commerce_categories (
 ALTER TABLE commerce.commerce_categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_categories_select_own_org" ON commerce.commerce_categories;
 CREATE POLICY "commerce_categories_select_own_org" ON commerce.commerce_categories FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_categories;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_categories FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -100,7 +100,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_products_category ON commerce.commerce_p
 ALTER TABLE commerce.commerce_products ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_products_select_own_org" ON commerce.commerce_products;
 CREATE POLICY "commerce_products_select_own_org" ON commerce.commerce_products FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_products;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_products FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -122,7 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_offers_org ON commerce.commerce_offers (
 ALTER TABLE commerce.commerce_offers ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_offers_select_own_org" ON commerce.commerce_offers;
 CREATE POLICY "commerce_offers_select_own_org" ON commerce.commerce_offers FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_offers;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_offers FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -142,7 +142,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_media_org ON commerce.commerce_media (or
 ALTER TABLE commerce.commerce_media ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_media_select_own_org" ON commerce.commerce_media;
 CREATE POLICY "commerce_media_select_own_org" ON commerce.commerce_media FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_media;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_media FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -166,7 +166,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_commerce_coupons_org_code ON commerce.comme
 ALTER TABLE commerce.commerce_coupons ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_coupons_select_own_org" ON commerce.commerce_coupons;
 CREATE POLICY "commerce_coupons_select_own_org" ON commerce.commerce_coupons FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_coupons;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_coupons FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS commerce.commerce_customers (
 ALTER TABLE commerce.commerce_customers ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_customers_select_own_org" ON commerce.commerce_customers;
 CREATE POLICY "commerce_customers_select_own_org" ON commerce.commerce_customers FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_customers;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_customers FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -210,7 +210,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_consents_org ON commerce.commerce_consen
 ALTER TABLE commerce.commerce_consents ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_consents_select_own_org" ON commerce.commerce_consents;
 CREATE POLICY "commerce_consents_select_own_org" ON commerce.commerce_consents FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_consents;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_consents FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -231,7 +231,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_privacy_requests_org ON commerce.commerc
 ALTER TABLE commerce.commerce_privacy_requests ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_privacy_requests_select_own_org" ON commerce.commerce_privacy_requests;
 CREATE POLICY "commerce_privacy_requests_select_own_org" ON commerce.commerce_privacy_requests FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_privacy_requests;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_privacy_requests FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -271,7 +271,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_orders_charge ON commerce.commerce_order
 ALTER TABLE commerce.commerce_orders ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_orders_select_own_org" ON commerce.commerce_orders;
 CREATE POLICY "commerce_orders_select_own_org" ON commerce.commerce_orders FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_orders;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_orders FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -294,7 +294,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_order_items_org ON commerce.commerce_ord
 ALTER TABLE commerce.commerce_order_items ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_order_items_select_own_org" ON commerce.commerce_order_items;
 CREATE POLICY "commerce_order_items_select_own_org" ON commerce.commerce_order_items FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_order_items;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_order_items FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -314,7 +314,7 @@ CREATE INDEX IF NOT EXISTS idx_commerce_order_events_org ON commerce.commerce_or
 ALTER TABLE commerce.commerce_order_events ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "commerce_order_events_select_own_org" ON commerce.commerce_order_events;
 CREATE POLICY "commerce_order_events_select_own_org" ON commerce.commerce_order_events FOR SELECT TO authenticated
-  USING (org_id = (SELECT public.current_org_id()));
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.commerce_order_events;
 CREATE POLICY "service_role_bypass" ON commerce.commerce_order_events FOR ALL TO service_role USING (true) WITH CHECK (true);
 
@@ -334,7 +334,7 @@ ALTER TABLE commerce.credentials ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "credentials_select_own_org" ON commerce.credentials;
 CREATE POLICY "credentials_select_own_org" ON commerce.credentials FOR SELECT TO authenticated
-  USING (org_id = current_org_id());
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
 
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.credentials;
 CREATE POLICY "service_role_bypass" ON commerce.credentials FOR ALL TO service_role USING (true) WITH CHECK (true);
