@@ -70,6 +70,12 @@ class RoteiroUpdate(StrictHttpModel):
             raise ValueError("Informe o nome ou o conteúdo a salvar")
         if self.nome is not None and not self.nome.strip():
             raise ValueError("O nome não pode ser vazio")
+        # Only a `completo` roteiro is editable (the service answers 409 otherwise), and a
+        # completo roteiro with no text is not a state the domain has: blanking it is data
+        # loss, never an edit (2026-10-13 — an editor seeded before generation finished
+        # would have PATCHed "" over a freshly generated roteiro).
+        if self.conteudo is not None and not self.conteudo.strip():
+            raise ValueError("O conteúdo do roteiro não pode ficar vazio")
         return self
 
 

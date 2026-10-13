@@ -3,7 +3,7 @@
  * Pesquisa (the latter hidden while `fontes` is NULL), Nome (optional),
  * markdown textarea, Copiar Roteiro, and the optimistic-lock save (#37, 409).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 
@@ -28,23 +28,91 @@ function statusDe(e: unknown): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** The server values the local edit state was seeded from (or last reconciled with). */
+interface Base {
+  id: string;
+  versao: number;
+  nome: string;
+  conteudo: string;
+}
+
+/**
+ * Local edit state for one roteiro, reconciled against the polled server row.
+ *
+ * The local `nome`/`conteudo` remember the server BASELINE they came from. On
+ * every server change (generation finishing, a reprocess, another tab saving,
+ * our own save) each field is reconciled on its own:
+ *   - untouched locally (local === baseline), or already equal to the server
+ *     → adopt the server value;
+ *   - typed locally AND changed on the server → keep the typed text and raise
+ *     `conflito` (the same "O roteiro mudou; recarregue" path a 409 takes).
+ * The save sends `expected_versao` = the baseline's versao, so a save made over
+ * an unreconciled server change is refused (409) instead of overwriting it.
+ *
+ * 2026-10-13 regression this closes: re-seeding only on id/versao meant an
+ * editor mounted while the roteiro was still `criando` (conteudo null, versao 1)
+ * kept "" after the worker wrote the text at the same versao — the textarea
+ * showed 0 chars and "Atualizar" would have PATCHed "" over the roteiro.
+ */
 export function useEdicaoRoteiro(roteiro: Roteiro | undefined, onSalvo?: (r: Roteiro) => void) {
   const salvar = useSalvarRoteiro();
   const [nome, setNome] = useState("");
   const [conteudo, setConteudo] = useState("");
   const [conflito, setConflito] = useState(false);
+  const base = useRef<Base | null>(null);
 
-  // Re-seed only when the server row really changed (id / versao) — polling must not clobber typing.
+  function adotar(r: Roteiro) {
+    base.current = { id: r.id, versao: r.versao, nome: r.nome, conteudo: r.conteudo ?? "" };
+    setNome(r.nome);
+    setConteudo(r.conteudo ?? "");
+    setConflito(false);
+  }
+
   useEffect(() => {
     if (!roteiro) return;
-    setNome(roteiro.nome);
-    setConteudo(roteiro.conteudo ?? "");
-    setConflito(false);
-  }, [roteiro?.id, roteiro?.versao]); // eslint-disable-line react-hooks/exhaustive-deps
+    const b = base.current;
+    if (!b || b.id !== roteiro.id) {
+      adotar(roteiro);
+      return;
+    }
+    const servNome = roteiro.nome;
+    const servConteudo = roteiro.conteudo ?? "";
+    let divergiu = false;
+    const prox: Base = { ...b };
+    if (servNome !== b.nome) {
+      if (nome === b.nome || nome.trim() === servNome) {
+        prox.nome = servNome;
+        setNome(servNome);
+      } else divergiu = true;
+    }
+    if (servConteudo !== b.conteudo) {
+      if (conteudo === b.conteudo || conteudo === servConteudo) {
+        prox.conteudo = servConteudo;
+        setConteudo(servConteudo);
+      } else divergiu = true;
+    }
+    // The baseline only advances to the server's versao once nothing is left unreconciled;
+    // an unresolved field keeps diverging on every pass, so `conflito` tracks it exactly.
+    if (!divergiu) prox.versao = roteiro.versao;
+    base.current = prox;
+    setConflito(divergiu);
+  }, [roteiro?.id, roteiro?.versao, roteiro?.nome, roteiro?.conteudo]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Drop the local edits and take the current server row (the conflict's "Recarregar"). */
+  function recarregar() {
+    if (roteiro) adotar(roteiro);
+  }
 
   const nomeLimpo = nome.trim();
-  const alterou = !!roteiro && (nomeLimpo !== roteiro.nome || conteudo !== (roteiro.conteudo ?? ""));
-  const valido = nomeLimpo.length > 0 && nomeLimpo.length <= NOME_MAX && conteudo.length <= CONTEUDO_MAX;
+  const conteudoServidor = roteiro?.conteudo ?? "";
+  const alterouConteudo = !!roteiro && conteudo !== conteudoServidor;
+  const alterou = !!roteiro && (nomeLimpo !== roteiro.nome || alterouConteudo);
+  // A completo roteiro never goes blank (the API answers 422): clearing it is data loss, not an edit.
+  const valido =
+    nomeLimpo.length > 0 &&
+    nomeLimpo.length <= NOME_MAX &&
+    conteudo.length <= CONTEUDO_MAX &&
+    (!alterouConteudo || conteudo.trim().length > 0);
 
   async function salvarAgora(): Promise<Roteiro | null> {
     if (!roteiro || !alterou || !valido) return null;
@@ -52,8 +120,8 @@ export function useEdicaoRoteiro(roteiro: Roteiro | undefined, onSalvo?: (r: Rot
       const r = await salvar.mutateAsync({
         id: roteiro.id,
         nome: nomeLimpo !== roteiro.nome ? nomeLimpo : undefined,
-        conteudo: conteudo !== (roteiro.conteudo ?? "") ? conteudo : undefined,
-        expected_versao: roteiro.versao,
+        conteudo: alterouConteudo ? conteudo : undefined,
+        expected_versao: base.current?.id === roteiro.id ? base.current.versao : roteiro.versao,
       });
       toast.success("Roteiro atualizado.");
       onSalvo?.(r);
@@ -71,6 +139,7 @@ export function useEdicaoRoteiro(roteiro: Roteiro | undefined, onSalvo?: (r: Rot
     conteudo,
     setConteudo,
     conflito,
+    recarregar,
     alterou,
     valido,
     salvando: salvar.isPending,
@@ -103,7 +172,15 @@ export function RoteiroCorpo({ roteiro, edicao, mostrarNome = true, onRecarregar
         <div role="alert" className="flex items-center justify-between rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm">
           <span>{MSG_CONFLITO}</span>
           {onRecarregar && (
-            <Button type="button" size="sm" variant="outline" onClick={onRecarregar}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                edicao.recarregar();
+                onRecarregar();
+              }}
+            >
               Recarregar
             </Button>
           )}

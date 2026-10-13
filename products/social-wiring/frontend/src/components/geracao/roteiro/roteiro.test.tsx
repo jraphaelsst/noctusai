@@ -229,6 +229,23 @@ describe("RoteiroAvancadoModal", () => {
       expect(m.salvar).toHaveBeenCalledWith({ id: "r1", nome: undefined, conteudo: "editado", expected_versao: 1 }),
     );
   });
+
+  it("poll criando (conteudo null) → completo na mesma versao: o sucesso mostra o roteiro gerado (prod 2026-10-13)", async () => {
+    m.criar.mockResolvedValue({ ...base, status: "criando", conteudo: null });
+    const { rerender } = abrir({ headlineInicial: { texto: "x" } });
+    m.roteiro.mockReturnValue(q({ ...base, status: "criando", conteudo: null, etapa: "Gerando roteiro…" }));
+    fireEvent.click(screen.getByRole("button", { name: "Criar roteiro" }));
+    await screen.findByText("Gerando roteiro…");
+    // The worker writes conteudo; versao stays 1.
+    m.roteiro.mockReturnValue(q({ ...base }));
+    rerender(<RoteiroAvancadoModal open onOpenChange={vi.fn()} marcaId="m1" headlineInicial={{ texto: "x" }} />);
+    await screen.findByText("Roteiro criado com sucesso!");
+    expect(screen.getByLabelText("Roteiro")).toHaveValue(base.conteudo);
+    expect(screen.getByText(`${base.conteudo.length}/30.000 caracteres`)).toBeInTheDocument();
+    // Nothing edited: "Atualizar Roteiro" cannot PATCH an empty text over the generated one.
+    expect(screen.getByRole("button", { name: "Atualizar Roteiro" })).toBeDisabled();
+    expect(m.salvar).not.toHaveBeenCalled();
+  });
 });
 
 describe("RoteiroAvancadoModal — postId (Esteira)", () => {

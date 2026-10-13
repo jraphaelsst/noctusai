@@ -27,7 +27,16 @@ export function EditarHeadlineRoteiroModal({ open, onOpenChange, headline }: Pro
       headline={headline}
       roteiroBloco={
         headline?.roteiro_id
-          ? { roteiro: pronto, carregando: q.showSkeleton, edicao, onRecarregar: () => void q.refetch() }
+          ? {
+              roteiro: pronto,
+              carregando: q.showSkeleton,
+              edicao,
+              // "Recarregar" discards the local edit, then refreshes the row it is reconciled against.
+              onRecarregar: () => {
+                edicao.recarregar();
+                void q.refetch();
+              },
+            }
           : undefined
       }
     />

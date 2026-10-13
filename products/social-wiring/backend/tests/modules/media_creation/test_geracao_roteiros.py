@@ -470,6 +470,14 @@ class TestEdicao:
         andamento = _criar(rc).json()["data"]["id"]
         assert rc.put(f"{BASE}/{andamento}", json={"nome": "x", "expected_versao": 1}).status_code == 409
 
+    @pytest.mark.parametrize("vazio", ["", "   \n\t"])
+    def test_salvar_conteudo_vazio_e_422_e_nao_apaga_o_roteiro(self, rc, vazio):
+        rid = _pronto(rc)
+        r = rc.put(f"{BASE}/{rid}", json={"conteudo": vazio, "expected_versao": 1})
+        assert r.status_code == 422 and "não pode ficar vazio" in r.text
+        row = _row(rc, rid)
+        assert row["conteudo"] == "## Capa\nTexto" and int(row.get("versao") or 1) == 1
+
     def test_feedback(self, rc):
         rid = _pronto(rc)
         d = rc.post(f"{BASE}/{rid}/feedback", json={"feedback": "nao_gostei", "motivo": " genérico "}).json()["data"]
