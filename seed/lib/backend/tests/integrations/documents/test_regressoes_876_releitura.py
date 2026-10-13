@@ -163,6 +163,22 @@ class TestR3AverbacaoVence:
         assert all(c.genero is None or c.genero_derivado for c in out.conjuges)
 
 
+class TestR3cNomeDeCasadaComParticula:
+    def test_married_name_caught_with_a_leading_de_still_collapses(self) -> None:
+        """Harness, real certidão: spouses 'X FRACASSO' and 'DE X FRACASSO
+        PICCHI' (the tail of "passou a usar o nome DE …")."""
+        from noctusai_lib.integrations.documents.conjuges import ConjugeLido, _finalizar
+
+        out = _finalizar((
+            ConjugeLido(nome="ANA MARIA EXEMPLO", genero="Feminino", genero_confianca="baixa"),
+            ConjugeLido(nome="DE ANA MARIA EXEMPLO PICCHI"),
+        ))
+        assert len(out) == 1
+        assert out[0].nome_apos_casamento == "ANA MARIA EXEMPLO PICCHI"
+        assert out[0].nome_anterior == "ANA MARIA EXEMPLO"
+        assert out[0].genero_derivado is True
+
+
 #: R4 (measured on a later harness run): a CNH's RG "18568536" read as
 #: "1656536" — present, so no core field was missing and no re-read ran.
 class TestR4RgTruncadoReleitura:

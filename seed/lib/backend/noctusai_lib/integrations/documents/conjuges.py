@@ -1265,6 +1265,13 @@ def _e_nome_de_casada(curto: str, longo: str) -> bool:
     return nomes_compativeis(curto, longo)
 
 
+def _sem_particula_inicial(nome: str) -> str:
+    palavras = nome.split()
+    while len(palavras) > 2 and strip_accents_upper(palavras[0]) in _PARTICULAS_NOME:
+        palavras = palavras[1:]
+    return " ".join(palavras)
+
+
 def _finalizar(lido: tuple[ConjugeLido, ...]) -> tuple[ConjugeLido, ...]:
     """Owner rules (2026-10-13) applied to every reader's output.
 
@@ -1280,7 +1287,14 @@ def _finalizar(lido: tuple[ConjugeLido, ...]) -> tuple[ConjugeLido, ...]:
        extractor's core-field check ("os dois cônjuges"), never fabricated.
     2. Every gender here is derived (`genero_derivado=True`).
     """
-    out = list(lido)
+    # A name never STARTS with a particle: "DE SANTA MARIA FRACASSO PICCHI"
+    # is the tail of "passou a usar o nome DE …" caught by a reader's span
+    # (measured on a real certidão, 2026-10-13) — trimmed before comparing.
+    out = [
+        replace(c, nome=_sem_particula_inicial(c.nome))
+        if c.nome and _sem_particula_inicial(c.nome) != c.nome else c
+        for c in lido
+    ]
     if len(out) == 2:
         a, b = out
         for curto, longo in ((a, b), (b, a)):
