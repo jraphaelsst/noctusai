@@ -743,7 +743,8 @@ function ContasTab({ client }: { client: Marca }) {
   }
 
   /**
-   * WA card-body click — deep-links into the WhatsApp chat page with this
+   * WA card-body click — deep-links into the WhatsApp chat page (Lais › Conversas, via the
+   * `/whatsapp-chat` redirect) with this
    * client/connection pre-selected; falls back to the QR/config dialog if
    * whatsapp has no dashboardRoute configured.
    */
@@ -752,7 +753,7 @@ function ContasTab({ client }: { client: Marca }) {
     if (dashboardRoute) {
       setActiveMarca(client.id);
       // A WhatsApp connection id is not an integration_accounts.id at all —
-      // it keys `whatsapp` explicitly so WhatsAppChat can find it and no
+      // it keys `whatsapp` explicitly so the Lais WhatsApp pages find it and no
       // other page can mistake it for one of theirs.
       setActiveAccount("whatsapp", line.id);
       navigate(dashboardRoute);

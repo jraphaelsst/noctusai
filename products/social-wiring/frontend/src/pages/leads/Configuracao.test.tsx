@@ -15,7 +15,7 @@
  * every `@/components/ui/*` primitive is a lightweight stub, hooks are
  * `vi.fn()`s configured per test, `@noctusai/lib/design-system` is stubbed
  * (real barrel throws at module-load without VITE_SUPABASE_URL — see
- * WhatsAppChat.test.tsx's docstring for the full rationale).
+ * lais/WhatsAppWorkspace.test.tsx's docstring for the full rationale).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 

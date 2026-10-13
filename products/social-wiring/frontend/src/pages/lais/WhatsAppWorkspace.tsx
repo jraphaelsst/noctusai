@@ -1,33 +1,36 @@
 /**
- * WhatsApp — the unified WhatsApp (WAHA) surface at /whatsapp-chat.
+ * WhatsAppWorkspace — the shared layout behind the "Lais" WhatsApp (WAHA)
+ * pages (owner decision 2026-10-13; formerly the single `/whatsapp-chat` page
+ * with Chat + Configurações subtabs):
  *
- * Remodel of the pre-Wave-5 bespoke 2-pane chat page into a YouTube/Meta-style
- * shell (see `pages/YouTube.tsx` / `pages/MetaDashboard.tsx`): a connection
- * selector in the header + two subtabs, so WhatsApp joins the unified
- * SocialDashboardShell pattern (the N=3 that formalizes the recurrence rule
- * for `@noctusai/lib/design-system`'s `SocialDashboardShell` + `ChatWindow`).
+ *   /lais/conversas     — `view="conversas"`: the connection's live
+ *                          conversations via the existing `WhatsAppChatWindow`
+ *                          adapter over the seed `<ChatWindow>` organ (reused
+ *                          verbatim; this file never talks to
+ *                          `useWhatsAppChats`/`useSendWhatsAppMessage` directly).
+ *   /lais/configuracoes — `view="configuracoes"`: QR pairing / session actions /
+ *                          auto-reply / fields / authorized numbers / bound chats
+ *                          via `ConnectionSettingsPanel`
+ *                          (`components/ConnectionDetailDialog.tsx` — the same
+ *                          WAHA body the MarcaModal modal uses).
  *
- *   Chat           — the connection's live conversations, rendered via the
- *                     shared seed `<ChatWindow>` organ through the existing
- *                     `WhatsAppChatWindow` adapter (`components/WhatsAppChatWindow.tsx`
- *                     — reused verbatim, not re-wrapped: this file never talks
- *                     to `useWhatsAppChats`/`useSendWhatsAppMessage`/etc directly).
- *   Configurações  — QR pairing / session actions / auto-reply / editable
- *                     fields / authorized numbers / bound chats for the
- *                     selected connection, via `ConnectionSettingsPanel`
- *                     (`components/ConnectionDetailDialog.tsx` — the same
- *                     WAHA management body the MarcaModal/Conexoes modal
- *                     uses, extracted so it also renders inline here).
+ * ONE layout, one view per route — not two copies. Data loading, the
+ * loading/error/empty states, the connection selector and the delete confirm
+ * live here once; each route page is a one-line `<WhatsAppWorkspace view=…/>`.
  *
- * Connection selection lives at the page level (the `accountSwitcher` shell
- * slot) so both subtabs read the SAME selected connection. Deep-links from a
- * connected WhatsApp `IntegrationCard` (`MarcaModal`'s card-body click, or
- * `Conexoes`'s) pre-select the connection via the shared
- * `useActiveAccountStore` — the same store YouTube/Meta already use for their
- * account switchers, here holding a WAHA `connection.id` instead of an
- * `integration_accounts.id` (WhatsApp connections aren't rows in that table).
+ * Connection selection is SHARED across both routes through
+ * `useActiveAccountStore` (key `whatsapp`, persisted): picking a connection on
+ * Conversas is still selected after navigating to Configurações, and a
+ * connected WhatsApp `IntegrationCard` click (MarcaModal) writes the same key
+ * before deep-linking, so it lands pre-selected. A WAHA `connection.id` is not
+ * an `integration_accounts.id`, which is why it has its own provider key. No
+ * valid stored id ⇒ the first connection.
+ *
+ * Rendered through the canonical `SocialDashboardShell` (`@noctusai/lib`) with
+ * a single "WhatsApp" channel subtab — navigation between the views is the
+ * sidebar's job (Lais group), not a second tab bar.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import {
   AlertCircle,
@@ -51,7 +54,11 @@ import {
   useWhatsAppConnectionMutations,
   type WhatsAppConnectionLine,
 } from "@/hooks/useWhatsAppConnections";
-import { useActiveAccountId } from "@/state/useActiveAccount";
+import {
+  useActiveAccountId,
+  useActiveAccountStore,
+} from "@/state/useActiveAccount";
+import { LAIS_LABEL, LAIS_PAGES } from "@/nav/lais";
 
 // ─── Connection selector (accountSwitcher header slot) ───────────────────────
 /**
@@ -110,7 +117,7 @@ function NoConnectionsState() {
   );
 }
 
-// ─── Chat subtab ──────────────────────────────────────────────────────────────
+// ─── Conversas view ──────────────────────────────────────────────────────────────
 
 function ChatPanel({ connection }: { connection: WhatsAppConnectionLine | null }) {
   if (!connection) return <NoConnectionsState />;
@@ -123,7 +130,7 @@ function ChatPanel({ connection }: { connection: WhatsAppConnectionLine | null }
   );
 }
 
-// ─── Configurações subtab ─────────────────────────────────────────────────────
+// ─── Configurações view ─────────────────────────────────────────────────────
 
 function ConfigPanel({
   connection,
@@ -143,42 +150,44 @@ function ConfigPanel({
   );
 }
 
-// ─── Page ─────────────────────────────────────────────────────────────────────
+// ─── Shared layout ────────────────────────────────────────────────────────────
 
-export default function WhatsAppChat() {
+/** The WhatsApp provider key in `useActiveAccountStore`. */
+const WA_PROVIDER = "whatsapp";
+
+export type WhatsAppWorkspaceView = "conversas" | "configuracoes";
+
+const VIEW_META: Record<
+  WhatsAppWorkspaceView,
+  { subtitle: string; icon: typeof MessageCircle }
+> = {
+  conversas: {
+    subtitle: "Conversas das suas conexões WhatsApp (WAHA).",
+    icon: MessageCircle,
+  },
+  configuracoes: {
+    subtitle: "Configuração das suas conexões WhatsApp (WAHA).",
+    icon: SettingsIcon,
+  },
+};
+
+export function WhatsAppWorkspace({ view }: { view: WhatsAppWorkspaceView }) {
   // `isPending`, not `isLoading` — v5's `isLoading` goes FALSE mid-refetch
   // and would unmount this whole chat picker on every background refresh.
   // → KB § PATTERNS/frontend/lying-loading-state.md
   const { data: connections = [], isPending, isError } = useWhatsAppConnections();
   const { remove } = useWhatsAppConnectionMutations();
 
-  const activeAccountId = useActiveAccountId("whatsapp");
-
-  const [selectedConnId, setSelectedConnId] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<WhatsAppConnectionLine | null>(null);
-
-  // Default-select on load: prefer a deep-linked connection (from
-  // useActiveAccountStore — set by a connected-card body click), else keep
-  // the current selection if still valid, else fall back to the first
-  // connection. Mirrors the pre-Wave-5 page's "default first connection"
-  // behaviour, extended with the deep-link pre-selection.
-  useEffect(() => {
-    if (connections.length === 0) {
-      if (selectedConnId !== null) setSelectedConnId(null);
-      return;
-    }
-    if (selectedConnId && connections.some((c) => c.id === selectedConnId)) {
-      return;
-    }
-    const preferred =
-      activeAccountId && connections.some((c) => c.id === activeAccountId)
-        ? activeAccountId
-        : connections[0].id;
-    setSelectedConnId(preferred);
-  }, [connections, activeAccountId, selectedConnId]);
-
+  // The selection IS the store entry — shared by both Lais routes and by the
+  // IntegrationCard deep-link. A stale/foreign id falls back to the first
+  // connection (derived, so there is no effect to race the first render).
+  const activeAccountId = useActiveAccountId(WA_PROVIDER);
+  const setActiveAccount = useActiveAccountStore((s) => s.setActiveAccount);
   const selectedConn =
-    connections.find((c) => c.id === selectedConnId) ?? null;
+    connections.find((c) => c.id === activeAccountId) ?? connections[0] ?? null;
+  const selectConnection = (id: string) => setActiveAccount(WA_PROVIDER, id);
+
+  const [deleteTarget, setDeleteTarget] = useState<WhatsAppConnectionLine | null>(null);
 
   function confirmDelete() {
     if (!deleteTarget) return;
@@ -218,40 +227,38 @@ export default function WhatsAppChat() {
     );
   }
 
+  const page = LAIS_PAGES[view];
   const SUBTABS: SocialDashboardSubtab[] = [
     {
-      key: "chat",
-      label: "Chat",
-      icon: MessageCircle,
-      render: () => <ChatPanel connection={selectedConn} />,
-    },
-    {
-      key: "config",
-      label: "Configurações",
-      icon: SettingsIcon,
-      render: () => (
-        <ConfigPanel
-          connection={selectedConn}
-          onRequestDelete={setDeleteTarget}
-        />
-      ),
+      key: "whatsapp",
+      label: "WhatsApp",
+      icon: VIEW_META[view].icon,
+      render: () =>
+        view === "conversas" ? (
+          <ChatPanel connection={selectedConn} />
+        ) : (
+          <ConfigPanel
+            connection={selectedConn}
+            onRequestDelete={setDeleteTarget}
+          />
+        ),
     },
   ];
 
   return (
     <>
       <SocialDashboardShell
-        title="WhatsApp"
-        subtitle="Conversas e configuração das suas conexões WhatsApp (WAHA)."
+        title={`${LAIS_LABEL} · ${page.name}`}
+        subtitle={VIEW_META[view].subtitle}
         accountSwitcher={
           <WhatsAppConnectionSelector
             connections={connections}
-            selectedId={selectedConnId}
-            onChange={setSelectedConnId}
+            selectedId={selectedConn?.id ?? null}
+            onChange={selectConnection}
           />
         }
         subtabs={SUBTABS}
-        defaultSubtab="chat"
+        defaultSubtab="whatsapp"
       />
 
       {/* Delete confirm — mirrors the Conexoes/MarcaModal pattern */}

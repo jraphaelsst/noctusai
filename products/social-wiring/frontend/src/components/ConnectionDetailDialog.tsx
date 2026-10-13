@@ -504,7 +504,7 @@ function BoundChatsEditor({
  * `ConnectionDetailDialog` body so the SAME markup + hooks render in two
  * contexts without duplicating any WAHA logic:
  *   - inside a modal — `ConnectionDetailDialog` below (MarcaModal / Conexoes)
- *   - inline as a page subtab — `pages/WhatsAppChat.tsx` "Configurações"
+ *   - inline as a page — `pages/lais/WhatsAppWorkspace.tsx` (Lais › Configurações)
  *
  * Uses plain heading markup (`<h2>`/`<p>`), not `DialogTitle`/`DialogDescription`
  * — those Radix primitives read from Dialog's React context and throw when
