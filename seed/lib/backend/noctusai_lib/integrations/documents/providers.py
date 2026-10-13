@@ -99,9 +99,11 @@ DEFAULT_DOCUMENT_PROVIDER = "anthropic"
 #: Rung 1 — the vision model that transcribes a scanned page, PER PROVIDER.
 OCR_MODELS: dict[str, str] = {
     "openai": "gpt-4.1-mini",
-    # Cheapest Claude that read every synthetic scan field correctly — see
-    # the module docstring's measurement table.
-    "anthropic": "claude-haiku-4-5",
+    # REAL-document benchmark (2026-10-13, see `REAL_BENCHMARK_2026_10_13`
+    # below): Sonnet 5 = 98.9% field accuracy on 27 real docs × 3 runs vs
+    # Haiku 4.5's 75.1% (30% doc-level run-to-run consistency; invented a
+    # divorce averbação). Owner decision: Sonnet 5 first read.
+    "anthropic": "claude-sonnet-5",
     # Gemini's flash tier is the cheapest of the three; it stays as a third
     # manual option so an agency out of credit at one vendor is never left
     # with a single alternative.
@@ -144,6 +146,37 @@ DOCUMENT_PROVIDERS: tuple[str, ...] = tuple(OCR_MODELS)
 #: cost (Sonnet-5 is materially more expensive per page than Haiku, per
 #: `OCR_MODELS`' own docstring) rather than a blanket model upgrade.
 #:
+#: SUPERSEDED 2026-10-13 — REAL-DOCUMENT BENCHMARK (owner decision)
+#: -----------------------------------------------------------------
+#: The 2026-09-22 Haiku pin was measured on ONE run over 11 SYNTHETIC scans;
+#: on real documents it failed (75.1% fields, 3 different averbação texts in
+#: 3 runs of the same certidão). Re-measured on 27 REAL documents from 15
+#: closed deals (12 CNH, 13 certidões de casamento, 3 RG, 1 RNE), 3 runs per
+#: model, the repo's own ladder + parsers, scored vs signed-contract answer
+#: keys:
+#:
+#:     model               fields   wrong  docs identical x3  US$/doc
+#:     claude-fable-5-1    100.0%   0      0.85               0.101
+#:     claude-sonnet-5      98.9%   2      0.78               0.018
+#:     claude-opus-5-5      96.8%   6      0.93               0.056
+#:     claude-sonnet-5-5    95.8%   5      0.78               0.029
+#:     claude-haiku-5-5     76.7%   2      0.63               0.0015
+#:     claude-haiku-4-5     75.1%   6      0.30               0.0043
+#:
+#: Pins: first read Sonnet 5; second read (the agreement gate's independent
+#: read) Opus 5.5 — the most run-to-run-consistent model, chosen over Fable
+#: 5.1 because Fable carries 30-day data retention (no ZDR) for ID documents.
+#: FUTURE EVALUATION (owner, 2026-10-13): "if Opus keeps failing we might
+#: switch to Fable for consistent result" — track Opus's wrong-value rate on
+#: real reads (agreement-gate divergences where Opus was the outlier); if it
+#: keeps failing, re-run the real-doc benchmark and move this pin to
+#: `claude-fable-5-1` (already priced in `llm.models`). Corpus is small (RG 3,
+#: RNE 1): the middle three models are not statistically separable; Haiku
+#: 4.5's deficit is robust. Vendor: owner prefers to stay all-Anthropic —
+#: a cloud OCR (Azure Document Intelligence, Brazil South) is the fallback
+#: only if Claude proves unreliable on real reads.
+REAL_BENCHMARK_2026_10_13 = "scratchpad bench: 27 real docs x 6 models x 3 runs"
+
 #: NOC-REMEDIATE[escalation-model-openai-gemini]: OpenAI and Gemini have NO
 #: measured stronger-tier win on this corpus (the measurement above only
 #: covers Anthropic, the seed-canonical `DEFAULT_DOCUMENT_PROVIDER`) — 2026-
@@ -156,6 +189,6 @@ DOCUMENT_PROVIDERS: tuple[str, ...] = tuple(OCR_MODELS)
 #: docstring asks for.
 ESCALATION_OCR_MODELS: dict[str, str] = {
     "openai": OCR_MODELS["openai"],
-    "anthropic": "claude-sonnet-5",
+    "anthropic": "claude-opus-5-5",
     "gemini": OCR_MODELS["gemini"],
 }

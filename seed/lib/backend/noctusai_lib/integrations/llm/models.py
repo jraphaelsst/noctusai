@@ -308,6 +308,46 @@ MODELS: Tuple[ModelEntry, ...] = (
         cost_per_1m_input_tokens=2.00,
         cost_per_1m_output_tokens=10.00,
     ),
+    #: Opus 5.5 is the document-escalation pin (`documents.providers.
+    #: ESCALATION_OCR_MODELS`, owner decision 2026-10-13); Fable 5.1 is the
+    #: measured fallback if Opus keeps producing wrong values. Both priced so
+    #: a pin move never lands on the zero-cost (budget-guard-off) path.
+    ModelEntry(
+        id="claude-opus-5-5",
+        label="Claude Opus 5.5",
+        provider="anthropic",
+        kind="chat",
+        description="Anthropic top tier — highest run-to-run consistency on real document scans.",
+        cost_per_1m_input_tokens=4.00,
+        cost_per_1m_output_tokens=20.00,
+    ),
+    ModelEntry(
+        id="claude-opus-5-5",
+        label="Claude Opus 5.5 (Vision)",
+        provider="anthropic",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=4.00,
+        cost_per_1m_output_tokens=20.00,
+    ),
+    ModelEntry(
+        id="claude-fable-5-1",
+        label="Claude Fable 5.1",
+        provider="anthropic",
+        kind="chat",
+        description="Anthropic most capable model — 0 wrong values on the real-document benchmark.",
+        cost_per_1m_input_tokens=10.00,
+        cost_per_1m_output_tokens=50.00,
+    ),
+    ModelEntry(
+        id="claude-fable-5-1",
+        label="Claude Fable 5.1 (Vision)",
+        provider="anthropic",
+        kind="vision",
+        description="Same model used for vision — accepts image content blocks.",
+        cost_per_1m_input_tokens=10.00,
+        cost_per_1m_output_tokens=50.00,
+    ),
     ModelEntry(
         id="claude-opus-4-7",
         label="Claude Opus 4.7",
