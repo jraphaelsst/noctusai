@@ -15,6 +15,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md`.
 
+- [ ] **commerce-buyer-doc-fiscal-retention** at `seed/lib/backend/noctusai_lib/domain/commerce/fiscal_retention.py` — D30: anonymize keeps buyer CPF/CNPJ + name on paid orders (commerce_orders.buyer_doc/buyer_name) as a tax record for 5 years from 1 Jan after payment (LGPD art. 16 II + CTN art. 173); erased by purge_expired_fiscal_retention, which has no scheduler yet (NOC-REMEDIATE commerce-fiscal-purge-schedule, P5).
+  - *Mitigation*: Schedule the purge daily in P5; mask buyer_doc in staff UI; restrict to paid-reached orders only.
+  - *Flagged*: 2026-10-13
 - [ ] **Org-level favorecidos registry holds CPF/CNPJ, bank account (banco/agencia/conta) and PIX key of named natural/legal persons (financial PII).** at `products/social-wiring/backend/app/modules/card_hub/favorecidos_service.py` — Migration 251 centralizes payee data per org (previously per-card). Controls shipped: org-scoped RLS, values never logged, list masked (CPF/CNPJ, PIX, conta last 2), full record only for write roles (trusted noctus_users.org_role), writes stamped created_por/updated_por, soft delete. Open: retention policy for deactivated entries and per-read audit of full-record GETs.
   - *Mitigation*: NOC-REMEDIATE[favorecidos-read-audit]: route full-record reads through the seed audit sink (SW has no registry-level access-log seam; *_documento_acessos is document-specific); define retention/erasure for ativo=false rows on data-subject request.
   - *Flagged*: 2026-10-13
