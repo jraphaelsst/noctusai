@@ -30,7 +30,7 @@ export type { MeAccess, OrgSelectionState, OrgChoice, OrgRef } from './access';
 // Org picker pin store (dependency-free). The `useOrgSelection` hook lives with
 // its organs in `@noctusai/lib/design-system` — it needs `@noctusai/seed/infra`.
 export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
-export { hasOrgVisitMarker, markOrgVisit, clearOrgVisitMarker, beginOrgVisitEntry } from './org-visit';
+export { hasOrgVisitMarker, getOrgVisitOrg, markOrgVisit, clearOrgVisitMarker, beginOrgVisitEntry } from './org-visit';
 export type { ApiClient, CreateApiClientOptions, RefreshAttempt, RefreshWithBackoffOptions } from './api';
 
 // Auth

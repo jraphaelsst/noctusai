@@ -49,12 +49,35 @@ export function hasOrgVisitMarker(): boolean {
   }
 }
 
-/** Record the visit (after a successful choice / for non-staff). */
-export function markOrgVisit(): void {
+/** Marker value for tabs where no picker applies (non-staff): no org to compare. */
+export const NO_PICKER_ORG = '-';
+
+/**
+ * Record the visit: the org THIS tab chose (after a successful choice), or
+ * `NO_PICKER_ORG` for non-staff. Cross-tab rule (owner 1A, 2026-10-12): one org per
+ * product per login, so a load whose server-side selection differs from this org
+ * must re-prompt, never silently adopt the other tab's org.
+ */
+export function markOrgVisit(orgId: string = NO_PICKER_ORG): void {
   try {
-    window.sessionStorage.setItem(visitKey(), String(Date.now()));
+    window.sessionStorage.setItem(visitKey(), orgId);
   } catch {
     // Not persisted => the next load is an entry again (fail toward prompting).
+  }
+}
+
+/**
+ * The org this tab chose, or `null` when there is no marker, storage is unavailable,
+ * or the value is a legacy timestamp / unparseable (all read as "unknown org" so the
+ * caller re-prompts; fail toward prompting). `NO_PICKER_ORG` is returned as-is.
+ */
+export function getOrgVisitOrg(): string | null {
+  try {
+    const v = window.sessionStorage.getItem(visitKey());
+    if (v === null || v === '' || /^\d+$/.test(v)) return null; // legacy timestamp
+    return v;
+  } catch {
+    return null;
   }
 }
 

@@ -34,7 +34,7 @@ describe('useOrgSelection pin vs org swap', () => {
     apiGet.mockReset(); reload.mockReset();
     resetOrgSelectionPage(); setOrgPin(null);
     // These cover reloads WITHIN a visit (the tab already chose): marker present.
-    markOrgVisit();
+    markOrgVisit('x');
     qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     Object.defineProperty(window, 'location', { configurable: true, value: { ...orig, reload } });
   });

@@ -178,6 +178,16 @@ strict `403 {"code":"not_platform_staff"}`.
   header does NOT mount org-scoped widgets (notification bell, AI/LLM badges) nor the
   enrichment "Carregando" state while it is true, so nothing fetches behind the picker; logo,
   sidebar shell and avatar/name stay. Non-staff: unchanged.
+  **Cross-tab rule (owner 1A, 2026-10-12; fix 2026-10-13):** one org per product per login, so
+  choosing in a 2nd tab must make the 1st tab RE-PROMPT, never silently adopt. The marker
+  therefore stores the org THIS tab chose (`markOrgVisit(orgId)`; non-staff store the sentinel
+  `-`; reader `getOrgVisitOrg()`; a legacy timestamp value reads as unknown). On a `visit` load
+  for a picker user whose server selection differs from the marker org (other tab replaced it,
+  none, or legacy marker) the marker is cleared and the phase goes straight to `ended`
+  (required, non-dismissible picker, content blocked) WITHOUT the entry DELETE -- it would end
+  the other tab's live selection; the next PUT replaces it and that tab re-prompts in turn. The
+  in-page swap branch still hard-reloads (purges the old org's cache) and the reload re-prompts.
+  Same org re-chosen elsewhere (marker == server org): silent, F5 unchanged.
   **Server:** `resolve_effective_org(..., require_selection=True)` (the default — every
   gated path: base dep license gate, org dep, `resolve_org_membership`) answers staff on a
   ready product with no valid live selection `409 {"code":"org_selection_required"}`

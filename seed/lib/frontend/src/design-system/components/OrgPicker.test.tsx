@@ -149,7 +149,7 @@ describe('OrgPickerModal', () => {
 });
 
 describe('ActingAsBanner / OrgSelectionGate', () => {
-  beforeEach(() => { [apiGet, apiPut, apiDelete].forEach((m) => m.mockReset()); setOrgPin(null); resetOrgSelectionPage(); setOrgPickerForced(false); markOrgVisit(); });
+  beforeEach(() => { [apiGet, apiPut, apiDelete].forEach((m) => m.mockReset()); setOrgPin(null); resetOrgSelectionPage(); setOrgPickerForced(false); });
   afterEach(() => { cleanup(); window.sessionStorage.clear(); });
 
   it('hidden for non-staff', async () => {
@@ -160,6 +160,7 @@ describe('ActingAsBanner / OrgSelectionGate', () => {
   });
 
   it('staff in their home org: slim Trocar org bar, not the full banner', async () => {
+    markOrgVisit('h');
     route({ ...base, org_selection: sel({ required: false, acting: false, selection_id: 's' }) });
     mount(<OrgSelectionGate />);
     expect(await screen.findByTestId('org-switch-bar')).toBeInTheDocument();
@@ -176,6 +177,7 @@ describe('ActingAsBanner / OrgSelectionGate', () => {
   });
 
   it('acting: shows the org, pins it, and Trocar org opens the picker', async () => {
+    markOrgVisit('o1');
     route({ ...base, org: ACME, org_selection: sel({ required: false, acting: true, org: ACME, selection_id: 's1' }) });
     mount(<OrgSelectionGate />);
     expect(await screen.findByText('Imobiliária Acme')).toBeInTheDocument();
@@ -276,7 +278,7 @@ describe('every entry is a choice (owner 2026-10-12)', () => {
   });
 
   it('reload within the visit (marker + live selection): no DELETE, no picker, content renders', async () => {
-    markOrgVisit();
+    markOrgVisit('o1');
     route({ ...base, org: ACME, org_selection: LEFTOVER });
     mountShell();
     expect(await screen.findByTestId('product-content')).toBeInTheDocument();
@@ -348,7 +350,7 @@ describe('every entry is a choice (owner 2026-10-12)', () => {
   });
 
   it('409 org_selection_required within a visit reopens the REQUIRED picker and hides the content', async () => {
-    markOrgVisit();
+    markOrgVisit('h');
     let required = false;
     apiGet.mockImplementation(async (path: string) => {
       if (path === '/api/me/access') {
@@ -368,5 +370,88 @@ describe('every entry is a choice (owner 2026-10-12)', () => {
     await waitFor(() => expect(screen.queryByTestId('product-content')).toBeNull());
     expect(screen.queryByLabelText('Fechar')).toBeNull();
     expect(apiDelete).not.toHaveBeenCalled(); // a 409 is not an entry
+  });
+
+  // --- cross-tab rule (owner 1A, 2026-10-12): one org per product per login ---
+  const expectRepromptNoDelete = async () => {
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Fechar')).toBeNull(); // non-dismissible
+    expect(screen.queryByTestId('product-content')).toBeNull(); // nothing behind it
+    expect(apiDelete).not.toHaveBeenCalled(); // would end the OTHER tab's live selection
+    expect(getOrgPin()).toBeNull();
+    expect(hasOrgVisitMarker()).toBe(false);
+  };
+
+  it('F5 with the marker org == server org: silent, no picker', async () => {
+    markOrgVisit('o1');
+    route({ ...base, org: ACME, org_selection: LEFTOVER });
+    mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(apiDelete).not.toHaveBeenCalled();
+  });
+
+  it('marker org != server org (other tab replaced it): REQUIRED picker, NO DELETE, nothing adopted', async () => {
+    markOrgVisit('h'); // this tab chose NoctusAI; the server now holds Acme
+    route({ ...base, org: ACME, org_selection: LEFTOVER });
+    mountShell();
+    await expectRepromptNoDelete();
+    expect(reload).not.toHaveBeenCalled();
+  });
+
+  it('marker org but the server has no selection: re-prompt, NO DELETE', async () => {
+    markOrgVisit('o1');
+    route({ ...base, org_selection: sel() });
+    mountShell();
+    await expectRepromptNoDelete();
+  });
+
+  it('legacy timestamp marker: re-prompt, NO DELETE', async () => {
+    window.sessionStorage.setItem('noctus:org-visit:product', String(Date.now()));
+    route({ ...base, org: ACME, org_selection: LEFTOVER });
+    mountShell();
+    await expectRepromptNoDelete();
+  });
+
+  it('re-prompt then choose: PUT replaces the other tab, marker stores the chosen org, reloads', async () => {
+    markOrgVisit('h');
+    route({ ...base, org: ACME, org_selection: LEFTOVER });
+    apiPut.mockResolvedValue({});
+    mountShell();
+    await userEvent.click(await screen.findByText('Imobiliária Acme'));
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(apiPut).toHaveBeenCalledWith('/api/me/org-choice', { org_id: 'o1' });
+    expect(hasOrgVisitMarker()).toBe(true);
+    expect(apiDelete).not.toHaveBeenCalled();
+  });
+
+  it('in-page swap by another tab: reloads, and the reloaded page re-prompts', async () => {
+    markOrgVisit('h');
+    let access: object = { ...base, org: HOME, org_selection: sel({ required: false, selection_id: 's', acting: false }) };
+    apiGet.mockImplementation(async (path: string) => {
+      if (path === '/api/me/access') return access;
+      if (path === '/api/me/org-choices') return choices;
+      throw new Error(`unexpected ${path}`);
+    });
+    const view = mountShell();
+    expect(await screen.findByTestId('product-content')).toBeInTheDocument();
+    access = { ...base, org: ACME, org_selection: LEFTOVER }; // other tab chose Acme
+    notifyOrgSelectionChanged();
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    // simulate the reload: fresh module state, same sessionStorage (marker still 'h')
+    view.unmount();
+    resetOrgSelectionPage();
+    setOrgPin(null);
+    mountShell();
+    await expectRepromptNoDelete();
+  });
+
+  it('org-scoped widgets are not mounted while the cross-tab re-prompt is required', async () => {
+    markOrgVisit('h');
+    function Header() { return useOrgEntryPending() ? null : <span data-testid="bell" />; }
+    route({ ...base, org: ACME, org_selection: LEFTOVER });
+    mount(<><OrgSelectionGate /><Header /></>);
+    await screen.findByRole('dialog');
+    expect(screen.queryByTestId('bell')).toBeNull();
   });
 });

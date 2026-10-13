@@ -22,7 +22,7 @@ import {
   getOrgPin, setOrgPin, setOrgSelectionChangedHandler, subscribeOrgPin,
 } from './org-pin';
 import {
-  clearOrgVisitMarker, getOrgEntryPhase, markOrgVisit, resetOrgEntryPhase,
+  clearOrgVisitMarker, getOrgEntryPhase, getOrgVisitOrg, markOrgVisit, resetOrgEntryPhase,
   setOrgEntryPhase, subscribeOrgEntryPhase,
 } from './org-visit';
 import type { OrgEntryPhase } from './org-visit';
@@ -158,7 +158,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     // commit with the same stale render value -- only the first may start the DELETE.
     if (getOrgEntryPhase() !== 'entry' || !accessLoaded) return;
     if (!selection.available) {
-      markOrgVisit(); // non-staff / not picker-ready: no picker, behaviour unchanged
+      markOrgVisit(); // (sentinel) non-staff / not picker-ready: no picker, behaviour unchanged
       setOrgEntryPhase('visit');
       return;
     }
@@ -183,6 +183,18 @@ export function useOrgSelection():UseOrgSelectionResult {
     // An entry page load never adopts a selection: the only way out is a choice
     // (which reloads). Within a visit the pin/swap rules below apply unchanged.
     if (entryPhase !== 'visit') return;
+    // Cross-tab rule (owner 1A): the marker holds the org THIS tab chose. A picker
+    // user whose server-side selection differs (other tab replaced it, ended, or the
+    // marker is legacy/unparseable) must re-choose -- never silently adopt. NO entry
+    // DELETE: it would end the other tab's live selection; the next PUT replaces it.
+    if (pageOrg === null && accessLoaded && selection.available
+      && (accessOrgId === null || accessOrgId !== getOrgVisitOrg())) {
+      clearOrgVisitMarker();
+      setOrgPin(null);
+      setForced(false);
+      setOrgEntryPhase('ended');
+      return;
+    }
     if (pageOrg === null) {
       if (accessOrgId) { pageOrg = accessOrgId; setOrgPin(accessOrgId); }
       else if (!selection.available) setOrgPin(null);
@@ -193,7 +205,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     swapping = true;
     setForced(false);
     void teardownRealtime().finally(reloadPage);
-  }, [accessOrgId, selection.available, pin, entryPhase]);
+  }, [accessOrgId, selection.available, pin, entryPhase, accessLoaded]);
 
   // Stale pin (409 org_selection_changed): refetch access + reopen the picker.
   useEffect(() => {
@@ -224,7 +236,7 @@ export function useOrgSelection():UseOrgSelectionResult {
     await entrySettled; // keep the guard: never PUT before the entry DELETE settled
     await chooseM.mutateAsync(orgId);
     swapping = true; // the reload below IS the swap; the pin effect must not double-fire
-    markOrgVisit(); // the choice holds for this tab's visit (reloads included)
+    markOrgVisit(orgId); // the choice holds for this tab's visit (reloads included)
     setOrgPin(orgId);
     setForced(false);
     await teardownRealtime();
