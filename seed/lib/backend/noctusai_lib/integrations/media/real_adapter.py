@@ -610,6 +610,7 @@ class RealMediaResolver:
         return ResolvedMedia(
             kind=kind,
             text=f"[documento PDF digitalizado] {texto}",
+            avisos=tuple(getattr(transcricao, "avisos", ()) or ()),
         )
 
     @staticmethod

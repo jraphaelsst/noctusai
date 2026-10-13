@@ -101,6 +101,23 @@ OCR_PROMPT = (
     "nor underlined."
 )
 
+#: Appended to the transcription prompt when ONE page arrives as several
+#: bands (`documents.vision_tiling`). One request per page, not one per band:
+#: the model sees the whole page, so a line cut by a band edge is read from
+#: whichever band holds it whole, and the overlap is de-duplicated by the
+#: reader that can actually SEE it is the same line. A per-band call would
+#: need a deterministic text stitcher matching the overlap's lines — and two
+#: independent reads of the same line routinely differ in a digit or a
+#: space, which is exactly the content this module must not corrupt.
+OCR_BANDS_PROMPT_SUFFIX = (
+    "\n\nThe page is provided as {n} images: horizontal strips of ONE page, "
+    "in order from top (image 1) to bottom (image {n}). Consecutive strips "
+    "overlap vertically, so the last lines of one strip appear again at the "
+    "top of the next. Transcribe the page once, top to bottom, as one "
+    "continuous text: write every overlapping line only once, and do not "
+    "mention or mark where the strips join."
+)
+
 #: Cap on vision calls for one document. A runaway PDF (a 400-page bundle
 #: uploaded by mistake) would otherwise bill page-by-page to completion.
 #: Exceeding it is an error, NOT a silent truncation — a half-transcribed
@@ -165,6 +182,33 @@ class RenderDpiPolicy:
     dpi_for_page_count: Callable[[int], int]
     max_encoded_bytes: int
     step_down_dpis: tuple[int, ...] = (300, 200, 150, 100)
+    #: 🔴 NATIVE-RESOLUTION FIELDS (2026-10-13, `documents.vision_tiling`).
+    #: Used only when the vision model publishes its native resolution
+    #: (`vision_tiling.vision_resolution_for` — every Anthropic vision pin);
+    #: otherwise the byte-budget step-down above stays in charge, unchanged.
+    #:
+    #: `max_bands`: how many overlapping horizontal bands one page may be
+    #: split into when a single image at native resolution would be coarser
+    #: than the render target. 1 = never tile (an identity CARD: one card's
+    #: fields fit one native image). `band_overlap`: the minimum vertical
+    #: overlap between neighbours, as a fraction of a band — a text line cut
+    #: by one band's edge is whole in the other.
+    max_bands: int = 1
+    band_overlap: float = 0.08
+    #: The legibility floor: delivered pixel density below this (in the
+    #: page's own units, and never above the scan's own native density) is
+    #: logged AND marked `resolucao_reduzida` on the read. Defaults to the
+    #: seed-wide `RENDER_DPI` — the density measured legible for dense
+    #: registry print.
+    min_dpi: int = RENDER_DPI
+    #: A scan coarser than the render target is upsampled by at most this
+    #: factor (a phone photo of a certidão is ~116 DPI): bigger glyphs per
+    #: 28-px patch, without inventing a 5x render of a 72-DPI image.
+    #: NOC-REMEDIATE[vision-upscale-measure]: 2.0 is a hypothesis, not yet
+    #: A/B-measured on real scans (the Anthropic account hit its monthly
+    #: limit before the 2026-10-13 benchmark could run) — re-measure 1.0 vs
+    #: 2.0 with the deal-876 harness and pin the winner here.
+    max_upscale: float = 2.0
 
 
 def identity_document_render_dpi_policy() -> RenderDpiPolicy:
@@ -208,7 +252,63 @@ def identity_document_render_dpi_policy() -> RenderDpiPolicy:
         dpi_for_page_count=_dpi_for_page_count,
         max_encoded_bytes=MAX_IMAGE_BYTES,
         step_down_dpis=(300, 200, 150, 100),
+        # A card: one native image carries it (the 2026-10-13 rule — see
+        # `render_dpi_policy_for`).
+        max_bands=1,
     )
+
+
+#: The render target for a FULL-PAGE document read by vision (a certidão, a
+#: matrícula page, a comprovante): 300 DPI is what dense registry small print
+#: (averbação blocks, CPF digits in running text) needs. An A4 page at 300
+#: DPI is 2481x3508 px — ~11,100 visual tokens against a high-resolution
+#: model's 4784-token native limit, i.e. a single image is silently
+#: downscaled by the vendor to ~195 DPI. Hence bands.
+FULL_PAGE_RENDER_DPI = 300
+
+#: Up to 4 bands: an A4/Ofício page at the target needs 2-3 at native width
+#: (2576 px); 4 leaves room for a long (legal-size) scan without reducing.
+FULL_PAGE_MAX_BANDS = 4
+
+
+def full_page_document_render_dpi_policy() -> RenderDpiPolicy:
+    """Policy for a full-page document (certidão, matrícula, comprovante):
+    render at `FULL_PAGE_RENDER_DPI`, deliver at the model's native
+    resolution in up to `FULL_PAGE_MAX_BANDS` overlapping bands — see
+    `documents.vision_tiling` for the limits and sources."""
+    from noctusai_lib.integrations.llm.providers.anthropic_provider import (
+        MAX_IMAGE_BYTES,
+    )
+
+    return RenderDpiPolicy(
+        dpi_for_page_count=lambda _n: FULL_PAGE_RENDER_DPI,
+        max_encoded_bytes=MAX_IMAGE_BYTES,
+        step_down_dpis=(200, 150, 100),
+        max_bands=FULL_PAGE_MAX_BANDS,
+    )
+
+
+def render_dpi_policy_for(tipo_documento: Optional[str]) -> RenderDpiPolicy:
+    """Tiling is a decision BY DOCUMENT CLASS (`legibilidade.classe_documento`,
+    the same buckets the readability gate already uses):
+
+    - CARD (RG / CPF / CNH / CIN): `identity_document_render_dpi_policy` —
+      one image at native resolution; a card's fields are large relative to
+      the card, and cutting a (often rotated) card into strips would cut its
+      text lines.
+    - everything else — a certidão, a comprovante, an unknown type:
+      `full_page_document_render_dpi_policy` — bands when the page needs
+      them. Bands only ever happen when a single native image would be
+      coarser than the target, so a small page costs nothing extra.
+    """
+    from noctusai_lib.integrations.documents.legibilidade import (
+        ClasseDocumento,
+        classe_documento,
+    )
+
+    if classe_documento(tipo_documento) is ClasseDocumento.CARTAO:
+        return identity_document_render_dpi_policy()
+    return full_page_document_render_dpi_policy()
 
 
 def _classify_failure(exc: Exception) -> str:
@@ -277,6 +377,11 @@ class TranscribedPage:
     #: `text` changed: that invariant is what lets existing consumers keep
     #: their offsets into it (matrícula acts, migration 109).
     formatting: tuple[FormatRange, ...] = ()
+    #: True when this page reached the vision model BELOW its render
+    #: policy's legibility floor (`RenderDpiPolicy.min_dpi`) — logged where
+    #: it happened, and surfaced as `Transcription.avisos` so a reader can
+    #: treat the read as lower trust instead of discovering it in a log.
+    resolucao_reduzida: bool = False
 
 
 @dataclass(frozen=True)
@@ -330,6 +435,25 @@ class Transcription:
             offset += len(page.text)
             primeira = False
         return tuple(ranges)
+
+    @property
+    def paginas_resolucao_reduzida(self) -> tuple[int, ...]:
+        """Pages read below the policy's legibility floor."""
+        return tuple(p.number for p in self.pages if p.resolucao_reduzida)
+
+    @property
+    def avisos(self) -> tuple[str, ...]:
+        """Soft findings about HOW the document was read — never an error
+        (the text is complete), always a reason to trust it less.
+        `resolucao_reduzida` (`vision_tiling.AVISO_RESOLUCAO_REDUZIDA`) when
+        any page was delivered below its legibility floor."""
+        if self.paginas_resolucao_reduzida:
+            from noctusai_lib.integrations.documents.vision_tiling import (
+                AVISO_RESOLUCAO_REDUZIDA,
+            )
+
+            return (AVISO_RESOLUCAO_REDUZIDA,)
+        return ()
 
     @property
     def paginas_por_visao(self) -> tuple[int, ...]:
@@ -415,7 +539,7 @@ class FakeDocumentTranscriber:
 
 async def _vision_call(
     analyze,
-    image: bytes,
+    image: "bytes | tuple[bytes, ...]",
     prompt: str,
     *,
     model: Optional[str],
@@ -433,6 +557,14 @@ async def _vision_call(
     that is read as `truncated=False` — exactly today's behaviour, so a
     test fixture written before truncation-awareness existed is unaffected.
     """
+    if isinstance(image, tuple):
+        if len(image) == 1:
+            image = image[0]
+        else:
+            # Several bands of ONE page, in order — the providers' list form
+            # of `analyze_image` (one request, ordered image blocks).
+            prompt = prompt + OCR_BANDS_PROMPT_SUFFIX.format(n=len(image))
+            image = list(image)
     resultado = await analyze(
         image,
         prompt,
@@ -445,6 +577,10 @@ async def _vision_call(
     if isinstance(resultado, VisionResult):
         return resultado.text, resultado.truncated
     return resultado, False
+
+
+#: Sentinel: `_resolucao_visao` not looked up yet (`None` is a real answer).
+_NAO_RESOLVIDA = object()
 
 
 class LadderDocumentTranscriber:
@@ -484,6 +620,7 @@ class LadderDocumentTranscriber:
         # `_pdf_to_images_within_budget`, which then takes over from
         # `render_dpi` entirely for the vision rung.
         self._render_dpi_policy = render_dpi_policy
+        self._vision_resolution = _NAO_RESOLVIDA
         self._max_vision_pages = max_vision_pages
         # Injected in tests; resolved lazily otherwise so importing this
         # module never drags in the LLM stack.
@@ -658,17 +795,35 @@ class LadderDocumentTranscriber:
                 ),
             )
 
+        images: dict[int, "bytes | tuple[bytes, ...]"]
+        reduzidas: set[int] = set()
         if self._render_dpi_policy is not None:
-            images = _pdf_to_images_within_budget(
-                content,
-                paginas_para_visao,
-                self._render_dpi_policy,
-                num_paginas,
-                camada,
-                force_vision=force_vision,
-            )
+            resolucao = self._resolucao_visao()
+            if resolucao is not None:
+                # The model publishes its native resolution: pre-fit to it,
+                # banding a dense page (`documents.vision_tiling`).
+                paginas_img = _pdf_to_native_vision_images(
+                    content,
+                    paginas_para_visao,
+                    self._render_dpi_policy,
+                    num_paginas,
+                    camada,
+                    resolucao,
+                    force_vision=force_vision,
+                )
+            else:
+                paginas_img = _pdf_to_images_within_budget(
+                    content,
+                    paginas_para_visao,
+                    self._render_dpi_policy,
+                    num_paginas,
+                    camada,
+                    force_vision=force_vision,
+                )
+            images = {n: p.imagens for n, p in paginas_img.items()}
+            reduzidas = {n for n, p in paginas_img.items() if p.resolucao_reduzida}
         else:
-            images = _pdf_to_images(content, paginas_para_visao, self._render_dpi)
+            images = dict(_pdf_to_images(content, paginas_para_visao, self._render_dpi))
         formatacao_visao: dict[int, tuple[FormatRange, ...]] = {}
         for numero in paginas_para_visao:
             img = images.get(numero)
@@ -754,11 +909,23 @@ class LadderDocumentTranscriber:
                         if n in por_visao
                         else formatacao_camada.get(n, ())
                     ),
+                    resolucao_reduzida=n in reduzidas,
                 )
                 for n in sorted(textos)
             ),
             num_paginas=num_paginas,
         )
+
+    def _resolucao_visao(self):
+        """The pinned vision model's native resolution, or `None` (no
+        published limits -> the legacy byte-budget render). Resolved once."""
+        if self._vision_resolution is _NAO_RESOLVIDA:
+            from noctusai_lib.integrations.documents.vision_tiling import (
+                vision_resolution_for,
+            )
+
+            self._vision_resolution = vision_resolution_for(self._provider, self._ocr_model)
+        return self._vision_resolution
 
     def _get_analyze(self):
         """Resolve the vision entry point, or None when unusable.
@@ -1018,54 +1185,76 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
         if numero < 1 or numero > doc.page_count:
             return None
         page = doc[numero - 1]
-        try:
-            imagens = page.get_images(full=True)
-        except Exception:
-            logger.debug("dominant-image: get_images failed on page %d", numero, exc_info=True)
+        regiao = _regiao_dominante(doc, page)
+        if regiao is None:
             return None
-        if not imagens:
-            return None
-
-        candidatos: list[tuple[float, int, "fitz.Rect"]] = []
-        for img in imagens:
-            xref = img[0]
-            try:
-                rects = page.get_image_rects(xref)
-            except Exception:
-                continue
-            if not rects:
-                continue
-            rect = max(rects, key=lambda r: abs(r.width * r.height))
-            try:
-                info = doc.extract_image(xref)
-            except Exception:
-                continue
-            if _barcode_like(info):
-                continue
-            candidatos.append((abs(rect.width * rect.height), xref, rect))
-
-        if not candidatos:
-            return None  # no card-shaped image once barcodes are excluded
-
-        candidatos.sort(key=lambda c: c[0], reverse=True)
-        maior_area = candidatos[0][0]
-        irmas = [c for c in candidatos if c[0] * _DOMINANT_IMAGE_AREA_RATIO >= maior_area]
-
-        if len(irmas) == 1:
-            return _render_regiao(page, irmas[0][2])
-
-        # 2+ comparable, non-barcode images — no single one IS the
-        # document, but their UNION region is. Crop-render just that
-        # region instead of extracting one (possibly wrong) image
-        # verbatim, or falling back to the whole page.
-        left = min(r.x0 for _, _, r in irmas)
-        top = min(r.y0 for _, _, r in irmas)
-        right = max(r.x1 for _, _, r in irmas)
-        bottom = max(r.y1 for _, _, r in irmas)
-        uniao = fitz.Rect(left, top, right, bottom)
-        return _render_regiao(page, uniao)
+        return _render_regiao(page, regiao[0])
     finally:
         doc.close()
+
+
+def _regiao_dominante(doc, page) -> Optional[tuple["fitz.Rect", float]]:
+    """The card/scan region `_dominant_embedded_image` renders — the single
+    dominant non-barcode image's rect, or the union of comparable ones —
+    plus its NATIVE pixel density (px per inch of page space), or `None`.
+
+    The density is rotation-invariant (`sqrt(px_area / rect_area_in2)`): a
+    phone photo placed rotated on the page has its width and height swapped
+    relative to the rect, and the information per inch is the same either
+    way. With several sibling images, the densest one counts — the region
+    carries at least that much detail somewhere.
+    """
+    try:
+        imagens = page.get_images(full=True)
+    except Exception:
+        logger.debug("dominant-image: get_images failed on page %d", page.number + 1, exc_info=True)
+        return None
+    if not imagens:
+        return None
+
+    candidatos: list[tuple[float, int, "fitz.Rect", float]] = []
+    for img in imagens:
+        xref = img[0]
+        try:
+            rects = page.get_image_rects(xref)
+        except Exception:
+            continue
+        if not rects:
+            continue
+        rect = max(rects, key=lambda r: abs(r.width * r.height))
+        try:
+            info = doc.extract_image(xref)
+        except Exception:
+            continue
+        if _barcode_like(info):
+            continue
+        area = abs(rect.width * rect.height)
+        px = (info.get("width") or 0) * (info.get("height") or 0)
+        densidade = (px / (area / (72.0 * 72.0))) ** 0.5 if area > 0 and px > 0 else 0.0
+        candidatos.append((area, xref, rect, densidade))
+
+    if not candidatos:
+        return None  # no card-shaped image once barcodes are excluded
+
+    candidatos.sort(key=lambda c: c[0], reverse=True)
+    maior_area = candidatos[0][0]
+    irmas = [c for c in candidatos if c[0] * _DOMINANT_IMAGE_AREA_RATIO >= maior_area]
+    densidade = max(c[3] for c in irmas)
+
+    if len(irmas) == 1:
+        return irmas[0][2], densidade
+
+    # 2+ comparable, non-barcode images — no single one IS the document,
+    # but their UNION region is.
+    import fitz  # type: ignore  # PyMuPDF
+
+    uniao = fitz.Rect(
+        min(r.x0 for _, _, r, _ in irmas),
+        min(r.y0 for _, _, r, _ in irmas),
+        max(r.x1 for _, _, r, _ in irmas),
+        max(r.y1 for _, _, r, _ in irmas),
+    )
+    return uniao, densidade
 
 
 #: Public name for a consumer that needs the page's own embedded-image pixels
@@ -1076,6 +1265,115 @@ def _dominant_embedded_image(pdf_bytes: bytes, numero: int) -> Optional[bytes]:
 dominant_embedded_image = _dominant_embedded_image
 
 
+@dataclass(frozen=True)
+class _ImagensPagina:
+    """What one page sends to the vision call: one image, or the ordered
+    bands of one page — and whether it fell below the legibility floor."""
+
+    imagens: tuple[bytes, ...]
+    resolucao_reduzida: bool = False
+
+
+#: Page-classifier reasons that mean "this page IS its embedded image": a
+#: scan/photo (`rendered scan`) or a card under a provenance stamp. Rendering
+#: just that image's region, at its own density, beats rasterizing the whole
+#: page (white margins cost visual tokens and dilute the content's pixels).
+_RAZOES_REGIAO_IMAGEM = frozenset({"provenance stamp only", "rendered scan"})
+
+
+def _pdf_to_native_vision_images(
+    pdf_bytes: bytes,
+    paginas: list[int],
+    policy: RenderDpiPolicy,
+    num_paginas: int,
+    camada,
+    resolucao,
+    *,
+    force_vision: bool = False,
+) -> dict[int, _ImagensPagina]:
+    """Rasterize each page for a vision model with a KNOWN native resolution
+    (`vision_tiling.VisionResolution`) — the 2026-10-13 replacement for the
+    byte-budget DPI step-down. Per page:
+
+    1. Region: a page that IS its embedded image (`_RAZOES_REGIAO_IMAGEM`,
+       `force_vision`, or no text layer at all) renders just that image's
+       region (`_regiao_dominante`); otherwise the whole page.
+    2. Density: the policy's target (`dpi_for_page_count`), raised to the
+       scan's own native density when that is higher (never throw away the
+       pixels a phone photo of an RG actually has), and — for a scan coarser
+       than the target — upsampled at most `policy.max_upscale`x. Capped at
+       `_CARD_REGION_DPI`.
+    3. Delivery: `vision_tiling.render_page_for_vision` — pre-fitted to the
+       model's native size (so the vendor never resizes it silently), split
+       into up to `policy.max_bands` overlapping bands when one image would
+       be coarser than the target, encoded JPEG (PNG only when smaller)
+       under `policy.max_encoded_bytes`.
+
+    A page delivered below `policy.min_dpi` (or below its scan's own
+    density, whichever is lower) is logged and marked `resolucao_reduzida`.
+    A page PyMuPDF cannot rasterize is simply absent — the caller's
+    `rasterize_failed` handles it, never a silent drop.
+    """
+    import fitz  # type: ignore  # PyMuPDF
+    from noctusai_lib.integrations.documents.vision_tiling import render_page_for_vision
+
+    camada_paginas = {p.number: p for p in camada.pages} if camada is not None else {}
+    alvo_base = policy.dpi_for_page_count(num_paginas)
+    resultado: dict[int, _ImagensPagina] = {}
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        logger.debug("transcription: could not open PDF for native render", exc_info=True)
+        return resultado
+    try:
+        for numero in paginas:
+            if numero < 1 or numero > doc.page_count:
+                continue
+            page = doc[numero - 1]
+            info = camada_paginas.get(numero)
+            sem_texto = info is None or not (info.text or "").strip()
+            regiao = None
+            if force_vision or sem_texto or (info is not None and info.reason in _RAZOES_REGIAO_IMAGEM):
+                regiao = _regiao_dominante(doc, page)
+            clip, nativa = (regiao if regiao is not None else (None, None))
+            alvo = float(alvo_base)
+            if nativa:
+                alvo = nativa if nativa >= alvo else min(alvo, nativa * policy.max_upscale)
+            alvo = min(alvo, float(_CARD_REGION_DPI))
+            plano = render_page_for_vision(
+                page,
+                clip,
+                target_dpi=alvo,
+                min_dpi=policy.min_dpi,
+                native_dpi=nativa,
+                resolution=resolucao,
+                max_bands=policy.max_bands,
+                overlap=policy.band_overlap,
+                max_encoded_bytes=policy.max_encoded_bytes,
+            )
+            if plano is None:
+                continue
+            if plano.resolucao_reduzida:
+                logger.warning(
+                    "transcription: page %d/%d delivered to the vision model at "
+                    "%.0f DPI, below its %.0f-DPI legibility floor (%d band(s), "
+                    "max %d) — marked resolucao_reduzida",
+                    numero, num_paginas, plano.delivered_dpi, plano.floor_dpi,
+                    len(plano.images), policy.max_bands,
+                )
+            else:
+                logger.info(
+                    "transcription: page %d/%d -> %d image(s) at %.0f DPI "
+                    "(target %.0f, native %s)",
+                    numero, num_paginas, len(plano.images), plano.delivered_dpi,
+                    alvo, f"{nativa:.0f}" if nativa else "vector",
+                )
+            resultado[numero] = _ImagensPagina(plano.images, plano.resolucao_reduzida)
+    finally:
+        doc.close()
+    return resultado
+
+
 def _pdf_to_images_within_budget(
     pdf_bytes: bytes,
     paginas: list[int],
@@ -1084,7 +1382,7 @@ def _pdf_to_images_within_budget(
     camada,
     *,
     force_vision: bool = False,
-) -> dict[int, bytes]:
+) -> dict[int, "_ImagensPagina"]:
     """Rasterize each page for vision, honouring `policy` — the
     `identity-vision-render-dpi` fix. Per page, independently:
 
@@ -1111,6 +1409,11 @@ def _pdf_to_images_within_budget(
        1 and whose page 2 is a dense full-page scan should not have its
        sharp page-1 render dragged down by page 2's size, nor vice versa.
 
+    This is the path for a vision model with NO published native resolution
+    (`vision_tiling.vision_resolution_for` -> `None`); a model that has one
+    goes through `_pdf_to_native_vision_images` instead. A page stepped down
+    below `policy.min_dpi` is marked `resolucao_reduzida`.
+
     Never sends a page silently over budget: if even the floor DPI does
     not fit, the floor render is still used (a document must not lose a
     page because it is dense) but logged at `error` so the near-413 is
@@ -1122,12 +1425,12 @@ def _pdf_to_images_within_budget(
         {d for d in policy.step_down_dpis if d < starting_dpi}, reverse=True
     )
 
-    images: dict[int, bytes] = {}
+    images: dict[int, _ImagensPagina] = {}
     for numero in paginas:
         if razoes.get(numero) == "provenance stamp only" or force_vision:
             nativo = _dominant_embedded_image(pdf_bytes, numero)
             if nativo is not None and _encoded_size(nativo) <= policy.max_encoded_bytes:
-                images[numero] = nativo
+                images[numero] = _ImagensPagina((nativo,))
                 continue
 
         escolhido: Optional[bytes] = None
@@ -1147,11 +1450,14 @@ def _pdf_to_images_within_budget(
             # existing `rasterize_failed` handling covers a missing page.
             continue
 
+        reduzida = dpi_usado < policy.min_dpi
         if dpi_usado < candidatos[0]:
             logger.warning(
                 "transcription: page %d rendered at %d DPI (policy asked "
-                "for %d) to stay under the %d-byte vision request budget",
+                "for %d) to stay under the %d-byte vision request budget%s",
                 numero, dpi_usado, candidatos[0], policy.max_encoded_bytes,
+                f" — below the {policy.min_dpi}-DPI legibility floor, marked "
+                "resolucao_reduzida" if reduzida else "",
             )
         if _encoded_size(escolhido) > policy.max_encoded_bytes:
             logger.error(
@@ -1160,7 +1466,7 @@ def _pdf_to_images_within_budget(
                 "anyway; the provider call may reject it as too large",
                 numero, policy.max_encoded_bytes, dpi_usado,
             )
-        images[numero] = escolhido
+        images[numero] = _ImagensPagina((escolhido,), resolucao_reduzida=reduzida)
     return images
 
 
@@ -1753,10 +2059,13 @@ def make_document_transcriber(
 __all__ = [
     "DEFAULT_VISION_PROVIDER",
     "DocumentTranscriber",
+    "FULL_PAGE_MAX_BANDS",
+    "FULL_PAGE_RENDER_DPI",
     "FakeDocumentTranscriber",
     "LadderDocumentTranscriber",
     "MAX_VISION_PAGES",
     "OCR_MODEL",
+    "OCR_BANDS_PROMPT_SUFFIX",
     "OCR_MODELS",
     "OCR_PROMPT",
     "RENDER_DPI",
@@ -1764,7 +2073,9 @@ __all__ = [
     "TranscribedPage",
     "Transcription",
     "dominant_embedded_image",
+    "full_page_document_render_dpi_policy",
     "identity_document_render_dpi_policy",
+    "render_dpi_policy_for",
     "make_document_transcriber",
     "has_raw_markup",
     "parse_markup",

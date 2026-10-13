@@ -351,6 +351,12 @@ def _classe_documento(tipo_documento: Optional[str]) -> ClasseDocumento:
     return ClasseDocumento.OUTRO
 
 
+#: Public name: `transcription.render_dpi_policy_for` picks the vision render
+#: policy (one native image for a CARD, bands for a full page) by the SAME
+#: buckets this gate scopes its signals by — one classification, two uses.
+classe_documento = _classe_documento
+
+
 class LegibilidadeStatus(str, Enum):
     """The document-wide verdict — never a per-field one."""
 
@@ -716,6 +722,7 @@ def avaliar_legibilidade(
 __all__ = [
     "AVISO_LEITURA_COMPROMETIDA",
     "ClasseDocumento",
+    "classe_documento",
     "LegibilidadeAvaliacao",
     "LegibilidadeStatus",
     "avaliar_legibilidade",

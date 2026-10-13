@@ -58,7 +58,7 @@ from noctusai_lib.integrations.documents.cpf import (
 )
 from noctusai_lib.integrations.documents.gender import find_gender
 from noctusai_lib.integrations.documents.fake import classify_kind
-from noctusai_lib.integrations.documents.ladder import DocumentTextLadder
+from noctusai_lib.integrations.documents.ladder import DocumentTextLadder, LeituraTexto
 from noctusai_lib.integrations.documents.legibilidade import (
     AVISO_LEITURA_COMPROMETIDA,
     avaliar_legibilidade,
@@ -73,6 +73,7 @@ import noctusai_lib.integrations.documents.releitura as releitura
 from noctusai_lib.integrations.documents.ancora import ancora_falhou
 from noctusai_lib.integrations.documents.transcription import (
     identity_document_render_dpi_policy,
+    render_dpi_policy_for,
 )
 from noctusai_lib.integrations.documents.nacionalidade import find_nacionalidade
 from noctusai_lib.integrations.documents.name import (
@@ -180,6 +181,28 @@ _IDENTITY_DOCUMENT_PROMPT = (
 )
 
 
+async def _ler(ladder, content, mimetype, filename, **kwargs) -> LeituraTexto:
+    """`ladder.ler(...)` — the text plus its `avisos`. A `DocumentTextLadder`
+    always has `ler`; an injected test double written against the older
+    `to_text`-only shape is read through `to_text`, with no avisos (it has
+    none to report)."""
+    ler = getattr(ladder, "ler", None)
+    if ler is not None:
+        return await ler(content, mimetype, filename, **kwargs)
+    text, source, err = await ladder.to_text(content, mimetype, filename, **kwargs)
+    return LeituraTexto(text, source, err)
+
+
+def _marcar_avisos_leitura(fields: IdentityFields, leitura: LeituraTexto) -> IdentityFields:
+    """Carry the transcription's own `avisos` onto the read — today only
+    `resolucao_reduzida` (`releitura.marcar_resolucao_reduzida`)."""
+    from noctusai_lib.integrations.documents.vision_tiling import AVISO_RESOLUCAO_REDUZIDA
+
+    if AVISO_RESOLUCAO_REDUZIDA in leitura.avisos:
+        return releitura.marcar_resolucao_reduzida(fields)
+    return fields
+
+
 class LadderIdentityExtractor:
     """Text-layer-first, vision-second identity extractor.
 
@@ -217,6 +240,16 @@ class LadderIdentityExtractor:
             provider=provider,
             render_dpi_policy=identity_document_render_dpi_policy(),
         )
+        # 🔴 RENDER POLICY BY DOCUMENT CLASS (2026-10-13,
+        # `transcription.render_dpi_policy_for`): `self._ladder` above is the
+        # CARD ladder (one native image per page); a declared full-page type
+        # (a certidão, a comprovante) reads through a second ladder whose
+        # policy bands a dense page at the model's native resolution — built
+        # lazily, only when such a type is read. An injected `ladder=` (a
+        # test) answers for every class, same as every other DI default.
+        self._ladder_injetada = ladder is not None
+        self._resolver = resolver
+        self._ladders_pagina: dict[bool, DocumentTextLadder] = {}
         # Remembered so `_get_escalation_ladder` (built lazily, only when a
         # read actually triggers `releitura.deve_escalar`) can construct a
         # SECOND ladder on the same org/prompt/page-cap/vendor, differing
@@ -269,7 +302,9 @@ class LadderIdentityExtractor:
                 error_message="no bytes to read",
             )
 
-        text, source, err = await self._ladder.to_text(content, mimetype, filename)
+        ladder = self._ladder_para(tipo_documento)
+        leitura = await _ler(ladder, content, mimetype, filename)
+        text, source, err = leitura.text, leitura.source, leitura.error
         if err is not None:
             return IdentityFields(kind=kind, source=source, error=err[0], error_message=err[1])
         if not text.strip():
@@ -278,7 +313,9 @@ class LadderIdentityExtractor:
             # because retrying it is pointless.
             return IdentityFields(kind=kind, source=source)
 
-        fields = self._ler(text, source, kind, titular, tipo_documento)
+        fields = _marcar_avisos_leitura(
+            self._ler(text, source, kind, titular, tipo_documento), leitura
+        )
         if source is TextSource.TEXT_LAYER and (
             not _achou_algo(fields)
             or releitura.campos_nucleo_faltando(fields, tipo_documento)
@@ -311,9 +348,10 @@ class LadderIdentityExtractor:
             # the same table `deve_escalar` already reads), a text layer
             # missing any of THOSE fields gets the same second chance a
             # truly-empty one already got, whether or not it found nome.
-            texto_ocr, fonte_ocr, err_ocr = await self._ladder.to_text(
-                content, mimetype, filename, pular_camada_texto=True
+            leitura = await _ler(
+                ladder, content, mimetype, filename, pular_camada_texto=True
             )
+            texto_ocr, fonte_ocr, err_ocr = leitura.text, leitura.source, leitura.error
             if err_ocr is not None:
                 # The text layer had nothing and vision could not run: that
                 # is a failure to read, not an empty document — report it so
@@ -322,7 +360,10 @@ class LadderIdentityExtractor:
                     kind=kind, source=fonte_ocr, error=err_ocr[0], error_message=err_ocr[1]
                 )
             if texto_ocr.strip():
-                fields = self._ler(texto_ocr, fonte_ocr, kind, titular, tipo_documento)
+                fields = _marcar_avisos_leitura(
+                    self._ler(texto_ocr, fonte_ocr, kind, titular, tipo_documento),
+                    leitura,
+                )
 
         # 🔴 RE-READ ESCALATION (owner directive, 2026-09-28) — see
         # `releitura.py`'s own module docstring for why this exists (the
@@ -379,9 +420,11 @@ class LadderIdentityExtractor:
         page, never batched.
         """
         async def _reler() -> Optional[IdentityFields]:
-            texto, fonte, erro = await self._get_escalation_ladder().to_text(
-                content, mimetype, filename, pular_camada_texto=True
+            leitura = await _ler(
+                self._get_escalation_ladder(tipo_documento),
+                content, mimetype, filename, pular_camada_texto=True,
             )
+            texto, fonte, erro = leitura.text, leitura.source, leitura.error
             if erro is not None:
                 logger.warning(
                     "releitura: escalation transcription failed for org=%s: %s",
@@ -390,7 +433,10 @@ class LadderIdentityExtractor:
                 return None
             if not texto.strip():
                 return None
-            return self._ler(texto, fonte, original.kind, titular, tipo_documento)
+            return _marcar_avisos_leitura(
+                self._ler(texto, fonte, original.kind, titular, tipo_documento),
+                leitura,
+            )
 
         escalada = await _reler()
         if escalada is None:
@@ -423,9 +469,43 @@ class LadderIdentityExtractor:
                 )
         return resultado
 
-    def _get_escalation_ladder(self) -> DocumentTextLadder:
+    def _ladder_para(self, tipo_documento: Optional[str]) -> DocumentTextLadder:
+        """The first-read ladder for this document CLASS — `self._ladder`
+        (card policy) unless the declared type reads as a full page."""
+        if self._ladder_injetada:
+            return self._ladder
+        politica = render_dpi_policy_for(tipo_documento)
+        if politica.max_bands <= 1:
+            return self._ladder
+        if True not in self._ladders_pagina:
+            self._ladders_pagina[True] = DocumentTextLadder(
+                org_id=self._org_id,
+                document_prompt=self._document_prompt or _IDENTITY_DOCUMENT_PROMPT,
+                resolver=self._resolver,
+                max_pages=self._max_pages,
+                provider=self._provider,
+                render_dpi_policy=politica,
+            )
+        return self._ladders_pagina[True]
+
+    def _get_escalation_ladder(self, tipo_documento: Optional[str] = None) -> DocumentTextLadder:
+        """The escalated-model ladder, with the SAME class policy the first
+        read used (a certidão escalates with bands too)."""
         if self._escalation_ladder_override is not None:
             return self._escalation_ladder_override
+        politica = render_dpi_policy_for(tipo_documento)
+        pagina = politica.max_bands > 1
+        if pagina:
+            if False not in self._ladders_pagina:
+                self._ladders_pagina[False] = DocumentTextLadder(
+                    org_id=self._org_id,
+                    document_prompt=self._document_prompt or _IDENTITY_DOCUMENT_PROMPT,
+                    max_pages=self._max_pages,
+                    provider=self._provider,
+                    render_dpi_policy=politica,
+                    ocr_model=self._escalation_model,
+                )
+            return self._ladders_pagina[False]
         if self._escalation_ladder_built is None:
             self._escalation_ladder_built = DocumentTextLadder(
                 org_id=self._org_id,

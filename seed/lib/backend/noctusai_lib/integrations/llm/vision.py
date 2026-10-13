@@ -7,14 +7,14 @@ fetches directly.
 """
 from __future__ import annotations
 
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 from .client import get_llm_config, get_provider, resolve_api_key
 from .vision_types import VisionResult
 
 
 async def analyze_image(
-    image: Union[bytes, str],
+    image: Union[bytes, str, Sequence[Union[bytes, str]]],
     prompt: str,
     *,
     model: Optional[str] = None,
@@ -26,7 +26,8 @@ async def analyze_image(
     """Analyze an image against a text prompt via the configured provider.
 
     Args:
-        image: Raw image bytes or a URL string.
+        image: Raw image bytes or a URL string — or an ordered list of them
+            forming ONE subject (the bands of one page), sent in one request.
         prompt: The text prompt describing what to extract / analyze.
         model: Override the vision model. Defaults to `LLMConfig.default_vision_model`.
         provider: Override the active provider.

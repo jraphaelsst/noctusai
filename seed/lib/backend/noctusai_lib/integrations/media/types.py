@@ -82,6 +82,11 @@ class ResolvedMedia:
     text: str
     error: Optional[str] = None
     error_message: Optional[str] = None
+    #: Soft findings that are NOT errors (the text is complete) but lower
+    #: trust in it — e.g. `resolucao_reduzida` when a scanned page reached
+    #: the vision model below its legibility floor
+    #: (`documents.transcription.Transcription.avisos`).
+    avisos: tuple[str, ...] = ()
 
 
 @runtime_checkable

@@ -16,7 +16,7 @@ Errors from the SDK surface as `LLMAPIError`. Missing keys surface as
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 from openai import AsyncOpenAI
 from openai import OpenAIError
@@ -299,7 +299,7 @@ class OpenAIProvider:
 
     async def analyze_image(
         self,
-        image: Union[bytes, str],
+        image: Union[bytes, str, Sequence[Union[bytes, str]]],
         prompt: str,
         *,
         model: str,
@@ -317,24 +317,31 @@ class OpenAIProvider:
         from ..usage import record_usage
 
         client = self._client_for(api_key)
-        if isinstance(image, bytes):
-            b64 = base64.b64encode(image).decode("ascii")
-            image_url = f"data:image/jpeg;base64,{b64}"
+
+        def _url(img: Union[bytes, str]) -> str:
+            if isinstance(img, bytes):
+                b64 = base64.b64encode(img).decode("ascii")
+                return f"data:image/jpeg;base64,{b64}"
+            return img
+
+        # A list is one subject in order (the bands of one page —
+        # `documents.vision_tiling`): labelled image parts, then the prompt.
+        content: list[dict] = []
+        if isinstance(image, (list, tuple)):
+            for i, img in enumerate(image, 1):
+                content.append({"type": "text", "text": f"Image {i}:"})
+                content.append({"type": "image_url", "image_url": {"url": _url(img)}})
+            content.append({"type": "text", "text": prompt})
         else:
-            image_url = image
+            content = [
+                {"type": "text", "text": prompt},
+                {"type": "image_url", "image_url": {"url": _url(image)}},
+            ]
 
         try:
             response = await _create_retrying(client.chat.completions.create,
                 model=model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {"type": "image_url", "image_url": {"url": image_url}},
-                        ],
-                    }
-                ],
+                messages=[{"role": "user", "content": content}],
                 **kwargs,
             )
             usage = getattr(response, "usage", None)

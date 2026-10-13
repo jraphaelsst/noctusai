@@ -21,7 +21,7 @@ shutdown can release pooled connections cleanly.
 """
 from __future__ import annotations
 
-from typing import Any, AsyncIterator, Optional, Protocol, Union, runtime_checkable
+from typing import Any, AsyncIterator, Optional, Protocol, runtime_checkable, Sequence, Union
 
 
 @runtime_checkable
@@ -84,7 +84,7 @@ class LLMProvider(Protocol):
 
     async def analyze_image(
         self,
-        image: Union[bytes, str],
+        image: Union[bytes, str, Sequence[Union[bytes, str]]],
         prompt: str,
         *,
         model: str,
@@ -92,6 +92,11 @@ class LLMProvider(Protocol):
         **kwargs: Any,
     ) -> str:
         """Analyze an image (bytes or URL) against a text prompt.
+
+        `image` may also be an ordered LIST of images forming ONE subject
+        (the overlapping bands of one dense page, `documents.vision_tiling`):
+        sent in one request, each labelled "Image k:", prompt last. Every
+        real provider and `FakeProvider` accept it.
 
         Returns the model's textual response — or a
         `vision_types.VisionResult` (text + normalized `truncated` + raw

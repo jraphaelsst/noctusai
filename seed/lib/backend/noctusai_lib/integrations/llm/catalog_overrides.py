@@ -123,6 +123,12 @@ class ModelOverride:
             supports_batch=self.supports_batch,
             snapshot=self.snapshot,
             tag_performance=self.tag_performance,
+            # The vendor's native image resolution is model physics, not an
+            # operator-tunable price: carried from the static row, so a price
+            # override never silently switches `documents.vision_tiling`'s
+            # pre-fit/tiling off for that model.
+            vision_max_edge_px=base.vision_max_edge_px if base else None,
+            vision_max_visual_tokens=base.vision_max_visual_tokens if base else None,
         )
 
 

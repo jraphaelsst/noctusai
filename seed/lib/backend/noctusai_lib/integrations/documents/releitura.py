@@ -215,6 +215,10 @@ def deve_escalar(fields: IdentityFields, tipo_documento: Optional[str]) -> bool:
         return True
     if fields.leitura_comprometida:
         return True
+    if resolucao_reduzida(fields):
+        # The page reached the model below its legibility floor — a
+        # lower-trust read gets the same second look a compromised one does.
+        return True
     if rg_anomalo(fields):
         return True
     return bool(campos_nucleo_faltando(fields, tipo_documento))
@@ -669,6 +673,37 @@ _NOME_CAMPO = {
 }
 
 
+def resolucao_reduzida(fields: IdentityFields) -> bool:
+    """Was this read transcribed from a page delivered BELOW its render
+    policy's legibility floor (`vision_tiling.AVISO_RESOLUCAO_REDUZIDA`)?
+    Membership in the "+"-joined `aviso`, never a substring match."""
+    from noctusai_lib.integrations.documents.vision_tiling import AVISO_RESOLUCAO_REDUZIDA
+
+    return bool(fields.aviso) and AVISO_RESOLUCAO_REDUZIDA in fields.aviso.split("+")
+
+
+def marcar_resolucao_reduzida(fields: IdentityFields) -> IdentityFields:
+    """Append `resolucao_reduzida`: the transcription behind this read had
+    to deliver at least one page to the vision model below its legibility
+    floor (`documents.vision_tiling` — the page could not be banded within
+    its policy). The text is complete; it is LOWER TRUST — `deve_escalar`
+    re-reads it, and a human reviewing it should know the model saw a
+    coarser image than the policy asked for. Idempotent."""
+    from noctusai_lib.integrations.documents.vision_tiling import AVISO_RESOLUCAO_REDUZIDA
+
+    if resolucao_reduzida(fields):
+        return fields
+    return replace(
+        fields,
+        aviso=_somar_codigo(fields.aviso, AVISO_RESOLUCAO_REDUZIDA),
+        aviso_mensagem=_somar_mensagem(
+            fields.aviso_mensagem,
+            "página(s) enviada(s) ao modelo de visão abaixo da resolução "
+            "mínima de legibilidade — leitura de confiança reduzida",
+        ),
+    )
+
+
 def marcar_campos_ausentes(
     fields: IdentityFields, faltando: tuple[str, ...], *, tipo_documento: Optional[str] = None
 ) -> IdentityFields:
@@ -714,6 +749,8 @@ __all__ = [
     "deve_escalar",
     "leitura_valida",
     "marcar_campos_ausentes",
+    "marcar_resolucao_reduzida",
     "mesclar",
+    "resolucao_reduzida",
     "sem_corroboracao",
 ]

@@ -33,6 +33,7 @@ wrong), while a vision-read *gênero* is either right or absent.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
 from noctusai_lib.integrations.documents.mime_sniff import sniff_real_mimetype
@@ -53,6 +54,21 @@ def looks_like_pdf(mimetype: Optional[str], filename: Optional[str]) -> bool:
     return (mimetype or "").lower() in _PDF_MIMETYPES or (
         filename or ""
     ).lower().endswith(".pdf")
+
+
+@dataclass(frozen=True)
+class LeituraTexto:
+    """`DocumentTextLadder.ler`'s answer: `to_text`'s `(text, source, error)`
+    plus `avisos` — soft findings about HOW the text was read that are not
+    errors (the text is complete) but lower its trust: today
+    `resolucao_reduzida` (`documents.vision_tiling`), carried up from
+    `Transcription.avisos` so the extractor can mark the read instead of
+    the fact dying in a log line."""
+
+    text: str
+    source: TextSource
+    error: Optional[tuple[str, str]] = None
+    avisos: tuple[str, ...] = ()
 
 
 class DocumentTextLadder:
@@ -176,7 +192,27 @@ class DocumentTextLadder:
         pular_camada_texto: bool = False,
         paginas: Optional[Sequence[int]] = None,
     ) -> tuple[str, TextSource, Optional[tuple[str, str]]]:
-        """Return `(text, source, error)`. NEVER raises.
+        """Return `(text, source, error)`. NEVER raises — `ler` minus its
+        `avisos`, for every caller that only needs the text (see `ler`)."""
+        leitura = await self.ler(
+            content,
+            mimetype,
+            filename,
+            pular_camada_texto=pular_camada_texto,
+            paginas=paginas,
+        )
+        return (leitura.text, leitura.source, leitura.error)
+
+    async def ler(
+        self,
+        content: bytes,
+        mimetype: Optional[str] = None,
+        filename: Optional[str] = None,
+        *,
+        pular_camada_texto: bool = False,
+        paginas: Optional[Sequence[int]] = None,
+    ) -> LeituraTexto:
+        """Return a `LeituraTexto` (`to_text`'s triple + `avisos`). NEVER raises.
 
         These extractors run detached from the request that triggered them,
         so an exception here would surface nowhere and would leave the
@@ -264,7 +300,7 @@ class DocumentTextLadder:
                 logger.debug("pdf text-layer extraction failed", exc_info=True)
                 text = ""
             if text.strip():
-                return (text, TextSource.TEXT_LAYER, None)
+                return LeituraTexto(text, TextSource.TEXT_LAYER)
 
         if paginas is not None and looks_like_pdf(mimetype, filename):
             # Page-targeted vision bypasses the whole-document media
@@ -280,7 +316,7 @@ class DocumentTextLadder:
                 paginas=paginas,
             )
             if not transcricao.ok:
-                return (
+                return LeituraTexto(
                     "",
                     TextSource.NENHUMA,
                     (transcricao.error, transcricao.error_message or ""),
@@ -300,7 +336,7 @@ class DocumentTextLadder:
                 # that is not an error: the caller's own two-pass logic
                 # decides what an empty window means.
                 fonte = TextSource.NENHUMA
-            return (texto, fonte, None)
+            return LeituraTexto(texto, fonte, None, tuple(getattr(transcricao, "avisos", ()) or ()))
 
         # Rung 2 — images always land here; PDFs land here when the text
         # layer was empty (scanned/photographed) and no `paginas` window
@@ -324,15 +360,20 @@ class DocumentTextLadder:
             )
         except Exception as exc:  # noqa: BLE001 - background job must not die
             logger.warning("document text ladder: resolver failed: %s", exc)
-            return ("", TextSource.NENHUMA, ("resolver_failed", str(exc)))
+            return LeituraTexto("", TextSource.NENHUMA, ("resolver_failed", str(exc)))
 
         if getattr(resolved, "error", None):
-            return (
+            return LeituraTexto(
                 "",
                 TextSource.NENHUMA,
                 (resolved.error, getattr(resolved, "error_message", "") or ""),
             )
-        return (getattr(resolved, "text", "") or "", TextSource.OCR, None)
+        return LeituraTexto(
+            getattr(resolved, "text", "") or "",
+            TextSource.OCR,
+            None,
+            tuple(getattr(resolved, "avisos", ()) or ()),
+        )
 
 
-__all__ = ["DocumentTextLadder", "looks_like_pdf"]
+__all__ = ["DocumentTextLadder", "LeituraTexto", "looks_like_pdf"]
