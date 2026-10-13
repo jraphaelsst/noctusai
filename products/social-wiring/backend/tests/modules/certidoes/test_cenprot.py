@@ -42,8 +42,12 @@ def _pdf_com_captura() -> bytes:
 PDF = _pdf_com_captura()
 
 
-HAIKU = "claude-haiku-4-5"
-SONNET = "claude-sonnet-5"
+# The cheap / escalated pair is whatever the seed pins (real-document
+# benchmark 2026-10-13: Sonnet 5 / Opus 5.5) — names kept for the history.
+from noctusai_lib.integrations.documents.providers import ESCALATION_OCR_MODELS, OCR_MODELS
+
+HAIKU = OCR_MODELS["anthropic"]
+SONNET = ESCALATION_OCR_MODELS["anthropic"]
 
 
 class _Leitor:
