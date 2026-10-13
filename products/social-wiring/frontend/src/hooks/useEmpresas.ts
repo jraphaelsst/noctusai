@@ -14,6 +14,7 @@
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { uploadMultipart } from "@/hooks/useCardHub";
 import type { DocumentoUrlResponse } from "@/types/cardHub";
@@ -87,10 +88,11 @@ export function useEmpresaDocumentos(empresaId: string | null) {
     queryFn: () =>
       api.get<EmpresaDocumentosResponse>(`${empresaBase(empresaId as string)}/documentos`),
     enabled: !!empresaId,
-    refetchInterval: (q) => {
-      const items = (q.state.data as EmpresaDocumentosResponse | undefined)?.items ?? [];
-      return items.some((d) => extracaoEmAndamento(d.extracao_status)) ? 2500 : false;
-    },
+    ...jobPolling(
+      (d: EmpresaDocumentosResponse | undefined) =>
+        (d?.items ?? []).some((doc) => extracaoEmAndamento(doc.extracao_status)),
+      2500,
+    ),
   });
 }
 

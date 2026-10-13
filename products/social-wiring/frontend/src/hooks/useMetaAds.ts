@@ -14,6 +14,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 import { apiBase } from "@/lib/apiBase";
 
 // ─── qs (local copy — mirrors useMeta's helper) ─────────────────────────────
@@ -461,8 +462,7 @@ export function useSyncJob(jobId: string | null) {
     queryKey: ["meta-ads", "sync-job", jobId ?? ""],
     queryFn: () => api.get<AdsSyncStatus>(`/api/meta/ads/sync/${jobId}`),
     enabled: !!jobId,
-    refetchInterval: (q) =>
-      q.state.data && q.state.data.status !== "running" ? false : 2000,
+    ...jobPolling((d: AdsSyncStatus | undefined) => !d || d.status === "running", 2000),
   });
 }
 

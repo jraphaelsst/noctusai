@@ -6,10 +6,12 @@
  * Loading rule (lying-loading-state.md): `showSkeleton = isPending && !data`,
  * `isRefreshing = isFetching && !!data`, `placeholderData` on key changes —
  * never `isLoading`. The batch status is REAL: lists and the detail poll every
- * 3 s only while a visible batch is `criando`/`processando` (contract §3.2).
+ * 3 s only while a visible batch is `criando`/`processando` (contract §3.2) —
+ * via `jobPolling`, so the poll keeps running in a background tab.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { emAndamento } from "@/components/geracao/labels";
 import type { Criatividade, Headline, HeadlineLote, HeadlineLoteDetalhe } from "@/types/geracao";
@@ -51,7 +53,7 @@ export function useLotes(marcaId: string | null, q = "", offset = 0) {
       if (q.trim()) p.set("q", q.trim());
       return unwrap(await api.get<Envelope<{ items: HeadlineLote[]; total: number }>>(`${BASE}/lotes?${p}`));
     },
-    refetchInterval: (s) => (algumLoteEmAndamento(s.state.data?.items) ? HEADLINES_POLL_MS : false),
+    ...jobPolling((d: { items: HeadlineLote[]; total: number } | undefined) => algumLoteEmAndamento(d?.items), HEADLINES_POLL_MS),
     placeholderData: keepPreviousData,
   });
   return {
@@ -74,7 +76,7 @@ export function useLotesDoPost(marcaId: string | null, postId: string | null) {
       });
       return unwrap(await api.get<Envelope<{ items: HeadlineLote[]; total: number }>>(`${BASE}/lotes?${p}`));
     },
-    refetchInterval: (s) => (algumLoteEmAndamento(s.state.data?.items) ? HEADLINES_POLL_MS : false),
+    ...jobPolling((d: { items: HeadlineLote[]; total: number } | undefined) => algumLoteEmAndamento(d?.items), HEADLINES_POLL_MS),
     placeholderData: keepPreviousData,
   });
   return {
@@ -90,7 +92,7 @@ export function useLote(id: string | null) {
     enabled: !!id,
     queryFn: async () =>
       unwrap(await api.get<Envelope<HeadlineLoteDetalhe>>(`${BASE}/lotes/${encodeURIComponent(id as string)}`)),
-    refetchInterval: (s) => (s.state.data && emAndamento(s.state.data.status) ? HEADLINES_POLL_MS : false),
+    ...jobPolling((d: HeadlineLoteDetalhe | undefined) => !!d && emAndamento(d.status), HEADLINES_POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
   return {

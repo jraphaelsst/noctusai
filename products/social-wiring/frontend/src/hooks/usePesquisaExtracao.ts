@@ -17,6 +17,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { PESQUISA_KEY } from "@/hooks/usePesquisa";
 
@@ -211,10 +212,8 @@ export function useExtracaoJob(id: string | null) {
     queryKey: jobKey(id),
     enabled: !!id,
     queryFn: async () => unwrap(await api.get<Envelope<ExtractionJob>>(`${BASE}/extracoes/${enc(id as string)}`)),
-    refetchInterval: (q) => {
-      const status = q.state.data?.status;
-      return status && !isJobActive(status) ? false : POLL_INTERVAL_MS;
-    },
+    // Unknown status (not loaded yet) counts as active, as before.
+    ...jobPolling((d: ExtractionJob | undefined) => !d?.status || isJobActive(d.status), POLL_INTERVAL_MS),
   });
   return {
     ...query,

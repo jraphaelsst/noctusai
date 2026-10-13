@@ -5,11 +5,13 @@
  * Loading rule (lying-loading-state.md): query hooks return
  * `showSkeleton = isPending && !data` and `isRefreshing = isFetching && !!data`,
  * never `isLoading`. The real status drives the 3 s poll (contract §3.2): only
- * `criando` / `processando` are moving — `perguntas` waits for the user.
+ * `criando` / `processando` are moving — `perguntas` waits for the user. The poll
+ * goes through `jobPolling`, so it keeps running in a background tab.
  * Every mutation invalidates the whole `["sw","geracao"]` family.
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { emAndamento } from "@/components/geracao/labels";
 import type { Roteiro, RoteiroResumo } from "@/types/geracao";
@@ -52,7 +54,7 @@ export function useRoteiros(marcaId: string | null, q = "", offset = 0) {
       if (q.trim()) p.set("q", q.trim());
       return unwrap(await api.get<Envelope<{ items: RoteiroResumo[]; total: number }>>(`${BASE}?${p}`));
     },
-    refetchInterval: (s) => (algumRoteiroEmAndamento(s.state.data?.items) ? ROTEIROS_POLL_MS : false),
+    ...jobPolling((d: { items: RoteiroResumo[]; total: number } | undefined) => algumRoteiroEmAndamento(d?.items), ROTEIROS_POLL_MS),
     placeholderData: keepPreviousData,
   });
   return {
@@ -67,7 +69,7 @@ export function useRoteiro(id: string | null) {
     queryKey: detalheKey(id),
     enabled: !!id,
     queryFn: async () => unwrap(await api.get<Envelope<Roteiro>>(`${BASE}/${encodeURIComponent(id as string)}`)),
-    refetchInterval: (s) => (s.state.data && emAndamento(s.state.data.status) ? ROTEIROS_POLL_MS : false),
+    ...jobPolling((d: Roteiro | undefined) => !!d && emAndamento(d.status), ROTEIROS_POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
   return {

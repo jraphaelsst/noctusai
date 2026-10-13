@@ -783,6 +783,10 @@ Import: `import { ... } from '@noctusai/lib'`
 
 `createCrudHooks<T>(options)` → `useList`, `useOne`, `useCreate`, `useUpdate`, `useDelete` with auto-invalidation. **TanStack-Query data layer** — requires a `QueryClientProvider` in the host app. NOTE: most products are NOT wired for react-query, so the no-dependency default for a CRUD page is `<ResourceManager/>` (see `components/`), which is self-contained on the `api` client. Use `createCrudHooks` only when the product already opts into react-query.
 
+### `job-polling.ts` — Job-progress polling
+
+`jobPolling(isActive, intervalMs)` → TanStack query options to spread into `useQuery`/`useInfiniteQuery`: polls every `intervalMs` while `isActive(data)` — **including in a hidden tab** — and refetches immediately when the tab becomes visible; idle ⇒ no polling at all. The canonical way to poll an async job's progress (a bare `refetchInterval` freezes in a background tab). → `KB § PATTERNS/frontend/frontend.md` ("Job-progress polling")
+
 ### `notifications.ts`
 
 `createNotificationHooks(api, useAuthStore)` → `useNotificacoes`, `useContagemNaoLidas`, `useMarcarComoLida`, `useMarcarTodasComoLidas`.

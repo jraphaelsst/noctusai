@@ -24,6 +24,7 @@ import { useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuthStore } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 import { copyRichText } from "@noctusai/lib/clipboard";
 
 import { api } from "@/lib/api";
@@ -215,13 +216,12 @@ export function useCertidaoConsultas(filtros?: FiltrosConsultas) {
     },
     enabled: !!user,
     staleTime: 30 * 1000, // 30s — data changes during processing
-    refetchInterval: (query) => {
-      const data = query.state.data as CertidaoConsulta[] | undefined;
-      if (data?.some((c) => c.status === "pendente" || c.status === "processando")) {
-        return 3000; // Poll every 3s for real-time progress updates
-      }
-      return false;
-    },
+    // Poll every 3s for real-time progress updates (also in a background tab).
+    ...jobPolling(
+      (data: CertidaoConsulta[] | undefined) =>
+        !!data?.some((c) => c.status === "pendente" || c.status === "processando"),
+      3000,
+    ),
     // Key includes the filters — without this, typing in the search box
     // unmounts the table between keystrokes.
     placeholderData: (prev) => prev,
@@ -240,19 +240,18 @@ export function useCertidaoConsulta(id?: string) {
     },
     enabled: !!user && !!id,
     staleTime: 5 * 1000, // 5s — poll frequently during processing
-    refetchInterval: (query) => {
-      const data = query.state.data as CertidaoConsulta | null | undefined;
-      if (data && (data.status === "pendente" || data.status === "processando")) {
-        return 3000; // Poll every 3s for real-time progress updates
-      }
-      // A manual upload onto an already-concluded consulta reads its PDF in a
-      // background task (migration 155) — the consulta stays `concluida` while
-      // that one resultado is `processando`, so poll on the resultado too.
-      if (data?.resultados?.some((r) => r.status === "pendente" || r.status === "processando")) {
-        return 3000;
-      }
-      return false;
-    },
+    // Poll every 3s while the consulta runs. A manual upload onto an
+    // already-concluded consulta reads its PDF in a background task (migration
+    // 155) — the consulta stays `concluida` while that one resultado is
+    // `processando`, so poll on the resultado too.
+    ...jobPolling(
+      (data: CertidaoConsulta | null | undefined) =>
+        !!data &&
+        (data.status === "pendente" ||
+          data.status === "processando" ||
+          !!data.resultados?.some((r) => r.status === "pendente" || r.status === "processando")),
+      3000,
+    ),
   });
 }
 
@@ -267,13 +266,11 @@ export function useTjspFila() {
     },
     enabled: !!user,
     staleTime: 10 * 1000,
-    refetchInterval: (query) => {
-      const data = query.state.data as TjspFilaStatus | undefined;
-      if (data && (data.total_na_fila > 0 || data.cooldown.ativo)) {
-        return 15000; // Poll every 15s while queue is active
-      }
-      return false;
-    },
+    // Poll every 15s while the queue is active.
+    ...jobPolling(
+      (data: TjspFilaStatus | undefined) => !!data && (data.total_na_fila > 0 || data.cooldown.ativo),
+      15000,
+    ),
   });
 }
 
@@ -373,13 +370,11 @@ export function useResultadosPorParte(atendimentoParteId?: string) {
     // Mirrors `useCertidaoConsulta`'s own polling: a resultado fanned out by
     // `vincular_parte` (or still being scraped by the original consulta) can
     // land after this panel is already open.
-    refetchInterval: (query) => {
-      const data = query.state.data as CertidaoResultado[] | undefined;
-      if (data?.some((r) => r.status === "pendente" || r.status === "processando")) {
-        return 3000;
-      }
-      return false;
-    },
+    ...jobPolling(
+      (data: CertidaoResultado[] | undefined) =>
+        !!data?.some((r) => r.status === "pendente" || r.status === "processando"),
+      3000,
+    ),
     placeholderData: (prev) => prev,
   });
 }
@@ -398,13 +393,11 @@ export function useResultadosPorCliente(clienteId?: string) {
     },
     enabled: !!user && !!clienteId,
     staleTime: 5 * 1000,
-    refetchInterval: (query) => {
-      const data = query.state.data as CertidaoResultado[] | undefined;
-      if (data?.some((r) => r.status === "pendente" || r.status === "processando")) {
-        return 3000;
-      }
-      return false;
-    },
+    ...jobPolling(
+      (data: CertidaoResultado[] | undefined) =>
+        !!data?.some((r) => r.status === "pendente" || r.status === "processando"),
+      3000,
+    ),
     placeholderData: (prev) => prev,
   });
 }
@@ -522,13 +515,11 @@ export function useResultadosPorEmpresa(empresaId?: string) {
     },
     enabled: !!user && !!empresaId,
     staleTime: 5 * 1000,
-    refetchInterval: (query) => {
-      const data = query.state.data as CertidaoResultado[] | undefined;
-      if (data?.some((r) => r.status === "pendente" || r.status === "processando")) {
-        return 3000;
-      }
-      return false;
-    },
+    ...jobPolling(
+      (data: CertidaoResultado[] | undefined) =>
+        !!data?.some((r) => r.status === "pendente" || r.status === "processando"),
+      3000,
+    ),
     placeholderData: (prev) => prev,
   });
 }

@@ -27,6 +27,7 @@ import { prepareImageForUpload } from '@noctusai/lib/imageUpload';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { api, useAuthStore } from '@noctusai/seed/infra';
+import { jobPolling } from '@noctusai/lib';
 
 /**
  * `noctusai_lib.integrations.documents.formatting.FormatRange` on the wire —
@@ -141,13 +142,10 @@ export function useMatriculaExtracoes(filtro?: MatriculaExtracoesFiltro) {
     },
     enabled: !!user,
     staleTime: 30 * 1000,
-    refetchInterval: (query) => {
-      const data = query.state.data as MatriculaExtracao[] | undefined;
-      if (data?.some((e) => isInFlight(e.status))) {
-        return 3000;
-      }
-      return false;
-    },
+    ...jobPolling(
+      (data: MatriculaExtracao[] | undefined) => !!data?.some((e) => isInFlight(e.status)),
+      3000,
+    ),
   });
 }
 
@@ -163,13 +161,10 @@ export function useMatriculaExtracao(id?: string) {
     },
     enabled: !!user && !!id,
     staleTime: 10 * 1000,
-    refetchInterval: (query) => {
-      const data = query.state.data as MatriculaExtracao | null | undefined;
-      if (data && isInFlight(data.status)) {
-        return 3000;
-      }
-      return false;
-    },
+    ...jobPolling(
+      (data: MatriculaExtracao | null | undefined) => !!data && isInFlight(data.status),
+      3000,
+    ),
   });
 }
 

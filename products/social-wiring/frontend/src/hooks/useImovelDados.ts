@@ -11,6 +11,7 @@ import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { apiUrl } from "@/lib/apiBase";
 
@@ -306,12 +307,11 @@ export function useImovelDocumentos(codigo: string | null) {
      * Polling STOPS as soon as no document is in a non-terminal state, so an
      * idle page makes no requests at all.
      */
-    refetchInterval: (query) => {
-      const docs = query.state.data;
-      if (!docs) return false;
-      const trabalhando = docs.some((d) => extracaoEmAndamento(d.extracao_status));
-      return trabalhando ? 3000 : false;
-    },
+    ...jobPolling(
+      (docs: ImovelDocumento[] | undefined) =>
+        !!docs?.some((d) => extracaoEmAndamento(d.extracao_status)),
+      3000,
+    ),
   });
 }
 

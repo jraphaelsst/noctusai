@@ -8,8 +8,16 @@
  * on screen on marca/search change via `placeholderData`. Mutations invalidate the whole `["sw","cerebro"]` family
  * (an apply changes brain content/size too).
  */
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type InfiniteData,
+} from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { CEREBRO_KEY, POLL_MS } from "@/hooks/useCerebro";
 import type { ExtractionDetail, ExtractionSummary } from "@/types/cerebro";
@@ -57,8 +65,11 @@ export function useExtracoes(marcaId: string | null, q: string) {
       items: d.pages.flatMap((pg) => pg.items),
       total: d.pages[d.pages.length - 1]?.total ?? 0,
     }),
-    refetchInterval: (s) =>
-      s.state.data?.pages.some((pg) => pg.items.some(extracaoEmAndamento)) ? POLL_MS : false,
+    ...jobPolling(
+      (d: InfiniteData<ExtracoesPage> | undefined) =>
+        !!d?.pages.some((pg) => pg.items.some(extracaoEmAndamento)),
+      POLL_MS,
+    ),
     placeholderData: keepPreviousData,
   });
   return {
@@ -74,7 +85,7 @@ export function useExtracao(id: string | null) {
     enabled: !!id,
     queryFn: async () =>
       unwrap(await api.get<Envelope<ExtractionDetail>>(`${BASE}/${encodeURIComponent(id as string)}`)),
-    refetchInterval: (s) => (extracaoEmAndamento(s.state.data) ? POLL_MS : false),
+    ...jobPolling((d: ExtractionDetail | undefined) => extracaoEmAndamento(d), POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
   return {

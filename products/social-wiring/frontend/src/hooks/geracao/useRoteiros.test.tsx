@@ -1,13 +1,14 @@
 /** Roteiros hooks hit the §4.5 endpoints, poll only on real moving status, and invalidate the geracao family. */
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), put: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api }));
 
 import {
+  ROTEIROS_POLL_MS,
   algumRoteiroEmAndamento,
   useCriarRoteiro,
   useExcluirRoteiros,
@@ -60,6 +61,30 @@ describe("useRoteiro (detalhe)", () => {
     const { result } = renderHook(() => useRoteiro("r1"), { wrapper });
     await waitFor(() => expect(result.current.data?.id).toBe("r1"));
     expect(api.get).toHaveBeenCalledWith("/api/media-creation/roteiros/r1");
+  });
+});
+
+describe("polling em segundo plano (jobPolling)", () => {
+  afterEach(() => {
+    focusManager.setFocused(undefined);
+    vi.useRealTimers();
+  });
+
+  it("useRoteiro continua consultando com a aba oculta enquanto cria, e para em perguntas", async () => {
+    vi.useFakeTimers();
+    api.get
+      .mockResolvedValueOnce({ data: { id: "r1", status: "criando" } })
+      .mockResolvedValue({ data: { id: "r1", status: "perguntas" } });
+    renderHook(() => useRoteiro("r1"), { wrapper });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.get).toHaveBeenCalledTimes(1);
+
+    focusManager.setFocused(false); // aba em segundo plano — o caso "Preparando as perguntas…"
+    await vi.advanceTimersByTimeAsync(ROTEIROS_POLL_MS);
+    expect(api.get).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(ROTEIROS_POLL_MS * 3); // perguntas espera o usuário ⇒ sem polling
+    expect(api.get).toHaveBeenCalledTimes(2);
   });
 });
 

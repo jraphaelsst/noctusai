@@ -18,6 +18,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { ESTEIRA_KEY, ESTEIRA_PIPELINE_KEY } from "@/lib/esteiraKeys";
 import type {
@@ -139,7 +140,7 @@ export function usePost(id: string | null) {
     enabled: !!id,
     queryFn: async () =>
       unwrap(await api.get<Envelope<PostDetalhe>>(`${ESTEIRA_BASE}/posts/${encodeURIComponent(id as string)}`)),
-    refetchInterval: (s) => (s.state.data?.lote_ativo ? ESTEIRA_POLL_MS : false),
+    ...jobPolling((d: PostDetalhe | undefined) => !!d?.lote_ativo, ESTEIRA_POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
   return {

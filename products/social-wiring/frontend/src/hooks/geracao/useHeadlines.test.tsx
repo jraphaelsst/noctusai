@@ -1,13 +1,14 @@
 /** Headlines hooks hit the §4.4 endpoints; polling follows the REAL batch status. */
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, focusManager } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
 
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), patch: vi.fn() }));
 vi.mock("@noctusai/seed/infra", () => ({ api }));
 
 import {
+  HEADLINES_POLL_MS,
   algumLoteEmAndamento,
   useContagemEstruturas,
   useCriarLote,
@@ -90,6 +91,31 @@ describe("queries", () => {
     const { result } = renderHook(() => useContagemEstruturas("m1", ["a", "b"]), { wrapper });
     await waitFor(() => expect(result.current.data?.compativeis).toBe(4));
     expect(api.get.mock.calls[0][0]).toContain("variaveis%5B%5D=a&variaveis%5B%5D=b");
+  });
+});
+
+describe("polling em segundo plano (jobPolling)", () => {
+  afterEach(() => {
+    focusManager.setFocused(undefined);
+    vi.useRealTimers();
+  });
+
+  it("useLote continua consultando com a aba oculta enquanto o lote processa, e para ao concluir", async () => {
+    vi.useFakeTimers();
+    api.get
+      .mockResolvedValueOnce({ data: { id: "l1", status: "processando", headlines: [] } })
+      .mockResolvedValueOnce({ data: { id: "l1", status: "processando", headlines: [] } })
+      .mockResolvedValue({ data: { id: "l1", status: "completo", headlines: [] } });
+    renderHook(() => useLote("l1"), { wrapper });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(api.get).toHaveBeenCalledTimes(1);
+
+    focusManager.setFocused(false); // aba em segundo plano — o caso "estrutura 3 de 5"
+    await vi.advanceTimersByTimeAsync(HEADLINES_POLL_MS * 2);
+    expect(api.get).toHaveBeenCalledTimes(3);
+
+    await vi.advanceTimersByTimeAsync(HEADLINES_POLL_MS * 3); // concluído ⇒ sem polling
+    expect(api.get).toHaveBeenCalledTimes(3);
   });
 });
 

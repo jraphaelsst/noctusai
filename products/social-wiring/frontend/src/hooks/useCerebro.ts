@@ -12,6 +12,7 @@
  */
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import { INSTAGRAM_PROVIDER, useInstagramProfile } from "@/hooks/useInstagramInsights";
 import { useIntegrationAccounts } from "@/hooks/useIntegrationAccounts";
@@ -63,7 +64,7 @@ export function useCerebroBrain(id: string | null) {
     enabled: !!id,
     queryFn: async () =>
       unwrap(await api.get<Envelope<BrainDetail>>(`${BASE}/brains/${encodeURIComponent(id as string)}`)),
-    refetchInterval: (q) => (brainEmAndamento(q.state.data) ? POLL_MS : false),
+    ...jobPolling(brainEmAndamento, POLL_MS),
     placeholderData: (prev) => (prev && prev.id === id ? prev : undefined),
   });
   return {

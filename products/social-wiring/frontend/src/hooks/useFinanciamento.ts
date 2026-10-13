@@ -15,6 +15,7 @@ import { prepareImageForUpload } from "@noctusai/lib/imageUpload";
 import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, supabase } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 import { toast } from "sonner";
 
 import { apiUrl } from "@/lib/apiBase";
@@ -271,10 +272,11 @@ export function useFinanciamento(clienteId: string | null) {
     // extraction runs server-side and asynchronously, so refetching is the
     // only way this panel learns a read landed. Stops the instant nothing
     // is in flight; never polls a card with no pending document.
-    refetchInterval: (q) => {
-      const docs = (q.state.data as Financiamento | undefined)?.documentos ?? [];
-      return docs.some((d) => extracaoEmAndamento(d.extracao_status)) ? 2500 : false;
-    },
+    ...jobPolling(
+      (f: Financiamento | undefined) =>
+        (f?.documentos ?? []).some((d) => extracaoEmAndamento(d.extracao_status)),
+      2500,
+    ),
   });
 }
 

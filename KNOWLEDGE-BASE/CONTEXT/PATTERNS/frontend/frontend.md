@@ -38,6 +38,20 @@ State split:
 - `staleTime` — set appropriate (5–60s for most lists; 0 for write-heavy data).
 - `invalidateQueries` — invalidate by matching keys after mutations.
 
+### Job-progress polling — `jobPolling`, never a bare `refetchInterval`
+
+A query that polls while a server job runs (a batch `processando`, an extraction `queued/running`, a sync `running`) spreads `jobPolling(isActive, intervalMs)` from `@noctusai/lib` instead of hand-writing `refetchInterval: (q) => active ? ms : false`:
+
+```ts
+useQuery({ queryKey, queryFn, ...jobPolling((d: Lote | undefined) => !!d && emAndamento(d.status), POLL_MS) });
+```
+
+**Why.** TanStack pauses `refetchInterval` while `document.visibilityState === 'hidden'` (`refetchIntervalInBackground` defaults to `false`), and the seed `createQueryClient` sets `refetchOnWindowFocus: false`. A user who starts a 30 s job and switches tabs comes back to the progress they left — the SW CoreStudio "Gerar headlines" modal sat at "estrutura 3 de 5" and the roteiro modal at "Preparando as perguntas…" after the server had finished (2026-10-13). A progress UI frozen over a finished job is the time-axis twin of a lying loading state (`lying-loading-state.md`).
+
+**What it sets.** While `isActive(data)`: `refetchInterval = intervalMs`, `refetchIntervalInBackground: true`, and `refetchOnWindowFocus: 'always'` (tab visible again ⇒ immediate refetch — browsers throttle hidden-tab timers, so the last background tick can be minutes old). While idle: no polling at all, foreground or background. `refetchIntervalInBackground` is a plain boolean in v5, so it is `true` unconditionally — inert while `refetchInterval` resolves `false`; that is what keeps idle queries off the network in a background tab by construction.
+
+**Not for** live data with no terminal state (inbox, feed, presence) — that is a realtime stream (`inbox-chat-surface.md`), and a fixed-cadence dashboard refresh (`refetchInterval: 30_000`) stays a plain interval that rightly pauses in a hidden tab. Variable-cadence job pollers (a fast-then-slow window, a max-poll budget) do not fit the fixed-interval helper yet — extend `jobPolling` before hand-rolling a fourth.
+
 ## Hooks in dedicated files, always
 
 Every domain entity gets its own hook file:

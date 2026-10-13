@@ -197,6 +197,13 @@ export { readSseStream } from './realtime/readSseStream';
 export type { ReadSseStreamOptions } from './realtime/readSseStream';
 export { lazyWithReload } from "./lazyWithReload";
 
+// ─── Job-progress polling ────────────────────────────────────────────────────
+// Poll an async job while it runs — and keep polling in a hidden tab, refetching
+// at once on return — so a progress UI never freezes in the background.
+// → KB § PATTERNS/frontend/frontend.md ("Job-progress polling")
+export { jobPolling } from './job-polling';
+export type { JobPollingOptions, JobPollingQuery } from './job-polling';
+
 // ─── Edição de Fotos (seed feature) ──────────────────────────────────────────
 // Seed-portable AI photo-editing organs — no Social-Wiring coupling. See
 // `projects/edicao-fotos/EDICAO-FOTOS-CONTRACT.md` for the API contract this

@@ -10,6 +10,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@noctusai/seed/infra";
+import { jobPolling } from "@noctusai/lib";
 
 import type { CertidaoMatrizLinhaCustomizada } from "@/types/certidoesMatriz";
 import type {
@@ -61,7 +62,7 @@ export function useCertidoesPartes(clienteId: string | null, atendimentoId?: str
     enabled: !!clienteId,
     // Keep the previous party list mounted while the key changes / refetches.
     placeholderData: (prev) => prev,
-    refetchInterval: (query) => (partesTemEmAndamento(query.state.data) ? POLL_MS : false),
+    ...jobPolling(partesTemEmAndamento, POLL_MS),
   });
 }
 
