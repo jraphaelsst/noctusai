@@ -44,7 +44,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Optional
 
 from noctusai_lib.integrations.documents.legibilidade import AVISO_LEITURA_COMPROMETIDA
-from noctusai_lib.integrations.documents.name import chave_nome
+from noctusai_lib.integrations.documents.name import chave_nome, looks_like_a_name
 from noctusai_lib.integrations.documents.text import strip_accents_upper
 from noctusai_lib.integrations.documents.types import (
     CAMPOS,
@@ -290,6 +290,13 @@ def _vencedor_por_contexto(
     """
     if primeira_comprometida:
         return ("primeira leitura comprometida", True)
+    if campo == "nome":
+        # A value that is not a person's name at all (a field label, footer
+        # prose) loses to one that is — measured: "DATAS DE NASCIMENTO" vs
+        # the holder's real name on a CNH re-read.
+        a, b = looks_like_a_name(str(original.nome)), looks_like_a_name(str(escalada.nome))
+        if a != b:
+            return ("nome implausível", b)
     if campo == "rg":
         a, b = rg_anomalo(original), rg_anomalo(escalada)
         if a != b:
@@ -299,6 +306,14 @@ def _vencedor_por_contexto(
         b = (escalada.estado_civil_rotulo or "").upper().startswith("AVERBACAO")
         if a != b:
             return ("averbação", b)
+    # The first read is visibly the WORSE transcription of the same page:
+    # the re-read found two or more fields it missed entirely (measured: a
+    # CNH first read with no CPF/RG/birthdate took a footer line as the
+    # name). A disagreement then goes to the re-read; the first is kept as
+    # the alternative.
+    preenchidos = sum(1 for c in CAMPOS if not original.presente(c) and escalada.presente(c))
+    if preenchidos >= 2:
+        return ("primeira leitura incompleta", True)
     return None
 
 
