@@ -405,9 +405,23 @@ class LadderIdentityExtractor:
             terceira = await _reler()
             if terceira is not None:
                 extras = (terceira,)
-        return releitura.mesclar(
+        resultado = releitura.mesclar(
             original, escalada, escalation_model=self._escalation_model, extras=extras
         )
+        if not extras and resultado.divergencias:
+            # The cheap read is often too weak to corroborate anything (it
+            # returned NO field on 4/5 real documents), so a field left
+            # unsettled gets ONE more escalated read: two escalated reads can
+            # agree where cheap+escalated cannot. Still bounded at three
+            # transcriptions, and still no winner — a 2-of-3 AGREEMENT or
+            # nothing.
+            terceira = await _reler()
+            if terceira is not None:
+                resultado = releitura.mesclar(
+                    original, escalada, escalation_model=self._escalation_model,
+                    extras=(terceira,),
+                )
+        return resultado
 
     def _get_escalation_ladder(self) -> DocumentTextLadder:
         if self._escalation_ladder_override is not None:

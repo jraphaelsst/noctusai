@@ -425,8 +425,9 @@ def _preencher(
 
 def _decidir_campo(
     campo: str, todas: list[IdentityFields], validas: list[IdentityFields]
-) -> tuple[Optional[dict[str, Any]], list[str]]:
-    """`(kwargs_se_estabelecido, outros_valores)` for ONE critical field.
+) -> tuple[Optional[dict[str, Any]], list[str], str]:
+    """`(kwargs_se_estabelecido, outros_valores, via)` for ONE critical field
+    (`via` = `acordo` | `dv` | `nenhuma`).
 
     - ≥2 VALID reads agree (after normalisation) -> the field is set from
       them, confidence promoted one step; any read that differed rides as an
@@ -448,19 +449,19 @@ def _decidir_campo(
             # digit beats the same RG without one).
             fonte = max(g, key=lambda p: len(re.sub(r"[^0-9A-Za-z]", "", str(p[1]))))[0]
         kwargs = _preencher(campo, fonte, promover=True, irmaos=[l for l, _ in g])
-        return kwargs, [_como_texto(gg[0][1]) for gg in grupos if gg is not g]
+        return kwargs, [_como_texto(gg[0][1]) for gg in grupos if gg is not g], "acordo"
     if campo in _CAMPOS_COM_DV:
         com_dv = [g for g in grupos if _dv_ok(campo, g[0][1])]
         if len(com_dv) == 1:
             kwargs = _preencher(campo, com_dv[0][0][0], promover=False, irmaos=[])
-            return kwargs, [_como_texto(g[0][1]) for g in grupos if g is not com_dv[0]]
+            return kwargs, [_como_texto(g[0][1]) for g in grupos if g is not com_dv[0]], "dv"
     valores: list[str] = []
     for l in todas:
         if _tem(l, campo):
             texto = _como_texto(getattr(l, campo))
             if texto not in valores:
                 valores.append(texto)
-    return None, valores
+    return None, valores, "nenhuma"
 
 
 def _chaves_conjuges(leitura: IdentityFields) -> frozenset[str]:
@@ -482,6 +483,7 @@ def _portao(leituras: list[IdentityFields], *, modelo: Optional[str]) -> Identit
 
     updates: dict[str, Any] = {}
     estabelecidos: list[str] = []
+    por_dv: list[str] = []
     divergentes: list[tuple[str, tuple[str, ...]]] = []
     alternativas: list[tuple[str, str]] = list(base.leituras_alternativas)
 
@@ -493,11 +495,11 @@ def _portao(leituras: list[IdentityFields], *, modelo: Optional[str]) -> Identit
     for campo in (*CAMPOS_CRITICOS, *_GRUPOS_CRITICOS):
         if not any(_tem(l, campo) for l in leituras):
             continue
-        kwargs, outros = _decidir_campo(campo, leituras, validas)
+        kwargs, outros, via = _decidir_campo(campo, leituras, validas)
         anotar(campo, outros)
         if kwargs is not None:
             updates.update(kwargs)
-            estabelecidos.append(campo)
+            (estabelecidos if via == "acordo" else por_dv).append(campo)
         else:
             updates.update(_limpar(campo))
             divergentes.append((campo, tuple(outros)))
@@ -580,6 +582,8 @@ def _portao(leituras: list[IdentityFields], *, modelo: Optional[str]) -> Identit
         partes.append("leitura(s) fora da concordância: " + ", ".join(fora))
     if estabelecidos:
         partes.append("concordaram (duas leituras independentes): " + ", ".join(estabelecidos))
+    if por_dv:
+        partes.append("dígito verificador válido (leitura única): " + ", ".join(por_dv))
     if divergentes:
         partes.append(
             "SEM valor — leituras divergentes ou não corroboradas; nenhuma foi "
