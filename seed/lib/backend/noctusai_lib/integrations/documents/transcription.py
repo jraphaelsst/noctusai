@@ -120,7 +120,7 @@ MAX_VISION_PAGES = 40
 #: Sonnet and came back cut off mid-page — silently, because nothing here
 #: checked the provider's stop reason. `VISION_MAX_TOKENS_RETRY` below is
 #: the one-shot escape hatch for exactly that page.
-VISION_MAX_TOKENS = 4096
+VISION_MAX_TOKENS = 8192  # 2026-10-13: 4096 truncated reads on models that reason before answering (real-doc benchmark: 3 truncation retries)
 
 #: The retry cap for a page whose FIRST vision call came back truncated
 #: (`VisionResult.truncated`). One retry only — see `_transcribe`'s vision
@@ -132,7 +132,7 @@ VISION_MAX_TOKENS = 4096
 #: this is a flat constant, not a per-model lookup; every model this module
 #: is configured for as of 2026-09 (Claude/GPT-4o/Gemini vision) accepts an
 #: 8192-token `max_tokens` for a single-image call.
-VISION_MAX_TOKENS_RETRY = 8192
+VISION_MAX_TOKENS_RETRY = 16384
 
 #: The Transcription-level error when a page is STILL truncated after the
 #: one retry above. Whole-document abort, same shape as `rasterize_failed` /

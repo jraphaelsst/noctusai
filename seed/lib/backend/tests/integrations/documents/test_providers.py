@@ -20,12 +20,23 @@ def test_the_document_default_is_anthropic() -> None:
     assert DEFAULT_DOCUMENT_PROVIDER == "anthropic"
 
 
-def test_both_rungs_pin_the_measured_cheapest_claude() -> None:
-    """Haiku 4.5 matched Opus 5 on every scored synthetic-scan field at
-    ~1/11th the cost (table in the module docstring). Moving a pin is a
-    decision that needs its own measurement — this test makes it explicit."""
-    assert OCR_MODELS["anthropic"] == "claude-haiku-4-5"
+def test_vision_pins_follow_the_real_document_benchmark() -> None:
+    """2026-10-13 real-document benchmark (27 real docs x 3 runs, table in
+    the module docstring) + owner decision: Sonnet 5 first read, Opus 5.5
+    second (agreement-gate) read. Moving a pin is a decision that needs its
+    own REAL-document measurement — this test makes it explicit. The chat
+    rung (structured JSON over text) was not part of that benchmark and
+    stays on Haiku until measured."""
+    from noctusai_lib.integrations.documents.providers import ESCALATION_OCR_MODELS
+    from noctusai_lib.integrations.llm.models import is_priced, models_for
+
+    assert OCR_MODELS["anthropic"] == "claude-sonnet-5"
+    assert ESCALATION_OCR_MODELS["anthropic"] == "claude-opus-5-5"
     assert DOCUMENT_ANALYSIS_MODELS["anthropic"] == "claude-haiku-4-5"
+    # a pinned model must be priced, or usage records $0 and the budget guard is off
+    priced = {m.id for m in models_for("anthropic", "vision") if is_priced(m)}
+    for mid in (OCR_MODELS["anthropic"], ESCALATION_OCR_MODELS["anthropic"], "claude-fable-5-1"):
+        assert mid in priced, mid
 
 
 def test_every_rung_covers_every_vendor_and_the_default() -> None:
