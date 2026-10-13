@@ -445,7 +445,9 @@ def make_local_credential_override(
     return _read
 
 
-def credentials_table_ddl(schema: str, *, table: str = "credentials") -> str:
+def credentials_table_ddl(
+    schema: str, *, table: str = "credentials", idempotent: bool = False
+) -> str:
     """DDL template for the org-scoped, Fernet-encrypted credentials table.
 
     Mirrors `social-wiring` migration 001's ``credentials`` table
@@ -461,14 +463,23 @@ def credentials_table_ddl(schema: str, *, table: str = "credentials") -> str:
     migration declares it once; a product bootstrapping schema #1 must
     ship that function itself first (see `social-wiring` migration 001's
     own header for the canonical declaration this DDL assumes).
+
+    ``idempotent=True`` emits the re-runnable shape (``IF NOT EXISTS`` on the
+    table + indexes, ``DROP POLICY IF EXISTS`` before each policy) for a
+    generator whose output is replayed twice by the migration-chain replay
+    (e.g. ``commerce_migration``). The default is byte-identical to before.
     """
     select_policy = rls_subquery_policy(
         schema, table, f"{table}_select_own_org", "SELECT",
         using="org_id = current_org_id()",
     )
     bypass_policy = service_role_bypass(table, schema=schema)
+    ine = "IF NOT EXISTS " if idempotent else ""
+    if idempotent:
+        select_policy = f'DROP POLICY IF EXISTS "{table}_select_own_org" ON {schema}.{table};\n{select_policy}'
+        bypass_policy = f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};\n{bypass_policy}'
     return (
-        f"CREATE TABLE {schema}.{table} (\n"
+        f"CREATE TABLE {ine}{schema}.{table} (\n"
         f"    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),\n"
         f"    org_id UUID NOT NULL,\n"
         f"    provider TEXT NOT NULL,\n"
@@ -481,6 +492,6 @@ def credentials_table_ddl(schema: str, *, table: str = "credentials") -> str:
         f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;\n\n"
         f"{select_policy}\n\n"
         f"{bypass_policy}\n\n"
-        f"CREATE INDEX idx_{schema}_{table}_org ON {schema}.{table}(org_id);\n"
-        f"CREATE INDEX idx_{schema}_{table}_provider ON {schema}.{table}(provider);"
+        f"CREATE INDEX {ine}idx_{schema}_{table}_org ON {schema}.{table}(org_id);\n"
+        f"CREATE INDEX {ine}idx_{schema}_{table}_provider ON {schema}.{table}(provider);"
     )

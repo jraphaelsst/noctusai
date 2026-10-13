@@ -21,6 +21,7 @@ deliberate: domain rules must not know which vendor is configured.
 from __future__ import annotations
 
 from .event_inbox import EventInbox, FakeEventInbox, RealSupabaseEventInbox, make_event_inbox
+from .event_inbox_sql import DEFAULT_EVENT_INBOX_TABLE, event_inbox_table_sql
 from .subscription import (
     TERMINAL_STATES,
     Subscription,
@@ -31,6 +32,7 @@ from .subscription import (
 )
 
 __all__ = [
+    "DEFAULT_EVENT_INBOX_TABLE",
     "TERMINAL_STATES",
     "EventInbox",
     "FakeEventInbox",
@@ -39,6 +41,7 @@ __all__ = [
     "SubscriptionState",
     "is_terminal",
     "legal_next_states",
+    "event_inbox_table_sql",
     "make_event_inbox",
     "transition",
 ]

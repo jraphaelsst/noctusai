@@ -251,6 +251,12 @@ class AsaasPaymentGateway:
         against (null ⇒ every redirect-back is refused with `invalid_object`)."""
         return self._request("GET", "/myAccount/commercialInfo")
 
+    def get_customer(self, id_at_gateway: str) -> dict[str, Any]:
+        """`GET /customers/{id}` -- the gateway's raw customer record (name,
+        cpfCnpj, email, phone, address fields). Read-only; the commerce organ uses
+        it to enrich a buyer from the CONFIRMED payment's data."""
+        return self._request("GET", f"/customers/{id_at_gateway}")
+
     def get_fee_breakdown(self, charge_id_at_gateway: str) -> FeeBreakdown:
         raw = self._request("GET", f"/payments/{charge_id_at_gateway}")
         gross_value = Decimal(str(raw["value"]))

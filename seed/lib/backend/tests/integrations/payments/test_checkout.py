@@ -526,6 +526,39 @@ def test_asaas_one_off_without_success_url_omits_callback() -> None:
     assert "callback" not in seen["body"]
 
 
+def test_asaas_one_off_carries_the_platform_split_only_when_asked() -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def create_payment(request: httpx.Request) -> httpx.Response:
+        bodies.append(json_lib.loads(request.content))
+        return httpx.Response(200, content=json_lib.dumps({"id": "p", "invoiceUrl": "u"}).encode())
+
+    transport = _routed_transport(
+        {"GET /v3/customers": _json(200, {"data": [{"id": "c"}]}), "POST /v3/payments": create_payment}
+    )
+    checkout = _asaas_checkout(transport)
+    checkout.create_checkout(_one_off_request())
+    checkout.create_checkout(_one_off_request(split_wallet_id="w-1", split_percent=2.5))
+    assert "split" not in bodies[0]
+    assert bodies[1]["split"] == [{"walletId": "w-1", "percentualValue": 2.5}]
+
+
+def test_asaas_one_off_pix_fetches_the_qr_code() -> None:
+    transport = _routed_transport(
+        {
+            "GET /v3/customers": _json(200, {"data": [{"id": "c"}]}),
+            "POST /v3/payments": _json(200, {"id": "pay_q", "invoiceUrl": "https://asaas.test/i/q"}),
+            "GET /v3/payments/pay_q/pixQrCode": _json(
+                200, {"payload": "000201...", "encodedImage": "aGk=", "expirationDate": "2026-12-01"}
+            ),
+        }
+    )
+    session = _asaas_checkout(transport).create_checkout(_one_off_request(billing_method="pix"))
+    assert session.pix_qr is not None
+    assert session.pix_qr.payload == "000201..."
+    assert session.pix_qr.expiration_date == "2026-12-01"
+
+
 def test_stripe_one_off_uses_payment_mode_with_inline_price(
     stripe_double: Any, stripe_checkout: StripeHostedCheckout
 ) -> None:

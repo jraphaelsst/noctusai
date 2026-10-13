@@ -66,6 +66,10 @@ business logic" namespace.
   `EditorialStore` Protocol + Fake + Supabase + `make_editorial_store`; DDL via
   `sql_templates.editorial_tables`. Built 2026-10-04 (`projects/seed-editorial-workflow/`);
   not wired to any product yet.
+- `commerce/` — generic store spine organ: catalog, per-org customers + LGPD consents, server-priced
+  checkout (Asaas hosted charge, optional noc fee split), pure order state machine + event trail,
+  idempotent payment webhook, host-resolved public storefront; `commerce_migration(cfg, schema)` DDL +
+  three router factories. Built 2026-10-12 (`projects/commerce-seed-p3/`); reference host `products/commerce`.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)

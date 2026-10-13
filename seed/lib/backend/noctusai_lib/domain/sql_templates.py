@@ -206,6 +206,50 @@ def rls_subquery_policy(
     return "\n".join(lines) + ";"
 
 
+def private_org_bucket_sql(
+    bucket: str,
+    *,
+    comment: str = "Private bucket; object RLS keys on the org_id first path segment.",
+) -> str:
+    """Emit a PRIVATE storage bucket + per-org object RLS (first key segment = ``org_id``).
+
+    Policy names on ``storage.objects`` are global to that table, so each is
+    bucket-qualified -- two organs' buckets must not replace each other's
+    policies. Re-runnable (``ON CONFLICT DO NOTHING``, ``DROP POLICY IF
+    EXISTS``). Used by ``card_hub`` and ``commerce``; byte-pinned by the
+    card-hub SQL tests.
+    """
+    predicate = (
+        f"bucket_id = '{bucket}' AND (storage.foldername(name))[1] = (SELECT public.current_org_id())::text"
+    )
+    parts = [
+        f"INSERT INTO storage.buckets (id, name, public)\nVALUES ('{bucket}', '{bucket}', false)\nON CONFLICT (id) DO NOTHING;"
+    ]
+    for cmd, using, with_check in (
+        ("SELECT", predicate, None),
+        ("INSERT", None, predicate),
+        ("UPDATE", predicate, None),
+        ("DELETE", predicate, None),
+    ):
+        name = f"{bucket}_storage_{cmd.lower()}"
+        parts.append(f'DROP POLICY IF EXISTS "{name}" ON storage.objects;')
+        parts.append(rls_subquery_policy("storage", "objects", name, cmd, using=using, with_check=with_check))
+    service_name = f"{bucket}_storage_service"
+    parts.append(f'DROP POLICY IF EXISTS "{service_name}" ON storage.objects;')
+    parts.append(
+        rls_subquery_policy(
+            "storage",
+            "objects",
+            service_name,
+            "ALL",
+            using=f"bucket_id = '{bucket}'",
+            with_check=f"bucket_id = '{bucket}'",
+            to_role="service_role",
+        )
+    )
+    return f"-- {comment}\n" + "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Org-identity functions — the ONE definition behind every org-scoped RLS
 # policy in every schema (SEC-2 customer-role isolation, 2026-09-28).

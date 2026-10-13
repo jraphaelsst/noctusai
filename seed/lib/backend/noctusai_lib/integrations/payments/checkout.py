@@ -122,6 +122,12 @@ class CheckoutRequest:
     description: Optional[str] = None
     #: One-off only, Asaas: days from today until the charge's due date.
     due_days: int = 3
+    #: One-off only, Asaas: route a share of the charge to another wallet
+    #: (the platform fee split, commerce D27). Both or neither: `split_percent`
+    #: is the wallet's percentage of the NET value (0 < p <= 100). Stripe
+    #: ignores them (no Connect split in this seam).
+    split_wallet_id: Optional[str] = None
+    split_percent: Optional[float] = None
 
     @property
     def is_one_off(self) -> bool:
@@ -397,6 +403,10 @@ class AsaasHostedCheckout:
         }
         if request.success_url:
             body["callback"] = {"successUrl": request.success_url, "autoRedirect": True}
+        if request.split_wallet_id and request.split_percent:
+            body["split"] = [
+                {"walletId": request.split_wallet_id, "percentualValue": request.split_percent}
+            ]
         payment = self._gateway._request("POST", "/payments", json=body)
         invoice_url = payment.get("invoiceUrl")
         if not payment.get("id") or not invoice_url:
@@ -405,12 +415,21 @@ class AsaasHostedCheckout:
                 f"payment {payment.get('id')!r} has no id/invoiceUrl",
                 retryable=True,
             )
+        pix_qr: Optional[PixQr] = None
+        if request.billing_method == "pix":
+            qr_raw = self._gateway._request("GET", f"/payments/{payment['id']}/pixQrCode")
+            pix_qr = PixQr(
+                payload=qr_raw["payload"],
+                encoded_image=qr_raw["encodedImage"],
+                expiration_date=qr_raw.get("expirationDate"),
+            )
         return CheckoutSession(
             id_at_gateway=payment["id"],
             checkout_url=invoice_url,
             customer_id_at_gateway=customer.id_at_gateway,
             external_reference=request.external_reference,
             subscription_id_at_gateway=None,
+            pix_qr=pix_qr,
             raw={"payment": payment},
         )
 
