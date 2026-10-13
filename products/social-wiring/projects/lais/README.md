@@ -8,7 +8,7 @@ Start with `analysis/SUMMARY.md`, then `specs/page-map.md`.
 
 | Path | What |
 | --- | --- |
-| `specs/page-map.md` | Live UI map: shell, every sidebar page, tabs, fields, buttons, current config values, observed AI script, mechanisms (evidence tags C/I/U). Screenshot names in it refer to `screenshots/` or `private/screenshots/`. |
+| `specs/page-map.md` | Live UI map: shell, every sidebar page, tabs, fields, buttons, current config values, observed AI script, mechanisms (evidence tags C/I/U). Screenshot names in it refer to `screenshots/` or the private set (see below). |
 | `analysis/SUMMARY.md` | Static-analysis headline: counts, top findings, unknowns, Stage-2 safe-GET allowlist, never-call list. |
 | `analysis/endpoints.{md,json}` | 230 endpoints by domain: method, caller, request/response, routes, **safety class** (READ / WRITE / SEND / AUTH). |
 | `analysis/routes.md` | 58 routes: gate/redirect reason, native vs Bubble, sections, fields, validations. |
@@ -17,7 +17,7 @@ Start with `analysis/SUMMARY.md`, then `specs/page-map.md`.
 | `analysis/flags-permissions.md` · `realtime-and-integrations.md` · `bubble-embeds.md` | Flags + permissions + plan gates · websockets, auth, Meta, CRMs/ERPs/portals · the Next↔Bubble iframe protocol. |
 | `tools/` | Static-analysis helper scripts (they read the bundles from a scratch path; re-point before re-running). |
 | `screenshots/` | 23 screenshots without third-party personal data. |
-| `private/` (git-ignored) | Screenshots containing lead/staff data + the vendor's JS bundles (third-party code). Local only — never commit. |
+| `private/` (git-ignored) | Optional local drop zone. The real private set lives **outside the repo** at `~/Documents/repository/NoctusAI/_private-studies/lais/` (`screenshots/` with lead/staff data, `all-screenshots/` = all 35, `js/` = the vendor's 130 bundle chunks). Never commit it. |
 | `DECISIONS.md` | Owner answers and open questions. |
 
 ## Architecture in one paragraph
