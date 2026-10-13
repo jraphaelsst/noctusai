@@ -19,10 +19,12 @@ known_facts:
   (`afterTags`, `afterDescricao`, `beforeAnexos`); `GeralActions` is its
   toolbar (Etiquetas/Checklist/Membros + `afterEtiquetas`).'
 - '`Timeline` renders by a kind-renderer registry (`{icon, summary}` per kind).
-  Seed defaults = the seed backend gatherers (nota, documento, checklist);
-  `GENERIC_TIMELINE_RENDERERS` (movimento, sistema) are opt-in; a product
-  merges its own (SW: touch). An unregistered kind renders the fallback line
-  "Evento (<kind>)" + a `(<kind>)` tag — never a crash, never dropped.'
+  Seed defaults = every kind the seed''s own data produces: the gatherer kinds
+  (nota, documento, checklist) + `GENERIC_TIMELINE_RENDERERS` (movimento =
+  seed `move_card` rows, sistema) — movimento was opt-in until 2026-10-13 and
+  every consumer that skipped the merge showed stage moves as the fallback. A
+  product merges its own (SW: touch). An unregistered kind renders the
+  fallback line "Evento" + a `(<kind>)` tag — never a crash, never dropped.'
 - '`createCardHubHooks({rootKey, basePath, entityLabel, documentoInvalidates},
   api)` mirrors `createPipelineHooks`. Keys derive from rootKey in SW''s exact
   shape (`[...root, id, "card"]`, `[...root, id, "timeline", kinds ?? "all"]`,

@@ -27,7 +27,7 @@ type AvisoLote = Pick<
 export function AvisosLote({ lote }: { lote: AvisoLote }) {
   const avisos: string[] = [];
   if (lote.fallback_metodo) {
-    avisos.push("Sem estruturas da biblioteca — usando templates do Método Audience.");
+    avisos.push("Sem estruturas da biblioteca — usando templates do Método.");
   }
   if (lote.aviso_poucas_estruturas) {
     avisos.push("Poucas estruturas compatíveis com os critérios escolhidos (menos de 3). Amplie os filtros para ter mais variedade.");

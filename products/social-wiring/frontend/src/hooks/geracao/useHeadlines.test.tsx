@@ -10,6 +10,7 @@ vi.mock("@noctusai/seed/infra", () => ({ api }));
 import {
   HEADLINES_POLL_MS,
   algumLoteEmAndamento,
+  contagemParams,
   useContagemEstruturas,
   useCriarLote,
   useExcluirLotes,
@@ -84,13 +85,24 @@ describe("queries", () => {
     expect(api.get).toHaveBeenCalledWith("/api/media-creation/headlines/h9");
   });
 
-  it("useContagemEstruturas repete variaveis[] e fica parado sem variáveis", async () => {
+  it("useContagemEstruturas repete a chave variaveis (sem []) e fica parado sem variáveis", async () => {
     api.get.mockResolvedValue({ data: { compativeis: 4, por_perfil: [] } });
     renderHook(() => useContagemEstruturas("m1", []), { wrapper });
     expect(api.get).not.toHaveBeenCalled();
     const { result } = renderHook(() => useContagemEstruturas("m1", ["a", "b"]), { wrapper });
     await waitFor(() => expect(result.current.data?.compativeis).toBe(4));
-    expect(api.get.mock.calls[0][0]).toContain("variaveis%5B%5D=a&variaveis%5B%5D=b");
+    expect(api.get).toHaveBeenCalledWith(
+      "/api/media-creation/headlines/estruturas/contagem?marca_id=m1&variaveis=a&variaveis=b",
+    );
+  });
+
+  it("🔴 contagemParams fixa o formato do fio: chave repetida, nunca variaveis[] (422 em prod, 2026-10-13)", () => {
+    const p = contagemParams("m1", ["TECNICAS-E-PROCEDIMENTOS-EFETUADOS-PELO-ESPECIALISTA", "*"]);
+    expect(p.getAll("variaveis")).toEqual(["TECNICAS-E-PROCEDIMENTOS-EFETUADOS-PELO-ESPECIALISTA", "*"]);
+    expect(p.has("variaveis[]")).toBe(false);
+    expect(p.toString()).toBe(
+      "marca_id=m1&variaveis=TECNICAS-E-PROCEDIMENTOS-EFETUADOS-PELO-ESPECIALISTA&variaveis=*",
+    );
   });
 });
 

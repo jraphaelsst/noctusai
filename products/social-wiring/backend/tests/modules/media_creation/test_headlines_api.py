@@ -515,6 +515,17 @@ class TestContagem:
         d = hc.get(f"{BASE}/estruturas/contagem", params={"marca_id": MARCA, "variaveis": ["MEDOS-DO-AVATAR"]}).json()["data"]
         assert d["compativeis"] == 0 and {x["n"] for x in d["por_perfil"]} == {0}
 
+    def test_wire_format_is_the_repeated_key(self, hc):
+        """The FE sends ``variaveis=A&variaveis=B`` (``contagemParams``). The PHP-style
+        ``variaveis[]=`` is another key to FastAPI -- the list is then missing and the call is a
+        422; that was every structure count in prod on 2026-10-13."""
+        _viral(hc)
+        tecnicas = "TECNICAS-E-PROCEDIMENTOS-EFETUADOS-PELO-ESPECIALISTA"
+        r = hc.get(f"{BASE}/estruturas/contagem?marca_id={MARCA}&variaveis={DORES}&variaveis={tecnicas}")
+        assert r.status_code == 200 and r.json()["data"]["compativeis"] == 1
+        bracket = hc.get(f"{BASE}/estruturas/contagem?marca_id={MARCA}&variaveis%5B%5D={DORES}")
+        assert bracket.status_code == 422
+
     def test_validation_and_scoping(self, hc):
         assert hc.get(f"{BASE}/estruturas/contagem", params={"marca_id": MARCA, "variaveis": ["NOPE"]}).status_code == 422
         assert hc.get(f"{BASE}/estruturas/contagem", params={"marca_id": OTHER_MARCA, "variaveis": ["*"]}).status_code == 404

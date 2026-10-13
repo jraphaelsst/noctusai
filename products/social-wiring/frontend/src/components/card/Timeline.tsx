@@ -5,9 +5,9 @@
  *
  * The seed renders any kind through a RENDERER REGISTRY and keeps the
  * unknown-kind fallback (an unregistered kind renders `Evento (<kind>)`, never
- * crashes, never drops). What stays SW is the registry: the seed's own kinds
- * (`nota`, `documento`, `checklist`), the generic `movimento` + `sistema`, and
- * SW's `touch` — the one kind only SW's backend gathers.
+ * crashes, never drops). What stays SW is the registry: the seed default
+ * (`nota`, `documento`, `checklist`, `movimento`, `sistema`) plus SW's
+ * `touch` — the one kind only SW's backend gathers.
  *
  * 🔴 `visita` is deliberately NOT registered. SW's `KNOWN_TIMELINE_KINDS`
  * never listed it, so a `visita` entry (roteiro created / visita outcome,
@@ -17,11 +17,7 @@
  * one. `SW_TIMELINE_RENDERERS` is therefore exactly SW's pre-swap known set.
  */
 import { Zap } from "lucide-react";
-import {
-  DEFAULT_TIMELINE_RENDERERS,
-  GENERIC_TIMELINE_RENDERERS,
-  Timeline as CardHubTimeline,
-} from "@noctusai/lib/components";
+import { DEFAULT_TIMELINE_RENDERERS, Timeline as CardHubTimeline } from "@noctusai/lib/components";
 import type {
   TimelineProps as CardHubTimelineProps,
   TimelineRenderers,
@@ -50,10 +46,9 @@ function touchSummary(entry: TimelineTouchEntry): string {
   return "Novo contato";
 }
 
-/** SW's kind registry — the seed kinds, the generic ones, plus `touch`. */
+/** SW's kind registry — the seed default plus `touch`. */
 export const SW_TIMELINE_RENDERERS: TimelineRenderers = {
   ...DEFAULT_TIMELINE_RENDERERS,
-  ...GENERIC_TIMELINE_RENDERERS,
   touch: { icon: Zap, summary: touchSummary },
 };
 

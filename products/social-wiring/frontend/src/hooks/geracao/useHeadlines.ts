@@ -164,14 +164,26 @@ export interface Contagem {
   por_perfil: { perfil_id: string; n: number }[];
 }
 
+/**
+ * Query string of `estruturas/contagem`. A list goes as the REPEATED key
+ * (`variaveis=A&variaveis=B`) — the house convention (`viraisParams`,
+ * `useImoveis`) and what FastAPI's `list[str] = Query(...)` reads. The PHP-style
+ * `variaveis[]=` is a different key to FastAPI: the list arrived missing and
+ * every count was a 422 (prod, 2026-10-13).
+ */
+export function contagemParams(marcaId: string, variaveis: string[]): URLSearchParams {
+  const p = new URLSearchParams({ marca_id: marcaId });
+  variaveis.forEach((v) => p.append("variaveis", v));
+  return p;
+}
+
 /** Compatible structures for the selected variables (`estruturas/contagem`). */
 export function useContagemEstruturas(marcaId: string | null, variaveis: string[]) {
   const query = useQuery({
     queryKey: [...HEAD_KEY, marcaId, "contagem", variaveis],
     enabled: !!marcaId && variaveis.length > 0,
     queryFn: async () => {
-      const p = new URLSearchParams({ marca_id: marcaId as string });
-      variaveis.forEach((v) => p.append("variaveis[]", v));
+      const p = contagemParams(marcaId as string, variaveis);
       return unwrap(await api.get<Envelope<Contagem>>(`${BASE}/estruturas/contagem?${p}`));
     },
     placeholderData: keepPreviousData,

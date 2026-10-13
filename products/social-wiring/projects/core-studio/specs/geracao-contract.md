@@ -614,7 +614,7 @@ type DashboardCriacao = { saudacao_nome: string; kpis: { headlines_geradas: numb
      - essencial → 12, 14, 22, 25, 30
      - equilibrado → 5, 11, 13, 28, 31
      - explorador → 6, 7, 18, 19, 32
-   - The UI shows "Sem estruturas da biblioteca — usando templates do Método Audience". This is honest about the source, not a silent substitute.
+   - The UI shows "Sem estruturas da biblioteca — usando templates do Método" (wording 2026-10-13: "Audience" was a leftover external name). This is honest about the source, not a silent substitute.
 3. **One LLM call per structure.** The output is exactly `{"headline_1": {...}, "headline_2": {...}}` (§5.4), so one call yields two `cs_headlines` rows (`angulo` 1/2), as in CoreStudio.
    - Failure of one structure → `estruturas_com_erro += 1`; continue with the rest.
    - `etapa` is updated per structure.

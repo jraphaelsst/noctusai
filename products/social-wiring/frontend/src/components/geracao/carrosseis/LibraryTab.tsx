@@ -479,7 +479,7 @@ function ScoreCard({ score }: { score: PostScore }) {
         : "secondary";
   return (
     <section>
-      <h3 className="mb-2 text-sm font-semibold">Avaliação (Método Audience)</h3>
+      <h3 className="mb-2 text-sm font-semibold">Avaliação (Método)</h3>
       <Card className="bg-muted/30">
         <CardContent className="space-y-3 p-4 text-sm">
           <div className="flex flex-wrap items-center gap-3">

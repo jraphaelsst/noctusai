@@ -10,13 +10,20 @@
  * ---------------------------------------
  * SW's copy was a closed `switch (entry.kind)` over SW's own kinds. The seed
  * cannot know a product's kinds, so each kind is a REGISTERED renderer
- * (`{ icon, summary }`): the seed ships the kinds its backend gatherers
- * produce (`DEFAULT_TIMELINE_RENDERERS` — nota, documento, checklist) plus
- * opt-in generic ones (`GENERIC_TIMELINE_RENDERERS` — movimento, sistema); a
- * product merges its own over them (SW: `touch`).
+ * (`{ icon, summary }`): `DEFAULT_TIMELINE_RENDERERS` covers every kind the
+ * seed's own data produces — the gatherer kinds (nota, documento, checklist)
+ * AND the generic ones (`GENERIC_TIMELINE_RENDERERS` — movimento, the
+ * `pipeline_movimentos` rows the seed `move_card` writes; sistema). A product
+ * merges its own over them (SW: `touch`).
+ *
+ * 🔴 WHY movimento IS A DEFAULT, NOT OPT-IN. It used to be opt-in; every
+ * consumer that rendered `CardHubDialog` without hand-merging the generic
+ * set (SW's Esteira post card, 2026-10-13) showed a stage move as the
+ * unknown-kind fallback. A kind the seed's own pipeline writes is a seed
+ * kind: the canonical default covers it.
  *
  * 🔴 AN UNREGISTERED KIND STILL RENDERS. It gets the generic fallback line
- * ("Evento (<kind>)" plus a `(<kind>)` tag) — never a crash, never a silently
+ * ("Evento" plus a `(<kind>)` tag) — never a crash, never a silently
  * dropped row. That is how a backend can ship a new kind before any frontend
  * learns it.
  *
@@ -53,7 +60,7 @@ export interface TimelineKindRenderer {
 export type TimelineRenderers = Readonly<Record<string, TimelineKindRenderer>>;
 
 /** The kinds the seed backend gatherers produce. */
-export const DEFAULT_TIMELINE_RENDERERS: TimelineRenderers = {
+const SEED_GATHERER_RENDERERS: TimelineRenderers = {
   nota: {
     icon: MessageSquare,
     summary: (entry: TimelineNotaEntry) => (entry.deleted_at ? "Nota removida" : entry.corpo),
@@ -69,20 +76,33 @@ export const DEFAULT_TIMELINE_RENDERERS: TimelineRenderers = {
   },
 };
 
-/** Generic kinds a product opts into by merging them into `renderers`. */
+/** A stage move. The target stage can be unresolved (a deleted stage) — the
+ *  line then says only that the card changed stage, never `"null"`. */
+export function movimentoSummary(entry: Pick<TimelineMovimentoEntry, "de_etapa" | "para_etapa">): string {
+  if (!entry.para_etapa) return "Moveu de etapa";
+  return entry.de_etapa
+    ? `Moveu de "${entry.de_etapa}" para "${entry.para_etapa}"`
+    : `Entrou em "${entry.para_etapa}"`;
+}
+
+/** The generic kinds (stage moves + system events). Part of the default
+ *  registry; still exported for consumers that compose their own. */
 export const GENERIC_TIMELINE_RENDERERS: TimelineRenderers = {
   movimento: {
     icon: MoveRight,
-    summary: (entry: TimelineMovimentoEntry) =>
-      entry.de_etapa
-        ? `Moveu de "${entry.de_etapa}" para "${entry.para_etapa}"`
-        : `Entrou em "${entry.para_etapa}"`,
+    summary: (entry: TimelineMovimentoEntry) => movimentoSummary(entry),
   },
   sistema: {
     icon: FileText,
     summary: (entry: TimelineSistemaEntry) =>
       entry.detalhe ? `${entry.evento} — ${entry.detalhe}` : entry.evento,
   },
+};
+
+/** The seed's canonical registry: every kind the seed's own data produces. */
+export const DEFAULT_TIMELINE_RENDERERS: TimelineRenderers = {
+  ...SEED_GATHERER_RENDERERS,
+  ...GENERIC_TIMELINE_RENDERERS,
 };
 
 export interface TimelineProps {
@@ -95,9 +115,8 @@ export interface TimelineProps {
   testId?: string;
   /**
    * The kind registry. Defaults to `DEFAULT_TIMELINE_RENDERERS`; a product
-   * passes `{ ...DEFAULT_TIMELINE_RENDERERS, ...GENERIC_TIMELINE_RENDERERS,
-   * ...own }`. A kind absent from it renders through the unknown-kind
-   * fallback.
+   * with its own kinds passes `{ ...DEFAULT_TIMELINE_RENDERERS, ...own }`. A
+   * kind absent from it renders through the unknown-kind fallback.
    */
   renderers?: TimelineRenderers;
 }
@@ -138,7 +157,9 @@ function TimelineEntryRow({
           {entry.ator && <span className="font-semibold">{entry.ator.nome} </span>}
           {/* Unknown kind — a best-effort generic line rather than a crash
               or a silently dropped entry. */}
-          {renderer ? renderer.summary(entry) : `Evento (${entry.kind})`}
+          {/* The kind appears ONCE, in the tag — "Evento (x) (x)" was the
+              2026-10-13 double label. */}
+          {renderer ? renderer.summary(entry) : "Evento"}
           {!renderer && (
             <span className="ml-1 text-xs text-muted-foreground" data-testid="timeline-entry-unknown-kind">
               ({entry.kind})

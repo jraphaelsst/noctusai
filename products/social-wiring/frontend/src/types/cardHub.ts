@@ -579,7 +579,9 @@ export interface TimelineTouchEntry extends TimelineEntryBase {
 export interface TimelineMovimentoEntry extends TimelineEntryBase {
   kind: "movimento";
   de_etapa: string | null;
-  para_etapa: string;
+  /** Null when the target stage no longer resolves (the gatherer's lookup
+   *  missed) — renderers must not print it raw. */
+  para_etapa: string | null;
 }
 
 export interface TimelineDocumentoEntry extends TimelineEntryBase {

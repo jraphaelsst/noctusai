@@ -14,7 +14,7 @@ afterEach(async () => {
   (await import("@testing-library/react")).cleanup();
 });
 
-import { DEFAULT_TIMELINE_RENDERERS, GENERIC_TIMELINE_RENDERERS, Timeline } from "./Timeline";
+import { DEFAULT_TIMELINE_RENDERERS, GENERIC_TIMELINE_RENDERERS, Timeline, movimentoSummary } from "./Timeline";
 
 async function render(props: React.ComponentProps<typeof Timeline>) {
   const React = (await import("react")).default;
@@ -137,15 +137,48 @@ describe("Timeline — kind-renderer registry", () => {
     detalhe: "via import",
   };
 
-  it("the seed default registry covers the seed gatherers (nota, documento, checklist)", () => {
-    expect(Object.keys(DEFAULT_TIMELINE_RENDERERS).sort()).toEqual(["checklist", "documento", "nota"]);
+  it("the seed default registry covers every kind the seed's own data produces", () => {
+    expect(Object.keys(DEFAULT_TIMELINE_RENDERERS).sort()).toEqual([
+      "checklist",
+      "documento",
+      "movimento",
+      "nota",
+      "sistema",
+    ]);
   });
 
   it("🔴 a kind outside the registry falls back — it is never dropped", async () => {
-    const { getAllByTestId, getByTestId } = await render({ entries: [sistema], loading: false });
+    const { getAllByTestId, getByTestId } = await render({ entries: [sistema], loading: false, renderers: {} });
     expect(getAllByTestId("timeline-entry")).toHaveLength(1);
-    expect(getByTestId("timeline-entry").textContent).toContain("Evento (sistema)");
+    expect(getByTestId("timeline-entry").textContent).toContain("Evento");
     expect(getByTestId("timeline-entry-unknown-kind").textContent).toBe("(sistema)");
+  });
+
+  it("🔴 the fallback names the kind ONCE (no 'Evento (x) (x)' — 2026-10-13)", async () => {
+    const { getByTestId } = await render({
+      entries: [{ ...sistema, kind: "visita" } as TimelineEntry],
+      loading: false,
+    });
+    const text = getByTestId("timeline-entry").textContent ?? "";
+    expect(text.match(/\(visita\)/g)).toHaveLength(1);
+  });
+
+  it("🔴 a stage move renders with the DEFAULT registry (no opt-in — the Esteira post card bug)", async () => {
+    const { getByTestId, queryByTestId } = await render({
+      entries: [
+        {
+          id: "m2",
+          kind: "movimento",
+          ocorrido_em: "2026-10-13T13:15:00Z",
+          ator: { id: "u1", nome: "Raphael" },
+          de_etapa: "Roteiro",
+          para_etapa: "Gravação",
+        },
+      ],
+      loading: false,
+    });
+    expect(getByTestId("timeline-entry").textContent).toContain('Raphael Moveu de "Roteiro" para "Gravação"');
+    expect(queryByTestId("timeline-entry-unknown-kind")).toBeNull();
   });
 
   it("an opted-in generic renderer summarises its kind", async () => {
@@ -183,5 +216,10 @@ describe("Timeline — kind-renderer registry", () => {
       renderers: GENERIC_TIMELINE_RENDERERS,
     });
     expect(getByTestId("timeline-entry").textContent).toContain('Moveu de "Novo" para "Visita"');
+  });
+
+  it("a movimento without a resolvable target stage never prints null", async () => {
+    expect(movimentoSummary({ de_etapa: "Novo", para_etapa: null })).toBe("Moveu de etapa");
+    expect(movimentoSummary({ de_etapa: null, para_etapa: "Novo" })).toBe('Entrou em "Novo"');
   });
 });

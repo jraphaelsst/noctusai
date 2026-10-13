@@ -238,10 +238,10 @@ describe("progresso real", () => {
     expect(rtl.screen.queryByTestId("progresso-lote")).toBeNull();
   });
 
-  it("informa honestamente o fallback para os templates do Método Audience", () => {
+  it("informa honestamente o fallback para os templates do Método", () => {
     m.lotes.mockReturnValue(ok({ items: [lote({ status: "processando", fallback_metodo: true })], total: 1 }));
     renderPage();
-    expect(rtl.screen.getByText(/Sem estruturas da biblioteca — usando templates do Método Audience/)).toBeTruthy();
+    expect(rtl.screen.getByText(/Sem estruturas da biblioteca — usando templates do Método\./)).toBeTruthy();
   });
 });
 
