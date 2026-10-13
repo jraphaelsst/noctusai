@@ -198,6 +198,19 @@ def test_start_requires_slug():
     assert res["status"] == "error" and "requires slug" in res["error"]
 
 
+@pytest.mark.parametrize("slug,flat", [("fix/public-toast", "fix-public-toast"), ("a\\b", "a-b")])
+def test_start_refuses_a_multi_segment_slug(slug, flat):
+    """A nested worktree (`.claude/worktrees/fix/x`) makes every keeper run
+    from it resolve REPO_ROOT one level too high — refused before any git
+    write, with a flat suggestion."""
+    fake = FakeGit(refs={"origin/dev": "d0"}, anc=_anc_pairs([]))
+    res = T.task_branch(action="start", slug=slug, confirm=True, run=fake)
+    assert res["status"] == "error" and res["exit_code"] == 1
+    assert "path separator" in res["error"]
+    assert repr(flat) in res["error"]
+    assert fake.calls == []  # not even a fetch
+
+
 class FakeGitWorktreeAlreadyExists(FakeGit):
     """`worktree add` fails ("already exists") on the FIRST call; `worktree
     list --porcelain` reports the path already checked out on `existing_

@@ -2060,6 +2060,20 @@ def task_branch(
 
     # ── START ── fetch → worktree add -b feat/<slug> origin/dev [→ wire_env]
     if action == "start":
+        # A slug is ONE path segment. `workspace._detect_worktree_root` (and
+        # every REPO_ROOT / LEDGER_ROOT built on it) treats the directory
+        # directly under `.claude/worktrees/` as the worktree root, so
+        # slug="fix/x" made every keeper run from that worktree resolve
+        # REPO_ROOT to `.claude/worktrees/fix` — the pre-push ledger-drain
+        # keeper then HARD-BLOCKED with "task_branch.py not found", which
+        # integrate reported as "persistent concurrent pushes" (2026-10-13).
+        # Refused at start only, so a pre-existing nested worktree can still
+        # be integrated/cleaned.
+        if "/" in slug or "\\" in slug:
+            return {**base, "status": "error", "exit_code": 1,
+                    "error": (f"slug {slug!r} contains a path separator — a slug is one "
+                              f"segment (the branch is already namespaced feat/<slug>). "
+                              f"Use e.g. {slug.replace('/', '-').replace(chr(92), '-')!r}.")}
         git("fetch", remote, "--quiet")
         dev = _resolve(git, f"{remote}/{dev_branch}")
         if not dev:
