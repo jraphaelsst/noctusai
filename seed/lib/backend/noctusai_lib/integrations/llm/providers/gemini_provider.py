@@ -22,7 +22,7 @@ SDK notes (google-genai):
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 from google import genai
 from google.genai import types
@@ -322,7 +322,7 @@ class GeminiProvider:
 
     async def analyze_image(
         self,
-        image: Union[bytes, str],
+        image: Union[bytes, str, Sequence[Union[bytes, str]]],
         prompt: str,
         *,
         model: str,
@@ -334,16 +334,27 @@ class GeminiProvider:
         from ..usage import record_usage
 
         client = self._get_client(api_key)
-        if isinstance(image, bytes):
-            mime_type = kwargs.pop("mime_type", "image/jpeg")
-            image_part = types.Part.from_bytes(data=image, mime_type=mime_type)
-        else:
+        mime_type = kwargs.pop("mime_type", "image/jpeg")
+
+        def _parte(img: Union[bytes, str]):
+            if isinstance(img, bytes):
+                return types.Part.from_bytes(data=img, mime_type=mime_type)
             # URL image — Gemini SDK doesn't fetch URLs directly; the caller
             # would need to download first. We surface that contract clearly.
             raise LLMAPIError(
                 "gemini",
                 "URL images not supported in Gemini analyze_image — download first and pass bytes.",
             )
+
+        # A list is one subject in order (the bands of one page —
+        # `documents.vision_tiling`): labelled image parts, then the prompt.
+        image_parts: list = []
+        if isinstance(image, (list, tuple)):
+            for i, img in enumerate(image, 1):
+                image_parts.append(types.Part.from_text(text=f"Image {i}:"))
+                image_parts.append(_parte(img))
+        else:
+            image_parts.append(_parte(image))
 
         # 🔴 FIXED 2026-09-28: `max_tokens` used to be accepted (via
         # `**kwargs`) and silently dropped — `generate_content` was never
@@ -362,7 +373,7 @@ class GeminiProvider:
             text_part = types.Part.from_text(text=prompt)
             response = await client.aio.models.generate_content(
                 model=model,
-                contents=[image_part, text_part],
+                contents=[*image_parts, text_part],
                 **({"config": config} if config is not None else {}),
             )
             text = getattr(response, "text", "") or ""

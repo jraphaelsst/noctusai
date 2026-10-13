@@ -498,8 +498,13 @@ class TestBudgetAwareRasterization:
         monkeypatch.setattr(
             "noctusai_lib.integrations.media.classify_pdf_text_layer", lambda b: camada
         )
+        # `provider="openai"`: this class pins the LEGACY byte-budget path,
+        # which runs only for a vision model WITHOUT a published native
+        # resolution (`vision_tiling.vision_resolution_for` -> None). The
+        # Anthropic pins take the native-resolution path instead — see
+        # `test_vision_tiling.py`.
         return LadderDocumentTranscriber(
-            analyze=vision or _Vision(), render_dpi_policy=policy
+            analyze=vision or _Vision(), render_dpi_policy=policy, provider="openai"
         )
 
     @pytest.mark.asyncio
@@ -545,6 +550,36 @@ class TestBudgetAwareRasterization:
 
         assert result.ok
         assert chamadas == [(400, (1,)), (300, (1,))]
+        # 300 is above the 200-DPI legibility floor: a step-down, not a
+        # reduction worth flagging.
+        assert result.avisos == ()
+
+    @pytest.mark.asyncio
+    async def test_step_down_below_the_legibility_floor_is_marked(
+        self, monkeypatch
+    ) -> None:
+        # The live 2026-10-13 shape: "page 1 rendered at 150 DPI (policy
+        # asked for 400)" — logged, and now ALSO on the read itself.
+        policy = RenderDpiPolicy(
+            dpi_for_page_count=lambda n: 400,
+            max_encoded_bytes=_encoded_size(b"x" * 500),
+            step_down_dpis=(300, 200, 150, 100),
+        )
+        camada = _camada(("", False, "below char floor"))
+        _spy_pdf_to_images(
+            monkeypatch,
+            {400: {1: b"x" * 5000}, 300: {1: b"x" * 4000}, 200: {1: b"x" * 3000},
+             150: {1: b"x" * 400}},
+        )
+        transcriber = self._transcriber(
+            monkeypatch, num_paginas=1, camada=camada, policy=policy
+        )
+
+        result = await transcriber.transcribe(b"pdf-bytes")
+
+        assert result.ok
+        assert result.avisos == ("resolucao_reduzida",)
+        assert result.pages[0].resolucao_reduzida is True
 
     @pytest.mark.asyncio
     async def test_floor_still_over_budget_is_sent_anyway_and_logged(

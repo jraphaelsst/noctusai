@@ -22,6 +22,7 @@ from __future__ import annotations
 import pytest
 
 from noctusai_lib.integrations.documents import TranscribedPage, Transcription, TextSource
+from noctusai_lib.integrations.documents.providers import OCR_MODELS
 from noctusai_lib.integrations.media import InboundMedia
 from noctusai_lib.integrations.media.real_adapter import RealMediaResolver
 
@@ -145,7 +146,9 @@ class TestProviderRoutesVendorAndModelTogether:
         await resolver.resolve(InboundMedia(content=b"\xff\xd8\xff", mimetype="image/jpeg"))
 
         assert analyze.calls[0]["provider"] == "anthropic"
-        assert analyze.calls[0]["model"] == "claude-haiku-4-5"
+        # The pin itself lives in `documents.providers` — asserting the
+        # pairing, not a hard-coded id that breaks on every measured move.
+        assert analyze.calls[0]["model"] == OCR_MODELS["anthropic"]
 
     @pytest.mark.asyncio
     async def test_gemini_selects_its_own_model(self) -> None:
@@ -316,7 +319,7 @@ class TestMaxPagesMapsToMaxVisionPages:
 
         assert isinstance(transcriber, LadderDocumentTranscriber)
         assert transcriber._provider == "anthropic"
-        assert transcriber._ocr_model == "claude-haiku-4-5"
+        assert transcriber._ocr_model == OCR_MODELS["anthropic"]
 
 
 class TestDocumentPromptReachesTheDelegatedTranscriber:

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Optional, Sequence, Union
 
 from anthropic import AsyncAnthropic, APIError as AnthropicAPIError
 
@@ -254,7 +254,7 @@ class AnthropicProvider:
 
     async def analyze_image(
         self,
-        image: Union[bytes, str],
+        image: Union[bytes, str, Sequence[Union[bytes, str]]],
         prompt: str,
         *,
         model: str,
@@ -268,25 +268,37 @@ class AnthropicProvider:
         client = self._client_for(api_key)
 
         # Build the Anthropic content-block shape for the user message.
-        if isinstance(image, bytes):
-            # Detect mime with a best-effort header sniff; default jpeg.
-            media_type = _sniff_image_mime(image)
-            source: dict[str, Any] = {
-                "type": "base64",
-                "media_type": media_type,
-                "data": base64.b64encode(image).decode("ascii"),
-            }
-        else:
+        #
+        # A LIST of images is one subject in order (the bands of one page —
+        # `documents.vision_tiling`): each is labelled "Image k:" before its
+        # block, the form the vision guide recommends for several images
+        # ("introduce each one with a short text label"), and the prompt
+        # comes after them all (images-before-text is the guide's preferred
+        # order). Each image is resized independently against the model's
+        # native limits, so N bands keep N times the pixels of one image.
+        def _bloco(img: Union[bytes, str]) -> dict[str, Any]:
+            if isinstance(img, bytes):
+                # Detect mime with a best-effort header sniff; default jpeg.
+                return {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": _sniff_image_mime(img),
+                        "data": base64.b64encode(img).decode("ascii"),
+                    },
+                }
             # Anthropic supports URL images in recent SDK versions via type=url.
-            source = {"type": "url", "url": image}
+            return {"type": "image", "source": {"type": "url", "url": img}}
 
-        user_message = {
-            "role": "user",
-            "content": [
-                {"type": "image", "source": source},
-                {"type": "text", "text": prompt},
-            ],
-        }
+        content: list[dict[str, Any]] = []
+        if isinstance(image, (list, tuple)):
+            for i, img in enumerate(image, 1):
+                content.append({"type": "text", "text": f"Image {i}:"})
+                content.append(_bloco(img))
+        else:
+            content.append(_bloco(image))
+        content.append({"type": "text", "text": prompt})
+        user_message = {"role": "user", "content": content}
 
         try:
             response = await client.messages.create(

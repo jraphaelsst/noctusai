@@ -24,7 +24,7 @@ Usage:
 from __future__ import annotations
 
 from collections import deque
-from typing import Any, Deque, Iterable, List, Optional, Union
+from typing import Any, Deque, Iterable, List, Optional, Sequence, Union
 
 from ..stream_types import StreamOutcome
 from ..vision_types import VisionResult
@@ -145,7 +145,7 @@ class FakeProvider:
 
     async def analyze_image(
         self,
-        image: Union[bytes, str],
+        image: Union[bytes, str, Sequence[Union[bytes, str]]],
         prompt: str,
         *,
         model: str,
@@ -156,6 +156,9 @@ class FakeProvider:
         self._record(
             "analyze_image",
             image_type=type(image).__name__,
+            # How many images one call carried (the bands of one page arrive
+            # as a list — `documents.vision_tiling`); 1 for a single image.
+            image_count=len(image) if isinstance(image, (list, tuple)) else 1,
             prompt=prompt,
             model=model,
             api_key=api_key,

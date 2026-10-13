@@ -63,6 +63,24 @@ class ModelEntry:
     # UI recommendation tag: "performance" (quality-first) | "economico"
     # (cost-first) | None. Pure presentation — never a capability gate.
     tag_performance: Optional[str] = None
+    # `vision` rows only: the model's NATIVE image resolution — the largest
+    # image it reads without the vendor downscaling it server-side first.
+    # Two limits, both must hold (Anthropic's rule): no edge over
+    # `vision_max_edge_px`, and `ceil(w/28) * ceil(h/28)` visual tokens no
+    # more than `vision_max_visual_tokens`. Consumed by
+    # `documents.vision_tiling` to pre-fit (and, for a dense full page, to
+    # split into bands) instead of sending pixels the vendor throws away.
+    # None = not published for this model -> no pre-fit, no tiling.
+    #
+    # Anthropic, checked 2026-10-13 (platform.claude.com/docs/en/build-with-
+    # claude/vision "Resolution and token cost", and .../vision-coordinates
+    # "How Claude resizes and pads images"): "High-resolution — Claude 4.7
+    # and later models — 2576 px / 4784 visual tokens"; "Standard — all
+    # other models — 1568 px / 1568". Per-image byte ceiling there: 10 MB
+    # base64 on the direct API, 5 MB on Bedrock/Vertex; hard max 8000x8000
+    # px; 32 MB per request; >20 images per request -> 2000 px per image.
+    vision_max_edge_px: Optional[int] = None
+    vision_max_visual_tokens: Optional[int] = None
 
 
 MODELS: Tuple[ModelEntry, ...] = (
@@ -286,6 +304,8 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Same model used for vision — accepts image content blocks.",
         cost_per_1m_input_tokens=5.00,
         cost_per_1m_output_tokens=25.00,
+        vision_max_edge_px=2576,
+        vision_max_visual_tokens=4784,
     ),
     #: Registered for the same reason, one step down: the mid-tier swap
     #: between the old Opus pin and the current Haiku pin, so a consumer
@@ -307,6 +327,8 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Same model used for vision — accepts image content blocks.",
         cost_per_1m_input_tokens=2.00,
         cost_per_1m_output_tokens=10.00,
+        vision_max_edge_px=2576,
+        vision_max_visual_tokens=4784,
     ),
     #: Opus 5.5 is the document-escalation pin (`documents.providers.
     #: ESCALATION_OCR_MODELS`, owner decision 2026-10-13); Fable 5.1 is the
@@ -329,6 +351,8 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Same model used for vision — accepts image content blocks.",
         cost_per_1m_input_tokens=4.00,
         cost_per_1m_output_tokens=20.00,
+        vision_max_edge_px=2576,
+        vision_max_visual_tokens=4784,
     ),
     ModelEntry(
         id="claude-fable-5-1",
@@ -347,6 +371,8 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Same model used for vision — accepts image content blocks.",
         cost_per_1m_input_tokens=10.00,
         cost_per_1m_output_tokens=50.00,
+        vision_max_edge_px=2576,
+        vision_max_visual_tokens=4784,
     ),
     ModelEntry(
         id="claude-opus-4-7",
@@ -389,6 +415,8 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Same model used for vision — accepts image content blocks.",
         cost_per_1m_input_tokens=1.00,
         cost_per_1m_output_tokens=5.00,
+        vision_max_edge_px=1568,
+        vision_max_visual_tokens=1568,
     ),
     ModelEntry(
         id="claude-sonnet-4-6",
@@ -398,6 +426,8 @@ MODELS: Tuple[ModelEntry, ...] = (
         description="Same model used for vision — accepts image content blocks.",
         cost_per_1m_input_tokens=3.00,
         cost_per_1m_output_tokens=15.00,
+        vision_max_edge_px=1568,
+        vision_max_visual_tokens=1568,
     ),
 
     # ── Gemini (real — Phase 14) ─────────────────────────────────────
