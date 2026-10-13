@@ -57,8 +57,8 @@ Architecture, stack, tenant isolation, and shared packages: see `03-SEED-ARCHITE
 | Agents | 14 | 1 | 39 | 27 | 79 | 1,087 |
 | Community | 23 | 29 | 49 | 30 | 58 | 657 |
 | Store | 4 | 5 | 12 | 1 | 13 | 117 |
-| Commerce | 4 | 1 | 8 | 1 | 8 | 39 |
-| **Total** | **297** | **331** | **693** | **447** | **1196** | **17,342** |
+| Commerce | 4 | 1 | 8 | 1 | 8 | 43 |
+| **Total** | **297** | **331** | **693** | **447** | **1196** | **17,346** |
 <!-- kb-counts:end:inventory -->
 
 ## Database
