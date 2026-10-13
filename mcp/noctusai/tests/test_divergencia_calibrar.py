@@ -208,3 +208,23 @@ def test_policy_loads_when_another_products_app_package_is_already_imported(monk
 
     assert "nome_oficial" in politica
     assert sys.modules["app"] is intruso  # the other caller's package is untouched
+
+
+# ── noctus.dev.roteamento_modelos_recalibrar (per-model extension) ──────
+
+_REPO = Path(__file__).resolve().parents[3]
+
+
+def test_roteamento_recalibrar_dry_run_matches_the_committed_table():
+    """No new evidence: the committed routing table is a fixed point of its
+    own generator — nothing moves, nothing is written."""
+    out = dc.roteamento_modelos_recalibrar(repo_root=str(_REPO))
+    assert out["escrito"] is False
+    assert out["mudancas"] == []
+    assert out["por_tipo"]["CNH"]["primario"] == "claude-sonnet-5"
+    assert "claude-sonnet-5" in out["custos"]
+
+
+def test_roteamento_recalibrar_refuses_a_checkout_without_the_engine(tmp_path: Path):
+    with pytest.raises(FileNotFoundError):
+        dc.roteamento_modelos_recalibrar(repo_root=str(tmp_path))

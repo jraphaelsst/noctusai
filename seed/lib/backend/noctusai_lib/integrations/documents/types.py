@@ -24,7 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Protocol, runtime_checkable
 
 if TYPE_CHECKING:  # the carriers below are imported lazily to keep this module leaf-level
     from noctusai_lib.integrations.documents.address import EnderecoLido
@@ -451,6 +451,15 @@ class IdentityFields:
     #: not a persistable per-person fact, it is a diagnostic).
     tipo_provavel: Optional[str] = None
 
+    #: Model routing + trust-gate provenance of THIS read (`real.
+    #: LadderIdentityExtractor`, owner direction 2026-10-13): which model read
+    #: first, whether the fallback model ran, the per-field trust verdict and
+    #: what became of each critical field, and what every transcription cost.
+    #: The learning loop (social-wiring `extracao_leitura_resultados`) records
+    #: it — field names, model ids and verdicts only, never a value. `None`
+    #: for a text-layer read or the Fake.
+    roteamento: Optional["ResumoRoteamento"] = None
+
     @property
     def rg_orgao_partes(self) -> tuple[Optional[str], Optional[str]]:
         """`rg_orgao` split into `(orgao, uf)` — `SSP/SP` -> `("SSP", "SP")`;
@@ -622,6 +631,66 @@ class IdentityFields:
 
 
 @dataclass(frozen=True)
+class CustoLeitura:
+    """One transcription's LLM spend — summed from the `llm.usage` events
+    the read produced (`llm.usage.coletar_uso`), never a second ledger."""
+
+    modelo: str
+    papel: str  # "primaria" | "fallback" | "medicao"
+    chamadas: int = 0
+    tokens_entrada: int = 0
+    tokens_saida: int = 0
+    usd: float = 0.0
+
+
+@dataclass(frozen=True)
+class DesfechoCampo:
+    """What the routed read decided for ONE critical field.
+
+    `veredito` — the trust gate after the primary read (`confianca.
+    CONFIAVEL` / `DUVIDOSO` / `AUSENTE`), with its `motivos`.
+    `resultado` — `armazenado` (gate passed, primary value kept) /
+    `concordou` (doubtful, fallback agreed -> stored) / `divergiu`
+    (doubtful, reads disagree -> empty, both readings to review) / `dv`
+    (stood on its own check digit) / `sem_leitura` (no read produced a value)
+    / `nao_conciliado` (doubtful but the fallback did not run: off switch or
+    fallback failure). `acordo` — did the fallback read state the same value
+    (None when it did not run or did not read the field).
+    """
+
+    campo: str
+    veredito: str
+    motivos: tuple[str, ...] = ()
+    resultado: str = "armazenado"
+    acordo: Optional[bool] = None
+    #: `confianca.impressao` of each read's value — a 24-bit fingerprint
+    #: (never the value) so a later human resolution can say which read was
+    #: right without anything identifying being stored.
+    impressao_primaria: Optional[str] = None
+    impressao_fallback: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ResumoRoteamento:
+    """See `IdentityFields.roteamento`."""
+
+    tipo_documento: Optional[str]
+    modelo_primario: str
+    modelo_fallback: Optional[str]
+    #: "producao" (one read; fallback only for a doubtful critical field),
+    #: "medicao" (always-two-reads agreement gate, evaluation harnesses only)
+    #: or "leitura_unica" (per-org off switch).
+    modo: str
+    fallback_executado: bool = False
+    campos: tuple[DesfechoCampo, ...] = ()
+    custos: tuple[CustoLeitura, ...] = ()
+
+    @property
+    def usd_total(self) -> float:
+        return sum(c.usd for c in self.custos)
+
+
+@dataclass(frozen=True)
 class TitularEsperado:
     """Who the caller already knows this document belongs to — and, when
     the caller knows it, who the OTHER half of the couple is.
@@ -677,15 +746,23 @@ class IdentityExtractor(Protocol):
         #: CNPJ/ICMS lines). `classify_kind`'s filename guess is the fallback
         #: when a caller has nothing better — see `real.py`'s own comment.
         tipo_documento: Optional[str] = None,
+        #: Optional cross-document corroboration for the trust gate: critical
+        #: field -> the value already CONFIRMED on the cliente from ANOTHER
+        #: document type (`confianca.avaliar`). A selector of trust, never a
+        #: source: nothing here is ever emitted as a reading.
+        confirmados: Optional[Mapping[str, Any]] = None,
     ) -> IdentityFields:
         ...
 
 
 __all__ = [
+    "CustoLeitura",
+    "DesfechoCampo",
     "ExtractionConfidence",
     "IdentityDocumentKind",
     "IdentityExtractor",
     "IdentityFields",
+    "ResumoRoteamento",
     "TextSource",
     "TitularEsperado",
 ]

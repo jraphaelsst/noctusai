@@ -20,6 +20,7 @@ def make_identity_extractor(
     max_pages: int | None = -1,
     provider: Optional[str] = None,
     escalar_releitura: bool = True,
+    modo_medicao: bool = False,
 ) -> IdentityExtractor:
     """Return an identity extractor.
 
@@ -45,16 +46,19 @@ def make_identity_extractor(
             this is a MANUAL selection, nothing here fails over to another
             vendor. See `noctusai_lib.integrations.llm.resolve_llm_provider`
             for the per-org switch a caller resolves this from.
-        escalar_releitura: Re-read with a stronger model
-            (`documents.providers.ESCALATION_OCR_MODELS`) before returning.
-            🔴 ALWAYS for an OCR read of a document that carries critical
-            identity fields (`documents.releitura.deve_escalar`): the
-            agreement gate (`releitura.mesclar`) emits a critical field only
-            when two independent reads agree, so the second read is not
-            optional cost-control any more (owner decision 2026-10-13).
-            `True` (the default) — on by default for the identity family.
-            `False` is the per-org OFF SWITCH: the single read is returned
-            as before, WITHOUT the agreement gate. A caller resolving a per-org off switch
+        escalar_releitura: Conditional conciliation (owner direction
+            2026-10-13): read ONCE with the routed primary model
+            (`documents.roteamento`), judge every critical field
+            (`documents.confianca`), and only when one is `duvidoso` read
+            ONCE more with the routed fallback model and reconcile those
+            fields (`releitura.conciliar`: agreement -> stored, disagreement
+            -> empty + both readings for review). `True` (the default) — on
+            for the identity family. `False` is the per-org OFF SWITCH: the
+            single read is returned as before, with no reconciliation.
+        modo_medicao: 🔴 EVALUATION HARNESSES ONLY. The always-two-reads
+            agreement gate (`releitura.deve_escalar` + `mesclar` + a third
+            read for unsettled fields) — the behaviour production had before
+            the routing table; kept to MEASURE models, never to serve. A caller resolving a per-org off switch
             passes `False` through here; see
             `social_wiring...api_keys_store.resolve_releitura_habilitada`
             for that consume seam.
@@ -70,6 +74,7 @@ def make_identity_extractor(
         max_pages=max_pages,
         provider=provider,
         escalar_releitura=escalar_releitura,
+        modo_medicao=modo_medicao,
     )
 
 

@@ -8,7 +8,7 @@ a slim environment can import the package at all.
 from __future__ import annotations
 
 from datetime import date
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 from noctusai_lib.integrations.documents.types import (
     ExtractionConfidence,
@@ -58,6 +58,8 @@ class FakeIdentityExtractor:
         #: `identidade_extracao_service`'s `tipo`) actually reached the
         #: extractor, the same way `titulares` does for `titular`.
         self.tipos_documento: list[Optional[str]] = []
+        #: Every `confirmados=` the caller passed (cross-document corroboration).
+        self.confirmados: list[Optional[Mapping[str, Any]]] = []
 
     async def extract(
         self,
@@ -67,7 +69,9 @@ class FakeIdentityExtractor:
         filename: Optional[str] = None,
         titular: Optional[TitularEsperado] = None,
         tipo_documento: Optional[str] = None,
+        confirmados: Optional[Mapping[str, Any]] = None,
     ) -> IdentityFields:
+        self.confirmados.append(confirmados)
         self.titulares.append(titular)
         self.tipos_documento.append(tipo_documento)
         self.calls.append((len(content or b""), mimetype, filename))

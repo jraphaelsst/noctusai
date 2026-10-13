@@ -104,7 +104,7 @@ class TestR1RgNuncaComRne:
     async def test_end_to_end_rne_as_printed_no_rg_registro_kept(self) -> None:
         out = await LadderIdentityExtractor(
             ladder=_Ladder(CNH_RNE_ESCALADA),
-            escalar_releitura=True,
+            escalar_releitura=True, modo_medicao=True,
             escalation_ladder=_Ladder(CNH_RNE_ESCALADA),
         ).extract(b"x", mimetype="image/jpeg", tipo_documento="cnh")
         assert out.rg is None
@@ -185,7 +185,7 @@ class TestR3AverbacaoVence:
         )
         out = await LadderIdentityExtractor(
             ladder=_Ladder(CERTIDAO_SEM_AVERBACAO_LIDA),
-            escalar_releitura=True,
+            escalar_releitura=True, modo_medicao=True,
             escalation_ladder=_Ladder([CERTIDAO_COM_DIVORCIO, obito]),
         ).extract(b"x", mimetype="application/pdf", tipo_documento="certidao_casamento")
         # three reads, three different estados civis: no two agree, no winner
@@ -201,7 +201,7 @@ class TestR3AverbacaoVence:
     async def test_end_to_end_two_reads_that_both_read_the_divorce_agree(self) -> None:
         out = await LadderIdentityExtractor(
             ladder=_Ladder(CERTIDAO_COM_DIVORCIO),
-            escalar_releitura=True,
+            escalar_releitura=True, modo_medicao=True,
             escalation_ladder=_Ladder(CERTIDAO_COM_DIVORCIO),
         ).extract(b"x", mimetype="application/pdf", tipo_documento="certidao_casamento")
         assert out.estado_civil == "divorciado"
