@@ -229,6 +229,29 @@ class TestRegistrarSerasaDeCrednet:
             == "pendente"
         )
 
+    def test_one_document_is_registered_once_per_cliente_on_the_latest_consulta(self):
+        """Owner, 2026-10-13: one Crednet file used to be copied into EVERY
+        matching consulta — the same Serasa three times in the contract's
+        legal-review list. Now: the latest consulta only, and re-running the
+        same reading writes nothing (idempotent)."""
+        cliente_id = str(uuid4())
+        consultas = [
+            _consulta(cliente_id=cliente_id, created_at=f"2026-0{n}-01T00:00:00+00:00")
+            for n in (1, 3, 2)
+        ]
+        resultados = [_resultado(consulta_id=c["id"]) for c in consultas]
+        client = _client(**{CONSULTAS: consultas, RESULTADOS: resultados})
+        doc = _doc()
+
+        assert service.registrar_serasa_de_crednet(client, ORG, cliente_id, doc, _Leitura()) == 1
+        assert service.registrar_serasa_de_crednet(client, ORG, cliente_id, doc, _Leitura()) == 0
+
+        preenchidos = [
+            r["consulta_id"] for r in client.table(RESULTADOS).select("*").execute().data
+            if r["fonte_cliente_documento_id"] == doc["id"]
+        ]
+        assert preenchidos == [consultas[1]["id"]]
+
     def test_no_matching_consulta_defers_returns_zero(self):
         client = _client(**{CONSULTAS: [], RESULTADOS: []})
         assert service.registrar_serasa_de_crednet(client, ORG, str(uuid4()), _doc(), _Leitura()) == 0

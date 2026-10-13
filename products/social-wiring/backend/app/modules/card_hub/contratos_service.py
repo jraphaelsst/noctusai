@@ -220,9 +220,13 @@ def exigir_revisao_juridica(row: dict) -> None:
 
 #: The keys of a `revisao_juridica_campos` entry — what the reviewer is
 #: shown and what the approval checks. Deliberately NOT the value itself
-#: (`valor`): the PDF carries it, and a JSON copy of a CPF on every version
-#: row is a second place LGPD has to find it. `valor_sha256` is enough to
-#: refuse an approval after the value changed.
+#: (`valor`): a JSON copy of a CPF on every version row is a second place
+#: LGPD has to find it. `valor_sha256` is enough to refuse an approval after
+#: the value changed, and the listing reads the value LIVE off its own row
+#: (`validacao_extracao.valores_ao_vivo` — owner 2026-10-13: a review list
+#: without values is useless). `secao`/`motivo`/`precisao`/`fonte_tipo`/
+#: `n_documentos`/`agrupadas` (the spouse's row of a couple fact, folded
+#: into one item) are the 2026-10-13 one-row-per-fact list.
 CAMPOS_REVISAO_CHAVES: tuple[str, ...] = (
     "chave",
     "entidade",
@@ -235,6 +239,12 @@ CAMPOS_REVISAO_CHAVES: tuple[str, ...] = (
     "fonte_nome",
     "confianca",
     "valor_sha256",
+    "secao",
+    "motivo",
+    "precisao",
+    "fonte_tipo",
+    "n_documentos",
+    "agrupadas",
 )
 
 
@@ -254,14 +264,23 @@ def exigir_revisao_da_versao_atual(client: Any, org_id: UUID, contrato_id: UUID)
 STATUSES_FINAIS: tuple[str, ...] = ("enviado_assinatura", "assinado")
 
 
-def _revisao_out(row: dict, resolved: dict) -> dict:
+def _campo_revisao_out(c: dict, valores: dict[str, dict]) -> dict:
+    # The fingerprints are the approval's business, not the reader's.
+    saida = {k: c.get(k) for k in CAMPOS_REVISAO_CHAVES if k != "valor_sha256"}
+    saida["agrupadas"] = [{"chave": a.get("chave")} for a in c.get("agrupadas") or []]
+    vivo = valores.get(c.get("chave") or "")
+    saida["valor"] = vivo["valor"] if vivo else None
+    saida["valor_mascarado"] = vivo["valor_mascarado"] if vivo else None
+    # `None` = not readable here (no registry row) — never a silent "confere".
+    saida["valor_confere"] = vivo["valor_confere"] if vivo else None
+    return saida
+
+
+def _revisao_out(row: dict, resolved: dict, valores: Optional[dict[str, dict]] = None) -> dict:
     campos = revisao_juridica_campos(row)
     return {
         "status": revisao_juridica_status(row),
-        # The fingerprint is the approval's business, not the reader's.
-        "campos": [
-            {k: c.get(k) for k in CAMPOS_REVISAO_CHAVES if k != "valor_sha256"} for c in campos
-        ],
+        "campos": [_campo_revisao_out(c, valores or {}) for c in campos],
         # Migration 193 — wording to read with care (verbatim operator
         # paragraphs, single-contract-derived PJ wording): `{codigo, titulo,
         # texto}`. `[]` for a pre-193 row (no column at all).
@@ -379,7 +398,10 @@ def obter_contrato(client: Any, org_id: UUID, contrato_id: UUID) -> dict:
     return rows[0]
 
 
-def _versao_out(row: dict, resolved: dict) -> dict:
+def _versao_out(row: dict, resolved: dict, valores: Optional[dict[str, dict]] = None) -> dict:
+    """`valores` — the live review values (`_valores_em_revisao`); a caller
+    that projects ONE version without them (the generation answer) leaves
+    each `campos[].valor` `None`, and the card reads the contract list."""
     return {
         **documento_base(row, resolved),
         "numero": row["numero"],
@@ -394,7 +416,7 @@ def _versao_out(row: dict, resolved: dict) -> dict:
         # "Baixar para impressão" is only offered for 'fisica'.
         "modalidade_assinatura": row.get("modalidade_assinatura"),
         # Migration 177 — the one final legal review (owner 2026-09-30).
-        "revisao_juridica": _revisao_out(row, resolved),
+        "revisao_juridica": _revisao_out(row, resolved, valores),
     }
 
 
@@ -402,6 +424,23 @@ def _versao_out(row: dict, resolved: dict) -> dict:
 #: (`contrato_aditivo.store`, migration 193) carry the same row shape and are
 #: projected by this same function, never a copy of it.
 saida_versao = _versao_out
+
+
+def _valores_em_revisao(client: Any, org_id: UUID, linhas: list[dict]) -> dict[str, dict]:
+    """The LIVE values of every recorded review item of the versions still
+    awaiting the legal review (an approved one shows no list) — batched for
+    the whole contract (`validacao_extracao.valores_ao_vivo`)."""
+    campos = [
+        c for r in linhas if revisao_juridica_status(r) == REVISAO_AGUARDANDO
+        for c in revisao_juridica_campos(r)
+    ]
+    if not campos:
+        return {}
+    # Function-level: `contrato_gerador` reads contracts through THIS module
+    # (`carregador`, `service`) — a top-level import would be a cycle.
+    from app.modules.card_hub.contrato_gerador import validacao_extracao
+
+    return validacao_extracao.valores_ao_vivo(client, org_id, campos)
 
 
 def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
@@ -417,7 +456,8 @@ def _contrato_saida(client: Any, org_id: UUID, row: dict) -> dict:
         ids.add(row["processo_legado_por"])
     resolved = table_reads.resolve_actors(ids)
 
-    versoes = [_versao_out(r, resolved) for r in linhas]
+    valores = _valores_em_revisao(client, org_id, linhas)
+    versoes = [_versao_out(r, resolved, valores) for r in linhas]
     return {
         "id": row["id"],
         "atendimento_id": row["atendimento_id"],

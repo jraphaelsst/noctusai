@@ -138,6 +138,17 @@ class TestGerarComRevisaoFinal:
             "fonte_documento_id": versao["_doc_id"],
             "fonte_nome": "rg-fulano.pdf",
             "confianca": "alta",
+            "secao": "extraido",
+            "motivo": "Lido automaticamente do documento e ainda não confirmado por ninguém.",
+            "precisao": "precisão medida 100% (1 contrato)",
+            "fonte_tipo": "RG",
+            "n_documentos": None,
+            "agrupadas": [],
+            # The generation answer projects ONE version without the live
+            # read; the contract list carries the value (see TestValorNaLista).
+            "valor": None,
+            "valor_mascarado": None,
+            "valor_confere": None,
         }]
         # The row keeps a fingerprint of the printed value — never the value.
         [registrado] = _versao_row(scoped, versao["id"])["revisao_juridica_campos"]

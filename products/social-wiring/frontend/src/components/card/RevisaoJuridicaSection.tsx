@@ -11,8 +11,13 @@
  * ORIGEM, so a version with ZERO machine-extracted values still waits; only
  * an upload / signed copy is `nao_exigida`). `revisao_juridica.campos` is
  * what the reviewer looks at FIRST, never the condition for a review:
- *   - a machine-extracted value ("extraído automaticamente — revisar no
- *     documento": the value itself is read in the PDF, never repeated here);
+ *   - a machine-extracted value — ONE row per fact, grouped by person, the
+ *     VALUE first (owner 2026-10-13: a 43-row list of field names with no
+ *     values was "trash"; CPF/RG masked until "Revelar"), then "fonte: <tipo>
+ *     · <arquivo>", then why it is listed + the MEASURED precision of that
+ *     source (never a document's own "confiança"). Copied/inferred values
+ *     ("Derivados (conferir)") and values ≥2 documents agree on ("Confirmado
+ *     por documentos") are collapsed and never counted as extracted;
  *   - an aditivo's own wording (`origem: "gerado"`) and each free clause the
  *     team wrote (`origem: "manual"`).
  * The copy therefore never says "usa 0 dados extraídos": it counts the
@@ -45,7 +50,7 @@ import {
 } from "@/components/ui/dialog";
 import type { CampoRevisaoJuridica, VersaoOut } from "@/hooks/useContratos";
 import { revisaoJuridicaStatus } from "@/hooks/useContratos";
-import { CONFIANCA_ROTULO, ORIGEM_ROTULO } from "@/hooks/useValidacaoExtracao";
+import { ORIGEM_ROTULO } from "@/hooks/useValidacaoExtracao";
 
 import { ItensRevisaoLista } from "./ItensRevisaoLista";
 
@@ -56,10 +61,88 @@ const ORIGEM_NAO_EXTRAIDA: Record<string, string> = {
   manual: "redigido pela equipe",
 };
 
-/** A campo read off a document by a machine (anything but the two above —
- *  including a missing `origem`, which the pre-aditivo rows never had). */
+/** A campo read off a document by a machine that nobody vouched for —
+ *  anything but the two wording origins above (including a missing `origem`,
+ *  which the pre-aditivo rows never had), and neither a `derivado` (copied /
+ *  inferred) nor a `corroborado` (≥2 documents agree) value. */
 export function campoExtraido(campo: CampoRevisaoJuridica): boolean {
-  return !(campo.origem && campo.origem in ORIGEM_NAO_EXTRAIDA);
+  if (campo.origem && campo.origem in ORIGEM_NAO_EXTRAIDA) return false;
+  return !campo.secao || campo.secao === "extraido";
+}
+
+/** The rows of `campos` in their (server-given) order, grouped by `grupo` —
+ *  person/entity first, identity → civil status → address → contact inside. */
+function porGrupo(campos: CampoRevisaoJuridica[]): [string, CampoRevisaoJuridica[]][] {
+  const grupos = new Map<string, CampoRevisaoJuridica[]>();
+  for (const c of campos) {
+    const g = c.grupo ?? "";
+    grupos.set(g, [...(grupos.get(g) ?? []), c]);
+  }
+  return [...grupos.entries()];
+}
+
+interface LinhaCampoProps {
+  campo: CampoRevisaoJuridica;
+  testIdPrefix: string;
+  revelado: boolean;
+  onAlternarRevelar: (chave: string) => void;
+}
+
+/** One fact: the VALUE first (masked until "Revelar" for an identity
+ *  number — the favorecidos pattern), then the field, then
+ *  "fonte: <tipo> · <arquivo>", then why it is listed + the measured
+ *  precision. A row recorded before values existed reads "confira no PDF". */
+function LinhaCampo({ campo: c, testIdPrefix, revelado, onAlternarRevelar }: LinhaCampoProps) {
+  const extraido = !(c.origem && c.origem in ORIGEM_NAO_EXTRAIDA);
+  const mascarado = Boolean(c.valor_mascarado) && !revelado;
+  const valor = mascarado ? c.valor_mascarado : c.valor;
+  const fonteTipo = c.fonte_tipo ?? (c.origem ? (ORIGEM_ROTULO[c.origem] ?? c.origem) : null);
+  const fonte = [fonteTipo, c.fonte_nome].filter(Boolean).join(" · ");
+  const motivo = extraido
+    ? (c.motivo ?? "extraído automaticamente — revisar no documento")
+    : `${ORIGEM_NAO_EXTRAIDA[c.origem as string]} — revisar no documento`;
+  return (
+    <li
+      className="space-y-0.5 rounded border border-amber-200 bg-white/70 px-2 py-1.5 text-xs"
+      data-testid={`${testIdPrefix}-campo-${c.chave}`}
+    >
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="text-[11px] text-muted-foreground">{c.rotulo}</span>
+        {c.valor != null ? (
+          <span
+            className="break-all text-sm font-semibold text-foreground"
+            data-testid={`${testIdPrefix}-valor-${c.chave}`}
+          >
+            {valor}
+          </span>
+        ) : (
+          extraido && <span className="text-[11px] italic text-amber-800">valor: confira no PDF</span>
+        )}
+        {c.valor_mascarado && c.valor != null && (
+          <button
+            type="button"
+            className="min-h-8 text-[11px] font-medium text-amber-900 underline"
+            onClick={() => onAlternarRevelar(c.chave)}
+            data-testid={`${testIdPrefix}-revelar-${c.chave}`}
+          >
+            {revelado ? "Ocultar" : "Revelar"}
+          </button>
+        )}
+      </div>
+      {extraido && fonte && (
+        <p className="text-[11px] text-muted-foreground">fonte: {fonte}</p>
+      )}
+      <p className="text-[11px] text-amber-800">
+        {motivo}
+        {extraido ? ` · ${c.precisao ?? "sem medição"}` : ""}
+      </p>
+      {c.valor_confere === false && (
+        <p className="text-[11px] font-medium text-red-700" data-testid={`${testIdPrefix}-mudou-${c.chave}`}>
+          O valor mudou depois que esta versão foi gerada — gere uma nova versão antes de aprovar.
+        </p>
+      )}
+    </li>
+  );
 }
 
 /** The pt-BR intro of the `aguardando` block — one sentence per case, so an
@@ -106,6 +189,15 @@ export function RevisaoJuridicaSection({
   testIdPrefix = "contrato-revisao",
 }: RevisaoJuridicaSectionProps) {
   const [confirmarAberto, setConfirmarAberto] = useState(false);
+  // Per-row, explicit reveal of a masked identity number — never global.
+  const [revelados, setRevelados] = useState<ReadonlySet<string>>(new Set());
+  const alternarRevelar = (chave: string) =>
+    setRevelados((atual) => {
+      const novo = new Set(atual);
+      if (novo.has(chave)) novo.delete(chave);
+      else novo.add(chave);
+      return novo;
+    });
   const status = revisaoJuridicaStatus(versao);
   const revisao = versao.revisao_juridica;
 
@@ -127,6 +219,18 @@ export function RevisaoJuridicaSection({
 
   const campos = revisao.campos;
   const extraidos = campos.filter(campoExtraido).length;
+  const principais = campos.filter((c) => !c.secao || c.secao === "extraido");
+  const corroborados = campos.filter((c) => c.secao === "corroborado");
+  const derivados = campos.filter((c) => c.secao === "derivado");
+  const linha = (c: CampoRevisaoJuridica) => (
+    <LinhaCampo
+      key={c.chave}
+      campo={c}
+      testIdPrefix={testIdPrefix}
+      revelado={revelados.has(c.chave)}
+      onAlternarRevelar={alternarRevelar}
+    />
+  );
   return (
     <div
       className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-2.5"
@@ -141,33 +245,37 @@ export function RevisaoJuridicaSection({
           {textoRevisaoAguardando(campos, documento)}
         </p>
       </div>
-      {campos.length > 0 && (
-        <ul className="space-y-1" data-testid={`${testIdPrefix}-campos-${contratoId}`}>
-          {campos.map((c) => (
-            <li
-              key={c.chave}
-              className="flex flex-wrap items-baseline gap-x-1.5 rounded border border-amber-200 bg-white/70 px-2 py-1 text-xs"
-              data-testid={`${testIdPrefix}-campo-${c.chave}`}
-            >
-              <span className="font-medium">{c.rotulo}</span>
-              {c.grupo && <span className="text-muted-foreground">· {c.grupo}</span>}
-              <span className="w-full text-[11px] text-amber-800 sm:w-auto">
-                {campoExtraido(c) ? (
-                  <>
-                    extraído automaticamente
-                    {c.origem ? ` (${ORIGEM_ROTULO[c.origem] ?? c.origem}` : ""}
-                    {c.origem && c.fonte_nome ? ` · ${c.fonte_nome}` : ""}
-                    {c.origem && c.confianca ? ` · ${CONFIANCA_ROTULO[c.confianca] ?? c.confianca}` : ""}
-                    {c.origem ? ")" : ""}
-                  </>
-                ) : (
-                  ORIGEM_NAO_EXTRAIDA[c.origem as string]
-                )}{" "}
-                — revisar no documento
-              </span>
-            </li>
+      {principais.length > 0 && (
+        <div className="space-y-2" data-testid={`${testIdPrefix}-campos-${contratoId}`}>
+          {porGrupo(principais).map(([grupo, itens]) => (
+            <section key={grupo} className="space-y-1">
+              {grupo && <p className="text-[11px] font-semibold text-amber-900">{grupo}</p>}
+              <ul className="space-y-1">{itens.map(linha)}</ul>
+            </section>
           ))}
-        </ul>
+        </div>
+      )}
+      {corroborados.length > 0 && (
+        <details
+          className="rounded border border-emerald-200 bg-white/60 px-2 py-1 text-xs"
+          data-testid={`${testIdPrefix}-corroborados-${contratoId}`}
+        >
+          <summary className="min-h-8 cursor-pointer text-[11px] font-medium text-emerald-800">
+            Confirmado por documentos ({corroborados.length})
+          </summary>
+          <ul className="mt-1 space-y-1">{corroborados.map(linha)}</ul>
+        </details>
+      )}
+      {derivados.length > 0 && (
+        <details
+          className="rounded border border-amber-200 bg-white/60 px-2 py-1 text-xs"
+          data-testid={`${testIdPrefix}-derivados-${contratoId}`}
+        >
+          <summary className="min-h-8 cursor-pointer text-[11px] font-medium text-amber-900">
+            Derivados (conferir) ({derivados.length})
+          </summary>
+          <ul className="mt-1 space-y-1">{derivados.map(linha)}</ul>
+        </details>
       )}
       <ItensRevisaoLista
         itens={revisao.itens}

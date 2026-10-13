@@ -35,6 +35,7 @@ Wording belongs to `frases`/`contexto`; a value nobody entered stays None so
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Any, Iterable, Optional
@@ -177,8 +178,28 @@ def _certidoes_da_empresa(client: Any, org_id: UUID, empresa_id: str) -> list[di
     return certidoes_svc.certidoes_por_empresa(client, org_id, empresa_id)
 
 
+def _participacao_vale(row: dict) -> bool:
+    """A participação a human stands behind: confirmed (`confirmado_em`), or
+    typed by a human in the first place (`origem='manual'`). A machine
+    (Crednet) participação nobody confirmed is NOT a fact about the seller —
+    the Crednet lists every company a CPF ever appeared in (owner, 2026-10-13:
+    "SPEDIREXPRESS" reached a contract this way)."""
+    # NOC-REMEDIATE[empresa-participacao-confirmar]: there is no action yet
+    # to CONFIRM a Crednet participação (`empresas.dados_service.
+    # criar_ou_vincular_manual` on an existing row only fills `pct`), so a
+    # seller's real company read off the Crednet stays out of the contract
+    # until that action exists on the card's Empresas section.
+    return bool(row.get("confirmado_em")) or row.get("origem") == "manual"
+
+
 def _empresas(
-    client: Any, org_id: UUID, certificando_ids: Iterable[str], pessoas_por_id: dict[str, Pessoa]
+    client: Any,
+    org_id: UUID,
+    certificando_ids: Iterable[str],
+    pessoas_por_id: dict[str, Pessoa],
+    *,
+    empresas_parte: Iterable[str] = (),
+    cnpjs_parte: Iterable[str] = (),
 ) -> list[Empresa]:
     """[E1/E3/E4/E6] The DISTINCT companies (migration 167) a certificando
     holds a Crednet participação in — `cliente_empresa_participacoes` ->
@@ -193,7 +214,14 @@ def _empresas(
     off `d.vendedores`/`d.compradores` alone, independent of whether this
     loader ever reaches their empresa at all (S2a's `/empresas` endpoint,
     which loads every parte including bare cônjuges, is the fuller
-    picture)."""
+    picture).
+
+    🔴 Only a participação a human stands behind (`_participacao_vale`), or
+    a company that is itself a contract party — a PJ parte
+    (`empresas_parte`, `atendimento_partes.empresa_id`) or a PJ
+    intermediário (`cnpjs_parte`, digits). An unconfirmed Crednet
+    participação never enters the contract, nor therefore its legal-review
+    list (`validacao_extracao.coletar` reads `dados.empresas`)."""
     ids = sorted({str(i) for i in certificando_ids if i})
     if not ids:
         return []
@@ -206,15 +234,18 @@ def _empresas(
     for row in participacoes:
         por_empresa.setdefault(str(row["empresa_id"]), []).append(row)
     linhas_empresa = _rows_por_id_generico(client, org_id, "empresas", list(por_empresa))
+    partes = {str(e) for e in empresas_parte if e}
+    cnpjs = {re.sub(r"\D", "", str(c)) for c in cnpjs_parte if c}
     saida: list[Empresa] = []
     for empresa_id, participantes in por_empresa.items():
         row = linhas_empresa.get(empresa_id)
         if row is None:
             continue
+        e_parte = empresa_id in partes or re.sub(r"\D", "", row.get("cnpj") or "") in cnpjs
         donos = [
             pessoas_por_id[str(r["cliente_id"])]
             for r in participantes
-            if str(r["cliente_id"]) in pessoas_por_id
+            if str(r["cliente_id"]) in pessoas_por_id and (e_parte or _participacao_vale(r))
         ]
         if not donos:
             continue
@@ -772,7 +803,14 @@ def carregar(
     }
     certificando_ids -= {p.cliente_id for p in anuentes(vendedores)}
     pessoas_por_id = {p.cliente_id: p for p in vendedores + compradores}
-    empresas = _empresas(client, org_id, certificando_ids, pessoas_por_id)
+    empresas = _empresas(
+        client, org_id, certificando_ids, pessoas_por_id,
+        empresas_parte=[pj.empresa_id for pj in partes_pj],
+        cnpjs_parte=[
+            i.get("documento") for i in estruturada.get("intermediarios") or []
+            if len(re.sub(r"\D", "", str(i.get("documento") or ""))) == 14
+        ],
+    )
     clientes_com_crednet = _clientes_com_crednet(client, org_id, certificando_ids)
 
     dados = DadosContrato(

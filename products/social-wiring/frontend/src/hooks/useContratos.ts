@@ -102,11 +102,21 @@ export interface VersaoOut {
  *  approved. */
 export type RevisaoJuridicaStatus = "nao_exigida" | "aguardando" | "aprovada";
 
+/** `secao` of a review item (backend `validacao_extracao.SECAO_*`, owner
+ *  2026-10-13): only `extraido` is a machine reading nobody vouched for —
+ *  `derivado` (copied/inferred) and `corroborado` (≥2 documents agree) are
+ *  shown collapsed and never counted. Absent on a row recorded before. */
+export type SecaoRevisao = "extraido" | "derivado" | "corroborado";
+
 /** What the reviewer is pointed at FIRST — a machine-extracted value the
  *  version relied on, or (aditivos) the generated wording / a free clause the
- *  team wrote (`origem` `"gerado"` / `"manual"`). Labels and provenance only;
- *  the value itself is read in the PDF ("revisar no documento"). An EMPTY
- *  list does not mean "no review": see `RevisaoJuridicaStatus`. */
+ *  team wrote (`origem` `"gerado"` / `"manual"`). ONE row per fact (a couple
+ *  fact once, `agrupadas` = the spouse's row it also confirms). `valor` is
+ *  read LIVE by the contract list (the version stores only a fingerprint);
+ *  `valor_mascarado` is set for an identity number and shown until the user
+ *  reveals; `valor_confere=false` = the value changed after this version was
+ *  generated. An EMPTY list does not mean "no review": see
+ *  `RevisaoJuridicaStatus`. */
 export interface CampoRevisaoJuridica {
   chave: string;
   entidade: string;
@@ -117,7 +127,21 @@ export interface CampoRevisaoJuridica {
   origem: string | null;
   fonte_documento_id: string | null;
   fonte_nome: string | null;
+  /** The source document's own confidence — kept for the ledger, never shown
+   *  (on a spouse's row it was the titular's). `precisao` is what is shown. */
   confianca: string | null;
+  secao?: SecaoRevisao | null;
+  /** The reason line ("Copiado do endereço do cônjuge…"). */
+  motivo?: string | null;
+  /** "precisão medida 39% (18 contratos)" | "sem medição". */
+  precisao?: string | null;
+  /** "CNH", "Certidão de casamento", "Serasa Crednet"… */
+  fonte_tipo?: string | null;
+  n_documentos?: number | null;
+  agrupadas?: { chave: string }[];
+  valor?: string | null;
+  valor_mascarado?: string | null;
+  valor_confere?: boolean | null;
 }
 
 /** [Migration 193] A piece of WORDING the final legal review must read —

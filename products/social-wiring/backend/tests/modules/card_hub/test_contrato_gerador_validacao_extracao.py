@@ -405,10 +405,16 @@ class TestListagem:
         scoped.set_table_data("clientes", linhas)
         assert _pendentes(client, ids) == []
 
-    def test_an_api_certidao_and_a_suggested_last_transfer_are_listed(self, client, scoped):
+    def test_an_ia_certidao_and_a_suggested_last_transfer_are_listed(self, client, scoped):
+        """Only an `ia` READING of a certidão is a review item — `api`/`texto`
+        are the issuer's own verdict (owner, 2026-10-13)."""
         ids = _seed_completo(scoped)
         resultados = _rows(scoped, "certidao_resultados")
-        resultados[0] = {**resultados[0], "resultado_origem": "api",
+        resultados[0] = {**resultados[0], "resultado_origem": "ia",
+                         "confirmado_por": None, "confirmado_em": None}
+        resultados[1] = {**resultados[1], "resultado_origem": "api",
+                         "confirmado_por": None, "confirmado_em": None}
+        resultados[2] = {**resultados[2], "resultado_origem": "texto",
                          "confirmado_por": None, "confirmado_em": None}
         scoped.set_table_data("certidao_resultados", resultados)
         detalhes = [
@@ -421,7 +427,7 @@ class TestListagem:
         assert set(por_entidade) == {"certidao", "ato_detalhe"}
         cert = por_entidade["certidao"]
         assert cert["entidade_id"] == resultados[0]["id"]
-        assert cert["origem"] == "api" and cert["obrigatorio"] is True and cert["edicao"] is None
+        assert cert["origem"] == "ia" and cert["obrigatorio"] is True and cert["edicao"] is None
         ato = por_entidade["ato_detalhe"]
         assert ato["confianca"] == "baixa"
         assert "Antiga Dona Exemplo" in ato["valor"]

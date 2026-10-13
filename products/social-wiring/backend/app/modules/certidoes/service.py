@@ -3956,6 +3956,30 @@ def certidoes_por_cliente(db, org_id, cliente_id: str) -> list[dict]:
     return _resultados_das_consultas(db, org_id, consultas)
 
 
+def mais_recente_por_tipo(resultados: list[dict]) -> list[dict]:
+    """The latest resultado per `tipo` of ONE person's (or entity's)
+    certidões — what a reader that judges the CURRENT state wants (the
+    contract's legal-review list), never the history `certidoes_por_parte`/
+    `certidoes_por_cliente` deliberately return (a person may hold one or two
+    consultas over a deal, and a Crednet reading used to be copied into every
+    one of them — the same Serasa file three times).
+
+    "Latest" = the most recent `emitida_em`, then `created_at`, then
+    `updated_at`; soft-deleted rows never reach here (both readers filter
+    `excluida_em`). Input order is kept for the survivors."""
+    melhor: dict[str, dict] = {}
+    for r in resultados:
+        tipo = r.get("tipo") or ""
+        atual = melhor.get(tipo)
+        chave_r = (r.get("emitida_em") or "", r.get("created_at") or "", r.get("updated_at") or "")
+        if atual is None or chave_r > (
+            atual.get("emitida_em") or "", atual.get("created_at") or "", atual.get("updated_at") or ""
+        ):
+            melhor[tipo] = r
+    vencedores = {id(r) for r in melhor.values()}
+    return [r for r in resultados if id(r) in vencedores]
+
+
 def certidoes_por_empresa(db, org_id, empresa_id: str) -> list[dict]:
     """Every certidão result across every CNPJ consulta linked to an
     `empresas` row — `certidoes_por_cliente`'s sibling for an empresa
@@ -4381,23 +4405,31 @@ def _aplicar_crednet_a_resultado(
 
 
 def registrar_serasa_de_crednet(db, org_id, cliente_id: str, doc: dict, leitura: Any) -> int:
-    """§C5 step (d): fill the `serasa` resultado of every CPF consulta this
-    cliente's Crednet CPF matches. `doc` is the `cliente_documentos` row the
-    reading came off (`storage_path`/`id` are what this needs of it).
+    """§C5 step (d): fill the `serasa` resultado of this cliente's LATEST CPF
+    consulta the Crednet CPF matches. `doc` is the `cliente_documentos` row
+    the reading came off (`storage_path`/`id` are what this needs of it).
 
-    Targets: every non-excluded `tipo_documento='cpf'` consulta belonging to
-    `cliente_id` whose normalized `documento` equals the Crednet's normalized
-    CPF — the same person may be investigated under a slightly differently
-    punctuated CPF, so comparison is digit-only, not string-equal.
+    Target: among the non-excluded `tipo_documento='cpf'` consultas belonging
+    to `cliente_id` whose normalized `documento` equals the Crednet's
+    normalized CPF (digit-only — the same person may be investigated under a
+    differently punctuated CPF), ONLY the most recent one (`created_at`).
 
-    Returns the number of resultados this call actually filled/superseded.
+    🔴 ONE document, ONE registration per cliente (owner, 2026-10-13). This
+    used to fan the same Crednet into EVERY matching consulta, so one Serasa
+    file showed up three times in the contract's legal-review list. Idempotent:
+    re-registering the same reading writes nothing (`_aplicar_crednet_a_
+    resultado` only supersedes an OLDER Crednet reading).
+
+    Returns the number of resultados this call actually filled/superseded
+    (0 or 1).
     """
     cpf_norm = only_digits(leitura.cpf) if leitura.cpf else None
     if not cpf_norm:
         return 0
+    # postgrest-unbounded-ok: a handful of consultas per cliente, not 1 000.
     consultas = (
         db.table(CONSULTAS)
-        .select("id, documento")
+        .select("id, documento, created_at")
         .eq("org_id", str(org_id))
         .eq("cliente_id", str(cliente_id))
         .eq("tipo_documento", "cpf")
@@ -4407,11 +4439,8 @@ def registrar_serasa_de_crednet(db, org_id, cliente_id: str, doc: dict, leitura:
     alvo = [c for c in consultas if only_digits(c.get("documento") or "") == cpf_norm]
     if not alvo:
         return 0
-    return sum(
-        1
-        for consulta in alvo
-        if _aplicar_crednet_a_resultado(db, org_id, consulta["id"], doc, leitura)
-    )
+    ultima = max(alvo, key=lambda c: (c.get("created_at") or "", str(c["id"])))
+    return int(_aplicar_crednet_a_resultado(db, org_id, ultima["id"], doc, leitura))
 
 
 def aplicar_crednet_pendente(db, org_id, consulta: dict) -> bool:
@@ -4487,6 +4516,7 @@ __all__ = [
     "divergencias_da_releitura",
     "executar_releitura",
     "kwargs_extracao_releitura",
+    "mais_recente_por_tipo",
     "pode_reler",
     "preparar_releitura",
     "releitura_em_andamento",
