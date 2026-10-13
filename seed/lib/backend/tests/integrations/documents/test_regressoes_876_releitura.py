@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from noctusai_lib.integrations.documents.civil_status import find_estado_civil
 from noctusai_lib.integrations.documents.legibilidade import AVISO_LEITURA_COMPROMETIDA
 from noctusai_lib.integrations.documents.real import LadderIdentityExtractor
 from noctusai_lib.integrations.documents.releitura import mesclar
@@ -160,3 +161,31 @@ class TestR3AverbacaoVence:
         assert out.regime_bens == "comunhao_universal"
         assert out.genero is None
         assert all(c.genero is None or c.genero_derivado for c in out.conjuges)
+
+
+#: R3b (measured on a later harness run): the escalated transcription
+#: rendered the matrícula appendix's book-type legend in a variant shape the
+#: old "LIVRO X (Evento)" guard did not cover, and "Óbito" read as a death.
+_DIVORCIO = (
+    "CERTIDAO DE CASAMENTO\nREGIME DE BENS: COMUNHAO UNIVERSAL DE BENS\n"
+    "AVERBACOES / ANOTACOES A ACRESCER: AVERBACAO DE DIVORCIO: FOI HOMOLOGADO O DIVORCIO DO CASAL.\n"
+)
+
+
+class TestR3bLegendaDeLivroNaoEObito:
+    @pytest.mark.parametrize(
+        "legenda",
+        [
+            "4: Livro C (Óbito)",
+            "4: Livro C - Óbito",
+            "4 - Livro C: Óbito",
+            "4: Livro C (Óbito",
+            "e (1): Tipo do livro, sendo: 1: Livro A (Nascimento) 4: Livro C Obito",
+        ],
+    )
+    def test_book_type_legend_never_makes_a_widow(self, legenda: str) -> None:
+        assert find_estado_civil(_DIVORCIO + legenda)[0] == "divorciado"
+
+    def test_a_real_death_averbacao_is_still_read(self) -> None:
+        texto = "CERTIDAO DE CASAMENTO\nAVERBACAO: OBITO DO CONJUGE VARAO, REGISTRADO NO LIVRO C-12."
+        assert find_estado_civil(texto)[0] == "viuvo"
