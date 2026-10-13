@@ -302,7 +302,10 @@ class TestIdentidadeEstrangeiro:
     def test_rne_replaces_the_rg_wording(self):
         texto = _texto(1, self._estrangeira())
         assert "italiana" in texto
-        assert "portadora da cédula de identidade RNE V123456-7 CGPI/DIREX/DPF e inscrita no CPF/MF" in texto
+        # The signed wording: "RNE nº <n>" — the issuing body (DIREX/DPF)
+        # is never part of the number.
+        assert "portadora da cédula de identidade RNE nº V123456-7 e inscrita no CPF/MF" in texto
+        assert "DIREX" not in texto
         assert "RG V123456-7" not in texto
 
     def test_a_brazilian_identified_by_rne_blocks(self):

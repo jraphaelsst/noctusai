@@ -169,7 +169,8 @@ def _certidoes_de(nome: str, cpf_base: str, *, cliente_id: str, parte_id: str | 
          "emitida_em": emitida.isoformat(),
          "validade_ate": (emitida + timedelta(days=90)).isoformat(), "resultado": "negativa",
          "created_at": _T0, "updated_at": _T0}
-        for i, (tipo, *_r) in enumerate(CERTIDOES, start=1)
+        for i, (tipo, _r, _n, pf, pj, _s) in enumerate(CERTIDOES, start=1)
+        if pf or pj  # the legacy required set — never the Certidão Única (a substitute)
     ]
     return consulta, resultados
 

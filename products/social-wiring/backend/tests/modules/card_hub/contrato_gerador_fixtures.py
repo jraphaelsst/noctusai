@@ -95,7 +95,8 @@ def certidoes_completas(emitida: date = date(2026, 9, 1)) -> list[Certidao]:
             validade_ate=date(2026, 12, 1),
             consulta_tipo_documento="cpf",
         )
-        for i, (tipo, *_resto) in enumerate(CERTIDOES, start=1)
+        for i, (tipo, _r, _n, pf, pj, _s) in enumerate(CERTIDOES, start=1)
+        if pf or pj  # the legacy required set — never the Certidão Única (a substitute)
     ]
 
 

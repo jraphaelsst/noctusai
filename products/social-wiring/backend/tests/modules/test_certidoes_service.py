@@ -2429,15 +2429,17 @@ class TestRegistryEstruturado:
             "nao_emitida", "negativa_com_homonimos",
         }
 
-    def test_manual_tipos_tem_quatro_itens_sem_endpoint(self):
+    def test_manual_tipos_tem_cinco_itens_sem_endpoint(self):
         """Certidões matriz tab (Levantamento de Certidões.xlsx): row 5.13
         (`fgts_regularidade`) added to the original three. `outras_1`/
         `outras_2` — this module's first, now-replaced pass at rows
         5.14/5.15 — are GONE: per-card CUSTOM rows (migration 170) replaced
-        them, never reached dev/prod (unmerged branch), nothing orphaned."""
-        assert len(MANUAL_TIPOS_CONFIG) == 4
+        them, never reached dev/prod (unmerged branch), nothing orphaned.
+        `certidao_unica_sp` (Resolução Conjunta SFP/PGE nº 1/2026) is the
+        SP Certidão Única de Débitos, manual-upload."""
+        assert len(MANUAL_TIPOS_CONFIG) == 5
         assert {c["tipo"] for c in MANUAL_TIPOS_CONFIG} == {
-            "serasa", "tjsp_esaj", "tjsp_eproc", "fgts_regularidade",
+            "serasa", "tjsp_esaj", "tjsp_eproc", "fgts_regularidade", "certidao_unica_sp",
         }
         for config in MANUAL_TIPOS_CONFIG:
             assert "endpoint" not in config
@@ -2448,14 +2450,14 @@ class TestRegistryEstruturado:
         automated types stay pinned at ten, unaffected by this migration."""
         tipos = {c["tipo"] for c in get_certidoes_tipos()}
         assert tipos.isdisjoint({
-            "serasa", "tjsp_esaj", "tjsp_eproc", "fgts_regularidade",
+            "serasa", "tjsp_esaj", "tjsp_eproc", "fgts_regularidade", "certidao_unica_sp",
         })
         assert len(get_certidoes_tipos()) == 10
 
     def test_get_manual_tipos_retorna_tipo_nome_ordem(self):
         for item in get_manual_tipos():
             assert set(item) == {"tipo", "nome", "ordem"}
-        assert [c["ordem"] for c in get_manual_tipos()] == [11, 12, 13, 14]
+        assert [c["ordem"] for c in get_manual_tipos()] == [11, 12, 13, 14, 15]
 
     def test_manual_config_for_desconhecido_retorna_none(self):
         assert manual_config_for("nao_existe") is None

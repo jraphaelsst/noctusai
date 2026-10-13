@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -60,7 +60,7 @@ from noctusai_lib.integrations.documents.cpf import is_valid as cpf_valido
 from noctusai_lib.primitives.accents import fold_accents
 
 from app.modules.card_hub.banco_texto import banco_tem_dados_de_conta
-from app.modules.card_hub.contrato_gerador import certidao_pcen, frases
+from app.modules.card_hub.contrato_gerador import certidao_pcen, frases, profissoes
 from app.modules.card_hub.contrato_gerador.concordancia import normalizar_genero
 from app.modules.card_hub.contrato_gerador.dados import (
     PAPEIS_SEM_REDACAO,
@@ -1020,9 +1020,31 @@ def _rotulo_certidao_seguro(tipo: str) -> str:
     return tipo
 
 
-def tipos_exigidos(tipo_documento: str) -> list[str]:
+def certidao_unica_sp_vale(c: Optional[Certidao]) -> bool:
+    """Does a Certidão Única de Débitos (SP) stand in for the two legacy SP
+    lines? Yes once it carries ANYTHING read or typed (resultado, número or
+    emission date) and was not `nao_emitida` — an empty `pendente`
+    placeholder does not; a half-filled one does, so its own missing pieces
+    are named (`certidao.certidao_unica_sp.*`) instead of the legacy pair."""
+    if c is None or c.resultado == "nao_emitida":
+        return False
+    return bool(c.resultado or c.numero or c.emitida_em)
+
+
+def tipos_exigidos(tipo_documento: str, idx: Optional[dict[str, Certidao]] = None) -> list[str]:
+    """The certidão tipos required (and printed, in office order) for one
+    consulta kind. With `idx` (`indice_certidoes`), a valid Certidão Única
+    de Débitos (SP) takes the place of the two legacy SP certidões it
+    replaced — ONE line where they stood."""
     coluna = 3 if tipo_documento == "cpf" else 4
-    return [c[0] for c in frases.CERTIDOES if c[coluna]]
+    tipos = [c[0] for c in frases.CERTIDOES if c[coluna]]
+    if idx is None or not certidao_unica_sp_vale(idx.get(frases.CERTIDAO_UNICA_SP)):
+        return tipos
+    substituidas = frases.CERTIDOES_SUBSTITUIDAS_PELA_UNICA_SP
+    posicao = next((i for i, t in enumerate(tipos) if t in substituidas), len(tipos))
+    tipos = [t for t in tipos if t not in substituidas]
+    tipos.insert(min(posicao, len(tipos)), frases.CERTIDAO_UNICA_SP)
+    return tipos
 
 
 def indice_certidoes(certidoes: list[Certidao], tipo_documento: str) -> dict[str, Certidao]:
@@ -1546,6 +1568,32 @@ def _identidade(av: Avaliacao, p: Pessoa) -> None:
         )
 
 
+def _render_qualificacao(av: Avaliacao, p: Pessoa) -> None:
+    """Render guards on values the qualificação prints AS STORED — each one
+    surfaced for a human, never silently rewritten:
+
+    - an RG órgão expedidor without its UF ("SSP" for "SSP/SP") prints the
+      órgão alone (`frases.rg_texto` never invents a UF) and warns;
+    - a profissão outside the vocabulary (`profissoes.reconhecida`; e.g. the
+      misread "aposentanda") is a `falta` — it would go into the deed
+      verbatim."""
+    if frases.rg_orgao_sem_uf(p):
+        av.avisa(
+            "RG_ORGAO_SEM_UF",
+            f"UF do órgão expedidor do RG de {_nome(p)} ausente — a qualificação sai só com o órgão "
+            f"('{(p.rg_orgao or '').strip()}').",
+        )
+    profissao = (p.profissao or "").strip()
+    if profissao and not profissoes.reconhecida(profissao):
+        av.falta(
+            "qualificacao.profissao",
+            f"Profissão de {_nome(p)} não reconhecida: '{profissao}'",
+            "partes",
+            p.parte_id,
+            ancora=_ancora(p),
+        )
+
+
 def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRAO) -> None:
     """The parties gate. `politica` defaults to the office's — keeps the
     two-argument call `contrato_aditivo` makes working (its pacto check
@@ -1597,6 +1645,7 @@ def _partes(av: Avaliacao, d: DadosContrato, politica: Politica = POLITICA_PADRA
         ids_lado = {p.cliente_id: p for p in lado_pessoas}
         for p in lado_pessoas:
             _identidade(av, p)
+            _render_qualificacao(av, p)
             # [Owner decision, 2026-10-03] a missing BAIRRO warns, never blocks
             # (the other address fields still gate via `faltando_qualificacao`).
             if (
@@ -2685,7 +2734,7 @@ def _certidoes(
                     alvo=alvo,
                 )
         idx = indice_certidoes(certs, tipo_documento)
-        for tipo in tipos_exigidos(tipo_documento):
+        for tipo in tipos_exigidos(tipo_documento, idx):
             rotulo = frases.rotulo_certidao(tipo, None)
             c = idx.get(tipo)
             if c is None or not c.resultado:
@@ -2722,6 +2771,22 @@ def _certidoes(
                     av, d, "CERTIDAO_EMITIDA_APOS_ASSINATURA",
                     f"{rotulo} de {nome_grupo} tem emissão posterior à assinatura.",
                 )
+            elif tipo == frases.CERTIDAO_UNICA_SP:
+                # [Resolução Conjunta SFP/PGE nº 1/2026] Judged by validity,
+                # not emission age: the printed "válida até" when read,
+                # else emission + 90 days.
+                validade = c.validade_ate or (
+                    c.emitida_em + timedelta(days=frases.VALIDADE_CERTIDAO_UNICA_SP_DIAS)
+                )
+                if validade < assinatura:
+                    origem = "impressa" if c.validade_ate else (
+                        f"{frases.VALIDADE_CERTIDAO_UNICA_SP_DIAS} dias da emissão"
+                    )
+                    tempo(
+                        "CERTIDAO_VENCIDA",
+                        f"{rotulo} de {nome_grupo} está vencida na data da assinatura "
+                        f"(validade {origem}: {validade.strftime('%d/%m/%Y')}).",
+                    )
             elif not excecao_pcen and (assinatura - c.emitida_em).days >= politica.certidao_max_dias:
                 # [Q10] every certidão is emitted less than 30 days before signing.
                 # (The Receita PCEN 2ª via is judged by its printed validity below.)
@@ -2733,7 +2798,7 @@ def _certidoes(
                         segunda_via=c.segunda_via, validade_ate=c.validade_ate, assinatura=assinatura,
                     ),
                 )
-            if c.validade_ate is not None and c.validade_ate < assinatura:
+            if tipo != frases.CERTIDAO_UNICA_SP and c.validade_ate is not None and c.validade_ate < assinatura:
                 tempo("CERTIDAO_VENCIDA", f"{rotulo} de {nome_grupo} está vencida na data da assinatura.")
             elif excecao_pcen and c.emitida_em <= assinatura:
                 confirmar_pcen(parte_id, c, rotulo, nome_grupo)

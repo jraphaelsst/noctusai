@@ -535,8 +535,8 @@ class TestCriarConsultaManual:
         # 9 automated (the generic `tjsp` excluded — G12, 2026-09-25: the
         # office splits it into e-SAJ/e-Proc instead) + 3 CPF-applicable
         # manual types (excludes `fgts_regularidade`, CNPJ-only — matriz
-        # row 5.13).
-        assert data["total_certidoes"] == 12
+        # row 5.13) + the SP Certidão Única de Débitos (manual).
+        assert data["total_certidoes"] == 13
 
     def test_nao_dispara_processamento_em_background(self, client, certidoes_db, override_service):
         db, _ = certidoes_db
@@ -555,10 +555,10 @@ class TestCriarConsultaManual:
         _seed(db)
         client.post(f"{BASE}/consultas/manual", json=self._payload())
         inserted = db.table("certidao_resultados").inserted_payloads
-        assert len(inserted) == 12
+        assert len(inserted) == 13
         tipos = {r["tipo"] for r in inserted}
         assert tipos == {c["tipo"] for c in service.CERTIDOES_CONFIG if c["tipo"] != "tjsp"} | {
-            "serasa", "tjsp_esaj", "tjsp_eproc",
+            "serasa", "tjsp_esaj", "tjsp_eproc", "certidao_unica_sp",
         }
         assert "tjsp" not in tipos
         assert all(r["status"] == "pendente" for r in inserted)
@@ -636,7 +636,7 @@ class TestCriarConsultaManual:
             f"{BASE}/consultas/manual", json=self._payload(incluir_tjsp=True)
         )
         assert resp.status_code == 200
-        assert resp.json()["data"]["total_certidoes"] == 12
+        assert resp.json()["data"]["total_certidoes"] == 13
         assert "incluir_tjsp" not in db.table("certidao_consultas").inserted_payloads[0]
         tipos = {r["tipo"] for r in db.table("certidao_resultados").inserted_payloads}
         assert "tjsp" not in tipos
@@ -1255,7 +1255,7 @@ class TestVincularParte:
             r["tipo"]
             for r in db.table("certidao_resultados").select("*").execute().data
         }
-        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc", "certidao_unica_sp"}
 
     def test_g13_aplica_crednet_pendente_apos_vincular(self, client, certidoes_db):
         """P1/883 (2026-09-25): `vincular_parte` must apply an already-
@@ -1292,7 +1292,7 @@ class TestVincularParte:
             json={"atendimento_parte_id": PARTE_ID},
         )
         rows = db.table("certidao_resultados").select("*").execute().data
-        assert len(rows) == 3
+        assert len(rows) == 4  # serasa, tjsp_esaj, tjsp_eproc, certidao_unica_sp
 
     def test_nao_duplica_tipos_ja_existentes(self, client, certidoes_db):
         """A consulta already carrying the ten automated resultados (the
@@ -1464,7 +1464,7 @@ class TestVincularCliente:
             r["tipo"]
             for r in db.table("certidao_resultados").select("*").execute().data
         }
-        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc"}
+        assert tipos == {"serasa", "tjsp_esaj", "tjsp_eproc", "certidao_unica_sp"}
 
     def test_g13_aplica_crednet_pendente_apos_vincular(self, client, certidoes_db):
         """P1/883 (2026-09-25): `vincular_cliente`'s sibling of the
@@ -1497,7 +1497,7 @@ class TestVincularCliente:
             json={"cliente_id": CLIENTE_ID},
         )
         rows = db.table("certidao_resultados").select("*").execute().data
-        assert len(rows) == 3
+        assert len(rows) == 4  # serasa, tjsp_esaj, tjsp_eproc, certidao_unica_sp
 
     def test_cliente_inexistente_e_404(self, client, certidoes_db):
         db, _ = certidoes_db

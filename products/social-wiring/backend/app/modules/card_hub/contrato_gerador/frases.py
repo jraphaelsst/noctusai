@@ -25,6 +25,7 @@ from noctusai_lib.integrations.documents.nacionalidade import (
     canonico as _nacionalidade_canonica,
     feminino as _nacionalidade_feminina,
 )
+from noctusai_lib.primitives import identificador
 
 from app.modules.card_hub.contrato_gerador.extenso import brl_por_extenso
 from app.modules.card_hub.contrato_gerador.concordancia import (
@@ -70,16 +71,58 @@ def cep(valor: Optional[str]) -> str:
     return f"{d[:5]}-{d[5:]}" if len(d) == 8 else (valor or "").strip()
 
 
+#: Portuguese particles a title-cased place name keeps lower-case (never
+#: the value's FIRST word).
+_PARTICULAS = frozenset({"de", "da", "do", "das", "dos", "e"})
+
+#: A Roman numeral up to XXXIX ("Rua Dom Pedro II", "Rua XV de Novembro")
+#: stays upper-case. Bounded on purpose: an open Roman grammar would also
+#: match ordinary words such as "DI" or "MIL".
+_ROMANO_RE = re.compile(r"^X{0,3}(?:IX|IV|V?I{0,3})$")
+
+#: The first letter of a word and of each hyphen/apostrophe-joined piece
+#: ("D'Oeste", "Bela-Vista").
+_INICIO_PECA_RE = re.compile(r"(^|[-'’])([^\W\d_])")
+
+
+def _palavra_titulo(palavra: str, *, primeira: bool) -> str:
+    baixa = palavra.lower()
+    if not primeira and baixa in _PARTICULAS:
+        return baixa
+    if len(palavra) >= 2 and _ROMANO_RE.match(palavra.upper()):
+        return palavra.upper()
+    # An abbreviation keeps its period exactly as the source wrote it ("AL."
+    # -> "Al.") — never expanded, never abbreviated.
+    return _INICIO_PECA_RE.sub(lambda m: m.group(1) + m.group(2).upper(), baixa)
+
+
+def titulo_lugar(valor: Optional[str]) -> str:
+    """Render-time casing of a logradouro/bairro/cidade (the stored value is
+    never changed): an ALL-CAPS or all-lower value prints in title case with
+    the Portuguese particles lower-case — "ALAMEDA LIVERPOOL" -> "Alameda
+    Liverpool", "RESERVA DO VIANNA" -> "Reserva do Vianna" (the signed
+    contracts' style). A MIXED-case value is a deliberate spelling
+    ("Alphaville Residencial dois") and prints exactly as stored."""
+    bruto = re.sub(r"\s+", " ", (valor or "").strip())
+    if not bruto or not (bruto.isupper() or bruto.islower()):
+        return bruto
+    return " ".join(_palavra_titulo(w, primeira=i == 0) for i, w in enumerate(bruto.split(" ")))
+
+
 def endereco_texto(e: Endereco) -> str:
-    """"Rua X, nº 10 - Apto 1 - Bairro - Cidade/UF – CEP: 00000-000"."""
-    texto = f"{e.logradouro}, nº {e.numero}"
+    """"Rua X, nº 10 - Apto 1 - Bairro - Cidade/UF – CEP: 00000-000".
+
+    Logradouro, bairro and cidade go through `titulo_lugar` (signed style:
+    "Al. Liverpool, nº 81 - Reserva do Vianna - Cotia/SP"); the UF stays
+    upper-case and the CEP digits-and-hyphen."""
+    texto = f"{titulo_lugar(e.logradouro)}, nº {e.numero}"
     if e.complemento:
         texto += f" - {e.complemento}"
     # A missing bairro is an aviso upstream (`ENDERECO_SEM_BAIRRO`), never a
     # dangling " -  - ": the segment is simply omitted.
     if (e.bairro or "").strip():
-        texto += f" - {e.bairro.strip()}"
-    return f"{texto} - {e.cidade}/{(e.uf or '').upper()} – CEP: {cep(e.cep)}"
+        texto += f" - {titulo_lugar(e.bairro)}"
+    return f"{texto} - {titulo_lugar(e.cidade)}/{(e.uf or '').strip().upper()} – CEP: {cep(e.cep)}"
 
 
 def matricula_numero(valor: Optional[str]) -> str:
@@ -198,6 +241,20 @@ def rg_texto(p: Pessoa) -> str:
     return f"{numero}-{orgao}" if orgao else numero
 
 
+def rg_orgao_sem_uf(p: Pessoa) -> bool:
+    """True when the party is identified by RG and the stored órgão
+    expedidor is a state órgão without its UF ("SSP" instead of "SSP/SP").
+    `rg_texto` still prints the órgão alone — the UF is never invented — and
+    readiness warns (`RG_ORGAO_SEM_UF`) so a human completes it. The seed's
+    órgão grammar decides (`identificador.ler("orgao_expedidor")`, motivo
+    `sem_uf`)."""
+    if (p.identidade_tipo or "rg").strip().lower() != "rg":
+        return False
+    if not (p.rg_orgao or "").strip():
+        return False
+    return identificador.ler("orgao_expedidor", p.rg_orgao).motivo == "sem_uf"
+
+
 #: [Migration 193] `clientes.identidade_tipo` — the identity documents a
 #: foreign party is qualified by instead of the RG (corpus: 3 deals, "RNE").
 #: `None`/'rg' is the cédula de identidade (RG). RNM (Registro Nacional
@@ -209,14 +266,15 @@ IDENTIDADES_VALIDAS: tuple[str, ...] = ("rg", *IDENTIDADES_ESTRANGEIRO)
 
 def identidade_texto(p: Pessoa) -> str:
     """"portador(a) da cédula de identidade RG <n>-<órgão>" — or, for a
-    foreign party (corpus deals 141/866/876), "portador(a) da cédula de
-    identidade RNE <n> <órgão>" (the corpus's own spacing: no hyphen)."""
+    foreign party, "portador(a) da cédula de identidade RNE nº <n>" (the
+    signed contracts' wording). The RNE/RNM's issuing body (DIREX, CGPI/
+    DIREX/DPF — the Polícia Federal) is NEVER part of the number and is not
+    printed: appending it produced "RNE W-573.678-Z DIREX"."""
     portador = _g(p, "portador", "portadora")
     sigla = IDENTIDADES_ESTRANGEIRO.get((p.identidade_tipo or "").strip().lower())
     if sigla is None:
         return f"{portador} da cédula de identidade RG {rg_texto(p)}"
-    orgao = re.sub(r"\s+", " ", (p.rg_orgao or "").strip().upper())
-    return f"{portador} da cédula de identidade {sigla} {(p.rg or '').strip()} {orgao}".rstrip()
+    return f"{portador} da cédula de identidade {sigla} nº {(p.rg or '').strip()}"
 
 
 #: [Migration 193] A person qualified ALONE whose estado civil is one the
@@ -783,7 +841,23 @@ CERTIDOES: tuple[tuple[str, str, str, bool, bool, Optional[str]], ...] = (
     ("cenprot", "Pesquisa {R} junto ao Cenprot, relativa a protestos com abrangência ao Estado de São Paulo", "protocolo nº", True, True, None),
     ("cnd_fazenda_sp", "Certidão {R} de Débitos Tributários Não Inscritos na Dívida Ativa do Estado de São Paulo", "nº", True, True, None),
     ("divida_ativa_sp", "Certidão {R} de Débitos Tributários da Dívida Ativa do Estado de São Paulo", "nº", True, True, None),
+    # Not required on its own (PF/PJ False): it REPLACES the two lines above
+    # when present — `derivacao.tipos_exigidos(..., idx)`.
+    ("certidao_unica_sp", "Certidão Única de Débitos do Estado de São Paulo", "nº", False, False, None),
 )
+
+#: [Resolução Conjunta SFP/PGE nº 1/2026, DOE-SP 14/09/2026] From ~14/10/2026
+#: SEFAZ-SP and PGE-SP issue ONE "Certidão Única de Débitos" in place of the
+#: CND de débitos não inscritos (`cnd_fazenda_sp`) and the CND da dívida ativa
+#: (`divida_ativa_sp`). Its number is the "Código de controle"
+#: (XXXX.XXXX.XXXX.XXXX). Certidões issued before keep their printed validity
+#: and their own two lines.
+CERTIDAO_UNICA_SP = "certidao_unica_sp"
+CERTIDOES_SUBSTITUIDAS_PELA_UNICA_SP: tuple[str, ...] = ("cnd_fazenda_sp", "divida_ativa_sp")
+#: Validity when the document's printed "válida até" was not read: 90 days
+#: from emission (the Cadastro Fiscal Positivo's 180 days is only ever taken
+#: from the printed date — never assumed).
+VALIDADE_CERTIDAO_UNICA_SP_DIAS = 90
 
 RESULTADO_ROTULO = {
     "negativa": "Negativa",
