@@ -8,8 +8,8 @@ cents, weight and dimensions. CRUD, search, archive (items are never hard-delete
 reference them), CSV import / export.
 
 NOT here, on purpose: stock (the inventory organ owns it); the commerce catalog (a sales-channel concept --
-roadmap E5: `commerce_products.item_id` is a nullable FK that lands with the inventory wave,
-NOC-REMEDIATE[items-commerce-link] -- 2026-10-14).
+roadmap E5: `commerce_products.item_id` is a nullable composite FK shipped by the commerce organ's ERP
+link delta, `commerce/erp_sql.py` -- stock applies only to a product that carries it).
 
 Mount it from a product:
 

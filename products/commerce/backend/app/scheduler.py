@@ -10,6 +10,7 @@ Jobs (`register`, `noctusai_lib.api.scheduler`):
   -- `register_commerce_jobs` (the dispute poll is REQUIRED: Asaas has no "dispute lost" webhook, W3).
 * `finance_gateway_sync` -- `register_gateway_sync` (6-hourly statement pull per gateway account).
 * `finance_generate_recurrences` -- daily; books the due recurring entries.
+* `contracts_generate_billing` -- daily (the contracts organ's `register_jobs`); books each contract's receivables into finance.
 
 Worker: `commerce.invoice.issue` / `commerce.invoice.cancel` jobs (`make_invoice_job_handlers`) drained by a
 seed `Worker` with `INVOICE_RETRY_POLICY` (the worker's policy is the retry-vs-dead-letter authority).
@@ -30,6 +31,7 @@ from noctusai_lib.domain.jobs import Worker
 from app import commerce_deps as deps
 from app.commerce import CFG, FINANCE_CFG
 from app.dependencies import get_admin_client
+from app.routers.commerce_routers import contracts_organ
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +64,8 @@ def configure() -> tuple[str, ...]:
     )
     gateway_sync = register_gateway_sync(FINANCE_CFG, get_db=get_admin_client, operations_for=deps.charge_operations_for)
     register(RECURRENCES_JOB, finance_generate_recurrences_job, cron="10 3 * * *")
-    return (*names, gateway_sync, RECURRENCES_JOB)
+    contracts_billing = contracts_organ.register_jobs()
+    return (*names, gateway_sync, RECURRENCES_JOB, contracts_billing)
 
 
 def build_invoice_worker() -> Worker:

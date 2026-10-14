@@ -77,6 +77,12 @@ export interface ProductEditorProps {
   onSaved?: (product: Product) => void;
   /** Called after delete. */
   onDeleted?: () => void;
+  /**
+   * The items catalog to link a product to (ERP link: `commerce_products.item_id`). Passing it shows the "Item de
+   * estoque" picker; a product WITH an item holds, ships and gives back stock through the fulfillment handler, one
+   * without needs none (digital). Omit it on a host that has no items organ — the field and the wire key disappear.
+   */
+  itemOptions?: ReadonlyArray<{ id: string; label: string }>;
 }
 
 interface FormState {
@@ -88,6 +94,7 @@ interface FormState {
   fulfillment_type: FulfillmentType;
   category_id: string;
   tax_treatment_override: TaxTreatment | '';
+  item_id: string;
   attributes: Record<string, string>;
 }
 
@@ -102,11 +109,12 @@ function toState(p?: Product | null): FormState {
     fulfillment_type: p?.fulfillment_type ?? FULFILLMENT_BY_TYPE[type][0],
     category_id: p?.category_id ?? '',
     tax_treatment_override: p?.tax_treatment_override ?? '',
+    item_id: p?.item_id ?? '',
     attributes: Object.fromEntries(Object.entries(p?.attributes ?? {}).map(([k, v]) => [k, String(v ?? '')])),
   };
 }
 
-export function ProductEditor({ hooks, productId, locale, onSaved, onDeleted }: ProductEditorProps) {
+export function ProductEditor({ hooks, productId, locale, onSaved, onDeleted, itemOptions }: ProductEditorProps) {
   const { t } = useCommerceT(locale);
   const product = hooks.useProduct(productId);
   const categories = hooks.useCategories();
@@ -174,6 +182,8 @@ export function ProductEditor({ hooks, productId, locale, onSaved, onDeleted }: 
       category_id: form.category_id || null,
       attributes,
       tax_treatment_override: form.tax_treatment_override || null,
+      // Sent only when the host offers the picker: a host without the items organ has no such column.
+      ...(itemOptions ? { item_id: form.item_id || null } : {}),
     };
   }
 
@@ -252,6 +262,23 @@ export function ProductEditor({ hooks, productId, locale, onSaved, onDeleted }: 
               ))}
             </Select>
           </Field>
+          {itemOptions ? (
+            <div className="space-y-1">
+            <Field label={t('product.item')}>
+              <Select value={form.item_id} onChange={(e) => set('item_id', e.target.value)}>
+                <option value="">{t('product.no_item')}</option>
+                {/* an item archived since linking must still show (else saving would silently unlink it) */}
+                {form.item_id && !itemOptions.some((o) => o.id === form.item_id) ? (
+                  <option value={form.item_id}>{form.item_id.slice(0, 8)}</option>
+                ) : null}
+                {itemOptions.map((o) => (
+                  <option key={o.id} value={o.id}>{o.label}</option>
+                ))}
+              </Select>
+            </Field>
+            <p className="text-xs text-muted-foreground">{t('product.item_hint')}</p>
+            </div>
+          ) : null}
         </div>
         <Field label={t('product.description')}>
           <Textarea rows={4} value={form.description} onChange={(e) => set('description', e.target.value)} />

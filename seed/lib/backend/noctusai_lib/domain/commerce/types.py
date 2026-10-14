@@ -30,6 +30,14 @@ class FulfillmentType(_StrEnum):
     NONE = "none"
 
 
+class OrderChannel(_StrEnum):
+    """Where an order came from (roadmap E7). `storefront` = the public checkout; `manual` = created by staff or by
+    another organ (an accepted quote) -- no gateway charge exists until someone opens one."""
+
+    STOREFRONT = "storefront"
+    MANUAL = "manual"
+
+
 class ProductStatus(_StrEnum):
     DRAFT = "draft"
     IN_REVIEW = "in_review"

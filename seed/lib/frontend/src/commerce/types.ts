@@ -71,6 +71,10 @@ export type MediaKind = (typeof MEDIA_KINDS)[number];
 export const PRIVACY_REQUEST_STATUSES = ['open', 'verified', 'done', 'rejected'] as const;
 export type PrivacyRequestStatus = (typeof PRIVACY_REQUEST_STATUSES)[number];
 
+/** Where an order came from (roadmap E7): the public checkout, or staff / another organ (an accepted quote). */
+export const ORDER_CHANNELS = ['storefront', 'manual'] as const;
+export type OrderChannel = (typeof ORDER_CHANNELS)[number];
+
 export const ORDER_EVENT_SOURCES = ['checkout', 'webhook', 'staff', 'system'] as const;
 export type OrderEventSource = (typeof ORDER_EVENT_SOURCES)[number];
 
@@ -218,6 +222,8 @@ export interface Product {
   category_id: string | null;
   attributes: Record<string, unknown>;
   tax_treatment_override: TaxTreatment | null;
+  /** The items-catalog link (ERP link delta): stock applies only to a product that carries one. */
+  item_id?: string | null;
   created_at?: string;
   updated_at?: string;
   /** Present on GET by id. */
@@ -226,7 +232,7 @@ export interface Product {
 }
 
 export type ProductInput = Pick<Product, 'slug' | 'title' | 'product_type' | 'fulfillment_type'> &
-  Partial<Pick<Product, 'description' | 'category_id' | 'attributes' | 'tax_treatment_override'>>;
+  Partial<Pick<Product, 'description' | 'category_id' | 'attributes' | 'tax_treatment_override' | 'item_id'>>;
 
 export interface Coupon {
   id: string;
@@ -335,6 +341,10 @@ export interface Order {
   expires_at: string | null;
   paid_at: string | null;
   platform_fee_cents: number;
+  /** `manual` = made by staff / from an accepted quote (no gateway charge yet); absent before the ERP link delta. */
+  channel?: OrderChannel;
+  /** The record a manual order was made from (an accepted quote's id). */
+  source_ref?: string | null;
   created_at?: string;
   updated_at?: string;
   /** Present on GET by id. */

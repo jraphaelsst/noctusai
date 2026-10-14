@@ -4,7 +4,8 @@
  * Two audiences on one SPA:
  *   - **Storefront** (public, no login, host-resolved by the backend): `/`,
  *     `/p/:slug`, `/carrinho`, `/checkout`, `/pedido/:token`,
- *     `/minhas-compras`, `/privacidade`, `/privacidade/verificar` —
+ *     `/minhas-compras`, `/privacidade`, `/privacidade/verificar`, and the customer's signed quote link
+ *     `/orcamento/:token` (accept / decline, no login) —
  *     `publicRoutes`, so they render for anonymous buyers. The paths match
  *     the organ's e-mailed link templates (`CommerceConfig.*_path_template`).
  *   - **Back office** (`/admin/*`, license-gated staff): flat `routes` under
@@ -36,6 +37,9 @@ import {
   Boxes,
   Warehouse,
   Handshake,
+  Truck,
+  FileText,
+  FileSignature,
   Globe,
   KeyRound,
   Settings,
@@ -63,6 +67,9 @@ const Financeiro = lazy(() => import("@/pages/admin/Financeiro"));
 const Itens = lazy(() => import("@/pages/admin/Itens"));
 const Parceiros = lazy(() => import("@/pages/admin/Parceiros"));
 const Estoque = lazy(() => import("@/pages/admin/Estoque"));
+const Compras = lazy(() => import("@/pages/admin/Compras"));
+const Orcamentos = lazy(() => import("@/pages/admin/Orcamentos"));
+const Contratos = lazy(() => import("@/pages/admin/Contratos"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 
 // Storefront (public)
@@ -74,6 +81,9 @@ const StoreOrder = lazy(() => import("@/pages/storefront/StoreOrder"));
 const MyOrders = lazy(() => import("@/pages/storefront/MyOrders"));
 const PrivacyRequest = lazy(() => import("@/pages/storefront/PrivacyRequest"));
 const PrivacyVerify = lazy(() => import("@/pages/storefront/PrivacyVerify"));
+
+// Customer-facing quote link (public, signed token — no login, outside the authed shell)
+const QuoteAccept = lazy(() => import("@/pages/quote/QuoteAccept"));
 
 // Nav — `route` keys are `status_pagina.nome_pagina` rows (an item without a row is hidden).
 const NAV_GROUPS: NavGroupWithRoute[] = [
@@ -105,6 +115,9 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Itens", href: "/admin/itens", icon: Boxes, route: "itens" },
       { name: "Parceiros", href: "/admin/parceiros", icon: Handshake, route: "parceiros" },
       { name: "Estoque", href: "/admin/estoque", icon: Warehouse, route: "estoque" },
+      { name: "Compras", href: "/admin/compras", icon: Truck, route: "compras" },
+      { name: "Orçamentos", href: "/admin/orcamentos", icon: FileText, route: "orcamentos" },
+      { name: "Contratos", href: "/admin/contratos", icon: FileSignature, route: "contratos" },
     ],
   },
   {
@@ -150,6 +163,9 @@ export default createProductApp({
     { path: "/admin/itens", component: Itens },
     { path: "/admin/parceiros", component: Parceiros },
     { path: "/admin/estoque", component: Estoque },
+    { path: "/admin/compras", component: Compras },
+    { path: "/admin/orcamentos", component: Orcamentos },
+    { path: "/admin/contratos", component: Contratos },
     { path: "/admin/loja", component: StoreProfile },
     { path: "/admin/enderecos", component: StorefrontHosts },
     { path: "/admin/integracoes", component: ApiKeys },
@@ -164,6 +180,7 @@ export default createProductApp({
     { path: "/minhas-compras", component: MyOrders },
     { path: "/privacidade", component: PrivacyRequest },
     { path: "/privacidade/verificar", component: PrivacyVerify },
+    { path: "/orcamento/:token", component: QuoteAccept },
   ],
   Layout,
   ...infra.appConfig,

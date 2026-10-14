@@ -23,7 +23,14 @@ Mount it from a product:
 from . import decisions, delivery, esign, links, public, quotes, render
 from .config import QuotesConfig, QuotesContext
 from .errors import QuotesError
-from .handler import FakeQuoteAcceptHandler, NoopQuoteAcceptHandler, QuoteAcceptContext, QuoteAcceptHandler, QuoteConversion
+from .handler import (
+    FakeQuoteAcceptHandler,
+    NoopQuoteAcceptHandler,
+    QuoteAcceptContext,
+    QuoteAcceptHandler,
+    QuoteConversion,
+    RoutingQuoteAcceptHandler,
+)
 from .router import make_quotes_public_router, make_quotes_router
 from .sql import APPEND_ONLY_TABLES, QUOTES_TABLES, quotes_migration
 from .types import Channel, ConversionStatus, ConvertTo, Decision, LineKind, QuoteStatus
@@ -45,6 +52,7 @@ __all__ = [
     "QuotesConfig",
     "QuotesContext",
     "QuotesError",
+    "RoutingQuoteAcceptHandler",
     "decisions",
     "delivery",
     "esign",

@@ -75,7 +75,7 @@ New field `detail: EventDetail | None`, with `EventDetail = Literal["overdue", "
 | `partially_refunded` | `CHARGEBACK` | `chargeback` (counterpart of the P3 `paid → chargeback` edge, which stays) |
 
 - **`webhook.py` rewrite:** branch on `kind` / `detail` only, never on `raw`. `charge_refunded` + `detail=chargeback_opened` ⇒ `DISPUTE_OPENED` (not `CHARGEBACK`). `charge_paid` + `confirmed` ⇒ `paid`; `received` ⇒ finance settlement (§2.4). Refund/partial/dispute events ⇒ re-read `get_charge` and reconcile (§2.4).
-- **Fulfillment seam:** `FulfillmentHandler` gains `on_paused(order)` / `on_resumed(order)` (→/← `disputed`), `on_revoked(order)` (→ `refunded` | `chargeback`), `on_expired(order)` (→ `expired`). All default no-op. Commerce has no inventory yet, so "release stock" (D35) is `on_expired` — named destination P9.
+- **Fulfillment seam:** `FulfillmentHandler` gains `on_paused(order)` / `on_resumed(order)` (→/← `disputed`), `on_revoked(order)` (→ `refunded` | `chargeback`), `on_expired(order)` (→ `expired`). All default no-op. **Closed 2026-10-14 (ERP E6):** two more optional hooks, `on_created(order, items)` (runs BEFORE the order row exists; raising refuses the sale) and `on_cancelled(order, items)` (checkout failed after the hold, or staff cancelled), and the seed `StockFulfillment` (`domain/commerce/stock_fulfillment.py`) drives the inventory `StockPort` through them: created → `reserve`, paid → `commit`, `on_expired` / `on_cancelled` / `on_revoked` → `release` — D35's "stock released" is real for products linked to an item (`commerce_products.item_id`, the `commerce_erp` link delta).
 
 ### 2.3 Tables (added to `commerce_migration`; rendered into a NEW host migration, never editing `012`)
 | Table | Key columns |

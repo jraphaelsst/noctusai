@@ -163,7 +163,7 @@ def test_scheduler_registers_every_p4_job():
     names = configure()
     assert set(names) == {
         "commerce_expire_orders", "commerce_expiry_reminders", "commerce_dispute_poll", "commerce_fiscal_purge",
-        "finance_gateway_sync", "finance_generate_recurrences",
+        "finance_gateway_sync", "finance_generate_recurrences", "contracts_generate_billing",
     }
     assert names and {j.id for j in seed_scheduler.scheduler.get_jobs()} >= set(names)
 

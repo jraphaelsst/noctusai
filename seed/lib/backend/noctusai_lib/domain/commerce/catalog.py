@@ -12,7 +12,7 @@ from typing import Any, Mapping, Optional
 from uuid import UUID
 
 from noctusai_lib.integrations.persistence.table_reads import paged_rows
-from noctusai_lib.primitives.postgrest_errors import is_unique_violation
+from noctusai_lib.primitives.postgrest_errors import is_foreign_key_violation, is_unique_violation
 
 from ._common import first, get_row, like_term, new_id, now_iso, page_rows, slugify, tbl
 from .errors import CommerceError, conflict, invalid, not_found
@@ -191,11 +191,15 @@ def create_product(db: Any, org_id: Any, data: Mapping[str, Any]) -> dict:
         "created_at": now,
         "updated_at": now,
     }
+    if d.get("item_id"):  # written only when set: a host that never applied the ERP link delta has no such column
+        row["item_id"] = d["item_id"]
     try:
         return first(tbl(db, _PRODUCTS).insert(row).execute()) or row
     except Exception as exc:  # noqa: BLE001 - narrowed below
         if is_unique_violation(exc):
             raise conflict("slug_em_uso", "Já existe um produto com este endereço (slug).") from exc
+        if is_foreign_key_violation(exc) and row.get("item_id"):
+            raise invalid("item_id", "Item não encontrado.", code="item_invalido") from exc
         raise
 
 
@@ -222,10 +226,17 @@ def update_product(db: Any, org_id: Any, product_id: Any, changes: Mapping[str, 
     if "category_id" in d:
         _category_ok(db, org_id, d["category_id"])
         patch["category_id"] = d["category_id"]
+    if "item_id" in d:  # None unlinks; a value links (the composite FK refuses another org's item)
+        patch["item_id"] = d["item_id"]
     if not patch:
         return current
     patch["updated_at"] = now_iso()
-    updated = tbl(db, _PRODUCTS).update(patch).eq("org_id", str(org_id)).eq("id", str(product_id)).execute()
+    try:
+        updated = tbl(db, _PRODUCTS).update(patch).eq("org_id", str(org_id)).eq("id", str(product_id)).execute()
+    except Exception as exc:  # noqa: BLE001 - narrowed below
+        if is_foreign_key_violation(exc) and patch.get("item_id"):
+            raise invalid("item_id", "Item não encontrado.", code="item_invalido") from exc
+        raise
     return first(updated) or {**current, **patch}
 
 

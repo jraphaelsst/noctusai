@@ -34,5 +34,6 @@ items normally carry none.
   `FOREIGN KEY (org_id, category_id)` on `UNIQUE (org_id, id)`.
 - CSV round-trips (`export.csv` -> edit -> `import`): see `csv_io.py` for the exact column set and the
   validate-everything-first / blank-cell-keeps-value semantics.
-- Commerce link: `commerce_products.item_id` (nullable FK) lands in W3 -- NOC-REMEDIATE[items-commerce-link]
-  (see `sql.py`), roadmap E5.
+- Commerce link: `commerce_products.item_id` (nullable composite FK `(org_id, item_id)`) ships as the commerce organ's ERP
+  link delta (`domain/commerce/erp_sql.py`, registry organ `commerce_erp`), roadmap E5. A product that carries it holds, ships
+  and gives back stock through `commerce/stock_fulfillment.py` (roadmap E6); a digital product needs none.

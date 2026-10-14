@@ -8,6 +8,7 @@ import {
   CONSENT_KINDS,
   FIELD_SOURCES,
   FULFILLMENT_TYPES,
+  ORDER_CHANNELS,
   ORDER_STATUSES,
   ORDER_TRANSITIONS,
   CHARGE_ATTEMPT_STATUSES,
@@ -38,6 +39,7 @@ describe('commerce enums (CONTRACT §1)', () => {
       RefundStatus: REFUND_STATUSES,
       ChargeAttemptStatus: CHARGE_ATTEMPT_STATUSES,
       ReminderKind: REMINDER_KINDS,
+      OrderChannel: ORDER_CHANNELS,
     }).toEqual({
       ProductType: ['digital', 'physical', 'service', 'print_on_demand'],
       FulfillmentType: ['digital_delivery', 'shipping', 'pickup', 'local_delivery', 'none'],
@@ -64,6 +66,7 @@ describe('commerce enums (CONTRACT §1)', () => {
       RefundStatus: ['requested', 'done', 'failed'],
       ChargeAttemptStatus: ['pending', 'paid', 'expired', 'cancelled', 'failed'],
       ReminderKind: ['before_expiry', 'after_expiry'],
+      OrderChannel: ['storefront', 'manual'],
     });
   });
 

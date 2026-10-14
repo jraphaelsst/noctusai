@@ -17,7 +17,19 @@ from typing import Any, Optional
 from fastapi import Depends, HTTPException, Request
 from noctusai_lib.api.auth.effective_org import acting_header_of, is_platform_staff
 from noctusai_lib.api.auth.session.scopes import require_org_admin_role
-from noctusai_lib.domain.commerce import CommerceContext, MoneyDeps, make_checkout_gateway, make_fulfillment_registry
+from noctusai_lib.domain.commerce import (
+    CommerceContext,
+    FulfillmentType,
+    MoneyDeps,
+    make_checkout_gateway,
+    make_fulfillment_registry,
+)
+from noctusai_lib.domain.commerce.quote_handlers import CommerceQuoteAcceptHandler
+from noctusai_lib.domain.commerce.stock_fulfillment import StockFulfillment
+from noctusai_lib.domain.contracts.quote_handler import ContractQuoteAcceptHandler
+from noctusai_lib.domain.inventory import make_stock_port
+from noctusai_lib.domain.inventory.port import StockPort
+from noctusai_lib.domain.quotes import QuoteAcceptHandler, RoutingQuoteAcceptHandler
 from noctusai_lib.domain.commerce import invoices as invoices_svc
 from noctusai_lib.domain.commerce.errors import GatewayNotConfigured
 from noctusai_lib.domain.commerce.fulfillment import FulfillmentRegistry
@@ -43,7 +55,7 @@ from noctusai_lib.integrations.storage.fake import FakeStorageBackend
 from noctusai_lib.integrations.storage.protocol import StorageBackend
 
 from app.api_keys import build_store
-from app.commerce import CFG, FINANCE_CFG, SCHEMA
+from app.commerce import CFG, CONTRACTS_CFG, FINANCE_CFG, INVENTORY_CFG, SCHEMA
 from app.config import settings
 from app.database import _db
 from app.dependencies import get_admin_client, get_current_user_org
@@ -191,11 +203,65 @@ def require_platform_admin(auth: Any = Depends(get_current_user_org)) -> None:
 
 # ── fulfillment / finance ──────────────────────────────────────────────────
 
-_fulfillment = make_fulfillment_registry()
+def get_stock_port() -> StockPort:
+    """The inventory organ's `StockPort` over the admin client (row-locked RPCs, scoped per call to the order's org)."""
+    return make_stock_port("supabase", db=get_admin_client(), cfg=INVENTORY_CFG)
+
+
+# Physical orders hold, ship and give back STOCK (roadmap E6): created -> reserve, paid -> commit, expired/cancelled/
+# revoked -> release. Only lines whose product carries an `item_id` take part; digital fulfillment stays a Noop.
+_stock_fulfillment = StockFulfillment(get_stock=get_stock_port, get_db=get_admin_client)
+_fulfillment = make_fulfillment_registry(
+    {
+        FulfillmentType.SHIPPING: _stock_fulfillment,
+        FulfillmentType.PICKUP: _stock_fulfillment,
+        FulfillmentType.LOCAL_DELIVERY: _stock_fulfillment,
+    }
+)
 
 
 def get_fulfillment() -> FulfillmentRegistry:
     return _fulfillment
+
+
+# ── quotes: accept handler, issuer, public link ────────────────────────────
+
+
+def get_quote_accept_handler() -> QuoteAcceptHandler:
+    """Convert-on-accept: goods -> a commerce order (manual channel, stock held), services -> a draft contract.
+    Both are idempotent on the quote id; the deps are resolved per conversion, never captured."""
+    return RoutingQuoteAcceptHandler(
+        {
+            "order": CommerceQuoteAcceptHandler(get_db=get_admin_client, get_fulfillment=get_fulfillment),
+            "contract": ContractQuoteAcceptHandler(get_db=get_admin_client, cfg=CONTRACTS_CFG),
+        }
+    )
+
+
+def quote_accept_url(token: str) -> str:
+    """The public accept page the e-mailed link points at (a `publicRoutes` entry of the SPA, outside the authed shell)."""
+    return f"{settings.commerce_public_url.rstrip('/')}/orcamento/{token}"
+
+
+def quote_issuer(org_id: str) -> dict:
+    """The seller identity printed on quote PDFs / e-mails: the store profile's trade name."""
+    profile = get_profile(get_admin_client(), org_id) or {}
+    return {"name": profile.get("trade_name") or profile.get("legal_name") or "Loja"}
+
+
+def quote_client_ip(request: Request) -> Optional[str]:
+    """The address recorded on a customer's decision. Cloudflare overwrites this header on every proxied request."""
+    forwarded = request.headers.get("cf-connecting-ip", "").strip()
+    return forwarded or (request.client.host if request.client else None)
+
+
+def quote_org_is_active(db: Any, org_id: str) -> bool:
+    """A lapsed licence refuses the quote link with the same 404 as a bad token; a failed lookup fails CLOSED."""
+    try:
+        return bool(get_license_checker().has_license(org_id, CFG.license_product_slug))
+    except Exception:  # noqa: BLE001 -- fail closed, logged
+        logger.warning("commerce: licence lookup failed for a quote link -- refusing", exc_info=True)
+        return False
 
 
 def get_finance() -> FinanceBooking:

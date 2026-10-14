@@ -4,7 +4,7 @@ NoctusAI Commerce — host product of the commerce vertical seed.
 Run with: uvicorn app.main:app --reload --port 8019
 
 Mounts the noctusai_lib.domain.commerce organ routers (staff, storefront,
-payment webhook, fiscal + invoice webhook), the finance, items, parties and inventory organs and the
+payment webhook, fiscal + invoice webhook), the finance, items, parties, inventory, purchasing, quotes and contracts organs and the
 managed-keys router, next to the day-one skeletons. Scheduled jobs + the invoice
 jobs worker start in the lifespan (`app/scheduler.py`; inert without NOCTUS_SCHEDULERS_ENABLED).
 """
@@ -14,6 +14,7 @@ from app.rate_limit import limiter
 from app.routers.webhook_router import router as webhook_router
 from app.routers.api_keys_router import router as api_keys_router
 from app.routers.commerce_routers import (
+    contracts_organ,
     finance_organ,
     fiscal_organ,
     inventory_organ,
@@ -21,6 +22,8 @@ from app.routers.commerce_routers import (
     parties_organ,
     payment_webhook_router,
     public_router,
+    purchasing_organ,
+    quotes_organ,
     staff_router,
 )
 from app.scheduler import configure as configure_scheduler, start_background, stop_background
@@ -42,7 +45,10 @@ app = create_product_app(
     routers=[webhook_router, staff_router, public_router, payment_webhook_router, api_keys_router],
     # The media upload is an `UploadFile` route: the 1 MB webhook default would 413 any real photo.
     # Organs (finance attachment + statement upload, items CSV import, fiscal certificate) carry their own.
-    organs=[fiscal_organ, finance_organ, items_organ, parties_organ, inventory_organ],
+    organs=[
+        fiscal_organ, finance_organ, items_organ, parties_organ, inventory_organ,
+        purchasing_organ, quotes_organ, contracts_organ,
+    ],
     max_body_path_overrides={MEDIA_UPLOAD_PATH_PATTERN: MEDIA_UPLOAD_MAX_BYTES},
     lifespan_startup=start_background,
     lifespan_shutdown=stop_background,

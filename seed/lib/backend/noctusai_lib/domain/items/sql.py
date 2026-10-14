@@ -15,8 +15,9 @@ Two org-scoped tables (`item_categories`, `items`) as one re-runnable migration 
   GTIN length) -- the GTIN CHECK DIGIT is validated by the service only (see ITEMS.md).
 - Money is integer cents (`BIGINT`). No stock columns: the inventory organ owns stock.
 
-NOC-REMEDIATE[items-commerce-link]: `commerce_products.item_id` (nullable FK -> `itm_items`) lands with
-the inventory/W3 wave, only when both organs are mounted in the same schema (roadmap E5/E8). -- 2026-10-14
+Commerce link (closed 2026-10-14): `commerce_products.item_id` (nullable composite FK `(org_id, item_id)` -> this table's
+`UNIQUE (org_id, id)`) ships as the commerce organ's ERP link delta (`commerce/erp_sql.py`, organ `commerce_erp`); it needs
+both organs in the same schema (roadmap E5/E8).
 
 Prerequisites (not created here): `public.current_org_id_for(text)` (core 070; the default `org_id_expr`).
 """

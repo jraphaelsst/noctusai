@@ -21,6 +21,7 @@ CONTRACT_ENUMS = {
     "RefundStatus": ["requested", "done", "failed"],
     "ChargeAttemptStatus": ["pending", "paid", "expired", "cancelled", "failed"],
     "ReminderKind": ["before_expiry", "after_expiry"],
+    "OrderChannel": ["storefront", "manual"],
     # closed sets fixed by §2 columns (mirrored by the FE types.ts)
     "MediaKind": ["image", "video"],
     "PrivacyRequestStatus": ["open", "verified", "done", "rejected"],

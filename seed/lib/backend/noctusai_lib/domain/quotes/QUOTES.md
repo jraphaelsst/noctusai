@@ -32,7 +32,7 @@ phones / internal ids. Rate limits are the host's (`rate_limit=limiter.limit`); 
 ## Convert-on-accept
 Accept = claim (conditional UPDATE) -> record (append-only) -> handler. Handler failure is stored (`conversion_status=failed`) and never
 undoes the acceptance; `POST /{id}/convert` retries (handlers MUST be idempotent on `quote.id`). No handler wired => `skipped`.
-Contracts / commerce-order handlers are wired by the host; this organ imports neither.
+Contracts / commerce-order handlers are wired by the host; this organ imports neither. The seed ships both: `contracts/quote_handler.py` (`ContractQuoteAcceptHandler`: services → a DRAFT contract for exactly the accepted total) and `commerce/quote_handlers.py` (`CommerceQuoteAcceptHandler`: goods → a `manual`-channel commerce order, stock held, needs the commerce `commerce_erp` delta); `RoutingQuoteAcceptHandler` (here, `handler.py`) routes by `convert_to`.
 
 ## Not yet (named destinations)
 NOC-REMEDIATE[quotes-signature-webhook-route]: `esign.apply_signature_event` is the entry point, but the provider webhook ROUTE

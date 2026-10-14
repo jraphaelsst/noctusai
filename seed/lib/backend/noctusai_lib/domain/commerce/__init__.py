@@ -64,6 +64,7 @@ from .errors import (
     GatewayNotConfigured,
 )
 from .fiscal_retention import purge_expired_fiscal_retention
+from .erp_sql import commerce_erp_migration
 from .fulfillment import FulfillmentHandler, FulfillmentRegistry, NoopFulfillment, make_fulfillment_registry
 from .gateway import AsaasCheckoutGateway, CheckoutGateway, FakeCheckoutGateway, make_checkout_gateway
 from .jobs import register_commerce_jobs
@@ -80,6 +81,7 @@ from .types import (
     FieldSource,
     FulfillmentType,
     MediaKind,
+    OrderChannel,
     OrderStatus,
     PaymentMethod,
     PrivacyRequestKind,
@@ -118,6 +120,7 @@ __all__ = [
     "MediaKind",
     "MoneyDeps",
     "NoopFulfillment",
+    "OrderChannel",
     "OrderEvent",
     "OrderStatus",
     "PaymentMethod",
@@ -148,6 +151,7 @@ __all__ = [
     "installments",
     "jobs",
     "make_checkout_gateway",
+    "commerce_erp_migration",
     "make_fulfillment_registry",
     "media",
     "money",

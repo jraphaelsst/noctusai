@@ -38,6 +38,7 @@ from .customers import record_consents, upsert_buyer
 from .installments import installment_options, option_for
 from .order_charges import insert_attempt, session_installment_id
 from .errors import ACEITE_OBRIGATORIO, CommerceError, GatewayNotConfigured, invalid
+from .fulfillment import FulfillmentRegistry
 from .gateway import GATEWAY_NAME, CheckoutGateway
 from .order_state import OrderEvent
 from .orders import append_event, apply_transition, new_token
@@ -293,6 +294,17 @@ def open_gateway_charge(
     )
 
 
+def _give_back_stock(fulfillment: Optional[FulfillmentRegistry], order: Optional[Mapping[str, Any]], items: list[dict]) -> None:
+    """Best effort: a failed checkout must not keep stock held. A failure here is logged loudly, never raised over the
+    original error (the order is already lost; a stale hold is reconciled by the next inventory count)."""
+    if fulfillment is None or order is None or not items:
+        return
+    try:
+        fulfillment.dispatch_cancelled(order, items)
+    except Exception:  # noqa: BLE001 - logged; the caller is already handling the real failure
+        logger.error("commerce checkout: could not release the stock hold of order=%s", order.get("id"), exc_info=True)
+
+
 def create_checkout(
     db: Any,
     org_id: Any,
@@ -303,8 +315,13 @@ def create_checkout(
     order_url_for: Callable[[str], str],
     ip: Optional[str] = None,
     user_agent: Optional[str] = None,
+    fulfillment: Optional[FulfillmentRegistry] = None,
 ) -> dict:
     """Run a checkout; returns `{order_token, status, checkout_url, pix_qr, expires_at}`.
+
+    With a `fulfillment` registry the sale is offered to its `on_created` hooks BEFORE the order row exists (stock holds,
+    roadmap E6): a hook that raises refuses the sale and nothing is written. Anything that fails after the hold gives it
+    back through `on_cancelled`.
 
     `order_url_for(token)` returns the absolute storefront URL of the public order
     page (the gateway's success/cancel redirect); the token only exists once the
@@ -337,10 +354,33 @@ def create_checkout(
     if coupon is not None and not coupons_svc.reserve_use(db, org_id, coupon):
         raise CommerceError("cupom_invalido", "O cupom informado não pode ser aplicado.", 422, details={"reason": coupons_svc.ESGOTADO})
 
+    order_row: Optional[dict] = None
+    order_id: Optional[str] = None
+    item_rows: list[dict] = []
+    held = False
     try:
         wallet, percent, fee_cents = split_for(db, org_id, gateway, charged_cents)
         at = now()
         order_id, token = new_id(), new_token()
+        item_rows = [
+            {
+                "id": new_id(),
+                "org_id": str(org_id),
+                "order_id": order_id,
+                "product_id": str(src["product"]["id"]),
+                "offer_id": str(src["offer"]["id"]),
+                "title_snapshot": f"{line['title']} — {src['offer']['name']}"[:300],
+                "product_type": src["product"]["product_type"],
+                "fulfillment_type": src["product"]["fulfillment_type"],
+                "unit_price_cents": line["unit_price_cents"],
+                "qty": line["qty"],
+                "total_cents": line["total_cents"],
+            }
+            for line, src in zip(quote.lines, quote.sources)
+        ]
+        if fulfillment is not None:
+            held = True  # set BEFORE the call: a hook that refused halfway may already hold some lines
+            fulfillment.dispatch_created({"id": order_id, "org_id": str(org_id)}, item_rows)
         customer = upsert_buyer(db, org_id, {**buyer, "address": body.get("address") or {}})
         order_row = {
             "id": order_id,
@@ -367,24 +407,7 @@ def create_checkout(
             "updated_at": at.isoformat(),
         }
         order = first(tbl(db, _ORDERS).insert(order_row).execute()) or order_row
-        tbl(db, _ITEMS).insert(
-            [
-                {
-                    "id": new_id(),
-                    "org_id": str(org_id),
-                    "order_id": order_id,
-                    "product_id": str(src["product"]["id"]),
-                    "offer_id": str(src["offer"]["id"]),
-                    "title_snapshot": f"{line['title']} — {src['offer']['name']}"[:300],
-                    "product_type": src["product"]["product_type"],
-                    "fulfillment_type": src["product"]["fulfillment_type"],
-                    "unit_price_cents": line["unit_price_cents"],
-                    "qty": line["qty"],
-                    "total_cents": line["total_cents"],
-                }
-                for line, src in zip(quote.lines, quote.sources)
-            ]
-        ).execute()
+        tbl(db, _ITEMS).insert(item_rows).execute()
         append_event(
             db, org_id, order_id, from_status=None, to_status=OrderStatus.CREATED.value,
             source=OrderEventSource.CHECKOUT, reason="pedido criado",
@@ -416,6 +439,7 @@ def create_checkout(
             )
             if coupon is not None:
                 coupons_svc.release_use(db, org_id, coupon)
+            _give_back_stock(fulfillment if held else None, order_row, item_rows)
             raise CommerceError(
                 "pagamento_falhou", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.", 502
             ) from exc
@@ -438,11 +462,16 @@ def create_checkout(
             },
         )
     except CommerceError:
+        if order_row is None:  # refused before the order row existed (a stock hook): nothing was written, give back the coupon
+            if coupon is not None:
+                coupons_svc.release_use(db, org_id, coupon)
+            _give_back_stock(fulfillment if held else None, {"id": order_id, "org_id": str(org_id)}, item_rows)
         raise
     except Exception:
         # Anything unexpected before the charge exists: give the coupon back, surface loudly.
         if coupon is not None:
             coupons_svc.release_use(db, org_id, coupon)
+        _give_back_stock(fulfillment if held else None, order_row or {"id": order_id, "org_id": str(org_id)}, item_rows)
         raise
     return {
         "order_token": token,

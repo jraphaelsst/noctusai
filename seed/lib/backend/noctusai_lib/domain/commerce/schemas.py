@@ -96,6 +96,8 @@ class ProductBody(StrictHttpModel):
     product_type: ProductType
     fulfillment_type: Optional[FulfillmentType] = None
     category_id: Optional[UUID] = None
+    #: The items-catalog link (ERP link delta): stock applies only to a product that carries one.
+    item_id: Optional[UUID] = None
     attributes: dict[str, Any] = Field(default_factory=dict)
     tax_treatment_override: Optional[TaxTreatment] = None
 
@@ -112,6 +114,7 @@ class ProductPatch(StrictHttpModel):
     product_type: Optional[ProductType] = None
     fulfillment_type: Optional[FulfillmentType] = None
     category_id: Optional[UUID] = None
+    item_id: Optional[UUID] = None
     attributes: Optional[dict[str, Any]] = None
     tax_treatment_override: Optional[TaxTreatment] = None
 

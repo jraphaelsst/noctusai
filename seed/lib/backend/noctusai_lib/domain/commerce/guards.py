@@ -142,3 +142,38 @@ def commerce_fiscal_guard_probes(schema: str) -> tuple[OrganGuardProbe, ...]:
             rationale="D37: a Simples/MEI store must issue NFS-e through the national emitter; a municipal mode is unrepresentable.",
         ),
     )
+
+
+def commerce_erp_guard_probes(schema: str) -> tuple[OrganGuardProbe, ...]:
+    s = schema
+    return (
+        OrganGuardProbe(
+            guard_name="commerce_orders_channel_check",
+            kind="check",
+            requires=_ORDER_TABLES,
+            declare=_DECLARE,
+            body=(
+                f"INSERT INTO {s}.commerce_customers (org_id, email) VALUES (v_org, 'noc-probe@example.invalid') RETURNING id INTO v_cust;\n"
+                f"INSERT INTO {s}.commerce_orders (org_id, token, customer_id, subtotal_cents, total_cents, channel) "
+                "VALUES (v_org, 'noc-probe-' || gen_random_uuid()::text, v_cust, 100, 100, 'noc_invalid');"
+            ),
+            permitted="an order whose channel is outside storefront | manual",
+            rationale="Order channel is a closed vocabulary (E7): a typo'd channel would hide an order from every channel-aware report.",
+        ),
+        OrganGuardProbe(
+            guard_name="uq_commerce_orders_source_ref",
+            kind="unique",
+            requires=_ORDER_TABLES,
+            declare=_DECLARE,
+            body=(
+                f"INSERT INTO {s}.commerce_customers (org_id, email) VALUES (v_org, 'noc-probe@example.invalid') RETURNING id INTO v_cust;\n"
+                + "".join(
+                    f"INSERT INTO {s}.commerce_orders (org_id, token, customer_id, subtotal_cents, total_cents, channel, source_ref) "
+                    f"VALUES (v_org, 'noc-probe-' || gen_random_uuid()::text, v_cust, 100, 100, 'manual', 'noc-quote-same');\n"
+                    for _ in range(2)
+                )
+            ),
+            permitted="two orders created from the same source record",
+            rationale="A quote becomes AT MOST one order: a retried conversion must find the first order, never create a second.",
+        ),
+    )

@@ -371,7 +371,9 @@ def commerce_staff_router(
     async def cancel_order_route(
         order_id: UUID, ctx: CommerceContext = Depends(ctx_dep), deps: Optional[MoneyDeps] = Depends(money_deps)
     ) -> dict:
-        orders_svc.cancel_order(ctx.db, ctx.org_id, order_id, gateway=deps.gateway if deps else None)
+        orders_svc.cancel_order(
+            ctx.db, ctx.org_id, order_id, gateway=deps.gateway if deps else None, fulfillment=deps.fulfillment if deps else None
+        )
         return success_response(_order_view(ctx, order_id))
 
     @router.post("/orders/{order_id}/refunds", status_code=201, name="commerce_create_refund", dependencies=[Depends(org_admin_dep)])
@@ -421,6 +423,7 @@ def storefront_router(
     get_email: Callable[..., EmailSender],
     get_license_checker: Callable[..., LicenseChecker],
     get_link_secret: Callable[[], str],
+    get_fulfillment: Optional[Callable[..., FulfillmentRegistry]] = None,
     rate_limit: Optional[RateLimit] = None,
     prefix: str = "/api/storefront",
     tags: Optional[list[str]] = None,
@@ -434,6 +437,7 @@ def storefront_router(
     on reads and `cfg.checkout_rate_limit` on the write routes.
     """
     router = APIRouter(prefix=prefix, tags=tags or ["storefront"])
+    registry_dep = get_fulfillment or (lambda: _DEFAULT_REGISTRY)
 
     def org_dep(request: Request, db=Depends(get_db), checker=Depends(get_license_checker)) -> str:
         return store_svc.resolve_storefront_org(db, request.headers.get("host", ""), checker, cfg)
@@ -476,12 +480,14 @@ def storefront_router(
         org_id: str = Depends(org_dep),
         db=Depends(get_db),
         gateway=Depends(get_gateway),
+        fulfillment=Depends(registry_dep),
     ) -> dict:
         base = _base_url(request)
         result = checkout_svc.create_checkout(
             db, org_id, cfg, gateway, _dump(body),
             order_url_for=lambda token: base + cfg.order_path_template.format(token=token),
             ip=_client_ip(request), user_agent=request.headers.get("user-agent"),
+            fulfillment=fulfillment,
         )
         return success_response(result)
 

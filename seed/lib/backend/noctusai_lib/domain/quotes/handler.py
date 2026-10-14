@@ -75,4 +75,18 @@ class FakeQuoteAcceptHandler:
         return QuoteConversion(kind=ctx.convert_to, ref=f"fake-{ctx.convert_to}-{ctx.quote['id']}")
 
 
-__all__ = ["FakeQuoteAcceptHandler", "NoopQuoteAcceptHandler", "QuoteAcceptContext", "QuoteAcceptHandler", "QuoteConversion"]
+class RoutingQuoteAcceptHandler:
+    """Routes an accepted quote to the handler of its `convert_to` (`{"order": ..., "contract": ...}`).
+
+    A kind without a handler is "I did nothing" (`None` -> conversion `skipped`, retryable once wired) -- exactly the
+    `NoopQuoteAcceptHandler` answer, so a host can wire only the conversions it supports."""
+
+    def __init__(self, handlers: Mapping[str, QuoteAcceptHandler]) -> None:
+        self._handlers = dict(handlers)
+
+    def handle(self, ctx: QuoteAcceptContext) -> Optional[QuoteConversion]:
+        handler = self._handlers.get(ctx.convert_to)
+        return handler.handle(ctx) if handler is not None else None
+
+
+__all__ = ["FakeQuoteAcceptHandler", "NoopQuoteAcceptHandler", "QuoteAcceptContext", "QuoteAcceptHandler", "QuoteConversion", "RoutingQuoteAcceptHandler"]

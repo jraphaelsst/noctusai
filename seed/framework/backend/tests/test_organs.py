@@ -394,6 +394,7 @@ def test_requires_declares_the_documented_graph():
     assert set(spec["purchasing"].requires) == {"parties", "items", "inventory", "finance"}
     assert set(spec["contracts"].requires) == {"parties", "items", "finance"}
     assert spec["finance"].requires == () and spec["finance"].optional_requires == ("parties",)
+    assert set(spec["commerce_erp"].requires) == {"items", "commerce_money"}
 
 
 def _render(tmp_path, numbering: dict[str, int], schema: str = "erp"):
@@ -428,3 +429,24 @@ def test_assert_organ_migration_order_refuses_a_missing_requirement_but_allows_a
     assert assert_organ_migration_order(_render(tmp_path / "b", {"finance": 10}), ["finance"]) == {"finance": 10}
     with pytest.raises(AssertionError, match="finance.*AFTER parties"):
         assert_organ_migration_order(_render(tmp_path / "c", {"finance": 10, "parties": 11}), ["finance", "parties"])
+
+
+def test_a_waiver_excuses_exactly_the_edge_a_separate_delta_satisfies(tmp_path):
+    """commerce renders finance BEFORE parties and links them in a later delta file: that one edge is waived, nothing else."""
+    from noctusai_seed.organs import assert_organ_migration_order
+
+    organs = {"finance": 10, "parties": 11}
+    root = _render(tmp_path, organs)
+    assert assert_organ_migration_order(root, list(organs), waived=(("finance", "parties"),)) == organs
+    # the other edges of a waived organ still bind
+    both = {"parties": 10, "items": 11, "finance": 12, "inventory": 13, "contracts": 9}
+    with pytest.raises(AssertionError, match="contracts.*AFTER"):
+        assert_organ_migration_order(_render(tmp_path / "x", both), list(both), waived=(("finance", "parties"),))
+
+
+def test_a_stale_waiver_fails_loudly(tmp_path):
+    from noctusai_seed.organs import assert_organ_migration_order
+
+    organs = {"parties": 10, "items": 11}
+    with pytest.raises(AssertionError, match="waiver"):
+        assert_organ_migration_order(_render(tmp_path, organs), list(organs), waived=(("items", "parties"),))

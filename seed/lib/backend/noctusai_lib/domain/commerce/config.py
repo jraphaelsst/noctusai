@@ -83,6 +83,8 @@ class CommerceConfig:
     asaas_environment_name: str = "asaas_environment"
     asaas_default_environment: str = ASAAS_SANDBOX
     order_expiry_hours: int = 72
+    #: The items organ's table (ERP link delta, `erp_sql`): `commerce_products.item_id` references it.
+    items_table: str = "itm_items"
     order_path_template: str = "/pedido/{token}"
     my_orders_path_template: str = "/minhas-compras?token={token}"
     privacy_verify_path_template: str = "/privacidade/verificar?token={token}"
@@ -102,6 +104,8 @@ class CommerceConfig:
                 f"CommerceConfig.asaas_default_environment must be one of {sorted(ASAAS_BASE_URLS)}, "
                 f"got {self.asaas_default_environment!r}"
             )
+        if not _IDENT.match(self.items_table or ""):
+            raise ValueError(f"CommerceConfig.items_table must be a bare lowercase identifier, got {self.items_table!r}")
         if not _BUCKET.match(self.bucket or ""):
             raise ValueError(f"CommerceConfig.bucket must be a bucket id, got {self.bucket!r}")
         for name in ("storefront_rate_limit", "checkout_rate_limit", "webhook_rate_limit", "payment_rate_limit"):

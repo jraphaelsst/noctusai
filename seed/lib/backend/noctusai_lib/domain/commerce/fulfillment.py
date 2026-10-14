@@ -6,6 +6,11 @@ a `NoopFulfillment` (P5 fills `digital_delivery` -- download links + licence
 certificate; P9 fills the physical types). A handler is registered per type, so
 a market product adds behaviour without touching the organ.
 
+STOCK HOLD HOOKS (roadmap E6): `on_created` runs BEFORE the order row is written -- a handler that cannot honour the sale (no
+stock) RAISES a `CommerceError` and the order is never created; `on_cancelled` runs when an order that held something will
+never be fulfilled (checkout failed after the hold, staff cancelled), so the hold is given back. Both are optional and
+no-ops by default.
+
 IDEMPOTENCY CONTRACT: the webhook calls `on_paid` for every confirmed-payment
 delivery of a `paid` order (Asaas sends `PAYMENT_CONFIRMED` and `PAYMENT_RECEIVED`
 as two distinct events) and re-calls it when a previous call raised and the gateway
@@ -23,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 #: The P4 lifecycle hooks a handler MAY define (see the module docstring).
-LIFECYCLE_HOOKS: tuple[str, ...] = ("on_paused", "on_resumed", "on_revoked", "on_expired")
+LIFECYCLE_HOOKS: tuple[str, ...] = ("on_created", "on_cancelled", "on_paused", "on_resumed", "on_revoked", "on_expired")
 
 
 @runtime_checkable
@@ -38,6 +43,12 @@ class NoopFulfillment:
     """The default for every `FulfillmentType`: nothing to deliver, nothing to take back."""
 
     def on_paid(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
+        return None
+
+    def on_created(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
+        return None
+
+    def on_cancelled(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
         return None
 
     def on_paused(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
@@ -85,6 +96,14 @@ class FulfillmentRegistry:
         """Call each fulfillment type's handler ONCE with that type's items.
         Returns the types dispatched (declaration order)."""
         return self._dispatch("on_paid", order, items)
+
+    def dispatch_created(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """The order is about to be written. A handler may RAISE to refuse the sale (e.g. out of stock)."""
+        return self._dispatch("on_created", order, items)
+
+    def dispatch_cancelled(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """The order will not be fulfilled (checkout failed after `on_created`, or staff cancelled it)."""
+        return self._dispatch("on_cancelled", order, items)
 
     def dispatch_paused(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
         """The order entered `disputed`."""

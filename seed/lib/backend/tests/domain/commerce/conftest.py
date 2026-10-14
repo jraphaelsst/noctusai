@@ -40,7 +40,10 @@ from noctusai_lib.domain.commerce import (
     storefront_router,
 )
 from noctusai_lib.domain.commerce.fulfillment import FulfillmentRegistry
+from noctusai_lib.domain.commerce.erp_sql import commerce_erp_migration
 from noctusai_lib.domain.finance.booking import FakeFinanceBooking
+from noctusai_lib.domain.items import ItemsConfig, items_migration
+from noctusai_lib.domain.parties import PartiesConfig, parties_migration
 from noctusai_lib.domain.licensing import FakeLicenseChecker
 from noctusai_lib.domain.payments import FakeEventInbox
 from noctusai_lib.integrations.cnpj_registry import FakeCnpjRegistryLookup
@@ -85,7 +88,16 @@ def commerce_schema_cache():
     judge writes against the schema the generators emit."""
     base = {t: set(c) for t, c in _schema_cache.get_schema_map().items()}
     base_checks, base_defaults = _schema_cache._CHECK_CACHE, _schema_cache._DEFAULTS_CACHE
-    sql = commerce_migration(CFG, SCHEMA) + "\n" + commerce_money_migration(CFG, SCHEMA)
+    # + the ERP link delta (item_id / channel / source_ref) and the parties / items tables it and the quote handlers touch.
+    sql = "\n".join(
+        [
+            commerce_migration(CFG, SCHEMA),
+            commerce_money_migration(CFG, SCHEMA),
+            commerce_erp_migration(CFG, SCHEMA),
+            parties_migration(PartiesConfig(schema=SCHEMA), SCHEMA),
+            items_migration(ItemsConfig(schema=SCHEMA)),
+        ]
+    )
     generated = parse_sql(sql, source_label="commerce_migration+money")
     merged: dict[str, set[str]] = {t: set(c) for t, c in base.items()}
     for table, cols in generated.items():

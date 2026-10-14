@@ -17,6 +17,7 @@ from noctusai_lib.integrations.persistence.table_reads import paged_rows
 
 from ._common import first, get_row, new_id, now, now_iso, page_rows, tbl
 from .errors import CommerceError, not_found
+from .fulfillment import FulfillmentRegistry
 from .gateway import CheckoutGateway
 from .order_charges import cancel_gateway_charge, current_attempt, ensure_attempt_row, set_attempt_status
 from .order_state import InvalidTransition, OrderEvent, transition
@@ -160,12 +161,20 @@ def order_detail(db: Any, org_id: Any, order_id: Any) -> dict:
 # ─── staff actions ───────────────────────────────────────────────────────
 
 def cancel_order(
-    db: Any, org_id: Any, order_id: Any, *, reason: Optional[str] = None, gateway: Optional[CheckoutGateway] = None
+    db: Any,
+    org_id: Any,
+    order_id: Any,
+    *,
+    reason: Optional[str] = None,
+    gateway: Optional[CheckoutGateway] = None,
+    fulfillment: Optional[FulfillmentRegistry] = None,
 ) -> dict:
     """Cancel an order. With a `gateway` the live charge is VOIDED first (closes
     `NOC-REMEDIATE[commerce-gateway-cancel]`): if it cannot be proven dead the cancel is refused with 409
     `cobranca_anterior_ativa` -- a cancelled order must not keep a payable charge. Without a gateway (a host that
-    never wired one) only the order moves, and a payment that still lands is ignored by the webhook + alerted."""
+    never wired one) only the order moves, and a payment that still lands is ignored by the webhook + alerted.
+    With a `fulfillment` registry the cancelled order's `on_cancelled` hooks run (a stock hold is given back); a hook
+    failure is logged, never undoes the cancel."""
     order = get_order(db, org_id, order_id)
     if gateway is not None and order["status"] in (OrderStatus.CREATED.value, OrderStatus.PENDING_PAYMENT.value):
         rows = ensure_attempt_row(db, org_id, order)
@@ -174,9 +183,15 @@ def cancel_order(
             cancel_gateway_charge(gateway, org_id, live["gateway_charge_id"])
             set_attempt_status(db, org_id, live["id"], ChargeAttemptStatus.CANCELLED)
     try:
-        return apply_transition(
+        cancelled = apply_transition(
             db, org_id, order, OrderEvent.CANCEL, source=OrderEventSource.STAFF, reason=reason or "cancelado pela equipe"
         )
+        if fulfillment is not None:
+            try:
+                fulfillment.dispatch_cancelled(cancelled, list_items(db, org_id, order_id))
+            except Exception:  # noqa: BLE001 - the order IS cancelled; a hook failure is reported, not fatal
+                logger.error("commerce cancel: on_cancelled failed for order=%s", order_id, exc_info=True)
+        return cancelled
     except InvalidTransition as exc:
         raise CommerceError(
             "transicao_invalida", f"Um pedido {order['status']} não pode ser cancelado.", 409
