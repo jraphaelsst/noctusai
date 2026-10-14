@@ -270,3 +270,7 @@ export * from './parties';
 // `createFinanceHooks` + pages. Contract: projects/commerce-seed-p4/CONTRACT.md §3 + §10.
 // Product-agnostic; the host mounts the pages under its own route and passes the api client.
 export * from './finance';
+
+// Inventory organ (warehouses, kardex, balances, moving-average valuation, low stock). Backend:
+// noctusai_lib.domain.inventory. Product-agnostic; the host passes its authenticated api client.
+export * from './inventory';

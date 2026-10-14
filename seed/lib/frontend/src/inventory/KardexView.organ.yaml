@@ -1,0 +1,34 @@
+name: KardexView
+kind: component
+path: seed/lib/frontend/src/inventory/KardexView.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "An item's append-only stock history, oldest first, with the running on-hand / reserved / average cost AFTER each move (stamped by the RPC in the same transaction, so a page needs no replay); outflows signed negative, adjust shows its signed delta."
+  - "Part of the inventory organ (project-history/roadmaps/erp-seed-2026-10.md E2/E6/E8/E14); backend noctusai_lib.domain.inventory. Quantities are numeric(18,3) (fractional KG) sent as decimal STRINGS; money is integer cents, formatted only via formatCents; pt-BR copy (inventory/messages.ts)."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client and (optionally) an itemLabel mapper, because item names belong to the items organ."
+
+errors_encountered: []
+
+drifts_surfaced:
+  - "controls.tsx duplicates commerce/controls.tsx's ListSkeleton/RetryError/RefreshingBar (N=2); formalize into design-system at the third organ that needs them."
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): built once in the seed."
+  - "Computing the running balance client-side by replaying moves was rejected: the RPC stamps on_hand_after / reserved_after / avg_cost_after_cents in the same transaction."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
