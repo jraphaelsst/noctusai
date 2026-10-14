@@ -63,14 +63,14 @@ describe("Storefront › order view", () => {
     expect(screen.getByRole("link", { name: /pagamento|checkout|pagar/i })).toHaveAttribute("href", "https://sandbox.asaas.com/c/x");
   });
 
-  it("expired: the regenerate-payment action stays disabled in P3", async () => {
+  it("expired: the regenerate-payment action is offered (closed in P4)", async () => {
     stubFetch({
       "GET /api/storefront": { body: { data: STOREFRONT } },
       "GET /api/storefront/orders/tok123": { body: { data: { ...ORDER, status: "expired", paid_at: null } } },
     });
     renderRoutes("/pedido/tok123", ROUTES);
     expect(await screen.findByText(/prazo de pagamento deste pedido expirou/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /novo pagamento|nova cobrança|gerar/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /novo pagamento|nova cobrança|gerar/i })).toBeEnabled();
   });
 
   it("unknown token: not-found state", async () => {

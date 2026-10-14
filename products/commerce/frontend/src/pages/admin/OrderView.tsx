@@ -5,11 +5,16 @@
  * retention date). The buyer block reads the same `useOrder` query the organ
  * component uses — one request, shared cache.
  *
+ * Below it the organ's `OrderMoneyPanel` (charges with parcelas, refunds incl. "em andamento", reminders,
+ * invoices) with the refund / invoice actions for org admins only (UX; the server enforces). It reads the same
+ * `useOrder` query — one request, shared cache.
+ *
  * Named seam: the buyer block is a page-level addition next to the organ, not
  * a fork of it (see CONTRACT-DELTAS D5 — fold into `OrderDetail` upstream).
  */
 import { Link, useParams } from "react-router-dom";
-import { OrderDetail, maskCpfOrCnpj, type Order } from "@noctusai/lib";
+import { OrderDetail, OrderMoneyPanel, maskCpfOrCnpj, type Order } from "@noctusai/lib";
+import { useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { AdminFrame } from "@/components/AdminFrame";
 import { staffCommerce } from "@/lib/commerce";
@@ -47,6 +52,14 @@ function BuyerSnapshot({ orderId }: { orderId: string }) {
   );
 }
 
+function MoneyPanel({ orderId }: { orderId: string }) {
+  const isAdmin = useIsOrgAdmin();
+  const order = staffCommerce.useOrder(orderId);
+  // Loading / error / not-found are rendered by <OrderDetail/>; the money view only adds data when present.
+  if (!order.data) return null;
+  return <OrderMoneyPanel hooks={staffCommerce} order={order.data} isAdmin={isAdmin} />;
+}
+
 function BackLink() {
   const { t } = usePageT();
   return (
@@ -62,6 +75,7 @@ export default function OrderView() {
     <AdminFrame titleKey="admin.order_title" actions={<BackLink />}>
       <BuyerSnapshot orderId={id} />
       <OrderDetail hooks={staffCommerce} orderId={id} />
+      <MoneyPanel orderId={id} />
     </AdminFrame>
   );
 }

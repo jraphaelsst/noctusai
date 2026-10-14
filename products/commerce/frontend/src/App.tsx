@@ -32,6 +32,10 @@ import {
   Users,
   UserCog,
   Building2,
+  Landmark,
+  Boxes,
+  Warehouse,
+  Handshake,
   Globe,
   KeyRound,
   Settings,
@@ -55,6 +59,10 @@ const Orders = lazy(() => import("@/pages/admin/Orders"));
 const OrderView = lazy(() => import("@/pages/admin/OrderView"));
 const Customers = lazy(() => import("@/pages/admin/Customers"));
 const ApiKeys = lazy(() => import("@/pages/admin/ApiKeys"));
+const Financeiro = lazy(() => import("@/pages/admin/Financeiro"));
+const Itens = lazy(() => import("@/pages/admin/Itens"));
+const Parceiros = lazy(() => import("@/pages/admin/Parceiros"));
+const Estoque = lazy(() => import("@/pages/admin/Estoque"));
 const Equipe = lazy(() => import("@/pages/Equipe"));
 
 // Storefront (public)
@@ -86,6 +94,17 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
     items: [
       { name: "Produtos", href: "/admin/produtos", icon: Package, route: "produtos" },
       { name: "Categorias", href: "/admin/categorias", icon: Tags, route: "categorias" },
+    ],
+  },
+  {
+    key: "gestao",
+    label: "Gestão",
+    icon: Landmark,
+    items: [
+      { name: "Financeiro", href: "/admin/financeiro", icon: Landmark, route: "financeiro" },
+      { name: "Itens", href: "/admin/itens", icon: Boxes, route: "itens" },
+      { name: "Parceiros", href: "/admin/parceiros", icon: Handshake, route: "parceiros" },
+      { name: "Estoque", href: "/admin/estoque", icon: Warehouse, route: "estoque" },
     ],
   },
   {
@@ -127,6 +146,10 @@ export default createProductApp({
     { path: "/admin/produtos", component: Products },
     { path: "/admin/produtos/:id", component: ProductEdit },
     { path: "/admin/categorias", component: Categories },
+    { path: "/admin/financeiro/*", component: Financeiro },
+    { path: "/admin/itens", component: Itens },
+    { path: "/admin/parceiros", component: Parceiros },
+    { path: "/admin/estoque", component: Estoque },
     { path: "/admin/loja", component: StoreProfile },
     { path: "/admin/enderecos", component: StorefrontHosts },
     { path: "/admin/integracoes", component: ApiKeys },
