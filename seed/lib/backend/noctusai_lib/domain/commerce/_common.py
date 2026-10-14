@@ -2,38 +2,18 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 from typing import Any, Optional
-from uuid import uuid4
 
+from noctusai_lib.domain._organ_common import digits, first, like_term, new_id, now, now_iso
 from noctusai_lib.primitives.accents import fold_accents_ascii
 from noctusai_lib.primitives.responses import calculate_pagination
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
-def now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def now_iso() -> str:
-    return now().isoformat()
-
-
-def new_id() -> str:
-    return str(uuid4())
-
-
 def tbl(db: Any, name: str):
     """The query builder for `name` on an already schema-scoped client."""
     return db.table(name)
-
-
-def first(response: Any) -> Optional[dict]:
-    data = getattr(response, "data", None)
-    if isinstance(data, list):
-        return dict(data[0]) if data else None
-    return dict(data) if isinstance(data, dict) else None
 
 
 def get_row(db: Any, table: str, org_id: Any, row_id: Any, *, id_col: str = "id") -> Optional[dict]:
@@ -68,12 +48,6 @@ def page_rows(
     return rows, int(total if total is not None else len(rows)), page, page_size
 
 
-def like_term(q: str) -> str:
-    """A safe ILIKE pattern for a user search term (no wildcards from the user)."""
-    cleaned = re.sub(r"[%_,()*\\]", " ", q or "").strip()
-    return f"%{cleaned}%"
-
-
 def slugify(text: str) -> str:
     base = fold_accents_ascii(text)
     slug = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
@@ -82,10 +56,6 @@ def slugify(text: str) -> str:
 
 def valid_email(value: str) -> bool:
     return bool(value) and len(value) <= 254 and bool(_EMAIL_RE.match(value))
-
-
-def digits(value: Optional[str]) -> str:
-    return re.sub(r"\D", "", value or "")
 
 
 __all__ = [

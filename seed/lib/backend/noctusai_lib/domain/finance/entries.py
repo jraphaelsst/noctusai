@@ -10,6 +10,7 @@ import logging
 from datetime import date
 from typing import Any, Mapping, Optional
 
+from noctusai_lib.domain._organ_common import mask_doc
 from noctusai_lib.integrations.persistence.table_reads import IN_FILTER_BATCH
 from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
@@ -62,18 +63,6 @@ def normalize_doc(raw: Optional[str]) -> Optional[str]:
     if len(cleaned) == 14 and cnpj_dv_valido(cleaned):
         return cleaned
     raise invalid("counterparty_doc", "CPF ou CNPJ inválido.", code=DOCUMENTO_INVALIDO)
-
-
-def mask_doc(doc: Optional[str]) -> Optional[str]:
-    """`***.456.789-**` (CPF) / `**.***.678/9012-**` (CNPJ): enough to recognise, not to reuse."""
-    if not doc:
-        return doc
-    d = "".join(ch for ch in str(doc) if ch.isalnum())
-    if len(d) == 11:
-        return f"***.{d[3:6]}.{d[6:9]}-**"
-    if len(d) == 14:
-        return f"**.***.{d[5:8]}/{d[8:12]}-**"
-    return "*" * len(d)
 
 
 def present_entry(row: dict, *, is_admin: bool, on: Optional[date] = None) -> dict:

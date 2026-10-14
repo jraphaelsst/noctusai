@@ -2,7 +2,7 @@
 
 * **Document.** `doc` is a CPF (PF) or CNPJ (PJ, numeric or alphanumeric) with VALID check digits,
   stored without punctuation (the seed's `cpf_dv_valido` / `cnpj_dv_valido`). Unique per org when present.
-* **LGPD.** `doc` is masked (`mask_doc`, the finance organ's) in every read for a non-admin; staff
+* **LGPD.** `doc` is masked (`_organ_common.mask_doc`) in every read for a non-admin; staff
   cannot probe documents by prefix either: a non-admin doc search only matches a COMPLETE document.
 * **Archive, don't delete.** `is_active=false` is the normal retirement. A hard delete is refused
   (409 `parceiro_em_uso`) while any `cfg.reference_tables` row points at the party.
@@ -16,7 +16,7 @@ import logging
 import re
 from typing import Any, Mapping, Optional
 
-from noctusai_lib.domain.finance.entries import mask_doc
+from noctusai_lib.domain._organ_common import mask_doc
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows
 from noctusai_lib.primitives.identificador import cnpj_dv_valido, cpf_dv_valido
 from noctusai_lib.primitives.phone import normalize_phone

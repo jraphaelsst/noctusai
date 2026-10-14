@@ -25,6 +25,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
+from noctusai_lib.domain._organ_common import csv_safe
 from noctusai_lib.primitives.postgrest_errors import is_unique_violation
 
 from ._common import Scope, now_iso
@@ -44,7 +45,6 @@ MAX_IMPORT_BYTES = 5 * 1024 * 1024
 MAX_REPORTED_ERRORS = 100
 ITEMS_IMPORT_PATH_PATTERN = "/api/items/import"
 ITEMS_IMPORT_MAX_BYTES = MAX_IMPORT_BYTES + 1024 * 1024  # multipart framing headroom
-_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
 _PAGE = 200
 
 ITEM_CSV_COLUMNS = (
@@ -55,12 +55,6 @@ _MONEY = {"cost": "cost_cents", "price": "price_cents"}
 _INTS = ("origem", "weight_g", "length_mm", "width_mm", "height_mm")
 _TRUE = {"1", "true", "sim", "s", "yes", "y", "ativo"}
 _FALSE = {"0", "false", "nao", "não", "n", "no", "inativo"}
-
-
-def csv_safe(value: Any) -> str:
-    """One cell: text starting with a formula character is neutralised with a leading `'`."""
-    text = "" if value is None else str(value)
-    return "'" + text if text.startswith(_FORMULA_LEAD) else text
 
 
 def money(cents: Any) -> str:

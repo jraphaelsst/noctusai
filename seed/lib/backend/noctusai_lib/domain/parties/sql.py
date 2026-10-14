@@ -22,7 +22,8 @@ as a generator flag on `finance_migration`; add `("fin_entries", "party_id")` to
 """
 from __future__ import annotations
 
-from noctusai_lib.domain.sql_templates import rls_subquery_policy, service_role_bypass, set_search_path
+from noctusai_lib.domain._organ_common import org_rls
+from noctusai_lib.domain.sql_templates import set_search_path
 
 from .config import PartiesConfig
 from .types import PartyKind, PartyRole, values
@@ -34,21 +35,6 @@ PARTIES_TABLES: tuple[str, ...] = ("parties", "party_roles")
 
 def _in(enum_cls) -> str:
     return ", ".join(f"'{v}'" for v in values(enum_cls))
-
-
-def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
-    select_name = f"{table}_select_own_org"
-    return "\n".join(
-        [
-            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
-            f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
-            rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
-            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
-            service_role_bypass(table, schema=schema),
-            f"GRANT SELECT ON {schema}.{table} TO authenticated;",
-            f"GRANT ALL ON {schema}.{table} TO service_role;",
-        ]
-    )
 
 
 def _tables(cfg: PartiesConfig, s: str) -> list[str]:
@@ -83,7 +69,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_{parties}_doc ON {s}.{parties} (org_id, doc
 CREATE INDEX IF NOT EXISTS idx_{parties}_org_name ON {s}.{parties} (org_id, lower(legal_name));
 CREATE INDEX IF NOT EXISTS idx_{parties}_org_email ON {s}.{parties} (org_id, lower(email)) WHERE email IS NOT NULL;
 """,
-                _org_rls(s, parties, o),
+                org_rls(s, parties, o, grants=True),
             ]
         ),
         "\n".join(
@@ -100,7 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_{parties}_org_email ON {s}.{parties} (org_id, low
 );
 CREATE INDEX IF NOT EXISTS idx_{roles}_org_role ON {s}.{roles} (org_id, role);
 """,
-                _org_rls(s, roles, o),
+                org_rls(s, roles, o, grants=True),
             ]
         ),
     ]

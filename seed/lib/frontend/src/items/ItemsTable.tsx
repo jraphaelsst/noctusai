@@ -8,7 +8,7 @@
 import * as React from 'react';
 import { Button } from '../design-system/ui/Button';
 import { Badge } from '../design-system/ui/Badge';
-import { formatCents } from '../commerce/format';
+import { formatCents } from '../organ-kit/money';
 import { EmptyState, FormError, Input, ListSkeleton, RefreshingBar, RetryError, Select } from './controls';
 import { errorMessage, type ItemListParams, type ItemsHooks } from './hooks';
 import { itemsT as t } from './messages';

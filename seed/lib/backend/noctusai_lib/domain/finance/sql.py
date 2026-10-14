@@ -21,10 +21,9 @@ and `public.current_org_id_for(text)` (core 070; the default `org_id_expr`).
 """
 from __future__ import annotations
 
+from noctusai_lib.domain._organ_common import definer_search_path, org_rls
 from noctusai_lib.domain.sql_templates import (
     private_org_bucket_sql,
-    rls_subquery_policy,
-    service_role_bypass,
     set_search_path,
 )
 
@@ -90,23 +89,8 @@ def _in_lines(*, with_unclassified: bool) -> str:
     return ", ".join(f"'{v}'" for v in lines)
 
 
-def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
-    select_name = f"{table}_select_own_org"
-    return "\n".join(
-        [
-            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
-            f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
-            rls_subquery_policy(
-                schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"
-            ),
-            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
-            service_role_bypass(table, schema=schema),
-        ]
-    )
-
-
 def _section(title: str, schema: str, table: str, body: str, org: str, *, extra: str = "") -> str:
-    return f"-- {title}\n{body.strip()}\n{extra}{_org_rls(schema, table, org)}"
+    return f"-- {title}\n{body.strip()}\n{extra}{org_rls(schema, table, org)}"
 
 
 def _tables(cfg: FinanceConfig, s: str) -> list[str]:
@@ -445,7 +429,7 @@ def _rpcs(cfg: FinanceConfig, s: str) -> str:
 CREATE OR REPLACE FUNCTION {s}.{settle}(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {s}, pg_temp
+{definer_search_path(s)}
 AS $fn$
 DECLARE
     v_entry   {s}.{t['entries']}%ROWTYPE;
@@ -491,7 +475,7 @@ GRANT EXECUTE ON FUNCTION {s}.{settle}(UUID, UUID, JSONB) TO service_role;
 CREATE OR REPLACE FUNCTION {s}.{reverse}(p_org_id UUID, p_settlement_id UUID, p_reason TEXT, p_user UUID, p_on DATE) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {s}, pg_temp
+{definer_search_path(s)}
 AS $fn$
 DECLARE
     v_st      {s}.{t['settlements']}%ROWTYPE;

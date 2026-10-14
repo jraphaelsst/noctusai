@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 from pydantic import ValidationError
 
-from noctusai_lib.domain.finance.exports import csv_safe
+from noctusai_lib.domain._organ_common import csv_safe
 
 from . import parties as svc
 from ._common import Scope

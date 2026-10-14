@@ -13,8 +13,9 @@
  * Errors are never swallowed: queries expose `error`, mutations reject with `ApiError` so the
  * caller renders it (409 `documento_duplicado`, 409 `parceiro_em_uso`, 422 `documento_invalido`...).
  */
-import { useMutation, useQuery, useQueryClient, type QueryKey, type UseQueryResult } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { ApiError, type ApiClient } from '../api';
+import { apiErrorCode, errorMessage, keep, signals } from '../organ-kit/query';
 import type {
   PartiesImportResult,
   PartiesPaginated,
@@ -39,27 +40,8 @@ export const partiesKeys = {
   detail: (id: string) => ['parties', 'detail', id] as const,
 };
 
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-export function apiErrorCode(err: unknown): string | null {
-  return err instanceof ApiError ? err.code : null;
-}
+export { apiErrorCode, errorMessage };
 
-/** Two-signal loading, computed once. A disabled query (`idle`) is not a skeleton. */
-function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
-  return {
-    data: q.data,
-    error: q.error,
-    isError: q.isError,
-    isPending: q.isPending,
-    refetch: q.refetch,
-    showSkeleton: q.isPending && !q.data && q.fetchStatus !== 'idle',
-    isRefreshing: q.isFetching && !!q.data,
-  };
-}
-
-const keep = <T,>(prev: T | undefined) => prev;
 
 /** The query string of a list / export request (empty filters are not sent). `active` maps to `?active=true|false`. */
 export function listQuery(params: PartiesListParams): Record<string, string | number | boolean> {

@@ -10,8 +10,9 @@
  * codes) and invalidate every read they can change: a stock move changes balances, kardex, valuation
  * and low-stock at once.
  */
-import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, type ApiClient } from '../api';
+import { errorMessage, keep, signals } from '../organ-kit/query';
 import { defaultInventoryT, type InventoryTranslate } from './i18n';
 import type {
   AdjustInput,
@@ -46,9 +47,7 @@ export const inventoryKeys = {
   lowStock: ['inventory', 'low-stock'] as const,
 };
 
-export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+export { errorMessage };
 
 /** pt-BR copy for the stable backend error codes; falls back to the server message. */
 export function inventoryErrorMessage(err: unknown, t: InventoryTranslate = defaultInventoryT): string {
@@ -59,19 +58,6 @@ export function inventoryErrorMessage(err: unknown, t: InventoryTranslate = defa
   return errorMessage(err);
 }
 
-function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
-  return {
-    data: q.data,
-    error: q.error,
-    isError: q.isError,
-    isPending: q.isPending,
-    refetch: q.refetch,
-    showSkeleton: q.isPending && !q.data && q.fetchStatus !== 'idle',
-    isRefreshing: q.isFetching && !!q.data,
-  };
-}
-
-const keep = <T,>(prev: T | undefined) => prev;
 
 export function createInventoryHooks(api: InventoryApi) {
   const unwrap = async <T,>(p: Promise<InventoryEnvelope<T>>): Promise<T> => (await p).data;

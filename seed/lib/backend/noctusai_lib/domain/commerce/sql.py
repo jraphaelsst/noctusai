@@ -28,10 +28,9 @@ and `public.current_org_id_for(text)` (core 070; the default `org_id_expr`).
 from __future__ import annotations
 
 from noctusai_lib.domain.payments.event_inbox_sql import event_inbox_table_sql
+from noctusai_lib.domain._organ_common import org_rls
 from noctusai_lib.domain.sql_templates import (
     private_org_bucket_sql,
-    rls_subquery_policy,
-    service_role_bypass,
     set_search_path,
 )
 from noctusai_lib.security.api_keys import credentials_table_ddl
@@ -98,24 +97,8 @@ P3_ORDER_STATUSES: tuple[str, ...] = (
 _P3_STATUSES = ", ".join(f"'{v}'" for v in P3_ORDER_STATUSES)
 
 
-def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
-    """RLS on + own-org SELECT for `authenticated` + `service_role_bypass`."""
-    select_name = f"{table}_select_own_org"
-    return "\n".join(
-        [
-            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
-            f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
-            rls_subquery_policy(
-                schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"
-            ),
-            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
-            service_role_bypass(table, schema=schema),
-        ]
-    )
-
-
 def _section(title: str, schema: str, table: str, body: str, org: str, *, extra: str = "") -> str:
-    return f"-- {title}\n{body.strip()}\n{extra}{_org_rls(schema, table, org)}"
+    return f"-- {title}\n{body.strip()}\n{extra}{org_rls(schema, table, org)}"
 
 
 def _tables(cfg: CommerceConfig, s: str) -> list[str]:

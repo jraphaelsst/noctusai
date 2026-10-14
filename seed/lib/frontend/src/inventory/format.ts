@@ -1,5 +1,5 @@
 /** Inventory display helpers. Quantities keep up to 3 decimals (KG); money reuses the commerce cents seam. */
-import { formatCents } from '../commerce/format';
+import { formatCents } from '../organ-kit/money';
 
 export { formatCents };
 

@@ -11,8 +11,9 @@
  *
  * Errors are never swallowed: queries expose `error`, mutations reject with `ApiError`.
  */
-import { useMutation, useQuery, useQueryClient, type QueryKey, type UseQueryResult } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
 import { ApiError, type ApiClient } from '../api';
+import { keep, signals } from '../organ-kit/query';
 import type {
   Item,
   ItemCategory,
@@ -74,20 +75,6 @@ export function importRowErrors(err: unknown): { rows: import('./types').ItemImp
   return { rows: rows as import('./types').ItemImportRowError[], total: typeof count === 'number' ? count : rows.length };
 }
 
-/** Two-signal loading, computed once. A disabled query (`idle`) is not a skeleton. */
-function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
-  return {
-    data: q.data,
-    error: q.error,
-    isError: q.isError,
-    isPending: q.isPending,
-    refetch: q.refetch,
-    showSkeleton: q.isPending && !q.data && q.fetchStatus !== 'idle',
-    isRefreshing: q.isFetching && !!q.data,
-  };
-}
-
-const keep = <T,>(prev: T | undefined) => prev;
 
 function listQuery(params: ItemListParams): Record<string, string | number> {
   const out: Record<string, string | number> = { page: params.page ?? 1, page_size: ITEMS_PAGE_SIZE };

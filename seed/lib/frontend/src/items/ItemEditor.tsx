@@ -8,7 +8,7 @@
  */
 import * as React from 'react';
 import { Button } from '../design-system/ui/Button';
-import { centsToInput, parseMoneyToCents } from '../commerce/format';
+import { centsToInput, parseMoneyToCents } from '../organ-kit/money';
 import { EmptyState, Field, FormError, Input, ListSkeleton, RetryError, Select, Textarea } from './controls';
 import { apiFieldError, errorMessage, type ItemsHooks } from './hooks';
 import { itemsT as t } from './messages';

@@ -27,6 +27,7 @@ Forward-only and idempotent (the chain replay applies a new file twice). Money i
 """
 from __future__ import annotations
 
+from noctusai_lib.domain._organ_common import definer_search_path
 from noctusai_lib.domain.sql_templates import set_search_path
 
 from .config import CommerceConfig
@@ -193,7 +194,7 @@ CREATE OR REPLACE FUNCTION {s}.{CREATE_REFUND_RPC}(
 ) RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, {s}, pg_temp
+{definer_search_path(s)}
 AS $fn$
 DECLARE
     v_order      {s}.commerce_orders%ROWTYPE;

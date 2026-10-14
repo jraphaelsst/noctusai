@@ -1,6 +1,6 @@
 /**
  * Finance-local UI helpers on top of the same seed form primitives the commerce organ is drawn
- * with (re-exported from there: one import seam, no second copy of skeleton / retry / refreshing).
+ * with (the shared organ kit: one import seam, no second copy of skeleton / retry / refreshing).
  */
 import * as React from 'react';
 import { Badge } from '../design-system/ui/Badge';
@@ -20,7 +20,7 @@ export {
   ListSkeleton,
   RetryError,
   RefreshingBar,
-} from '../commerce/controls';
+} from '../organ-kit/controls';
 
 /** Entry status as a chip. `overdue` is computed server-side and wins over `open`/`partial`. */
 export function EntryStatusChip({ status, overdue }: { status: EntryStatus; overdue?: boolean }) {

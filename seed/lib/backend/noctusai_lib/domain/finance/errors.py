@@ -6,9 +6,7 @@ retype the string.
 """
 from __future__ import annotations
 
-from typing import Optional
-
-from noctusai_lib.primitives.exceptions import AppException, NotFoundError
+from noctusai_lib.domain._organ_common import OrganError, error_factories, not_found
 
 CATEGORIA_EM_USO = "categoria_em_uso"
 LANCAMENTO_COM_BAIXA = "lancamento_com_baixa"
@@ -29,35 +27,11 @@ ANEXO_LIMITE = "anexo_limite"
 DOCUMENTO_INVALIDO = "documento_invalido"
 
 
-class FinanceError(AppException):
+class FinanceError(OrganError):
     """A finance refusal carrying its stable machine `code`."""
 
-    def __init__(
-        self,
-        code: str,
-        message: str,
-        status_code: int = 422,
-        *,
-        field: Optional[str] = None,
-        details: Optional[dict] = None,
-    ) -> None:
-        merged = dict(details or {})
-        if field:
-            merged["field"] = field
-        super().__init__(code=code, message=message, status_code=status_code, details=merged)
 
-
-def invalid(field: str, message: str, code: str = "invalid") -> FinanceError:
-    return FinanceError(code, message, 422, field=field)
-
-
-def conflict(code: str, message: str, **details) -> FinanceError:
-    return FinanceError(code, message, 409, details=details)
-
-
-def not_found(what: str) -> NotFoundError:
-    """The platform's 404 -- a foreign-org id is indistinguishable from a missing one."""
-    return NotFoundError(what)
+invalid, conflict = error_factories(FinanceError)
 
 
 __all__ = [

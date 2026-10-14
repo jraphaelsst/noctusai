@@ -1,43 +1,14 @@
 /** Shared test helpers for the finance organ (not exported from the barrel). */
 import * as React from 'react';
-import { vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ApiError } from '../api';
+import { makeRoutedApi as sharedRoutedApi, type RoutedHandler } from '../organ-kit/testing';
 import { createFinanceHooks, type FinanceApi } from './hooks';
 import type { FinanceAccount, FinanceCategory, FinanceEntry, CostCenter } from './types';
 
-type Handler = unknown | ((path: string, arg?: unknown) => unknown);
+type Handler = RoutedHandler;
 
-/**
- * Routed fake `ApiClient`: `routes['GET /api/finance/accounts']` is a value (resolved) or a function
- * `(path, argOrParams) => value` (may throw / return a rejected promise). An unrouted call REJECTS loudly
- * (a test must declare every endpoint it touches). Every call is recorded on the `vi.fn` mocks.
- */
-export function makeRoutedApi(routes: Record<string, Handler> = {}) {
-  const table = { ...routes };
-  const run = (method: string) =>
-    vi.fn(async (path: string, arg?: unknown) => {
-      const clean = path.split('?')[0];
-      const handler = table[`${method} ${clean}`] ?? table[`${method} ${path}`];
-      if (handler === undefined) throw new ApiError(404, `unrouted ${method} ${path}`);
-      return typeof handler === 'function' ? (handler as (p: string, a?: unknown) => unknown)(path, arg) : handler;
-    });
-  const api = {
-    get: run('GET'),
-    post: run('POST'),
-    put: run('PUT'),
-    patch: run('PATCH'),
-    delete: run('DELETE'),
-    upload: run('UPLOAD'),
-    download: vi.fn(async (_path: string) => new Blob(['x'])),
-  };
-  return Object.assign(api as unknown as FinanceApi & typeof api, {
-    routes: table,
-    route(key: string, handler: Handler) {
-      table[key] = handler;
-    },
-  });
-}
+/** Routed fake `FinanceApi` (see `organ-kit/testing`). */
+export const makeRoutedApi = (routes: Record<string, Handler> = {}) => sharedRoutedApi<FinanceApi>(routes);
 
 export function makeClient() {
   return new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });

@@ -22,7 +22,7 @@ drifts_surfaced:
 
 alternatives_considered:
   - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by ERP-shaped products."
-  - "Importing commerce/controls (ListSkeleton/RetryError/RefreshingBar) instead of copying: chosen, single seam in parties/controls.ts, NOC-REMEDIATE[organ-controls-lift] to lift into design-system at N=3."
+  - "Importing the shared organ-kit controls (ListSkeleton/RetryError/RefreshingBar) instead of copying: single seam in parties/controls.ts, lifted into organ-kit at N=3 (organ-controls-lift closed)."
 
 manual_validation_log: []
 

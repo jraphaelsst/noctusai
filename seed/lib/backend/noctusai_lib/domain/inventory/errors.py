@@ -5,9 +5,7 @@ The RPC refusal codes (raised inside Postgres) are the same constants: the servi
 """
 from __future__ import annotations
 
-from typing import Optional
-
-from noctusai_lib.primitives.exceptions import AppException, NotFoundError
+from noctusai_lib.domain._organ_common import OrganError, error_factories, not_found
 
 ESTOQUE_INSUFICIENTE = "estoque_insuficiente"
 DEPOSITO_INVALIDO = "deposito_invalido"
@@ -61,29 +59,11 @@ _MESSAGES = {
 }
 
 
-class InventoryError(AppException):
+class InventoryError(OrganError):
     """An inventory refusal carrying its stable machine `code`."""
 
-    def __init__(
-        self, code: str, message: str, status_code: int = 422, *, field: Optional[str] = None, details: Optional[dict] = None
-    ) -> None:
-        merged = dict(details or {})
-        if field:
-            merged["field"] = field
-        super().__init__(code=code, message=message, status_code=status_code, details=merged)
 
-
-def invalid(field: str, message: str, code: str = "invalid") -> InventoryError:
-    return InventoryError(code, message, 422, field=field)
-
-
-def conflict(code: str, message: str, **details) -> InventoryError:
-    return InventoryError(code, message, 409, details=details)
-
-
-def not_found(what: str) -> NotFoundError:
-    """The platform's 404 -- a foreign-org id is indistinguishable from a missing one."""
-    return NotFoundError(what)
+invalid, conflict = error_factories(InventoryError)
 
 
 def from_refusal(payload: dict) -> InventoryError:

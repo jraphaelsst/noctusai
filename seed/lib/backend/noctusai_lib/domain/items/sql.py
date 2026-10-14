@@ -22,9 +22,8 @@ Prerequisites (not created here): `public.current_org_id_for(text)` (core 070; t
 """
 from __future__ import annotations
 
+from noctusai_lib.domain._organ_common import org_rls
 from noctusai_lib.domain.sql_templates import (
-    rls_subquery_policy,
-    service_role_bypass,
     set_search_path,
 )
 
@@ -42,26 +41,13 @@ def _lit(vals: tuple[str, ...]) -> str:
     return ", ".join(f"'{v}'" for v in vals)
 
 
-def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
-    select_name = f"{table}_select_own_org"
-    return "\n".join(
-        [
-            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
-            f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
-            rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
-            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
-            service_role_bypass(table, schema=schema),
-        ]
-    )
-
-
 def _tables(cfg: ItemsConfig, s: str) -> list[str]:
     o = cfg.org_id_expr
     t = {name: cfg.table(name) for name in ITEMS_TABLES}
     out: list[str] = []
 
     def add(title: str, name: str, body: str) -> None:
-        out.append(f"-- {title}\n{body.strip()}\n{_org_rls(s, t[name], o)}")
+        out.append(f"-- {title}\n{body.strip()}\n{org_rls(s, t[name], o)}")
 
     add(
         "Item categories (tree per org). Unique (org, parent, lower(name)); a parent is always in the same org.",

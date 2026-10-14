@@ -21,7 +21,7 @@ import {
   type QueryKey,
 } from '@tanstack/react-query';
 import { ApiError, type ApiClient } from '../api';
-import { createFetchTransport, errorMessage, keep, signals } from '../commerce/hooks';
+import { createFetchTransport, errorMessage, keep, signals } from '../organ-kit/query';
 import { buildQuery } from './format';
 import type {
   AccountBalance,
@@ -70,7 +70,7 @@ import type {
 } from './dreTypes';
 
 export { errorMessage };
-export { apiErrorCode, apiErrorStatus } from '../commerce/hooks';
+export { apiErrorCode, apiErrorStatus } from '../organ-kit/query';
 
 /** The subset of the seed `ApiClient` the finance hooks need. */
 export type FinanceApi = Pick<ApiClient, 'get' | 'post' | 'put' | 'patch' | 'delete' | 'upload' | 'download'>;

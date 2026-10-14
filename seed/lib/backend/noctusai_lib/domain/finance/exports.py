@@ -17,6 +17,8 @@ from decimal import Decimal
 from typing import Any, Optional
 from xml.etree import ElementTree as ET
 
+from noctusai_lib.domain._organ_common import csv_safe
+
 from ._common import Scope, iso, now, to_date, today
 from .accounts import account_balance, get_account
 from .entries import list_entries, present_entry
@@ -25,7 +27,6 @@ from .types import AccountKind, LedgerDirection, LedgerOrigin
 
 MAX_EXPORT_ROWS = 50_000
 EXPORT_TOO_BIG = "exportacao_grande_demais"
-_FORMULA_LEAD = ("=", "+", "-", "@", "\t", "\r")
 _XML_ILLEGAL = re.compile("[^\x09\x0a\x0d\x20-퟿-�]")
 _PAGE = 200
 
@@ -33,12 +34,6 @@ CSV_COLUMNS = (
     "id", "direction", "status", "description", "counterparty_name", "counterparty_doc", "category",
     "cost_center", "competence_month", "due_date", "amount", "settled", "overdue", "source", "source_ref", "notes",
 )
-
-
-def csv_safe(value: Any) -> str:
-    """One cell: text starting with a formula character is neutralised with a leading `'`."""
-    text = "" if value is None else str(value)
-    return "'" + text if text.startswith(_FORMULA_LEAD) else text
 
 
 def money(cents: Any) -> str:

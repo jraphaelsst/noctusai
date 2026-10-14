@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { Button, Dialog, DialogBody, DialogFooter, DialogHeader, Field, FormError, Input, Textarea } from './controls';
 import { formatQty, parseQty, shortId } from './format';
-import { parseMoneyToCents } from '../commerce/format';
+import { parseMoneyToCents } from '../organ-kit/money';
 import { inventoryErrorMessage } from './hooks';
 import { defaultInventoryT } from './i18n';
 import type { InventoryOrganProps } from './shared';
