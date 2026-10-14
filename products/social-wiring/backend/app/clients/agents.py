@@ -15,10 +15,7 @@ Every row of the section 3.1 error table maps to ONE typed exception below, so
 the lead path decides what to do from the TYPE, never from a status code or a
 message string. The lead never sees any of this (L2): errors end in "no reply".
 
-# NOC-REMEDIATE[agents-delete-conversation-wire]: the deletion endpoint
-# (`POST /api/channels/conversations/delete`) is this client's PROPOSAL for the
-# agents side (slice A2) -- the contract names the behaviour (M5) but not the
-# route. A2 implements exactly this shape or amends it here. — 2026-10-14
+Deletion wire (shipped by A2): DELETE /api/channels/conversations, JSON body, 204.
 """
 from __future__ import annotations
 
@@ -427,6 +424,8 @@ class HttpAgentsClient:
         if response.status_code in ok_statuses:
             return None
         _raise_for_agents_status(response)
+        if response.status_code == 204 or not response.content:
+            return {}
         try:
             return response.json()
         except ValueError as exc:
@@ -439,10 +438,12 @@ class HttpAgentsClient:
         return parse_agent_status(await self._send("GET", f"/api/channels/agents/{quote(agent_key, safe='')}/status"))
 
     async def delete_conversation_data(self, req: DeletionRequest) -> DeletionResult:
-        # 404 = nothing stored for that chat on the agents side: already gone, not an error.
+        """`DELETE /api/channels/conversations` (A2): 204 empty, also when nothing exists;
+        409 `turn_in_progress` while a turn runs (raised as `TurnInProgress`)."""
+        # 404 is tolerated too (an older agents build): nothing stored = already gone.
         body = await self._send(
-            "POST",
-            "/api/channels/conversations/delete",
+            "DELETE",
+            "/api/channels/conversations",
             json={
                 "agent_key": req.agent_key,
                 "channel": "whatsapp",
@@ -450,11 +451,11 @@ class HttpAgentsClient:
             },
             ok_statuses=(404,),
         )
-        if body is None:
-            return DeletionResult(deleted=False)
-        deleted = bool(body.get("deleted")) if isinstance(body, dict) else False
-        count = body.get("messages_deleted") if isinstance(body, dict) else 0
-        return DeletionResult(deleted=deleted, messages_deleted=count if isinstance(count, int) else 0)
+        # A 204 carries no body, so "was something deleted" is not knowable; the 2xx
+        # itself is the guarantee that nothing remains.
+        if isinstance(body, dict) and "deleted" in body:
+            return DeletionResult(deleted=bool(body["deleted"]))
+        return DeletionResult(deleted=body is not None)
 
 
 # ── factory ─────────────────────────────────────────────────────────────────

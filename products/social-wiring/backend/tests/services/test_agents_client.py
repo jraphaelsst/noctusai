@@ -222,31 +222,43 @@ class TestErrorTable:
 
 @pytest.mark.asyncio
 class TestDeletion:
-    async def test_posts_the_deletion_shape(self):
+    async def test_sends_the_shipped_delete_shape_and_a_204_is_success(self):
         seen = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen["path"], seen["body"] = request.url.path, json.loads(request.content)
-            return httpx.Response(200, json={"deleted": True, "messages_deleted": 4})
+            seen["method"], seen["path"], seen["body"] = request.method, request.url.path, json.loads(request.content)
+            return httpx.Response(204)
 
         res = await _client(handler).delete_conversation_data(
             DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="5511999990000@c.us"))
-        assert seen["path"] == "/api/channels/conversations/delete"
+        assert (seen["method"], seen["path"]) == ("DELETE", "/api/channels/conversations")
         assert seen["body"] == {
             "agent_key": "lead-imob", "channel": "whatsapp",
             "channel_ref": {"connection_id": CONN, "chat_id": "5511999990000@c.us"},
         }
-        assert res.deleted is True and res.messages_deleted == 4
+        assert res.deleted is True
 
-    async def test_404_means_already_gone_not_an_error(self):
-        res = await _client(_err(404)).delete_conversation_data(
-            DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="x@c.us"))
-        assert res.deleted is False
+    async def test_409_turn_in_progress_is_raised_so_the_caller_can_retry(self):
+        with pytest.raises(TurnInProgress):
+            await _client(_err(409, "turn_in_progress")).delete_conversation_data(
+                DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="x@c.us"))
 
     async def test_other_errors_propagate(self):
         with pytest.raises(AgentsTokenInvalid):
             await _client(_err(401)).delete_conversation_data(
                 DeletionRequest(agent_key="lead-imob", connection_id=CONN, chat_id="x@c.us"))
+
+    async def test_403_agent_not_allowed_is_a_token_problem(self):
+        with pytest.raises(AgentsTokenInvalid) as ei:
+            await _client(_err(403, "agent_not_allowed")).run_turn(_req())
+        assert ei.value.code == "agent_not_allowed"
+
+    async def test_flat_error_bodies_are_read(self):
+        def handler(request):
+            return httpx.Response(409, json={"detail": "dup", "code": "idempotency_conflict"})
+
+        with pytest.raises(IdempotencyConflict):
+            await _client(handler).run_turn(_req())
 
 
 @pytest.mark.asyncio

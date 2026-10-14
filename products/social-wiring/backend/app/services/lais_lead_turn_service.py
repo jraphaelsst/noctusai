@@ -312,7 +312,15 @@ async def process_lead_batch(key: str, memory: list[dict[str, Any]], *, deps: Le
         close_run(deps.buffer, key, run)
         return
 
-    batch = trim_batch(run, max_chars=deps.cfg.lais_agente_batch_max_chars)
+    # A2: provider_message_id is unique within a batch (1..256 chars) -- first wins.
+    seen_ids: set[str] = set()
+    unique_run = []
+    for item in run:
+        pid = str(item.get("provider_message_id") or "")[:256]
+        if pid and pid not in seen_ids:
+            seen_ids.add(pid)
+            unique_run.append({**item, "provider_message_id": pid})
+    batch = trim_batch(unique_run, max_chars=deps.cfg.lais_agente_batch_max_chars)
     meta = next((i.get("metadata") or {} for i in reversed(run) if i.get("metadata")), {})
     phone = _phone_e164(chat_id)
     if phone is None and lais.is_lid(chat_id):
