@@ -22,6 +22,8 @@ ROUTES = [
     ("GET", f"{P}/recurrences", False), ("POST", f"{P}/recurrences", True), ("PATCH", f"{P}/recurrences/{U0}", True),
     ("POST", f"{P}/transfers", True),
     ("GET", f"{P}/reports/cashflow", False), ("GET", f"{P}/reports/dre", False), ("GET", f"{P}/reports/aging", False),
+    ("GET", f"{P}/reports/simples-base", False), ("GET", f"{P}/dre-settings", False), ("PUT", f"{P}/dre-settings", True),
+    ("GET", f"{P}/accountant-checklist", False), ("GET", f"{P}/exports/dre.csv", True),
     ("GET", f"{P}/entries/{U0}/attachments", False), ("POST", f"{P}/entries/{U0}/attachments", True),
     ("DELETE", f"{P}/attachments/{U0}", True),
 ]
@@ -178,6 +180,8 @@ def test_reports_defaults_and_validation(h):
     assert call(h, "GET", f"{P}/reports/dre", h.staff()).status_code == 200
     assert call(h, "GET", f"{P}/reports/cashflow?from=2026-03-01&to=2026-01-01", h.staff()).status_code == 422
     assert call(h, "GET", f"{P}/reports/dre?from=2026-01-01&to=2026-02-01", h.staff()).json()["data"]["months"] == ["2026-01", "2026-02"]
+    assert call(h, "GET", f"{P}/reports/dre?view=managerial", h.staff()).json()["data"]["view"] == "managerial"
+    assert call(h, "GET", f"{P}/reports/dre?view=pie", h.staff()).status_code == 422
 
 
 def test_transfer_and_recurrence_routes(h):

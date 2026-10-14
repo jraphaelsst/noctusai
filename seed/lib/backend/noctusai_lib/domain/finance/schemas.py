@@ -15,7 +15,16 @@ from pydantic import Field
 from noctusai_lib.api import StrictHttpModel
 
 from .entries import MAX_INSTALLMENTS
-from .types import AccountKind, CategoryDirection, EntryDirection, Frequency, SettlementKind
+from .types import (
+    AccountKind,
+    CategoryBehavior,
+    CategoryDirection,
+    DreLine,
+    EntryDirection,
+    Frequency,
+    SettlementKind,
+    TaxRegime,
+)
 
 #: Sanity bound (R$ 100 bi), not a business rule: keeps a typo from becoming a BIGINT-sized lie.
 MAX_CENTS = 10_000_000_000_000
@@ -47,12 +56,19 @@ class CategoryBody(StrictHttpModel):
     name: str = Field(min_length=1, max_length=80)
     direction: CategoryDirection
     parent_id: Optional[UUID] = None
+    dre_line: Optional[DreLine] = None
+    behavior: Optional[CategoryBehavior] = None
+    is_das: bool = False
 
 
 class CategoryPatch(StrictHttpModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=80)
     parent_id: Optional[UUID] = None
     active: Optional[bool] = None
+    #: Explicit null is meaningful (unclassify / back to the line default): the route dumps with `exclude_unset`.
+    dre_line: Optional[DreLine] = None
+    behavior: Optional[CategoryBehavior] = None
+    is_das: Optional[bool] = None
 
 
 class CostCenterBody(StrictHttpModel):
@@ -158,6 +174,32 @@ class TransferBody(StrictHttpModel):
     description: Optional[str] = Field(default=None, max_length=300)
 
 
+_DRE_LINE_CHOICE = Optional[DreLine]
+
+
+class DreChoiceMeta(StrictHttpModel):
+    """Confirmation of ONE provisional choice. `confirmed=True` clears `provisional` (stamped server-side with the
+    caller and the time); `confirmed=False` returns it to provisional."""
+
+    confirmed: bool
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class DreSettingsBody(StrictHttpModel):
+    """`PUT /dre-settings` -- every field optional (a partial update); nothing here moves money."""
+
+    tax_regime: Optional[TaxRegime] = None
+    das_split_irpj_csll: Optional[bool] = None
+    das_irpj_csll_share_bps: Optional[int] = Field(default=None, ge=0, le=10_000)
+    gateway_fee_line: _DRE_LINE_CHOICE = None
+    anticipation_fee_line: _DRE_LINE_CHOICE = None
+    chargeback_line: _DRE_LINE_CHOICE = None
+    chargeback_fee_line: _DRE_LINE_CHOICE = None
+    installment_interest_line: _DRE_LINE_CHOICE = None
+    #: `{choice name: {confirmed, note}}` -- the accountant's sign-off per provisional choice.
+    confirmations: dict[str, DreChoiceMeta] = Field(default_factory=dict)
+
+
 __all__ = [
     "AccountBody",
     "AccountPatch",
@@ -165,6 +207,8 @@ __all__ = [
     "CategoryPatch",
     "CostCenterBody",
     "CostCenterPatch",
+    "DreChoiceMeta",
+    "DreSettingsBody",
     "EntryBody",
     "EntryPatch",
     "MAX_CENTS",

@@ -846,3 +846,51 @@ class TestEmailHygiene:
         w.db.table("commerce_order_reminders").insert({"order_id": other_id, "kind": "after_expiry", "org_id": ORG_A, "sent_at": now().isoformat()}).execute()
         w.db.table("commerce_customers").update({"email": "Ana@Example.com".lower()}).eq("org_id", ORG_A).execute()
         assert run(jobs_svc.commerce_expiry_reminders(w.db, cfg=CFG, email=w.mail, link_secret="s")) == 0
+
+
+class TestInterestIsBookedSeparately:
+    """CONTRACT §10.5.3: the buyer's installment interest is its OWN receivable (`<order>:interest`), never folded into the sale."""
+
+    def _world(self, db, **body):
+        return World(db, payment_method="credit_card", installments=6, price_cents=60000, **body)
+
+    def test_principal_and_interest_are_two_receivables_that_add_up_to_the_charge(self, db):
+        w = self._world(db)
+        charge = w.gw.charges.charges[w.order["gateway_charge_id"]]
+        charged = charge.amount.amount_cents
+        assert charged > 60000  # 6x is past the interest-free limit: the buyer pays the price table
+        pay(w.gw, w.order, confirmed_only=True)
+        w.send("charge_paid", detail="confirmed")
+        by_ref = {k[2]: v for k, v in w.fin.entries.items()}
+        assert set(by_ref) == {w.order["id"], f"{w.order['id']}:interest"}
+        assert by_ref[w.order["id"]]["amount_cents"] == 60000 and by_ref[w.order["id"]]["category_hint"] == "vendas"
+        interest = by_ref[f"{w.order['id']}:interest"]
+        assert interest["amount_cents"] == charged - 60000 and interest["category_hint"] == "juros de parcelamento"
+        assert interest["competence_month"] == by_ref[w.order["id"]]["competence_month"]
+
+    def test_rebooking_is_idempotent(self, db):
+        w = self._world(db)
+        pay(w.gw, w.order, confirmed_only=True)
+        w.send("charge_paid", detail="confirmed")
+        w.send("charge_paid", detail="confirmed")
+        pay(w.gw, w.order)
+        w.send("charge_paid", detail="received")
+        w.send("charge_paid", detail="received")
+        assert len(w.fin.entries) == 2 and len(w.fin.settlements) == 1
+
+    def test_the_settlement_names_the_interest_entry_so_finance_can_split_the_amount(self, db):
+        w = self._world(db)
+        pay(w.gw, w.order, fee_cents=500)
+        w.send("charge_paid", detail="received")
+        (st,) = w.fin.settlements.values()
+        assert st["interest_source_ref"] == f"{w.order['id']}:interest" and st["fee_cents"] == 500
+
+    def test_an_interest_free_order_books_only_the_sale(self, db):
+        w = World(db, payment_method="credit_card", installments=2, price_cents=60000)
+        pay(w.gw, w.order, confirmed_only=True)
+        w.send("charge_paid", detail="confirmed")
+        assert [k[2] for k in w.fin.entries] == [w.order["id"]]
+        pay(w.gw, w.order)
+        w.send("charge_paid", detail="received")
+        (st,) = w.fin.settlements.values()
+        assert st["interest_source_ref"] is None

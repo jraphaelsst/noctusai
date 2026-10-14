@@ -34,7 +34,11 @@ from noctusai_lib.primitives.responses import paginated_response, success_respon
 
 from . import accounts as accounts_svc
 from . import attachments as attachments_svc
+from . import accountant as accountant_svc
 from . import categories as categories_svc
+from . import dre_settings as dre_settings_svc
+from . import exports as exports_svc
+from . import simples_base as simples_base_svc
 from . import entries as entries_svc
 from . import recurrences as recurrences_svc
 from . import reports as reports_svc
@@ -50,6 +54,7 @@ from .schemas import (
     CategoryPatch,
     CostCenterBody,
     CostCenterPatch,
+    DreSettingsBody,
     EntryBody,
     EntryPatch,
     RecurrenceBody,
@@ -74,6 +79,7 @@ def make_finance_router(
     get_storage: Callable[..., StorageBackend],
     prefix: str = "/api/finance",
     tags: Optional[list[str]] = None,
+    default_tax_regime: Optional[Callable[[FinanceContext], Optional[str]]] = None,
 ) -> APIRouter:
     """Build the finance router.
 
@@ -83,6 +89,9 @@ def make_finance_router(
         resolve_context: `(auth_value, db) -> FinanceContext(db, org_id, user_id, is_admin)`;
             `is_admin` is decided SERVER-SIDE and only drives LGPD masking of reads.
         get_db / get_storage: FastAPI dependencies (schema-scoped client / `StorageBackend`).
+        default_tax_regime: optional host seam `(ctx) -> 'mei'|'simples'|'presumido'|None` (CONTRACT §10.5.1:
+            "prefilled from the commerce store profile when present"). Used ONLY until the org saves its own
+            DRE settings; the finance organ never reads another organ's tables itself.
     """
     router = APIRouter(prefix=prefix, tags=tags or ["finance"])
 
@@ -93,6 +102,9 @@ def make_finance_router(
         return Scope(ctx.db, cfg, str(ctx.org_id))
 
     admin = Depends(admin_dependency)
+
+    def prefill(ctx: FinanceContext) -> Optional[str]:
+        return default_tax_regime(ctx) if default_tax_regime is not None else None
 
     # ── accounts ──
     @router.get("/accounts", name="finance_list_accounts")
@@ -256,11 +268,59 @@ def make_finance_router(
     async def dre_route(
         date_from: Optional[date] = Query(None, alias="from"),
         date_to: Optional[date] = Query(None, alias="to"),
+        view: str = Query("statement", pattern="^(statement|managerial)$"),
         ctx: FinanceContext = Depends(ctx_dep),
     ) -> dict:
         end = date_to or today()
         start = date_from or end.replace(month=1, day=1)
-        return success_response(reports_svc.dre(scope(ctx), start, end))
+        return success_response(reports_svc.dre(scope(ctx), start, end, view=view, regime_prefill=prefill(ctx)))
+
+    @router.get("/reports/simples-base", name="finance_report_simples_base")
+    async def simples_base_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> dict:
+        end = date_to or today()
+        start = date_from or end.replace(month=1, day=1)
+        return success_response(simples_base_svc.simples_base(scope(ctx), start, end, regime_prefill=prefill(ctx)))
+
+    # ── DRE settings + accountant checklist (CONTRACT §10.4 / §10.5) ──
+    @router.get("/dre-settings", name="finance_get_dre_settings")
+    async def get_dre_settings_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+        return success_response(dre_settings_svc.get_settings(scope(ctx), regime_prefill=prefill(ctx)))
+
+    @router.put("/dre-settings", name="finance_put_dre_settings")
+    async def put_dre_settings_route(body: DreSettingsBody, _a=admin, ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+        return success_response(
+            dre_settings_svc.update_settings(scope(ctx), _dump(body), user_id=ctx.user_id, regime_prefill=prefill(ctx))
+        )
+
+    @router.get("/accountant-checklist", name="finance_accountant_checklist")
+    async def accountant_checklist_route(ctx: FinanceContext = Depends(ctx_dep)) -> dict:
+        links = {
+            "dre_csv": f"{prefix}/exports/dre.csv",
+            "entries_csv": f"{prefix}/exports/entries.csv",
+            "ledger_ofx": f"{prefix}/exports/ledger.ofx",
+        }
+        return success_response(accountant_svc.build_checklist(scope(ctx), export_links=links, regime_prefill=prefill(ctx)))
+
+    @router.get("/exports/dre.csv", name="finance_export_dre")
+    async def export_dre_route(
+        date_from: Optional[date] = Query(None, alias="from"),
+        date_to: Optional[date] = Query(None, alias="to"),
+        view: str = Query("statement", pattern="^(statement|managerial)$"),
+        _a=admin,
+        ctx: FinanceContext = Depends(ctx_dep),
+    ) -> Response:
+        end = date_to or today()
+        start = date_from or end.replace(month=1, day=1)
+        body = exports_svc.dre_csv(scope(ctx), start, end, view=view, regime_prefill=prefill(ctx))
+        return Response(
+            content=body,
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="dre.csv"', "Cache-Control": "no-store"},
+        )
 
     @router.get("/reports/aging", name="finance_report_aging")
     async def aging_route(as_of: Optional[date] = Query(None), ctx: FinanceContext = Depends(ctx_dep)) -> dict:

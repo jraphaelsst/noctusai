@@ -1,4 +1,4 @@
-"""Exports: `entries.csv` (spreadsheet) and `ledger.ofx` (OFX 2.x, importable by any accounting tool).
+"""Exports: `entries.csv` and `dre.csv` (spreadsheets) and `ledger.ofx` (OFX 2.x, importable by any accounting tool).
 
 * **CSV injection.** A cell that begins with `= + - @ TAB CR` is a formula to Excel/Sheets; it is
   prefixed with `'` (contract §3.4). Applied to EVERY text cell -- descriptions and counterparty
@@ -94,6 +94,56 @@ def entries_csv(
             break
         page += 1
         rows, _, _, _ = list_entries(s, page=page, page_size=_PAGE, **filters)
+    return b"\xef\xbb\xbf" + out.getvalue().encode("utf-8")
+
+
+# ─── dre.csv ─────────────────────────────────────────────────────────────────
+
+
+def dre_csv(
+    s: Scope, month_from: date, month_to: date, *, view: str = "statement", regime_prefill: Optional[str] = None
+) -> bytes:
+    """The structured DRE (`dre.build_dre`) as a spreadsheet: one row per line / subtotal / category detail,
+    one column per month plus a total, then the unclassified block and the warnings (so a printout never hides them).
+    Amounts are in reais with two decimals, as the line's own sign convention (deductions and expenses are positive)."""
+    from .dre import build_dre  # local: exports must stay importable without the DRE module graph
+
+    report = build_dre(s, month_from, month_to, view=view, regime_prefill=regime_prefill)
+    months = report["months"]
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\r\n")
+    writer.writerow([csv_safe(report["title"])])
+    writer.writerow(["periodo", report["from"], report["to"], "regime", csv_safe(report["tax_regime"])])
+    writer.writerow([])
+    writer.writerow(["tipo", "linha", "nome", *months, "total"])
+
+    def emit(kind: str, key: str, name: Any, by_month: dict, total: int) -> None:
+        writer.writerow([kind, csv_safe(key), csv_safe(name), *(money(by_month.get(m, 0)) for m in months), money(total)])
+
+    if view == "managerial":
+        m = report["managerial"]
+        for key, label in (("revenue", "Receita bruta"), ("variable_costs", "(-) Custos e despesas variáveis"),
+                           ("contribution_margin", "= Margem de contribuição"), ("fixed_costs", "(-) Custos e despesas fixos"),
+                           ("other_income", "(+) Outras receitas"), ("net_result", "= Resultado líquido")):
+            block = m[key]
+            emit("linha" if key not in ("contribution_margin", "net_result") else "subtotal", key, label, block["by_month"], block["cents"])
+            for d in block.get("detail", []):
+                emit("detalhe", d["line"], d["name"], d["by_month"], d["cents"])
+    else:
+        for item in report["statement"]:
+            emit("subtotal" if item["kind"] == "subtotal" else "linha", item["key"], item["label"], item["by_month"], item["cents"])
+            for d in item["detail"]:
+                emit("detalhe", item["key"], d["name"], d["by_month"], d["cents"])
+    un = report["unclassified"]
+    if un["detail"]:
+        emit("sem_classificacao", "unclassified", "Sem classificação (fora do resultado)", un["by_month"], un["net_cents"])
+        for d in un["detail"]:
+            emit("detalhe", "unclassified", d["name"], d["by_month"], d["cents"])
+    writer.writerow([])
+    for w in report["warnings"]:
+        writer.writerow(["aviso", csv_safe(w["code"]), csv_safe(w["message"])])
+    for a in report["accountant_alerts"]:
+        writer.writerow(["alerta_contador", csv_safe(a["code"]), csv_safe(a["message"])])
     return b"\xef\xbb\xbf" + out.getvalue().encode("utf-8")
 
 
@@ -193,4 +243,4 @@ def ledger_ofx(
     return header.encode("utf-8") + ET.tostring(ofx, encoding="utf-8")
 
 
-__all__ = ["CSV_COLUMNS", "EXPORT_TOO_BIG", "MAX_EXPORT_ROWS", "csv_safe", "entries_csv", "ledger_ofx", "money"]
+__all__ = ["CSV_COLUMNS", "EXPORT_TOO_BIG", "MAX_EXPORT_ROWS", "csv_safe", "dre_csv", "entries_csv", "ledger_ofx", "money"]

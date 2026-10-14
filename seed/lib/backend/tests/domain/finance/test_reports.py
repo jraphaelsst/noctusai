@@ -1,11 +1,11 @@
-"""Cash flow (realized + projected), DRE by competence x category tree, receivables aging."""
+"""Cash flow (realized + projected), receivables aging (the DRE: test_dre.py)."""
 from __future__ import annotations
 
 from datetime import date
 
 import pytest
 
-from noctusai_lib.domain.finance import categories, reports, settlements
+from noctusai_lib.domain.finance import reports, settlements
 from noctusai_lib.domain.finance.errors import FinanceError
 
 from .conftest import VALID_CNPJ, VALID_CPF, mk_account, mk_entry
@@ -64,48 +64,13 @@ def test_cashflow_range_rules_and_org_scope(s, s_b):
     assert reports.cashflow(s, date(2026, 1, 1), date(2026, 1, 31))["totals"]["projected_in_cents"] == 0
 
 
-# ── DRE ──
+# ── DRE ── (the structured statement is covered in test_dre.py; only the legacy import path is pinned here)
 
 
-def test_dre_rolls_up_the_category_tree_by_competence_month(s):
-    cats = {c["name"]: c for c in categories.list_categories(s)}
-    sales, rent = cats["Vendas"], cats["Aluguel e condomínio"]
-    mk_entry(s, direction="receivable", amount_cents=10000, due_date="2026-03-05", competence_month="2026-01-15", category_id=sales["id"])
-    mk_entry(s, direction="receivable", amount_cents=4000, due_date="2026-02-05", category_id=sales["id"])
-    mk_entry(s, direction="payable", amount_cents=3000, due_date="2026-02-07", category_id=rent["id"])
-    mk_entry(s, direction="payable", amount_cents=500, due_date="2026-02-08")  # uncategorized
-    cancelled = mk_entry(s, direction="payable", amount_cents=99999, due_date="2026-02-09", category_id=rent["id"])
-    from noctusai_lib.domain.finance import entries
-
-    entries.cancel_entry(s, cancelled["id"])  # cancelled never counts
-    mk_entry(s, direction="receivable", amount_cents=1, due_date="2026-06-01")  # out of range
-
+def test_reports_dre_keeps_its_import_path_and_answers_the_structured_statement(s):
     out = reports.dre(s, date(2026, 1, 1), date(2026, 3, 31))
-    assert out["months"] == ["2026-01", "2026-02", "2026-03"]
-    node = {n["name"]: n for n in out["categories"]}
-    assert node["Vendas"]["revenue_cents"] == 14000
-    assert node["Vendas"]["by_month"]["2026-01"]["revenue_cents"] == 10000  # competence, not due date
-    assert node["Vendas"]["by_month"]["2026-02"]["revenue_cents"] == 4000
-    assert node["Receitas operacionais"]["revenue_cents"] == 14000  # parent rolls up its child
-    assert node["Despesas operacionais"]["expense_cents"] == 3000
-    assert out["uncategorized"] == {"revenue_cents": 0, "expense_cents": 500}
-    assert out["totals"]["revenue_cents"] == 14000 and out["totals"]["expense_cents"] == 3500
-    assert out["totals"]["result_cents"] == 10500
-    assert out["totals"]["by_month"]["2026-02"]["result_cents"] == 4000 - 3000 - 500
-
-
-def test_dre_is_accrual_not_cash(s):
-    cats = {c["name"]: c for c in categories.list_categories(s)}
-    e = mk_entry(s, amount_cents=1000, due_date="2026-02-05", category_id=cats["Vendas"]["id"])
-    out = reports.dre(s, date(2026, 2, 1), date(2026, 2, 1))
-    assert out["totals"]["revenue_cents"] == 1000  # nothing was paid, still revenue of the month
-    pay(s, e, mk_account(s), 1000, "2026-05-01")
-    assert reports.dre(s, date(2026, 2, 1), date(2026, 2, 1))["totals"]["revenue_cents"] == 1000
-
-
-def test_dre_org_scope(s, s_b):
-    mk_entry(s_b, amount_cents=777, due_date="2026-02-05")
-    assert reports.dre(s, date(2026, 2, 1), date(2026, 2, 1))["totals"]["revenue_cents"] == 0
+    assert out["months"] == ["2026-01", "2026-02", "2026-03"] and out["view"] == "statement"
+    assert [i["key"] for i in out["statement"]][-1] == "net_result"
 
 
 # ── aging ──

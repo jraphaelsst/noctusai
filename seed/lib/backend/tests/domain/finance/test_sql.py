@@ -20,8 +20,10 @@ from noctusai_lib.domain.finance.types import (
     MatchStatus,
     SettlementKind,
     StatementFormat,
+    TaxRegime,
     values,
 )
+from noctusai_lib.domain.finance.types import CategoryBehavior, DreLine
 from noctusai_lib.testing.migration_parser import parse_sql
 
 SNAPSHOT = Path(__file__).parent / "snapshots" / "finance_migration.sql"
@@ -34,7 +36,7 @@ CONTRACT_COLUMNS = {
         "id", "org_id", "name", "kind", "bank_code", "agency", "number", "opening_balance_cents",
         "opening_date", "gateway", "active",
     },
-    "categories": {"id", "org_id", "parent_id", "name", "direction", "is_default", "active"},
+    "categories": {"id", "org_id", "parent_id", "name", "direction", "is_default", "active", "dre_line", "behavior", "is_das"},
     "cost_centers": {"id", "org_id", "code", "name", "active"},
     "entries": {
         "id", "org_id", "direction", "status", "description", "counterparty_name", "counterparty_doc",
@@ -62,6 +64,11 @@ CONTRACT_COLUMNS = {
         "id", "org_id", "entry_id", "storage_path", "filename", "content_type", "size_bytes", "uploaded_by", "at",
     },
     "gateway_sync": {"account_id", "cursor", "last_synced_at", "last_error"},
+    # CONTRACT §10.5 (the shape of the per-choice confirmation is the `choice_meta` JSON, documented in dre_settings.py).
+    "dre_settings": {
+        "id", "org_id", "tax_regime", "das_split_irpj_csll", "das_irpj_csll_share_bps", "gateway_fee_line",
+        "anticipation_fee_line", "chargeback_line", "chargeback_fee_line", "installment_interest_line", "choice_meta",
+    },
 }
 
 
@@ -140,6 +147,39 @@ def test_enum_checks_match_the_python_enums():
         found = re.search(check, _block(table))
         assert found, f"{table}.{col} CHECK missing"
         assert tuple(re.findall(r"'([^']+)'", found.group(1))) == values(enum)
+
+
+def test_dre_columns_are_additive_and_rerunnable():
+    # Tables created by an OLDER generator gain the columns on re-run: ADD COLUMN IF NOT EXISTS, never a bare ADD.
+    assert not re.search(r"ADD COLUMN (?!IF NOT EXISTS)", SQL)
+    for col in ("dre_line", "behavior", "is_das"):
+        assert f"ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS {col} " in SQL
+
+
+def test_dre_enum_checks_match_the_python_enums():
+    cat = re.search(r"ADD COLUMN IF NOT EXISTS dre_line TEXT\s+CHECK \(dre_line IN \(([^)]*)\)\)", SQL)
+    assert cat and tuple(re.findall(r"'([^']+)'", cat.group(1))) == values(DreLine)
+    beh = re.search(r"ADD COLUMN IF NOT EXISTS behavior TEXT\s+CHECK \(behavior IN \(([^)]*)\)\)", SQL)
+    assert beh and tuple(re.findall(r"'([^']+)'", beh.group(1))) == values(CategoryBehavior)
+    block = _block("fin_dre_settings")
+    regime = re.search(r"tax_regime\s+TEXT[^\n]*CHECK \(tax_regime IN \(([^)]*)\)\)", block)
+    assert regime and tuple(re.findall(r"'([^']+)'", regime.group(1))) == values(TaxRegime)
+    real = tuple(v for v in values(DreLine) if v != "unclassified")
+    for col in ("gateway_fee_line", "anticipation_fee_line", "chargeback_line", "chargeback_fee_line", "installment_interest_line"):
+        found = re.search(rf"{col}\s+TEXT[^\n]*CHECK \({col} IN \(([^)]*)\)\)", block)
+        assert found, col
+        assert tuple(re.findall(r"'([^']+)'", found.group(1))) == real  # a choice may never be 'unclassified'
+
+
+def test_dre_settings_is_one_row_per_org_with_the_documented_defaults():
+    block = _block("fin_dre_settings")
+    assert re.search(r"org_id\s+UUID NOT NULL UNIQUE", block)
+    for col, default in (
+        ("gateway_fee_line", "selling_expenses"), ("anticipation_fee_line", "financial_expenses"),
+        ("chargeback_line", "deductions"), ("chargeback_fee_line", "selling_expenses"),
+        ("installment_interest_line", "gross_revenue"), ("tax_regime", "unknown"),
+    ):
+        assert re.search(rf"{col}\s+TEXT NOT NULL DEFAULT '{default}'", block), col
 
 
 def test_money_is_bigint_cents_and_positive_where_it_must_be():

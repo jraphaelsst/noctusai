@@ -101,6 +101,19 @@ RULES: dict[str, tuple[str, str]] = {
         "VALUES (o,'payable','x','2026-11-01','2026-11-05',10,r); "
         f"INSERT INTO {SCHEMA}.fin_entries(org_id,direction,description,competence_month,due_date,amount_cents,recurrence_id) "
         "VALUES (o,'payable','y','2026-11-01','2026-11-05',10,r)"),
+    "one DRE settings row per org": ("unique_violation",
+        f"INSERT INTO {SCHEMA}.fin_dre_settings(org_id) VALUES (o); INSERT INTO {SCHEMA}.fin_dre_settings(org_id) VALUES (o)"),
+    "DRE regime is an enum": ("check_violation", f"INSERT INTO {SCHEMA}.fin_dre_settings(org_id,tax_regime) VALUES (o,'lucro-real')"),
+    "a DRE choice cannot be 'unclassified'": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_dre_settings(org_id,gateway_fee_line) VALUES (o,'unclassified')"),
+    "a DRE choice must be a known line": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_dre_settings(org_id,chargeback_line) VALUES (o,'marketing')"),
+    "DAS share is bounded by 100%": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_dre_settings(org_id,das_irpj_csll_share_bps) VALUES (o,10001)"),
+    "category DRE line is an enum": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_categories(org_id,name,direction,dre_line) VALUES (o,'x','expense','nope')"),
+    "category behavior is an enum": ("check_violation",
+        f"INSERT INTO {SCHEMA}.fin_categories(org_id,name,direction,behavior) VALUES (o,'x','expense','semi')"),
     "statement sha256 unique per account": ("unique_violation",
         f"INSERT INTO {SCHEMA}.fin_statement_imports(org_id,account_id,format,filename,sha256) VALUES (o,a,'ofx','a.ofx','h'); "
         f"INSERT INTO {SCHEMA}.fin_statement_imports(org_id,account_id,format,filename,sha256) VALUES (o,a,'ofx','b.ofx','h')"),
@@ -116,12 +129,39 @@ def _rule_sql(clause: str, stmt: str) -> str:
     return _BASE.replace("{body}", body)
 
 
+LEGACY = "finlegacy"
+#: A categories table exactly as the PRE-DRE generator emitted it, holding a row -- the upgrade path of every existing org.
+LEGACY_PRELUDE = f"""
+CREATE SCHEMA IF NOT EXISTS {LEGACY};
+CREATE TABLE {LEGACY}.fin_categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), org_id UUID NOT NULL,
+    parent_id UUID REFERENCES {LEGACY}.fin_categories(id) ON DELETE RESTRICT, name TEXT NOT NULL,
+    direction TEXT NOT NULL CHECK (direction IN ('income', 'expense', 'transfer')),
+    is_default BOOLEAN NOT NULL DEFAULT false, active BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO {LEGACY}.fin_categories(org_id, name, direction, is_default) VALUES (gen_random_uuid(), 'Vendas', 'income', true);
+"""
+LEGACY_CHECK = f"""
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM {LEGACY}.fin_categories WHERE name = 'Vendas' AND dre_line IS NULL AND behavior IS NULL AND is_das = false) <> 1 THEN
+    RAISE EXCEPTION 'legacy row did not survive the upgrade with NULL lines';
+  END IF;
+  UPDATE {LEGACY}.fin_categories SET dre_line = 'gross_revenue', behavior = 'variable' WHERE name = 'Vendas';
+END $$;
+"""
+
+
 @pytest.fixture(scope="module")
 def replay() -> dict:
     sql = finance_migration(FinanceConfig(schema=SCHEMA), SCHEMA)
     steps = [
         {"product": SCHEMA, "file": "prelude", "sql": PRELUDE, "mode": "file", "twice": False},
         {"product": SCHEMA, "file": "finance_migration", "sql": sql, "mode": "file", "twice": True},
+        {"product": LEGACY, "file": "legacy prelude", "sql": PRELUDE.replace(SCHEMA, LEGACY) + LEGACY_PRELUDE, "mode": "file", "twice": False},
+        {"product": LEGACY, "file": "legacy upgrade", "sql": finance_migration(FinanceConfig(schema=LEGACY), LEGACY), "mode": "file", "twice": True},
+        {"product": LEGACY, "file": "legacy check", "sql": LEGACY_CHECK, "mode": "file", "twice": False},
         *({"product": SCHEMA, "file": f"rule: {name}", "sql": _rule_sql(*rule), "mode": "file", "twice": False} for name, rule in RULES.items()),
     ]
     proc = subprocess.run(
@@ -140,6 +180,11 @@ def replay() -> dict:
 def test_ddl_applies_twice_on_real_postgres(replay):
     step = replay["finance_migration"]
     assert step["failures"] == [], step["failures"]
+
+
+@pytest.mark.parametrize("step", ["legacy prelude", "legacy upgrade", "legacy check"])
+def test_pre_dre_tables_upgrade_in_place_and_keep_their_rows(replay, step):
+    assert replay[step]["failures"] == [], replay[step]["failures"]
 
 
 @pytest.mark.parametrize("rule", list(RULES))

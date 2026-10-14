@@ -31,7 +31,9 @@ from noctusai_lib.domain.sql_templates import (
 from .config import FinanceConfig
 from .types import (
     AccountKind,
+    CategoryBehavior,
     CategoryDirection,
+    DreLine,
     EntryDirection,
     EntrySource,
     EntryStatus,
@@ -41,6 +43,7 @@ from .types import (
     MatchStatus,
     SettlementKind,
     StatementFormat,
+    TaxRegime,
     values,
 )
 
@@ -58,6 +61,7 @@ FINANCE_TABLES: tuple[str, ...] = (
     "ledger",
     "attachments",
     "gateway_sync",
+    "dre_settings",
 )
 
 #: Rows that are only ever appended (history): settlements and ledger rows are
@@ -78,6 +82,12 @@ def rpc_name(cfg: FinanceConfig, base: str) -> str:
 
 def _in(enum_cls) -> str:
     return ", ".join(f"'{v}'" for v in values(enum_cls))
+
+
+def _in_lines(*, with_unclassified: bool) -> str:
+    """The DRE line CHECK list: settings choices may only name a REAL line (never `unclassified`)."""
+    lines = [v for v in values(DreLine) if with_unclassified or v != DreLine.UNCLASSIFIED.value]
+    return ", ".join(f"'{v}'" for v in lines)
 
 
 def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
@@ -151,6 +161,15 @@ CREATE TABLE IF NOT EXISTS {s}.{t['categories']} (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_{t['categories']}_name ON {s}.{t['categories']}
     (org_id, COALESCE(parent_id, '{_NIL_UUID}'::uuid), lower(name));
 CREATE INDEX IF NOT EXISTS idx_{t['categories']}_parent ON {s}.{t['categories']} (parent_id);
+""",
+        extra=f"""-- DRE mapping (CONTRACT §10.3 / §10.5): additive and re-runnable (tables created by an older generator gain the columns).
+-- dre_line NULL = unclassified (shown in its own block with a warning); behavior NULL = the line's default;
+-- is_das marks the category that holds the DAS payable (routed by the store's tax regime).
+ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS dre_line TEXT
+    CHECK (dre_line IN ({_in_lines(with_unclassified=True)}));
+ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS behavior TEXT
+    CHECK (behavior IN ({_in(CategoryBehavior)}));
+ALTER TABLE {s}.{t['categories']} ADD COLUMN IF NOT EXISTS is_das BOOLEAN NOT NULL DEFAULT false;
 """,
     )
     add(
@@ -384,6 +403,30 @@ CREATE TABLE IF NOT EXISTS {s}.{t['gateway_sync']} (
 CREATE INDEX IF NOT EXISTS idx_{t['gateway_sync']}_org ON {s}.{t['gateway_sync']} (org_id);
 """,
     )
+    add(
+        "DRE settings (CONTRACT §10.5): ONE row per org. The per-store mapping of every provisional accounting "
+        "choice is DATA so an accountant changes it without touching money records. `choice_meta` is "
+        "`{<choice>: {provisional, confirmed_by, confirmed_at, note}}` -- absent = provisional (the default).",
+        "dre_settings",
+        f"""
+CREATE TABLE IF NOT EXISTS {s}.{t['dre_settings']} (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id                     UUID NOT NULL UNIQUE,
+    tax_regime                 TEXT NOT NULL DEFAULT 'unknown' CHECK (tax_regime IN ({_in(TaxRegime)})),
+    das_split_irpj_csll        BOOLEAN NOT NULL DEFAULT false,
+    das_irpj_csll_share_bps    INTEGER NOT NULL DEFAULT 0 CHECK (das_irpj_csll_share_bps BETWEEN 0 AND 10000),
+    gateway_fee_line           TEXT NOT NULL DEFAULT 'selling_expenses' CHECK (gateway_fee_line IN ({_in_lines(with_unclassified=False)})),
+    anticipation_fee_line      TEXT NOT NULL DEFAULT 'financial_expenses' CHECK (anticipation_fee_line IN ({_in_lines(with_unclassified=False)})),
+    chargeback_line            TEXT NOT NULL DEFAULT 'deductions' CHECK (chargeback_line IN ({_in_lines(with_unclassified=False)})),
+    chargeback_fee_line        TEXT NOT NULL DEFAULT 'selling_expenses' CHECK (chargeback_fee_line IN ({_in_lines(with_unclassified=False)})),
+    installment_interest_line  TEXT NOT NULL DEFAULT 'gross_revenue' CHECK (installment_interest_line IN ({_in_lines(with_unclassified=False)})),
+    choice_meta                JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    updated_by                 UUID,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+""",
+    )
     return out
 
 
@@ -493,7 +536,7 @@ GRANT EXECUTE ON FUNCTION {s}.{reverse}(UUID, UUID, TEXT, UUID, DATE) TO service
 def finance_migration(cfg: FinanceConfig, schema: str) -> str:
     """The whole finance DDL for `schema`, as one re-runnable migration body.
 
-    Includes the 11 `FINANCE_TABLES` and the private attachments bucket with
+    Includes the 12 `FINANCE_TABLES` and the private attachments bucket with
     per-org object RLS. Prerequisites: see the module docstring.
     """
     if not schema or not schema.strip():

@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS commerce.fin_categories (
 CREATE UNIQUE INDEX IF NOT EXISTS uq_fin_categories_name ON commerce.fin_categories
     (org_id, COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), lower(name));
 CREATE INDEX IF NOT EXISTS idx_fin_categories_parent ON commerce.fin_categories (parent_id);
+-- DRE mapping (CONTRACT §10.3 / §10.5): additive and re-runnable (tables created by an older generator gain the columns).
+-- dre_line NULL = unclassified (shown in its own block with a warning); behavior NULL = the line's default;
+-- is_das marks the category that holds the DAS payable (routed by the store's tax regime).
+ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS dre_line TEXT
+    CHECK (dre_line IN ('gross_revenue', 'deductions', 'cost_of_sales', 'selling_expenses', 'administrative_expenses', 'other_operating', 'financial_revenue', 'financial_expenses', 'income_taxes', 'unclassified'));
+ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS behavior TEXT
+    CHECK (behavior IN ('variable', 'fixed'));
+ALTER TABLE commerce.fin_categories ADD COLUMN IF NOT EXISTS is_das BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE commerce.fin_categories ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "fin_categories_select_own_org" ON commerce.fin_categories;
 CREATE POLICY "fin_categories_select_own_org" ON commerce.fin_categories FOR SELECT TO authenticated
@@ -295,6 +303,30 @@ CREATE POLICY "fin_gateway_sync_select_own_org" ON commerce.fin_gateway_sync FOR
   USING (org_id = (SELECT public.current_org_id_for('commerce')));
 DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_gateway_sync;
 CREATE POLICY "service_role_bypass" ON commerce.fin_gateway_sync FOR ALL TO service_role USING (true) WITH CHECK (true);
+
+-- DRE settings (CONTRACT §10.5): ONE row per org. The per-store mapping of every provisional accounting choice is DATA so an accountant changes it without touching money records. `choice_meta` is `{<choice>: {provisional, confirmed_by, confirmed_at, note}}` -- absent = provisional (the default).
+CREATE TABLE IF NOT EXISTS commerce.fin_dre_settings (
+    id                         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id                     UUID NOT NULL UNIQUE,
+    tax_regime                 TEXT NOT NULL DEFAULT 'unknown' CHECK (tax_regime IN ('mei', 'simples', 'presumido', 'unknown')),
+    das_split_irpj_csll        BOOLEAN NOT NULL DEFAULT false,
+    das_irpj_csll_share_bps    INTEGER NOT NULL DEFAULT 0 CHECK (das_irpj_csll_share_bps BETWEEN 0 AND 10000),
+    gateway_fee_line           TEXT NOT NULL DEFAULT 'selling_expenses' CHECK (gateway_fee_line IN ('gross_revenue', 'deductions', 'cost_of_sales', 'selling_expenses', 'administrative_expenses', 'other_operating', 'financial_revenue', 'financial_expenses', 'income_taxes')),
+    anticipation_fee_line      TEXT NOT NULL DEFAULT 'financial_expenses' CHECK (anticipation_fee_line IN ('gross_revenue', 'deductions', 'cost_of_sales', 'selling_expenses', 'administrative_expenses', 'other_operating', 'financial_revenue', 'financial_expenses', 'income_taxes')),
+    chargeback_line            TEXT NOT NULL DEFAULT 'deductions' CHECK (chargeback_line IN ('gross_revenue', 'deductions', 'cost_of_sales', 'selling_expenses', 'administrative_expenses', 'other_operating', 'financial_revenue', 'financial_expenses', 'income_taxes')),
+    chargeback_fee_line        TEXT NOT NULL DEFAULT 'selling_expenses' CHECK (chargeback_fee_line IN ('gross_revenue', 'deductions', 'cost_of_sales', 'selling_expenses', 'administrative_expenses', 'other_operating', 'financial_revenue', 'financial_expenses', 'income_taxes')),
+    installment_interest_line  TEXT NOT NULL DEFAULT 'gross_revenue' CHECK (installment_interest_line IN ('gross_revenue', 'deductions', 'cost_of_sales', 'selling_expenses', 'administrative_expenses', 'other_operating', 'financial_revenue', 'financial_expenses', 'income_taxes')),
+    choice_meta                JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_by                 UUID,
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+ALTER TABLE commerce.fin_dre_settings ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "fin_dre_settings_select_own_org" ON commerce.fin_dre_settings;
+CREATE POLICY "fin_dre_settings_select_own_org" ON commerce.fin_dre_settings FOR SELECT TO authenticated
+  USING (org_id = (SELECT public.current_org_id_for('commerce')));
+DROP POLICY IF EXISTS "service_role_bypass" ON commerce.fin_dre_settings;
+CREATE POLICY "service_role_bypass" ON commerce.fin_dre_settings FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Settle under a row lock: the balance is checked and the settlement inserted in ONE transaction.
 CREATE OR REPLACE FUNCTION commerce.fin_settle_entry_locked(p_org_id UUID, p_entry_id UUID, p_row JSONB) RETURNS JSONB

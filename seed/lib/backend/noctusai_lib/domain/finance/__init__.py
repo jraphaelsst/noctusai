@@ -3,7 +3,8 @@
 Accounts (bank / cash / gateway), a category tree + cost centers, payable / receivable
 entries (installment groups, recurrences), settlements with an append-only ledger and
 reversal, transfers, and the reports a small business asks for first: cash flow
-(realized + projected), DRE by competence month, receivables aging. Money is integer
+(realized + projected), the structured DRE (NBC TG 1002 lines, per-store mapping, guidance), the Simples tax base,
+receivables aging. Money is integer
 cents; `overdue` is computed on read; `counterparty_doc` (CPF/CNPJ) is masked for
 non-admins (LGPD).
 
@@ -28,10 +29,13 @@ Contract: `projects/commerce-seed-p4/CONTRACT.md §3`. Jobs the host registers:
 `finance_generate_recurrences` (daily, `recurrences.generate_due_recurrences`).
 """
 from . import (
+    accountant,
     accounts,
     attachments,
     booking,
     categories,
+    dre,
+    dre_settings,
     entries,
     exports,
     gateway_sync,
@@ -39,6 +43,7 @@ from . import (
     recurrences,
     reports,
     settlements,
+    simples_base,
     statements,
 )
 from .attachments import ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_PATH_PATTERN
@@ -60,7 +65,9 @@ from .statements import STATEMENT_UPLOAD_MAX_BYTES, STATEMENT_UPLOAD_PATH_PATTER
 from .sql import APPEND_ONLY_TABLES, FINANCE_TABLES, finance_migration
 from .types import (
     AccountKind,
+    CategoryBehavior,
     CategoryDirection,
+    DreLine,
     EntryDirection,
     EntrySource,
     EntryStatus,
@@ -70,6 +77,7 @@ from .types import (
     MatchStatus,
     SettlementKind,
     StatementFormat,
+    TaxRegime,
 )
 
 __all__ = [
@@ -77,7 +85,9 @@ __all__ = [
     "ATTACHMENT_UPLOAD_MAX_BYTES",
     "ATTACHMENT_UPLOAD_PATH_PATTERN",
     "AccountKind",
+    "CategoryBehavior",
     "CategoryDirection",
+    "DreLine",
     "EntryDirection",
     "EntrySource",
     "EntryStatus",
@@ -97,11 +107,15 @@ __all__ = [
     "SettlementKind",
     "StatementFormat",
     "SupabaseFinanceBooking",
+    "TaxRegime",
+    "accountant",
     "accounts",
     "attachments",
     "booking",
     "calcular_proxima_data",
     "categories",
+    "dre",
+    "dre_settings",
     "entries",
     "exports",
     "finance_migration",
@@ -117,5 +131,6 @@ __all__ = [
     "reports",
     "run_gateway_sync_all",
     "settlements",
+    "simples_base",
     "statements",
 ]

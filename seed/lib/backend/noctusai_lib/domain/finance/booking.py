@@ -22,12 +22,14 @@ from .categories import find_category_by_hint
 from .config import FinanceConfig
 from .entries import create_entry, find_by_source
 from .errors import DOCUMENTO_INVALIDO, LANCAMENTO_DUPLICADO, FinanceError, invalid, not_found
-from .settlements import settle_entry
+from .settlements import find_settlement_by_ref, settle_entry
 from .types import CategoryDirection, EntrySource, SettlementKind, values
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_ACCOUNT_HINT = "gateway:asaas"
+#: The second settlement of a principal+interest split carries `<external_ref>:interest` (idempotent on its own).
+INTEREST_REF_SUFFIX = ":interest"
 
 
 @runtime_checkable
@@ -63,8 +65,14 @@ class FinanceBooking(Protocol):
         fee_cents: int = 0,
         settled_on: date,
         account_hint: str = DEFAULT_ACCOUNT_HINT,
+        interest_source_ref: Optional[str] = None,
     ) -> Optional[str]:
-        """Settle the entry `(source, source_ref)`; idempotent on `(kind, external_ref)`; returns the settlement id."""
+        """Settle the entry `(source, source_ref)`; idempotent on `(kind, external_ref)`; returns the settlement id.
+
+        `interest_source_ref` (CONTRACT §10.5.3): when the order's installment interest is a SEPARATE receivable
+        (`<order>:interest`), the amount is applied to the principal entry first and the overflow to the interest
+        entry (a second settlement, `external_ref = <external_ref>:interest`) -- so a payment/refund of the whole
+        charge never overshoots the principal. The fee rides on the first settlement written."""
         ...
 
 
@@ -92,6 +100,7 @@ class FakeFinanceBooking:
         return self.entries[key]["id"]
 
     def book_settlement(self, org_id: str, *, source: str, source_ref: str, kind: str, external_ref: str, **fields: Any) -> Optional[str]:
+        # The real seam splits across principal + interest; the fake only records the key (its consumers assert calls).
         if (str(org_id), source, source_ref) not in self.entries:
             raise not_found("Lançamento")
         key = (str(org_id), kind, external_ref)
@@ -187,6 +196,7 @@ class SupabaseFinanceBooking:
         fee_cents: int = 0,
         settled_on: date,
         account_hint: str = DEFAULT_ACCOUNT_HINT,
+        interest_source_ref: Optional[str] = None,
     ) -> Optional[str]:
         s = self._scope(org_id)
         if kind not in values(SettlementKind):
@@ -197,20 +207,45 @@ class SupabaseFinanceBooking:
         if entry is None:
             raise not_found("Lançamento")
         account = self._account(s, account_hint)
-        result = settle_entry(
-            s,
-            entry["id"],
-            {
-                "account_id": account["id"],
-                "kind": kind,
-                "settled_on": iso(settled_on),
-                "amount_cents": amount_cents,
-                "fee_cents": fee_cents,
-                "external_ref": external_ref,
-                "method": account_hint,
-            },
-        )
-        return str(result["settlement"]["id"])
+
+        def settle(target: dict, ref: str, amount: int, fee: int) -> str:
+            result = settle_entry(
+                s,
+                target["id"],
+                {
+                    "account_id": account["id"],
+                    "kind": kind,
+                    "settled_on": iso(settled_on),
+                    "amount_cents": amount,
+                    "fee_cents": fee,
+                    "external_ref": ref,
+                    "method": account_hint,
+                },
+            )
+            return str(result["settlement"]["id"])
+
+        interest_entry = find_by_source(s, source, interest_source_ref) if interest_source_ref else None
+        if interest_entry is None:
+            return settle(entry, external_ref, amount_cents, fee_cents)
+
+        interest_ref = f"{external_ref}{INTEREST_REF_SUFFIX}"
+        done_main = find_settlement_by_ref(s, kind, external_ref)
+        done_interest = find_settlement_by_ref(s, kind, interest_ref)
+        if done_main is not None:  # a replay (or a half-finished first run): the split is already decided
+            main_part = int(done_main["amount_cents"])
+        elif done_interest is not None:
+            main_part = amount_cents - int(done_interest["amount_cents"])
+        elif kind == SettlementKind.PAYMENT.value:
+            main_part = min(amount_cents, max(int(entry["amount_cents"]) - int(entry.get("settled_cents") or 0), 0))
+        else:  # a refund returns principal first, then interest
+            main_part = min(amount_cents, int(entry.get("settled_cents") or 0))
+        interest_part = amount_cents - main_part
+        main_id = interest_id = None
+        if main_part > 0:
+            main_id = settle(entry, external_ref, main_part, fee_cents)
+        if interest_part > 0:
+            interest_id = settle(interest_entry, interest_ref, interest_part, fee_cents if main_part == 0 else 0)
+        return main_id or interest_id
 
 
 def make_finance_booking(
@@ -233,6 +268,7 @@ def make_finance_booking(
 
 __all__ = [
     "DEFAULT_ACCOUNT_HINT",
+    "INTEREST_REF_SUFFIX",
     "FakeFinanceBooking",
     "FinanceBooking",
     "NoopFinanceBooking",

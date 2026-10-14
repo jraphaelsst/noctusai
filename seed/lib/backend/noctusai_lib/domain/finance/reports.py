@@ -1,4 +1,4 @@
-"""Reports -- cash flow (realized + projected), DRE by competence, receivables aging.
+"""Reports -- cash flow (realized + projected), structured DRE (see `dre.py`), receivables aging.
 
 All three read through the org `Scope`, paging past PostgREST's 1 000-row cap. They
 are READ-ONLY and derive everything from entries + ledger (no stored aggregates).
@@ -8,11 +8,10 @@ RPC per report) -- move there when a real org crosses ~200k rows. -- 2026-10-13
 """
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import date
 from typing import Any, Optional
 
-from ._common import Scope, add_months, iso, month_start, to_date, today
+from ._common import Scope, add_months, month_start, to_date, today
 from .entries import mask_doc
 from .errors import invalid
 from .types import EntryDirection, EntryStatus, LedgerDirection, LedgerOrigin
@@ -113,92 +112,12 @@ def cashflow(s: Scope, date_from: date, date_to: date, *, account_id: Optional[A
 # ─── DRE ─────────────────────────────────────────────────────────────────────
 
 
-def dre(s: Scope, month_from: date, month_to: date) -> dict:
-    """Income statement by `competence_month` x category tree (accrual basis: entry amounts, not cash)."""
-    start, end = month_start(month_from), month_start(month_to)
-    _check_range(start, end)
-    months = _months(start, end)
-    cats = {str(c["id"]): c for c in s.rows("categories")}
-    entries = s.rows(
-        "entries",
-        refine=lambda q: q.neq("status", EntryStatus.CANCELLED.value)
-        .gte("competence_month", iso(start)).lte("competence_month", iso(end)),
-    )
+def dre(s: Scope, month_from: date, month_to: date, *, view: str = "statement", regime_prefill: Optional[str] = None) -> dict:
+    """The structured DRE (CONTRACT §10): lines + computed subtotals + guidance. Implemented in `dre.py`;
+    this name stays so `reports.dre` (the original import path) keeps working."""
+    from .dre import build_dre  # local: dre.py imports nothing from here, but reports stays a cheap module to import
 
-    def zeros() -> dict[str, int]:
-        return {m: 0 for m in months}
-
-    own: dict[str, dict[str, dict[str, int]]] = defaultdict(lambda: {"revenue": zeros(), "expense": zeros()})
-    uncategorized = {"revenue": zeros(), "expense": zeros()}
-    for e in entries:
-        side = "revenue" if e["direction"] == EntryDirection.RECEIVABLE.value else "expense"
-        bucket = own[str(e["category_id"])][side] if e.get("category_id") and str(e["category_id"]) in cats else uncategorized[side]
-        bucket[_month_key(e["competence_month"])] += int(e["amount_cents"])
-
-    children: dict[Optional[str], list[str]] = defaultdict(list)
-    for cid, c in cats.items():
-        children[str(c["parent_id"]) if c.get("parent_id") else None].append(cid)
-
-    def roll(cid: str) -> dict[str, dict[str, int]]:
-        total = {side: dict(vals) for side, vals in own[cid].items()} if cid in own else {"revenue": zeros(), "expense": zeros()}
-        for child in children.get(cid, []):
-            sub = roll(child)
-            for side in total:
-                for m in months:
-                    total[side][m] += sub[side][m]
-        rolled[cid] = total
-        return total
-
-    rolled: dict[str, dict[str, dict[str, int]]] = {}
-    for root in children.get(None, []):
-        roll(root)
-
-    nodes = []
-    for cid, c in sorted(cats.items(), key=lambda kv: (str(kv[1].get("parent_id") or ""), str(kv[1]["name"]).lower())):
-        tot = rolled.get(cid)
-        if tot is None:
-            continue
-        revenue, expense = sum(tot["revenue"].values()), sum(tot["expense"].values())
-        if revenue == 0 and expense == 0:
-            continue
-        nodes.append({
-            "category_id": cid,
-            "parent_id": str(c["parent_id"]) if c.get("parent_id") else None,
-            "name": c["name"],
-            "direction": c["direction"],
-            "revenue_cents": revenue,
-            "expense_cents": expense,
-            "by_month": {m: {"revenue_cents": tot["revenue"][m], "expense_cents": tot["expense"][m]} for m in months},
-        })
-
-    rev_by_m, exp_by_m = zeros(), zeros()
-    for cid in own:
-        for m in months:
-            rev_by_m[m] += own[cid]["revenue"][m]
-            exp_by_m[m] += own[cid]["expense"][m]
-    for m in months:
-        rev_by_m[m] += uncategorized["revenue"][m]
-        exp_by_m[m] += uncategorized["expense"][m]
-    revenue_total, expense_total = sum(rev_by_m.values()), sum(exp_by_m.values())
-    return {
-        "from": iso(start),
-        "to": iso(end),
-        "months": months,
-        "categories": nodes,
-        "uncategorized": {
-            "revenue_cents": sum(uncategorized["revenue"].values()),
-            "expense_cents": sum(uncategorized["expense"].values()),
-        },
-        "totals": {
-            "revenue_cents": revenue_total,
-            "expense_cents": expense_total,
-            "result_cents": revenue_total - expense_total,
-            "by_month": {
-                m: {"revenue_cents": rev_by_m[m], "expense_cents": exp_by_m[m], "result_cents": rev_by_m[m] - exp_by_m[m]}
-                for m in months
-            },
-        },
-    }
+    return build_dre(s, month_from, month_to, view=view, regime_prefill=regime_prefill)
 
 
 # ─── aging ───────────────────────────────────────────────────────────────────

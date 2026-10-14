@@ -93,6 +93,39 @@ class MatchStatus(_StrEnum):
     IGNORED = "ignored"
 
 
+class DreLine(_StrEnum):
+    """DRE lines in STATEMENT ORDER (CONTRACT §10.1 / NBC TG 1002 §5.1). Subtotals are computed, never a member.
+
+    `unclassified` is the block for money whose category has no line: shown apart, never dropped (D47)."""
+
+    GROSS_REVENUE = "gross_revenue"
+    DEDUCTIONS = "deductions"
+    COST_OF_SALES = "cost_of_sales"
+    SELLING_EXPENSES = "selling_expenses"
+    ADMINISTRATIVE_EXPENSES = "administrative_expenses"
+    OTHER_OPERATING = "other_operating"
+    FINANCIAL_REVENUE = "financial_revenue"
+    FINANCIAL_EXPENSES = "financial_expenses"
+    INCOME_TAXES = "income_taxes"
+    UNCLASSIFIED = "unclassified"
+
+
+class TaxRegime(_StrEnum):
+    """The store's tax regime (CONTRACT §10.5.1). `unknown` raises the `regime_nao_informado` warning."""
+
+    MEI = "mei"
+    SIMPLES = "simples"
+    PRESUMIDO = "presumido"
+    UNKNOWN = "unknown"
+
+
+class CategoryBehavior(_StrEnum):
+    """Managerial view (CONTRACT §10.5.6): does the cost move with sales (`variable`) or not (`fixed`)?"""
+
+    VARIABLE = "variable"
+    FIXED = "fixed"
+
+
 def values(enum_cls: type[Enum]) -> tuple[str, ...]:
     """The wire values of an enum, in declaration order (SQL CHECKs + parity tests)."""
     return tuple(member.value for member in enum_cls)
@@ -100,7 +133,9 @@ def values(enum_cls: type[Enum]) -> tuple[str, ...]:
 
 __all__ = [
     "AccountKind",
+    "CategoryBehavior",
     "CategoryDirection",
+    "DreLine",
     "EntryDirection",
     "EntrySource",
     "EntryStatus",
@@ -110,5 +145,6 @@ __all__ = [
     "MatchStatus",
     "SettlementKind",
     "StatementFormat",
+    "TaxRegime",
     "values",
 ]
