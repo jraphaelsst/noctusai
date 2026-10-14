@@ -224,3 +224,35 @@ Wave 1 = A (`integrations/payments/**`), C (`domain/finance/**`, model + service
 | W13 | §6 host | slice F adds the finance attachment path to `max_body_path_overrides` and registers `finance_generate_recurrences` (`generate_due_recurrences`) | |
 
 Several Focus NFS-e Nacional field names and the webhook body shape are `UNVERIFIED:` in `focus.py` — the opt-in live homologação test settles them once a token exists (P6).
+
+## 10 · DRE design (2026-10-14 — replaces the category-tree DRE of §3.3/§3.4)
+
+> Source research + every provisional choice: `ACCOUNTANT-QUESTIONS.md`. Owner decisions D42–D51. **Provisional choices are data (a per-store mapping), never code** (D48), so an accountant can change them without touching money records.
+
+### 10.1 Structure (D42 — NBC TG 1002 §5.1; NBC TG 1001 shape above R$4.8M)
+`DreLine` enum, in statement order, with subtotals computed (never stored):
+`gross_revenue` (a) · `deductions` (b) · **= net_revenue** (c) · `cost_of_sales` (d) · **= gross_result** (e) · `selling_expenses` (f) · `administrative_expenses` (g) · `other_operating` (h, +/−) · **= result_before_financial** (i) · `financial_revenue` (j) · `financial_expenses` (k) · **= result_before_income_taxes** (l) · `income_taxes` (m) · **= net_result** (n). Plus `unclassified` — shown in its own block, never silently dropped, with a warning (D47).
+- Expenses by **function** (f/g/h) with each category as a detail row (D49). NBC TG 1002 §5.1 says lines "que apresentem valores relevantes" — zero lines are shown greyed with their help text, not hidden, so the owner learns the structure.
+- **Standard switch:** trailing-12-month `gross_revenue` > R$4,800,000 ⇒ a warning that the store falls under NBC TG 1001 (expenses by function is then mandatory — already our shape) + a "talk to an accountant" alert.
+
+### 10.2 Where each money fact lands
+| Fact | Source of the number | DRE line | Status |
+|---|---|---|---|
+| Sale (order price, without buyer interest) | receivable `book_receivable` | category's line (default `gross_revenue`) | sourced |
+| **Installment interest** charged to the buyer (D45) | booked as a SEPARATE receivable (`source_ref=<order>:interest`) at `→ paid` | `financial_revenue` | provisional — Q2 |
+| Refunds / cancellations / discounts | `done` refund settlements on commerce receivables | `deductions` | sourced (Lei 6.404 art. 187 I; NBC TG 1002 §23.2; LC 123 art. 3 §1) |
+| **Chargebacks** (D46) | lost-dispute refund settlements | `deductions` | provisional — Q3 |
+| **Gateway fees** (D44) | `fin_settlements.fee_cents` (and gateway-sync fee rows) | `selling_expenses` | provisional — Q1 |
+| **DAS** (D51) | payable in a category flagged `das` | **`unclassified` until set** ("awaiting classification" alert) | open — Q4 |
+| Cost categories (D50) | payables in categories with `dre_line=cost_of_sales` | `cost_of_sales` | provisional — Q5 |
+| Any category with no `dre_line` | — | `unclassified` + warning | — |
+
+The DRE stays **accrual by `competence_month`** (Lei 6.404 art. 187 §1; NBC TG 1002 §25.1); refunds, chargebacks and fees take the competence month of the settlement that produced them.
+
+### 10.3 Mapping (per store, data)
+- `fin_categories.dre_line` (nullable `DreLine`) + `fin_categories.is_cost` folded into `dre_line=cost_of_sales`.
+- `fin_dre_settings` (one row per org): `gateway_fee_line` (default `selling_expenses`), `installment_interest_line` (default `financial_revenue`), `chargeback_line` (default `deductions`), `das_line` (default NULL = awaiting), each with `provisional bool default true`, `confirmed_by`, `confirmed_at`, `note` — an accountant's confirmation clears `provisional`.
+- Default category → line proposal: **pending owner review (Q7)** — see the table the tech-lead brought to the owner on 2026-10-14; not built until answered.
+
+### 10.4 Guidance (D47) — part of the API, not only UI copy
+`GET /api/finance/reports/dre` returns, besides lines/subtotals: `help` (per line: plain-language pt-BR "o que é", example, source citation) · `warnings[]` (`{code, severity, message, action}` — e.g. `categoria_sem_linha_dre`, `das_aguardando_classificacao`, `escolha_provisoria`, `limite_microentidade_excedido`, `receita_sem_categoria`) · `accountant_alerts[]` (when a professional is needed, and why). `GET /api/finance/accountant-checklist` returns every provisional choice + open question with sources (from `fin_dre_settings` + `ACCOUNTANT-QUESTIONS.md` content) and links the DRE CSV + entries CSV + ledger OFX exports.

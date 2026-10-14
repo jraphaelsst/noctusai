@@ -85,6 +85,16 @@ Rule: anything 2+ markets need lives in L1; market-only behavior lives in L2 beh
 - 2026-10-13 · **D39 finance scope** — full accounts payable + receivable + cash flow **per store (org)**, with CSV/OFX export for the accountant; built as a seed module that igig migrates onto later (pilot-first).
 - 2026-10-13 · **D40 finance design** — the owner asked whether igig was the best base; a fleet survey ranked it first (only active product, 101 tests, RLS, competência vs vencimento, idempotent monthly close, DRE, defaulters, CSV) but receivables-only. Plan approved: igig receivables core + p-studio gateway sync/webhook inbox + community idempotent cash ledger (integer cents) + personal-finance accounts/hierarchical categories/recurrence + orbity payables recurrence/installments; **new**: OFX/CSV statement import, Asaas payout reconciliation on the seed `FeeBreakdown` + core `billing_payments`, cost centers, receipt attachments, CSV/OFX export. erp-imobiliario contributes table shapes only; adconnect nothing.
 - 2026-10-13 · **D41 installment interest default** — buyers pay **1.99 % a.m.** (Price table) on installments above the interest-free count, "for now": the platform default must be swappable without a code change (platform setting → code fallback), and each store may override it.
+- 2026-10-14 · **D42 DRE standard** — after primary-source research (`projects/commerce-seed-p4/ACCOUNTANT-QUESTIONS.md`): the DRE template follows **NBC TG 1002 §5.1** (microentidades, ≤ R$4.8M — ITG 1000 is revoked) and switches to the **NBC TG 1001** shape above R$4.8M. The owner is not an accountant ("eu sou leigo") and needs orientation and warnings throughout, including when to seek a professional.
+- 2026-10-14 · **D43 → D51** (DAS placement postponed, then left to an accountant).
+- 2026-10-14 · **D44 gateway fees** → Despesas com vendas. *Provisional — owner's own choice, confirm with an accountant (Q1).*
+- 2026-10-14 · **D45 installment interest** → separated from the sale as Receitas financeiras. *Provisional (Q2).*
+- 2026-10-14 · **D46 chargebacks** → Deduções da receita bruta. *Provisional (Q3).*
+- 2026-10-14 · **D47 guidance** — plain-language help per DRE line, warnings, "talk to an accountant" alerts, and an accountant checklist/export page.
+- 2026-10-14 · **D48 provisional choices are data** — a per-store mapping flagged "provisional — confirm with an accountant"; changing it re-classifies the DRE without touching money records.
+- 2026-10-14 · **D49 expense grouping** — by function (vendas / administrativas / outras) with categories as detail (NBC TG 1001 shape at every size). *Provisional (Q6).*
+- 2026-10-14 · **D50 cost of sales** — categories can be marked as custo and feed line (d). *Provisional (Q5).*
+- 2026-10-14 · **D51 DAS** — NBC TG 1002 §29.3 allows deduction or tax on profit; the owner is unsure, so it stays "awaiting classification" with an alert until an accountant decides (Q4).
 - 2026-10-12 · **D23 learn-while-building** — new skill `noc-learn-refine` + tool `noctus.dev.method_trial`: methods in use are trials with hypothesis, metrics, observations and verdicts.
 
 ## Phases
