@@ -1,4 +1,4 @@
-"""Structural tests for the org-picker rollout migrations (007 policies, 8 acting audit, 9 ready) of seed.
+"""Structural tests for the org-picker rollout migrations (policies, acting audit, ready) of seed.
 
 Every seed RLS policy that resolves the caller's org by an identity form
 (current_org_id(), current_user_org_id(), an inline noctus_users subquery) must
@@ -24,10 +24,13 @@ pglast = pytest.importorskip("pglast")
 from pglast import ast, enums, parse_sql  # noqa: E402
 from pglast.stream import RawStream  # noqa: E402
 
+from noctusai_lib.testing.migrations import migration_path  # noqa: E402
+
 MIGRATIONS = Path(__file__).resolve().parents[1] / "migrations"
-FILE_A = MIGRATIONS / "007_org_picker_policies.sql"
-FILE_B = MIGRATIONS / "008_org_picker_acting_audit.sql"
-FILE_C = MIGRATIONS / "009_org_picker_ready.sql"
+# Resolved by NAME, never by number: a renumber on integrate must not break the test.
+FILE_A = migration_path(MIGRATIONS, "org_picker_policies")
+FILE_B = migration_path(MIGRATIONS, "org_picker_acting_audit")
+FILE_C = migration_path(MIGRATIONS, "org_picker_ready")
 
 
 def _render(text: str) -> str:

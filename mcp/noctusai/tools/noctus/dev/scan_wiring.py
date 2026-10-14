@@ -656,6 +656,83 @@ def _factory_router_routes(content: str) -> tuple[list[tuple[str, str]], set[int
     return routes, consumed_lines
 
 
+# Seed-LIBRARY router factories (`noctusai_lib.domain.<organ>.commerce_staff_router(...)`):
+# a product imports the factory and mounts it, so its routes live in the seed lib,
+# not the product. The factory takes its prefix as a parameter with a literal default
+# (`prefix: str = "/api/commerce"`) — resolved here from that default. A product that
+# overrides `prefix=` at the call site is NOT followed (under-resolution: today's
+# behavior for that router); the default IS the canonical mount (seed-canonical-defaults).
+_NOCTUSAI_LIB_IMPORT_RE = re.compile(r"^\s*from\s+noctusai_lib\.(?P<mod>[A-Za-z0-9_.]+)\s+import\b", re.M)
+_SEED_LIB_ROOT_REL = ("seed", "lib", "backend", "noctusai_lib")
+
+
+def _seed_lib_files_for_imports(contents: list[str], repo_root: Path) -> list[Path]:
+    """The seed-lib source files behind every `from noctusai_lib.<mod> import ...` in
+    a product: a package ⇒ its own `*.py` (non-recursive — re-exports live there); a
+    module ⇒ that file."""
+    base = repo_root.joinpath(*_SEED_LIB_ROOT_REL)
+    files: set[Path] = set()
+    for content in contents:
+        for m in _NOCTUSAI_LIB_IMPORT_RE.finditer(content):
+            target = base.joinpath(*m.group("mod").split("."))
+            if target.is_dir():
+                files |= {p for p in target.glob("*.py") if p.is_file()}
+            elif target.with_suffix(".py").is_file():
+                files.add(target.with_suffix(".py"))
+    return sorted(files)
+
+
+def _default_prefix_factory_routes(content: str) -> list[tuple[str, str]]:
+    """Routes of factories shaped `def f(..., prefix: str = "/api/x"): r = APIRouter(prefix=prefix);
+    @r.<method>("/p")` — joined to the parameter's LITERAL default. Anything else
+    (non-literal default, prefix built another way, nested router) contributes nothing."""
+    try:
+        tree = ast.parse(content)
+    except SyntaxError:
+        return []
+    routes: list[tuple[str, str]] = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        defaults: dict[str, str] = {}
+        pos = [*fn.args.posonlyargs, *fn.args.args]
+        for arg, default in zip(pos[len(pos) - len(fn.args.defaults):], fn.args.defaults):
+            if isinstance(default, ast.Constant) and isinstance(default.value, str):
+                defaults[arg.arg] = default.value
+        for arg, default in zip(fn.args.kwonlyargs, fn.args.kw_defaults):
+            if isinstance(default, ast.Constant) and isinstance(default.value, str):
+                defaults[arg.arg] = default.value
+        if not defaults:
+            continue
+        router_prefix: dict[str, str] = {}
+        for stmt in fn.body:
+            if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Name) and isinstance(stmt.value, ast.Call)):
+                continue
+            call = stmt.value
+            fname = call.func.id if isinstance(call.func, ast.Name) else getattr(call.func, "attr", None)
+            if fname != "APIRouter":
+                continue
+            for kw in call.keywords:
+                if kw.arg == "prefix" and isinstance(kw.value, ast.Name) and kw.value.id in defaults:
+                    router_prefix[stmt.targets[0].id] = defaults[kw.value.id]
+        if not router_prefix:
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) or node is fn:
+                continue
+            for dec in node.decorator_list:
+                if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute)
+                        and isinstance(dec.func.value, ast.Name)
+                        and dec.func.value.id in router_prefix
+                        and dec.func.attr in _HTTP_METHODS
+                        and dec.args and isinstance(dec.args[0], ast.Constant)
+                        and isinstance(dec.args[0].value, str)):
+                    continue
+                routes.append((dec.func.attr, _join_route(router_prefix[dec.func.value.id], dec.args[0].value)))
+    return routes
+
+
 def _routes_from_file(
     content: str,
 ) -> tuple[list[tuple[str, str]], set[str], list[tuple[str, str]]]:
@@ -752,6 +829,22 @@ def _scan_backend_routes(be_root: Path, repo_root: Path | None = None) -> _BeRou
             _ingest(path.read_text(encoding="utf-8"))
         except (UnicodeDecodeError, OSError) as exc:
             logger.warning("scan_wiring: cannot read seed router %s (%s), skipping", path, exc)
+
+    # Seed-LIBRARY organ routers the product imports + mounts (factory, default prefix).
+    # Only the default-prefix resolution is taken from these files — never their bare
+    # decorators — so an unrelated seed-lib route can't be re-offered under a product prefix.
+    if scan_root.exists():
+        product_contents = []
+        for path in scan_root.rglob("*" + _BE_EXT):
+            try:
+                product_contents.append(path.read_text(encoding="utf-8"))
+            except (UnicodeDecodeError, OSError) as exc:
+                logger.warning("scan_wiring: cannot read %s (%s), skipping", path, exc)
+        for path in _seed_lib_files_for_imports(product_contents, seed_root):
+            try:
+                scan.routes.update(_default_prefix_factory_routes(path.read_text(encoding="utf-8")))
+            except (UnicodeDecodeError, OSError) as exc:
+                logger.warning("scan_wiring: cannot read seed-lib router %s (%s), skipping", path, exc)
 
     # Re-offer prefix-less decorator paths under every discovered prefix
     # (covers the prefix-at-mount-time / include_router(prefix=) form).

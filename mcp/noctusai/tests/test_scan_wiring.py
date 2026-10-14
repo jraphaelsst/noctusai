@@ -363,6 +363,65 @@ class TestLegAFactoryRouterResolution:
         assert result["missing_routes"] == [], result["missing_routes"]
 
 
+class TestLegASeedLibFactoryRouters:
+    """A product mounts a seed-LIBRARY organ router factory
+    (`from noctusai_lib.domain.<organ> import <organ>_router`); the routes live in
+    `seed/lib/backend/noctusai_lib/...` with the prefix as a defaulted parameter.
+    Born 2026-10-14: commerce woke in catalog scope and its hosts DELETE was flagged
+    missing although the organ serves it."""
+
+    _ORGAN_ROUTER_PY = (
+        "from fastapi import APIRouter\n"
+        "def shop_staff_router(auth_dependency, *, prefix: str = '/api/shop', tags=None):\n"
+        "    router = APIRouter(prefix=prefix, tags=tags or ['shop'])\n"
+        "    @router.get('/hosts')\n"
+        "    def list_hosts():\n        return []\n"
+        "    @router.delete('/hosts/{hostname}', status_code=204)\n"
+        "    def delete_host(hostname: str):\n        return None\n"
+        "    return router\n"
+    )
+
+    def _repo(self, tmp_path: Path, product_py: str, fe: str) -> Path:
+        repo = _mk_product(tmp_path, "shop", {
+            "backend/app/routers/shop_routers.py": product_py,
+            "frontend/src/hooks/useHosts.ts": fe,
+        })
+        organ = tmp_path / "seed/lib/backend/noctusai_lib/domain/shop"
+        organ.mkdir(parents=True)
+        (organ / "__init__.py").write_text("from .router import shop_staff_router\n")
+        (organ / "router.py").write_text(self._ORGAN_ROUTER_PY)
+        return repo
+
+    def test_imported_organ_factory_routes_resolve_with_default_prefix(self, tmp_path: Path):
+        repo = self._repo(
+            tmp_path,
+            "from noctusai_lib.domain.shop import shop_staff_router\n"
+            "staff_router = shop_staff_router(auth_dependency=None)\n",
+            "await api.delete(`/api/shop/hosts/${encodeURIComponent(hostname)}`);\n",
+        )
+        result = scan_wiring("shop", repo_root=repo)
+        assert result["missing_routes"] == [], result["missing_routes"]
+
+    def test_organ_not_imported_still_flags(self, tmp_path: Path):
+        repo = self._repo(
+            tmp_path,
+            "from fastapi import APIRouter\nrouter = APIRouter(prefix='/api/other')\n",
+            "await api.delete(`/api/shop/hosts/${encodeURIComponent(hostname)}`);\n",
+        )
+        result = scan_wiring("shop", repo_root=repo)
+        assert len(result["missing_routes"]) == 1
+
+    def test_wrong_path_under_organ_prefix_still_flags(self, tmp_path: Path):
+        repo = self._repo(
+            tmp_path,
+            "from noctusai_lib.domain.shop import shop_staff_router\n"
+            "staff_router = shop_staff_router(auth_dependency=None)\n",
+            "await api.delete(`/api/shop/nope/${id}`);\n",
+        )
+        result = scan_wiring("shop", repo_root=repo)
+        assert len(result["missing_routes"]) == 1
+
+
 class TestNormalizePath:
     def test_dynamic_segments_normalize_equal(self):
         assert _normalize_path("/api/plans/${planId}") == _normalize_path("/api/plans/{plan_id}")
