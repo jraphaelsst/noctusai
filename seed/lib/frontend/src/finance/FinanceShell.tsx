@@ -132,7 +132,7 @@ export function FinanceShell({ hooks, isAdmin = false, section: controlled, onSe
     case 'registers':
       page = (
         <div className="space-y-4">
-          <SubTabs tabs={REGISTER_TABS} active={registerTab} onChange={setRegisterTab} labelPrefix="registers" label={t('nav.registers')} />
+          <SubTabs<RegisterTab> tabs={REGISTER_TABS} active={registerTab} onChange={(k) => setRegisterTab(k)} labelPrefix="registers" label={t('nav.registers')} />
           {registerTab === 'accounts' ? <AccountsManager hooks={hooks} isAdmin={isAdmin} /> : null}
           {registerTab === 'categories' ? <FinanceCategoryManager hooks={hooks} isAdmin={isAdmin} /> : null}
           {registerTab === 'cost_centers' ? <CostCentersManager hooks={hooks} isAdmin={isAdmin} /> : null}
@@ -143,7 +143,7 @@ export function FinanceShell({ hooks, isAdmin = false, section: controlled, onSe
     case 'accountant':
       page = (
         <div className="space-y-4">
-          <SubTabs tabs={ACCOUNTANT_TABS} active={accountantTab} onChange={setAccountantTab} labelPrefix="accountant_tabs" label={t('nav.accountant')} />
+          <SubTabs<AccountantTab> tabs={ACCOUNTANT_TABS} active={accountantTab} onChange={(k) => setAccountantTab(k)} labelPrefix="accountant_tabs" label={t('nav.accountant')} />
           {accountantTab === 'checklist' ? <AccountantChecklist hooks={hooks} isAdmin={isAdmin} /> : null}
           {accountantTab === 'dre_settings' ? <DreSettingsForm hooks={hooks} isAdmin={isAdmin} /> : null}
           {accountantTab === 'simples' ? <SimplesBaseReport hooks={hooks} now={now} /> : null}

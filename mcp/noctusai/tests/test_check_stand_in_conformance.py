@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.noctus.dev.stand_in_conformance import (  # noqa: E402
     _leg_a_check_product,
     _leg_b_iii_mock_write_validator_wired,
+    _check_body_column_count,
     _leg_b_iv_check_constraint_coverage,
     _resolve_product_venv_python,
     check_stand_in_conformance,
@@ -144,6 +145,20 @@ _SINGLE_COLUMN_CHECK_MIGRATION = (
 
 def _b_iv(tmp_path):
     return _leg_b_iv_check_constraint_coverage(tmp_path, [tmp_path / "products" / "widget"])
+
+
+class TestCheckBodyColumnCount:
+    """`EXTRACT(<field> FROM col)` names ONE column — the field is a keyword
+    (finance organ `fin_entries.competence_month`, commerce 017, 2026-10-14)."""
+
+    def test_extract_field_is_not_a_column(self):
+        assert _check_body_column_count("EXTRACT(DAY FROM competence_month) = 1") == 1
+
+    def test_a_real_column_named_like_a_field_still_counts(self):
+        assert _check_body_column_count("month <= 12 AND year > 2000") == 2
+
+    def test_substring_from_keeps_its_column(self):
+        assert _check_body_column_count("substring(code FROM 1 FOR 2) = prefix") >= 2
 
 
 class TestCheckStandInConformanceLegBiv:

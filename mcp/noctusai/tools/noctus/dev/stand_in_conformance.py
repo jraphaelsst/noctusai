@@ -683,6 +683,12 @@ _SQL_STOPWORDS = {
     "distinct", "case", "when", "then", "else", "end", "now",
 }
 
+#: `EXTRACT(<field> FROM col)` — the field is a keyword, not a column:
+#: `EXTRACT(DAY FROM competence_month) = 1` constrains ONE column (finance
+#: organ, commerce 017, 2026-10-14). Stripped positionally, so a real column
+#: named `month`/`year` elsewhere in a body still counts.
+_EXTRACT_FIELD = re.compile(r"\bEXTRACT\s*\(\s*[A-Za-z_]+\s+FROM\b", re.IGNORECASE)
+
 
 def _check_body_column_count(body: str) -> int:
     """Distinct SQL-identifier-shaped tokens in a CHECK body (string
@@ -693,7 +699,7 @@ def _check_body_column_count(body: str) -> int:
     single-column allowed-value model cannot express (a
     `col IN ('a','b')` or `col >= 0` shape resolves to exactly 1 and is
     correctly excluded — that class already has a working mock model)."""
-    no_strings = re.sub(r"'[^']*'", "", body)
+    no_strings = _EXTRACT_FIELD.sub("extract(", re.sub(r"'[^']*'", "", body))
     # A function CALL's name is not a column reference (`current_org_id()`,
     # `now()`, `length(x)`) — strip the identifier immediately preceding an
     # opening paren, keeping the paren so its ARGUMENTS still get scanned.
