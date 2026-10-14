@@ -33,6 +33,8 @@ KNOWLEDGE-BASE/
 │   │   │   ├── agent-context-architecture.md
 │   │   │   ├── agent-reading-discipline.md
 │   │   │   ├── app-reverse-engineering.md
+│   │   ├── finance/
+│   │   │   ├── dre-structure.md
 │   │   ├── architect/
 │   │   │   ├── ast.md
 │   │   │   ├── auth-boundary-false-green.md
@@ -338,6 +340,7 @@ KNOWLEDGE-BASE/
 | Product working scope (`ativo` + `deploy_scope` = which products we touch and where; inactive never live; reactivation lands in dev) | `CONTEXT/PATTERNS/architect/product-working-scope.md` |
 | Proposals & improvements (two systems — per-project folders, ONE bundled proposal per phase, promote boundary) | `CONTEXT/PATTERNS/common/proposals-and-improvements.md` |
 | LGPD awareness (keeper principle, the five questions, noctus.dev.lgpd_flag tool) | `CONTEXT/PATTERNS/security/lgpd.md` |
+| DRE structure for small Brazilian e-commerce stores — NBC TG 1002/1001 line shape, where the DAS goes (whole DAS in Deduções for Simples; DAS-MEI as fixed cost), e-commerce items (gateway fees, antecipação, marketplace commission, freight, chargebacks, refunds, installment interest), tiered sources, open questions, when a contador (CRC) is required; agent `accountant` | `CONTEXT/PATTERNS/finance/dre-structure.md` |
 | LLM usage tracking (SupabaseUsageSink, /api/llm/usage, cost estimation, RLS scoping) | `CONTEXT/PATTERNS/backend/llm-usage.md` |
 | LLM provider selection — fleet-wide map of every chat/vision/embedding/audio call site's vendor dependency; the lightweight `resolve_llm_provider(capability, org_id, allowed=..., default="openai")` manual switch (reads `org_settings`/`platform_settings`/env under `llm_<capability>_provider`, never auto-fails-over); which products already have a switch (social-wiring's 3 named settings) vs. which are still openai-only by default; strictly-pinned classification (embeddings/audio → Anthropic is a real capability gap; embeddings/audio → Gemini is a missing `GEMINI_API_KEY`, not a capability gap); the MCP dev toolkit's embedding funnel has no switch mechanism at all (highest-severity SPOF); silent-failure call sites where a dead provider reads as "no results" (`kb_search`/`code_search`) or fail-open (community's moderation) instead of a visible error | `CONTEXT/PATTERNS/backend/llm-provider-selection.md` |
 | Logging convention (when-to-log, level guide, no-`# silent-ok` rule, correlation IDs) | `CONTEXT/PATTERNS/backend/logging.md` |
