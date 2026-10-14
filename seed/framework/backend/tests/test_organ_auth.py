@@ -94,3 +94,47 @@ def test_mount_organs_refuses_conflicting_overrides():
     with pytest.raises(ValueError, match="conflicting"):
         mount_organs([a, b])
     assert mount_organs([a, MountedOrgan("c", (), {"/x": 1})])[1] == {"/x": 1}
+
+
+# -- B3 sweep: the shared seed helpers decide admin IN the selected org --------------------------------------
+
+from noctusai_lib.api.auth.session.scopes import (  # noqa: E402
+    is_org_admin,
+    make_require_org_admin,
+    require_org_admin_role,
+    resolve_org_role,
+)
+
+
+def test_helpers_with_org_id_fail_closed_on_org_mismatch():
+    core = _core("owner")
+    assert is_org_admin(core, "u1") is True  # legacy HOME predicate unchanged
+    assert is_org_admin(core, "u1", org_id=HOME) is True
+    assert is_org_admin(core, "u1", org_id=OTHER) is False
+    assert resolve_org_role(core, "u1", org_id=OTHER) is None
+    require_org_admin_role(core, "u1", "X", org_id=HOME)
+    with pytest.raises(HTTPException) as e:
+        require_org_admin_role(core, "u1", "X", org_id=OTHER)
+    assert e.value.status_code == 403
+
+
+def test_make_require_org_admin_uses_selected_org():
+    core = _core("owner")
+    sel = {"org": OTHER}
+
+    async def auth(authorization: str | None = Header(None)):
+        if not authorization:
+            raise HTTPException(status_code=401, detail="no auth")
+        return (SimpleNamespace(id="u1"), "tok", sel["org"])
+
+    app = FastAPI()
+
+    @app.put("/w")
+    async def w(a=Depends(make_require_org_admin(auth, lambda: core))):
+        return {"ok": True}
+
+    c = TestClient(app)
+    assert c.put("/w").status_code == 401
+    assert c.put("/w", headers=H).status_code == 403
+    sel["org"] = HOME
+    assert c.put("/w", headers=H).status_code == 200

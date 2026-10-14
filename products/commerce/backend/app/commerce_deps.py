@@ -14,8 +14,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from fastapi import Depends, HTTPException
-from noctusai_lib.api.auth.effective_org import is_platform_staff
+from fastapi import Depends, HTTPException, Request
+from noctusai_lib.api.auth.effective_org import acting_header_of, is_platform_staff
 from noctusai_lib.api.auth.session.scopes import require_org_admin_role
 from noctusai_lib.domain.commerce import CommerceContext, MoneyDeps, make_checkout_gateway, make_fulfillment_registry
 from noctusai_lib.domain.commerce import invoices as invoices_svc
@@ -172,10 +172,14 @@ def get_email_sender() -> EmailSender:
 # ── org-admin gate / platform-admin gate ───────────────────────────────────
 
 
-async def require_org_admin(auth: Any = Depends(get_current_user_org)) -> Any:
+async def require_org_admin(request: Request, auth: Any = Depends(get_current_user_org)) -> Any:
     """ORG-admin gate for money-moving / fiscal writes (CONTRACT §0). The role is read from the
-    TRUSTED `noctus_users` row (core client), never `user_metadata`; plain staff get 403."""
-    require_org_admin_role(_db.get_core_client(), getattr(auth[0], "id", None), "Comércio")
+    TRUSTED `noctus_users` row (core client) IN the request's SELECTED org (B3), never `user_metadata`
+    nor the home-org role; plain staff get 403."""
+    require_org_admin_role(
+        _db.get_core_client(), getattr(auth[0], "id", None), "Comércio",
+        org_id=auth[2], token=auth[1], acting_header=acting_header_of(request),
+    )
     return auth
 
 

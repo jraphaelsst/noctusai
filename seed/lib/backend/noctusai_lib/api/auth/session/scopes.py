@@ -53,7 +53,10 @@ from noctusai_lib.domain.licensing import enforce_license
 CallerRestriction = Literal["any", "product_only", "user_only"]
 
 
-def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
+def resolve_org_role(
+    core_client: Any, user_id: Any, *, org_id: Any = None, token: Optional[str] = None,
+    acting_header: Optional[str] = None,
+) -> str | None:
     """Trusted-DB read of ``public.noctus_users.org_role`` for ``user_id``.
 
     Mirrors ``noctusai_seed.auth_router._require_org_admin``'s query
@@ -75,10 +78,18 @@ def resolve_org_role(core_client: Any, user_id: Any) -> str | None:
         The role string (e.g. ``"owner"``) or ``None`` when
         ``user_id`` is ``None`` or no matching row exists.
     """
-    # HOME role: no token/header is passed, so a staff member's org-picker selection
-    # is never applied here (the acting role/org ride on the auth dependencies).
-    eff = resolve_effective_org_for_request(core_client, user_id)
-    return eff.org_role if eff is not None else None
+    # Without ``org_id`` this is the HOME role (no token/header => no org-picker selection applied).
+    # B3: a caller that authorizes a request whose org is the SELECTED org MUST pass ``org_id`` (+ the
+    # request's ``token`` / ``acting_header``): the role is then the one of THAT org's membership and
+    # ``None`` (fail closed) when the effective org differs -- a home-org owner who is a plain member of
+    # the selected org must not be an admin there.
+    if org_id is None:
+        eff = resolve_effective_org_for_request(core_client, user_id)
+        return eff.org_role if eff is not None else None
+    membership = resolve_org_membership(core_client, user_id, token=token, acting_header=acting_header)
+    if membership is None or str(membership.get("org_id")) != str(org_id):
+        return None
+    return membership.get("org_role")
 
 
 def resolve_org_membership(
@@ -111,6 +122,9 @@ def is_org_admin(
     user_id: Any,
     *,
     admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+    org_id: Any = None,
+    token: Optional[str] = None,
+    acting_header: Optional[str] = None,
 ) -> bool:
     """Trusted-DB bool predicate — "does this user have an admin-equivalent
     org_role" — never raises, and NEVER reads ``user_metadata`` (that
@@ -139,8 +153,13 @@ def is_org_admin(
             closed, never raises).
         admin_roles: The role set that counts as "admin". Defaults to the
             platform's own ``("owner", "admin")``.
+        org_id / token / acting_header: pass the request's SELECTED ``org_id`` (+ token and
+            ``acting_header_of(request)``) to decide admin IN that org (B3, fail closed on a
+            mismatch). Omitted = the legacy HOME-org predicate.
     """
-    return resolve_org_role(core_client, user_id) in admin_roles
+    return resolve_org_role(
+        core_client, user_id, org_id=org_id, token=token, acting_header=acting_header
+    ) in admin_roles
 
 
 def require_org_admin_role(
@@ -149,6 +168,9 @@ def require_org_admin_role(
     context: str,
     *,
     admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+    org_id: Any = None,
+    token: Optional[str] = None,
+    acting_header: Optional[str] = None,
 ) -> None:
     """Imperative 403 gate — the drop-in replacement for a hand-rolled
     ``if role not in (...): raise HTTPException(403, ...)`` block INSIDE an
@@ -165,7 +187,10 @@ def require_org_admin_role(
     ``context`` parameter every pre-existing hand-rolled gate this
     replaces already took.
     """
-    if not is_org_admin(core_client, user_id, admin_roles=admin_roles):
+    if not is_org_admin(
+        core_client, user_id, admin_roles=admin_roles,
+        org_id=org_id, token=token, acting_header=acting_header,
+    ):
         raise HTTPException(
             status_code=403, detail=f"{context} restrito a administradores."
         )
@@ -192,15 +217,21 @@ async def require_org_admin_role_assured(
     core_client: Any, user_id: Any, context: str, *, request: Request,
     response: Response | None = None, aal: str | None,
     admin_roles: frozenset[str] = ADMIN_ORG_ROLES,
+    org_id: Any = None,
+    token: Optional[str] = None,
 ) -> None:
-    """:func:`require_org_admin_role` + the admin-MFA gate. The sync
+    """:func:`require_org_admin_role` + the admin-MFA gate (pass ``org_id``/``token`` for the B3 selected-org decision). The sync
     imperative form cannot await the policy, so a route body that holds a
     ``Request`` and the caller's ``aal`` (``AuthContext.aal`` or
     ``read_aal``) uses THIS twin; the 403 contract is unchanged."""
-    require_org_admin_role(core_client, user_id, context, admin_roles=admin_roles)
+    acting = acting_header_of(request)
+    require_org_admin_role(
+        core_client, user_id, context, admin_roles=admin_roles,
+        org_id=org_id, token=token, acting_header=acting,
+    )
     await require_admin_assurance(
         request, response, caller_kind="user", aal=aal, user_id=user_id,
-        role=resolve_org_role(core_client, user_id),
+        role=resolve_org_role(core_client, user_id, org_id=org_id, token=token, acting_header=acting),
     )
 
 
@@ -228,8 +259,10 @@ def make_require_org_admin(
         response: Response = None,
     ) -> tuple:
         user, token, org_id = auth
+        # B3: the role is decided IN the request's selected org (fail closed on mismatch).
         if not is_org_admin(
-            get_core_client(), getattr(user, "id", None), admin_roles=admin_roles
+            get_core_client(), getattr(user, "id", None), admin_roles=admin_roles,
+            org_id=org_id, token=token, acting_header=acting_header_of(request),
         ):
             raise HTTPException(status_code=403, detail=detail)
         await assure_legacy_admin(request, response, user, token, org_id)
