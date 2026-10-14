@@ -8,13 +8,16 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button, EmptyState } from "@noctusai/lib/design-system";
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   MAX_TURNS_MAX,
   MAX_TURNS_MIN,
   STUDIO_EFFORTS,
-  STUDIO_MODELS,
+  MODELS_BY_PROVIDER,
+  STUDIO_PROVIDERS,
   type DraftPatchInput,
   type StudioEffort,
   type StudioModel,
+  type StudioProvider,
   type VersionDetail,
 } from "@/api/studio/types";
 import { PromptMarkdownField } from "@/components/studio/PromptMarkdownField";
@@ -41,9 +44,15 @@ const MODEL_LABELS: Record<StudioModel, string> = {
   "claude-opus-5": "Opus 5",
   "claude-sonnet-5": "Sonnet 5",
   "claude-haiku-4-5": "Haiku 4.5 — mais rápido e barato",
+  "gpt-5.6-sol": "GPT-5.6 Sol",
+  "gpt-5.6-terra": "GPT-5.6 Terra — padrão",
+  "gpt-5.6-luna": "GPT-5.6 Luna — mais rápido e barato",
 };
 
+const PROVIDER_LABELS: Record<StudioProvider, string> = { anthropic: "Anthropic", openai: "OpenAI" };
+
 interface Form {
+  provider: StudioProvider;
   model: StudioModel;
   effort: StudioEffort;
   max_turns: string;
@@ -55,6 +64,7 @@ interface Form {
 
 function toForm(v: VersionDetail): Form {
   return {
+    provider: v.provider ?? "anthropic",
     model: v.model,
     effort: v.effort,
     max_turns: String(v.max_turns),
@@ -68,7 +78,10 @@ function toForm(v: VersionDetail): Form {
 /** Only the fields that changed — the PATCH is partial by contract. */
 function settingsPatch(v: VersionDetail, f: Form): DraftPatchInput {
   const p: DraftPatchInput = {};
-  if (f.model !== v.model) p.model = f.model;
+  const providerChanged = f.provider !== (v.provider ?? "anthropic");
+  if (providerChanged) p.provider = f.provider;
+  // The backend validates the EFFECTIVE (provider, model) pair — send both on a provider switch.
+  if (providerChanged || f.model !== v.model) p.model = f.model;
   if (f.effort !== v.effort) p.effort = f.effort;
   if (Number(f.max_turns) !== v.max_turns) p.max_turns = Number(f.max_turns);
   if (f.idioma.trim() !== v.idioma) p.idioma = f.idioma.trim();
@@ -156,6 +169,27 @@ export default function SettingsTab({ agentKey }: { agentKey: string }) {
             )}
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
+                <label htmlFor="cfg-provider" className="mb-1 block text-xs font-medium">
+                  Provedor
+                </label>
+                <select
+                  id="cfg-provider"
+                  className={INPUT_CLASS}
+                  value={form.provider}
+                  disabled={!editable}
+                  onChange={(e) => {
+                    const provider = e.target.value as StudioProvider;
+                    setForm({ ...form, provider, model: DEFAULT_MODEL_BY_PROVIDER[provider] });
+                  }}
+                >
+                  {STUDIO_PROVIDERS.map((p) => (
+                    <option key={p} value={p}>
+                      {PROVIDER_LABELS[p]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label htmlFor="cfg-model" className="mb-1 block text-xs font-medium">
                   Modelo
                 </label>
@@ -166,7 +200,7 @@ export default function SettingsTab({ agentKey }: { agentKey: string }) {
                   disabled={!editable}
                   onChange={(e) => setForm({ ...form, model: e.target.value as StudioModel })}
                 >
-                  {STUDIO_MODELS.map((m) => (
+                  {MODELS_BY_PROVIDER[form.provider].map((m) => (
                     <option key={m} value={m}>
                       {MODEL_LABELS[m]}
                     </option>

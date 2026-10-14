@@ -15,6 +15,7 @@ export const STUDIO_TABS = [
   { id: "conhecimento", label: "Conhecimento" },
   { id: "avaliacoes", label: "Avaliações" },
   { id: "clientes", label: "Clientes" },
+  { id: "canais", label: "Canais" },
   { id: "aprendizados", label: "Aprendizados" },
   { id: "versoes", label: "Versões" },
   { id: "compilado", label: "Prompt compilado" },
@@ -30,10 +31,13 @@ export function isStudioTab(value: string | null): value is StudioTabId {
 }
 
 /** Tabs that only exist for one agent kind (Agent Packages §D3). */
-const RUNTIME_ONLY: readonly StudioTabId[] = ["clientes"];
+const RUNTIME_ONLY: readonly StudioTabId[] = ["clientes", "canais"];
+/** Tabs that only exist for the channel agent (Lais page-0 agent "Julia"). */
+export const CHANNEL_AGENT_KEY = "lead-imob";
 const DEV_ADVISOR_ONLY: readonly StudioTabId[] = ["aprendizados"];
 
-export function isTabVisibleForKind(tab: StudioTabId, kind: string): boolean {
+export function isTabVisibleForKind(tab: StudioTabId, kind: string, agentKey?: string): boolean {
+  if (tab === "canais" && agentKey !== undefined && agentKey !== CHANNEL_AGENT_KEY) return false;
   if (kind === "dev-advisor") return !RUNTIME_ONLY.includes(tab);
   return !DEV_ADVISOR_ONLY.includes(tab);
 }

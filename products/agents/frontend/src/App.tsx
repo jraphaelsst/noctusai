@@ -10,7 +10,7 @@ import { createProductApp, createProductLayout } from "@noctusai/seed";
 import infra from '@noctusai/seed/infra';
 import type { NavGroupWithRoute } from "@noctusai/lib";
 import type { NavGroup } from "@noctusai/lib/design-system";
-import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes } from "lucide-react";
+import { LayoutDashboard, Users, Home, Bot, MessageCircle, CheckCircle2, KeyRound, SlidersHorizontal, Boxes, Sparkles } from "lucide-react";
 
 // Pages
 const Landing = lazy(() => import("@/pages/Landing"));
@@ -27,6 +27,7 @@ const JuliaPersona = lazy(() => import("@/pages/JuliaPersona"));
 const Aprovacoes = lazy(() => import("@/pages/Aprovacoes"));
 // Platform-admin pages (server-enforced by `require_platform_admin`).
 const Credenciais = lazy(() => import("@/pages/Credenciais"));
+const ChavesIA = lazy(() => import("@/pages/ChavesIA"));
 const ConfiguracoesAgente = lazy(() => import("@/pages/ConfiguracoesAgente"));
 // Agent Studio — `products/agents/projects/agent-studio-isaia/CONTRACT.md` §G.
 const StudioList = lazy(() => import("@/pages/studio/StudioList"));
@@ -55,6 +56,7 @@ const NAV_GROUPS: NavGroupWithRoute[] = [
       { name: "Equipe", href: "/equipe", icon: Users, route: "equipe" },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal, route: "configuracoes-agente" },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound, route: "credenciais" },
+      { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles, route: "chaves-ia" },
     ],
   },
 ];
@@ -80,6 +82,7 @@ const NAV_FALLBACK: NavGroup[] = [
       { name: "Equipe", href: "/equipe", icon: Users },
       { name: "Configurações do agente", href: "/configuracoes-agente", icon: SlidersHorizontal },
       { name: "Credenciais", href: "/credenciais", icon: KeyRound },
+      { name: "Chaves de IA", href: "/chaves-ia", icon: Sparkles },
     ],
   },
 ];
@@ -102,6 +105,7 @@ export default createProductApp({
     { path: "/aprovacoes", component: Aprovacoes },
     { path: "/equipe", component: Equipe },
     { path: "/credenciais", component: Credenciais },
+    { path: "/chaves-ia", component: ChavesIA },
     { path: "/configuracoes-agente", component: ConfiguracoesAgente },
     { path: "/studio", component: StudioList },
     // Declared before `/studio/:key` for readability; react-router ranks the

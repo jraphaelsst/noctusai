@@ -21,7 +21,21 @@
 // ── Enumerations (contract §B1 CHECKs / §A10 allowlist) ───────────────────────
 
 export const STUDIO_MODELS = ["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"] as const;
-export type StudioModel = (typeof STUDIO_MODELS)[number];
+export const OPENAI_STUDIO_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] as const;
+export type StudioModel = (typeof STUDIO_MODELS)[number] | (typeof OPENAI_STUDIO_MODELS)[number];
+
+/** Migration 024 — the provider a version runs on; mirrors the backend's
+ * `MODELS_BY_PROVIDER` (`stores/studio_definitions.py`). */
+export const STUDIO_PROVIDERS = ["anthropic", "openai"] as const;
+export type StudioProvider = (typeof STUDIO_PROVIDERS)[number];
+export const MODELS_BY_PROVIDER: Record<StudioProvider, readonly StudioModel[]> = {
+  anthropic: STUDIO_MODELS,
+  openai: OPENAI_STUDIO_MODELS,
+};
+export const DEFAULT_MODEL_BY_PROVIDER: Record<StudioProvider, StudioModel> = {
+  anthropic: "claude-opus-5",
+  openai: "gpt-5.6-terra",
+};
 
 export const STUDIO_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
 export type StudioEffort = (typeof STUDIO_EFFORTS)[number];
@@ -90,6 +104,8 @@ export interface VersionSummary {
   status: VersionStatus;
   notas: string | null;
   model: StudioModel;
+  /** Migration 024; absent on payloads that predate it (= anthropic). */
+  provider?: StudioProvider;
   created_at: string;
   published_at: string | null;
   compiled_hash: string | null;
@@ -169,6 +185,7 @@ export interface DraftCreateInput {
 
 export interface DraftPatchInput {
   notas?: string | null;
+  provider?: StudioProvider;
   model?: StudioModel;
   effort?: StudioEffort;
   max_turns?: number;

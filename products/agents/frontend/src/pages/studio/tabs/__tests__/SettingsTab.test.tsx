@@ -5,7 +5,7 @@
  * equivalent coverage for the persona page's own selector.
  */
 import React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockUseAgentVersionRefs = vi.fn();
@@ -94,5 +94,21 @@ describe("SettingsTab — model selector", () => {
     const haiku = options.find((o) => o.value === "claude-haiku-4-5")!;
     expect(haiku.textContent).toMatch(/haiku/i);
     expect(haiku.textContent).toMatch(/rápido|barato/i);
+  });
+});
+
+describe("SettingsTab — provider selector", () => {
+  it("switching to OpenAI swaps the model list and defaults to terra, sending both on save", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(VERSION_DETAIL);
+    mockUseUpdateDraft.mockReturnValue({ mutateAsync, isPending: false });
+    await renderTab();
+
+    fireEvent.change(screen.getByLabelText("Provedor"), { target: { value: "openai" } });
+    const model = screen.getByLabelText("Modelo") as HTMLSelectElement;
+    expect(Array.from(model.options).map((o) => o.value)).toEqual(["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]);
+    expect(model.value).toBe("gpt-5.6-terra");
+
+    fireEvent.click(screen.getByTestId("settings-save"));
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ provider: "openai", model: "gpt-5.6-terra" }));
   });
 });

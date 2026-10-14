@@ -23,6 +23,7 @@ const TAB_COMPONENTS: Record<StudioTabId, TabComponent> = {
   conhecimento: lazy(() => import("./tabs/KnowledgeTab")),
   avaliacoes: lazy(() => import("./tabs/EvalsTab")),
   clientes: lazy(() => import("./tabs/ClientsTab")),
+  canais: lazy(() => import("./tabs/ChannelsTab")),
   aprendizados: lazy(() => import("./tabs/LearningsTab")),
   versoes: lazy(() => import("./tabs/VersionsTab")),
   compilado: lazy(() => import("./tabs/CompiledTab")),
@@ -45,8 +46,8 @@ export default function StudioAgent() {
   const raw = params.get("tab");
   const { data: agent, showSkeleton, isRefreshing, isError, error, refetch } = useStudioAgent(key);
   const kind = agent?.kind ?? "runtime";
-  const tab: StudioTabId = isStudioTab(raw) && isTabVisibleForKind(raw, kind) ? raw : DEFAULT_TAB;
-  const visibleTabs = STUDIO_TABS.filter((t) => isTabVisibleForKind(t.id, kind));
+  const tab: StudioTabId = isStudioTab(raw) && isTabVisibleForKind(raw, kind, key) ? raw : DEFAULT_TAB;
+  const visibleTabs = STUDIO_TABS.filter((t) => isTabVisibleForKind(t.id, kind, key));
 
   function selectTab(next: StudioTabId) {
     // Deep-link params (secao/chave/skill/versao/cliente) belong to one tab;
