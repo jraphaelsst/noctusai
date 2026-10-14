@@ -90,6 +90,29 @@ CAMPOS_EDITAVEIS: tuple[str, ...] = (
     # `None` = not stated (the contract's vistoria clause then uses the
     # condomínio wording); `False` is the only value that switches it off.
     "em_condominio",
+    # Migration 264 — valuation characteristics (see CAMPOS_AVALIACAO).
+    "padrao_construtivo",
+    "estado_conservacao",
+    "area_terreno_m2",
+    "area_construida_m2",
+    "testada_m",
+    "profundidade_m",
+    "topografia",
+    "posicao_lote",
+)
+
+#: Migration 264 — PHYSICAL attributes the price evaluator reads. Not legal
+#: data: they are read/written on the imóvel's OWN row and do NOT follow the
+#: manual<->Vista `legal_efetivo` link. A change stamps who/when.
+CAMPOS_AVALIACAO: tuple[str, ...] = (
+    "padrao_construtivo",
+    "estado_conservacao",
+    "area_terreno_m2",
+    "area_construida_m2",
+    "testada_m",
+    "profundidade_m",
+    "topografia",
+    "posicao_lote",
 )
 
 #: What the UI offers for `situacao_onus`. Here rather than as a schema CHECK
@@ -513,12 +536,15 @@ def _fonte_onus(row: dict, resolved: dict) -> Optional[dict]:
     }
 
 
-def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
+def _saida(
+    codigo: str, row: Optional[dict], resolved: dict, propria: Optional[dict] = None
+) -> dict:
     """The response shape. An imóvel with no row yet is NOT an error and NOT
     an empty object — it is every field, null. A caller that had to tell
     "no row" apart from "row with nothing in it" would branch on it at every
     call site, and the two mean the same thing to a user."""
     row = row or {}
+    propria = propria if propria is not None else row
     return {
         "codigo": codigo,
         "numero_matricula": row.get("numero_matricula"),
@@ -535,6 +561,12 @@ def _saida(codigo: str, row: Optional[dict], resolved: dict) -> dict:
         "situacao_onus": row.get("situacao_onus"),
         # Migration 202 — three-state: None (not stated) / True / False.
         "em_condominio": row.get("em_condominio"),
+        # Migration 264 — valuation characteristics, from the imóvel's OWN row.
+        **{campo: propria.get(campo) for campo in CAMPOS_AVALIACAO},
+        "avaliacao_campos_atualizado_em": propria.get("avaliacao_campos_atualizado_em"),
+        "avaliacao_campos_atualizado_por": table_reads.actor(
+            resolved, propria.get("avaliacao_campos_atualizado_por")
+        ),
         "onus_observacoes": row.get("onus_observacoes"),
         # The date printed ON the certidão, not when it was uploaded — a
         # certidão's validity runs from its own emission, so the upload
@@ -638,7 +670,9 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
 
     efetivo = vinculo_legal.legal_efetivo(client, org_id, codigo)
     row = efetivo.linha
+    propria = linha(client, org_id, codigo) or {}
     ids = {
+        propria.get("avaliacao_campos_atualizado_por"),
         (row or {}).get("captador_user_id"),
         (row or {}).get("numero_matricula_confirmado_por"),
         (row or {}).get("onus_registrado_por"),
@@ -654,7 +688,7 @@ def obter(client: Any, org_id: UUID, codigo: str) -> dict:
         (row or {}).get("prefeitura_cadastro_imobiliario_confirmado_por"),
         (row or {}).get("situacao_onus_confirmado_por"),
     }
-    saida = _saida(codigo, row, table_reads.resolve_actors(ids))
+    saida = _saida(codigo, row, table_reads.resolve_actors(ids), propria)
     # None when unlinked / read from the manual side.
     saida["vinculo_legal"] = efetivo.como_dict()
     return saida
@@ -729,6 +763,16 @@ def atualizar(
         else:
             patch[f"{campo}_confirmado_por"] = None
             patch[f"{campo}_confirmado_em"] = None
+
+    # Migration 264 — stamp who/when on a real change to a valuation field.
+    if any(
+        campo in patch and patch[campo] != (atual or {}).get(campo)
+        for campo in CAMPOS_AVALIACAO
+    ):
+        patch["avaliacao_campos_atualizado_em"] = _now()
+        patch["avaliacao_campos_atualizado_por"] = (
+            str(usuario_id) if usuario_id else None
+        )
 
     if "captador_user_id" in patch and patch["captador_user_id"] is not None:
         patch["captador_user_id"] = str(patch["captador_user_id"])

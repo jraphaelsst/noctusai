@@ -144,8 +144,39 @@ export interface ImovelDados {
   // condomínio wording); `false` = explicitly NOT in a condomínio.
   em_condominio: boolean | null;
 
+  // ─── Valuation characteristics (migration 264) ─────────────────────────
+  // Physical attributes the price evaluator reads, authored by brokers on the
+  // imóvel's OWN row (not legal data; not routed through the manual↔Vista link).
+  padrao_construtivo: PadraoConstrutivo | null;
+  estado_conservacao: EstadoConservacao | null;
+  area_terreno_m2: number | null;
+  area_construida_m2: number | null;
+  testada_m: number | null;
+  profundidade_m: number | null;
+  topografia: Topografia | null;
+  posicao_lote: PosicaoLote | null;
+  avaliacao_campos_atualizado_em: string | null;
+  avaliacao_campos_atualizado_por: Ator | null;
+
   updated_at: string | null;
 }
+
+export type PadraoConstrutivo = "simples" | "medio" | "superior" | "fino" | "luxo";
+export type EstadoConservacao =
+  | "novo"
+  | "entre_novo_e_regular"
+  | "regular"
+  | "reparos_simples"
+  | "reparos_importantes"
+  | "sem_valor";
+export type Topografia =
+  | "plano"
+  | "aclive_leve"
+  | "aclive_acentuado"
+  | "declive_leve"
+  | "declive_acentuado"
+  | "irregular";
+export type PosicaoLote = "meio_quadra" | "esquina" | "multiplas_frentes";
 
 /** `PUT .../endereco-manual` body — absence means "leave alone", `null`
  *  means "clear the override and fall back to the mirror" (migration 149,
@@ -188,6 +219,14 @@ export interface ImovelDadosPatch {
   onus_documento_id?: string | null;
   empreendimento_manual?: string | null;
   em_condominio?: boolean | null;
+  padrao_construtivo?: PadraoConstrutivo | null;
+  estado_conservacao?: EstadoConservacao | null;
+  area_terreno_m2?: number | null;
+  area_construida_m2?: number | null;
+  testada_m?: number | null;
+  profundidade_m?: number | null;
+  topografia?: Topografia | null;
+  posicao_lote?: PosicaoLote | null;
 }
 
 export type ExtracaoStatus =

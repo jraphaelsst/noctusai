@@ -14,6 +14,28 @@ from pydantic import Field, model_validator
 from noctusai_lib.api import StrictHttpModel
 
 
+#: Migration 264 — valuation characteristics. The CHECKs in the migration
+#: and these Literals are two halves of one contract (structural test pins it).
+PadraoConstrutivo = Literal["simples", "medio", "superior", "fino", "luxo"]
+EstadoConservacao = Literal[
+    "novo",
+    "entre_novo_e_regular",
+    "regular",
+    "reparos_simples",
+    "reparos_importantes",
+    "sem_valor",
+]
+Topografia = Literal[
+    "plano",
+    "aclive_leve",
+    "aclive_acentuado",
+    "declive_leve",
+    "declive_acentuado",
+    "irregular",
+]
+PosicaoLote = Literal["meio_quadra", "esquina", "multiplas_frentes"]
+
+
 class ImovelDadosPatchBody(StrictHttpModel):
     """The cartório fields a human may set.
 
@@ -55,6 +77,16 @@ class ImovelDadosPatchBody(StrictHttpModel):
     #: contract's vistoria clause defaults to the condomínio wording), `False`
     #: = explicitly NOT in a condomínio, `True` = in one.
     em_condominio: Optional[bool] = None
+    #: Migration 264 — physical attributes for the price evaluator. `None`
+    #: clears; absence leaves alone (same `model_fields_set` contract).
+    padrao_construtivo: Optional[PadraoConstrutivo] = None
+    estado_conservacao: Optional[EstadoConservacao] = None
+    area_terreno_m2: Optional[float] = Field(default=None, gt=0, lt=10_000_000_000)
+    area_construida_m2: Optional[float] = Field(default=None, gt=0, lt=10_000_000_000)
+    testada_m: Optional[float] = Field(default=None, gt=0, lt=1_000_000)
+    profundidade_m: Optional[float] = Field(default=None, gt=0, lt=1_000_000)
+    topografia: Optional[Topografia] = None
+    posicao_lote: Optional[PosicaoLote] = None
 
 
 class EnderecoManualPatchBody(StrictHttpModel):

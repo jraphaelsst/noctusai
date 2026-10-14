@@ -43,6 +43,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ImovelContratoContainer } from "@/components/ImovelContratoContainer";
 import EditPlaceholderButton from "@/components/imovel/EditPlaceholderButton";
 import ImovelAreasSection from "@/components/imovel/ImovelAreasSection";
+import ImovelAvaliacaoSection from "@/components/imovel/ImovelAvaliacaoSection";
 import ImovelCartorioCard from "@/components/imovel/ImovelCartorioCard";
 import ImovelComodidadesSection from "@/components/imovel/ImovelComodidadesSection";
 import ImovelComodosSection from "@/components/imovel/ImovelComodosSection";
@@ -324,6 +325,16 @@ export default function ImovelDetalhes() {
             posicao={imovel.posicao}
             elevador={imovel.elevador}
             portaria={imovel.portaria}
+          />
+
+          {/* Migration 264 — characteristics the price evaluator needs. */}
+          <ImovelAvaliacaoSection
+            dados={dadosQuery.data}
+            categoria={imovel.categoria}
+            loading={dadosQuery.isPending && !dadosQuery.data}
+            saving={dadosMutation.isPending}
+            error={dadosMutation.error?.message ?? null}
+            onSave={(patch) => dadosMutation.mutate(patch)}
           />
 
           {/* § 5.7 Condições comerciais */}
