@@ -1,0 +1,122 @@
+"""`commerce_fiscal_migration(cfg, schema)` -- the fiscal DDL (slice B2), a NEW host migration.
+
+Rendered AFTER `commerce_migration` (it ALTERs `commerce_store_profiles` and references
+`commerce_orders`) and never edits it. Re-runnable (`IF NOT EXISTS`, `DROP ... IF EXISTS` before
+each constraint/policy), forward-only, same RLS conventions as `sql.py`.
+
+* `commerce_invoices` -- one row per fiscal document attempt. `ref` is OUR idempotency key
+  (`"{org_short}-{order_id}-{kind}-{n}"`), unique per org; `(order_id, kind, seq)` is unique so
+  a re-issue after a rejection is a new `seq`. `pdf_path` / `xml_path` are keys in the PRIVATE
+  bucket (copies kept for the D30 5-year fiscal retention) -- never public URLs.
+* `commerce_store_profiles` gains the fiscal columns. `nfse_mode` is NULLABLE on purpose:
+  NULL means "the regime default" (so `put_profile`, which does not know this column, still
+  inserts a valid row for a MEI/Simples store). The CHECK makes the D37 rule a database
+  invariant: a `mei`/`simples` store can never hold `municipal`.
+* Per-company provider tokens are NOT here -- they live in the encrypted credentials table.
+* Bucket: invoice copies reuse the commerce private bucket (`cfg.bucket`, org id as the first
+  path segment, keys `<org_id>/invoices/<invoice_id>.pdf|xml`), so that bucket's per-org object
+  RLS already covers them. Pass `bucket=` only for a dedicated one.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from noctusai_lib.domain.sql_templates import (
+    private_org_bucket_sql,
+    rls_subquery_policy,
+    service_role_bypass,
+    set_search_path,
+)
+
+from .config import CommerceConfig
+from .fiscal_types import InvoiceKind, InvoiceStatus, NfseMode
+
+INVOICE_TABLE = "commerce_invoices"
+
+#: Fiscal columns added to `commerce_store_profiles` (name -> column DDL).
+PROFILE_FISCAL_COLUMNS: dict[str, str] = {
+    "inscricao_municipal": "TEXT",
+    "inscricao_estadual": "TEXT",
+    "municipio_ibge": "TEXT CHECK (municipio_ibge IS NULL OR municipio_ibge ~ '^[0-9]{7}$')",
+    "nfse_mode": f"TEXT CHECK (nfse_mode IS NULL OR nfse_mode IN ({', '.join(repr(m.value) for m in NfseMode)}))",
+    "nfse_cutover": "JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "invoice_company_ref": "TEXT",
+    "certificate_valid_until": "TIMESTAMPTZ",
+    "certificate_cnpj": "TEXT",
+    "auto_issue_invoices": "BOOLEAN NOT NULL DEFAULT false",
+}
+
+
+def _in(enum_cls) -> str:
+    return ", ".join(f"'{m.value}'" for m in enum_cls)
+
+
+def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
+    select_name = f"{table}_select_own_org"
+    return "\n".join(
+        [
+            f"ALTER TABLE {schema}.{table} ENABLE ROW LEVEL SECURITY;",
+            f'DROP POLICY IF EXISTS "{select_name}" ON {schema}.{table};',
+            rls_subquery_policy(schema, table, select_name, "SELECT", using=f"org_id = (SELECT {org_id_expr})"),
+            f'DROP POLICY IF EXISTS "service_role_bypass" ON {schema}.{table};',
+            service_role_bypass(table, schema=schema),
+        ]
+    )
+
+
+def commerce_fiscal_migration(cfg: CommerceConfig, schema: str, *, bucket: Optional[str] = None) -> str:
+    """The fiscal DDL for `schema` as one re-runnable migration body."""
+    if not schema or not schema.strip():
+        raise ValueError("commerce_fiscal_migration requires a non-empty schema")
+    s = schema
+    p = f"{s}.commerce_store_profiles"
+    alters = "\n".join(
+        f"ALTER TABLE {p} ADD COLUMN IF NOT EXISTS {col} {ddl};" for col, ddl in PROFILE_FISCAL_COLUMNS.items()
+    )
+    regime_rule = f"""-- D37: Simples/MEI must issue NFS-e via the Emissor Nacional; a municipal mode is unrepresentable.
+ALTER TABLE {p} DROP CONSTRAINT IF EXISTS commerce_store_profiles_nfse_regime_ck;
+ALTER TABLE {p} ADD CONSTRAINT commerce_store_profiles_nfse_regime_ck
+    CHECK (nfse_mode IS NULL OR NOT (tax_regime IN ('mei', 'simples') AND nfse_mode = 'municipal'));"""
+    invoices = f"""-- Invoices: one row per fiscal document attempt. ref = OUR idempotency key; pdf_path/xml_path = private-bucket keys.
+CREATE TABLE IF NOT EXISTS {s}.{INVOICE_TABLE} (
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    org_id              UUID NOT NULL,
+    order_id            UUID NOT NULL REFERENCES {s}.commerce_orders(id) ON DELETE CASCADE,
+    kind                TEXT NOT NULL CHECK (kind IN ({_in(InvoiceKind)})),
+    seq                 INTEGER NOT NULL DEFAULT 1 CHECK (seq >= 1),
+    ref                 TEXT NOT NULL CHECK (ref ~ '^[A-Za-z0-9_-]{{1,64}}$'),
+    status              TEXT NOT NULL DEFAULT 'processing' CHECK (status IN ({_in(InvoiceStatus)})),
+    provider            TEXT,
+    number              TEXT,
+    series              TEXT,
+    access_key          TEXT,
+    verification_code   TEXT,
+    pdf_path            TEXT,
+    xml_path            TEXT,
+    rejection           JSONB,
+    cancel_reason       TEXT,
+    cancel_requested_at TIMESTAMPTZ,
+    issued_at           TIMESTAMPTZ,
+    cancelled_at        TIMESTAMPTZ,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, ref),
+    UNIQUE (order_id, kind, seq)
+);
+CREATE INDEX IF NOT EXISTS idx_commerce_invoices_order ON {s}.{INVOICE_TABLE} (order_id);
+CREATE INDEX IF NOT EXISTS idx_commerce_invoices_org_status ON {s}.{INVOICE_TABLE} (org_id, status);
+{_org_rls(s, INVOICE_TABLE, cfg.org_id_expr)}"""
+    sections = [
+        "-- Commerce fiscal -- generated by noctusai_lib.domain.commerce.fiscal_sql (do not hand-edit)",
+        f"{set_search_path(s)};",
+        "-- Fiscal identity + NFS-e mode on the store profile.\n" + alters + "\n" + regime_rule,
+        invoices,
+    ]
+    if bucket and bucket != cfg.bucket:
+        sections.append(
+            private_org_bucket_sql(bucket, comment="Private invoice copies (PDF/XML); object RLS keys on the org_id first path segment.")
+        )
+    return "\n\n".join(sections) + "\n"
+
+
+__all__ = ["INVOICE_TABLE", "PROFILE_FISCAL_COLUMNS", "commerce_fiscal_migration"]
