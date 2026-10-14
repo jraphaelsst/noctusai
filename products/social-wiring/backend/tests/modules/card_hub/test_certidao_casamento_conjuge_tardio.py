@@ -76,3 +76,33 @@ def test_certidao_emission_date_answers_for_the_linked_spouse():
     out = svc.certidao_estado_civil_mais_recente(db, ORG, esposa)
     assert out is not None and out["emitida_em"] == "2026-09-20"
     assert out["documento_id"] == doc
+
+
+def test_the_certidao_takes_over_the_spouses_ficha_sourced_couple_facts():
+    """Deal 876: Cilene's ficha was read first, so estado civil / regime /
+    nacionalidade sat on `ficha_cadastral` while the couple's certidão lives
+    on Fortunato's record. The non-titular entry must hand the source over to
+    the certidão (seed `autoridade.PRECEDENCIA`), not just corroborate."""
+    db, titular, esposa, doc = _setup()
+    ficha = str(uuid4())
+    db.table("clientes").update({
+        "estado_civil": "casado", "estado_civil_origem": "ficha_cadastral",
+        "estado_civil_documento_id": ficha,
+        "regime_bens": "comunhao_parcial", "regime_bens_origem": "ficha_cadastral",
+        "regime_bens_documento_id": ficha,
+        "nacionalidade": "brasileira", "nacionalidade_origem": "ficha_cadastral",
+        "nacionalidade_documento_id": ficha,
+    }).eq("id", esposa).execute()
+    db.set_table_data("cliente_campo_conflitos", [])
+
+    vincular_conjuge(db, ORG, esposa, titular)
+
+    row = _cliente(db, esposa)
+    for campo in ("estado_civil", "regime_bens", "nacionalidade"):
+        assert row[f"{campo}_origem"] == "certidao_casamento", campo
+        assert row[f"{campo}_documento_id"] == doc, campo
+    pendentes = [
+        c for c in db.table("cliente_campo_conflitos").select("*").execute().data
+        if c.get("status") == "pendente"
+    ]
+    assert pendentes == []
