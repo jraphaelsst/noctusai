@@ -83,6 +83,24 @@ export interface MeAccess {
   org_selection?: OrgSelectionState;
 }
 
+export const ME_ACCESS_QUERY_KEY = ['me', 'access'] as const;
+
+/**
+ * THE `GET /api/me/access` query -- one key, one cache policy for every consumer (picker, gate,
+ * switcher, the shell's effective org, `useIsOrgAdmin`, `TeamPage`). Lives here, dependency-free,
+ * so a consumer holding its own `api` (TeamPage) shares the SAME cache entry without importing
+ * `@noctusai/seed/infra`. `fetchAccess` is the caller's `GET /api/me/access`.
+ */
+export function meAccessQueryOptions(fetchAccess: () => Promise<MeAccess>) {
+  return {
+    queryKey: ME_ACCESS_QUERY_KEY,
+    queryFn: fetchAccess,
+    staleTime: 60_000,
+    retry: false,
+    placeholderData: (prev: MeAccess | undefined) => prev,
+  };
+}
+
 /** Safe default for non-staff / old backends. */
 export const NO_ORG_SELECTION: OrgSelectionState = {
   available: false, required: false, mfa_required: false, acting: false,

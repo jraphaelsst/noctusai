@@ -23,8 +23,8 @@ import { ExternalLink, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
+import { isOrgAdmin } from "@noctusai/lib";
 
 import { ConflitosPendentesCard } from "@/components/card/ConflitosPendentesCard";
 import { Button } from "@/components/ui/button";
@@ -143,8 +143,7 @@ function erro(e: unknown, fallback: string): string {
 }
 
 export function ImovelConflitosCard({ codigo }: { codigo: string }) {
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const ssoCtx = useEffectiveSSOContext();
   // UI convenience only — the server reads the TRUSTED `noctus_users` row
   // and 403s a spoofed claim regardless (`decidir_conflito_route`).
   const isAdmin =

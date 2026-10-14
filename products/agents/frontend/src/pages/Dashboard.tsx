@@ -1,11 +1,11 @@
 import { useAuthStore } from '@noctusai/seed/infra';
-import { resolveSSOContext } from "@noctusai/lib";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
 import { Bot, Users, CheckCircle2 } from "lucide-react";
 import { CredentialExpiryBanner } from "@/components/CredentialExpiryBanner";
 
 export default function Dashboard() {
   const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const ssoCtx = useEffectiveSSOContext();
 
   return (
     <div className="space-y-6">

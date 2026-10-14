@@ -29,8 +29,8 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { toast } from "sonner";
 
-import { useAuthStore } from "@noctusai/seed/infra";
-import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
+import { isOrgAdmin } from "@noctusai/lib";
 
 import { useLeadCorretores } from "@/hooks/useLeadsCorretores";
 import {
@@ -235,8 +235,7 @@ export function ClienteDetailModal({
   // `excluir_cliente_route` reads the TRUSTED `noctus_users` row and 403s a
   // spoofed claim regardless of what this renders; hiding the icon here
   // just keeps a non-admin from seeing a button that would fail.
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const ssoCtx = useEffectiveSSOContext();
   const isAdmin =
     isOrgAdmin(ssoCtx);
   const documentoMutations = useDocumentoMutations(id ?? "__none__");

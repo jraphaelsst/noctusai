@@ -46,8 +46,8 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 
-import { useAuthStore } from "@noctusai/seed/infra";
-import { isOrgAdmin, resolveSSOContext, StatusPaginaPanel } from "@noctusai/lib";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
+import { isOrgAdmin, StatusPaginaPanel } from "@noctusai/lib";
 import { normalizePhone } from "@noctusai/lib/phone";
 import { api } from "@/lib/api";
 
@@ -2177,8 +2177,7 @@ function PendenciasDadosTab() {
   );
 }
 
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const ssoCtx = useEffectiveSSOContext();
   const isAdminOrDev = isOrgAdmin(ssoCtx) || ssoCtx.org.role === "dev";
   // Precise owner/admin check for the clientes-inactivity write form — the
   // backend's `_require_admin` accepts only these two roles (not "dev"),

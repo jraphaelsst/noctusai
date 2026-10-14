@@ -13,14 +13,6 @@ afterEach(async () => {
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-vi.mock("@noctusai/lib", async () => {
-  const actual = await vi.importActual<typeof import("@noctusai/lib")>("@noctusai/lib");
-  return {
-    ...actual,
-    resolveSSOContext: () => ({ isProductAdmin: true, org: { role: "owner" } }),
-  };
-});
-
 const contratoRecemCriado = {
   id: "c1",
   titulo: "Contrato",
@@ -70,7 +62,9 @@ vi.mock("@noctusai/seed/infra", async () => {
   return {
     ...actual,
     api: { get: (u: string) => getSpy(u), put: vi.fn(), post: (u: string) => postSpy(u), patch: vi.fn(), delete: vi.fn() },
-    useAuthStore: () => ({ user: { user_metadata: {} } }),
+    // An org owner. The admin gate reads the EFFECTIVE org (`useEffectiveSSOContext`); with no
+    // `/api/me/access` answer the token's role stands in -- the real resolver, nothing stubbed.
+    useAuthStore: () => ({ user: { user_metadata: { org_role: "owner" } } }),
     supabase: { auth: { getSession: async () => ({ data: { session: null } }) } },
   };
 });

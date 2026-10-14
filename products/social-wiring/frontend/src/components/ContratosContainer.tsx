@@ -35,8 +35,8 @@
 import { memo, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { useAuthStore } from "@noctusai/seed/infra";
-import { canReviewLegal, resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
+import { canReviewLegal, isOrgAdmin } from "@noctusai/lib";
 
 import { AditivosContainer } from "@/components/AditivosContainer";
 import { GeradorContratoContainer } from "@/components/GeradorContratoContainer";
@@ -85,8 +85,7 @@ export function ContratosContainer({
   // same posture `ConflitosPendentesPanel`'s own `isAdmin` already takes:
   // the server's `PUT .../processo-legado` reads the TRUSTED `noctus_users`
   // row and 403s a spoofed claim regardless of what this renders.
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const ssoCtx = useEffectiveSSOContext();
   const isAdmin =
     isOrgAdmin(ssoCtx);
   // "Aprovar revisão jurídica" — admins plus the org's legal staff (jurídico).

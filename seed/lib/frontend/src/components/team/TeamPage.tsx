@@ -36,7 +36,10 @@
  */
 import * as React from 'react';
 import { AlertCircle, ExternalLink, Loader2, Mail, RefreshCw, UserPlus, Users } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
+import { meAccessQueryOptions } from '../../access';
+import type { MeAccess } from '../../access';
 import { Badge } from '../../design-system/ui/Badge';
 import { Button } from '../../design-system/ui/Button';
 import { Dialog, DialogBody, DialogFooter, DialogHeader } from '../../design-system/ui/Dialog';
@@ -44,7 +47,7 @@ import { Input } from '../../design-system/ui/Input';
 import { TableSkeleton } from '../../design-system/ui/TableSkeleton';
 import { env } from '../../env';
 import { ADMIN_ROLES, ELEVATED_GRANT_ROLES, MANAGE_TEAM_ROLES, ORG_ROLE_LABELS } from '../../roles';
-import { resolveSSOContext } from '../../sso';
+import { resolveEffectiveSSOContext } from '../../sso';
 import { createTeamHooks } from './createTeamHooks';
 import type { TeamApi, TeamHooks, TeamMember } from './createTeamHooks';
 
@@ -295,7 +298,14 @@ export function TeamPage({ api, user, canManage, coreUrl, hooks: hooksProp, chil
   const hooks = React.useMemo(() => hooksProp ?? createTeamHooks(api), [hooksProp, api]);
   const ready = user != null;
 
-  const sso = resolveSSOContext(user?.user_metadata ?? undefined);
+  // The EFFECTIVE org's role (multi-org): after a member switches org, their role THERE gates
+  // invite/admin -- not the role the SSO token was minted with. Same `/api/me/access` cache
+  // entry as the shell (`meAccessQueryOptions`); the token stands in only until it answers.
+  const access = useQuery<MeAccess>({
+    ...meAccessQueryOptions(() => api.get<MeAccess>('/api/me/access')),
+    enabled: ready,
+  });
+  const sso = resolveEffectiveSSOContext(user?.user_metadata ?? undefined, access.data);
   // Two gates, mirroring the backend: invite = MANAGE_TEAM_ROLES; listing /
   // cancelling invitations = ADMIN_ROLES. `isProductAdmin` covers the
   // platform operator (backend `_PLATFORM_ADMIN`).

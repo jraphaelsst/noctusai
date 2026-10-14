@@ -23,7 +23,7 @@ import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, supabase } from '@noctusai/seed/infra';
 
-import { isMemberOrgPicker, orgSelectionOf } from './access';
+import { ME_ACCESS_QUERY_KEY, isMemberOrgPicker, meAccessQueryOptions, orgSelectionOf } from './access';
 import type { MeAccess, OrgChoice, OrgSelectionState } from './access';
 import {
   getOrgPin, setOrgPin, setOrgSelectionChangedHandler, subscribeOrgPin,
@@ -36,7 +36,9 @@ import type { OrgEntryPhase } from './org-visit';
 
 export { ORG_PIN_HEADER, getOrgPin, setOrgPin } from './org-pin';
 
-export const ME_ACCESS_QUERY_KEY = ['me', 'access'] as const;
+export { ME_ACCESS_QUERY_KEY } from './access';
+
+const fetchMeAccess = (): Promise<MeAccess> => api.get<MeAccess>('/api/me/access');
 export const ORG_CHOICES_QUERY_KEY = ['me', 'org-choices'] as const;
 const CHOICES_STALE_MS = 5 * 60_000;
 
@@ -67,13 +69,7 @@ function reloadPage(): void {
  * (picker, gate, switcher, the shell's effective org, `useIsOrgAdmin`).
  */
 export function useMeAccess() {
-  return useQuery<MeAccess>({
-    queryKey: ME_ACCESS_QUERY_KEY,
-    queryFn: () => api.get<MeAccess>('/api/me/access'),
-    staleTime: 60_000,
-    retry: false,
-    placeholderData: (prev) => prev,
-  });
+  return useQuery<MeAccess>(meAccessQueryOptions(fetchMeAccess));
 }
 
 /** Never fetches: stands in for the app's client where no `QueryClientProvider` exists. */
@@ -103,14 +99,7 @@ export function useMeAccessIfProvided() {
   const client = useProvidedQueryClient();
   if (client == null && inertClient == null) inertClient = new QueryClient();
   return useQuery<MeAccess>(
-    {
-      queryKey: ME_ACCESS_QUERY_KEY,
-      queryFn: () => api.get<MeAccess>('/api/me/access'),
-      staleTime: 60_000,
-      retry: false,
-      placeholderData: (prev) => prev,
-      enabled: client != null,
-    },
+    { ...meAccessQueryOptions(fetchMeAccess), enabled: client != null },
     client ?? (inertClient as QueryClient),
   );
 }

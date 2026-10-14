@@ -18,9 +18,9 @@
 import { useMemo, useState } from "react";
 import { Building2, CheckCircle2, Circle, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 
-import { resolveSSOContext, isOrgAdmin } from "@noctusai/lib";
+import { isOrgAdmin } from "@noctusai/lib";
 import { CollapsibleSection, baixarArquivo } from "@noctusai/lib/components";
-import { useAuthStore } from "@noctusai/seed/infra";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -249,8 +249,7 @@ function EmpresaRow({ item, clienteId }: { item: EmpresaCardItem; clienteId: str
   // the TRUSTED `noctus_users` row and 403s a spoofed claim regardless of
   // what this renders; hiding the icon here just keeps a non-admin from
   // seeing a button that would fail.
-  const { user } = useAuthStore();
-  const ssoCtx = resolveSSOContext(user?.user_metadata);
+  const ssoCtx = useEffectiveSSOContext();
   const isAdmin =
     isOrgAdmin(ssoCtx);
 

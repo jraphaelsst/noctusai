@@ -5,17 +5,17 @@
 import { useState } from "react";
 import { Link as LinkIcon } from "lucide-react";
 import { Button } from "@noctusai/lib/design-system";
-import { useAuthStore } from "@noctusai/seed/infra";
+import { useEffectiveSSOContext } from "@noctusai/lib/design-system";
 
 export function LinkPreQualificacao() {
-  const { user } = useAuthStore();
+  const { orgId, orgSource } = useEffectiveSSOContext();
   const [copiado, setCopiado] = useState(false);
-  // `org_id` lives on the raw user metadata, not on `resolveSSOContext().org`
-  // (which carries name/logo/role only) — same accessor the seed's
-  // LLMSpendBadge uses.
-  const orgId = (user?.user_metadata?.org_id as string | undefined) ?? null;
 
-  if (!orgId) return null;
+  // The link names the EFFECTIVE org of this visit (multi-org S6): a member who
+  // switched org shares THAT org's form, never the SSO token's. Until
+  // `/api/me/access` answers, the token's org is only a stand-in — a link copied
+  // then could route leads to the org the user just left, so none is shown.
+  if (orgSource !== "access" || !orgId) return null;
   const url = `${window.location.origin}/pre-qualificacao/${orgId}`;
 
   return (
