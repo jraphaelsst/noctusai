@@ -137,6 +137,8 @@ def assert_organ_migration_order(product_dir: Any, organs: Sequence[str]) -> dic
                 f"{organ} ({numbers[organ]:03d}) must be numbered AFTER {dep} ({numbers[dep]:03d}): its DDL references {dep}'s tables"
             )
     return numbers
+
+
 def organ_guard_probes(organ: str, schema: str) -> tuple[Any, ...]:
     """The organ's declared guard probes bound to ``schema`` (empty tuple when it declares none)."""
     spec = ORGAN_REGISTRY[organ]

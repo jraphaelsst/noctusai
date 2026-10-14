@@ -30,4 +30,15 @@ def contracts_guard_probes(schema: str) -> tuple[OrganGuardProbe, ...]:
             permitted="two contracts converted from the same quote",
             rationale="Convert-on-accept is idempotent: a quote becomes exactly one contract, however often the conversion is retried.",
         ),
+        OrganGuardProbe(
+            guard_name="uq_ctr_contracts_signature",
+            kind="unique",
+            requires=("ctr_contracts",),
+            body=(
+                _contract(s, ", signature_provider, signature_external_id", ", 'noc_sig', 'noc-doc'")
+                + _contract(s, ", signature_provider, signature_external_id", ", 'noc_sig', 'noc-doc'")
+            ),
+            permitted="two contracts bound to the same signature-provider document",
+            rationale="A provider document id belongs to one contract platform-wide: a signature webhook resolves its contract by it, so a duplicate would route a signature to the wrong org.",
+        ),
     )
