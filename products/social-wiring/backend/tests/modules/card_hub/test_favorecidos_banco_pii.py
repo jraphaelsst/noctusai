@@ -10,7 +10,7 @@ from tests.modules.card_hub.conftest import ORG_ID
 from tests.modules.card_hub.test_contrato_gerador_pagamentos import _avaliar
 from tests.modules.card_hub.test_favorecidos_registro import CPF_OK, _auth, _criar, _papel
 
-_BANCO_LEGADO = "Itaú (341) Ag. 9901 CC 00018-3"
+_BANCO_LEGADO = "Itaú (341) Ag. 1234 CC 56789-0"
 
 
 def _linha_legada() -> dict:
@@ -28,7 +28,7 @@ class TestBancoComDadosDeContaNaoVaza:
         item = client.get("/api/card-hub/favorecidos", headers=_auth()).json()["items"][0]
         assert item["banco"] == "Itaú (341)"
         assert item["banco_requer_revisao"] is True
-        assert "9901" not in str(item) and "00018" not in str(item)
+        assert "Ag. 1234" not in str(item) and "56789-0" not in str(item)
 
     def test_clean_banco_is_not_flagged(self, client, scoped):
         row = {**_linha_legada(), "banco": "Itaú (341)"}
@@ -43,7 +43,7 @@ class TestBancoComDadosDeContaNaoVaza:
         _papel(client, "viewer")
         det = client.get(f"/api/card-hub/favorecidos/{row['id']}", headers=_auth()).json()
         assert det["banco"] == "Itaú (341)" and det["banco_requer_revisao"] is True
-        assert "9901" not in str(det) and "00018" not in str(det)
+        assert "Ag. 1234" not in str(det) and "56789-0" not in str(det)
 
     def test_create_and_patch_refuse_conta_data_in_banco(self, client, scoped):
         scoped.set_table_data("favorecidos", [])

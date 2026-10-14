@@ -1,6 +1,6 @@
 """Guard for a `banco` value that carries agência/conta typed as free text.
 
-Legacy card rows had e.g. "Itaú (341) Ag. 9901 CC 00018-3" in `banco` with
+Legacy card rows had e.g. "Itaú (341) Ag. 1234 CC 56789-0" in `banco` with
 `agencia`/`conta` NULL; the migration-251 backfill copied it to the registry.
 The bank NAME/code is public; the agência/conta digits are financial PII.
 
