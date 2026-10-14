@@ -103,7 +103,7 @@ def test_create_product_app_organs_seam_mounts_routers_and_covers_upload_routes(
 
 
 def test_every_registered_organ_header_prefixes_its_generated_migration():
-    assert {"finance", "items", "commerce_money", "commerce_fiscal", "jobs", "parties", "inventory", "purchasing"} <= set(ORGAN_REGISTRY)
+    assert {"finance", "items", "commerce_money", "commerce_fiscal", "jobs", "parties", "inventory", "purchasing", "contracts"} <= set(ORGAN_REGISTRY)
     for name, spec in ORGAN_REGISTRY.items():
         assert organ_migration_sql(name, "erp").startswith(spec.migration_header), name
 
@@ -231,3 +231,66 @@ def test_purchasing_approval_comes_from_the_selected_org_role_and_the_permission
     assert _purchasing_client(role="owner", threshold=50_000).post(APPROVE, headers=H).status_code == 403
     assert _purchasing_client(role="owner", grants=(1,), threshold=50_000).post(APPROVE, headers=H).status_code == 200
     assert _purchasing_client(role="owner", threshold=500_000).post(APPROVE, headers=H).status_code == 200
+
+
+# -- contracts -------------------------------------------------------------------------------------------
+
+
+def _contracts_client(*, role: str):
+    from noctusai_lib.testing import MockSupabaseClient
+    from noctusai_seed.organs import mount_contracts
+
+    core = MockSupabaseClient()
+    core.set_table_data("noctus_users", [{"id": "u1", "org_id": "org-1", "org_role": role, "role": "user"}])
+    organ = mount_contracts(schema="erp", auth_dependency=_auth, get_admin_client=lambda: MockSupabaseClient(), get_core_client=lambda: core)
+    return organ, TestClient(_app_of(organ))
+
+
+def test_mount_contracts_strict_401_on_every_route_and_admin_gates_the_writes():
+    organ, client = _contracts_client(role="member")
+    cid = "55555555-5555-4555-8555-555555555555"
+    for method, path in (("GET", "/api/contracts"), ("POST", "/api/contracts"), ("GET", f"/api/contracts/{cid}"), ("POST", f"/api/contracts/{cid}/activate"),
+                         ("POST", f"/api/contracts/{cid}/terminate"), ("GET", f"/api/contracts/{cid}/billing-preview"), ("POST", "/api/contracts/billing/run"),
+                         ("POST", f"/api/contracts/{cid}/signature"), ("GET", f"/api/contracts/{cid}/attachments")):
+        assert client.request(method, path, json={} if method == "POST" else None).status_code == 401, path
+    assert client.post("/api/contracts", json={}, headers=H).status_code == 403  # member: not admin
+    assert client.post(f"/api/contracts/{cid}/terminate", json={}, headers=H).status_code == 403
+    assert client.post("/api/contracts/billing/run", headers=H).status_code == 403
+    assert client.get("/api/contracts", headers=H).status_code == 200
+
+
+def test_mount_contracts_overrides_rebase_on_the_prefix_and_expose_the_job():
+    from noctusai_lib.domain.contracts import ATTACHMENT_UPLOAD_MAX_BYTES, ATTACHMENT_UPLOAD_PATH_PATTERN
+    from noctusai_seed.organs import mount_contracts
+
+    organ = mount_contracts(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object())
+    assert organ.max_body_path_overrides == {ATTACHMENT_UPLOAD_PATH_PATTERN: ATTACHMENT_UPLOAD_MAX_BYTES}
+    moved = mount_contracts(schema="erp", auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object(), prefix="/api/ctr")
+    assert list(moved.max_body_path_overrides) == ["/api/ctr/*/attachments"]
+
+    class Sched:
+        jobs: dict = {}
+
+        def register(self, job_id, fn, **kw):
+            self.jobs[job_id] = kw
+
+    sched = Sched()
+    assert organ.register_jobs(scheduler=sched) == "contracts_generate_billing" and sched.jobs["contracts_generate_billing"] == {"hours": 24}
+    assert organ.max_body_path_overrides and ORGAN_REGISTRY["contracts"].max_body_path_overrides() == organ.max_body_path_overrides
+
+
+def test_contracts_migration_restates_the_finance_source_check_from_the_full_enum():
+    from noctusai_lib.domain.finance.types import EntrySource, values
+
+    sql = organ_migration_sql("contracts", "erp")
+    for v in values(EntrySource):
+        assert f"'{v}'" in sql, v
+    assert "'purchasing'" in sql and "'contracts'" in sql
+
+
+def test_mount_contracts_refuses_a_cfg_for_another_schema():
+    from noctusai_lib.domain.contracts import ContractsConfig
+    from noctusai_seed.organs import mount_contracts
+
+    with pytest.raises(ValueError):
+        mount_contracts(schema="erp", cfg=ContractsConfig(schema="other"), auth_dependency=_auth, get_admin_client=lambda: object(), get_core_client=lambda: object())
