@@ -4,7 +4,8 @@ staff (`/api/commerce/*`, license-gated via `get_current_user_org`) · storefron
 (`/api/storefront/*`, public, Host-resolved org) · payment webhook
 (`/api/webhooks/payments/{gateway}/{org_id}`, verify-before-side-effect) · fiscal
 (`/api/commerce/fiscal*`, invoices) + invoice webhook (`/api/webhooks/invoices/...`) ·
-finance (`/api/finance/*`) · items (`/api/items/*`).
+finance (`/api/finance/*`) · items (`/api/items/*`) · parties (`/api/parties/*`) · inventory
+(`/api/inventory/*`).
 """
 from __future__ import annotations
 
@@ -15,7 +16,16 @@ from app.dependencies import get_admin_client, get_current_user_org
 from app.rate_limit import limiter
 from noctusai_lib.domain.commerce import commerce_staff_router, commerce_webhook_router, storefront_router
 from noctusai_lib.domain.commerce.fiscal_router import commerce_fiscal_router, commerce_invoice_webhook_router
-from noctusai_seed.organs import ORGAN_REGISTRY, MountedOrgan, mount_finance, mount_items
+from noctusai_lib.domain.finance import FinanceConfig
+from noctusai_lib.domain.parties import PartiesConfig
+from noctusai_seed.organs import (
+    ORGAN_REGISTRY,
+    MountedOrgan,
+    mount_finance,
+    mount_inventory,
+    mount_items,
+    mount_parties,
+)
 
 staff_router = commerce_staff_router(
     CFG,
@@ -98,9 +108,30 @@ finance_organ = mount_finance(
     get_storage=deps.get_storage,
     get_charge_operations=deps.get_charge_operations,
     default_tax_regime=deps.default_tax_regime,
+    cfg=FinanceConfig(schema=SCHEMA, with_parties=True),  # fin_entries.party_id (migration 023)
 )
 
 items_organ = mount_items(
+    schema=SCHEMA,
+    auth_dependency=get_current_user_org,
+    get_admin_client=get_admin_client,
+    get_core_client=lambda: _db.get_core_client(),
+)
+
+# ERP W1-W2: parties (suppliers / customers) and inventory (warehouses, kardex).
+# NOC-REMEDIATE[commerce-purchasing-mount]: mount_purchasing (+ its migration, the `/admin/compras` page and the
+# `pur_orders` entry of PartiesConfig.reference_tables) once the approval-permission org-scoping fix lands in the
+# seed — 2026-10-14.
+parties_organ = mount_parties(
+    schema=SCHEMA,
+    auth_dependency=get_current_user_org,
+    get_admin_client=get_admin_client,
+    get_core_client=lambda: _db.get_core_client(),
+    # A party referenced by a finance entry is archived, never hard-deleted (409 parceiro_em_uso).
+    cfg=PartiesConfig(schema=SCHEMA, reference_tables=(("fin_entries", "party_id"),)),
+)
+
+inventory_organ = mount_inventory(
     schema=SCHEMA,
     auth_dependency=get_current_user_org,
     get_admin_client=get_admin_client,

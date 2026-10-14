@@ -130,8 +130,8 @@ describe("Admin › Itens", () => {
   });
 });
 
-describe("Admin › Parceiros / Estoque (backends not mounted yet)", () => {
-  it("Parceiros: success rows and the error state of an unmounted /api/parties", async () => {
+describe("Admin › Parceiros / Estoque", () => {
+  it("Parceiros: success rows and the error state when /api/parties fails", async () => {
     const party = { id: "p1", org_id: "o", kind: "company", legal_name: "Fornecedor Alfa", trade_name: null, doc: null, roles: ["supplier"], is_active: true, email: null, phones: [], address: {}, state_registration: null, municipal_registration: null, notes: null, created_at: "2026-10-14T10:00:00Z", updated_at: "2026-10-14T10:00:00Z" };
     routeGets({ "/api/commerce/profile": { data: null }, "/api/parties": page([party]) });
     renderRoutes("/admin/parceiros", { "/admin/parceiros": <Parceiros /> });
@@ -139,12 +139,12 @@ describe("Admin › Parceiros / Estoque (backends not mounted yet)", () => {
     expect(screen.queryByRole("button", { name: "Novo cadastro" })).toBeNull();
     cleanup();
     admin.value = true;
-    routeGets({ "/api/commerce/profile": { data: null } }); // /api/parties 404s: not mounted
+    routeGets({ "/api/commerce/profile": { data: null }, "/api/parties": new ApiError(500, "boom") });
     renderRoutes("/admin/parceiros", { "/admin/parceiros": <Parceiros /> });
     expect(await screen.findByText(/Não foi possível carregar/)).toBeInTheDocument();
   });
 
-  it("Estoque: tabs render and an unmounted /api/inventory surfaces the error state", async () => {
+  it("Estoque: tabs render and a failing /api/inventory surfaces the error state", async () => {
     routeGets({ "/api/commerce/profile": { data: null }, "/api/items": page([]) });
     renderRoutes("/admin/estoque", { "/admin/estoque": <Estoque /> });
     expect(await screen.findByRole("tab", { name: "Saldos" })).toBeInTheDocument();
@@ -166,13 +166,26 @@ describe("nav ↔ status_pagina parity (an item without a row is silently hidden
     expect(missing).toEqual([]);
   });
 
-  it("parceiros + estoque stay desenvolvimento until their routers are mounted; financeiro + itens are producao", () => {
+  it("the four ERP pages are producao (their routers are mounted), idempotently", () => {
     const sql = readFileSync(join(migrations, "019_finance_items_pages_status_pagina.sql"), "utf8");
-    expect(sql).toMatch(/\('financeiro', 'producao'\)/);
-    expect(sql).toMatch(/\('itens', 'producao'\)/);
-    expect(sql).toMatch(/\('parceiros', 'desenvolvimento'\)/);
-    expect(sql).toMatch(/\('estoque', 'desenvolvimento'\)/);
+    for (const page of ["financeiro", "itens", "parceiros", "estoque"]) expect(sql).toMatch(new RegExp(`\\('${page}', 'producao'\\)`));
     expect(sql).toMatch(/ON CONFLICT \(nome_pagina\) DO NOTHING/);
-    expect(sql).toContain("NOC-REMEDIATE[commerce-parties-inventory-mount]");
+    expect(sql).not.toContain("NOC-REMEDIATE[commerce-parties-inventory-mount]");
+  });
+});
+
+describe("Estoque › item labels", () => {
+  it("fetches names for the VISIBLE item ids only and shows them instead of short ids", async () => {
+    const bal = { org_id: "o", item_id: "aaaaaaaa-1111", warehouse_id: "w1", on_hand: 5, reserved: 0, available: 5, avg_cost_cents: 100, value_cents: 500, min_qty: null, low_stock: false, updated_at: "2026-10-14T10:00:00Z" };
+    routeGets({
+      "/api/commerce/profile": { data: null },
+      "/api/inventory/warehouses": { data: [{ id: "w1", name: "Central", code: "C", is_active: true }] },
+      "/api/inventory/balances": page([bal]),
+      "/api/items/aaaaaaaa-1111": { data: { ...ITEM, id: "aaaaaaaa-1111", sku: "CAM-9", name: "Camiseta Azul" } },
+    });
+    renderRoutes("/admin/estoque", { "/admin/estoque": <Estoque /> });
+    expect(await screen.findByText(/CAM-9 · Camiseta Azul/)).toBeInTheDocument();
+    expect(apiMock.get.mock.calls.filter(([u]) => String(u).startsWith("/api/items/")).map(([u]) => u)).toEqual(["/api/items/aaaaaaaa-1111"]);
+    expect(apiMock.get.mock.calls.some(([u]) => u === "/api/items")).toBe(false); // no whole-catalog fetch
   });
 });

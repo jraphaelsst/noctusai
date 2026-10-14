@@ -13987,6 +13987,48 @@ _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
     # cannot exercise a constraint on a table that does not exist there yet. Remove these entries and register real
     # `GuardProbe`s in `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migrations.
     # NOC-REMEDIATE[commerce-p4-guard-probes]: unique/CHECK probes for the money, finance and items organs — 2026-10-14.
+    # Commerce parties + inventory (migrations 020/021) and the refreshed 017 finance CHECK: same file-only situation;
+    # probes are registered in the SAME change that applies them (NOC-REMEDIATE[commerce-p4-guard-probes] above).
+    (
+        "products/commerce/backend/migrations/017_finance.sql",
+        "fin_entries_source_check",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/020_parties.sql",
+        "uq_pty_parties_doc",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/021_inventory.sql",
+        "uq_inv_warehouses_code",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/021_inventory.sql",
+        "uq_inv_warehouses_default",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/021_inventory.sql",
+        "inv_stock_balances_reserved_nonneg",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/021_inventory.sql",
+        "inv_stock_balances_available_nonneg",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/021_inventory.sql",
+        "uq_inv_stock_moves_idem",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
+    (
+        "products/commerce/backend/migrations/021_inventory.sql",
+        "inv_stock_moves_append_only",
+        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
+    ),
     (
         "products/commerce/backend/migrations/014_commerce_money.sql",
         "commerce_orders_status_check",

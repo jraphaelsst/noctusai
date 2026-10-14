@@ -17,12 +17,12 @@ from noctusai_lib.domain.commerce import commerce_migration
 from noctusai_lib.domain.commerce.fiscal_router import CERTIFICATE_UPLOAD_PATH_PATTERN
 from noctusai_lib.domain.finance import ATTACHMENT_UPLOAD_PATH_PATTERN, STATEMENT_UPLOAD_PATH_PATTERN
 from noctusai_lib.domain.items import ITEMS_IMPORT_PATH_PATTERN
-from noctusai_lib.testing.migrations import migrations_dir
+from noctusai_lib.testing.migrations import migration_path, migrations_dir
 from noctusai_lib.testing.organs import assert_organ_migration_current, find_organ_migration
 
 PRODUCT_DIR = Path(__file__).resolve().parents[1]
 UUID0 = "00000000-0000-0000-0000-000000000000"
-ORGANS = ("commerce_money", "commerce_fiscal", "jobs", "finance", "items")
+ORGANS = ("commerce_money", "commerce_fiscal", "jobs", "finance", "items", "parties", "inventory")
 
 
 @pytest.mark.parametrize("organ", ORGANS)
@@ -60,6 +60,9 @@ P4_ROUTES = [
     ("GET", "/api/finance/accounts"), ("POST", "/api/finance/accounts"),
     ("GET", "/api/finance/entries"), ("POST", "/api/finance/entries"),
     ("GET", "/api/finance/categories"), ("GET", "/api/finance/recurrences"),
+    # parties / inventory
+    ("GET", "/api/parties"), ("POST", "/api/parties"),
+    ("GET", "/api/inventory/warehouses"), ("GET", "/api/inventory/balances"),
     # items
     ("GET", "/api/items"), ("POST", "/api/items"), ("POST", ITEMS_IMPORT_PATH_PATTERN),
     # fiscal
@@ -92,6 +95,8 @@ def test_finance_reconciliation_and_attachment_routes_exist(client):
 AUTH_ROUTES = [
     ("GET", "/api/finance/accounts"), ("POST", "/api/finance/entries"), ("GET", "/api/finance/entries"),
     ("GET", "/api/items"), ("POST", "/api/items"), ("POST", ITEMS_IMPORT_PATH_PATTERN),
+    ("GET", "/api/parties"), ("POST", "/api/parties"),
+    ("GET", "/api/inventory/warehouses"), ("GET", "/api/inventory/balances"),
     ("GET", "/api/commerce/fiscal"), ("PUT", "/api/commerce/fiscal"), ("POST", CERTIFICATE_UPLOAD_PATH_PATTERN),
     ("POST", "/api/commerce/fiscal/nfse-cutover"),
     ("GET", f"/api/commerce/orders/{UUID0}/invoices"),
@@ -119,7 +124,7 @@ def test_upload_overrides_cover_every_upload_route():
     from noctusai_seed.organs import ORGAN_REGISTRY
 
     merged = {}
-    for organ in ("finance", "items", "commerce_fiscal"):
+    for organ in ("finance", "items", "parties", "commerce_fiscal"):
         merged.update(ORGAN_REGISTRY[organ].max_body_path_overrides())
     assert ATTACHMENT_UPLOAD_PATH_PATTERN in merged and STATEMENT_UPLOAD_PATH_PATTERN in merged
     assert merged[ITEMS_IMPORT_PATH_PATTERN] == ITEMS_IMPORT_MAX_BYTES
@@ -177,3 +182,32 @@ def test_settings_carry_the_new_flags_off_by_default():
     from app.config import settings
 
     assert settings.invoices_allow_fake is False and settings.commerce_link_secret == ""
+
+
+def test_organ_migrations_are_applied_in_dependency_order():
+    """parties and items before inventory; the finance party link after parties."""
+    from noctusai_seed.organs import ORGAN_REGISTRY
+
+    num = lambda organ: int(find_organ_migration(PRODUCT_DIR, ORGAN_REGISTRY[organ].migration_header)[0].name.split("_")[0])  # noqa: E731
+    link = int(migration_path(PRODUCT_DIR, "finance_party_link").name.split("_")[0])
+    assert num("finance") < num("parties") < link and num("items") < num("inventory") and num("parties") < num("inventory")
+    assert link > num("finance")
+
+
+def test_finance_party_link_delta_is_the_generators_with_parties_diff():
+    """023 carries exactly the lines `with_parties=True` adds over the default finance output (017)."""
+    from noctusai_lib.domain.finance import FinanceConfig, finance_migration
+
+    default = set(finance_migration(FinanceConfig(schema="commerce"), "commerce").splitlines())
+    delta = [ln for ln in finance_migration(FinanceConfig(schema="commerce", with_parties=True), "commerce").splitlines() if ln not in default]
+    assert delta, "with_parties added nothing: the link moved into the default output; drop migration 022"
+    body = migration_path(PRODUCT_DIR, "finance_party_link").read_text(encoding="utf-8")
+    assert [ln for ln in body.splitlines() if ln in set(delta)] == delta
+    # nothing else executable hides in the file
+    executable = [ln for ln in body.splitlines() if ln.strip() and not ln.startswith("--")]
+    assert executable == [ln for ln in delta if not ln.startswith("--")]
+
+
+def test_parties_protects_the_rows_other_organs_point_at():
+    src = (PRODUCT_DIR / "app" / "routers" / "commerce_routers.py").read_text(encoding="utf-8")
+    assert '("fin_entries", "party_id")' in src

@@ -1,34 +1,21 @@
 /**
  * `/admin/estoque` — stock per warehouse: balances (count / transfer for admins, kardex drill-down), warehouses,
  * low-stock alerts and valuation. Item names come from the items catalog (the inventory organ only knows ids).
- *
- * NOC-REMEDIATE[commerce-parties-inventory-mount]: `/api/inventory` is not mounted in this host's backend yet, so
- * the page's `status_pagina` row (migration 019) is `desenvolvimento` and the organs show their error states
- * until the router is mounted — 2026-10-14. See `@/lib/backoffice`.
- * NOC-REMEDIATE[commerce-inventory-item-labels]: the id → name map covers the first page of the items list
- * (the organ's `itemLabel` seam is synchronous); an item beyond it falls back to a short id — lift a by-ids
- * lookup into the items organ — 2026-10-14.
+ * Item names are fetched for the VISIBLE ids only (`useItemLabels`).
  */
 import * as React from "react";
 import { KardexView, LowStockAlerts, StockBalancesTable, ValuationTile, WarehousesManager } from "@noctusai/lib";
 import { Button, Tabs, TabsContent, TabsList, TabsTrigger, useIsOrgAdmin } from "@noctusai/lib/design-system";
 
 import { AdminFrame } from "@/components/AdminFrame";
-import { staffInventory, staffItems } from "@/lib/backoffice";
+import { useItemLabels } from "@/hooks/useItemLabels";
+import { staffInventory } from "@/lib/backoffice";
 import { usePageT } from "@/lib/i18n";
-
-function useItemLabel() {
-  const items = staffItems.useItems({});
-  return React.useMemo(() => {
-    const names = new Map((items.data?.data ?? []).map((i) => [i.id, `${i.sku} · ${i.name}`]));
-    return (id: string) => names.get(id) ?? id.slice(0, 8);
-  }, [items.data]);
-}
 
 function InventoryBody() {
   const { t } = usePageT();
   const isAdmin = useIsOrgAdmin();
-  const itemLabel = useItemLabel();
+  const itemLabel = useItemLabels();
   const [kardex, setKardex] = React.useState<{ itemId: string; warehouseId: string } | null>(null);
 
   if (kardex) {
