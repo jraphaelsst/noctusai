@@ -890,3 +890,28 @@ class TestBoardReadsPagePastTheRowCap:
         assert r.status_code == 200
         cards = [c for col in r.json()["data"] for c in col["cards"]]
         assert len(cards) == self._OVER_CAP
+
+
+class TestPerderPersistsMotivo:
+    """`PerderRequest.motivo` used to be accepted and silently dropped."""
+
+    def test_motivo_is_persisted_and_returned(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/perder",
+            json={"motivo": "  Comprou com outra imobiliária  "},
+            headers=auth_headers(),
+        )
+        assert r.status_code == 200
+        updated = http_client.scoped.table("atendimentos").updated_payloads[-1]
+        assert updated["status"] == "perdida"
+        assert updated["motivo_perda"] == "Comprou com outra imobiliária"
+        assert r.json()["data"]["motivo_perda"] == "Comprou com outra imobiliária"
+
+    def test_blank_motivo_is_stored_as_null(self, http_client):
+        http_client.scoped.set_table_data("atendimentos", [atendimento("neg-1", "novo")])
+        r = http_client.post(
+            "/api/atendimentos-venda/neg-1/perder", json={"motivo": "   "}, headers=auth_headers(),
+        )
+        assert r.status_code == 200
+        assert http_client.scoped.table("atendimentos").updated_payloads[-1]["motivo_perda"] is None

@@ -128,7 +128,7 @@ _ATENDIMENTO_FIELDS = (
     "titulo", "valor_estimado", "kanban_pos", "arquivado", "closed_at",
     "created_at", "updated_at", "lead", "campanha", "etapa_rel",
     # P1.4 completion — see the module docstring.
-    "cliente_id", "colapsadas",
+    "cliente_id", "colapsadas", "motivo_perda",
 )
 _PROCESSO_FIELDS = (
     "id", "org_id", "atendimento_id", "etapa_id", "valor", "observacoes",

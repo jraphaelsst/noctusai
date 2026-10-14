@@ -433,9 +433,10 @@ def perder_atendimento(
     auth: tuple = Depends(get_current_user_org_unified),
 ) -> dict:
     ctx = pipeline_context(auth)
+    motivo = (body.motivo or "").strip() or None
     rows = (
         ctx.db.table("atendimentos")
-        .update({"status": "perdida", "closed_at": "now()"})
+        .update({"status": "perdida", "closed_at": "now()", "motivo_perda": motivo})
         .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()
