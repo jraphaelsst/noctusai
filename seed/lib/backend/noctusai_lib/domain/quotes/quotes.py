@@ -222,6 +222,7 @@ def transition(
     accept / reject / expire / send paths take -- the second writer matches zero rows.
     """
     patch = {"status": to_status, "updated_at": now_iso(), **dict(extra or {})}
+    # postgrest-unbounded-ok: `expect` is a fixed tuple of <= 4 status words, never a data-sized collection
     resp = (
         s.tbl(_QUOTES).update(patch).eq("org_id", s.org_id).eq("id", str(row["id"])).in_("status", list(expect)).execute()
     )
@@ -244,6 +245,7 @@ def expire_if_due(s: Scope, row: dict, *, at: Optional[datetime] = None) -> dict
 def expire_due(s: Scope, *, at: Optional[datetime] = None) -> int:
     """Flip EVERY open past-validity quote of this org to `expired` (the scheduled-job entry point). Returns the count."""
     today = local_today(s.cfg, at).isoformat()
+    # postgrest-unbounded-ok: OPEN_STATUSES is the fixed 2-word tuple ('sent','viewed'); rows() pages the result
     due = s.rows(_QUOTES, refine=lambda q: q.in_("status", list(OPEN_STATUSES)).lt("valid_until", today))
     flipped = 0
     for row in due:
