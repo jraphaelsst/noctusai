@@ -388,16 +388,35 @@ class TestConfirmApply:
             "tracking INSERT was not executed"
         )
 
-    def test_confirm_mirrors_applied_files_into_migrations_applied_json(self, tmp_path):
-        import hashlib, json
+    def test_confirm_persists_applied_record_via_isolated_persister_not_the_read_tree(self, tmp_path):
+        import hashlib
 
         products = _make_products_dir(tmp_path)
         sql_001 = "CREATE SCHEMA IF NOT EXISTS orbity;"
         _make_migration_files(products, "orbity", [("001_seed.sql", sql_001)])
-        result = migrate_product("orbity", confirm=True, executor=FakeSqlExecutor(), products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
-        rec = json.loads((products / "orbity" / "backend" / "migrations-applied.json").read_text())
-        assert rec["applied"] == {"001_seed.sql": hashlib.sha256(sql_001.encode()).hexdigest()}
+        calls = []
+
+        def persister(product, files):
+            calls.append((product, dict(files)))
+            return {"status": "recorded", "path": "/iso/migrations-applied.json", "error": None}
+
+        result = migrate_product("orbity", confirm=True, executor=FakeSqlExecutor(), products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"), record_persister=persister)
+        assert calls == [("orbity", {"001_seed.sql": hashlib.sha256(sql_001.encode()).hexdigest()})]
+        assert not (products / "orbity" / "backend" / "migrations-applied.json").exists()
         assert result["applied_record"]["error"] is None
+        assert result["applied_record"]["path"] == "/iso/migrations-applied.json"
+
+    def test_persister_failure_is_reported_not_raised(self, tmp_path):
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")])
+
+        def boom(product, files):
+            raise RuntimeError("no worktree")
+
+        result = migrate_product("orbity", confirm=True, executor=FakeSqlExecutor(), products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"), record_persister=boom)
+        assert result["status"] == "applied"
+        assert "no worktree" in result["applied_record"]["error"]
+        assert result["applied_record"]["files"]
 
     def test_skips_already_applied_on_rerun(self, tmp_path):
         products = _make_products_dir(tmp_path)

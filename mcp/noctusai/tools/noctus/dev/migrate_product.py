@@ -1102,6 +1102,7 @@ def migrate_product(
     repo_root: str | Path | None = None,
     git_runner: GitRunner | None = None,
     live_products_fn: Callable[[], list[str]] | None = None,
+    record_persister: Callable[[str, dict[str, str]], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Apply pending migrations for ``product`` to the Supabase database.
 
@@ -1557,18 +1558,22 @@ def migrate_product(
     # Mirror what ran into the in-repo applied record (frozen-file source of truth for organ
     # migrations: render_organ_migration / assert_organ_migration_current). Best-effort: the DDL
     # already ran, so a write failure is surfaced, never fatal.
-    applied_record: dict[str, Any] = {"path": None, "error": None}
+    # The record is persisted through an ISOLATED branch (record_applied_migrations: task_branch
+    # start -> write -> commit -> integrate) -- never into the tree this call read from, so the
+    # primary checkout stays clean. `record_persister` is the test seam.
+    applied_record: dict[str, Any] = {"path": None, "error": None, "files": {}}
+    rec_files = {f.name: c for f, _sql, c in pending_sql if f.name in newly_applied}
+    applied_record["files"] = rec_files
     try:
-        from noctusai_lib.testing.migrations_applied import record_applied
-
-        rec_path = record_applied(
-            resolved_products_dir / product / "backend",
-            {f.name: c for f, _sql, c in pending_sql if f.name in newly_applied},
-        )
-        applied_record["path"] = str(rec_path)
+        if record_persister is None:
+            from .record_applied_migrations import record_applied_migrations as record_persister
+        rec = record_persister(product, rec_files)
+        applied_record["path"] = rec.get("path")
+        applied_record["status"] = rec.get("status")
+        applied_record["error"] = rec.get("error")
     except Exception as exc:  # noqa: BLE001 -- surfaced in the result, DDL already applied
         applied_record["error"] = f"{type(exc).__name__}: {exc}"
-        logger.warning("migrate_product: could not update migrations-applied.json: %s", exc)
+        logger.warning("migrate_product: could not persist applied record: %s", exc)
 
     return _result(
         "applied",

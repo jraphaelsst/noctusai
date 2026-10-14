@@ -2021,9 +2021,28 @@ def task_branch(
     def git(*args, cwd: str | None = None):
         return _git(runner, *args, cwd=cwd, dev_branch=dev_branch)
 
-    if action not in {"status", "start", "integrate", "cleanup"}:
+    if action not in {"status", "start", "integrate", "cleanup", "sync_primary"}:
         return {"ok": False, "status": "error", "exit_code": 1,
-                "error": f"unknown action '{action}' (expected status|start|integrate|cleanup)"}
+                "error": f"unknown action '{action}' (expected status|start|integrate|cleanup|sync_primary)"}
+
+    # ── SYNC_PRIMARY ── one-shot repair: fetch, then the same ff-only primary
+    # fast-forward integrate ends with (removes byte-identical untracked
+    # collisions; anything else refuses). Dry-run unless confirm.
+    if action == "sync_primary":
+        root = _resolve_primary_root(primary_root)
+        if not confirm:
+            return {"ok": True, "action": action, "status": "planned", "exit_code": 0,
+                    "message": f"would fetch {remote} and fast-forward {root} to "
+                               f"{remote}/{dev_branch} (identical untracked collisions removed)."}
+        rc, _o, err = runner(["git", "-C", root, "fetch", remote, "--quiet"])
+        if rc != 0:
+            return {"ok": False, "action": action, "status": "error", "exit_code": 1,
+                    "error": f"fetch failed: {(err or '')[:200]}"}
+        res = _ff_primary_after_integrate(runner, root, dev_branch, remote)
+        ok = res.get("status") in ("fast_forwarded", "up_to_date")
+        return {"ok": ok, "action": action, "status": "synced" if ok else "blocked",
+                "exit_code": 0 if ok else 1, "primary_ff": res,
+                "message": _primary_ff_summary(res) or "primary already up to date."}
 
     wt_path = f"{worktrees_dir}/{slug}" if slug else None
     branch = f"{branch_prefix}{slug}" if slug else None

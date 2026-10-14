@@ -82,7 +82,7 @@ def test_untracked_file_the_ff_would_overwrite_is_refused_loudly(repos):
 
     r = ff_primary_to_dev(str(primary), fetch=True)
 
-    assert r["status"] == "skipped_ff_failed"
+    assert r["status"] == "skipped_untracked_conflict"
     assert (primary / "new.txt").read_text() == "my untracked copy"
     assert "NOT fast-forwarded" in summary_line(r)
 
@@ -162,3 +162,32 @@ def test_task_branch_git_wrapper_still_bans_merge():
 
     with pytest.raises(ValueError):
         tb_git(lambda *a, **k: (0, "", ""), "merge", "--ff-only", "origin/dev")
+
+
+def _peer_pushes_file(peer: Path, name: str, body: str) -> None:
+    _commit(peer, name, body)
+    _git(peer, "push", "-q", "origin", "HEAD:dev")
+
+
+def test_byte_identical_untracked_collision_is_removed_and_ff_succeeds(repos):
+    primary, peer = repos
+    _peer_pushes_file(peer, "rec.json", "same\n")
+    (primary / "rec.json").write_text("same\n")
+
+    r = ff_primary_to_dev(str(primary), fetch=True)
+
+    assert r["status"] == "fast_forwarded"
+    assert r["removed_identical_untracked"] == ["rec.json"]
+    assert _git(primary, "status", "--porcelain") == ""
+    assert "rec.json" in summary_line(r)
+
+
+def test_differing_untracked_collision_still_refuses_and_keeps_data(repos):
+    primary, peer = repos
+    _peer_pushes_file(peer, "rec.json", "theirs\n")
+    (primary / "rec.json").write_text("mine\n")
+
+    r = ff_primary_to_dev(str(primary), fetch=True)
+
+    assert r["status"] == "skipped_untracked_conflict" and r["files"] == ["rec.json"]
+    assert (primary / "rec.json").read_text() == "mine\n"

@@ -11,7 +11,9 @@ not run, because the primary still held the old code).
 **When it refuses (and says so — never silently):** the primary is on any
 branch other than ``dev``, a detached HEAD, has TRACKED modifications (staged
 or not), has local commits ``origin/dev`` lacks (diverged), or the FF would
-overwrite an untracked file. Untracked files are otherwise fine: an ff-only
+overwrite an untracked file that DIFFERS from the incoming blob (untracked files byte-identical to
+the incoming blob are removed first and reported in ``removed_identical_untracked`` — a tool wrote
+the same bytes the commit now carries; nothing is lost). Untracked files are otherwise fine: an ff-only
 merge leaves them alone. Every refusal is a ``skipped_*`` status with the
 reason; the caller surfaces it.
 
@@ -27,6 +29,7 @@ importing the toolkit package).
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from collections.abc import Callable
 from typing import Any
@@ -40,6 +43,29 @@ def _default_git(root: str) -> GitFn:
                            timeout=timeout)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     return git
+
+
+def _remove_identical_untracked_collisions(root: str, g: GitFn, upstream: str) -> dict[str, list[str]]:
+    """Untracked files the FF would overwrite: delete those byte-identical to the
+    incoming blob (no data lost; typically a tool wrote the same file the commit
+    now carries), report the rest as ``blocked`` (never touched)."""
+    out: dict[str, list[str]] = {"removed": [], "blocked": []}
+    rc, untracked, _e = g("ls-files", "--others", "--exclude-standard")
+    if rc != 0 or not untracked:
+        return out
+    rc, incoming, _e = g("diff", "--name-only", "--diff-filter=AR", "HEAD", upstream)
+    if rc != 0:
+        return out
+    colliding = set(untracked.splitlines()) & set(incoming.splitlines())
+    for rel in sorted(colliding):
+        rc1, local_sha, _e = g("hash-object", "--", rel)
+        rc2, remote_sha, _e = g("rev-parse", f"{upstream}:{rel}")
+        if rc1 == 0 and rc2 == 0 and local_sha == remote_sha:
+            os.remove(os.path.join(root, rel))
+            out["removed"].append(rel)
+        else:
+            out["blocked"].append(rel)
+    return out
 
 
 def ff_primary_to_dev(
@@ -91,12 +117,21 @@ def ff_primary_to_dev(
                     "head": before}
         if not behind:
             return {"status": "up_to_date", "head": before}
+        removed = _remove_identical_untracked_collisions(root, g, upstream)
+        if removed.get("blocked"):
+            return {"status": "skipped_untracked_conflict",
+                    "reason": f"{len(removed['blocked'])} untracked file(s) differ from "
+                              f"{upstream}'s version; refusing to overwrite",
+                    "files": removed["blocked"][:20], "head": before}
         rc, _o, err = g("merge", "--ff-only", "--quiet", upstream, timeout=600)
         if rc != 0:
             return {"status": "skipped_ff_failed",
                     "reason": f"git merge --ff-only refused: {err[:300]}", "head": before}
         rc, after, _e = g("rev-parse", "--short", "HEAD")
-        return {"status": "fast_forwarded", "from": before, "to": after, "commits": behind}
+        out = {"status": "fast_forwarded", "from": before, "to": after, "commits": behind}
+        if removed["removed"]:
+            out["removed_identical_untracked"] = removed["removed"]
+        return out
     except Exception as e:  # noqa: BLE001 — best-effort; the caller reports it
         return {"status": "error", "reason": f"{type(e).__name__}: {e}"}
 
@@ -105,8 +140,10 @@ def summary_line(result: dict[str, Any]) -> str:
     """One human line for a result ('' for the boring up-to-date case)."""
     s = result.get("status")
     if s == "fast_forwarded":
+        rm = result.get("removed_identical_untracked")
         return (f"noc: primary checkout fast-forwarded {result['from']}..{result['to']} "
-                f"({result['commits']} commit(s))")
+                f"({result['commits']} commit(s))"
+                + (f"; removed {len(rm)} byte-identical untracked file(s): {', '.join(rm)}" if rm else ""))
     if s in (None, "up_to_date"):
         return ""
     return f"noc: primary checkout NOT fast-forwarded ({s}): {result.get('reason', '')}"

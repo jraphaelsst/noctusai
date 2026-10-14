@@ -417,3 +417,7 @@ produces). Files without a leading numeric prefix are silently skipped (logged a
 - `noctus.dev.deploy_image` — `allow_stale_tree`'s escape-hatch shape
   mirrors `skip_ancestry_check`
 - `noctus.dev.scaffold_migration` — creates the next numbered migration file
+
+## Applied record is persisted through an isolated branch (2026-10-14)
+
+`migrate_product confirm=True` mirrors what it applied into `products/<p>/backend/migrations-applied.json`, but never writes that file into the tree it read from: it calls `noctus.dev.record_applied_migrations`, which opens a `task_branch` worktree off `origin/dev`, writes + commits the record there and integrates it. Writing into the primary left untracked files there (4 on 2026-10-14) — breaking the clean-primary rule and later blocking `task_branch integrate`'s primary fast-forward on the same paths. Chosen over "return the record and let the caller commit" because the DDL has already run: leaving persistence to a second manual step is exactly the step that gets skipped. "Record failure is reported, not raised" holds: `applied_record = {path, status, error, files}`; retry by hand with `record_applied_migrations(product, files)`. Test seam: `migrate_product(record_persister=...)`.
