@@ -18,6 +18,13 @@ PostgREST has no multi-statement transaction, so the write order is chosen so ev
 partial failure converges on retry: ledger inserts are unique per
 `(settlement_id, origin)` / `reverses_id`, and the entry total is always RE-DERIVED
 from the settlement rows, never incremented.
+
+NOC-REMEDIATE[finance-settle-overpay-race]: what retries cannot fix is two
+CONCURRENT manual settlements on one entry — both read the same remaining balance in
+`settle_entry` and both pass the "≤ remaining" check, so the entry ends over-settled.
+Gateway bookings are safe (unique `(org, kind, external_ref)`). Destination: commerce
+P4 slice B, which lands the `SELECT … FOR UPDATE` RPC pattern for refunds
+(CONTRACT §2.4) — settle + reverse move onto the same RPC shape there.
 """
 from __future__ import annotations
 
