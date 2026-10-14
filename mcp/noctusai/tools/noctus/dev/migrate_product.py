@@ -1554,11 +1554,28 @@ def migrate_product(
         newly_applied.append(mig_file.name)
         logger.info("migrate_product: applied %s ✓", mig_file.name)
 
+    # Mirror what ran into the in-repo applied record (frozen-file source of truth for organ
+    # migrations: render_organ_migration / assert_organ_migration_current). Best-effort: the DDL
+    # already ran, so a write failure is surfaced, never fatal.
+    applied_record: dict[str, Any] = {"path": None, "error": None}
+    try:
+        from noctusai_lib.testing.migrations_applied import record_applied
+
+        rec_path = record_applied(
+            resolved_products_dir / product / "backend",
+            {f.name: c for f, _sql, c in pending_sql if f.name in newly_applied},
+        )
+        applied_record["path"] = str(rec_path)
+    except Exception as exc:  # noqa: BLE001 -- surfaced in the result, DDL already applied
+        applied_record["error"] = f"{type(exc).__name__}: {exc}"
+        logger.warning("migrate_product: could not update migrations-applied.json: %s", exc)
+
     return _result(
         "applied",
         applied=newly_applied,
         skipped_already_applied=skipped,
         checksum_verification=checksum_verification,
+        applied_record=applied_record,
     )
 
 

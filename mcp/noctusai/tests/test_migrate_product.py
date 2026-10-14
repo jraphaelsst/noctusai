@@ -388,6 +388,17 @@ class TestConfirmApply:
             "tracking INSERT was not executed"
         )
 
+    def test_confirm_mirrors_applied_files_into_migrations_applied_json(self, tmp_path):
+        import hashlib, json
+
+        products = _make_products_dir(tmp_path)
+        sql_001 = "CREATE SCHEMA IF NOT EXISTS orbity;"
+        _make_migration_files(products, "orbity", [("001_seed.sql", sql_001)])
+        result = migrate_product("orbity", confirm=True, executor=FakeSqlExecutor(), products_dir=products, git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
+        rec = json.loads((products / "orbity" / "backend" / "migrations-applied.json").read_text())
+        assert rec["applied"] == {"001_seed.sql": hashlib.sha256(sql_001.encode()).hexdigest()}
+        assert result["applied_record"]["error"] is None
+
     def test_skips_already_applied_on_rerun(self, tmp_path):
         products = _make_products_dir(tmp_path)
         _make_migration_files(

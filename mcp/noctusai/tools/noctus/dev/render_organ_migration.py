@@ -41,8 +41,8 @@ def render_organ_migration(
 ) -> dict[str, Any]:
     """Returns ``{status, product, organ, schema, path, number, catalog_scope, warnings, error}``.
 
-    status: planned | would_refresh | up_to_date | created | refreshed |
-            refused_catalog_scope | error
+    status: planned | would_refresh | would_new_revision | up_to_date | created | refreshed |
+            new_revision | refused_catalog_scope | error
     """
     result: dict[str, Any] = {"product": product, "organ": organ, "warnings": []}
     bad = validate_product_slug(product) or (validate_schema_identifier(schema) if schema is not None else None)
@@ -64,7 +64,7 @@ def render_organ_migration(
         }
 
     try:
-        from noctusai_seed.organs import ORGAN_REGISTRY, organ_migration_sql
+        from noctusai_seed.organs import ORGAN_REGISTRY
     except ImportError as exc:  # seed framework not importable in this interpreter
         return {**result, "status": "error", "error": f"cannot import noctusai_seed.organs: {exc}"}
     spec = ORGAN_REGISTRY.get(organ)
@@ -86,25 +86,34 @@ def render_organ_migration(
             f"Could not derive the DB schema of {product!r} from its app/main.py create_product_app(schema=...) "
             f"declaration; refusing to render DDL into a guessed schema. Pass schema= explicitly."
         )}
-    sql = organ_migration_sql(organ, resolved_schema)
+    from noctusai_lib.testing.migrations_applied import load_applied
+    from noctusai_lib.testing.organs import expected_organ_migration
 
     existing = [
         p for p in sorted(migrations_dir.glob("*.sql"))
         if p.read_text(encoding="utf-8").startswith(spec.migration_header)
     ]
-    if len(existing) > 1:
-        return {**result, "status": "error",
-                "error": f"expected at most one rendered {organ} migration, found {[p.name for p in existing]}"}
-
+    sql = expected_organ_migration(organ, resolved_schema, max(len(existing), 1))
+    new_revision = False
     if existing:
-        path = existing[0]
+        path = existing[-1]
         result["path"] = str(path)
         if path.read_text(encoding="utf-8") == sql:
             return {**result, "status": "up_to_date"}
-        if not confirm:
-            return {**result, "status": "would_refresh"}
-        path.write_text(sql, encoding="utf-8")
-        return {**result, "status": "refreshed"}
+        try:
+            applied = load_applied(migrations_dir)
+        except ValueError as exc:
+            return {**result, "status": "error", "error": str(exc)}
+        if path.name not in applied:  # unapplied: refresh in place
+            if not confirm:
+                return {**result, "status": "would_refresh"}
+            path.write_text(sql, encoding="utf-8")
+            return {**result, "status": "refreshed"}
+        # applied files are frozen: the generator moved on => ship the full current state as a NEW file
+        new_revision = True
+        revision = len(existing) + 1
+        sql = expected_organ_migration(organ, resolved_schema, revision)
+        result["revision"] = revision
 
     number = next_migration_number(
         product, worktree_path=worktree_path, products_dir=products_dir, skip_fetch=skip_fetch,
@@ -113,14 +122,15 @@ def render_organ_migration(
         return {**result, "status": "error", "error": number["error"]}
     result["warnings"] = list(number.get("warnings", []))
     n = number["next_number"]
-    path = migrations_dir / f"{_format_number(n)}_{organ}.sql"
+    suffix = f"{organ}_rev{result['revision']}" if new_revision else organ
+    path = migrations_dir / f"{_format_number(n)}_{suffix}.sql"
     result.update(path=str(path), number=n)
     if path.exists():
         return {**result, "status": "error", "error": f"refusing to overwrite {path}"}
     if not confirm:
-        return {**result, "status": "planned"}
+        return {**result, "status": "would_new_revision" if new_revision else "planned"}
     path.write_text(sql, encoding="utf-8")
-    return {**result, "status": "created"}
+    return {**result, "status": "new_revision" if new_revision else "created"}
 
 
 def register(server) -> None:
@@ -132,8 +142,9 @@ def register(server) -> None:
             "products/<p>/backend/migrations/NNN_<organ>.sql with a collision-safe number "
             "(next_migration_number). DRY-RUN by default (status 'planned'/'would_refresh'); "
             "confirm=True writes. Idempotent: an existing rendered file is found by the organ's "
-            "generated header and left alone when current ('up_to_date'), refreshed in place when "
-            "the generator changed. Refuses asleep products (catalog scope guard -> "
+            "generated header and left alone when current ('up_to_date'); when the generator changed, an "
+            "unapplied file is refreshed in place, an applied one (migrations-applied.json) yields a NEW revision file ('new_revision'). "
+            " Refuses asleep products (catalog scope guard -> "
             "'refused_catalog_scope'; allow_inactive=True is the supervised escape hatch). Pair the "
             "product with noctusai_lib.testing.organs.assert_organ_migration_current. "
             "KB § PATTERNS/architect/vertical-seed.md."
