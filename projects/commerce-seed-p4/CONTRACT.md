@@ -204,3 +204,23 @@ New migration (number via `noctus.dev.next_migration_number`) with the P4 commer
 
 ## 8 · Wave plan + collisions
 Wave 1 = A (`integrations/payments/**`), C (`domain/finance/**`, model + service + API), E (`integrations/invoices/**`) — file-disjoint. Shared generated files (KB counts, `catalog.md`, seed barrels / `__init__` exports) may collide: the tech-lead re-runs gates on the merged tip. Wave 2 = B (commerce money states + finance bridge) and D (statement import, reconciliation, gateway sync, exports — inside `domain/finance/**` new files). Wave 3 = F.
+
+## 9 · Wave-1 deltas (as shipped 2026-10-14 — these override the sections above)
+
+| # | Section | Shipped | Why |
+|---|---|---|---|
+| W1 | §1.1 types | `PaymentMethod` for integrations is `Literal["pix","boleto","credit_card","undefined","other"]` in `integrations/payments/types.py` (same strings as the commerce enum) | integrations never import domain |
+| W2 | §1.1 / §2.4 refunds | **Asaas refunds carry no id** (`GatewayRefund.id_at_gateway is None`). Slice B reconciles Asaas refunds by amount + timestamp against `GatewayCharge.refunds`; `commerce_refunds.gateway_refund_id` stays nullable and is only unique when set (Stripe) | Asaas API shape (`ASAAS-EVENTS.md`) |
+| W3 | §1.3 / §2.4 disputes | **Asaas has no "dispute lost" webhook** — a loss is only `chargeback.status == "DISPUTE_LOST"` on the payment, which `get_charge` reports as `chargeback`. `commerce_dispute_poll` is REQUIRED, not a fallback. `DONE` is not treated as lost | docs.asaas.com/docs/chargeback |
+| W4 | §1.1 statuses | Asaas `partially_refunded` is derived from `refunds[]`; `deleted: true` ⇒ `cancelled`; `REFUND_REQUESTED`/`REFUND_IN_PROGRESS` read as `received`. `installment_count` on `get_charge` costs one extra `GET /installments/{id}` | Asaas has no such statuses |
+| W5 | §3.2 uniques | every unique is org-scoped: `(org_id, kind, external_ref)` etc.; money columns BIGINT | tenancy |
+| W6 | §3.3 fees | the `settlement` ledger row is the GROSS settled amount; the `fee` row is OUT — net effect = amount − fee | |
+| W7 | §3.5 | `book_settlement` returns the settlement id and creates the gateway account on demand; a replay returns 200 and heals missing ledger rows | |
+| W8 | §3.4 | `make_finance_router(cfg, auth_dependency, admin_dependency, *, resolve_context, get_db, get_storage)`; `POST /entries` always returns a list (an installment group returns every installment) | |
+| W9 | §3 open markers | `NOC-REMEDIATE[finance-settle-overpay-race]` → **slice B** (settle + reverse join the refund `FOR UPDATE` RPC shape) · `[finance-attachment-download-disposition]` (needs `StorageBackend.signed_url(download=)`; XML stored as octet-stream meanwhile) · `[finance-report-sql-aggregates]` · `finance-doc-retention-purge` (LGPD entry) | |
+| W10 | §4 tokens | `ProviderCompany` has **no token field**; the provider hands per-company tokens to an injected `token_sink` (`CompanyTokenStore.sink_for(org_id)`), read back via `resolver_for`. Use one provider instance per request/org | security B3 |
+| W11 | §4 certificate | `inspect_pkcs12(pfx, password, *, expected_cnpj=None)` enforces 64 KB / 128 chars / private key present and raises `InvoiceCertificateCnpjMismatch` (`certificado_cnpj_divergente`); `upload_certificate(..., expected_cnpj=)` too — the host's §2.5 check is now by construction | security S1 |
+| W12 | §4 | `get`/`cancel` take optional `company_ref`; NFS-e lookups probe `/v2/nfsen` then `/v2/nfse` (finds pre-cutover documents); `ref`/`company_ref` validated `^[A-Za-z0-9_-]{1,64}$`; `InvoiceEvent.kind` may be `None` (Focus bodies don't say) | |
+| W13 | §6 host | slice F adds the finance attachment path to `max_body_path_overrides` and registers `finance_generate_recurrences` (`generate_due_recurrences`) | |
+
+Several Focus NFS-e Nacional field names and the webhook body shape are `UNVERIFIED:` in `focus.py` — the opt-in live homologação test settles them once a token exists (P6).

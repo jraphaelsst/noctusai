@@ -4,7 +4,7 @@
 
 - **Created:** 2026-10-13
 - **Last updated:** 2026-10-13
-- **Status:** 🟡 Phase 0 — decisions D32–D40 + CONTRACT.md (architect + security reviewed); wave 1 next
+- **Status:** 🟡 Wave 1 merged 2026-10-14 (A payments, C finance, E invoices — merged-tip green); wave 2 (B money states, D reconciliation) next
 - **Owner / stakeholders:** noc owner · tech-lead session · architect + security (advisors)
 - **Related docs:** roadmap · `projects/commerce-seed-p3/CONTRACT.md` · `KB § PATTERNS/architect/approved-cutover.md` · `KB § PATTERNS/backend/seed-fake-real-adapter.md` · `INTEGRATIONS/payments.md`
 - **Project slug:** `commerce-seed-p4` (cross-product seed work → `projects/`)
