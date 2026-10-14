@@ -1,13 +1,15 @@
 # lais — reference material (study only, no build)
 
-Everything extracted from **Lais** (`casa.lais.ai`, vendor **Lastro**) — the real-estate WhatsApp AI agent One Consultoria Imobiliária uses — to understand it and later build our own. Studied **2026-10-13, read-only, on the owner's own account**, with skill `noc-reverse-engineer` (born from this run and CoreStudio's). **Stages 1 (map) and 2 (read-only data + Bubble definition) are done.** Nothing of Lais is being rebuilt yet; our own module will live in SW's "Lais" nav group (see `DECISIONS.md`).
+Everything extracted from **Lais** (`casa.lais.ai`, vendor **Lastro**) — the real-estate WhatsApp AI agent One Consultoria Imobiliária uses — to understand it and later build our own. Studied **2026-10-13, read-only, on the owner's own account**, with skill `noc-reverse-engineer` (born from this run and CoreStudio's). **Stages 1 (map) and 2 (read-only data + Bubble definition) are done; consolidated 2026-10-14 into page-map v2.** Page 0 of our own module (Julia) is live in prod; our own module will live in SW's "Lais" nav group (see `DECISIONS.md`).
 
-Start with `analysis/SUMMARY.md`, then `specs/page-map.md`.
+Start with **`specs/page-map-v2.md`** (authoritative, 2026-10-14: all 58 routes, element → data → endpoint → safety, route × endpoint matrix, gap list) and **`specs/mechanisms.md`**, then `specs/sw-reconstruction-map.md` (each Lais page → SW, build order, data wiring). Where they disagree with the 2026-10-13 files, the 2026-10-14 files win (`page-map-v2.md` §0.2).
 
 ## Layout
 
 | Path | What |
 | --- | --- |
+| `specs/page-map-v2.md` · `specs/mechanisms.md` · `specs/sw-reconstruction-map.md` | Authoritative map (coverage-tagged per route, gap buckets a–d) · every mechanism (data model, states, triggers, AI calls, unknowns) · Lais → SW route map, build waves 0–13, cross-module wiring. |
+| `TEST-CHECKLIST.md` | Live test checklist per shipped page (page 0 Julia). |
 | `specs/page-map.md` | Live UI map: shell, every sidebar page, tabs, fields, buttons, current config values, observed AI script, mechanisms (evidence tags C/I/U). Screenshot names in it refer to `screenshots/` or the private set (see below). |
 | `analysis/SUMMARY.md` | Headline of both stages: S2 findings, then S1 counts, findings, unknowns, safe-GET allowlist, never-call list. |
 | `analysis/agent-brain.md` | S2: how the agent is configured — compiled prompt, 63-question slot catalogue, CRM forwarding (Vista), reengage, templates + param registry, visits, plans/credits. |
