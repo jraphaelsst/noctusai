@@ -22,6 +22,7 @@ from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
 
 import httpx
 
+from noctusai_lib.integrations.payments.charges import ChargeOperations, FakeChargeOperations, make_charge_operations
 from noctusai_lib.integrations.payments.checkout import FakeHostedCheckout, HostedCheckout, make_hosted_checkout
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
 from noctusai_lib.integrations.payments.factory import make_payment_gateway
@@ -50,6 +51,11 @@ class CheckoutGateway(Protocol):
         """A hosted-checkout client for an EXPLICIT key, in the org's environment --
         what the settings page's "Testar" probe runs against. Raises
         `GatewayNotConfigured` when the org's environment choice is unusable."""
+        ...
+
+    def charge_operations(self, org_id: Any) -> ChargeOperations:
+        """The org's read / refund / cancel client for charges it already created (P4).
+        Raises `GatewayNotConfigured` when the org has no usable credentials."""
         ...
 
     def platform_wallet_id(self) -> Optional[str]:
@@ -85,6 +91,7 @@ class FakeCheckoutGateway:
         webhook_secret: Optional[str] = "fake-webhook-token",
         customers: Optional[dict[str, dict]] = None,
         checkout: Optional[FakeHostedCheckout] = None,
+        charges: Optional[FakeChargeOperations] = None,
         customer_error: Optional[BaseException] = None,
     ) -> None:
         self.configured = configured
@@ -92,6 +99,7 @@ class FakeCheckoutGateway:
         self.webhook_secret = webhook_secret
         self.customers = dict(customers or {})
         self.checkout = checkout or FakeHostedCheckout()
+        self.charges = charges or FakeChargeOperations()
         self.customer_error = customer_error
 
     def hosted_checkout(self, org_id: Any) -> HostedCheckout:
@@ -101,6 +109,29 @@ class FakeCheckoutGateway:
 
     def checkout_for_key(self, org_id: Any, api_key: str) -> HostedCheckout:
         return self.checkout
+
+    def sync_charges(self) -> None:
+        """Mirror every charge the fake checkout created into the fake `ChargeOperations`
+        (pending, same id / amount / method / installments / `external_reference`), so a test
+        can then `charges.mark_paid(...)` / `open_dispute(...)` what the order really holds."""
+        method_of = {"pix": "pix", "boleto": "boleto", "card": "credit_card"}
+        for call, request in self.checkout.calls:
+            if call != "create_checkout":
+                continue
+            for session in self.checkout.sessions.values():
+                if session.external_reference == request.external_reference and session.id_at_gateway not in self.charges.charges:
+                    self.charges.add_charge(
+                        session.id_at_gateway,
+                        amount=request.price,
+                        method=method_of.get(request.billing_method, "undefined"),
+                        installment_count=request.installment_count,
+                        external_reference=request.external_reference,
+                    )
+
+    def charge_operations(self, org_id: Any) -> ChargeOperations:
+        if not self.configured:
+            raise GatewayNotConfigured(f"no payment gateway credentials for org {org_id}")
+        return self.charges
 
     def platform_wallet_id(self) -> Optional[str]:
         return self.wallet_id
@@ -205,6 +236,14 @@ class AsaasCheckoutGateway:
 
     def checkout_for_key(self, org_id: Any, api_key: str) -> HostedCheckout:
         return self._checkout(org_id, api_key)
+
+    def charge_operations(self, org_id: Any) -> ChargeOperations:
+        return make_charge_operations(
+            provider="asaas",
+            asaas_api_key=self._api_key(org_id),
+            asaas_base_url=self._base_url(org_id),
+            asaas_transport=self._transport,
+        )
 
     def platform_wallet_id(self) -> Optional[str]:
         # PLATFORM tier on purpose (org_id=None): the wallet is noc's, never a client's.

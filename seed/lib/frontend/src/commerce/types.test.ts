@@ -10,7 +10,10 @@ import {
   FULFILLMENT_TYPES,
   ORDER_STATUSES,
   ORDER_TRANSITIONS,
+  CHARGE_ATTEMPT_STATUSES,
   PAYMENT_METHODS,
+  REFUND_STATUSES,
+  REMINDER_KINDS,
   PRIVACY_REQUEST_KINDS,
   PRODUCT_STATUSES,
   PRODUCT_TYPES,
@@ -32,11 +35,25 @@ describe('commerce enums (CONTRACT §1)', () => {
       PrivacyRequestKind: PRIVACY_REQUEST_KINDS,
       FieldSource: FIELD_SOURCES,
       PaymentMethod: PAYMENT_METHODS,
+      RefundStatus: REFUND_STATUSES,
+      ChargeAttemptStatus: CHARGE_ATTEMPT_STATUSES,
+      ReminderKind: REMINDER_KINDS,
     }).toEqual({
       ProductType: ['digital', 'physical', 'service', 'print_on_demand'],
       FulfillmentType: ['digital_delivery', 'shipping', 'pickup', 'local_delivery', 'none'],
       ProductStatus: ['draft', 'in_review', 'published', 'unlisted', 'retired'],
-      OrderStatus: ['created', 'pending_payment', 'paid', 'expired', 'failed', 'cancelled', 'refunded', 'chargeback'],
+      OrderStatus: [
+        'created',
+        'pending_payment',
+        'paid',
+        'expired',
+        'failed',
+        'cancelled',
+        'refunded',
+        'chargeback',
+        'partially_refunded',
+        'disputed',
+      ],
       TaxRegime: ['mei', 'simples', 'lucro_presumido', 'lucro_real', 'outro'],
       TaxTreatment: ['service_nfse', 'rights_receipt', 'goods_nfe', 'none'],
       CouponKind: ['percent', 'fixed'],
@@ -44,6 +61,9 @@ describe('commerce enums (CONTRACT §1)', () => {
       PrivacyRequestKind: ['access', 'correction', 'deletion', 'portability', 'revoke_consent'],
       FieldSource: ['form', 'payment', 'staff'],
       PaymentMethod: ['pix', 'boleto', 'credit_card'],
+      RefundStatus: ['requested', 'done', 'failed'],
+      ChargeAttemptStatus: ['pending', 'paid', 'expired', 'cancelled', 'failed'],
+      ReminderKind: ['before_expiry', 'after_expiry'],
     });
   });
 
@@ -51,12 +71,14 @@ describe('commerce enums (CONTRACT §1)', () => {
     expect(ORDER_TRANSITIONS).toEqual({
       created: ['pending_payment', 'failed', 'cancelled'],
       pending_payment: ['paid', 'expired', 'failed', 'cancelled'],
-      expired: ['paid', 'cancelled'],
+      expired: ['paid', 'cancelled', 'pending_payment'],
       failed: ['pending_payment'],
-      paid: ['refunded', 'chargeback'],
+      paid: ['refunded', 'chargeback', 'partially_refunded', 'disputed'],
       cancelled: [],
       refunded: [],
       chargeback: [],
+      partially_refunded: ['partially_refunded', 'refunded', 'chargeback', 'disputed'],
+      disputed: ['paid', 'partially_refunded', 'chargeback'],
     });
     for (const [from, tos] of Object.entries(ORDER_TRANSITIONS)) {
       expect(ORDER_STATUSES).toContain(from);

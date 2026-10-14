@@ -29,8 +29,19 @@ export const ORDER_STATUSES = [
   'cancelled',
   'refunded',
   'chargeback',
+  'partially_refunded',
+  'disputed',
 ] as const;
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
+
+export const REFUND_STATUSES = ['requested', 'done', 'failed'] as const;
+export type RefundStatus = (typeof REFUND_STATUSES)[number];
+
+export const CHARGE_ATTEMPT_STATUSES = ['pending', 'paid', 'expired', 'cancelled', 'failed'] as const;
+export type ChargeAttemptStatus = (typeof CHARGE_ATTEMPT_STATUSES)[number];
+
+export const REMINDER_KINDS = ['before_expiry', 'after_expiry'] as const;
+export type ReminderKind = (typeof REMINDER_KINDS)[number];
 
 export const TAX_REGIMES = ['mei', 'simples', 'lucro_presumido', 'lucro_real', 'outro'] as const;
 export type TaxRegime = (typeof TAX_REGIMES)[number];
@@ -67,12 +78,14 @@ export type OrderEventSource = (typeof ORDER_EVENT_SOURCES)[number];
 export const ORDER_TRANSITIONS: Readonly<Record<OrderStatus, readonly OrderStatus[]>> = {
   created: ['pending_payment', 'failed', 'cancelled'],
   pending_payment: ['paid', 'expired', 'failed', 'cancelled'],
-  expired: ['paid', 'cancelled'],
+  expired: ['paid', 'cancelled', 'pending_payment'],
   failed: ['pending_payment'],
-  paid: ['refunded', 'chargeback'],
+  paid: ['refunded', 'chargeback', 'partially_refunded', 'disputed'],
   cancelled: [],
   refunded: [],
   chargeback: [],
+  partially_refunded: ['partially_refunded', 'refunded', 'chargeback', 'disputed'],
+  disputed: ['paid', 'partially_refunded', 'chargeback'],
 };
 
 // ---------------------------------------------------------------------------

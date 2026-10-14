@@ -47,6 +47,10 @@ class OrderStatus(_StrEnum):
     CANCELLED = "cancelled"
     REFUNDED = "refunded"
     CHARGEBACK = "chargeback"
+    #: P4: a partial refund left money with the merchant (still a sale).
+    PARTIALLY_REFUNDED = "partially_refunded"
+    #: P4: a chargeback dispute is open ("Contestado"); fulfillment is paused.
+    DISPUTED = "disputed"
 
 
 class TaxRegime(_StrEnum):
@@ -108,6 +112,31 @@ class PrivacyRequestStatus(_StrEnum):
     REJECTED = "rejected"
 
 
+class RefundStatus(_StrEnum):
+    """A `commerce_refunds` row: asked of the gateway, confirmed, or refused."""
+
+    REQUESTED = "requested"
+    DONE = "done"
+    FAILED = "failed"
+
+
+class ChargeAttemptStatus(_StrEnum):
+    """One `commerce_order_charges` row (an order can be charged more than once)."""
+
+    PENDING = "pending"
+    PAID = "paid"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+    FAILED = "failed"
+
+
+class ReminderKind(_StrEnum):
+    """The two payment-recovery e-mails (`commerce_order_reminders`)."""
+
+    BEFORE_EXPIRY = "before_expiry"
+    AFTER_EXPIRY = "after_expiry"
+
+
 class OrderEventSource(_StrEnum):
     CHECKOUT = "checkout"
     WEBHOOK = "webhook"
@@ -131,6 +160,7 @@ def is_digital_line(product_type: str, fulfillment_type: str) -> bool:
 
 
 __all__ = [
+    "ChargeAttemptStatus",
     "ConsentKind",
     "CouponKind",
     "FieldSource",
@@ -143,6 +173,8 @@ __all__ = [
     "PrivacyRequestStatus",
     "ProductStatus",
     "ProductType",
+    "ReminderKind",
+    "RefundStatus",
     "TaxRegime",
     "TaxTreatment",
     "is_digital_line",

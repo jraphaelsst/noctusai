@@ -31,6 +31,7 @@ from .customers import (
 from .errors import CommerceError, not_found
 from .hosts import resolve_host
 from .media import with_url
+from .order_charges import current_attempt, list_charges
 from .orders import get_order_by_token, list_items
 from .profile import get_profile
 from .types import PrivacyRequestKind, ProductStatus
@@ -235,7 +236,12 @@ def order_view_by_token(db: Any, org_id: Any, token: str) -> dict:
     order = get_order_by_token(db, org_id, token)
     if order is None:
         raise not_found("Pedido")
-    return public_order_view(db, org_id, order)
+    view = public_order_view(db, org_id, order)
+    # What the buyer actually pays (interest included) and in how many parcelas -- from the CURRENT attempt.
+    current = current_attempt(list_charges(db, org_id, order["id"]), order)
+    view["installment_count"] = int(current["installment_count"]) if current else 1
+    view["charged_cents"] = int(current["amount_cents"]) if current else int(order["total_cents"])
+    return view
 
 
 def my_orders_view(db: Any, org_id: Any, customer_id: Any) -> list[dict]:

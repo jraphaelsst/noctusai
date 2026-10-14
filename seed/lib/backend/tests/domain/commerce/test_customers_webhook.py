@@ -1,16 +1,18 @@
 """Customer enrichment (D26), privacy, and the idempotent payment webhook."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from noctusai_lib.domain.commerce import FakeCheckoutGateway, FulfillmentType, customers, make_fulfillment_registry, orders
+from noctusai_lib.domain.commerce import FakeCheckoutGateway, FulfillmentType, MoneyDeps, customers, make_fulfillment_registry, orders
 from noctusai_lib.domain.commerce.checkout import create_checkout
 from noctusai_lib.domain.commerce.webhook import DUPLICATE, IGNORED, PROCESSED, handle_event
 from noctusai_lib.domain.payments import FakeEventInbox
 from noctusai_lib.integrations.payments.webhook_events import make_fake_gateway_event
 from noctusai_lib.primitives.exceptions import NotFoundError
 
-from .conftest import CFG, ORG_A, ORG_B, checkout_body, seed_product, seed_profile
+from .conftest import CFG, ORG_A, ORG_B, checkout_body, run, seed_product, seed_profile
 
 
 class TestEnrichment:
@@ -76,11 +78,16 @@ class TestPrivacy:
         assert customers.list_consents(db, ORG_A, c["id"])[0]["granted"] is False
 
 
-def paid_event(order_id, *, event_id="evt1", customer="cus_1", name="PAYMENT_CONFIRMED"):
+def paid_event(order, *, event_id="evt1", name="PAYMENT_CONFIRMED", detail="confirmed"):
     return make_fake_gateway_event(
-        gateway="asaas", kind="charge_paid", event_id=event_id, external_reference=order_id,
-        charge_id_at_gateway="pay_1", raw={"event": name, "payment": {"customer": customer}},
+        gateway="asaas", kind="charge_paid", event_id=event_id, external_reference=order["id"],
+        charge_id_at_gateway=order["gateway_charge_id"], detail=detail, raw={"event": name},
     )
+
+
+def he(db, org, event, inbox, gw, reg):
+    """Drive the (async) webhook handler with the money deps the router would build."""
+    return run(handle_event(db, org, event, inbox=inbox, deps=MoneyDeps(cfg=CFG, gateway=gw, fulfillment=reg)))
 
 
 class Rec:
@@ -91,13 +98,26 @@ class Rec:
         self.calls.append(order["id"])
 
 
-@pytest.fixture
-def placed(db):
+def place_order(db, gw, **body):
+    """Checkout through the organ, mirror the charge into the fake gateway, and give it a payer record."""
     seed_profile(db)
     _, o = seed_product(db)
-    gw = FakeCheckoutGateway(customers={"cus_1": {"name": "Ana Souza Real", "doc": "52998224725", "email": "ana@example.com"}})
-    create_checkout(db, ORG_A, CFG, gw, checkout_body(o["id"]), order_url_for=lambda t: t)
+    create_checkout(db, ORG_A, CFG, gw, checkout_body(o["id"], **body), order_url_for=lambda t: t)
+    gw.sync_charges()
     order = db.table("commerce_orders").select("*").execute().data[0]
+    return order
+
+
+@pytest.fixture
+def placed(db):
+    gw = FakeCheckoutGateway()
+    order = place_order(db, gw)
+    session = next(iter(gw.checkout.sessions.values()))
+    gw.customers[session.customer_id_at_gateway] = {"name": "Ana Souza Real", "doc": "52998224725", "email": "ana@example.com"}
+    gw.charges.charges[order["gateway_charge_id"]] = replace(
+        gw.charges.charges[order["gateway_charge_id"]], raw={"customer": session.customer_id_at_gateway}
+    )
+    gw.charges.mark_paid(order["gateway_charge_id"])
     rec = Rec()
     reg = make_fulfillment_registry({FulfillmentType.DIGITAL_DELIVERY: rec})
     return db, order, gw, FakeEventInbox(), reg, rec
@@ -106,7 +126,7 @@ def placed(db):
 class TestWebhook:
     def test_paid_transitions_enriches_and_fulfils(self, placed):
         db, order, gw, inbox, reg, rec = placed
-        assert handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg) == PROCESSED
+        assert he(db, ORG_A, paid_event(order), inbox, gw, reg) == PROCESSED
         o = orders.get_order(db, ORG_A, order["id"])
         assert o["status"] == "paid" and o["paid_at"]
         cust = db.table("commerce_customers").select("*").execute().data[0]
@@ -116,16 +136,16 @@ class TestWebhook:
 
     def test_duplicate_delivery_never_double_transitions(self, placed):
         db, order, gw, inbox, reg, rec = placed
-        ev = paid_event(order["id"])
-        assert handle_event(db, ORG_A, ev, inbox=inbox, gateway=gw, fulfillment=reg) == PROCESSED
-        assert handle_event(db, ORG_A, ev, inbox=inbox, gateway=gw, fulfillment=reg) == DUPLICATE
+        ev = paid_event(order)
+        assert he(db, ORG_A, ev, inbox, gw, reg) == PROCESSED
+        assert he(db, ORG_A, ev, inbox, gw, reg) == DUPLICATE
         assert len(orders.list_events(db, ORG_A, order["id"])) == 3  # created, pending, paid
         assert rec.calls == [order["id"]]
 
     def test_second_confirmation_event_is_a_state_noop(self, placed):
         db, order, gw, inbox, reg, rec = placed
-        handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg)
-        handle_event(db, ORG_A, paid_event(order["id"], event_id="evt2", name="PAYMENT_RECEIVED"), inbox=inbox, gateway=gw, fulfillment=reg)
+        he(db, ORG_A, paid_event(order), inbox, gw, reg)
+        he(db, ORG_A, paid_event(order, event_id="evt2", name="PAYMENT_RECEIVED"), inbox, gw, reg)
         assert len(orders.list_events(db, ORG_A, order["id"])) == 3
 
     def test_failure_releases_the_claim_so_the_retry_lands(self, placed):
@@ -136,53 +156,57 @@ class TestWebhook:
                 raise RuntimeError("down")
 
         bad_reg = make_fulfillment_registry({FulfillmentType.DIGITAL_DELIVERY: Bad()})
-        ev = paid_event(order["id"])
+        ev = paid_event(order)
         with pytest.raises(RuntimeError):
-            handle_event(db, ORG_A, ev, inbox=inbox, gateway=gw, fulfillment=bad_reg)
+            he(db, ORG_A, ev, inbox, gw, bad_reg)
         assert inbox.releases
-        assert handle_event(db, ORG_A, ev, inbox=inbox, gateway=gw, fulfillment=reg) == PROCESSED
+        assert he(db, ORG_A, ev, inbox, gw, reg) == PROCESSED
 
     def test_overdue_expires_then_late_payment_recovers(self, placed):
         db, order, gw, inbox, reg, _ = placed
         over = make_fake_gateway_event(gateway="asaas", kind="charge_failed", event_id="o1", external_reference=order["id"])
-        assert handle_event(db, ORG_A, over, inbox=inbox, gateway=gw, fulfillment=reg) == PROCESSED
+        assert he(db, ORG_A, over, inbox, gw, reg) == PROCESSED
         assert orders.get_order(db, ORG_A, order["id"])["status"] == "expired"
-        handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg)
+        he(db, ORG_A, paid_event(order), inbox, gw, reg)
         assert orders.get_order(db, ORG_A, order["id"])["status"] == "paid"
 
-    def test_refund_and_chargeback_only_from_paid(self, placed):
+    def test_refund_and_dispute_only_from_a_paid_order(self, placed):
         db, order, gw, inbox, reg, _ = placed
-        refund = make_fake_gateway_event(gateway="asaas", kind="charge_refunded", event_id="r0", external_reference=order["id"])
-        assert handle_event(db, ORG_A, refund, inbox=inbox, gateway=gw, fulfillment=reg) == IGNORED
-        handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg)
+        refund = make_fake_gateway_event(gateway="asaas", kind="charge_refunded", event_id="r0", external_reference=order["id"],
+                                         charge_id_at_gateway=order["gateway_charge_id"])
+        assert he(db, ORG_A, refund, inbox, gw, reg) == IGNORED  # never paid
+        he(db, ORG_A, paid_event(order), inbox, gw, reg)
+        gw.charges.open_dispute(order["gateway_charge_id"])
         cb = make_fake_gateway_event(gateway="asaas", kind="charge_refunded", event_id="r1", external_reference=order["id"],
-                                     raw={"event": "PAYMENT_CHARGEBACK_REQUESTED"})
-        assert handle_event(db, ORG_A, cb, inbox=inbox, gateway=gw, fulfillment=reg) == PROCESSED
+                                     charge_id_at_gateway=order["gateway_charge_id"], detail="chargeback_opened")
+        assert he(db, ORG_A, cb, inbox, gw, reg) == PROCESSED
         o = orders.get_order(db, ORG_A, order["id"])
-        assert o["status"] == "chargeback" and orders.platform_fee_earned(o) == 0
+        assert o["status"] == "disputed" and orders.platform_fee_earned(o) == 0  # opened, NOT yet a chargeback
 
     def test_late_payment_cannot_resurrect_a_refunded_order(self, placed):
         db, order, gw, inbox, reg, _ = placed
-        handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg)
-        handle_event(db, ORG_A, make_fake_gateway_event(gateway="asaas", kind="charge_refunded", event_id="r", external_reference=order["id"]),
-                     inbox=inbox, gateway=gw, fulfillment=reg)
-        assert handle_event(db, ORG_A, paid_event(order["id"], event_id="late"), inbox=inbox, gateway=gw, fulfillment=reg) == IGNORED
+        he(db, ORG_A, paid_event(order), inbox, gw, reg)
+        gw.charges.refund_charge(order["gateway_charge_id"], amount=None, description="x")
+        refund = make_fake_gateway_event(gateway="asaas", kind="charge_refunded", event_id="r", external_reference=order["id"],
+                                         charge_id_at_gateway=order["gateway_charge_id"])
+        he(db, ORG_A, refund, inbox, gw, reg)
+        assert orders.get_order(db, ORG_A, order["id"])["status"] == "refunded"
+        assert he(db, ORG_A, paid_event(order, event_id="late"), inbox, gw, reg) == IGNORED
         assert orders.get_order(db, ORG_A, order["id"])["status"] == "refunded"
 
     def test_unknown_order_unknown_kind_and_foreign_org_are_ignored(self, placed):
         db, order, gw, inbox, reg, _ = placed
-        assert handle_event(db, ORG_A, paid_event("11111111-1111-1111-1111-111111111111", event_id="u"), inbox=inbox, gateway=gw, fulfillment=reg) == IGNORED
-        assert handle_event(db, ORG_A, make_fake_gateway_event(gateway="asaas", kind="ignored", event_id="k"), inbox=inbox, gateway=gw, fulfillment=reg) == IGNORED
-        assert handle_event(db, ORG_B, paid_event(order["id"], event_id="x"), inbox=inbox, gateway=gw, fulfillment=reg) == IGNORED
+        assert he(db, ORG_A, paid_event({**order, "id": "11111111-1111-1111-1111-111111111111", "gateway_charge_id": "pay_nope"}, event_id="u"), inbox, gw, reg) == IGNORED
+        assert he(db, ORG_A, make_fake_gateway_event(gateway="asaas", kind="ignored", event_id="k"), inbox, gw, reg) == IGNORED
+        assert he(db, ORG_B, paid_event(order, event_id="x"), inbox, gw, reg) == IGNORED
         assert orders.get_order(db, ORG_A, order["id"])["status"] == "pending_payment"
 
     def test_enrichment_failure_never_undoes_the_payment(self, db):
-        seed_profile(db)
-        _, o = seed_product(db)
         gw = FakeCheckoutGateway(customer_error=RuntimeError("asaas down"))
-        create_checkout(db, ORG_A, CFG, gw, checkout_body(o["id"]), order_url_for=lambda t: t)
-        order = db.table("commerce_orders").select("*").execute().data[0]
-        handle_event(db, ORG_A, paid_event(order["id"]), inbox=FakeEventInbox(), gateway=gw, fulfillment=make_fulfillment_registry())
+        order = place_order(db, gw)
+        gw.charges.charges[order["gateway_charge_id"]] = replace(gw.charges.charges[order["gateway_charge_id"]], raw={"customer": "cus_x"})
+        gw.charges.mark_paid(order["gateway_charge_id"])
+        he(db, ORG_A, paid_event(order), FakeEventInbox(), gw, make_fulfillment_registry())
         assert orders.get_order(db, ORG_A, order["id"])["status"] == "paid"
 
 
@@ -192,7 +216,7 @@ class TestFiscalRetention:
     @staticmethod
     def _paid(placed):
         db, order, gw, inbox, reg, _ = placed
-        handle_event(db, ORG_A, paid_event(order["id"]), inbox=inbox, gateway=gw, fulfillment=reg)
+        he(db, ORG_A, paid_event(order), inbox, gw, reg)
         return db, order, gw, inbox, reg
 
     def test_snapshot_on_paid_uses_payment_values_and_sets_window(self, placed):
@@ -209,7 +233,7 @@ class TestFiscalRetention:
         cust = db.table("commerce_customers").select("*").execute().data[0]
         db.table("commerce_customers").update({"name": "Outro Nome", "doc": "11111111111"}).eq("id", cust["id"]).execute()
         snapshot_fiscal_identity(db, ORG_A, first_)
-        handle_event(db, ORG_A, paid_event(order["id"], event_id="evt2", name="PAYMENT_RECEIVED"), inbox=inbox, gateway=gw, fulfillment=reg)
+        he(db, ORG_A, paid_event(order, event_id="evt2", name="PAYMENT_RECEIVED"), inbox, gw, reg)
         again = orders.get_order(db, ORG_A, order["id"])
         assert (again["buyer_doc"], again["buyer_name"], again["fiscal_retain_until"]) == (
             first_["buyer_doc"], first_["buyer_name"], first_["fiscal_retain_until"])

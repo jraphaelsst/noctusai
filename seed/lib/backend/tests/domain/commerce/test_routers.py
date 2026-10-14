@@ -29,6 +29,7 @@ STAFF_ROUTES = [
     ("GET", "/api/commerce/customers"), ("GET", f"/api/commerce/customers/{UUID0}"),
     ("GET", f"/api/commerce/customers/{UUID0}/export"), ("POST", f"/api/commerce/customers/{UUID0}/anonymize"),
     ("GET", "/api/commerce/orders"), ("GET", f"/api/commerce/orders/{UUID0}"), ("POST", f"/api/commerce/orders/{UUID0}/cancel"),
+    ("POST", f"/api/commerce/orders/{UUID0}/refunds"),
     ("GET", "/api/commerce/hosts"), ("POST", "/api/commerce/hosts"), ("DELETE", "/api/commerce/hosts/x.test"),
 ]
 
@@ -273,14 +274,17 @@ class TestWebhookRoute:
     def _order(self, shop):
         h, _, o = shop
         h.client.post("/api/storefront/checkout", json=checkout_body(o["id"]), headers=h.shop())
-        return h, h.db.table("commerce_orders").select("*").execute().data[0]
+        order = h.db.table("commerce_orders").select("*").execute().data[0]
+        h.gateway.sync_charges()
+        h.gateway.charges.mark_paid(order["gateway_charge_id"])  # what the gateway read will show
+        return h, order
 
     def _post(self, h, org, payload, token="hook-token", gateway="asaas"):
         headers = {"asaas-access-token": token} if token is not None else {}
         return h.client.post(f"/api/webhooks/payments/{gateway}/{org}", content=json.dumps(payload), headers=headers)
 
     def _payload(self, order, event="PAYMENT_CONFIRMED", id_="evt_1"):
-        return {"id": id_, "event": event, "payment": {"id": "pay_9", "status": "RECEIVED", "externalReference": order["id"], "customer": "cus_1"}}
+        return {"id": id_, "event": event, "payment": {"id": order["gateway_charge_id"], "status": "RECEIVED", "externalReference": order["id"], "customer": "cus_1"}}
 
     def test_bad_or_missing_token_is_401_and_changes_nothing(self, shop):
         h, order = self._order(shop)

@@ -13,6 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
+from noctusai_lib.api.rate_limit_policies import DEFAULT_PORTAL_RL
 from noctusai_lib.integrations.payments.real_asaas import ASAAS_BASE_URLS, ASAAS_SANDBOX
 
 _IDENT = re.compile(r"^[a-z_][a-z0-9_]*$")
@@ -38,7 +39,7 @@ class CommerceConfig:
             `<org_id>/products/<product_id>/<media_id>.<ext>`.
         license_product_slug: `products.slug` the storefront license check uses
             (an org without an active license for it is a 404, not a 403).
-        storefront_rate_limit / checkout_rate_limit / webhook_rate_limit:
+        storefront_rate_limit / checkout_rate_limit / webhook_rate_limit / payment_rate_limit:
             slowapi limit strings applied through the host-supplied
             `rate_limit` decorator factory (see `storefront_router`).
         terms_version / privacy_version: the legal-text versions the checkout
@@ -71,6 +72,8 @@ class CommerceConfig:
     storefront_rate_limit: str = "120/minute"
     checkout_rate_limit: str = "10/minute"
     webhook_rate_limit: str = "300/minute"
+    #: Regenerate-payment (public, token-addressed): the seed portal policy; per-order caps (5 attempts, 60 s spacing) bound the rest.
+    payment_rate_limit: str = DEFAULT_PORTAL_RL
     terms_version: str = "1.0"
     privacy_version: str = "1.0"
     withdrawal_text: str = DEFAULT_WITHDRAWAL_TEXT
@@ -101,7 +104,7 @@ class CommerceConfig:
             )
         if not _BUCKET.match(self.bucket or ""):
             raise ValueError(f"CommerceConfig.bucket must be a bucket id, got {self.bucket!r}")
-        for name in ("storefront_rate_limit", "checkout_rate_limit", "webhook_rate_limit"):
+        for name in ("storefront_rate_limit", "checkout_rate_limit", "webhook_rate_limit", "payment_rate_limit"):
             if not getattr(self, name).strip():
                 raise ValueError(f"CommerceConfig.{name} must be a non-empty limit string")
         if self.order_expiry_hours < 1 or self.link_ttl_minutes < 1 or self.signed_url_ttl_seconds < 1:

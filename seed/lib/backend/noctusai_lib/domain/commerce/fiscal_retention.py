@@ -53,7 +53,7 @@ def snapshot_fiscal_identity(db: Any, org_id: Any, order: Mapping[str, Any]) -> 
     return first(updated) or {**order, **patch}
 
 
-# NOC-REMEDIATE[commerce-fiscal-purge-schedule]: no commerce job runner exists yet; this must run on a schedule (daily) -- destination P5 (back-office jobs). Until then the host/staff calls it by hand. — 2026-10-13
+# Scheduled daily by `jobs.commerce_fiscal_purge` (registered via `jobs.register_commerce_jobs`); also callable by hand.
 def purge_expired_fiscal_retention(db: Any, org_id: Any = None, today: Optional[date] = None) -> int:
     """Null buyer_doc / buyer_name / fiscal_retain_until where the window ended
     (`fiscal_retain_until <= today`). `org_id=None` sweeps every org. Returns the

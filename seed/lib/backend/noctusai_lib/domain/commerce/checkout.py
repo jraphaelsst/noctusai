@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any, Callable, Mapping, Optional
 
-from noctusai_lib.integrations.payments.checkout import CheckoutRequest, PixQr
+from noctusai_lib.integrations.payments.checkout import CheckoutRequest, CheckoutSession, HostedCheckout, PixQr
 from noctusai_lib.integrations.payments.errors import PaymentGatewayError
 from noctusai_lib.integrations.payments.types import Money
 from noctusai_lib.integrations.persistence.table_reads import in_batched_rows
@@ -35,6 +35,8 @@ from . import coupons as coupons_svc
 from ._common import digits, first, new_id, now, tbl, valid_email
 from .config import CommerceConfig
 from .customers import record_consents, upsert_buyer
+from .installments import installment_options, option_for
+from .order_charges import insert_attempt
 from .errors import ACEITE_OBRIGATORIO, CommerceError, GatewayNotConfigured, invalid
 from .gateway import GATEWAY_NAME, CheckoutGateway
 from .order_state import OrderEvent
@@ -201,7 +203,7 @@ def validate_buyer(buyer: Mapping[str, Any]) -> dict:
     return {"name": name, "email": email, "doc": doc, "phone": phone or None}
 
 
-def _split_for(db: Any, org_id: Any, gateway: CheckoutGateway, total_cents: int) -> tuple[Optional[str], Optional[float], int]:
+def split_for(db: Any, org_id: Any, gateway: CheckoutGateway, total_cents: int) -> tuple[Optional[str], Optional[float], int]:
     """`(wallet_id, percent, expected_fee_cents)`; `(None, None, 0)` when no split applies."""
     profile = get_profile(db, org_id) or {}
     bps = int(profile.get("platform_fee_bps") or 0)
@@ -217,10 +219,78 @@ def _split_for(db: Any, org_id: Any, gateway: CheckoutGateway, total_cents: int)
     return wallet, bps / 100, (total_cents * bps) // 10000
 
 
-def _public_pix(pix: Optional[PixQr]) -> Optional[dict]:
+def public_pix(pix: Optional[PixQr]) -> Optional[dict]:
     if pix is None:
         return None
     return {"payload": pix.payload, "encoded_image": pix.encoded_image, "expires_at": pix.expiration_date}
+
+
+def public_quote(db: Any, org_id: Any, quote: Quote) -> dict:
+    """The storefront quote: the priced cart + the card `installment_options` for this total (D33)."""
+    out = quote.public()
+    out["installment_options"] = installment_options(quote.total_cents, get_profile(db, org_id))
+    return out
+
+
+def parse_installments(method: str, raw: Any) -> int:
+    """The requested number of parcelas: 1 for anything but a card; 422 `parcelamento_invalido` for junk."""
+    try:
+        count = 1 if raw is None else int(raw)
+    except (TypeError, ValueError) as exc:
+        raise CommerceError("parcelamento_invalido", "Parcelamento inválido.", 422, field="installments") from exc
+    if count < 1 or (method != PaymentMethod.CREDIT_CARD.value and count != 1):
+        raise CommerceError("parcelamento_invalido", "Parcelamento inválido para esta forma de pagamento.", 422, field="installments")
+    return count
+
+
+def charged_total(db: Any, org_id: Any, method: str, installments: int, total_cents: int) -> int:
+    """What the gateway charges: the order total, or the Price-table total for a card in more parcelas
+    than the store's interest-free limit. 422 `parcelamento_invalido` when that count is not offered."""
+    if installments == 1:
+        return total_cents
+    option = option_for(total_cents, installments, get_profile(db, org_id))
+    if option is None:
+        raise CommerceError("parcelamento_invalido", "Esse parcelamento não está disponível para este pedido.", 422, field="installments")
+    return int(option["total_cents"])
+
+
+def open_gateway_charge(
+    hosted: HostedCheckout,
+    cfg: CommerceConfig,
+    *,
+    order_id: str,
+    customer_id: str,
+    buyer: Mapping[str, Any],
+    method: str,
+    charged_cents: int,
+    currency: str,
+    installments: int,
+    return_url: str,
+    wallet: Optional[str],
+    percent: Optional[float],
+) -> CheckoutSession:
+    """Create ONE hosted charge for an order attempt (checkout and regenerate share this call).
+    One gateway customer per buyer (`customer_reference`); `external_reference` = the order id."""
+    return hosted.create_checkout(
+        CheckoutRequest(
+            external_reference=order_id,
+            customer_reference=customer_id,
+            email=buyer["email"],
+            name=buyer["name"],
+            price=Money(charged_cents, currency),
+            billing_cycle=None,
+            billing_method=_BILLING_METHOD[method],
+            installment_count=installments,
+            tax_id=buyer["doc"],
+            description=f"Pedido {order_id[:8]}",
+            success_url=return_url,
+            cancel_url=return_url,
+            metadata={"order_id": order_id},
+            due_days=max(1, math.ceil(cfg.order_expiry_hours / 24)),
+            split_wallet_id=wallet,
+            split_percent=percent,
+        )
+    )
 
 
 def create_checkout(
@@ -254,6 +324,8 @@ def create_checkout(
         raise CommerceError("total_zero", "O total do pedido deve ser maior que zero.", 422)
 
     method = PaymentMethod(body["payment_method"]).value
+    installments = parse_installments(method, body.get("installments"))
+    charged_cents = charged_total(db, org_id, method, installments, quote.total_cents)
     # Resolved BEFORE any write: an unconfigured gateway must not leave an orphan order.
     try:
         hosted = gateway.hosted_checkout(org_id)
@@ -266,7 +338,7 @@ def create_checkout(
         raise CommerceError("cupom_invalido", "O cupom informado não pode ser aplicado.", 422, details={"reason": coupons_svc.ESGOTADO})
 
     try:
-        wallet, percent, fee_cents = _split_for(db, org_id, gateway, quote.total_cents)
+        wallet, percent, fee_cents = split_for(db, org_id, gateway, charged_cents)
         at = now()
         order_id, token = new_id(), new_token()
         customer = upsert_buyer(db, org_id, {**buyer, "address": body.get("address") or {}})
@@ -289,6 +361,8 @@ def create_checkout(
             "expires_at": (at + timedelta(hours=cfg.order_expiry_hours)).isoformat(),
             "paid_at": None,
             "platform_fee_cents": fee_cents,
+            "charge_attempts": 0,
+            "last_charge_attempt_at": at.isoformat(),
             "created_at": at.isoformat(),
             "updated_at": at.isoformat(),
         }
@@ -326,23 +400,10 @@ def create_checkout(
         record_consents(db, org_id, customer["id"], order_id=order_id, entries=entries, ip=ip, user_agent=user_agent)
 
         try:
-            session = hosted.create_checkout(
-                CheckoutRequest(
-                    external_reference=order_id,
-                    email=buyer["email"],
-                    name=buyer["name"],
-                    price=Money(quote.total_cents, quote.currency),
-                    billing_cycle=None,
-                    billing_method=_BILLING_METHOD[method],
-                    tax_id=buyer["doc"],
-                    description=f"Pedido {order_id[:8]}",
-                    success_url=order_url_for(token),
-                    cancel_url=order_url_for(token),
-                    metadata={"order_id": order_id},
-                    due_days=max(1, math.ceil(cfg.order_expiry_hours / 24)),
-                    split_wallet_id=wallet,
-                    split_percent=percent,
-                )
+            session = open_gateway_charge(
+                hosted, cfg, order_id=order_id, customer_id=str(customer["id"]), buyer=buyer, method=method,
+                charged_cents=charged_cents, currency=quote.currency, installments=installments,
+                return_url=order_url_for(token), wallet=wallet, percent=percent,
             )
         except PaymentGatewayError as exc:
             logger.error(
@@ -359,11 +420,21 @@ def create_checkout(
                 "pagamento_falhou", "Não foi possível iniciar o pagamento agora. Tente novamente em instantes.", 502
             ) from exc
 
-        pix = _public_pix(session.pix_qr)
+        pix = public_pix(session.pix_qr)
+        # The attempt row lands BEFORE the order moves: a crash in between leaves a `created` order with a
+        # recognisable charge (the webhook recovers it), never a charge nobody can attribute.
+        insert_attempt(
+            db, org_id, order_id, attempt=1, gateway=GATEWAY_NAME, gateway_charge_id=session.id_at_gateway,
+            payment_method=method, installment_count=installments, amount_cents=charged_cents,
+            checkout_url=session.checkout_url, pix_qr=pix, due_at=order_row["expires_at"],
+        )
         order = apply_transition(
             db, org_id, order, OrderEvent.CHARGE_CREATED, source=OrderEventSource.CHECKOUT,
             reason="cobrança criada",
-            extra={"gateway_charge_id": session.id_at_gateway, "checkout_url": session.checkout_url, "pix_qr": pix},
+            extra={
+                "gateway_charge_id": session.id_at_gateway, "checkout_url": session.checkout_url, "pix_qr": pix,
+                "charge_attempts": 1, "last_charge_attempt_at": now().isoformat(),
+            },
         )
     except CommerceError:
         raise
@@ -378,14 +449,22 @@ def create_checkout(
         "checkout_url": session.checkout_url,
         "pix_qr": pix,
         "expires_at": order_row["expires_at"],
+        "installment_count": installments,
+        "charged_cents": charged_cents,
     }
 
 
 __all__ = [
     "MAX_SUBTOTAL_CENTS",
+    "public_pix",
+    "public_quote",
+    "split_for",
     "Quote",
     "build_quote",
+    "charged_total",
     "create_checkout",
+    "open_gateway_charge",
+    "parse_installments",
     "validate_buyer",
     "validate_consents",
 ]

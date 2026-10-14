@@ -51,6 +51,11 @@ PROFILE_FIELDS = (
 )
 
 
+#: Card-installment knobs (D33/D41). Written only when the caller sends them (absent = keep / DB default), so a
+#: host that has not applied the money migration yet still saves its profile.
+INSTALLMENT_FIELDS = ("installments_max", "installments_interest_free", "installment_interest_monthly_bps")
+
+
 def normalize_cnpj(raw: str) -> str:
     """Uppercase alphanumerics only (`12.ABC.345/01DE-35` -> `12ABC34501DE35`)."""
     return re.sub(r"[^0-9A-Za-z]", "", raw or "").upper()
@@ -107,8 +112,23 @@ def put_profile(
     if is_platform_admin and data.get("platform_fee_bps") is not None:
         fee_bps = int(data["platform_fee_bps"])
 
-    now = now_iso()
     row: dict[str, Any] = {k: _plain(data.get(k)) for k in PROFILE_FIELDS}
+    for key in INSTALLMENT_FIELDS:
+        if key in data:
+            row[key] = data[key]
+    effective_max = row.get("installments_max") or (existing or {}).get("installments_max") or 12
+    effective_free = row.get("installments_interest_free") or (existing or {}).get("installments_interest_free") or 3
+    if int(effective_free) > int(effective_max):
+        raise CommerceError(
+            "parcelamento_invalido", "As parcelas sem juros não podem passar do máximo de parcelas.", 422,
+            field="installments_interest_free",
+        )
+    # B2 (fiscal): `nfse_mode` is regime-dependent (a CHECK forbids 'municipal' for mei/simples), so a regime change
+    # clears it back to NULL = "the regime default". Only touched when the stored row actually carries a value
+    # (the column exists only once the fiscal migration is applied).
+    if existing is not None and existing.get("nfse_mode") is not None and existing.get("tax_regime") != row.get("tax_regime"):
+        row["nfse_mode"] = None
+    now = now_iso()
     row["cnpj"] = cnpj
     row["tax_treatment"] = row.get("tax_treatment") or {}
     row["brand_tokens"] = row.get("brand_tokens") or {}
@@ -196,6 +216,7 @@ async def cnpj_prefill(lookup: CnpjRegistryLookup, raw_cnpj: str) -> dict:
 
 
 __all__ = [
+    "INSTALLMENT_FIELDS",
     "PROFILE_FIELDS",
     "cnpj_prefill",
     "current_version",

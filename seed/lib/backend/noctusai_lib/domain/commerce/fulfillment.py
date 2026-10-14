@@ -22,15 +22,34 @@ from .types import FulfillmentType
 logger = logging.getLogger(__name__)
 
 
+#: The P4 lifecycle hooks a handler MAY define (see the module docstring).
+LIFECYCLE_HOOKS: tuple[str, ...] = ("on_paused", "on_resumed", "on_revoked", "on_expired")
+
+
 @runtime_checkable
 class FulfillmentHandler(Protocol):
+    """`on_paid` is the one required method; the lifecycle hooks are optional
+    (`LIFECYCLE_HOOKS`) -- subclass `NoopFulfillment` to get all of them as no-ops."""
+
     def on_paid(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None: ...
 
 
 class NoopFulfillment:
-    """The P3 default for every `FulfillmentType`: nothing to deliver yet."""
+    """The default for every `FulfillmentType`: nothing to deliver, nothing to take back."""
 
     def on_paid(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
+        return None
+
+    def on_paused(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
+        return None
+
+    def on_resumed(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
+        return None
+
+    def on_revoked(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
+        return None
+
+    def on_expired(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> None:
         return None
 
 
@@ -49,18 +68,39 @@ class FulfillmentRegistry:
     def handler_for(self, ftype: FulfillmentType | str) -> FulfillmentHandler:
         return self._handlers[FulfillmentType(ftype)]
 
-    def dispatch_paid(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
-        """Call each fulfillment type's handler ONCE with that type's items.
-        Returns the types dispatched (declaration order)."""
+    def _dispatch(self, hook: str, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
         by_type: dict[FulfillmentType, list[Mapping[str, Any]]] = {}
         for item in items:
             by_type.setdefault(FulfillmentType(item["fulfillment_type"]), []).append(item)
         dispatched: list[FulfillmentType] = []
         for ftype in FulfillmentType:
             if ftype in by_type:
-                self._handlers[ftype].on_paid(order, by_type[ftype])
+                method = getattr(self._handlers[ftype], hook, None)
+                if method is not None:  # a pre-P4 handler has no lifecycle hooks: that is a no-op, not an error
+                    method(order, by_type[ftype])
                 dispatched.append(ftype)
         return dispatched
+
+    def dispatch_paid(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """Call each fulfillment type's handler ONCE with that type's items.
+        Returns the types dispatched (declaration order)."""
+        return self._dispatch("on_paid", order, items)
+
+    def dispatch_paused(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """The order entered `disputed`."""
+        return self._dispatch("on_paused", order, items)
+
+    def dispatch_resumed(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """The dispute was won."""
+        return self._dispatch("on_resumed", order, items)
+
+    def dispatch_revoked(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """The order became `refunded` / `chargeback`."""
+        return self._dispatch("on_revoked", order, items)
+
+    def dispatch_expired(self, order: Mapping[str, Any], items: Sequence[Mapping[str, Any]]) -> list[FulfillmentType]:
+        """The order became `expired`."""
+        return self._dispatch("on_expired", order, items)
 
 
 def make_fulfillment_registry(
@@ -70,6 +110,7 @@ def make_fulfillment_registry(
 
 
 __all__ = [
+    "LIFECYCLE_HOOKS",
     "FulfillmentHandler",
     "FulfillmentRegistry",
     "NoopFulfillment",

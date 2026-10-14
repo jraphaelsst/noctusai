@@ -14,12 +14,28 @@ S, E = OrderStatus, OrderEvent
 CONTRACT = {
     S.CREATED: {S.PENDING_PAYMENT, S.FAILED, S.CANCELLED},
     S.PENDING_PAYMENT: {S.PAID, S.EXPIRED, S.FAILED, S.CANCELLED},
-    S.EXPIRED: {S.PAID, S.CANCELLED},
+    S.EXPIRED: {S.PAID, S.CANCELLED, S.PENDING_PAYMENT},
     S.FAILED: {S.PENDING_PAYMENT},
-    S.PAID: {S.REFUNDED, S.CHARGEBACK},
+    S.PAID: {S.REFUNDED, S.CHARGEBACK, S.PARTIALLY_REFUNDED, S.DISPUTED},
+    S.PARTIALLY_REFUNDED: {S.PARTIALLY_REFUNDED, S.REFUNDED, S.CHARGEBACK, S.DISPUTED},
+    S.DISPUTED: {S.PAID, S.PARTIALLY_REFUNDED, S.CHARGEBACK},
     S.CANCELLED: set(),
     S.REFUNDED: set(),
     S.CHARGEBACK: set(),
+}
+
+#: CONTRACT §2.2 -- the P4 additions, one target per (state, event), written out independently.
+P4_EDGES = {
+    (S.EXPIRED, E.RETRY): S.PENDING_PAYMENT,
+    (S.PAID, E.PARTIAL_REFUND): S.PARTIALLY_REFUNDED,
+    (S.PARTIALLY_REFUNDED, E.PARTIAL_REFUND): S.PARTIALLY_REFUNDED,
+    (S.PARTIALLY_REFUNDED, E.REFUND): S.REFUNDED,
+    (S.PAID, E.DISPUTE_OPENED): S.DISPUTED,
+    (S.PARTIALLY_REFUNDED, E.DISPUTE_OPENED): S.DISPUTED,
+    (S.DISPUTED, E.DISPUTE_WON): S.PAID,
+    (S.DISPUTED, E.DISPUTE_WON_PARTIAL): S.PARTIALLY_REFUNDED,
+    (S.DISPUTED, E.DISPUTE_LOST): S.CHARGEBACK,
+    (S.PARTIALLY_REFUNDED, E.CHARGEBACK): S.CHARGEBACK,
 }
 
 
@@ -70,3 +86,19 @@ def test_accepts_wire_strings_and_rejects_unknown_ones():
 def test_a_repeated_event_is_an_error_not_a_silent_noop():
     with pytest.raises(InvalidTransition):
         transition(S.PAID, E.PAYMENT_CONFIRMED)
+
+
+@pytest.mark.parametrize("edge,target", list(P4_EDGES.items()))
+def test_p4_edges_are_in_the_table_with_one_target(edge, target):
+    assert TRANSITIONS[edge] is target
+
+
+def test_the_p3_paid_to_chargeback_edge_stays():
+    assert transition(S.PAID, E.CHARGEBACK) is S.CHARGEBACK
+    assert transition(S.PAID, E.REFUND) is S.REFUNDED
+
+
+def test_a_dispute_cannot_be_refunded_or_charged_back_directly():
+    for event in (E.REFUND, E.PARTIAL_REFUND, E.CHARGEBACK, E.PAYMENT_CONFIRMED):
+        with pytest.raises(InvalidTransition):
+            transition(S.DISPUTED, event)

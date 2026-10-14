@@ -7,7 +7,10 @@ CONTRACT_ENUMS = {
     "ProductType": ["digital", "physical", "service", "print_on_demand"],
     "FulfillmentType": ["digital_delivery", "shipping", "pickup", "local_delivery", "none"],
     "ProductStatus": ["draft", "in_review", "published", "unlisted", "retired"],
-    "OrderStatus": ["created", "pending_payment", "paid", "expired", "failed", "cancelled", "refunded", "chargeback"],
+    "OrderStatus": [
+        "created", "pending_payment", "paid", "expired", "failed", "cancelled", "refunded", "chargeback",
+        "partially_refunded", "disputed",
+    ],
     "TaxRegime": ["mei", "simples", "lucro_presumido", "lucro_real", "outro"],
     "TaxTreatment": ["service_nfse", "rights_receipt", "goods_nfe", "none"],
     "CouponKind": ["percent", "fixed"],
@@ -15,6 +18,9 @@ CONTRACT_ENUMS = {
     "PrivacyRequestKind": ["access", "correction", "deletion", "portability", "revoke_consent"],
     "FieldSource": ["form", "payment", "staff"],
     "PaymentMethod": ["pix", "boleto", "credit_card"],
+    "RefundStatus": ["requested", "done", "failed"],
+    "ChargeAttemptStatus": ["pending", "paid", "expired", "cancelled", "failed"],
+    "ReminderKind": ["before_expiry", "after_expiry"],
     # closed sets fixed by §2 columns (mirrored by the FE types.ts)
     "MediaKind": ["image", "video"],
     "PrivacyRequestStatus": ["open", "verified", "done", "rejected"],

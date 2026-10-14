@@ -17,8 +17,10 @@ from noctusai_lib.integrations.persistence.table_reads import paged_rows
 
 from ._common import first, get_row, new_id, now, now_iso, page_rows, tbl
 from .errors import CommerceError, not_found
+from .gateway import CheckoutGateway
+from .order_charges import cancel_gateway_charge, current_attempt, ensure_attempt_row, set_attempt_status
 from .order_state import InvalidTransition, OrderEvent, transition
-from .types import OrderEventSource, OrderStatus
+from .types import ChargeAttemptStatus, OrderEventSource, OrderStatus
 
 logger = logging.getLogger(__name__)
 
@@ -157,11 +159,20 @@ def order_detail(db: Any, org_id: Any, order_id: Any) -> dict:
 
 # ─── staff actions ───────────────────────────────────────────────────────
 
-# NOC-REMEDIATE[commerce-gateway-cancel]: cancelling a pending order does not void the gateway charge (HostedCheckout has no cancel/delete); a payment that still lands on a cancelled order is ignored by the webhook and needs a manual refund. — 2026-10-12
-
-
-def cancel_order(db: Any, org_id: Any, order_id: Any, *, reason: Optional[str] = None) -> dict:
+def cancel_order(
+    db: Any, org_id: Any, order_id: Any, *, reason: Optional[str] = None, gateway: Optional[CheckoutGateway] = None
+) -> dict:
+    """Cancel an order. With a `gateway` the live charge is VOIDED first (closes
+    `NOC-REMEDIATE[commerce-gateway-cancel]`): if it cannot be proven dead the cancel is refused with 409
+    `cobranca_anterior_ativa` -- a cancelled order must not keep a payable charge. Without a gateway (a host that
+    never wired one) only the order moves, and a payment that still lands is ignored by the webhook + alerted."""
     order = get_order(db, org_id, order_id)
+    if gateway is not None and order["status"] in (OrderStatus.CREATED.value, OrderStatus.PENDING_PAYMENT.value):
+        rows = ensure_attempt_row(db, org_id, order)
+        live = current_attempt(rows, order)
+        if live is not None and live["status"] == ChargeAttemptStatus.PENDING.value:
+            cancel_gateway_charge(gateway, org_id, live["gateway_charge_id"])
+            set_attempt_status(db, org_id, live["id"], ChargeAttemptStatus.CANCELLED)
     try:
         return apply_transition(
             db, org_id, order, OrderEvent.CANCEL, source=OrderEventSource.STAFF, reason=reason or "cancelado pela equipe"

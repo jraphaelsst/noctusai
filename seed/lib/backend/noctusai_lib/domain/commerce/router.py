@@ -24,8 +24,9 @@ import logging
 from typing import Any, Callable, Optional, get_type_hints
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, Query, Request, Response, UploadFile
 
+from noctusai_lib.domain.finance.booking import FinanceBooking, NoopFinanceBooking
 from noctusai_lib.domain.licensing import LicenseChecker
 from noctusai_lib.domain.payments.event_inbox import EventInbox
 from noctusai_lib.integrations.cnpj_registry import CnpjRegistryLookup
@@ -41,14 +42,18 @@ from . import coupons as coupons_svc
 from . import customers as customers_svc
 from . import hosts as hosts_svc
 from . import media as media_svc
+from . import order_money as order_money_svc
 from . import orders as orders_svc
 from . import profile as profile_svc
+from . import refunds as refunds_svc
+from . import regenerate as regenerate_svc
 from . import storefront as store_svc
 from . import webhook as webhook_svc
 from .config import CommerceConfig, CommerceContext
 from .errors import CommerceError
 from .fulfillment import FulfillmentRegistry, make_fulfillment_registry
 from .gateway import GATEWAY_NAME, CheckoutGateway
+from .money import MoneyDeps
 from .schemas import (
     AccessLinkBody,
     CategoryBody,
@@ -60,11 +65,13 @@ from .schemas import (
     HostBody,
     OfferBody,
     OfferPatch,
+    PaymentBody,
     PrivacyRequestBody,
     ProductBody,
     ProductPatch,
     ProfileBody,
     QuoteBody,
+    RefundBody,
     StatusBody,
     TokenBody,
 )
@@ -121,6 +128,11 @@ def commerce_staff_router(
     get_storage: Callable[..., StorageBackend],
     get_cnpj_lookup: Callable[..., CnpjRegistryLookup],
     is_platform_admin: Callable[[Any], bool],
+    admin_dependency: Optional[Callable[..., Any]] = None,
+    get_gateway: Optional[Callable[..., CheckoutGateway]] = None,
+    get_finance: Optional[Callable[..., FinanceBooking]] = None,
+    get_fulfillment: Optional[Callable[..., FulfillmentRegistry]] = None,
+    get_email: Optional[Callable[..., EmailSender]] = None,
     prefix: str = "/api/commerce",
     tags: Optional[list[str]] = None,
 ) -> APIRouter:
@@ -134,6 +146,11 @@ def commerce_staff_router(
         is_platform_admin: `(auth_value) -> bool`, decided SERVER-SIDE (the seed's
             `is_platform_staff`); gates `platform_fee_bps` and the `/hosts` routes.
             Never derived from client input.
+        admin_dependency: the ORG-admin gate (`require_org_admin(...)`; 403 for plain staff) -- required for
+            refunds (CONTRACT §0). Left unset it FAILS CLOSED: every admin action answers 403.
+        get_gateway / get_finance / get_fulfillment / get_email: the money collaborators (P4). Without
+            `get_gateway` the refund route answers 503 `pagamento_indisponivel` and cancelling an order cannot
+            void its charge; without `get_finance` nothing is booked; without `get_email` staff alerts are logged.
     """
     router = APIRouter(prefix=prefix, tags=tags or ["commerce"])
 
@@ -143,6 +160,21 @@ def commerce_staff_router(
     def platform_admin_dep(auth=Depends(auth_dependency)) -> None:
         if not is_platform_admin(auth):
             raise ForbiddenError("Apenas a administração da plataforma pode fazer isso.")
+
+    def _no_admin_gate(auth=Depends(auth_dependency)) -> None:
+        raise ForbiddenError("Apenas administradores da organização podem fazer isso.")
+
+    org_admin_dep = admin_dependency or _no_admin_gate
+
+    gw_dep = get_gateway or (lambda: None)
+    fin_dep = get_finance or (lambda: _DEFAULT_FINANCE)
+    ful_dep = get_fulfillment or (lambda: _DEFAULT_REGISTRY)
+    mail_dep = get_email or (lambda: None)
+
+    def money_deps(gateway=Depends(gw_dep), finance=Depends(fin_dep), fulfillment=Depends(ful_dep), email=Depends(mail_dep)) -> Optional[MoneyDeps]:
+        if gateway is None:
+            return None
+        return MoneyDeps(cfg=cfg, gateway=gateway, fulfillment=fulfillment, finance=finance, email=email)
 
     # ── profile ──
     @router.get("/profile", name="commerce_get_profile")
@@ -154,6 +186,9 @@ def commerce_staff_router(
         body: ProfileBody, auth=Depends(auth_dependency), ctx: CommerceContext = Depends(ctx_dep)
     ) -> dict:
         data = _dump(body)
+        for key in profile_svc.INSTALLMENT_FIELDS:  # only what the client SENT is written (null is meaningful for the rate)
+            if key not in body.model_fields_set:
+                data.pop(key, None)
         saved = profile_svc.put_profile(
             ctx.db, ctx.org_id, ctx.user_id, data,
             expected_version=body.expected_version, is_platform_admin=is_platform_admin(auth),
@@ -340,14 +375,35 @@ def commerce_staff_router(
             raise CommerceError("invalid", "Status de pedido inválido.", 422, field="status") from exc
         return paginated_response(rows, total, page, size)
 
+    def _order_view(ctx: CommerceContext, order_id: UUID) -> dict:
+        return {**orders_svc.order_detail(ctx.db, ctx.org_id, order_id), **order_money_svc.money_detail(ctx.db, ctx.org_id, order_id)}
+
     @router.get("/orders/{order_id}", name="commerce_get_order")
     async def get_order_route(order_id: UUID, ctx: CommerceContext = Depends(ctx_dep)) -> dict:
-        return success_response(orders_svc.order_detail(ctx.db, ctx.org_id, order_id))
+        return success_response(_order_view(ctx, order_id))
 
     @router.post("/orders/{order_id}/cancel", name="commerce_cancel_order")
-    async def cancel_order_route(order_id: UUID, ctx: CommerceContext = Depends(ctx_dep)) -> dict:
-        orders_svc.cancel_order(ctx.db, ctx.org_id, order_id)
-        return success_response(orders_svc.order_detail(ctx.db, ctx.org_id, order_id))
+    async def cancel_order_route(
+        order_id: UUID, ctx: CommerceContext = Depends(ctx_dep), deps: Optional[MoneyDeps] = Depends(money_deps)
+    ) -> dict:
+        orders_svc.cancel_order(ctx.db, ctx.org_id, order_id, gateway=deps.gateway if deps else None)
+        return success_response(_order_view(ctx, order_id))
+
+    @router.post("/orders/{order_id}/refunds", status_code=201, name="commerce_create_refund", dependencies=[Depends(org_admin_dep)])
+    async def create_refund_route(
+        order_id: UUID,
+        body: RefundBody,
+        idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", max_length=200),
+        ctx: CommerceContext = Depends(ctx_dep),
+        deps: Optional[MoneyDeps] = Depends(money_deps),
+    ) -> dict:
+        if deps is None:
+            raise CommerceError("pagamento_indisponivel", "O gateway de pagamento não está configurado neste serviço.", 503)
+        refund = await refunds_svc.create_refund(
+            ctx.db, ctx.org_id, deps, order_id,
+            amount_cents=body.amount_cents, reason=body.reason, requested_by=ctx.user_id, idempotency_key=idempotency_key,
+        )
+        return success_response(refund)
 
     # ── hosts (platform admin only) ──
     @router.get("/hosts", name="commerce_list_hosts", dependencies=[Depends(platform_admin_dep)])
@@ -427,7 +483,7 @@ def storefront_router(
 
     async def quote(request: Request, body: QuoteBody, org_id: str = Depends(org_dep), db=Depends(get_db)) -> dict:
         built = checkout_svc.build_quote(db, org_id, [_dump(i) for i in body.items], body.coupon)
-        return success_response(built.public())
+        return success_response(checkout_svc.public_quote(db, org_id, built))
 
     async def checkout(
         request: Request,
@@ -446,6 +502,22 @@ def storefront_router(
 
     async def order_by_token(request: Request, token: str, org_id: str = Depends(org_dep), db=Depends(get_db)) -> dict:
         return success_response(store_svc.order_view_by_token(db, org_id, token))
+
+    async def order_payment(
+        request: Request,
+        token: str,
+        body: PaymentBody,
+        org_id: str = Depends(org_dep),
+        db=Depends(get_db),
+        gateway=Depends(get_gateway),
+    ) -> dict:
+        base = _base_url(request)
+        result = regenerate_svc.regenerate_payment(
+            db, org_id, cfg, gateway, token,
+            payment_method=body.payment_method.value, installments=body.installments,
+            order_url_for=lambda t: base + cfg.order_path_template.format(token=t),
+        )
+        return success_response(result)
 
     async def access_link(
         request: Request,
@@ -501,6 +573,9 @@ def storefront_router(
     )
     router.add_api_route("/orders/access-link", limited(write_limit, access_link), methods=["POST"], status_code=202, name="storefront_access_link")
     router.add_api_route("/orders/{token}", limited(read_limit, order_by_token), methods=["GET"], name="storefront_order")
+    router.add_api_route(
+        "/orders/{token}/payment", limited(cfg.payment_rate_limit, order_payment), methods=["POST"], name="storefront_order_payment"
+    )
     router.add_api_route("/my-orders", limited(read_limit, my_orders), methods=["GET"], name="storefront_my_orders")
     router.add_api_route("/privacy-requests", limited(write_limit, privacy_request), methods=["POST"], status_code=202, name="storefront_privacy_request")
     router.add_api_route("/privacy-requests/verify", limited(write_limit, privacy_verify), methods=["POST"], name="storefront_privacy_verify")
@@ -522,6 +597,8 @@ def commerce_webhook_router(
     get_gateway: Callable[..., CheckoutGateway],
     get_event_inbox: Callable[..., EventInbox],
     get_fulfillment: Optional[Callable[..., FulfillmentRegistry]] = None,
+    get_finance: Optional[Callable[..., FinanceBooking]] = None,
+    get_email: Optional[Callable[..., EmailSender]] = None,
     rate_limit: Optional[RateLimit] = None,
     prefix: str = "/api/webhooks/payments",
     tags: Optional[list[str]] = None,
@@ -537,6 +614,8 @@ def commerce_webhook_router(
     """
     router = APIRouter(prefix=prefix, tags=tags or ["commerce-webhooks"])
     registry_dep = get_fulfillment or (lambda: _DEFAULT_REGISTRY)
+    finance_dep = get_finance or (lambda: _DEFAULT_FINANCE)
+    email_dep = get_email or (lambda: None)
 
     async def receive(
         request: Request,
@@ -546,6 +625,8 @@ def commerce_webhook_router(
         gateway=Depends(get_gateway),
         inbox=Depends(get_event_inbox),
         fulfillment=Depends(registry_dep),
+        finance=Depends(finance_dep),
+        email=Depends(email_dep),
     ) -> dict:
         if gateway_name != GATEWAY_NAME:
             raise NotFoundError("Gateway")
@@ -556,7 +637,8 @@ def commerce_webhook_router(
         except PaymentWebhookSignatureError as exc:
             logger.warning("commerce webhook: verification failed (org=%s): %s", org_id, getattr(exc, "detail", exc))
             raise CommerceError("assinatura_invalida", "Assinatura do webhook inválida.", 401) from exc
-        outcome = webhook_svc.handle_event(db, str(org_id), event, inbox=inbox, gateway=gateway, fulfillment=fulfillment)
+        deps = MoneyDeps(cfg=cfg, gateway=gateway, fulfillment=fulfillment, finance=finance, email=email)
+        outcome = await webhook_svc.handle_event(db, str(org_id), event, inbox=inbox, deps=deps)
         return {"received": True, "outcome": outcome}
 
     handler = _apply_limit(rate_limit, cfg.webhook_rate_limit, receive)
@@ -565,6 +647,7 @@ def commerce_webhook_router(
 
 
 _DEFAULT_REGISTRY = make_fulfillment_registry()
+_DEFAULT_FINANCE = NoopFinanceBooking()
 
 
 __all__ = ["RateLimit", "commerce_staff_router", "commerce_webhook_router", "storefront_router"]

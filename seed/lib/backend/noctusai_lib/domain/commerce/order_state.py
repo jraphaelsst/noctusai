@@ -16,7 +16,10 @@ Transitions (the whole table):
     pending_payment  -> paid | expired | failed | cancelled
     expired          -> paid (late payment = recovery) | cancelled
     failed           -> pending_payment (retry)
-    paid             -> refunded | chargeback
+    paid             -> refunded | partially_refunded | chargeback | disputed
+    partially_refunded -> partially_refunded | refunded | chargeback | disputed
+    disputed         -> paid | partially_refunded | chargeback      (won / won with refunds / lost)
+    expired          -> pending_payment (buyer regenerates the payment, P4)
     terminal: cancelled, refunded, chargeback
 """
 from __future__ import annotations
@@ -37,6 +40,12 @@ class OrderEvent(str, Enum):
     RETRY = "retry"                          # a failed order gets a new charge
     REFUND = "refund"
     CHARGEBACK = "chargeback"
+    # P4 money states (CONTRACT §2.2)
+    PARTIAL_REFUND = "partial_refund"          # a refund that leaves money with the merchant
+    DISPUTE_OPENED = "dispute_opened"          # a chargeback dispute started
+    DISPUTE_WON = "dispute_won"                # back to `paid`
+    DISPUTE_WON_PARTIAL = "dispute_won_partial"  # back to `partially_refunded` (refunds were already made)
+    DISPUTE_LOST = "dispute_lost"              # -> `chargeback`
 
 
 class InvalidTransition(Exception):
@@ -63,9 +72,20 @@ TRANSITIONS: dict[tuple[OrderStatus, OrderEvent], OrderStatus] = {
     (S.PENDING_PAYMENT, E.CANCEL): S.CANCELLED,
     (S.EXPIRED, E.PAYMENT_CONFIRMED): S.PAID,
     (S.EXPIRED, E.CANCEL): S.CANCELLED,
+    (S.EXPIRED, E.RETRY): S.PENDING_PAYMENT,
     (S.FAILED, E.RETRY): S.PENDING_PAYMENT,
     (S.PAID, E.REFUND): S.REFUNDED,
     (S.PAID, E.CHARGEBACK): S.CHARGEBACK,
+    # P4 money states
+    (S.PAID, E.PARTIAL_REFUND): S.PARTIALLY_REFUNDED,
+    (S.PARTIALLY_REFUNDED, E.PARTIAL_REFUND): S.PARTIALLY_REFUNDED,
+    (S.PARTIALLY_REFUNDED, E.REFUND): S.REFUNDED,
+    (S.PARTIALLY_REFUNDED, E.CHARGEBACK): S.CHARGEBACK,
+    (S.PAID, E.DISPUTE_OPENED): S.DISPUTED,
+    (S.PARTIALLY_REFUNDED, E.DISPUTE_OPENED): S.DISPUTED,
+    (S.DISPUTED, E.DISPUTE_WON): S.PAID,
+    (S.DISPUTED, E.DISPUTE_WON_PARTIAL): S.PARTIALLY_REFUNDED,
+    (S.DISPUTED, E.DISPUTE_LOST): S.CHARGEBACK,
 }
 
 TERMINAL_STATES: frozenset[OrderStatus] = frozenset(

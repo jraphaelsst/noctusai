@@ -53,6 +53,11 @@ class ProfileBody(StrictHttpModel):
     contact_phone: Optional[str] = Field(default=None, max_length=40)
     #: Honoured ONLY for a platform admin; silently ignored otherwise (CONTRACT §3).
     platform_fee_bps: Optional[int] = Field(default=None, ge=0, le=10000)
+    #: Card installments (D33/D41). Only the fields the client SENT are written (the route filters on
+    #: `model_fields_set`); `installment_interest_monthly_bps: null` = follow the platform default.
+    installments_max: Optional[int] = Field(default=None, ge=1, le=12)
+    installments_interest_free: Optional[int] = Field(default=None, ge=1, le=12)
+    installment_interest_monthly_bps: Optional[int] = Field(default=None, ge=0, le=2000)
     expected_version: int = Field(ge=0)
 
     @field_validator("brand_tokens", "address")
@@ -197,6 +202,8 @@ class CheckoutBody(StrictHttpModel):
     buyer: Buyer
     address: Optional[dict[str, Any]] = None
     payment_method: PaymentMethod
+    #: Unbounded here ON PURPOSE: a bad count is the domain error `parcelamento_invalido` (422), not a generic one.
+    installments: int = Field(default=1, ge=-1000, le=1000)
     #: Optional at the schema level ON PURPOSE: a missing block is the domain
     #: error `aceite_obrigatorio` (422), not a generic validation error.
     consents: Optional[Consents] = None
@@ -205,6 +212,20 @@ class CheckoutBody(StrictHttpModel):
     @classmethod
     def _small(cls, v: Optional[dict]) -> Optional[dict]:
         return _bounded_json(v, "address") if v is not None else v
+
+
+class PaymentBody(StrictHttpModel):
+    """`POST /storefront/orders/{token}/payment` -- regenerate / switch the payment of an order."""
+
+    payment_method: PaymentMethod
+    installments: Optional[int] = Field(default=None, ge=-1000, le=1000)
+
+
+class RefundBody(StrictHttpModel):
+    """`POST /orders/{id}/refunds`. `amount_cents` omitted = everything still refundable."""
+
+    amount_cents: Optional[int] = Field(default=None, gt=0, le=2_000_000_000)
+    reason: str = Field(min_length=3, max_length=300)
 
 
 class AccessLinkBody(StrictHttpModel):
@@ -235,12 +256,14 @@ __all__ = [
     "MAX_PRICE_CENTS",
     "OfferBody",
     "OfferPatch",
+    "PaymentBody",
     "ProductBody",
     "ProductPatch",
     "ProfileBody",
     "PrivacyRequestBody",
     "QuoteBody",
     "QuoteItem",
+    "RefundBody",
     "StatusBody",
     "TokenBody",
 ]

@@ -592,6 +592,8 @@ class FakeHostedCheckout:
     def __init__(self, *, checkout_base_url: str = "https://checkout.fake.test/") -> None:
         self._base_url = checkout_base_url.rstrip("/")
         self.sessions: dict[str, CheckoutSession] = {}
+        #: `customer_key -> gateway customer id` (one per buyer when `customer_reference` is set).
+        self._customers: dict[str, str] = {}
         # Recorded calls, so a test can assert on intent, not just outcome.
         self.calls: list[tuple[str, object]] = []
         self._seq = 0
@@ -612,6 +614,10 @@ class FakeHostedCheckout:
     def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
         self.calls.append(("create_checkout", request))
         session_id = self._next_id("pay" if request.is_one_off else "cs")
+        # Honour the P4 request fields like the Real adapters: a buyer keeps ONE gateway
+        # customer (`customer_reference`) across charges; the per-charge key stays `external_reference`.
+        customer_key = request.customer_key
+        customer_id = self._customers.setdefault(customer_key, self._next_id("cus"))
         pix_qr: Optional[PixQr] = None
         if request.billing_method == "pix":
             pix_qr = PixQr(
@@ -622,10 +628,11 @@ class FakeHostedCheckout:
         session = CheckoutSession(
             id_at_gateway=session_id,
             checkout_url=f"{self._base_url}/{session_id}",
-            customer_id_at_gateway=self._next_id("cus"),
+            customer_id_at_gateway=customer_id,
             external_reference=request.external_reference,
             subscription_id_at_gateway=None if request.is_one_off else self._next_id("sub"),
             pix_qr=pix_qr,
+            raw={"installment_count": request.installment_count, "customer_key": customer_key},
         )
         self.sessions[session_id] = session
         return session

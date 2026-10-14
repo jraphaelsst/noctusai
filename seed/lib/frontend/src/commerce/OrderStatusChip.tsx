@@ -12,6 +12,8 @@ const VARIANT: Record<OrderStatus, BadgeVariant> = {
   cancelled: 'muted',
   refunded: 'outline',
   chargeback: 'destructive',
+  partially_refunded: 'outline',
+  disputed: 'destructive',
 };
 
 export function OrderStatusChip({ status, locale }: { status: OrderStatus; locale?: string }) {

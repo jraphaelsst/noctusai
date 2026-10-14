@@ -43,7 +43,6 @@ from .types import (
     FulfillmentType,
     MediaKind,
     OrderEventSource,
-    OrderStatus,
     PaymentMethod,
     PrivacyRequestKind,
     PrivacyRequestStatus,
@@ -87,6 +86,16 @@ APPEND_ONLY_TABLES: tuple[str, ...] = (
 
 def _in(enum_cls) -> str:
     return ", ".join(f"'{v}'" for v in values(enum_cls))
+
+
+#: The order statuses the BASE migration allows -- frozen at the P3 set on purpose. A host has already applied
+#: `012_commerce.sql` (the generator's output verbatim, pinned by a parity test and "never edit 012"), so the
+#: base output must stay byte-identical; `partially_refunded` / `disputed` (P4) arrive through the money delta
+#: (`money_sql.commerce_money_migration`), which replaces these CHECKs.
+P3_ORDER_STATUSES: tuple[str, ...] = (
+    "created", "pending_payment", "paid", "expired", "failed", "cancelled", "refunded", "chargeback",
+)
+_P3_STATUSES = ", ".join(f"'{v}'" for v in P3_ORDER_STATUSES)
 
 
 def _org_rls(schema: str, table: str, org_id_expr: str) -> str:
@@ -379,7 +388,7 @@ CREATE TABLE IF NOT EXISTS {s}.commerce_orders (
     org_id             UUID NOT NULL,
     token              TEXT NOT NULL UNIQUE,
     customer_id        UUID NOT NULL REFERENCES {s}.commerce_customers(id),
-    status             TEXT NOT NULL DEFAULT 'created' CHECK (status IN ({_in(OrderStatus)})),
+    status             TEXT NOT NULL DEFAULT 'created' CHECK (status IN ({_P3_STATUSES})),
     subtotal_cents     INTEGER NOT NULL CHECK (subtotal_cents >= 0),
     discount_cents     INTEGER NOT NULL DEFAULT 0 CHECK (discount_cents >= 0),
     total_cents        INTEGER NOT NULL CHECK (total_cents >= 0),
@@ -445,8 +454,8 @@ CREATE TABLE IF NOT EXISTS {s}.commerce_order_events (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id       UUID NOT NULL,
     order_id     UUID NOT NULL REFERENCES {s}.commerce_orders(id) ON DELETE CASCADE,
-    from_status  TEXT CHECK (from_status IS NULL OR from_status IN ({_in(OrderStatus)})),
-    to_status    TEXT NOT NULL CHECK (to_status IN ({_in(OrderStatus)})),
+    from_status  TEXT CHECK (from_status IS NULL OR from_status IN ({_P3_STATUSES})),
+    to_status    TEXT NOT NULL CHECK (to_status IN ({_P3_STATUSES})),
     reason       TEXT,
     source       TEXT NOT NULL CHECK (source IN ({_in(OrderEventSource)})),
     at           TIMESTAMPTZ NOT NULL DEFAULT now()
