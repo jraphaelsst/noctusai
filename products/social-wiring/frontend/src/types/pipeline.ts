@@ -74,6 +74,9 @@ export interface Atendimento {
   arquivado: boolean;
   closed_at: string | null;
   created_at: string;
+  /** Why the deal was lost (`status === "perdida"`): closed-set key + free note. */
+  motivo_perda_categoria?: string | null;
+  motivo_perda?: string | null;
   lead?: AtendimentoLead | null;
   campanha?: AtendimentoCampanha | null;
   /** The person this card is about (`social_wiring.clientes`, migration 048). */

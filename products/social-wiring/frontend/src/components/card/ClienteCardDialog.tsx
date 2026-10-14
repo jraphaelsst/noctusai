@@ -42,6 +42,7 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
   Archive,
+  ThumbsDown,
   Bell,
   ExternalLink,
   Loader2,
@@ -80,6 +81,7 @@ import {
   DadosPessoaisForm,
   type DadosPessoais,
 } from "@/components/card/DadosPessoaisForm";
+import { motivoPerdaLabel } from "@/lib/motivoPerda";
 import { formatDate } from "@/lib/utils";
 import { formatIdentificador } from "@noctusai/lib/identificador";
 import { cn } from "@/lib/utils";
@@ -153,6 +155,14 @@ export interface ClienteCardDialogProps {
   onArquivarAtendimento?: () => void;
   /** Disables the archive icon while the mutation is in flight. */
   arquivandoAtendimento?: boolean;
+  /**
+   * Mark THIS FUNIL CARD as lost (asks for a reason in a SIBLING dialog owned
+   * by `ClienteDetailModal`). Absent ⇒ the icon hides: no atendimento in
+   * context, or the atendimento is not `aberta`.
+   */
+  onPerderAtendimento?: () => void;
+  /** Disables the "perdida" icon while the mutation is in flight. */
+  perdendoAtendimento?: boolean;
   /**
    * Hard-delete the CLIENTE (irreversible) — admin/owner only. Absent ⇒
    * the icon hides: the container only ever passes this when the caller
@@ -787,6 +797,7 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
         //    phone.
         afterTags: (
           <>
+            <AtendimentosPerdidos atendimentos={props.atendimentos} />
             <ContatoResumo dados={props.dadosPessoais} origem={contatoDeOrigem(props.atendimentos)} />
             {props.renderAtendimentoImoveis && (
               <div className="mb-4" data-testid="atendimento-imoveis-slot">
@@ -1219,6 +1230,16 @@ export function ClienteCardDialog(props: ClienteCardDialogProps) {
               onClick={props.onAdicionarComprador}
             />
           )}
+          {props.onPerderAtendimento && (
+            <TooltipIconButton
+              label="Marcar como perdida"
+              icon={ThumbsDown}
+              variant="outline"
+              testId="perder-atendimento-btn"
+              onClick={props.onPerderAtendimento}
+              disabled={props.perdendoAtendimento}
+            />
+          )}
           {props.onArquivarAtendimento && (
             <TooltipIconButton
               label="Arquivar no funil"
@@ -1360,6 +1381,35 @@ function contatoDeOrigem(atendimentos?: CardAtendimento[]): DadosPessoais {
     }
   }
   return origem;
+}
+
+/** The lost deals on this card, with the reason they were lost. */
+function AtendimentosPerdidos({ atendimentos }: { atendimentos?: CardAtendimento[] }) {
+  const perdidos = (atendimentos ?? []).filter((a) => a.status === "perdida");
+  if (perdidos.length === 0) return null;
+  return (
+    <div className="mb-4 space-y-2" data-testid="atendimentos-perdidos">
+      {perdidos.map((a) => {
+        const rotulo = motivoPerdaLabel(a.motivo_perda_categoria);
+        return (
+          <div
+            key={a.id}
+            className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm"
+            data-testid={`atendimento-perdido-${a.id}`}
+          >
+            <p className="font-medium text-destructive">
+              Negócio perdido{a.titulo ? ` — ${a.titulo}` : ""}
+            </p>
+            <p className="text-muted-foreground">
+              {rotulo ?? "Motivo não registrado"}
+              {a.closed_at ? ` · ${formatDate(a.closed_at)}` : ""}
+            </p>
+            {a.motivo_perda && <p className="mt-1 whitespace-pre-wrap">{a.motivo_perda}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function ContatoResumo({

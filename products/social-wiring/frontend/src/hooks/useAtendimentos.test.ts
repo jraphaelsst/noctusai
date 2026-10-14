@@ -8,7 +8,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 
-import { useArquivarAtendimento } from "./useAtendimentos";
+import { useArquivarAtendimento, usePerderAtendimento } from "./useAtendimentos";
 
 vi.mock("@/lib/api", () => ({
   api: { get: vi.fn(), post: vi.fn(), delete: vi.fn(), patch: vi.fn() },
@@ -53,5 +53,37 @@ describe("useArquivarAtendimento", () => {
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["sw-funil"] });
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ["atendimentos-venda"] });
+  });
+});
+
+describe("usePerderAtendimento", () => {
+  it("POSTs categoria + trimmed motivo to /perder and invalidates funil + card hub", async () => {
+    mockApi.post = vi.fn().mockResolvedValue({ data: { id: "atd-1", status: "perdida" } });
+    const { Wrapper, invalidateSpy } = makeWrapper();
+    const { result } = renderHook(() => usePerderAtendimento(), { wrapper: Wrapper });
+    await act(async () => {
+      result.current.mutate({ atendimentoId: "atd-1", categoria: "outro", motivo: "  família mudou  " });
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.post).toHaveBeenCalledWith("/api/atendimentos-venda/atd-1/perder", {
+      categoria: "outro",
+      motivo: "família mudou",
+    });
+    const keys = invalidateSpy.mock.calls.map((c) => (c[0] as any).queryKey);
+    expect(keys).toContainEqual(["sw-funil"]);
+    expect(keys).toContainEqual(["sw", "cardHub"]);
+  });
+
+  it("omits motivo when blank", async () => {
+    mockApi.post = vi.fn().mockResolvedValue({ data: {} });
+    const { Wrapper } = makeWrapper();
+    const { result } = renderHook(() => usePerderAtendimento(), { wrapper: Wrapper });
+    await act(async () => {
+      result.current.mutate({ atendimentoId: "atd-1", categoria: "sem_retorno", motivo: "  " });
+    });
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(mockApi.post).toHaveBeenCalledWith("/api/atendimentos-venda/atd-1/perder", {
+      categoria: "sem_retorno",
+    });
   });
 });

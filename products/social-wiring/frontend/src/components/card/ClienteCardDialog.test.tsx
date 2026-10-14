@@ -1057,6 +1057,45 @@ describe("ClienteCardDialog — Compradores (migration 073)", () => {
     );
   });
 
+  it("offers 'Marcar como perdida' only when onPerderAtendimento is wired, and fires it", async () => {
+    const { fireEvent, render, screen, cleanup } = await import("@testing-library/react");
+    render(<ClienteCardDialog {...baseProps()} />);
+    expect(screen.queryByTestId("perder-atendimento-btn")).toBeNull();
+    cleanup();
+    const onPerder = vi.fn();
+    render(<ClienteCardDialog {...baseProps({ onPerderAtendimento: onPerder })} />);
+    fireEvent.click(screen.getByTestId("perder-atendimento-btn"));
+    expect(onPerder).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the lost reason (label + note) for a perdida atendimento", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    render(
+      <ClienteCardDialog
+        {...baseProps({
+          atendimentos: [
+            {
+              id: "atd-9",
+              titulo: "Apto 12",
+              status: "perdida",
+              closed_at: "2026-10-01T12:00:00Z",
+              created_at: null,
+              lead_id: null,
+              meta_ads_lead_id: null,
+              lead: null,
+              campanha: null,
+              motivo_perda_categoria: "preco_acima_mercado",
+              motivo_perda: "Pediam 10% a menos",
+            },
+          ],
+        })}
+      />,
+    );
+    const box = screen.getByTestId("atendimento-perdido-atd-9");
+    expect(box.textContent).toContain("Preço acima do mercado");
+    expect(box.textContent).toContain("Pediam 10% a menos");
+  });
+
   it("hides the Excluir icon when onExcluirCliente is absent (non-admin)", async () => {
     const { render, screen } = await import("@testing-library/react");
     render(<ClienteCardDialog {...baseProps()} />);

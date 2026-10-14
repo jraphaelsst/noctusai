@@ -18,6 +18,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { api } from "@/lib/api";
+import type { MotivoPerdaCategoria } from "@/lib/motivoPerda";
 
 export function useArquivarAtendimento() {
   const queryClient = useQueryClient();
@@ -37,6 +38,44 @@ export function useArquivarAtendimento() {
     onSettled: () => {
       queryClient.invalidateQueries({ queryKey: ["sw-funil"] });
       queryClient.invalidateQueries({ queryKey: ["atendimentos-venda"] });
+    },
+  });
+}
+
+/**
+ * Mark a funil card as LOST (`POST /api/atendimentos-venda/{id}/perder`).
+ * `categoria` is the closed-set reason (the price evaluator aggregates it);
+ * `motivo` is the operator's free note, required by the server for `outro`.
+ *
+ * Invalidates the funil board, the atendimentos family AND the card-hub cache
+ * (`["sw","cardHub"]`) — the open card embeds the atendimento's status.
+ */
+export interface PerderAtendimentoInput {
+  atendimentoId: string;
+  categoria: MotivoPerdaCategoria;
+  motivo?: string;
+}
+
+export function usePerderAtendimento() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ atendimentoId, categoria, motivo }: PerderAtendimentoInput) => {
+      const nota = motivo?.trim();
+      const result: any = await api.post(
+        `/api/atendimentos-venda/${atendimentoId}/perder`,
+        nota ? { categoria, motivo: nota } : { categoria },
+      );
+      return result?.data ?? result;
+    },
+    onSuccess: () => {
+      toast.success("Card marcado como perdido");
+    },
+    onError: (error: Error) =>
+      toast.error("Erro ao marcar card como perdido", { description: error.message }),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ["sw-funil"] });
+      queryClient.invalidateQueries({ queryKey: ["atendimentos-venda"] });
+      queryClient.invalidateQueries({ queryKey: ["sw", "cardHub"] });
     },
   });
 }

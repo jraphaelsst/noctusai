@@ -14,10 +14,10 @@ deliberately no `POST /api/atendimentos-venda`.
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from noctusai_lib.api import StrictHttpModel
 from noctusai_lib.domain.pipeline import (
@@ -103,8 +103,33 @@ class ProcessoUpdate(StrictHttpModel):
     arquivado: Optional[bool] = None
 
 
+MotivoPerdaCategoria = Literal[
+    "preco_acima_mercado",
+    "cliente_desistiu",
+    "comprou_outro_imovel",
+    "comprou_com_concorrente",
+    "financiamento_negado",
+    "documentacao_imovel",
+    "proprietario_desistiu",
+    "imovel_vendido_outro",
+    "sem_retorno",
+    "outro",
+]
+
+
 class PerderRequest(StrictHttpModel):
+    """Why a deal was lost: a closed-set `categoria` (aggregable — feeds the
+    price evaluator) plus a free `motivo` note, required only for `outro`.
+    Mirrors the CHECK in migration 263."""
+
+    categoria: MotivoPerdaCategoria
     motivo: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _outro_exige_motivo(self) -> "PerderRequest":
+        if self.categoria == "outro" and not (self.motivo or "").strip():
+            raise ValueError("motivo é obrigatório quando a categoria é 'outro'")
+        return self
 
 
 # ─────────────────────────────── Funil board ────────────────────────────────
@@ -436,7 +461,14 @@ def perder_atendimento(
     motivo = (body.motivo or "").strip() or None
     rows = (
         ctx.db.table("atendimentos")
-        .update({"status": "perdida", "closed_at": "now()", "motivo_perda": motivo})
+        .update(
+            {
+                "status": "perdida",
+                "closed_at": "now()",
+                "motivo_perda": motivo,
+                "motivo_perda_categoria": body.categoria,
+            }
+        )
         .eq("id", atendimento_id)
         .eq("org_id", ctx.org_id)
         .execute()

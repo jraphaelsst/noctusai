@@ -54,6 +54,7 @@ vi.mock("@/hooks/useLeadsCorretores", () => ({
 // these hooks directly (not just through props the stub renders).
 vi.mock("@/hooks/useAtendimentos", () => ({
   useArquivarAtendimento: () => ({ mutate: vi.fn(), isPending: false }),
+  usePerderAtendimento: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@/hooks/useClientes", async () => {

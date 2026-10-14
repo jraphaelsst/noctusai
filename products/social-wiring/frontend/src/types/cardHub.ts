@@ -269,6 +269,9 @@ export interface CardAtendimento {
   status: string | null;
   closed_at: string | null;
   created_at: string | null;
+  /** Lost-deal reason (set when `status === "perdida"`): closed-set key + free note. */
+  motivo_perda_categoria?: string | null;
+  motivo_perda?: string | null;
   lead_id: string | null;
   meta_ads_lead_id: string | null;
   /** Present when the card was spawned from a `social_wiring.leads` row. */

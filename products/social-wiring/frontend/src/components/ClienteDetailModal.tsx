@@ -79,6 +79,7 @@ import { useAdicionarParte, useAtualizarContratoParte, usePartes } from "@/hooks
 import { toastServerError } from "@/lib/erroServidor";
 import { QualificacaoContratoContainer } from "@/components/QualificacaoContratoContainer";
 import { ArquivarAtendimentoConfirmDialog } from "@/components/card/ArquivarAtendimentoConfirmDialog";
+import { PerderAtendimentoDialog } from "@/components/card/PerderAtendimentoDialog";
 import { ExcluirClienteConfirmDialog } from "@/components/card/ExcluirClienteConfirmDialog";
 import { CriarRoteiroDialog } from "@/components/card/CriarRoteiroDialog";
 import { NovoContratoDialog } from "@/components/card/NovoContratoDialog";
@@ -94,7 +95,7 @@ import { EmpresasSection } from "@/components/card/EmpresasSection";
 import { QualificacaoCompletudePanel } from "@/components/QualificacaoCompletudePanel";
 import { ConflitosPendentesPanel } from "@/components/ConflitosPendentesPanel";
 import { useContratoMutations } from "@/hooks/useContratos";
-import { useArquivarAtendimento } from "@/hooks/useAtendimentos";
+import { useArquivarAtendimento, usePerderAtendimento } from "@/hooks/useAtendimentos";
 import { useClienteMutations } from "@/hooks/useClientes";
 import { mensagemClienteExcluido } from "@/lib/mensagemClienteExcluido";
 
@@ -140,6 +141,7 @@ export function ClienteDetailModal({
   // `ClienteCardDialog` below) only flips these booleans; the mutation
   // itself fires from `onConfirm` on the matching dialog further down.
   const [confirmArquivarOpen, setConfirmArquivarOpen] = useState(false);
+  const [perderOpen, setPerderOpen] = useState(false);
   const [confirmExcluirOpen, setConfirmExcluirOpen] = useState(false);
   // Cônjuge tab's own empty-state action — sibling of the two above, its own
   // boolean rather than reusing `compradorDialogOpen` so the two "add a
@@ -228,6 +230,11 @@ export function ClienteDetailModal({
   const contratoMutations = useContratoMutations(id ?? "__none__");
   const checklistMutations = useChecklistMutations(id ?? "__none__");
   const arquivarAtendimento = useArquivarAtendimento();
+  const perderAtendimento = usePerderAtendimento();
+  // Only an OPEN deal can be marked lost — a won/lost one is history.
+  const atendimentoAberto =
+    !!atendimentoId &&
+    card.data?.atendimentos?.find((a) => a.id === atendimentoId)?.status === "aberta";
   const { remove: excluirCliente } = useClienteMutations();
 
   // UI convenience ONLY — same posture `ConflitosPendentesPanel.tsx` already
@@ -463,6 +470,8 @@ export function ClienteDetailModal({
         atendimentoId ? () => setConfirmArquivarOpen(true) : undefined
       }
       arquivandoAtendimento={arquivarAtendimento.isPending}
+      onPerderAtendimento={atendimentoAberto ? () => setPerderOpen(true) : undefined}
+      perdendoAtendimento={perderAtendimento.isPending}
       onExcluirCliente={isAdmin && id ? () => setConfirmExcluirOpen(true) : undefined}
       excluindoCliente={excluirCliente.isPending}
       isLoading={loading}
@@ -978,6 +987,21 @@ export function ClienteDetailModal({
             onClose();
           },
         });
+      }}
+    />
+
+    {/* Same sibling reasoning. Marking lost keeps the modal open on success:
+        the card's banner then shows the recorded reason. */}
+    <PerderAtendimentoDialog
+      open={perderOpen}
+      pending={perderAtendimento.isPending}
+      onOpenChange={setPerderOpen}
+      onConfirm={({ categoria, motivo }) => {
+        if (!atendimentoId) return;
+        perderAtendimento.mutate(
+          { atendimentoId, categoria, motivo },
+          { onSuccess: () => setPerderOpen(false) },
+        );
       }}
     />
 
