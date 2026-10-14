@@ -173,7 +173,7 @@ export function errorMessage(err: unknown): string {
 }
 
 /** Two-signal loading, computed once. A disabled query (`idle`) is not a skeleton. */
-function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
+export function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
   return {
     data: q.data,
     error: q.error,
@@ -185,7 +185,7 @@ function signals<TData, TErr>(q: UseQueryResult<TData, TErr>) {
   };
 }
 
-const keep = <T,>(prev: T | undefined) => prev;
+export const keep = <T,>(prev: T | undefined) => prev;
 
 // ---------------------------------------------------------------------------
 // Factory

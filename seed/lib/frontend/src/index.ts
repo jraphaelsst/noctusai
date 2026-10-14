@@ -265,3 +265,8 @@ export * from './items';
 // `<PartiesTable/>`, `<PartyEditor/>`, role chips, CSV export/import. Backend:
 // noctusai_lib.domain.parties. Product-agnostic; the host supplies the authenticated api client.
 export * from './parties';
+
+// Finance organ (contas a pagar/receber, fluxo de caixa, DRE, conciliação, exportações) —
+// `createFinanceHooks` + pages. Contract: projects/commerce-seed-p4/CONTRACT.md §3 + §10.
+// Product-agnostic; the host mounts the pages under its own route and passes the api client.
+export * from './finance';

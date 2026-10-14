@@ -1,0 +1,32 @@
+name: AccountantChecklist
+kind: component
+path: seed/lib/frontend/src/finance/AccountantChecklist.tsx
+phase: pilot-seed
+registered_at: "2026-10-14"
+organ_version: "1.0"
+validation_status: emerging
+
+known_facts:
+  - "Provisional choices and open questions to take to the accountant, with sources and the export links."
+  - "Part of the finance organ (projects/commerce-seed-p4/CONTRACT.md §3 + §10); money is integer cents end to end, formatted only via formatCents (shared with the commerce organ); pt-BR copy in finance/messages.ts."
+  - "Loading contract: read hooks return showSkeleton = isPending && !data and isRefreshing = isFetching && !!data (lying-loading-state.md); components never use isLoading and never gate on a bare isFetching."
+  - "Seed-portable: no product coupling; the host passes its authenticated api client and isAdmin (UX gate only; the server enforces every write)."
+
+errors_encountered: []
+
+drifts_surfaced: []
+
+alternatives_considered:
+  - "Per-product copies were rejected (replication-to-seed symmetry): the organ is built once in the seed and consumed by products/commerce and later products."
+
+manual_validation_log: []
+
+integration_test_status: unknown
+
+e2e_test:
+  path: null
+  status: pending
+  last_run: null
+  runs_in_ci: false
+
+bugs_fixed_during_dev: []
