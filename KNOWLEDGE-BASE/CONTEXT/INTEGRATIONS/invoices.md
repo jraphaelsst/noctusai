@@ -18,14 +18,34 @@
   (`processing`·`authorized`·`rejected`·`cancelled`·`error`) · `NfseMode`
   (`nacional`·`municipal`) and every DTO. Money is integer cents; the adapter
   converts to reais only at the wire.
-- `inspect_pkcs12(pfx, password) -> CertificateInfo` — local A1 inspection
-  (expiry + CNPJ from ICP-Brasil OID `2.16.76.1.3.3`, CN `:cnpj` fallback). One
-  generic `InvoiceCertificateError` for bad file AND wrong password. The host
-  calls it BEFORE forwarding (CNPJ ≠ store CNPJ ⇒ 422 before anything is sent).
-- `CompanyTokenStore` — per-company Focus tokens, encrypted at rest through the
-  seed `CredentialStore` (`security.token_store`, Fernet), keyed
+- `inspect_pkcs12(pfx, password, *, expected_cnpj=None) -> CertificateInfo` —
+  local A1 inspection: file ≤ 64 KB, password ≤ 128 chars, a private key must be
+  present; expiry + CNPJ from the ICP-Brasil OID `2.16.76.1.3.3` (the CN `:cnpj`
+  fallback applies ONLY when that OID is absent). One generic
+  `InvoiceCertificateError` for a bad file AND a wrong password;
+  `expected_cnpj` mismatch ⇒ `InvoiceCertificateCnpjMismatch`
+  (`certificado_cnpj_divergente`) inside the organ, before anything is sent.
+  **Mistake-proofing, not chain validation:** no ICP-Brasil chain check, so a
+  self-signed file can claim any CNPJ — SEFAZ / the prefeitura reject its
+  signatures. `upload_certificate` takes the same `expected_cnpj`.
+- Per-company Focus tokens **never appear on a returned object**:
+  `ProviderCompany` carries `ref, cnpj, nfse_mode, nfe_enabled, nfse_enabled`
+  only; the provider hands a token from `/v2/empresas` to an injected
+  `token_sink` (`CompanyTokenStore.sink_for(org_id)`), and reads back through
+  `resolver_for`. `CompanyTokenStore` encrypts at rest through the seed
+  `CredentialStore` (`security.token_store`, Fernet), keyed
   `(org_id, "invoices_focusnfe:<company_ref>")`, environment + CNPJ as metadata;
-  refuses a token read for another environment; a CNPJ change rotates.
+  refuses a token read for another environment; a CNPJ change rotates. Its
+  plaintext getter is private.
+- `ref` / `company_ref` (including a webhook-supplied `ref`) must match
+  `^[A-Za-z0-9_-]{1,64}$` (`refs.py`) before any URL is built.
+- Secrets: every credential the instance sent (account token, its Basic base64
+  form, company tokens, certificate base64, password) is scrubbed from
+  `reasons` / `raw` before truncation; the upload path drops provider free text
+  entirely; every `httpx.HTTPError` becomes a generic `transporte` error raised
+  outside the `except` (no httpx exception on `__cause__` / `__context__`).
+  Use one provider instance per request or per org — it remembers the tokens it
+  sent for scrubbing.
 
 ## Defects of the adconnect adapter, fixed
 
@@ -39,7 +59,7 @@
 
 `producao` needs BOTH env `FOCUSNFE_ALLOW_PRODUCTION=1` (literal `1`) AND the
 platform credential `focusnfe_environment=producao`; environment is config,
-never a request. Credential `producao` without the env switch is **refused**
+never a request — the factory has no argument that can override either check. Credential `producao` without the env switch is **refused**
 (`production_not_allowed`), never silently downgraded. Token tier: platform
 credential `focusnfe_token_environment` declares which environment the account
 token belongs to; a mismatch is refused and `producao` requires it declared.
