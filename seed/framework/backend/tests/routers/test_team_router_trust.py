@@ -28,6 +28,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from noctusai_lib.testing.memberships import seed_profiles
 from noctusai_lib.testing.mocks import MockSupabaseClient
 from noctusai_seed.routers import _create_team_router
 
@@ -72,7 +73,7 @@ def world(fake_deps, fake_settings, product_name):
     product_db = MockSupabaseClient(validate_schema=False, schema="test")
     product_db.set_table_data("invitations", [])
     core_db = MockSupabaseClient(validate_schema=False, schema="public")
-    core_db.set_table_data("noctus_users", [dict(r) for r in ROSTER])
+    seed_profiles(core_db, ROSTER)
     core_db.set_table_data(
         "organizations",
         [{"id": MY_ORG, "nome": "Minha Org"}, {"id": VICTIM_ORG, "nome": "Vitima"}],
@@ -114,6 +115,21 @@ class TestListMembers:
         listed = {r["id"] for r in resp.json()["data"]}
         assert listed == _ids(world.core, MY_ORG)
         assert "victim-owner" not in listed
+
+    def test_members_are_the_orgs_ACTIVE_memberships_not_profile_orgs(self, world):
+        """Multi-org S6b: `victim-member`'s profile (last-active org) is VICTIM_ORG, but they
+        also hold an ACTIVE membership in MY_ORG -- they are on MY_ORG's team, with the role
+        THEY HOLD HERE. A REMOVED membership is not. Reading `noctus_users.org_id` hid them."""
+        seed_profiles(world.core, ROSTER, extra_memberships=[
+            {"user_id": "victim-member", "org_id": MY_ORG, "org_role": "admin", "status": "active"},
+            {"user_id": "victim-owner", "org_id": MY_ORG, "org_role": "member", "status": "removed"},
+        ])
+        resp = world.as_user("me-member").get("/api/team", headers=AUTH)
+        assert resp.status_code == 200, resp.text
+        rows = {r["id"]: r for r in resp.json()["data"]}
+        assert set(rows) == _ids(world.core, MY_ORG) | {"victim-member"}
+        assert rows["victim-member"]["org_role"] == "admin"
+        assert rows["victim-member"]["org_id"] == MY_ORG
 
     def test_caller_without_membership_row_gets_403_even_with_metadata_org(self, world):
         client = world.as_user("stranger", metadata=SPOOFED_METADATA)
@@ -174,13 +190,18 @@ class TestInvite:
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["role"] == "member"
 
-    def test_owner_can_invite_an_owner(self, world):
-        client = world.as_user("me-owner")
+    @pytest.mark.parametrize("inviter", ["me-owner", "operator"])
+    def test_nobody_can_invite_an_owner(self, world, inviter):
+        """Owner decision 2026-10-14: an invitation never grants ownership -- not even from an
+        owner or a platform operator. Ownership is granted after the person joined, by NoctusAI
+        owner/admins (core's role change)."""
+        client = world.as_user(inviter)
         resp = client.post(
             "/api/team/invite", json={"email": "o2@test.com", "role": "owner"}, headers=AUTH
         )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["data"]["role"] == "owner"
+        assert resp.status_code == 403, resp.text
+        assert "proprietário" in resp.json()["detail"]
+        assert world.product.table("invitations").inserted_payloads == []
 
     def test_unknown_role_is_rejected_400(self, world):
         client = world.as_user("me-owner")

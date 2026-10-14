@@ -40,6 +40,7 @@ import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
+from noctusai_lib.testing.memberships import seed_profiles
 from noctusai_lib.testing.mocks import MockSupabaseClient
 from noctusai_seed.routers import _create_team_router
 
@@ -645,36 +646,58 @@ class TestAcceptActuallyCreatesTheMember:
             {"org_id": "org-1", "org_role": "member"}
         ]
 
-    def test_member_of_another_org_gets_409(self, team_app, client):
-        """Membership is a single-org FK — accepting would EVICT them from
-        their current org and every product licensed to it."""
+    def test_member_of_another_org_joins_and_keeps_their_home_org(self, team_app, client):
+        """Multi-org S6b: belonging to another org is no reason to refuse (the old single-org
+        409). The person gains an ACTIVE membership in the inviting org, recorded with who
+        invited them; their profile and their `user_metadata` stay on their home org -- they
+        reach the new org through the org picker, as with core's own accept."""
         core = team_app.state.core_db
-        core.set_table_data(
-            "noctus_users",
-            [{"id": "existing-1", "email": "invitee@test.com",
-              "nome": "Existing", "org_id": "other-org", "org_role": "owner"}],
-        )
+        seed_profiles(core, [{"id": "existing-1", "email": "invitee@test.com",
+                              "nome": "Existing", "org_id": "other-org", "org_role": "owner"}])
         self._seed(team_app, token="t13", org_id="org-1", email="invitee@test.com")
 
         resp = client.post("/api/team/accept", json={"token": "t13", **SIGNUP})
 
-        assert resp.status_code == 409, resp.text
+        assert resp.status_code == 200, resp.text
+        assert core.table("org_memberships").inserted_payloads == [{
+            "user_id": "existing-1", "org_id": "org-1", "org_role": "member",
+            "status": "active", "invited_by": "u-admin",
+        }]
         assert core.table("noctus_users").updated_payloads == []
+        assert core.table("noctus_users").inserted_payloads == []
+        core.auth.admin.update_user_by_id.assert_not_called()
+        assert team_app.state.mock_db.table("invitations").updated_payloads != []
 
-    def test_conflict_leaves_the_invitation_pending(self, team_app, client):
-        """A refused accept must stay retryable — burning the token on a 409
-        would strand the invite permanently."""
+    def test_suspended_membership_is_refused_and_the_invitation_stays_pending(self, team_app, client):
+        """A suspension is an org decision an invitation must not lift; a refused accept must
+        stay retryable -- burning the token would strand the invite permanently."""
         core = team_app.state.core_db
-        core.set_table_data(
-            "noctus_users",
-            [{"id": "e1", "email": "invitee@test.com", "nome": "E",
-              "org_id": "other-org"}],
+        seed_profiles(
+            core,
+            [{"id": "e1", "email": "invitee@test.com", "nome": "E", "org_id": "other-org"}],
+            extra_memberships=[{"user_id": "e1", "org_id": "org-1", "org_role": "member",
+                                "status": "suspended"}],
         )
         self._seed(team_app, token="t14", email="invitee@test.com")
 
-        client.post("/api/team/accept", json={"token": "t14", **SIGNUP})
+        resp = client.post("/api/team/accept", json={"token": "t14", **SIGNUP})
 
+        assert resp.status_code == 403, resp.text
+        assert core.table("org_memberships").updated_payloads == []
         assert team_app.state.mock_db.table("invitations").updated_payloads == []
+
+    def test_an_owner_invitation_is_refused_on_accept(self, team_app, client):
+        """An owner invitation created before the rule (owner decision 2026-10-14) is refused,
+        not honoured: ownership is granted after joining, by NoctusAI owner/admins."""
+        row = _make_invitation_row(token="t14b", email="invitee@test.com")
+        row["role"] = "owner"
+        team_app.state.mock_db.set_table_data("invitations", [row])
+
+        resp = client.post("/api/team/accept", json={"token": "t14b", **SIGNUP})
+
+        assert resp.status_code == 403, resp.text
+        assert team_app.state.core_db.table("noctus_users").inserted_payloads == []
+        team_app.state.core_db.auth.admin.create_user.assert_not_called()
 
     # ── Authenticated accept ───────────────────────────────────────────
     def test_authenticated_accept_uses_the_caller_identity(

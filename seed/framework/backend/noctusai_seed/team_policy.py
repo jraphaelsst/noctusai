@@ -41,6 +41,10 @@ from noctusai_lib.primitives.roles import (
     ORG_ROLES,
 )
 
+#: An invitation never grants it (owner decision 2026-10-14) -- ownership is granted after the
+#: person joined, by NoctusAI owner/admins only (core's role change, `owner_grant_forbidden`).
+NEVER_INVITABLE_ROLE = "owner"
+
 
 def _ordered(roles) -> list[str]:
     """Platform roles in `ORG_ROLES` order first, product extras sorted after —
@@ -109,6 +113,12 @@ class TeamPolicy:
                     "without a label in extra_role_labels"
                 )
 
+        if self.invitable_roles is not None and NEVER_INVITABLE_ROLE in self.invitable_roles:
+            raise ValueError(
+                "TeamPolicy.invitable_roles names 'owner' — an invitation never grants "
+                "ownership (granted after joining, by NoctusAI owner/admins)"
+            )
+
         if self.staff_roles is not None and self.invitable_roles is not None:
             outside = sorted(self.invitable_roles - self.staff_roles)
             if outside:
@@ -133,12 +143,13 @@ class TeamPolicy:
         return _ordered(self.staff_roles)
 
     def effective_invitable_roles(self) -> list[str]:
-        """Roles an invite may grant."""
+        """Roles an invite may grant -- never `owner` (owner decision 2026-10-14: ownership is
+        granted after the person joined, by NoctusAI owner/admins, never by an invitation)."""
         if self.invitable_roles is not None:
             return _ordered(self.invitable_roles)
         if self.staff_roles is not None:
-            return [r for r in ORG_ROLES if r in self.staff_roles]
-        return list(ORG_ROLES)
+            return [r for r in ORG_ROLES if r in self.staff_roles and r != NEVER_INVITABLE_ROLE]
+        return [r for r in ORG_ROLES if r != NEVER_INVITABLE_ROLE]
 
     def labels(self) -> dict[str, str]:
         """pt-BR label for every role this policy can surface (platform + extras)."""

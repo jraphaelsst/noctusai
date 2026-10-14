@@ -6,6 +6,7 @@ These tests prove the framework itself works. If these fail, every product
 that inherits from the framework is affected.
 """
 from noctusai_lib.testing import MockSupabaseResponse
+from noctusai_lib.testing.framework_test_suites import TeamFlowSuite
 
 
 # ==========================================================================
@@ -64,32 +65,9 @@ class TestFrameworkEndpoints:
 # 2. Authenticated team flow
 # ==========================================================================
 
-class TestTeamFlow:
-    """Team management through the framework's standard router."""
-
-    def test_list_members_returns_data(self, client):
-        """Authenticated user can list org members.
-
-        Alice is the CALLER (``test-user-123``): since SEC-1 (2026-09-28) the
-        seed team router resolves the org from the caller's own trusted
-        ``noctus_users`` row, never ``user_metadata``.
-        """
-        client._mock_supabase.set_table_data("noctus_users", [
-            {"id": "test-user-123", "nome": "Alice", "email": "alice@test.com",
-             "org_role": "owner", "avatar_url": None, "created_at": "2026-01-01T00:00:00Z", "org_id": "test-org-123"},
-            {"id": "u2", "nome": "Bob", "email": "bob@test.com",
-             "org_role": "member", "avatar_url": None, "created_at": "2026-01-02T00:00:00Z", "org_id": "test-org-123"},
-        ])
-        resp = client.get("/api/team")
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert len(data) == 2
-
-    def test_cannot_remove_self(self, client):
-        """Framework prevents self-removal."""
-        resp = client.delete("/api/team/test-user-123")
-        # Returns 400 (self-removal) or 403 (not admin) — both are correct rejections
-        assert resp.status_code in (400, 403)
+class TestTeamFlow(TeamFlowSuite):
+    """Team management through the framework's standard router -- the shared suite (this
+    file kept a hand copy, which drifted when the roster moved to `org_memberships`)."""
 
 
 # ==========================================================================

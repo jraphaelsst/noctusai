@@ -38,6 +38,7 @@ from noctusai_lib.domain.invitations import (
     cancel_invitation,
     list_pending_invitations,
 )
+from noctusai_lib.domain.org_memberships import list_member_profiles
 from noctusai_lib.domain.org import (
     attach_user_to_org,
     provision_invited_identity,
@@ -56,7 +57,7 @@ from noctusai_lib.primitives.roles import (
     CUSTOMER_ORG_ROLES,
     MANAGE_TEAM_ROLES,
 )
-from noctusai_seed.team_policy import DEFAULT_TEAM_POLICY, TeamPolicy
+from noctusai_seed.team_policy import DEFAULT_TEAM_POLICY, NEVER_INVITABLE_ROLE, TeamPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -159,10 +160,9 @@ _PLATFORM_ADMIN = "platform_admin"
 
 #: Who may grant which org role through `/api/team/invite`. A role absent from
 #: this map is grantable by anyone who may invite at all (MANAGE_TEAM_ROLES).
-#: Without it any inviter could mint an `owner` — i.e. a manager could invite a
-#: sock-puppet owner and take the org over.
+#: Without it a manager could invite a sock-puppet admin and take the org over.
+#: `owner` is never invitable at all (`_OWNER_NOT_INVITABLE`, `TeamPolicy`).
 _GRANT_REQUIRES = {
-    "owner": frozenset({"owner", _PLATFORM_ADMIN}),
     "admin": frozenset({"owner", "admin", _PLATFORM_ADMIN}),
 }
 
@@ -225,8 +225,11 @@ _TEAM_MEMBER_COLUMNS = (
     "id, email, nome, org_id, org_role, role, avatar_url, created_at, last_active_at"
 )
 
-#: Page size for the roster read — PostgREST's default max-rows.
-_TEAM_PAGE = 1000
+#: Why `owner` is refused on invite AND on accept (owner decision 2026-10-14).
+_OWNER_NOT_INVITABLE = (
+    "Convites não concedem o papel de proprietário. Convide com outro papel; a equipe "
+    "NoctusAI concede a propriedade depois que a pessoa entrar na organização."
+)
 
 #: Error code of the 409 `DELETE /api/team/{user_id}` returns (see that route).
 TEAM_REMOVE_CORE_ONLY = "TEAM_REMOVE_CORE_ONLY"
@@ -273,34 +276,21 @@ def _create_team_router(
     async def list_members(authorization: Optional[str] = Header(None)):
         _user, org_id, _role = await _member_context(authorization)
         core = deps.get_core_client()
-        # The org is shared across products (and, for the platform org, with
-        # end customers): the roster is the product's STAFF only — customers
-        # never, and only the declared `staff_roles` when the policy names them.
-        # Filtered IN the query (so customers never count against a page) and
-        # paged with `.range()` (PostgREST caps an unranged select at 1000 rows
-        # and reports success) — then re-checked by `policy.lists`, the single
+        # Members = the ACTIVE `org_memberships` of the org (multi-org S6b), never
+        # `noctus_users.org_id` -- that is each person's LAST-ACTIVE org, so a member whose
+        # last pick is elsewhere vanished from this page. Each row's `org_role` is the role IN
+        # THIS ORG. The org is shared across products (and, for the platform org, with end
+        # customers): the roster is the product's STAFF only -- customers never, and only the
+        # declared `staff_roles` when the policy names them. Filtered IN the query (an org may
+        # hold thousands of customer memberships), then re-checked by `policy.lists`, the single
         # definition of who is staff.
-        rows: list = []
-        start = 0
-        while True:
-            query = (
-                core.table("noctus_users").select(_TEAM_MEMBER_COLUMNS)
-                .eq("org_id", org_id)
-            )
-            if policy.staff_roles is not None:
-                # postgrest-unbounded-ok: staff_roles is a product-declared role
-                # vocabulary (a handful of slugs), never data-sized.
-                query = query.in_("org_role", sorted(policy.staff_roles))
-            else:
-                customers = ",".join(sorted(CUSTOMER_ORG_ROLES))
-                query = query.or_(f"org_role.is.null,org_role.not.in.({customers})")
-            batch = (
-                query.order("id").range(start, start + _TEAM_PAGE - 1).execute().data or []
-            )
-            rows.extend(batch)
-            if len(batch) < _TEAM_PAGE:
-                break
-            start += _TEAM_PAGE
+        rows = list_member_profiles(
+            core,
+            org_id,
+            _TEAM_MEMBER_COLUMNS,
+            only_roles=policy.staff_roles,
+            exclude_roles=None if policy.staff_roles is not None else CUSTOMER_ORG_ROLES,
+        )
         return {"data": [r for r in rows if policy.lists(r.get("org_role"))]}
 
     @router.get("/policy")
@@ -323,6 +313,10 @@ def _create_team_router(
         if not email:
             raise HTTPException(status_code=400, detail="Email e obrigatorio")
         role = body.get("role") or "member"
+        # Owner decision (2026-10-14): an invitation never makes anyone an owner -- ownership is
+        # granted AFTER the person joined, by NoctusAI owner/admins only (core's role change).
+        if role == NEVER_INVITABLE_ROLE:
+            raise HTTPException(status_code=403, detail=_OWNER_NOT_INVITABLE)
         # `invitable` = ORG_ROLES by default, the policy's `invitable_roles`
         # (platform roles and/or labelled product extras such as `moderador`)
         # when declared. A customer role is never in it (TeamPolicy refuses).
@@ -421,6 +415,9 @@ def _create_team_router(
         email = inv["email"]
         org_id = inv["org_id"]
         org_role = inv.get("role", "member")
+        if org_role == NEVER_INVITABLE_ROLE:
+            # An owner invitation predating the rule above is refused, not honoured.
+            raise HTTPException(status_code=403, detail=_OWNER_NOT_INVITABLE)
 
         # ── Identity ──────────────────────────────────────────────────────
         # License-UNGATED on purpose: acceptance onboards users whose org lacks
@@ -478,6 +475,7 @@ def _create_team_router(
                 email=email,
                 nome=nome,
                 org_role=org_role,
+                invited_by=inv.get("invited_by"),
             )
         except Exception as exc:
             # Compensating delete: an identity we JUST created, with no
@@ -530,8 +528,12 @@ def _create_team_router(
             )
 
         # Mirror into user_metadata so the member works BEFORE their first SSO
-        # launch (which re-syncs from noctus_users anyway). Best-effort.
-        sync_org_metadata(core, user_id, org_id=org_id, org_role=org_role, nome=nome)
+        # launch (which re-syncs from noctus_users anyway). Best-effort. Only when the
+        # profile now points HERE: a person who already belonged to another org keeps it
+        # as their last-active org and reaches this one through the org picker (multi-org,
+        # same as core's accept) -- rewriting their metadata would silently re-home them.
+        if str(membership.get("profile_org_id")) == str(org_id):
+            sync_org_metadata(core, user_id, org_id=org_id, org_role=org_role, nome=nome)
 
         accept_invitation(
             admin, _INVITATIONS_TABLE, inv["id"], accepted_by=user_id,

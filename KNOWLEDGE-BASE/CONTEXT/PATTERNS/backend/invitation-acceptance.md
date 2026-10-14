@@ -19,9 +19,11 @@ returns 200 the whole time, which is why this survived three months.
 
 ## Why the membership row is load-bearing
 
-`public.noctus_users` is not a profile nicety — it is the platform's membership
-table. There is **no `org_members` join table**: membership *is*
-`noctus_users.org_id NOT NULL + org_role`, a single-org-per-user FK.
+`public.noctus_users` is not a profile nicety — without it a person cannot log in
+anywhere. Since multi-org (core 079, 2026-10) membership itself is
+`public.org_memberships` (one row per person per org, `status`), and
+`noctus_users.org_id` is only the person's LAST-ACTIVE org (it follows the org
+picker); core's 079 trigger mirrors every profile org into an ACTIVE membership.
 
 Core's `GET /api/sso/launch/{product_slug}` reads it directly:
 
@@ -57,11 +59,16 @@ invite to a known address, click your own link, choose a password, and you are
 in. Look the identity up *before* creating (`find_auth_user_id_by_email`), and
 if it exists, join it to the org using the credentials it already has.
 
-**Already in a different org: 409, don't move them.** Membership is a single-org
-FK, so "joining" a second org overwrites the first. That silently evicts the
-user from their current org and every product licensed to it. Refusing is the
-only non-destructive answer; transferring an account is a deliberate admin
-action, not a side effect of clicking a link.
+**Already in a different org: they JOIN, and stay home.** (Multi-org S6b,
+2026-10-14 — the single-org 409 is gone.) An existing person gets an ACTIVE
+`org_memberships` row in the inviting org (`noctusai_lib.domain.org_memberships.join_org`,
+via `attach_user_to_org`); their profile and `user_metadata` are NOT moved — they
+reach the new org through the org picker, exactly like core's own accept
+(`team_invitation_accept`). Moving the profile would silently re-home them.
+Already ACTIVE here: the existing role wins (a different invited role is a 409
+naming it; same role is an idempotent 200). `suspended` here: 403 — an invitation
+never lifts an org's suspension. An invitation never carries `owner` (refused on
+invite AND accept): ownership is granted after joining, by NoctusAI owner/admins.
 
 **The invited email wins over the request body.** Take the address from the
 invitation row, never from the payload. Otherwise a leaked token enrolls an

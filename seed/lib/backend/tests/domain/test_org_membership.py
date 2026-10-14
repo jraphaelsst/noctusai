@@ -37,10 +37,17 @@ ORG_B = "22222222-2222-2222-2222-222222222222"
 USER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 
-def _db(profiles: list | None = None) -> MockSupabaseClient:
+def _db(profiles: list | None = None, memberships: list | None = None) -> MockSupabaseClient:
     db = MockSupabaseClient(validate_schema=False, schema="public")
     db.set_table_data("noctus_users", profiles or [])
+    # core's 079 trigger mirrors every profile org into an ACTIVE membership; the mock has no
+    # trigger, so a test seeds the memberships it needs explicitly.
+    db.set_table_data("org_memberships", memberships or [])
     return db
+
+
+def _member(org_id: str, role: str = "member", status: str = "active") -> dict:
+    return {"user_id": USER, "org_id": org_id, "org_role": role, "status": status}
 
 
 def _auth_user(user_id: str = USER):
@@ -221,32 +228,61 @@ class TestAttachUserToOrg:
     def test_already_in_the_same_org_is_a_no_op(self):
         """A double-submitted accept must be idempotent, not a 500."""
         db = _db([{"id": USER, "email": "a@test.com", "nome": "A",
-                   "org_id": ORG_A, "org_role": "member"}])
+                   "org_id": ORG_A, "org_role": "member"}], [_member(ORG_A)])
         row = attach_user_to_org(db, USER, org_id=ORG_A, email="a@test.com")
         assert row["org_id"] == ORG_A
+        assert row["joined"] is False
         assert db.table("noctus_users").updated_payloads == []
         assert db.table("noctus_users").inserted_payloads == []
+        assert db.table("org_memberships").inserted_payloads == []
+        assert db.table("org_memberships").updated_payloads == []
 
-    def test_already_in_a_DIFFERENT_org_raises_409(self):
-        """Membership is a single-org FK. Honouring the invite would EVICT the
-        user from their current org, losing access to every product licensed to
-        it. Refusing is the only non-destructive answer."""
+    def test_already_active_here_reports_its_OWN_role(self):
+        """The caller compares the invited role with the role the person already holds; this
+        helper never silently re-roles an existing member."""
         db = _db([{"id": USER, "email": "a@test.com", "nome": "A",
-                   "org_id": ORG_B, "org_role": "owner"}])
+                   "org_id": ORG_B, "org_role": "owner"}], [_member(ORG_B, "owner"), _member(ORG_A, "admin")])
+        row = attach_user_to_org(db, USER, org_id=ORG_A, email="a@test.com", org_role="member")
+        assert row["org_role"] == "admin"
+        assert row["joined"] is False
+
+    def test_member_of_ANOTHER_org_joins_without_being_re_homed(self):
+        """Multi-org: belonging to another org is no reason to refuse. The person gains an
+        ACTIVE membership here; their profile (last-active org) stays where it was -- they
+        reach this org through the org picker. The old single-org 409 is gone."""
+        db = _db([{"id": USER, "email": "a@test.com", "nome": "A",
+                   "org_id": ORG_B, "org_role": "owner"}], [_member(ORG_B, "owner")])
+        row = attach_user_to_org(
+            db, USER, org_id=ORG_A, email="a@test.com", org_role="member", invited_by="inviter-1",
+        )
+        assert db.table("org_memberships").inserted_payloads == [{
+            "user_id": USER, "org_id": ORG_A, "org_role": "member", "status": "active",
+            "invited_by": "inviter-1",
+        }]
+        assert db.table("noctus_users").updated_payloads == []
+        assert db.table("noctus_users").inserted_payloads == []
+        assert row["org_id"] == ORG_A and row["org_role"] == "member" and row["joined"] is True
+        assert row["profile_org_id"] == ORG_B
+
+    def test_removed_membership_is_reactivated(self):
+        db = _db([{"id": USER, "email": "a@test.com", "nome": "A",
+                   "org_id": ORG_B, "org_role": "owner"}], [_member(ORG_B, "owner"), _member(ORG_A, "admin", "removed")])
+        row = attach_user_to_org(db, USER, org_id=ORG_A, email="a@test.com", org_role="member")
+        assert db.table("org_memberships").inserted_payloads == []
+        assert db.table("org_memberships").updated_payloads == [
+            {"org_role": "member", "status": "active", "ended_at": None},
+        ]
+        assert row["joined"] is True
+
+    def test_suspended_membership_is_refused_403_and_not_lifted(self):
+        """A suspension is an org decision; an invitation must not lift it."""
+        db = _db([{"id": USER, "email": "a@test.com", "nome": "A",
+                   "org_id": ORG_B, "org_role": "owner"}], [_member(ORG_B, "owner"), _member(ORG_A, "member", "suspended")])
         with pytest.raises(HTTPException) as exc:
             attach_user_to_org(db, USER, org_id=ORG_A, email="a@test.com")
-        assert exc.value.status_code == 409
-        assert "outra organizacao" in exc.value.detail
-
-    def test_conflicting_membership_is_not_mutated(self):
-        """The 409 must leave the existing membership untouched — a partial
-        write here would be the eviction the guard exists to prevent."""
-        db = _db([{"id": USER, "email": "a@test.com", "nome": "A",
-                   "org_id": ORG_B, "org_role": "owner"}])
-        with pytest.raises(HTTPException):
-            attach_user_to_org(db, USER, org_id=ORG_A, email="a@test.com")
-        assert db.table("noctus_users").updated_payloads == []
-        assert db.table("noctus_users").inserted_payloads == []
+        assert exc.value.status_code == 403
+        assert db.table("org_memberships").updated_payloads == []
+        assert db.table("org_memberships").inserted_payloads == []
 
     def test_default_org_role_is_member(self):
         db = _db([])

@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 from noctusai_lib.primitives.exceptions import http_exception_handler
 from noctusai_lib.primitives.roles import ORG_ROLE_LABELS, ORG_ROLES
 from noctusai_lib.testing.mocks import MockSupabaseClient
+from noctusai_lib.testing.memberships import seed_profiles
 from noctusai_seed import TeamPolicy
 from noctusai_seed.routers import _create_team_router, build_standard_routers
 
@@ -80,7 +81,7 @@ def make_world(fake_deps, fake_settings, product_name):
         product_db = MockSupabaseClient(validate_schema=False, schema="test")
         product_db.set_table_data("invitations", [])
         core_db = MockSupabaseClient(validate_schema=False, schema="public")
-        core_db.set_table_data("noctus_users", [dict(r) for r in ROSTER])
+        seed_profiles(core_db, ROSTER)
         core_db.set_table_data("organizations", [{"id": ORG, "nome": "NoctusAI"}])
         core_db.auth.admin.list_users.return_value = []
         fake_deps.get_admin_client = MagicMock(return_value=product_db)
@@ -121,7 +122,8 @@ class TestTeamPolicyValidation:
     def test_default_policy_is_the_pre_seam_contract(self):
         contract = TeamPolicy().as_contract()
         assert contract["staff_roles"] == list(ORG_ROLES)
-        assert contract["invitable_roles"] == list(ORG_ROLES)
+        # `owner` is never invitable (owner decision 2026-10-14: granted after joining).
+        assert contract["invitable_roles"] == [r for r in ORG_ROLES if r != "owner"]
         assert contract["labels"] == {r: ORG_ROLE_LABELS[r] for r in ORG_ROLES}
 
     def test_declared_policy_contract_shape(self):
@@ -138,7 +140,11 @@ class TestTeamPolicyValidation:
 
     def test_staff_only_policy_narrows_default_invitable_to_staff(self):
         policy = TeamPolicy(staff_roles=frozenset({"owner", "admin", "corretor"}))
-        assert policy.effective_invitable_roles() == ["owner", "admin", "corretor"]
+        assert policy.effective_invitable_roles() == ["admin", "corretor"]
+
+    def test_owner_is_never_invitable_even_when_declared(self):
+        with pytest.raises(ValueError, match="owner"):
+            TeamPolicy(invitable_roles=frozenset({"owner", "admin"}))
 
     def test_moderador_does_not_join_org_roles(self):
         assert "moderador" not in ORG_ROLES
@@ -235,7 +241,7 @@ class TestListFilter:
         the roster pages with `.range()` so no member silently disappears."""
         world = make_world(None)
         many = [_row(f"m-{i:04d}", ORG, "corretor") for i in range(1500)]
-        world.core.set_table_data("noctus_users", [*ROSTER, *many])
+        seed_profiles(world.core, [*ROSTER, *many])
         resp = world.as_user("admin-1").get("/api/team", headers=AUTH)
         assert resp.status_code == 200, resp.text
         assert len(_listed(resp)) == 7 + 1500
@@ -251,7 +257,7 @@ class TestListFilter:
         explicit column list is checked against the real `public.noctus_users`
         migrations, and `*` is gone."""
         core_db = MockSupabaseClient(validate_schema=True, schema="public")
-        core_db.set_table_data("noctus_users", [dict(r) for r in ROSTER])
+        seed_profiles(core_db, ROSTER)
         fake_deps.get_core_client = MagicMock(return_value=core_db)
         user = SimpleNamespace(id="admin-1", email="admin-1@test.com", user_metadata={})
         fake_deps.get_current_user = AsyncMock(return_value=(user, "tok"))
@@ -304,9 +310,7 @@ class TestInviteRoles:
 
     def test_grant_matrix_still_applies_under_a_policy(self, make_world):
         world = make_world(COMMUNITY)
-        world.core.set_table_data(
-            "noctus_users", [*ROSTER, _row("mgr-x", ORG, "manager")],
-        )
+        seed_profiles(world.core, [*ROSTER, _row("mgr-x", ORG, "manager")])
         resp = world.as_user("mod-1").post(
             "/api/team/invite", json={"email": "a@test.com", "role": "admin"}, headers=AUTH,
         )

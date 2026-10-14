@@ -273,6 +273,16 @@ a PUT for any other org answers a strict `403 {"code":"not_a_member"}`.
     `team_member_remove.moves_profile_in_the_same_transaction`,
     `team_invitation_accept.refuses_an_active_member`; behaviour on real Postgres:
     `mcp/noctusai/tests/test_core_team_membership_ops_on_replay.py`.
+  - **Product team router = memberships too (S6b, 2026-10-14).** The seed's `/api/team` (every
+    product's Equipe) reads the SAME seed module core does — `noctusai_lib.domain.org_memberships`
+    (`list_member_profiles`: ACTIVE memberships of the effective org, role = the role THERE, staff
+    filter in the query); core's `team_memberships` re-exports its reads from it. A product
+    invitation (product-schema `invitations`, not core's) is accepted by `attach_user_to_org` →
+    `join_org`: an existing person gains a membership and stays home (no 409, no metadata
+    rewrite), `suspended` → 403, already ACTIVE → their own role wins. `owner` is never invitable
+    (`TeamPolicy.NEVER_INVITABLE_ROLE`, refused on invite and on accept — owner decision
+    2026-10-14). Mock note: `MockSupabaseClient` has no triggers — seed profiles through
+    `noctusai_lib.testing.memberships.seed_profiles` so the 079 mirror exists in tests.
   - **Access rules (S4b, owner decisions D2–D5 2026-10-14, core `member_access_rules`).** API
     contract: roadmap § S4b API contract.
     - **D2 platform powers.** Platform staff (`platform_staff_role`, Python + SQL twins: the

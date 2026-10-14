@@ -12,11 +12,12 @@ invitee's email (creating it, or returning the existing one); the second makes
 that identity a member of the inviting org. They are separate because the
 authenticated-accept path already HAS an identity and only needs the second.
 
-**Audit-corrected mechanics.** There is no `public.org_members` join table on
-this platform. Membership is `public.noctus_users.org_id NOT NULL + org_role`
-(single-org-per-user FK), and `public.current_org_id()` reads the JWT claim,
-not a join. Attaching a user to a new org therefore means inserting (or
-updating) the noctus_users row — no join-table write.
+**Mechanics (multi-org).** Membership is `public.org_memberships` (one row per person per
+org, `status` active/suspended/removed/invited); `public.noctus_users.org_id` is only the
+person's LAST-ACTIVE org (it follows the org picker), and core's 079 trigger mirrors every
+profile org into an ACTIVE membership. Attaching a person who has NO profile creates it in the
+inviting org; attaching one who HAS a profile adds a membership and leaves the profile where it
+is (`noctusai_lib.domain.org_memberships.join_org`) -- the new org is reached through the picker.
 
 **Why the noctus_users row is load-bearing, not bookkeeping.** Core's
 `/api/sso/launch/{slug}` reads `noctus_users` (`org_id, role, org_role`) to
@@ -32,6 +33,8 @@ import re
 from typing import Any, Optional
 
 from fastapi import HTTPException
+
+from noctusai_lib.domain.org_memberships import MembershipSuspended, join_org
 
 logger = logging.getLogger(__name__)
 
@@ -246,34 +249,35 @@ def attach_user_to_org(
     nome: Optional[str] = None,
     org_role: str = "member",
     platform_role: str = "user",
+    invited_by: Optional[str] = None,
 ) -> dict:
-    """Make `user_id` a member of `org_id` via `public.noctus_users`. Idempotent.
+    """Make `user_id` an ACTIVE member of `org_id`. Idempotent.
 
-    Three cases, in the order they are checked:
-
-    - **Already in THIS org** — returns the existing row untouched. Makes a
-      double-submitted accept a no-op instead of a 500.
-    - **Already in a DIFFERENT org** — raises HTTPException(409). Membership is
-      a single-org FK (`noctus_users.org_id`), so honouring the invite would
-      silently EVICT the user from their current org, losing their access to
-      every product licensed to it. Refusing is the only non-destructive answer;
-      moving orgs is a deliberate admin action, not a side effect of a link.
-    - **No row, or a row with no org** — inserts/updates so the user belongs to
-      `org_id` with `org_role`.
+    - **No profile, or a profile with no org** -- the profile is created/updated IN `org_id`
+      with `org_role` (core's 079 trigger mirrors it into an ACTIVE membership).
+      `"joined": True`, `"new_profile"` says which.
+    - **A profile elsewhere or here** -- membership only (`org_memberships.join_org`); the
+      profile is not moved (multi-org: belonging to another org is no reason to refuse).
+      Already ACTIVE here returns that membership untouched (`"joined": False`, its OWN role --
+      the caller decides what a different invited role means); re-activates a `removed` one.
+    - **Suspended here** -- HTTPException(403): an org decision an invitation must not lift.
 
     Args:
-        db: Supabase client bound to `public` (the CORE client — `noctus_users`
-            is a platform table, not a product one).
+        db: Supabase client bound to `public` (the CORE client -- `noctus_users` and
+            `org_memberships` are platform tables, not product ones).
         user_id: `auth.users.id`.
         org_id: the inviting organization.
-        email / nome: written when the row is created. `nome` defaults to the
+        email / nome: written when the profile is created. `nome` defaults to the
             email's local part; the column is NOT NULL.
-        org_role: `noctus_users.org_role` — the invite's role.
-        platform_role: `noctus_users.role`. Stays `"user"`: an org-level invite
-            never confers platform admin.
+        org_role: the role in `org_id` (the invite's role).
+        platform_role: `noctus_users.role` of a NEW profile. Stays `"user"`: an org-level
+            invite never confers platform admin.
+        invited_by: the inviter's user id, recorded on a membership this call creates.
 
     Returns:
-        The membership row as written.
+        The profile fields (when known) overlaid with the membership in `org_id`:
+        `{..., "org_id", "org_role", "joined", "new_profile", "profile_org_id"}` --
+        `profile_org_id` is where the profile (last-active org) points after the call.
     """
     existing = (
         db.table("noctus_users")
@@ -284,19 +288,21 @@ def attach_user_to_org(
     rows = existing.data or []
 
     if rows and rows[0].get("org_id"):
-        current_org = str(rows[0]["org_id"])
-        if current_org == str(org_id):
-            logger.info(
-                "attach_user_to_org: user_id=%s already in org_id=%s — no-op", user_id, org_id
-            )
-            return rows[0]
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                "Voce ja pertence a outra organizacao. "
-                "Entre em contato com o suporte para transferir sua conta."
-            ),
-        )
+        try:
+            membership = join_org(db, user_id, org_id, org_role, invited_by=invited_by)
+        except MembershipSuspended as exc:
+            raise HTTPException(
+                status_code=403,
+                detail="Sua participação nesta organização está suspensa",
+            ) from exc
+        return {
+            **rows[0],
+            "org_id": str(org_id),
+            "org_role": membership.get("org_role"),
+            "joined": membership.get("joined", False),
+            "new_profile": False,
+            "profile_org_id": str(rows[0]["org_id"]),
+        }
 
     payload = {
         "org_id": str(org_id),
@@ -305,10 +311,10 @@ def attach_user_to_org(
     if rows:
         db.table("noctus_users").update(payload).eq("id", user_id).execute()
         logger.info(
-            "attach_user_to_org: attached existing profile user_id=%s to org_id=%s (%s)",
+            "attach_user_to_org: placed org-less profile user_id=%s in org_id=%s (%s)",
             user_id, org_id, org_role,
         )
-        return {**rows[0], **payload}
+        return {**rows[0], **payload, "joined": True, "new_profile": False, "profile_org_id": str(org_id)}
 
     row = {
         "id": str(user_id),
@@ -318,11 +324,19 @@ def attach_user_to_org(
         **payload,
     }
     db.table("noctus_users").insert(row).execute()
+    if invited_by:
+        # The 079 trigger created the ACTIVE membership; record who invited (core's accept does
+        # the same for its own invitations).
+        (
+            db.table("org_memberships").update({"invited_by": str(invited_by)})
+            .eq("org_id", str(org_id)).eq("user_id", str(user_id)).eq("status", "active")
+            .execute()
+        )
     logger.info(
         "attach_user_to_org: created profile user_id=%s in org_id=%s (%s)",
         user_id, org_id, org_role,
     )
-    return row
+    return {**row, "joined": True, "new_profile": True, "profile_org_id": str(org_id)}
 
 
 def sync_org_metadata(

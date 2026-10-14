@@ -27,6 +27,15 @@ from typing import Any, Iterator, Optional
 
 from fastapi import HTTPException
 from noctusai_lib.integrations.persistence.paging import iter_paged_rows
+from noctusai_lib.domain.org_memberships import (  # noqa: F401 -- re-exported API
+    active_member_user_ids,
+    count_active_members,
+    get_membership,
+    list_active_memberships,
+    list_member_profiles,
+    list_user_active_memberships,
+    profiles_by_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,106 +83,18 @@ def _batched(values: list, size: int = _IN_BATCH) -> Iterator[list]:
 
 
 # ---------------------------------------------------------------------------
-# Reads -- members OF an org
+# Reads -- members OF an org: the seed's (`noctusai_lib.domain.org_memberships`), shared with
+# every product's team router (multi-org S6b). Re-exported under their historical names.
 # ---------------------------------------------------------------------------
-
-def get_membership(db, org_id: str, user_id: str) -> Optional[dict]:
-    """The (user, org) membership row, any status, or ``None``."""
-    resp = (
-        db.table("org_memberships")
-        .select("user_id, org_id, org_role, status")
-        .eq("org_id", org_id)
-        .eq("user_id", user_id)
-        .maybe_single()
-        .execute()
-    )
-    return resp.data if resp is not None else None
-
-
-def list_active_memberships(db, org_id: str) -> list[dict]:
-    """Every ACTIVE membership of ``org_id`` (paged -- never the silent 1 000-row cap)."""
-    return list(iter_paged_rows(
-        lambda start, end: (
-            db.table("org_memberships")
-            .select("user_id, org_role, created_at")
-            .eq("org_id", org_id)
-            .eq("status", "active")
-            .order("user_id")
-            .range(start, end)
-            .execute()
-            .data
-        ),
-        id_key="user_id",
-        label=f"active memberships of org {org_id}",
-    ))
-
-
-def list_user_active_memberships(db, user_id: str) -> list[dict]:
-    """Every ACTIVE membership OF a user, most recently updated first (an ordinary user belongs
-    to a handful of orgs; paged anyway so the cap can never hide one)."""
-    rows = list(iter_paged_rows(
-        lambda start, end: (
-            db.table("org_memberships")
-            .select("org_id, org_role, updated_at")
-            .eq("user_id", user_id)
-            .eq("status", "active")
-            .order("org_id")
-            .range(start, end)
-            .execute()
-            .data
-        ),
-        id_key="org_id",
-        label=f"active memberships of user {user_id}",
-    ))
-    rows.sort(key=lambda r: str(r.get("updated_at") or ""), reverse=True)
-    return rows
-
-
-def active_member_user_ids(db, org_id: str) -> list[str]:
-    return [str(r["user_id"]) for r in list_active_memberships(db, org_id)]
-
-
-def count_active_members(db, org_id: str) -> int:
-    """Seats in use: ACTIVE memberships (``invited`` is not a seat until accepted)."""
-    resp = (
-        db.table("org_memberships")
-        .select("user_id", count="exact")
-        .eq("org_id", org_id)
-        .eq("status", "active")
-        .execute()
-    )
-    return resp.count if resp.count is not None else len(resp.data or [])
-
-
-def profiles_by_id(db, user_ids: list[str], columns: str) -> dict[str, dict]:
-    """``noctus_users`` rows for ``user_ids`` keyed by id (``columns`` must include ``id``)."""
-    out: dict[str, dict] = {}
-    for chunk in _batched(list(user_ids)):
-        rows = db.table("noctus_users").select(columns).in_("id", chunk).execute().data or []
-        for row in rows:
-            out[str(row["id"])] = row
-    return out
-
 
 def list_team(db, org_id: str) -> list[dict]:
     """The team page rows: profile identity + the role IN THIS ORG (the membership role, not the
     profile's last-active-org role)."""
-    memberships = list_active_memberships(db, org_id)
-    profiles = profiles_by_id(db, [str(m["user_id"]) for m in memberships], "id, nome, email, created_at")
-    rows = []
-    for m in memberships:
-        p = profiles.get(str(m["user_id"]))
-        if p is None:
-            # An active membership without a profile cannot be named or acted on; say so.
-            logger.error("team: active membership without a noctus_users profile org=%s user=%s",
-                         org_id, m["user_id"])
-            continue
-        rows.append({
-            "id": p["id"], "nome": p.get("nome"), "email": p.get("email"),
-            "org_role": m.get("org_role"), "created_at": p.get("created_at") or m.get("created_at"),
-        })
-    rows.sort(key=lambda r: str(r.get("created_at") or ""))
-    return rows
+    return [
+        {"id": r["id"], "nome": r.get("nome"), "email": r.get("email"),
+         "org_role": r.get("org_role"), "created_at": r.get("created_at")}
+        for r in list_member_profiles(db, org_id, "id, nome, email, created_at")
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -1120,11 +1120,13 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
     def single(self):
         self._single_mode = True
         self._single_raises_on_empty = self._strict_single
+        self._maybe_single = False
         return self
 
     def maybe_single(self):
         self._single_mode = True
         self._single_raises_on_empty = False
+        self._maybe_single = True
         return self
 
     def _filtered_rows(self) -> list:
@@ -1197,7 +1199,15 @@ class MockSelectBuilder(_FilterMixin, _MockExecuteMixin):
                     "details": "The result contains 0 rows",
                     "hint": None,
                 })
-            return MockSupabaseResponse(data=data, count=count)
+            resp = MockSupabaseResponse(data=data, count=count)
+            if data is None and getattr(self, "_maybe_single", False):
+                # Real postgrest-py: `.maybe_single()` on 0 rows yields NO row (`None`), never
+                # an empty list -- `MockSupabaseResponse` coerces `None` to `[]` for every
+                # other shape, which handed `maybe_single` callers a list where real code
+                # sees `None` (`existing.get(...)` crashed only in the mock, and an `is None`
+                # check never fired in tests).
+                resp.data = None
+            return resp
         data = self._windowed_rows(filtered) if isinstance(filtered, list) else filtered
         return MockSupabaseResponse(data=data, count=count)
 

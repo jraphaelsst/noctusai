@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from noctusai_lib.testing.clients import TEST_ORG_ID, TEST_USER_ID
+from noctusai_lib.testing.memberships import seed_profiles
 
 
 # ---------------------------------------------------------------------------
@@ -258,15 +259,14 @@ class TeamFlowSuite:
         """Authenticated user can list org members.
 
         Seeded rows include ``org_id`` matching the conftest-bound
-        ``MockUser(org_id=<expected_org_id>)`` so the production
-        ``.eq("org_id", org_id)`` filter in
-        ``noctusai_seed.routers._create_team_router`` returns both rows
-        instead of empty. Without ``org_id`` the filter drops every row
-        and ``len(data) == 2`` fails.
+        ``MockUser(org_id=<expected_org_id>)``, and ``seed_profiles`` gives
+        each the ACTIVE membership core's 079 trigger keeps for it -- the
+        roster reads ``org_memberships`` of the effective org (multi-org
+        S6b), so profiles alone would list nobody.
         """
         # Row 1 is the CALLER (TEST_USER_ID): the router resolves the org
         # from the caller's own trusted membership row (SEC-1, 2026-09-28).
-        client._mock_supabase.set_table_data("noctus_users", [
+        seed_profiles(client._mock_supabase, [
             {**_caller_membership_row(self.expected_org_id, "owner"),
              "nome": "Alice", "email": "alice@test.com"},
             {"id": "u2", "nome": "Bob", "email": "bob@test.com",
