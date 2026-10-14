@@ -44,7 +44,9 @@ def test_migration_order_respects_requires():
 def test_routes_are_mounted_and_strictly_401_without_auth(client, path):
     from app.main import app
 
-    mounted = {getattr(r, "path", "") for r in app.routes}
+    # The OpenAPI paths, not `app.routes`: FastAPI >= 0.143 keeps an included router as one `_IncludedRouter`
+    # entry with no `.path`, so walking `app.routes` misses every organ route.
+    mounted = set(app.openapi()["paths"])
     assert any(m == path or m.startswith(path + "/") or m == path.rstrip("/") for m in mounted), path
     assert client.raw().get(path).status_code == 401
 
