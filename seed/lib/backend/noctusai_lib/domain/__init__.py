@@ -70,6 +70,11 @@ business logic" namespace.
   checkout (Asaas hosted charge, optional noc fee split), pure order state machine + event trail,
   idempotent payment webhook, host-resolved public storefront; `commerce_migration(cfg, schema)` DDL +
   three router factories. Built 2026-10-12 (`projects/commerce-seed-p3/`); reference host `products/commerce`.
+- `finance/` — generic financial core organ: accounts (bank/cash/gateway), category tree + cost centers,
+  payable/receivable entries (installment groups, recurrences), settlements over an append-only ledger with
+  reversal, transfers, cash flow / DRE / aging reports, private attachments, and the `FinanceBooking` seam other
+  organs book through; `finance_migration(cfg, schema)` DDL + `make_finance_router`. Built 2026-10-13
+  (`projects/commerce-seed-p4/`, slice C); statement import / gateway sync / exports land in slice D.
 
 **Future occupants:**
 - `gamification/` (when ERP Metas patterns extract)

@@ -15,6 +15,9 @@
 >
 > Philosophy + the five questions: `KNOWLEDGE-BASE/CONTEXT/PATTERNS/security/lgpd.md`.
 
+- [ ] **finance-counterparty-doc-cpf-cnpj** at `seed/lib/backend/noctusai_lib/domain/finance/entries.py` — fin_entries.counterparty_doc stores the CPF/CNPJ of named natural/legal persons (payees/payers) as a fiscal record. Controls shipped: org-scoped RLS, validated check digits, masked (***.456.789-**) in every staff read (lists, detail, aging) and shown whole only to org admins; never logged. Open: retention clock (kept as a fiscal record under the D30 5-year rule; a commerce privacy deletion must NOT erase finance rows of paid orders, LGPD art. 16 II) has no purge job yet, and admin full-record reads are not individually audited beyond the seed request-history middleware. CSV export masking lands with slice D.
+  - *Mitigation*: NOC-REMEDIATE[finance-doc-retention-purge]: schedule a purge of counterparty_doc 5 years after the fiscal year of the entry (mirror commerce purge_expired_fiscal_retention); slice D export must mask for non-admins (contract §3.3). — 2026-10-13
+  - *Flagged*: 2026-10-14
 - [ ] **commerce-buyer-doc-fiscal-retention** at `seed/lib/backend/noctusai_lib/domain/commerce/fiscal_retention.py` — D30: anonymize keeps buyer CPF/CNPJ + name on paid orders (commerce_orders.buyer_doc/buyer_name) as a tax record for 5 years from 1 Jan after payment (LGPD art. 16 II + CTN art. 173); erased by purge_expired_fiscal_retention, which has no scheduler yet (NOC-REMEDIATE commerce-fiscal-purge-schedule, P5).
   - *Mitigation*: Schedule the purge daily in P5; mask buyer_doc in staff UI; restrict to paid-reached orders only.
   - *Flagged*: 2026-10-13
