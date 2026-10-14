@@ -1007,13 +1007,13 @@ def _default_run_check(
         from . import verify_db_guards as _vdg
 
         scoped = tuple(
-            p for p in _vdg.DEFAULT_REGISTRY if p.product in (product, "<platform>")
+            p for p in _vdg.full_registry() if p.product in (product, "<platform>")
         )
         if not scoped:
             return True, (
                 f"db_guards SKIPPED — no behaviour probes registered for "
                 f"{product} (or platform-wide) yet. See "
-                "noctus.dev.verify_db_guards's DEFAULT_REGISTRY."
+                "noctus.dev.verify_db_guards's DEFAULT_REGISTRY or organ-derived probes."
             )
         result = _vdg.verify_db_guards(registry=scoped)
         if result["status"] in ("not_configured", "error", "unverified"):

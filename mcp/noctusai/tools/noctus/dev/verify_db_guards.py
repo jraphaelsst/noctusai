@@ -196,7 +196,7 @@ def wrap_rollback_only(probe_sql: str) -> str:
 # substitutions can carry newlines from a caught SQLERRM) is captured whole.
 _SENTINEL_RE = re.compile(
     r"NOC_PROBE:(?P<outcome>refused|permitted|clean|violation|allowed|blocked|"
-    r"no_fixture|ambiguous):"
+    r"no_fixture|ambiguous|pending):"
     r"\s*(?P<detail>.*)",
     re.DOTALL,
 )
@@ -210,6 +210,9 @@ _OUTCOME_STATUS: dict[str, str] = {
     "blocked": "finding",
     "no_fixture": "failure",
     "ambiguous": "failure",
+    # The probed table does not exist in the target DB yet (its migration is not applied): neither a pass nor a
+    # failure -- named and listed under `pending`, never counted as checked.
+    "pending": "pending_migration",
 }
 _OUTCOME_SEVERITY: dict[str, str] = {
     "permitted": "high",
@@ -217,6 +220,7 @@ _OUTCOME_SEVERITY: dict[str, str] = {
     "blocked": "high",
     "no_fixture": "high",
     "ambiguous": "high",
+    "pending": "info",
 }
 
 
@@ -8020,6 +8024,133 @@ REGISTERED_GUARD_NAMES: frozenset[str] = frozenset(p.guard_name for p in DEFAULT
 
 
 # ---------------------------------------------------------------------------
+# Organ-derived probes -- a seed organ declares its guards ONCE
+# (`noctusai_seed.organs.ORGAN_REGISTRY[...].guard_probes`, next to the generator); every product that rendered
+# the organ's migration (found by the organ's header line, never by number) gets the organ's probes bound to
+# ITS schema. A render therefore never needs a hand-written probe or `_GUARD_PROBE_ALLOWLIST` entry.
+# A probe whose table is not in the target DB yet (migration pending) reports `pending` -- never a false green.
+# ---------------------------------------------------------------------------
+
+_ORGAN_PROBE_PREFIX = "organ"
+
+
+def _organ_probe_sql(schema: str, probe: Any) -> str:
+    """One `OrganGuardProbe` -> the standard probe body (pending guard, classified sub-block, sentinels)."""
+    pending = "\n".join(
+        f"  IF to_regclass('{_sql_lit(schema)}.{_sql_lit(t)}') IS NULL THEN\n"
+        f"    RAISE EXCEPTION 'NOC_PROBE:pending: {_sql_lit(schema)}.{_sql_lit(t)} does not exist (organ migration not applied)';\n"
+        "  END IF;"
+        for t in probe.requires
+    )
+    body = probe.body.strip()
+    if _PROBE_TAG in body or _PROBE_TAG in probe.declare:
+        raise ValueError(f"organ guard {probe.guard_name!r}: probe text may not contain {_PROBE_TAG}")
+    declare = probe.declare.strip()
+    return _do_block(f"""
+DECLARE
+  v_org uuid := gen_random_uuid();
+  {declare}
+BEGIN
+{pending}
+  BEGIN
+{body}
+    RAISE EXCEPTION 'NOC_PROBE:permitted: {_sql_lit(probe.permitted)} succeeded -- the {probe.kind} guard did not fire';
+  EXCEPTION WHEN OTHERS THEN
+    IF SQLERRM LIKE 'NOC_PROBE:permitted:%' THEN
+      RAISE;
+    ELSIF SQLERRM LIKE '%{_sql_lit(probe.refusal_fragment)}%' THEN
+      RAISE EXCEPTION 'NOC_PROBE:refused: %', SQLERRM;
+    ELSE
+      RAISE EXCEPTION 'NOC_PROBE:ambiguous: unexpected error (not the guard under test): %', SQLERRM;
+    END IF;
+  END;
+END;
+""")
+
+
+def _unverifiable_probe(probe_id: str, product: str, schema: str, why: str) -> GuardProbe:
+    """A deliberately failing probe: what could not be derived is reported, never skipped."""
+    return GuardProbe(
+        id=probe_id, product=product, schema=schema, guard_name=probe_id, kind="write_refusal",
+        rationale="organ-derived probes must be derivable for every product that rendered an organ migration",
+        sql=_do_block(f"""
+BEGIN
+  RAISE EXCEPTION 'NOC_PROBE:no_fixture: {_sql_lit(why)}';
+END;
+"""),
+    )
+
+
+def derive_organ_probes(*, products_dir: Any = None, registry: Any = None) -> tuple[GuardProbe, ...]:
+    """The probes of every organ guard, for every product with a rendered organ migration.
+
+    Fail-closed: an organ registry that cannot be imported, or a product whose schema cannot be derived, yields a
+    failing probe naming the cause instead of silently deriving nothing.
+    """
+    from settings import PRODUCTS_DIR
+
+    root = products_dir or PRODUCTS_DIR
+    if registry is None:
+        try:
+            from noctusai_seed.organs import ORGAN_REGISTRY as registry  # type: ignore[no-redef]
+        except ImportError as exc:
+            return (_unverifiable_probe(
+                f"{_ORGAN_PROBE_PREFIX}.registry_unavailable", "<platform>", "public",
+                f"cannot import noctusai_seed.organs ({exc}): organ-derived guard probes cannot be derived",
+            ),)
+    headers = {name: spec.migration_header for name, spec in registry.items() if getattr(spec, "guard_probes", None)}
+    undeclared = {name: spec.migration_header for name, spec in registry.items() if not getattr(spec, "guard_probes", None)}
+    longest = max((len(h) for h in {**headers, **undeclared}.values()), default=0)
+
+    rendered: dict[tuple[str, str], list[str]] = {}
+    for sql_file in sorted(root.glob("*/backend/migrations/*.sql")):
+        try:
+            with open(sql_file, encoding="utf-8") as fh:
+                head = fh.read(longest + 1)
+        except (OSError, UnicodeDecodeError):
+            continue
+        product = sql_file.parents[2].name
+        for name, header in {**headers, **undeclared}.items():
+            if head.startswith(header):
+                rendered.setdefault((product, name), []).append(sql_file.name)
+
+    probes: list[GuardProbe] = []
+    for (product, organ), files in sorted(rendered.items()):
+        if organ in undeclared:
+            probes.append(_unverifiable_probe(
+                f"{_ORGAN_PROBE_PREFIX}.{organ}.{product}.undeclared", product, "public",
+                f"organ {organ!r} rendered into {product} declares no guard_probes",
+            ))
+            continue
+        schema, source = _mp._resolve_schema(product, None, root)
+        if source == "slug_fallback":
+            probes.append(_unverifiable_probe(
+                f"{_ORGAN_PROBE_PREFIX}.{organ}.{product}.schema", product, schema,
+                f"cannot derive the DB schema of {product} from its create_product_app(schema=...) declaration",
+            ))
+            continue
+        latest = sorted(files)[-1]
+        for op in registry[organ].guard_probes(schema):
+            probes.append(GuardProbe(
+                id=f"{_ORGAN_PROBE_PREFIX}.{organ}.{product}.{op.probe_key}",
+                product=product,
+                schema=schema,
+                guard_name=op.guard_name,
+                kind="write_refusal",
+                migrations=(latest,),
+                rationale=op.rationale,
+                sql=_organ_probe_sql(schema, op),
+            ))
+    return tuple(probes)
+
+
+def full_registry(*, products_dir: Any = None, registry: Any = None) -> tuple[GuardProbe, ...]:
+    """`DEFAULT_REGISTRY` (hand-written, per-product) + the organ-derived probes: what a run actually executes."""
+    return (*DEFAULT_REGISTRY, *derive_organ_probes(products_dir=products_dir, registry=registry))
+
+
+
+# ---------------------------------------------------------------------------
 # Top-level runner
 # ---------------------------------------------------------------------------
 
@@ -8106,7 +8237,7 @@ def verify_db_guards(
         base.update(overrides)
         return base
 
-    reg = registry if registry is not None else DEFAULT_REGISTRY
+    reg = registry if registry is not None else full_registry()
     if not reg:
         return _result("error", error="verify_db_guards: empty probe registry")
 
@@ -8147,7 +8278,9 @@ def verify_db_guards(
             continue
         r = run_probe(probe, executor)
         results.append(r)
-        if r["status"] == "finding":
+        if r["status"] == "pending_migration":
+            pending.append(r)
+        elif r["status"] == "finding":
             findings.append(r)
         elif r["status"] == "failure":
             failures.append(r)
@@ -8200,6 +8333,8 @@ __all__ = [
     "GuardProbe",
     "DEFAULT_REGISTRY",
     "REGISTERED_GUARD_NAMES",
+    "derive_organ_probes",
+    "full_registry",
     "wrap_rollback_only",
     "run_probe",
     "verify_db_guards",

@@ -330,6 +330,23 @@ NEW trigger/CHECK/UNIQUE guard with no registered probe is blocked at
 commit time, so this does not quietly regress the moment the next guard
 ships.
 
+**Seed organs declare their guards once (2026-10-14).** An organ migration is
+rendered into many products, so a hand-written probe (or an allowlist entry
+for "file-only, no live table yet") per render does not scale and invites
+bypass. Instead the organ declares each guard ONCE, next to its generator,
+as an `OrganGuardProbe` (`noctusai_lib/domain/<organ>/guards.py`, wired via
+`OrganSpec.guard_probes`): schema-parameterized plpgsql that performs the
+violating operation. `verify_db_guards` derives the probes for every product
+whose migrations contain a rendered organ file (found by the organ's header
+line) bound to THAT product's schema; a probe whose table is not in the
+target DB yet reports `pending` (listed, neither pass nor fail — never a false
+green). `check_migration_guard_has_probe` accepts an organ-rendered guard iff
+the organ declares a probe for it (organ files are never allowlisted), and a
+completeness test fails when a generator adds a guard without one. The
+declared probes are exercised on PGlite against the organ's own DDL
+(`mcp/noctusai/tests/test_organ_guard_probes.py`), including a negative case
+(a dropped guard reports `permitted`).
+
 ⇒ **A structural check that a guard exists is a hypothesis about its
 behaviour, not proof of it — proof requires watching it refuse.**
 ### 9. Resolve the root from the artefact under evaluation, never from the ambient cwd

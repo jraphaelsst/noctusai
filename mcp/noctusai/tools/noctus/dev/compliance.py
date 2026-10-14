@@ -13963,6 +13963,10 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: A migration RENDERED FROM A SEED ORGAN (`noctus.dev.render_organ_migration`) never belongs here: its guards are
+#: declared once by the organ (`OrganSpec.guard_probes`) and probed in every rendering product by
+#: `verify_db_guards.derive_organ_probes` -- an organ guard is covered iff the organ declares a probe for it.
+#:
 #: `(file, guard_name, rationale)` — a genuine guard-shaped DDL object that
 #: legitimately has NO behaviour probe. Co-located rationale, same shape as
 #: `_HOOKS_BYPASS_ALLOWLIST` / `check_mock_schema_validation`'s opt-out.
@@ -13982,158 +13986,6 @@ _GUARD_UNIQUE_INDEX_RE = re.compile(
 #: plausible, not yet built). NOC-REMEDIATE[rls-guard-probes]: build a role/
 #: JWT-impersonation seam for RLS-policy behaviour probes — 2026-09-18.
 _GUARD_PROBE_ALLOWLIST: tuple[tuple[str, str, str], ...] = (
-    # Commerce P4 organ migrations 014-018 (host `products/commerce`, 2026-10-14) are FILE-ONLY: the tech-lead
-    # applies them to prod later (migrate_product). `verify_db_guards`'s `SqlExecutor` probes LIVE production, so it
-    # cannot exercise a constraint on a table that does not exist there yet. Remove these entries and register real
-    # `GuardProbe`s in `verify_db_guards.DEFAULT_REGISTRY` in the SAME change that applies the migrations.
-    # NOC-REMEDIATE[commerce-p4-guard-probes]: unique/CHECK probes for the money, finance and items organs — 2026-10-14.
-    # Commerce parties + inventory (migrations 020/021) and the refreshed 017 finance CHECK: same file-only situation;
-    # probes are registered in the SAME change that applies them (NOC-REMEDIATE[commerce-p4-guard-probes] above).
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "fin_entries_source_check",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/020_parties.sql",
-        "uq_pty_parties_doc",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/021_inventory.sql",
-        "uq_inv_warehouses_code",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/021_inventory.sql",
-        "uq_inv_warehouses_default",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/021_inventory.sql",
-        "inv_stock_balances_reserved_nonneg",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/021_inventory.sql",
-        "inv_stock_balances_available_nonneg",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/021_inventory.sql",
-        "uq_inv_stock_moves_idem",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/021_inventory.sql",
-        "inv_stock_moves_append_only",
-        "Migration file-only (commerce parties + inventory mount, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "commerce_orders_status_check",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "commerce_order_events_from_status_check",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "commerce_order_events_to_status_check",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "uq_commerce_order_charges_attempt",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "uq_commerce_order_charges_gateway",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "uq_commerce_refunds_gateway_id",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "uq_commerce_refunds_idempotency",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/014_commerce_money.sql",
-        "uq_commerce_refunds_one_requested",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/015_commerce_fiscal.sql",
-        "commerce_store_profiles_nfse_regime_ck",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "fin_entries_source_check",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_accounts_gateway",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_categories_name",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_entries_source_ref",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_entries_recurrence_due",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_entries_installment",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_statement_lines_ledger",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_settlements_external",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_ledger_settlement_origin",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/017_finance.sql",
-        "uq_fin_ledger_reverses",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/018_items.sql",
-        "uq_itm_item_categories_name",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
-    (
-        "products/commerce/backend/migrations/018_items.sql",
-        "uq_itm_items_sku",
-        "Migration file-only (commerce P4, applied later by the tech-lead) — no live table to probe against yet.",
-    ),
     # Migration 167 (social-wiring, P0c contract) is FILE-ONLY — the
     # contract's own §A explicitly forbids applying it in this slice
     # ("It is not applied by the slice"; `migrations/APPLIED.md` still
@@ -14325,6 +14177,48 @@ def _detect_guard_objects(sql_text: str) -> list[dict]:
     return guards
 
 
+def _load_organ_specs(root: Path) -> dict:
+    """`ORGAN_REGISTRY` of the tree being checked ({} when the seed framework is not importable).
+
+    An unimportable registry makes every organ-rendered guard look unprobed (it falls through to the plain
+    registry/allowlist path, where it has neither) -- fail-closed, never a silent pass.
+    """
+    import sys
+
+    # The venv's editable install resolves `noctusai_lib`/`noctusai_seed` to the PRIMARY checkout; a keeper run from a
+    # worktree (pre-commit) must judge the worktree's own organs. Re-point both packages at `root` when they were
+    # already imported from elsewhere (own process under pre-commit; under pytest the conftest already aligned them).
+    for pkg, sub in (("noctusai_lib", "seed/lib/backend"), ("noctusai_seed", "seed/framework/backend")):
+        base = root / sub
+        if not base.is_dir():
+            continue
+        loaded = getattr(sys.modules.get(pkg), "__file__", None)
+        if loaded and not Path(loaded).resolve().is_relative_to(base.resolve()):
+            for name in [k for k in sys.modules if k == pkg or k.startswith(pkg + ".")]:
+                del sys.modules[name]
+        if str(base) not in sys.path:
+            sys.path.insert(0, str(base))
+    try:
+        from noctusai_seed.organs import ORGAN_REGISTRY
+    except ImportError as exc:
+        logger.warning("compliance: cannot import noctusai_seed.organs (%s) -- organ-rendered guards unverifiable", exc)
+        return {}
+    return dict(ORGAN_REGISTRY)
+
+
+def _organ_of_migration(content: str, organ_specs: dict) -> str | None:
+    """The organ whose generated header opens this migration (found by header, never by number/name)."""
+    for name, spec in organ_specs.items():
+        if content.startswith(spec.migration_header):
+            return name
+    return None
+
+
+def _organ_declared_guard_names(spec) -> set[str]:
+    """Guard names the organ declares a behaviour probe for (names carry no schema, so any schema will do)."""
+    return {p.guard_name for p in (spec.guard_probes("organ_guard_probe_check") if spec.guard_probes else ())}
+
+
 # NOC-REMEDIATE[migration-guard-probes]: burn down the pre-existing guards with no GuardProbe, batched per product by the release lane; this keeper is the tracker (212 on 2026-10-10 — social-wiring 147, core 17, academia 4, agents 4, igig 3; asleep: erp-imobiliario 22, orbity 7, community 3, personal-finance 3, daily-life 2) — 2026-10-10
 def check_migration_guard_has_probe(
     repo_root: Path | None = None, paths: list[str] | None = None
@@ -14366,6 +14260,8 @@ def check_migration_guard_has_probe(
 
     from .verify_db_guards import REGISTERED_GUARD_NAMES
 
+    organ_specs = _load_organ_specs(root)
+
     if paths is not None:
         sql_files = sorted(
             root / p for p in paths
@@ -14383,12 +14279,30 @@ def check_migration_guard_has_probe(
             logger.warning("compliance: cannot read %s (%s), skipping", sql_file, exc)
             continue
         rel = str(sql_file.relative_to(root))
+        organ = _organ_of_migration(content, organ_specs)
+        organ_declared = _organ_declared_guard_names(organ_specs[organ]) if organ else None
         seen_names: set[str] = set()
         for guard in _detect_guard_objects(content):
             name = guard["guard_name"]
             if name in seen_names:
                 continue
             seen_names.add(name)
+            if organ is not None:
+                if name in organ_declared:
+                    continue
+                findings.append({
+                    "product": sql_file.parents[2].name,
+                    "file": rel,
+                    "issue": (
+                        f"{rel} is rendered from the `{organ}` seed organ and defines a {guard['kind']} `{name}` "
+                        f"that the organ declares NO behaviour probe for. Add an `OrganGuardProbe` for it in "
+                        f"`noctusai_lib/domain/<organ>/guards.py` (`OrganSpec.guard_probes`) -- one declaration "
+                        "probes it in every product that renders the organ. Organ-rendered files are never "
+                        "allowlisted. See KB § PATTERNS/common/methodology-execution-discipline.md § 8."
+                    ),
+                    "severity": "high",
+                })
+                continue
             if name in REGISTERED_GUARD_NAMES or (rel, name) in allowlisted:
                 continue
             findings.append({
