@@ -7475,6 +7475,9 @@ _GATED_PREFIXES: dict[str, str] = {
     "dev_team/tests/": "tooling-tests",
     "scripts/codemods/": "tooling-tests",
     "templates/product-seed/backend/tests/": "tooling-tests",
+    # Run by mcp-toolkit-tests: `tests/test_scaffold_overlay.py` scaffolds the ERP overlay into a temp
+    # product and executes its `backend/tests/test_erp_wiring.py` (2026-10-14).
+    "templates/product-erp/backend/tests/": "mcp-toolkit-tests (via test_scaffold_overlay)",
     ".claude/mods/": "harness-mod-tests",
 }
 
