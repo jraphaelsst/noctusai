@@ -2090,3 +2090,30 @@ class TestLedgerChecksumVerification:
         assert result["status"] == "applied", result
         assert result["applied"] == ["002_new.sql"]
         assert result["checksum_verification"]["acknowledged"] == ["001_first.sql"]
+
+
+class TestApplyIsHermeticToRealRepo:
+    """Regression: confirm=True with an injected products_dir and no record_persister must not
+    create real worktrees/branches or touch the real branch-tree ledger (2026-10-14 leak)."""
+
+    def test_default_persister_skips_on_injected_tree(self, tmp_path):
+        import subprocess
+        from pathlib import Path as _P
+
+        repo = _P(__file__).resolve().parents[3]
+        ledger = repo / "project-history" / "branch-tree.ndjson"
+
+        def snap():
+            wts = subprocess.run(["git", "-C", str(repo), "worktree", "list", "--porcelain"],
+                                 capture_output=True, text=True).stdout
+            brs = subprocess.run(["git", "-C", str(repo), "branch", "--list", "feat/applied-record-*"],
+                                 capture_output=True, text=True).stdout
+            return wts, brs, ledger.read_bytes() if ledger.exists() else None
+
+        before = snap()
+        products = _make_products_dir(tmp_path)
+        _make_migration_files(products, "orbity", [("001_seed.sql", "CREATE SCHEMA IF NOT EXISTS orbity;")])
+        result = migrate_product("orbity", confirm=True, executor=FakeSqlExecutor(), products_dir=products,
+                                 git_runner=_clean_git_runner(), live_products_fn=_live_catalog_fn("orbity"))
+        assert result["applied_record"]["status"] == "skipped_injected_tree"
+        assert snap() == before

@@ -1565,9 +1565,16 @@ def migrate_product(
     rec_files = {f.name: c for f, _sql, c in pending_sql if f.name in newly_applied}
     applied_record["files"] = rec_files
     try:
-        if record_persister is None:
-            from .record_applied_migrations import record_applied_migrations as record_persister
-        rec = record_persister(product, rec_files)
+        if record_persister is None and products_dir is not None:
+            # An injected migrations tree is not the real repo: the default persister
+            # (task_branch start/integrate) would create real worktrees/branches and
+            # write the real branch-tree ledger for a fixture product. Inject
+            # `record_persister` to exercise the record path.
+            rec = {"status": "skipped_injected_tree", "path": None, "error": None}
+        else:
+            if record_persister is None:
+                from .record_applied_migrations import record_applied_migrations as record_persister
+            rec = record_persister(product, rec_files)
         applied_record["path"] = rec.get("path")
         applied_record["status"] = rec.get("status")
         applied_record["error"] = rec.get("error")
